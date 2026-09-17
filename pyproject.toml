@@ -1,6 +1,6 @@
 [project]
 name = "loom-ia"
-version = "2.0.1"
+version = "2.0.0.dev0"
 description = "Async AI agent engine: delegated LLM roles, Python and MCP tools, event-sourced runs with replay and resume, exposed as a Python library, REST API or MCP server."
 authors = [
     { name = "Denis Lamard", email = "lamard.denis@gmail.com" }
