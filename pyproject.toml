@@ -85,7 +85,7 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
 [tool.pyright]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
-include = ["src", "tests"]
+include = ["src", "tests", "examples"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -105,6 +105,27 @@ name = "Noyau et moteur sans adaptateurs ni SDK"
 type = "forbidden"
 source_modules = ["loom_ia.core", "loom_ia.engine"]
 forbidden_modules = ["loom_ia.adapters", "anthropic", "openai", "fastapi", "mcp"]
+
+[[tool.importlinter.contracts]]
+name = "Noyau indépendant du reste de loom_ia"
+type = "forbidden"
+source_modules = ["loom_ia.core"]
+forbidden_modules = [
+    "loom_ia.access",
+    "loom_ia.adapters",
+    "loom_ia.agents",
+    "loom_ia.artifacts",
+    "loom_ia.config",
+    "loom_ia.engine",
+    "loom_ia.guards",
+    "loom_ia.replay",
+    "loom_ia.runtime",
+    "loom_ia.sessions",
+    "loom_ia.telemetry",
+    "loom_ia.tenancy",
+    "loom_ia.testing",
+    "loom_ia.usage",
+]
 
 [[tool.importlinter.contracts]]
 name = "Adaptateurs indépendants"
