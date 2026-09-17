@@ -16,6 +16,7 @@ from loom_ia.core.model import (
     ReasoningDelta,
     ResponseAccumulator,
     Stopped,
+    StreamReset,
     TextBlock,
     TextDelta,
     ToolArgsDelta,
@@ -104,6 +105,19 @@ def test_missing_arguments_mean_an_empty_object() -> None:
         model_id="m", provider="fake"
     )
     assert response.message.tool_calls[0].arguments == {}
+
+
+def test_reset_discards_the_partial_answer() -> None:
+    response = accumulate(
+        TextDelta(text="Début abandonné"),
+        ToolCallStarted(index=0, call_id="c1", name="calculer"),
+        UsageDelta(usage=Usage(input_tokens=10)),
+        StreamReset(attempt=2),
+        TextDelta(text="Réponse"),
+        Stopped(reason="end"),
+    ).result(model_id="m", provider="fake")
+    assert response.message == Message.assistant("Réponse")
+    assert response.usage == Usage()
 
 
 def test_empty_stream_gives_an_empty_text() -> None:

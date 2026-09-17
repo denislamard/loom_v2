@@ -28,7 +28,9 @@ from loom_ia.core.model import (
     CallerContext,
     Message,
     ModelChunk,
+    ModelSpec,
     Pricing,
+    RetryPolicy,
     RunId,
     RunState,
     RunStatus,
@@ -46,7 +48,13 @@ from loom_ia.testing import RunJournal, ScriptedModel, tool_call_message
 from loom_ia.tools import tool
 
 USAGE = Usage(input_tokens=1_000, output_tokens=100)
-PRICING = Pricing(input=1.0, output=5.0)
+SPEC = ModelSpec(
+    id="FAKE",
+    sdk="fake",
+    model="fake-1",
+    pricing=Pricing(input=1.0, output=5.0),
+    retry=RetryPolicy(initial_delay=0),
+)
 
 
 @tool
@@ -68,13 +76,12 @@ def context(store: EventStore, model: ScriptedModel, **options: object) -> RunCo
     defaults: dict[str, object] = {
         "tools": ToolExecutor([calculer]),
         "system": "Tu calcules.",
-        "pricing": PRICING,
+        "model_spec": SPEC,
     }
     return RunContext(
         agent="demo",
         store=store,
         model=model,
-        model_id="fake-1",
         **(defaults | options),  # pyright: ignore[reportArgumentType]
     )
 
@@ -147,7 +154,13 @@ async def test_direct_answer(store: EventStore) -> None:
     async def on_chunk(chunk: ModelChunk) -> None:
         chunks.append(chunk)
 
-    ctx = context(store, model, on_chunk=on_chunk, max_tokens=500, params={"temperature": 0})
+    ctx = context(
+        store,
+        model,
+        on_chunk=on_chunk,
+        model_spec=SPEC.model_copy(update={"max_tokens": 500, "params": {"top_p": 1}}),
+        params={"temperature": 0},
+    )
     started = await begin_run(ctx, "Bonjour")
     assert started.session_id == started.run_id
     state = await drive(ctx, started.run_id)
@@ -166,7 +179,7 @@ async def test_direct_answer(store: EventStore) -> None:
         500,
     )
     assert request.tools == (calculer.spec.definition(),)
-    assert request.params == {"temperature": 0}
+    assert request.params == {"top_p": 1, "temperature": 0}
 
     events = await journal(store, state)
     assert kinds(events) == [
@@ -297,7 +310,7 @@ async def test_model_failure_fails_the_run(
     assert isinstance(transition, RunTransitioned)
     assert (transition.cause_type, transition.cause_event_id) == ("RuntimeError", None)
     assert isinstance(failure, RunFailed) and failure.iterations == 0
-    assert "Échec de l'appel au modèle fake-1" in caplog.text
+    assert "Échec de l'appel au modèle FAKE" in caplog.text
 
 
 async def test_resume_after_a_crash_during_the_tool_batch(store: EventStore) -> None:
@@ -473,7 +486,7 @@ async def test_finished_run_is_left_untouched(store: EventStore) -> None:
 async def test_drive_checks_the_agent(store: EventStore) -> None:
     ctx = context(store, scripted())
     run = await begin_run(ctx, "?")
-    other = RunContext(agent="autre", store=store, model=scripted(), model_id="m")
+    other = RunContext(agent="autre", store=store, model=scripted(), model_spec=SPEC)
     with pytest.raises(ValueError, match="appartient à l'agent 'demo'"):
         await drive(other, run.run_id)
 

@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from loom_ia.core.events import (
     Event,
     ModelResponded,
+    ModelRetried,
     RunCompleted,
     RunFailed,
     RunStarted,
@@ -94,7 +95,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
             update |= {"pending_calls": remaining, "messages": (*state.messages, result)}
         case StepStarted(step_no=step_no):
             update["step"] = step_no
-        case StepCompleted():
+        case StepCompleted() | ModelRetried():
             pass
         case RunTransitioned(from_state=from_state, to_state=to_state):
             if from_state != state.status:

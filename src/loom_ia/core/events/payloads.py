@@ -19,7 +19,7 @@ from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import EventId, RunId
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.run_state import RunStatus
-from loom_ia.core.model.streaming import StopReason
+from loom_ia.core.model.streaming import ModelErrorKind, StopReason
 from loom_ia.core.model.tooling import ToolKind
 from loom_ia.core.model.usage import Usage
 
@@ -169,6 +169,28 @@ class ModelResponded(Payload):
         return {**super().facets(), "tokens": self.usage.total_tokens}
 
 
+class ModelRetried(Payload):
+    """Tentative d'appel échouée, suivie d'une nouvelle tentative (#10)."""
+
+    category: ClassVar[EventCategory] = "model"
+    facet_fields: ClassVar[tuple[str, ...]] = ("model_id", "provider", "error_kind", "attempt")
+
+    type: Literal["model.retried"] = "model.retried"
+    model_id: str
+    provider: str
+    # Numéro de la tentative qui a échoué.
+    attempt: PositiveInt
+    error_kind: ModelErrorKind
+    error: str
+    http_status: int | None = None
+    # Attente avant la tentative suivante, en secondes.
+    delay_s: NonNegativeFloat
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning"
+
+
 # --- Outils ------------------------------------------------------------------
 
 
@@ -213,6 +235,7 @@ type DurablePayload = Annotated[
     | RunFailed
     | UserMessage
     | ModelResponded
+    | ModelRetried
     | ToolCalled
     | ToolCompleted,
     Field(discriminator="type"),
@@ -227,6 +250,7 @@ DURABLE_PAYLOADS: tuple[type[Payload], ...] = (
     RunFailed,
     UserMessage,
     ModelResponded,
+    ModelRetried,
     ToolCalled,
     ToolCompleted,
 )

@@ -13,7 +13,6 @@ requête et renvoie l'un des deux.
 """
 
 import asyncio
-import json
 from collections import deque
 from collections.abc import AsyncGenerator, Callable
 
@@ -21,18 +20,8 @@ from loom_ia.core.model import (
     Message,
     ModelChunk,
     ModelRequest,
-    ReasoningBlock,
-    ReasoningDelta,
-    Stopped,
-    StopReason,
-    TextBlock,
-    TextDelta,
-    ToolArgsDelta,
-    ToolCallBlock,
-    ToolCallEnded,
-    ToolCallStarted,
     Usage,
-    UsageDelta,
+    message_to_chunks,
 )
 
 type Reply = Message | Exception
@@ -76,6 +65,9 @@ class ScriptedModel:
     def add(self, *script: ScriptItem) -> None:
         self._script.extend(script)
 
+    async def aclose(self) -> None:
+        pass
+
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
         self.requests.append(request)
         if not self._script:
@@ -88,45 +80,3 @@ class ScriptedModel:
             if self.delay:
                 await asyncio.sleep(self.delay)
             yield chunk
-
-
-def message_to_chunks(
-    message: Message,
-    *,
-    usage: Usage | None = None,
-    stop_reason: StopReason | None = None,
-    model_id: str | None = None,
-    fragment_size: int = 8,
-) -> list[ModelChunk]:
-    """Morceaux de flux qu'un fournisseur enverrait pour ce message."""
-    chunks: list[ModelChunk] = []
-    index = 0
-    for block in message.blocks:
-        match block:
-            case TextBlock(text=text):
-                chunks += [TextDelta(text=part) for part in _split(text, fragment_size)]
-            case ReasoningBlock(text=text, provider_meta=meta):
-                parts = _split(text, fragment_size)
-                chunks += [ReasoningDelta(text=part) for part in parts[:-1]]
-                chunks.append(ReasoningDelta(text=parts[-1], provider_meta=meta))
-            case ToolCallBlock(call_id=call_id, name=name, arguments=arguments):
-                chunks.append(ToolCallStarted(index=index, call_id=call_id, name=name))
-                raw = json.dumps(arguments, ensure_ascii=False)
-                chunks += [
-                    ToolArgsDelta(index=index, json_fragment=part)
-                    for part in _split(raw, fragment_size)
-                ]
-                chunks.append(ToolCallEnded(index=index))
-                index += 1
-            case _:
-                raise ValueError(f"Bloc {block.type!r} impossible dans une réponse de modèle")
-    if usage is not None:
-        chunks.append(UsageDelta(usage=usage))
-    reason: StopReason = stop_reason or ("tool_use" if message.tool_calls else "end")
-    chunks.append(Stopped(reason=reason, model_id=model_id))
-    return chunks
-
-
-def _split(text: str, size: int) -> list[str]:
-    """Découpe en morceaux ; un texte vide donne un morceau vide."""
-    return [text[i : i + size] for i in range(0, len(text), size)] or [""]

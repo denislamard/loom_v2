@@ -29,14 +29,14 @@ from loom_ia.core.events import (
     ToolCompleted,
     UserMessage,
 )
-from loom_ia.core.model import DEFAULT_TENANT, Message, Pricing
+from loom_ia.core.model import DEFAULT_TENANT, Message, ModelSpec, Pricing
 from loom_ia.engine import RunContext, ToolExecutor, begin_run, drive
 from loom_ia.testing import ScriptedModel, tool_call_message
 from loom_ia.tools import tool
 
 ROOT = Path("data/examples/j1")
 PROMPT = "Quel est le prix TTC de 3 articles à 40 € HT ?"
-PRICING = Pricing(input=1.0, output=5.0)
+MODEL = ModelSpec(id="FAKE", sdk="fake", model="fake-1", pricing=Pricing(input=1.0, output=5.0))
 executions = {"calculer": 0, "taux_tva": 0}
 
 
@@ -77,10 +77,9 @@ def engine(store: JsonlEventStore, model: ScriptedModel) -> RunContext:
         agent="demo",
         store=store,
         model=model,
-        model_id="fake-1",
+        model_spec=MODEL,
         system="Tu réponds aux questions de prix.",
         tools=ToolExecutor([calculer, taux_tva]),
-        pricing=PRICING,
     )
 
 

@@ -33,6 +33,7 @@ from loom_ia.core.events import (
     Event,
     EventDraft,
     ModelResponded,
+    ModelRetried,
     RunCompleted,
     RunFailed,
     RunScope,
@@ -47,7 +48,8 @@ from loom_ia.core.model import (
     CallerContext,
     Message,
     ModelRequest,
-    Pricing,
+    ModelResponse,
+    ModelSpec,
     RunId,
     RunState,
     RunStatus,
@@ -59,9 +61,10 @@ from loom_ia.core.model import (
     new_run_id,
     new_span_id,
 )
-from loom_ia.core.ports import ChunkCallback, EventStore, ModelClient, complete
+from loom_ia.core.ports import ChunkCallback, EventStore, ModelClient, ModelError
 from loom_ia.core.projections import apply, fold, history
 from loom_ia.engine.executor import ToolExecutor
+from loom_ia.engine.model_call import ModelCall
 
 logger = logging.getLogger(__name__)
 
@@ -86,13 +89,12 @@ class RunContext:
     agent: str
     store: EventStore
     model: ModelClient
-    model_id: str
+    model_spec: ModelSpec
     tools: ToolExecutor = field(default_factory=ToolExecutor)
     system: str = ""
     max_iterations: int = DEFAULT_MAX_ITERATIONS
-    max_tokens: int | None = None
+    # Surcharge de ``model_spec.params``, clé par clé (B6).
     params: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
-    pricing: Pricing | None = None
     # Reçoit les morceaux du flux du modèle, pour la diffusion en direct.
     on_chunk: ChunkCallback | None = None
 
@@ -287,7 +289,9 @@ class _Step:
         self._effect: Effect = effect
         self._started = time.perf_counter()
 
-    def draft(self, payload: StepStarted | StepCompleted | ModelResponded) -> EventDraft:
+    def draft(
+        self, payload: StepStarted | StepCompleted | ModelResponded | ModelRetried
+    ) -> EventDraft:
         return self._scope.draft(payload, span_id=self.span)
 
     def started(self) -> EventDraft:
@@ -314,31 +318,43 @@ async def _model_step(
 ) -> AsyncGenerator[EventDraft]:
     current = _Step(state, scope, "finalize" if forced else "model_call")
     yield current.started()
+    spec = ctx.model_spec
     started = time.perf_counter()
+    emitted = attempts = 0
+    response: ModelResponse | None = None
     try:
         request = ModelRequest(
-            model_id=ctx.model_id,
+            model_id=spec.model,
             system=ctx.system,
             messages=(*previous, *state.messages),
             tools=ctx.tools.definitions(),
             tool_choice="none" if forced else "auto",
-            max_tokens=ctx.max_tokens,
-            params=dict(ctx.params),
+            max_tokens=spec.max_tokens,
+            params={**spec.params, **ctx.params},
         )
-        response = await complete(ctx.model, request, on_chunk=ctx.on_chunk)
+        call = ModelCall(ctx.model, spec, on_chunk=ctx.on_chunk)
+        async with aclosing(call.run(request)) as outcomes:
+            async for outcome in outcomes:
+                attempts += 1
+                if isinstance(outcome, ModelResponse):
+                    response = outcome
+                else:
+                    yield current.draft(outcome)
+                    emitted += 1
+        if response is None:
+            raise RuntimeError("Appel de modèle terminé sans réponse")
     except Exception as exc:
+        failure = f"model.{exc.kind}" if isinstance(exc, ModelError) else type(exc).__name__
         logger.error(
             "Échec de l'appel au modèle %s",
-            ctx.model_id,
+            spec.id,
             exc_info=exc,
             extra={"run_id": state.run_id, "span_id": current.span},
         )
-        yield current.completed(0, ok=False)
-        failure = type(exc).__name__
+        yield current.completed(emitted, ok=False)
         yield _transition(state, scope, RunStatus.FAILED, failure)
         yield scope.draft(_failed(state, failure, str(exc)))
         return
-
     message = response.message
     if forced and message.tool_calls:
         logger.warning(
@@ -353,13 +369,14 @@ async def _model_step(
             provider=response.provider,
             message=message,
             usage=response.usage,
-            cost_usd=ctx.pricing.cost(response.usage) if ctx.pricing else 0.0,
+            cost_usd=spec.pricing.cost(response.usage),
             stop_reason=response.stop_reason,
             latency_ms=(time.perf_counter() - started) * 1000,
+            attempts=attempts,
             request_hash=request.request_hash(),
         )
     )
-    yield current.completed(1)
+    yield current.completed(emitted + 1)
 
 
 async def _tool_step(

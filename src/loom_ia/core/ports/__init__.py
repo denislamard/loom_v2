@@ -7,14 +7,22 @@ from loom_ia.core.ports.event_store import (
     SequenceConflict,
     journal_key,
 )
-from loom_ia.core.ports.model_client import ChunkCallback, ModelClient, complete
+from loom_ia.core.ports.model_client import (
+    RETRYABLE_ERRORS,
+    ChunkCallback,
+    ModelClient,
+    ModelError,
+    complete,
+)
 from loom_ia.core.ports.tool import Tool, ToolContext, ToolError, idempotency_key
 
 __all__ = [
+    "RETRYABLE_ERRORS",
     "ChunkCallback",
     "EventStore",
     "JournalCorrupted",
     "ModelClient",
+    "ModelError",
     "SequenceConflict",
     "Tool",
     "ToolContext",

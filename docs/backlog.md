@@ -58,3 +58,27 @@ storage:
 **À faire :** passer #47 en décidé dans `fonctions.md` avec un renvoi vers `jalons.md`, et retirer la ligne correspondante du §20 de `conception.md`.
 
 **Statut :** à faire.
+
+---
+
+## #004 — Retirer les mentions de respx dans les docs
+
+**Origine :** phase 1.4.
+
+**Constat :** les SDK `anthropic` (1.6) et `openai` (3.14) utilisent `httpx2`, que respx n'intercepte pas. Les tests de contrat des adaptateurs simulent donc les réponses avec `httpx2.MockTransport`, passé au SDK par `http_client`. respx a été retiré des dépendances de dev.
+
+**À faire :** remplacer « respx » par `httpx2.MockTransport` dans `docs/fonctions.md` (#9 et outils de dev), `docs/conception.md` (§10.1 et §19) et `docs/jalons.md` (principes et tests du J1).
+
+**Statut :** à faire.
+
+---
+
+## #005 — `model.retried` écrit dès la phase 1.4
+
+**Origine :** phase 1.4.
+
+**Constat :** `docs/jalons.md` place `model.retried` en phase 3.5 ; il est écrit dès la 1.4, avec le retry.
+
+**À faire :** retirer `model.retried` de la ligne 3.5 et le mentionner en 1.4 (`fell_back` reste en 3.5).
+
+**Statut :** à faire.

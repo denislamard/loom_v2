@@ -3,7 +3,8 @@
 
 Le streaming est la seule primitive des adaptateurs : ils émettent des
 ``ModelChunk`` neutres, que ``ResponseAccumulator`` rassemble en
-``ModelResponse``.
+``ModelResponse``. ``message_to_chunks`` fait le chemin inverse, pour les
+fournisseurs sans streaming et les faux modèles.
 """
 
 import hashlib
@@ -26,6 +27,16 @@ from loom_ia.core.model.usage import Usage
 
 type StopReason = Literal["end", "tool_use", "max_tokens", "refusal"]
 type ToolChoice = Literal["auto", "none"]
+# Classement neutre des erreurs d'appel (#10).
+type ModelErrorKind = Literal[
+    "transient",
+    "overloaded",
+    "quota_exhausted",
+    "context_overflow",
+    "auth",
+    "invalid_request",
+    "content_filtered",
+]
 
 # Clé posée dans les arguments quand le modèle a produit un JSON illisible :
 # l'exécuteur renvoie alors une erreur que le modèle peut corriger.
@@ -66,6 +77,9 @@ class TextDelta(DomainModel):
 class ReasoningDelta(DomainModel):
     type: Literal["reasoning_delta"] = "reasoning_delta"
     text: str = ""
+    # Vrai au premier morceau d'un bloc : deux blocs qui se suivent restent
+    # distincts (chacun a sa signature).
+    start: bool = False
     # Les données du fournisseur (signature…) peuvent arriver en cours de flux.
     provider_meta: dict[str, ProviderMeta] = Field(default_factory=dict)
 
@@ -102,6 +116,17 @@ class Stopped(DomainModel):
     model_id: str | None = None
 
 
+class StreamReset(DomainModel):
+    """Émis par le moteur seulement, avant de relancer un appel déjà commencé.
+
+    Le texte partiel reçu jusque-là doit être effacé.
+    """
+
+    type: Literal["reset"] = "reset"
+    # Tentative qui va commencer.
+    attempt: PositiveInt
+
+
 type ModelChunk = Annotated[
     TextDelta
     | ReasoningDelta
@@ -109,7 +134,8 @@ type ModelChunk = Annotated[
     | ToolArgsDelta
     | ToolCallEnded
     | UsageDelta
-    | Stopped,
+    | Stopped
+    | StreamReset,
     Field(discriminator="type"),
 ]
 
@@ -149,6 +175,9 @@ class ResponseAccumulator:
     """Rassemble les morceaux d'un flux en message, dans l'ordre d'arrivée."""
 
     def __init__(self) -> None:
+        self._reset()
+
+    def _reset(self) -> None:
         # Blocs terminés, ou en cours de construction pour texte et raisonnement.
         self._parts: list[ContentBlock | _PendingCall] = []
         self._calls: dict[int, _PendingCall] = {}
@@ -166,8 +195,10 @@ class ResponseAccumulator:
                 if self._text is None:
                     self._text = []
                 self._text.append(text)
-            case ReasoningDelta(text=text, provider_meta=meta):
+            case ReasoningDelta(text=text, provider_meta=meta, start=start):
                 self._flush_text()
+                if start:
+                    self._flush_reasoning()
                 if self._reasoning is None:
                     self._reasoning = []
                 self._reasoning.append(text)
@@ -187,6 +218,8 @@ class ResponseAccumulator:
             case Stopped(reason=reason, model_id=model_id):
                 self.stop_reason = reason
                 self.model_id = model_id
+            case StreamReset():
+                self._reset()
 
     def result(self, *, model_id: str, provider: str) -> ModelResponse:
         self._flush_text()
@@ -216,3 +249,48 @@ class ResponseAccumulator:
             )
             self._reasoning = None
             self._reasoning_meta = {}
+
+
+def message_to_chunks(
+    message: Message,
+    *,
+    usage: Usage | None = None,
+    stop_reason: StopReason | None = None,
+    model_id: str | None = None,
+    fragment_size: int = 8,
+) -> list[ModelChunk]:
+    """Morceaux de flux qu'un fournisseur enverrait pour ce message."""
+    chunks: list[ModelChunk] = []
+    index = 0
+    for block in message.blocks:
+        match block:
+            case TextBlock(text=text):
+                chunks += [TextDelta(text=part) for part in _split(text, fragment_size)]
+            case ReasoningBlock(text=text, provider_meta=meta):
+                parts = _split(text, fragment_size)
+                last = len(parts) - 1
+                chunks += [
+                    ReasoningDelta(text=part, start=i == 0, provider_meta=meta if i == last else {})
+                    for i, part in enumerate(parts)
+                ]
+            case ToolCallBlock(call_id=call_id, name=name, arguments=arguments):
+                chunks.append(ToolCallStarted(index=index, call_id=call_id, name=name))
+                raw = json.dumps(arguments, ensure_ascii=False)
+                chunks += [
+                    ToolArgsDelta(index=index, json_fragment=part)
+                    for part in _split(raw, fragment_size)
+                ]
+                chunks.append(ToolCallEnded(index=index))
+                index += 1
+            case _:
+                raise ValueError(f"Bloc {block.type!r} impossible dans une réponse de modèle")
+    if usage is not None:
+        chunks.append(UsageDelta(usage=usage))
+    reason: StopReason = stop_reason or ("tool_use" if message.tool_calls else "end")
+    chunks.append(Stopped(reason=reason, model_id=model_id))
+    return chunks
+
+
+def _split(text: str, size: int) -> list[str]:
+    """Découpe en morceaux ; un texte vide donne un morceau vide."""
+    return [text[i : i + size] for i in range(0, len(text), size)] or [""]
