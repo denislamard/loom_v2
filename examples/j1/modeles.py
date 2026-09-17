@@ -8,19 +8,24 @@
         --base-url https://api.together.xyz/v1 --model openai/gpt-oss-120b \\
         --key-env TOGETHER_API_KEY
 
-La réponse s'affiche au fil du flux, puis le journal du run (en mémoire,
-rien n'est écrit sur le disque). La clé est lue dans la variable nommée par
-``--key-env`` et n'est jamais affichée.
+La réponse s'affiche au fil du flux, puis le journal du run, écrit en JSONL
+dans ``data/examples/j1/`` (ignoré par git) : c'est là que se lisent les
+données brutes du fournisseur (usage, signatures de raisonnement,
+``request_hash``). ``--memoire`` garde le journal en mémoire.
+
+La clé est lue dans la variable nommée par ``--key-env`` et n'est jamais
+affichée.
 """
 
 import argparse
 import asyncio
 import sys
+from pathlib import Path
 
 from pydantic import JsonValue
 
 from loom_ia.adapters.models import ModelConfigError, create_model_client
-from loom_ia.adapters.stores import InMemoryEventStore
+from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.core.events import (
     ModelResponded,
     ModelRetried,
@@ -37,9 +42,11 @@ from loom_ia.core.model import (
     StreamReset,
     TextDelta,
 )
+from loom_ia.core.ports import EventStore
 from loom_ia.engine import RunContext, ToolExecutor, begin_run, drive
 from loom_ia.tools import tool
 
+ROOT = Path("data/examples/j1")
 QUESTION = "Combien font 12 fois 7, plus 3 ? Utilise l'outil de calcul."
 FAKE_SCRIPT: JsonValue = [
     {"text": "Je calcule.", "tool_calls": [{"name": "calculer", "arguments": {"expr": "12*7+3"}}]},
@@ -55,14 +62,20 @@ def calculer(expr: str) -> str:
     return str(eval(expr, {"__builtins__": {}}))
 
 
-def parse_spec(argv: list[str]) -> ModelSpec:
+def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Agent demo sur un fournisseur de modèles")
     parser.add_argument("--sdk", choices=["fake", "anthropic", "openai"], default="fake")
     parser.add_argument("--model", default="fake-1")
     parser.add_argument("--base-url")
     parser.add_argument("--key-env", help="variable d'environnement qui contient la clé")
     parser.add_argument("--max-tokens", type=int, default=1024)
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--memoire", action="store_true", help="journal en mémoire, rien sur le disque"
+    )
+    return parser.parse_args(argv)
+
+
+def build_spec(args: argparse.Namespace) -> ModelSpec:
     return ModelSpec(
         id="DEMO",
         sdk=args.sdk,
@@ -88,13 +101,14 @@ async def show(chunk: ModelChunk) -> None:
             pass
 
 
-async def main(spec: ModelSpec) -> int:
+async def main(args: argparse.Namespace) -> int:
+    spec = build_spec(args)
     try:
         model = create_model_client(spec)
     except ModelConfigError as error:
         print(f"Configuration : {error}", file=sys.stderr)
         return 2
-    store = InMemoryEventStore()
+    store: EventStore = InMemoryEventStore() if args.memoire else JsonlEventStore(ROOT)
     ctx = RunContext(
         agent="demo",
         store=store,
@@ -112,6 +126,8 @@ async def main(spec: ModelSpec) -> int:
         await model.aclose()
 
     print("\n\nJournal")
+    if isinstance(store, JsonlEventStore):
+        print(f"{store.path(DEFAULT_TENANT, run.session_id)}\n")
     for event in await store.read(DEFAULT_TENANT, run.session_id):
         match event.payload:
             case RunTransitioned(from_state=before, to_state=after):
@@ -132,8 +148,9 @@ async def main(spec: ModelSpec) -> int:
     if state.error:
         print(f"Erreur : {state.error}")
     print(f"Itérations : {state.iterations}, tokens : {state.usage.total_tokens}")
+    await store.aclose()
     return 0 if state.error is None else 1
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main(parse_spec(sys.argv[1:]))))
+    sys.exit(asyncio.run(main(parse_args(sys.argv[1:]))))
