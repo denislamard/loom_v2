@@ -1,0 +1,120 @@
+[project]
+name = "loom-ia"
+version = "2.0.1"
+description = "Async AI agent engine: delegated LLM roles, Python and MCP tools, event-sourced runs with replay and resume, exposed as a Python library, REST API or MCP server."
+authors = [
+    { name = "Denis Lamard", email = "lamard.denis@gmail.com" }
+]
+requires-python = ">=3.14"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = [
+    "jsonschema>=4.26.0",
+    "pydantic>=2,<3",
+    "pyyaml>=6.0.3",
+]
+
+[project.optional-dependencies]
+anthropic = [
+    "anthropic>=1.6.0",
+]
+openai = [
+    "openai>=3.14.1",
+]
+mcp = [
+    "mcp<2",
+]
+http = [
+    "fastapi>=0.141.1",
+    "sse-starlette>=3.4.11",
+    "uvicorn>=0.53.0",
+]
+sqlite = [
+    "aiosqlite>=0.22.1",
+]
+postgres = [
+    "asyncpg>=0.31.0",
+]
+firestore = [
+    "google-cloud-firestore>=2.30.0",
+]
+gcs = [
+    "google-cloud-storage>=3.14.1",
+]
+rabbitmq = [
+    "aio-pika>=10.0.1",
+]
+redis = [
+    "redis>=8.1.0",
+]
+otel = [
+    "opentelemetry-exporter-otlp>=1.44.0",
+    "opentelemetry-sdk>=1.44.0",
+]
+all = [
+    "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,firestore,gcs,rabbitmq,redis,otel]",
+]
+
+[project.scripts]
+loom = "loom_ia.access.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.14,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "respx>=0.23.1",
+    "ruff>=0.16.8",
+    "types-jsonschema>=4.26.0.20260518",
+    "types-pyyaml>=6.0.12.20260906",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
+
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.importlinter]
+root_package = "loom_ia"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Couches"
+type = "layers"
+layers = ["loom_ia.access", "loom_ia.runtime", "loom_ia.engine", "loom_ia.core"]
+
+[[tool.importlinter.contracts]]
+name = "Noyau et moteur sans adaptateurs ni SDK"
+type = "forbidden"
+source_modules = ["loom_ia.core", "loom_ia.engine"]
+forbidden_modules = ["loom_ia.adapters", "anthropic", "openai", "fastapi", "mcp"]
+
+[[tool.importlinter.contracts]]
+name = "Adaptateurs indépendants"
+type = "independence"
+modules = [
+    "loom_ia.adapters.models",
+    "loom_ia.adapters.stores",
+    "loom_ia.adapters.artifacts",
+    "loom_ia.adapters.bus",
+    "loom_ia.adapters.queue",
+    "loom_ia.adapters.mcp",
+    "loom_ia.adapters.telemetry",
+]
