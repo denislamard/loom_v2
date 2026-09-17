@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: Apache-2.0
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  qualite:
+    name: Qualité (ruff, pyright, import-linter)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      # --locked échoue si uv.lock n'est pas à jour avec pyproject.toml.
+      - name: Installer le projet (tous les extras)
+        run: uv sync --locked --all-extras
+
+      - name: Ruff (lint)
+        run: uv run --locked ruff check .
+
+      - name: Ruff (format)
+        run: uv run --locked ruff format --check .
+
+      - name: Pyright (strict)
+        run: uv run --locked pyright
+
+      - name: Contrats d'import
+        run: uv run --locked lint-imports
+
+  tests-noyau:
+    name: Tests (noyau seul)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Installer le projet (aucun extra)
+        run: uv sync --locked
+
+      - name: Le noyau s'importe sans SDK
+        run: |
+          uv run --locked python - <<'EOF'
+          import importlib.util
+
+          import loom_ia  # noqa: F401
+
+          extras = ["anthropic", "openai", "fastapi", "mcp"]
+          installes = [m for m in extras if importlib.util.find_spec(m) is not None]
+          if installes:
+              raise SystemExit(f"Modules d'extras installés sans être demandés : {installes}")
+          print("Noyau importé, aucun module d'extra installé.")
+          EOF
+
+      - name: Tests
+        run: |
+          set +e
+          uv run --locked pytest
+          code=$?
+          # Code 5 = aucun test collecté : toléré jusqu'aux premiers tests (phase 1.2).
+          if [ "$code" -eq 5 ]; then echo "Aucun test pour l'instant."; exit 0; fi
+          exit "$code"
+
+  tests-complets:
+    name: Tests (tous les extras)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Installer le projet (tous les extras)
+        run: uv sync --locked --all-extras
+
+      - name: Tests avec couverture
+        run: |
+          set +e
+          uv run --locked pytest --cov=loom_ia --cov-report=term-missing
+          code=$?
+          # Code 5 = aucun test collecté : toléré jusqu'aux premiers tests (phase 1.2).
+          if [ "$code" -eq 5 ]; then echo "Aucun test pour l'instant."; exit 0; fi
+          exit "$code"
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Construire le sdist et le wheel
+        run: uv build
+
+      - name: Vérifier le wheel
+        run: |
+          python3 - <<'EOF'
+          import glob
+          import zipfile
+
+          (wheel,) = glob.glob("dist/*.whl")
+          with zipfile.ZipFile(wheel) as zf:
+              noms = zf.namelist()
+              metadata = next(n for n in noms if n.endswith(".dist-info/METADATA"))
+              contenu = zf.read(metadata).decode()
+
+          erreurs = []
+          if "loom_ia/py.typed" not in noms:
+              erreurs.append("py.typed absent")
+          if not any(n.endswith(".dist-info/licenses/LICENSE") for n in noms):
+              erreurs.append("LICENSE absente")
+          if "License-Expression: Apache-2.0" not in contenu:
+              erreurs.append("License-Expression incorrecte")
+          if erreurs:
+              raise SystemExit(f"{wheel} : " + ", ".join(erreurs))
+          print(f"{wheel} : OK")
+          EOF
