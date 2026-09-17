@@ -27,6 +27,7 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
+          cache-suffix: ${{ github.job }}
 
       # --locked échoue si uv.lock n'est pas à jour avec pyproject.toml.
       - name: Installer le projet (tous les extras)
@@ -53,6 +54,7 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
+          cache-suffix: ${{ github.job }}
 
       - name: Installer le projet (aucun extra)
         run: uv sync --locked
@@ -89,6 +91,7 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
+          cache-suffix: ${{ github.job }}
 
       - name: Installer le projet (tous les extras)
         run: uv sync --locked --all-extras
@@ -111,6 +114,7 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
+          cache-suffix: ${{ github.job }}
 
       - name: Construire le sdist et le wheel
         run: uv build
