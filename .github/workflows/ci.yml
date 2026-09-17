@@ -74,13 +74,7 @@ jobs:
           EOF
 
       - name: Tests
-        run: |
-          set +e
-          uv run --locked pytest
-          code=$?
-          # Code 5 = aucun test collecté : toléré jusqu'aux premiers tests (phase 1.2).
-          if [ "$code" -eq 5 ]; then echo "Aucun test pour l'instant."; exit 0; fi
-          exit "$code"
+        run: uv run --locked pytest
 
   tests-complets:
     name: Tests (tous les extras)
@@ -97,13 +91,7 @@ jobs:
         run: uv sync --locked --all-extras
 
       - name: Tests avec couverture
-        run: |
-          set +e
-          uv run --locked pytest --cov=loom_ia --cov-report=term-missing
-          code=$?
-          # Code 5 = aucun test collecté : toléré jusqu'aux premiers tests (phase 1.2).
-          if [ "$code" -eq 5 ]; then echo "Aucun test pour l'instant."; exit 0; fi
-          exit "$code"
+        run: uv run --locked pytest --cov=loom_ia --cov-report=term-missing
 
   build:
     name: Build
