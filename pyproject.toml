@@ -124,8 +124,15 @@ forbidden_modules = [
     "loom_ia.telemetry",
     "loom_ia.tenancy",
     "loom_ia.testing",
+    "loom_ia.tools",
     "loom_ia.usage",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Moteur indépendant des outils et du kit de test"
+type = "forbidden"
+source_modules = ["loom_ia.engine"]
+forbidden_modules = ["loom_ia.tools", "loom_ia.testing"]
 
 [[tool.importlinter.contracts]]
 name = "Adaptateurs indépendants"

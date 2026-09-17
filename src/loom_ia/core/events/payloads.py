@@ -5,8 +5,8 @@ Chaque classe déclare son ``type`` (``<catégorie>.<action au passé>``), sa
 catégorie et ses facettes : les champs de recherche que l'enveloppe recopie
 pour que les stores les indexent sans connaître les payloads.
 
-Phase 1.2 : événements nécessaires au jalon J1. Les autres types (guards,
-approbations, artefacts, compaction…) arrivent avec leurs phases.
+Événements du jalon J1. Les autres types (guards, approbations, artefacts,
+compaction…) arrivent avec leurs phases.
 """
 
 from typing import Annotated, ClassVar, Literal
@@ -19,6 +19,8 @@ from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import EventId, RunId
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.run_state import RunStatus
+from loom_ia.core.model.streaming import StopReason
+from loom_ia.core.model.tooling import ToolKind
 from loom_ia.core.model.usage import Usage
 
 type EventCategory = Literal[
@@ -157,7 +159,7 @@ class ModelResponded(Payload):
     message: Message
     usage: Usage = Usage()
     cost_usd: NonNegativeFloat = 0.0
-    stop_reason: Literal["end", "tool_use", "max_tokens", "refusal"] = "end"
+    stop_reason: StopReason = "end"
     latency_ms: NonNegativeFloat = 0.0
     attempts: PositiveInt = 1
     # Empreinte de la requête envoyée : détection de divergence au rejeu (#31).
@@ -177,8 +179,10 @@ class ToolCalled(Payload):
     type: Literal["tool.called"] = "tool.called"
     call_id: str
     tool_name: str
-    tool_kind: Literal["python", "mcp", "role", "agent", "builtin"]
+    tool_kind: ToolKind
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    # Nouvelle exécution d'un appel interrompu (#18).
+    resumed: bool = False
 
 
 class ToolCompleted(Payload):

@@ -3,7 +3,9 @@
 
 Seuls les runs racine terminés avec succès y figurent : un run échoué peut
 contenir un appel d'outil sans résultat, que les API refusent. Les sous-runs
-ont leur propre journal et n'en font pas partie. Le raisonnement est retiré.
+ont leur propre journal et n'en font pas partie. Le raisonnement et les
+textes vides sont retirés ; un message qui ne contient plus rien est omis
+(certaines API refusent un bloc de texte vide).
 
 Les snapshots, la compaction (J4) et le marqueur de sortie terminale (J2)
 s'ajouteront ici.
@@ -12,7 +14,7 @@ s'ajouteront ici.
 from collections.abc import Iterable
 
 from loom_ia.core.events import Event
-from loom_ia.core.model import Message, RunStatus
+from loom_ia.core.model import Message, RunStatus, TextBlock
 from loom_ia.core.projections.run_state import fold_all
 
 
@@ -25,5 +27,16 @@ def history(events: Iterable[Event]) -> list[Message]:
         for message in state.messages:
             kept = message.without_reasoning()
             if kept is not None:
+                kept = _without_empty_text(kept)
+            if kept is not None:
                 messages.append(kept)
     return messages
+
+
+def _without_empty_text(message: Message) -> Message | None:
+    kept = tuple(b for b in message.blocks if not (isinstance(b, TextBlock) and not b.text))
+    if len(kept) == len(message.blocks):
+        return message
+    if not kept:
+        return None
+    return message.model_copy(update={"blocks": kept})

@@ -41,6 +41,13 @@ def calculation_run(session: SessionId | None = None) -> RunJournal:
     return journal.complete()
 
 
+def test_run_state_keeps_the_root_span() -> None:
+    events = numbered(calculation_run())
+    state = fold(events, events[0].run_id)
+    assert state.span_id == events[0].span_id
+    assert state.parent_span_id is None
+
+
 def test_fold_rebuilds_a_completed_run() -> None:
     journal = calculation_run()
     state = fold(numbered(journal), journal.run_id)
@@ -199,9 +206,24 @@ def test_history_keeps_completed_root_runs_without_reasoning() -> None:
     thinking_only.model_turn(Message(role="assistant", blocks=(ReasoningBlock(text="..."),)))
     thinking_only.complete()
 
-    messages = history(numbered(done, failed, child, thinking_only))
+    empty = RunJournal(session_id=session)
+    empty.start("Rien ?")
+    empty.model_turn(
+        Message(role="assistant", blocks=(TextBlock(text=""), TextBlock(text="")))
+    ).complete()
+
+    mixed = RunJournal(session_id=session)
+    mixed.start("Et là ?")
+    mixed.model_turn(
+        Message(role="assistant", blocks=(TextBlock(text=""), TextBlock(text="Oui")))
+    ).complete()
+
+    messages = history(numbered(done, failed, child, thinking_only, empty, mixed))
     assert messages == [
         Message.user("Bonjour"),
         Message.assistant("Bonjour !"),
         Message.user("Et ça ?"),
+        Message.user("Rien ?"),
+        Message.user("Et là ?"),
+        Message.assistant("Oui"),
     ]

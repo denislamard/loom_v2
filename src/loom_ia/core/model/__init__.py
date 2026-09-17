@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Modèle de domaine : messages, blocs, usage, état d'un run."""
+"""Modèle de domaine : messages, blocs, usage, outils, flux des modèles, état d'un run."""
 
 from loom_ia.core.model.base import DomainModel
 from loom_ia.core.model.content import (
@@ -31,11 +31,38 @@ from loom_ia.core.model.ids import (
 )
 from loom_ia.core.model.messages import Message, Role
 from loom_ia.core.model.run_state import PendingCall, RunState, RunStatus
-from loom_ia.core.model.usage import Usage
+from loom_ia.core.model.streaming import (
+    INVALID_JSON_KEY,
+    ModelChunk,
+    ModelRequest,
+    ModelResponse,
+    ReasoningDelta,
+    ResponseAccumulator,
+    Stopped,
+    StopReason,
+    TextDelta,
+    ToolArgsDelta,
+    ToolCallEnded,
+    ToolCallStarted,
+    ToolChoice,
+    UsageDelta,
+)
+from loom_ia.core.model.tooling import (
+    TOOL_NAME_PATTERN,
+    Approval,
+    SideEffects,
+    ToolDefinition,
+    ToolKind,
+    ToolSpec,
+)
+from loom_ia.core.model.usage import Pricing, Usage
 
 __all__ = [
     "DEFAULT_TENANT",
+    "INVALID_JSON_KEY",
+    "TOOL_NAME_PATTERN",
     "AnthropicMeta",
+    "Approval",
     "ArtifactRefBlock",
     "CallerContext",
     "ContentBlock",
@@ -43,23 +70,41 @@ __all__ = [
     "EventId",
     "JsonBlock",
     "Message",
+    "ModelChunk",
+    "ModelRequest",
+    "ModelResponse",
     "OpenAIMeta",
     "OutputBlock",
     "PendingCall",
+    "Pricing",
     "ProviderMeta",
     "ReasoningBlock",
+    "ReasoningDelta",
+    "ResponseAccumulator",
     "Role",
     "RunId",
     "RunState",
     "RunStatus",
     "SessionId",
+    "SideEffects",
     "SpanId",
+    "StopReason",
+    "Stopped",
     "TenantId",
     "TextBlock",
+    "TextDelta",
+    "ToolArgsDelta",
     "ToolCallBlock",
+    "ToolCallEnded",
+    "ToolCallStarted",
+    "ToolChoice",
+    "ToolDefinition",
+    "ToolKind",
     "ToolOutput",
     "ToolResultBlock",
+    "ToolSpec",
     "Usage",
+    "UsageDelta",
     "new_event_id",
     "new_id",
     "new_run_id",

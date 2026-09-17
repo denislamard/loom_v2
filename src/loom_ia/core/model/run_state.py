@@ -11,7 +11,7 @@ from pydantic import Field, JsonValue, NonNegativeFloat, NonNegativeInt
 
 from loom_ia.core.model.base import DomainModel
 from loom_ia.core.model.context import CallerContext
-from loom_ia.core.model.ids import RunId, SessionId
+from loom_ia.core.model.ids import RunId, SessionId, SpanId
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.usage import Usage
 
@@ -47,6 +47,9 @@ class RunState(DomainModel):
     run_id: RunId
     session_id: SessionId
     root_run_id: RunId
+    # Span racine du run, repris à chaque reprise.
+    span_id: SpanId
+    parent_span_id: SpanId | None = None
     parent_run_id: RunId | None = None
     parent_call_id: str | None = None
     depth: NonNegativeInt = 0

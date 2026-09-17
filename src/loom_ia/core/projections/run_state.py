@@ -47,6 +47,8 @@ def apply(state: RunState | None, event: Event) -> RunState:
             run_id=event.run_id,
             session_id=event.session_id,
             root_run_id=event.root_run_id,
+            span_id=event.span_id,
+            parent_span_id=event.parent_span_id,
             parent_run_id=payload.parent_run_id,
             parent_call_id=payload.parent_call_id,
             depth=payload.depth,

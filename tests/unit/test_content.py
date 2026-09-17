@@ -15,6 +15,7 @@ from loom_ia.core.model import (
     RunState,
     RunStatus,
     SessionId,
+    SpanId,
     TextBlock,
     ToolCallBlock,
     ToolOutput,
@@ -146,7 +147,11 @@ def test_new_ids_are_time_ordered() -> None:
 
 def test_run_state_defaults() -> None:
     state = RunState(
-        run_id=RunId("r"), session_id=SessionId("s"), root_run_id=RunId("r"), agent="demo"
+        run_id=RunId("r"),
+        session_id=SessionId("s"),
+        root_run_id=RunId("r"),
+        span_id=SpanId("sp"),
+        agent="demo",
     )
     assert state.status is RunStatus.READY_FOR_MODEL
     assert state.context.tenant_id == "default"
