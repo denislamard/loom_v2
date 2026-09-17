@@ -867,7 +867,7 @@ wheels = [
 
 [[package]]
 name = "loom-ia"
-version = "0.1.0"
+version = "2.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "jsonschema" },
