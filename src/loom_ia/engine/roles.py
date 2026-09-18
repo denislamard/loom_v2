@@ -15,6 +15,15 @@ reçoit une erreur qui lui dit quoi faire d'abord.
 Construction du message : avec un ``input_template``, le texte rendu ; sans,
 un bloc balisé par contexte, dans l'ordre déclaré, puis les arguments.
 
+Ce que l'orchestrateur voit : la description du rôle est complétée par la
+liste du contexte qu'il reçoit déjà. Sans elle, l'orchestrateur ne le sait que
+si son prompt le dit, et tend à transmettre en arguments ce que le rôle a déjà.
+
+Arguments : sauf déclaration contraire dans ``input_schema``, un rôle refuse
+ceux que son schéma ne prévoit pas (``additionalProperties: false``), comme un
+outil Python. Un argument inventé par l'orchestrateur lui revient en erreur
+au lieu d'être ignoré sans bruit.
+
 Appel : ``model.retried`` et ``model.responded`` sont journalisés dans le span
 de l'appel, avec son ``call_id``. Une erreur du modèle, après ses nouvelles
 tentatives, ou une sortie vide deviennent un résultat d'erreur pour
@@ -27,7 +36,7 @@ import time
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import aclosing
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import JsonValue
 
@@ -48,6 +57,9 @@ from loom_ia.engine.model_call import ModelCall, responded
 from loom_ia.engine.refs import output_text
 
 logger = logging.getLogger(__name__)
+
+# Mention ajoutée à la description d'un rôle qui déclare du contexte.
+CONTEXT_HINT: Final = "Reçoit déjà, inutile de les transmettre"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +83,7 @@ class RoleDefinition:
     name: str
     description: str
     system: str = ""
+    # Sans ``additionalProperties`` déclaré, les arguments non prévus sont refusés.
     input_schema: dict[str, JsonValue] = field(default_factory=_empty_object)
     template: Template | None = None
     context: tuple[ContextItem, ...] = ()
@@ -91,8 +104,8 @@ class RoleTool(DelegatedTool):
         self.model_spec = model_spec
         self._spec = ToolSpec(
             name=definition.name,
-            description=definition.description,
-            input_schema=definition.input_schema,
+            description=described(definition),
+            input_schema=strict_schema(definition.input_schema),
             kind="role",
             side_effects="none",
             timeout=definition.timeout,
@@ -208,6 +221,29 @@ class RoleTool(DelegatedTool):
             )
             return
         yield ToolOutput.text(message.text)
+
+
+def described(definition: RoleDefinition) -> str:
+    """Description vue par l'orchestrateur : celle du rôle, puis le contexte qu'il reçoit."""
+    received: list[str] = []
+    for item in definition.context:
+        match item:
+            case "user_input":
+                received.append("la demande de l'utilisateur")
+            case "caller_context":
+                received.append("le contexte de l'appelant")
+            case ToolResults(tools=names):
+                received.append(f"les résultats de {', '.join(names)}")
+    if not received:
+        return definition.description
+    return f"{definition.description}\n\n{CONTEXT_HINT} : {' ; '.join(received)}."
+
+
+def strict_schema(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """Schéma d'entrée qui refuse les arguments non prévus, sauf choix contraire déclaré."""
+    if "additionalProperties" in schema:
+        return schema
+    return {**schema, "additionalProperties": False}
 
 
 def _user_input(run: RunView) -> str:

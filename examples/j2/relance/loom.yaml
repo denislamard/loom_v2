@@ -41,12 +41,17 @@ models:
             Bien cordialement,
             Plomberie Dupont
 
+  # Tarifs en $ par million de tokens, relevés le 18/09/2026 sur les pages des
+  # fournisseurs. Sans eux, le coût d'un run vaut 0 $.
   - id: M3_MAIN
     sdk: anthropic
     base_url: https://api.minimax.io/anthropic
     model: MiniMax-M3
     api_key_env: M3_API_KEY
     max_tokens: 2048
+    # Palier jusqu'à 512k tokens d'entrée (au-delà : tarifs doublés). Écriture
+    # en cache non publiée : comptée au prix de l'entrée, par prudence.
+    pricing: {input: 0.30, output: 1.20, cache_read: 0.06, cache_write: 0.30}
   - id: GPT_OSS
     sdk: openai
     api: chat
@@ -54,6 +59,8 @@ models:
     model: openai/gpt-oss-120b
     api_key_env: TOGETHER_API_KEY
     max_tokens: 2048
+    # Pas de tarif de cache publié : lecture comptée au prix de l'entrée, par prudence.
+    pricing: {input: 0.15, output: 0.60, cache_read: 0.15}
 
 storage:
   events: {backend: jsonl, path: data}   # ignoré par git

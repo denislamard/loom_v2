@@ -237,6 +237,68 @@ async def test_orchestrator_sees_references_when_the_agent_has_roles(store: Even
     assert result.output == ToolOutput.text("2")
 
 
+def test_role_description_lists_the_context_it_already_receives() -> None:
+    both = role(
+        role_model(),
+        context=("user_input", ToolResults(tools=("calculer", "chercher")), "caller_context"),
+        terminal=True,
+    )
+    assert both.spec.description == (
+        "Rédige une réponse soignée.\n\n"
+        "Reçoit déjà, inutile de les transmettre : la demande de l'utilisateur ; "
+        "les résultats de calculer, chercher ; le contexte de l'appelant."
+    )
+    # Ce que voit le modèle : la mention du contexte, puis celle de l'outil terminal.
+    assert both.spec.definition().description == f"{both.spec.description}\n\n{TERMINAL_HINT}"
+    assert role(role_model(), context=()).spec.description == "Rédige une réponse soignée."
+
+
+async def test_serialized_reference_reaches_the_role(store: EventStore) -> None:
+    # Cas relevé avec MiniMax-M3 : la référence arrive sérialisée en chaîne.
+    main = main_model(
+        tool_call_message(("c1", "calculer", {"expr": "12*7+3"})),
+        tool_call_message(("c2", "rediger", {"ton": "poli", "calcul": '{"$ref": "result:1"}'})),
+        Message.assistant("Fait."),
+    )
+    writer = role_model(Message.assistant("87."))
+    state = await run(context(store, main, role(writer, context=())))
+
+    [called] = [p for p in payloads(await journal(store, state), ToolCalled) if p.call_id == "c2"]
+    assert called.refs == ("result:1",)
+    assert called.arguments["calcul"] == '{"$ref": "result:1"}'
+    assert writer.requests[0].messages == (
+        Message.user('<arguments>\n{"ton": "poli", "calcul": "87"}\n</arguments>'),
+    )
+
+
+async def test_arguments_not_in_the_schema_are_refused(store: EventStore) -> None:
+    main = main_model(
+        tool_call_message(("c1", "rediger", {"ton": "poli", "devis": "D-42"})),
+        tool_call_message(("c2", "libre", {"ton": "poli", "devis": "D-42"})),
+        Message.assistant("Fait."),
+    )
+    strict = role_model()
+    # Un rôle qui déclare lui-même additionalProperties garde son choix.
+    open_schema: dict[str, JsonValue] = {**SCHEMA, "additionalProperties": True}
+    loose = role_model(Message.assistant("Accepté."))
+    state = await run(
+        context(
+            store,
+            main,
+            role(strict, context=()),
+            role(loose, name="libre", input_schema=open_schema, context=()),
+        )
+    )
+
+    assert strict.requests == []
+    outputs = {p.call_id: p.output for p in payloads(await journal(store, state), ToolCompleted)}
+    assert outputs["c1"].is_error
+    assert "Additional properties are not allowed ('devis' was unexpected)" in outputs["c1"].as_text
+    assert outputs["c2"] == ToolOutput.text("Accepté.")
+    rediger = next(d for d in main.requests[0].tools if d.name == "rediger")
+    assert rediger.input_schema["additionalProperties"] is False
+
+
 async def test_role_with_a_template(store: EventStore) -> None:
     main = main_model(
         tool_call_message(("c1", "calculer", {"expr": "2*3"})),

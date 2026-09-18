@@ -2,7 +2,7 @@
 """Phase 2.1 : un orchestrateur qui délègue la rédaction à un rôle, sur un autre modèle.
 
     uv run python examples/j2/roles.py                     # modèles simulés
-    uv run --extra anthropic --extra openai python examples/j2/roles.py --reel
+    uv run --env-file .env --extra anthropic --extra openai python examples/j2/roles.py --reel
 
 La config est dans ``examples/j2/relance/``. L'orchestrateur cherche un devis
 (outil Python), puis appelle le rôle ``rediger_relance``. Ce rôle ne reçoit
@@ -11,7 +11,9 @@ sa sortie est la réponse finale, sans nouveau passage par l'orchestrateur.
 
 ``--reel`` prend l'agent ``relance_reel`` : MiniMax-M3 (clé dans
 ``M3_API_KEY``) pour l'orchestrateur, gpt-oss-120b chez Together (clé dans
-``TOGETHER_API_KEY``) pour le rôle. Les clés ne sont jamais affichées.
+``TOGETHER_API_KEY``) pour le rôle. loom-ia lit les clés dans l'environnement
+et ne charge pas ``.env`` lui-même : ``--env-file .env`` demande à uv de le
+faire. Les clés ne sont jamais affichées.
 
 Après la réponse, le déroulé du run : les appels de modèle attribués à leur
 rôle (``main`` ou ``rediger_relance``), les outils, et les références

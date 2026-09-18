@@ -60,6 +60,31 @@ def test_references_are_replaced_at_any_depth() -> None:
     assert index.resolve({"x": 1}) == ({"x": 1}, ())
 
 
+def test_serialized_references_are_resolved_too() -> None:
+    # Ce qu'a écrit MiniMax-M3 : la référence sérialisée en chaîne.
+    index = ResultIndex(MESSAGES)
+    arguments: dict[str, JsonValue] = {
+        "devis": '{"$ref": "result:1"}',
+        "total": ' {"$ref":"result:2"} ',
+        "liste": ['{"$ref": "result:2"}'],
+        "texte": 'Voir {"$ref": "result:1"} plus haut',
+        "casse": '{"$ref": "result:1"',
+        "invalide": '{"$ref": result:1}',
+        "autre": '{"$ref": "#/definitions/x"}',
+        "deux": '{"$ref": "result:1", "note": 1}',
+    }
+    resolved, refs = index.resolve(arguments)
+    assert resolved == {
+        **arguments,
+        "devis": DATA,
+        "total": "2",
+        "liste": ["2"],
+    }
+    assert refs == ("result:1", "result:2", "result:2")
+    with pytest.raises(RefError, match="Référence inconnue : result:7"):
+        index.resolve({"x": '{"$ref": "result:7"}'})
+
+
 @pytest.mark.parametrize(
     ("ref", "message"),
     [

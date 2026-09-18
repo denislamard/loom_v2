@@ -10,6 +10,11 @@ les a demandés. Seuls les résultats du run courant sont adressables, et
 seulement ceux obtenus avant le tour en cours : un appel du même tour n'a pas
 encore de résultat, et le rejeu reste déterministe.
 
+Certains modèles écrivent la référence sérialisée, en chaîne :
+``"{\\"$ref\\": \\"result:3\\"}"``. Une chaîne dont tout le contenu est cet
+objet est traitée comme la référence elle-même ; sinon, la valeur transmise
+serait le texte de la référence, sans aucune erreur.
+
 Pour que le modèle connaisse ces numéros, chaque résultat qu'il reçoit
 commence par sa référence (``[result:3]``) et une consigne s'ajoute au prompt
 système. Ce marquage n'existe que dans la requête : le journal garde les
@@ -36,8 +41,8 @@ REF_KEY: Final = "$ref"
 REF_PREFIX: Final = "result:"
 REFS_HINT: Final = (
     "Chaque résultat d'outil commence par sa référence, par exemple [result:3]. "
-    "Pour transmettre un résultat à un outil sans le recopier, donne à l'argument "
-    'la valeur {"$ref": "result:3"}.'
+    "Pour passer un résultat à un argument prévu par un outil sans le recopier, "
+    'donne à cet argument la valeur {"$ref": "result:3"} : un objet JSON, pas une chaîne.'
 )
 
 
@@ -122,10 +127,10 @@ class ResultIndex:
         return resolved, tuple(found)
 
     def _walk(self, value: JsonValue, found: list[str]) -> JsonValue:
+        ref = _ref_in(value)
+        if ref is not None:
+            return self._value(ref, found)
         if isinstance(value, dict):
-            ref = value.get(REF_KEY)
-            if len(value) == 1 and isinstance(ref, str) and ref.startswith(REF_PREFIX):
-                return self._value(ref, found)
             return {key: self._walk(item, found) for key, item in value.items()}
         if isinstance(value, list):
             return [self._walk(item, found) for item in value]
@@ -159,6 +164,23 @@ class ResultIndex:
         if not usable:
             return "Aucun résultat à référencer dans ce run."
         return f"Références disponibles : {', '.join(usable)}."
+
+
+def _ref_in(value: JsonValue) -> str | None:
+    """Référence portée par une valeur : l'objet ``{"$ref": …}``, ou ce même objet en chaîne."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not (text.startswith("{") and text.endswith("}") and REF_KEY in text):
+            return None
+        try:
+            value = cast(JsonValue, json.loads(text))
+        except ValueError:
+            return None
+    if isinstance(value, dict) and len(value) == 1:
+        ref = value.get(REF_KEY)
+        if isinstance(ref, str) and ref.startswith(REF_PREFIX):
+            return ref
+    return None
 
 
 def mark_results(messages: Sequence[Message], index: ResultIndex) -> tuple[Message, ...]:

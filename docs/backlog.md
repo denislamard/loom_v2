@@ -130,3 +130,15 @@ storage:
 **À faire :** avec `stream_output` (3.2), diffuser les morceaux du rôle terminal en `live`, attribués au rôle (`model.delta` du bus en J4).
 
 **Statut :** à faire en 3.2.
+
+---
+
+## #010 — Budget sur un agent dont un modèle n'a pas de tarif
+
+**Origine :** exemple de la phase 2.1 (`relance_reel`), dont les modèles n'avaient pas de `pricing` : coût du run à 0 $.
+
+**Constat :** un modèle sans `pricing` coûte 0 $. Un budget en dollars (3.4) ne se déclenche donc jamais pour lui, sans que rien ne le signale.
+
+**À faire en 3.4 :** contrôle au démarrage quand un budget s'applique à un agent dont un modèle (`main`, rôle, juge, secours) n'a pas de tarif : avertissement en profil dev, erreur en profil prod. Les tarifs par palier (MiniMax-M3 double ses prix au-delà de 512k tokens d'entrée) sont une question voisine, à trancher au même moment.
+
+**Statut :** à faire en 3.4.

@@ -593,7 +593,9 @@ Le message du rôle est construit par un `input_template` explicite (`{{ args.x 
 
 **Appel d'un rôle :** un seul appel de modèle, sans historique ni outils, journalisé dans le run de l'orchestrateur entre `tool.called` et `tool.completed` (`model.responded` avec le `call_id` de l'appel, enveloppe au nom du rôle). Une erreur du modèle ou une sortie vide deviennent un résultat d'erreur. Le délai par défaut des outils ne s'applique pas ; ceux du modèle et son retry bornent l'appel.
 
-**Références `$ref`** (#12) : `{"$ref": "result:<n>"}` désigne le n-ième appel d'outil du run. Quand l'agent a des rôles, chaque résultat montré à l'orchestrateur commence par sa référence (`[result:3]`), et son prompt système explique `$ref`.
+**Arguments d'un rôle :** sauf `additionalProperties` déclaré, les arguments non prévus par `input_schema` sont refusés, comme pour un outil Python. La description que voit l'orchestrateur liste le contexte que le rôle reçoit déjà, pour qu'il ne le transmette pas en arguments.
+
+**Références `$ref`** (#12) : `{"$ref": "result:<n>"}` désigne le n-ième appel d'outil du run ; la même référence sérialisée en chaîne est acceptée. Quand l'agent a des rôles, chaque résultat montré à l'orchestrateur commence par sa référence (`[result:3]`), et son prompt système explique `$ref`.
 
 **Rôle vision :** il déclare le contexte `attachments` et reste masqué quand le run n'a pas de pièce jointe (C4).
 
