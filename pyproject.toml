@@ -128,10 +128,15 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Moteur indépendant des outils et du kit de test"
+name = "Moteur indépendant de la config, des outils et du kit de test"
 type = "forbidden"
 source_modules = ["loom_ia.engine"]
-forbidden_modules = ["loom_ia.tools", "loom_ia.testing"]
+forbidden_modules = [
+    "loom_ia.agents",
+    "loom_ia.config",
+    "loom_ia.testing",
+    "loom_ia.tools",
+]
 
 [[tool.importlinter.contracts]]
 name = "Adaptateurs indépendants"

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Modèle de domaine : messages, blocs, usage, outils, flux des modèles, état d'un run."""
 
-from loom_ia.core.model.base import DomainModel
+from loom_ia.core.model.base import DomainModel, UnsupportedKey, reject_later
 from loom_ia.core.model.content import (
     AnthropicMeta,
     ArtifactRefBlock,
@@ -122,6 +122,7 @@ __all__ = [
     "ToolOutput",
     "ToolResultBlock",
     "ToolSpec",
+    "UnsupportedKey",
     "Usage",
     "UsageDelta",
     "message_to_chunks",
@@ -129,4 +130,5 @@ __all__ = [
     "new_id",
     "new_run_id",
     "new_span_id",
+    "reject_later",
 ]

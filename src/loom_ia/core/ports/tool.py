@@ -7,7 +7,7 @@ MCP, rôles et sous-agents implémentent ce même port.
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from pydantic import JsonValue
 
@@ -46,7 +46,14 @@ class ToolError(Exception):
         self.message = message
 
 
+@runtime_checkable
 class Tool(Protocol):
+    """Outil appelable par un agent.
+
+    ``isinstance`` vérifie seulement la présence de ``spec`` et ``invoke`` :
+    c'est ce qui sert à reconnaître un outil dans la config.
+    """
+
     @property
     def spec(self) -> ToolSpec: ...
 
