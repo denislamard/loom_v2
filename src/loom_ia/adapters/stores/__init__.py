@@ -3,5 +3,12 @@
 
 from loom_ia.adapters.stores.jsonl import JsonlEventStore
 from loom_ia.adapters.stores.memory import InMemoryEventStore
+from loom_ia.adapters.stores.notifying import EventSink, NotifyingEventStore, Subscription
 
-__all__ = ["InMemoryEventStore", "JsonlEventStore"]
+__all__ = [
+    "EventSink",
+    "InMemoryEventStore",
+    "JsonlEventStore",
+    "NotifyingEventStore",
+    "Subscription",
+]

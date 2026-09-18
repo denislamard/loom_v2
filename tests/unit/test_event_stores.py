@@ -8,7 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
+from loom_ia.adapters.stores import (
+    InMemoryEventStore,
+    JsonlEventStore,
+    NotifyingEventStore,
+)
 from loom_ia.core.events import EventDraft, EventQuery
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -246,3 +250,72 @@ async def test_jsonl_two_instances_share_the_sequence(tmp_path: Path) -> None:
     )
     seqs = sorted(events[0].seq for events in results)
     assert seqs == list(range(5, len(drafts) + 1))
+
+
+# --- Journal qui prévient ses abonnés ----------------------------------------
+
+
+async def test_notifying_store_delegates_to_the_one_it_wraps(store: EventStore) -> None:
+    notifying = NotifyingEventStore(store)
+    _, drafts = run_drafts()
+    events = await notifying.append(drafts, expected_seq=0)
+
+    assert notifying.inner is store
+    assert await notifying.read(DEFAULT_TENANT, SESSION) == events
+    assert await notifying.read(DEFAULT_TENANT, SESSION, after_seq=events[-2].seq) == events[-1:]
+    assert await notifying.last_seq(DEFAULT_TENANT, SESSION) == len(events)
+    query = EventQuery(tenant_id=DEFAULT_TENANT, session_id=SESSION, categories=("tool",))
+    assert [e.type for e in await notifying.query(query)] == ["tool.called", "tool.completed"]
+
+
+async def test_a_sink_is_called_at_each_write(store: EventStore) -> None:
+    notifying = NotifyingEventStore(store)
+    seen: list[str] = []
+    _, drafts = run_drafts()
+
+    with notifying.listen(lambda event: seen.append(event.type)):
+        assert notifying.listeners == 1
+        await notifying.append(drafts[:2], expected_seq=0)
+    await notifying.append(drafts[2:4], expected_seq=2)
+
+    assert seen == ["run.started", "message.user"]
+    assert notifying.listeners == 0
+
+
+async def test_a_sink_can_watch_one_run(store: EventStore) -> None:
+    notifying = NotifyingEventStore(store)
+    journal, drafts = run_drafts()
+    other = RunJournal(session_id=SESSION)
+    other.start("Autre run")
+    seen: list[str] = []
+
+    with notifying.listen(lambda event: seen.append(event.run_id), journal.run_id):
+        await notifying.append(drafts[:2], expected_seq=0)
+        await notifying.append(other.take(), expected_seq=2)
+
+    assert seen == [journal.run_id, journal.run_id]
+
+
+async def test_a_subscription_iterates_until_it_closes(store: EventStore) -> None:
+    notifying = NotifyingEventStore(store)
+    _, drafts = run_drafts()
+
+    async with notifying.subscribe() as subscription:
+        await notifying.append(drafts[:3], expected_seq=0)
+        assert subscription.pending == 3
+        seen = [await anext(aiter(subscription)) for _ in range(3)]
+        subscription.close()
+        rest = [event async for event in subscription]
+
+    assert [event.type for event in seen] == ["run.started", "message.user", "step.started"]
+    assert rest == []
+    # Fermée, elle n'accepte plus rien.
+    await notifying.append(drafts[3:4], expected_seq=3)
+    assert subscription.pending == 0
+
+
+async def test_closing_the_notifying_store_closes_the_one_it_wraps(store: EventStore) -> None:
+    notifying = NotifyingEventStore(store)
+    with notifying.listen(lambda _: None):
+        await notifying.aclose()
+    assert notifying.listeners == 0

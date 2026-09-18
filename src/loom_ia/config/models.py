@@ -12,12 +12,19 @@ Sous-ensemble du jalon J1 ; le schéma complet est dans ``docs/conception.md``
 
 import logging
 from pathlib import Path
-from typing import Final, Self
+from typing import Final, Literal, Self
 
-from pydantic import PositiveFloat, model_validator
+from pydantic import Field, PositiveFloat, model_validator
 
 from loom_ia.agents.spec import AgentSpec
-from loom_ia.config.later import LATER_ROOT, LATER_STORAGE, LATER_TELEMETRY
+from loom_ia.config.keys import ALGORITHM, matches
+from loom_ia.config.later import (
+    LATER_API_KEY,
+    LATER_ROOT,
+    LATER_SERVER,
+    LATER_STORAGE,
+    LATER_TELEMETRY,
+)
 from loom_ia.core.model import DomainModel, ModelSpec, reject_later
 from loom_ia.telemetry.logs import LogFormat
 
@@ -86,6 +93,65 @@ class TelemetryConfig(DomainModel):
         return data
 
 
+type Scope = Literal["run", "read", "read_content", "approve", "admin"]
+
+
+class ApiKey(DomainModel):
+    """Clé déclarée dans la config, par son empreinte seulement (#39)."""
+
+    id: str = Field(min_length=1)
+    # Empreinte ``sha256:…`` donnée par ``loom keys create``.
+    hash: str
+    scopes: tuple[Scope, ...] = ("run", "read")
+    # Agents autorisés ; vide signifie tous.
+    agents: tuple[str, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _later(cls, data: object) -> object:
+        reject_later(data, LATER_API_KEY)
+        return data
+
+    @model_validator(mode="after")
+    def _check_hash(self) -> Self:
+        if not self.hash.startswith(f"{ALGORITHM}:"):
+            raise ValueError(f"Empreinte de clé attendue sous la forme '{ALGORITHM}:…'")
+        return self
+
+    def accepts(self, key: str) -> bool:
+        return matches(key, self.hash)
+
+    def allows(self, agent: str) -> bool:
+        return not self.agents or agent in self.agents
+
+
+class SecurityConfig(DomainModel):
+    api_keys: tuple[ApiKey, ...] = ()
+
+
+class HttpServer(DomainModel):
+    host: str = "127.0.0.1"
+    port: int = Field(default=8000, ge=1, le=65535)
+    # Préfixe commun des routes, par exemple ``/loom``.
+    base_path: str = ""
+
+    @model_validator(mode="after")
+    def _check_base_path(self) -> Self:
+        if self.base_path and not self.base_path.startswith("/"):
+            raise ValueError("'base_path' doit commencer par '/'")
+        return self
+
+
+class ServerConfig(DomainModel):
+    http: HttpServer = HttpServer()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _later(cls, data: object) -> object:
+        reject_later(data, LATER_SERVER)
+        return data
+
+
 class LoomConfig(DomainModel):
     version: int
     # Dossier du fichier de config, posé au chargement : les modules voisins
@@ -99,6 +165,8 @@ class LoomConfig(DomainModel):
     storage: StorageConfig = StorageConfig()
     execution: ExecutionConfig = ExecutionConfig()
     telemetry: TelemetryConfig = TelemetryConfig()
+    security: SecurityConfig = SecurityConfig()
+    server: ServerConfig = ServerConfig()
     # Remplis depuis ``agents_dir`` au chargement, ou donnés directement en Python.
     agents: tuple[AgentSpec, ...] = ()
 
@@ -116,6 +184,7 @@ class LoomConfig(DomainModel):
                 f"(attendue : {SCHEMA_VERSION})"
             )
         _reject_doubles("Agent", [agent.name for agent in self.agents])
+        _reject_doubles("Clé", [key.id for key in self.security.api_keys])
         ids = [spec.id for spec in self.models]
         _reject_doubles("Modèle", ids)
         for agent in self.agents:

@@ -12,10 +12,16 @@ LATER_ROOT: Final[dict[str, str]] = {
     "sessions": "J4 (sessions et compaction)",
     "budgets": "J3 (coûts et budgets)",
     "tenants": "J5 (multi-clients)",
-    "security": "J1.6 (accès REST)",
-    "server": "J1.6 (accès REST)",
     "profile": "J5 (profils dev et prod)",
     "profiles": "J5 (profils dev et prod)",
+}
+LATER_API_KEY: Final[dict[str, str]] = {
+    "tenant": "J5 (multi-clients)",
+    "rate_limit": "J5 (quotas)",
+    "expires": "J5 (rotation des clés)",
+}
+LATER_SERVER: Final[dict[str, str]] = {
+    "mcp": "J5 (serveur MCP en HTTP)",
 }
 LATER_STORAGE: Final[dict[str, str]] = {
     "artifacts": "J2 (artefacts)",

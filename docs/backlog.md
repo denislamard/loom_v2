@@ -82,3 +82,27 @@ storage:
 **À faire :** retirer `model.retried` de la ligne 3.5 et le mentionner en 1.4 (`fell_back` reste en 3.5).
 
 **Statut :** à faire.
+
+---
+
+## #006 — `timeout` d'agent : nommer la phase qui l'apportera
+
+**Origine :** phase 1.6.
+
+**Constat :** la clé `timeout` d'un agent est refusée avec le message « J1.6 (cycle de vie des runs) » (`agents/spec.py`, `LATER_AGENT`). Or la ligne 1.6 de `docs/jalons.md` ne couvre que les trois accès : délai maximal d'un run, annulation et expiration ne sont décrits nulle part.
+
+**À décider :** où atterrit le cycle de vie d'un run (délai, annulation, `run.cancelled`) — J3 avec les politiques et les budgets, ou J4 avec les sessions et le bus. Le message de refus suivra.
+
+**Statut :** à décider.
+
+---
+
+## #007 — Nom de l'exemple des trois accès
+
+**Origine :** phase 1.6.
+
+**Constat :** `docs/jalons.md` annonce `examples/j1/run.py` pour l'accès Python ; l'exemple livré est `examples/j1/acces.py`, et il montre les trois accès plutôt que le seul accès Python (`run.py` se confondrait d'ailleurs avec la commande `loom run`).
+
+**À faire :** renommer le fichier, ou corriger la ligne du J1 dans `jalons.md`.
+
+**Statut :** à décider.

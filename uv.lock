@@ -931,6 +931,7 @@ sqlite = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx2" },
     { name = "import-linter" },
     { name = "pyright" },
     { name = "pytest" },
@@ -966,6 +967,7 @@ provides-extras = ["anthropic", "openai", "mcp", "http", "sqlite", "postgres", "
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "httpx2", specifier = ">=2.13.0" },
     { name = "import-linter", specifier = ">=2.15" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.1.1" },
