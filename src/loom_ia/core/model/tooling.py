@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Description des outils (#15, #17, #18).
+"""Description des outils (#13, #15, #17, #18).
 
 ``ToolDefinition`` est ce que voit le modèle ; ``ToolSpec`` y ajoute ce que
 le moteur doit savoir pour exécuter l'outil sans risque.
 """
 
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import Field, JsonValue, PositiveFloat
 
@@ -17,6 +17,12 @@ type Approval = Literal["never", "always", "policy"]
 
 # Contrainte commune aux API des fournisseurs sur les noms d'outils.
 TOOL_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
+
+# Nom du rôle orchestrateur (C6) : réservé, porté par ses événements de modèle.
+MAIN_ROLE: Final = "main"
+
+# Mention ajoutée à la description d'un outil terminal (#13).
+TERMINAL_HINT: Final = "À appeler seul : sa sortie est la réponse finale, transmise telle quelle."
 
 
 def _empty_object_schema() -> dict[str, JsonValue]:
@@ -40,6 +46,8 @@ class ToolSpec(ToolDefinition):
     idempotent: bool = False
     # Timeout propre à l'outil ; sinon celui de l'exécuteur.
     timeout: PositiveFloat | None = None
+    # Sortie transmise telle quelle comme réponse finale s'il est seul dans son tour (#13).
+    terminal: bool = False
 
     @property
     def safe_to_retry(self) -> bool:
@@ -47,6 +55,10 @@ class ToolSpec(ToolDefinition):
         return self.side_effects == "none" or self.idempotent
 
     def definition(self) -> ToolDefinition:
+        """Ce que voit le modèle ; un outil terminal le dit dans sa description."""
+        description = self.description
+        if self.terminal:
+            description = f"{description}\n\n{TERMINAL_HINT}" if description else TERMINAL_HINT
         return ToolDefinition(
-            name=self.name, description=self.description, input_schema=self.input_schema
+            name=self.name, description=description, input_schema=self.input_schema
         )

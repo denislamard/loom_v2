@@ -2,13 +2,26 @@
 """Agents : définition et registre (A9)."""
 
 from loom_ia.agents.registry import AgentRegistry, UnknownAgent
-from loom_ia.agents.spec import AgentSpec, Expose, MainRole, PythonTool
+from loom_ia.agents.spec import (
+    AgentSpec,
+    BaseRole,
+    Expose,
+    LlmSettings,
+    MainRole,
+    PythonTool,
+    RoleSpec,
+    ToolResultsContext,
+)
 
 __all__ = [
     "AgentRegistry",
     "AgentSpec",
+    "BaseRole",
     "Expose",
+    "LlmSettings",
     "MainRole",
     "PythonTool",
+    "RoleSpec",
+    "ToolResultsContext",
     "UnknownAgent",
 ]

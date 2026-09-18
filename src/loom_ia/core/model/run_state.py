@@ -67,6 +67,8 @@ class RunState(DomainModel):
     cost_usd: NonNegativeFloat = 0.0
 
     output: Message | None = None
+    # Appel dont le résultat est devenu la réponse finale (#13).
+    terminal_call_id: str | None = None
     error: str | None = None
     # Vrai après run.completed ou run.failed : plus aucun événement accepté.
     finished: bool = False

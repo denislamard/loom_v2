@@ -7,6 +7,8 @@ from loom_ia.runtime.wiring import (
     build_agent,
     create_event_store,
     load_registry,
+    prompt_text,
+    role_definition,
     system_prompt,
 )
 
@@ -16,5 +18,7 @@ __all__ = [
     "build_agent",
     "create_event_store",
     "load_registry",
+    "prompt_text",
+    "role_definition",
     "system_prompt",
 ]

@@ -1,0 +1,62 @@
+# Configuration de l'exemple de la phase 2.1 : un orchestrateur et un rôle délégué.
+#
+# Deux agents, même scénario :
+#   relance       modèles simulés (sdk: fake), sans clé ni réseau ;
+#   relance_reel  MiniMax-M3 pour l'orchestrateur, gpt-oss-120b (Together) pour le rôle.
+version: 1
+
+imports: [outils]                 # module voisin de ce fichier
+agents_dir: agents/
+prompts_dir: prompts/
+
+models:
+  # Orchestrateur simulé : cherche le devis, puis délègue la rédaction.
+  - id: FAKE_MAIN
+    sdk: fake
+    model: fake-main
+    params:
+      script:
+        - text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+  # Rôle simulé : un autre modèle, qui rédige.
+  - id: FAKE_ROLE
+    sdk: fake
+    model: fake-role
+    params:
+      script:
+        - text: |-
+            Objet : votre devis D-2026-042
+
+            Bonjour Madame Martin,
+
+            Je reviens vers vous au sujet du devis de 1 840 € pour le remplacement
+            de votre chauffe-eau, envoyé le 2 septembre. Avez-vous pu en prendre
+            connaissance ? Je reste disponible pour en parler.
+
+            Bien cordialement,
+            Plomberie Dupont
+
+  - id: M3_MAIN
+    sdk: anthropic
+    base_url: https://api.minimax.io/anthropic
+    model: MiniMax-M3
+    api_key_env: M3_API_KEY
+    max_tokens: 2048
+  - id: GPT_OSS
+    sdk: openai
+    api: chat
+    base_url: https://api.together.xyz/v1
+    model: openai/gpt-oss-120b
+    api_key_env: TOGETHER_API_KEY
+    max_tokens: 2048
+
+storage:
+  events: {backend: jsonl, path: data}   # ignoré par git
+
+telemetry:
+  logging: {level: WARNING, format: console}

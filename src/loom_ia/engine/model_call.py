@@ -17,8 +17,9 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Final
 
-from loom_ia.core.events import ModelRetried
+from loom_ia.core.events import ModelResponded, ModelRetried
 from loom_ia.core.model import (
+    Message,
     ModelRequest,
     ModelResponse,
     ModelSpec,
@@ -33,6 +34,31 @@ logger = logging.getLogger(__name__)
 CHARS_PER_TOKEN: Final = 4
 
 type Sleep = Callable[[float], Awaitable[None]]
+
+
+def responded(
+    request: ModelRequest,
+    response: ModelResponse,
+    spec: ModelSpec,
+    *,
+    attempts: int,
+    latency_ms: float,
+    message: Message | None = None,
+    call_id: str | None = None,
+) -> ModelResponded:
+    """Événement d'une réponse obtenue ; ``message`` remplace celui de la réponse."""
+    return ModelResponded(
+        model_id=response.model_id,
+        provider=response.provider,
+        message=message if message is not None else response.message,
+        usage=response.usage,
+        cost_usd=spec.pricing.cost(response.usage),
+        stop_reason=response.stop_reason,
+        latency_ms=latency_ms,
+        attempts=attempts,
+        request_hash=request.request_hash(),
+        call_id=call_id,
+    )
 
 
 def estimate_tokens(request: ModelRequest) -> int:

@@ -458,13 +458,16 @@ Par défaut, un rôle ne reçoit que ses arguments. Il peut en plus déclarer du
 |---|---|---|
 | `user_input` | Message original de l'utilisateur, mot pour mot | Plus de recopie par l'orchestrateur |
 | `attachments` | Pièces jointes du run (références) | Remplace le cas particulier « vision » |
-| `tool_results: [noms]` | Résultats d'outils précédents du run | Plus de gros JSON recopié |
+| `tool_results: [noms]` | Tous les résultats réussis de ces outils dans le run, dans l'ordre des appels | Plus de gros JSON recopié |
 | `session_summary` | Dernier résumé de compaction | Contexte sans l'historique complet |
 | `last_turns: N` | N derniers échanges de la session | Au cas par cas |
 | `caller_context` | Métadonnées de l'appelant (A8) | Client, utilisateur |
 
-- **Références dans les arguments :** l'orchestrateur peut passer `{"$ref": "result:<call_id>"}` au lieu de recopier un résultat. L'exécuteur la remplace par le résultat avant d'appeler l'outil.
-- **Construction du message :** le rôle déclare un `input_template` explicite. La règle implicite de V1 (clés `input`, `text`…) disparaît. Sans template, le rôle reçoit les blocs de contexte suivis des arguments en JSON.
+- **Contexte manquant :** si un outil de `tool_results` n'a encore rien donné dans le run, le rôle n'est pas appelé ; l'orchestrateur reçoit une erreur qui lui dit d'appeler d'abord cet outil. Seuls comptent les résultats obtenus avant le tour en cours.
+- **Références dans les arguments :** l'orchestrateur peut passer `{"$ref": "result:<n>"}` au lieu de recopier un résultat, dans les arguments de n'importe quel outil. `result:3` désigne le 3ᵉ appel d'outil du run, dans l'ordre des demandes du modèle. L'exécuteur la remplace par le `data` du résultat, sinon par son texte, avant de valider les arguments. `tool.called` garde les arguments tels que le modèle les a écrits, plus la liste `refs` des références résolues.
+- **Numéros visibles par le modèle :** rien ne garantit qu'un modèle voie les `call_id` des fournisseurs. Quand l'agent a des rôles, chaque résultat qu'il reçoit commence donc par sa référence (`[result:3]`) et une consigne sur `$ref` s'ajoute à son prompt système. Ce marquage n'existe que dans la requête, pas dans le journal. Sans rôle, les requêtes sont inchangées.
+- **Construction du message :** le rôle déclare un `input_template` explicite. La règle implicite de V1 (clés `input`, `text`…) disparaît. Sans template, le rôle reçoit les blocs de contexte suivis des arguments en JSON, balisés (`<user_input>`, `<tool_result tool="…" ref="result:n">`, `<caller_context>`, `<arguments>`).
+- **Journal d'un appel de rôle :** l'appel de modèle du rôle est journalisé dans le run de l'orchestrateur, entre `tool.called` et `tool.completed`, dans un span sous celui de l'appel : `model.responded` porte le `call_id` de l'appel et l'enveloppe le nom du rôle. Seuls son usage et son coût s'ajoutent au run ; il ne compte pas dans les itérations. Les appels de l'orchestrateur sont attribués au rôle `main`.
 
 ### 13. Outil terminal
 
@@ -473,7 +476,8 @@ La règle de V1 est conservée : un outil terminal n'est terminal que s'il est s
 1. **Guards :** la sortie terminale passe par les hooks `on_output` et suit le réglage `stream_output`.
 2. **Réponse structurée (A7) :** si l'agent déclare un schéma de sortie, la sortie terminale doit le respecter.
 3. **Échec :** en cas d'erreur, ou de contrat non satisfait après réparation, le résultat revient à l'orchestrateur comme un résultat normal.
-4. **Appel en parallèle :** la description de chaque outil terminal reçoit automatiquement une mention « à appeler seul ». Si l'orchestrateur l'appelle quand même avec d'autres outils, `policy.decided` le signale et l'orchestrateur compose la réponse.
+4. **Appel en parallèle :** la description de chaque outil terminal reçoit automatiquement une mention « à appeler seul ». Si l'orchestrateur l'appelle quand même avec d'autres outils, la règle ne s'applique pas et l'orchestrateur compose la réponse. Le cas est signalé par un avertissement dans les logs ; l'événement `policy.decided` viendra avec les hooks (phase 3.1, backlog #008).
+5. **Plafond d'itérations :** si l'outil terminal termine le lot qui atteint `max_iterations`, il l'emporte sur `FINALIZING`.
 
 **Journal :** pas de duplication. `run.completed` référence le `tool.completed` terminal ; l'historique LLM affiche la sortie comme réponse finale, avec un marqueur à la place du résultat d'outil.
 
@@ -668,8 +672,8 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 |---|---|
 | `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte |
 | `message.user` | blocs de contenu (pièces jointes par référence) |
-| `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash |
-| `tool.called` | tool_name, tool_kind, call_id, arguments |
+| `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué) |
+| `tool.called` | tool_name, tool_kind, call_id, arguments, refs |
 | `tool.completed` | tool_name, call_id, is_error, sortie (blocs ou réf.), latence, taille |
 | `guard.checked` | guard, cible, outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized (voir points 20 et 21) |
 | `judge.evaluated` | modèle juge, scores par critère, bloquant, réussi |

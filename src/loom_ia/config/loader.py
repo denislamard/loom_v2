@@ -13,7 +13,7 @@ from typing import Any, cast
 import yaml
 from pydantic import ValidationError
 
-from loom_ia.agents.spec import AgentSpec
+from loom_ia.agents.spec import AgentSpec, BaseRole
 from loom_ia.config.errors import ConfigError, from_validation
 from loom_ia.config.models import LoomConfig
 
@@ -48,22 +48,30 @@ def _load_agents(agents_dir: Path, prompts_dir: Path) -> list[AgentSpec]:
     agents: list[AgentSpec] = []
     for file in sorted(f for f in agents_dir.iterdir() if f.suffix in AGENT_SUFFIXES):
         spec = _validate(AgentSpec, _read_yaml(file), source=file)
-        agents.append(_with_prompt(spec, prompts_dir, source=file))
+        agents.append(_with_prompts(spec, prompts_dir, source=file))
     return agents
 
 
-def _with_prompt(spec: AgentSpec, prompts_dir: Path, *, source: Path) -> AgentSpec:
-    """Rend le chemin du prompt absolu et vérifie qu'il est lisible."""
-    if spec.main.system_file is None:
-        return spec
-    prompt = prompts_dir / spec.main.system_file
+def _with_prompts(spec: AgentSpec, prompts_dir: Path, *, source: Path) -> AgentSpec:
+    """Rend absolus les chemins des prompts (``main`` et rôles), et vérifie qu'ils sont lisibles."""
+    main = _with_prompt(spec.main, prompts_dir, "main", source=source)
+    roles = tuple(
+        _with_prompt(role, prompts_dir, f"roles[{role.name}]", source=source) for role in spec.roles
+    )
+    return spec.model_copy(update={"main": main, "roles": roles})
+
+
+def _with_prompt[R: BaseRole](role: R, prompts_dir: Path, label: str, *, source: Path) -> R:
+    if role.system_file is None:
+        return role
+    prompt = prompts_dir / role.system_file
     if not prompt.is_file():
-        raise ConfigError(f"main.system_file — prompt introuvable : {prompt}", source=source)
+        raise ConfigError(f"{label}.system_file — prompt introuvable : {prompt}", source=source)
     try:
         prompt.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ConfigError(f"main.system_file — prompt illisible : {exc}", source=source) from exc
-    return spec.model_copy(update={"main": spec.main.model_copy(update={"system_file": prompt})})
+        raise ConfigError(f"{label}.system_file — prompt illisible : {exc}", source=source) from exc
+    return role.model_copy(update={"system_file": prompt})
 
 
 def _absolute_storage(config: LoomConfig, base_dir: Path) -> object:

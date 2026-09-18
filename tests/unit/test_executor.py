@@ -275,3 +275,21 @@ def test_registration() -> None:
     with pytest.raises(SchemaError):
         executor.add(RecordingTool(broken))
     assert executor.get("casse") is None
+
+
+class Fatal(BaseException):
+    """Exception hors de ``Exception`` : elle ne devient pas un résultat d'erreur."""
+
+
+@dataclass
+class FatalTool:
+    spec: ToolSpec
+
+    async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        raise Fatal("arrêt")
+
+
+async def test_fatal_error_interrupts_the_batch() -> None:
+    executor = ToolExecutor([FatalTool(spec("fatal"))])
+    with pytest.raises(Fatal, match="arrêt"):
+        await collect(executor, awaiting(call("c1", "fatal")))

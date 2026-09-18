@@ -4,6 +4,10 @@
 ``apply`` enregistre des faits : il ne décide rien. Les décisions (appeler
 un outil, changer d'état) sont prises par le moteur et arrivent ici sous
 forme d'événements, dont ``run.transitioned``.
+
+Une réponse de modèle qui sert un appel d'outil (rôle délégué, C2) n'entre
+pas dans la conversation de l'orchestrateur : seuls son usage et son coût
+s'ajoutent au run.
 """
 
 from collections.abc import Iterable
@@ -28,6 +32,7 @@ from loom_ia.core.model import (
     RunId,
     RunState,
     RunStatus,
+    TextBlock,
     ToolResultBlock,
 )
 
@@ -71,6 +76,9 @@ def apply(state: RunState | None, event: Event) -> RunState:
             raise ProjectionError(f"Run {state.run_id} : run.started en double (seq {event.seq})")
         case UserMessage(message=message):
             update["messages"] = (*state.messages, message)
+        case ModelResponded(call_id=str() as call_id, usage=usage, cost_usd=cost):
+            _require_pending(state, call_id, event)
+            update |= {"usage": state.usage + usage, "cost_usd": state.cost_usd + cost}
         case ModelResponded(message=message, usage=usage, cost_usd=cost):
             update |= {
                 "messages": (*state.messages, message),
@@ -104,6 +112,14 @@ def apply(state: RunState | None, event: Event) -> RunState:
                     f"alors que l'état reconstruit est {state.status} (seq {event.seq})"
                 )
             update["status"] = to_state
+        case RunCompleted(output=None, output_event_id=str()):
+            call_id, output = _terminal_output(state, event)
+            update |= {
+                "status": RunStatus.COMPLETED,
+                "output": output,
+                "terminal_call_id": call_id,
+                "finished": True,
+            }
         case RunCompleted(output=output):
             update |= {"status": RunStatus.COMPLETED, "output": output, "finished": True}
         case RunFailed(error_type=error_type, error=error):
@@ -119,6 +135,20 @@ def _closes(status: RunStatus, event: Event) -> bool:
     """Vrai pour l'événement de clôture qui suit la transition vers un état final."""
     closing = {RunStatus.COMPLETED: RunCompleted, RunStatus.FAILED: RunFailed}.get(status)
     return closing is not None and isinstance(event.payload, closing)
+
+
+def _terminal_output(state: RunState, event: Event) -> tuple[str, Message]:
+    """Réponse finale tirée du résultat de l'outil terminal, dernier message du run (#13)."""
+    last = state.messages[-1] if state.messages else None
+    results = [b for b in last.blocks if isinstance(b, ToolResultBlock)] if last else []
+    if len(results) != 1:
+        raise ProjectionError(
+            f"Run {state.run_id} : run.completed désigne une sortie d'outil, mais le dernier "
+            f"message n'est pas un résultat d'outil unique (seq {event.seq})"
+        )
+    [result] = results
+    blocks = result.output.blocks or (TextBlock(text=""),)
+    return result.call_id, Message(role="assistant", blocks=blocks)
 
 
 def _require_pending(state: RunState, call_id: str, event: Event) -> tuple[PendingCall, ...]:

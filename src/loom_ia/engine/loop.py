@@ -17,6 +17,14 @@ d'outil commencé mais non terminé est traité par l'exécuteur (#18).
 Plafond d'itérations : au retour des outils, si le modèle a été appelé
 ``max_iterations`` fois, le run passe en ``FINALIZING`` ; le dépassement est
 borné à cette dernière génération.
+
+Outil terminal (#13) : seul dans son tour et sans erreur, sa sortie devient
+la réponse finale. ``run.completed`` désigne alors son ``tool.completed``
+au lieu de recopier la sortie. Appelé avec d'autres outils, il redevient un
+outil ordinaire et l'orchestrateur compose la réponse.
+
+Rôles délégués : si l'agent en a, chaque résultat montré au modèle porte sa
+référence (``[result:3]``) et le prompt système explique ``$ref`` (#12).
 """
 
 import logging
@@ -41,10 +49,12 @@ from loom_ia.core.events import (
     RunTransitioned,
     StepCompleted,
     StepStarted,
+    ToolCompleted,
     UserMessage,
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    MAIN_ROLE,
     CallerContext,
     Message,
     ModelRequest,
@@ -58,13 +68,15 @@ from loom_ia.core.model import (
     TenantId,
     TextBlock,
     ToolCallBlock,
+    ToolResultBlock,
     new_run_id,
     new_span_id,
 )
 from loom_ia.core.ports import ChunkCallback, EventStore, ModelClient, ModelError
 from loom_ia.core.projections import apply, fold, history
-from loom_ia.engine.executor import ToolExecutor
-from loom_ia.engine.model_call import ModelCall
+from loom_ia.engine.executor import Delegated, ToolExecutor
+from loom_ia.engine.model_call import ModelCall, responded
+from loom_ia.engine.refs import REFS_HINT, ResultIndex, mark_results
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +105,9 @@ class RunContext:
     tools: ToolExecutor = field(default_factory=ToolExecutor)
     system: str = ""
     max_iterations: int = DEFAULT_MAX_ITERATIONS
-    # Surcharge de ``model_spec.params``, clé par clé (B6).
+    # Réglages du rôle ``main`` (B6) : ``max_tokens`` remplace celui du modèle,
+    # ``params`` surcharge ``model_spec.params`` clé par clé.
+    max_tokens: int | None = None
     params: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     # Reçoit les morceaux du flux du modèle, pour la diffusion en direct.
     on_chunk: ChunkCallback | None = None
@@ -215,6 +229,9 @@ def _decide(
     last = state.messages[-1] if state.messages else None
     answered = last is not None and last.role == "assistant"
     match state.status:
+        case RunStatus.COMPLETED if not state.finished and last is not None and last.role == "tool":
+            # Seul un outil terminal mène à COMPLETED sur un résultat d'outil.
+            return [scope.draft(_completed(state, None, terminal=_terminal_event(state, cause)))]
         case RunStatus.COMPLETED if not state.finished:
             return [scope.draft(_completed(state, last if answered else None))]
         case RunStatus.FAILED if not state.finished:
@@ -229,6 +246,11 @@ def _decide(
             return [
                 _transition(state, scope, RunStatus.COMPLETED, cause),
                 scope.draft(_completed(state, last)),
+            ]
+        case RunStatus.AWAITING_TOOLS if not state.pending_calls and _is_terminal(state, ctx):
+            return [
+                _transition(state, scope, RunStatus.COMPLETED, cause),
+                scope.draft(_completed(state, None, terminal=_terminal_event(state, cause))),
             ]
         case RunStatus.AWAITING_TOOLS if not state.pending_calls:
             limit_reached = state.iterations >= ctx.max_iterations
@@ -256,9 +278,39 @@ def _transition(
     )
 
 
-def _completed(state: RunState, output: Message | None) -> RunCompleted:
+def _is_terminal(state: RunState, ctx: RunContext) -> bool:
+    """Vrai si le lot qui vient de finir fait de sa sortie la réponse finale (#13)."""
+    turn = next((m for m in reversed(state.messages) if m.role == "assistant"), None)
+    calls = turn.tool_calls if turn is not None else ()
+    terminal = [c for c in calls if (tool := ctx.tools.get(c.name)) and tool.spec.terminal]
+    if not terminal:
+        return False
+    if len(calls) > 1:
+        logger.warning(
+            "Outil terminal %s appelé avec d'autres outils : sa sortie revient à l'orchestrateur",
+            ", ".join(c.name for c in terminal),
+            extra={"run_id": state.run_id},
+        )
+        return False
+    last = state.messages[-1]
+    return all(
+        isinstance(block, ToolResultBlock) and not block.output.is_error for block in last.blocks
+    )
+
+
+def _terminal_event(state: RunState, cause: Event | None) -> Event:
+    """``tool.completed`` de l'outil terminal : c'est le dernier effet du run."""
+    if cause is None or not isinstance(cause.payload, ToolCompleted):
+        raise RuntimeError(f"Run {state.run_id} : sortie terminale sans tool.completed")
+    return cause
+
+
+def _completed(
+    state: RunState, output: Message | None, *, terminal: Event | None = None
+) -> RunCompleted:
     return RunCompleted(
         output=output,
+        output_event_id=terminal.event_id if terminal is not None else None,
         iterations=state.iterations,
         usage=state.usage,
         cost_usd=state.cost_usd,
@@ -292,7 +344,9 @@ class _Step:
     def draft(
         self, payload: StepStarted | StepCompleted | ModelResponded | ModelRetried
     ) -> EventDraft:
-        return self._scope.draft(payload, span_id=self.span)
+        # Les appels de modèle de l'orchestrateur sont ceux du rôle ``main`` (C6).
+        role = MAIN_ROLE if isinstance(payload, ModelResponded | ModelRetried) else None
+        return self._scope.draft(payload, span_id=self.span, role=role)
 
     def started(self) -> EventDraft:
         return self.draft(StepStarted(step_no=self.no, state=self._status, effect=self._effect))
@@ -322,14 +376,18 @@ async def _model_step(
     started = time.perf_counter()
     emitted = attempts = 0
     response: ModelResponse | None = None
+    system, messages = ctx.system, state.messages
+    if ctx.tools.has_delegated:
+        messages = mark_results(messages, ResultIndex(messages))
+        system = f"{system}\n\n{REFS_HINT}" if system else REFS_HINT
     try:
         request = ModelRequest(
             model_id=spec.model,
-            system=ctx.system,
-            messages=(*previous, *state.messages),
+            system=system,
+            messages=(*previous, *messages),
             tools=ctx.tools.definitions(),
             tool_choice="none" if forced else "auto",
-            max_tokens=spec.max_tokens,
+            max_tokens=ctx.max_tokens or spec.max_tokens,
             params={**spec.params, **ctx.params},
         )
         call = ModelCall(ctx.model, spec, on_chunk=ctx.on_chunk)
@@ -364,16 +422,13 @@ async def _model_step(
         kept = tuple(b for b in message.blocks if not isinstance(b, ToolCallBlock))
         message = message.model_copy(update={"blocks": kept or (TextBlock(text=""),)})
     yield current.draft(
-        ModelResponded(
-            model_id=response.model_id,
-            provider=response.provider,
-            message=message,
-            usage=response.usage,
-            cost_usd=spec.pricing.cost(response.usage),
-            stop_reason=response.stop_reason,
-            latency_ms=(time.perf_counter() - started) * 1000,
+        responded(
+            request,
+            response,
+            spec,
             attempts=attempts,
-            request_hash=request.request_hash(),
+            latency_ms=(time.perf_counter() - started) * 1000,
+            message=message,
         )
     )
     yield current.completed(emitted + 1)
@@ -384,12 +439,18 @@ async def _tool_step(
 ) -> AsyncGenerator[EventDraft]:
     current = _Step(state, scope, "tool_batch")
     yield current.started()
+    # Un span par appel d'outil ; les appels de modèle d'un rôle ont le leur, en dessous.
     spans: dict[str, SpanId] = {}
+    model_spans: dict[str, SpanId] = {}
     emitted = 0
     async with aclosing(ctx.tools.run_batch(state)) as events:
-        async for payload in events:
-            span = spans.setdefault(payload.call_id, new_span_id())
-            yield scope.draft(payload, span_id=span, parent_span_id=current.span)
+        async for item in events:
+            span = spans.setdefault(item.call_id, new_span_id())
+            if isinstance(item, Delegated):
+                inner = model_spans.setdefault(item.call_id, new_span_id())
+                yield scope.draft(item.payload, span_id=inner, parent_span_id=span, role=item.role)
+            else:
+                yield scope.draft(item, span_id=span, parent_span_id=current.span)
             emitted += 1
     yield current.completed(emitted)
 

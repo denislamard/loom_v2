@@ -187,13 +187,19 @@ class LoomConfig(DomainModel):
         _reject_doubles("Clé", [key.id for key in self.security.api_keys])
         ids = [spec.id for spec in self.models]
         _reject_doubles("Modèle", ids)
+        known = ", ".join(ids) or "aucun"
         for agent in self.agents:
             if agent.main.model not in ids:
-                known = ", ".join(ids) or "aucun"
                 raise ValueError(
                     f"Agent {agent.name!r} : modèle {agent.main.model!r} non déclaré "
                     f"(modèles connus : {known})"
                 )
+            for role in agent.roles:
+                if role.model not in ids:
+                    raise ValueError(
+                        f"Agent {agent.name!r}, rôle {role.name!r} : modèle {role.model!r} "
+                        f"non déclaré (modèles connus : {known})"
+                    )
         return self
 
     def model_spec(self, model_id: str) -> ModelSpec:

@@ -1,20 +1,28 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Exécution des appels d'outils d'un tour (#15, #18, D1, D2, D4, D5).
+"""Exécution des appels d'outils d'un tour (#12, #15, #18, D1, D2, D4, D5).
 
-Chaîne d'un appel : outil connu, reprise sans risque, arguments lisibles et
-conformes au schéma, puis exécution avec timeout. Tout échec devient un
+Chaîne d'un appel : outil connu, reprise sans risque, arguments lisibles,
+références ``$ref`` résolues, arguments conformes au schéma, refus éventuel
+d'un outil délégué, puis exécution avec timeout. Tout échec devient un
 résultat d'erreur destiné au modèle ; seule l'annulation interrompt le lot.
 
 ``tool.called`` n'est écrit que pour un appel réellement lancé : c'est la
 marque qu'un effet de bord a peut-être eu lieu. Tous les ``tool.called`` du
 lot sont écrits avant la première exécution, puis chaque ``tool.completed``
 dès que son outil répond.
+
+Un outil délégué (rôle) produit aussi des événements pendant son appel. Ils
+passent par la même file que les résultats : ils précèdent toujours le
+``tool.completed`` de leur appel. Le délai par défaut des outils ne
+s'applique pas à eux : les délais et le retry de leur modèle les bornent.
 """
 
 import asyncio
 import logging
 import time
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, Callable, Iterable
+from contextlib import aclosing
+from dataclasses import dataclass
 from typing import Final
 
 from jsonschema import Draft202012Validator
@@ -32,6 +40,8 @@ from loom_ia.core.model import (
     ToolSpec,
 )
 from loom_ia.core.ports import Tool, ToolContext, ToolError
+from loom_ia.engine.delegated import DelegatedPayload, DelegatedTool, RunView
+from loom_ia.engine.refs import RefError
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +53,38 @@ UNKNOWN_STATE: Final = (
     "le rappeler."
 )
 
-type ToolEvent = ToolCalled | ToolCompleted
+type AnyTool = Tool | DelegatedTool
+
+
+@dataclass(frozen=True, slots=True)
+class Delegated:
+    """Événement produit par un outil délégué pendant son appel."""
+
+    call_id: str
+    # Rôle qui a produit l'événement, recopié dans l'enveloppe.
+    role: str
+    payload: DelegatedPayload
+
+
+type ToolEvent = ToolCalled | ToolCompleted | Delegated
+
+
+@dataclass(frozen=True, slots=True)
+class _Ready:
+    """Appel accepté, prêt à partir."""
+
+    call: PendingCall
+    tool: AnyTool
+    # Arguments après résolution des références.
+    arguments: dict[str, JsonValue]
+    refs: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _Crashed:
+    """Exception sortie d'une tâche d'exécution : elle interrompt le lot."""
+
+    error: BaseException
 
 
 class ToolExecutor:
@@ -51,19 +92,19 @@ class ToolExecutor:
 
     def __init__(
         self,
-        tools: Iterable[Tool] = (),
+        tools: Iterable[AnyTool] = (),
         *,
         default_timeout: float | None = DEFAULT_TOOL_TIMEOUT,
         validate_arguments: bool = True,
     ) -> None:
         self.default_timeout = default_timeout
         self.validate_arguments = validate_arguments
-        self._tools: dict[str, Tool] = {}
+        self._tools: dict[str, AnyTool] = {}
         self._validators: dict[str, Validator] = {}
         for tool in tools:
             self.add(tool)
 
-    def add(self, tool: Tool) -> None:
+    def add(self, tool: AnyTool) -> None:
         spec = tool.spec
         if spec.name in self._tools:
             raise ValueError(f"Outil {spec.name!r} déjà déclaré")
@@ -72,8 +113,13 @@ class ToolExecutor:
         self._tools[spec.name] = tool
         self._validators[spec.name] = cls(spec.input_schema)
 
-    def get(self, name: str) -> Tool | None:
+    def get(self, name: str) -> AnyTool | None:
         return self._tools.get(name)
+
+    @property
+    def has_delegated(self) -> bool:
+        """Vrai si l'agent délègue à des rôles : les références ``$ref`` lui sont montrées."""
+        return any(isinstance(tool, DelegatedTool) for tool in self._tools.values())
 
     @property
     def specs(self) -> tuple[ToolSpec, ...]:
@@ -85,31 +131,46 @@ class ToolExecutor:
 
     async def run_batch(self, state: RunState) -> AsyncGenerator[ToolEvent]:
         """Traite les appels en attente du run et émet leurs événements."""
-        ready: list[tuple[PendingCall, Tool]] = []
+        view = RunView.of(state)
+        ready: list[_Ready] = []
         for call in state.pending_calls:
             tool = self._tools.get(call.name)
-            if tool is None:
-                problem = self._unknown_tool(call.name)
+            prepared = (
+                self._unknown_tool(call.name) if tool is None else self._prepare(call, tool, view)
+            )
+            if isinstance(prepared, _Ready):
+                ready.append(prepared)
             else:
-                problem = self._precheck(call, tool)
-                if problem is None:
-                    ready.append((call, tool))
-                    continue
-            yield _completed(call, ToolOutput.error(problem), started=None)
+                yield _completed(call, ToolOutput.error(prepared), started=None)
 
-        for call, tool in ready:
+        for item in ready:
             yield ToolCalled(
-                call_id=call.call_id,
-                tool_name=call.name,
-                tool_kind=tool.spec.kind,
-                arguments=call.arguments,
-                resumed=call.started,
+                call_id=item.call.call_id,
+                tool_name=item.call.name,
+                tool_kind=item.tool.spec.kind,
+                arguments=item.call.arguments,
+                refs=item.refs,
+                resumed=item.call.started,
             )
 
-        tasks = [asyncio.create_task(self._execute(call, tool, state)) for call, tool in ready]
+        queue: asyncio.Queue[ToolEvent | _Crashed] = asyncio.Queue()
+
+        def crashed(task: asyncio.Task[None]) -> None:
+            if not task.cancelled() and (error := task.exception()) is not None:
+                queue.put_nowait(_Crashed(error))
+
+        tasks = [asyncio.create_task(self._execute(item, view, queue.put_nowait)) for item in ready]
+        for task in tasks:
+            task.add_done_callback(crashed)
         try:
-            async for task in asyncio.as_completed(tasks):
-                yield task.result()
+            remaining = len(tasks)
+            while remaining:
+                event = await queue.get()
+                if isinstance(event, _Crashed):
+                    raise event.error
+                if isinstance(event, ToolCompleted):
+                    remaining -= 1
+                yield event
         finally:
             for task in tasks:
                 task.cancel()
@@ -121,16 +182,26 @@ class ToolExecutor:
         available = ", ".join(self._tools) or "aucun"
         return f"Outil inconnu : {name!r}. Outils disponibles : {available}."
 
-    def _precheck(self, call: PendingCall, tool: Tool) -> str | None:
-        """Motif de refus de l'appel, ou None s'il peut être lancé."""
+    def _prepare(self, call: PendingCall, tool: AnyTool, view: RunView) -> _Ready | str:
+        """Appel prêt à partir, ou motif de refus destiné au modèle."""
         if call.started and not tool.spec.safe_to_retry:
             return UNKNOWN_STATE
         if set(call.arguments) == {INVALID_JSON_KEY}:
             raw = str(call.arguments[INVALID_JSON_KEY])
             return f"Arguments illisibles : ce n'est pas un objet JSON valide.\nReçu : {raw[:500]}"
+        try:
+            arguments, refs = view.results.resolve(call.arguments)
+        except RefError as exc:
+            return exc.message
         if self.validate_arguments:
-            return self._schema_errors(call.name, call.arguments)
-        return None
+            problem = self._schema_errors(call.name, arguments)
+            if problem is not None:
+                return problem
+        if isinstance(tool, DelegatedTool):
+            problem = tool.check(arguments, view)
+            if problem is not None:
+                return problem
+        return _Ready(call=call, tool=tool, arguments=arguments, refs=refs)
 
     def _schema_errors(self, name: str, arguments: dict[str, JsonValue]) -> str | None:
         errors = sorted(
@@ -145,9 +216,14 @@ class ToolExecutor:
             lines.append(f"- {location} : {error.message}")
         return "\n".join(lines)
 
-    async def _execute(self, call: PendingCall, tool: Tool, state: RunState) -> ToolCompleted:
+    async def _execute(
+        self, item: _Ready, view: RunView, emit: Callable[[ToolEvent], None]
+    ) -> None:
+        """Exécute un appel ; ses événements et son résultat partent dans la file du lot."""
+        tool, call, state = item.tool, item.call, view.state
         spec = tool.spec
-        timeout = spec.timeout if spec.timeout is not None else self.default_timeout
+        delegated = isinstance(tool, DelegatedTool)
+        timeout = spec.timeout if spec.timeout is not None or delegated else self.default_timeout
         context = ToolContext(
             tenant_id=state.context.tenant_id,
             session_id=state.session_id,
@@ -160,7 +236,10 @@ class ToolExecutor:
         scope = asyncio.timeout(timeout)
         try:
             async with scope:
-                output = await tool.invoke(call.arguments, context)
+                if isinstance(tool, DelegatedTool):
+                    output = await _delegate(tool, item.arguments, context, view, emit)
+                else:
+                    output = await tool.invoke(item.arguments, context)
         except TimeoutError as exc:
             if scope.expired():
                 output = ToolOutput.error(f"Délai dépassé : pas de réponse en {timeout:g} s.")
@@ -171,7 +250,27 @@ class ToolExecutor:
             output = ToolOutput.error(exc.message)
         except Exception as exc:
             output = _unexpected(spec.name, exc, state)
-        return _completed(call, output, started=started)
+        emit(_completed(call, output, started=started))
+
+
+async def _delegate(
+    tool: DelegatedTool,
+    arguments: dict[str, JsonValue],
+    context: ToolContext,
+    view: RunView,
+    emit: Callable[[ToolEvent], None],
+) -> ToolOutput:
+    """Déroule un outil délégué : ses événements sont émis, son résultat renvoyé."""
+    output: ToolOutput | None = None
+    async with aclosing(tool.run(arguments, context, view)) as produced:
+        async for item in produced:
+            if isinstance(item, ToolOutput):
+                output = item
+            else:
+                emit(Delegated(call_id=context.call_id, role=tool.spec.name, payload=item))
+    if output is None:
+        raise RuntimeError(f"Outil délégué {tool.spec.name} terminé sans résultat")
+    return output
 
 
 def _unexpected(name: str, exc: Exception, state: RunState) -> ToolOutput:

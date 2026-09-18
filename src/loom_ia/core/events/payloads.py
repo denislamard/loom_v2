@@ -5,8 +5,13 @@ Chaque classe déclare son ``type`` (``<catégorie>.<action au passé>``), sa
 catégorie et ses facettes : les champs de recherche que l'enveloppe recopie
 pour que les stores les indexent sans connaître les payloads.
 
-Événements du jalon J1. Les autres types (guards, approbations, artefacts,
-compaction…) arrivent avec leurs phases.
+Événements des jalons J1 et J2. Les autres types (guards, approbations,
+artefacts, compaction…) arrivent avec leurs phases.
+
+Un appel de modèle fait par un rôle délégué (C2) est journalisé dans le run
+de l'orchestrateur, entre le ``tool.called`` et le ``tool.completed`` de
+l'appel : ``call_id`` le relie à cet appel, et l'enveloppe porte le nom du
+rôle.
 """
 
 from typing import Annotated, ClassVar, Literal
@@ -164,6 +169,8 @@ class ModelResponded(Payload):
     attempts: PositiveInt = 1
     # Empreinte de la requête envoyée : détection de divergence au rejeu (#31).
     request_hash: str
+    # Appel d'outil servi par cette réponse (rôle délégué) ; None pour l'orchestrateur.
+    call_id: str | None = None
 
     def facets(self) -> dict[str, FacetValue]:
         return {**super().facets(), "tokens": self.usage.total_tokens}
@@ -185,6 +192,8 @@ class ModelRetried(Payload):
     http_status: int | None = None
     # Attente avant la tentative suivante, en secondes.
     delay_s: NonNegativeFloat
+    # Appel d'outil servi par cet appel de modèle (rôle délégué).
+    call_id: str | None = None
 
     @property
     def event_status(self) -> EventStatus:
@@ -202,7 +211,10 @@ class ToolCalled(Payload):
     call_id: str
     tool_name: str
     tool_kind: ToolKind
+    # Tels que le modèle les a écrits, références ``$ref`` comprises.
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    # Références résolues dans les arguments avant l'exécution (#12).
+    refs: tuple[str, ...] = ()
     # Nouvelle exécution d'un appel interrompu (#18).
     resumed: bool = False
 

@@ -142,7 +142,10 @@ async def _validate(args: argparse.Namespace) -> int:
     async with Loom(config, registry=registry) as loom:
         for spec in config.agents:
             context = loom.context(spec.name)
-            print(f"  {spec.name} : modèle {context.model_spec.id}, {len(spec.tools)} outil(s)")
+            roles = "".join(f", rôle {role.name} ({role.model})" for role in spec.roles)
+            print(
+                f"  {spec.name} : modèle {context.model_spec.id}, {len(spec.tools)} outil(s){roles}"
+            )
     print(f"\n{len(config.agents)} agent(s) monté(s) sans erreur.")
     return OK
 
@@ -161,6 +164,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                 ):
                     _show(item)
                 print()
+                state = await loom.state(run_id, session_id=session)
+                if state.terminal_call_id is not None and state.output is not None:
+                    # Sortie d'un outil terminal : elle n'est pas passée par le flux du modèle.
+                    print(state.output.text)
                 return await loom.result(run_id, session_id=session)
             return await loom.run(args.agent, args.message, session_id=session, run_id=run_id)
 

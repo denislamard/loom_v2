@@ -106,3 +106,27 @@ storage:
 **À faire :** renommer le fichier, ou corriger la ligne du J1 dans `jalons.md`.
 
 **Statut :** à décider.
+
+---
+
+## #008 — `policy.decided` pour un outil terminal appelé en parallèle
+
+**Origine :** phase 2.1.
+
+**Constat :** #13 prévoit que `policy.decided` signale un outil terminal appelé avec d'autres outils. Cet événement n'existera qu'avec les hooks (3.1), et son vocabulaire (`Continue`, `Deny`…) ne décrit pas ce cas. En 2.1, le moteur écrit un avertissement dans les logs (`engine/loop.py`, `_is_terminal`).
+
+**À faire en 3.1 :** écrire l'événement à cet endroit, avec une décision adaptée.
+
+**Statut :** à faire en 3.1.
+
+---
+
+## #009 — Diffusion en direct de la sortie d'un rôle terminal
+
+**Origine :** phase 2.1.
+
+**Constat :** seuls les morceaux du modèle `main` partent vers `on_chunk`. La sortie d'un rôle terminal n'apparaît donc pas dans `Loom.stream()`. Elle apparaît dans le `tool.completed` terminal (SSE), dans le résultat du run (REST, MCP) et, pour `loom run --stream`, elle est affichée à la fin du run.
+
+**À faire :** avec `stream_output` (3.2), diffuser les morceaux du rôle terminal en `live`, attribués au rôle (`model.delta` du bus en J4).
+
+**Statut :** à faire en 3.2.

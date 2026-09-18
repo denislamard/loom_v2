@@ -8,7 +8,7 @@ ces clés sont refusées en nommant le jalon qui les apportera.
 from typing import Final
 
 LATER_ROOT: Final[dict[str, str]] = {
-    "mcp_servers": "J2 (client MCP)",
+    "mcp_servers": "J2.2 (client MCP)",
     "sessions": "J4 (sessions et compaction)",
     "budgets": "J3 (coûts et budgets)",
     "tenants": "J5 (multi-clients)",
@@ -24,8 +24,8 @@ LATER_SERVER: Final[dict[str, str]] = {
     "mcp": "J5 (serveur MCP en HTTP)",
 }
 LATER_STORAGE: Final[dict[str, str]] = {
-    "artifacts": "J2 (artefacts)",
-    "idempotency": "J2 (idempotence)",
+    "artifacts": "J2.3 (artefacts)",
+    "idempotency": "J4.4 (idempotence)",
     "bus": "J4 (bus et observabilité)",
     "queue": "J4 (arrière-plan)",
     "encryption": "J5 (chiffrement par client)",

@@ -316,11 +316,11 @@ Event
 |---|---|
 | `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte |
 | `message.user` | blocs de contenu |
-| `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash |
-| `model.retried` | tentative, type d'erreur, délai |
+| `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué) |
+| `model.retried` | tentative, type d'erreur, délai, call_id (rôle délégué) |
 | `model.fell_back` | ancien modèle, nouveau modèle, motif |
 | `idempotency.recorded` | clé, call_id, résultat |
-| `tool.called` | tool_name, tool_kind, call_id, arguments |
+| `tool.called` | tool_name, tool_kind, call_id, arguments, refs |
 | `tool.completed` | tool_name, call_id, is_error, sortie (blocs ou réf.), latence, taille |
 | `guard.checked` | guard, cible, outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized |
 | `judge.evaluated` | modèle juge, scores par critère, bloquant, réussi |
@@ -472,7 +472,7 @@ ToolOutput
 
 **Chaîne d'exécution d'un appel :**
 
-1. Résolution des références `{"$ref": "result:<call_id>"}` dans les arguments (#12).
+1. Résolution des références `{"$ref": "result:<n>"}` dans les arguments (#12) ; pour un rôle, contrôle de son contexte déclaré.
 2. Validation des arguments par le schéma ; en cas d'erreur, résultat d'erreur actionnable pour le modèle (D4).
 3. Politiques `before_tool` : droits, approbation (`Pause`), refus (`Deny`).
 4. Exécution avec timeout, et la clé d'idempotence `hash(run_id, call_id)` dans le `ToolContext` (#18).
@@ -584,16 +584,20 @@ tools:
 |---|---|
 | `user_input` | Message original de l'utilisateur, mot pour mot |
 | `attachments` | Pièces jointes du run (références) |
-| `tool_results: [noms]` | Résultats d'outils précédents du run |
+| `tool_results: [noms]` | Tous les résultats réussis de ces outils dans le run ; sans aucun, le rôle est refusé |
 | `session_summary` | Dernier résumé de compaction |
 | `last_turns: N` | N derniers échanges de la session |
 | `caller_context` | Métadonnées de l'appelant (A8) |
 
-Le message du rôle est construit par un `input_template` explicite ; sans template, le rôle reçoit les blocs de contexte suivis des arguments en JSON.
+Le message du rôle est construit par un `input_template` explicite (`{{ args.x }}`, `{{ context.y }}`, #50) ; sans template, le rôle reçoit les blocs de contexte balisés, suivis des arguments en JSON.
+
+**Appel d'un rôle :** un seul appel de modèle, sans historique ni outils, journalisé dans le run de l'orchestrateur entre `tool.called` et `tool.completed` (`model.responded` avec le `call_id` de l'appel, enveloppe au nom du rôle). Une erreur du modèle ou une sortie vide deviennent un résultat d'erreur. Le délai par défaut des outils ne s'applique pas ; ceux du modèle et son retry bornent l'appel.
+
+**Références `$ref`** (#12) : `{"$ref": "result:<n>"}` désigne le n-ième appel d'outil du run. Quand l'agent a des rôles, chaque résultat montré à l'orchestrateur commence par sa référence (`[result:3]`), et son prompt système explique `$ref`.
 
 **Rôle vision :** il déclare le contexte `attachments` et reste masqué quand le run n'a pas de pièce jointe (C4).
 
-**Outil terminal** (#13) : il n'est terminal que s'il est seul dans le tour et n'a pas échoué. Sa sortie passe par les hooks `on_output` et le réglage `stream_output`, et doit respecter le schéma de sortie de l'agent s'il en a un. En cas d'échec, le résultat revient à l'orchestrateur. Sa description reçoit automatiquement la mention « à appeler seul » ; un appel en parallèle est signalé par `policy.decided`. Dans le journal, `run.completed` référence le `tool.completed` terminal, sans duplication.
+**Outil terminal** (#13) : il n'est terminal que s'il est seul dans le tour et n'a pas échoué. Sa sortie passe par les hooks `on_output` et le réglage `stream_output`, et doit respecter le schéma de sortie de l'agent s'il en a un. En cas d'échec, le résultat revient à l'orchestrateur. Sa description reçoit automatiquement la mention « à appeler seul » ; un appel en parallèle ne déclenche pas la règle et est signalé dans les logs (`policy.decided` en 3.1). Dans le journal, `run.completed` référence le `tool.completed` terminal, sans duplication.
 
 **Sous-agent** (#4) : l'outil `AgentTool` crée un `RunState` enfant, sauvegardé séparément.
 
@@ -1038,10 +1042,11 @@ roles:
     model: HAIKU
     system_file: relance_devis/rediger.md
     input_schema: {...}
-    input_template: "Devis : {{ args.devis }}\nDemande : {{ context.user_input }}"
-    context: [user_input, {tool_results: [chercher_devis]}]
+    input_template: "Devis : {{ context.tool_results.chercher_devis }}\nDemande : {{ context.user_input }}\nTon : {{ args.ton }}"
+    context: [user_input, {tool_results: [chercher_devis]}]   # tout contexte déclaré sert au template
     llm: {max_tokens: 1024, params: {temperature: 0}}
     terminal: false
+    timeout: 60                       # sinon, délais et retry du modèle
     output: {...}
     judge: {...}
 subagents:

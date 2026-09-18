@@ -59,6 +59,8 @@ from loom_ia.core.model.streaming import (
     message_to_chunks,
 )
 from loom_ia.core.model.tooling import (
+    MAIN_ROLE,
+    TERMINAL_HINT,
     TOOL_NAME_PATTERN,
     Approval,
     SideEffects,
@@ -71,6 +73,8 @@ from loom_ia.core.model.usage import Pricing, Usage
 __all__ = [
     "DEFAULT_TENANT",
     "INVALID_JSON_KEY",
+    "MAIN_ROLE",
+    "TERMINAL_HINT",
     "TOOL_NAME_PATTERN",
     "AnthropicMeta",
     "Approval",
