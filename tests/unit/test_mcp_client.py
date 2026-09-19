@@ -199,6 +199,12 @@ async def test_tools_are_prefixed_and_declared(caplog: pytest.LogCaptureFixture)
         "Additionne deux entiers.",
     )
     assert add.input_schema["required"] == ["a", "b"]
+    # Title racine retiré, comme pour les outils Python ; titres des propriétés gardés.
+    assert "title" not in add.input_schema
+    assert add.input_schema["properties"] == {
+        "a": {"title": "A", "type": "integer"},
+        "b": {"title": "B", "type": "integer"},
+    }
     assert specs["math__noter"].side_effects == "reversible"
     assert "Outil MCP 'point.dans.le.nom' du serveur math écarté" in caplog.text
     assert f"Outil MCP '{'n' * 70}' du serveur math écarté" in caplog.text

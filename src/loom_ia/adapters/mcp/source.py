@@ -20,7 +20,7 @@ from typing import Any, Final, cast
 from mcp import McpError, types
 from pydantic import JsonValue, ValidationError
 
-from loom_ia.adapters.mcp.convert import declared, description, to_output
+from loom_ia.adapters.mcp.convert import declared, description, input_schema, to_output
 from loom_ia.adapters.mcp.pool import McpPool
 from loom_ia.adapters.mcp.server import ConnectionLost, McpServer
 from loom_ia.adapters.mcp.transports import SessionFactory
@@ -155,7 +155,7 @@ class McpSource:
             spec = ToolSpec(
                 name=name,
                 description=description(tool),
-                input_schema=cast(dict[str, JsonValue], tool.inputSchema),
+                input_schema=input_schema(tool),
                 kind="mcp",
                 side_effects=side_effects,
                 idempotent=idempotent,

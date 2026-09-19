@@ -154,3 +154,15 @@ storage:
 **À faire en 3.5 :** un mécanisme commun aux modèles et aux serveurs MCP, avec son événement.
 
 **Statut :** à faire en 3.5.
+
+---
+
+## #012 — Forcer un appel d'outil (`tool_choice: required`)
+
+**Origine :** exemple de la phase 2.2 (`assistant_reel`). MiniMax-M3 a répondu sans appeler aucun outil, en inventant l'heure et un calcul. En essai direct, la même requête a donné 8 appels d'outils sur 9 : le modèle n'est pas régulier, et rien ne l'oblige à appeler un outil.
+
+**Constat :** `ModelRequest.tool_choice` ne connaît que `auto` et `none`. Les fournisseurs savent imposer un appel d'outil (`{"type": "any"}` chez Anthropic, `"required"` chez OpenAI).
+
+**À trancher en 3.1 :** une valeur `required` dans le domaine et les adaptateurs, et qui la pose : un réglage de l'agent (premier tour seulement ?) ou un hook `before_model` (décision `Replace` sur la requête). Garde-fou : jamais en `FINALIZING`, où `tool_choice` reste `none`.
+
+**Statut :** à trancher en 3.1.

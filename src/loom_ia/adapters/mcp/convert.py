@@ -7,6 +7,10 @@ défaut, que la config remplace. Sans annotation, la spec MCP considère un
 outil comme modifiant (``readOnlyHint: false``) et destructeur
 (``destructiveHint: true``) : il est donc traité comme irréversible.
 
+**Schéma d'entrée.** Il est transmis tel quel, sauf son ``title`` racine
+(``maintenantArguments`` chez FastMCP) : un nom technique sans intérêt pour le
+modèle, que les outils Python retirent déjà.
+
 **Résultats.** Les blocs ``text`` deviennent des blocs texte, et le contenu
 structuré (``structuredContent``) le ``data`` du résultat. Images, audio et
 ressources binaires sont remplacés par une mention en attendant les
@@ -28,6 +32,13 @@ def declared(annotations: types.ToolAnnotations | None) -> tuple[SideEffects, bo
         return "none", True
     side_effects: SideEffects = "reversible" if hints.destructiveHint is False else "irreversible"
     return side_effects, bool(hints.idempotentHint)
+
+
+def input_schema(tool: types.Tool) -> dict[str, JsonValue]:
+    """Schéma d'entrée montré au modèle : celui du serveur, sans son ``title`` racine."""
+    schema = cast(dict[str, JsonValue], dict(tool.inputSchema))
+    schema.pop("title", None)
+    return schema
 
 
 def description(tool: types.Tool) -> str:

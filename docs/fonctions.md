@@ -573,6 +573,7 @@ ToolOutput
 - **Connexion perdue pendant un appel :** l'appel est rejoué une fois après reconnexion s'il est sans risque (`side_effects: none` ou idempotent) ; sinon, le modèle reçoit l'erreur « état inconnu » (#18).
 - **Noms :** `serveur__outil`, ou `alias__outil`. Les noms de serveurs et les alias n'ont pas de `__`. Un outil dont le nom préfixé sort du format des API (lettres, chiffres, `_`, `-`, 64 caractères) est écarté, avec un avertissement.
 - **Déclarations :** annotations MCP, puis `mcp_servers[].tools`, puis la référence de l'agent. `readOnlyHint` donne `side_effects: none` et `idempotent: true` ; `destructiveHint: false` donne `reversible` ; `idempotentHint` donne `idempotent`. Sans annotation, l'outil est traité comme irréversible (valeurs par défaut de la spec MCP).
+- **Schéma d'entrée :** transmis tel quel, sauf son `title` racine (retiré, comme pour les outils Python).
 - **Résultats :** `text` → bloc texte, `structuredContent` → `data`, `isError` → `is_error` ; images, audio et ressources binaires remplacés par une mention en attendant les artefacts (2.3).
 - **Clé d'idempotence :** transmise dans `_meta`, sous `loom-ia/idempotency_key`.
 

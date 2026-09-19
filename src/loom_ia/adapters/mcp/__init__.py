@@ -5,7 +5,7 @@ Demande l'extra ``mcp`` ; le montage n'importe ce module que si la config
 déclare des serveurs.
 """
 
-from loom_ia.adapters.mcp.convert import declared, description, to_output
+from loom_ia.adapters.mcp.convert import declared, description, input_schema, to_output
 from loom_ia.adapters.mcp.pool import McpPool
 from loom_ia.adapters.mcp.server import BACKOFF, ConnectionLost, McpServer, is_connection_lost
 from loom_ia.adapters.mcp.source import IDEMPOTENCY_META, McpSelection, McpSource, McpTool
@@ -24,6 +24,7 @@ __all__ = [
     "SessionFactory",
     "declared",
     "description",
+    "input_schema",
     "is_connection_lost",
     "session_factory",
     "to_output",
