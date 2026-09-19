@@ -204,3 +204,17 @@ storage:
 **À faire en 3.5 :** avec le raisonnement (#7), renvoyer le raisonnement des tours d'outils aux modèles qui l'attendent, puis refaire l'essai avec gpt-oss.
 
 **Statut :** à faire en 3.5.
+
+---
+
+## #016 — Commande qui crée un agent par questions
+
+**Origine :** après la phase 2.5 (accès MCP) : brancher une nouvelle tâche loom sur Claude Desktop demande d'écrire à la main toute la structure d'un projet.
+
+**Constat :** la CLI (N4) sait lancer, reprendre, servir et valider, mais pas créer. Un projet loom demande `loom.yaml` (modèles, stockage JSONL, `imports`, `server.mcp.file_roots` au besoin), `agents/<agent>.yaml` (nom, description lue par le client MCP, `expose`, modèle, outils, `max_iterations`), `prompts/<agent>.md`, éventuellement `outils.py` et les dossiers `serveurs/` et `data/`, les noms des variables de clés, puis l'entrée de configuration du client MCP (commande `uv run … loom … mcp` en chemins absolus).
+
+**À faire :** une commande de la CLI qui pose les questions (projet, agent, description, modèles, outils Python ou serveurs MCP, accès publiés, dossiers autorisés) et crée toute la structure, validée ensuite comme par `loom validate`.
+
+**À trancher :** nom de la commande ; projet neuf seulement ou ajout d'un agent à un projet existant ; création d'un projet uv dépendant de loom ou usage de l'environnement du dépôt ; entrée du client MCP affichée ou écrite ; mode sans questions (options en ligne de commande) pour les scripts. Phase à fixer (aucune ne le prévoit dans `jalons.md`).
+
+**Statut :** à placer.
