@@ -26,8 +26,10 @@ from loom_ia.access.api import Loom, RunResult, StreamItem, UnknownRun
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.config import ConfigError, config_json_schema, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
-from loom_ia.core.events import Event, ToolCalled, ToolCompleted
-from loom_ia.core.model import RunId, SessionId, TextDelta, new_run_id
+from loom_ia.core.events import Event, ToolCalled, ToolCompleted, ToolSourceUnavailable
+from loom_ia.core.model import DEFAULT_TENANT, RunId, SessionId, TextDelta, new_run_id
+from loom_ia.core.ports import SourceContext
+from loom_ia.engine import ToolExecutor
 from loom_ia.runtime import apply_logging, load_registry
 
 PROG: Final = "loom"
@@ -144,8 +146,10 @@ async def _validate(args: argparse.Namespace) -> int:
             context = loom.context(spec.name)
             roles = "".join(f", rôle {role.name} ({role.model})" for role in spec.roles)
             print(
-                f"  {spec.name} : modèle {context.model_spec.id}, {len(spec.tools)} outil(s){roles}"
+                f"  {spec.name} : modèle {context.model_spec.id}, "
+                f"{len(spec.python_tools)} outil(s) Python{roles}"
             )
+            await _show_sources(spec.name, context.tools)
     print(f"\n{len(config.agents)} agent(s) monté(s) sans erreur.")
     return OK
 
@@ -256,6 +260,30 @@ def _show(item: StreamItem) -> None:
     elif isinstance(item, Event) and isinstance(item.payload, ToolCompleted):
         issue = " (erreur)" if item.payload.output.is_error else ""
         print(f"· {item.payload.tool_name} : fait{issue}", file=sys.stderr)
+    elif isinstance(item, Event) and isinstance(item.payload, ToolSourceUnavailable):
+        required = " (requis)" if item.payload.required else ""
+        print(
+            f"· serveur {item.payload.source} indisponible{required} : {item.payload.error}",
+            file=sys.stderr,
+        )
+
+
+async def _show_sources(agent: str, tools: ToolExecutor) -> None:
+    """Se connecte aux serveurs MCP de l'agent et liste leurs outils."""
+    if not tools.sources:
+        return
+    context = SourceContext(
+        tenant_id=DEFAULT_TENANT,
+        session_id=SessionId("validate"),
+        run_id=RunId("validate"),
+        agent=agent,
+    )
+    async with tools.opened(context) as opened:
+        found = [spec.name for spec in opened.tools.specs if spec.kind == "mcp"]
+        print(f"    MCP : {_listed(found)}")
+        for missing in opened.unavailable:
+            required = " (requis)" if missing.required else ""
+            print(f"    MCP {missing.source} indisponible{required} : {missing.error}")
 
 
 def _arguments(called: ToolCalled) -> str:

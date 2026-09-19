@@ -150,7 +150,7 @@ def test_config_can_be_written_in_python() -> None:
         (
             {},
             {"demo": {**AGENT, "tools": [{"mcp": "crm"}]}},
-            "'mcp' : prévu pour le jalon J2",
+            "Agent 'demo' : serveur MCP 'crm' non déclaré dans mcp_servers (serveurs : aucun)",
         ),
         (
             {},

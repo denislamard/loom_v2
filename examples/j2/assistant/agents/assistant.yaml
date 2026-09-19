@@ -1,0 +1,14 @@
+name: assistant
+description: Répond aux questions de date et de calcul avec deux serveurs MCP (modèle simulé).
+expose: {rest: true, mcp: true}
+
+main:
+  model: FAKE_MAIN
+  system_file: assistant.md
+
+max_iterations: 5
+
+tools:
+  - mcp: time                # outils time__maintenant et time__jours_entre
+  - mcp: math
+    include: [calculer]      # outil math__calculer

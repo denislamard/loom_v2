@@ -25,7 +25,7 @@ from loom_ia.config.later import (
     LATER_STORAGE,
     LATER_TELEMETRY,
 )
-from loom_ia.core.model import DomainModel, ModelSpec, reject_later
+from loom_ia.core.model import DomainModel, McpServerSpec, ModelSpec, reject_later
 from loom_ia.telemetry.logs import LogFormat
 
 SCHEMA_VERSION: Final = 1
@@ -162,6 +162,8 @@ class LoomConfig(DomainModel):
     agents_dir: Path = Path("agents")
     prompts_dir: Path = Path("prompts")
     models: tuple[ModelSpec, ...] = ()
+    # Serveurs MCP, référencés par les agents (#19).
+    mcp_servers: tuple[McpServerSpec, ...] = ()
     storage: StorageConfig = StorageConfig()
     execution: ExecutionConfig = ExecutionConfig()
     telemetry: TelemetryConfig = TelemetryConfig()
@@ -185,6 +187,16 @@ class LoomConfig(DomainModel):
             )
         _reject_doubles("Agent", [agent.name for agent in self.agents])
         _reject_doubles("Clé", [key.id for key in self.security.api_keys])
+        servers = [server.name for server in self.mcp_servers]
+        _reject_doubles("Serveur MCP", servers)
+        for agent in self.agents:
+            for ref in agent.mcp_tools:
+                if ref.mcp not in servers:
+                    declared = ", ".join(servers) or "aucun"
+                    raise ValueError(
+                        f"Agent {agent.name!r} : serveur MCP {ref.mcp!r} non déclaré "
+                        f"dans mcp_servers (serveurs : {declared})"
+                    )
         ids = [spec.id for spec in self.models]
         _reject_doubles("Modèle", ids)
         known = ", ".join(ids) or "aucun"
@@ -201,6 +213,13 @@ class LoomConfig(DomainModel):
                         f"non déclaré (modèles connus : {known})"
                     )
         return self
+
+    def mcp_server(self, name: str) -> McpServerSpec:
+        """Définition d'un serveur MCP par son nom."""
+        for server in self.mcp_servers:
+            if server.name == name:
+                return server
+        raise KeyError(name)
 
     def model_spec(self, model_id: str) -> ModelSpec:
         """Définition d'un modèle par son identifiant."""

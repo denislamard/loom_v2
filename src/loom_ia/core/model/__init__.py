@@ -29,6 +29,13 @@ from loom_ia.core.model.ids import (
     new_run_id,
     new_span_id,
 )
+from loom_ia.core.model.mcp_spec import (
+    MCP_NAME_PATTERN,
+    MCP_PREFIX_SEPARATOR,
+    McpScope,
+    McpServerSpec,
+    McpTransport,
+)
 from loom_ia.core.model.messages import Message, Role
 from loom_ia.core.model.model_spec import (
     ModelApi,
@@ -66,6 +73,7 @@ from loom_ia.core.model.tooling import (
     SideEffects,
     ToolDefinition,
     ToolKind,
+    ToolOverrides,
     ToolSpec,
 )
 from loom_ia.core.model.usage import Pricing, Usage
@@ -74,6 +82,8 @@ __all__ = [
     "DEFAULT_TENANT",
     "INVALID_JSON_KEY",
     "MAIN_ROLE",
+    "MCP_NAME_PATTERN",
+    "MCP_PREFIX_SEPARATOR",
     "TERMINAL_HINT",
     "TOOL_NAME_PATTERN",
     "AnthropicMeta",
@@ -84,6 +94,9 @@ __all__ = [
     "DomainModel",
     "EventId",
     "JsonBlock",
+    "McpScope",
+    "McpServerSpec",
+    "McpTransport",
     "Message",
     "ModelApi",
     "ModelCapabilities",
@@ -124,6 +137,7 @@ __all__ = [
     "ToolDefinition",
     "ToolKind",
     "ToolOutput",
+    "ToolOverrides",
     "ToolResultBlock",
     "ToolSpec",
     "UnsupportedKey",

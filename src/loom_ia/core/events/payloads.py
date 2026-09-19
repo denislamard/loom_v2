@@ -238,6 +238,23 @@ class ToolCompleted(Payload):
         return {**super().facets(), "is_error": self.output.is_error}
 
 
+class ToolSourceUnavailable(Payload):
+    """Source d'outils injoignable au début du run : ses outils sont retirés (#19)."""
+
+    category: ClassVar[EventCategory] = "tool"
+    facet_fields: ClassVar[tuple[str, ...]] = ("source", "required")
+
+    type: Literal["tool.source_unavailable"] = "tool.source_unavailable"
+    source: str
+    error: str
+    # Vrai si le run ne peut pas s'en passer : il échoue.
+    required: bool = False
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "error" if self.required else "warning"
+
+
 type DurablePayload = Annotated[
     RunStarted
     | StepStarted
@@ -249,7 +266,8 @@ type DurablePayload = Annotated[
     | ModelResponded
     | ModelRetried
     | ToolCalled
-    | ToolCompleted,
+    | ToolCompleted
+    | ToolSourceUnavailable,
     Field(discriminator="type"),
 ]
 
@@ -265,4 +283,5 @@ DURABLE_PAYLOADS: tuple[type[Payload], ...] = (
     ModelRetried,
     ToolCalled,
     ToolCompleted,
+    ToolSourceUnavailable,
 )

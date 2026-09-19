@@ -20,6 +20,7 @@ from loom_ia.core.events.payloads import (
     StepStarted,
     ToolCalled,
     ToolCompleted,
+    ToolSourceUnavailable,
     UserMessage,
 )
 from loom_ia.core.events.query import EventQuery
@@ -48,6 +49,7 @@ __all__ = [
     "StepStarted",
     "ToolCalled",
     "ToolCompleted",
+    "ToolSourceUnavailable",
     "UserMessage",
     "event_json_schema",
 ]

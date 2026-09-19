@@ -45,7 +45,13 @@ from loom_ia.core.model.base import DomainModel
 from loom_ia.core.ports import ChunkCallback, EventStore
 from loom_ia.core.projections import fold
 from loom_ia.engine import RunContext, begin_run, drive
-from loom_ia.runtime import Agent, build_agent, create_event_store, load_registry
+from loom_ia.runtime import (
+    Agent,
+    build_agent,
+    create_event_store,
+    create_mcp_pool,
+    load_registry,
+)
 
 # Ce qu'un run donne à voir pendant qu'il se déroule.
 type StreamItem = Event | ModelChunk
@@ -120,6 +126,8 @@ class Loom:
         self._owns_store = store is None
         self._environ = environ
         self._built: dict[str, Agent] = {}
+        # Connexions MCP de portée shared, communes à tous les agents.
+        self._mcp = create_mcp_pool(config, environ)
 
     @classmethod
     def from_config(
@@ -251,6 +259,7 @@ class Loom:
                 self._store,
                 registry=self._registry,
                 environ=self._environ,
+                mcp_pool=self._mcp,
             )
             self._built[agent] = built
         if on_chunk is None:
@@ -334,9 +343,11 @@ class Loom:
     # --- Cycle de vie ---------------------------------------------------------
 
     async def aclose(self) -> None:
-        """Ferme les clients de modèle, et le journal s'il vient de la config."""
+        """Ferme les clients de modèle, les connexions MCP et le journal s'il vient de la config."""
         for built in self._built.values():
             await built.aclose()
+        if self._mcp is not None:
+            await self._mcp.aclose()
         self._built.clear()
         if self._owns_store:
             await self._store.aclose()

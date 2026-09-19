@@ -1,0 +1,14 @@
+name: assistant_reel
+description: Répond aux questions de date et de calcul avec deux serveurs MCP (MiniMax-M3).
+expose: {rest: true, mcp: true}
+
+main:
+  model: M3_MAIN
+  system_file: assistant.md
+
+max_iterations: 5
+
+tools:
+  - mcp: time
+  - mcp: math
+    include: [calculer]

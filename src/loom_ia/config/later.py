@@ -8,7 +8,6 @@ ces clés sont refusées en nommant le jalon qui les apportera.
 from typing import Final
 
 LATER_ROOT: Final[dict[str, str]] = {
-    "mcp_servers": "J2.2 (client MCP)",
     "sessions": "J4 (sessions et compaction)",
     "budgets": "J3 (coûts et budgets)",
     "tenants": "J5 (multi-clients)",

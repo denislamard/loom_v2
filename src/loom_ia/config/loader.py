@@ -2,9 +2,11 @@
 """Lecture de ``loom.yaml`` et des agents (M1, #35).
 
 ``safe_load`` puis validation stricte par les modèles Pydantic. Les chemins
-(``agents_dir``, ``prompts_dir``, journal) sont relatifs au fichier de
-config et deviennent absolus au chargement. Un ``system_file`` manquant, un
-modèle inconnu ou un agent en double arrêtent le démarrage.
+(``agents_dir``, ``prompts_dir``, journal, ``cwd`` des serveurs MCP) sont
+relatifs au fichier de config et deviennent absolus au chargement. Un
+serveur MCP stdio sans ``cwd`` se lance depuis le dossier de la config. Un
+``system_file`` manquant, un modèle inconnu ou un agent en double arrêtent
+le démarrage.
 """
 
 from pathlib import Path
@@ -16,6 +18,7 @@ from pydantic import ValidationError
 from loom_ia.agents.spec import AgentSpec, BaseRole
 from loom_ia.config.errors import ConfigError, from_validation
 from loom_ia.config.models import LoomConfig
+from loom_ia.core.model import McpServerSpec
 
 AGENT_SUFFIXES = (".yaml", ".yml")
 
@@ -38,8 +41,17 @@ def load_config(path: str | Path) -> LoomConfig:
             "agents_dir": base_dir / config.agents_dir,
             "prompts_dir": base_dir / config.prompts_dir,
             "storage": _absolute_storage(config, base_dir),
+            "mcp_servers": tuple(_launched_from(server, base_dir) for server in config.mcp_servers),
         }
     )
+
+
+def _launched_from(server: McpServerSpec, base_dir: Path) -> McpServerSpec:
+    """Un serveur stdio se lance depuis le dossier de la config, sauf ``cwd`` absolu."""
+    if server.transport != "stdio":
+        return server
+    cwd = base_dir if server.cwd is None else base_dir / server.cwd
+    return server.model_copy(update={"cwd": cwd})
 
 
 def _load_agents(agents_dir: Path, prompts_dir: Path) -> list[AgentSpec]:

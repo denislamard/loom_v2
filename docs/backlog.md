@@ -142,3 +142,15 @@ storage:
 **À faire en 3.4 :** contrôle au démarrage quand un budget s'applique à un agent dont un modèle (`main`, rôle, juge, secours) n'a pas de tarif : avertissement en profil dev, erreur en profil prod. Les tarifs par palier (MiniMax-M3 double ses prix au-delà de 512k tokens d'entrée) sont une question voisine, à trancher au même moment.
 
 **Statut :** à faire en 3.4.
+
+---
+
+## #011 — Disjoncteur des serveurs MCP
+
+**Origine :** phase 2.2.
+
+**Constat :** en 2.2, un serveur MCP en échec est seulement réessayé avec backoff (1, 2, 5, 10 puis 30 s). Le disjoncteur prévu en #19 (serveur écarté pendant T secondes après N échecs, pour tous les runs) n'est pas réalisé.
+
+**À faire en 3.5 :** un mécanisme commun aux modèles et aux serveurs MCP, avec son événement.
+
+**Statut :** à faire en 3.5.

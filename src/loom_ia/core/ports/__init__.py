@@ -14,7 +14,15 @@ from loom_ia.core.ports.model_client import (
     ModelError,
     complete,
 )
-from loom_ia.core.ports.tool import Tool, ToolContext, ToolError, idempotency_key
+from loom_ia.core.ports.tool import (
+    SourceContext,
+    SourceUnavailable,
+    Tool,
+    ToolContext,
+    ToolError,
+    ToolSource,
+    idempotency_key,
+)
 
 __all__ = [
     "RETRYABLE_ERRORS",
@@ -24,9 +32,12 @@ __all__ = [
     "ModelClient",
     "ModelError",
     "SequenceConflict",
+    "SourceContext",
+    "SourceUnavailable",
     "Tool",
     "ToolContext",
     "ToolError",
+    "ToolSource",
     "complete",
     "idempotency_key",
     "journal_key",

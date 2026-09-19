@@ -37,6 +37,15 @@ class ToolDefinition(DomainModel):
     input_schema: dict[str, JsonValue] = Field(default_factory=_empty_object_schema)
 
 
+class ToolOverrides(DomainModel):
+    """Déclarations d'un outil fixées par la config ; ``None`` garde celle de l'outil."""
+
+    side_effects: SideEffects | None = None
+    approval: Approval | None = None
+    idempotent: bool | None = None
+    timeout: PositiveFloat | None = None
+
+
 class ToolSpec(ToolDefinition):
     """Définition complétée des déclarations utiles au moteur."""
 
@@ -53,6 +62,13 @@ class ToolSpec(ToolDefinition):
     def safe_to_retry(self) -> bool:
         """Vrai si une réexécution après interruption est sans risque (#18)."""
         return self.side_effects == "none" or self.idempotent
+
+    def overridden(self, overrides: ToolOverrides | None) -> ToolSpec:
+        """Déclarations remplacées par celles que ``overrides`` renseigne."""
+        if overrides is None:
+            return self
+        changes = overrides.model_dump(exclude_none=True)
+        return self.model_copy(update=changes) if changes else self
 
     def definition(self) -> ToolDefinition:
         """Ce que voit le modèle ; un outil terminal le dit dans sa description."""

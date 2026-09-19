@@ -7,6 +7,7 @@ from loom_ia.engine.executor import (
     UNKNOWN_STATE,
     AnyTool,
     Delegated,
+    OpenedTools,
     ToolEvent,
     ToolExecutor,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "Delegated",
     "DelegatedPayload",
     "DelegatedTool",
+    "OpenedTools",
     "RefError",
     "ResultIndex",
     "RoleDefinition",

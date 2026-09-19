@@ -31,7 +31,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import aclosing
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Final
 
 from pydantic import JsonValue
@@ -50,6 +50,7 @@ from loom_ia.core.events import (
     StepCompleted,
     StepStarted,
     ToolCompleted,
+    ToolSourceUnavailable,
     UserMessage,
 )
 from loom_ia.core.model import (
@@ -72,7 +73,7 @@ from loom_ia.core.model import (
     new_run_id,
     new_span_id,
 )
-from loom_ia.core.ports import ChunkCallback, EventStore, ModelClient, ModelError
+from loom_ia.core.ports import ChunkCallback, EventStore, ModelClient, ModelError, SourceContext
 from loom_ia.core.projections import apply, fold, history
 from loom_ia.engine.executor import Delegated, ToolExecutor
 from loom_ia.engine.model_call import ModelCall, responded
@@ -158,6 +159,11 @@ async def drive(
     """Fait avancer le run jusqu'à un état où il ne peut plus avancer seul.
 
     Sans ``session_id``, le run est son propre journal (``session_id = run_id``).
+
+    Les sources d'outils de l'agent (serveurs MCP) sont ouvertes au début et
+    refermées à la fin : leurs outils restent fixes pendant tout le ``drive``.
+    Une source injoignable est journalisée (``tool.source_unavailable``) ; si
+    le run ne peut pas s'en passer, il échoue.
     """
     tenant = tenant_id or DEFAULT_TENANT
     session = session_id or SessionId(run_id)
@@ -166,24 +172,54 @@ async def drive(
     state = fold(own, run_id)
     if state.agent != ctx.agent:
         raise ValueError(f"Le run {run_id} appartient à l'agent {state.agent!r}, pas {ctx.agent!r}")
+    if state.finished or state.status not in _ACTIONABLE:
+        return state
     previous = history(e for e in events if e.seq < own[0].seq)
     cause = next((e for e in reversed(own) if e.category in {"model", "tool"}), None)
     last_seq = events[-1].seq
 
-    while not state.finished and state.status in _ACTIONABLE:
-        emitted = 0
-        async with aclosing(step(state, ctx, previous, cause=cause)) as drafts:
-            async for draft in drafts:
-                [event] = await ctx.store.append([draft], expected_seq=last_seq)
-                last_seq = event.seq
-                emitted += 1
-                if event.category in {"model", "tool"}:
-                    cause = event
-                if isinstance(event.payload, RunTransitioned):
-                    _log_transition(event, event.payload)
-                state = apply(state, event)
-        if emitted == 0:
-            raise RuntimeError(f"Run {run_id} : aucune progression depuis l'état {state.status}")
+    async def write(draft: EventDraft) -> Event:
+        nonlocal state, last_seq, cause
+        [event] = await ctx.store.append([draft], expected_seq=last_seq)
+        last_seq = event.seq
+        if event.category in {"model", "tool"}:
+            cause = event
+        if isinstance(event.payload, RunTransitioned):
+            _log_transition(event, event.payload)
+        state = apply(state, event)
+        return event
+
+    sources = SourceContext(
+        tenant_id=state.context.tenant_id,
+        session_id=state.session_id,
+        run_id=run_id,
+        agent=state.agent,
+    )
+    async with ctx.tools.opened(sources) as opened:
+        scope = _scope(state)
+        blocking: tuple[Event, ToolSourceUnavailable] | None = None
+        for payload in opened.unavailable:
+            event = await write(scope.draft(payload))
+            if payload.required and blocking is None:
+                blocking = event, payload
+        if blocking is not None:
+            event, payload = blocking
+            await write(_transition(state, scope, RunStatus.FAILED, event))
+            reason = f"source {payload.source} requise et indisponible : {payload.error}"
+            await write(scope.draft(_failed(state, payload.type, reason)))
+            return state
+
+        run_ctx = replace(ctx, tools=opened.tools)
+        while not state.finished and state.status in _ACTIONABLE:
+            emitted = 0
+            async with aclosing(step(state, run_ctx, previous, cause=cause)) as drafts:
+                async for draft in drafts:
+                    await write(draft)
+                    emitted += 1
+            if emitted == 0:
+                raise RuntimeError(
+                    f"Run {run_id} : aucune progression depuis l'état {state.status}"
+                )
     return state
 
 

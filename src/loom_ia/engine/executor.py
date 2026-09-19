@@ -21,16 +21,16 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable, Iterable
-from contextlib import aclosing
+from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from dataclasses import dataclass
 from typing import Final
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, SchemaError
 from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
 from pydantic import JsonValue
 
-from loom_ia.core.events import ToolCalled, ToolCompleted
+from loom_ia.core.events import ToolCalled, ToolCompleted, ToolSourceUnavailable
 from loom_ia.core.model import (
     INVALID_JSON_KEY,
     PendingCall,
@@ -39,7 +39,14 @@ from loom_ia.core.model import (
     ToolOutput,
     ToolSpec,
 )
-from loom_ia.core.ports import Tool, ToolContext, ToolError
+from loom_ia.core.ports import (
+    SourceContext,
+    SourceUnavailable,
+    Tool,
+    ToolContext,
+    ToolError,
+    ToolSource,
+)
 from loom_ia.engine.delegated import DelegatedPayload, DelegatedTool, RunView
 from loom_ia.engine.refs import RefError
 
@@ -81,6 +88,15 @@ class _Ready:
 
 
 @dataclass(frozen=True, slots=True)
+class OpenedTools:
+    """Outils d'un run : ceux de l'agent, plus ceux de ses sources disponibles."""
+
+    tools: ToolExecutor
+    # Sources injoignables à l'ouverture, à journaliser.
+    unavailable: tuple[ToolSourceUnavailable, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class _Crashed:
     """Exception sortie d'une tâche d'exécution : elle interrompt le lot."""
 
@@ -94,15 +110,73 @@ class ToolExecutor:
         self,
         tools: Iterable[AnyTool] = (),
         *,
+        sources: Iterable[ToolSource] = (),
         default_timeout: float | None = DEFAULT_TOOL_TIMEOUT,
         validate_arguments: bool = True,
     ) -> None:
         self.default_timeout = default_timeout
         self.validate_arguments = validate_arguments
+        # Sources ouvertes au début de chaque run (serveurs MCP, #19).
+        self.sources: tuple[ToolSource, ...] = tuple(sources)
         self._tools: dict[str, AnyTool] = {}
         self._validators: dict[str, Validator] = {}
         for tool in tools:
             self.add(tool)
+
+    @asynccontextmanager
+    async def opened(self, context: SourceContext) -> AsyncGenerator[OpenedTools]:
+        """Outils du run, jusqu'à la sortie du contexte.
+
+        Chaque source est ouverte dans l'ordre de déclaration. Une source
+        injoignable est écartée et signalée, les autres restent utilisables.
+        Un outil de source dont le nom ou le schéma pose problème est écarté,
+        avec un avertissement.
+        """
+        if not self.sources:
+            yield OpenedTools(tools=self)
+            return
+        async with AsyncExitStack() as stack:
+            tools = self._copy()
+            unavailable: list[ToolSourceUnavailable] = []
+            for source in self.sources:
+                try:
+                    provided = await stack.enter_async_context(source.open(context))
+                except Exception as exc:
+                    message = exc.message if isinstance(exc, SourceUnavailable) else repr(exc)
+                    logger.warning(
+                        "Source d'outils %s indisponible : %s",
+                        source.name,
+                        message,
+                        exc_info=not isinstance(exc, SourceUnavailable),
+                        extra={"run_id": context.run_id},
+                    )
+                    unavailable.append(
+                        ToolSourceUnavailable(
+                            source=source.name, error=message, required=source.required
+                        )
+                    )
+                    continue
+                for tool in provided:
+                    try:
+                        tools.add(tool)
+                    except (ValueError, SchemaError) as exc:
+                        logger.warning(
+                            "Outil %s de la source %s écarté : %s",
+                            tool.spec.name,
+                            source.name,
+                            exc,
+                            extra={"run_id": context.run_id},
+                        )
+            yield OpenedTools(tools=tools, unavailable=tuple(unavailable))
+
+    def _copy(self) -> ToolExecutor:
+        """Mêmes outils et réglages, sans les sources : base des outils d'un run."""
+        copy = ToolExecutor(
+            default_timeout=self.default_timeout, validate_arguments=self.validate_arguments
+        )
+        copy._tools = dict(self._tools)
+        copy._validators = dict(self._validators)
+        return copy
 
     def add(self, tool: AnyTool) -> None:
         spec = tool.spec

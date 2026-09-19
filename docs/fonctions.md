@@ -563,6 +563,19 @@ ToolOutput
 - **Espaces de noms :** les outils sont préfixés par le serveur (`crm__rechercher`).
 - **Catalogue :** les outils découverts peuvent varier d'un client à l'autre ; la sélection par run (D7) en tient compte.
 
+**Réalisation (phase 2.2) :**
+
+- **Source d'outils :** chaque serveur référencé par un agent est une source (port `ToolSource`), ouverte au début de chaque `drive` et refermée à la fin. Les outils obtenus restent fixes pendant tout le `drive` : les requêtes au modèle restent stables. Une nouvelle liste (`tools/list_changed`) vaut pour les runs suivants.
+- **Portées :** `shared` (connexion gardée par l'instance `Loom`, partagée par les runs et les agents, fermée après `idle_timeout`) et `run` (connexion ouverte et fermée avec chaque `drive` ; après une reprise, c'est une nouvelle connexion, donc l'état d'un serveur à état est perdu). `tenant` arrive en 5.1.
+- **Contrôle de santé :** un `ping` à chaque réutilisation d'une connexion partagée pour un nouveau run ; une connexion morte est rouverte.
+- **Reconnexion :** après un échec de connexion, attentes de 1, 2, 5, 10 puis 30 s ; entre-temps, le serveur est déclaré indisponible sans nouvel essai. Le disjoncteur commun aux modèles et aux serveurs MCP arrive en 3.5.
+- **Serveur indisponible au démarrage :** ses outils sont retirés pour le run, et l'événement durable `tool.source_unavailable` (serveur, erreur, `required`) est écrit avant la première étape. Avec `required: true`, le run passe en `FAILED`.
+- **Connexion perdue pendant un appel :** l'appel est rejoué une fois après reconnexion s'il est sans risque (`side_effects: none` ou idempotent) ; sinon, le modèle reçoit l'erreur « état inconnu » (#18).
+- **Noms :** `serveur__outil`, ou `alias__outil`. Les noms de serveurs et les alias n'ont pas de `__`. Un outil dont le nom préfixé sort du format des API (lettres, chiffres, `_`, `-`, 64 caractères) est écarté, avec un avertissement.
+- **Déclarations :** annotations MCP, puis `mcp_servers[].tools`, puis la référence de l'agent. `readOnlyHint` donne `side_effects: none` et `idempotent: true` ; `destructiveHint: false` donne `reversible` ; `idempotentHint` donne `idempotent`. Sans annotation, l'outil est traité comme irréversible (valeurs par défaut de la spec MCP).
+- **Résultats :** `text` → bloc texte, `structuredContent` → `data`, `isError` → `is_error` ; images, audio et ressources binaires remplacés par une mention en attendant les artefacts (2.3).
+- **Clé d'idempotence :** transmise dans `_meta`, sous `loom-ia/idempotency_key`.
+
 **Plusieurs serveurs par agent :**
 
 ```yaml
@@ -677,6 +690,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué) |
 | `tool.called` | tool_name, tool_kind, call_id, arguments, refs |
 | `tool.completed` | tool_name, call_id, is_error, sortie (blocs ou réf.), latence, taille |
+| `tool.source_unavailable` | source (serveur MCP), erreur, required (voir point 19) |
 | `guard.checked` | guard, cible, outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized (voir points 20 et 21) |
 | `judge.evaluated` | modèle juge, scores par critère, bloquant, réussi |
 | `approval.requested` / `.granted` / `.rejected` / `.expired` | tool_name, call_id, arguments, auteur, motif, scope, expire_at (voir point 17) |

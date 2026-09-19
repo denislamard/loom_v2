@@ -11,18 +11,29 @@ modèle, le prompt système et les réglages ``llm``.
 """
 
 from pathlib import Path
-from typing import Final, Literal, Self, cast
+from typing import Annotated, Final, Literal, Self, cast
 
 from jsonschema import Draft202012Validator, SchemaError
 from jsonschema.validators import validator_for
-from pydantic import Field, JsonValue, PositiveFloat, PositiveInt, model_validator
+from pydantic import (
+    Discriminator,
+    Field,
+    JsonValue,
+    PositiveFloat,
+    PositiveInt,
+    Tag,
+    model_validator,
+)
 
 from loom_ia.core.model import (
     MAIN_ROLE,
+    MCP_NAME_PATTERN,
+    MCP_PREFIX_SEPARATOR,
     TOOL_NAME_PATTERN,
     Approval,
     DomainModel,
     SideEffects,
+    ToolOverrides,
     UnsupportedKey,
     reject_later,
 )
@@ -56,7 +67,6 @@ LATER_CONTEXT: Final[dict[str, str]] = {
     "last_turns": "J4.1 (sessions)",
 }
 LATER_TOOL: Final[dict[str, str]] = {
-    "mcp": "J2.2 (client MCP)",
     "offload_over": "J2.3 (déport des gros résultats)",
 }
 
@@ -265,13 +275,60 @@ class PythonTool(DomainModel):
         return data
 
 
+class McpTools(DomainModel):
+    """Serveur MCP référencé par un agent (#19).
+
+    Les outils prennent le préfixe ``serveur__`` (ou ``alias__``) ; ``include``
+    ou ``exclude`` choisit ceux qui sont exposés, ``tools`` fixe leurs
+    déclarations pour cet agent.
+    """
+
+    mcp: str = Field(pattern=MCP_NAME_PATTERN)
+    # Préfixe plus court que le nom du serveur.
+    alias: str | None = Field(default=None, pattern=MCP_NAME_PATTERN, max_length=40)
+    include: tuple[str, ...] | None = None
+    exclude: tuple[str, ...] | None = None
+    # Sans ce serveur, le run échoue au lieu de continuer sans ses outils.
+    required: bool = False
+    tools: dict[str, ToolOverrides] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_filters(self) -> Self:
+        if self.include is not None and self.exclude is not None:
+            raise ValueError(f"Serveur MCP {self.mcp!r} : 'include' ou 'exclude', pas les deux")
+        return self
+
+    @property
+    def prefix(self) -> str:
+        return self.alias or self.mcp
+
+    def owns(self, tool: str) -> bool:
+        """Vrai si ``tool`` porte le préfixe de cette référence."""
+        return tool.startswith(f"{self.prefix}{MCP_PREFIX_SEPARATOR}")
+
+
+def _tool_kind(value: object) -> str:
+    if isinstance(value, McpTools):
+        return "mcp"
+    if isinstance(value, dict) and "mcp" in value:
+        return "mcp"
+    return "python"
+
+
+type ToolRef = Annotated[
+    Annotated[PythonTool, Tag("python")] | Annotated[McpTools, Tag("mcp")],
+    Discriminator(_tool_kind),
+]
+
+
 class AgentSpec(DomainModel):
     name: str = Field(pattern=AGENT_NAME_PATTERN)
     description: str = ""
     expose: Expose = Expose()
     main: MainRole
     max_iterations: PositiveInt = 10
-    tools: tuple[PythonTool, ...] = ()
+    # Outils Python et serveurs MCP, dans l'ordre de déclaration.
+    tools: tuple[ToolRef, ...] = ()
     roles: tuple[RoleSpec, ...] = ()
 
     @model_validator(mode="before")
@@ -282,12 +339,27 @@ class AgentSpec(DomainModel):
 
     @model_validator(mode="after")
     def _unique_tools(self) -> Self:
-        names = [tool.python for tool in self.tools]
+        names = [tool.python for tool in self.python_tools]
         doubles = {name for name in names if names.count(name) > 1}
         if doubles:
             raise ValueError(f"Outil déclaré deux fois : {', '.join(sorted(doubles))}")
+        prefixes = [ref.prefix for ref in self.mcp_tools]
+        doubles = {name for name in prefixes if prefixes.count(name) > 1}
+        if doubles:
+            raise ValueError(
+                f"Préfixe MCP déclaré deux fois : {', '.join(sorted(doubles))} "
+                "(donner un 'alias' à l'une des références)"
+            )
         roles = [role.name for role in self.roles]
         doubles = {name for name in roles if roles.count(name) > 1}
         if doubles:
             raise ValueError(f"Rôle déclaré deux fois : {', '.join(sorted(doubles))}")
         return self
+
+    @property
+    def python_tools(self) -> tuple[PythonTool, ...]:
+        return tuple(tool for tool in self.tools if isinstance(tool, PythonTool))
+
+    @property
+    def mcp_tools(self) -> tuple[McpTools, ...]:
+        return tuple(tool for tool in self.tools if isinstance(tool, McpTools))

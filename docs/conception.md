@@ -322,6 +322,7 @@ Event
 | `idempotency.recorded` | clé, call_id, résultat |
 | `tool.called` | tool_name, tool_kind, call_id, arguments, refs |
 | `tool.completed` | tool_name, call_id, is_error, sortie (blocs ou réf.), latence, taille |
+| `tool.source_unavailable` | source (serveur MCP), erreur, required |
 | `guard.checked` | guard, cible, outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized |
 | `judge.evaluated` | modèle juge, scores par critère, bloquant, réussi |
 | `policy.decided` | hook, point, décision, motif |
@@ -550,7 +551,9 @@ IdempotencyStore
 | `tenant` | Une par client, avec ses identifiants | Serveurs qui détiennent des données client |
 | `run` | Ouverte et fermée avec le run | Serveurs à état, sandbox |
 
-Connexion à la première utilisation, contrôle de santé, reconnexion avec backoff et disjoncteur, fermeture après inactivité, liste d'outils en cache rafraîchie sur `tools/list_changed`. Les outils sont préfixés par leur serveur (`crm__rechercher`). La sélection des outils par run (D7) tient compte des outils propres à chaque client.
+Connexion à la première utilisation, contrôle de santé, reconnexion avec backoff et disjoncteur (3.5), fermeture après inactivité, liste d'outils en cache rafraîchie sur `tools/list_changed`. Les outils sont préfixés par leur serveur (`crm__rechercher`). La sélection des outils par run (D7) tient compte des outils propres à chaque client.
+
+Les outils d'un serveur sont obtenus au début de chaque run (port `ToolSource`) et restent fixes jusqu'à sa fin. Un serveur injoignable est journalisé (`tool.source_unavailable`) et ses outils sont retirés du run ; avec `required: true`, le run échoue. Une connexion perdue pendant un appel n'est rejouée que pour un outil sans risque (#18). Détails de réalisation : `fonctions.md`, point 19.
 
 **Plusieurs serveurs par agent :**
 
@@ -1090,15 +1093,23 @@ judge:
 
 ```yaml
 mcp_servers:
-  - name: crm
+  - name: crm                         # sans « __ » : il préfixe les outils
     transport: http                   # stdio | http
     url: https://crm.example/mcp
-    headers_env: {Authorization: CRM_TOKEN}
-    # stdio : command, args, env
-    scope: tenant                     # shared | tenant | run
-    idle_timeout: 300
+    headers_env: {Authorization: CRM_TOKEN}   # en-tête ← variable d'environnement
+    scope: tenant                     # shared | tenant (J5.1) | run
+    connect_timeout: 10               # connexion et initialisation
+    idle_timeout: 300                 # shared : fermeture après inactivité ; null la garde
     tools:
       envoyer_email: {side_effects: irreversible, approval: always}
+  - name: math
+    transport: stdio
+    command: python
+    args: [serveurs/serveur_math.py]
+    cwd: .                            # relatif à loom.yaml ; par défaut son dossier
+    env: {NIVEAU: "2"}                # valeurs en clair
+    env_from: {JETON: MATH_TOKEN}     # variable du serveur ← variable de loom-ia
+    scope: run
 ```
 
 Un agent peut référencer plusieurs serveurs : voir §9.5.
