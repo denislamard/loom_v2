@@ -2,8 +2,14 @@
 """Serveur MCP : un agent, un outil (N3, D4).
 
 Chaque agent publié (``expose.mcp``) devient un outil MCP qui prend un
-message et rend la réponse du run. Un outil de plus, ``run_status``, relit un
-run par son identifiant.
+message, éventuellement des images (argument ``attachments``, décrit dans le
+module du même nom), et rend la réponse du run avec la liste de ses fichiers. Un outil de plus,
+``run_status``, relit un run par son identifiant.
+
+Progression (D4) : si le client en demande une (``progressToken``), chaque
+étape visible du run — appels d'outils, fichiers rangés, sous-agents qui
+démarrent et se terminent, avec leurs propres appels — lui est envoyée en
+notification de progression, dans l'ordre du journal.
 
 Le transport du jalon J1 est stdio : le client lance le process et parle sur
 son entrée et sa sortie standard. Les logs de loom vont sur la sortie
@@ -23,8 +29,11 @@ from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
 from loom_ia.access.api import Loom, RunResult
+from loom_ia.access.mcp_server.attachments import ATTACHMENTS_INPUT, AttachmentReader
+from loom_ia.access.progress import Progress
 from loom_ia.agents.registry import UnknownAgent
-from loom_ia.core.model import RunId, SessionId
+from loom_ia.core.events import Event
+from loom_ia.core.model import DEFAULT_TENANT, Attachment, RunId, SessionId, new_run_id
 
 SERVER_NAME: Final = "loom"
 STATUS_TOOL: Final = "run_status"
@@ -37,6 +46,7 @@ AGENT_INPUT: Final[dict[str, Any]] = {
             "type": "string",
             "description": "Journal auquel rattacher le run, pour poursuivre un échange",
         },
+        "attachments": ATTACHMENTS_INPUT,
     },
     "required": ["message"],
     "additionalProperties": False,
@@ -62,6 +72,22 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
         "text": {"type": "string"},
         "error": {"type": ["string", "null"]},
         "iterations": {"type": "integer"},
+        # Fichiers du run : pièces jointes, fichiers produits, déports.
+        "artifacts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "uri": {"type": "string"},
+                    "media_type": {"type": "string"},
+                    "size": {"type": "integer"},
+                    "name": {"type": "string"},
+                    "origin": {"type": "string"},
+                    "call_id": {"type": "string"},
+                },
+                "required": ["uri", "media_type", "size", "origin"],
+            },
+        },
     },
     "required": ["run_id", "session_id", "agent", "status", "text"],
 }
@@ -70,6 +96,13 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
 def create_server(loom: Loom, *, name: str = SERVER_NAME) -> Server[object, Any]:
     """Serveur MCP publiant les agents d'une instance."""
     server = Server[object, Any](name, version=_package_version(), instructions=_instructions(loom))
+    # Le serveur MCP n'a qu'un client : celui par défaut (les clients viendront en J5).
+    reader = AttachmentReader(
+        loom.artifacts,
+        loom.config.execution.attachments,
+        tenant=DEFAULT_TENANT,
+        roots=loom.config.server.mcp.file_roots,
+    )
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
@@ -102,10 +135,39 @@ def create_server(loom: Loom, *, name: str = SERVER_NAME) -> Server[object, Any]
             result = await loom.result(RunId(str(arguments["run_id"])), session_id=session_id)
         else:
             _published(loom, tool)
-            result = await loom.run(tool, str(arguments["message"]), session_id=session_id)
+            attachments = await reader.read(arguments.get("attachments"))
+            message = str(arguments["message"])
+            result = await _run(server, loom, tool, message, attachments, session_id)
         return [types.TextContent(type="text", text=_answer(result))], structured(result)
 
     return server
+
+
+async def _run(
+    server: Server[object, Any],
+    loom: Loom,
+    agent: str,
+    message: str,
+    attachments: list[Attachment],
+    session_id: SessionId | None,
+) -> RunResult:
+    """Fait tourner le run ; suit sa progression si le client en demande une."""
+    ctx = server.request_context
+    token = ctx.meta.progressToken if ctx.meta is not None else None
+    if token is None:
+        return await loom.run(agent, message, attachments=attachments, session_id=session_id)
+    run_id = new_run_id()
+    progress = Progress()
+    sent = 0
+    async for item in loom.stream(
+        agent, message, attachments=attachments, session_id=session_id, run_id=run_id
+    ):
+        if isinstance(item, Event) and (line := progress.line(item)) is not None:
+            sent += 1
+            await ctx.session.send_progress_notification(
+                token, sent, message=line, related_request_id=str(ctx.request_id)
+            )
+    return await loom.result(run_id, session_id=session_id)
 
 
 async def run_stdio(loom: Loom, *, name: str = SERVER_NAME) -> None:
@@ -125,6 +187,9 @@ def structured(result: RunResult) -> dict[str, Any]:
         "text": result.text,
         "error": result.error,
         "iterations": result.iterations,
+        "artifacts": [
+            artifact.model_dump(mode="json", exclude_none=True) for artifact in result.artifacts
+        ],
     }
 
 

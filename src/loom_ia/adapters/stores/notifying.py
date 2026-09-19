@@ -12,6 +12,10 @@ Deux formes d'abonnement, la seconde bâtie sur la première :
   source, comme les morceaux du modèle ;
 - ``subscribe()`` : un objet qui s'itère en ``async for``.
 
+Les deux se restreignent à un run (``run_id``) ou à un filtre (``accept``),
+appelé à chaque écriture dans l'ordre du journal : l'arbre d'un run
+(``RunTree.admit``) s'y reconnaît au fil de l'eau.
+
 C'est la place que prendra le bus du jalon J4 : le jour où les événements
 passeront par un courtier, seuls ces deux abonnements changeront de source.
 """
@@ -26,6 +30,7 @@ from loom_ia.core.model import RunId, SessionId, TenantId
 from loom_ia.core.ports import EventStore
 
 type EventSink = Callable[[Event], None]
+type EventFilter = Callable[[Event], bool]
 
 
 class Subscription:
@@ -69,7 +74,7 @@ class NotifyingEventStore:
 
     def __init__(self, inner: EventStore) -> None:
         self._inner = inner
-        self._sinks: list[tuple[EventSink, RunId | None]] = []
+        self._sinks: list[tuple[EventSink, RunId | None, EventFilter | None]] = []
 
     @property
     def inner(self) -> EventStore:
@@ -80,13 +85,20 @@ class NotifyingEventStore:
         return len(self._sinks)
 
     @contextmanager
-    def listen(self, sink: EventSink, run_id: RunId | None = None) -> Generator[EventSink]:
+    def listen(
+        self,
+        sink: EventSink,
+        run_id: RunId | None = None,
+        *,
+        accept: EventFilter | None = None,
+    ) -> Generator[EventSink]:
         """Appelle ``sink`` à chaque écriture, le temps du bloc.
 
-        Sans ``run_id``, tous les événements écrits sont remis. ``sink`` est
-        appelé depuis ``append`` : il ne doit rien attendre.
+        Sans ``run_id`` ni ``accept``, tous les événements écrits sont remis.
+        ``sink`` et ``accept`` sont appelés depuis ``append`` : ils ne doivent
+        rien attendre.
         """
-        entry = (sink, run_id)
+        entry = (sink, run_id, accept)
         self._sinks.append(entry)
         try:
             yield sink
@@ -96,10 +108,12 @@ class NotifyingEventStore:
                 self._sinks.remove(entry)
 
     @asynccontextmanager
-    async def subscribe(self, run_id: RunId | None = None) -> AsyncGenerator[Subscription]:
+    async def subscribe(
+        self, run_id: RunId | None = None, *, accept: EventFilter | None = None
+    ) -> AsyncGenerator[Subscription]:
         """Abonnement itérable, fermé à la sortie du bloc."""
         subscription = Subscription()
-        with self.listen(subscription.offer, run_id):
+        with self.listen(subscription.offer, run_id, accept=accept):
             try:
                 yield subscription
             finally:
@@ -110,8 +124,10 @@ class NotifyingEventStore:
     ) -> list[Event]:
         events = await self._inner.append(drafts, expected_seq=expected_seq)
         for event in events:
-            for sink, run_id in tuple(self._sinks):
-                if run_id is None or event.run_id == run_id:
+            for sink, run_id, accept in tuple(self._sinks):
+                if run_id is not None and event.run_id != run_id:
+                    continue
+                if accept is None or accept(event):
                     sink(event)
         return events
 

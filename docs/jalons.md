@@ -52,7 +52,7 @@ Les commandes ci-dessous sont indicatives.
 
 | Accès | Exécution |
 |---|---|
-| Python | `uv run python examples/j1/run.py` (`loom.run()` puis `loom.stream()`) |
+| Python | `uv run --extra http --extra mcp python examples/j1/acces.py` (`loom.run()` puis `loom.stream()`, puis REST et MCP, journaux comparés) |
 | CLI | `uv run loom run demo "Combien font 12 × 7 + 3 ?"` · `uv run loom resume <run_id>` · `uv run loom validate` |
 | REST | `uv run loom serve`, puis `curl -X POST …/v1/agents/demo/runs` et `curl -N …/v1/runs/<id>/events` |
 | MCP | `uv run loom mcp`, testé avec MCP Inspector ou `claude mcp add loom -- uv run loom mcp` |
@@ -81,10 +81,10 @@ Les commandes ci-dessous sont indicatives.
 
 | Accès | Exécution |
 |---|---|
-| Python | `examples/j2/run.py` (avec et sans image) |
-| CLI | `loom run assistant "…" --attach photo.jpg` |
+| Python | `examples/j2/acces.py` (avec image, par les trois accès, arbres comparés) ; sans image : `examples/j2/client_mcp.py` |
+| CLI | `loom run assistant "…" --attach photo.jpg --stream` |
 | REST | `POST …/runs` en multipart avec l'image ; SSE qui montre les sous-runs |
-| MCP | Outil `assistant` avec une image en contenu |
+| MCP | Outil `assistant` avec une image dans `attachments` (base64 ou lien) ; notifications de progression qui montrent les sous-runs |
 
 **Tests automatisés :** résolution des `$ref` ; contexte déclaré et `input_template` ; règle de l'outil terminal ; plusieurs serveurs MCP de test (préfixes, `include` / `exclude`, serveur indisponible, `required`) ; déport et `artifact_read` ; rôle vision masqué sans image ; arbre parent-enfant et annulation propagée ; scénario de bout en bout via les trois accès.
 

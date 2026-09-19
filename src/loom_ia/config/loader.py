@@ -41,6 +41,7 @@ def load_config(path: str | Path) -> LoomConfig:
             "agents_dir": base_dir / config.agents_dir,
             "prompts_dir": base_dir / config.prompts_dir,
             "storage": _absolute_storage(config, base_dir),
+            "server": _absolute_server(config, base_dir),
             "mcp_servers": tuple(_launched_from(server, base_dir) for server in config.mcp_servers),
         }
     )
@@ -99,6 +100,15 @@ def _absolute_storage(config: LoomConfig, base_dir: Path) -> object:
             update={"path": base_dir / storage.artifacts.path}
         )
     return storage.model_copy(update=update) if update else storage
+
+
+def _absolute_server(config: LoomConfig, base_dir: Path) -> object:
+    """Dossiers lisibles par le serveur MCP, rapportés au dossier de la config."""
+    mcp = config.server.mcp
+    if not mcp.file_roots:
+        return config.server
+    roots = tuple(base_dir / root for root in mcp.file_roots)
+    return config.server.model_copy(update={"mcp": mcp.model_copy(update={"file_roots": roots})})
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

@@ -5,10 +5,13 @@ Quatre routes au jalon J1, sous ``/v1`` :
 
 - ``GET  /agents`` : les agents publiés (``expose.rest``) ;
 - ``POST /agents/{name}/runs`` : lancement **synchrone** ; la réponse est le
-  résultat du run ;
+  résultat du run. Le corps est en JSON, ou en ``multipart/form-data`` pour
+  joindre des images (``uploads``) ;
 - ``GET  /runs/{run_id}`` : statut et résultat d'un run ;
 - ``GET  /runs/{run_id}/events`` : le journal du run en SSE — ce qui est déjà
-  écrit, puis la suite en direct s'il tourne encore.
+  écrit, puis la suite en direct s'il tourne encore. Les événements de ses
+  sous-runs y sont mêlés, sauf avec ``?subruns=false`` ; le flux se ferme
+  sur la clôture du run demandé.
 
 Pour suivre un run depuis son départ, l'appelant choisit son ``run_id`` dans
 le corps de la requête : il peut ouvrir le flux sans attendre la réponse.
@@ -28,10 +31,11 @@ from sse_starlette.sse import EventSourceResponse
 
 from loom_ia.access.api import Loom, RunResult, StreamItem, UnknownRun
 from loom_ia.access.http.auth import Caller, identify, require
-from loom_ia.access.http.schemas import AgentInfo, RunRequest
+from loom_ia.access.http.schemas import AgentInfo
+from loom_ia.access.http.uploads import RUN_BODY, run_request
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.core.events import Event
-from loom_ia.core.model import RunId, SessionId
+from loom_ia.core.model import AttachmentError, RunId, SessionId
 
 logger = logging.getLogger(__name__)
 
@@ -87,18 +91,23 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         "/agents/{name}/runs",
         summary="Lance un run et attend sa fin",
         status_code=status.HTTP_201_CREATED,
+        openapi_extra=RUN_BODY,
     )
-    async def start(name: str, body: RunRequest, who: Who) -> RunResult:
+    async def start(name: str, request: Request, who: Who) -> RunResult:
         require(who, "run", name)
         _published(loom, name)
         try:
+            body, attachments = await run_request(request, loom.config.execution.attachments)
             return await loom.run(
                 name,
                 body.message,
+                attachments=attachments,
                 session_id=body.session_id,
                 context=body.context(),
                 run_id=body.run_id,
             )
+        except AttachmentError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
@@ -116,6 +125,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         run_id: RunId,
         session_id: SessionId | None = None,
         after_seq: Annotated[int, Query(ge=0)] = 0,
+        subruns: bool = True,
     ) -> EventSourceResponse:
         require(who, "read")
         state = await loom.state(run_id, session_id=session_id)
@@ -123,7 +133,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         resumed = request.headers.get("last-event-id")
         after = int(resumed) if resumed and resumed.isdigit() else after_seq
         return EventSourceResponse(
-            _messages(loom.follow(run_id, session_id=session_id, after_seq=after))
+            _messages(loom.follow(run_id, session_id=session_id, after_seq=after, subruns=subruns))
         )
 
     app.include_router(router)

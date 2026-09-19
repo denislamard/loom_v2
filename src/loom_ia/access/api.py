@@ -14,6 +14,13 @@ bien qu'un run donne le même journal quel que soit le chemin emprunté.
 l'ordre où ils arrivent : c'est la même source pour le direct de la CLI et
 pour le flux SSE.
 
+Sous-runs (C5) : ``stream``, ``follow`` et ``events`` rendent par défaut
+l'arbre du run — ses événements et ceux de ses sous-runs, dans l'ordre du
+journal ; chaque événement dit à quel run il appartient (``run_id``,
+``agent``). ``subruns=False`` s'en tient au run lui-même. Les morceaux du
+modèle d'un sous-run ne sont pas diffusés : sa réponse arrive avec le
+``tool.completed`` de l'appel.
+
 Fichiers (G1 à G3) : ``run`` et ``stream`` acceptent des pièces jointes
 (``Attachment``), validées puis rangées dans le stockage d'artefacts de
 l'instance ; ``RunResult.artifacts`` liste les fichiers du run, et
@@ -53,7 +60,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.model.base import DomainModel
 from loom_ia.core.ports import ArtifactStore, ChunkCallback, EventStore
-from loom_ia.core.projections import fold
+from loom_ia.core.projections import RunTree, fold
 from loom_ia.engine import RunContext, begin_run, drive
 from loom_ia.runtime import (
     Agent,
@@ -233,11 +240,13 @@ class Loom:
         session_id: SessionId | None = None,
         context: CallerContext | None = None,
         run_id: RunId | None = None,
+        subruns: bool = True,
     ) -> AsyncGenerator[StreamItem]:
         """Événements du journal et morceaux du modèle, dans l'ordre d'arrivée.
 
         Le run est lancé en tâche de fond ; abandonner l'itération l'annule.
-        Son résultat se relit ensuite avec ``result(run_id)``.
+        Son résultat se relit ensuite avec ``result(run_id)``. Avec
+        ``subruns``, les événements des sous-runs sont mêlés au flux.
         """
         run_id = run_id or new_run_id()
         items: asyncio.Queue[StreamItem | None] = asyncio.Queue()
@@ -246,7 +255,9 @@ class Loom:
             items.put_nowait(chunk)
 
         ctx = self.context(agent, on_chunk=on_chunk)
-        with self._store.listen(items.put_nowait, run_id):
+        tree = RunTree(run_id, subruns=subruns)
+        # Écoute posée avant le démarrage : l'arbre se reconnaît dans l'ordre d'écriture.
+        with self._store.listen(items.put_nowait, accept=tree.admit):
             task = asyncio.create_task(
                 self._start(ctx, message, attachments, session_id, context, run_id)
             )
@@ -313,14 +324,23 @@ class Loom:
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
         after_seq: int = 0,
+        subruns: bool = True,
     ) -> list[Event]:
-        """Événements d'un run, dans l'ordre du journal."""
-        return await self._store.read(
-            tenant_id or DEFAULT_TENANT,
-            session_id or SessionId(run_id),
-            after_seq=after_seq,
-            run_id=run_id,
-        )
+        """Événements d'un run dans l'ordre du journal, et ceux de ses sous-runs.
+
+        ``subruns=False`` s'en tient au run. ``after_seq`` ne rend que la
+        suite ; l'arbre, lui, se reconnaît depuis le début de la session.
+        """
+        tenant = tenant_id or DEFAULT_TENANT
+        session = session_id or SessionId(run_id)
+        if not subruns:
+            return await self._store.read(tenant, session, after_seq=after_seq, run_id=run_id)
+        tree = RunTree(run_id)
+        return [
+            event
+            for event in tree.select(await self._store.read(tenant, session))
+            if event.seq > after_seq
+        ]
 
     async def follow(
         self,
@@ -329,29 +349,41 @@ class Loom:
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
         after_seq: int = 0,
+        subruns: bool = True,
     ) -> AsyncGenerator[Event]:
         """Événements déjà écrits, puis les suivants si le run tourne encore.
 
-        L'itération s'arrête sur la clôture du run. Un run inconnu lève
-        ``UnknownRun``.
+        Avec ``subruns``, ceux de ses sous-runs suivent aussi. L'itération
+        s'arrête sur la clôture du run demandé, même si elle précède
+        ``after_seq``. Un run inconnu lève ``UnknownRun``.
         """
         tenant = tenant_id or DEFAULT_TENANT
         session = session_id or SessionId(run_id)
-        async with self._store.subscribe(run_id) as live:
-            written = await self._store.read(tenant, session, after_seq=after_seq, run_id=run_id)
-            if not written and not await self._store.read(tenant, session, run_id=run_id):
+        tree = RunTree(run_id, subruns=subruns)
+
+        def in_session(event: Event) -> bool:
+            return event.tenant_id == tenant and event.session_id == session
+
+        # Abonnement posé avant la lecture : rien ne se perd entre les deux. Le
+        # filtre de l'arbre s'applique ici, dans l'ordre du journal.
+        async with self._store.subscribe(accept=in_session) as live:
+            written = await self._store.read(tenant, session)
+            if not any(event.run_id == run_id for event in written):
                 raise UnknownRun(run_id)
-            seen = after_seq
+            seen = 0
             for event in written:
                 seen = event.seq
-                yield event
-                if is_final(event):
+                if not tree.admit(event):
+                    continue
+                if event.seq > after_seq:
+                    yield event
+                if _closes(event, run_id):
                     return
             async for event in live:
-                if event.seq <= seen:
+                if event.seq <= seen or not tree.admit(event):
                     continue
                 yield event
-                if is_final(event):
+                if _closes(event, run_id):
                     return
 
     async def state(
@@ -362,7 +394,9 @@ class Loom:
         tenant_id: TenantId | None = None,
     ) -> RunState:
         """État d'un run, reconstruit depuis son journal."""
-        events = await self.events(run_id, session_id=session_id, tenant_id=tenant_id)
+        events = await self.events(
+            run_id, session_id=session_id, tenant_id=tenant_id, subruns=False
+        )
         if not events:
             raise UnknownRun(run_id)
         return fold(events, run_id)
@@ -425,3 +459,8 @@ class Loom:
             session_id=state.session_id,
             tenant_id=state.context.tenant_id,
         )
+
+
+def _closes(event: Event, run_id: RunId) -> bool:
+    """Vrai sur la clôture du run suivi (celle d'un sous-run ne compte pas)."""
+    return event.run_id == run_id and is_final(event)

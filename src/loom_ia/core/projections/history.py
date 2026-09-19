@@ -2,8 +2,8 @@
 """Historique d'une session envoyé au modèle (#7, #22).
 
 Seuls les runs racine terminés avec succès y figurent : un run échoué peut
-contenir un appel d'outil sans résultat, que les API refusent. Les sous-runs
-ont leur propre journal et n'en font pas partie. Le raisonnement et les
+contenir un appel d'outil sans résultat, que les API refusent. Les sous-runs,
+écrits dans le même journal, n'en font pas partie. Le raisonnement et les
 textes vides sont retirés ; un message qui ne contient plus rien est omis
 (certaines API refusent un bloc de texte vide).
 

@@ -26,6 +26,7 @@ mcp = [
 ]
 http = [
     "fastapi>=0.141.1",
+    "python-multipart>=0.0.32",
     "sse-starlette>=3.4.11",
     "uvicorn>=0.53.0",
 ]

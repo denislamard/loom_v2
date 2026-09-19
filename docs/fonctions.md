@@ -353,7 +353,7 @@ RunState
 - **Reprise :** `tool.called` porte `child_run_id`. À la reprise, le parent refait avancer ce même enfant ; s'il avait fini, sa réponse est reprise sans nouvel appel.
 - **Profondeur :** `max_depth` par agent (défaut 1) ; un sous-agent n'est proposé que si la profondeur du run appelant est inférieure au `max_depth` de son agent. Une boucle d'agents qui s'appellent reste bornée.
 - **Annulation :** l'enfant tourne dans la tâche de l'appel ; annuler le parent l'annule aussi, sans rien écrire. `run.cancelled` arrive en J4.2 (backlog #006), `WAITING_CHILD` avec les approbations (J4.3).
-- **Accès :** l'arbre se lit dans le journal de la session ; sa diffusion par REST, SSE et MCP relève de 2.5.
+- **Accès :** l'arbre se lit dans le journal de la session ; les trois accès le diffusent depuis 2.5 (réalisation sous #40).
 
 ### 5. Bus d'événements : en mémoire, journal comme source
 
@@ -1006,6 +1006,14 @@ AgentRegistry ─┼─ HTTP REST (SSE)
   - les traces et les sessions sont exposées en ressources en lecture seule (`loom://runs/{id}`) ;
   - transports stdio (local) et HTTP, monté dans la même application ASGI que l'API REST.
 - **Limites de MCP :** seulement des notifications de progression, pas de flux d'événements complet. La validation humaine passe par l'elicitation ; sinon, le run se met en pause et renvoie un `run_id`, puis la validation se fait via l'API REST.
+
+**Réalisation (phase 2.5) :**
+
+- **Arbre des sous-runs :** le flux d'un run montre aussi ses sous-runs, par défaut, dans l'ordre du journal : `Loom.stream()`, `follow()` et `events()` (paramètre `subruns=False` pour le run seul), SSE de `GET /v1/runs/{id}/events` (`?subruns=false`). Un sous-run entre dans l'arbre par son `run.started` (`parent_run_id` déjà dans l'arbre) ; chaque événement dit à quel run il appartient (`run_id`, `agent`). `follow` s'arrête sur la clôture du run demandé, pas sur celle d'un enfant. Les morceaux du modèle d'un sous-run ne sont pas diffusés.
+- **Déroulé en lignes :** la CLI (`loom run --stream`) et le serveur MCP décrivent le run de la même façon (appels d'outils et leur issue, fichiers rangés, serveur indisponible, sous-agent démarré puis terminé ou en échec), les lignes d'un sous-run décalées selon sa profondeur.
+- **REST :** `POST /v1/agents/{name}/runs` accepte le JSON ou `multipart/form-data` (champs `message`, `session_id`, `run_id`, `user_id`, `metadata` en JSON ; fichiers sous `attachments`) ; OpenAPI décrit les deux corps. Un envoi plus gros que `max_files` fichiers de `max_bytes` est refusé sur son en-tête (413), chaque fichier n'est lu que jusqu'à sa limite ; une pièce refusée donne 422, un autre type de corps 415.
+- **MCP :** l'outil d'un agent prend un argument `attachments` : `{type: image, data, mimeType?, name?}` (base64) ou `{type: resource_link, uri, …}`, où `uri` vaut `artifact://…` (fichier déjà rangé, même client) ou `file:///…` (lu seulement sous `server.mcp.file_roots`, vide par défaut). Le résultat structuré liste les fichiers du run (`artifacts`). Si le client fournit un `progressToken`, chaque ligne du déroulé lui arrive en notification de progression.
+- **Limite commune :** `execution.attachments.max_files` (10 par défaut) borne le nombre de pièces jointes d'un run, par tous les accès.
 
 ### 41. Un package avec des extras
 

@@ -24,16 +24,11 @@ from pathlib import Path
 from typing import Final
 
 from loom_ia.access.api import Loom, RunResult, StreamItem, UnknownRun
+from loom_ia.access.progress import Progress
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.config import ConfigError, config_json_schema, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
-from loom_ia.core.events import (
-    ArtifactStored,
-    Event,
-    ToolCalled,
-    ToolCompleted,
-    ToolSourceUnavailable,
-)
+from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     Attachment,
@@ -198,6 +193,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     async def go() -> RunResult:
         async with Loom(config) as loom:
             if args.stream:
+                live = _Live()
                 async for item in loom.stream(
                     args.agent,
                     args.message,
@@ -205,7 +201,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     session_id=session,
                     run_id=run_id,
                 ):
-                    _show(item)
+                    live.show(item)
                 print()
                 state = await loom.state(run_id, session_id=session)
                 if state.terminal_call_id is not None and state.output is not None:
@@ -295,33 +291,31 @@ def cmd_schema(args: argparse.Namespace) -> int:
 # --- Affichage ---------------------------------------------------------------
 
 
-def _show(item: StreamItem) -> None:
-    """Un morceau de flux ou un événement, pendant un run suivi en direct."""
-    if isinstance(item, TextDelta):
-        sys.stdout.write(item.text)
-        sys.stdout.flush()
-    elif isinstance(item, Event) and isinstance(item.payload, ToolCalled):
-        print(f"\n· {item.payload.tool_name}({_arguments(item.payload)})", file=sys.stderr)
-    elif isinstance(item, Event) and isinstance(item.payload, ToolCompleted):
-        issue = " (erreur)" if item.payload.output.is_error else ""
-        print(f"· {item.payload.tool_name} : fait{issue}", file=sys.stderr)
-    elif isinstance(item, Event) and isinstance(item.payload, ToolSourceUnavailable):
-        required = " (requis)" if item.payload.required else ""
-        print(
-            f"· serveur {item.payload.source} indisponible{required} : {item.payload.error}",
-            file=sys.stderr,
-        )
-    elif isinstance(item, Event) and isinstance(item.payload, ArtifactStored):
-        stored = item.payload
-        label = {
-            "attachment": "pièce jointe rangée",
-            "tool_output": "fichier rangé",
-            "offload": "résultat déporté",
-        }[stored.origin]
-        print(
-            f"· {label} : {stored.name or stored.uri} ({stored.media_type}, {stored.size} octets)",
-            file=sys.stderr,
-        )
+class _Live:
+    """Un run suivi en direct : le texte du modèle sur stdout, le déroulé sur stderr.
+
+    Les événements des sous-runs arrivent dans le flux ; leurs lignes sont
+    décalées selon leur profondeur.
+    """
+
+    def __init__(self) -> None:
+        self._progress = Progress()
+        # Du texte a été écrit sans fin de ligne : la ligne suivante doit en partir.
+        self._open = False
+
+    def show(self, item: StreamItem) -> None:
+        if isinstance(item, TextDelta):
+            sys.stdout.write(item.text)
+            sys.stdout.flush()
+            if item.text:
+                self._open = not item.text.endswith("\n")
+            return
+        if not isinstance(item, Event) or (line := self._progress.line(item)) is None:
+            return
+        if self._open:
+            print(file=sys.stdout, flush=True)
+            self._open = False
+        print(line, file=sys.stderr)
 
 
 async def _show_sources(agent: str, tools: ToolExecutor) -> None:
@@ -340,10 +334,6 @@ async def _show_sources(agent: str, tools: ToolExecutor) -> None:
         for missing in opened.unavailable:
             required = " (requis)" if missing.required else ""
             print(f"    MCP {missing.source} indisponible{required} : {missing.error}")
-
-
-def _arguments(called: ToolCalled) -> str:
-    return ", ".join(f"{name}={value!r}" for name, value in called.arguments.items())
 
 
 def _report(result: RunResult, *, as_json: bool = False, quiet: bool = False) -> int:

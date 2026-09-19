@@ -448,12 +448,14 @@ def write(tmp_path: Path, **changes: Any) -> Path:
 async def test_loom_runs_subagents(tmp_path: Path) -> None:
     async with Loom(load_config(write(tmp_path))) as loom:
         result = await loom.run("demo", "Combien font 2 + 2 ?")
-        own = await loom.events(result.run_id)
+        own = await loom.events(result.run_id, subruns=False)
+        both = await loom.events(result.run_id)
         tree = await loom.store.read(DEFAULT_TENANT, result.session_id)
 
     assert (result.text, result.status) == ("Vérifié : 4.", RunStatus.COMPLETED)
-    # events(run_id) ne donne que le run racine ; le journal de la session contient l'arbre.
+    # events(run_id) donne l'arbre (ici tout le journal de la session) ; subruns=False, la racine.
     assert {e.run_id for e in own} == {result.run_id}
+    assert both == tree
     runs = {e.run_id: e.agent or "" for e in tree}
     assert sorted(runs.values()) == ["demo", "verificateur"]
     assert {e.root_run_id for e in tree} == {result.run_id}

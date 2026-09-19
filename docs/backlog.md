@@ -107,7 +107,7 @@ storage:
 
 **À faire :** renommer le fichier, ou corriger la ligne du J1 dans `jalons.md`.
 
-**Statut :** à décider.
+**Statut :** fait en 2.5 : les lignes Python du J1 et du J2 nomment `acces.py` (`examples/j2/acces.py` montre les trois accès avec une image). J3 à J5 annoncent encore `run.py` : le nom sera choisi avec chaque exemple.
 
 ---
 

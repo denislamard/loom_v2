@@ -80,3 +80,74 @@ def demo_agent(**changes: Any) -> dict[str, Any]:
         "tools": [{"python": "calculer"}],
     }
     return {**agent, **changes}
+
+
+# --- Délégation à un sous-agent (J2.5) ---------------------------------------------
+
+TREE_QUESTION = "Combien font 2 + 2 ?"
+TREE_ANSWER = "Vérifié : 4."
+# Signature PNG suivie d'octets quelconques : assez pour être reconnue.
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+
+
+@pytest.fixture
+def tree(tmp_path: Path) -> ConfigFactory:
+    """Config où ``demo`` fait vérifier un calcul par le sous-agent ``verificateur``.
+
+    L'enfant appelle lui-même l'outil ``calculer`` : l'arbre a deux runs, et
+    chacun des appels d'outil. Le journal est en JSONL, pour que plusieurs
+    instances le partagent. Les mots-clés complètent la racine du fichier.
+    """
+
+    def build(**root: Any) -> Path:
+        (tmp_path / "agents").mkdir(exist_ok=True)
+        (tmp_path / "outils_acces.py").write_text(OUTILS, encoding="utf-8")
+        main_script: list[dict[str, Any]] = [
+            {
+                "text": "Je fais vérifier.",
+                "tool_calls": [{"name": "verifier", "arguments": {"message": "Vérifie 2 + 2."}}],
+            },
+            {"text": TREE_ANSWER},
+        ]
+        child_script: list[dict[str, Any]] = [
+            {"tool_calls": [{"name": "calculer", "arguments": {"expr": "2+2"}}]},
+            {"text": "2 + 2 = 4, c'est exact."},
+        ]
+        config: dict[str, Any] = {
+            "version": 1,
+            "imports": ["outils_acces"],
+            "models": [
+                {"id": "MAIN", "sdk": "fake", "model": "main-1", "params": {"script": main_script}},
+                {
+                    "id": "CHILD",
+                    "sdk": "fake",
+                    "model": "child-1",
+                    "params": {"script": child_script},
+                },
+            ],
+            "storage": {"events": {"backend": "jsonl", "path": "data"}},
+            "telemetry": {"logging": {"level": "WARNING"}},
+            **root,
+        }
+        agents: list[dict[str, Any]] = [
+            {
+                "name": "demo",
+                "description": "Répond, après vérification.",
+                "main": {"model": "MAIN", "system": "Tu fais vérifier tes calculs."},
+                "subagents": [{"agent": "verificateur", "name": "verifier"}],
+            },
+            {
+                "name": "verificateur",
+                "description": "Vérifie un calcul.",
+                "expose": {"rest": False, "mcp": False},
+                "main": {"model": "CHILD", "system": "Tu vérifies."},
+                "tools": [{"python": "calculer"}],
+            },
+        ]
+        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        for agent in agents:
+            path = tmp_path / "agents" / f"{agent['name']}.yaml"
+            path.write_text(yaml.safe_dump(agent), encoding="utf-8")
+        return tmp_path / "loom.yaml"
+
+    return build

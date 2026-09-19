@@ -20,8 +20,8 @@ from loom_ia.agents.spec import AgentSpec
 from loom_ia.config.keys import ALGORITHM, matches
 from loom_ia.config.later import (
     LATER_API_KEY,
+    LATER_MCP_ACCESS,
     LATER_ROOT,
-    LATER_SERVER,
     LATER_STORAGE,
     LATER_TELEMETRY,
 )
@@ -188,14 +188,23 @@ class HttpServer(DomainModel):
         return self
 
 
-class ServerConfig(DomainModel):
-    http: HttpServer = HttpServer()
+class McpAccess(DomainModel):
+    """Serveur MCP de l'instance (``loom mcp``)."""
+
+    # Dossiers où un lien ``file://`` joint à un appel peut être lu ; aucun par
+    # défaut : les liens ``file://`` sont refusés. Relatifs au dossier de la config.
+    file_roots: tuple[Path, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
     def _later(cls, data: object) -> object:
-        reject_later(data, LATER_SERVER)
+        reject_later(data, LATER_MCP_ACCESS)
         return data
+
+
+class ServerConfig(DomainModel):
+    http: HttpServer = HttpServer()
+    mcp: McpAccess = McpAccess()
 
 
 class LoomConfig(DomainModel):

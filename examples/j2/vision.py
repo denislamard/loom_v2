@@ -139,8 +139,10 @@ async def main(argv: list[str]) -> int:
 
     print(result.text or result.error or "—")
     print("\nDéroulé :")
-    for line in filter(None, map(describe, events)):
-        print(line)
+    for event in events:
+        if (line := describe(event)) is not None:
+            # Les lignes du sous-agent vérificateur sont décalées.
+            print(line if event.run_id == result.run_id else f"  {line}")
     print(
         f"\nStatut     : {result.status} · itérations : {result.iterations}"
         f" · coût total : {result.cost_usd:.5f} $"

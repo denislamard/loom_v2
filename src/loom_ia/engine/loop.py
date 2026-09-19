@@ -180,6 +180,7 @@ async def begin_run(
     message = Message.user(prompt) if isinstance(prompt, str) else prompt
     if message.role != "user":
         raise ValueError(f"La demande doit être un message 'user', pas {message.role!r}")
+    ctx.attachments.check_count(len(attachments))
     checked = [(attachment, attachment.checked(ctx.attachments)) for attachment in attachments]
     store = ctx.artifacts
     if checked and store is None:

@@ -19,8 +19,9 @@ LATER_API_KEY: Final[dict[str, str]] = {
     "rate_limit": "J5 (quotas)",
     "expires": "J5 (rotation des clés)",
 }
-LATER_SERVER: Final[dict[str, str]] = {
-    "mcp": "J5 (serveur MCP en HTTP)",
+LATER_MCP_ACCESS: Final[dict[str, str]] = {
+    "http": "J5 (serveur MCP en HTTP)",
+    "allowed_origins": "J5 (serveur MCP en HTTP)",
 }
 LATER_STORAGE: Final[dict[str, str]] = {
     "idempotency": "J4.4 (idempotence)",

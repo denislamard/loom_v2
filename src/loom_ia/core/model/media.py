@@ -134,6 +134,8 @@ class AttachmentPolicy(DomainModel):
     max_bytes: PositiveInt = 5 * 1024 * 1024
     # Types MIME acceptés, parmi les images reconnues.
     types: tuple[str, ...] = Field(default=tuple(IMAGE_TYPES), min_length=1)
+    # Nombre de pièces jointes d'un run ; borne aussi la taille d'un envoi REST.
+    max_files: PositiveInt = 10
 
     @model_validator(mode="after")
     def _check_types(self) -> Self:
@@ -144,6 +146,20 @@ class AttachmentPolicy(DomainModel):
                 f"(images reconnues : {', '.join(IMAGE_TYPES)})"
             )
         return self
+
+    def check_count(self, count: int) -> None:
+        """Lève ``AttachmentError`` au-delà de ``max_files`` pièces jointes."""
+        if count > self.max_files:
+            raise AttachmentError(
+                f"{count} pièces jointes, au-delà de la limite de {self.max_files}"
+            )
+
+    def check_size(self, label: str, size: int) -> None:
+        """Lève ``AttachmentError`` si ``size`` dépasse ``max_bytes``."""
+        if size > self.max_bytes:
+            raise AttachmentError(
+                f"{label} : {size} octets, au-delà de la limite de {self.max_bytes}"
+            )
 
 
 class AttachmentError(ValueError):
@@ -169,10 +185,7 @@ class Attachment:
         label = self.name or "pièce jointe"
         if not self.data:
             raise AttachmentError(f"{label} : fichier vide")
-        if len(self.data) > policy.max_bytes:
-            raise AttachmentError(
-                f"{label} : {len(self.data)} octets, au-delà de la limite de {policy.max_bytes}"
-            )
+        policy.check_size(label, len(self.data))
         detected = sniff(self.data)
         if detected is None:
             raise AttachmentError(

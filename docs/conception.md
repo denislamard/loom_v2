@@ -809,7 +809,7 @@ runtime (fin du run) ──enqueue──▶ TaskQueue ──▶ worker
 
 ### 11.4 Artefacts
 
-- Les pièces jointes sont validées à l'entrée, avant tout écrit : format par signature binaire (images JPEG, PNG, GIF, WebP au jalon J2), type annoncé cohérent, taille (`execution.attachments`, 5 Mio par défaut) (G1). Chacune donne un `artifact.stored`, puis le message de l'utilisateur les porte en références.
+- Les pièces jointes sont validées à l'entrée, avant tout écrit : format par signature binaire (images JPEG, PNG, GIF, WebP au jalon J2), type annoncé cohérent, taille et nombre (`execution.attachments` : 5 Mio et 10 fichiers par défaut) (G1). Chacune donne un `artifact.stored`, puis le message de l'utilisateur les porte en références.
 - Stockage hors journal, désigné par une URI adressée par le contenu : `artifact://<client>/<session>/<sha256>.<ext>`. Un même fichier n'est rangé qu'une fois par session, et la suppression d'une session touche un seul dossier.
 - Les outils peuvent produire des artefacts, récupérables par l'appelant (G3) : `RunResult.artifacts`, `Loom.artifact(uri)`.
 - En mode librairie, le stockage par défaut suit le journal : dossier `.artifacts` sous celui d'un journal JSONL, mémoire pour un journal en mémoire ; GCS en mode service.
@@ -1146,7 +1146,7 @@ sessions:
 
 execution:
   tools: {timeout: 30, validate_arguments: true, offload_over: 50000}
-  attachments: {max_bytes: 5242880, types: [image/jpeg, image/png, image/gif, image/webp]}
+  attachments: {max_bytes: 5242880, max_files: 10, types: [image/jpeg, image/png, image/gif, image/webp]}
   lease: {ttl: 60, renew_every: 20}
   shutdown_timeout: 30
 ```
@@ -1195,7 +1195,7 @@ security:
 
 server:
   http: {host: 127.0.0.1, port: 8000, base_path: /loom}
-  mcp:  {http: true, allowed_origins: []}
+  mcp:  {http: true, allowed_origins: [], file_roots: []}   # file_roots : dossiers lisibles par un lien file://
 ```
 
 ### 17.9 Profils et contrôles
@@ -1241,6 +1241,7 @@ async with loom:
 
 - `run()` accepte `session_id`, `tenant`, des pièces jointes et un `approver` optionnel ; il renvoie un `RunResult` (statut, réponse, `run_id`, approbations en attente).
 - `stream()` renvoie un itérateur d'événements (durables et éphémères).
+- `stream()`, `follow()` et `events()` rendent l'arbre du run : ses événements et ceux de ses sous-runs, dans l'ordre du journal ; `subruns=False` s'en tient au run.
 
 ### 18.2 HTTP REST
 
@@ -1261,12 +1262,17 @@ app.mount("/loom", loom.asgi_app(rest=True, mcp=True))
 
 OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
+- **Pièces jointes :** le lancement d'un run accepte le JSON ou `multipart/form-data` (fichiers sous `attachments`). Limites de `execution.attachments` ; envoi trop gros refusé sur son en-tête (413), pièce refusée en 422.
+- **Sous-runs :** le flux SSE d'un run contient les événements de ses sous-runs (`?subruns=false` pour le run seul) ; il se ferme sur la clôture du run demandé.
+
 ### 18.3 Serveur MCP
 
 - Chaque agent devient un outil MCP ; deux outils de contrôle s'ajoutent : `run_status` et `cancel`.
 - Traces et sessions exposées en ressources en lecture seule (`loom://runs/{id}`).
 - Transports : stdio (local, `loom mcp`) et HTTP, monté dans la même application que l'API REST.
 - Limites : notifications de progression seulement ; validation humaine par elicitation, sinon pause et validation via l'API REST.
+- **Pièces jointes :** argument `attachments` de l'outil d'un agent : image en base64, ou lien `artifact://` (fichier déjà rangé, même client) ou `file://` (seulement sous `server.mcp.file_roots`, vide par défaut). Le résultat structuré liste les fichiers du run.
+- **Progression :** si le client fournit un `progressToken`, le déroulé du run (appels d'outils, fichiers, sous-agents et leurs appels) lui arrive en notifications de progression.
 
 ### 18.4 CLI
 
