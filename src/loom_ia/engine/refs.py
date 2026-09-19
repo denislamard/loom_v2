@@ -17,8 +17,13 @@ serait le texte de la référence, sans aucune erreur.
 
 Pour que le modèle connaisse ces numéros, chaque résultat qu'il reçoit
 commence par sa référence (``[result:3]``) et une consigne s'ajoute au prompt
-système. Ce marquage n'existe que dans la requête : le journal garde les
-résultats tels quels.
+système, dès qu'un rôle est proposé dans le run. Ce marquage n'existe que dans
+la requête : le journal garde les résultats tels quels, dans leur ordre
+d'arrivée, et la requête les remet dans l'ordre des appels.
+
+Un résultat déporté (#16) n'a dans le journal qu'un aperçu : sa référence
+transmet le contenu complet, relu dans le stockage d'artefacts. L'orchestrateur
+peut ainsi passer un gros résultat à un rôle sans l'avoir lu.
 """
 
 import json
@@ -36,6 +41,7 @@ from loom_ia.core.model import (
     ToolOutput,
     ToolResultBlock,
 )
+from loom_ia.core.ports import ArtifactNotFound, ArtifactStore
 
 REF_KEY: Final = "$ref"
 REF_PREFIX: Final = "result:"
@@ -84,9 +90,13 @@ def output_text(output: ToolOutput) -> str:
 
 
 class ResultIndex:
-    """Appels d'outils d'un run, numérotés dans l'ordre des demandes du modèle."""
+    """Appels d'outils d'un run, numérotés dans l'ordre des demandes du modèle.
 
-    def __init__(self, messages: Iterable[Message]) -> None:
+    ``artifacts`` sert à relire le contenu complet d'un résultat déporté.
+    """
+
+    def __init__(self, messages: Iterable[Message], artifacts: ArtifactStore | None = None) -> None:
+        self._artifacts = artifacts
         messages = tuple(messages)
         outputs = {
             block.call_id: block.output
@@ -115,7 +125,7 @@ class ResultIndex:
         """Résultats réussis d'un outil, dans l'ordre des appels."""
         return tuple(r for r in self.records if r.name == name and r.usable)
 
-    def resolve(
+    async def resolve(
         self, arguments: dict[str, JsonValue]
     ) -> tuple[dict[str, JsonValue], tuple[str, ...]]:
         """Arguments aux références remplacées, et les références résolues.
@@ -123,20 +133,47 @@ class ResultIndex:
         Lève ``RefError`` si une référence ne peut pas être résolue.
         """
         found: list[str] = []
-        resolved = cast(dict[str, JsonValue], self._walk(arguments, found))
+        resolved = cast(dict[str, JsonValue], await self._walk(arguments, found))
         return resolved, tuple(found)
 
-    def _walk(self, value: JsonValue, found: list[str]) -> JsonValue:
+    async def content(self, record: CallRecord) -> JsonValue:
+        """Ce que transmet un résultat : ``data`` ou texte, relu s'il a été déporté.
+
+        Lève ``RefError`` si le contenu déporté ne peut pas être relu.
+        """
+        if record.output is None:
+            raise RefError(f"{record.ref} ({record.name}) n'a pas encore de résultat.")
+        uri = record.output.offloaded
+        if uri is None:
+            return output_value(record.output)
+        if self._artifacts is None:
+            raise RefError(
+                f"{record.ref} ({record.name}) a été déporté, et aucun stockage d'artefacts "
+                "ne permet de le relire."
+            )
+        try:
+            data = await self._artifacts.get(uri)
+        except ArtifactNotFound as exc:
+            raise RefError(f"{record.ref} ({record.name}) : contenu déporté introuvable.") from exc
+        text = data.decode("utf-8")
+        return cast(JsonValue, json.loads(text)) if uri.endswith(".json") else text
+
+    async def text(self, record: CallRecord) -> str:
+        """Contenu d'un résultat en texte : le texte, ou le JSON de ``data``."""
+        value = await self.content(record)
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+    async def _walk(self, value: JsonValue, found: list[str]) -> JsonValue:
         ref = _ref_in(value)
         if ref is not None:
-            return self._value(ref, found)
+            return await self._value(ref, found)
         if isinstance(value, dict):
-            return {key: self._walk(item, found) for key, item in value.items()}
+            return {key: await self._walk(item, found) for key, item in value.items()}
         if isinstance(value, list):
-            return [self._walk(item, found) for item in value]
+            return [await self._walk(item, found) for item in value]
         return value
 
-    def _value(self, ref: str, found: list[str]) -> JsonValue:
+    async def _value(self, ref: str, found: list[str]) -> JsonValue:
         number = ref.removeprefix(REF_PREFIX)
         if not number.isdigit():
             raise RefError(
@@ -153,7 +190,7 @@ class ResultIndex:
             )
         if record.output.is_error:
             raise RefError(f"{ref} ({record.name}) est une erreur : il ne peut pas être transmis.")
-        value = output_value(record.output)
+        value = await self.content(record)
         if value == "":
             raise RefError(f"{ref} ({record.name}) est vide : rien à transmettre.")
         found.append(ref)
@@ -181,6 +218,37 @@ def _ref_in(value: JsonValue) -> str | None:
         if isinstance(ref, str) and ref.startswith(REF_PREFIX):
             return ref
     return None
+
+
+def in_call_order(messages: Sequence[Message]) -> tuple[Message, ...]:
+    """Messages d'une requête, les résultats de chaque tour dans l'ordre des appels.
+
+    Le journal garde les résultats dans leur ordre d'arrivée, qui dépend des
+    durées des outils. La requête, elle, ne doit dépendre que de ce que le
+    modèle a demandé : reproductible d'un run à l'autre, et stable pour le
+    cache des fournisseurs.
+    """
+    ordered: list[Message] = []
+    results: list[Message] = []
+    positions: dict[str, int] = {}
+
+    def position(message: Message) -> int:
+        first = message.blocks[0]
+        if isinstance(first, ToolResultBlock):
+            return positions.get(first.call_id, len(positions))
+        return len(positions)
+
+    for message in messages:
+        if message.role == "tool":
+            results.append(message)
+            continue
+        ordered += sorted(results, key=position)
+        results.clear()
+        if message.role == "assistant":
+            positions = {call.call_id: n for n, call in enumerate(message.tool_calls)}
+        ordered.append(message)
+    ordered += sorted(results, key=position)
+    return tuple(ordered)
 
 
 def mark_results(messages: Sequence[Message], index: ResultIndex) -> tuple[Message, ...]:

@@ -7,7 +7,7 @@ le moteur doit savoir pour exécuter l'outil sans risque.
 
 from typing import Final, Literal
 
-from pydantic import Field, JsonValue, PositiveFloat
+from pydantic import Field, JsonValue, PositiveFloat, PositiveInt
 
 from loom_ia.core.model.base import DomainModel
 
@@ -44,6 +44,7 @@ class ToolOverrides(DomainModel):
     approval: Approval | None = None
     idempotent: bool | None = None
     timeout: PositiveFloat | None = None
+    offload_over: PositiveInt | None = None
 
 
 class ToolSpec(ToolDefinition):
@@ -55,6 +56,9 @@ class ToolSpec(ToolDefinition):
     idempotent: bool = False
     # Timeout propre à l'outil ; sinon celui de l'exécuteur.
     timeout: PositiveFloat | None = None
+    # Taille en caractères au-delà de laquelle le résultat est déporté (#16) ;
+    # sinon le seuil de l'exécuteur.
+    offload_over: PositiveInt | None = None
     # Sortie transmise telle quelle comme réponse finale s'il est seul dans son tour (#13).
     terminal: bool = False
 

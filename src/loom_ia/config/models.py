@@ -6,15 +6,15 @@ remplir, et une configuration écrite en Python (M2) les construit
 directement. Tout champ inconnu est refusé ; une clé prévue pour une phase
 suivante donne une erreur qui nomme cette phase.
 
-Sous-ensemble du jalon J1 ; le schéma complet est dans ``docs/conception.md``
-§17.
+Sous-ensemble des jalons J1 et J2 ; le schéma complet est dans
+``docs/conception.md`` §17.
 """
 
 import logging
 from pathlib import Path
 from typing import Final, Literal, Self
 
-from pydantic import Field, PositiveFloat, model_validator
+from pydantic import Field, PositiveFloat, PositiveInt, model_validator
 
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config.keys import ALGORITHM, matches
@@ -25,11 +25,13 @@ from loom_ia.config.later import (
     LATER_STORAGE,
     LATER_TELEMETRY,
 )
-from loom_ia.core.model import DomainModel, McpServerSpec, ModelSpec, reject_later
+from loom_ia.core.model import AttachmentPolicy, DomainModel, McpServerSpec, ModelSpec, reject_later
 from loom_ia.telemetry.logs import LogFormat
 
 SCHEMA_VERSION: Final = 1
 EVENT_BACKENDS: Final = ("memory", "jsonl")
+# Dossier des artefacts sous celui du journal JSONL, quand la config n'en donne pas.
+ARTIFACTS_SUBDIR: Final = ".artifacts"
 
 
 class EventsStorage(DomainModel):
@@ -49,8 +51,21 @@ class EventsStorage(DomainModel):
         return self
 
 
+class ArtifactsStorage(DomainModel):
+    """Stockage des fichiers : pièces jointes, sorties d'outils, résultats déportés (G2).
+
+    Sans ``backend``, il suit le journal : dossier ``.artifacts`` sous celui
+    d'un journal ``jsonl``, mémoire pour un journal ``memory``.
+    """
+
+    backend: Literal["local", "memory"] | None = None
+    # Dossier du stockage ``local``, relatif au fichier de config.
+    path: Path | None = None
+
+
 class StorageConfig(DomainModel):
     events: EventsStorage = EventsStorage()
+    artifacts: ArtifactsStorage = ArtifactsStorage()
 
     @model_validator(mode="before")
     @classmethod
@@ -58,15 +73,46 @@ class StorageConfig(DomainModel):
         reject_later(data, LATER_STORAGE)
         return data
 
+    @model_validator(mode="after")
+    def _check_artifacts(self) -> Self:
+        artifacts = self.artifacts
+        if artifacts.backend == "memory" and artifacts.path is not None:
+            raise ValueError("Artefacts 'memory' : 'path' n'a pas de sens")
+        if artifacts.backend == "local" and artifacts.path is None and self.events.path is None:
+            raise ValueError(
+                "Artefacts 'local' : 'path' est obligatoire quand le journal n'est pas en fichiers"
+            )
+        return self
+
+    @property
+    def artifacts_backend(self) -> Literal["local", "memory"]:
+        """Stockage d'artefacts effectif : celui déclaré, sinon celui qui suit le journal."""
+        if self.artifacts.backend is not None:
+            return self.artifacts.backend
+        return "local" if self.events.backend == "jsonl" else "memory"
+
+    @property
+    def artifacts_path(self) -> Path | None:
+        """Dossier du stockage ``local`` : celui déclaré, sinon ``.artifacts`` sous le journal."""
+        if self.artifacts_backend != "local":
+            return None
+        if self.artifacts.path is not None:
+            return self.artifacts.path
+        return None if self.events.path is None else self.events.path / ARTIFACTS_SUBDIR
+
 
 class ToolsExecution(DomainModel):
     # Délai par défaut d'un outil ; ``null`` retire la limite.
     timeout: PositiveFloat | None = 30.0
     validate_arguments: bool = True
+    # Au-delà, en caractères, le résultat est déporté (#16) ; ``null`` le désactive.
+    offload_over: PositiveInt | None = 50_000
 
 
 class ExecutionConfig(DomainModel):
     tools: ToolsExecution = ToolsExecution()
+    # Pièces jointes acceptées à l'entrée d'un run (G1) : images, taille maximale.
+    attachments: AttachmentPolicy = AttachmentPolicy()
 
 
 class LoggingConfig(DomainModel):
@@ -211,6 +257,12 @@ class LoomConfig(DomainModel):
                     raise ValueError(
                         f"Agent {agent.name!r}, rôle {role.name!r} : modèle {role.model!r} "
                         f"non déclaré (modèles connus : {known})"
+                    )
+                if role.wants_attachments and not self.model_spec(role.model).capabilities.vision:
+                    raise ValueError(
+                        f"Agent {agent.name!r}, rôle {role.name!r} : il reçoit les pièces "
+                        f"jointes, mais le modèle {role.model!r} n'a pas la capacité vision "
+                        "(capabilities.vision: true)"
                     )
         return self
 

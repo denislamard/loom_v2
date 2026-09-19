@@ -13,6 +13,7 @@ from loom_ia.adapters.models._common import classify_error, output_text, retry_a
 from loom_ia.adapters.models.fake import FakeModel
 from loom_ia.core.model import (
     ArtifactRefBlock,
+    InlineDataBlock,
     JsonBlock,
     Message,
     ModelRequest,
@@ -181,5 +182,8 @@ def test_output_text() -> None:
     assert output_text(ToolOutput(data={"k": "é"})) == '{"k": "é"}'
     assert output_text(ToolOutput()) == ""
     image = ToolOutput(blocks=(ArtifactRefBlock(uri="mem://1", media_type="image/png"),))
-    with pytest.raises(ModelError, match="pièces jointes"):
+    with pytest.raises(ModelError, match="non résolue"):
         output_text(image)
+    inline = ToolOutput(blocks=(InlineDataBlock(media_type="image/png", data=b"\x89PNG"),))
+    with pytest.raises(ModelError, match="tool_result_media: false"):
+        output_text(inline)

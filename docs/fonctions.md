@@ -465,7 +465,7 @@ Par défaut, un rôle ne reçoit que ses arguments. Il peut en plus déclarer du
 
 - **Contexte manquant :** si un outil de `tool_results` n'a encore rien donné dans le run, le rôle n'est pas appelé ; l'orchestrateur reçoit une erreur qui lui dit d'appeler d'abord cet outil. Seuls comptent les résultats obtenus avant le tour en cours.
 - **Références dans les arguments :** l'orchestrateur peut passer `{"$ref": "result:<n>"}` au lieu de recopier un résultat, dans les arguments de n'importe quel outil. `result:3` désigne le 3ᵉ appel d'outil du run, dans l'ordre des demandes du modèle. L'exécuteur la remplace par le `data` du résultat, sinon par son texte, avant de valider les arguments. Une chaîne dont tout le contenu est cet objet (`"{\"$ref\": \"result:3\"}"`, écrit ainsi par MiniMax-M3) est résolue de la même façon. `tool.called` garde les arguments tels que le modèle les a écrits, plus la liste `refs` des références résolues.
-- **Numéros visibles par le modèle :** rien ne garantit qu'un modèle voie les `call_id` des fournisseurs. Quand l'agent a des rôles, chaque résultat qu'il reçoit commence donc par sa référence (`[result:3]`) et une consigne sur `$ref` s'ajoute à son prompt système. Ce marquage n'existe que dans la requête, pas dans le journal. Sans rôle, les requêtes sont inchangées.
+- **Numéros visibles par le modèle :** rien ne garantit qu'un modèle voie les `call_id` des fournisseurs. Quand un rôle est proposé dans le run, chaque résultat qu'il reçoit commence donc par sa référence (`[result:3]`) et une consigne sur `$ref` s'ajoute à son prompt système. Ce marquage n'existe que dans la requête, pas dans le journal. Sans rôle proposé (aucun rôle, ou rôle vision masqué faute de pièce jointe), les requêtes sont inchangées.
 - **Description vue par l'orchestrateur :** elle est complétée automatiquement par le contexte que le rôle reçoit déjà (« Reçoit déjà, inutile de les transmettre : la demande de l'utilisateur ; les résultats de chercher_devis. »). Sans cette mention, MiniMax-M3 transmettait le devis en argument alors que le rôle l'avait déjà.
 - **Arguments d'un rôle :** sauf `additionalProperties` déclaré dans son `input_schema`, un rôle refuse les arguments non prévus, comme un outil Python. Un argument inventé par l'orchestrateur lui revient en erreur au lieu d'être ignoré sans bruit.
 - **Construction du message :** le rôle déclare un `input_template` explicite. La règle implicite de V1 (clés `input`, `text`…) disparaît. Sans template, le rôle reçoit les blocs de contexte suivis des arguments en JSON, balisés (`<user_input>`, `<tool_result tool="…" ref="result:n">`, `<caller_context>`, `<arguments>`).
@@ -492,6 +492,14 @@ Le modèle vision doit accepter la forme choisie.
 - Par défaut, l'image est envoyée en base64, lue depuis le stockage d'artefacts. Une URL signée à courte durée de vie n'est utilisée que si le modèle l'accepte et que la config l'autorise (RGPD).
 - Si le format ou la taille ne conviennent pas au modèle : erreur explicite avant l'appel, ou conversion via un hook.
 
+**Réalisation (phase 2.3) :**
+
+- **Pièces jointes (G1) :** images JPEG, PNG, GIF et WebP, reconnues à leur signature binaire ; un type annoncé qui ne correspond pas est refusé ; 5 Mio au plus par défaut (`execution.attachments`). Le contrôle a lieu avant tout écrit. PDF, audio et autres fichiers : backlog #013.
+- **Stockage (G2) :** port `ArtifactStore` (`put`, `get`), adaptateurs `local` et `memory`. URI adressée par le contenu, `artifact://<client>/<session>/<sha256>.<ext>`. Par défaut, le stockage suit le journal : `.artifacts/` sous le dossier d'un journal JSONL, mémoire sinon. Chaque fichier rangé donne un `artifact.stored` (uri, type, taille, nom, origine, call_id).
+- **Résolution :** faite par le moteur juste avant l'appel, selon les capacités du modèle (`vision`, `image_formats`, `max_image_bytes`, `tool_result_media`) ; les adaptateurs ne voient que des octets (`InlineDataBlock`, jamais journalisé) ou des mentions. Un modèle sans vision reçoit une mention (nom, type, taille). Seul le base64 est réalisé (`image_input` doit le contenir) ; l'URL signée viendra avec un stockage distant.
+- **Rôle vision (C4) :** contexte `attachments` ; les images suivent le texte du message du rôle ; rôle masqué (ni proposé ni appelable) sans pièce jointe ; modèle `vision: true` exigé au chargement.
+- **Empreinte :** `request_hash` porte sur la requête avant résolution, sans les octets.
+
 ### 15. Format des résultats d'outils
 
 ```
@@ -507,6 +515,8 @@ ToolOutput
 - **MCP :** le contenu (`text`, `image`, `resource`…), `structuredContent` et `isError` se traduisent directement.
 - **Selon le modèle (B9), capacité `tool_result_media` :** si le modèle n'accepte pas d'image dans un résultat d'outil, l'adaptateur la place dans un message utilisateur juste après, ou la remplace par sa référence.
 
+**Réalisation (phase 2.3) :** un outil rend ses fichiers en octets (`Image` pour un outil Python ; `image`, `audio` et ressources binaires pour un outil MCP). Avant d'écrire le résultat, le moteur les range (`artifact.stored`, dans le span de l'appel, avant `tool.completed`) et les remplace par leur référence ; `ToolOutput.artifacts` les liste, `RunResult.artifacts` et `Loom.artifact(uri)` les rendent à l'appelant. Sans `tool_result_media`, l'image part dans un message utilisateur placé après tous les résultats du tour (l'API Chat d'OpenAI exige que les messages `tool` se suivent).
+
 ### 16. Gros résultats
 
 - Seuil par outil, avec une valeur par défaut globale.
@@ -516,6 +526,14 @@ ToolOutput
   - ou par `$ref` (point 12) : l'orchestrateur transmet la référence à un rôle sans lire le contenu.
 - Repli : la troncature simple ne sert que si aucun stockage d'artefacts n'est configuré. En mode librairie, le défaut est un stockage fichier local.
 - Journal : `tool.completed` porte l'aperçu, la référence et une facette `offloaded`.
+
+**Réalisation (phase 2.3) :**
+
+- **Seuil :** `offload_over`, en caractères de ce que le modèle verrait (textes et JSON) ; 50 000 par défaut (`execution.tools.offload_over`, `null` le désactive), surchargé par outil (`offload_over` d'un outil Python, `tools.<outil>.offload_over` d'un serveur MCP).
+- **Contenu rangé :** `data` en JSON s'il existe, sinon le texte (`text/plain`) ; le résultat garde l'aperçu (2 000 caractères, ou structure du JSON : clés, premiers éléments, nombre total), la consigne de lecture et `offloaded` (URI). `data` n'est pas gardé dans le journal.
+- **Lecture :** `artifact_read(ref, offset, limit)` n'est proposé qu'après un premier déport dans le run, et ne lit que les déports de ce run ; `$ref` et le contexte `tool_results` d'un rôle transmettent le contenu complet, relu dans le stockage.
+- **Exceptions :** un outil terminal n'est jamais déporté (sa sortie est la réponse finale), ni `artifact_read`. Sans stockage, troncature au seuil avec une mention.
+- **Facette :** `offloaded: true` n'est présente que sur un résultat déporté, pour que les journaux antérieurs restent lisibles.
 
 ### 17. Approbation
 
@@ -574,7 +592,7 @@ ToolOutput
 - **Noms :** `serveur__outil`, ou `alias__outil`. Les noms de serveurs et les alias n'ont pas de `__`. Un outil dont le nom préfixé sort du format des API (lettres, chiffres, `_`, `-`, 64 caractères) est écarté, avec un avertissement.
 - **Déclarations :** annotations MCP, puis `mcp_servers[].tools`, puis la référence de l'agent. `readOnlyHint` donne `side_effects: none` et `idempotent: true` ; `destructiveHint: false` donne `reversible` ; `idempotentHint` donne `idempotent`. Sans annotation, l'outil est traité comme irréversible (valeurs par défaut de la spec MCP).
 - **Schéma d'entrée :** transmis tel quel, sauf son `title` racine (retiré, comme pour les outils Python).
-- **Résultats :** `text` → bloc texte, `structuredContent` → `data`, `isError` → `is_error` ; images, audio et ressources binaires remplacés par une mention en attendant les artefacts (2.3).
+- **Résultats :** `text` → bloc texte, `structuredContent` → `data`, `isError` → `is_error` ; images, audio et ressources binaires rangés comme artefacts (depuis 2.3), liens de ressources en mention.
 - **Clé d'idempotence :** transmise dans `_meta`, sous `loom-ia/idempotency_key`.
 
 **Plusieurs serveurs par agent :**

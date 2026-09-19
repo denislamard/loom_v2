@@ -9,7 +9,7 @@ fournisseur ; un adaptateur ne lit que son entrée.
 
 from typing import Annotated, Literal, Self, cast
 
-from pydantic import Field, JsonValue, field_validator, model_validator
+from pydantic import ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from loom_ia.core.model.base import DomainModel
 
@@ -79,6 +79,22 @@ class ArtifactRefBlock(_Block):
     name: str | None = None
 
 
+class InlineDataBlock(_Block):
+    """Octets d'un fichier, de passage : jamais écrits dans le journal.
+
+    Deux usages : le résultat d'un outil avant son stockage (le moteur le
+    remplace par un ``ArtifactRefBlock``), et une requête au modèle après la
+    résolution des références (#14).
+    """
+
+    model_config = ConfigDict(ser_json_bytes="base64", val_json_bytes="base64")
+
+    type: Literal["inline_data"] = "inline_data"
+    media_type: str
+    data: bytes
+    name: str | None = None
+
+
 class ReasoningBlock(_Block):
     """Raisonnement du modèle, neutre vis-à-vis du fournisseur (#7)."""
 
@@ -96,7 +112,9 @@ class ToolCallBlock(_Block):
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
 
 
-type OutputBlock = Annotated[TextBlock | JsonBlock | ArtifactRefBlock, Field(discriminator="type")]
+type OutputBlock = Annotated[
+    TextBlock | JsonBlock | ArtifactRefBlock | InlineDataBlock, Field(discriminator="type")
+]
 
 
 class ToolOutput(DomainModel):
@@ -108,6 +126,9 @@ class ToolOutput(DomainModel):
     is_error: bool = False
     # URI des artefacts produits (G3).
     artifacts: tuple[str, ...] = ()
+    # URI du contenu complet quand il a été déporté ; les blocs n'en montrent
+    # alors qu'un aperçu (#16).
+    offloaded: str | None = None
 
     @classmethod
     def text(cls, text: str, *, is_error: bool = False) -> Self:
@@ -130,6 +151,22 @@ class ToolResultBlock(_Block):
 
 
 type ContentBlock = Annotated[
-    TextBlock | JsonBlock | ArtifactRefBlock | ReasoningBlock | ToolCallBlock | ToolResultBlock,
+    TextBlock
+    | JsonBlock
+    | ArtifactRefBlock
+    | InlineDataBlock
+    | ReasoningBlock
+    | ToolCallBlock
+    | ToolResultBlock,
     Field(discriminator="type"),
 ]
+
+
+def has_inline_data(blocks: tuple[ContentBlock, ...] | tuple[OutputBlock, ...]) -> bool:
+    """Vrai si des octets de fichier traînent dans ces blocs (interdit au journal)."""
+    for block in blocks:
+        if isinstance(block, InlineDataBlock):
+            return True
+        if isinstance(block, ToolResultBlock) and has_inline_data(block.output.blocks):
+            return True
+    return False

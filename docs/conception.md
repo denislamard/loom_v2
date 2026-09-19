@@ -321,13 +321,13 @@ Event
 | `model.fell_back` | ancien modèle, nouveau modèle, motif |
 | `idempotency.recorded` | clé, call_id, résultat |
 | `tool.called` | tool_name, tool_kind, call_id, arguments, refs |
-| `tool.completed` | tool_name, call_id, is_error, sortie (blocs ou réf.), latence, taille |
+| `tool.completed` | tool_name, call_id, is_error, sortie (blocs, références de fichiers, aperçu et référence si déportée), latence, taille ; facette `offloaded` |
 | `tool.source_unavailable` | source (serveur MCP), erreur, required |
 | `guard.checked` | guard, cible, outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized |
 | `judge.evaluated` | modèle juge, scores par critère, bloquant, réussi |
 | `policy.decided` | hook, point, décision, motif |
 | `approval.requested` / `.granted` / `.rejected` / `.expired` | tool_name, call_id, arguments, auteur, motif, scope, expire_at |
-| `artifact.stored` | uri, type MIME, taille |
+| `artifact.stored` | uri, type MIME, taille, nom, origine (`attachment`, `tool_output`, `offload`), call_id |
 | `session.compacted` | résumé, up_to_seq, tokens avant/après |
 | `step.started` / `.completed` | step_no, état, effet, durée, statut |
 | `run.transitioned` | from, to, step_no, cause |
@@ -460,16 +460,18 @@ Decision = Continue
 
 ```
 ToolOutput
-  blocks      Text | Json | ImageRef | FileRef   # ce que voit le modèle
+  blocks      Text | Json | ArtifactRef           # ce que voit le modèle
   data        JSON structuré optionnel            # pour $ref, A7, l'interface
   is_error    bool
   artifacts   références produites (G3)
+  offloaded   référence du contenu complet, s'il a été déporté (#16)
 ```
 
-- Outils Python : une `str` donne `Text` ; `dict`, `list` ou modèle Pydantic donnent `Json` ; une `Image` est stockée et renvoyée en `ImageRef` ; un `ToolOutput` explicite donne le contrôle total.
+- Outils Python : une `str` donne `Text` ; `dict`, `list` ou modèle Pydantic donnent `Json` ; une `Image` est stockée et renvoyée en `ArtifactRef` ; un `ToolOutput` explicite donne le contrôle total.
 - Une exception donne `is_error` ; une `ToolError(message)` porte un message exploitable par le modèle.
-- MCP : `text`, `image`, `resource`, `structuredContent` et `isError` se traduisent directement.
-- Capacité du modèle `tool_result_media` : si le modèle n'accepte pas d'image dans un résultat d'outil, l'adaptateur la place dans un message utilisateur juste après, ou la remplace par sa référence.
+- MCP : `text` et `structuredContent` se traduisent directement ; `image`, `audio` et les ressources binaires sont stockés comme artefacts ; un lien de ressource reste une mention.
+- Un outil rend ses fichiers en octets (bloc `InlineData`, jamais journalisé) : le moteur les range dans le stockage d'artefacts (`artifact.stored`, avant le `tool.completed`) et les remplace par leur référence. Sans stockage, le modèle reçoit une mention.
+- Capacité du modèle `tool_result_media` : si le modèle n'accepte pas d'image dans un résultat d'outil, l'image part dans un message utilisateur placé après les résultats du tour, et le résultat la mentionne.
 
 **Chaîne d'exécution d'un appel :**
 
@@ -477,10 +479,10 @@ ToolOutput
 2. Validation des arguments par le schéma ; en cas d'erreur, résultat d'erreur actionnable pour le modèle (D4).
 3. Politiques `before_tool` : droits, approbation (`Pause`), refus (`Deny`).
 4. Exécution avec timeout, et la clé d'idempotence `hash(run_id, call_id)` dans le `ToolContext` (#18).
-5. Déport si le résultat dépasse le seuil de l'outil (#16) : contenu complet dans le stockage d'artefacts, aperçu structuré pour le modèle, facette `offloaded`. Un outil intégré `artifact_read(ref, offset, limit)` est exposé seulement si un déport a eu lieu dans le run. La troncature simple ne sert que sans stockage d'artefacts.
+5. Fichiers rangés, puis déport si le résultat dépasse le seuil de l'outil (#16, `offload_over`, en caractères de ce que verrait le modèle, 50 000 par défaut) : contenu complet dans le stockage d'artefacts (`data` en JSON s'il existe, sinon le texte), aperçu pour le modèle (début du texte, ou structure du JSON), facette `offloaded`. Un outil intégré `artifact_read(ref, offset, limit)` est exposé seulement si un déport a eu lieu dans le run ; `$ref` et `tool_results` transmettent le contenu complet. Ni un outil terminal ni `artifact_read` ne sont déportés. La troncature simple ne sert que sans stockage d'artefacts.
 6. Politiques `after_tool`.
 
-**Lot parallèle :** tous les appels d'un tour s'exécutent en parallèle ; chaque résultat est écrit dès qu'il arrive. Si certains exigent une approbation, les autres s'exécutent d'abord, puis le run passe en `PAUSED`.
+**Lot parallèle :** tous les appels d'un tour s'exécutent en parallèle ; chaque résultat est écrit dès qu'il arrive. Dans la requête suivante, les résultats du tour suivent l'ordre des appels, pas leur ordre d'arrivée : la requête ne dépend pas des durées des outils. Si certains exigent une approbation, les autres s'exécutent d'abord, puis le run passe en `PAUSED`.
 
 **Approbation** (#17) : une politique peut exiger une approbation sur n'importe quel outil, mais ne peut la lever que si l'outil n'est pas en `always` (seule la config admin le peut). Déroulé :
 
@@ -598,9 +600,9 @@ Le message du rôle est construit par un `input_template` explicite (`{{ args.x 
 
 **Arguments d'un rôle :** sauf `additionalProperties` déclaré, les arguments non prévus par `input_schema` sont refusés, comme pour un outil Python. La description que voit l'orchestrateur liste le contexte que le rôle reçoit déjà, pour qu'il ne le transmette pas en arguments.
 
-**Références `$ref`** (#12) : `{"$ref": "result:<n>"}` désigne le n-ième appel d'outil du run ; la même référence sérialisée en chaîne est acceptée. Quand l'agent a des rôles, chaque résultat montré à l'orchestrateur commence par sa référence (`[result:3]`), et son prompt système explique `$ref`.
+**Références `$ref`** (#12) : `{"$ref": "result:<n>"}` désigne le n-ième appel d'outil du run ; la même référence sérialisée en chaîne est acceptée. Quand un rôle est proposé dans le run (un rôle vision masqué ne compte pas), chaque résultat montré à l'orchestrateur commence par sa référence (`[result:3]`), et son prompt système explique `$ref`.
 
-**Rôle vision :** il déclare le contexte `attachments` et reste masqué quand le run n'a pas de pièce jointe (C4).
+**Rôle vision :** il déclare le contexte `attachments` et reste masqué quand le run n'a pas de pièce jointe (C4). Les images suivent le texte de son message, en références résolues à l'appel ; son modèle doit avoir la capacité `vision` (contrôlé au chargement). Un `input_template` peut citer `{{ context.attachments }}` (liste des fichiers : nom, type, taille), sans obligation.
 
 **Outil terminal** (#13) : il n'est terminal que s'il est seul dans le tour et n'a pas échoué. Sa sortie passe par les hooks `on_output` et le réglage `stream_output`, et doit respecter le schéma de sortie de l'agent s'il en a un. En cas d'échec, le résultat revient à l'orchestrateur. Sa description reçoit automatiquement la mention « à appeler seul » ; un appel en parallèle ne déclenche pas la règle et est signalé dans les logs (`policy.decided` en 3.1). Dans le journal, `run.completed` référence le `tool.completed` terminal, sans duplication.
 
@@ -667,7 +669,7 @@ Les tentatives refusées restent dans le journal mais sont exclues de l'historiq
 | `id` | Identifiant utilisé par les rôles |
 | `sdk` | `anthropic` ou `openai` : choisit l'adaptateur (#9) |
 | `api` | Pour `sdk: openai` : `chat` (défaut) ou `responses` ; refusé avec `sdk: anthropic` |
-| `base_url`, `model` | Point d'accès et modèle du fournisseur |
+| `base_url`, `model` | Point d'accès et modèle du fournisseur ; sans `base_url`, l'adresse officielle du fournisseur du SDK, jamais une variable d'environnement (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) |
 | `api_key_env` | Nom de la variable qui contient la clé |
 | Réglages | `max_tokens`, `params` (fusion par bloc entier, B6) |
 | Capacités | Vision, outils, thinking, JSON natif, `image_input` (`base64`, `url`, `file_id`), taille et formats d'image, `tool_result_media`, `streaming`, fenêtre de contexte |
@@ -734,7 +736,7 @@ models:
 
 **Raisonnement** (#7) : le `RunState` garde un bloc `Reasoning` neutre. L'adaptateur décide quoi renvoyer selon les capacités du modèle : Anthropic exige les blocs signés pendant une boucle d'outils ; l'API Responses d'OpenAI accepte le raisonnement chiffré ; d'autres API compatibles l'ignorent ou le refusent. Après une bascule de modèle, le raisonnement d'un autre fournisseur est écarté. Il est retiré au stockage de la session.
 
-**Images** (#14) : le `RunState` ne garde qu'une référence. L'adaptateur la résout à l'appel selon `image_input` : base64 par défaut, lu depuis le stockage d'artefacts ; URL signée à courte durée de vie seulement si le modèle l'accepte et que la config l'autorise (RGPD). Si le format ou la taille ne conviennent pas : erreur explicite avant l'appel, ou conversion par un hook.
+**Images** (#14) : le `RunState` ne garde qu'une référence. Juste avant l'appel, le moteur la résout selon les capacités du modèle : un modèle avec `vision` reçoit les octets, lus dans le stockage d'artefacts et envoyés en base64 par l'adaptateur ; un modèle sans `vision`, ou un fichier qui n'est pas une image, donne une mention textuelle (nom, type, taille). URL signée à courte durée de vie seulement si le modèle l'accepte et que la config l'autorise (RGPD), plus tard : `image_input` doit aujourd'hui contenir `base64`. Si le format (`image_formats`) ou la taille (`max_image_bytes`) ne conviennent pas : erreur explicite avant l'appel (`model.invalid_request`), ou conversion par un hook (3.1). `request_hash` est calculé sur la requête avant résolution, et la fenêtre de contexte compte 1 600 tokens par image envoyée.
 
 ## 11. Journal, sessions et persistance
 
@@ -805,10 +807,10 @@ runtime (fin du run) ──enqueue──▶ TaskQueue ──▶ worker
 
 ### 11.4 Artefacts
 
-- Les pièces jointes sont validées à l'entrée : format par signature binaire, taille (G1).
-- Stockage hors journal, désigné par URI et préfixé par client (`tenant/<id>/...`).
-- Les outils peuvent produire des artefacts, récupérables par l'appelant (G3).
-- En mode librairie, le stockage par défaut est un dossier local ; GCS en mode service.
+- Les pièces jointes sont validées à l'entrée, avant tout écrit : format par signature binaire (images JPEG, PNG, GIF, WebP au jalon J2), type annoncé cohérent, taille (`execution.attachments`, 5 Mio par défaut) (G1). Chacune donne un `artifact.stored`, puis le message de l'utilisateur les porte en références.
+- Stockage hors journal, désigné par une URI adressée par le contenu : `artifact://<client>/<session>/<sha256>.<ext>`. Un même fichier n'est rangé qu'une fois par session, et la suppression d'une session touche un seul dossier.
+- Les outils peuvent produire des artefacts, récupérables par l'appelant (G3) : `RunResult.artifacts`, `Loom.artifact(uri)`.
+- En mode librairie, le stockage par défaut suit le journal : dossier `.artifacts` sous celui d'un journal JSONL, mémoire pour un journal en mémoire ; GCS en mode service.
 
 ### 11.5 RGPD
 
@@ -1054,6 +1056,11 @@ roles:
     timeout: 60                       # sinon, délais et retry du modèle
     output: {...}
     judge: {...}
+  - name: lire_photo                  # rôle vision
+    description: Décrit les photos jointes par le client.
+    model: HAIKU                      # capabilities.vision: true exigée
+    input_schema: {...}
+    context: [user_input, attachments]   # masqué quand le run n'a pas de pièce jointe
 subagents:
   - agent: verifier_devis
     name: verifier
@@ -1119,7 +1126,7 @@ Un agent peut référencer plusieurs serveurs : voir §9.5.
 ```yaml
 storage:
   events:      {backend: jsonl, path: data/events}      # memory|jsonl|sqlite|postgres|firestore (+ dsn_env)
-  artifacts:   {backend: local, path: data/artifacts}   # local|gcs (+ bucket)
+  artifacts:   {backend: local, path: data/artifacts}   # local|memory|gcs (+ bucket) ; défaut : suit le journal
   idempotency: {backend: journal}                       # journal|memory|sqlite|postgres|firestore|redis
   bus:         {backend: memory}                        # memory|postgres|redis|rabbitmq
   queue:       {backend: asyncio}                       # asyncio|rabbitmq (+ url_env)
@@ -1137,6 +1144,7 @@ sessions:
 
 execution:
   tools: {timeout: 30, validate_arguments: true, offload_over: 50000}
+  attachments: {max_bytes: 5242880, types: [image/jpeg, image/png, image/gif, image/webp]}
   lease: {ttl: 60, renew_every: 20}
   shutdown_timeout: 30
 ```

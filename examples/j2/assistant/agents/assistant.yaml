@@ -1,5 +1,5 @@
 name: assistant
-description: Répond aux questions de date et de calcul avec deux serveurs MCP (modèle simulé).
+description: Répond aux questions de date et de calcul avec deux serveurs MCP, et décrit les images jointes (modèles simulés).
 expose: {rest: true, mcp: true}
 
 main:
@@ -12,3 +12,19 @@ tools:
   - mcp: time                # outils time__maintenant et time__jours_entre
   - mcp: math
     include: [calculer]      # outil math__calculer
+
+roles:
+  # Rôle vision : il reçoit les images jointes, et reste masqué sans image.
+  # Pas de user_input : il ne verrait que les autres questions de la demande.
+  - name: decrire_image
+    description: Décrit les images jointes par l'utilisateur.
+    model: FAKE_VISION
+    system: >-
+      Tu décris des images en français, de façon factuelle et brève.
+      Ne réponds qu'à la consigne, d'après l'image seule.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: Ce qu'il faut regarder ou décrire}
+      required: [consigne]
+    context: [attachments]

@@ -5,6 +5,7 @@ Les réponses HTTP sont simulées par ``httpx2.MockTransport``, au format SSE de
 l'API Chat Completions, avec les champs ajoutés par les fournisseurs compatibles.
 """
 
+import base64
 import json
 from typing import Any
 
@@ -20,6 +21,7 @@ from loom_ia.core.model import (
     INVALID_JSON_KEY,
     AnthropicMeta,
     ArtifactRefBlock,
+    InlineDataBlock,
     JsonBlock,
     Message,
     ModelRequest,
@@ -360,9 +362,49 @@ async def test_servers_without_key() -> None:
     assert server.requests[0].headers["authorization"] == f"Bearer {NO_API_KEY}"
 
 
-async def test_attachments_are_refused_before_calling() -> None:
+async def test_unresolved_references_are_refused_before_calling() -> None:
     server = Server()
     image = ArtifactRefBlock(uri="file://photo.png", media_type="image/png")
-    with pytest.raises(ModelError, match="pièces jointes"):
+    with pytest.raises(ModelError, match="non résolue"):
         await complete(server.model(), request(Message(role="user", blocks=(image,))))
     assert server.requests == []
+
+
+async def test_official_address_without_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    # La config décide seule où partent les requêtes : la variable du SDK est ignorée.
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://ailleurs.test/v1")
+    server = Server(streamed(chunk({"content": "ok"}, finish="stop")))
+    await complete(server.model(SPEC.model_copy(update={"base_url": None})), request())
+    assert str(server.requests[0].url) == "https://api.openai.com/v1/chat/completions"
+
+
+async def test_images_go_in_user_content_parts() -> None:
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+    image = InlineDataBlock(media_type="image/png", data=png)
+    server = Server(streamed(chunk({"content": "ok"}, finish="stop")))
+    await complete(
+        server.model(),
+        request(
+            Message(role="user", blocks=(TextBlock(text="Regarde"), TextBlock(text=""), image))
+        ),
+    )
+    url = f"data:image/png;base64,{base64.b64encode(png).decode()}"
+    assert server.body["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Regarde"},
+                {"type": "image_url", "image_url": {"url": url}},
+            ],
+        }
+    ]
+    # L'API n'accepte pas d'image dans un résultat d'outil.
+    result = ToolResultBlock(call_id="t1", output=ToolOutput(blocks=(image,)))
+    with pytest.raises(ModelError, match="tool_result_media: false"):
+        await complete(
+            server.model(),
+            request(
+                Message(role="assistant", blocks=(ToolCallBlock(call_id="t1", name="tracer"),)),
+                Message(role="tool", blocks=(result,)),
+            ),
+        )

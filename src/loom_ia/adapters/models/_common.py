@@ -2,8 +2,14 @@
 """Outils communs aux adaptateurs de modèles : classement des erreurs, conversions.
 
 Ce module n'importe aucun SDK.
+
+Images (#14) : le moteur remplace chaque référence de fichier avant l'appel,
+par les octets de l'image (``inline_data``) ou par une mention. Un adaptateur
+ne reçoit donc jamais de ``ArtifactRefBlock`` ; s'il en reçoit un, c'est une
+erreur de montage.
 """
 
+import base64
 import json
 import re
 import time
@@ -15,11 +21,13 @@ from pydantic import JsonValue
 
 from loom_ia.core.model import (
     ArtifactRefBlock,
+    InlineDataBlock,
     JsonBlock,
     ModelErrorKind,
     OutputBlock,
     TextBlock,
     ToolOutput,
+    is_image,
 )
 from loom_ia.core.ports import ModelError
 
@@ -109,7 +117,11 @@ def retry_after(headers: Mapping[str, str] | None, *, now: float | None = None) 
 
 
 def output_text(output: ToolOutput) -> str:
-    """Contenu d'un résultat d'outil, en texte (JSON sérialisé pour les blocs ``json``)."""
+    """Contenu d'un résultat d'outil, en texte (JSON sérialisé pour les blocs ``json``).
+
+    Lève ``ModelError`` si le résultat contient une image : l'API ne l'accepte
+    pas dans un résultat d'outil.
+    """
     parts = [_block_text(block) for block in output.blocks]
     if not parts and output.data is not None:
         parts.append(json_text(output.data))
@@ -120,12 +132,21 @@ def json_text(data: JsonValue) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
-def unsupported(block: ArtifactRefBlock) -> ModelError:
+def unresolved(block: ArtifactRefBlock) -> ModelError:
     return ModelError(
         "invalid_request",
-        f"Référence de fichier {block.uri!r} : les pièces jointes ne sont pas encore "
-        "transmises aux modèles",
+        f"Référence de fichier {block.uri!r} non résolue : le moteur la remplace avant l'appel",
     )
+
+
+def image_data(block: InlineDataBlock) -> str:
+    """Octets d'une image, en base64 ; lève ``ModelError`` pour un autre type de fichier."""
+    if not is_image(block.media_type):
+        raise ModelError(
+            "invalid_request",
+            f"Fichier {block.media_type} : seules les images sont transmises aux modèles",
+        )
+    return base64.b64encode(block.data).decode("ascii")
 
 
 def _block_text(block: OutputBlock) -> str:
@@ -135,4 +156,10 @@ def _block_text(block: OutputBlock) -> str:
         case JsonBlock(data=data):
             return json_text(data)
         case ArtifactRefBlock():
-            raise unsupported(block)
+            raise unresolved(block)
+        case InlineDataBlock():
+            raise ModelError(
+                "invalid_request",
+                "Image dans un résultat d'outil : cette API ne l'accepte pas "
+                "(déclarer tool_result_media: false)",
+            )

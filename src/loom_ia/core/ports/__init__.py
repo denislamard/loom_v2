@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Ports : interfaces vers l'extérieur, implémentées par les adaptateurs."""
 
+from loom_ia.core.ports.artifact_store import ArtifactNotFound, ArtifactStore
 from loom_ia.core.ports.event_store import (
     EventStore,
     JournalCorrupted,
@@ -26,6 +27,8 @@ from loom_ia.core.ports.tool import (
 
 __all__ = [
     "RETRYABLE_ERRORS",
+    "ArtifactNotFound",
+    "ArtifactStore",
     "ChunkCallback",
     "EventStore",
     "JournalCorrupted",

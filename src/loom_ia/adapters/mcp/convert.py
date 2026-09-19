@@ -13,16 +13,24 @@ modèle, que les outils Python retirent déjà.
 
 **Résultats.** Les blocs ``text`` deviennent des blocs texte, et le contenu
 structuré (``structuredContent``) le ``data`` du résultat. Images, audio et
-ressources binaires sont remplacés par une mention en attendant les
-artefacts (phase 2.3).
+ressources binaires deviennent des octets (``inline_data``) que le moteur
+range dans le stockage d'artefacts avant d'écrire le résultat (#15) ; un
+lien de ressource reste une mention.
 """
 
+import base64
 from typing import cast
 
 from mcp import types
 from pydantic import JsonValue
 
-from loom_ia.core.model import OutputBlock, SideEffects, TextBlock, ToolOutput
+from loom_ia.core.model import (
+    InlineDataBlock,
+    OutputBlock,
+    SideEffects,
+    TextBlock,
+    ToolOutput,
+)
 
 
 def declared(annotations: types.ToolAnnotations | None) -> tuple[SideEffects, bool]:
@@ -58,19 +66,25 @@ def _block(content: types.ContentBlock) -> OutputBlock:
     match content:
         case types.TextContent(text=text):
             return TextBlock(text=text)
-        case types.ImageContent(mimeType=mime, data=data):
-            return TextBlock(text=_withheld("image", mime, data))
-        case types.AudioContent(mimeType=mime, data=data):
-            return TextBlock(text=_withheld("audio", mime, data))
+        case (
+            types.ImageContent(mimeType=mime, data=data)
+            | types.AudioContent(mimeType=mime, data=data)
+        ):
+            return _inline(mime, data, None)
         case types.ResourceLink(uri=uri, name=name):
             return TextBlock(text=f"[ressource {name} : {uri}]")
-        case types.EmbeddedResource(resource=types.TextResourceContents(text=text)):
-            return TextBlock(text=text)
         case types.EmbeddedResource(resource=resource):
+            if isinstance(resource, types.TextResourceContents):
+                return TextBlock(text=resource.text)
             mime = resource.mimeType or "application/octet-stream"
-            return TextBlock(text=f"[ressource binaire {resource.uri} ({mime}) non transmise]")
+            name = str(resource.uri).rstrip("/").rsplit("/", 1)[-1] or None
+            return _inline(mime, resource.blob, name)
 
 
-def _withheld(kind: str, mime: str, data: str) -> str:
-    size = len(data) * 3 // 4
-    return f"[{kind} {mime}, environ {size} octets : non transmis avant les artefacts (2.3)]"
+def _inline(mime: str, data: str, name: str | None) -> OutputBlock:
+    """Octets d'un contenu binaire, décodés du base64 ; une mention s'ils sont illisibles."""
+    try:
+        decoded = base64.b64decode(data, validate=True)
+    except ValueError:  # binascii.Error
+        return TextBlock(text=f"[contenu {mime} illisible : base64 invalide]")
+    return InlineDataBlock(media_type=mime, data=decoded, name=name)

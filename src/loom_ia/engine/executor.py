@@ -15,6 +15,13 @@ Un outil délégué (rôle) produit aussi des événements pendant son appel. Il
 passent par la même file que les résultats : ils précèdent toujours le
 ``tool.completed`` de leur appel. Le délai par défaut des outils ne
 s'applique pas à eux : les délais et le retry de leur modèle les bornent.
+
+Fichiers (#15, #16) : avant d'écrire un résultat, les octets qu'il porte
+(image renvoyée par un outil) sont rangés dans le stockage d'artefacts et
+remplacés par leur référence, puis un résultat trop long est déporté. Chaque
+fichier rangé donne un ``artifact.stored``, écrit avant le ``tool.completed``
+de l'appel. Un outil délégué indisponible dans le run (rôle vision sans pièce
+jointe, ``artifact_read`` sans déport) n'est ni montré au modèle ni appelable.
 """
 
 import asyncio
@@ -30,16 +37,25 @@ from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
 from pydantic import JsonValue
 
-from loom_ia.core.events import ToolCalled, ToolCompleted, ToolSourceUnavailable
+from loom_ia.core.events import ArtifactStored, ToolCalled, ToolCompleted, ToolSourceUnavailable
 from loom_ia.core.model import (
     INVALID_JSON_KEY,
+    ArtifactRefBlock,
+    InlineDataBlock,
+    OutputBlock,
     PendingCall,
     RunState,
+    TextBlock,
     ToolDefinition,
     ToolOutput,
     ToolSpec,
+    artifact_uri,
+    extension,
+    has_inline_data,
+    sniff,
 )
 from loom_ia.core.ports import (
+    ArtifactStore,
     SourceContext,
     SourceUnavailable,
     Tool,
@@ -48,6 +64,15 @@ from loom_ia.core.ports import (
     ToolSource,
 )
 from loom_ia.engine.delegated import DelegatedPayload, DelegatedTool, RunView
+from loom_ia.engine.media import size_label
+from loom_ia.engine.offload import (
+    DEFAULT_OFFLOAD_OVER,
+    ArtifactReadTool,
+    full_content,
+    offloaded,
+    truncated,
+    visible_text,
+)
 from loom_ia.engine.refs import RefError
 
 logger = logging.getLogger(__name__)
@@ -73,7 +98,15 @@ class Delegated:
     payload: DelegatedPayload
 
 
-type ToolEvent = ToolCalled | ToolCompleted | Delegated
+@dataclass(frozen=True, slots=True)
+class Stored:
+    """Fichier rangé pendant un appel : sortie d'outil ou résultat déporté."""
+
+    call_id: str
+    payload: ArtifactStored
+
+
+type ToolEvent = ToolCalled | ToolCompleted | Stored | Delegated
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +137,13 @@ class _Crashed:
 
 
 class ToolExecutor:
-    """Outils disponibles pour un run, et exécution de leurs appels."""
+    """Outils disponibles pour un run, et exécution de leurs appels.
+
+    ``artifacts`` est le stockage des fichiers du run : pièces jointes, sorties
+    d'outils, résultats déportés. Avec lui, l'outil intégré ``artifact_read``
+    est déclaré. ``offload_over`` est le seuil de déport des outils qui n'en
+    fixent pas ; ``None`` le désactive.
+    """
 
     def __init__(
         self,
@@ -113,15 +152,21 @@ class ToolExecutor:
         sources: Iterable[ToolSource] = (),
         default_timeout: float | None = DEFAULT_TOOL_TIMEOUT,
         validate_arguments: bool = True,
+        artifacts: ArtifactStore | None = None,
+        offload_over: int | None = DEFAULT_OFFLOAD_OVER,
     ) -> None:
         self.default_timeout = default_timeout
         self.validate_arguments = validate_arguments
+        self.artifacts = artifacts
+        self.offload_over = offload_over
         # Sources ouvertes au début de chaque run (serveurs MCP, #19).
         self.sources: tuple[ToolSource, ...] = tuple(sources)
         self._tools: dict[str, AnyTool] = {}
         self._validators: dict[str, Validator] = {}
         for tool in tools:
             self.add(tool)
+        if artifacts is not None:
+            self.add(ArtifactReadTool())
 
     @asynccontextmanager
     async def opened(self, context: SourceContext) -> AsyncGenerator[OpenedTools]:
@@ -172,7 +217,10 @@ class ToolExecutor:
     def _copy(self) -> ToolExecutor:
         """Mêmes outils et réglages, sans les sources : base des outils d'un run."""
         copy = ToolExecutor(
-            default_timeout=self.default_timeout, validate_arguments=self.validate_arguments
+            default_timeout=self.default_timeout,
+            validate_arguments=self.validate_arguments,
+            artifacts=self.artifacts,
+            offload_over=self.offload_over,
         )
         copy._tools = dict(self._tools)
         copy._validators = dict(self._validators)
@@ -190,27 +238,44 @@ class ToolExecutor:
     def get(self, name: str) -> AnyTool | None:
         return self._tools.get(name)
 
-    @property
-    def has_delegated(self) -> bool:
-        """Vrai si l'agent délègue à des rôles : les références ``$ref`` lui sont montrées."""
-        return any(isinstance(tool, DelegatedTool) for tool in self._tools.values())
+    def offers_roles(self, run: RunView) -> bool:
+        """Vrai si un rôle est proposé dans ce run : les références ``$ref`` sont montrées.
+
+        Un rôle masqué (rôle vision sans pièce jointe) ne compte pas.
+        """
+        return any(
+            tool.spec.kind == "role" and _offered(tool, run) for tool in self._tools.values()
+        )
 
     @property
     def specs(self) -> tuple[ToolSpec, ...]:
         return tuple(tool.spec for tool in self._tools.values())
 
-    def definitions(self) -> tuple[ToolDefinition, ...]:
-        """Ce que le modèle voit des outils, dans l'ordre de déclaration."""
-        return tuple(spec.definition() for spec in self.specs)
+    def view(self, state: RunState) -> RunView:
+        """Ce que les outils délégués voient du run."""
+        return RunView.of(state, self.artifacts)
+
+    def definitions(self, run: RunView | None = None) -> tuple[ToolDefinition, ...]:
+        """Ce que le modèle voit des outils, dans l'ordre de déclaration.
+
+        Avec ``run``, les outils délégués indisponibles dans ce run sont écartés.
+        """
+        return tuple(
+            tool.spec.definition()
+            for tool in self._tools.values()
+            if run is None or _offered(tool, run)
+        )
 
     async def run_batch(self, state: RunState) -> AsyncGenerator[ToolEvent]:
         """Traite les appels en attente du run et émet leurs événements."""
-        view = RunView.of(state)
+        view = self.view(state)
         ready: list[_Ready] = []
         for call in state.pending_calls:
             tool = self._tools.get(call.name)
             prepared = (
-                self._unknown_tool(call.name) if tool is None else self._prepare(call, tool, view)
+                self._unknown_tool(call.name, view)
+                if tool is None or not _offered(tool, view)
+                else await self._prepare(call, tool, view)
             )
             if isinstance(prepared, _Ready):
                 ready.append(prepared)
@@ -252,11 +317,11 @@ class ToolExecutor:
 
     # --- Interne ---------------------------------------------------------
 
-    def _unknown_tool(self, name: str) -> str:
-        available = ", ".join(self._tools) or "aucun"
-        return f"Outil inconnu : {name!r}. Outils disponibles : {available}."
+    def _unknown_tool(self, name: str, view: RunView) -> str:
+        offered = [tool.spec.name for tool in self._tools.values() if _offered(tool, view)]
+        return f"Outil inconnu : {name!r}. Outils disponibles : {', '.join(offered) or 'aucun'}."
 
-    def _prepare(self, call: PendingCall, tool: AnyTool, view: RunView) -> _Ready | str:
+    async def _prepare(self, call: PendingCall, tool: AnyTool, view: RunView) -> _Ready | str:
         """Appel prêt à partir, ou motif de refus destiné au modèle."""
         if call.started and not tool.spec.safe_to_retry:
             return UNKNOWN_STATE
@@ -264,7 +329,7 @@ class ToolExecutor:
             raw = str(call.arguments[INVALID_JSON_KEY])
             return f"Arguments illisibles : ce n'est pas un objet JSON valide.\nReçu : {raw[:500]}"
         try:
-            arguments, refs = view.results.resolve(call.arguments)
+            arguments, refs = await view.results.resolve(call.arguments)
         except RefError as exc:
             return exc.message
         if self.validate_arguments:
@@ -272,7 +337,7 @@ class ToolExecutor:
             if problem is not None:
                 return problem
         if isinstance(tool, DelegatedTool):
-            problem = tool.check(arguments, view)
+            problem = await tool.check(arguments, view)
             if problem is not None:
                 return problem
         return _Ready(call=call, tool=tool, arguments=arguments, refs=refs)
@@ -324,7 +389,112 @@ class ToolExecutor:
             output = ToolOutput.error(exc.message)
         except Exception as exc:
             output = _unexpected(spec.name, exc, state)
+        output = await self._settle(output, spec, call.call_id, view, emit)
         emit(_completed(call, output, started=started))
+
+    async def _settle(
+        self,
+        output: ToolOutput,
+        spec: ToolSpec,
+        call_id: str,
+        view: RunView,
+        emit: Callable[[ToolEvent], None],
+    ) -> ToolOutput:
+        """Résultat prêt pour le journal : fichiers rangés, contenu trop long déporté."""
+        state = view.state
+        try:
+            if has_inline_data(output.blocks):
+                output = await self._store_files(output, call_id, state, emit)
+            limit = spec.offload_over or self.offload_over
+            if (
+                limit is not None
+                and not spec.terminal
+                and spec.kind != "builtin"
+                and len(visible_text(output)) > limit
+            ):
+                output = await self._offload(output, limit, spec, call_id, view, emit)
+        except Exception as exc:
+            logger.warning(
+                "Résultat de l'outil %s non conservé",
+                spec.name,
+                exc_info=exc,
+                extra={"run_id": state.run_id},
+            )
+            return ToolOutput.error(
+                f"Résultat de l'outil {spec.name} perdu : échec du stockage d'artefacts "
+                f"({type(exc).__name__}: {exc})."
+            )
+        return output
+
+    async def _store_files(
+        self,
+        output: ToolOutput,
+        call_id: str,
+        state: RunState,
+        emit: Callable[[ToolEvent], None],
+    ) -> ToolOutput:
+        """Octets des blocs rangés dans le stockage, remplacés par leur référence (G3)."""
+        blocks: list[OutputBlock] = []
+        uris = list(output.artifacts)
+        for block in output.blocks:
+            if not isinstance(block, InlineDataBlock):
+                blocks.append(block)
+                continue
+            size = len(block.data)
+            if self.artifacts is None:
+                blocks.append(
+                    TextBlock(
+                        text=f"[fichier {block.media_type} de {size_label(size)} non conservé : "
+                        "aucun stockage d'artefacts]"
+                    )
+                )
+                continue
+            media_type = sniff(block.data) or block.media_type
+            uri = artifact_uri(state.context.tenant_id, state.session_id, block.data, media_type)
+            await self.artifacts.put(uri, block.data)
+            stored = ArtifactStored(
+                uri=uri,
+                media_type=media_type,
+                size=size,
+                name=block.name,
+                origin="tool_output",
+                call_id=call_id,
+            )
+            emit(Stored(call_id=call_id, payload=stored))
+            blocks.append(
+                ArtifactRefBlock(uri=uri, media_type=media_type, size=size, name=block.name)
+            )
+            if uri not in uris:
+                uris.append(uri)
+        return output.model_copy(update={"blocks": tuple(blocks), "artifacts": tuple(uris)})
+
+    async def _offload(
+        self,
+        output: ToolOutput,
+        limit: int,
+        spec: ToolSpec,
+        call_id: str,
+        view: RunView,
+        emit: Callable[[ToolEvent], None],
+    ) -> ToolOutput:
+        """Contenu complet rangé à part, aperçu à la place (#16) ; tronqué sans stockage."""
+        if self.artifacts is None:
+            return truncated(output, limit)
+        state = view.state
+        content, media_type = full_content(output)
+        data = content.encode()
+        uri = artifact_uri(state.context.tenant_id, state.session_id, data, media_type)
+        await self.artifacts.put(uri, data)
+        stored = ArtifactStored(
+            uri=uri,
+            media_type=media_type,
+            size=len(data),
+            name=f"{spec.name}.{extension(media_type)}",
+            origin="offload",
+            call_id=call_id,
+        )
+        emit(Stored(call_id=call_id, payload=stored))
+        return offloaded(output, uri=uri, content=content, refs=self.offers_roles(view))
 
 
 async def _delegate(
@@ -345,6 +515,11 @@ async def _delegate(
     if output is None:
         raise RuntimeError(f"Outil délégué {tool.spec.name} terminé sans résultat")
     return output
+
+
+def _offered(tool: AnyTool, run: RunView) -> bool:
+    """Vrai si l'outil est montré au modèle et appelable dans ce run."""
+    return not isinstance(tool, DelegatedTool) or tool.available(run)
 
 
 def _unexpected(name: str, exc: Exception, state: RunState) -> ToolOutput:

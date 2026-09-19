@@ -4,6 +4,10 @@
 Le ``sdk`` choisit l'adaptateur ; le fournisseur n'est qu'une affaire de
 config (``base_url``, clé, capacités). La config ne contient jamais la clé,
 seulement le nom de la variable qui la porte (``api_key_env``).
+
+Sans ``base_url``, l'adaptateur prend l'adresse officielle du fournisseur de
+son SDK, jamais celle d'une variable d'environnement (``ANTHROPIC_BASE_URL``,
+``OPENAI_BASE_URL``) : seule la config décide où partent les requêtes.
 """
 
 from typing import Literal, Self
@@ -11,10 +15,13 @@ from typing import Literal, Self
 from pydantic import Field, JsonValue, NonNegativeFloat, PositiveFloat, PositiveInt, model_validator
 
 from loom_ia.core.model.base import DomainModel
+from loom_ia.core.model.media import ImageFormat
 from loom_ia.core.model.usage import Pricing
 
 type Sdk = Literal["anthropic", "openai", "fake"]
 type ModelApi = Literal["chat", "responses"]
+# Formes sous lesquelles un modèle accepte une image (#14).
+type ImageInput = Literal["base64", "url", "file_id"]
 
 
 class ModelTimeouts(DomainModel):
@@ -50,12 +57,36 @@ class RetryPolicy(DomainModel):
 
 
 class ModelCapabilities(DomainModel):
-    """Capacités déclarées (sous-ensemble du J1 ; les autres arrivent avec leurs phases)."""
+    """Capacités déclarées (sous-ensemble ; les autres arrivent avec leurs phases).
+
+    Images (#14) : un modèle sans ``vision`` n'en reçoit qu'une mention
+    textuelle. Pour un modèle avec ``vision``, chaque image est lue dans le
+    stockage d'artefacts et envoyée en base64, après contrôle de son format
+    (``image_formats``) et de sa taille (``max_image_bytes``).
+    """
 
     # False : appel non streamé, dont la réponse est rejouée en un flux simulé.
     streaming: bool = True
     # Fenêtre en tokens ; vérifiée avant l'appel si elle est déclarée (B7).
     context_window: PositiveInt | None = None
+    vision: bool = False
+    # Formes acceptées par le modèle ; loom-ia n'envoie pour l'instant qu'en base64.
+    image_input: tuple[ImageInput, ...] = ("base64",)
+    image_formats: tuple[ImageFormat, ...] = ("jpeg", "png", "gif", "webp")
+    # Taille maximale d'une image, en octets.
+    max_image_bytes: PositiveInt | None = None
+    # Images acceptées dans un résultat d'outil ; sinon, elles suivent les
+    # résultats dans un message utilisateur.
+    tool_result_media: bool = False
+
+    @model_validator(mode="after")
+    def _check_images(self) -> Self:
+        if self.vision and "base64" not in self.image_input:
+            raise ValueError(
+                "image_input : seul l'envoi en base64 est pris en charge pour l'instant "
+                "(url et file_id viendront avec le stockage distant) ; ajouter base64"
+            )
+        return self
 
 
 class ModelSpec(DomainModel):
@@ -65,6 +96,7 @@ class ModelSpec(DomainModel):
     api: ModelApi | None = None
     # Nom du modèle chez le fournisseur.
     model: str = Field(min_length=1)
+    # Point d'accès ; sans lui, l'adresse officielle du fournisseur du SDK.
     base_url: str | None = None
     # Variable d'environnement qui contient la clé.
     api_key_env: str | None = None

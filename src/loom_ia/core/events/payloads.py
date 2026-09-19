@@ -6,22 +6,34 @@ catégorie et ses facettes : les champs de recherche que l'enveloppe recopie
 pour que les stores les indexent sans connaître les payloads.
 
 Événements des jalons J1 et J2. Les autres types (guards, approbations,
-artefacts, compaction…) arrivent avec leurs phases.
+compaction…) arrivent avec leurs phases.
 
 Un appel de modèle fait par un rôle délégué (C2) est journalisé dans le run
 de l'orchestrateur, entre le ``tool.called`` et le ``tool.completed`` de
 l'appel : ``call_id`` le relie à cet appel, et l'enveloppe porte le nom du
 rôle.
+
+Les fichiers ne sont jamais dans le journal : ``artifact.stored`` annonce
+qu'un fichier a été rangé dans le stockage d'artefacts, et les messages ne
+portent que sa référence. Un bloc d'octets (``inline_data``) y est refusé.
 """
 
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, ClassVar, Final, Literal, Self
 
-from pydantic import Field, JsonValue, NonNegativeFloat, NonNegativeInt, PositiveInt
+from pydantic import (
+    Field,
+    JsonValue,
+    NonNegativeFloat,
+    NonNegativeInt,
+    PositiveInt,
+    model_validator,
+)
 
 from loom_ia.core.model.base import DomainModel
-from loom_ia.core.model.content import ToolOutput
+from loom_ia.core.model.content import ToolOutput, has_inline_data
 from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import EventId, RunId
+from loom_ia.core.model.media import ArtifactOrigin, ArtifactRecord
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.run_state import RunStatus
 from loom_ia.core.model.streaming import ModelErrorKind, StopReason
@@ -33,6 +45,14 @@ type EventCategory = Literal[
 ]
 type EventStatus = Literal["ok", "warning", "error"]
 type FacetValue = str | int | float | bool | None
+
+
+INLINE_REFUSED: Final = "{label} : octets de fichier interdits dans le journal (référence attendue)"
+
+
+def _no_inline_data(message: Message | None, label: str) -> None:
+    if message is not None and has_inline_data(message.blocks):
+        raise ValueError(INLINE_REFUSED.format(label=label))
 
 
 class Payload(DomainModel):
@@ -121,6 +141,11 @@ class RunCompleted(Payload):
     usage: Usage = Usage()
     cost_usd: NonNegativeFloat = 0.0
 
+    @model_validator(mode="after")
+    def _check_output(self) -> Self:
+        _no_inline_data(self.output, "run.completed")
+        return self
+
 
 class RunFailed(Payload):
     category: ClassVar[EventCategory] = "run"
@@ -147,6 +172,11 @@ class UserMessage(Payload):
     type: Literal["message.user"] = "message.user"
     message: Message
 
+    @model_validator(mode="after")
+    def _check_message(self) -> Self:
+        _no_inline_data(self.message, "message.user")
+        return self
+
 
 class ModelResponded(Payload):
     category: ClassVar[EventCategory] = "model"
@@ -171,6 +201,11 @@ class ModelResponded(Payload):
     request_hash: str
     # Appel d'outil servi par cette réponse (rôle délégué) ; None pour l'orchestrateur.
     call_id: str | None = None
+
+    @model_validator(mode="after")
+    def _check_message(self) -> Self:
+        _no_inline_data(self.message, "model.responded")
+        return self
 
     def facets(self) -> dict[str, FacetValue]:
         return {**super().facets(), "tokens": self.usage.total_tokens}
@@ -230,12 +265,22 @@ class ToolCompleted(Payload):
     latency_ms: NonNegativeFloat = 0.0
     size: NonNegativeInt = 0
 
+    @model_validator(mode="after")
+    def _check_output(self) -> Self:
+        if has_inline_data(self.output.blocks):
+            raise ValueError(INLINE_REFUSED.format(label="tool.completed"))
+        return self
+
     @property
     def event_status(self) -> EventStatus:
         return "error" if self.output.is_error else "ok"
 
     def facets(self) -> dict[str, FacetValue]:
-        return {**super().facets(), "is_error": self.output.is_error}
+        facets: dict[str, FacetValue] = {**super().facets(), "is_error": self.output.is_error}
+        if self.output.offloaded is not None:
+            # Absente quand elle est fausse : les journaux antérieurs restent lisibles.
+            facets["offloaded"] = True
+        return facets
 
 
 class ToolSourceUnavailable(Payload):
@@ -255,6 +300,41 @@ class ToolSourceUnavailable(Payload):
         return "error" if self.required else "warning"
 
 
+# --- Artefacts ---------------------------------------------------------------
+
+
+class ArtifactStored(Payload):
+    """Fichier rangé dans le stockage d'artefacts (G2, #16).
+
+    Pièce jointe de la demande (écrit avant ``message.user``), fichier produit
+    par un outil ou résultat déporté (écrits avant le ``tool.completed`` de
+    l'appel, dans son span).
+    """
+
+    category: ClassVar[EventCategory] = "artifact"
+    facet_fields: ClassVar[tuple[str, ...]] = ("origin", "media_type", "size")
+
+    type: Literal["artifact.stored"] = "artifact.stored"
+    uri: str
+    media_type: str
+    size: NonNegativeInt
+    name: str | None = None
+    origin: ArtifactOrigin
+    # Appel d'outil qui l'a produit (sortie ou déport).
+    call_id: str | None = None
+
+    @property
+    def record(self) -> ArtifactRecord:
+        return ArtifactRecord(
+            uri=self.uri,
+            media_type=self.media_type,
+            size=self.size,
+            name=self.name,
+            origin=self.origin,
+            call_id=self.call_id,
+        )
+
+
 type DurablePayload = Annotated[
     RunStarted
     | StepStarted
@@ -267,7 +347,8 @@ type DurablePayload = Annotated[
     | ModelRetried
     | ToolCalled
     | ToolCompleted
-    | ToolSourceUnavailable,
+    | ToolSourceUnavailable
+    | ArtifactStored,
     Field(discriminator="type"),
 ]
 
@@ -284,4 +365,5 @@ DURABLE_PAYLOADS: tuple[type[Payload], ...] = (
     ToolCalled,
     ToolCompleted,
     ToolSourceUnavailable,
+    ArtifactStored,
 )

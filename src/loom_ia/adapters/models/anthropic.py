@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Adaptateur ``sdk: anthropic`` : API Messages, en streaming (B1, B8).
 
-Sert aussi les fournisseurs compatibles (MiniMax…) via ``base_url``.
+Sert aussi les fournisseurs compatibles (MiniMax…) via ``base_url`` ; sans
+lui, l'adresse officielle d'Anthropic, quelle que soit ``ANTHROPIC_BASE_URL``.
 
 Traduction des messages :
 
@@ -9,7 +10,9 @@ Traduction des messages :
 - les messages consécutifs de même rôle sont fusionnés ;
 - les blocs de texte vides sont omis (l'API les refuse) ;
 - le raisonnement n'est renvoyé que s'il porte des données Anthropic
-  (signature ou contenu masqué) ; les autres blocs de raisonnement sont omis.
+  (signature ou contenu masqué) ; les autres blocs de raisonnement sont omis ;
+- une image (``inline_data``) devient un bloc ``image`` en base64, dans un
+  message comme dans un résultat d'outil.
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 """
@@ -25,15 +28,16 @@ from pydantic import JsonValue
 
 from loom_ia.adapters.models._common import (
     classify_error,
+    image_data,
     json_text,
-    output_text,
     retry_after,
-    unsupported,
+    unresolved,
 )
 from loom_ia.core.model import (
     AnthropicMeta,
     ArtifactRefBlock,
     ContentBlock,
+    InlineDataBlock,
     JsonBlock,
     Message,
     ModelChunk,
@@ -50,6 +54,7 @@ from loom_ia.core.model import (
     ToolCallBlock,
     ToolCallEnded,
     ToolCallStarted,
+    ToolOutput,
     ToolResultBlock,
     Usage,
     UsageDelta,
@@ -60,6 +65,8 @@ from loom_ia.core.ports import ModelError
 logger = logging.getLogger(__name__)
 
 PROVIDER: Final = "anthropic"
+# Adresse sans ``base_url`` : passée au SDK pour qu'il ne lise pas ANTHROPIC_BASE_URL.
+DEFAULT_BASE_URL: Final = "https://api.anthropic.com"
 # L'API exige max_tokens.
 DEFAULT_MAX_TOKENS: Final = 4096
 
@@ -74,6 +81,7 @@ _STOP_REASONS: Final[dict[str, StopReason]] = {
 }
 
 type _Role = Literal["user", "assistant"]
+type _ImageType = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
 class AnthropicModel:
@@ -89,7 +97,7 @@ class AnthropicModel:
         self.spec = spec
         self._client = anthropic.AsyncAnthropic(
             api_key=api_key,
-            base_url=spec.base_url,
+            base_url=spec.base_url or DEFAULT_BASE_URL,
             max_retries=0,
             timeout=spec.timeouts.total,
             http_client=http_client,
@@ -182,8 +190,10 @@ def _to_block(block: ContentBlock) -> sdk.ContentBlockParam | None:
             return {"type": "text", "text": text} if text else None
         case JsonBlock(data=data):
             return {"type": "text", "text": json_text(data)}
+        case InlineDataBlock():
+            return _image(block)
         case ArtifactRefBlock():
-            raise unsupported(block)
+            raise unresolved(block)
         case ReasoningBlock(text=text, provider_meta=meta):
             own = meta.get(PROVIDER)
             if not isinstance(own, AnthropicMeta):
@@ -202,10 +212,44 @@ def _to_block(block: ContentBlock) -> sdk.ContentBlockParam | None:
                 "tool_use_id": call_id,
                 "is_error": output.is_error,
             }
-            text = output_text(output)
-            if text:
-                result["content"] = [{"type": "text", "text": text}]
+            content = _result_content(output)
+            if content:
+                result["content"] = content
             return result
+
+
+def _image(block: InlineDataBlock) -> sdk.ImageBlockParam:
+    data = image_data(block)
+    media_type = cast(_ImageType, block.media_type)
+    return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+
+
+def _result_content(output: ToolOutput) -> list[sdk.tool_result_block_param.Content]:
+    """Contenu d'un résultat : ses textes réunis, et ses images à leur place."""
+    content: list[sdk.tool_result_block_param.Content] = []
+    texts: list[str] = []
+
+    def flush() -> None:
+        text = "\n".join(texts)
+        if text:
+            content.append({"type": "text", "text": text})
+        texts.clear()
+
+    for block in output.blocks:
+        match block:
+            case TextBlock(text=text):
+                texts.append(text)
+            case JsonBlock(data=data):
+                texts.append(json_text(data))
+            case InlineDataBlock():
+                flush()
+                content.append(_image(block))
+            case ArtifactRefBlock():
+                raise unresolved(block)
+    if not output.blocks and output.data is not None:
+        texts.append(json_text(output.data))
+    flush()
+    return content
 
 
 # --- Réponse -------------------------------------------------------------------

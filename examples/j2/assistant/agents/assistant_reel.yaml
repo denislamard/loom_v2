@@ -1,5 +1,5 @@
 name: assistant_reel
-description: Répond aux questions de date et de calcul avec deux serveurs MCP (MiniMax-M3).
+description: Répond aux questions de date et de calcul avec deux serveurs MCP, et décrit les images jointes (MiniMax-M3, Claude Haiku 4.5).
 expose: {rest: true, mcp: true}
 
 main:
@@ -12,3 +12,17 @@ tools:
   - mcp: time
   - mcp: math
     include: [calculer]
+
+roles:
+  - name: decrire_image
+    description: Décrit les images jointes par l'utilisateur.
+    model: HAIKU
+    system: >-
+      Tu décris des images en français, de façon factuelle et brève.
+      Ne réponds qu'à la consigne, d'après l'image seule.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: Ce qu'il faut regarder ou décrire}
+      required: [consigne]
+    context: [attachments]

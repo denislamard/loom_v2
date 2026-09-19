@@ -12,6 +12,10 @@ Serveurs MCP (#19) : chaque référence d'un agent devient une source d'outils,
 ouverte au début de chaque run. Les connexions de portée ``shared`` vivent
 dans un ``McpPool``, celui de l'instance ``Loom`` ou, à défaut, celui de
 l'agent. Le SDK ``mcp`` n'est importé que si la config déclare des serveurs.
+
+Stockage d'artefacts (G2) : un seul par instance, partagé par ses agents. Il
+suit le journal par défaut (dossier ``.artifacts`` d'un journal JSONL,
+mémoire sinon).
 """
 
 import logging
@@ -21,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from loom_ia.adapters.artifacts import InMemoryArtifactStore, LocalArtifactStore
 from loom_ia.adapters.models import create_model_client
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.agents.registry import AgentRegistry
@@ -35,7 +40,14 @@ from loom_ia.agents.spec import ContextItem as DeclaredContext
 from loom_ia.config.errors import ConfigError
 from loom_ia.config.models import LoomConfig
 from loom_ia.config.references import Registry, import_modules, resolve
-from loom_ia.core.ports import ChunkCallback, EventStore, ModelClient, Tool, ToolSource
+from loom_ia.core.ports import (
+    ArtifactStore,
+    ChunkCallback,
+    EventStore,
+    ModelClient,
+    Tool,
+    ToolSource,
+)
 from loom_ia.core.template import Template
 from loom_ia.engine import (
     AnyTool,
@@ -96,6 +108,15 @@ def create_event_store(config: LoomConfig) -> EventStore:
     return InMemoryEventStore()
 
 
+def create_artifact_store(config: LoomConfig) -> ArtifactStore:
+    """Stockage d'artefacts déclaré dans ``storage.artifacts``, ou celui qui suit le journal."""
+    storage = config.storage
+    path = storage.artifacts_path
+    if storage.artifacts_backend == "local" and path is not None:
+        return LocalArtifactStore(path)
+    return InMemoryArtifactStore()
+
+
 def load_registry(config: LoomConfig) -> Registry:
     """Charge les modules de ``imports`` et enregistre leurs outils."""
     return import_modules(config.imports, base_dir=config.base_dir)
@@ -116,11 +137,14 @@ def build_agent(
     environ: Mapping[str, str] | None = None,
     on_chunk: ChunkCallback | None = None,
     mcp_pool: McpPool | None = None,
+    artifacts: ArtifactStore | None = None,
 ) -> Agent:
     """Assemble l'agent ``name`` de la config.
 
     ``mcp_pool`` porte les connexions MCP partagées ; sans lui, l'agent ouvre
-    le sien et le ferme avec ``aclose``.
+    le sien et le ferme avec ``aclose``. ``artifacts`` est le stockage des
+    fichiers ; sans lui, les pièces jointes sont refusées et les gros
+    résultats tronqués.
     """
     spec = AgentRegistry.from_config(config).get(name)
     known = registry if registry is not None else load_registry(config)
@@ -152,12 +176,15 @@ def build_agent(
             sources=sources,
             default_timeout=execution.timeout,
             validate_arguments=execution.validate_arguments,
+            artifacts=artifacts,
+            offload_over=execution.offload_over,
         ),
         system=system_prompt(spec),
         max_iterations=spec.max_iterations,
         max_tokens=llm.max_tokens,
         params=llm.params,
         on_chunk=on_chunk,
+        attachments=config.execution.attachments,
     )
     return Agent(spec=spec, context=context, clients=tuple(clients.values()), owned=owned)
 
@@ -195,7 +222,7 @@ def _context_item(item: DeclaredContext) -> ContextItem:
     match item:
         case ToolResultsContext(tool_results=tools):
             return ToolResults(tools=tools)
-        case "user_input" | "caller_context":
+        case "user_input" | "caller_context" | "attachments":
             return item
 
 
@@ -281,6 +308,7 @@ def _tool(declared: PythonTool, registry: Registry, base_dir: Path | None) -> To
         side_effects=declared.side_effects,
         approval=declared.approval,
         idempotent=declared.idempotent,
+        offload_over=declared.offload_over,
     )
 
 

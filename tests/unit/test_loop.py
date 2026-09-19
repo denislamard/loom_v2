@@ -41,9 +41,17 @@ from loom_ia.core.model import (
     ToolResultBlock,
     Usage,
 )
-from loom_ia.core.ports import EventStore
+from loom_ia.core.ports import EventStore, ModelError
 from loom_ia.core.projections import ProjectionError
-from loom_ia.engine import UNKNOWN_STATE, RunContext, ToolExecutor, begin_run, drive, step
+from loom_ia.engine import (
+    UNKNOWN_STATE,
+    RunContext,
+    ToolExecutor,
+    begin_run,
+    drive,
+    in_call_order,
+    step,
+)
 from loom_ia.testing import RunJournal, ScriptedModel, tool_call_message
 from loom_ia.tools import tool
 
@@ -310,7 +318,21 @@ async def test_model_failure_fails_the_run(
     assert isinstance(transition, RunTransitioned)
     assert (transition.cause_type, transition.cause_event_id) == ("RuntimeError", None)
     assert isinstance(failure, RunFailed) and failure.iterations == 0
-    assert "Échec de l'appel au modèle FAKE" in caplog.text
+    assert "Échec de l'appel au modèle FAKE : RuntimeError — panne réseau" in caplog.text
+    # Une exception inattendue garde sa pile d'appels.
+    assert caplog.records[-1].exc_info is not None
+
+
+async def test_model_errors_are_logged_on_one_line(
+    store: EventStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    ctx = context(store, ScriptedModel(ModelError("auth", "clé refusée", http_status=401)))
+    with caplog.at_level(logging.ERROR, logger="loom_ia.engine.loop"):
+        state = await drive(ctx, (await begin_run(ctx, "?")).run_id)
+    assert state.error == "model.auth: clé refusée"
+    [record] = [r for r in caplog.records if r.name == "loom_ia.engine.loop"]
+    assert record.getMessage() == "Échec de l'appel au modèle FAKE : model.auth — clé refusée"
+    assert record.exc_info is None
 
 
 async def test_resume_after_a_crash_during_the_tool_batch(store: EventStore) -> None:
@@ -567,3 +589,69 @@ async def test_drive_refuses_a_step_without_progress(
     run = await begin_run(ctx, "?")
     with pytest.raises(RuntimeError, match="aucune progression"):
         await drive(ctx, run.run_id)
+
+
+async def test_results_follow_the_call_order_in_requests(store: EventStore) -> None:
+    released = asyncio.Event()
+
+    @tool
+    async def lent() -> str:
+        """Répond après rapide."""
+        await released.wait()
+        return "lent"
+
+    @tool
+    async def rapide() -> str:
+        """Répond tout de suite."""
+        released.set()
+        return "rapide"
+
+    model = ScriptedModel(
+        tool_call_message(("c1", "lent", {}), ("c2", "rapide", {})),
+        Message.assistant("Fini."),
+    )
+    ctx = context(store, model, tools=ToolExecutor([lent, rapide]))
+    state = await drive(ctx, (await begin_run(ctx, "?")).run_id)
+
+    def order(messages: Sequence[Message]) -> list[str]:
+        return [b.call_id for m in messages for b in m.blocks if isinstance(b, ToolResultBlock)]
+
+    # Le journal garde l'ordre d'arrivée ; la requête suit l'ordre des appels.
+    assert order(state.messages) == ["c2", "c1"]
+    sent = model.requests[1]
+    assert order(sent.messages) == ["c1", "c2"]
+    responded = [
+        e.payload for e in await journal(store, state) if isinstance(e.payload, ModelResponded)
+    ]
+    assert responded[1].request_hash == sent.request_hash()
+
+
+def test_in_call_order_keeps_other_messages_in_place() -> None:
+    def result(call_id: str) -> Message:
+        return Message(
+            role="tool", blocks=(ToolResultBlock(call_id=call_id, output=ToolOutput.text(call_id)),)
+        )
+
+    first = tool_call_message(("a", "x", {}), ("b", "x", {}))
+    second = tool_call_message(("c", "x", {}), ("d", "x", {}))
+    messages = (
+        Message.user("?"),
+        first,
+        result("b"),
+        result("a"),
+        second,
+        result("inconnu"),
+        result("d"),
+        result("c"),
+    )
+    assert in_call_order(messages) == (
+        Message.user("?"),
+        first,
+        result("a"),
+        result("b"),
+        second,
+        result("c"),
+        result("d"),
+        result("inconnu"),
+    )
+    assert in_call_order(()) == ()

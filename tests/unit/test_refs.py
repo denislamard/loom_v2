@@ -4,6 +4,7 @@
 import pytest
 from pydantic import JsonValue
 
+from loom_ia.adapters.artifacts import InMemoryArtifactStore
 from loom_ia.core.model import JsonBlock, Message, TextBlock, ToolOutput, ToolResultBlock
 from loom_ia.engine import REFS_HINT, RefError, ResultIndex, mark_results
 from loom_ia.testing import tool_call_message
@@ -41,7 +42,7 @@ def test_calls_are_numbered_in_request_order() -> None:
     assert index.results_of("casse") == index.results_of("lent") == ()
 
 
-def test_references_are_replaced_at_any_depth() -> None:
+async def test_references_are_replaced_at_any_depth() -> None:
     index = ResultIndex(MESSAGES)
     arguments: dict[str, JsonValue] = {
         "devis": {"$ref": "result:1"},
@@ -49,7 +50,7 @@ def test_references_are_replaced_at_any_depth() -> None:
         "autre": {"$ref": "#/definitions/x"},
         "double": {"$ref": "result:2", "note": "pas une référence"},
     }
-    resolved, refs = index.resolve(arguments)
+    resolved, refs = await index.resolve(arguments)
     assert resolved == {
         "devis": DATA,
         "lignes": [{"total": "2"}, "fixe"],
@@ -57,10 +58,10 @@ def test_references_are_replaced_at_any_depth() -> None:
         "double": {"$ref": "result:2", "note": "pas une référence"},
     }
     assert refs == ("result:1", "result:2")
-    assert index.resolve({"x": 1}) == ({"x": 1}, ())
+    assert await index.resolve({"x": 1}) == ({"x": 1}, ())
 
 
-def test_serialized_references_are_resolved_too() -> None:
+async def test_serialized_references_are_resolved_too() -> None:
     # Ce qu'a écrit MiniMax-M3 : la référence sérialisée en chaîne.
     index = ResultIndex(MESSAGES)
     arguments: dict[str, JsonValue] = {
@@ -73,7 +74,7 @@ def test_serialized_references_are_resolved_too() -> None:
         "autre": '{"$ref": "#/definitions/x"}',
         "deux": '{"$ref": "result:1", "note": 1}',
     }
-    resolved, refs = index.resolve(arguments)
+    resolved, refs = await index.resolve(arguments)
     assert resolved == {
         **arguments,
         "devis": DATA,
@@ -82,7 +83,7 @@ def test_serialized_references_are_resolved_too() -> None:
     }
     assert refs == ("result:1", "result:2", "result:2")
     with pytest.raises(RefError, match="Référence inconnue : result:7"):
-        index.resolve({"x": '{"$ref": "result:7"}'})
+        await index.resolve({"x": '{"$ref": "result:7"}'})
 
 
 @pytest.mark.parametrize(
@@ -98,18 +99,18 @@ def test_serialized_references_are_resolved_too() -> None:
         ("result:4", "result:4 (casse) est une erreur"),
     ],
 )
-def test_unresolvable_references(ref: str, message: str) -> None:
+async def test_unresolvable_references(ref: str, message: str) -> None:
     with pytest.raises(RefError) as caught:
-        ResultIndex(MESSAGES).resolve({"x": {"$ref": ref}})
+        await ResultIndex(MESSAGES).resolve({"x": {"$ref": ref}})
     assert caught.value.message.startswith(message)
 
 
-def test_empty_result_and_empty_run() -> None:
+async def test_empty_result_and_empty_run() -> None:
     messages = (tool_call_message(("c1", "vide", {})), result("c1", ToolOutput()))
     with pytest.raises(RefError, match="est vide"):
-        ResultIndex(messages).resolve({"x": {"$ref": "result:1"}})
+        await ResultIndex(messages).resolve({"x": {"$ref": "result:1"}})
     with pytest.raises(RefError, match="Aucun résultat à référencer"):
-        ResultIndex(()).resolve({"x": {"$ref": "result:1"}})
+        await ResultIndex(()).resolve({"x": {"$ref": "result:1"}})
 
 
 def test_results_shown_to_the_model_carry_their_reference() -> None:
@@ -130,3 +131,24 @@ def test_results_shown_to_the_model_carry_their_reference() -> None:
     errors = mark_results(MESSAGES, ResultIndex(MESSAGES))[-1]
     assert errors == MESSAGES[-1]
     assert "$ref" in REFS_HINT
+
+
+async def test_offloaded_results_are_read_back() -> None:
+    uri = "artifact://default/s1/abc.json"
+    offloaded = ToolOutput(blocks=(TextBlock(text="aperçu"),), offloaded=uri)
+    messages = (tool_call_message(("c1", "gros", {})), result("c1", offloaded))
+    files = InMemoryArtifactStore()
+    await files.put(uri, b'{"n": 1}')
+    assert await ResultIndex(messages, files).resolve({"x": {"$ref": "result:1"}}) == (
+        {"x": {"n": 1}},
+        ("result:1",),
+    )
+    text_uri = "artifact://default/s1/abc.txt"
+    await files.put(text_uri, "très long".encode())
+    as_text = (tool_call_message(("c1", "gros", {})), result("c1", ToolOutput(offloaded=text_uri)))
+    index = ResultIndex(as_text, files)
+    assert await index.text(index.records[0]) == "très long"
+    with pytest.raises(RefError, match="aucun stockage d'artefacts"):
+        await ResultIndex(messages).resolve({"x": {"$ref": "result:1"}})
+    with pytest.raises(RefError, match="contenu déporté introuvable"):
+        await ResultIndex(messages, InMemoryArtifactStore()).resolve({"x": {"$ref": "result:1"}})

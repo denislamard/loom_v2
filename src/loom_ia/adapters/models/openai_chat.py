@@ -1,11 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Adaptateur ``sdk: openai``, ``api: chat`` : API Chat Completions (B1, B8).
 
-Vise les fournisseurs compatibles (Together, vLLM, Ollama…) :
+Vise les fournisseurs compatibles (Together, vLLM, Ollama…) ; sans
+``base_url``, l'adresse officielle d'OpenAI, quelle que soit
+``OPENAI_BASE_URL``.
 
 - le prompt système devient un message ``system`` ;
 - chaque résultat d'outil devient un message ``tool`` ; l'API n'ayant pas
   d'indicateur d'erreur, le contenu d'un résultat en erreur est préfixé ;
+- une image (``inline_data``) d'un message utilisateur devient une partie
+  ``image_url`` en URL ``data:`` ; l'API n'accepte pas d'image dans un
+  résultat d'outil (``tool_result_media: false``) ;
 - le raisonnement est lu dans les champs ``reasoning_content`` ou
   ``reasoning`` que ces fournisseurs ajoutent, mais n'est jamais renvoyé ;
 - la limite de sortie passe par ``max_tokens``, qu'ils reconnaissent tous ;
@@ -25,6 +30,7 @@ from openai.types.chat import (
     ChatCompletion,
     ChatCompletionAssistantMessageParam,
     ChatCompletionChunk,
+    ChatCompletionContentPartParam,
     ChatCompletionFunctionToolParam,
     ChatCompletionMessageFunctionToolCallParam,
     ChatCompletionMessageParam,
@@ -35,13 +41,16 @@ from pydantic import BaseModel
 from loom_ia.adapters.models._common import (
     ERROR_PREFIX,
     classify_error,
+    image_data,
     json_text,
     output_text,
     retry_after,
-    unsupported,
+    unresolved,
 )
 from loom_ia.core.model import (
     ArtifactRefBlock,
+    ContentBlock,
+    InlineDataBlock,
     JsonBlock,
     Message,
     ModelChunk,
@@ -65,6 +74,8 @@ from loom_ia.core.ports import ModelError
 logger = logging.getLogger(__name__)
 
 PROVIDER: Final = "openai"
+# Adresse sans ``base_url`` : passée au SDK pour qu'il ne lise pas OPENAI_BASE_URL.
+DEFAULT_BASE_URL: Final = "https://api.openai.com/v1"
 # Champs de raisonnement ajoutés par les fournisseurs compatibles.
 REASONING_FIELDS: Final = ("reasoning_content", "reasoning")
 
@@ -90,7 +101,7 @@ class OpenAIChatModel:
         self.spec = spec
         self._client = openai.AsyncOpenAI(
             api_key=api_key,
-            base_url=spec.base_url,
+            base_url=spec.base_url or DEFAULT_BASE_URL,
             max_retries=0,
             timeout=spec.timeouts.total,
             http_client=http_client,
@@ -163,7 +174,7 @@ def to_openai_messages(
     for message in messages:
         match message.role:
             case "user":
-                result.append({"role": "user", "content": _text_of(message)})
+                result.append({"role": "user", "content": _user_content(message)})
             case "assistant":
                 result.append(_assistant(message))
             case "tool":
@@ -195,19 +206,40 @@ def to_openai_tools(request: ModelRequest) -> list[ChatCompletionFunctionToolPar
     return tools
 
 
-def _text_of(message: Message) -> str:
-    parts: list[str] = []
+def _user_content(message: Message) -> str | list[ChatCompletionContentPartParam]:
+    """Texte seul, ou parties texte et image quand le message porte des images."""
+    if not any(isinstance(block, InlineDataBlock) for block in message.blocks):
+        return _text_of(message)
+    parts: list[ChatCompletionContentPartParam] = []
     for block in message.blocks:
         match block:
-            case TextBlock(text=text):
-                parts.append(text)
-            case JsonBlock(data=data):
-                parts.append(json_text(data))
-            case ArtifactRefBlock():
-                raise unsupported(block)
+            case InlineDataBlock(media_type=media_type):
+                url = f"data:{media_type};base64,{image_data(block)}"
+                parts.append({"type": "image_url", "image_url": {"url": url}})
             case _:
-                pass
-    return "\n\n".join(part for part in parts if part)
+                if text := _text(block):
+                    parts.append({"type": "text", "text": text})
+    return parts
+
+
+def _text_of(message: Message) -> str:
+    return "\n\n".join(text for block in message.blocks if (text := _text(block)))
+
+
+def _text(block: ContentBlock) -> str:
+    match block:
+        case TextBlock(text=text):
+            return text
+        case JsonBlock(data=data):
+            return json_text(data)
+        case ArtifactRefBlock():
+            raise unresolved(block)
+        case InlineDataBlock():
+            raise ModelError(
+                "invalid_request", "Image hors d'un message utilisateur : non transmissible"
+            )
+        case _:
+            return ""
 
 
 def _assistant(message: Message) -> ChatCompletionAssistantMessageParam:

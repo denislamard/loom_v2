@@ -168,8 +168,13 @@ def broken(**changes: Any) -> dict[str, Any]:
         (broken(output={"max_chars": 10}), "'output' : prévu pour le jalon J3.2"),
         (broken(fallbacks=["MAIN"]), "'fallbacks' : prévu pour le jalon J3.5"),
         (
-            broken(context=["user_input", "attachments"]),
-            "'attachments' : prévu pour le jalon J2.3",
+            broken(context=["user_input", {"tool_results": ["calculer"]}, "attachments"]),
+            "rôle 'rediger' : il reçoit les pièces jointes, mais le modèle 'ROLE' n'a pas "
+            "la capacité vision",
+        ),
+        (
+            broken(context=["attachments"], input_template="{{ context.attachments.x }}"),
+            "attachments est un texte",
         ),
         (broken(context=[{"last_turns": 3}]), "'last_turns' : prévu pour le jalon J4.1"),
         (broken(context=["user_input", "user_input"]), "Contexte déclaré deux fois : user_input"),

@@ -23,7 +23,6 @@ LATER_SERVER: Final[dict[str, str]] = {
     "mcp": "J5 (serveur MCP en HTTP)",
 }
 LATER_STORAGE: Final[dict[str, str]] = {
-    "artifacts": "J2.3 (artefacts)",
     "idempotency": "J4.4 (idempotence)",
     "bus": "J4 (bus et observabilité)",
     "queue": "J4 (arrière-plan)",

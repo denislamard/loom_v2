@@ -5,6 +5,7 @@ Les réponses HTTP sont simulées par ``httpx2.MockTransport``, au format SSE
 documenté de l'API Messages.
 """
 
+import base64
 import json
 from collections.abc import Callable
 from typing import Any
@@ -20,6 +21,7 @@ from loom_ia.adapters.models.anthropic import AnthropicModel
 from loom_ia.core.model import (
     AnthropicMeta,
     ArtifactRefBlock,
+    InlineDataBlock,
     JsonBlock,
     Message,
     ModelChunk,
@@ -419,3 +421,45 @@ async def test_attachments_are_refused_before_calling() -> None:
         await complete(server.model(), request(Message(role="user", blocks=(image,))))
     assert caught.value.kind == "invalid_request"
     assert server.requests == []
+
+
+async def test_official_address_without_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    # La config décide seule où partent les requêtes : la variable du SDK est ignorée.
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://ailleurs.test")
+    server = Server(streamed(start(), *end("end_turn")))
+    await complete(server.model(SPEC.model_copy(update={"base_url": None})), request())
+    assert str(server.requests[0].url) == "https://api.anthropic.com/v1/messages"
+
+
+async def test_images_are_sent_in_base64() -> None:
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+    encoded = base64.b64encode(png).decode()
+    image = InlineDataBlock(media_type="image/png", data=png, name="photo.png")
+    result = ToolResultBlock(
+        call_id="t1",
+        output=ToolOutput(blocks=(TextBlock(text="[result:1]"), TextBlock(text="voici"), image)),
+    )
+    server = Server(streamed(start(), *end("end_turn")))
+    await complete(
+        server.model(),
+        request(
+            Message(role="user", blocks=(TextBlock(text="Regarde"), image)),
+            Message(role="assistant", blocks=(ToolCallBlock(call_id="t1", name="tracer"),)),
+            Message(role="tool", blocks=(result,)),
+        ),
+    )
+    source = {"type": "base64", "media_type": "image/png", "data": encoded}
+    user, _, tool = server.body["messages"]
+    assert user["content"] == [
+        {"type": "text", "text": "Regarde"},
+        {"type": "image", "source": source},
+    ]
+    # Dans un résultat d'outil : les textes réunis, puis l'image à sa place.
+    assert tool["content"][0]["content"] == [
+        {"type": "text", "text": "[result:1]\nvoici"},
+        {"type": "image", "source": source},
+    ]
+
+    pdf = InlineDataBlock(media_type="application/pdf", data=b"%PDF")
+    with pytest.raises(ModelError, match="seules les images"):
+        await complete(server.model(), request(Message(role="user", blocks=(pdf,))))

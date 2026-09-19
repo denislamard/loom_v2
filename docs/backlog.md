@@ -18,7 +18,7 @@ Points à traiter, numérotés dans l'ordre d'ajout (#001, #002…). Les renvois
 |---|---|---|
 | Valeurs par défaut omises | Lignes plus courtes, relecture identique | Non, nouveau |
 | Compression (par exemple gzip des fichiers JSONL clos) | Moins d'espace disque | Non, nouveau |
-| Seuil de déport (`offload_over`) | Les gros résultats vont dans le stockage d'artefacts ; le journal garde une référence | Oui (#16) |
+| Seuil de déport (`offload_over`) | Les gros résultats vont dans le stockage d'artefacts ; le journal garde une référence | Oui (#16, réalisé en 2.3) |
 | Échanges HTTP bruts (`raw_exchanges`) | Ajoute les requêtes et réponses complètes des fournisseurs, pour le débogage | Oui, désactivé par défaut (#31) |
 | Chiffrement par client | Contenus illisibles sans la clé | Oui, en option (#30) |
 | Rétention (`retention.events_days`) | Suppression des journaux anciens | Oui (#50) |
@@ -166,3 +166,27 @@ storage:
 **À trancher en 3.1 :** une valeur `required` dans le domaine et les adaptateurs, et qui la pose : un réglage de l'agent (premier tour seulement ?) ou un hook `before_model` (décision `Replace` sur la requête). Garde-fou : jamais en `FINALIZING`, où `tool_choice` reste `none`.
 
 **Statut :** à trancher en 3.1.
+
+---
+
+## #013 — Pièces jointes autres que les images (PDF, audio, fichiers)
+
+**Origine :** phase 2.3 (choix « images seules » pour le jalon J2).
+
+**Constat :** G1 prévoit en V2 les PDF, l'audio et les fichiers quelconques. En 2.3, seules les images JPEG, PNG, GIF et WebP sont acceptées à l'entrée d'un run ; un fichier produit par un outil (PDF d'un serveur MCP…) est bien rangé comme artefact, mais un modèle n'en reçoit qu'une mention.
+
+**À faire :** signatures binaires des nouveaux types, capacités des modèles (blocs `document` chez Anthropic, audio chez OpenAI), traduction dans les adaptateurs, contexte des rôles qui les reçoivent. Phase à fixer (aucune ne le prévoit dans `jalons.md`).
+
+**Statut :** à placer.
+
+---
+
+## #014 — Images envoyées par URL signée ou `file_id`
+
+**Origine :** phase 2.3.
+
+**Constat :** #14 prévoit trois formes d'envoi (`image_input: base64 | url | file_id`). Seul le base64 est réalisé : `image_input` doit le contenir, sinon la config est refusée. L'URL signée à courte durée de vie suppose un stockage distant (GCS) et une autorisation explicite dans la config (RGPD) ; `file_id` suppose l'envoi préalable du fichier au fournisseur.
+
+**À faire en J5 :** avec le stockage GCS du mode service.
+
+**Statut :** à faire en J5.

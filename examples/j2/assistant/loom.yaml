@@ -1,21 +1,31 @@
-# Configuration de l'exemple de la phase 2.2 : un agent et deux serveurs MCP.
-# Ce dossier grandira jusqu'au scénario final du jalon J2 (phase 2.5).
+# Configuration des exemples des phases 2.2 et 2.3 : un agent, deux serveurs
+# MCP et un rôle vision. Ce dossier grandira jusqu'au scénario final du
+# jalon J2 (phase 2.5).
 #
 # Deux agents, même scénario :
-#   assistant       modèle simulé (sdk: fake), sans clé ni réseau ;
-#   assistant_reel  MiniMax-M3 (clé dans M3_API_KEY).
+#   assistant       modèles simulés (sdk: fake), sans clé ni réseau ;
+#   assistant_reel  MiniMax-M3 (clé dans M3_API_KEY), et Claude Haiku 4.5 pour
+#                   le rôle vision (clé dans ANTHROPIC_API_KEY).
 version: 1
 
 agents_dir: agents/
 prompts_dir: prompts/
 
 models:
-# Orchestrateur simulé : lit l'heure et compte les jours (time), puis calcule (math).
+# Orchestrateur simulé : fait décrire la photo jointe s'il y en a une, lit
+# l'heure et compte les jours (time), puis calcule (math). Une réponse avec
+# with_tool (ou without_tool) n'est donnée que si cet outil est proposé (ou
+# ne l'est pas) : le rôle vision n'est proposé que quand le run a une image.
 - id: FAKE_MAIN
   sdk: fake
   model: fake-main
   params:
     script:
+    - text: Je fais d'abord décrire la photo jointe.
+      with_tool: decrire_image
+      tool_calls:
+      - name: decrire_image
+        arguments: { consigne: Décris la photo en une phrase. }
     - text: Je lis l'heure et je compte les jours.
       tool_calls:
       - name: time__maintenant
@@ -27,6 +37,19 @@ models:
         arguments: { expression: "121 * 24" }
     - text: >-
         J'ai lu l'heure de Paris. Entre le 1er septembre et le 31 décembre 2026, il y a 121 jours, soit 2 904 heures.
+      without_tool: decrire_image
+    - text: >-
+        La photo jointe montre un carré bleu sur fond blanc. J'ai lu l'heure de Paris. Entre le 1er septembre et le 31 décembre 2026, il y a 121 jours, soit 2 904 heures.
+      with_tool: decrire_image
+
+# Rôle vision simulé : la capacité vision lui fait recevoir les octets de l'image.
+- id: FAKE_VISION
+  sdk: fake
+  model: fake-vision
+  capabilities: { vision: true }
+  params:
+    script:
+    - text: Un carré bleu sur fond blanc.
 
 # Tarifs en $ par million de tokens, relevés le 18/09/2026 (palier ≤ 512k tokens).
 - id: M3_MAIN
@@ -36,6 +59,20 @@ models:
   api_key_env: M3_API_KEY
   max_tokens: 4096
   pricing: { input: 0.30, output: 1.20, cache_read: 0.06, cache_write: 0.30 }
+
+# Modèle du rôle vision réel. Images en base64, 5 Mio au plus ; l'API accepte
+# une image dans un résultat d'outil.
+- id: HAIKU
+  sdk: anthropic
+  model: claude-haiku-4-5-20251001
+  api_key_env: ANTHROPIC_API_KEY
+  max_tokens: 4096
+  capabilities:
+    vision: true
+    image_formats: [ jpeg, png, gif, webp ]
+    max_image_bytes: 5242880
+    tool_result_media: true
+  pricing: { input: 1.0, output: 5.0, cache_read: 0.10, cache_write: 1.25 }
 
 # Serveurs locaux écrits avec FastMCP, lancés depuis ce dossier.
 # « python » est celui de l'environnement : lancer l'exemple avec uv run.
@@ -52,6 +89,7 @@ mcp_servers:
   scope: run # une connexion par run, refermée à la fin
 
 storage:
+  # Les fichiers (images jointes…) suivent le journal : data/.artifacts/.
   events: { backend: jsonl, path: data } # ignoré par git
 
 telemetry:

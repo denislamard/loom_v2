@@ -41,6 +41,7 @@ from loom_ia.adapters.mcp import (
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    InlineDataBlock,
     McpServerSpec,
     RunId,
     SessionId,
@@ -162,14 +163,21 @@ def test_results_are_translated() -> None:
     )
     output = to_output(result)
     assert output.is_error and output.data == {"n": 1}
-    assert [b.text for b in output.blocks if isinstance(b, TextBlock)] == [
-        "bonjour",
-        "[image image/png, environ 3 octets : non transmis avant les artefacts (2.3)]",
-        "[audio audio/wav, environ 6 octets : non transmis avant les artefacts (2.3)]",
-        "[ressource doc : file:///doc.txt]",
-        "contenu",
-        "[ressource binaire file:///b.bin (application/octet-stream) non transmise]",
-    ]
+    # Les contenus binaires deviennent des octets : le moteur les range ensuite.
+    assert output.blocks == (
+        TextBlock(text="bonjour"),
+        InlineDataBlock(media_type="image/png", data=b"\x00\x00\x00"),
+        InlineDataBlock(media_type="audio/wav", data=b"\x00" * 6),
+        TextBlock(text="[ressource doc : file:///doc.txt]"),
+        TextBlock(text="contenu"),
+        InlineDataBlock(media_type="application/octet-stream", data=b"\x00" * 3, name="b.bin"),
+    )
+    broken = types.CallToolResult(
+        content=[types.ImageContent(type="image", mimeType="image/png", data="%%%")]
+    )
+    assert to_output(broken).blocks == (
+        TextBlock(text="[contenu image/png illisible : base64 invalide]"),
+    )
 
 
 def test_connection_errors_are_told_apart() -> None:

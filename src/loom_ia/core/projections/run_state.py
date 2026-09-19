@@ -13,6 +13,7 @@ s'ajoutent au run.
 from collections.abc import Iterable
 
 from loom_ia.core.events import (
+    ArtifactStored,
     Event,
     ModelResponded,
     ModelRetried,
@@ -102,6 +103,9 @@ def apply(state: RunState | None, event: Event) -> RunState:
             )
             result = Message(role="tool", blocks=(ToolResultBlock(call_id=call_id, output=output),))
             update |= {"pending_calls": remaining, "messages": (*state.messages, result)}
+        case ArtifactStored() as stored:
+            if state.artifact(stored.uri) is None:
+                update["artifacts"] = (*state.artifacts, stored.record)
         case StepStarted(step_no=step_no):
             update["step"] = step_no
         case StepCompleted() | ModelRetried() | ToolSourceUnavailable():

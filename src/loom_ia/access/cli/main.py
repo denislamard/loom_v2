@@ -2,7 +2,8 @@
 """Ligne de commande ``loom`` (N4).
 
     loom validate                  vérifie la config et monte les agents
-    loom run demo "Bonjour"        lance un run (``--stream`` pour le direct)
+    loom run demo "Bonjour"        lance un run (``--stream`` pour le direct,
+                                   ``--attach photo.jpg`` pour joindre une image)
     loom resume <run_id>           reprend un run interrompu
     loom serve                     sert l'API REST
     loom mcp                       sert les agents en MCP, sur stdio
@@ -26,8 +27,21 @@ from loom_ia.access.api import Loom, RunResult, StreamItem, UnknownRun
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.config import ConfigError, config_json_schema, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
-from loom_ia.core.events import Event, ToolCalled, ToolCompleted, ToolSourceUnavailable
-from loom_ia.core.model import DEFAULT_TENANT, RunId, SessionId, TextDelta, new_run_id
+from loom_ia.core.events import (
+    ArtifactStored,
+    Event,
+    ToolCalled,
+    ToolCompleted,
+    ToolSourceUnavailable,
+)
+from loom_ia.core.model import (
+    DEFAULT_TENANT,
+    Attachment,
+    RunId,
+    SessionId,
+    TextDelta,
+    new_run_id,
+)
 from loom_ia.core.ports import SourceContext
 from loom_ia.engine import ToolExecutor
 from loom_ia.runtime import apply_logging, load_registry
@@ -81,6 +95,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
     run.add_argument("--session", type=str, default=None, help="journal auquel rattacher le run")
     run.add_argument("--run-id", type=str, default=None, help="identifiant choisi pour le run")
+    run.add_argument(
+        "--attach",
+        type=Path,
+        action="append",
+        default=None,
+        metavar="FICHIER",
+        help="image jointe à la demande (répétable)",
+    )
     run.set_defaults(handler=cmd_run)
 
     resume = commands.add_parser("resume", help="reprend un run interrompu")
@@ -131,14 +153,18 @@ async def _validate(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     apply_logging(config)
     registry = load_registry(config)
-    events = config.storage.events
+    storage = config.storage
+    events = storage.events
     journal = f"{events.backend} ({events.path})" if events.path else events.backend
+    files = storage.artifacts_path
+    artifacts = f"{storage.artifacts_backend} ({files})" if files else storage.artifacts_backend
     keys = ", ".join(key.id for key in config.security.api_keys)
     print(f"Config     : {args.config}")
     print(f"Modèles    : {_listed(spec.id for spec in config.models)}")
     print(f"Agents     : {_listed(agent.name for agent in config.agents)}")
     print(f"Outils     : {_listed(registry.names)}")
     print(f"Journal    : {journal}")
+    print(f"Artefacts  : {artifacts}")
     print(f"Clés d'API : {keys or 'aucune (API REST ouverte)'}")
 
     async with Loom(config, registry=registry) as loom:
@@ -159,12 +185,22 @@ def cmd_run(args: argparse.Namespace) -> int:
     apply_logging(config)
     session = SessionId(args.session) if args.session else None
     run_id = RunId(args.run_id) if args.run_id else new_run_id()
+    paths: list[Path] = args.attach or []
+    try:
+        attachments = [Attachment.from_path(path) for path in paths]
+    except OSError as error:
+        print(f"Pièce jointe illisible : {error}", file=sys.stderr)
+        return REFUSED
 
     async def go() -> RunResult:
         async with Loom(config) as loom:
             if args.stream:
                 async for item in loom.stream(
-                    args.agent, args.message, session_id=session, run_id=run_id
+                    args.agent,
+                    args.message,
+                    attachments=attachments,
+                    session_id=session,
+                    run_id=run_id,
                 ):
                     _show(item)
                 print()
@@ -173,7 +209,13 @@ def cmd_run(args: argparse.Namespace) -> int:
                     # Sortie d'un outil terminal : elle n'est pas passée par le flux du modèle.
                     print(state.output.text)
                 return await loom.result(run_id, session_id=session)
-            return await loom.run(args.agent, args.message, session_id=session, run_id=run_id)
+            return await loom.run(
+                args.agent,
+                args.message,
+                attachments=attachments,
+                session_id=session,
+                run_id=run_id,
+            )
 
     return _report(asyncio.run(go()), as_json=args.json, quiet=args.stream)
 
@@ -266,6 +308,17 @@ def _show(item: StreamItem) -> None:
             f"· serveur {item.payload.source} indisponible{required} : {item.payload.error}",
             file=sys.stderr,
         )
+    elif isinstance(item, Event) and isinstance(item.payload, ArtifactStored):
+        stored = item.payload
+        label = {
+            "attachment": "pièce jointe rangée",
+            "tool_output": "fichier rangé",
+            "offload": "résultat déporté",
+        }[stored.origin]
+        print(
+            f"· {label} : {stored.name or stored.uri} ({stored.media_type}, {stored.size} octets)",
+            file=sys.stderr,
+        )
 
 
 async def _show_sources(agent: str, tools: ToolExecutor) -> None:
@@ -304,6 +357,11 @@ def _report(result: RunResult, *, as_json: bool = False, quiet: bool = False) ->
             file=sys.stderr,
         )
         print(f"Run        : {result.run_id}", file=sys.stderr)
+        for produced in result.produced:
+            print(
+                f"Fichier    : {produced.uri} ({produced.media_type}, {produced.size} octets)",
+                file=sys.stderr,
+            )
         if result.error:
             print(f"Erreur     : {result.error}", file=sys.stderr)
     return OK if result.ok else FAILED

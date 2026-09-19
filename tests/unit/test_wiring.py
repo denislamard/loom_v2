@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 import yaml
 
+from loom_ia.adapters.artifacts import InMemoryArtifactStore
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.agents import UnknownAgent
 from loom_ia.config import ConfigError, load_config
@@ -180,6 +181,26 @@ async def test_configured_tool_runs_the_original(tmp_path: Path) -> None:
     )
     assert await tool.invoke({"expr": "12*7+3"}, context) == ToolOutput.text("87")
     await agent.aclose()
+
+
+async def test_offload_settings_reach_the_executor(tmp_path: Path) -> None:
+    root = {"execution": {"tools": {"offload_over": 2000}}}
+    agent_spec = demo_agent(tools=[{"python": "calculer", "offload_over": 500}])
+    config = load_config(write(tmp_path, root=root, agent=agent_spec))
+    files = InMemoryArtifactStore()
+    agent = build_agent(config, "demo", InMemoryEventStore(), artifacts=files)
+    tools = agent.context.tools
+    assert (tools.offload_over, tools.artifacts, agent.context.artifacts) == (2000, files, files)
+    calculer = tools.get("calculer")
+    assert calculer is not None and calculer.spec.offload_over == 500
+    # Avec un stockage, l'outil intégré artifact_read est déclaré (montré après un déport).
+    assert [spec.name for spec in tools.specs] == ["calculer", "artifact_read"]
+    await agent.aclose()
+
+    bare = build_agent(config, "demo", InMemoryEventStore())
+    assert bare.context.artifacts is None
+    assert [spec.name for spec in bare.context.tools.specs] == ["calculer"]
+    await bare.aclose()
 
 
 def test_registry_is_reused(tmp_path: Path) -> None:

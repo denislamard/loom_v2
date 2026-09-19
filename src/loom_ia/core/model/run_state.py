@@ -12,6 +12,7 @@ from pydantic import Field, JsonValue, NonNegativeFloat, NonNegativeInt
 from loom_ia.core.model.base import DomainModel
 from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import RunId, SessionId, SpanId
+from loom_ia.core.model.media import ArtifactRecord
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.usage import Usage
 
@@ -65,6 +66,8 @@ class RunState(DomainModel):
     pending_calls: tuple[PendingCall, ...] = ()
     usage: Usage = Usage()
     cost_usd: NonNegativeFloat = 0.0
+    # Fichiers du run (pièces jointes, sorties d'outils, déports), une fois par URI.
+    artifacts: tuple[ArtifactRecord, ...] = ()
 
     output: Message | None = None
     # Appel dont le résultat est devenu la réponse finale (#13).
@@ -77,3 +80,16 @@ class RunState(DomainModel):
 
     def pending(self, call_id: str) -> PendingCall | None:
         return next((c for c in self.pending_calls if c.call_id == call_id), None)
+
+    @property
+    def attachments(self) -> tuple[ArtifactRecord, ...]:
+        """Pièces jointes de la demande, dans l'ordre où elles ont été données."""
+        return tuple(a for a in self.artifacts if a.origin == "attachment")
+
+    @property
+    def offloaded(self) -> bool:
+        """Vrai si au moins un résultat a été déporté dans ce run (#16)."""
+        return any(a.origin == "offload" for a in self.artifacts)
+
+    def artifact(self, uri: str) -> ArtifactRecord | None:
+        return next((a for a in self.artifacts if a.uri == uri), None)

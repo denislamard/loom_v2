@@ -13,9 +13,15 @@ et n'apparaît pas dans le schéma.
     async def envoyer_email(to: str, body: str, ctx: ToolContext) -> None: ...
 
 Conversion du résultat (#15) : ``str`` donne un bloc texte ; ``None`` un
-résultat vide ; un ``ToolOutput`` est repris tel quel ; toute autre valeur
-sérialisable en JSON (``dict``, ``list``, nombre, modèle Pydantic…) donne un
-bloc JSON, recopié dans ``data``.
+résultat vide ; un ``ToolOutput`` est repris tel quel ; une ``Image`` est
+rangée dans le stockage d'artefacts par le moteur et le modèle en reçoit la
+référence ; toute autre valeur sérialisable en JSON (``dict``, ``list``,
+nombre, modèle Pydantic…) donne un bloc JSON, recopié dans ``data``.
+
+    @tool
+    def graphique(serie: list[float]) -> Image:
+        '''Trace la série.'''
+        return Image(tracer_png(serie))
 
 Une fonction synchrone s'exécute dans un thread : un timeout rend la main au
 moteur, mais ne peut pas interrompre le thread.
@@ -24,21 +30,51 @@ moteur, mais ne peut pas interrompre le thread.
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import Any, cast, get_type_hints, overload
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Self, cast, get_type_hints, overload
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError, create_model
 
 from loom_ia.core.model import (
     Approval,
+    InlineDataBlock,
     JsonBlock,
     SideEffects,
     ToolKind,
     ToolOutput,
     ToolSpec,
+    sniff,
 )
 from loom_ia.core.ports import ToolContext, ToolError
 
 _JSON: TypeAdapter[Any] = TypeAdapter(Any)
+
+
+@dataclass(frozen=True, slots=True)
+class Image:
+    """Image renvoyée par un outil : rangée comme artefact, référencée dans le résultat (G3).
+
+    Le type se déduit de la signature binaire (JPEG, PNG, GIF, WebP) ;
+    ``media_type`` ne sert que si elle n'est pas reconnue.
+    """
+
+    data: bytes
+    media_type: str | None = None
+    name: str | None = None
+
+    @classmethod
+    def from_path(cls, path: str | Path) -> Self:
+        file = Path(path)
+        return cls(data=file.read_bytes(), name=file.name)
+
+    def block(self) -> InlineDataBlock:
+        media_type = sniff(self.data) or self.media_type
+        if media_type is None:
+            raise ValueError(
+                f"Image {self.name or ''} : format non reconnu (JPEG, PNG, GIF ou WebP attendu)"
+            )
+        return InlineDataBlock(media_type=media_type, data=self.data, name=self.name)
 
 
 class FunctionTool[**P, R]:
@@ -56,6 +92,7 @@ class FunctionTool[**P, R]:
         approval: Approval = "never",
         idempotent: bool = False,
         timeout: float | None = None,
+        offload_over: int | None = None,
     ) -> None:
         self.fn = fn
         self._is_async = inspect.iscoroutinefunction(fn)
@@ -75,6 +112,7 @@ class FunctionTool[**P, R]:
             approval=approval,
             idempotent=idempotent,
             timeout=timeout,
+            offload_over=offload_over,
         )
 
     @property
@@ -110,6 +148,8 @@ def to_output(result: object) -> ToolOutput:
     match result:
         case ToolOutput():
             return result
+        case Image():
+            return ToolOutput(blocks=(result.block(),))
         case str():
             return ToolOutput.text(result)
         case None:
@@ -132,6 +172,7 @@ def tool[**P, R](
     approval: Approval = "never",
     idempotent: bool = False,
     timeout: float | None = None,
+    offload_over: int | None = None,
 ) -> Callable[[Callable[P, R]], FunctionTool[P, R]]: ...
 
 
@@ -145,6 +186,7 @@ def tool[**P, R](
     approval: Approval = "never",
     idempotent: bool = False,
     timeout: float | None = None,
+    offload_over: int | None = None,
 ) -> FunctionTool[P, R] | Callable[[Callable[P, R]], FunctionTool[P, R]]:
     """Déclare une fonction comme outil, avec ou sans options."""
 
@@ -157,6 +199,7 @@ def tool[**P, R](
             approval=approval,
             idempotent=idempotent,
             timeout=timeout,
+            offload_over=offload_over,
         )
 
     return wrap if fn is None else wrap(fn)

@@ -13,10 +13,18 @@ bien qu'un run donne le même journal quel que soit le chemin emprunté.
 ``stream`` mêle les événements du journal et les morceaux du modèle, dans
 l'ordre où ils arrivent : c'est la même source pour le direct de la CLI et
 pour le flux SSE.
+
+Fichiers (G1 à G3) : ``run`` et ``stream`` acceptent des pièces jointes
+(``Attachment``), validées puis rangées dans le stockage d'artefacts de
+l'instance ; ``RunResult.artifacts`` liste les fichiers du run, et
+``artifact(uri)`` en rend les octets.
+
+    photo = Attachment.from_path("photo.jpg")
+    result = await loom.run("assistant", "Que montre la photo ?", attachments=[photo])
 """
 
 import asyncio
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
@@ -30,6 +38,8 @@ from loom_ia.config.references import Registry
 from loom_ia.core.events import Event, RunCompleted, RunFailed
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    ArtifactRecord,
+    Attachment,
     CallerContext,
     Message,
     ModelChunk,
@@ -42,12 +52,13 @@ from loom_ia.core.model import (
     new_run_id,
 )
 from loom_ia.core.model.base import DomainModel
-from loom_ia.core.ports import ChunkCallback, EventStore
+from loom_ia.core.ports import ArtifactStore, ChunkCallback, EventStore
 from loom_ia.core.projections import fold
 from loom_ia.engine import RunContext, begin_run, drive
 from loom_ia.runtime import (
     Agent,
     build_agent,
+    create_artifact_store,
     create_event_store,
     create_mcp_pool,
     load_registry,
@@ -83,6 +94,8 @@ class RunResult(DomainModel):
     iterations: int = 0
     usage: Usage = Usage()
     cost_usd: float = 0.0
+    # Fichiers du run : pièces jointes, fichiers produits par les outils, déports (G3).
+    artifacts: tuple[ArtifactRecord, ...] = ()
 
     @classmethod
     def of(cls, state: RunState) -> Self:
@@ -97,11 +110,17 @@ class RunResult(DomainModel):
             iterations=state.iterations,
             usage=state.usage,
             cost_usd=state.cost_usd,
+            artifacts=state.artifacts,
         )
 
     @property
     def ok(self) -> bool:
         return self.status is RunStatus.COMPLETED
+
+    @property
+    def produced(self) -> tuple[ArtifactRecord, ...]:
+        """Fichiers produits par les outils du run."""
+        return tuple(a for a in self.artifacts if a.origin == "tool_output")
 
 
 class Loom:
@@ -114,6 +133,7 @@ class Loom:
         store: EventStore | None = None,
         registry: Registry | None = None,
         environ: Mapping[str, str] | None = None,
+        artifacts: ArtifactStore | None = None,
     ) -> None:
         self._config = config
         self._registry = registry if registry is not None else load_registry(config)
@@ -124,6 +144,9 @@ class Loom:
         )
         # Un journal fourni par l'appelant reste à lui de fermer.
         self._owns_store = store is None
+        # Stockage des fichiers, commun aux agents ; même règle de fermeture.
+        self._artifacts = artifacts if artifacts is not None else create_artifact_store(config)
+        self._owns_artifacts = artifacts is None
         self._environ = environ
         self._built: dict[str, Agent] = {}
         # Connexions MCP de portée shared, communes à tous les agents.
@@ -149,6 +172,11 @@ class Loom:
     def store(self) -> NotifyingEventStore:
         """Journal de l'instance, abonnable pendant qu'un run se déroule."""
         return self._store
+
+    @property
+    def artifacts(self) -> ArtifactStore:
+        """Stockage des fichiers des runs de l'instance."""
+        return self._artifacts
 
     @property
     def registry(self) -> Registry:
@@ -181,14 +209,19 @@ class Loom:
         agent: str,
         message: str | Message,
         *,
+        attachments: Sequence[Attachment] = (),
         session_id: SessionId | None = None,
         context: CallerContext | None = None,
         run_id: RunId | None = None,
         on_chunk: ChunkCallback | None = None,
     ) -> RunResult:
-        """Fait tourner un run jusqu'au bout et renvoie ce qu'il a produit."""
+        """Fait tourner un run jusqu'au bout et renvoie ce qu'il a produit.
+
+        Une pièce jointe refusée (format, taille) lève ``AttachmentError``
+        avant que le run ne commence.
+        """
         ctx = self.context(agent, on_chunk=on_chunk)
-        state = await self._start(ctx, message, session_id, context, run_id)
+        state = await self._start(ctx, message, attachments, session_id, context, run_id)
         return RunResult.of(state)
 
     async def stream(
@@ -196,6 +229,7 @@ class Loom:
         agent: str,
         message: str | Message,
         *,
+        attachments: Sequence[Attachment] = (),
         session_id: SessionId | None = None,
         context: CallerContext | None = None,
         run_id: RunId | None = None,
@@ -213,7 +247,9 @@ class Loom:
 
         ctx = self.context(agent, on_chunk=on_chunk)
         with self._store.listen(items.put_nowait, run_id):
-            task = asyncio.create_task(self._start(ctx, message, session_id, context, run_id))
+            task = asyncio.create_task(
+                self._start(ctx, message, attachments, session_id, context, run_id)
+            )
             task.add_done_callback(lambda _: items.put_nowait(None))
             try:
                 while (item := await items.get()) is not None:
@@ -260,6 +296,7 @@ class Loom:
                 registry=self._registry,
                 environ=self._environ,
                 mcp_pool=self._mcp,
+                artifacts=self._artifacts,
             )
             self._built[agent] = built
         if on_chunk is None:
@@ -340,10 +377,14 @@ class Loom:
         state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
         return RunResult.of(state)
 
+    async def artifact(self, uri: str) -> bytes:
+        """Octets d'un fichier du stockage ; lève ``ArtifactNotFound``."""
+        return await self._artifacts.get(uri)
+
     # --- Cycle de vie ---------------------------------------------------------
 
     async def aclose(self) -> None:
-        """Ferme les clients de modèle, les connexions MCP et le journal s'il vient de la config."""
+        """Ferme les clients de modèle, les connexions MCP, et les stockages venus de la config."""
         for built in self._built.values():
             await built.aclose()
         if self._mcp is not None:
@@ -351,6 +392,8 @@ class Loom:
         self._built.clear()
         if self._owns_store:
             await self._store.aclose()
+        if self._owns_artifacts:
+            await self._artifacts.aclose()
 
     async def __aenter__(self) -> Self:
         return self
@@ -362,11 +405,19 @@ class Loom:
         self,
         ctx: RunContext,
         message: str | Message,
+        attachments: Sequence[Attachment],
         session_id: SessionId | None,
         context: CallerContext | None,
         run_id: RunId | None,
     ) -> RunState:
-        state = await begin_run(ctx, message, session_id=session_id, context=context, run_id=run_id)
+        state = await begin_run(
+            ctx,
+            message,
+            attachments=attachments,
+            session_id=session_id,
+            context=context,
+            run_id=run_id,
+        )
         return await drive(
             ctx,
             state.run_id,

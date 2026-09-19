@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Modèle de domaine : messages, blocs, usage, outils, flux des modèles, état d'un run."""
+"""Modèle de domaine : messages, blocs, fichiers, usage, outils, flux des modèles, état d'un run."""
 
 from loom_ia.core.model.base import DomainModel, UnsupportedKey, reject_later
 from loom_ia.core.model.content import (
     AnthropicMeta,
     ArtifactRefBlock,
     ContentBlock,
+    InlineDataBlock,
     JsonBlock,
     OpenAIMeta,
     OutputBlock,
@@ -15,6 +16,7 @@ from loom_ia.core.model.content import (
     ToolCallBlock,
     ToolOutput,
     ToolResultBlock,
+    has_inline_data,
 )
 from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import (
@@ -36,8 +38,25 @@ from loom_ia.core.model.mcp_spec import (
     McpServerSpec,
     McpTransport,
 )
+from loom_ia.core.model.media import (
+    ARTIFACT_SCHEME,
+    IMAGE_TYPES,
+    MOVED_IMAGES,
+    ArtifactLocation,
+    ArtifactOrigin,
+    ArtifactRecord,
+    Attachment,
+    AttachmentError,
+    AttachmentPolicy,
+    ImageFormat,
+    artifact_uri,
+    extension,
+    is_image,
+    sniff,
+)
 from loom_ia.core.model.messages import Message, Role
 from loom_ia.core.model.model_spec import (
+    ImageInput,
     ModelApi,
     ModelCapabilities,
     ModelSpec,
@@ -79,20 +98,32 @@ from loom_ia.core.model.tooling import (
 from loom_ia.core.model.usage import Pricing, Usage
 
 __all__ = [
+    "ARTIFACT_SCHEME",
     "DEFAULT_TENANT",
+    "IMAGE_TYPES",
     "INVALID_JSON_KEY",
     "MAIN_ROLE",
     "MCP_NAME_PATTERN",
     "MCP_PREFIX_SEPARATOR",
+    "MOVED_IMAGES",
     "TERMINAL_HINT",
     "TOOL_NAME_PATTERN",
     "AnthropicMeta",
     "Approval",
+    "ArtifactLocation",
+    "ArtifactOrigin",
+    "ArtifactRecord",
     "ArtifactRefBlock",
+    "Attachment",
+    "AttachmentError",
+    "AttachmentPolicy",
     "CallerContext",
     "ContentBlock",
     "DomainModel",
     "EventId",
+    "ImageFormat",
+    "ImageInput",
+    "InlineDataBlock",
     "JsonBlock",
     "McpScope",
     "McpServerSpec",
@@ -143,10 +174,15 @@ __all__ = [
     "UnsupportedKey",
     "Usage",
     "UsageDelta",
+    "artifact_uri",
+    "extension",
+    "has_inline_data",
+    "is_image",
     "message_to_chunks",
     "new_event_id",
     "new_id",
     "new_run_id",
     "new_span_id",
     "reject_later",
+    "sniff",
 ]

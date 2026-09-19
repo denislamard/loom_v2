@@ -23,8 +23,15 @@ la réponse finale. ``run.completed`` désigne alors son ``tool.completed``
 au lieu de recopier la sortie. Appelé avec d'autres outils, il redevient un
 outil ordinaire et l'orchestrateur compose la réponse.
 
-Rôles délégués : si l'agent en a, chaque résultat montré au modèle porte sa
-référence (``[result:3]``) et le prompt système explique ``$ref`` (#12).
+Rôles délégués : si un rôle est proposé dans le run, chaque résultat montré au
+modèle porte sa référence (``[result:3]``) et le prompt système explique
+``$ref`` (#12). Dans la requête, les résultats d'un tour suivent l'ordre des
+appels, quel que soit leur ordre d'arrivée dans le journal.
+
+Pièces jointes (G1) : validées avant tout écrit (signature binaire, type,
+taille), rangées dans le stockage d'artefacts, annoncées par un
+``artifact.stored`` chacune, puis jointes au message de l'utilisateur en
+références. Chaque appel de modèle les résout selon ses capacités (#14).
 """
 
 import logging
@@ -37,6 +44,7 @@ from typing import Final
 from pydantic import JsonValue
 
 from loom_ia.core.events import (
+    ArtifactStored,
     Effect,
     Event,
     EventDraft,
@@ -56,6 +64,9 @@ from loom_ia.core.events import (
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     MAIN_ROLE,
+    ArtifactRefBlock,
+    Attachment,
+    AttachmentPolicy,
     CallerContext,
     Message,
     ModelRequest,
@@ -70,14 +81,22 @@ from loom_ia.core.model import (
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
+    artifact_uri,
     new_run_id,
     new_span_id,
 )
-from loom_ia.core.ports import ChunkCallback, EventStore, ModelClient, ModelError, SourceContext
+from loom_ia.core.ports import (
+    ArtifactStore,
+    ChunkCallback,
+    EventStore,
+    ModelClient,
+    ModelError,
+    SourceContext,
+)
 from loom_ia.core.projections import apply, fold, history
-from loom_ia.engine.executor import Delegated, ToolExecutor
+from loom_ia.engine.executor import Delegated, Stored, ToolExecutor
 from loom_ia.engine.model_call import ModelCall, responded
-from loom_ia.engine.refs import REFS_HINT, ResultIndex, mark_results
+from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
 
 logger = logging.getLogger(__name__)
 
@@ -112,12 +131,20 @@ class RunContext:
     params: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     # Reçoit les morceaux du flux du modèle, pour la diffusion en direct.
     on_chunk: ChunkCallback | None = None
+    # Pièces jointes acceptées à l'entrée d'un run (G1).
+    attachments: AttachmentPolicy = field(default_factory=AttachmentPolicy)
+
+    @property
+    def artifacts(self) -> ArtifactStore | None:
+        """Stockage des fichiers du run : celui de l'exécuteur d'outils."""
+        return self.tools.artifacts
 
 
 async def begin_run(
     ctx: RunContext,
     prompt: str | Message,
     *,
+    attachments: Sequence[Attachment] = (),
     session_id: SessionId | None = None,
     context: CallerContext | None = None,
     run_id: RunId | None = None,
@@ -125,10 +152,15 @@ async def begin_run(
     """Écrit le démarrage d'un run et la demande de l'utilisateur.
 
     Un ``run_id`` fourni par l'appelant ne doit pas déjà exister dans le journal.
+    Une pièce jointe refusée lève ``AttachmentError`` avant tout écrit.
     """
     message = Message.user(prompt) if isinstance(prompt, str) else prompt
     if message.role != "user":
         raise ValueError(f"La demande doit être un message 'user', pas {message.role!r}")
+    checked = [(attachment, attachment.checked(ctx.attachments)) for attachment in attachments]
+    store = ctx.artifacts
+    if checked and store is None:
+        raise ValueError("Pièces jointes refusées : aucun stockage d'artefacts n'est configuré")
     context = context or CallerContext()
     chosen = run_id is not None
     run_id = run_id or new_run_id()
@@ -141,12 +173,40 @@ async def begin_run(
     )
     if chosen and await ctx.store.read(scope.tenant_id, scope.session_id, run_id=run_id):
         raise ValueError(f"Le run {run_id} existe déjà")
+    stored: list[ArtifactStored] = []
+    if store is not None:
+        stored = [await _store_attachment(store, scope, *item) for item in checked]
+    if stored:
+        files = tuple(
+            ArtifactRefBlock(uri=s.uri, media_type=s.media_type, size=s.size, name=s.name)
+            for s in stored
+        )
+        message = message.model_copy(update={"blocks": (*message.blocks, *files)})
     last = await ctx.store.last_seq(scope.tenant_id, scope.session_id)
     events = await ctx.store.append(
-        [scope.draft(RunStarted(context=context)), scope.draft(UserMessage(message=message))],
+        [
+            scope.draft(RunStarted(context=context)),
+            *(scope.draft(payload) for payload in stored),
+            scope.draft(UserMessage(message=message)),
+        ],
         expected_seq=last,
     )
     return fold(events, run_id)
+
+
+async def _store_attachment(
+    store: ArtifactStore, scope: RunScope, attachment: Attachment, media_type: str
+) -> ArtifactStored:
+    """Range une pièce jointe validée ; son ``artifact.stored`` précède le message."""
+    uri = artifact_uri(scope.tenant_id, scope.session_id, attachment.data, media_type)
+    await store.put(uri, attachment.data)
+    return ArtifactStored(
+        uri=uri,
+        media_type=media_type,
+        size=len(attachment.data),
+        name=attachment.name,
+        origin="attachment",
+    )
 
 
 async def drive(
@@ -412,21 +472,22 @@ async def _model_step(
     started = time.perf_counter()
     emitted = attempts = 0
     response: ModelResponse | None = None
-    system, messages = ctx.system, state.messages
-    if ctx.tools.has_delegated:
+    view = ctx.tools.view(state)
+    system, messages = ctx.system, in_call_order(state.messages)
+    if ctx.tools.offers_roles(view):
         messages = mark_results(messages, ResultIndex(messages))
         system = f"{system}\n\n{REFS_HINT}" if system else REFS_HINT
     try:
         request = ModelRequest(
             model_id=spec.model,
             system=system,
-            messages=(*previous, *messages),
-            tools=ctx.tools.definitions(),
+            messages=(*in_call_order(previous), *messages),
+            tools=ctx.tools.definitions(view),
             tool_choice="none" if forced else "auto",
             max_tokens=ctx.max_tokens or spec.max_tokens,
             params={**spec.params, **ctx.params},
         )
-        call = ModelCall(ctx.model, spec, on_chunk=ctx.on_chunk)
+        call = ModelCall(ctx.model, spec, on_chunk=ctx.on_chunk, artifacts=ctx.artifacts)
         async with aclosing(call.run(request)) as outcomes:
             async for outcome in outcomes:
                 attempts += 1
@@ -439,10 +500,15 @@ async def _model_step(
             raise RuntimeError("Appel de modèle terminé sans réponse")
     except Exception as exc:
         failure = f"model.{exc.kind}" if isinstance(exc, ModelError) else type(exc).__name__
+        # Une erreur classée du fournisseur tient en une ligne ; une autre
+        # exception est inattendue, et garde sa pile d'appels.
+        expected = isinstance(exc, ModelError)
         logger.error(
-            "Échec de l'appel au modèle %s",
+            "Échec de l'appel au modèle %s : %s — %s",
             spec.id,
-            exc_info=exc,
+            failure,
+            exc.message if isinstance(exc, ModelError) else exc,
+            exc_info=None if expected else exc,
             extra={"run_id": state.run_id, "span_id": current.span},
         )
         yield current.completed(emitted, ok=False)
@@ -485,6 +551,8 @@ async def _tool_step(
             if isinstance(item, Delegated):
                 inner = model_spans.setdefault(item.call_id, new_span_id())
                 yield scope.draft(item.payload, span_id=inner, parent_span_id=span, role=item.role)
+            elif isinstance(item, Stored):
+                yield scope.draft(item.payload, span_id=span, parent_span_id=current.span)
             else:
                 yield scope.draft(item, span_id=span, parent_span_id=current.span)
             emitted += 1

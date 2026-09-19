@@ -7,13 +7,20 @@ partir de ses arguments et du contexte qu'il déclare. Il ne reçoit rien
 d'autre : ni l'historique, ni les outils de l'orchestrateur.
 
 Contexte déclarable (#12) : ``user_input`` (la demande de l'utilisateur, mot
-pour mot), ``caller_context`` (le contexte de l'appelant) et ``tool_results``
-(tous les résultats réussis des outils nommés, dans l'ordre des appels). Si un
-outil nommé n'a encore rien donné, le rôle n'est pas appelé : l'orchestrateur
-reçoit une erreur qui lui dit quoi faire d'abord.
+pour mot), ``caller_context`` (le contexte de l'appelant), ``tool_results``
+(tous les résultats réussis des outils nommés, dans l'ordre des appels, en
+entier même s'ils ont été déportés) et ``attachments`` (les pièces jointes du
+run). Si un outil nommé n'a encore rien donné, le rôle n'est pas appelé :
+l'orchestrateur reçoit une erreur qui lui dit quoi faire d'abord.
+
+Rôle vision (C4) : un rôle qui déclare ``attachments`` reçoit les images
+jointes à la demande, à la suite de son texte ; son modèle les voit s'il a la
+capacité ``vision``. Sans pièce jointe dans le run, il est masqué à
+l'orchestrateur.
 
 Construction du message : avec un ``input_template``, le texte rendu ; sans,
-un bloc balisé par contexte, dans l'ordre déclaré, puis les arguments.
+un bloc balisé par contexte, dans l'ordre déclaré, puis les arguments. Les
+pièces jointes suivent le texte, en références que l'appel résout.
 
 Ce que l'orchestrateur voit : la description du rôle est complétée par la
 liste du contexte qu'il reçoit déjà. Sans elle, l'orchestrateur ne le sait que
@@ -41,6 +48,7 @@ from typing import Final, Literal
 from pydantic import JsonValue
 
 from loom_ia.core.model import (
+    ContentBlock,
     Message,
     ModelRequest,
     ModelResponse,
@@ -53,8 +61,9 @@ from loom_ia.core.model import (
 from loom_ia.core.ports import ModelClient, ModelError, ToolContext
 from loom_ia.core.template import Template
 from loom_ia.engine.delegated import DelegatedPayload, DelegatedTool, RunView
+from loom_ia.engine.media import describe
 from loom_ia.engine.model_call import ModelCall, responded
-from loom_ia.engine.refs import output_text
+from loom_ia.engine.refs import RefError
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +78,7 @@ class ToolResults:
     tools: tuple[str, ...]
 
 
-type ContextItem = Literal["user_input", "caller_context"] | ToolResults
+type ContextItem = Literal["user_input", "caller_context", "attachments"] | ToolResults
 
 
 def _empty_object() -> dict[str, JsonValue]:
@@ -119,16 +128,25 @@ class RoleTool(DelegatedTool):
     def __repr__(self) -> str:
         return f"RoleTool({self.definition.name!r}, modèle {self.model_spec.id!r})"
 
-    def check(self, arguments: dict[str, JsonValue], run: RunView) -> str | None:
-        built = self.message(arguments, run)
+    @property
+    def wants_attachments(self) -> bool:
+        return "attachments" in self.definition.context
+
+    def available(self, run: RunView) -> bool:
+        """Un rôle qui attend les pièces jointes est masqué quand le run n'en a pas (C4)."""
+        return not self.wants_attachments or bool(run.state.attachments)
+
+    async def check(self, arguments: dict[str, JsonValue], run: RunView) -> str | None:
+        built = await self.message(arguments, run)
         return built if isinstance(built, str) else None
 
-    def message(self, arguments: dict[str, JsonValue], run: RunView) -> Message | str:
+    async def message(self, arguments: dict[str, JsonValue], run: RunView) -> Message | str:
         """Message envoyé au rôle, ou motif de refus destiné à l'orchestrateur."""
         role = self.definition
         sections: list[str] = []
         values: dict[str, JsonValue] = {}
         results: dict[str, JsonValue] = {}
+        files: list[ContentBlock] = []
         for item in role.context:
             match item:
                 case "user_input":
@@ -139,6 +157,15 @@ class RoleTool(DelegatedTool):
                     data = run.state.context.model_dump(mode="json")
                     values["caller_context"] = data
                     sections.append(_tagged("caller_context", json.dumps(data, ensure_ascii=False)))
+                case "attachments":
+                    files += run.attachments
+                    if not files:
+                        return (
+                            f"Le rôle {role.name} n'a aucune pièce jointe à regarder dans ce run."
+                        )
+                    listing = "\n".join(f"- {describe(block)}" for block in run.attachments)
+                    values["attachments"] = listing
+                    sections.append(_tagged("attachments", listing))
                 case ToolResults(tools=names):
                     for name in names:
                         records = run.results.results_of(name)
@@ -147,7 +174,10 @@ class RoleTool(DelegatedTool):
                                 f"Le rôle {role.name} a besoin d'un résultat de {name} : "
                                 "appelle d'abord cet outil."
                             )
-                        texts = [output_text(r.output) for r in records if r.output is not None]
+                        try:
+                            texts = [await run.results.text(record) for record in records]
+                        except RefError as exc:
+                            return exc.message
                         results[name] = "\n\n".join(texts)
                         sections += [
                             _tagged("tool_result", text, tool=name, ref=record.ref)
@@ -161,15 +191,15 @@ class RoleTool(DelegatedTool):
             if arguments:
                 sections.append(_tagged("arguments", json.dumps(arguments, ensure_ascii=False)))
             text = "\n\n".join(sections)
-        if not text.strip():
+        if not text.strip() and not files:
             return f"Le rôle {role.name} n'a rien reçu : donne-lui ses arguments."
-        return Message.user(text)
+        return Message(role="user", blocks=(TextBlock(text=text), *files))
 
     async def run(
         self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
     ) -> AsyncGenerator[DelegatedPayload | ToolOutput]:
         role, spec = self.definition, self.model_spec
-        built = self.message(arguments, run)
+        built = await self.message(arguments, run)
         if isinstance(built, str):
             yield ToolOutput.error(built)
             return
@@ -184,7 +214,8 @@ class RoleTool(DelegatedTool):
         attempts = 0
         response: ModelResponse | None = None
         try:
-            async with aclosing(ModelCall(self.model, spec).run(request)) as outcomes:
+            call = ModelCall(self.model, spec, artifacts=run.artifacts)
+            async with aclosing(call.run(request)) as outcomes:
                 async for outcome in outcomes:
                     attempts += 1
                     if isinstance(outcome, ModelResponse):
@@ -192,11 +223,13 @@ class RoleTool(DelegatedTool):
                     else:
                         yield outcome.model_copy(update={"call_id": context.call_id})
         except ModelError as exc:
+            # Erreur classée du fournisseur : son message suffit, sans pile d'appels.
             logger.warning(
-                "Échec du rôle %s (modèle %s)",
+                "Échec du rôle %s (modèle %s) : model.%s — %s",
                 role.name,
                 spec.id,
-                exc_info=exc,
+                exc.kind,
+                exc.message,
                 extra={"run_id": context.run_id},
             )
             yield ToolOutput.error(
@@ -232,6 +265,8 @@ def described(definition: RoleDefinition) -> str:
                 received.append("la demande de l'utilisateur")
             case "caller_context":
                 received.append("le contexte de l'appelant")
+            case "attachments":
+                received.append("les pièces jointes de la demande (images)")
             case ToolResults(tools=names):
                 received.append(f"les résultats de {', '.join(names)}")
     if not received:

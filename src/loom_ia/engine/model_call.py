@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Appel d'un modèle : fenêtre de contexte, délais, nouvelles tentatives (B3, B7).
+"""Appel d'un modèle : fichiers, fenêtre de contexte, délais, nouvelles tentatives (B3, B7, #14).
 
 La politique de retry est celle de loom-ia, pas celle des SDK (désactivée) :
 chaque tentative ratée est annoncée par un ``model.retried``, que le moteur
 écrit dans le journal avant d'attendre. Un appel relancé l'est en entier ; si
 des morceaux avaient déjà été diffusés, ``on_chunk`` reçoit d'abord un
 ``StreamReset``.
+
+Avant la première tentative, les références de fichiers de la requête sont
+résolues selon les capacités du modèle (``MediaResolver``) ; la fenêtre de
+contexte est estimée sur la requête non résolue, plus une part fixe par image.
 """
 
 import asyncio
@@ -26,7 +30,8 @@ from loom_ia.core.model import (
     ResponseAccumulator,
     StreamReset,
 )
-from loom_ia.core.ports import ChunkCallback, ModelClient, ModelError
+from loom_ia.core.ports import ArtifactStore, ChunkCallback, ModelClient, ModelError
+from loom_ia.engine.media import IMAGE_TOKENS, MediaResolver
 
 logger = logging.getLogger(__name__)
 
@@ -83,27 +88,30 @@ class ModelCall:
         spec: ModelSpec,
         *,
         on_chunk: ChunkCallback | None = None,
+        artifacts: ArtifactStore | None = None,
         sleep: Sleep = asyncio.sleep,
         jitter: Callable[[], float] = random.random,
     ) -> None:
         self.client = client
         self.spec = spec
         self.on_chunk = on_chunk
+        self.media = MediaResolver(spec, artifacts)
         self._sleep = sleep
         self._jitter = jitter
 
     async def run(self, request: ModelRequest) -> AsyncGenerator[ModelRetried | ModelResponse]:
         """Émet un ``ModelRetried`` par tentative ratée, puis la réponse.
 
-        Lève ``ModelError`` si l'erreur n'est pas rejouable ou si les tentatives
-        sont épuisées.
+        Lève ``ModelError`` si l'erreur n'est pas rejouable, si les tentatives
+        sont épuisées, ou si un fichier de la requête ne peut pas être envoyé.
         """
         self._check_context(request)
+        sent = await self.media.resolve(request)
         attempt = 1
         while True:
             progress = _Progress()
             try:
-                response = await self._attempt(request, progress)
+                response = await self._attempt(sent, progress)
             except ModelError as error:
                 delay = self._retry_delay(error, attempt)
                 if delay is None:
@@ -140,7 +148,7 @@ class ModelCall:
         window = self.spec.capabilities.context_window
         if window is None:
             return
-        estimated = estimate_tokens(request)
+        estimated = estimate_tokens(request) + IMAGE_TOKENS * self.media.images(request)
         needed = estimated + (request.max_tokens or 0)
         if needed > window:
             raise ModelError(

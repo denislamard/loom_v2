@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Définition d'un agent (A9, #50).
 
-Sous-ensemble des jalons J1 et J2 : orchestrateur (``main``), outils Python
-et rôles délégués. Les sous-agents, les guards, le juge, le budget et les
-politiques arrivent avec leurs phases ; les déclarer aujourd'hui donne une
-erreur qui nomme la phase.
+Sous-ensemble des jalons J1 et J2 : orchestrateur (``main``), outils Python,
+serveurs MCP et rôles délégués (dont le rôle vision, qui reçoit les pièces
+jointes). Les sous-agents, les guards, le juge, le budget et les politiques
+arrivent avec leurs phases ; les déclarer aujourd'hui donne une erreur qui
+nomme la phase.
 
 ``main`` est lui-même un rôle (C6) : il partage avec les rôles délégués le
 modèle, le prompt système et les réglages ``llm``.
@@ -62,12 +63,8 @@ LATER_ROLE: Final[dict[str, str]] = {
     "fallbacks": "J3.5 (modèle de secours)",
 }
 LATER_CONTEXT: Final[dict[str, str]] = {
-    "attachments": "J2.3 (pièces jointes)",
     "session_summary": "J4.1 (sessions)",
     "last_turns": "J4.1 (sessions)",
-}
-LATER_TOOL: Final[dict[str, str]] = {
-    "offload_over": "J2.3 (déport des gros résultats)",
 }
 
 
@@ -115,7 +112,7 @@ class ToolResultsContext(DomainModel):
     tool_results: tuple[str, ...] = Field(min_length=1)
 
 
-type ContextName = Literal["user_input", "caller_context"]
+type ContextName = Literal["user_input", "caller_context", "attachments"]
 type ContextItem = ContextName | ToolResultsContext
 
 
@@ -174,6 +171,11 @@ class RoleSpec(BaseRole):
         return names
 
     @property
+    def wants_attachments(self) -> bool:
+        """Vrai pour un rôle vision : il reçoit les pièces jointes du run (C4)."""
+        return "attachments" in self.context
+
+    @property
     def tool_results(self) -> tuple[str, ...]:
         """Outils dont le rôle reçoit les résultats."""
         return tuple(
@@ -226,11 +228,11 @@ def _check_template(source: str, properties: set[str], declared: list[str]) -> N
                     raise ValueError(
                         f"input_template : {shown} — {name!r} absent de input_schema.properties"
                     )
-            case ("context", "user_input" | "caller_context" as name, *rest):
+            case ("context", "user_input" | "caller_context" | "attachments" as name, *rest):
                 if name not in declared:
                     raise ValueError(f"input_template : {shown} — contexte {name!r} non déclaré")
-                if rest and name == "user_input":
-                    raise ValueError(f"input_template : {shown} — user_input est un texte")
+                if rest and name != "caller_context":
+                    raise ValueError(f"input_template : {shown} — {name} est un texte")
                 used.add(name)
             case ("context", "tool_results", tool):
                 if f"tool_results.{tool}" not in declared:
@@ -239,9 +241,11 @@ def _check_template(source: str, properties: set[str], declared: list[str]) -> N
             case _:
                 raise ValueError(
                     f"input_template : variable inconnue {shown} (attendu args.<argument>, "
-                    "context.user_input, context.caller_context ou context.tool_results.<outil>)"
+                    "context.user_input, context.caller_context, context.attachments "
+                    "ou context.tool_results.<outil>)"
                 )
-    unused = [name for name in declared if name not in used]
+    # Les pièces jointes partent en images après le texte : les citer est facultatif.
+    unused = [name for name in declared if name not in used and name != "attachments"]
     if unused:
         raise ValueError(
             f"input_template : contexte déclaré mais non utilisé : {', '.join(unused)}"
@@ -267,12 +271,8 @@ class PythonTool(DomainModel):
     side_effects: SideEffects | None = None
     approval: Approval | None = None
     idempotent: bool | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_TOOL)
-        return data
+    # Seuil de déport du résultat, en caractères (#16).
+    offload_over: PositiveInt | None = None
 
 
 class McpTools(DomainModel):

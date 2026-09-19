@@ -357,7 +357,9 @@ async def test_references_are_checked_before_the_call(store: EventStore) -> None
     )
 
 
-async def test_role_failures_become_error_results(store: EventStore) -> None:
+async def test_role_failures_become_error_results(
+    store: EventStore, caplog: pytest.LogCaptureFixture
+) -> None:
     main = main_model(
         tool_call_message(("c1", "calculer", {"expr": "1"})),
         tool_call_message(("c2", "rediger", {"ton": "a"})),
@@ -372,9 +374,16 @@ async def test_role_failures_become_error_results(store: EventStore) -> None:
         ModelError("auth", "clé refusée", http_status=401),
         Message.assistant(" "),
     )
-    state = await run(context(store, main, role(writer)))
+    with caplog.at_level(logging.WARNING, logger="loom_ia.engine.roles"):
+        state = await run(context(store, main, role(writer)))
 
     assert state.status is RunStatus.COMPLETED
+    # Une erreur classée du fournisseur tient en une ligne, sans pile d'appels.
+    [failure] = [r for r in caplog.records if r.name == "loom_ia.engine.roles"]
+    assert failure.getMessage() == (
+        "Échec du rôle rediger (modèle ROLE) : model.auth — clé refusée"
+    )
+    assert failure.exc_info is None
     events = await journal(store, state)
     outputs = {p.call_id: p.output for p in payloads(events, ToolCompleted)}
     assert outputs["c2"] == ToolOutput.text("Bonne réponse.")

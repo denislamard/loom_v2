@@ -2,9 +2,9 @@
 """Lecture de ``loom.yaml`` et des agents (M1, #35).
 
 ``safe_load`` puis validation stricte par les modèles Pydantic. Les chemins
-(``agents_dir``, ``prompts_dir``, journal, ``cwd`` des serveurs MCP) sont
-relatifs au fichier de config et deviennent absolus au chargement. Un
-serveur MCP stdio sans ``cwd`` se lance depuis le dossier de la config. Un
+(``agents_dir``, ``prompts_dir``, journal, artefacts, ``cwd`` des serveurs
+MCP) sont relatifs au fichier de config et deviennent absolus au chargement.
+Un serveur MCP stdio sans ``cwd`` se lance depuis le dossier de la config. Un
 ``system_file`` manquant, un modèle inconnu ou un agent en double arrêtent
 le démarrage.
 """
@@ -87,12 +87,18 @@ def _with_prompt[R: BaseRole](role: R, prompts_dir: Path, label: str, *, source:
 
 
 def _absolute_storage(config: LoomConfig, base_dir: Path) -> object:
-    events = config.storage.events
-    if events.path is None:
-        return config.storage
-    return config.storage.model_copy(
-        update={"events": events.model_copy(update={"path": base_dir / events.path})}
-    )
+    """Chemins du journal et des artefacts rapportés au dossier de la config."""
+    storage = config.storage
+    update: dict[str, object] = {}
+    if storage.events.path is not None:
+        update["events"] = storage.events.model_copy(
+            update={"path": base_dir / storage.events.path}
+        )
+    if storage.artifacts.path is not None:
+        update["artifacts"] = storage.artifacts.model_copy(
+            update={"path": base_dir / storage.artifacts.path}
+        )
+    return storage.model_copy(update=update) if update else storage
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
