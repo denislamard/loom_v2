@@ -297,6 +297,7 @@ class Loom:
                 environ=self._environ,
                 mcp_pool=self._mcp,
                 artifacts=self._artifacts,
+                agents=self.context,
             )
             self._built[agent] = built
         if on_chunk is None:

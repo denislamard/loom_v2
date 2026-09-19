@@ -171,9 +171,12 @@ async def _validate(args: argparse.Namespace) -> int:
         for spec in config.agents:
             context = loom.context(spec.name)
             roles = "".join(f", rôle {role.name} ({role.model})" for role in spec.roles)
+            subagents = "".join(
+                f", sous-agent {ref.tool_name} ({ref.agent})" for ref in spec.subagents
+            )
             print(
                 f"  {spec.name} : modèle {context.model_spec.id}, "
-                f"{len(spec.python_tools)} outil(s) Python{roles}"
+                f"{len(spec.python_tools)} outil(s) Python{roles}{subagents}"
             )
             await _show_sources(spec.name, context.tools)
     print(f"\n{len(config.agents)} agent(s) monté(s) sans erreur.")

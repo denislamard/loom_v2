@@ -23,10 +23,10 @@ la réponse finale. ``run.completed`` désigne alors son ``tool.completed``
 au lieu de recopier la sortie. Appelé avec d'autres outils, il redevient un
 outil ordinaire et l'orchestrateur compose la réponse.
 
-Rôles délégués : si un rôle est proposé dans le run, chaque résultat montré au
-modèle porte sa référence (``[result:3]``) et le prompt système explique
-``$ref`` (#12). Dans la requête, les résultats d'un tour suivent l'ordre des
-appels, quel que soit leur ordre d'arrivée dans le journal.
+Rôles et sous-agents : si l'un d'eux est proposé dans le run, chaque résultat
+montré au modèle porte sa référence (``[result:3]``) et le prompt système
+explique ``$ref`` (#12). Dans la requête, les résultats d'un tour suivent
+l'ordre des appels, quel que soit leur ordre d'arrivée dans le journal.
 
 Pièces jointes (G1) : validées avant tout écrit (signature binaire, type,
 taille), rangées dans le stockage d'artefacts, annoncées par un
@@ -97,6 +97,7 @@ from loom_ia.core.projections import apply, fold, history
 from loom_ia.engine.executor import Delegated, Stored, ToolExecutor
 from loom_ia.engine.model_call import ModelCall, responded
 from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
+from loom_ia.engine.writer import SessionWriter
 
 logger = logging.getLogger(__name__)
 
@@ -133,11 +134,27 @@ class RunContext:
     on_chunk: ChunkCallback | None = None
     # Pièces jointes acceptées à l'entrée d'un run (G1).
     attachments: AttachmentPolicy = field(default_factory=AttachmentPolicy)
+    # Écrivain du journal, posé par ``drive`` pour le run en cours : les
+    # sous-agents écrivent leur run avec lui.
+    writer: SessionWriter | None = None
 
     @property
     def artifacts(self) -> ArtifactStore | None:
         """Stockage des fichiers du run : celui de l'exécuteur d'outils."""
         return self.tools.artifacts
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ParentRun:
+    """Run parent d'un sous-run, et l'appel qui l'a lancé (#4)."""
+
+    run_id: RunId
+    root_run_id: RunId
+    call_id: str
+    # Profondeur du parent ; l'enfant est à ``depth + 1``.
+    depth: int
+    # Span de l'appel dans le parent : parent du span racine de l'enfant.
+    span_id: SpanId | None = None
 
 
 async def begin_run(
@@ -148,11 +165,17 @@ async def begin_run(
     session_id: SessionId | None = None,
     context: CallerContext | None = None,
     run_id: RunId | None = None,
+    parent: ParentRun | None = None,
+    writer: SessionWriter | None = None,
 ) -> RunState:
     """Écrit le démarrage d'un run et la demande de l'utilisateur.
 
     Un ``run_id`` fourni par l'appelant ne doit pas déjà exister dans le journal.
     Une pièce jointe refusée lève ``AttachmentError`` avant tout écrit.
+
+    Un sous-run (``parent``) s'écrit dans le journal de son parent, avec
+    l'écrivain de la session (``writer``) : il hérite de sa racine, et sa
+    profondeur est celle du parent plus un.
     """
     message = Message.user(prompt) if isinstance(prompt, str) else prompt
     if message.role != "user":
@@ -168,9 +191,18 @@ async def begin_run(
         tenant_id=context.tenant_id,
         session_id=session_id or SessionId(run_id),
         run_id=run_id,
-        root_run_id=run_id,
+        root_run_id=parent.root_run_id if parent is not None else run_id,
         agent=ctx.agent,
+        parent_span_id=parent.span_id if parent is not None else None,
     )
+    started = RunStarted(context=context)
+    if parent is not None:
+        started = RunStarted(
+            context=context,
+            parent_run_id=parent.run_id,
+            parent_call_id=parent.call_id,
+            depth=parent.depth + 1,
+        )
     if chosen and await ctx.store.read(scope.tenant_id, scope.session_id, run_id=run_id):
         raise ValueError(f"Le run {run_id} existe déjà")
     stored: list[ArtifactStored] = []
@@ -182,14 +214,14 @@ async def begin_run(
             for s in stored
         )
         message = message.model_copy(update={"blocks": (*message.blocks, *files)})
-    last = await ctx.store.last_seq(scope.tenant_id, scope.session_id)
-    events = await ctx.store.append(
+    if writer is None:
+        writer = await SessionWriter.open(ctx.store, scope.tenant_id, scope.session_id)
+    events = await writer.append(
         [
-            scope.draft(RunStarted(context=context)),
+            scope.draft(started),
             *(scope.draft(payload) for payload in stored),
             scope.draft(UserMessage(message=message)),
-        ],
-        expected_seq=last,
+        ]
     )
     return fold(events, run_id)
 
@@ -215,6 +247,7 @@ async def drive(
     *,
     session_id: SessionId | None = None,
     tenant_id: TenantId | None = None,
+    writer: SessionWriter | None = None,
 ) -> RunState:
     """Fait avancer le run jusqu'à un état où il ne peut plus avancer seul.
 
@@ -224,6 +257,9 @@ async def drive(
     refermées à la fin : leurs outils restent fixes pendant tout le ``drive``.
     Une source injoignable est journalisée (``tool.source_unavailable``) ; si
     le run ne peut pas s'en passer, il échoue.
+
+    Un sous-run reçoit l'écrivain de son parent (``writer``) : ils écrivent
+    dans le même journal. Il n'a pas d'historique de session.
     """
     tenant = tenant_id or DEFAULT_TENANT
     session = session_id or SessionId(run_id)
@@ -234,14 +270,17 @@ async def drive(
         raise ValueError(f"Le run {run_id} appartient à l'agent {state.agent!r}, pas {ctx.agent!r}")
     if state.finished or state.status not in _ACTIONABLE:
         return state
-    previous = history(e for e in events if e.seq < own[0].seq)
+    previous = (
+        history(e for e in events if e.seq < own[0].seq) if state.parent_run_id is None else []
+    )
     cause = next((e for e in reversed(own) if e.category in {"model", "tool"}), None)
-    last_seq = events[-1].seq
+    if writer is None:
+        writer = SessionWriter(ctx.store, tenant, session, events[-1].seq)
+    journal = writer
 
     async def write(draft: EventDraft) -> Event:
-        nonlocal state, last_seq, cause
-        [event] = await ctx.store.append([draft], expected_seq=last_seq)
-        last_seq = event.seq
+        nonlocal state, cause
+        [event] = await journal.append([draft])
         if event.category in {"model", "tool"}:
             cause = event
         if isinstance(event.payload, RunTransitioned):
@@ -269,7 +308,7 @@ async def drive(
             await write(scope.draft(_failed(state, payload.type, reason)))
             return state
 
-        run_ctx = replace(ctx, tools=opened.tools)
+        run_ctx = replace(ctx, tools=opened.tools, writer=journal)
         while not state.finished and state.status in _ACTIONABLE:
             emitted = 0
             async with aclosing(step(state, run_ctx, previous, cause=cause)) as drafts:
@@ -474,7 +513,7 @@ async def _model_step(
     response: ModelResponse | None = None
     view = ctx.tools.view(state)
     system, messages = ctx.system, in_call_order(state.messages)
-    if ctx.tools.offers_roles(view):
+    if ctx.tools.shows_refs(view):
         messages = mark_results(messages, ResultIndex(messages))
         system = f"{system}\n\n{REFS_HINT}" if system else REFS_HINT
     try:
@@ -541,11 +580,13 @@ async def _tool_step(
 ) -> AsyncGenerator[EventDraft]:
     current = _Step(state, scope, "tool_batch")
     yield current.started()
-    # Un span par appel d'outil ; les appels de modèle d'un rôle ont le leur, en dessous.
-    spans: dict[str, SpanId] = {}
+    # Un span par appel d'outil, choisi d'avance : un sous-agent y rattache
+    # son run. Les appels de modèle d'un rôle ont leur span, en dessous.
+    spans: dict[str, SpanId] = {call.call_id: new_span_id() for call in state.pending_calls}
     model_spans: dict[str, SpanId] = {}
     emitted = 0
-    async with aclosing(ctx.tools.run_batch(state)) as events:
+    batch = ctx.tools.run_batch(state, writer=ctx.writer, spans=spans)
+    async with aclosing(batch) as events:
         async for item in events:
             span = spans.setdefault(item.call_id, new_span_id())
             if isinstance(item, Delegated):

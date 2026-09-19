@@ -28,3 +28,8 @@ roles:
         consigne: {type: string, description: Ce qu'il faut regarder ou décrire}
       required: [consigne]
     context: [attachments]
+
+subagents:
+  # Sous-agent : l'agent verificateur, appelé par l'outil verifier.
+  - agent: verificateur
+    name: verifier

@@ -1,0 +1,14 @@
+name: verificateur_reel
+description: Vérifie des dates et des calculs en les refaisant avec ses propres outils (GLM-5.3-Flash).
+expose: {rest: false, mcp: false}   # appelé seulement comme sous-agent
+
+main:
+  model: GLM_FLASH
+  system_file: verificateur.md
+
+max_iterations: 3
+
+tools:
+  - mcp: time
+  - mcp: math
+    include: [calculer]

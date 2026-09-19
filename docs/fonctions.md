@@ -344,6 +344,17 @@ RunState
 - **Annulation :** elle se propage du parent vers ses enfants.
 - **Session :** un enfant est éphémère par défaut, sans session propre.
 
+**Réalisation (phase 2.4) :**
+
+- **Appel :** un sous-agent est un outil délégué (`kind: agent`) qui ne prend qu'un argument, `message` ; sa description reçoit une consigne : il ne voit ni la conversation ni les résultats précédents. Config : `subagents: [{agent, name?, description?}]` (nom et description de l'agent par défaut) ; `budget_share` arrive en 3.4.
+- **Run enfant :** écrit dans le journal du parent (même session), avec le `root_run_id` du parent, `parent_run_id`, `parent_call_id`, `depth + 1` et le contexte de l'appelant ; son span racine est rattaché au span de l'appel. Il n'a ni l'historique de session ni celui du parent, et `history` l'ignore.
+- **Écritures :** parent et enfants partagent un écrivain de session (verrou et dernier `seq`), ce qui permet plusieurs sous-agents en parallèle dans le même journal.
+- **Retour :** la réponse finale de l'enfant devient le résultat d'outil ; un échec ou une réponse vide deviennent un résultat d'erreur. `tool.completed` porte la consommation de l'enfant (usage et coût de tout son run), ajoutée au parent.
+- **Reprise :** `tool.called` porte `child_run_id`. À la reprise, le parent refait avancer ce même enfant ; s'il avait fini, sa réponse est reprise sans nouvel appel.
+- **Profondeur :** `max_depth` par agent (défaut 1) ; un sous-agent n'est proposé que si la profondeur du run appelant est inférieure au `max_depth` de son agent. Une boucle d'agents qui s'appellent reste bornée.
+- **Annulation :** l'enfant tourne dans la tâche de l'appel ; annuler le parent l'annule aussi, sans rien écrire. `run.cancelled` arrive en J4.2 (backlog #006), `WAITING_CHILD` avec les approbations (J4.3).
+- **Accès :** l'arbre se lit dans le journal de la session ; sa diffusion par REST, SSE et MCP relève de 2.5.
+
 ### 5. Bus d'événements : en mémoire, journal comme source
 
 Le journal fait foi, le bus sert à notifier vite.
@@ -707,7 +718,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte |
 | `message.user` | blocs de contenu (pièces jointes par référence) |
 | `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué) |
-| `tool.called` | tool_name, tool_kind, call_id, arguments, refs |
+| `tool.called` | tool_name, tool_kind, call_id, arguments, refs, child_run_id (sous-agent) |
 | `tool.completed` | tool_name, call_id, is_error, sortie (blocs ou réf.), latence, taille |
 | `tool.source_unavailable` | source (serveur MCP), erreur, required (voir point 19) |
 | `guard.checked` | guard, cible, outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized (voir points 20 et 21) |

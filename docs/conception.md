@@ -320,8 +320,8 @@ Event
 | `model.retried` | tentative, type d'erreur, délai, call_id (rôle délégué) |
 | `model.fell_back` | ancien modèle, nouveau modèle, motif |
 | `idempotency.recorded` | clé, call_id, résultat |
-| `tool.called` | tool_name, tool_kind, call_id, arguments, refs |
-| `tool.completed` | tool_name, call_id, is_error, sortie (blocs, références de fichiers, aperçu et référence si déportée), latence, taille ; facette `offloaded` |
+| `tool.called` | tool_name, tool_kind, call_id, arguments, refs, child_run_id (sous-agent) |
+| `tool.completed` | tool_name, call_id, is_error, sortie (blocs, références de fichiers, aperçu et référence si déportée), latence, taille, consommation d'un sous-agent (usage, coût) ; facette `offloaded` |
 | `tool.source_unavailable` | source (serveur MCP), erreur, required |
 | `guard.checked` | guard, cible, outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized |
 | `judge.evaluated` | modèle juge, scores par critère, bloquant, réussi |
@@ -616,6 +616,8 @@ Le message du rôle est construit par un `input_template` explicite (`{{ args.x 
 - Si l'enfant attend une validation, le parent passe en `WAITING_CHILD`.
 - L'annulation se propage du parent vers ses enfants.
 - Un enfant est éphémère par défaut, sans session propre.
+
+Réalisation (phase 2.4) : l'orchestrateur passe un seul argument, `message` ; l'enfant écrit son run dans le journal du parent, par un écrivain de session partagé (plusieurs enfants peuvent tourner en parallèle) ; `tool.called` porte `child_run_id`, `tool.completed` la consommation de l'enfant ; `max_depth` est propre à chaque agent (défaut 1) : un sous-agent n'est proposé que si la profondeur du run appelant est inférieure au `max_depth` de son agent. `WAITING_CHILD` arrive avec les approbations (J4.3), `run.cancelled` avec le cycle de vie des runs (J4.2).
 
 ### 9.7 Fiabilité des sorties
 
@@ -1061,11 +1063,11 @@ roles:
     model: HAIKU                      # capabilities.vision: true exigée
     input_schema: {...}
     context: [user_input, attachments]   # masqué quand le run n'a pas de pièce jointe
-subagents:
+subagents:                            # outils de kind agent, un argument : message
   - agent: verifier_devis
-    name: verifier
-    description: Vérifie la cohérence d'un devis.
-    budget_share: 0.3
+    name: verifier                    # défaut : le nom de l'agent
+    description: Vérifie la cohérence d'un devis.   # défaut : celle de l'agent
+    budget_share: 0.3                 # J3.4
 policies:
   - hook: myapp.policies:plafond_montant
     points: [before_tool]

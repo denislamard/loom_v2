@@ -16,6 +16,12 @@ l'agent. Le SDK ``mcp`` n'est importé que si la config déclare des serveurs.
 Stockage d'artefacts (G2) : un seul par instance, partagé par ses agents. Il
 suit le journal par défaut (dossier ``.artifacts`` d'un journal JSONL,
 mémoire sinon).
+
+Sous-agents (C5) : l'agent appelé n'est monté qu'au premier appel, par
+``agents`` (``Loom.context`` dans une instance). Deux agents peuvent ainsi
+s'appeler l'un l'autre sans que le montage boucle ; la profondeur borne les
+appels. Sans ``agents``, l'agent monte lui-même ses sous-agents à la demande,
+et les referme avec lui.
 """
 
 import logging
@@ -34,6 +40,7 @@ from loom_ia.agents.spec import (
     BaseRole,
     PythonTool,
     RoleSpec,
+    SubAgentRef,
     ToolResultsContext,
 )
 from loom_ia.agents.spec import ContextItem as DeclaredContext
@@ -50,11 +57,14 @@ from loom_ia.core.ports import (
 )
 from loom_ia.core.template import Template
 from loom_ia.engine import (
+    AgentResolver,
+    AgentTool,
     AnyTool,
     ContextItem,
     RoleDefinition,
     RoleTool,
     RunContext,
+    SubAgentDefinition,
     ToolExecutor,
     ToolResults,
 )
@@ -138,13 +148,15 @@ def build_agent(
     on_chunk: ChunkCallback | None = None,
     mcp_pool: McpPool | None = None,
     artifacts: ArtifactStore | None = None,
+    agents: AgentResolver | None = None,
 ) -> Agent:
     """Assemble l'agent ``name`` de la config.
 
     ``mcp_pool`` porte les connexions MCP partagées ; sans lui, l'agent ouvre
     le sien et le ferme avec ``aclose``. ``artifacts`` est le stockage des
     fichiers ; sans lui, les pièces jointes sont refusées et les gros
-    résultats tronqués.
+    résultats tronqués. ``agents`` donne le contexte d'un sous-agent par son
+    nom ; sans lui, l'agent monte ses sous-agents lui-même, au premier appel.
     """
     spec = AgentRegistry.from_config(config).get(name)
     known = registry if registry is not None else load_registry(config)
@@ -152,6 +164,17 @@ def build_agent(
     roles = [role_definition(role) for role in spec.roles]
     _check_names(spec, [tool.spec.name for tool in tools])
     sources, owned = _mcp_sources(config, spec, environ, mcp_pool)
+    if spec.subagents and agents is None:
+        nested = _SubAgents(
+            config,
+            store,
+            registry=known,
+            environ=environ,
+            mcp_pool=mcp_pool,
+            artifacts=artifacts,
+        )
+        agents = nested
+        owned = (*owned, nested)
 
     clients: dict[str, ModelClient] = {}
 
@@ -164,6 +187,10 @@ def build_agent(
         RoleTool(definition, client(role.model), config.model_spec(role.model))
         for role, definition in zip(spec.roles, roles, strict=True)
     ]
+    if agents is not None:
+        delegated += [
+            AgentTool(_subagent_definition(config, spec, ref), agents) for ref in spec.subagents
+        ]
     execution = config.execution.tools
     llm = spec.main.llm
     context = RunContext(
@@ -226,17 +253,78 @@ def _context_item(item: DeclaredContext) -> ContextItem:
             return item
 
 
+def _subagent_definition(
+    config: LoomConfig, spec: AgentSpec, ref: SubAgentRef
+) -> SubAgentDefinition:
+    """Sous-agent tel que le moteur l'appelle : nom et description de l'agent par défaut."""
+    target = AgentRegistry.from_config(config).get(ref.agent)
+    return SubAgentDefinition(
+        name=ref.tool_name,
+        agent=ref.agent,
+        description=ref.description or target.description,
+        max_depth=spec.max_depth,
+    )
+
+
+class _SubAgents:
+    """Sous-agents d'un agent monté hors d'une instance ``Loom`` : montés au premier appel."""
+
+    def __init__(
+        self,
+        config: LoomConfig,
+        store: EventStore,
+        *,
+        registry: Registry,
+        environ: Mapping[str, str] | None,
+        mcp_pool: McpPool | None,
+        artifacts: ArtifactStore | None,
+    ) -> None:
+        self._config = config
+        self._store = store
+        self._registry = registry
+        self._environ = environ
+        self._mcp_pool = mcp_pool
+        self._artifacts = artifacts
+        self._built: dict[str, Agent] = {}
+
+    def __call__(self, name: str) -> RunContext:
+        built = self._built.get(name)
+        if built is None:
+            built = build_agent(
+                self._config,
+                name,
+                self._store,
+                registry=self._registry,
+                environ=self._environ,
+                mcp_pool=self._mcp_pool,
+                artifacts=self._artifacts,
+                agents=self,
+            )
+            self._built[name] = built
+        return built.context
+
+    async def aclose(self) -> None:
+        for built in self._built.values():
+            await built.aclose()
+        self._built.clear()
+
+
 def _check_names(spec: AgentSpec, python_tools: list[str]) -> None:
     """Noms d'outils uniques dans l'agent, et ``tool_results`` qui désignent ses outils.
 
     Les outils MCP ne sont connus qu'au début du run : un nom qui porte le
     préfixe d'un serveur référencé est accepté.
     """
-    names = [*python_tools, *(role.name for role in spec.roles)]
+    names = [
+        *python_tools,
+        *(role.name for role in spec.roles),
+        *(ref.tool_name for ref in spec.subagents),
+    ]
     doubles = sorted({name for name in names if names.count(name) > 1})
     if doubles:
         raise ConfigError(
-            f"Agent {spec.name!r} : plusieurs outils ou rôles s'appellent {', '.join(doubles)}"
+            f"Agent {spec.name!r} : plusieurs outils, rôles ou sous-agents s'appellent "
+            f"{', '.join(doubles)}"
         )
     for role in spec.roles:
         for tool in role.tool_results:

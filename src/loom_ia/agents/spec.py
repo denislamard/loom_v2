@@ -2,8 +2,8 @@
 """Définition d'un agent (A9, #50).
 
 Sous-ensemble des jalons J1 et J2 : orchestrateur (``main``), outils Python,
-serveurs MCP et rôles délégués (dont le rôle vision, qui reçoit les pièces
-jointes). Les sous-agents, les guards, le juge, le budget et les politiques
+serveurs MCP, rôles délégués (dont le rôle vision, qui reçoit les pièces
+jointes) et sous-agents. Les guards, le juge, le budget et les politiques
 arrivent avec leurs phases ; les déclarer aujourd'hui donne une erreur qui
 nomme la phase.
 
@@ -44,15 +44,13 @@ AGENT_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 
 # Clés du schéma complet d'un agent, prévues pour plus tard (§17.4).
 LATER_AGENT: Final[dict[str, str]] = {
-    "subagents": "J2.4 (sous-agents)",
-    "max_depth": "J2.4 (sous-agents)",
     "approval": "J4.3 (approbations)",
     "policies": "J3.1 (politiques)",
     "output": "J3.2 (réponse structurée)",
     "judge": "J3.3 (juge)",
     "budget": "J3.4 (coûts et budgets)",
     "stream_output": "J3.2 (guards de sortie)",
-    "timeout": "J1.6 (cycle de vie des runs)",
+    "timeout": "J4.2 (cycle de vie des runs : délai, annulation)",
 }
 LATER_MAIN: Final[dict[str, str]] = {
     "fallbacks": "J3.5 (modèle de secours)",
@@ -61,6 +59,9 @@ LATER_ROLE: Final[dict[str, str]] = {
     "output": "J3.2 (contrats de sortie)",
     "judge": "J3.3 (juge)",
     "fallbacks": "J3.5 (modèle de secours)",
+}
+LATER_SUBAGENT: Final[dict[str, str]] = {
+    "budget_share": "J3.4 (coûts et budgets)",
 }
 LATER_CONTEXT: Final[dict[str, str]] = {
     "session_summary": "J4.1 (sessions)",
@@ -307,6 +308,29 @@ class McpTools(DomainModel):
         return tool.startswith(f"{self.prefix}{MCP_PREFIX_SEPARATOR}")
 
 
+class SubAgentRef(DomainModel):
+    """Sous-agent (C5) : un autre agent de la config, appelé comme un outil.
+
+    L'orchestrateur lui passe un seul argument, ``message``. Nom et
+    description de l'outil : ceux de l'agent, sauf s'ils sont donnés ici.
+    """
+
+    agent: str = Field(pattern=AGENT_NAME_PATTERN)
+    # Nom de l'outil vu par l'orchestrateur ; par défaut, celui de l'agent.
+    name: str | None = Field(default=None, pattern=TOOL_NAME_PATTERN)
+    description: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _later(cls, data: object) -> object:
+        reject_later(data, LATER_SUBAGENT)
+        return data
+
+    @property
+    def tool_name(self) -> str:
+        return self.name or self.agent
+
+
 def _tool_kind(value: object) -> str:
     if isinstance(value, McpTools):
         return "mcp"
@@ -330,6 +354,10 @@ class AgentSpec(DomainModel):
     # Outils Python et serveurs MCP, dans l'ordre de déclaration.
     tools: tuple[ToolRef, ...] = ()
     roles: tuple[RoleSpec, ...] = ()
+    subagents: tuple[SubAgentRef, ...] = ()
+    # Profondeur maximale d'un run de cet agent pour appeler ses sous-agents :
+    # à 1, un run racine les appelle, mais un sous-run de cet agent ne le peut pas.
+    max_depth: PositiveInt = 1
 
     @model_validator(mode="before")
     @classmethod
@@ -354,6 +382,13 @@ class AgentSpec(DomainModel):
         doubles = {name for name in roles if roles.count(name) > 1}
         if doubles:
             raise ValueError(f"Rôle déclaré deux fois : {', '.join(sorted(doubles))}")
+        subagents = [ref.tool_name for ref in self.subagents]
+        doubles = {name for name in subagents if subagents.count(name) > 1}
+        if doubles:
+            raise ValueError(
+                f"Sous-agent déclaré deux fois : {', '.join(sorted(doubles))} "
+                "(donner un 'name' à l'une des références)"
+            )
         return self
 
     @property

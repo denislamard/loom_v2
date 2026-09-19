@@ -198,7 +198,15 @@ def broken(**changes: Any) -> dict[str, Any]:
             "contexte déclaré mais non utilisé : tool_results.calculer",
         ),
         (agent(roles=[rediger(), rediger()]), "Rôle déclaré deux fois : rediger"),
-        (agent(subagents=[{"agent": "x"}]), "'subagents' : prévu pour le jalon J2.4"),
+        (agent(subagents=[{"agent": "x"}]), "sous-agent 'x' : agent 'x' non déclaré"),
+        (
+            agent(subagents=[{"agent": "demo", "budget_share": 0.3}]),
+            "'budget_share' : prévu pour le jalon J3.4",
+        ),
+        (
+            agent(subagents=[{"agent": "demo"}, {"agent": "demo"}]),
+            "Sous-agent déclaré deux fois : demo",
+        ),
         (agent(main={"model": "MAIN", "fallbacks": ["ROLE"]}), "prévu pour le jalon J3.5"),
     ],
 )
@@ -211,7 +219,9 @@ def test_role_checks_at_load(tmp_path: Path, spec: dict[str, Any], message: str)
 def test_role_checks_when_mounting(tmp_path: Path) -> None:
     store = InMemoryEventStore()
     same_name = load_config(write(tmp_path, agent(roles=[rediger(name="calculer")])))
-    with pytest.raises(ConfigError, match="plusieurs outils ou rôles s'appellent calculer"):
+    with pytest.raises(
+        ConfigError, match="plusieurs outils, rôles ou sous-agents s'appellent calculer"
+    ):
         build_agent(same_name, "demo", store)
 
     unknown = load_config(

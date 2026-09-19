@@ -93,7 +93,9 @@ storage:
 
 **À décider :** où atterrit le cycle de vie d'un run (délai, annulation, `run.cancelled`) — J3 avec les politiques et les budgets, ou J4 avec les sessions et le bus. Le message de refus suivra.
 
-**Statut :** à décider.
+**Décision (phase 2.4) :** J4.2, qui prévoit déjà l'annulation et le timeout global. En 2.4, l'annulation d'un parent se propage à ses sous-agents par asyncio (même arbre de tâches), sans rien écrire : les runs restent reprenables. `run.cancelled`, le délai d'un agent et l'API `cancel` arrivent en J4.2. Le message de refus de `timeout` nomme désormais J4.2.
+
+**Statut :** tranché, à faire en J4.2.
 
 ---
 
@@ -190,3 +192,15 @@ storage:
 **À faire en J5 :** avec le stockage GCS du mode service.
 
 **Statut :** à faire en J5.
+
+---
+
+## #015 — gpt-oss appelé avec des outils via l'API `chat` (Together)
+
+**Origine :** exemple de la phase 2.4 (`sous_agent.py --reel`, sous-agent `verificateur_reel` sur `openai/gpt-oss-120b`).
+
+**Constat :** avec des outils, gpt-oss continue d'écrire après un appel d'outil au lieu d'attendre son résultat : appels en double, sans identifiant fourni par le fournisseur, puis texte au format interne (« analysis… commentary to=functions… ») rendu comme réponse finale. L'adaptateur `openai` ne renvoie jamais le raisonnement du modèle ; pour gpt-oss, OpenAI recommande de renvoyer le champ `reasoning` des tours précédents pendant les appels d'outils. Le sous-agent de l'exemple est passé sur GLM-5.3-Flash ; la définition `GPT_OSS` reste dans `loom.yaml`, sans usage.
+
+**À faire en 3.5 :** avec le raisonnement (#7), renvoyer le raisonnement des tours d'outils aux modèles qui l'attendent, puis refaire l'essai avec gpt-oss.
+
+**Statut :** à faire en 3.5.

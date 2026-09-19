@@ -7,7 +7,8 @@ forme d'événements, dont ``run.transitioned``.
 
 Une réponse de modèle qui sert un appel d'outil (rôle délégué, C2) n'entre
 pas dans la conversation de l'orchestrateur : seuls son usage et son coût
-s'ajoutent au run.
+s'ajoutent au run. Un sous-agent (C5) a son propre run ; sa consommation
+arrive avec le ``tool.completed`` de l'appel.
 """
 
 from collections.abc import Iterable
@@ -92,17 +93,22 @@ def apply(state: RunState | None, event: Event) -> RunState:
                     for c in message.tool_calls
                 ),
             }
-        case ToolCalled(call_id=call_id):
+        case ToolCalled(call_id=call_id, child_run_id=child):
+            started: dict[str, object] = {"started": True}
+            if child is not None:
+                started["child_run_id"] = child
             update["pending_calls"] = tuple(
-                c.model_copy(update={"started": True}) if c.call_id == call_id else c
+                c.model_copy(update=started) if c.call_id == call_id else c
                 for c in _require_pending(state, call_id, event)
             )
-        case ToolCompleted(call_id=call_id, output=output):
+        case ToolCompleted(call_id=call_id, output=output, usage=usage, cost_usd=cost):
             remaining = tuple(
                 c for c in _require_pending(state, call_id, event) if c.call_id != call_id
             )
             result = Message(role="tool", blocks=(ToolResultBlock(call_id=call_id, output=output),))
             update |= {"pending_calls": remaining, "messages": (*state.messages, result)}
+            if usage is not None:
+                update |= {"usage": state.usage + usage, "cost_usd": state.cost_usd + cost}
         case ArtifactStored() as stored:
             if state.artifact(stored.uri) is None:
                 update["artifacts"] = (*state.artifacts, stored.record)

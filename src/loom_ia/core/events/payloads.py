@@ -13,6 +13,12 @@ de l'orchestrateur, entre le ``tool.called`` et le ``tool.completed`` de
 l'appel : ``call_id`` le relie à cet appel, et l'enveloppe porte le nom du
 rôle.
 
+Un sous-agent (C5, #4) tourne dans un run enfant du même journal : son
+``run.started`` porte ``parent_run_id``, ``parent_call_id`` et ``depth``, et
+l'enveloppe le ``root_run_id`` de l'arbre. Côté parent, le ``tool.called`` de
+l'appel donne l'identifiant de l'enfant (``child_run_id``), et le
+``tool.completed`` sa consommation, ajoutée à celle du parent.
+
 Les fichiers ne sont jamais dans le journal : ``artifact.stored`` annonce
 qu'un fichier a été rangé dans le stockage d'artefacts, et les messages ne
 portent que sa référence. Un bloc d'octets (``inline_data``) y est refusé.
@@ -252,6 +258,8 @@ class ToolCalled(Payload):
     refs: tuple[str, ...] = ()
     # Nouvelle exécution d'un appel interrompu (#18).
     resumed: bool = False
+    # Run enfant d'un sous-agent : repris, et non relancé, après une interruption (#4).
+    child_run_id: RunId | None = None
 
 
 class ToolCompleted(Payload):
@@ -264,6 +272,9 @@ class ToolCompleted(Payload):
     output: ToolOutput
     latency_ms: NonNegativeFloat = 0.0
     size: NonNegativeInt = 0
+    # Consommation d'un sous-agent (tout son run), ajoutée à celle du parent (#4).
+    usage: Usage | None = None
+    cost_usd: NonNegativeFloat = 0.0
 
     @model_validator(mode="after")
     def _check_output(self) -> Self:

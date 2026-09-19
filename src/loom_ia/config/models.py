@@ -264,6 +264,20 @@ class LoomConfig(DomainModel):
                         f"jointes, mais le modèle {role.model!r} n'a pas la capacité vision "
                         "(capabilities.vision: true)"
                     )
+        agents = {agent.name: agent for agent in self.agents}
+        for agent in self.agents:
+            for ref in agent.subagents:
+                target = agents.get(ref.agent)
+                if target is None:
+                    raise ValueError(
+                        f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : agent "
+                        f"{ref.agent!r} non déclaré (agents : {', '.join(agents)})"
+                    )
+                if not (ref.description or target.description):
+                    raise ValueError(
+                        f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : description "
+                        f"manquante (ni dans la référence ni dans l'agent {ref.agent!r})"
+                    )
         return self
 
     def mcp_server(self, name: str) -> McpServerSpec:

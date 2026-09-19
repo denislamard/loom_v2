@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Outils délégués : rôles (C2), puis sous-agents (C5).
+"""Outils délégués : rôles (C2) et sous-agents (C5).
 
 Un outil ordinaire (port ``Tool``) reçoit ses arguments et rend un résultat.
 Un outil délégué lit en plus l'état du run, et produit des événements pendant
@@ -10,40 +10,82 @@ Le type est nominal et interne au moteur : un outil fourni par l'utilisateur
 ne peut pas écrire dans le journal.
 
 Un outil délégué peut dépendre du run : le rôle vision n'existe que si le run
-a des pièces jointes, ``artifact_read`` que si un résultat a été déporté.
-``available`` le dit ; un outil indisponible n'est pas montré au modèle.
+a des pièces jointes, ``artifact_read`` que si un résultat a été déporté, un
+sous-agent que si la profondeur le permet. ``available`` le dit ; un outil
+indisponible n'est pas montré au modèle.
+
+Un sous-agent lance un run enfant (``child_run_id``) : son identifiant est
+choisi avant l'appel et écrit dans le ``tool.called``, pour que la reprise
+retrouve l'enfant. L'enfant écrit dans le journal du parent, par le même
+écrivain (``SessionWriter``), et sa consommation revient au parent
+(``Consumption``).
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Mapping
+from dataclasses import dataclass, field
 from typing import Self
 
 from pydantic import JsonValue
 
 from loom_ia.core.events import ModelResponded, ModelRetried
-from loom_ia.core.model import ArtifactRefBlock, RunState, ToolOutput, ToolSpec
+from loom_ia.core.model import (
+    ArtifactRefBlock,
+    PendingCall,
+    RunId,
+    RunState,
+    SpanId,
+    ToolOutput,
+    ToolSpec,
+    Usage,
+)
 from loom_ia.core.ports import ArtifactStore, ToolContext
 from loom_ia.engine.refs import ResultIndex
+from loom_ia.engine.writer import SessionWriter
 
-# Événements qu'un outil délégué peut produire.
+
+@dataclass(frozen=True, slots=True)
+class Consumption:
+    """Consommation d'un run enfant, à ajouter à celle du parent."""
+
+    usage: Usage
+    cost_usd: float
+
+
+# Ce qu'un outil délégué peut produire pendant son appel, avant son résultat.
 type DelegatedPayload = ModelRetried | ModelResponded
 
 
 @dataclass(frozen=True, slots=True)
 class RunView:
-    """Ce qu'un outil délégué voit du run : état au début du lot, résultats, fichiers."""
+    """Ce qu'un outil délégué voit du run : état au début du lot, résultats, fichiers.
+
+    ``writer`` écrit dans le journal du run ; ``spans`` donne le span de
+    chaque appel du lot, et ``children`` le run enfant choisi pour un appel.
+    """
 
     state: RunState
     results: ResultIndex
     artifacts: ArtifactStore | None = None
+    writer: SessionWriter | None = None
+    spans: Mapping[str, SpanId] = field(default_factory=dict[str, SpanId])
+    children: Mapping[str, RunId] = field(default_factory=dict[str, RunId])
 
     @classmethod
-    def of(cls, state: RunState, artifacts: ArtifactStore | None = None) -> Self:
+    def of(
+        cls,
+        state: RunState,
+        artifacts: ArtifactStore | None = None,
+        *,
+        writer: SessionWriter | None = None,
+        spans: Mapping[str, SpanId] | None = None,
+    ) -> Self:
         return cls(
             state=state,
             results=ResultIndex(state.messages, artifacts),
             artifacts=artifacts,
+            writer=writer,
+            spans=dict(spans or {}),
         )
 
     @property
@@ -66,6 +108,10 @@ class DelegatedTool(ABC):
         """Vrai si l'outil a un sens dans ce run ; sinon il est masqué au modèle."""
         return True
 
+    def child_run_id(self, call: PendingCall) -> RunId | None:
+        """Run enfant de cet appel, choisi avant son lancement ; None si l'outil n'en crée pas."""
+        return None
+
     async def check(self, arguments: dict[str, JsonValue], run: RunView) -> str | None:
         """Motif de refus avant tout lancement, destiné au modèle ; None si l'appel peut partir.
 
@@ -76,6 +122,6 @@ class DelegatedTool(ABC):
     @abstractmethod
     def run(
         self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
-    ) -> AsyncGenerator[DelegatedPayload | ToolOutput]:
-        """Événements de l'appel, puis son résultat en dernier."""
+    ) -> AsyncGenerator[DelegatedPayload | Consumption | ToolOutput]:
+        """Événements de l'appel, sa consommation s'il a un run enfant, puis son résultat."""
         ...

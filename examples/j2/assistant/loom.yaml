@@ -1,11 +1,13 @@
-# Configuration des exemples des phases 2.2 et 2.3 : un agent, deux serveurs
-# MCP et un rôle vision. Ce dossier grandira jusqu'au scénario final du
-# jalon J2 (phase 2.5).
+# Configuration des exemples des phases 2.2 à 2.4 : un agent, deux serveurs
+# MCP, un rôle vision et un sous-agent. Ce dossier grandira jusqu'au scénario
+# final du jalon J2 (phase 2.5).
 #
 # Deux agents, même scénario :
 #   assistant       modèles simulés (sdk: fake), sans clé ni réseau ;
-#   assistant_reel  MiniMax-M3 (clé dans M3_API_KEY), et Claude Haiku 4.5 pour
-#                   le rôle vision (clé dans ANTHROPIC_API_KEY).
+#   assistant_reel  MiniMax-M3 (clé dans M3_API_KEY), Claude Haiku 4.5 pour
+#                   le rôle vision (clé dans ANTHROPIC_API_KEY) et GLM-5.3-Flash
+#                   pour le sous-agent (clé dans TOGETHER_API_KEY).
+# Chacun a son sous-agent vérificateur : verificateur et verificateur_reel.
 version: 1
 
 agents_dir: agents/
@@ -13,9 +15,10 @@ prompts_dir: prompts/
 
 models:
 # Orchestrateur simulé : fait décrire la photo jointe s'il y en a une, lit
-# l'heure et compte les jours (time), puis calcule (math). Une réponse avec
-# with_tool (ou without_tool) n'est donnée que si cet outil est proposé (ou
-# ne l'est pas) : le rôle vision n'est proposé que quand le run a une image.
+# l'heure et compte les jours (time), calcule (math), puis fait vérifier le
+# résultat par le sous-agent. Une réponse avec with_tool (ou without_tool)
+# n'est donnée que si cet outil est proposé (ou ne l'est pas) : le rôle vision
+# n'est proposé que quand le run a une image.
 - id: FAKE_MAIN
   sdk: fake
   model: fake-main
@@ -35,12 +38,31 @@ models:
     - tool_calls:
       - name: math__calculer
         arguments: { expression: "121 * 24" }
+    - text: Je fais vérifier le résultat.
+      tool_calls:
+      - name: verifier
+        arguments:
+          message: >-
+            Vérifie : entre le 2026-09-01 et le 2026-12-31, il y a 121 jours, soit 2 904 heures.
     - text: >-
         J'ai lu l'heure de Paris. Entre le 1er septembre et le 31 décembre 2026, il y a 121 jours, soit 2 904 heures.
       without_tool: decrire_image
     - text: >-
         La photo jointe montre un carré bleu sur fond blanc. J'ai lu l'heure de Paris. Entre le 1er septembre et le 31 décembre 2026, il y a 121 jours, soit 2 904 heures.
       with_tool: decrire_image
+
+# Sous-agent vérificateur simulé : il recompte avec ses propres outils MCP.
+- id: FAKE_CHECK
+  sdk: fake
+  model: fake-check
+  params:
+    script:
+    - tool_calls:
+      - name: time__jours_entre
+        arguments: { debut: "2026-09-01", fin: "2026-12-31" }
+      - name: math__calculer
+        arguments: { expression: "121 * 24" }
+    - text: "Vérifié : 121 jours, et 121 × 24 = 2 904 heures."
 
 # Rôle vision simulé : la capacité vision lui fait recevoir les octets de l'image.
 - id: FAKE_VISION
@@ -73,6 +95,30 @@ models:
     max_image_bytes: 5242880
     tool_result_media: true
   pricing: { input: 1.0, output: 5.0, cache_read: 0.10, cache_write: 1.25 }
+
+# gpt-oss-120b chez Together (API compatible OpenAI). Écarté du sous-agent :
+# avec des outils, il enchaîne les appels sans attendre leurs résultats, puis
+# renvoie son format interne en texte (raisonnement non renvoyé, backlog #015).
+# Pas de tarif de cache publié : lecture comptée au prix de l'entrée, par prudence.
+- id: GPT_OSS
+  sdk: openai
+  api: chat
+  base_url: https://api.together.xyz/v1
+  model: openai/gpt-oss-120b
+  api_key_env: TOGETHER_API_KEY
+  max_tokens: 2048
+  pricing: { input: 0.15, output: 0.60, cache_read: 0.15 }
+
+# Modèle du sous-agent réel : GLM-5.3-Flash chez Together (API compatible
+# OpenAI). Tarifs en $ par million de tokens, relevés le 19/09/2026.
+- id: GLM_FLASH
+  sdk: openai
+  api: chat
+  base_url: https://api.together.xyz/v1
+  model: zai-org/GLM-5.3-Flash
+  api_key_env: TOGETHER_API_KEY
+  max_tokens: 4096
+  pricing: { input: 0.15, output: 0.50, cache_read: 0.03 }
 
 # Serveurs locaux écrits avec FastMCP, lancés depuis ce dossier.
 # « python » est celui de l'environnement : lancer l'exemple avec uv run.

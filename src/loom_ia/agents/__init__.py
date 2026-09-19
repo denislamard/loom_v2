@@ -11,6 +11,7 @@ from loom_ia.agents.spec import (
     McpTools,
     PythonTool,
     RoleSpec,
+    SubAgentRef,
     ToolResultsContext,
 )
 
@@ -24,6 +25,7 @@ __all__ = [
     "McpTools",
     "PythonTool",
     "RoleSpec",
+    "SubAgentRef",
     "ToolResultsContext",
     "UnknownAgent",
 ]
