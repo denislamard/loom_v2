@@ -192,7 +192,9 @@ def _output(name: str, final: RunState) -> ToolOutput:
                 return ToolOutput.error(f"Le sous-agent {name} n'a rien répondu.")
             return output
         case RunStatus.FAILED:
-            return ToolOutput.error(f"Le sous-agent {name} a échoué : {final.error}")
+            return ToolOutput.error(
+                f"Le sous-agent {name} a échoué ({final.error_type}) : {final.error}"
+            )
         case status:
             return ToolOutput.error(f"Le sous-agent {name} s'est arrêté dans l'état {status}.")
 

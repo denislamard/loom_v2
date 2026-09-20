@@ -403,7 +403,7 @@ async def test_a_run_fails_when_its_model_is_unavailable() -> None:
     )
     state, _ = await run(ctx)
     assert state.status is RunStatus.FAILED
-    assert state.error is not None and state.error.startswith("model.unavailable")
+    assert state.error_type == "model.unavailable"
     assert main_model.requests == []
 
 

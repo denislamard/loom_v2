@@ -32,6 +32,13 @@ l'instance ; ``RunResult.artifacts`` liste les fichiers du run, et
 Disjoncteurs (#10) : ceux des modèles et des serveurs MCP sont communs à
 tous les runs de l'instance. Un modèle écarté après ses échecs l'est pour
 tous ses agents, qui passent directement à leur secours.
+
+Résultat (J3) : ``RunResult`` dit, en plus de la réponse, si elle a été
+gardée sans respecter son contrat ou son juge (``unverified``), la
+consommation ventilée du run et de ses sous-runs (``report`` : par run, par
+rôle, par modèle) et les verdicts des juges (``verdicts``). Un échec a un
+type (``error_type`` : ``guard.judge``, ``model.auth``…) et un message
+lisible (``error``). Les trois accès rendent ce même résultat.
 """
 
 import asyncio
@@ -41,19 +48,20 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Self
 
-from pydantic import JsonValue
+from pydantic import JsonValue, PositiveInt
 
 from loom_ia.adapters.stores import NotifyingEventStore
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import LoomConfig, load_config
 from loom_ia.config.references import Registry
-from loom_ia.core.events import Event, RunCompleted, RunFailed
+from loom_ia.core.events import Event, JudgeEvaluated, RunCompleted, RunFailed
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     ArtifactRecord,
     Attachment,
     CallerContext,
+    CriterionScore,
     JudgesMode,
     Message,
     ModelChunk,
@@ -96,8 +104,42 @@ class UnknownRun(KeyError):
         self.run_id = run_id
 
 
+class JudgeVerdict(DomainModel):
+    """Verdict d'un juge sur une sortie du run ou d'un de ses sous-runs (``judge.evaluated``)."""
+
+    run_id: RunId
+    agent: str
+    judge: str
+    # ``output`` (réponse finale) ou ``role:<nom>``.
+    target: str
+    # Appel du rôle jugé (``tool.called``) ; None pour la réponse finale.
+    call_id: str | None = None
+    model_id: str
+    # Tous les critères atteignent leur seuil.
+    passed: bool
+    # Un critère bloquant est sous son seuil : la sortie a été refusée.
+    blocked: bool
+    attempt: PositiveInt = 1
+    criteria: tuple[CriterionScore, ...] = ()
+
+    @classmethod
+    def of(cls, event: Event, verdict: JudgeEvaluated) -> Self:
+        return cls(
+            run_id=event.run_id,
+            agent=event.agent or "",
+            judge=verdict.judge,
+            target=verdict.target,
+            call_id=verdict.call_id,
+            model_id=verdict.model_id,
+            passed=verdict.passed,
+            blocked=verdict.blocked,
+            attempt=verdict.attempt,
+            criteria=verdict.criteria,
+        )
+
+
 class RunResult(DomainModel):
-    """Ce qu'un run a produit, tiré de son état final."""
+    """Ce qu'un run a produit, tiré de son état final et de son journal."""
 
     run_id: RunId
     session_id: SessionId
@@ -105,6 +147,9 @@ class RunResult(DomainModel):
     status: RunStatus
     text: str = ""
     output: Message | None = None
+    # Échec : son type (``guard.judge``, ``guard.contract``, ``model.auth``,
+    # ``policy.<nom>``…) et son message, lisible tel quel.
+    error_type: str | None = None
     error: str | None = None
     iterations: int = 0
     usage: Usage = Usage()
@@ -115,9 +160,18 @@ class RunResult(DomainModel):
     data: JsonValue = None
     # Réponse gardée bien qu'elle ne respecte pas son contrat (``on_failure: unverified``).
     unverified: bool = False
+    # Consommation ventilée du run et de ses sous-runs : par run, par rôle, par modèle.
+    report: UsageReport | None = None
+    # Verdicts des juges du run et de ses sous-runs, dans l'ordre du journal.
+    verdicts: tuple[JudgeVerdict, ...] = ()
 
     @classmethod
-    def of(cls, state: RunState) -> Self:
+    def of(cls, state: RunState, events: Sequence[Event] = ()) -> Self:
+        """Résultat d'un état final.
+
+        ``events`` : le journal de sa session, d'où viennent le rapport et les verdicts.
+        """
+        tree = RunTree(state.run_id).select(events)
         return cls(
             run_id=state.run_id,
             session_id=state.session_id,
@@ -125,6 +179,7 @@ class RunResult(DomainModel):
             status=state.status,
             text=state.output.text if state.output else "",
             output=state.output,
+            error_type=state.error_type,
             error=state.error,
             iterations=state.iterations,
             usage=state.usage,
@@ -132,6 +187,12 @@ class RunResult(DomainModel):
             artifacts=state.artifacts,
             data=state.output_data,
             unverified=state.unverified,
+            report=usage_report(tree, state.session_id, state.run_id) if tree else None,
+            verdicts=tuple(
+                JudgeVerdict.of(event, payload)
+                for event in tree
+                if isinstance(payload := event.payload, JudgeEvaluated)
+            ),
         )
 
     @property
@@ -248,7 +309,7 @@ class Loom:
         """
         ctx = self.context(agent, on_chunk=on_chunk)
         state = await self._start(ctx, message, attachments, session_id, context, run_id, judges)
-        return RunResult.of(state)
+        return await self._result(state)
 
     async def stream(
         self,
@@ -311,7 +372,7 @@ class Loom:
             session_id=state.session_id,
             tenant_id=state.context.tenant_id,
         )
-        return RunResult.of(final)
+        return await self._result(final)
 
     def context(self, agent: str, *, on_chunk: ChunkCallback | None = None) -> RunContext:
         """Contexte d'exécution d'un agent, monté au premier appel.
@@ -430,9 +491,12 @@ class Loom:
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
     ) -> RunResult:
-        """Ce qu'un run a produit, relu depuis son journal."""
-        state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
-        return RunResult.of(state)
+        """Ce qu'un run a produit, relu depuis son journal : réponse, coûts, verdicts."""
+        tenant = tenant_id or DEFAULT_TENANT
+        events = await self._store.read(tenant, session_id or SessionId(run_id))
+        if not any(event.run_id == run_id for event in events):
+            raise UnknownRun(run_id)
+        return RunResult.of(fold(events, run_id), events)
 
     async def report(
         self,
@@ -477,6 +541,11 @@ class Loom:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
+
+    async def _result(self, state: RunState) -> RunResult:
+        """Résultat d'un run qui vient de s'arrêter, avec son rapport et ses verdicts."""
+        events = await self._store.read(state.context.tenant_id, state.session_id)
+        return RunResult.of(state, events)
 
     async def _start(
         self,

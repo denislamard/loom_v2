@@ -186,7 +186,8 @@ def apply(state: RunState | None, event: Event) -> RunState:
         case RunFailed(error_type=error_type, error=error):
             update |= {
                 "status": RunStatus.FAILED,
-                "error": f"{error_type}: {error}",
+                "error_type": error_type,
+                "error": error,
                 "finished": True,
             }
     return state.model_copy(update=update)

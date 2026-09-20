@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Final
 
 from loom_ia.access.api import Loom, RunResult, StreamItem, UnknownRun
-from loom_ia.access.progress import Progress
+from loom_ia.access.progress import Progress, notes
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.config import ConfigError, config_json_schema, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
@@ -443,9 +443,35 @@ def _report(result: RunResult, *, as_json: bool = False, quiet: bool = False) ->
                 f"Fichier    : {produced.uri} ({produced.media_type}, {produced.size} octets)",
                 file=sys.stderr,
             )
+        for line in _verdicts(result):
+            print(f"Juge       : {line}", file=sys.stderr)
+        if result.unverified:
+            print("Vérifiée   : non (gardée malgré son contrat ou son juge)", file=sys.stderr)
         if result.error:
-            print(f"Erreur     : {result.error}", file=sys.stderr)
+            print(f"Erreur     : {result.error} ({result.error_type})", file=sys.stderr)
     return OK if result.ok else FAILED
+
+
+def _verdicts(result: RunResult) -> list[str]:
+    """Une ligne par verdict ; pour un rôle, le rang de l'appel jugé parmi ceux de son run."""
+    calls: dict[tuple[str, str], list[str]] = {}
+    lines: list[str] = []
+    for verdict in result.verdicts:
+        if verdict.target == "output":
+            subject = "réponse finale"
+        else:
+            subject = verdict.target.replace("role:", "rôle ", 1)
+        if verdict.call_id is not None:
+            seen = calls.setdefault((verdict.run_id, verdict.target), [])
+            if verdict.call_id not in seen:
+                seen.append(verdict.call_id)
+            subject += f", appel {seen.index(verdict.call_id) + 1}"
+        outcome = "refusée" if verdict.blocked else "acceptée"
+        lines.append(
+            f"{verdict.judge} ({subject}), tentative {verdict.attempt} — {outcome} : "
+            f"{notes(verdict.criteria)}"
+        )
+    return lines
 
 
 def _listed(names: Iterable[str]) -> str:

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """API REST d'une instance loom (N2).
 
-Quatre routes au jalon J1, sous ``/v1`` :
+Cinq routes, sous ``/v1`` :
 
 - ``GET  /agents`` : les agents publiés (``expose.rest``) ;
 - ``POST /agents/{name}/runs`` : lancement **synchrone** ; la réponse est le
@@ -11,7 +11,17 @@ Quatre routes au jalon J1, sous ``/v1`` :
 - ``GET  /runs/{run_id}/events`` : le journal du run en SSE — ce qui est déjà
   écrit, puis la suite en direct s'il tourne encore. Les événements de ses
   sous-runs y sont mêlés, sauf avec ``?subruns=false`` ; le flux se ferme
-  sur la clôture du run demandé.
+  sur la clôture du run demandé ;
+- ``GET  /sessions/{session_id}/report`` : consommation de toute une session
+  (J3), ventilée par run, par rôle et par modèle.
+
+Résultat d'un run (J3) : la réponse, ``unverified`` si elle a été gardée sans
+respecter son contrat ou son juge, l'usage et le coût, leur ventilation
+(``report``) et les verdicts des juges (``verdicts``). Un run échoué garde le
+code 201 : ``status`` vaut ``failed``, ``error_type`` dit ce qui l'a arrêté
+(``guard.judge``, ``model.auth``…) et ``error`` le dit en clair. Le champ
+``judges`` du corps (``auto``, ``force``, ``skip``) règle les juges du run ;
+``skip`` demande une clé de portée ``admin``.
 
 Pour suivre un run depuis son départ, l'appelant choisit son ``run_id`` dans
 le corps de la requête : il peut ouvrir le flux sans attendre la réponse.
@@ -36,6 +46,7 @@ from loom_ia.access.http.uploads import RUN_BODY, run_request
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.core.events import Event
 from loom_ia.core.model import AttachmentError, RunId, SessionId
+from loom_ia.usage import UsageReport
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +109,9 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         _published(loom, name)
         try:
             body, attachments = await run_request(request, loom.config.execution.attachments)
+            if body.judges == "skip":
+                # Se passer des juges retire un contrôle : réservé à l'administration.
+                require(who, "admin")
             return await loom.run(
                 name,
                 body.message,
@@ -105,6 +119,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
                 session_id=body.session_id,
                 context=body.context(),
                 run_id=body.run_id,
+                judges=body.judges,
             )
         except AttachmentError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
@@ -135,6 +150,16 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         return EventSourceResponse(
             _messages(loom.follow(run_id, session_id=session_id, after_seq=after, subruns=subruns))
         )
+
+    @router.get("/sessions/{session_id}/report", summary="Consommation d'une session")
+    async def report(who: Who, session_id: SessionId) -> UsageReport:
+        require(who, "read")
+        found = await loom.report(session_id=session_id)
+        if not found.runs:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"Session {session_id} inconnue")
+        for agent in dict.fromkeys(run.agent for run in found.runs):
+            require(who, "read", agent)
+        return found
 
     app.include_router(router)
     return app

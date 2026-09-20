@@ -6,9 +6,9 @@ elle-même n'existe qu'une fois, à sa création. Une instance sans clé
 déclarée est ouverte — c'est le cas de l'usage local ; ``create_app``
 prévient si elle écoute ailleurs que sur la machine.
 
-Au jalon J1, deux portées sont vérifiées : ``run`` pour lancer un run,
-``read`` pour lire agents, statuts et événements. Une clé peut en outre être
-limitée à certains agents.
+Portées vérifiées : ``run`` pour lancer un run, ``read`` pour lire agents,
+statuts, événements et rapports, ``admin`` pour lancer un run sans ses juges
+(``judges: skip``, J3). Une clé peut en outre être limitée à certains agents.
 """
 
 from dataclasses import dataclass

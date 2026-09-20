@@ -5,11 +5,21 @@ Demande l'extra ``mcp`` : ``uv sync --extra mcp``.
 """
 
 from loom_ia.access.mcp_server.server import (
+    REPORT_TOOL,
     SERVER_NAME,
     STATUS_TOOL,
+    answer,
     create_server,
     run_stdio,
     structured,
 )
 
-__all__ = ["SERVER_NAME", "STATUS_TOOL", "create_server", "run_stdio", "structured"]
+__all__ = [
+    "REPORT_TOOL",
+    "SERVER_NAME",
+    "STATUS_TOOL",
+    "answer",
+    "create_server",
+    "run_stdio",
+    "structured",
+]

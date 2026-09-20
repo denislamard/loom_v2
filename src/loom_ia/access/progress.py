@@ -17,6 +17,7 @@ lignes d'un sous-run sont décalées selon sa profondeur :
     · verifier : fait
 """
 
+from collections.abc import Iterable
 from typing import Final
 
 from loom_ia.core.events import (
@@ -35,7 +36,7 @@ from loom_ia.core.events import (
     ToolCompleted,
     ToolSourceUnavailable,
 )
-from loom_ia.core.model import RunId
+from loom_ia.core.model import CriterionScore, RunId
 from loom_ia.usage import describe as describe_budget
 
 INDENT: Final = "  "
@@ -111,12 +112,7 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
         case GuardChecked():
             return f"contrôle {payload.guard} {payload.target} : ignoré — {payload.reason}"
         case JudgeEvaluated():
-            notes = ", ".join(
-                f"{c.name} {_score(c.score)}"
-                + ("" if c.passed else f" (seuil {_score(c.min_score)})")
-                for c in payload.criteria
-            )
-            return f"juge {payload.judge} ({payload.model_id}) : {notes}"
+            return f"juge {payload.judge} ({payload.model_id}) : {notes(payload.criteria)}"
         case ModelFellBack(reason="circuit_open"):
             return (
                 f"secours {payload.slot} : {payload.from_model} → {payload.to_model} — "
@@ -162,6 +158,14 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             return f"sous-agent {event.agent} : échec — {payload.error}"
         case _:
             return None
+
+
+def notes(criteria: Iterable[CriterionScore]) -> str:
+    """Notes d'un juge, avec le seuil des critères qui ne l'atteignent pas."""
+    return ", ".join(
+        f"{c.name} {_score(c.score)}" + ("" if c.passed else f" (seuil {_score(c.min_score)})")
+        for c in criteria
+    )
 
 
 def _score(value: float) -> str:

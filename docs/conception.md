@@ -971,7 +971,7 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - Ledger : projection des `model.responded` (`core/projections/ledger.py`), sans double compte des sous-agents ; ventilation par run, rôle (`main`, rôles, `judge:<nom>`), modèle et session.
 - Budgets : `budgets` (racine) et `budget` (agent), fusionnés clé par clé ; `run: {max_cost, max_tokens, max_calls}`, `session: {max_cost, max_tokens}`, `on_exceed: stop | warn`. Politique fournie `loom.budget` à `before_model` : `budget.exceeded` une fois par limite, puis `Stop` avec `stop`. Le budget de session compte les runs précédents de la session (calculé dans le journal par `drive`).
 - Sous-agents : `budget_share` = part de ce qui reste au parent au moment de l'appel, écrite dans le `run.started` de l'enfant ; parent épuisé : l'enfant n'est pas lancé.
-- Rapport : `Loom.report(run_id | session_id=…)`, `loom report`. Modèle sans tarif sous budget en dollars : avertissement (backlog #010). Par client et par période : J5.
+- Rapport : `Loom.report(run_id | session_id=…)`, `loom report` ; depuis 3.6, dans le résultat de chaque run (`report`) et par REST (`GET /v1/sessions/{id}/report`) et MCP (`run_report`), voir §18. Modèle sans tarif sous budget en dollars : avertissement (backlog #010). Par client et par période : J5.
 - Réponse forcée : consigne en dernier message de sa requête (`FINALIZE_HINT`, jamais journalisée) ; `OnOutput.finalizing` ; une réparation de la réponse forcée est une génération de plus que celle qui borne le dépassement.
 
 ## 16. Sécurité
@@ -982,6 +982,7 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - Rattachées à un client, avec des scopes (`run`, `read`, `read_content`, `approve`, `admin`) et la liste des agents autorisés.
 - Rotation, révocation et limitation de débit par clé.
 - En V2, les clés sont déclarées hachées dans la config ; `loom keys create` affiche la clé une seule fois et donne le hash (#50).
+- Portées vérifiées : `run` (lancer), `read` (agents, statuts, événements, rapports) et, depuis 3.6, `admin` pour lancer un run sans ses juges (`judges: skip`).
 
 ### 16.2 Point d'accès MCP
 
@@ -1316,7 +1317,7 @@ async with loom:
     await loom.approve(res.run_id, decision)
 ```
 
-- `run()` accepte `session_id`, `tenant`, des pièces jointes, `judges` (`auto`, `force`, `skip` ; depuis 3.3) et un `approver` optionnel ; il renvoie un `RunResult` (statut, réponse, `run_id`, approbations en attente).
+- `run()` accepte `session_id`, `tenant`, des pièces jointes, `judges` (`auto`, `force`, `skip` ; depuis 3.3) et un `approver` optionnel ; il renvoie un `RunResult` (statut, réponse, `run_id`, approbations en attente). Depuis 3.6, le `RunResult` porte aussi `unverified`, la consommation ventilée du run et de ses sous-runs (`report`), les verdicts des juges (`verdicts`) et, pour un échec, son type (`error_type`) à part de son message (`error`) ; REST et MCP rendent ce même résultat.
 - `stream()` renvoie un itérateur d'événements (durables et éphémères).
 - `report(run_id)` ou `report(session_id=…)` rend la consommation d'un run (et de ses sous-runs) ou d'une session : total, par run, par rôle, par modèle (depuis 3.4).
 - Les disjoncteurs des modèles et des serveurs MCP sont communs aux runs d'une instance ; `Loom(config, breakers=…)` les partage entre instances (depuis 3.5a).
@@ -1343,6 +1344,8 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
 - **Pièces jointes :** le lancement d'un run accepte le JSON ou `multipart/form-data` (fichiers sous `attachments`). Limites de `execution.attachments` ; envoi trop gros refusé sur son en-tête (413), pièce refusée en 422.
 - **Sous-runs :** le flux SSE d'un run contient les événements de ses sous-runs (`?subruns=false` pour le run seul) ; il se ferme sur la clôture du run demandé.
+- **Résultat (3.6) :** celui de l'API Python (`RunResult`, voir 18.1), en JSON. Un run échoué garde le code 201 (`status: failed`, `error_type`, `error`). Le champ `judges` du corps règle les juges du run ; `skip` demande la portée `admin`.
+- **Rapport de session (3.6) :** `GET /v1/sessions/{id}/report`, la consommation de toute la session (portée `read`, droit sur chaque agent de la session).
 
 ### 18.3 Serveur MCP
 
@@ -1352,6 +1355,8 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - Limites : notifications de progression seulement ; validation humaine par elicitation, sinon pause et validation via l'API REST.
 - **Pièces jointes :** argument `attachments` de l'outil d'un agent : image en base64, ou lien `artifact://` (fichier déjà rangé, même client) ou `file://` (seulement sous `server.mcp.file_roots`, vide par défaut). Le résultat structuré liste les fichiers du run.
 - **Progression :** si le client fournit un `progressToken`, le déroulé du run (appels d'outils, fichiers, sous-agents et leurs appels) lui arrive en notifications de progression.
+- **Résultat (3.6) :** le texte est la réponse ; le résultat structuré est celui de l'API Python (`unverified`, usage, coût, ventilation, verdicts). Une réponse non vérifiée est suivie d'un second texte qui le dit. Un run échoué est un résultat d'erreur (`isError`) dont le texte dit en clair ce qui l'a arrêté (« Échec de l'agent … : … ») ; son type est dans `error_type`. Les juges suivent leur `when` (pas de forçage par MCP).
+- **Rapport (3.6) :** outil `run_report` (`run_id` ou `session_id`) : consommation d'un run et de ses sous-runs, ou d'une session, en texte et en structuré.
 
 ### 18.4 CLI
 

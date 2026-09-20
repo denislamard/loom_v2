@@ -309,7 +309,7 @@ async def test_model_failure_fails_the_run(
         state = await drive(ctx, (await begin_run(ctx, "?")).run_id)
 
     assert state.status is RunStatus.FAILED and state.finished
-    assert state.error == "RuntimeError: panne réseau"
+    assert (state.error_type, state.error) == ("RuntimeError", "panne réseau")
     events = await journal(store, state)
     assert kinds(events)[2:] == ["step:model_call", "step.completed", "→failed", "run.failed"]
     step_done, transition, failure = (e.payload for e in events[3:])
@@ -329,7 +329,7 @@ async def test_model_errors_are_logged_on_one_line(
     ctx = context(store, ScriptedModel(ModelError("auth", "clé refusée", http_status=401)))
     with caplog.at_level(logging.ERROR, logger="loom_ia.engine.loop"):
         state = await drive(ctx, (await begin_run(ctx, "?")).run_id)
-    assert state.error == "model.auth: clé refusée"
+    assert (state.error_type, state.error) == ("model.auth", "clé refusée")
     [record] = [r for r in caplog.records if r.name == "loom_ia.engine.loop"]
     assert record.getMessage() == "Échec de l'appel au modèle FAKE : model.auth — clé refusée"
     assert record.exc_info is None

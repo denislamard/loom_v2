@@ -162,7 +162,8 @@ async def test_required_source_unavailable_fails_the_run() -> None:
     state = await drive(ctx, run.run_id)
 
     assert state.status is RunStatus.FAILED
-    assert state.error == "tool.source_unavailable: source crm requise et indisponible : refusé"
+    assert state.error_type == "tool.source_unavailable"
+    assert state.error == "source crm requise et indisponible : refusé"
     assert model.requests == []
     events = await events_of(ctx, run.run_id)
     assert [e.type for e in events[2:]] == [

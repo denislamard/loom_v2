@@ -528,7 +528,7 @@ async def test_judge_errors_block_by_default(store: EventStore, reply: Any, mess
     state = await run(context(store, main, judge(scripted(reply))))
     assert state.status is RunStatus.FAILED
     assert state.error is not None and message in state.error
-    assert state.error.startswith("policy.loom.judge.output:")
+    assert state.error_type == "policy.loom.judge.output"
 
 
 async def test_on_error_allow_lets_the_output_pass(store: EventStore) -> None:

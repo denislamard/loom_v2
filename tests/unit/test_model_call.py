@@ -272,7 +272,7 @@ async def test_loop_records_retries_and_failures() -> None:
 
     failed = await drive(ctx, (await begin_run(ctx, "Encore")).run_id)
     assert failed.status is RunStatus.FAILED
-    assert failed.error == "model.overloaded: toujours plein"
+    assert (failed.error_type, failed.error) == ("model.overloaded", "toujours plein")
     events = await store.read(failed.context.tenant_id, failed.session_id)
     closing = events[-1].payload
     assert isinstance(closing, RunFailed) and closing.error_type == "model.overloaded"
@@ -296,4 +296,5 @@ async def test_loop_fails_when_the_call_gives_no_response(monkeypatch: pytest.Mo
     store = InMemoryEventStore()
     ctx = RunContext(agent="demo", store=store, model=FlakyModel(), model_spec=spec())
     state = await drive(ctx, (await begin_run(ctx, "?")).run_id)
-    assert state.error == "RuntimeError: Appel de modèle terminé sans réponse"
+    assert state.error_type == "RuntimeError"
+    assert state.error == "Appel de modèle terminé sans réponse"

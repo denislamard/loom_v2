@@ -26,7 +26,7 @@ from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from loom_ia.access.http.schemas import RunRequest
-from loom_ia.core.model import Attachment, AttachmentPolicy
+from loom_ia.core.model import JUDGES_MODES, Attachment, AttachmentPolicy
 
 JSON: Final = "application/json"
 MULTIPART: Final = "multipart/form-data"
@@ -54,6 +54,7 @@ RUN_BODY: Final[dict[str, Any]] = {
                         "run_id": {"type": "string"},
                         "user_id": {"type": "string"},
                         "metadata": {"type": "string", "description": "Objet JSON"},
+                        "judges": {"type": "string", "enum": list(JUDGES_MODES)},
                         FILES_FIELD: {
                             "type": "array",
                             "items": {"type": "string", "format": "binary"},

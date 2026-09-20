@@ -215,7 +215,7 @@ async def test_failed_child_becomes_an_error_result(store: EventStore) -> None:
     assert state.status is RunStatus.COMPLETED
     result = state.messages[2].blocks[0]
     assert isinstance(result, ToolResultBlock) and result.output.is_error
-    assert result.output.as_text == ("Le sous-agent verifier a échoué : model.auth: clé refusée")
+    assert result.output.as_text == ("Le sous-agent verifier a échoué (model.auth) : clé refusée")
 
 
 async def test_subagents_run_in_parallel_in_one_journal(store: EventStore) -> None:

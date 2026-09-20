@@ -6,7 +6,7 @@ from typing import Self
 from pydantic import Field, JsonValue
 
 from loom_ia.agents.spec import AgentSpec
-from loom_ia.core.model import CallerContext, RunId, SessionId
+from loom_ia.core.model import CallerContext, JudgesMode, RunId, SessionId
 from loom_ia.core.model.base import DomainModel
 
 
@@ -31,6 +31,9 @@ class RunRequest(DomainModel):
     run_id: RunId | None = None
     user_id: str | None = None
     metadata: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
+    # Juges (#21) : ``auto`` selon leur ``when`` ; ``force``, tous (audit) ;
+    # ``skip``, aucun — réservé aux clés de portée ``admin``.
+    judges: JudgesMode = "auto"
 
     def context(self) -> CallerContext:
         return CallerContext(user_id=self.user_id, metadata=dict(self.metadata))

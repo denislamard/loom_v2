@@ -17,7 +17,7 @@ from mcp import ClientSession
 from mcp.shared.memory import create_connected_server_and_client_session as connected
 from mcp.types import ContentBlock, TextContent
 
-from loom_ia.access.mcp_server import STATUS_TOOL, create_server
+from loom_ia.access.mcp_server import REPORT_TOOL, STATUS_TOOL, create_server
 
 
 @asynccontextmanager
@@ -34,7 +34,7 @@ async def test_each_published_agent_is_a_tool(demo: ConfigFactory) -> None:
         listed = await client.list_tools()
 
     tools = {tool.name: tool for tool in listed.tools}
-    assert set(tools) == {"demo", STATUS_TOOL}
+    assert set(tools) == {"demo", STATUS_TOOL, REPORT_TOOL}
     assert tools["demo"].description == "Répond aux questions de calcul."
     assert tools["demo"].inputSchema["required"] == ["message"]
     assert "run_id" in (tools["demo"].outputSchema or {})["properties"]

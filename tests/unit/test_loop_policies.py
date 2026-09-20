@@ -230,7 +230,7 @@ async def test_fail_before_the_model_fails_the_run(store: EventStore) -> None:
     state = await run(context(store, model, bind(interdit)))
 
     assert state.status is RunStatus.FAILED
-    assert state.error == "policy.interdit: agent suspendu"
+    assert (state.error_type, state.error) == ("policy.interdit", "agent suspendu")
     assert model.requests == []
     events = await journal(store, state)
     assert kinds(events)[2:] == [
@@ -501,7 +501,7 @@ async def test_fail_before_a_tool_launches_nothing(store: EventStore) -> None:
     state = await run(context(store, model, bind(coupe)))
 
     assert state.status is RunStatus.FAILED and executed == []
-    assert state.error == "policy.coupe: budget épuisé"
+    assert (state.error_type, state.error) == ("policy.coupe", "budget épuisé")
     events = await journal(store, state)
     assert kinds(events)[6:] == [
         "step:tool_batch",
@@ -660,6 +660,6 @@ async def test_fail_after_the_model_fails_the_run(store: EventStore) -> None:
     model = scripted(tool_call_message(("c1", "calculer", {"expr": "1+1"})))
     state = await run(context(store, model, bind(hors_sujet)))
     assert state.status is RunStatus.FAILED and executed == []
-    assert state.error == "policy.hors_sujet: réponse hors sujet"
+    assert (state.error_type, state.error) == ("policy.hors_sujet", "réponse hors sujet")
     events = await journal(store, state)
     assert kinds(events)[5:] == ["policy:hors_sujet:fail", "→failed", "run.failed"]

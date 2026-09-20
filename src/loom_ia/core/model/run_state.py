@@ -118,6 +118,8 @@ class RunState(DomainModel):
     unverified: bool = False
     # Appel dont le résultat est devenu la réponse finale (#13).
     terminal_call_id: str | None = None
+    # Échec : son type (``guard.judge``, ``model.auth``, ``policy.<nom>``…) et son message.
+    error_type: str | None = None
     error: str | None = None
     # Vrai après run.completed ou run.failed : plus aucun événement accepté.
     finished: bool = False

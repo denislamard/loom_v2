@@ -94,7 +94,7 @@ def test_failed_run() -> None:
     journal.start("x").fail("TimeoutError", "modèle muet")
     state = fold(numbered(journal), journal.run_id)
     assert state.status is RunStatus.FAILED
-    assert state.error == "TimeoutError: modèle muet"
+    assert (state.error_type, state.error) == ("TimeoutError", "modèle muet")
 
 
 def test_event_before_run_started_is_rejected() -> None:

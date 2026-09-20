@@ -3,8 +3,17 @@
 
 Chaque agent publié (``expose.mcp``) devient un outil MCP qui prend un
 message, éventuellement des images (argument ``attachments``, décrit dans le
-module du même nom), et rend la réponse du run avec la liste de ses fichiers. Un outil de plus,
-``run_status``, relit un run par son identifiant.
+module du même nom), et rend la réponse du run avec la liste de ses fichiers. Deux outils de
+plus : ``run_status`` relit un run par son identifiant, ``run_report`` rend la
+consommation d'un run (avec ses sous-runs) ou de toute une session.
+
+Résultat (J3) : le texte est la réponse ; le résultat structuré y ajoute
+``unverified``, l'usage et le coût, leur ventilation (``report``) et les
+verdicts des juges. Une réponse gardée sans respecter son contrat ou son juge
+est suivie d'un second texte qui le dit. Un run échoué rend un résultat
+d'erreur (``isError``) dont le texte dit en clair ce qui l'a arrêté ; son
+type (``guard.judge``, ``model.auth``…) est dans ``error_type``. Les juges
+suivent leur ``when`` : l'accès MCP ne les force ni ne les retire.
 
 Progression (D4) : si le client en demande une (``progressToken``), chaque
 étape visible du run — appels d'outils, fichiers rangés, sous-agents qui
@@ -27,16 +36,30 @@ from typing import Any, Final
 import mcp.types as types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
+from pydantic.json_schema import models_json_schema
 
-from loom_ia.access.api import Loom, RunResult
+from loom_ia.access.api import JudgeVerdict, Loom, RunResult, UnknownRun
 from loom_ia.access.mcp_server.attachments import ATTACHMENTS_INPUT, AttachmentReader
 from loom_ia.access.progress import Progress
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.core.events import Event
-from loom_ia.core.model import DEFAULT_TENANT, Attachment, RunId, SessionId, new_run_id
+from loom_ia.core.model import (
+    DEFAULT_TENANT,
+    Attachment,
+    RunId,
+    RunStatus,
+    SessionId,
+    Usage,
+    new_run_id,
+)
+from loom_ia.usage import UsageReport, render
 
 SERVER_NAME: Final = "loom"
 STATUS_TOOL: Final = "run_status"
+REPORT_TOOL: Final = "run_report"
+UNVERIFIED_NOTE: Final = (
+    "Réponse non vérifiée : elle a été gardée sans respecter son contrat ou son juge."
+)
 
 AGENT_INPUT: Final[dict[str, Any]] = {
     "type": "object",
@@ -62,6 +85,30 @@ STATUS_INPUT: Final[dict[str, Any]] = {
     "additionalProperties": False,
 }
 
+REPORT_INPUT: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "run_id": {
+            "type": "string",
+            "description": "Run dont rendre la consommation, sous-runs compris",
+        },
+        "session_id": {
+            "type": "string",
+            "description": "Session dont rendre la consommation, ou journal du run",
+        },
+    },
+    "anyOf": [{"required": ["run_id"]}, {"required": ["session_id"]}],
+    "additionalProperties": False,
+}
+
+# Schémas de l'usage, du rapport et d'un verdict, rangés à la racine du schéma de sortie.
+_REFS, _DEFS = models_json_schema(
+    [(Usage, "serialization"), (UsageReport, "serialization"), (JudgeVerdict, "serialization")],
+    ref_template="#/$defs/{model}",
+)
+
+REPORT_OUTPUT: Final[dict[str, Any]] = UsageReport.model_json_schema(mode="serialization")
+
 RUN_OUTPUT: Final[dict[str, Any]] = {
     "type": "object",
     "properties": {
@@ -70,8 +117,19 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
         "agent": {"type": "string"},
         "status": {"type": "string"},
         "text": {"type": "string"},
+        # Échec : son type (``guard.judge``, ``model.auth``…) et son message lisible.
+        "error_type": {"type": ["string", "null"]},
         "error": {"type": ["string", "null"]},
         "iterations": {"type": "integer"},
+        "usage": _REFS[(Usage, "serialization")],
+        "cost_usd": {"type": "number"},
+        # Réponse structurée : l'objet JSON validé par le schéma de sortie.
+        "data": {},
+        # Réponse gardée sans respecter son contrat ou son juge.
+        "unverified": {"type": "boolean"},
+        # Consommation ventilée du run et de ses sous-runs.
+        "report": {"anyOf": [_REFS[(UsageReport, "serialization")], {"type": "null"}]},
+        "verdicts": {"type": "array", "items": _REFS[(JudgeVerdict, "serialization")]},
         # Fichiers du run : pièces jointes, fichiers produits, déports.
         "artifacts": {
             "type": "array",
@@ -90,6 +148,7 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
         },
     },
     "required": ["run_id", "session_id", "agent", "status", "text"],
+    **_DEFS,
 }
 
 
@@ -123,22 +182,37 @@ def create_server(loom: Loom, *, name: str = SERVER_NAME) -> Server[object, Any]
                 outputSchema=RUN_OUTPUT,
             )
         )
+        tools.append(
+            types.Tool(
+                name=REPORT_TOOL,
+                description=(
+                    "Consommation d'un run et de ses sous-runs, ou de toute une session : "
+                    "appels, tokens et coût, par run, par rôle et par modèle"
+                ),
+                inputSchema=REPORT_INPUT,
+                outputSchema=REPORT_OUTPUT,
+            )
+        )
         return tools
 
     @server.call_tool()
-    async def call_tool(
-        tool: str, arguments: dict[str, Any]
-    ) -> tuple[list[types.ContentBlock], dict[str, Any]]:
+    async def call_tool(tool: str, arguments: dict[str, Any]) -> types.CallToolResult:
         session = arguments.get("session_id")
         session_id = SessionId(str(session)) if session else None
-        if tool == STATUS_TOOL:
-            result = await loom.result(RunId(str(arguments["run_id"])), session_id=session_id)
-        else:
+        run = arguments.get("run_id")
+        run_id = RunId(str(run)) if run else None
+        try:
+            if tool == REPORT_TOOL:
+                return await _report(loom, run_id, session_id)
+            if tool == STATUS_TOOL:
+                found = await loom.result(RunId(str(run)), session_id=session_id)
+                return answer(found, ran=False)
             _published(loom, tool)
-            attachments = await reader.read(arguments.get("attachments"))
-            message = str(arguments["message"])
-            result = await _run(server, loom, tool, message, attachments, session_id)
-        return [types.TextContent(type="text", text=_answer(result))], structured(result)
+        except (UnknownAgent, UnknownRun) as exc:
+            return _refused(str(exc.args[0]))
+        attachments = await reader.read(arguments.get("attachments"))
+        message = str(arguments["message"])
+        return answer(await _run(server, loom, tool, message, attachments, session_id))
 
     return server
 
@@ -177,6 +251,21 @@ async def run_stdio(loom: Loom, *, name: str = SERVER_NAME) -> None:
         await server.run(reader, writer, server.create_initialization_options())
 
 
+def answer(result: RunResult, *, ran: bool = True) -> types.CallToolResult:
+    """Ce que rend l'outil d'un agent (``ran``) ou ``run_status``.
+
+    Un run échoué est une erreur de l'outil qui l'a lancé ; ``run_status``,
+    qui ne fait que le relire, rend son état sans erreur.
+    """
+    content: list[types.ContentBlock] = [types.TextContent(type="text", text=_text(result))]
+    if result.unverified:
+        content.append(types.TextContent(type="text", text=UNVERIFIED_NOTE))
+    failed = ran and result.status is RunStatus.FAILED
+    return types.CallToolResult(
+        content=content, structuredContent=structured(result), isError=failed
+    )
+
+
 def structured(result: RunResult) -> dict[str, Any]:
     """Résultat d'un run tel que l'outil MCP le rend."""
     return {
@@ -185,18 +274,47 @@ def structured(result: RunResult) -> dict[str, Any]:
         "agent": result.agent,
         "status": str(result.status),
         "text": result.text,
+        "error_type": result.error_type,
         "error": result.error,
         "iterations": result.iterations,
+        "usage": result.usage.model_dump(mode="json"),
+        "cost_usd": result.cost_usd,
+        "data": result.data,
+        "unverified": result.unverified,
+        "report": result.report.model_dump(mode="json") if result.report else None,
+        "verdicts": [verdict.model_dump(mode="json") for verdict in result.verdicts],
         "artifacts": [
             artifact.model_dump(mode="json", exclude_none=True) for artifact in result.artifacts
         ],
     }
 
 
-def _answer(result: RunResult) -> str:
-    if result.text:
-        return result.text
-    return result.error or f"Run {result.run_id} : {result.status}"
+def _text(result: RunResult) -> str:
+    """La réponse ; pour un échec, ce qui l'a arrêté, en clair."""
+    if result.status is RunStatus.FAILED:
+        return f"Échec de l'agent {result.agent} : {result.error}"
+    return result.text or f"Run {result.run_id} : {result.status}"
+
+
+async def _report(
+    loom: Loom, run_id: RunId | None, session_id: SessionId | None
+) -> types.CallToolResult:
+    """Consommation d'un run ou d'une session : le rapport en texte et en structuré."""
+    if run_id is None and session_id is None:
+        return _refused("Donner un run_id ou un session_id")
+    report = await loom.report(run_id, session_id=session_id)
+    if not report.runs:
+        return _refused(f"Session {session_id} inconnue")
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text="\n".join(render(report)))],
+        structuredContent=report.model_dump(mode="json"),
+    )
+
+
+def _refused(message: str) -> types.CallToolResult:
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=message)], isError=True
+    )
 
 
 def _instructions(loom: Loom) -> str:
