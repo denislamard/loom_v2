@@ -216,13 +216,44 @@ class OnOutput:
 type PolicySubject = BeforeModel | AfterModel | BeforeTool | AfterTool | OnOutput
 
 
+type CheckOutcome = Literal["passed", "failed", "skipped"]
+# Suite donnée à un contrôle échoué : réparation, ou décision une fois les réparations épuisées.
+type CheckResolution = Literal["retry", "fail", "unverified", "fallback"]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GuardCheck:
+    """Contrôle d'une sortie, journalisé en ``guard.checked`` avant la décision (#20).
+
+    ``target`` : ``output`` (réponse finale), ``role:<nom>`` ou ``tool:<nom>``.
+    """
+
+    guard: str
+    target: str
+    outcome: CheckOutcome
+    reason: str = ""
+    # La sortie a été corrigée par la normalisation déterministe.
+    normalized: bool = False
+    resolution: CheckResolution | None = None
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PolicyContext:
-    """Ce qu'une politique sait d'elle-même pour cet appel."""
+    """Ce qu'une politique sait d'elle-même pour cet appel.
+
+    Une politique qui contrôle une sortie (un guard) y enregistre ses contrôles
+    (``record``) : ils sont journalisés avant sa décision, réussis ou non.
+    """
 
     # Nom sous lequel la politique est déclarée dans l'agent.
     name: str
     # Paramètres donnés par la config.
     params: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
-    # Réparations déjà demandées par cette politique dans le run (``Retry``).
+    # Réparations déjà demandées par cette politique pour cette sortie (``Retry``) :
+    # dans le run pour la réponse finale, dans l'appel pour un rôle.
     attempt: int = 0
+    checks: list[GuardCheck] = field(default_factory=list[GuardCheck])
+
+    def record(self, check: GuardCheck) -> None:
+        """Enregistre un contrôle, journalisé en ``guard.checked``."""
+        self.checks.append(check)

@@ -323,7 +323,7 @@ Event
 | `tool.called` | tool_name, tool_kind, call_id, arguments, refs, child_run_id (sous-agent) |
 | `tool.completed` | tool_name, call_id, is_error, sortie (blocs, références de fichiers, aperçu et référence si déportée), latence, taille, consommation d'un sous-agent (usage, coût) ; facette `offloaded` |
 | `tool.source_unavailable` | source (serveur MCP), erreur, required |
-| `guard.checked` | guard, cible, outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized |
+| `guard.checked` | guard, cible (`output`, `role:<nom>`, `tool:<nom>`), outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized, resolution, politique, call_id |
 | `judge.evaluated` | modèle juge, scores par critère, bloquant, réussi |
 | `policy.decided` | politique, point, décision, motif, call_id, tentative et `tools` (`Retry`), arguments ou réponse remplacés, `error` |
 | `approval.requested` / `.granted` / `.rejected` / `.expired` | tool_name, call_id, arguments, auteur, motif, scope, expire_at |
@@ -333,7 +333,7 @@ Event
 | `run.transitioned` | from, to, step_no, cause |
 | `run.paused` / `.resumed` | motif |
 | `run.claimed` | worker_id, lease_until |
-| `run.completed` / `.failed` / `.cancelled` | itérations, usage total, coût total, erreur |
+| `run.completed` / `.failed` / `.cancelled` | itérations, usage total, coût total, erreur ; `data` et `unverified` (réponse finale) |
 
 **Événements éphémères** (publiés sur le bus, jamais écrits) : `model.delta` (texte, raisonnement, arguments partiels) et `model.delta.reset` (effacer le texte partiel après une relance).
 
@@ -449,8 +449,8 @@ Decision = Continue
 
 - Une politique est une fonction décorée par `@policy(points, decisions)` (`loom_ia.policies`) ; elle reçoit le sujet du point (`BeforeModel`, `AfterModel`, `BeforeTool`, `AfterTool`, `OnOutput`) et son `PolicyContext` (nom, `params`, réparations déjà demandées). Port `Policy` dans le noyau ; exécution de la chaîne dans `engine/hooks.py`.
 - `before_model` s'exécute dans l'étape d'appel du modèle ; `after_model` et `on_output` au moment de décider la suite d'une réponse (réévalués à la reprise tant que leur décision n'est pas appliquée) ; `before_tool` et `after_tool` dans l'exécuteur.
-- `Retry` à `after_model` et `on_output` : réparation par l'orchestrateur (diagnostic en `message.user` de `kind: repair`, exclu de l'historique de session avec la réponse refusée) ; à `after_tool`, le résultat revient à l'orchestrateur en erreur avec le diagnostic (réparation d'un rôle par son modèle : 3.2). `Pause` est refusée au démarrage jusqu'en J4.3.
-- Défauts : délai 5 s, `on_error: block`, `max_attempts: 1`. Politique fournie : `loom.require_tool` (`tool_choice: required` tant qu'aucun outil n'a été appelé, jamais en `FINALIZING`).
+- `Retry` à `after_model` et `on_output` : réparation par l'orchestrateur (diagnostic en `message.user` de `kind: repair`, exclu de l'historique de session avec la réponse refusée) ; à `after_tool`, un rôle est réparé par son propre modèle (depuis 3.2, §9.7) et le résultat d'un outil revient à l'orchestrateur en erreur avec le diagnostic. `Pause` est refusée au démarrage jusqu'en J4.3.
+- Défauts : délai 5 s, `on_error: block`, `max_attempts: 1` (par run à `after_model` et `on_output`, par appel à `after_tool`). Politiques fournies : `loom.require_tool` (`tool_choice: required` tant qu'aucun outil n'a été appelé, jamais en `FINALIZING`) ; `loom.contract` (contrats de sortie, 3.2, §9.7).
 
 ### 9.5 Outils
 
@@ -645,6 +645,14 @@ Réalisation (phase 2.4) : l'orchestrateur passe un seul argument, `message` ; l
 
 Les tentatives refusées restent dans le journal mais sont exclues de l'historique de session. Un appel de réparation dédié à un autre modèle n'est pas prévu en V2 ; la stratégie de réparation reste interchangeable.
 
+**Réalisation (phase 3.2)** (détails : `fonctions.md`, point 20) :
+
+- Le contrat (`OutputContract`) se déclare par `output` sur l'agent, un rôle, un outil Python ou un outil MCP (config du serveur ou référence dans l'agent) ; `schema_file` est lu au chargement.
+- Il est appliqué par la politique fournie `loom.contract` (`loom_ia.guards`), branchée d'office en tête des politiques de l'agent : `on_output` pour la réponse finale, `after_tool` pour un rôle ou un outil. Chaque contrôle écrit un `guard.checked`, réussi ou non.
+- Normalisation d'abord (sortie remplacée si elle devient conforme) ; puis réparation : l'orchestrateur pour la réponse finale (sans outils, sauf `repair.tools: allowed`), le modèle du rôle pour un rôle, à la suite de sa conversation ; un outil n'est jamais réparé. Les tentatives d'un rôle se comptent par appel.
+- `on_failure` : pour la réponse finale, `fail` fait échouer le run (`guard.contract`), `unverified` la garde en marquant `run.completed`, `fallback` la remplace ; pour un rôle ou un outil, `fail` rend un résultat d'erreur à l'orchestrateur (le run continue), `unverified` garde la sortie marquée, `fallback` la remplace.
+- Avec un schéma, l'objet JSON est dans `run.completed.data` (réponse finale) ou dans le `data` du `tool.completed` terminal ; `RunResult.data` et `RunResult.unverified` côté Python. Schéma natif du fournisseur : 3.5.
+
 **Juge** (#21) :
 
 - Critères avec seuils, bloquants ou non.
@@ -722,6 +730,8 @@ models:
 | Guard sur la réponse finale | `stream_output: live \| after_guards` par agent : `live` par défaut sans guard de sortie, sinon réponse en tampon envoyée après validation |
 
 **Voix :** la voix exige `live` ; les guards d'un agent vocal doivent être légers et compatibles avec le flux, ou ne s'appliquer qu'aux outils.
+
+**Réalisation (phase 3.2) :** sans réglage, `stream_output` vaut `after_guards` quand la réponse finale est contrôlée (contrat, politique `on_output`, rôle terminal sous contrat), `live` sinon. En `after_guards`, le texte d'une réponse qui appelle des outils part à la fin de cette réponse, et la réponse finale une fois le run clos ; en `live`, une réparation envoie d'abord un `StreamReset`. Un rôle terminal seul dans son lot diffuse ses morceaux en `live` (backlog #009).
 
 ### 10.3 Erreurs, retry et secours
 
@@ -1037,7 +1047,7 @@ main:                                 # RoleSpec, sans name
 max_iterations: 10
 timeout: 300
 max_depth: 2
-stream_output: after_guards           # live | after_guards
+stream_output: after_guards           # live | after_guards ; défaut : after_guards si la réponse finale est contrôlée
 output: {...}                         # OutputSpec (réponse finale, A7)
 judge: {...}                          # JudgeSpec (on_output)
 budget: {...}                         # surcharge des défauts
@@ -1048,8 +1058,11 @@ tools:
     offload_over: 20000
     side_effects: none
     idempotent: true
+    output: {...}                     # OutputSpec du résultat (jamais réparé)
   - mcp: crm
     include: [rechercher, fiche_client, envoyer_email]
+    tools:
+      fiche_client: {output: {...}}   # l'emporte sur mcp_servers[].tools
   - mcp: agenda
     exclude: [supprimer_creneau]
 roles:
@@ -1097,7 +1110,7 @@ output:
   normalize: true
   repair: {max_attempts: 1, tools: auto}      # auto | none | allowed
   on_failure: fail                            # fail | unverified | fallback
-  fallback_message: "..."
+  fallback_message: "..."                     # exigé par fallback
 
 judge:
   model: SONNET

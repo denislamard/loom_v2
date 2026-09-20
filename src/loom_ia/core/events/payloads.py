@@ -5,7 +5,7 @@ Chaque classe déclare son ``type`` (``<catégorie>.<action au passé>``), sa
 catégorie et ses facettes : les champs de recherche que l'enveloppe recopie
 pour que les stores les indexent sans connaître les payloads.
 
-Événements des jalons J1 et J2, et des politiques (J3.1). Les autres types
+Événements des jalons J1 et J2, des politiques (J3.1) et des guards (J3.2). Les autres types
 (guards, approbations, compaction…) arrivent avec leurs phases.
 
 Un appel de modèle fait par un rôle délégué (C2) est journalisé dans le run
@@ -18,6 +18,9 @@ Un sous-agent (C5, #4) tourne dans un run enfant du même journal : son
 l'enveloppe le ``root_run_id`` de l'arbre. Côté parent, le ``tool.called`` de
 l'appel donne l'identifiant de l'enfant (``child_run_id``), et le
 ``tool.completed`` sa consommation, ajoutée à celle du parent.
+
+Guards (#20) : chaque contrôle d'une sortie écrit un ``guard.checked``,
+réussi ou non, avant la décision qu'il motive.
 
 Politiques (#2) : toute décision autre que ``Continue`` écrit un
 ``policy.decided`` avant son effet, dans le span de l'étape ou de l'appel
@@ -46,7 +49,7 @@ from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import EventId, RunId
 from loom_ia.core.model.media import ArtifactOrigin, ArtifactRecord
 from loom_ia.core.model.messages import Message
-from loom_ia.core.model.policy import DecisionKind, HookPoint
+from loom_ia.core.model.policy import CheckOutcome, CheckResolution, DecisionKind, HookPoint
 from loom_ia.core.model.run_state import RunStatus
 from loom_ia.core.model.streaming import ModelErrorKind, StopReason
 from loom_ia.core.model.tooling import ToolKind
@@ -154,11 +157,26 @@ class RunCompleted(Payload):
     iterations: NonNegativeInt = 0
     usage: Usage = Usage()
     cost_usd: NonNegativeFloat = 0.0
+    # Réponse structurée : l'objet JSON validé par le schéma de sortie de l'agent (A7).
+    data: JsonValue = None
+    # Réponse gardée bien qu'elle ne respecte pas un contrat (``on_failure: unverified``).
+    unverified: bool = False
 
     @model_validator(mode="after")
     def _check_output(self) -> Self:
         _no_inline_data(self.output, "run.completed")
         return self
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning" if self.unverified else "ok"
+
+    def facets(self) -> dict[str, FacetValue]:
+        facets = super().facets()
+        if self.unverified:
+            # Absente sinon : les journaux antérieurs restent lisibles.
+            facets["unverified"] = True
+        return facets
 
 
 class RunFailed(Payload):
@@ -388,6 +406,38 @@ class PolicyDecided(Payload):
         return "ok"
 
 
+class GuardChecked(Payload):
+    """Contrôle d'une sortie par un guard, réussi ou non (#20).
+
+    Écrit avant la décision qu'il motive (``policy.decided``). ``attempt``
+    compte les contrôles de cette sortie : 1, puis 2 après une réparation…
+    ``resolution`` dit la suite d'un échec : réparation demandée, ou, une fois
+    les réparations épuisées, ``fail``, ``unverified`` ou ``fallback``.
+    """
+
+    category: ClassVar[EventCategory] = "guard"
+    facet_fields: ClassVar[tuple[str, ...]] = ("guard", "target", "outcome")
+
+    type: Literal["guard.checked"] = "guard.checked"
+    guard: str
+    # ``output`` (réponse finale), ``role:<nom>`` ou ``tool:<nom>``.
+    target: str
+    outcome: CheckOutcome
+    reason: str = ""
+    attempt: PositiveInt = 1
+    normalized: bool = False
+    resolution: CheckResolution | None = None
+    # Politique qui a fait le contrôle.
+    policy: str | None = None
+    call_id: str | None = None
+
+    @property
+    def event_status(self) -> EventStatus:
+        if self.outcome != "failed":
+            return "ok"
+        return "error" if self.resolution == "fail" else "warning"
+
+
 # --- Artefacts ---------------------------------------------------------------
 
 
@@ -437,6 +487,7 @@ type DurablePayload = Annotated[
     | ToolCompleted
     | ToolSourceUnavailable
     | PolicyDecided
+    | GuardChecked
     | ArtifactStored,
     Field(discriminator="type"),
 ]
@@ -455,5 +506,6 @@ DURABLE_PAYLOADS: tuple[type[Payload], ...] = (
     ToolCompleted,
     ToolSourceUnavailable,
     PolicyDecided,
+    GuardChecked,
     ArtifactStored,
 )

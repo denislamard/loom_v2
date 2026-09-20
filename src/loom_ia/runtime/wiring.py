@@ -22,6 +22,11 @@ nom enregistré ou ``module:attr``), puis contrôlée avant le premier run : ses
 points parmi ceux qu'elle déclare, ses décisions permises à chacun de ses
 points (``Pause`` arrive en J4.3), un nom unique dans l'agent.
 
+Contrats de sortie (#20) : si l'agent en déclare un (réponse finale, rôle,
+outil Python ou MCP), le guard ``loom.contract`` est placé en tête de ses
+politiques. La diffusion de la réponse finale (``stream_output``) vaut par
+défaut ``after_guards`` quand elle est contrôlée, ``live`` sinon.
+
 Sous-agents (C5) : l'agent appelé n'est monté qu'au premier appel, par
 ``agents`` (``Loom.context`` dans une instance). Deux agents peuvent ainsi
 s'appeler l'un l'autre sans que le montage boucle ; la profondeur borne les
@@ -53,7 +58,12 @@ from loom_ia.agents.spec import ContextItem as DeclaredContext
 from loom_ia.config.errors import ConfigError
 from loom_ia.config.models import LoomConfig
 from loom_ia.config.references import Registry, import_modules, resolve
-from loom_ia.core.model import ALLOWED_DECISIONS, LATER_DECISIONS, RESERVED_PREFIX
+from loom_ia.core.model import (
+    ALLOWED_DECISIONS,
+    LATER_DECISIONS,
+    RESERVED_PREFIX,
+    StreamOutput,
+)
 from loom_ia.core.ports import (
     ArtifactStore,
     ChunkCallback,
@@ -78,6 +88,7 @@ from loom_ia.engine import (
     ToolExecutor,
     ToolResults,
 )
+from loom_ia.guards import CONTRACT_POLICY, ContractGuard
 from loom_ia.policies import BUILTIN_POLICIES
 from loom_ia.telemetry import configure_logging
 from loom_ia.tools import FunctionTool, configure
@@ -174,7 +185,7 @@ def build_agent(
     tools = [_tool(declared, known, config.base_dir) for declared in spec.python_tools]
     roles = [role_definition(role) for role in spec.roles]
     _check_names(spec, [tool.spec.name for tool in tools])
-    policies = build_policies(spec, known, config.base_dir)
+    policies = build_policies(spec, known, config.base_dir, contracts=_has_contracts(config, spec))
     sources, owned = _mcp_sources(config, spec, environ, mcp_pool)
     if spec.subagents and agents is None:
         nested = _SubAgents(
@@ -225,13 +236,31 @@ def build_agent(
         on_chunk=on_chunk,
         attachments=config.execution.attachments,
         policies=policies,
+        output=spec.output,
+        stream_output=stream_output(spec, policies),
     )
     return Agent(spec=spec, context=context, clients=tuple(clients.values()), owned=owned)
 
 
-def build_policies(spec: AgentSpec, registry: Registry, base_dir: Path | None = None) -> Policies:
-    """Politiques de l'agent, résolues et contrôlées, dans l'ordre déclaré."""
+def build_policies(
+    spec: AgentSpec,
+    registry: Registry,
+    base_dir: Path | None = None,
+    *,
+    contracts: bool | None = None,
+) -> Policies:
+    """Politiques de l'agent, résolues et contrôlées, dans l'ordre déclaré.
+
+    Le guard des contrats passe en tête quand l'agent en déclare
+    (``contracts``, déduit de l'agent si absent).
+    """
     bound: list[BoundPolicy] = []
+    if contracts if contracts is not None else spec.contracts:
+        guard = ContractGuard(spec.output)
+        # Le guard borne lui-même ses réparations (repair.max_attempts du contrat).
+        bound.append(
+            BoundPolicy(policy=guard, name=CONTRACT_POLICY, points=guard.points, max_attempts=None)
+        )
     for ref in spec.policies:
         found = _policy(spec, ref, registry, base_dir)
         points = frozenset(ref.points) if ref.points is not None else found.points
@@ -271,6 +300,22 @@ def build_policies(spec: AgentSpec, registry: Registry, base_dir: Path | None = 
             )
         )
     return Policies(bound)
+
+
+def stream_output(spec: AgentSpec, policies: Policies) -> StreamOutput:
+    """Diffusion de la réponse finale : celle déclarée, sinon selon ses contrôles (#11)."""
+    if spec.stream_output is not None:
+        return spec.stream_output
+    guarded = bool(policies.at("on_output")) or any(
+        role.terminal and role.output is not None for role in spec.roles
+    )
+    return "after_guards" if guarded else "live"
+
+
+def _has_contracts(config: LoomConfig, spec: AgentSpec) -> bool:
+    """Vrai si un contrat s'applique à l'agent, y compris par un serveur MCP qu'il référence."""
+    servers = [config.mcp_server(ref.mcp) for ref in spec.mcp_tools]
+    return spec.contracts or any(o.output is not None for s in servers for o in s.tools.values())
 
 
 def _policy(spec: AgentSpec, ref: PolicyRef, registry: Registry, base_dir: Path | None) -> Policy:
@@ -316,6 +361,7 @@ def role_definition(role: RoleSpec) -> RoleDefinition:
         context=tuple(_context_item(item) for item in role.context),
         terminal=role.terminal,
         timeout=role.timeout,
+        output=role.output,
         max_tokens=role.llm.max_tokens,
         params=role.llm.params,
     )
@@ -473,6 +519,7 @@ def _tool(declared: PythonTool, registry: Registry, base_dir: Path | None) -> To
         approval=declared.approval,
         idempotent=declared.idempotent,
         offload_over=declared.offload_over,
+        output=declared.output,
     )
 
 

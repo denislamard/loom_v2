@@ -10,6 +10,7 @@ from typing import Final, Literal
 from pydantic import Field, JsonValue, PositiveFloat, PositiveInt
 
 from loom_ia.core.model.base import DomainModel
+from loom_ia.core.model.contract import OutputContract
 
 type ToolKind = Literal["python", "mcp", "role", "agent", "builtin"]
 type SideEffects = Literal["none", "reversible", "irreversible"]
@@ -45,6 +46,8 @@ class ToolOverrides(DomainModel):
     idempotent: bool | None = None
     timeout: PositiveFloat | None = None
     offload_over: PositiveInt | None = None
+    # Contrat de sortie propre à cet outil (E5).
+    output: OutputContract | None = None
 
 
 class ToolSpec(ToolDefinition):
@@ -61,6 +64,8 @@ class ToolSpec(ToolDefinition):
     offload_over: PositiveInt | None = None
     # Sortie transmise telle quelle comme réponse finale s'il est seul dans son tour (#13).
     terminal: bool = False
+    # Contrat de sortie (E5) : contrôlé après chaque appel ; un rôle se répare, un outil non.
+    output: OutputContract | None = None
 
     @property
     def safe_to_retry(self) -> bool:
@@ -71,7 +76,12 @@ class ToolSpec(ToolDefinition):
         """Déclarations remplacées par celles que ``overrides`` renseigne."""
         if overrides is None:
             return self
-        changes = overrides.model_dump(exclude_none=True)
+        # Valeurs prises telles quelles (pas de dump) : le contrat reste un modèle.
+        changes = {
+            name: value
+            for name in type(overrides).model_fields
+            if (value := getattr(overrides, name)) is not None
+        }
         return self.model_copy(update=changes) if changes else self
 
     def definition(self) -> ToolDefinition:

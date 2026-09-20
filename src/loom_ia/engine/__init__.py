@@ -1,7 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Moteur d'exécution : boucle d'un run, outils, rôles délégués, sous-agents, fichiers (#3)."""
 
-from loom_ia.engine.delegated import Consumption, DelegatedPayload, DelegatedTool, RunView
+from loom_ia.engine.delegated import (
+    Consumption,
+    DelegatedPayload,
+    DelegatedTool,
+    Exchange,
+    RunView,
+)
 from loom_ia.engine.executor import (
     DEFAULT_TOOL_TIMEOUT,
     UNKNOWN_STATE,
@@ -74,6 +80,7 @@ __all__ = [
     "Delegated",
     "DelegatedPayload",
     "DelegatedTool",
+    "Exchange",
     "MediaResolver",
     "OnError",
     "OpenedTools",

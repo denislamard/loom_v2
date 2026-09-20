@@ -535,7 +535,8 @@ async def test_after_tool_replaces_or_refuses_results(store: EventStore) -> None
     refused = outputs["c2"]
     assert refused.is_error
     assert refused.as_text == "Résultat refusé (verifie) : Résultat suspect.\n4"
-    assert state.retries == {"verifie": 1}
+    # Seules les réparations de l'orchestrateur se comptent dans le run.
+    assert state.retries == {}
 
 
 async def test_fail_after_a_tool_fails_the_run_after_the_batch(store: EventStore) -> None:

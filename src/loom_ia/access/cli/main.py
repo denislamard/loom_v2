@@ -34,6 +34,7 @@ from loom_ia.core.model import (
     Attachment,
     RunId,
     SessionId,
+    StreamReset,
     TextDelta,
     new_run_id,
 )
@@ -210,10 +211,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                     live.show(item)
                 print()
                 state = await loom.state(run_id, session_id=session)
-                if state.terminal_call_id is not None and state.output is not None:
-                    # Sortie d'un outil terminal : elle n'est pas passée par le flux du modèle.
-                    print(state.output.text)
-                elif state.replaced_output is not None and state.output is not None:
+                live = loom.context(args.agent).stream_output == "live"
+                if live and state.replaced_output is not None and state.output is not None:
                     # Réponse remplacée par une politique après sa diffusion.
                     print(f"[Réponse retenue]\n{state.output.text}")
                 return await loom.result(run_id, session_id=session)
@@ -318,6 +317,13 @@ class _Live:
             sys.stdout.flush()
             if item.text:
                 self._open = not item.text.endswith("\n")
+            return
+        if isinstance(item, StreamReset):
+            # Le texte déjà affiché est refusé ou relancé : une nouvelle réponse suit.
+            if self._open:
+                print(file=sys.stdout, flush=True)
+                self._open = False
+            print("· réponse reprise", file=sys.stderr)
             return
         if not isinstance(item, Event) or (line := self._progress.line(item)) is None:
             return

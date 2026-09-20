@@ -133,7 +133,9 @@ storage:
 
 **À faire :** avec `stream_output` (3.2), diffuser les morceaux du rôle terminal en `live`, attribués au rôle (`model.delta` du bus en J4).
 
-**Statut :** à faire en 3.2.
+**Réalisation (3.2) :** en `live`, un rôle terminal seul dans son lot envoie ses morceaux à `on_chunk` (`RunView.on_chunk`), réparations comprises, précédées d'un `StreamReset`. En `after_guards`, sa sortie part une fois le run clos, comme une réponse de l'orchestrateur. `loom run --stream` n'affiche donc plus la sortie terminale à la fin du run. L'attribution des morceaux au rôle reste pour le bus (`model.delta`, J4).
+
+**Statut :** fait en 3.2.
 
 ---
 

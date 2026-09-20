@@ -14,8 +14,13 @@ Garde-fous :
   ``on_error``, le run échoue (``block``, par défaut) ou la politique est
   ignorée (``allow``), ce qui est journalisé aussi ;
 - ``Retry`` est borné : au-delà de ``max_attempts`` réparations demandées par
-  une même politique dans le run (compteur du ``RunState``), sa décision
-  devient ``Fail``.
+  une même politique pour une même sortie (compteur du ``RunState`` pour la
+  réponse finale, compteur de l'appel pour un rôle), sa décision devient
+  ``Fail``. Un guard qui gère lui-même ses réparations (contrat de sortie)
+  n'a pas de borne ici (``max_attempts: None``).
+
+Guards : une politique peut enregistrer ses contrôles dans son contexte
+(``record``) ; ils deviennent des ``guard.checked``, écrits avant sa décision.
 
 Ce module ne fait qu'évaluer : ce que chaque décision change au run (requête
 remplacée, appel refusé, réparation, arrêt, échec) est appliqué par la boucle
@@ -31,7 +36,7 @@ from typing import Final, Literal, cast
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from loom_ia.core.events import PolicyDecided
+from loom_ia.core.events import GuardChecked, PolicyDecided
 from loom_ia.core.model import (
     ALLOWED_DECISIONS,
     CONTINUE,
@@ -43,6 +48,7 @@ from loom_ia.core.model import (
     DecisionKind,
     Deny,
     Fail,
+    GuardCheck,
     HookPoint,
     Message,
     ModelRequest,
@@ -85,8 +91,12 @@ class BoundPolicy:
     params: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     timeout: float | None = DEFAULT_POLICY_TIMEOUT
     on_error: OnError = "block"
-    # Réparations (``Retry``) que la politique peut demander dans un run.
-    max_attempts: int = 1
+    # Réparations (``Retry``) que la politique peut demander pour une sortie ;
+    # None : la politique borne elle-même ses réparations.
+    max_attempts: int | None = 1
+
+
+type PolicyEvent = PolicyDecided | GuardChecked
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,17 +106,30 @@ class Verdict:
     ``decision`` est ``Continue`` si aucune politique n'a arrêté la chaîne
     (``subject`` porte alors les valeurs éventuellement remplacées), sinon la
     décision qui l'a arrêtée, et ``by`` la politique qui l'a rendue.
-    ``decided`` : les événements à écrire, dans l'ordre.
+    ``events`` : les événements à écrire, dans l'ordre (contrôles, puis décisions).
     """
 
     decision: Decision
     subject: PolicySubject
-    decided: tuple[PolicyDecided, ...] = ()
+    events: tuple[PolicyEvent, ...] = ()
     by: str | None = None
+
+    @property
+    def decided(self) -> tuple[PolicyDecided, ...]:
+        return tuple(e for e in self.events if isinstance(e, PolicyDecided))
+
+    @property
+    def checked(self) -> tuple[GuardChecked, ...]:
+        return tuple(e for e in self.events if isinstance(e, GuardChecked))
 
     @property
     def replaced(self) -> bool:
         return any(d.decision == "replace" for d in self.decided)
+
+    @property
+    def unverified(self) -> bool:
+        """Vrai si un contrôle a gardé la sortie sans qu'elle respecte son contrat."""
+        return any(c.resolution == "unverified" for c in self.checked)
 
 
 class Policies:
@@ -131,32 +154,40 @@ class Policies:
         call_id: str | None = None,
         ignore: frozenset[DecisionKind] = frozenset(),
         check_arguments: ArgumentsCheck | None = None,
+        attempts: Mapping[str, int] | None = None,
     ) -> Verdict:
         """Évalue la chaîne du point de ``subject``.
 
         ``ignore`` : décisions sans effet dans la situation (``Stop`` pendant
         la réponse forcée), traitées comme ``Continue`` et non journalisées.
         ``check_arguments`` vérifie des arguments remplacés (``before_tool``).
+        ``attempts`` : réparations déjà demandées par politique, quand elles se
+        comptent ailleurs que dans le run (par appel, pour un rôle).
         """
         point = subject.point
         current: PolicySubject = subject
-        decided: list[PolicyDecided] = []
+        decided: list[PolicyEvent] = []
         for bound in self.at(point):
             state = current.state
+            counts = attempts if attempts is not None else state.retries
             context = PolicyContext(
-                name=bound.name,
-                params=bound.params,
-                attempt=state.retries.get(bound.name, 0),
+                name=bound.name, params=bound.params, attempt=counts.get(bound.name, 0)
             )
             try:
-                decision = await self._decide(bound, current, context)
+                try:
+                    decision = await self._decide(bound, current, context)
+                finally:
+                    decided += [
+                        _checked(bound, check, call_id, context) for check in context.checks
+                    ]
                 if decision.kind in ignore:
                     continue
                 if isinstance(decision, Replace):
                     current = _replaced(current, decision.value, check_arguments)
-                if isinstance(decision, Retry) and context.attempt >= bound.max_attempts:
+                limit = bound.max_attempts
+                if isinstance(decision, Retry) and limit is not None and context.attempt >= limit:
                     decision = Fail(
-                        f"{bound.max_attempts} réparation(s) demandée(s) sans succès ; "
+                        f"{limit} réparation(s) demandée(s) sans succès ; "
                         f"dernier diagnostic : {decision.feedback}"
                     )
             except PolicyFailure as exc:
@@ -252,6 +283,23 @@ def _replaced(subject: PolicySubject, value: object, check: ArgumentsCheck | Non
             return dataclasses.replace(subject, output=value)
         case _:
             raise PolicyFailure(f"Replace impossible au point {subject.point}")
+
+
+def _checked(
+    bound: BoundPolicy, check: GuardCheck, call_id: str | None, context: PolicyContext
+) -> GuardChecked:
+    """``guard.checked`` d'un contrôle enregistré par une politique."""
+    return GuardChecked(
+        guard=check.guard,
+        target=check.target,
+        outcome=check.outcome,
+        reason=check.reason,
+        attempt=context.attempt + 1,
+        normalized=check.normalized,
+        resolution=check.resolution,
+        policy=bound.name,
+        call_id=call_id,
+    )
 
 
 def _event(

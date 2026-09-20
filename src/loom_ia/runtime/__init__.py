@@ -12,6 +12,7 @@ from loom_ia.runtime.wiring import (
     load_registry,
     prompt_text,
     role_definition,
+    stream_output,
     system_prompt,
 )
 
@@ -26,5 +27,6 @@ __all__ = [
     "load_registry",
     "prompt_text",
     "role_definition",
+    "stream_output",
     "system_prompt",
 ]

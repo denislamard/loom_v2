@@ -3,7 +3,9 @@
 
 ``safe_load`` puis validation stricte par les modèles Pydantic. Les chemins
 (``agents_dir``, ``prompts_dir``, journal, artefacts, ``cwd`` des serveurs
-MCP) sont relatifs au fichier de config et deviennent absolus au chargement.
+MCP, ``schema_file`` des contrats de sortie) sont relatifs au fichier de
+config et deviennent absolus au chargement ; un schéma de sortie donné par
+fichier (JSON ou YAML) est lu et vérifié à ce moment-là.
 Un serveur MCP stdio sans ``cwd`` se lance depuis le dossier de la config. Un
 ``system_file`` manquant, un modèle inconnu ou un agent en double arrêtent
 le démarrage.
@@ -15,10 +17,10 @@ from typing import Any, cast
 import yaml
 from pydantic import ValidationError
 
-from loom_ia.agents.spec import AgentSpec, BaseRole
+from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools
 from loom_ia.config.errors import ConfigError, from_validation
 from loom_ia.config.models import LoomConfig
-from loom_ia.core.model import McpServerSpec
+from loom_ia.core.model import McpServerSpec, OutputContract, ToolOverrides
 
 AGENT_SUFFIXES = (".yaml", ".yml")
 
@@ -32,9 +34,13 @@ def load_config(path: str | Path) -> LoomConfig:
 
     agents = [
         *draft.agents,
-        *_load_agents(base_dir / draft.agents_dir, base_dir / draft.prompts_dir),
+        *_load_agents(base_dir / draft.agents_dir, base_dir / draft.prompts_dir, base_dir),
     ]
     config = _validate(LoomConfig, {**data, "agents": agents}, source=root)
+    servers = tuple(
+        server.model_copy(update={"tools": _with_schemas(server.tools, base_dir, source=root)})
+        for server in config.mcp_servers
+    )
     return config.model_copy(
         update={
             "base_dir": base_dir,
@@ -42,7 +48,7 @@ def load_config(path: str | Path) -> LoomConfig:
             "prompts_dir": base_dir / config.prompts_dir,
             "storage": _absolute_storage(config, base_dir),
             "server": _absolute_server(config, base_dir),
-            "mcp_servers": tuple(_launched_from(server, base_dir) for server in config.mcp_servers),
+            "mcp_servers": tuple(_launched_from(server, base_dir) for server in servers),
         }
     )
 
@@ -55,14 +61,57 @@ def _launched_from(server: McpServerSpec, base_dir: Path) -> McpServerSpec:
     return server.model_copy(update={"cwd": cwd})
 
 
-def _load_agents(agents_dir: Path, prompts_dir: Path) -> list[AgentSpec]:
+def _load_agents(agents_dir: Path, prompts_dir: Path, base_dir: Path) -> list[AgentSpec]:
     if not agents_dir.is_dir():
         raise ConfigError(f"Dossier d'agents introuvable : {agents_dir}")
     agents: list[AgentSpec] = []
     for file in sorted(f for f in agents_dir.iterdir() if f.suffix in AGENT_SUFFIXES):
         spec = _validate(AgentSpec, _read_yaml(file), source=file)
-        agents.append(_with_prompts(spec, prompts_dir, source=file))
+        spec = _with_prompts(spec, prompts_dir, source=file)
+        agents.append(_with_contracts(spec, base_dir, source=file))
     return agents
+
+
+def _with_contracts(spec: AgentSpec, base_dir: Path, *, source: Path) -> AgentSpec:
+    """Schémas de sortie donnés par fichier, lus : agent, rôles, outils Python et MCP."""
+    roles = tuple(
+        role.model_copy(update={"output": _schema(role.output, base_dir, source=source)})
+        for role in spec.roles
+    )
+    tools = tuple(
+        tool.model_copy(update={"tools": _with_schemas(tool.tools, base_dir, source=source)})
+        if isinstance(tool, McpTools)
+        else tool.model_copy(update={"output": _schema(tool.output, base_dir, source=source)})
+        for tool in spec.tools
+    )
+    output = _schema(spec.output, base_dir, source=source)
+    return spec.model_copy(update={"output": output, "roles": roles, "tools": tools})
+
+
+def _with_schemas(
+    overrides: dict[str, ToolOverrides], base_dir: Path, *, source: Path
+) -> dict[str, ToolOverrides]:
+    return {
+        name: override.model_copy(
+            update={"output": _schema(override.output, base_dir, source=source)}
+        )
+        for name, override in overrides.items()
+    }
+
+
+def _schema(
+    contract: OutputContract | None, base_dir: Path, *, source: Path
+) -> OutputContract | None:
+    """Contrat dont le schéma donné par fichier est lu et vérifié."""
+    if contract is None or contract.schema_file is None:
+        return contract
+    path = base_dir / contract.schema_file
+    schema = _read_yaml(path)
+    fields = contract.model_dump(by_alias=True, exclude={"schema_file"})
+    try:
+        return OutputContract.model_validate({**fields, "schema": schema})
+    except ValidationError as exc:
+        raise from_validation(exc, source=path) from exc
 
 
 def _with_prompts(spec: AgentSpec, prompts_dir: Path, *, source: Path) -> AgentSpec:

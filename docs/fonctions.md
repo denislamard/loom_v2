@@ -265,12 +265,12 @@ Une décision non autorisée à un point donné est une erreur de config, détec
   - `Stop` : → `FINALIZING` ; à `after_model`, les appels de la réponse sont fermés en erreur sans être exécutés ; sans effet pendant la réponse forcée ;
   - `Fail` : → `FAILED`, `error_type` `policy.<nom>` ; à `after_tool`, après la fin du lot ;
   - `Retry` à `after_model` et `on_output` : tour de réparation de l'orchestrateur. Les appels de la réponse refusée sont fermés sans exécution, puis le diagnostic est écrit en `message.user` de `kind: repair` (« Réponse refusée par un contrôle (politique) : … »), sans outils si `Retry(tools=False)`. Une sortie terminale refusée revient à l'orchestrateur ;
-  - `Retry` à `after_tool` : le résultat revient à l'orchestrateur en erreur, avec le diagnostic ; la réparation d'un rôle par son propre modèle arrive en 3.2.
+  - `Retry` à `after_tool` : le résultat d'un outil revient à l'orchestrateur en erreur, avec le diagnostic ; depuis la phase 3.2, un rôle est réparé par son propre modèle (point 20).
 - **Où :** `before_model` dans l'étape d'appel du modèle ; `after_model` et `on_output` au moment de décider la suite d'une réponse, pour qu'une reprise les réévalue tant que leur décision n'est pas appliquée ; `before_tool` et `after_tool` dans l'exécuteur. Un appel repris après une interruption n'est pas réévalué : ses arguments remplacés sont repris du journal.
 - **Journal :** `policy.decided` (catégorie `policy`) : politique, point, décision, motif, `call_id` ; `attempt` et `tools` d'un `Retry` ; `arguments` d'un `Replace` d'arguments ; `output` d'un `Replace` de réponse finale ; `error`. Il est écrit avant son effet, dans le span de l'étape, de l'appel ou du run. `RunState` : compteurs `retries` par politique, `pending_repair` (réparation décidée, pas encore demandée), positions des diagnostics (exclus de l'historique de session avec la réponse refusée), `replaced_output`, `PendingCall.replaced_arguments`.
-- **Garde-fous :** délai par politique (5 s par défaut) ; `on_error: block` (défaut, donne `Fail`) ou `allow` (`policy.decided` de décision `continue` avec `error`, statut `warning`). Exception, délai dépassé, décision non déclarée ou non permise, valeur de remplacement du mauvais type : erreurs de la politique. `max_attempts` (1 par défaut) borne les `Retry` d'une politique dans un run ; au-delà, `Fail`.
+- **Garde-fous :** délai par politique (5 s par défaut) ; `on_error: block` (défaut, donne `Fail`) ou `allow` (`policy.decided` de décision `continue` avec `error`, statut `warning`). Exception, délai dépassé, décision non déclarée ou non permise, valeur de remplacement du mauvais type : erreurs de la politique. `max_attempts` (1 par défaut) borne les `Retry` d'une politique : dans le run à `after_model` et `on_output`, par appel à `after_tool` (depuis la phase 3.2, où le compteur du `RunState` ne compte plus que les réparations de l'orchestrateur) ; au-delà, `Fail`.
 - **Politique fournie :** `loom.require_tool` (backlog #012) impose `tool_choice: required` tant que le run n'a appelé aucun outil. Jamais en `FINALIZING` : le moteur remet `none`, quoi qu'une politique demande. `ToolChoice` gagne `required` : `{"type": "any"}` chez Anthropic, `"required"` chez OpenAI.
-- **Accès :** le déroulé (CLI `--stream`, progression MCP) a une ligne par décision ; SSE et `events()` portent les `policy.decided` ; `loom validate` liste les politiques. Avec `--stream`, une réponse remplacée après sa diffusion est réaffichée (« Réponse retenue ») ; la mise en tampon arrive avec `stream_output: after_guards` (3.2).
+- **Accès :** le déroulé (CLI `--stream`, progression MCP) a une ligne par décision ; SSE et `events()` portent les `policy.decided` ; `loom validate` liste les politiques. Avec `--stream` en diffusion `live`, une réponse remplacée après sa diffusion est réaffichée (« Réponse retenue ») ; depuis la phase 3.2, une réponse finale contrôlée n'est diffusée qu'après ses contrôles (`stream_output: after_guards`, point 11).
 
 ### 3. Boucle : machine à états pilotée par événements (option B)
 
@@ -478,6 +478,13 @@ Le LLM `main` n'est pas forcément Anthropic.
 
 **Voix (I3) :** la voix exige `live`. Les guards d'un agent vocal doivent être légers et compatibles avec le flux (règles incrémentales), ou ne s'appliquer qu'aux outils.
 
+**Réalisation (phase 3.2) :**
+
+- **Réglage :** `stream_output` par agent. Sans réglage, `after_guards` quand la réponse finale est contrôlée (contrat `output` de l'agent, politique au point `on_output`, rôle terminal sous contrat), `live` sinon (`runtime.stream_output`).
+- **`after_guards` :** les morceaux du modèle ne partent pas au fil de l'eau. Le texte d'une réponse qui appelle des outils part à la fin de cette réponse ; la réponse finale part une fois le run clos (`run.completed` écrit), qu'elle vienne de l'orchestrateur ou d'un rôle terminal. Une réponse refusée n'est jamais diffusée.
+- **`live` :** une réparation de la réponse finale envoie d'abord un `StreamReset`, pour que l'interface efface le texte déjà affiché (CLI : « · réponse reprise »).
+- **Rôle terminal (backlog #009) :** en `live`, quand il est seul dans le lot, ses morceaux partent vers `on_chunk`, réparations comprises (précédées d'un `StreamReset`). Leur attribution au rôle viendra avec le bus (`model.delta`, J4). La CLI n'affiche plus la sortie terminale à la fin du run : elle arrive par le flux dans les deux modes.
+
 ### 12. Ce que reçoit un rôle
 
 Par défaut, un rôle ne reçoit que ses arguments. Il peut en plus déclarer du contexte, pris dans une liste fixe, pour que l'orchestrateur n'ait pas à recopier l'information (tokens de sortie coûteux, risque de reformulation) :
@@ -510,6 +517,8 @@ La règle de V1 est conservée : un outil terminal n'est terminal que s'il est s
 5. **Plafond d'itérations :** si l'outil terminal termine le lot qui atteint `max_iterations`, il l'emporte sur `FINALIZING`.
 
 **Journal :** pas de duplication. `run.completed` référence le `tool.completed` terminal ; l'historique LLM affiche la sortie comme réponse finale, avec un marqueur à la place du résultat d'outil.
+
+**Réalisation (phase 3.2) :** la sortie d'un rôle terminal sous contrat est contrôlée, et réparée par le rôle, au point `after_tool`, avant d'être retenue ; le contrat `output` de l'agent, s'il en a un, s'applique ensuite au point `on_output`. Une sortie encore refusée après ses réparations (`on_failure: fail`) revient à l'orchestrateur en erreur : l'outil n'est alors pas terminal. L'objet JSON de la sortie est lu dans le `data` du `tool.completed` terminal (`RunResult.data`), sans duplication ; une sortie gardée malgré son contrat (`unverified`) rend le run `unverified`.
 
 ### 14. Images transmises aux rôles vision
 
@@ -677,6 +686,35 @@ model.responded → guard.checked (échec, motif, tentative 1)
 
 **Appel dédié à un autre modèle :** pas prévu en V2. La stratégie de réparation reste un objet interchangeable, pour pouvoir l'ajouter plus tard sans toucher au moteur.
 
+**Réalisation (phase 3.2) :**
+
+- **Contrat** (`OutputContract`, `core/model/contract.py`) : `output: {schema | schema_file, must_match, must_not_match, max_chars, normalize, repair: {max_attempts, tools}, on_failure, fallback_message}`. `schema_file` est relatif au dossier de la config (JSON ou YAML), lu et validé au chargement ; `normalize` vaut `true`, `repair` `{max_attempts: 1, tools: auto}`, `on_failure` `fail` ; `fallback` exige `fallback_message`. Une sortie vide échoue toujours. Le contrat se déclare sur l'agent (réponse finale), sur un rôle, sur un outil Python (`tools[].output`) ou sur un outil MCP (`mcp_servers[].tools.<outil>.output`, ou `tools: {<outil>: {output: …}}` dans la référence de l'agent, qui l'emporte).
+- **Politique fournie `loom.contract`** (`loom_ia.guards`) : branchée d'office en tête des politiques d'un agent dès qu'un contrat s'y applique ; `on_output` pour la réponse finale, `after_tool` pour un rôle ou un outil. Elle compte ses tentatives avec `repair.max_attempts` (le `max_attempts` des politiques ne s'applique pas). Un résultat déjà en erreur n'est pas contrôlé.
+- **Étape 0 :** retrait d'un bloc de code qui entoure toute la sortie ; quand un schéma est attendu et que la sortie n'est pas du JSON, extraction du premier bloc de code qui en contient, sinon du texte compris entre la première accolade (ou le premier crochet) et la dernière ; espaces de début et de fin retirés. Une sortie conforme une fois normalisée est remplacée (`Replace`, « sortie normalisée ») ; avec un schéma, l'objet validé va dans `data` (« objet JSON retenu » quand seul `data` change).
+- **Diagnostic :** la liste des problèmes (JSON invalide avec ligne et colonne, erreurs du schéma par chemin, motif absent ou interdit, longueur), le schéma attendu en JSON compact, et la consigne de ne renvoyer que la sortie corrigée.
+- **Réponse finale :** tour de réparation de l'orchestrateur (point 2), sans outils sauf `repair.tools: allowed` (`none` les retire toujours ; `auto` les retire pour un échec de forme, le seul qu'un contrat détecte).
+- **Rôle :** réparé par son propre modèle, à la suite de sa conversation : sa requête, sa réponse, puis le diagnostic en message utilisateur (« Réponse refusée par un contrôle (loom.contract) : … »), avec les mêmes délais. Chaque tentative est un `model.responded` du rôle (même `call_id`) suivi de son `guard.checked` ; les réparations se comptent par appel et n'entament pas celles de la réponse finale. Cela vaut pour tout `Retry` à `after_tool` sur un rôle. Un outil Python ou MCP n'est jamais réparé.
+- **Épuisement (`on_failure`) :**
+
+  | | Réponse finale | Rôle ou outil |
+  |---|---|---|
+  | `fail` | run `FAILED`, `error_type` `guard.contract` | résultat d'erreur pour l'orchestrateur (« Sortie non conforme à son contrat », diagnostic, sortie reçue) ; le run continue |
+  | `unverified` | réponse gardée (normalisée), `run.completed.unverified` | sortie gardée, `ToolOutput.unverified` |
+  | `fallback` | `fallback_message` devient la réponse | `fallback_message` devient le résultat |
+
+- **Sortie structurée (A7) :** avec un schéma, `run.completed.data` porte l'objet JSON de la réponse finale ; pour un rôle terminal, c'est le `data` de son `tool.completed`. Côté Python : `RunResult.data` et `RunResult.unverified`. Le schéma JSON natif du fournisseur (B9) est reporté en 3.5.
+- **Streaming :** voir point 11 (`after_guards` par défaut quand la réponse finale est contrôlée).
+- **Séquence pour un rôle réparé :**
+
+  ```
+  tool.called → model.responded (rôle) → guard.checked (failed, resolution: retry, tentative 1)
+  → policy.decided (retry, after_tool) → model.responded (rôle)
+  → guard.checked (passed, tentative 2) → policy.decided (replace : objet JSON retenu)
+  → tool.completed
+  ```
+
+- **Accès :** une ligne de déroulé par contrôle (« contrôle contract role:rediger_relance : non conforme, réparation demandée — … ») ; les `policy.decided` de `loom.contract` n'ont pas de ligne à eux.
+
 ### 21. Juge
 
 - **Juge qui utilise le même modèle que l'évalué :** avertissement, erreur en profil prod.
@@ -738,7 +776,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `tool.called` | tool_name, tool_kind, call_id, arguments, refs, child_run_id (sous-agent) |
 | `tool.completed` | tool_name, call_id, is_error, sortie (blocs ou réf.), latence, taille |
 | `tool.source_unavailable` | source (serveur MCP), erreur, required (voir point 19) |
-| `guard.checked` | guard, cible, outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized (voir points 20 et 21) |
+| `guard.checked` | guard, cible (`output`, `role:<nom>`, `tool:<nom>`), outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized, resolution (`retry`, `fail`, `unverified`, `fallback`), politique, call_id (voir points 20 et 21) |
 | `judge.evaluated` | modèle juge, scores par critère, bloquant, réussi |
 | `approval.requested` / `.granted` / `.rejected` / `.expired` | tool_name, call_id, arguments, auteur, motif, scope, expire_at (voir point 17) |
 | `artifact.stored` | uri, type MIME, taille |
@@ -751,7 +789,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `model.retried` | tentative, type d'erreur, délai (voir point 10) |
 | `model.fell_back` | ancien modèle, nouveau modèle, motif (voir point 10) |
 | `idempotency.recorded` | clé, call_id, résultat (voir point 49) |
-| `run.completed` / `.failed` / `.cancelled` | itérations, usage total, coût total, erreur |
+| `run.completed` / `.failed` / `.cancelled` | itérations, usage total, coût total, erreur ; `data` (objet JSON de la réponse finale) et `unverified` (voir point 20) |
 
 Les tokens streamés (`model.delta`) sont des événements éphémères : ils passent sur le bus mais ne sont pas persistés. Seule la réponse complète est écrite.
 

@@ -20,6 +20,7 @@ from typing import Final
 from loom_ia.core.events import (
     ArtifactStored,
     Event,
+    GuardChecked,
     PolicyDecided,
     RunCompleted,
     RunFailed,
@@ -47,6 +48,15 @@ DECISIONS: Final = {
     "pause": "pause",
     "stop": "arrêt",
     "fail": "échec",
+}
+
+
+# Issue d'un contrôle de sortie, telle qu'une ligne du déroulé la nomme.
+RESOLUTIONS: Final = {
+    "retry": "réparation demandée",
+    "fail": "refusée",
+    "unverified": "gardée, non vérifiée",
+    "fallback": "remplacée par le message de repli",
 }
 
 
@@ -80,6 +90,19 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
         case ToolSourceUnavailable():
             required = " (requis)" if payload.required else ""
             return f"serveur {payload.source} indisponible{required} : {payload.error}"
+        case GuardChecked(outcome="passed"):
+            normalized = " (après normalisation)" if payload.normalized else ""
+            return f"contrôle {payload.guard} {payload.target} : conforme{normalized}"
+        case GuardChecked(outcome="failed", resolution=resolution):
+            then = f", {RESOLUTIONS[resolution]}" if resolution is not None else ""
+            return (
+                f"contrôle {payload.guard} {payload.target} : non conforme{then} — {payload.reason}"
+            )
+        case GuardChecked():
+            return f"contrôle {payload.guard} {payload.target} : ignoré — {payload.reason}"
+        case PolicyDecided(policy="loom.contract"):
+            # La ligne du contrôle dit déjà tout.
+            return None
         case PolicyDecided():
             reason = f" — {payload.reason}" if payload.reason else ""
             return (

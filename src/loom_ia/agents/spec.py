@@ -3,9 +3,9 @@
 
 Sous-ensemble des jalons J1 à J3 : orchestrateur (``main``), outils Python,
 serveurs MCP, rôles délégués (dont le rôle vision, qui reçoit les pièces
-jointes), sous-agents et politiques (J3.1). Les guards, le juge et le budget
-arrivent avec leurs phases ; les déclarer aujourd'hui donne une erreur qui
-nomme la phase.
+jointes), sous-agents, politiques (J3.1) et contrats de sortie (J3.2). Le
+juge et le budget arrivent avec leurs phases ; les déclarer aujourd'hui donne
+une erreur qui nomme la phase.
 
 ``main`` est lui-même un rôle (C6) : il partage avec les rôles délégués le
 modèle, le prompt système et les réglages ``llm``.
@@ -36,7 +36,9 @@ from loom_ia.core.model import (
     Approval,
     DomainModel,
     HookPoint,
+    OutputContract,
     SideEffects,
+    StreamOutput,
     ToolOverrides,
     UnsupportedKey,
     reject_later,
@@ -48,17 +50,14 @@ AGENT_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 # Clés du schéma complet d'un agent, prévues pour plus tard (§17.4).
 LATER_AGENT: Final[dict[str, str]] = {
     "approval": "J4.3 (approbations)",
-    "output": "J3.2 (réponse structurée)",
     "judge": "J3.3 (juge)",
     "budget": "J3.4 (coûts et budgets)",
-    "stream_output": "J3.2 (guards de sortie)",
     "timeout": "J4.2 (cycle de vie des runs : délai, annulation)",
 }
 LATER_MAIN: Final[dict[str, str]] = {
     "fallbacks": "J3.5 (modèle de secours)",
 }
 LATER_ROLE: Final[dict[str, str]] = {
-    "output": "J3.2 (contrats de sortie)",
     "judge": "J3.3 (juge)",
     "fallbacks": "J3.5 (modèle de secours)",
 }
@@ -138,6 +137,8 @@ class RoleSpec(BaseRole):
     terminal: bool = False
     # Délai de l'appel ; sans lui, ceux du modèle et son retry le bornent.
     timeout: PositiveFloat | None = None
+    # Contrat de sortie (E5) : réparé par le modèle du rôle, puis ``on_failure``.
+    output: OutputContract | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -276,6 +277,9 @@ class PythonTool(DomainModel):
     idempotent: bool | None = None
     # Seuil de déport du résultat, en caractères (#16).
     offload_over: PositiveInt | None = None
+    # Contrat de sortie (E5) : sans réparation, un résultat non conforme revient
+    # à l'orchestrateur en erreur.
+    output: OutputContract | None = None
 
 
 class McpTools(DomainModel):
@@ -383,6 +387,12 @@ class AgentSpec(DomainModel):
     expose: Expose = Expose()
     main: MainRole
     max_iterations: PositiveInt = 10
+    # Contrat de la réponse finale (A7, E1) : réparée par l'orchestrateur.
+    output: OutputContract | None = None
+    # Diffusion de la réponse finale ; par défaut ``after_guards`` si elle est
+    # contrôlée (contrat, politique on_output, rôle terminal sous contrat),
+    # sinon ``live`` (#11).
+    stream_output: StreamOutput | None = None
     # Outils Python et serveurs MCP, dans l'ordre de déclaration.
     tools: tuple[ToolRef, ...] = ()
     roles: tuple[RoleSpec, ...] = ()
@@ -424,6 +434,16 @@ class AgentSpec(DomainModel):
                 "(donner un 'name' à l'une des références)"
             )
         return self
+
+    @property
+    def contracts(self) -> bool:
+        """Vrai si l'agent déclare un contrat de sortie (réponse, rôle ou outil)."""
+        return (
+            self.output is not None
+            or any(role.output is not None for role in self.roles)
+            or any(tool.output is not None for tool in self.python_tools)
+            or any(o.output is not None for ref in self.mcp_tools for o in ref.tools.values())
+        )
 
     @property
     def python_tools(self) -> tuple[PythonTool, ...]:

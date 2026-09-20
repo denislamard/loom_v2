@@ -7,6 +7,7 @@
 #                 GLM-5.3-Flash chez Together pour le rôle (clé dans TOGETHER_API_KEY).
 #
 # Phase 3.1 : politiques. Voir politiques.py (à côté) et agents/*.yaml.
+# Phase 3.2 : le rôle rend un JSON {objet, corps}, sous contrat de sortie.
 version: 1
 
 imports: [outils, politiques]     # modules voisins de ce fichier
@@ -48,6 +49,8 @@ models:
           forced: >-
             Devis D-2026-042 trouvé, relance non rédigée : plafond d'appels atteint.
   # Rôle simulé : il répond selon qu'on lui demande ou non de citer le numéro.
+  # Sa première réponse enveloppe le JSON dans du texte et un bloc de code : la
+  # normalisation du contrat de sortie l'en extrait (phase 3.2).
   - id: FAKE_ROLE
     sdk: fake
     model: fake-role
@@ -55,28 +58,16 @@ models:
       script:
         - without_text: Cite le numéro
           text: |-
-            Objet : votre projet de chauffe-eau
+            Voici l'e-mail de relance :
 
-            Bonjour Madame Martin,
-
-            Je reviens vers vous au sujet de notre proposition de 1 840 € pour le
-            remplacement de votre chauffe-eau, envoyée le 2 septembre. Avez-vous pu
-            en prendre connaissance ?
-
-            Bien cordialement,
-            Plomberie Dupont
+            ```json
+            {"objet": "Votre projet de chauffe-eau",
+             "corps": "Bonjour Madame Martin,\n\nJe reviens vers vous au sujet de notre proposition de 1 840 € pour le remplacement de votre chauffe-eau, envoyée le 2 septembre. Avez-vous pu en prendre connaissance ?\n\nBien cordialement,\nPlomberie Dupont"}
+            ```
         - with_text: Cite le numéro
-          text: |-
-            Objet : votre devis D-2026-042
-
-            Bonjour Madame Martin,
-
-            Je reviens vers vous au sujet du devis D-2026-042 de 1 840 € pour le
-            remplacement de votre chauffe-eau, envoyé le 2 septembre. Avez-vous pu
-            en prendre connaissance ? Je reste disponible pour en parler.
-
-            Bien cordialement,
-            Plomberie Dupont
+          text: >-
+            {"objet": "Votre devis D-2026-042",
+            "corps": "Bonjour Madame Martin,\n\nJe reviens vers vous au sujet du devis D-2026-042 de 1 840 € pour le remplacement de votre chauffe-eau, envoyé le 2 septembre. Avez-vous pu en prendre connaissance ? Je reste disponible pour en parler.\n\nBien cordialement,\nPlomberie Dupont"}
 
   # Tarifs en $ par million de tokens, relevés le 18/09/2026 (palier ≤ 512k tokens).
   - id: M3_MAIN

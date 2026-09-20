@@ -146,7 +146,7 @@ def test_cli_shows_roles_and_the_terminal_output(
     assert main(["--config", path, "validate"]) == 0
     assert "demo : modèle MAIN, 1 outil(s) Python, rôle rediger (ROLE)" in capsys.readouterr().out
 
-    # En direct, la sortie du rôle terminal ne passe pas par le flux du modèle.
+    # En direct, la sortie du rôle terminal est diffusée par le rôle lui-même (#009).
     assert main(["--config", path, "run", "demo", "Combien ?", "--stream"]) == 0
     captured = capsys.readouterr()
     assert captured.out.strip() == "Cela fait 87."
@@ -165,7 +165,7 @@ def broken(**changes: Any) -> dict[str, Any]:
         (broken(model="ABSENT"), "rôle 'rediger' : modèle 'ABSENT' non déclaré"),
         (broken(system_file="absent.md"), "roles[rediger].system_file — prompt introuvable"),
         (broken(system="x", system_file="rediger.md"), "ne peuvent pas être donnés ensemble"),
-        (broken(output={"max_chars": 10}), "'output' : prévu pour le jalon J3.2"),
+        (broken(output={"on_failure": "fallback"}), "demande un 'fallback_message'"),
         (broken(fallbacks=["MAIN"]), "'fallbacks' : prévu pour le jalon J3.5"),
         (
             broken(context=["user_input", {"tool_results": ["calculer"]}, "attachments"]),

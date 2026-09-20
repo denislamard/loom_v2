@@ -35,6 +35,19 @@ roles:
       Consignes : {{ args.consignes }}
     llm: {max_tokens: 2000, params: {temperature: 0.3}}
     terminal: true
+    # Contrat de sortie (phase 3.2) : un JSON {objet, corps}. Normalisé d'abord
+    # (bloc de code, texte autour) ; sinon le modèle du rôle répare une fois ;
+    # sinon l'orchestrateur reçoit une erreur avec le diagnostic.
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      repair: {max_attempts: 1}
+      on_failure: fail
 
 # Politiques (phase 3.1), dans l'ordre d'exécution à chaque point.
 policies:

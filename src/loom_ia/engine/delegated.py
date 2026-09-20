@@ -14,6 +14,12 @@ a des pièces jointes, ``artifact_read`` que si un résultat a été déporté, 
 sous-agent que si la profondeur le permet. ``available`` le dit ; un outil
 indisponible n'est pas montré au modèle.
 
+Un rôle peut être réparé (#20) : il rend, avec sa sortie, l'échange qui l'a
+produite (``Exchange`` : requête et réponse). Si une politique ``after_tool``
+refuse la sortie (``Retry``), l'exécuteur lui demande de réparer
+(``repair``) : le même modèle, dans la même conversation, reçoit le
+diagnostic et répond de nouveau.
+
 Un sous-agent lance un run enfant (``child_run_id``) : son identifiant est
 choisi avant l'appel et écrit dans le ``tool.called``, pour que la reprise
 retrouve l'enfant. L'enfant écrit dans le journal du parent, par le même
@@ -31,6 +37,8 @@ from pydantic import JsonValue
 from loom_ia.core.events import ModelResponded, ModelRetried
 from loom_ia.core.model import (
     ArtifactRefBlock,
+    Message,
+    ModelRequest,
     PendingCall,
     RunId,
     RunState,
@@ -39,7 +47,7 @@ from loom_ia.core.model import (
     ToolSpec,
     Usage,
 )
-from loom_ia.core.ports import ArtifactStore, ToolContext
+from loom_ia.core.ports import ArtifactStore, ChunkCallback, ToolContext
 from loom_ia.engine.refs import ResultIndex
 from loom_ia.engine.writer import SessionWriter
 
@@ -50,6 +58,17 @@ class Consumption:
 
     usage: Usage
     cost_usd: float
+
+
+@dataclass(frozen=True, slots=True)
+class Exchange:
+    """Conversation d'un appel délégué : la requête envoyée et la réponse retenue.
+
+    Gardée par l'exécuteur le temps de l'appel, pour une réparation.
+    """
+
+    request: ModelRequest
+    answer: Message
 
 
 # Ce qu'un outil délégué peut produire pendant son appel, avant son résultat.
@@ -70,6 +89,8 @@ class RunView:
     writer: SessionWriter | None = None
     spans: Mapping[str, SpanId] = field(default_factory=dict[str, SpanId])
     children: Mapping[str, RunId] = field(default_factory=dict[str, RunId])
+    # Diffusion en direct de la sortie d'un rôle terminal (backlog #009).
+    on_chunk: ChunkCallback | None = None
 
     @classmethod
     def of(
@@ -122,6 +143,18 @@ class DelegatedTool(ABC):
     @abstractmethod
     def run(
         self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
-    ) -> AsyncGenerator[DelegatedPayload | Consumption | ToolOutput]:
-        """Événements de l'appel, sa consommation s'il a un run enfant, puis son résultat."""
+    ) -> AsyncGenerator[DelegatedPayload | Consumption | Exchange | ToolOutput]:
+        """Événements de l'appel, sa consommation (run enfant), son échange, puis son résultat."""
         ...
+
+    def repair(
+        self,
+        exchange: Exchange,
+        feedback: str,
+        *,
+        policy: str,
+        context: ToolContext,
+        run: RunView,
+    ) -> AsyncGenerator[DelegatedPayload | Consumption | Exchange | ToolOutput] | None:
+        """Nouvelle réponse après un refus (``Retry``), ou None si l'outil ne se répare pas."""
+        return None

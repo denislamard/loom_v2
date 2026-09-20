@@ -32,8 +32,14 @@ du run) ; ``after_tool`` au résultat, avant ses fichiers et son déport
 (résultat remplacé, refusé ou échec du run). Chaque décision part dans la file
 du lot avant l'événement qu'elle concerne. Un appel déjà lancé et repris
 après une interruption n'est pas réévalué : ses arguments remplacés sont
-repris du journal. Un résultat refusé (``Retry``) revient à l'orchestrateur
-en erreur, avec le diagnostic : c'est lui qui a écrit l'appel.
+repris du journal. Un résultat refusé (``Retry``) est réparé par son auteur :
+un rôle par son propre modèle, dans la même conversation (``repair``),
+tant que la politique le demande ; les réparations se comptent par appel.
+Un outil qui ne se répare pas renvoie son résultat à l'orchestrateur en
+erreur, avec le diagnostic : c'est lui qui a écrit l'appel.
+
+Diffusion (backlog #009) : un rôle terminal seul dans son lot diffuse sa
+sortie en direct si l'agent diffuse en ``live`` (``on_chunk``).
 """
 
 import asyncio
@@ -51,6 +57,7 @@ from pydantic import JsonValue
 
 from loom_ia.core.events import (
     ArtifactStored,
+    GuardChecked,
     PolicyDecided,
     ToolCalled,
     ToolCompleted,
@@ -82,6 +89,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import (
     ArtifactStore,
+    ChunkCallback,
     SourceContext,
     SourceUnavailable,
     Tool,
@@ -89,7 +97,13 @@ from loom_ia.core.ports import (
     ToolError,
     ToolSource,
 )
-from loom_ia.engine.delegated import Consumption, DelegatedPayload, DelegatedTool, RunView
+from loom_ia.engine.delegated import (
+    Consumption,
+    DelegatedPayload,
+    DelegatedTool,
+    Exchange,
+    RunView,
+)
 from loom_ia.engine.hooks import Policies, Verdict
 from loom_ia.engine.media import size_label
 from loom_ia.engine.offload import (
@@ -136,10 +150,10 @@ class Stored:
 
 @dataclass(frozen=True, slots=True)
 class Decided:
-    """Décision d'une politique d'outil, à écrire avant l'événement qu'elle concerne."""
+    """Décision ou contrôle d'une politique d'outil, à écrire avant l'événement concerné."""
 
     call_id: str
-    payload: PolicyDecided
+    payload: PolicyDecided | GuardChecked
 
 
 type ToolEvent = ToolCalled | ToolCompleted | Stored | Delegated | Decided
@@ -319,16 +333,22 @@ class ToolExecutor:
         writer: SessionWriter | None = None,
         spans: Mapping[str, SpanId] | None = None,
         policies: Policies | None = None,
+        on_chunk: ChunkCallback | None = None,
     ) -> AsyncGenerator[ToolEvent]:
         """Traite les appels en attente du run et émet leurs événements.
 
         ``writer`` et ``spans`` servent aux sous-agents : le journal où écrire
         leur run, et le span de leur appel. ``policies`` : celles de l'agent.
         Une décision ``Fail`` à ``before_tool`` arrête le lot avant tout
-        lancement.
+        lancement. ``on_chunk`` : diffusion en direct, pour un rôle terminal
+        seul dans son lot.
         """
         policies = policies or Policies()
         view = self.view(state, writer=writer, spans=spans)
+        if on_chunk is not None and len(state.pending_calls) == 1:
+            alone = self._tools.get(state.pending_calls[0].name)
+            if isinstance(alone, DelegatedTool) and alone.spec.terminal:
+                view = replace(view, on_chunk=on_chunk)
         ready: list[_Ready] = []
         for call in state.pending_calls:
             tool = self._tools.get(call.name)
@@ -484,26 +504,17 @@ class ToolExecutor:
             caller=state.context,
         )
         started = time.perf_counter()
-        scope = asyncio.timeout(timeout)
         consumption: Consumption | None = None
-        try:
-            async with scope:
-                if isinstance(tool, DelegatedTool):
-                    output, consumption = await _delegate(tool, item.arguments, context, view, emit)
-                else:
-                    output = await tool.invoke(item.arguments, context)
-        except TimeoutError as exc:
-            if scope.expired():
-                output = ToolOutput.error(f"Délai dépassé : pas de réponse en {timeout:g} s.")
-            else:
-                # TimeoutError levée par l'outil lui-même.
-                output = _unexpected(spec.name, exc, state)
-        except ToolError as exc:
-            output = ToolOutput.error(exc.message)
-        except Exception as exc:
-            output = _unexpected(spec.name, exc, state)
+        exchange: Exchange | None = None
+        if isinstance(tool, DelegatedTool):
+            produced = tool.run(item.arguments, context, view)
+            output, consumption, exchange = await _delegated(
+                produced, tool, context, emit, timeout, state
+            )
+        else:
+            output = await _invoked(tool, item.arguments, context, timeout, state)
         if policies:
-            output = await self._after_tool(item, output, view, emit, policies)
+            output = await self._after_tool(item, output, exchange, context, view, emit, policies)
         output = await self._settle(output, spec, call.call_id, view, emit)
         emit(_completed(call, output, started=started, consumption=consumption))
 
@@ -511,40 +522,64 @@ class ToolExecutor:
         self,
         item: _Ready,
         output: ToolOutput,
+        exchange: Exchange | None,
+        context: ToolContext,
         view: RunView,
         emit: Callable[[ToolEvent], None],
         policies: Policies,
     ) -> ToolOutput:
-        """Politiques ``after_tool`` : résultat gardé, remplacé ou refusé.
+        """Politiques ``after_tool`` : résultat gardé, remplacé, réparé ou refusé.
 
-        Un ``Fail`` laisse le résultat tel quel : le run échouera à la fin du lot.
+        Un rôle refusé (``Retry``) est réparé par son modèle, puis contrôlé de
+        nouveau ; ses réparations se comptent dans l'appel. Un ``Fail`` laisse
+        le résultat tel quel : le run échouera à la fin du lot.
         """
-        call = item.call
-        verdict = await policies.run(
-            AfterTool(
-                state=view.state,
-                call=call,
-                spec=item.tool.spec,
-                arguments=item.arguments,
-                output=output,
-            ),
-            call_id=call.call_id,
-        )
-        for decided in verdict.decided:
-            emit(Decided(call_id=call.call_id, payload=decided))
-        match verdict.decision:
-            case Retry(feedback=feedback):
-                refused = TextBlock(text=f"Résultat refusé ({verdict.by}) : {feedback}")
-                return output.model_copy(
-                    update={"blocks": (refused, *output.blocks), "is_error": True, "data": None}
-                )
-            case Fail():
-                return output
-            case _:
-                pass
-        if isinstance(verdict.subject, AfterTool):
-            return verdict.subject.output
-        return output
+        call, tool = item.call, item.tool
+        attempts: dict[str, int] = {}
+        while True:
+            verdict = await policies.run(
+                AfterTool(
+                    state=view.state,
+                    call=call,
+                    spec=tool.spec,
+                    arguments=item.arguments,
+                    output=output,
+                ),
+                call_id=call.call_id,
+                attempts=attempts,
+            )
+            for event in verdict.events:
+                emit(Decided(call_id=call.call_id, payload=event))
+            match verdict.decision:
+                case Retry(feedback=feedback) if verdict.by is not None:
+                    repaired = (
+                        tool.repair(
+                            exchange, feedback, policy=verdict.by, context=context, run=view
+                        )
+                        if isinstance(tool, DelegatedTool) and exchange is not None
+                        else None
+                    )
+                    if repaired is None or not isinstance(tool, DelegatedTool):
+                        refused = TextBlock(text=f"Résultat refusé ({verdict.by}) : {feedback}")
+                        return output.model_copy(
+                            update={
+                                "blocks": (refused, *output.blocks),
+                                "is_error": True,
+                                "data": None,
+                            }
+                        )
+                    attempts[verdict.by] = attempts.get(verdict.by, 0) + 1
+                    output, _, exchange = await _delegated(
+                        repaired, tool, context, emit, tool.spec.timeout, view.state
+                    )
+                    continue
+                case Fail():
+                    return output
+                case _:
+                    pass
+            if isinstance(verdict.subject, AfterTool):
+                return verdict.subject.output
+            return output
 
     async def _settle(
         self,
@@ -651,28 +686,74 @@ class ToolExecutor:
         return offloaded(output, uri=uri, content=content, refs=self.shows_refs(view))
 
 
-async def _delegate(
-    tool: DelegatedTool,
+async def _invoked(
+    tool: Tool,
     arguments: dict[str, JsonValue],
     context: ToolContext,
-    view: RunView,
+    limit: float | None,
+    state: RunState,
+) -> ToolOutput:
+    """Exécute un outil ordinaire avec son délai ; toute erreur devient un résultat d'erreur."""
+    scope = asyncio.timeout(limit)
+    try:
+        async with scope:
+            return await tool.invoke(arguments, context)
+    except TimeoutError as exc:
+        if scope.expired():
+            return ToolOutput.error(f"Délai dépassé : pas de réponse en {limit:g} s.")
+        # TimeoutError levée par l'outil lui-même.
+        return _unexpected(tool.spec.name, exc, state)
+    except ToolError as exc:
+        return ToolOutput.error(exc.message)
+    except Exception as exc:
+        return _unexpected(tool.spec.name, exc, state)
+
+
+async def _delegated(
+    produced: AsyncGenerator[DelegatedPayload | Consumption | Exchange | ToolOutput],
+    tool: DelegatedTool,
+    context: ToolContext,
     emit: Callable[[ToolEvent], None],
-) -> tuple[ToolOutput, Consumption | None]:
-    """Déroule un outil délégué : ses événements sont émis, son résultat renvoyé."""
+    limit: float | None,
+    state: RunState,
+) -> tuple[ToolOutput, Consumption | None, Exchange | None]:
+    """Déroule un outil délégué (appel ou réparation) avec son délai.
+
+    Ses événements sont émis ; son résultat, sa consommation et son échange
+    sont renvoyés. Toute erreur devient un résultat d'erreur.
+    """
     output: ToolOutput | None = None
     consumption: Consumption | None = None
-    async with aclosing(tool.run(arguments, context, view)) as produced:
-        async for item in produced:
-            match item:
-                case ToolOutput():
-                    output = item
-                case Consumption():
-                    consumption = item
-                case _:
-                    emit(Delegated(call_id=context.call_id, role=tool.spec.name, payload=item))
+    exchange: Exchange | None = None
+    scope = asyncio.timeout(limit)
+    try:
+        async with scope, aclosing(produced) as items:
+            async for item in items:
+                match item:
+                    case ToolOutput():
+                        output = item
+                    case Consumption():
+                        consumption = item
+                    case Exchange():
+                        exchange = item
+                    case _:
+                        emit(Delegated(call_id=context.call_id, role=tool.spec.name, payload=item))
+    except TimeoutError as exc:
+        if scope.expired():
+            output = ToolOutput.error(f"Délai dépassé : pas de réponse en {limit:g} s.")
+        else:
+            output = _unexpected(tool.spec.name, exc, state)
+    except ToolError as exc:
+        output = ToolOutput.error(exc.message)
+    except Exception as exc:
+        output = _unexpected(tool.spec.name, exc, state)
     if output is None:
-        raise RuntimeError(f"Outil délégué {tool.spec.name} terminé sans résultat")
-    return output, consumption
+        output = _unexpected(
+            tool.spec.name,
+            RuntimeError(f"Outil délégué {tool.spec.name} terminé sans résultat"),
+            state,
+        )
+    return output, consumption, exchange
 
 
 def _offered(tool: AnyTool, run: RunView) -> bool:

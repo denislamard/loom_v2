@@ -37,12 +37,23 @@ puis écrit le diagnostic (``message.user`` de ``kind: repair``) : le modèle
 répond de nouveau, sans outils si la politique l'a demandé. Les politiques
 d'outils sont appliquées par l'exécuteur.
 
+Contrats et diffusion (#20, #11) : les guards sont des politiques ; leurs
+contrôles (``guard.checked``) précèdent leurs décisions dans le journal. Une
+réponse finale structurée (schéma de sortie de l'agent) porte son objet
+JSON dans ``run.completed`` ; une réponse gardée hors contrat y est marquée
+``unverified``. Avec ``stream_output: live``, les morceaux du modèle partent
+au fil de l'eau, et une réparation envoie d'abord un ``StreamReset`` ; avec
+``after_guards``, le texte d'une réponse qui appelle des outils part à la fin
+de cette réponse, et la réponse finale seulement une fois ses contrôles
+passés, qu'elle vienne de l'orchestrateur ou d'un rôle terminal.
+
 Pièces jointes (G1) : validées avant tout écrit (signature binaire, type,
 taille), rangées dans le stockage d'artefacts, annoncées par un
 ``artifact.stored`` chacune, puis jointes au message de l'utilisateur en
 références. Chaque appel de modèle les résout selon ses capacités (#14).
 """
 
+import json
 import logging
 import time
 from collections.abc import AsyncGenerator, Mapping, Sequence
@@ -57,6 +68,7 @@ from loom_ia.core.events import (
     Effect,
     Event,
     EventDraft,
+    GuardChecked,
     ModelResponded,
     ModelRetried,
     PolicyDecided,
@@ -87,6 +99,7 @@ from loom_ia.core.model import (
     ModelResponse,
     ModelSpec,
     OnOutput,
+    OutputContract,
     PendingRepair,
     Retry,
     RunId,
@@ -95,8 +108,11 @@ from loom_ia.core.model import (
     SessionId,
     SpanId,
     Stop,
+    StreamOutput,
+    StreamReset,
     TenantId,
     TextBlock,
+    TextDelta,
     ToolCallBlock,
     ToolOutput,
     ToolResultBlock,
@@ -159,8 +175,12 @@ class RunContext:
     # Écrivain du journal, posé par ``drive`` pour le run en cours : les
     # sous-agents écrivent leur run avec lui.
     writer: SessionWriter | None = None
-    # Politiques de l'agent, dans l'ordre déclaré (#1, #2).
+    # Politiques de l'agent, dans l'ordre déclaré (#1, #2) ; les guards en tête.
     policies: Policies = field(default_factory=Policies)
+    # Contrat de la réponse finale : son schéma donne la réponse structurée (A7).
+    output: OutputContract | None = None
+    # Diffusion de la réponse finale : au fil de l'eau, ou après ses contrôles (#11).
+    stream_output: StreamOutput = "live"
 
     @property
     def artifacts(self) -> ArtifactStore | None:
@@ -340,11 +360,21 @@ async def drive(
                 async for draft in drafts:
                     await write(draft)
                     emitted += 1
+                    if isinstance(draft.payload, RunCompleted):
+                        await _release(ctx, state)
             if emitted == 0:
                 raise RuntimeError(
                     f"Run {run_id} : aucune progression depuis l'état {state.status}"
                 )
     return state
+
+
+async def _release(ctx: RunContext, state: RunState) -> None:
+    """``after_guards`` : la réponse finale, contrôlée, part dans le flux une fois le run clos."""
+    if ctx.on_chunk is None or ctx.stream_output != "after_guards" or state.output is None:
+        return
+    if state.output.text:
+        await ctx.on_chunk(TextDelta(text=state.output.text))
 
 
 async def step(
@@ -404,7 +434,8 @@ async def _decide(
             return [scope.draft(_completed(state, state.replaced_output, terminal=terminal))]
         case RunStatus.COMPLETED if not state.finished:
             output = state.replaced_output or (last if answered else None)
-            return [scope.draft(_completed(state, output))]
+            data = _structured(ctx.output, output) if output is not None else None
+            return [scope.draft(_completed(state, output, data=data))]
         case RunStatus.FAILED if not state.finished:
             return [
                 scope.draft(
@@ -446,13 +477,14 @@ async def _review(
         AfterModel(state=state, response=answer, finalizing=finalizing),
         ignore=frozenset({"stop"}) if finalizing else frozenset(),
     )
-    drafts = [scope.draft(decided) for decided in verdict.decided]
+    drafts = [scope.draft(event) for event in verdict.events]
     reason = _stopping(verdict, drafts)
     match verdict.decision:
         case Retry():
+            await _reset(ctx, state)
             return [*drafts, *_repair(state, ctx, scope, _pending_repair(verdict), reason)]
         case Fail(error=error):
-            return [*drafts, *_fail(state, scope, f"policy.{verdict.by}", error, reason)]
+            return [*drafts, *_fail(state, scope, _failure_type(verdict), error, reason)]
         case Stop(reason=why) if state.pending_calls:
             return [
                 *drafts,
@@ -485,25 +517,53 @@ async def _final(
         tool=None if terminal is None else terminal.name,
     )
     verdict = await ctx.policies.run(subject)
-    drafts = [scope.draft(decided) for decided in verdict.decided]
+    drafts = [scope.draft(event) for event in verdict.events]
     reason = _stopping(verdict, drafts)
     match verdict.decision:
         case Retry():
+            await _reset(ctx, state)
             return [*drafts, *_repair(state, ctx, scope, _pending_repair(verdict), reason)]
         case Fail(error=error):
-            return [*drafts, *_fail(state, scope, f"policy.{verdict.by}", error, reason)]
+            return [*drafts, *_fail(state, scope, _failure_type(verdict), error, reason)]
         case _:
             pass
     final = verdict.subject.output if isinstance(verdict.subject, OnOutput) else output
     replaced = verdict.replaced
+    data = _structured(ctx.output, final)
     completion = _transition(state, scope, RunStatus.COMPLETED, cause)
     if terminal is not None:
         closing = _completed(
-            state, final if replaced else None, terminal=_terminal_event(state, cause)
+            state,
+            final if replaced else None,
+            terminal=_terminal_event(state, cause),
+            data=data,
+            unverified=verdict.unverified,
         )
     else:
-        closing = _completed(state, final)
+        closing = _completed(state, final, data=data, unverified=verdict.unverified)
     return [*drafts, completion, scope.draft(closing)]
+
+
+async def _reset(ctx: RunContext, state: RunState) -> None:
+    """En diffusion ``live``, la réponse refusée a déjà été diffusée : elle doit être effacée."""
+    if ctx.on_chunk is not None and ctx.stream_output == "live":
+        await ctx.on_chunk(StreamReset(attempt=state.iterations + 1))
+
+
+def _failure_type(verdict: Verdict) -> str:
+    """Type d'erreur d'un échec : celui du guard qui l'a décidé, sinon celui de la politique."""
+    failed = next((c for c in verdict.checked if c.resolution == "fail"), None)
+    return f"guard.{failed.guard}" if failed is not None else f"policy.{verdict.by}"
+
+
+def _structured(contract: OutputContract | None, output: Message) -> JsonValue:
+    """Objet JSON de la réponse finale quand l'agent déclare un schéma de sortie (A7)."""
+    if contract is None or contract.json_schema is None:
+        return None
+    try:
+        return json.loads(output.text)
+    except json.JSONDecodeError:
+        return None
 
 
 def _stopping(verdict: Verdict, drafts: list[EventDraft]) -> EventDraft | None:
@@ -643,7 +703,12 @@ def _terminal_event(state: RunState, cause: Event | None) -> Event:
 
 
 def _completed(
-    state: RunState, output: Message | None, *, terminal: Event | None = None
+    state: RunState,
+    output: Message | None,
+    *,
+    terminal: Event | None = None,
+    data: JsonValue = None,
+    unverified: bool = False,
 ) -> RunCompleted:
     return RunCompleted(
         output=output,
@@ -651,6 +716,8 @@ def _completed(
         iterations=state.iterations,
         usage=state.usage,
         cost_usd=state.cost_usd,
+        data=data,
+        unverified=unverified or state.unverified,
     )
 
 
@@ -680,7 +747,12 @@ class _Step:
 
     def draft(
         self,
-        payload: StepStarted | StepCompleted | ModelResponded | ModelRetried | PolicyDecided,
+        payload: StepStarted
+        | StepCompleted
+        | ModelResponded
+        | ModelRetried
+        | PolicyDecided
+        | GuardChecked,
     ) -> EventDraft:
         # Les appels de modèle de l'orchestrateur sont ceux du rôle ``main`` (C6).
         role = MAIN_ROLE if isinstance(payload, ModelResponded | ModelRetried) else None
@@ -732,7 +804,7 @@ async def _model_step(
         BeforeModel(state=state, request=request, finalizing=forced),
         ignore=frozenset({"stop"}) if forced else frozenset(),
     )
-    decided = [current.draft(payload) for payload in verdict.decided]
+    decided = [current.draft(payload) for payload in verdict.events]
     for draft in decided:
         yield draft
     emitted += len(decided)
@@ -744,7 +816,7 @@ async def _model_step(
             return
         case Fail(error=error):
             yield current.completed(emitted, ok=False)
-            for draft in _fail(state, scope, f"policy.{verdict.by}", error, reason):
+            for draft in _fail(state, scope, _failure_type(verdict), error, reason):
                 yield draft
             return
         case _:
@@ -760,7 +832,9 @@ async def _model_step(
         )
         request = request.model_copy(update={"tool_choice": "none"})
     try:
-        call = ModelCall(ctx.model, spec, on_chunk=ctx.on_chunk, artifacts=ctx.artifacts)
+        # En after_guards, rien ne part pendant l'appel : la réponse est d'abord contrôlée.
+        live = ctx.on_chunk if ctx.stream_output == "live" else None
+        call = ModelCall(ctx.model, spec, on_chunk=live, artifacts=ctx.artifacts)
         async with aclosing(call.run(request)) as outcomes:
             async for outcome in outcomes:
                 attempts += 1
@@ -796,6 +870,10 @@ async def _model_step(
         )
         kept = tuple(b for b in message.blocks if not isinstance(b, ToolCallBlock))
         message = message.model_copy(update={"blocks": kept or (TextBlock(text=""),)})
+    if ctx.on_chunk is not None and live is None and message.tool_calls and message.text:
+        # after_guards : le texte d'une réponse qui appelle des outils n'est pas la
+        # réponse finale ; il part dès que la réponse est complète.
+        await ctx.on_chunk(TextDelta(text=message.text))
     yield current.draft(
         responded(
             request,
@@ -821,7 +899,13 @@ async def _tool_step(
     emitted = 0
     # Décision ``Fail`` d'une politique d'outil : le run échoue à la fin du lot.
     failure: tuple[EventDraft, PolicyDecided] | None = None
-    batch = ctx.tools.run_batch(state, writer=ctx.writer, spans=spans, policies=ctx.policies)
+    batch = ctx.tools.run_batch(
+        state,
+        writer=ctx.writer,
+        spans=spans,
+        policies=ctx.policies,
+        on_chunk=ctx.on_chunk if ctx.stream_output == "live" else None,
+    )
     async with aclosing(batch) as events:
         async for item in events:
             span = spans.setdefault(item.call_id, new_span_id())
@@ -830,8 +914,13 @@ async def _tool_step(
                 yield scope.draft(item.payload, span_id=inner, parent_span_id=span, role=item.role)
             elif isinstance(item, Stored | Decided):
                 draft = scope.draft(item.payload, span_id=span, parent_span_id=current.span)
-                if isinstance(item, Decided) and item.payload.decision == "fail" and not failure:
-                    failure = draft, item.payload
+                payload = item.payload
+                if (
+                    isinstance(payload, PolicyDecided)
+                    and payload.decision == "fail"
+                    and not failure
+                ):
+                    failure = draft, payload
                 yield draft
             else:
                 yield scope.draft(item, span_id=span, parent_span_id=current.span)

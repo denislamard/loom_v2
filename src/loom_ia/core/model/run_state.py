@@ -83,7 +83,8 @@ class RunState(DomainModel):
     # Fichiers du run (pièces jointes, sorties d'outils, déports), une fois par URI.
     artifacts: tuple[ArtifactRecord, ...] = ()
 
-    # Réparations demandées par chaque politique (``Retry``), bornées par son ``max_attempts``.
+    # Réparations de l'orchestrateur demandées par chaque politique (``Retry`` à
+    # ``after_model`` ou ``on_output``), bornées par son ``max_attempts``.
     retries: dict[str, NonNegativeInt] = Field(default_factory=dict[str, NonNegativeInt])
     # ``Retry`` journalisé dont le message de réparation n'est pas encore écrit.
     pending_repair: PendingRepair | None = None
@@ -96,6 +97,10 @@ class RunState(DomainModel):
     replaced_output: Message | None = None
 
     output: Message | None = None
+    # Réponse finale structurée : l'objet JSON validé par le schéma de sortie (A7).
+    output_data: JsonValue = None
+    # Réponse finale gardée bien qu'elle ne respecte pas un contrat (``unverified``).
+    unverified: bool = False
     # Appel dont le résultat est devenu la réponse finale (#13).
     terminal_call_id: str | None = None
     error: str | None = None

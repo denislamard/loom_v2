@@ -37,6 +37,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Self
 
+from pydantic import JsonValue
+
 from loom_ia.adapters.stores import NotifyingEventStore
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import AgentSpec
@@ -103,6 +105,10 @@ class RunResult(DomainModel):
     cost_usd: float = 0.0
     # Fichiers du run : pièces jointes, fichiers produits par les outils, déports (G3).
     artifacts: tuple[ArtifactRecord, ...] = ()
+    # Réponse structurée : l'objet JSON validé par le schéma de sortie (A7).
+    data: JsonValue = None
+    # Réponse gardée bien qu'elle ne respecte pas son contrat (``on_failure: unverified``).
+    unverified: bool = False
 
     @classmethod
     def of(cls, state: RunState) -> Self:
@@ -118,6 +124,8 @@ class RunResult(DomainModel):
             usage=state.usage,
             cost_usd=state.cost_usd,
             artifacts=state.artifacts,
+            data=state.output_data,
+            unverified=state.unverified,
         )
 
     @property

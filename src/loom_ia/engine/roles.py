@@ -35,6 +35,14 @@ Appel : ``model.retried`` et ``model.responded`` sont journalisés dans le span
 de l'appel, avec son ``call_id``. Une erreur du modèle, après ses nouvelles
 tentatives, ou une sortie vide deviennent un résultat d'erreur pour
 l'orchestrateur (D5).
+
+Réparation (#20) : un rôle rend aussi l'échange qui a produit sa sortie. Si
+une politique la refuse (contrat de sortie…), le même modèle reçoit, à la
+suite de sa conversation, sa réponse puis le diagnostic, et répond de
+nouveau ; chaque réponse est journalisée dans le span de l'appel.
+
+Diffusion (backlog #009) : un rôle terminal appelé seul diffuse sa sortie en
+direct quand l'agent diffuse en ``live`` (``RunView.on_chunk``).
 """
 
 import json
@@ -48,11 +56,14 @@ from typing import Final, Literal
 from pydantic import JsonValue
 
 from loom_ia.core.model import (
+    REPAIR_PREFIX,
     ContentBlock,
     Message,
     ModelRequest,
     ModelResponse,
     ModelSpec,
+    OutputContract,
+    StreamReset,
     TextBlock,
     ToolCallBlock,
     ToolOutput,
@@ -60,7 +71,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import ModelClient, ModelError, ToolContext
 from loom_ia.core.template import Template
-from loom_ia.engine.delegated import DelegatedPayload, DelegatedTool, RunView
+from loom_ia.engine.delegated import DelegatedPayload, DelegatedTool, Exchange, RunView
 from loom_ia.engine.media import describe
 from loom_ia.engine.model_call import ModelCall, responded
 from loom_ia.engine.refs import RefError
@@ -99,6 +110,8 @@ class RoleDefinition:
     terminal: bool = False
     # Délai de l'appel ; sans lui, ceux du modèle et son retry le bornent.
     timeout: float | None = None
+    # Contrat de sortie du rôle (E5) : réparé par son propre modèle.
+    output: OutputContract | None = None
     # Réglages propres au rôle (B6) : remplacent ceux du modèle.
     max_tokens: int | None = None
     params: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
@@ -119,6 +132,7 @@ class RoleTool(DelegatedTool):
             side_effects="none",
             timeout=definition.timeout,
             terminal=definition.terminal,
+            output=definition.output,
         )
 
     @property
@@ -197,7 +211,7 @@ class RoleTool(DelegatedTool):
 
     async def run(
         self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
-    ) -> AsyncGenerator[DelegatedPayload | ToolOutput]:
+    ) -> AsyncGenerator[DelegatedPayload | Exchange | ToolOutput]:
         role, spec = self.definition, self.model_spec
         built = await self.message(arguments, run)
         if isinstance(built, str):
@@ -210,11 +224,41 @@ class RoleTool(DelegatedTool):
             max_tokens=role.max_tokens or spec.max_tokens,
             params={**spec.params, **role.params},
         )
+        async with aclosing(self._call(request, context, run)) as produced:
+            async for item in produced:
+                yield item
+
+    async def repair(
+        self,
+        exchange: Exchange,
+        feedback: str,
+        *,
+        policy: str,
+        context: ToolContext,
+        run: RunView,
+    ) -> AsyncGenerator[DelegatedPayload | Exchange | ToolOutput]:
+        """Même modèle, même conversation : sa réponse, puis le diagnostic (#20)."""
+        diagnostic = Message.user(f"{REPAIR_PREFIX} ({policy}) : {feedback}")
+        request = exchange.request.model_copy(
+            update={"messages": (*exchange.request.messages, exchange.answer, diagnostic)}
+        )
+        if run.on_chunk is not None:
+            # La sortie déjà diffusée est refusée : elle doit être effacée.
+            await run.on_chunk(StreamReset(attempt=len(request.messages) // 2 + 1))
+        async with aclosing(self._call(request, context, run)) as produced:
+            async for item in produced:
+                yield item
+
+    async def _call(
+        self, request: ModelRequest, context: ToolContext, run: RunView
+    ) -> AsyncGenerator[DelegatedPayload | Exchange | ToolOutput]:
+        """Un appel du modèle du rôle : ses événements, l'échange, puis la sortie."""
+        role, spec = self.definition, self.model_spec
         started = time.perf_counter()
         attempts = 0
         response: ModelResponse | None = None
         try:
-            call = ModelCall(self.model, spec, artifacts=run.artifacts)
+            call = ModelCall(self.model, spec, on_chunk=run.on_chunk, artifacts=run.artifacts)
             async with aclosing(call.run(request)) as outcomes:
                 async for outcome in outcomes:
                     attempts += 1
@@ -248,6 +292,7 @@ class RoleTool(DelegatedTool):
             message=message,
             call_id=context.call_id,
         )
+        yield Exchange(request=request, answer=message)
         if not message.text.strip():
             yield ToolOutput.error(
                 f"Le rôle {role.name} n'a rien produit (arrêt : {response.stop_reason})."

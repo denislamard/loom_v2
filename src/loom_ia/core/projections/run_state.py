@@ -23,6 +23,7 @@ from collections.abc import Iterable
 from loom_ia.core.events import (
     ArtifactStored,
     Event,
+    GuardChecked,
     ModelResponded,
     ModelRetried,
     PolicyDecided,
@@ -134,6 +135,10 @@ def apply(state: RunState | None, event: Event) -> RunState:
             update["step"] = step_no
         case PolicyDecided() as decided:
             update |= _decided(state, decided, event)
+        case GuardChecked(target="output", resolution="unverified"):
+            update["unverified"] = True
+        case GuardChecked():
+            pass
         case StepCompleted() | ModelRetried() | ToolSourceUnavailable():
             pass
         case RunTransitioned(from_state=from_state, to_state=to_state):
@@ -143,17 +148,28 @@ def apply(state: RunState | None, event: Event) -> RunState:
                     f"alors que l'état reconstruit est {state.status} (seq {event.seq})"
                 )
             update["status"] = to_state
-        case RunCompleted(output=replaced, output_event_id=str()):
+        case RunCompleted(output=replaced, output_event_id=str()) as completed:
             # Sortie d'un outil terminal, éventuellement remplacée par une politique.
-            call_id, output = _terminal_output(state, event)
+            result = _terminal_result(state, event)
+            blocks = result.output.blocks or (TextBlock(text=""),)
+            output = Message(role="assistant", blocks=blocks)
+            data = completed.data if completed.data is not None else result.output.data
             update |= {
                 "status": RunStatus.COMPLETED,
                 "output": replaced or output,
-                "terminal_call_id": call_id,
+                "output_data": data,
+                "unverified": completed.unverified or result.output.unverified,
+                "terminal_call_id": result.call_id,
                 "finished": True,
             }
-        case RunCompleted(output=output):
-            update |= {"status": RunStatus.COMPLETED, "output": output, "finished": True}
+        case RunCompleted(output=output) as completed:
+            update |= {
+                "status": RunStatus.COMPLETED,
+                "output": output,
+                "output_data": completed.data,
+                "unverified": completed.unverified or state.unverified,
+                "finished": True,
+            }
         case RunFailed(error_type=error_type, error=error):
             update |= {
                 "status": RunStatus.FAILED,
@@ -167,15 +183,18 @@ def _decided(state: RunState, decided: PolicyDecided, event: Event) -> dict[str,
     """Ce qu'une décision de politique change dans l'état."""
     update: dict[str, object] = {}
     match decided:
-        case PolicyDecided(decision="retry", policy=policy):
+        case PolicyDecided(decision="retry", policy=policy) if decided.point in {
+            "after_model",
+            "on_output",
+        }:
+            # Réparations de l'orchestrateur ; celles d'un rôle se comptent dans son appel.
             update["retries"] = {**state.retries, policy: state.retries.get(policy, 0) + 1}
-            if decided.point in {"after_model", "on_output"}:
-                update["pending_repair"] = PendingRepair(
-                    policy=policy,
-                    point="on_output" if decided.point == "on_output" else "after_model",
-                    feedback=decided.reason,
-                    tools=decided.tools is not False,
-                )
+            update["pending_repair"] = PendingRepair(
+                policy=policy,
+                point="on_output" if decided.point == "on_output" else "after_model",
+                feedback=decided.reason,
+                tools=decided.tools is not False,
+            )
         case PolicyDecided(
             decision="replace", point="before_tool", call_id=str() as call_id, arguments=dict()
         ):
@@ -198,8 +217,8 @@ def _closes(status: RunStatus, event: Event) -> bool:
     return closing is not None and isinstance(event.payload, closing)
 
 
-def _terminal_output(state: RunState, event: Event) -> tuple[str, Message]:
-    """Réponse finale tirée du résultat de l'outil terminal, dernier message du run (#13)."""
+def _terminal_result(state: RunState, event: Event) -> ToolResultBlock:
+    """Résultat de l'outil terminal, dernier message du run (#13)."""
     last = state.messages[-1] if state.messages else None
     results = [b for b in last.blocks if isinstance(b, ToolResultBlock)] if last else []
     if len(results) != 1:
@@ -207,9 +226,7 @@ def _terminal_output(state: RunState, event: Event) -> tuple[str, Message]:
             f"Run {state.run_id} : run.completed désigne une sortie d'outil, mais le dernier "
             f"message n'est pas un résultat d'outil unique (seq {event.seq})"
         )
-    [result] = results
-    blocks = result.output.blocks or (TextBlock(text=""),)
-    return result.call_id, Message(role="assistant", blocks=blocks)
+    return results[0]
 
 
 def _require_pending(state: RunState, call_id: str, event: Event) -> tuple[PendingCall, ...]:

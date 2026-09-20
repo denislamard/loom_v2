@@ -106,5 +106,7 @@ def test_the_cli_shows_policies_and_decisions(
     # Le déroulé, sans les lignes de log (INFO) qui passent aussi sur la sortie d'erreur.
     shown = [line for line in captured.err.splitlines() if line.startswith("·")]
     assert shown == LINES
-    # La réponse diffusée a été remplacée ensuite : la réponse retenue suit.
-    assert captured.out.endswith(f"[Réponse retenue]\n{SIGNED}\n")
+    # Une politique on_output contrôle la réponse : diffusion after_guards par défaut.
+    # Le texte d'une réponse qui appelle des outils part à sa fin, la réponse
+    # finale une fois contrôlée (et signée).
+    assert captured.out.splitlines() == ["Je calcule.", SIGNED]

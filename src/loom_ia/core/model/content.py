@@ -129,6 +129,8 @@ class ToolOutput(DomainModel):
     # URI du contenu complet quand il a été déporté ; les blocs n'en montrent
     # alors qu'un aperçu (#16).
     offloaded: str | None = None
+    # Sortie gardée bien qu'elle ne respecte pas son contrat (``on_failure: unverified``).
+    unverified: bool = False
 
     @classmethod
     def text(cls, text: str, *, is_error: bool = False) -> Self:

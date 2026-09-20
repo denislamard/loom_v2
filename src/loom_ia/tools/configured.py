@@ -2,15 +2,15 @@
 """Surcharge des déclarations d'un outil par la config (#50).
 
 Un outil déclare lui-même ses effets de bord, son idempotence, son délai et
-son seuil de déport ; la config peut les remplacer, sans toucher au code de
-l'outil.
+son seuil de déport ; la config peut les remplacer, et lui donner un contrat
+de sortie, sans toucher au code de l'outil.
 """
 
 from dataclasses import dataclass
 
 from pydantic import JsonValue
 
-from loom_ia.core.model import Approval, SideEffects, ToolOutput, ToolSpec
+from loom_ia.core.model import Approval, OutputContract, SideEffects, ToolOutput, ToolSpec
 from loom_ia.core.ports import Tool, ToolContext
 
 
@@ -33,6 +33,7 @@ def configure(
     approval: Approval | None = None,
     idempotent: bool | None = None,
     offload_over: int | None = None,
+    output: OutputContract | None = None,
 ) -> Tool:
     """Applique les valeurs données ; ``None`` garde ce que l'outil déclare."""
     changes = {
@@ -41,6 +42,7 @@ def configure(
         "approval": approval,
         "idempotent": idempotent,
         "offload_over": offload_over,
+        "output": output,
     }
     applied = {key: value for key, value in changes.items() if value is not None}
     if not applied:
