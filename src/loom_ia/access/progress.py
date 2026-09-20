@@ -4,7 +4,8 @@
 Le direct de la CLI (``loom run --stream``) et les notifications de
 progression du serveur MCP décrivent un run de la même façon : un appel
 d'outil et son issue, un fichier rangé, un serveur indisponible, une
-décision de politique, un sous-agent qui démarre puis se termine. Les lignes d'un sous-run sont
+décision de politique, un contrôle de sortie et le verdict d'un juge, un
+sous-agent qui démarre puis se termine. Les lignes d'un sous-run sont
 décalées selon sa profondeur :
 
     · verifier(message='Vérifie : …')
@@ -21,6 +22,7 @@ from loom_ia.core.events import (
     ArtifactStored,
     Event,
     GuardChecked,
+    JudgeEvaluated,
     PolicyDecided,
     RunCompleted,
     RunFailed,
@@ -92,7 +94,8 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             return f"serveur {payload.source} indisponible{required} : {payload.error}"
         case GuardChecked(outcome="passed"):
             normalized = " (après normalisation)" if payload.normalized else ""
-            return f"contrôle {payload.guard} {payload.target} : conforme{normalized}"
+            reason = f" — {payload.reason}" if payload.reason else ""
+            return f"contrôle {payload.guard} {payload.target} : conforme{normalized}{reason}"
         case GuardChecked(outcome="failed", resolution=resolution):
             then = f", {RESOLUTIONS[resolution]}" if resolution is not None else ""
             return (
@@ -100,7 +103,16 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             )
         case GuardChecked():
             return f"contrôle {payload.guard} {payload.target} : ignoré — {payload.reason}"
-        case PolicyDecided(policy="loom.contract"):
+        case JudgeEvaluated():
+            notes = ", ".join(
+                f"{c.name} {_score(c.score)}"
+                + ("" if c.passed else f" (seuil {_score(c.min_score)})")
+                for c in payload.criteria
+            )
+            return f"juge {payload.judge} ({payload.model_id}) : {notes}"
+        case PolicyDecided(policy=policy) if policy == "loom.contract" or policy.startswith(
+            "loom.judge."
+        ):
             # La ligne du contrôle dit déjà tout.
             return None
         case PolicyDecided():
@@ -122,6 +134,10 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             return f"sous-agent {event.agent} : échec — {payload.error}"
         case _:
             return None
+
+
+def _score(value: float) -> str:
+    return f"{value:.2f}".replace(".", ",")
 
 
 def arguments(called: ToolCalled) -> str:

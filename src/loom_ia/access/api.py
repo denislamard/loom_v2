@@ -50,6 +50,7 @@ from loom_ia.core.model import (
     ArtifactRecord,
     Attachment,
     CallerContext,
+    JudgesMode,
     Message,
     ModelChunk,
     RunId,
@@ -229,14 +230,16 @@ class Loom:
         context: CallerContext | None = None,
         run_id: RunId | None = None,
         on_chunk: ChunkCallback | None = None,
+        judges: JudgesMode = "auto",
     ) -> RunResult:
         """Fait tourner un run jusqu'au bout et renvoie ce qu'il a produit.
 
         Une pièce jointe refusée (format, taille) lève ``AttachmentError``
-        avant que le run ne commence.
+        avant que le run ne commence. ``judges`` (#21) : ``auto``, chaque juge
+        selon son ``when`` ; ``force``, tous (audit, évals) ; ``skip``, aucun.
         """
         ctx = self.context(agent, on_chunk=on_chunk)
-        state = await self._start(ctx, message, attachments, session_id, context, run_id)
+        state = await self._start(ctx, message, attachments, session_id, context, run_id, judges)
         return RunResult.of(state)
 
     async def stream(
@@ -249,12 +252,14 @@ class Loom:
         context: CallerContext | None = None,
         run_id: RunId | None = None,
         subruns: bool = True,
+        judges: JudgesMode = "auto",
     ) -> AsyncGenerator[StreamItem]:
         """Événements du journal et morceaux du modèle, dans l'ordre d'arrivée.
 
         Le run est lancé en tâche de fond ; abandonner l'itération l'annule.
         Son résultat se relit ensuite avec ``result(run_id)``. Avec
         ``subruns``, les événements des sous-runs sont mêlés au flux.
+        ``judges`` : comme pour ``run``.
         """
         run_id = run_id or new_run_id()
         items: asyncio.Queue[StreamItem | None] = asyncio.Queue()
@@ -267,7 +272,7 @@ class Loom:
         # Écoute posée avant le démarrage : l'arbre se reconnaît dans l'ordre d'écriture.
         with self._store.listen(items.put_nowait, accept=tree.admit):
             task = asyncio.create_task(
-                self._start(ctx, message, attachments, session_id, context, run_id)
+                self._start(ctx, message, attachments, session_id, context, run_id, judges)
             )
             task.add_done_callback(lambda _: items.put_nowait(None))
             try:
@@ -452,6 +457,7 @@ class Loom:
         session_id: SessionId | None,
         context: CallerContext | None,
         run_id: RunId | None,
+        judges: JudgesMode = "auto",
     ) -> RunState:
         state = await begin_run(
             ctx,
@@ -460,6 +466,7 @@ class Loom:
             session_id=session_id,
             context=context,
             run_id=run_id,
+            judges=judges,
         )
         return await drive(
             ctx,

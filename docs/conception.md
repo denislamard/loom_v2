@@ -314,9 +314,9 @@ Event
 
 | Type | Champs principaux |
 |---|---|
-| `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte |
+| `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte, `judges` (`auto`, `force`, `skip`) |
 | `message.user` | blocs de contenu ; `kind` (`request`, `repair`), politique et `tools` d'une réparation |
-| `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué) |
+| `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué), `judge` (appel d'un juge) |
 | `model.retried` | tentative, type d'erreur, délai, call_id (rôle délégué) |
 | `model.fell_back` | ancien modèle, nouveau modèle, motif |
 | `idempotency.recorded` | clé, call_id, résultat |
@@ -324,7 +324,7 @@ Event
 | `tool.completed` | tool_name, call_id, is_error, sortie (blocs, références de fichiers, aperçu et référence si déportée), latence, taille, consommation d'un sous-agent (usage, coût) ; facette `offloaded` |
 | `tool.source_unavailable` | source (serveur MCP), erreur, required |
 | `guard.checked` | guard, cible (`output`, `role:<nom>`, `tool:<nom>`), outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized, resolution, politique, call_id |
-| `judge.evaluated` | modèle juge, scores par critère, bloquant, réussi |
+| `judge.evaluated` | juge, cible, modèle juge, notes par critère (note, seuil, bloquant, motif), `passed`, `blocked`, tentative, politique, call_id |
 | `policy.decided` | politique, point, décision, motif, call_id, tentative et `tools` (`Retry`), arguments ou réponse remplacés, `error` |
 | `approval.requested` / `.granted` / `.rejected` / `.expired` | tool_name, call_id, arguments, auteur, motif, scope, expire_at |
 | `artifact.stored` | uri, type MIME, taille, nom, origine (`attachment`, `tool_output`, `offload`), call_id |
@@ -450,7 +450,7 @@ Decision = Continue
 - Une politique est une fonction décorée par `@policy(points, decisions)` (`loom_ia.policies`) ; elle reçoit le sujet du point (`BeforeModel`, `AfterModel`, `BeforeTool`, `AfterTool`, `OnOutput`) et son `PolicyContext` (nom, `params`, réparations déjà demandées). Port `Policy` dans le noyau ; exécution de la chaîne dans `engine/hooks.py`.
 - `before_model` s'exécute dans l'étape d'appel du modèle ; `after_model` et `on_output` au moment de décider la suite d'une réponse (réévalués à la reprise tant que leur décision n'est pas appliquée) ; `before_tool` et `after_tool` dans l'exécuteur.
 - `Retry` à `after_model` et `on_output` : réparation par l'orchestrateur (diagnostic en `message.user` de `kind: repair`, exclu de l'historique de session avec la réponse refusée) ; à `after_tool`, un rôle est réparé par son propre modèle (depuis 3.2, §9.7) et le résultat d'un outil revient à l'orchestrateur en erreur avec le diagnostic. `Pause` est refusée au démarrage jusqu'en J4.3.
-- Défauts : délai 5 s, `on_error: block`, `max_attempts: 1` (par run à `after_model` et `on_output`, par appel à `after_tool`). Politiques fournies : `loom.require_tool` (`tool_choice: required` tant qu'aucun outil n'a été appelé, jamais en `FINALIZING`) ; `loom.contract` (contrats de sortie, 3.2, §9.7).
+- Défauts : délai 5 s, `on_error: block`, `max_attempts: 1` (par run à `after_model` et `on_output`, par appel à `after_tool`). Politiques fournies : `loom.require_tool` (`tool_choice: required` tant qu'aucun outil n'a été appelé, jamais en `FINALIZING`) ; `loom.contract` (contrats de sortie, 3.2, §9.7) ; `loom.judge.<nom>` (juges, 3.3, §9.7).
 
 ### 9.5 Outils
 
@@ -677,6 +677,14 @@ Les tentatives refusées restent dans le journal mais sont exclues de l'historiq
   - Un juge non déclenché écrit `guard.checked` avec `outcome: skipped` et le motif (`sampled_out`, `condition_false`, `filtered`).
   - Coût attribué au rôle `judge:<nom>`.
 
+**Réalisation (phase 3.3)** (détails : `fonctions.md`, point 21) :
+
+- Un juge se déclare par `judge:` sur l'agent (réponse finale) ou sur un rôle ; il devient la politique fournie `loom.judge.<nom>` (`JudgeGuard`), branchée d'office après `loom.contract` : `on_output` ou `after_tool`. Pas de juge sur un outil Python ou MCP.
+- Déclenchement : choix de l'appelant (`judges` : `auto`, `force`, `skip`, écrit dans `run.started` et hérité par les sous-runs), puis `tenants`, `sample` (tirage `sha256(run_id:nom)`), `condition` (`module:attr`, reçoit un `JudgeInput`). Motifs d'un juge non déclenché : `caller_skip`, `filtered`, `sampled_out`, `condition_false`.
+- Le juge voit ses critères, le contexte qu'il déclare (liste fixe des rôles), les arguments du rôle jugé et la sortie ; il rend son verdict par un outil imposé, `verdict` (`tool_choice: required`), contrôlé par un schéma. Une note par critère, entre 0 et 1 ; un critère bloquant sous son seuil fait refuser la sortie (réparation par l'auteur, puis `on_failure`), un critère non bloquant est seulement signalé.
+- Journal : `model.responded` du juge (champ `judge`, rôle `judge:<nom>`, span propre), `judge.evaluated`, `guard.checked`, `policy.decided`. Son coût entre dans `run.completed` et `run.failed`, pas ses itérations. Une erreur du juge (modèle, verdict, délai) suit son `on_error`.
+- Juge corrélé et juge bloquant échantillonné : avertissements au montage ; les erreurs en profil prod arrivent avec les profils (J5).
+
 ## 10. Modèles de langage
 
 ### 10.1 Définition d'un LLM
@@ -731,7 +739,7 @@ models:
 
 **Voix :** la voix exige `live` ; les guards d'un agent vocal doivent être légers et compatibles avec le flux, ou ne s'appliquer qu'aux outils.
 
-**Réalisation (phase 3.2) :** sans réglage, `stream_output` vaut `after_guards` quand la réponse finale est contrôlée (contrat, politique `on_output`, rôle terminal sous contrat), `live` sinon. En `after_guards`, le texte d'une réponse qui appelle des outils part à la fin de cette réponse, et la réponse finale une fois le run clos ; en `live`, une réparation envoie d'abord un `StreamReset`. Un rôle terminal seul dans son lot diffuse ses morceaux en `live` (backlog #009).
+**Réalisation (phase 3.2) :** sans réglage, `stream_output` vaut `after_guards` quand la réponse finale est contrôlée (contrat, juge, politique `on_output`, rôle terminal sous contrat ou jugé), `live` sinon. En `after_guards`, le texte d'une réponse qui appelle des outils part à la fin de cette réponse, et la réponse finale une fois le run clos ; en `live`, une réparation envoie d'abord un `StreamReset`. Un rôle terminal seul dans son lot diffuse ses morceaux en `live` (backlog #009).
 
 ### 10.3 Erreurs, retry et secours
 
@@ -1114,12 +1122,23 @@ output:
 
 judge:
   model: SONNET
-  when: {sample: 0.2}
+  name: engagements                   # défaut : output (réponse finale), nom du rôle (rôle)
+  context: [user_input, {tool_results: [chercher_devis]}]   # liste fixe des rôles
+  when:                               # toutes les clauses présentes ; absent : toujours
+    sample: 0.2                       # tirage déterministe par run
+    condition: myapp.judges:montant_eleve   # (JudgeInput) -> bool
+    tenants: [dupont-plomberie]
   criteria:
-    - {name: engagements, rule: "...", min_score: 0.8, blocking: true}
-  repair: {max_attempts: 1}
-  on_failure: fail
+    - {name: engagements, rule: "...", min_score: 0.8, blocking: true}   # défauts : 0.8, true
+  repair: {max_attempts: 1, tools: auto}   # auto : l'orchestrateur garde ses outils
+  on_failure: fail                    # fail | unverified | fallback
+  fallback_message: "..."
+  llm: {max_tokens: 1024}
+  timeout: 30                         # défaut : délais et retry du modèle
+  on_error: block                     # block | allow : modèle en échec, verdict invalide
 ```
+
+`when.profiles` arrive avec les profils (J5). Un juge ne se déclare pas sur un outil Python ou MCP.
 
 ### 17.5 Serveurs MCP
 
@@ -1223,7 +1242,7 @@ server:
 
 ### 17.9 Profils et contrôles
 
-- Profils `dev` et `prod` (M4), dans `profiles:`. Fusion profonde des objets, remplacement des listes, `params` et `llm` remplacés en bloc. Différences décidées : juge corrélé et juge bloquant échantillonné en avertissement (dev) ou en erreur (prod) ; stockage non durable pour un agent qui peut se mettre en pause toléré en dev seulement ; `judges="skip"` autorisé en dev seulement.
+- Profils `dev` et `prod` (M4), dans `profiles:`. Fusion profonde des objets, remplacement des listes, `params` et `llm` remplacés en bloc. Différences décidées : juge corrélé et juge bloquant échantillonné en avertissement (dev) ou en erreur (prod ; avertissements seulement depuis 3.3, jusqu'aux profils) ; stockage non durable pour un agent qui peut se mettre en pause toléré en dev seulement ; `judges="skip"` autorisé en dev seulement.
 - **Surcharges par client :** liste fermée (§6).
 - **Enregistrement des agents** (#48) : statique, par la config ou le code ; `loom serve --reload` recharge les agents en dev ; enregistrement dynamique plus tard.
 
@@ -1262,7 +1281,7 @@ async with loom:
     await loom.approve(res.run_id, decision)
 ```
 
-- `run()` accepte `session_id`, `tenant`, des pièces jointes et un `approver` optionnel ; il renvoie un `RunResult` (statut, réponse, `run_id`, approbations en attente).
+- `run()` accepte `session_id`, `tenant`, des pièces jointes, `judges` (`auto`, `force`, `skip` ; depuis 3.3) et un `approver` optionnel ; il renvoie un `RunResult` (statut, réponse, `run_id`, approbations en attente).
 - `stream()` renvoie un itérateur d'événements (durables et éphémères).
 - `stream()`, `follow()` et `events()` rendent l'arbre du run : ses événements et ceux de ses sous-runs, dans l'ordre du journal ; `subruns=False` s'en tient au run.
 

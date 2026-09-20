@@ -273,6 +273,18 @@ class LoomConfig(DomainModel):
                         f"jointes, mais le modèle {role.model!r} n'a pas la capacité vision "
                         "(capabilities.vision: true)"
                     )
+            for name, _, judge in agent.judges:
+                if judge.model not in ids:
+                    raise ValueError(
+                        f"Agent {agent.name!r}, juge {name!r} : modèle {judge.model!r} "
+                        f"non déclaré (modèles connus : {known})"
+                    )
+                if judge.wants_attachments and not self.model_spec(judge.model).capabilities.vision:
+                    raise ValueError(
+                        f"Agent {agent.name!r}, juge {name!r} : il reçoit les pièces "
+                        f"jointes, mais le modèle {judge.model!r} n'a pas la capacité vision "
+                        "(capabilities.vision: true)"
+                    )
         agents = {agent.name: agent for agent in self.agents}
         for agent in self.agents:
             for ref in agent.subagents:

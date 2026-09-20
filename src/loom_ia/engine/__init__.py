@@ -24,7 +24,11 @@ from loom_ia.engine.hooks import (
     BoundPolicy,
     OnError,
     Policies,
+    PolicyEvent,
     PolicyFailure,
+    Trace,
+    TracedEvent,
+    TracingPolicy,
     Verdict,
 )
 from loom_ia.engine.loop import (
@@ -34,6 +38,7 @@ from loom_ia.engine.loop import (
     RunContext,
     begin_run,
     drive,
+    judge_role,
     step,
 )
 from loom_ia.engine.media import IMAGE_TOKENS, MediaResolver
@@ -47,7 +52,14 @@ from loom_ia.engine.refs import (
     in_call_order,
     mark_results,
 )
-from loom_ia.engine.roles import ContextItem, RoleDefinition, RoleTool, ToolResults
+from loom_ia.engine.roles import (
+    ContextItem,
+    RoleDefinition,
+    RoleTool,
+    ToolResults,
+    tagged,
+    user_input,
+)
 from loom_ia.engine.subagents import (
     AGENT_HINT,
     AgentResolver,
@@ -86,6 +98,7 @@ __all__ = [
     "OpenedTools",
     "ParentRun",
     "Policies",
+    "PolicyEvent",
     "PolicyFailure",
     "RefError",
     "ResultIndex",
@@ -99,10 +112,16 @@ __all__ = [
     "ToolEvent",
     "ToolExecutor",
     "ToolResults",
+    "Trace",
+    "TracedEvent",
+    "TracingPolicy",
     "Verdict",
     "begin_run",
     "drive",
     "in_call_order",
+    "judge_role",
     "mark_results",
     "step",
+    "tagged",
+    "user_input",
 ]

@@ -36,10 +36,10 @@ et les referme avec lui.
 
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from loom_ia.adapters.artifacts import InMemoryArtifactStore, LocalArtifactStore
 from loom_ia.adapters.models import create_model_client
@@ -48,6 +48,7 @@ from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import (
     AgentSpec,
     BaseRole,
+    JudgeSpec,
     PolicyRef,
     PythonTool,
     RoleSpec,
@@ -88,13 +89,22 @@ from loom_ia.engine import (
     ToolExecutor,
     ToolResults,
 )
-from loom_ia.guards import CONTRACT_POLICY, ContractGuard
+from loom_ia.guards import (
+    CONTRACT_POLICY,
+    Condition,
+    ContractGuard,
+    JudgeDefinition,
+    JudgeGuard,
+    correlated,
+)
 from loom_ia.policies import BUILTIN_POLICIES
 from loom_ia.telemetry import configure_logging
 from loom_ia.tools import FunctionTool, configure
 
 if TYPE_CHECKING:
     from loom_ia.adapters.mcp import McpPool
+
+logger = logging.getLogger(__name__)
 
 
 class _Closable(Protocol):
@@ -185,7 +195,32 @@ def build_agent(
     tools = [_tool(declared, known, config.base_dir) for declared in spec.python_tools]
     roles = [role_definition(role) for role in spec.roles]
     _check_names(spec, [tool.spec.name for tool in tools])
-    policies = build_policies(spec, known, config.base_dir, contracts=_has_contracts(config, spec))
+
+    clients: dict[str, ModelClient] = {}
+
+    def client(model_id: str) -> ModelClient:
+        if model_id not in clients:
+            clients[model_id] = create_model_client(config.model_spec(model_id), environ=environ)
+        return clients[model_id]
+
+    judges = [
+        JudgeGuard(
+            judge_definition(spec, judged, known, config.base_dir),
+            client(judged[2].model),
+            config.model_spec(judged[2].model),
+            artifacts=artifacts,
+        )
+        for judged in spec.judges
+    ]
+    for warning in judge_warnings(config, spec):
+        logger.warning(warning)
+    policies = build_policies(
+        spec,
+        known,
+        config.base_dir,
+        contracts=_has_contracts(config, spec),
+        judges=judges,
+    )
     sources, owned = _mcp_sources(config, spec, environ, mcp_pool)
     if spec.subagents and agents is None:
         nested = _SubAgents(
@@ -198,13 +233,6 @@ def build_agent(
         )
         agents = nested
         owned = (*owned, nested)
-
-    clients: dict[str, ModelClient] = {}
-
-    def client(model_id: str) -> ModelClient:
-        if model_id not in clients:
-            clients[model_id] = create_model_client(config.model_spec(model_id), environ=environ)
-        return clients[model_id]
 
     delegated: list[AnyTool] = [
         RoleTool(definition, client(role.model), config.model_spec(role.model))
@@ -248,11 +276,13 @@ def build_policies(
     base_dir: Path | None = None,
     *,
     contracts: bool | None = None,
+    judges: Sequence[JudgeGuard] = (),
 ) -> Policies:
     """Politiques de l'agent, résolues et contrôlées, dans l'ordre déclaré.
 
     Le guard des contrats passe en tête quand l'agent en déclare
-    (``contracts``, déduit de l'agent si absent).
+    (``contracts``, déduit de l'agent si absent), puis les juges (``judges``) :
+    la forme d'une sortie est contrôlée avant son fond.
     """
     bound: list[BoundPolicy] = []
     if contracts if contracts is not None else spec.contracts:
@@ -260,6 +290,19 @@ def build_policies(
         # Le guard borne lui-même ses réparations (repair.max_attempts du contrat).
         bound.append(
             BoundPolicy(policy=guard, name=CONTRACT_POLICY, points=guard.points, max_attempts=None)
+        )
+    for judge in judges:
+        definition = judge.definition
+        # Un juge borne lui-même ses réparations (repair.max_attempts du juge).
+        bound.append(
+            BoundPolicy(
+                policy=judge,
+                name=judge.name,
+                points=judge.points,
+                timeout=definition.timeout,
+                on_error=definition.on_error,
+                max_attempts=None,
+            )
         )
     for ref in spec.policies:
         found = _policy(spec, ref, registry, base_dir)
@@ -307,7 +350,7 @@ def stream_output(spec: AgentSpec, policies: Policies) -> StreamOutput:
     if spec.stream_output is not None:
         return spec.stream_output
     guarded = bool(policies.at("on_output")) or any(
-        role.terminal and role.output is not None for role in spec.roles
+        role.terminal and (role.output is not None or role.judge is not None) for role in spec.roles
     )
     return "after_guards" if guarded else "live"
 
@@ -365,6 +408,61 @@ def role_definition(role: RoleSpec) -> RoleDefinition:
         max_tokens=role.llm.max_tokens,
         params=role.llm.params,
     )
+
+
+def judge_definition(
+    spec: AgentSpec,
+    judged: tuple[str, RoleSpec | None, JudgeSpec],
+    registry: Registry,
+    base_dir: Path | None = None,
+) -> JudgeDefinition:
+    """Juge tel que le moteur l'exécute : condition résolue, contexte converti."""
+    name, role, judge = judged
+    condition: Condition | None = None
+    reference = judge.when.condition
+    if reference is not None:
+        found = resolve(reference, registry, base_dir=base_dir)
+        if isinstance(found, type) or not callable(found):
+            raise ConfigError(
+                f"Agent {spec.name!r}, juge {name!r} : la condition {reference!r} "
+                "n'est pas une fonction"
+            )
+        condition = cast(Condition, found)
+    tenants = judge.when.tenants
+    return JudgeDefinition(
+        name=name,
+        role=role.name if role is not None else None,
+        criteria=judge.criteria,
+        context=tuple(_context_item(item) for item in judge.context),
+        sample=judge.when.sample,
+        condition=condition,
+        tenants=frozenset(tenants) if tenants is not None else None,
+        repair=judge.repair,
+        on_failure=judge.on_failure,
+        fallback_message=judge.fallback_message,
+        max_tokens=judge.llm.max_tokens,
+        params=judge.llm.params,
+        timeout=judge.timeout,
+        on_error=judge.on_error,
+    )
+
+
+def judge_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
+    """Avertissements sur les juges de l'agent (E6, #21) ; des erreurs en profil prod (J5)."""
+    warnings: list[str] = []
+    for name, role, judge in spec.judges:
+        label = f"Agent {spec.name!r}, juge {name!r}"
+        evaluated = role.model if role is not None else spec.main.model
+        if correlated(config.model_spec(judge.model), config.model_spec(evaluated)):
+            warnings.append(
+                f"{label} : même modèle que la sortie qu'il évalue ({evaluated}) : juge corrélé"
+            )
+        if judge.blocking and judge.when.sample < 1:
+            warnings.append(
+                f"{label} : bloquant, mais ne juge qu'une partie des runs "
+                f"(sample {judge.when.sample:g})"
+            )
+    return warnings
 
 
 def _context_item(item: DeclaredContext) -> ContextItem:

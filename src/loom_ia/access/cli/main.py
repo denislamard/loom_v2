@@ -31,6 +31,7 @@ from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    JUDGES_MODES,
     Attachment,
     RunId,
     SessionId,
@@ -98,6 +99,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="FICHIER",
         help="image jointe à la demande (répétable)",
+    )
+    run.add_argument(
+        "--judges",
+        choices=JUDGES_MODES,
+        default="auto",
+        help="juges : selon leur 'when' (auto), tous (force) ou aucun (skip)",
     )
     run.set_defaults(handler=cmd_run)
 
@@ -180,6 +187,14 @@ async def _validate(args: argparse.Namespace) -> int:
             )
             for bound in context.policies.bound:
                 print(f"    politique {bound.name} : {', '.join(sorted(bound.points))}")
+            for name, role, judge in spec.judges:
+                target = f"rôle {role.name}" if role is not None else "réponse finale"
+                sample = f", sample {judge.when.sample:g}" if judge.when.sample < 1 else ""
+                print(
+                    f"    juge {name} ({target}) : modèle {judge.model}, "
+                    f"{len(judge.criteria)} critère(s){sample}"
+                )
+
             await _show_sources(spec.name, context.tools)
     print(f"\n{len(config.agents)} agent(s) monté(s) sans erreur.")
     return OK
@@ -207,6 +222,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     attachments=attachments,
                     session_id=session,
                     run_id=run_id,
+                    judges=args.judges,
                 ):
                     live.show(item)
                 print()
@@ -222,6 +238,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 attachments=attachments,
                 session_id=session,
                 run_id=run_id,
+                judges=args.judges,
             )
 
     return _report(asyncio.run(go()), as_json=args.json, quiet=args.stream)

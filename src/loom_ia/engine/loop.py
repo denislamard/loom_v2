@@ -47,6 +47,13 @@ au fil de l'eau, et une réparation envoie d'abord un ``StreamReset`` ; avec
 de cette réponse, et la réponse finale seulement une fois ses contrôles
 passés, qu'elle vienne de l'orchestrateur ou d'un rôle terminal.
 
+Juges (#21) : un juge est une politique fournie qui appelle son modèle ; cet
+appel est écrit dans son propre span, au nom de ``judge:<nom>``, avant son
+verdict (``judge.evaluated``). Son coût entre dans ``run.completed`` (ou
+``run.failed``), écrit dans la même décision ; il ne compte pas dans les
+itérations. Le choix de l'appelant (``judges`` : ``auto``, ``force``,
+``skip``) est écrit dans ``run.started`` et hérité par les sous-runs.
+
 Pièces jointes (G1) : validées avant tout écrit (signature binaire, type,
 taille), rangées dans le stockage d'artefacts, annoncées par un
 ``artifact.stored`` chacune, puis jointes au message de l'utilisateur en
@@ -68,7 +75,6 @@ from loom_ia.core.events import (
     Effect,
     Event,
     EventDraft,
-    GuardChecked,
     ModelResponded,
     ModelRetried,
     PolicyDecided,
@@ -79,6 +85,7 @@ from loom_ia.core.events import (
     RunTransitioned,
     StepCompleted,
     StepStarted,
+    ToolCalled,
     ToolCompleted,
     ToolSourceUnavailable,
     UserMessage,
@@ -94,6 +101,7 @@ from loom_ia.core.model import (
     BeforeModel,
     CallerContext,
     Fail,
+    JudgesMode,
     Message,
     ModelRequest,
     ModelResponse,
@@ -116,6 +124,7 @@ from loom_ia.core.model import (
     ToolCallBlock,
     ToolOutput,
     ToolResultBlock,
+    Usage,
     artifact_uri,
     new_run_id,
     new_span_id,
@@ -130,7 +139,7 @@ from loom_ia.core.ports import (
 )
 from loom_ia.core.projections import apply, fold, history
 from loom_ia.engine.executor import Decided, Delegated, Stored, ToolExecutor
-from loom_ia.engine.hooks import Policies, Verdict
+from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.model_call import ModelCall, responded
 from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
 from loom_ia.engine.writer import SessionWriter
@@ -199,6 +208,8 @@ class ParentRun:
     depth: int
     # Span de l'appel dans le parent : parent du span racine de l'enfant.
     span_id: SpanId | None = None
+    # Juges choisis pour le parent : l'enfant hérite du même choix (#21).
+    judges: JudgesMode = "auto"
 
 
 async def begin_run(
@@ -211,6 +222,7 @@ async def begin_run(
     run_id: RunId | None = None,
     parent: ParentRun | None = None,
     writer: SessionWriter | None = None,
+    judges: JudgesMode = "auto",
 ) -> RunState:
     """Écrit le démarrage d'un run et la demande de l'utilisateur.
 
@@ -218,8 +230,11 @@ async def begin_run(
     Une pièce jointe refusée lève ``AttachmentError`` avant tout écrit.
 
     Un sous-run (``parent``) s'écrit dans le journal de son parent, avec
-    l'écrivain de la session (``writer``) : il hérite de sa racine, et sa
-    profondeur est celle du parent plus un.
+    l'écrivain de la session (``writer``) : il hérite de sa racine et du choix
+    de ses juges, et sa profondeur est celle du parent plus un.
+
+    ``judges`` (#21) : ``auto``, chaque juge selon son ``when`` ; ``force``,
+    tous les juges ; ``skip``, aucun.
     """
     message = Message.user(prompt) if isinstance(prompt, str) else prompt
     if message.role != "user":
@@ -240,13 +255,14 @@ async def begin_run(
         agent=ctx.agent,
         parent_span_id=parent.span_id if parent is not None else None,
     )
-    started = RunStarted(context=context)
+    started = RunStarted(context=context, judges=judges)
     if parent is not None:
         started = RunStarted(
             context=context,
             parent_run_id=parent.run_id,
             parent_call_id=parent.call_id,
             depth=parent.depth + 1,
+            judges=parent.judges,
         )
     if chosen and await ctx.store.read(scope.tenant_id, scope.session_id, run_id=run_id):
         raise ValueError(f"Le run {run_id} existe déjà")
@@ -477,14 +493,17 @@ async def _review(
         AfterModel(state=state, response=answer, finalizing=finalizing),
         ignore=frozenset({"stop"}) if finalizing else frozenset(),
     )
-    drafts = [scope.draft(event) for event in verdict.events]
+    drafts = _policy_drafts(scope, verdict.events)
     reason = _stopping(verdict, drafts)
     match verdict.decision:
         case Retry():
             await _reset(ctx, state)
             return [*drafts, *_repair(state, ctx, scope, _pending_repair(verdict), reason)]
         case Fail(error=error):
-            return [*drafts, *_fail(state, scope, _failure_type(verdict), error, reason)]
+            return [
+                *drafts,
+                *_fail(state, scope, _failure_type(verdict), error, reason, spent=verdict.spent),
+            ]
         case Stop(reason=why) if state.pending_calls:
             return [
                 *drafts,
@@ -517,14 +536,17 @@ async def _final(
         tool=None if terminal is None else terminal.name,
     )
     verdict = await ctx.policies.run(subject)
-    drafts = [scope.draft(event) for event in verdict.events]
+    drafts = _policy_drafts(scope, verdict.events)
     reason = _stopping(verdict, drafts)
     match verdict.decision:
         case Retry():
             await _reset(ctx, state)
             return [*drafts, *_repair(state, ctx, scope, _pending_repair(verdict), reason)]
         case Fail(error=error):
-            return [*drafts, *_fail(state, scope, _failure_type(verdict), error, reason)]
+            return [
+                *drafts,
+                *_fail(state, scope, _failure_type(verdict), error, reason, spent=verdict.spent),
+            ]
         case _:
             pass
     final = verdict.subject.output if isinstance(verdict.subject, OnOutput) else output
@@ -538,9 +560,12 @@ async def _final(
             terminal=_terminal_event(state, cause),
             data=data,
             unverified=verdict.unverified,
+            spent=verdict.spent,
         )
     else:
-        closing = _completed(state, final, data=data, unverified=verdict.unverified)
+        closing = _completed(
+            state, final, data=data, unverified=verdict.unverified, spent=verdict.spent
+        )
     return [*drafts, completion, scope.draft(closing)]
 
 
@@ -626,11 +651,18 @@ def _close_calls(state: RunState, scope: RunScope, reason: str) -> list[EventDra
 
 
 def _fail(
-    state: RunState, scope: RunScope, error_type: str, error: str, cause: EventDraft | None
+    state: RunState,
+    scope: RunScope,
+    error_type: str,
+    error: str,
+    cause: EventDraft | None,
+    *,
+    spent: tuple[Usage, float] = (Usage(), 0.0),
 ) -> list[EventDraft]:
+    """Échec du run ; ``spent`` : consommation pas encore appliquée à ``state`` (juges, lot)."""
     return [
         _transition(state, scope, RunStatus.FAILED, cause or error_type),
-        scope.draft(_failed(state, error_type, error)),
+        scope.draft(_failed(state, error_type, error, spent=spent)),
     ]
 
 
@@ -709,26 +741,70 @@ def _completed(
     terminal: Event | None = None,
     data: JsonValue = None,
     unverified: bool = False,
+    spent: tuple[Usage, float] = (Usage(), 0.0),
 ) -> RunCompleted:
+    """Clôture ; ``spent`` : consommation des juges de la décision, pas encore appliquée."""
+    usage, cost = spent
     return RunCompleted(
         output=output,
         output_event_id=terminal.event_id if terminal is not None else None,
         iterations=state.iterations,
-        usage=state.usage,
-        cost_usd=state.cost_usd,
+        usage=state.usage + usage,
+        cost_usd=state.cost_usd + cost,
         data=data,
         unverified=unverified or state.unverified,
     )
 
 
-def _failed(state: RunState, error_type: str, error: str) -> RunFailed:
+def _failed(
+    state: RunState, error_type: str, error: str, *, spent: tuple[Usage, float] = (Usage(), 0.0)
+) -> RunFailed:
+    usage, cost = spent
     return RunFailed(
         error_type=error_type,
         error=error,
         iterations=state.iterations,
-        usage=state.usage,
-        cost_usd=state.cost_usd,
+        usage=state.usage + usage,
+        cost_usd=state.cost_usd + cost,
     )
+
+
+def _policy_drafts(
+    scope: RunScope,
+    events: Sequence[PolicyEvent],
+    *,
+    span_id: SpanId | None = None,
+    parent_span_id: SpanId | None = None,
+) -> list[EventDraft]:
+    """Événements des politiques d'un point, dans leur span.
+
+    Les appels de modèle d'un juge ont leur propre span, sous celui du point, au
+    nom de ``judge:<nom>`` : un span par appel (ses nouvelles tentatives, puis
+    sa réponse).
+    """
+    drafts: list[EventDraft] = []
+    judged: SpanId | None = None
+    for event in events:
+        if isinstance(event, ModelRetried | ModelResponded) and event.judge is not None:
+            judged = judged or new_span_id()
+            drafts.append(
+                scope.draft(
+                    event,
+                    span_id=judged,
+                    parent_span_id=span_id or scope.span_id,
+                    role=judge_role(event.judge),
+                )
+            )
+            if isinstance(event, ModelResponded):
+                judged = None
+        else:
+            drafts.append(scope.draft(event, span_id=span_id, parent_span_id=parent_span_id))
+    return drafts
+
+
+def judge_role(judge: str) -> str:
+    """Rôle d'un juge dans l'enveloppe des événements : son coût lui est attribué (#21)."""
+    return f"judge:{judge}"
 
 
 # --- Effets ------------------------------------------------------------------
@@ -745,17 +821,11 @@ class _Step:
         self._effect: Effect = effect
         self._started = time.perf_counter()
 
-    def draft(
-        self,
-        payload: StepStarted
-        | StepCompleted
-        | ModelResponded
-        | ModelRetried
-        | PolicyDecided
-        | GuardChecked,
-    ) -> EventDraft:
-        # Les appels de modèle de l'orchestrateur sont ceux du rôle ``main`` (C6).
-        role = MAIN_ROLE if isinstance(payload, ModelResponded | ModelRetried) else None
+    def draft(self, payload: StepStarted | StepCompleted | PolicyEvent) -> EventDraft:
+        role: str | None = None
+        if isinstance(payload, ModelResponded | ModelRetried):
+            # Les appels de modèle de l'orchestrateur sont ceux du rôle ``main`` (C6).
+            role = judge_role(payload.judge) if payload.judge is not None else MAIN_ROLE
         return self._scope.draft(payload, span_id=self.span, role=role)
 
     def started(self) -> EventDraft:
@@ -896,7 +966,11 @@ async def _tool_step(
     # son run. Les appels de modèle d'un rôle ont leur span, en dessous.
     spans: dict[str, SpanId] = {call.call_id: new_span_id() for call in state.pending_calls}
     model_spans: dict[str, SpanId] = {}
+    # Appel en cours du juge d'un résultat : son span, sous celui de l'appel d'outil.
+    judge_spans: dict[str, SpanId] = {}
     emitted = 0
+    # Consommation du lot (rôles, juges, sous-agents), pour la clôture d'un échec.
+    usage, cost = Usage(), 0.0
     # Décision ``Fail`` d'une politique d'outil : le run échoue à la fin du lot.
     failure: tuple[EventDraft, PolicyDecided] | None = None
     batch = ctx.tools.run_batch(
@@ -909,9 +983,28 @@ async def _tool_step(
     async with aclosing(batch) as events:
         async for item in events:
             span = spans.setdefault(item.call_id, new_span_id())
+            seen = item if isinstance(item, ToolCalled | ToolCompleted) else item.payload
+            if isinstance(seen, ModelResponded):
+                usage, cost = usage + seen.usage, cost + seen.cost_usd
+            elif isinstance(seen, ToolCompleted) and seen.usage is not None:
+                usage, cost = usage + seen.usage, cost + seen.cost_usd
             if isinstance(item, Delegated):
                 inner = model_spans.setdefault(item.call_id, new_span_id())
                 yield scope.draft(item.payload, span_id=inner, parent_span_id=span, role=item.role)
+            elif (
+                isinstance(item, Decided)
+                and isinstance(item.payload, ModelRetried | ModelResponded)
+                and item.payload.judge is not None
+            ):
+                judged = judge_spans.setdefault(item.call_id, new_span_id())
+                yield scope.draft(
+                    item.payload,
+                    span_id=judged,
+                    parent_span_id=span,
+                    role=judge_role(item.payload.judge),
+                )
+                if isinstance(item.payload, ModelResponded):
+                    del judge_spans[item.call_id]
             elif isinstance(item, Stored | Decided):
                 draft = scope.draft(item.payload, span_id=span, parent_span_id=current.span)
                 payload = item.payload
@@ -928,7 +1021,14 @@ async def _tool_step(
     if failure is not None:
         draft, decided = failure
         yield current.completed(emitted, ok=False)
-        for event in _fail(state, scope, f"policy.{decided.policy}", decided.reason, draft):
+        for event in _fail(
+            state,
+            scope,
+            f"policy.{decided.policy}",
+            decided.reason,
+            draft,
+            spent=(usage, cost),
+        ):
             yield event
         return
     yield current.completed(emitted)

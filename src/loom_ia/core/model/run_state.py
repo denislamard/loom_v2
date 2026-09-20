@@ -13,6 +13,7 @@ from pydantic import Field, JsonValue, NonNegativeFloat, NonNegativeInt
 from loom_ia.core.model.base import DomainModel
 from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import RunId, SessionId, SpanId
+from loom_ia.core.model.judge import JudgesMode
 from loom_ia.core.model.media import ArtifactRecord
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.usage import Usage
@@ -70,6 +71,8 @@ class RunState(DomainModel):
     depth: NonNegativeInt = 0
     agent: str
     context: CallerContext = CallerContext()
+    # Juges choisis par l'appelant (#21) : selon leur ``when``, tous, ou aucun.
+    judges: JudgesMode = "auto"
 
     status: RunStatus = RunStatus.READY_FOR_MODEL
     # Numéro de la dernière étape commencée.
@@ -99,7 +102,7 @@ class RunState(DomainModel):
     output: Message | None = None
     # Réponse finale structurée : l'objet JSON validé par le schéma de sortie (A7).
     output_data: JsonValue = None
-    # Réponse finale gardée bien qu'elle ne respecte pas un contrat (``unverified``).
+    # Réponse finale gardée bien qu'un contrat ou un juge la refuse (``unverified``).
     unverified: bool = False
     # Appel dont le résultat est devenu la réponse finale (#13).
     terminal_call_id: str | None = None

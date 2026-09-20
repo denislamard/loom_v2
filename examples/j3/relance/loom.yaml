@@ -4,10 +4,12 @@
 # Deux agents, même scénario :
 #   relance       modèles simulés (sdk: fake), sans clé ni réseau ;
 #   relance_reel  MiniMax-M3 pour l'orchestrateur (clé dans M3_API_KEY),
-#                 GLM-5.3-Flash chez Together pour le rôle (clé dans TOGETHER_API_KEY).
+#                 GLM-5.3-Flash chez Together pour le rôle (clé dans TOGETHER_API_KEY),
+#                 Claude Haiku 4.5 pour le juge (clé dans ANTHROPIC_API_KEY).
 #
 # Phase 3.1 : politiques. Voir politiques.py (à côté) et agents/*.yaml.
 # Phase 3.2 : le rôle rend un JSON {objet, corps}, sous contrat de sortie.
+# Phase 3.3 : un juge vérifie que la relance n'invente rien.
 version: 1
 
 imports: [outils, politiques]     # modules voisins de ce fichier
@@ -69,6 +71,30 @@ models:
             {"objet": "Votre devis D-2026-042",
             "corps": "Bonjour Madame Martin,\n\nJe reviens vers vous au sujet du devis D-2026-042 de 1 840 € pour le remplacement de votre chauffe-eau, envoyé le 2 septembre. Avez-vous pu en prendre connaissance ? Je reste disponible pour en parler.\n\nBien cordialement,\nPlomberie Dupont"}
 
+  # Juge simulé (phase 3.3) : il refuse une relance qui promet une réduction de
+  # 10 % (absente du devis), et accepte les autres. Tarifs de Claude Haiku 4.5,
+  # pour voir le coût du juge s'ajouter à celui du run.
+  - id: FAKE_JUDGE
+    sdk: fake
+    model: fake-judge
+    pricing: {input: 1.0, output: 5.0}
+    params:
+      script:
+        - with_text: 10 %
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 0.1, reason: "La réduction de 10 % ne figure ni dans le devis ni dans la demande."}
+                  - {name: ton, score: 0.9, reason: "Ton cordial, comme demandé."}
+        - without_text: 10 %
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Montant, date d'envoi et objet repris du devis."}
+                  - {name: ton, score: 0.9, reason: "Ton cordial, comme demandé."}
+
   # Tarifs en $ par million de tokens, relevés le 18/09/2026 (palier ≤ 512k tokens).
   - id: M3_MAIN
     sdk: anthropic
@@ -86,6 +112,13 @@ models:
     api_key_env: TOGETHER_API_KEY
     max_tokens: 4096
     pricing: {input: 0.15, output: 0.50, cache_read: 0.03}
+  # Claude Haiku 4.5, juge réel (phase 3.3) ; tarifs repris de examples/j2/assistant.
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-4-5-20251001
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 1024
+    pricing: {input: 1.0, output: 5.0, cache_read: 0.10, cache_write: 1.25}
 
 storage:
   events: {backend: jsonl, path: data}   # ignoré par git

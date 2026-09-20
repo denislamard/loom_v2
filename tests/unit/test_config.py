@@ -145,8 +145,8 @@ def test_config_can_be_written_in_python() -> None:
         ),
         (
             {},
-            {"demo": {**AGENT, "judge": {"model": "FAKE"}}},
-            "'judge' : prévu pour le jalon J3",
+            {"demo": {**AGENT, "budget": {"max_usd": 1}}},
+            "'budget' : prévu pour le jalon J3",
         ),
         (
             {},

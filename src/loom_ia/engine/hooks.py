@@ -22,6 +22,11 @@ Garde-fous :
 Guards : une politique peut enregistrer ses contrôles dans son contexte
 (``record``) ; ils deviennent des ``guard.checked``, écrits avant sa décision.
 
+Juges (#21) : une politique fournie par loom-ia peut aussi journaliser son
+propre travail (``TracingPolicy``) : l'appel du modèle d'un juge et son
+verdict, écrits avant ses contrôles. Le type est nominal et interne : une
+politique écrite par l'utilisateur n'écrit pas dans le journal.
+
 Ce module ne fait qu'évaluer : ce que chaque décision change au run (requête
 remplacée, appel refusé, réparation, arrêt, échec) est appliqué par la boucle
 et l'exécuteur d'outils.
@@ -30,13 +35,20 @@ et l'exécuteur d'outils.
 import asyncio
 import dataclasses
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Final, Literal, cast
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from loom_ia.core.events import GuardChecked, PolicyDecided
+from loom_ia.core.events import (
+    GuardChecked,
+    JudgeEvaluated,
+    ModelResponded,
+    ModelRetried,
+    PolicyDecided,
+)
 from loom_ia.core.model import (
     ALLOWED_DECISIONS,
     CONTINUE,
@@ -61,6 +73,7 @@ from loom_ia.core.model import (
     Stop,
     TextBlock,
     ToolOutput,
+    Usage,
 )
 from loom_ia.core.ports import Policy
 
@@ -96,7 +109,28 @@ class BoundPolicy:
     max_attempts: int | None = 1
 
 
-type PolicyEvent = PolicyDecided | GuardChecked
+# Ce qu'une politique fournie journalise de son propre travail (appel et verdict d'un juge).
+type TracedEvent = ModelRetried | ModelResponded | JudgeEvaluated
+type Trace = Callable[[TracedEvent], None]
+type PolicyEvent = PolicyDecided | GuardChecked | TracedEvent
+
+
+class TracingPolicy(ABC):
+    """Politique fournie par loom-ia qui journalise son travail (juge, #21).
+
+    ``decide_traced`` remplace ``decide`` quand le moteur l'exécute : ``trace``
+    reçoit les événements à écrire (appel de modèle, verdict), dans l'ordre,
+    avant les contrôles et la décision de la politique.
+    """
+
+    @abstractmethod
+    async def decide_traced(
+        self, subject: PolicySubject, context: PolicyContext, trace: Trace
+    ) -> Decision: ...
+
+    async def decide(self, subject: PolicySubject, context: PolicyContext) -> Decision:
+        """Décision seule, sans journal (hors du moteur)."""
+        return await self.decide_traced(subject, context, lambda _: None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +164,15 @@ class Verdict:
     def unverified(self) -> bool:
         """Vrai si un contrôle a gardé la sortie sans qu'elle respecte son contrat."""
         return any(c.resolution == "unverified" for c in self.checked)
+
+    @property
+    def spent(self) -> tuple[Usage, float]:
+        """Consommation des appels de modèle faits par les politiques (juges)."""
+        usage, cost = Usage(), 0.0
+        for event in self.events:
+            if isinstance(event, ModelResponded):
+                usage, cost = usage + event.usage, cost + event.cost_usd
+        return usage, cost
 
 
 class Policies:
@@ -173,10 +216,12 @@ class Policies:
             context = PolicyContext(
                 name=bound.name, params=bound.params, attempt=counts.get(bound.name, 0)
             )
+            traced: list[TracedEvent] = []
             try:
                 try:
-                    decision = await self._decide(bound, current, context)
+                    decision = await self._decide(bound, current, context, traced.append)
                 finally:
+                    decided += traced
                     decided += [
                         _checked(bound, check, call_id, context) for check in context.checks
                     ]
@@ -224,18 +269,26 @@ class Policies:
         return Verdict(CONTINUE, current, tuple(decided))
 
     async def _decide(
-        self, bound: BoundPolicy, subject: PolicySubject, context: PolicyContext
+        self, bound: BoundPolicy, subject: PolicySubject, context: PolicyContext, trace: Trace
     ) -> Decision:
         """Décision de la politique, contrôlée ; lève ``PolicyFailure``."""
         scope = asyncio.timeout(bound.timeout)
+        policy = bound.policy
         try:
             async with scope:
                 # Une politique écrite à la main peut rendre n'importe quoi.
-                decision = cast(object, await bound.policy.decide(subject, context))
+                if isinstance(policy, TracingPolicy):
+                    decided = await policy.decide_traced(subject, context, trace)
+                else:
+                    decided = await policy.decide(subject, context)
+                decision = cast(object, decided)
         except TimeoutError as exc:
             if scope.expired():
                 raise PolicyFailure(f"délai de {bound.timeout:g} s dépassé") from exc
             raise PolicyFailure(f"{type(exc).__name__}: {exc}") from exc
+        except PolicyFailure:
+            # Erreur déjà décrite par la politique (juge : modèle en échec, verdict invalide).
+            raise
         except Exception as exc:
             raise PolicyFailure(f"{type(exc).__name__}: {exc}") from exc
         if not isinstance(decision, _DECISION_TYPES):

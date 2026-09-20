@@ -24,6 +24,7 @@ from loom_ia.core.events import (
     ArtifactStored,
     Event,
     GuardChecked,
+    JudgeEvaluated,
     ModelResponded,
     ModelRetried,
     PolicyDecided,
@@ -73,6 +74,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
             depth=payload.depth,
             agent=event.agent or "",
             context=payload.context,
+            judges=payload.judges,
             last_seq=event.seq,
         )
 
@@ -97,6 +99,9 @@ def apply(state: RunState | None, event: Event) -> RunState:
             }
         case UserMessage(message=message):
             update["messages"] = (*state.messages, message)
+        case ModelResponded(judge=str(), usage=usage, cost_usd=cost):
+            # Appel d'un juge : son coût compte, pas sa réponse ni une itération.
+            update |= {"usage": state.usage + usage, "cost_usd": state.cost_usd + cost}
         case ModelResponded(call_id=str() as call_id, usage=usage, cost_usd=cost):
             _require_pending(state, call_id, event)
             update |= {"usage": state.usage + usage, "cost_usd": state.cost_usd + cost}
@@ -137,7 +142,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
             update |= _decided(state, decided, event)
         case GuardChecked(target="output", resolution="unverified"):
             update["unverified"] = True
-        case GuardChecked():
+        case GuardChecked() | JudgeEvaluated():
             pass
         case StepCompleted() | ModelRetried() | ToolSourceUnavailable():
             pass

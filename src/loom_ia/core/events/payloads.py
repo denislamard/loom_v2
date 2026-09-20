@@ -22,6 +22,11 @@ l'appel donne l'identifiant de l'enfant (``child_run_id``), et le
 Guards (#20) : chaque contrôle d'une sortie écrit un ``guard.checked``,
 réussi ou non, avant la décision qu'il motive.
 
+Juges (#21) : l'appel du modèle d'un juge est journalisé dans le run jugé
+(``model.retried``, ``model.responded`` avec ``judge``, enveloppe au nom de
+``judge:<nom>``) : son coût s'ajoute au run, pas ses itérations. Son verdict
+est un ``judge.evaluated`` (notes par critère), suivi du ``guard.checked``.
+
 Politiques (#2) : toute décision autre que ``Continue`` écrit un
 ``policy.decided`` avant son effet, dans le span de l'étape ou de l'appel
 concerné. Une demande de réparation (``Retry``) est suivie d'un
@@ -47,6 +52,7 @@ from loom_ia.core.model.base import DomainModel
 from loom_ia.core.model.content import ToolOutput, has_inline_data
 from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import EventId, RunId
+from loom_ia.core.model.judge import CriterionScore, JudgesMode
 from loom_ia.core.model.media import ArtifactOrigin, ArtifactRecord
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.policy import CheckOutcome, CheckResolution, DecisionKind, HookPoint
@@ -101,6 +107,15 @@ class RunStarted(Payload):
     depth: NonNegativeInt = 0
     # Run qui a déclenché celui-ci (compaction, #23).
     triggered_by: RunId | None = None
+    # Juges choisis par l'appelant (#21) ; un sous-run hérite du choix de son parent.
+    judges: JudgesMode = "auto"
+
+    def facets(self) -> dict[str, FacetValue]:
+        facets = super().facets()
+        if self.judges != "auto":
+            # Absente sinon : les journaux antérieurs restent lisibles.
+            facets["judges"] = self.judges
+        return facets
 
 
 type Effect = Literal["model_call", "tool_batch", "finalize", "wait_child"]
@@ -159,7 +174,7 @@ class RunCompleted(Payload):
     cost_usd: NonNegativeFloat = 0.0
     # Réponse structurée : l'objet JSON validé par le schéma de sortie de l'agent (A7).
     data: JsonValue = None
-    # Réponse gardée bien qu'elle ne respecte pas un contrat (``on_failure: unverified``).
+    # Réponse gardée bien qu'un contrat ou un juge la refuse (``on_failure: unverified``).
     unverified: bool = False
 
     @model_validator(mode="after")
@@ -249,6 +264,8 @@ class ModelResponded(Payload):
     request_hash: str
     # Appel d'outil servi par cette réponse (rôle délégué) ; None pour l'orchestrateur.
     call_id: str | None = None
+    # Juge qui a fait cet appel (#21) : sa réponse n'entre pas dans la conversation.
+    judge: str | None = None
 
     @model_validator(mode="after")
     def _check_message(self) -> Self:
@@ -256,7 +273,10 @@ class ModelResponded(Payload):
         return self
 
     def facets(self) -> dict[str, FacetValue]:
-        return {**super().facets(), "tokens": self.usage.total_tokens}
+        facets: dict[str, FacetValue] = {**super().facets(), "tokens": self.usage.total_tokens}
+        if self.judge is not None:
+            facets["judge"] = self.judge
+        return facets
 
 
 class ModelRetried(Payload):
@@ -277,10 +297,18 @@ class ModelRetried(Payload):
     delay_s: NonNegativeFloat
     # Appel d'outil servi par cet appel de modèle (rôle délégué).
     call_id: str | None = None
+    # Juge qui a fait cet appel (#21).
+    judge: str | None = None
 
     @property
     def event_status(self) -> EventStatus:
         return "warning"
+
+    def facets(self) -> dict[str, FacetValue]:
+        facets = super().facets()
+        if self.judge is not None:
+            facets["judge"] = self.judge
+        return facets
 
 
 # --- Outils ------------------------------------------------------------------
@@ -438,6 +466,44 @@ class GuardChecked(Payload):
         return "error" if self.resolution == "fail" else "warning"
 
 
+class JudgeEvaluated(Payload):
+    """Verdict d'un juge sur une sortie : une note par critère (#21).
+
+    Écrit après l'appel du modèle du juge, avant le ``guard.checked`` qui en
+    tire la suite. ``blocked`` : un critère bloquant est sous son seuil, et la
+    sortie est refusée.
+    """
+
+    category: ClassVar[EventCategory] = "guard"
+    facet_fields: ClassVar[tuple[str, ...]] = ("judge", "target", "model_id", "passed", "blocked")
+
+    type: Literal["judge.evaluated"] = "judge.evaluated"
+    judge: str
+    # ``output`` (réponse finale) ou ``role:<nom>``.
+    target: str
+    model_id: str
+    criteria: tuple[CriterionScore, ...] = Field(min_length=1)
+    # Tous les critères atteignent leur seuil.
+    passed: bool
+    blocked: bool
+    attempt: PositiveInt = 1
+    # Politique qui a fait le contrôle.
+    policy: str | None = None
+    call_id: str | None = None
+
+    @model_validator(mode="after")
+    def _check_verdict(self) -> Self:
+        if self.passed != all(c.passed for c in self.criteria):
+            raise ValueError("judge.evaluated : 'passed' incohérent avec les notes")
+        if self.blocked != any(c.blocking and not c.passed for c in self.criteria):
+            raise ValueError("judge.evaluated : 'blocked' incohérent avec les notes")
+        return self
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "ok" if self.passed else "warning"
+
+
 # --- Artefacts ---------------------------------------------------------------
 
 
@@ -488,6 +554,7 @@ type DurablePayload = Annotated[
     | ToolSourceUnavailable
     | PolicyDecided
     | GuardChecked
+    | JudgeEvaluated
     | ArtifactStored,
     Field(discriminator="type"),
 ]
@@ -507,5 +574,6 @@ DURABLE_PAYLOADS: tuple[type[Payload], ...] = (
     ToolSourceUnavailable,
     PolicyDecided,
     GuardChecked,
+    JudgeEvaluated,
     ArtifactStored,
 )

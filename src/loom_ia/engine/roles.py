@@ -63,6 +63,7 @@ from loom_ia.core.model import (
     ModelResponse,
     ModelSpec,
     OutputContract,
+    RunState,
     StreamReset,
     TextBlock,
     ToolCallBlock,
@@ -164,13 +165,13 @@ class RoleTool(DelegatedTool):
         for item in role.context:
             match item:
                 case "user_input":
-                    text = _user_input(run)
+                    text = user_input(run.state)
                     values["user_input"] = text
-                    sections.append(_tagged("user_input", text))
+                    sections.append(tagged("user_input", text))
                 case "caller_context":
                     data = run.state.context.model_dump(mode="json")
                     values["caller_context"] = data
-                    sections.append(_tagged("caller_context", json.dumps(data, ensure_ascii=False)))
+                    sections.append(tagged("caller_context", json.dumps(data, ensure_ascii=False)))
                 case "attachments":
                     files += run.attachments
                     if not files:
@@ -179,7 +180,7 @@ class RoleTool(DelegatedTool):
                         )
                     listing = "\n".join(f"- {describe(block)}" for block in run.attachments)
                     values["attachments"] = listing
-                    sections.append(_tagged("attachments", listing))
+                    sections.append(tagged("attachments", listing))
                 case ToolResults(tools=names):
                     for name in names:
                         records = run.results.results_of(name)
@@ -194,7 +195,7 @@ class RoleTool(DelegatedTool):
                             return exc.message
                         results[name] = "\n\n".join(texts)
                         sections += [
-                            _tagged("tool_result", text, tool=name, ref=record.ref)
+                            tagged("tool_result", text, tool=name, ref=record.ref)
                             for record, text in zip(records, texts, strict=True)
                         ]
         if results:
@@ -203,7 +204,7 @@ class RoleTool(DelegatedTool):
             text = role.template.render({"args": arguments, "context": values})
         else:
             if arguments:
-                sections.append(_tagged("arguments", json.dumps(arguments, ensure_ascii=False)))
+                sections.append(tagged("arguments", json.dumps(arguments, ensure_ascii=False)))
             text = "\n\n".join(sections)
         if not text.strip() and not files:
             return f"Le rôle {role.name} n'a rien reçu : donne-lui ses arguments."
@@ -326,13 +327,14 @@ def strict_schema(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
     return {**schema, "additionalProperties": False}
 
 
-def _user_input(run: RunView) -> str:
+def user_input(state: RunState) -> str:
     """Demande de l'utilisateur qui a lancé le run, mot pour mot."""
-    first = next((m for m in run.state.messages if m.role == "user"), None)
+    first = next((m for m in state.messages if m.role == "user"), None)
     return first.text if first is not None else ""
 
 
-def _tagged(tag: str, body: str, **attributes: str) -> str:
+def tagged(tag: str, body: str, **attributes: str) -> str:
+    """Bloc de contexte balisé, tel qu'un rôle ou un juge le reçoit."""
     attrs = "".join(f' {name}="{value}"' for name, value in attributes.items())
     return f"<{tag}{attrs}>\n{body}\n</{tag}>"
 

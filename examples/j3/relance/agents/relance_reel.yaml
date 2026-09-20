@@ -48,6 +48,24 @@ roles:
         additionalProperties: false
       repair: {max_attempts: 1}
       on_failure: fail
+    # Juge (phase 3.3), après le contrat : la relance ne doit rien inventer. Il
+    # voit la demande, le devis et les arguments du rôle ; un refus est réparé
+    # une fois par le rôle lui-même, puis l'orchestrateur reçoit une erreur.
+    judge:
+      model: HAIKU
+      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: >-
+            Chaque montant, date, délai et engagement de l'e-mail figure dans le
+            devis ou dans la demande : rien d'inventé (réduction, délai
+            d'intervention, garantie…).
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé (argument ton).
+          min_score: 0.6
+          blocking: false
+      repair: {max_attempts: 1}
+      on_failure: fail
 
 # Politiques (phase 3.1), dans l'ordre d'exécution à chaque point.
 policies:

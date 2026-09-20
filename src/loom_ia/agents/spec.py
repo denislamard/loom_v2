@@ -3,9 +3,9 @@
 
 Sous-ensemble des jalons J1 à J3 : orchestrateur (``main``), outils Python,
 serveurs MCP, rôles délégués (dont le rôle vision, qui reçoit les pièces
-jointes), sous-agents, politiques (J3.1) et contrats de sortie (J3.2). Le
-juge et le budget arrivent avec leurs phases ; les déclarer aujourd'hui donne
-une erreur qui nomme la phase.
+jointes), sous-agents, politiques (J3.1), contrats de sortie (J3.2) et juges
+(J3.3). Le budget arrive avec sa phase ; le déclarer aujourd'hui donne une
+erreur qui nomme la phase.
 
 ``main`` est lui-même un rôle (C6) : il partage avec les rôles délégués le
 modèle, le prompt système et les réglages ``llm``.
@@ -27,6 +27,7 @@ from pydantic import (
 )
 
 from loom_ia.core.model import (
+    CRITERION_NAME_PATTERN,
     MAIN_ROLE,
     MCP_NAME_PATTERN,
     MCP_PREFIX_SEPARATOR,
@@ -34,9 +35,13 @@ from loom_ia.core.model import (
     RESERVED_PREFIX,
     TOOL_NAME_PATTERN,
     Approval,
+    Criterion,
     DomainModel,
     HookPoint,
+    JudgeWhen,
+    OnFailure,
     OutputContract,
+    RepairSettings,
     SideEffects,
     StreamOutput,
     ToolOverrides,
@@ -50,7 +55,6 @@ AGENT_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 # Clés du schéma complet d'un agent, prévues pour plus tard (§17.4).
 LATER_AGENT: Final[dict[str, str]] = {
     "approval": "J4.3 (approbations)",
-    "judge": "J3.3 (juge)",
     "budget": "J3.4 (coûts et budgets)",
     "timeout": "J4.2 (cycle de vie des runs : délai, annulation)",
 }
@@ -58,7 +62,6 @@ LATER_MAIN: Final[dict[str, str]] = {
     "fallbacks": "J3.5 (modèle de secours)",
 }
 LATER_ROLE: Final[dict[str, str]] = {
-    "judge": "J3.3 (juge)",
     "fallbacks": "J3.5 (modèle de secours)",
 }
 LATER_SUBAGENT: Final[dict[str, str]] = {
@@ -117,6 +120,65 @@ class ToolResultsContext(DomainModel):
 type ContextName = Literal["user_input", "caller_context", "attachments"]
 type ContextItem = ContextName | ToolResultsContext
 
+# Nom d'un juge pour la réponse finale, quand il n'en déclare pas.
+OUTPUT_JUDGE: Final = "output"
+
+
+class JudgeSpec(DomainModel):
+    """Juge d'une sortie (E3, E6, #21) : la réponse finale (agent) ou la sortie d'un rôle.
+
+    Chaque critère reçoit une note entre 0 et 1 ; un critère bloquant sous son
+    seuil fait refuser la sortie, que son auteur répare, puis ``on_failure``
+    décide. Le juge voit la sortie, ses critères, le contexte déclaré (liste
+    fixe du #12) et, pour un rôle, ses arguments.
+    """
+
+    # Identifiant d'un modèle déclaré dans ``models``.
+    model: str = Field(min_length=1)
+    # Nom dans le journal (tirage, rôle ``judge:<nom>``) ; par défaut ``output``
+    # pour la réponse finale, le nom du rôle pour un rôle.
+    name: str | None = Field(default=None, pattern=CRITERION_NAME_PATTERN)
+    criteria: tuple[Criterion, ...] = Field(min_length=1)
+    context: tuple[ContextItem, ...] = ()
+    when: JudgeWhen = JudgeWhen()
+    repair: RepairSettings = RepairSettings()
+    on_failure: OnFailure = "fail"
+    fallback_message: str | None = None
+    llm: LlmSettings = LlmSettings()
+    # Délai du juge ; sans lui, ceux de son modèle et son retry le bornent.
+    timeout: PositiveFloat | None = None
+    # Erreur du juge (modèle, verdict) : ``block`` fait échouer le run, ``allow`` laisse passer.
+    on_error: Literal["block", "allow"] = "block"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _check_input(cls, data: object) -> object:
+        _reject_later_context(data)
+        return data
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        names = [criterion.name for criterion in self.criteria]
+        doubles = sorted({name for name in names if names.count(name) > 1})
+        if doubles:
+            raise ValueError(f"Critère déclaré deux fois : {', '.join(doubles)}")
+        declared = _declared_context(self.context)
+        doubles = sorted({name for name in declared if declared.count(name) > 1})
+        if doubles:
+            raise ValueError(f"Contexte déclaré deux fois : {', '.join(doubles)}")
+        if self.on_failure == "fallback" and not self.fallback_message:
+            raise ValueError("on_failure: fallback demande un 'fallback_message'")
+        return self
+
+    @property
+    def blocking(self) -> bool:
+        """Vrai si un critère au moins peut faire refuser la sortie."""
+        return any(criterion.blocking for criterion in self.criteria)
+
+    @property
+    def wants_attachments(self) -> bool:
+        return "attachments" in self.context
+
 
 def _empty_object() -> dict[str, JsonValue]:
     return {"type": "object", "properties": {}}
@@ -139,6 +201,8 @@ class RoleSpec(BaseRole):
     timeout: PositiveFloat | None = None
     # Contrat de sortie (E5) : réparé par le modèle du rôle, puis ``on_failure``.
     output: OutputContract | None = None
+    # Juge de la sortie (E5, #21), après le contrat : réparée par le modèle du rôle.
+    judge: JudgeSpec | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -166,13 +230,7 @@ class RoleSpec(BaseRole):
     @property
     def declared_context(self) -> list[str]:
         """Noms du contexte déclaré : ``tool_results.<outil>`` pour chaque outil."""
-        names: list[str] = []
-        for item in self.context:
-            if isinstance(item, ToolResultsContext):
-                names += [f"tool_results.{tool}" for tool in item.tool_results]
-            else:
-                names.append(item)
-        return names
+        return _declared_context(self.context)
 
     @property
     def wants_attachments(self) -> bool:
@@ -188,6 +246,17 @@ class RoleSpec(BaseRole):
             if isinstance(item, ToolResultsContext)
             for tool in item.tool_results
         )
+
+
+def _declared_context(context: tuple[ContextItem, ...]) -> list[str]:
+    """Noms d'un contexte déclaré : ``tool_results.<outil>`` pour chaque outil."""
+    names: list[str] = []
+    for item in context:
+        if isinstance(item, ToolResultsContext):
+            names += [f"tool_results.{tool}" for tool in item.tool_results]
+        else:
+            names.append(item)
+    return names
 
 
 def _reject_later_context(data: object) -> None:
@@ -389,9 +458,11 @@ class AgentSpec(DomainModel):
     max_iterations: PositiveInt = 10
     # Contrat de la réponse finale (A7, E1) : réparée par l'orchestrateur.
     output: OutputContract | None = None
+    # Juge de la réponse finale (E3, #21), après son contrat.
+    judge: JudgeSpec | None = None
     # Diffusion de la réponse finale ; par défaut ``after_guards`` si elle est
-    # contrôlée (contrat, politique on_output, rôle terminal sous contrat),
-    # sinon ``live`` (#11).
+    # contrôlée (contrat, juge, politique on_output, rôle terminal sous contrat
+    # ou jugé), sinon ``live`` (#11).
     stream_output: StreamOutput | None = None
     # Outils Python et serveurs MCP, dans l'ordre de déclaration.
     tools: tuple[ToolRef, ...] = ()
@@ -433,7 +504,27 @@ class AgentSpec(DomainModel):
                 f"Sous-agent déclaré deux fois : {', '.join(sorted(doubles))} "
                 "(donner un 'name' à l'une des références)"
             )
+        judges = [name for name, _, _ in self.judges]
+        doubles = {name for name in judges if judges.count(name) > 1}
+        if doubles:
+            raise ValueError(
+                f"Juge déclaré deux fois : {', '.join(sorted(doubles))} "
+                "(donner un 'name' à l'un des juges)"
+            )
         return self
+
+    @property
+    def judges(self) -> tuple[tuple[str, RoleSpec | None, JudgeSpec], ...]:
+        """Juges de l'agent : nom, rôle jugé (None pour la réponse finale), définition."""
+        found: list[tuple[str, RoleSpec | None, JudgeSpec]] = []
+        if self.judge is not None:
+            found.append((self.judge.name or OUTPUT_JUDGE, None, self.judge))
+        found += [
+            (role.judge.name or role.name, role, role.judge)
+            for role in self.roles
+            if role.judge is not None
+        ]
+        return tuple(found)
 
     @property
     def contracts(self) -> bool:

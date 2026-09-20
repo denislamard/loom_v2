@@ -144,6 +144,7 @@ class AgentTool(DelegatedTool):
                     call_id=context.call_id,
                     depth=parent.depth,
                     span_id=run.spans.get(context.call_id),
+                    judges=parent.judges,
                 ),
                 writer=writer,
             )

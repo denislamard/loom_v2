@@ -57,8 +57,6 @@ from pydantic import JsonValue
 
 from loom_ia.core.events import (
     ArtifactStored,
-    GuardChecked,
-    PolicyDecided,
     ToolCalled,
     ToolCompleted,
     ToolSourceUnavailable,
@@ -104,7 +102,7 @@ from loom_ia.engine.delegated import (
     Exchange,
     RunView,
 )
-from loom_ia.engine.hooks import Policies, Verdict
+from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.media import size_label
 from loom_ia.engine.offload import (
     DEFAULT_OFFLOAD_OVER,
@@ -153,7 +151,7 @@ class Decided:
     """Décision ou contrôle d'une politique d'outil, à écrire avant l'événement concerné."""
 
     call_id: str
-    payload: PolicyDecided | GuardChecked
+    payload: PolicyEvent
 
 
 type ToolEvent = ToolCalled | ToolCompleted | Stored | Delegated | Decided
