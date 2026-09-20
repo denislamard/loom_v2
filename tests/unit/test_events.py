@@ -12,13 +12,16 @@ from loom_ia.core.events import (
     Event,
     EventQuery,
     ModelResponded,
+    PolicyDecided,
     RunScope,
     RunTransitioned,
     ToolCompleted,
+    UserMessage,
     event_json_schema,
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    InlineDataBlock,
     Message,
     RunId,
     RunStatus,
@@ -169,3 +172,38 @@ def test_json_schema_lists_every_durable_event_type() -> None:
     expected = {p.model_fields["type"].default for p in DURABLE_PAYLOADS}
     assert payload_types == expected
     assert len(expected) == len(DURABLE_PAYLOADS)
+
+
+def test_policy_decisions_have_their_own_category_and_status() -> None:
+    denied = SCOPE.draft(
+        PolicyDecided(policy="plafond", point="before_tool", decision="deny", call_id="c1")
+    ).to_event(1)
+    assert (denied.category, denied.status) == ("policy", "ok")
+    assert denied.facets == {"policy": "plafond", "point": "before_tool", "decision": "deny"}
+    failed = PolicyDecided(policy="plafond", point="before_model", decision="fail", reason="x")
+    allowed = PolicyDecided(policy="p", point="on_output", decision="continue", error=True)
+    assert (failed.event_status, allowed.event_status) == ("error", "warning")
+    assert Event.model_validate_json(denied.model_dump_json()) == denied
+    with pytest.raises(ValidationError, match="octets de fichier interdits"):
+        PolicyDecided(
+            policy="p",
+            point="on_output",
+            decision="replace",
+            output=Message(
+                role="assistant", blocks=(InlineDataBlock(media_type="image/png", data=b"x"),)
+            ),
+        )
+
+
+def test_repair_messages_are_marked_and_old_requests_unchanged() -> None:
+    request = SCOPE.draft(UserMessage(message=Message.user("?"))).to_event(1)
+    assert request.facets == {}
+    repair = SCOPE.draft(
+        UserMessage(message=Message.user("refusé"), kind="repair", policy="p", tools=False)
+    ).to_event(2)
+    assert repair.facets == {"kind": "repair"}
+    # Un message.user écrit avant J3.1 se relit sans changement.
+    old = json.loads(request.model_dump_json())
+    for field in ("kind", "policy", "tools"):
+        old["payload"].pop(field)
+    assert Event.model_validate(old) == request

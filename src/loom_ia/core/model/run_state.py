@@ -6,6 +6,7 @@ son ``run_id`` (#24). Il ne contient que des données sérialisables.
 """
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import Field, JsonValue, NonNegativeFloat, NonNegativeInt
 
@@ -42,6 +43,19 @@ class PendingCall(DomainModel):
     started: bool = False
     # Run enfant quand l'outil est un sous-agent (#4).
     child_run_id: RunId | None = None
+    # Arguments remplacés par une politique ``before_tool`` : repris tels quels
+    # si l'appel est relancé après une interruption (#2).
+    replaced_arguments: dict[str, JsonValue] | None = None
+
+
+class PendingRepair(DomainModel):
+    """Réparation décidée par une politique (``Retry``), pas encore demandée au modèle."""
+
+    policy: str
+    point: Literal["after_model", "on_output"]
+    feedback: str
+    # Faux : l'orchestrateur répare sans outils (échec de forme).
+    tools: bool = True
 
 
 class RunState(DomainModel):
@@ -68,6 +82,18 @@ class RunState(DomainModel):
     cost_usd: NonNegativeFloat = 0.0
     # Fichiers du run (pièces jointes, sorties d'outils, déports), une fois par URI.
     artifacts: tuple[ArtifactRecord, ...] = ()
+
+    # Réparations demandées par chaque politique (``Retry``), bornées par son ``max_attempts``.
+    retries: dict[str, NonNegativeInt] = Field(default_factory=dict[str, NonNegativeInt])
+    # ``Retry`` journalisé dont le message de réparation n'est pas encore écrit.
+    pending_repair: PendingRepair | None = None
+    # Positions des messages de réparation dans ``messages`` : avec la réponse
+    # refusée qui les précède, ils sont exclus de l'historique de session (#20).
+    repairs: tuple[NonNegativeInt, ...] = ()
+    # Prochaine réponse de l'orchestrateur sans outils (réparation de forme).
+    repair_without_tools: bool = False
+    # Réponse finale remplacée par une politique ``on_output``.
+    replaced_output: Message | None = None
 
     output: Message | None = None
     # Appel dont le résultat est devenu la réponse finale (#13).

@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Définition d'un agent (A9, #50).
 
-Sous-ensemble des jalons J1 et J2 : orchestrateur (``main``), outils Python,
+Sous-ensemble des jalons J1 à J3 : orchestrateur (``main``), outils Python,
 serveurs MCP, rôles délégués (dont le rôle vision, qui reçoit les pièces
-jointes) et sous-agents. Les guards, le juge, le budget et les politiques
+jointes), sous-agents et politiques (J3.1). Les guards, le juge et le budget
 arrivent avec leurs phases ; les déclarer aujourd'hui donne une erreur qui
 nomme la phase.
 
@@ -30,9 +30,12 @@ from loom_ia.core.model import (
     MAIN_ROLE,
     MCP_NAME_PATTERN,
     MCP_PREFIX_SEPARATOR,
+    POLICY_NAME_PATTERN,
+    RESERVED_PREFIX,
     TOOL_NAME_PATTERN,
     Approval,
     DomainModel,
+    HookPoint,
     SideEffects,
     ToolOverrides,
     UnsupportedKey,
@@ -45,7 +48,6 @@ AGENT_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 # Clés du schéma complet d'un agent, prévues pour plus tard (§17.4).
 LATER_AGENT: Final[dict[str, str]] = {
     "approval": "J4.3 (approbations)",
-    "policies": "J3.1 (politiques)",
     "output": "J3.2 (réponse structurée)",
     "judge": "J3.3 (juge)",
     "budget": "J3.4 (coûts et budgets)",
@@ -339,6 +341,36 @@ def _tool_kind(value: object) -> str:
     return "python"
 
 
+class PolicyRef(DomainModel):
+    """Politique branchée sur l'agent (#1, #2, §17.4).
+
+    ``hook`` : un nom enregistré (module de ``imports``), un chemin
+    ``module:attr``, ou une politique fournie (``loom.require_tool``).
+    ``points`` : ceux où l'agent la branche, parmi ceux qu'elle déclare ; par
+    défaut, tous. Les politiques d'un point s'exécutent dans l'ordre déclaré.
+    """
+
+    hook: str = Field(min_length=1)
+    # Nom dans le journal ; par défaut celui de la politique.
+    name: str | None = Field(default=None, pattern=POLICY_NAME_PATTERN)
+    points: tuple[HookPoint, ...] | None = Field(default=None, min_length=1)
+    params: dict[str, JsonValue] = Field(default_factory=dict)
+    # Délai de la politique ; ``null`` le retire.
+    timeout: PositiveFloat | None = 5.0
+    # Erreur de la politique : ``block`` fait échouer le run, ``allow`` l'ignore.
+    on_error: Literal["block", "allow"] = "block"
+    # Réparations (``Retry``) que la politique peut demander dans un run.
+    max_attempts: PositiveInt = 1
+
+    @model_validator(mode="after")
+    def _check_name(self) -> Self:
+        if self.name is not None and self.name.startswith(RESERVED_PREFIX):
+            raise ValueError(
+                f"Politique {self.name!r} : le préfixe {RESERVED_PREFIX!r} est réservé à loom-ia"
+            )
+        return self
+
+
 type ToolRef = Annotated[
     Annotated[PythonTool, Tag("python")] | Annotated[McpTools, Tag("mcp")],
     Discriminator(_tool_kind),
@@ -355,6 +387,8 @@ class AgentSpec(DomainModel):
     tools: tuple[ToolRef, ...] = ()
     roles: tuple[RoleSpec, ...] = ()
     subagents: tuple[SubAgentRef, ...] = ()
+    # Politiques, dans l'ordre d'exécution à chaque point (#2).
+    policies: tuple[PolicyRef, ...] = ()
     # Profondeur maximale d'un run de cet agent pour appeler ses sous-agents :
     # à 1, un run racine les appelle, mais un sous-run de cet agent ne le peut pas.
     max_depth: PositiveInt = 1

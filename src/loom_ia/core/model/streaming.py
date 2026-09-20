@@ -26,7 +26,8 @@ from loom_ia.core.model.tooling import ToolDefinition
 from loom_ia.core.model.usage import Usage
 
 type StopReason = Literal["end", "tool_use", "max_tokens", "refusal"]
-type ToolChoice = Literal["auto", "none"]
+# ``required`` impose un appel d'outil (backlog #012) ; jamais en ``FINALIZING``.
+type ToolChoice = Literal["auto", "none", "required"]
 # Classement neutre des erreurs d'appel (#10).
 type ModelErrorKind = Literal[
     "transient",

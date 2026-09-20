@@ -17,6 +17,11 @@ Stockage d'artefacts (G2) : un seul par instance, partagé par ses agents. Il
 suit le journal par défaut (dossier ``.artifacts`` d'un journal JSONL,
 mémoire sinon).
 
+Politiques (#2) : chaque référence est résolue (politique fournie ``loom.…``,
+nom enregistré ou ``module:attr``), puis contrôlée avant le premier run : ses
+points parmi ceux qu'elle déclare, ses décisions permises à chacun de ses
+points (``Pause`` arrive en J4.3), un nom unique dans l'agent.
+
 Sous-agents (C5) : l'agent appelé n'est monté qu'au premier appel, par
 ``agents`` (``Loom.context`` dans une instance). Deux agents peuvent ainsi
 s'appeler l'un l'autre sans que le montage boucle ; la profondeur borne les
@@ -38,6 +43,7 @@ from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import (
     AgentSpec,
     BaseRole,
+    PolicyRef,
     PythonTool,
     RoleSpec,
     SubAgentRef,
@@ -47,11 +53,13 @@ from loom_ia.agents.spec import ContextItem as DeclaredContext
 from loom_ia.config.errors import ConfigError
 from loom_ia.config.models import LoomConfig
 from loom_ia.config.references import Registry, import_modules, resolve
+from loom_ia.core.model import ALLOWED_DECISIONS, LATER_DECISIONS, RESERVED_PREFIX
 from loom_ia.core.ports import (
     ArtifactStore,
     ChunkCallback,
     EventStore,
     ModelClient,
+    Policy,
     Tool,
     ToolSource,
 )
@@ -60,7 +68,9 @@ from loom_ia.engine import (
     AgentResolver,
     AgentTool,
     AnyTool,
+    BoundPolicy,
     ContextItem,
+    Policies,
     RoleDefinition,
     RoleTool,
     RunContext,
@@ -68,6 +78,7 @@ from loom_ia.engine import (
     ToolExecutor,
     ToolResults,
 )
+from loom_ia.policies import BUILTIN_POLICIES
 from loom_ia.telemetry import configure_logging
 from loom_ia.tools import FunctionTool, configure
 
@@ -163,6 +174,7 @@ def build_agent(
     tools = [_tool(declared, known, config.base_dir) for declared in spec.python_tools]
     roles = [role_definition(role) for role in spec.roles]
     _check_names(spec, [tool.spec.name for tool in tools])
+    policies = build_policies(spec, known, config.base_dir)
     sources, owned = _mcp_sources(config, spec, environ, mcp_pool)
     if spec.subagents and agents is None:
         nested = _SubAgents(
@@ -212,8 +224,72 @@ def build_agent(
         params=llm.params,
         on_chunk=on_chunk,
         attachments=config.execution.attachments,
+        policies=policies,
     )
     return Agent(spec=spec, context=context, clients=tuple(clients.values()), owned=owned)
+
+
+def build_policies(spec: AgentSpec, registry: Registry, base_dir: Path | None = None) -> Policies:
+    """Politiques de l'agent, résolues et contrôlées, dans l'ordre déclaré."""
+    bound: list[BoundPolicy] = []
+    for ref in spec.policies:
+        found = _policy(spec, ref, registry, base_dir)
+        points = frozenset(ref.points) if ref.points is not None else found.points
+        name = ref.name or found.name
+        label = f"Agent {spec.name!r}, politique {name!r}"
+        outside = sorted(points - found.points)
+        if outside:
+            raise ConfigError(
+                f"{label} : ne s'applique pas à {', '.join(outside)} "
+                f"(points déclarés : {', '.join(sorted(found.points))})"
+            )
+        for kind in sorted(found.decisions):
+            if kind in LATER_DECISIONS:
+                raise ConfigError(
+                    f"{label} : décision {kind!r} prévue pour le jalon {LATER_DECISIONS[kind]}, "
+                    "pas encore prise en charge"
+                )
+        for point in sorted(points):
+            refused = sorted(found.decisions - ALLOWED_DECISIONS[point])
+            if refused:
+                raise ConfigError(
+                    f"{label} : décision(s) {', '.join(refused)} non permise(s) au point {point}"
+                )
+        if any(existing.name == name for existing in bound):
+            raise ConfigError(
+                f"{label} : déclarée deux fois (donner un 'name' à l'une des références)"
+            )
+        bound.append(
+            BoundPolicy(
+                policy=found,
+                name=name,
+                points=points,
+                params=ref.params,
+                timeout=ref.timeout,
+                on_error=ref.on_error,
+                max_attempts=ref.max_attempts,
+            )
+        )
+    return Policies(bound)
+
+
+def _policy(spec: AgentSpec, ref: PolicyRef, registry: Registry, base_dir: Path | None) -> Policy:
+    """Politique désignée par une référence : fournie par loom-ia, enregistrée ou importée."""
+    if ref.hook.startswith(RESERVED_PREFIX):
+        builtin = BUILTIN_POLICIES.get(ref.hook)
+        if builtin is None:
+            raise ConfigError(
+                f"Agent {spec.name!r} : politique fournie {ref.hook!r} inconnue "
+                f"(fournies : {', '.join(BUILTIN_POLICIES)})"
+            )
+        return builtin
+    found = resolve(ref.hook, registry, base_dir=base_dir)
+    if isinstance(found, type) or not isinstance(found, Policy):
+        raise ConfigError(
+            f"Agent {spec.name!r} : {ref.hook!r} n'est pas une politique "
+            "(décorer la fonction avec @policy)"
+        )
+    return found
 
 
 def system_prompt(spec: AgentSpec) -> str:

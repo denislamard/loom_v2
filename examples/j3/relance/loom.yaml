@@ -1,0 +1,103 @@
+# Configuration des exemples du jalon J3 : la relance de devis, fiabilisée.
+# Ce dossier grandit de phase en phase jusqu'au scénario final du jalon (3.6).
+#
+# Deux agents, même scénario :
+#   relance       modèles simulés (sdk: fake), sans clé ni réseau ;
+#   relance_reel  MiniMax-M3 pour l'orchestrateur (clé dans M3_API_KEY),
+#                 GLM-5.3-Flash chez Together pour le rôle (clé dans TOGETHER_API_KEY).
+#
+# Phase 3.1 : politiques. Voir politiques.py (à côté) et agents/*.yaml.
+version: 1
+
+imports: [outils, politiques]     # modules voisins de ce fichier
+agents_dir: agents/
+prompts_dir: prompts/
+
+models:
+  # Orchestrateur simulé. Chaque réponse montre une politique à l'œuvre :
+  #   1. numéro mal formé           → numero_devis refuse l'appel (Deny) ;
+  #   2. numéro en minuscules       → numero_devis le normalise (Replace) ;
+  #   3. relance sans numéro        → cite_le_devis la refuse (Retry) ;
+  #   4. relance avec des consignes → acceptée.
+  # « forced » : la réponse donnée à la place des appels d'outils quand le run
+  # est arrêté (plafond_appels, puis réponse forcée sans outils).
+  - id: FAKE_MAIN
+    sdk: fake
+    model: fake-main
+    params:
+      script:
+        - text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: "42"}
+        - text: Je corrige le numéro.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: " d-2026-042 "}
+        - tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+          forced: >-
+            Devis D-2026-042 trouvé (Mme Martin, 1 840 €, envoyé le 2 septembre),
+            mais la relance n'a pas été rédigée : plafond d'appels atteint.
+        - tool_calls:
+            - name: rediger_relance
+              arguments:
+                ton: cordial
+                consignes: Cite le numéro du devis D-2026-042 dans l'objet.
+          forced: >-
+            Devis D-2026-042 trouvé, relance non rédigée : plafond d'appels atteint.
+  # Rôle simulé : il répond selon qu'on lui demande ou non de citer le numéro.
+  - id: FAKE_ROLE
+    sdk: fake
+    model: fake-role
+    params:
+      script:
+        - without_text: Cite le numéro
+          text: |-
+            Objet : votre projet de chauffe-eau
+
+            Bonjour Madame Martin,
+
+            Je reviens vers vous au sujet de notre proposition de 1 840 € pour le
+            remplacement de votre chauffe-eau, envoyée le 2 septembre. Avez-vous pu
+            en prendre connaissance ?
+
+            Bien cordialement,
+            Plomberie Dupont
+        - with_text: Cite le numéro
+          text: |-
+            Objet : votre devis D-2026-042
+
+            Bonjour Madame Martin,
+
+            Je reviens vers vous au sujet du devis D-2026-042 de 1 840 € pour le
+            remplacement de votre chauffe-eau, envoyé le 2 septembre. Avez-vous pu
+            en prendre connaissance ? Je reste disponible pour en parler.
+
+            Bien cordialement,
+            Plomberie Dupont
+
+  # Tarifs en $ par million de tokens, relevés le 18/09/2026 (palier ≤ 512k tokens).
+  - id: M3_MAIN
+    sdk: anthropic
+    base_url: https://api.minimax.io/anthropic
+    model: MiniMax-M3
+    api_key_env: M3_API_KEY
+    max_tokens: 4096
+    pricing: {input: 0.30, output: 1.20, cache_read: 0.06, cache_write: 0.30}
+  # GLM-5.3-Flash chez Together (API compatible OpenAI), relevé le 19/09/2026.
+  - id: GLM_FLASH
+    sdk: openai
+    api: chat
+    base_url: https://api.together.xyz/v1
+    model: zai-org/GLM-5.3-Flash
+    api_key_env: TOGETHER_API_KEY
+    max_tokens: 4096
+    pricing: {input: 0.15, output: 0.50, cache_read: 0.03}
+
+storage:
+  events: {backend: jsonl, path: data}   # ignoré par git
+
+telemetry:
+  logging: {level: WARNING, format: console}

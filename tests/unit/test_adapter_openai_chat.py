@@ -255,6 +255,12 @@ async def test_defaults_and_forced_answer() -> None:
     assert refused.message == Message.assistant("Je ne peux pas.")
 
 
+async def test_required_tool_choice_is_passed_as_is() -> None:
+    server = Server(streamed(chunk({"content": "x"}, finish="stop")))
+    await complete(server.model(), request(tools=(TOOL,), tool_choice="required"))
+    assert server.body["tool_choice"] == "required"
+
+
 async def test_other_choices_and_reasoning_field() -> None:
     server = Server(
         streamed(

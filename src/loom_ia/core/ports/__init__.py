@@ -15,6 +15,7 @@ from loom_ia.core.ports.model_client import (
     ModelError,
     complete,
 )
+from loom_ia.core.ports.policy import Policy
 from loom_ia.core.ports.tool import (
     SourceContext,
     SourceUnavailable,
@@ -34,6 +35,7 @@ __all__ = [
     "JournalCorrupted",
     "ModelClient",
     "ModelError",
+    "Policy",
     "SequenceConflict",
     "SourceContext",
     "SourceUnavailable",

@@ -107,7 +107,7 @@ storage:
 
 **À faire :** renommer le fichier, ou corriger la ligne du J1 dans `jalons.md`.
 
-**Statut :** fait en 2.5 : les lignes Python du J1 et du J2 nomment `acces.py` (`examples/j2/acces.py` montre les trois accès avec une image). J3 à J5 annoncent encore `run.py` : le nom sera choisi avec chaque exemple.
+**Statut :** fait en 2.5 : les lignes Python du J1 et du J2 nomment `acces.py` (`examples/j2/acces.py` montre les trois accès avec une image). J4 et J5 annoncent encore `run.py` : le nom sera choisi avec chaque exemple. J3 : un exemple par phase (`politiques.py`, `contrats.py`, `juge.py`, `budget.py`, `secours.py`, `acces.py`), décidé au début du jalon.
 
 ---
 
@@ -119,7 +119,9 @@ storage:
 
 **À faire en 3.1 :** écrire l'événement à cet endroit, avec une décision adaptée.
 
-**Statut :** à faire en 3.1.
+**Réalisation (3.1) :** le moteur écrit un `policy.decided` pour chaque outil terminal appelé avec d'autres outils : règle du moteur `loom.terminal` (préfixe `loom.` réservé), point `after_tool`, décision `continue`, statut `warning`, avec le `call_id` de l'appel et le motif. L'avertissement dans les logs reste.
+
+**Statut :** fait en 3.1.
 
 ---
 
@@ -167,7 +169,9 @@ storage:
 
 **À trancher en 3.1 :** une valeur `required` dans le domaine et les adaptateurs, et qui la pose : un réglage de l'agent (premier tour seulement ?) ou un hook `before_model` (décision `Replace` sur la requête). Garde-fou : jamais en `FINALIZING`, où `tool_choice` reste `none`.
 
-**Statut :** à trancher en 3.1.
+**Décision et réalisation (3.1) :** une politique fournie, `loom.require_tool` (`before_model`, `Replace`) : `tool_choice: required` tant que le run n'a appelé aucun outil ; sans effet pendant la réponse forcée, sans outils proposés, ou pendant une réparation sans outils. `ToolChoice` gagne `required` (`{"type": "any"}` chez Anthropic, `"required"` chez OpenAI, respecté par le modèle `fake`). Le moteur remet `none` en `FINALIZING`, quoi qu'une politique demande. Vérifié en run réel le 20/09 : MiniMax-M3 (API compatible Anthropic) accepte `{"type": "any"}` et appelle un outil.
+
+**Statut :** fait en 3.1.
 
 ---
 

@@ -26,6 +26,17 @@ visible) et un run sans (rôle masqué).
           - text: Je regarde la photo.
             with_tool: decrire_image
             tool_calls: [{name: decrire_image, arguments: {consigne: "Décris-la."}}]
+
+Une réponse peut aussi dépendre de la demande : ``with_text`` la garde
+seulement si le dernier message de l'utilisateur contient ce texte,
+``without_text`` seulement s'il ne le contient pas. Un rôle, appelé à chaque
+fois avec un seul message, répond ainsi selon ce qu'on lui demande.
+
+Comme un fournisseur, le modèle respecte ``tool_choice`` : avec ``required``,
+une réponse sans appel d'outil est une erreur du script ; avec ``none``, une
+réponse qui appelle des outils donne à la place son texte ``forced`` (la
+réponse forcée d'un run arrêté), ou à défaut son texte. Un diagnostic de
+réparation (#20) n'est pas une nouvelle demande : le script continue.
 """
 
 from collections.abc import AsyncGenerator
@@ -35,6 +46,7 @@ from pydantic import Field, JsonValue, TypeAdapter
 
 from loom_ia.core.model import (
     MOVED_IMAGES,
+    REPAIR_PREFIX,
     ContentBlock,
     DomainModel,
     Message,
@@ -65,11 +77,20 @@ class FakeReply(DomainModel):
     # Réponse gardée seulement si cet outil est proposé au modèle, ou s'il ne l'est pas.
     with_tool: str | None = None
     without_tool: str | None = None
+    # Réponse gardée seulement si la dernière demande contient ce texte, ou ne le contient pas.
+    with_text: str | None = None
+    without_text: str | None = None
+    # Texte rendu à la place des appels d'outils quand la requête les interdit.
+    forced: str | None = None
 
-    def fits(self, tools: set[str]) -> bool:
+    def fits(self, tools: set[str], asked: str) -> bool:
         if self.with_tool is not None and self.with_tool not in tools:
             return False
-        return self.without_tool is None or self.without_tool not in tools
+        if self.without_tool is not None and self.without_tool in tools:
+            return False
+        if self.with_text is not None and self.with_text not in asked:
+            return False
+        return self.without_text is None or self.without_text not in asked
 
 
 _SCRIPT: Final = TypeAdapter(tuple[FakeReply, ...])
@@ -96,7 +117,8 @@ class FakeModel:
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
         turn = _turn(request)
         offered = {tool.name for tool in request.tools}
-        script = [reply for reply in self.script if reply.fits(offered)]
+        asked = _last_user_text(request)
+        script = [reply for reply in self.script if reply.fits(offered, asked)]
         if not self.script:
             reply = FakeReply(text=f"Écho : {_last_user_text(request)}")
         elif turn < len(script):
@@ -107,7 +129,15 @@ class FakeModel:
                 f"Script du modèle {self.spec.id!r} épuisé : réponse n°{turn + 1} demandée, "
                 f"{len(script)} prévue(s) avec ces outils",
             )
+        if request.tool_choice == "none" and reply.tool_calls:
+            reply = FakeReply(text=reply.forced if reply.forced is not None else reply.text)
         message = _message(reply, turn)
+        if request.tool_choice == "required" and request.tools and not message.tool_calls:
+            raise ModelError(
+                "invalid_request",
+                f"Script du modèle {self.spec.id!r} : réponse n°{turn + 1} sans appel d'outil, "
+                "alors que la requête en impose un (tool_choice: required)",
+            )
         usage = Usage(
             input_tokens=len(request.model_dump_json()) // _CHARS_PER_TOKEN,
             output_tokens=len(message.model_dump_json()) // _CHARS_PER_TOKEN,
@@ -119,11 +149,12 @@ class FakeModel:
 def _turn(request: ModelRequest) -> int:
     """Réponses déjà données depuis la dernière demande de l'utilisateur.
 
-    Le message qui porte les images des résultats d'outils n'est pas une demande.
+    Ne sont pas des demandes : le message qui porte les images des résultats
+    d'outils, et le diagnostic d'une réparation.
     """
     count = 0
     for message in reversed(request.messages):
-        if message.role == "user" and not _moved_images(message):
+        if message.role == "user" and not _moved_images(message) and not _repair(message):
             break
         if message.role == "assistant":
             count += 1
@@ -135,9 +166,15 @@ def _moved_images(message: Message) -> bool:
     return isinstance(first, TextBlock) and first.text == MOVED_IMAGES
 
 
+def _repair(message: Message) -> bool:
+    first = message.blocks[0]
+    return isinstance(first, TextBlock) and first.text.startswith(REPAIR_PREFIX)
+
+
 def _last_user_text(request: ModelRequest) -> str:
+    """Dernière demande de l'utilisateur (ni images déplacées, ni diagnostic de réparation)."""
     for message in reversed(request.messages):
-        if message.role == "user":
+        if message.role == "user" and not _moved_images(message) and not _repair(message):
             return message.text
     return ""
 

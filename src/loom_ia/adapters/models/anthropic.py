@@ -12,7 +12,8 @@ Traduction des messages :
 - le raisonnement n'est renvoyé que s'il porte des données Anthropic
   (signature ou contenu masqué) ; les autres blocs de raisonnement sont omis ;
 - une image (``inline_data``) devient un bloc ``image`` en base64, dans un
-  message comme dans un résultat d'outil.
+  message comme dans un résultat d'outil ;
+- ``tool_choice: required`` devient ``{"type": "any"}``.
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 """
@@ -118,7 +119,7 @@ class AnthropicModel:
         tools = to_anthropic_tools(request)
         tool_choice: sdk.ToolChoiceParam | anthropic.Omit = anthropic.omit
         if tools:
-            tool_choice = {"type": "none"} if request.tool_choice == "none" else {"type": "auto"}
+            tool_choice = _tool_choice(request)
         max_tokens = request.max_tokens or self.spec.max_tokens or DEFAULT_MAX_TOKENS
         system = request.system or anthropic.omit
         extra_body = dict(request.params) or None
@@ -174,6 +175,17 @@ def to_anthropic_messages(messages: Sequence[Message]) -> list[sdk.MessageParam]
         else:
             turns.append((role, content))
     return [{"role": role, "content": content} for role, content in turns]
+
+
+def _tool_choice(request: ModelRequest) -> sdk.ToolChoiceParam:
+    """``required`` devient ``any`` : le modèle doit appeler au moins un outil (#012)."""
+    match request.tool_choice:
+        case "none":
+            return {"type": "none"}
+        case "required":
+            return {"type": "any"}
+        case "auto":
+            return {"type": "auto"}
 
 
 def to_anthropic_tools(request: ModelRequest) -> list[sdk.ToolParam]:

@@ -3,8 +3,8 @@
 
 Le direct de la CLI (``loom run --stream``) et les notifications de
 progression du serveur MCP décrivent un run de la même façon : un appel
-d'outil et son issue, un fichier rangé, un serveur indisponible, un
-sous-agent qui démarre puis se termine. Les lignes d'un sous-run sont
+d'outil et son issue, un fichier rangé, un serveur indisponible, une
+décision de politique, un sous-agent qui démarre puis se termine. Les lignes d'un sous-run sont
 décalées selon sa profondeur :
 
     · verifier(message='Vérifie : …')
@@ -20,6 +20,7 @@ from typing import Final
 from loom_ia.core.events import (
     ArtifactStored,
     Event,
+    PolicyDecided,
     RunCompleted,
     RunFailed,
     RunStarted,
@@ -34,6 +35,18 @@ STORED: Final = {
     "attachment": "pièce jointe rangée",
     "tool_output": "fichier rangé",
     "offload": "résultat déporté",
+}
+
+
+# Décisions de politique, telles qu'une ligne du déroulé les nomme.
+DECISIONS: Final = {
+    "continue": "laissé passer",
+    "replace": "remplacé",
+    "retry": "réparation demandée",
+    "deny": "refusé",
+    "pause": "pause",
+    "stop": "arrêt",
+    "fail": "échec",
 }
 
 
@@ -67,6 +80,12 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
         case ToolSourceUnavailable():
             required = " (requis)" if payload.required else ""
             return f"serveur {payload.source} indisponible{required} : {payload.error}"
+        case PolicyDecided():
+            reason = f" — {payload.reason}" if payload.reason else ""
+            return (
+                f"politique {payload.policy} ({payload.point}) : "
+                f"{DECISIONS[payload.decision]}{reason}"
+            )
         case ArtifactStored():
             return (
                 f"{STORED[payload.origin]} : {payload.name or payload.uri} "

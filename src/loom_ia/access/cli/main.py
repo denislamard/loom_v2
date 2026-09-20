@@ -37,7 +37,7 @@ from loom_ia.core.model import (
     TextDelta,
     new_run_id,
 )
-from loom_ia.core.ports import SourceContext
+from loom_ia.core.ports import Policy, SourceContext, Tool
 from loom_ia.engine import ToolExecutor
 from loom_ia.runtime import apply_logging, load_registry
 
@@ -157,7 +157,11 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Config     : {args.config}")
     print(f"Modèles    : {_listed(spec.id for spec in config.models)}")
     print(f"Agents     : {_listed(agent.name for agent in config.agents)}")
-    print(f"Outils     : {_listed(registry.names)}")
+    named = [(name, registry.get(name)) for name in registry.names]
+    print(f"Outils     : {_listed(name for name, obj in named if isinstance(obj, Tool))}")
+    policies = [name for name, obj in named if isinstance(obj, Policy)]
+    if policies:
+        print(f"Politiques : {_listed(policies)}")
     print(f"Journal    : {journal}")
     print(f"Artefacts  : {artifacts}")
     print(f"Clés d'API : {keys or 'aucune (API REST ouverte)'}")
@@ -173,6 +177,8 @@ async def _validate(args: argparse.Namespace) -> int:
                 f"  {spec.name} : modèle {context.model_spec.id}, "
                 f"{len(spec.python_tools)} outil(s) Python{roles}{subagents}"
             )
+            for bound in context.policies.bound:
+                print(f"    politique {bound.name} : {', '.join(sorted(bound.points))}")
             await _show_sources(spec.name, context.tools)
     print(f"\n{len(config.agents)} agent(s) monté(s) sans erreur.")
     return OK
@@ -207,6 +213,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 if state.terminal_call_id is not None and state.output is not None:
                     # Sortie d'un outil terminal : elle n'est pas passée par le flux du modèle.
                     print(state.output.text)
+                elif state.replaced_output is not None and state.output is not None:
+                    # Réponse remplacée par une politique après sa diffusion.
+                    print(f"[Réponse retenue]\n{state.output.text}")
                 return await loom.result(run_id, session_id=session)
             return await loom.run(
                 args.agent,

@@ -1,0 +1,46 @@
+name: relance_reel
+description: Relance un client au sujet d'un devis en attente (vrais modèles).
+expose: {rest: true, mcp: true}
+
+main:
+  model: M3_MAIN
+  system_file: relance.md
+
+max_iterations: 6
+
+tools:
+  - python: chercher_devis
+    side_effects: none
+    idempotent: true
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis, prêt à envoyer.
+    model: GLM_FLASH
+    system_file: rediger.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial, ferme, bref…"}
+        consignes: {type: string, description: Corrections demandées après un refus, s'il y en a}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    input_template: |-
+      Demande : {{ context.user_input }}
+
+      Devis :
+      {{ context.tool_results.chercher_devis }}
+
+      Ton souhaité : {{ args.ton }}
+      Consignes : {{ args.consignes }}
+    llm: {max_tokens: 2000, params: {temperature: 0.3}}
+    terminal: true
+
+# Politiques (phase 3.1), dans l'ordre d'exécution à chaque point.
+policies:
+  - hook: loom.require_tool          # un premier appel d'outil est imposé (backlog #012)
+  - hook: numero_devis               # before_tool : numéro normalisé, ou appel refusé
+  - hook: plafond_appels             # before_model : arrêt au-delà de max_appels
+    params: {max_appels: 6}
+  - hook: cite_le_devis              # on_output : la relance doit citer le numéro
+    max_attempts: 2

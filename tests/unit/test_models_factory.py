@@ -88,6 +88,52 @@ async def test_fake_model_without_script_echoes() -> None:
     assert nothing.message == Message.assistant("Écho : ")
 
 
+async def test_fake_model_honours_required_tools_and_repairs() -> None:
+    from loom_ia.core.model import REPAIR_PREFIX, ToolDefinition
+
+    model = create_model_client(fake_spec(script=[{"text": "Sans outil."}, {"text": "Réparé."}]))
+    tools = (ToolDefinition(name="calculer", description="Calcule."),)
+    required = ModelRequest(
+        model_id="fake-1", messages=(Message.user("?"),), tools=tools, tool_choice="required"
+    )
+    with pytest.raises(ModelError, match="sans appel d'outil") as caught:
+        await complete(model, required)
+    assert caught.value.kind == "invalid_request"
+
+    # Un diagnostic de réparation n'est pas une nouvelle demande : le script continue.
+    repair = Message.user(f"{REPAIR_PREFIX} (p) : réessaie.")
+    again = await complete(
+        model, request(Message.user("?"), Message.assistant("Sans outil."), repair)
+    )
+    assert again.message == Message.assistant("Réparé.")
+
+
+async def test_fake_model_answers_by_request_and_forced_answer() -> None:
+    from loom_ia.core.model import ToolDefinition
+
+    script = [
+        {"text": "Version courte.", "without_text": "détaillé"},
+        {"text": "Version détaillée.", "with_text": "détaillé"},
+    ]
+    model = create_model_client(fake_spec(script=script))
+    short = await complete(model, request(Message.user("Résume.")))
+    detailed = await complete(model, request(Message.user("Un texte détaillé.")))
+    assert (short.message.text, detailed.message.text) == ("Version courte.", "Version détaillée.")
+
+    calls: list[dict[str, object]] = [
+        {"tool_calls": [{"name": "calculer", "arguments": {}}], "forced": "Je m'arrête là."}
+    ]
+    model = create_model_client(fake_spec(script=calls))
+    tools = (ToolDefinition(name="calculer", description="Calcule."),)
+    asked = (Message.user("Avec un outil."),)
+    called = await complete(model, ModelRequest(model_id="fake-1", messages=asked, tools=tools))
+    assert called.message.tool_calls
+    forced = await complete(
+        model, ModelRequest(model_id="fake-1", messages=asked, tools=tools, tool_choice="none")
+    )
+    assert forced.message == Message.assistant("Je m'arrête là.")
+
+
 def test_fake_script_is_validated() -> None:
     with pytest.raises(ValidationError):
         create_model_client(fake_spec(script=[{"texte": "faute de frappe"}]))

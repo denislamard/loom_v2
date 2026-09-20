@@ -255,6 +255,23 @@ Une décision non autorisée à un point donné est une erreur de config, détec
 - Si un hook lève une exception, le comportement est configurable par hook : bloquer le run (par défaut pour le budget et l'approbation) ou laisser passer.
 - Les hooks sont asynchrones et déterministes pour un état donné (échantillonnage par hash du `run_id`).
 
+**Réalisation (phase 3.1) :**
+
+- **Écrire une politique :** une fonction décorée par `@policy(points=[…], decisions=[…])` (package `loom_ia.policies`), synchrone ou asynchrone. Elle reçoit ce qui se passe au point : `BeforeModel` (état, requête, `finalizing`), `AfterModel` (état, réponse), `BeforeTool` (état, appel, déclaration de l'outil, arguments résolus et validés), `AfterTool` (les mêmes et le résultat), `OnOutput` (état, réponse finale, `source` : `model` ou `terminal`). Si elle le demande, elle reçoit aussi son contexte : `PolicyContext` (nom, `params` de la config, réparations déjà demandées). Le port `Policy` est dans le noyau, comme `Tool`.
+- **Brancher :** `policies: [{hook, name?, points?, params, timeout, on_error, max_attempts}]` dans l'agent. `hook` : nom enregistré par `imports`, chemin `module:attr`, ou politique fournie `loom.…`. Contrôles au démarrage : points parmi ceux que déclare la politique, décisions déclarées permises à chacun de ses points (`Pause` refusée jusqu'en J4.3), noms uniques dans l'agent, préfixe `loom.` réservé.
+- **Effets :**
+  - `Replace` : requête, arguments (validés de nouveau par le schéma de l'outil), résultat, réponse finale (un texte suffit) ;
+  - `Deny` : résultat d'erreur « Appel refusé (politique) : motif », sans `tool.called` ;
+  - `Stop` : → `FINALIZING` ; à `after_model`, les appels de la réponse sont fermés en erreur sans être exécutés ; sans effet pendant la réponse forcée ;
+  - `Fail` : → `FAILED`, `error_type` `policy.<nom>` ; à `after_tool`, après la fin du lot ;
+  - `Retry` à `after_model` et `on_output` : tour de réparation de l'orchestrateur. Les appels de la réponse refusée sont fermés sans exécution, puis le diagnostic est écrit en `message.user` de `kind: repair` (« Réponse refusée par un contrôle (politique) : … »), sans outils si `Retry(tools=False)`. Une sortie terminale refusée revient à l'orchestrateur ;
+  - `Retry` à `after_tool` : le résultat revient à l'orchestrateur en erreur, avec le diagnostic ; la réparation d'un rôle par son propre modèle arrive en 3.2.
+- **Où :** `before_model` dans l'étape d'appel du modèle ; `after_model` et `on_output` au moment de décider la suite d'une réponse, pour qu'une reprise les réévalue tant que leur décision n'est pas appliquée ; `before_tool` et `after_tool` dans l'exécuteur. Un appel repris après une interruption n'est pas réévalué : ses arguments remplacés sont repris du journal.
+- **Journal :** `policy.decided` (catégorie `policy`) : politique, point, décision, motif, `call_id` ; `attempt` et `tools` d'un `Retry` ; `arguments` d'un `Replace` d'arguments ; `output` d'un `Replace` de réponse finale ; `error`. Il est écrit avant son effet, dans le span de l'étape, de l'appel ou du run. `RunState` : compteurs `retries` par politique, `pending_repair` (réparation décidée, pas encore demandée), positions des diagnostics (exclus de l'historique de session avec la réponse refusée), `replaced_output`, `PendingCall.replaced_arguments`.
+- **Garde-fous :** délai par politique (5 s par défaut) ; `on_error: block` (défaut, donne `Fail`) ou `allow` (`policy.decided` de décision `continue` avec `error`, statut `warning`). Exception, délai dépassé, décision non déclarée ou non permise, valeur de remplacement du mauvais type : erreurs de la politique. `max_attempts` (1 par défaut) borne les `Retry` d'une politique dans un run ; au-delà, `Fail`.
+- **Politique fournie :** `loom.require_tool` (backlog #012) impose `tool_choice: required` tant que le run n'a appelé aucun outil. Jamais en `FINALIZING` : le moteur remet `none`, quoi qu'une politique demande. `ToolChoice` gagne `required` : `{"type": "any"}` chez Anthropic, `"required"` chez OpenAI.
+- **Accès :** le déroulé (CLI `--stream`, progression MCP) a une ligne par décision ; SSE et `events()` portent les `policy.decided` ; `loom validate` liste les politiques. Avec `--stream`, une réponse remplacée après sa diffusion est réaffichée (« Réponse retenue ») ; la mise en tampon arrive avec `stream_output: after_guards` (3.2).
+
 ### 3. Boucle : machine à états pilotée par événements (option B)
 
 L'état est une donnée explicite. La boucle se réduit à trois pièces :
@@ -489,7 +506,7 @@ La règle de V1 est conservée : un outil terminal n'est terminal que s'il est s
 1. **Guards :** la sortie terminale passe par les hooks `on_output` et suit le réglage `stream_output`.
 2. **Réponse structurée (A7) :** si l'agent déclare un schéma de sortie, la sortie terminale doit le respecter.
 3. **Échec :** en cas d'erreur, ou de contrat non satisfait après réparation, le résultat revient à l'orchestrateur comme un résultat normal.
-4. **Appel en parallèle :** la description de chaque outil terminal reçoit automatiquement une mention « à appeler seul ». Si l'orchestrateur l'appelle quand même avec d'autres outils, la règle ne s'applique pas et l'orchestrateur compose la réponse. Le cas est signalé par un avertissement dans les logs ; l'événement `policy.decided` viendra avec les hooks (phase 3.1, backlog #008).
+4. **Appel en parallèle :** la description de chaque outil terminal reçoit automatiquement une mention « à appeler seul ». Si l'orchestrateur l'appelle quand même avec d'autres outils, la règle ne s'applique pas et l'orchestrateur compose la réponse. Le cas est signalé dans les logs et, depuis la phase 3.1, par un `policy.decided` de la règle du moteur `loom.terminal` (décision `continue`, statut `warning`, backlog #008).
 5. **Plafond d'itérations :** si l'outil terminal termine le lot qui atteint `max_iterations`, il l'emporte sur `FINALIZING`.
 
 **Journal :** pas de duplication. `run.completed` référence le `tool.completed` terminal ; l'historique LLM affiche la sortie comme réponse finale, avec un marqueur à la place du résultat d'outil.
@@ -702,7 +719,7 @@ Event
   event_id (UUIDv7, triable)   seq   ts   schema_version
   tenant_id  session_id  run_id  root_run_id  span_id  parent_span_id
   type       ex. "tool.completed"
-  category   run | message | model | tool | guard | approval | artifact | session
+  category   run | message | model | tool | guard | policy | approval | artifact | session
   status     ok | warning | error
   agent  role                (si applicable)
   facets     champs de recherche remontés par le payload
@@ -716,7 +733,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | Type | Champs principaux |
 |---|---|
 | `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte |
-| `message.user` | blocs de contenu (pièces jointes par référence) |
+| `message.user` | blocs de contenu (pièces jointes par référence) ; `kind` : `request`, ou `repair` pour le diagnostic d'une réparation (politique, `tools`) |
 | `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué) |
 | `tool.called` | tool_name, tool_kind, call_id, arguments, refs, child_run_id (sous-agent) |
 | `tool.completed` | tool_name, call_id, is_error, sortie (blocs ou réf.), latence, taille |
@@ -730,7 +747,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `run.claimed` | worker_id, lease_until (voir point 27) |
 | `run.transitioned` | from, to, step_no, cause (voir point 3) |
 | `step.started` / `.completed` | step_no, état, effet, durée, statut (voir point 3) |
-| `policy.decided` | hook, point, décision, motif (voir point 2) |
+| `policy.decided` | politique, point, décision, motif, call_id, tentative, arguments ou réponse remplacés (voir point 2) |
 | `model.retried` | tentative, type d'erreur, délai (voir point 10) |
 | `model.fell_back` | ancien modèle, nouveau modèle, motif (voir point 10) |
 | `idempotency.recorded` | clé, call_id, résultat (voir point 49) |

@@ -25,6 +25,15 @@ remplacés par leur référence, puis un résultat trop long est déporté. Chaq
 fichier rangé donne un ``artifact.stored``, écrit avant le ``tool.completed``
 de l'appel. Un outil délégué indisponible dans le run (rôle vision sans pièce
 jointe, ``artifact_read`` sans déport) n'est ni montré au modèle ni appelable.
+
+Politiques (#2) : ``before_tool`` s'applique à un appel accepté, avant tout
+lancement (arguments remplacés puis validés de nouveau, appel refusé, échec
+du run) ; ``after_tool`` au résultat, avant ses fichiers et son déport
+(résultat remplacé, refusé ou échec du run). Chaque décision part dans la file
+du lot avant l'événement qu'elle concerne. Un appel déjà lancé et repris
+après une interruption n'est pas réévalué : ses arguments remplacés sont
+repris du journal. Un résultat refusé (``Retry``) revient à l'orchestrateur
+en erreur, avec le diagnostic : c'est lui qui a écrit l'appel.
 """
 
 import asyncio
@@ -40,13 +49,25 @@ from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
 from pydantic import JsonValue
 
-from loom_ia.core.events import ArtifactStored, ToolCalled, ToolCompleted, ToolSourceUnavailable
+from loom_ia.core.events import (
+    ArtifactStored,
+    PolicyDecided,
+    ToolCalled,
+    ToolCompleted,
+    ToolSourceUnavailable,
+)
 from loom_ia.core.model import (
+    CONTINUE,
     INVALID_JSON_KEY,
+    AfterTool,
     ArtifactRefBlock,
+    BeforeTool,
+    Deny,
+    Fail,
     InlineDataBlock,
     OutputBlock,
     PendingCall,
+    Retry,
     RunId,
     RunState,
     SpanId,
@@ -69,6 +90,7 @@ from loom_ia.core.ports import (
     ToolSource,
 )
 from loom_ia.engine.delegated import Consumption, DelegatedPayload, DelegatedTool, RunView
+from loom_ia.engine.hooks import Policies, Verdict
 from loom_ia.engine.media import size_label
 from loom_ia.engine.offload import (
     DEFAULT_OFFLOAD_OVER,
@@ -112,7 +134,15 @@ class Stored:
     payload: ArtifactStored
 
 
-type ToolEvent = ToolCalled | ToolCompleted | Stored | Delegated
+@dataclass(frozen=True, slots=True)
+class Decided:
+    """Décision d'une politique d'outil, à écrire avant l'événement qu'elle concerne."""
+
+    call_id: str
+    payload: PolicyDecided
+
+
+type ToolEvent = ToolCalled | ToolCompleted | Stored | Delegated | Decided
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,12 +318,16 @@ class ToolExecutor:
         *,
         writer: SessionWriter | None = None,
         spans: Mapping[str, SpanId] | None = None,
+        policies: Policies | None = None,
     ) -> AsyncGenerator[ToolEvent]:
         """Traite les appels en attente du run et émet leurs événements.
 
         ``writer`` et ``spans`` servent aux sous-agents : le journal où écrire
-        leur run, et le span de leur appel.
+        leur run, et le span de leur appel. ``policies`` : celles de l'agent.
+        Une décision ``Fail`` à ``before_tool`` arrête le lot avant tout
+        lancement.
         """
+        policies = policies or Policies()
         view = self.view(state, writer=writer, spans=spans)
         ready: list[_Ready] = []
         for call in state.pending_calls:
@@ -304,6 +338,20 @@ class ToolExecutor:
                 else await self._prepare(call, tool, view)
             )
             if isinstance(prepared, _Ready):
+                verdict = await self._before_tool(prepared, view, policies)
+                for decided in verdict.decided:
+                    yield Decided(call_id=call.call_id, payload=decided)
+                match verdict.decision:
+                    case Fail():
+                        return
+                    case Deny(reason=reason):
+                        text = f"Appel refusé ({verdict.by}) : {reason}"
+                        yield _completed(call, ToolOutput.error(text), started=None)
+                        continue
+                    case _:
+                        pass
+                if isinstance(verdict.subject, BeforeTool):
+                    prepared = replace(prepared, arguments=verdict.subject.arguments)
                 ready.append(prepared)
             else:
                 yield _completed(call, ToolOutput.error(prepared), started=None)
@@ -328,7 +376,10 @@ class ToolExecutor:
             if not task.cancelled() and (error := task.exception()) is not None:
                 queue.put_nowait(_Crashed(error))
 
-        tasks = [asyncio.create_task(self._execute(item, view, queue.put_nowait)) for item in ready]
+        tasks = [
+            asyncio.create_task(self._execute(item, view, queue.put_nowait, policies))
+            for item in ready
+        ]
         for task in tasks:
             task.add_done_callback(crashed)
         try:
@@ -374,6 +425,31 @@ class ToolExecutor:
             child = tool.child_run_id(call)
         return _Ready(call=call, tool=tool, arguments=arguments, refs=refs, child_run_id=child)
 
+    async def _before_tool(self, item: _Ready, view: RunView, policies: Policies) -> Verdict:
+        """Politiques ``before_tool`` d'un appel accepté.
+
+        Un appel repris après une interruption n'est pas réévalué : ses
+        arguments remplacés sont repris tels qu'ils ont été journalisés.
+        """
+        call = item.call
+        subject = BeforeTool(
+            state=view.state, call=call, spec=item.tool.spec, arguments=item.arguments
+        )
+        if call.started:
+            if call.replaced_arguments is not None:
+                subject = BeforeTool(
+                    state=view.state,
+                    call=call,
+                    spec=item.tool.spec,
+                    arguments=call.replaced_arguments,
+                )
+            return Verdict(CONTINUE, subject)
+        return await policies.run(
+            subject,
+            call_id=call.call_id,
+            check_arguments=lambda arguments: self._schema_errors(call.name, arguments),
+        )
+
     def _schema_errors(self, name: str, arguments: dict[str, JsonValue]) -> str | None:
         errors = sorted(
             self._validators[name].iter_errors(arguments),
@@ -388,7 +464,11 @@ class ToolExecutor:
         return "\n".join(lines)
 
     async def _execute(
-        self, item: _Ready, view: RunView, emit: Callable[[ToolEvent], None]
+        self,
+        item: _Ready,
+        view: RunView,
+        emit: Callable[[ToolEvent], None],
+        policies: Policies | None = None,
     ) -> None:
         """Exécute un appel ; ses événements et son résultat partent dans la file du lot."""
         tool, call, state = item.tool, item.call, view.state
@@ -422,8 +502,49 @@ class ToolExecutor:
             output = ToolOutput.error(exc.message)
         except Exception as exc:
             output = _unexpected(spec.name, exc, state)
+        if policies:
+            output = await self._after_tool(item, output, view, emit, policies)
         output = await self._settle(output, spec, call.call_id, view, emit)
         emit(_completed(call, output, started=started, consumption=consumption))
+
+    async def _after_tool(
+        self,
+        item: _Ready,
+        output: ToolOutput,
+        view: RunView,
+        emit: Callable[[ToolEvent], None],
+        policies: Policies,
+    ) -> ToolOutput:
+        """Politiques ``after_tool`` : résultat gardé, remplacé ou refusé.
+
+        Un ``Fail`` laisse le résultat tel quel : le run échouera à la fin du lot.
+        """
+        call = item.call
+        verdict = await policies.run(
+            AfterTool(
+                state=view.state,
+                call=call,
+                spec=item.tool.spec,
+                arguments=item.arguments,
+                output=output,
+            ),
+            call_id=call.call_id,
+        )
+        for decided in verdict.decided:
+            emit(Decided(call_id=call.call_id, payload=decided))
+        match verdict.decision:
+            case Retry(feedback=feedback):
+                refused = TextBlock(text=f"Résultat refusé ({verdict.by}) : {feedback}")
+                return output.model_copy(
+                    update={"blocks": (refused, *output.blocks), "is_error": True, "data": None}
+                )
+            case Fail():
+                return output
+            case _:
+                pass
+        if isinstance(verdict.subject, AfterTool):
+            return verdict.subject.output
+        return output
 
     async def _settle(
         self,

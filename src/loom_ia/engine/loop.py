@@ -28,6 +28,15 @@ montré au modèle porte sa référence (``[result:3]``) et le prompt système
 explique ``$ref`` (#12). Dans la requête, les résultats d'un tour suivent
 l'ordre des appels, quel que soit leur ordre d'arrivée dans le journal.
 
+Politiques (#1, #2) : ``before_model`` s'exécute avant l'appel du modèle
+(requête remplacée, arrêt vers ``FINALIZING``, échec) ; ``after_model`` et
+``on_output`` au moment de décider de la suite d'une réponse, pour qu'une
+reprise après un plantage les évalue aussi. Une réparation (``Retry``) écrit
+son ``policy.decided``, ferme les appels d'outils de la réponse refusée,
+puis écrit le diagnostic (``message.user`` de ``kind: repair``) : le modèle
+répond de nouveau, sans outils si la politique l'a demandé. Les politiques
+d'outils sont appliquées par l'exécuteur.
+
 Pièces jointes (G1) : validées avant tout écrit (signature binaire, type,
 taille), rangées dans le stockage d'artefacts, annoncées par un
 ``artifact.stored`` chacune, puis jointes au message de l'utilisateur en
@@ -50,6 +59,7 @@ from loom_ia.core.events import (
     EventDraft,
     ModelResponded,
     ModelRetried,
+    PolicyDecided,
     RunCompleted,
     RunFailed,
     RunScope,
@@ -64,22 +74,31 @@ from loom_ia.core.events import (
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     MAIN_ROLE,
+    REPAIR_PREFIX,
+    AfterModel,
     ArtifactRefBlock,
     Attachment,
     AttachmentPolicy,
+    BeforeModel,
     CallerContext,
+    Fail,
     Message,
     ModelRequest,
     ModelResponse,
     ModelSpec,
+    OnOutput,
+    PendingRepair,
+    Retry,
     RunId,
     RunState,
     RunStatus,
     SessionId,
     SpanId,
+    Stop,
     TenantId,
     TextBlock,
     ToolCallBlock,
+    ToolOutput,
     ToolResultBlock,
     artifact_uri,
     new_run_id,
@@ -94,7 +113,8 @@ from loom_ia.core.ports import (
     SourceContext,
 )
 from loom_ia.core.projections import apply, fold, history
-from loom_ia.engine.executor import Delegated, Stored, ToolExecutor
+from loom_ia.engine.executor import Decided, Delegated, Stored, ToolExecutor
+from loom_ia.engine.hooks import Policies, Verdict
 from loom_ia.engine.model_call import ModelCall, responded
 from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
 from loom_ia.engine.writer import SessionWriter
@@ -102,6 +122,8 @@ from loom_ia.engine.writer import SessionWriter
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS: Final = 10
+# Règle du moteur journalisée comme une décision de politique (#13, backlog #008).
+TERMINAL_RULE: Final = "loom.terminal"
 
 # États où ``step`` a quelque chose à faire (effet ou clôture).
 _ACTIONABLE: Final = frozenset(
@@ -137,6 +159,8 @@ class RunContext:
     # Écrivain du journal, posé par ``drive`` pour le run en cours : les
     # sous-agents écrivent leur run avec lui.
     writer: SessionWriter | None = None
+    # Politiques de l'agent, dans l'ordre déclaré (#1, #2).
+    policies: Policies = field(default_factory=Policies)
 
     @property
     def artifacts(self) -> ArtifactStore | None:
@@ -336,7 +360,7 @@ async def step(
     dernier événement d'effet, référencé par les transitions.
     """
     scope = _scope(state)
-    decision = _decide(state, ctx, scope, cause)
+    decision = await _decide(state, ctx, scope, cause)
     if decision is not None:
         for draft in decision:
             yield draft
@@ -358,48 +382,211 @@ async def step(
 # --- Décisions ---------------------------------------------------------------
 
 
-def _decide(
+async def _decide(
     state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None
 ) -> list[EventDraft] | None:
-    """Transition ou clôture dues à l'état courant, ou None s'il reste un effet à exécuter."""
+    """Transition ou clôture dues à l'état courant, ou None s'il reste un effet à exécuter.
+
+    Une réponse de l'orchestrateur passe d'abord par les politiques
+    ``after_model``, une réponse finale par ``on_output`` : elles décident ici
+    de la suite, et une reprise les réévalue si leur décision n'a pas été
+    appliquée.
+    """
     last = state.messages[-1] if state.messages else None
     answered = last is not None and last.role == "assistant"
+    if state.pending_repair is not None and not state.status.is_terminal:
+        # Réparation décidée avant une interruption : il reste à la demander.
+        return _repair(state, ctx, scope, state.pending_repair, cause)
     match state.status:
         case RunStatus.COMPLETED if not state.finished and last is not None and last.role == "tool":
             # Seul un outil terminal mène à COMPLETED sur un résultat d'outil.
-            return [scope.draft(_completed(state, None, terminal=_terminal_event(state, cause)))]
+            terminal = _terminal_event(state, cause)
+            return [scope.draft(_completed(state, state.replaced_output, terminal=terminal))]
         case RunStatus.COMPLETED if not state.finished:
-            return [scope.draft(_completed(state, last if answered else None))]
+            output = state.replaced_output or (last if answered else None)
+            return [scope.draft(_completed(state, output))]
         case RunStatus.FAILED if not state.finished:
             return [
                 scope.draft(
                     _failed(state, "Interrupted", "run interrompu après son passage en échec")
                 )
             ]
-        case RunStatus.READY_FOR_MODEL if answered and state.pending_calls:
-            return [_transition(state, scope, RunStatus.AWAITING_TOOLS, cause)]
-        case RunStatus.READY_FOR_MODEL | RunStatus.FINALIZING if answered:
-            return [
-                _transition(state, scope, RunStatus.COMPLETED, cause),
-                scope.draft(_completed(state, last)),
-            ]
-        case RunStatus.AWAITING_TOOLS if not state.pending_calls and _is_terminal(state, ctx):
-            return [
-                _transition(state, scope, RunStatus.COMPLETED, cause),
-                scope.draft(_completed(state, None, terminal=_terminal_event(state, cause))),
-            ]
+        case RunStatus.READY_FOR_MODEL | RunStatus.FINALIZING if answered and last is not None:
+            return await _review(state, ctx, scope, cause, last)
         case RunStatus.AWAITING_TOOLS if not state.pending_calls:
-            limit_reached = state.iterations >= ctx.max_iterations
-            target = RunStatus.FINALIZING if limit_reached else RunStatus.READY_FOR_MODEL
-            return [_transition(state, scope, target, cause)]
+            terminal, parallel = _terminal(state, ctx)
+            if terminal is not None:
+                return await _final(state, ctx, scope, cause, _terminal_message(state), terminal)
+            drafts = [
+                scope.draft(
+                    PolicyDecided(
+                        policy=TERMINAL_RULE,
+                        point="after_tool",
+                        decision="continue",
+                        reason=(
+                            f"Outil terminal {call.name} appelé avec d'autres outils : "
+                            "sa sortie revient à l'orchestrateur."
+                        ),
+                        call_id=call.call_id,
+                    )
+                )
+                for call in parallel
+            ]
+            return [*drafts, _transition(state, scope, _after_tools(state, ctx), cause)]
         case _:
             return None
 
 
+async def _review(
+    state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None, answer: Message
+) -> list[EventDraft]:
+    """Suite d'une réponse de l'orchestrateur : politiques ``after_model``, puis outils ou fin."""
+    finalizing = state.status is RunStatus.FINALIZING
+    verdict = await ctx.policies.run(
+        AfterModel(state=state, response=answer, finalizing=finalizing),
+        ignore=frozenset({"stop"}) if finalizing else frozenset(),
+    )
+    drafts = [scope.draft(decided) for decided in verdict.decided]
+    reason = _stopping(verdict, drafts)
+    match verdict.decision:
+        case Retry():
+            return [*drafts, *_repair(state, ctx, scope, _pending_repair(verdict), reason)]
+        case Fail(error=error):
+            return [*drafts, *_fail(state, scope, f"policy.{verdict.by}", error, reason)]
+        case Stop(reason=why) if state.pending_calls:
+            return [
+                *drafts,
+                *_close_calls(state, scope, f"Non exécuté : run arrêté ({why})."),
+                _transition(state, scope, RunStatus.FINALIZING, reason),
+            ]
+        case _:
+            pass
+    if state.pending_calls:
+        return [*drafts, _transition(state, scope, RunStatus.AWAITING_TOOLS, cause)]
+    return [*drafts, *await _final(state, ctx, scope, cause, answer, None)]
+
+
+async def _final(
+    state: RunState,
+    ctx: RunContext,
+    scope: RunScope,
+    cause: Event | None,
+    output: Message,
+    terminal: ToolCallBlock | None,
+) -> list[EventDraft]:
+    """Réponse finale : politiques ``on_output``, puis clôture, réparation ou échec.
+
+    ``terminal`` : l'appel de l'outil terminal dont ``output`` est la sortie (#13).
+    """
+    subject = OnOutput(
+        state=state,
+        output=output,
+        source="model" if terminal is None else "terminal",
+        tool=None if terminal is None else terminal.name,
+    )
+    verdict = await ctx.policies.run(subject)
+    drafts = [scope.draft(decided) for decided in verdict.decided]
+    reason = _stopping(verdict, drafts)
+    match verdict.decision:
+        case Retry():
+            return [*drafts, *_repair(state, ctx, scope, _pending_repair(verdict), reason)]
+        case Fail(error=error):
+            return [*drafts, *_fail(state, scope, f"policy.{verdict.by}", error, reason)]
+        case _:
+            pass
+    final = verdict.subject.output if isinstance(verdict.subject, OnOutput) else output
+    replaced = verdict.replaced
+    completion = _transition(state, scope, RunStatus.COMPLETED, cause)
+    if terminal is not None:
+        closing = _completed(
+            state, final if replaced else None, terminal=_terminal_event(state, cause)
+        )
+    else:
+        closing = _completed(state, final)
+    return [*drafts, completion, scope.draft(closing)]
+
+
+def _stopping(verdict: Verdict, drafts: list[EventDraft]) -> EventDraft | None:
+    """Événement de la décision qui a arrêté la chaîne : cause de la transition qui suit."""
+    return drafts[-1] if drafts and verdict.by is not None else None
+
+
+def _pending_repair(verdict: Verdict) -> PendingRepair:
+    decision = verdict.decision
+    if not isinstance(decision, Retry) or verdict.by is None:
+        raise RuntimeError("Réparation sans décision Retry")
+    return PendingRepair(
+        policy=verdict.by,
+        point="on_output" if verdict.subject.point == "on_output" else "after_model",
+        feedback=decision.feedback,
+        tools=decision.tools,
+    )
+
+
+def _repair(
+    state: RunState,
+    ctx: RunContext,
+    scope: RunScope,
+    repair: PendingRepair,
+    cause: Event | EventDraft | None,
+) -> list[EventDraft]:
+    """Demande de réparation au modèle orchestrateur (#20).
+
+    Les appels d'outils de la réponse refusée sont fermés sans être exécutés,
+    puis le diagnostic est écrit. Après une sortie terminale refusée, le run
+    revient à l'orchestrateur.
+    """
+    drafts = _close_calls(
+        state, scope, f"Non exécuté : réponse refusée par le contrôle {repair.policy}."
+    )
+    text = f"{REPAIR_PREFIX} ({repair.policy}) : {repair.feedback}"
+    drafts.append(
+        scope.draft(
+            UserMessage(
+                message=Message.user(text), kind="repair", policy=repair.policy, tools=repair.tools
+            )
+        )
+    )
+    if state.status is RunStatus.AWAITING_TOOLS:
+        drafts.append(_transition(state, scope, _after_tools(state, ctx), cause))
+    return drafts
+
+
+def _close_calls(state: RunState, scope: RunScope, reason: str) -> list[EventDraft]:
+    """Résultats d'erreur pour les appels en attente, qui ne seront pas exécutés."""
+    return [
+        scope.draft(
+            ToolCompleted(
+                call_id=call.call_id, tool_name=call.name, output=ToolOutput.error(reason)
+            ),
+            span_id=new_span_id(),
+        )
+        for call in state.pending_calls
+    ]
+
+
+def _fail(
+    state: RunState, scope: RunScope, error_type: str, error: str, cause: EventDraft | None
+) -> list[EventDraft]:
+    return [
+        _transition(state, scope, RunStatus.FAILED, cause or error_type),
+        scope.draft(_failed(state, error_type, error)),
+    ]
+
+
+def _after_tools(state: RunState, ctx: RunContext) -> RunStatus:
+    """État qui suit un lot d'outils : le modèle, ou la réponse forcée si le plafond est atteint."""
+    limit_reached = state.iterations >= ctx.max_iterations
+    return RunStatus.FINALIZING if limit_reached else RunStatus.READY_FOR_MODEL
+
+
 def _transition(
-    state: RunState, scope: RunScope, target: RunStatus, cause: Event | str | None
+    state: RunState,
+    scope: RunScope,
+    target: RunStatus,
+    cause: Event | EventDraft | str | None,
 ) -> EventDraft:
-    if isinstance(cause, Event):
+    if isinstance(cause, Event | EventDraft):
         cause_type, cause_id = cause.type, cause.event_id
     else:
         cause_type, cause_id = cause, None
@@ -414,24 +601,38 @@ def _transition(
     )
 
 
-def _is_terminal(state: RunState, ctx: RunContext) -> bool:
-    """Vrai si le lot qui vient de finir fait de sa sortie la réponse finale (#13)."""
+def _terminal(
+    state: RunState, ctx: RunContext
+) -> tuple[ToolCallBlock | None, tuple[ToolCallBlock, ...]]:
+    """Appel terminal dont la sortie devient la réponse finale (#13), ou None.
+
+    Le second élément : les outils terminaux appelés avec d'autres, pour qui
+    la règle ne s'applique pas.
+    """
     turn = next((m for m in reversed(state.messages) if m.role == "assistant"), None)
     calls = turn.tool_calls if turn is not None else ()
     terminal = [c for c in calls if (tool := ctx.tools.get(c.name)) and tool.spec.terminal]
     if not terminal:
-        return False
+        return None, ()
     if len(calls) > 1:
         logger.warning(
             "Outil terminal %s appelé avec d'autres outils : sa sortie revient à l'orchestrateur",
             ", ".join(c.name for c in terminal),
             extra={"run_id": state.run_id},
         )
-        return False
+        return None, tuple(terminal)
     last = state.messages[-1]
-    return all(
+    succeeded = all(
         isinstance(block, ToolResultBlock) and not block.output.is_error for block in last.blocks
     )
+    return (terminal[0] if succeeded else None), ()
+
+
+def _terminal_message(state: RunState) -> Message:
+    """Sortie de l'outil terminal, en réponse de l'assistant."""
+    last = state.messages[-1]
+    [result] = [b for b in last.blocks if isinstance(b, ToolResultBlock)]
+    return Message(role="assistant", blocks=result.output.blocks or (TextBlock(text=""),))
 
 
 def _terminal_event(state: RunState, cause: Event | None) -> Event:
@@ -478,7 +679,8 @@ class _Step:
         self._started = time.perf_counter()
 
     def draft(
-        self, payload: StepStarted | StepCompleted | ModelResponded | ModelRetried
+        self,
+        payload: StepStarted | StepCompleted | ModelResponded | ModelRetried | PolicyDecided,
     ) -> EventDraft:
         # Les appels de modèle de l'orchestrateur sont ceux du rôle ``main`` (C6).
         role = MAIN_ROLE if isinstance(payload, ModelResponded | ModelRetried) else None
@@ -517,16 +719,47 @@ async def _model_step(
     if ctx.tools.shows_refs(view):
         messages = mark_results(messages, ResultIndex(messages))
         system = f"{system}\n\n{REFS_HINT}" if system else REFS_HINT
-    try:
-        request = ModelRequest(
-            model_id=spec.model,
-            system=system,
-            messages=(*in_call_order(previous), *messages),
-            tools=ctx.tools.definitions(view),
-            tool_choice="none" if forced else "auto",
-            max_tokens=ctx.max_tokens or spec.max_tokens,
-            params={**spec.params, **ctx.params},
+    request = ModelRequest(
+        model_id=spec.model,
+        system=system,
+        messages=(*in_call_order(previous), *messages),
+        tools=ctx.tools.definitions(view),
+        tool_choice="none" if forced or state.repair_without_tools else "auto",
+        max_tokens=ctx.max_tokens or spec.max_tokens,
+        params={**spec.params, **ctx.params},
+    )
+    verdict = await ctx.policies.run(
+        BeforeModel(state=state, request=request, finalizing=forced),
+        ignore=frozenset({"stop"}) if forced else frozenset(),
+    )
+    decided = [current.draft(payload) for payload in verdict.decided]
+    for draft in decided:
+        yield draft
+    emitted += len(decided)
+    reason = _stopping(verdict, decided)
+    match verdict.decision:
+        case Stop():
+            yield current.completed(emitted)
+            yield _transition(state, scope, RunStatus.FINALIZING, reason)
+            return
+        case Fail(error=error):
+            yield current.completed(emitted, ok=False)
+            for draft in _fail(state, scope, f"policy.{verdict.by}", error, reason):
+                yield draft
+            return
+        case _:
+            pass
+    if isinstance(verdict.subject, BeforeModel):
+        request = verdict.subject.request
+    if forced and request.tool_choice != "none":
+        # Garde-fou : la réponse forcée reste sans outils, quoi qu'une politique demande.
+        logger.warning(
+            "Réponse forcée : tool_choice %r remplacé par 'none'",
+            request.tool_choice,
+            extra={"run_id": state.run_id, "span_id": current.span},
         )
+        request = request.model_copy(update={"tool_choice": "none"})
+    try:
         call = ModelCall(ctx.model, spec, on_chunk=ctx.on_chunk, artifacts=ctx.artifacts)
         async with aclosing(call.run(request)) as outcomes:
             async for outcome in outcomes:
@@ -586,18 +819,29 @@ async def _tool_step(
     spans: dict[str, SpanId] = {call.call_id: new_span_id() for call in state.pending_calls}
     model_spans: dict[str, SpanId] = {}
     emitted = 0
-    batch = ctx.tools.run_batch(state, writer=ctx.writer, spans=spans)
+    # Décision ``Fail`` d'une politique d'outil : le run échoue à la fin du lot.
+    failure: tuple[EventDraft, PolicyDecided] | None = None
+    batch = ctx.tools.run_batch(state, writer=ctx.writer, spans=spans, policies=ctx.policies)
     async with aclosing(batch) as events:
         async for item in events:
             span = spans.setdefault(item.call_id, new_span_id())
             if isinstance(item, Delegated):
                 inner = model_spans.setdefault(item.call_id, new_span_id())
                 yield scope.draft(item.payload, span_id=inner, parent_span_id=span, role=item.role)
-            elif isinstance(item, Stored):
-                yield scope.draft(item.payload, span_id=span, parent_span_id=current.span)
+            elif isinstance(item, Stored | Decided):
+                draft = scope.draft(item.payload, span_id=span, parent_span_id=current.span)
+                if isinstance(item, Decided) and item.payload.decision == "fail" and not failure:
+                    failure = draft, item.payload
+                yield draft
             else:
                 yield scope.draft(item, span_id=span, parent_span_id=current.span)
             emitted += 1
+    if failure is not None:
+        draft, decided = failure
+        yield current.completed(emitted, ok=False)
+        for event in _fail(state, scope, f"policy.{decided.policy}", decided.reason, draft):
+            yield event
+        return
     yield current.completed(emitted)
 
 

@@ -21,6 +21,7 @@ from loom_ia.adapters.stores import InMemoryEventStore, NotifyingEventStore
 from loom_ia.core.events import (
     DurablePayload,
     Event,
+    PolicyDecided,
     RunFailed,
     RunScope,
     RunStarted,
@@ -138,6 +139,20 @@ def test_progress_lines_of_a_failed_subrun() -> None:
         "  · sous-agent demo : démarré",
         "  · sous-agent demo : échec — délai dépassé",
         None,
+    ]
+
+
+def test_progress_lines_of_policy_decisions() -> None:
+    progress = Progress()
+    events = journal(
+        ("r0", RunStarted()),
+        ("r0", PolicyDecided(policy="devis", point="before_tool", decision="deny", reason="non")),
+        ("r0", PolicyDecided(policy="loom.require_tool", point="before_model", decision="replace")),
+    )
+    assert [progress.line(e) for e in events] == [
+        None,
+        "· politique devis (before_tool) : refusé — non",
+        "· politique loom.require_tool (before_model) : remplacé",
     ]
 
 

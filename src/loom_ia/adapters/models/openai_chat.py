@@ -14,6 +14,7 @@ Vise les fournisseurs compatibles (Together, vLLM, Ollama…) ; sans
 - le raisonnement est lu dans les champs ``reasoning_content`` ou
   ``reasoning`` que ces fournisseurs ajoutent, mais n'est jamais renvoyé ;
 - la limite de sortie passe par ``max_tokens``, qu'ils reconnaissent tous ;
+- ``tool_choice`` passe tel quel (``auto``, ``none``, ``required``) ;
 - un identifiant d'appel d'outil manquant est généré.
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.

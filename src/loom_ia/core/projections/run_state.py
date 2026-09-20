@@ -9,6 +9,13 @@ Une réponse de modèle qui sert un appel d'outil (rôle délégué, C2) n'entre
 pas dans la conversation de l'orchestrateur : seuls son usage et son coût
 s'ajoutent au run. Un sous-agent (C5) a son propre run ; sa consommation
 arrive avec le ``tool.completed`` de l'appel.
+
+Politiques (#2) : ``policy.decided`` enregistre ce qui doit survivre à une
+reprise — une réparation décidée mais pas encore demandée (``Retry``), les
+arguments remplacés d'un appel, la réponse finale remplacée — et compte les
+réparations de chaque politique. Le message de réparation (``message.user``
+de ``kind: repair``) entre dans la conversation du run, et sa position est
+retenue pour l'exclure de l'historique de session.
 """
 
 from collections.abc import Iterable
@@ -18,6 +25,7 @@ from loom_ia.core.events import (
     Event,
     ModelResponded,
     ModelRetried,
+    PolicyDecided,
     RunCompleted,
     RunFailed,
     RunStarted,
@@ -32,6 +40,7 @@ from loom_ia.core.events import (
 from loom_ia.core.model import (
     Message,
     PendingCall,
+    PendingRepair,
     RunId,
     RunState,
     RunStatus,
@@ -77,6 +86,14 @@ def apply(state: RunState | None, event: Event) -> RunState:
     match payload:
         case RunStarted():
             raise ProjectionError(f"Run {state.run_id} : run.started en double (seq {event.seq})")
+        case UserMessage(message=message, kind="repair", tools=tools):
+            update |= {
+                "messages": (*state.messages, message),
+                "repairs": (*state.repairs, len(state.messages)),
+                "pending_repair": None,
+                "repair_without_tools": not tools,
+                "replaced_output": None,
+            }
         case UserMessage(message=message):
             update["messages"] = (*state.messages, message)
         case ModelResponded(call_id=str() as call_id, usage=usage, cost_usd=cost):
@@ -92,6 +109,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
                     PendingCall(call_id=c.call_id, name=c.name, arguments=c.arguments)
                     for c in message.tool_calls
                 ),
+                "repair_without_tools": False,
             }
         case ToolCalled(call_id=call_id, child_run_id=child):
             started: dict[str, object] = {"started": True}
@@ -114,6 +132,8 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 update["artifacts"] = (*state.artifacts, stored.record)
         case StepStarted(step_no=step_no):
             update["step"] = step_no
+        case PolicyDecided() as decided:
+            update |= _decided(state, decided, event)
         case StepCompleted() | ModelRetried() | ToolSourceUnavailable():
             pass
         case RunTransitioned(from_state=from_state, to_state=to_state):
@@ -123,11 +143,12 @@ def apply(state: RunState | None, event: Event) -> RunState:
                     f"alors que l'état reconstruit est {state.status} (seq {event.seq})"
                 )
             update["status"] = to_state
-        case RunCompleted(output=None, output_event_id=str()):
+        case RunCompleted(output=replaced, output_event_id=str()):
+            # Sortie d'un outil terminal, éventuellement remplacée par une politique.
             call_id, output = _terminal_output(state, event)
             update |= {
                 "status": RunStatus.COMPLETED,
-                "output": output,
+                "output": replaced or output,
                 "terminal_call_id": call_id,
                 "finished": True,
             }
@@ -140,6 +161,35 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 "finished": True,
             }
     return state.model_copy(update=update)
+
+
+def _decided(state: RunState, decided: PolicyDecided, event: Event) -> dict[str, object]:
+    """Ce qu'une décision de politique change dans l'état."""
+    update: dict[str, object] = {}
+    match decided:
+        case PolicyDecided(decision="retry", policy=policy):
+            update["retries"] = {**state.retries, policy: state.retries.get(policy, 0) + 1}
+            if decided.point in {"after_model", "on_output"}:
+                update["pending_repair"] = PendingRepair(
+                    policy=policy,
+                    point="on_output" if decided.point == "on_output" else "after_model",
+                    feedback=decided.reason,
+                    tools=decided.tools is not False,
+                )
+        case PolicyDecided(
+            decision="replace", point="before_tool", call_id=str() as call_id, arguments=dict()
+        ):
+            update["pending_calls"] = tuple(
+                c.model_copy(update={"replaced_arguments": decided.arguments})
+                if c.call_id == call_id
+                else c
+                for c in _require_pending(state, call_id, event)
+            )
+        case PolicyDecided(decision="replace", point="on_output", output=Message() as output):
+            update["replaced_output"] = output
+        case _:
+            pass
+    return update
 
 
 def _closes(status: RunStatus, event: Event) -> bool:

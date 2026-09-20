@@ -115,7 +115,7 @@ Les commandes ci-dessous sont indicatives.
 
 | Accès | Exécution |
 |---|---|
-| Python | `examples/j3/run.py --variante a\|b\|c` et rapport de coûts |
+| Python | Un exemple par phase, sur la config `examples/j3/relance/` : `politiques.py` (3.1), `contrats.py` (3.2), `juge.py` (3.3), `budget.py` (3.4), `secours.py` (3.5) ; puis `acces.py` (3.6) : variantes a, b et c par les trois accès, et rapport de coûts |
 | CLI | `loom run relance "…"`, qui affiche le coût |
 | REST | La réponse contient `unverified`, les coûts et la ventilation |
 | MCP | Erreur lisible en cas d'échec d'un guard ; coût dans le résultat |

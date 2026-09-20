@@ -4,7 +4,8 @@
 Deux formes, le nom d'abord :
 
 - un **nom enregistré** : ``imports`` charge les modules listés, et les
-  outils qu'ils déclarent (``@tool``) sont enregistrés sous leur nom ;
+  outils (``@tool``) et politiques (``@policy``) qu'ils déclarent sont
+  enregistrés sous leur nom ;
 - un **chemin d'import** ``module:attr``, qui ne demande aucun ``imports``.
 
 Les modules voisins du fichier de config sont importables : son dossier est
@@ -18,7 +19,7 @@ from pathlib import Path
 from types import ModuleType
 
 from loom_ia.config.errors import ConfigError
-from loom_ia.core.ports import Tool
+from loom_ia.core.ports import Policy, Tool
 
 
 class Registry:
@@ -45,7 +46,7 @@ class Registry:
 
 
 def import_modules(names: Iterable[str], *, base_dir: Path | None = None) -> Registry:
-    """Importe les modules de ``imports`` et enregistre les outils trouvés."""
+    """Importe les modules de ``imports`` et enregistre les outils et politiques trouvés."""
     registry = Registry()
     with _importable(base_dir):
         for name in names:
@@ -53,8 +54,8 @@ def import_modules(names: Iterable[str], *, base_dir: Path | None = None) -> Reg
                 module = importlib.import_module(name)
             except ImportError as exc:
                 raise ConfigError(f"Module {name!r} introuvable : {exc}") from exc
-            for tool_name, tool in _tools_of(module):
-                registry.add(tool_name, tool, source=f"module {name}")
+            for found_name, found in _declared(module):
+                registry.add(found_name, found, source=f"module {name}")
     return registry
 
 
@@ -101,6 +102,15 @@ class _importable:
             self._added = False
 
 
-def _tools_of(module: ModuleType) -> list[tuple[str, Tool]]:
-    """Outils déclarés dans un module, par leur nom."""
-    return [(value.spec.name, value) for value in vars(module).values() if isinstance(value, Tool)]
+def _declared(module: ModuleType) -> list[tuple[str, object]]:
+    """Outils et politiques déclarés dans un module, par leur nom."""
+    found: list[tuple[str, object]] = []
+    for value in vars(module).values():
+        if isinstance(value, type):
+            # Une classe importée (FunctionTool…) a les attributs d'un outil, sans en être un.
+            continue
+        if isinstance(value, Tool):
+            found.append((value.spec.name, value))
+        elif isinstance(value, Policy):
+            found.append((value.name, value))
+    return found

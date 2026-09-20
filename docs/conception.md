@@ -300,7 +300,7 @@ Event
   event_id (UUIDv7, triable)   seq   ts   schema_version
   tenant_id  session_id  run_id  root_run_id  span_id  parent_span_id
   type       ex. "tool.completed"
-  category   run | message | model | tool | guard | approval | artifact | session
+  category   run | message | model | tool | guard | policy | approval | artifact | session
   status     ok | warning | error
   agent  role                (si applicable)
   facets     champs de recherche remontés par le payload
@@ -315,7 +315,7 @@ Event
 | Type | Champs principaux |
 |---|---|
 | `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte |
-| `message.user` | blocs de contenu |
+| `message.user` | blocs de contenu ; `kind` (`request`, `repair`), politique et `tools` d'une réparation |
 | `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué) |
 | `model.retried` | tentative, type d'erreur, délai, call_id (rôle délégué) |
 | `model.fell_back` | ancien modèle, nouveau modèle, motif |
@@ -325,7 +325,7 @@ Event
 | `tool.source_unavailable` | source (serveur MCP), erreur, required |
 | `guard.checked` | guard, cible, outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized |
 | `judge.evaluated` | modèle juge, scores par critère, bloquant, réussi |
-| `policy.decided` | hook, point, décision, motif |
+| `policy.decided` | politique, point, décision, motif, call_id, tentative et `tools` (`Retry`), arguments ou réponse remplacés, `error` |
 | `approval.requested` / `.granted` / `.rejected` / `.expired` | tool_name, call_id, arguments, auteur, motif, scope, expire_at |
 | `artifact.stored` | uri, type MIME, taille, nom, origine (`attachment`, `tool_output`, `offload`), call_id |
 | `session.compacted` | résumé, up_to_seq, tokens avant/après |
@@ -444,6 +444,13 @@ Decision = Continue
 - Les hooks s'exécutent dans l'ordre déclaré ; `Replace` transmet la valeur au suivant ; toute autre décision que `Continue` ou `Replace` arrête la chaîne.
 - Toute décision autre que `Continue` écrit `policy.decided`. En rejeu identique, ces décisions sont réutilisées ; en variante, les hooks sont réévalués.
 - `Retry` est borné (`max_attempts`) ; chaque hook a un timeout ; en cas d'exception, le comportement est configurable par hook (bloquer par défaut pour le budget et l'approbation) ; les hooks sont asynchrones et déterministes pour un état donné.
+
+**Réalisation (phase 3.1)** (détails : `fonctions.md`, point 2) :
+
+- Une politique est une fonction décorée par `@policy(points, decisions)` (`loom_ia.policies`) ; elle reçoit le sujet du point (`BeforeModel`, `AfterModel`, `BeforeTool`, `AfterTool`, `OnOutput`) et son `PolicyContext` (nom, `params`, réparations déjà demandées). Port `Policy` dans le noyau ; exécution de la chaîne dans `engine/hooks.py`.
+- `before_model` s'exécute dans l'étape d'appel du modèle ; `after_model` et `on_output` au moment de décider la suite d'une réponse (réévalués à la reprise tant que leur décision n'est pas appliquée) ; `before_tool` et `after_tool` dans l'exécuteur.
+- `Retry` à `after_model` et `on_output` : réparation par l'orchestrateur (diagnostic en `message.user` de `kind: repair`, exclu de l'historique de session avec la réponse refusée) ; à `after_tool`, le résultat revient à l'orchestrateur en erreur avec le diagnostic (réparation d'un rôle par son modèle : 3.2). `Pause` est refusée au démarrage jusqu'en J4.3.
+- Défauts : délai 5 s, `on_error: block`, `max_attempts: 1`. Politique fournie : `loom.require_tool` (`tool_choice: required` tant qu'aucun outil n'a été appelé, jamais en `FINALIZING`).
 
 ### 9.5 Outils
 
@@ -604,7 +611,7 @@ Le message du rôle est construit par un `input_template` explicite (`{{ args.x 
 
 **Rôle vision :** il déclare le contexte `attachments` et reste masqué quand le run n'a pas de pièce jointe (C4). Les images suivent le texte de son message, en références résolues à l'appel ; son modèle doit avoir la capacité `vision` (contrôlé au chargement). Un `input_template` peut citer `{{ context.attachments }}` (liste des fichiers : nom, type, taille), sans obligation.
 
-**Outil terminal** (#13) : il n'est terminal que s'il est seul dans le tour et n'a pas échoué. Sa sortie passe par les hooks `on_output` et le réglage `stream_output`, et doit respecter le schéma de sortie de l'agent s'il en a un. En cas d'échec, le résultat revient à l'orchestrateur. Sa description reçoit automatiquement la mention « à appeler seul » ; un appel en parallèle ne déclenche pas la règle et est signalé dans les logs (`policy.decided` en 3.1). Dans le journal, `run.completed` référence le `tool.completed` terminal, sans duplication.
+**Outil terminal** (#13) : il n'est terminal que s'il est seul dans le tour et n'a pas échoué. Sa sortie passe par les hooks `on_output` et le réglage `stream_output`, et doit respecter le schéma de sortie de l'agent s'il en a un. En cas d'échec, le résultat revient à l'orchestrateur. Sa description reçoit automatiquement la mention « à appeler seul » ; un appel en parallèle ne déclenche pas la règle et est signalé dans les logs et par un `policy.decided` (règle du moteur `loom.terminal`, décision `continue`, statut `warning`). Dans le journal, `run.completed` référence le `tool.completed` terminal, sans duplication.
 
 **Sous-agent** (#4) : l'outil `AgentTool` crée un `RunState` enfant, sauvegardé séparément.
 
@@ -1069,11 +1076,14 @@ subagents:                            # outils de kind agent, un argument : mess
     description: Vérifie la cohérence d'un devis.   # défaut : celle de l'agent
     budget_share: 0.3                 # J3.4
 policies:
-  - hook: myapp.policies:plafond_montant
-    points: [before_tool]
+  - hook: loom.require_tool           # politique fournie : un premier appel d'outil imposé
+  - hook: myapp.policies:plafond_montant   # nom enregistré (imports) ou module:attr
+    name: plafond                     # nom dans le journal ; défaut : celui de la politique
+    points: [before_tool]             # défaut : tous ceux que la politique déclare
     params: {max: 5000}
-    timeout: 2
-    on_error: block                   # block | allow
+    timeout: 2                        # défaut : 5 s ; null le retire
+    on_error: block                   # block (défaut) | allow
+    max_attempts: 1                   # réparations (Retry) permises dans un run
 ```
 
 **OutputSpec et JudgeSpec :**

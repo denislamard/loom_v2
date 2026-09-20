@@ -119,6 +119,7 @@ forbidden_modules = [
     "loom_ia.config",
     "loom_ia.engine",
     "loom_ia.guards",
+    "loom_ia.policies",
     "loom_ia.replay",
     "loom_ia.runtime",
     "loom_ia.sessions",
@@ -136,6 +137,7 @@ source_modules = ["loom_ia.engine"]
 forbidden_modules = [
     "loom_ia.agents",
     "loom_ia.config",
+    "loom_ia.policies",
     "loom_ia.testing",
     "loom_ia.tools",
 ]

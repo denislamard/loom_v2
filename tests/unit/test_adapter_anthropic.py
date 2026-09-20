@@ -303,6 +303,12 @@ async def test_defaults_without_tools_and_forced_answer() -> None:
     assert forced.stop_reason == "max_tokens"
 
 
+async def test_required_tool_choice_becomes_any() -> None:
+    server = Server(streamed(start(), *end("tool_use")))
+    await complete(server.model(), request(tools=(TOOL,), tool_choice="required"))
+    assert server.body["tool_choice"] == {"type": "any"}
+
+
 async def test_unknown_blocks_are_ignored() -> None:
     server = Server(
         streamed(
