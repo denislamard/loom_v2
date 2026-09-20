@@ -44,6 +44,11 @@ concerné. Une demande de réparation (``Retry``) est suivie d'un
 Les fichiers ne sont jamais dans le journal : ``artifact.stored`` annonce
 qu'un fichier a été rangé dans le stockage d'artefacts, et les messages ne
 portent que sa référence. Un bloc d'octets (``inline_data``) y est refusé.
+
+Sessions (J4.1) : les événements de catégorie ``session`` parlent de la
+session, pas du run qui les écrit. Ils portent tous ``up_to_seq``, la
+position jusqu'à laquelle ils remplacent l'historique, et la projection d'un
+run les ignore (ils peuvent arriver après sa clôture).
 """
 
 from typing import Annotated, ClassVar, Final, Literal, Self
@@ -67,7 +72,7 @@ from loom_ia.core.model.judge import CriterionScore, JudgesMode
 from loom_ia.core.model.media import ArtifactOrigin, ArtifactRecord
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.policy import CheckOutcome, CheckResolution, DecisionKind, HookPoint
-from loom_ia.core.model.run_state import RunStatus
+from loom_ia.core.model.run_state import RunKind, RunStatus
 from loom_ia.core.model.streaming import ModelErrorKind, StopReason
 from loom_ia.core.model.tooling import ToolKind
 from loom_ia.core.model.usage import Usage
@@ -120,7 +125,7 @@ class RunStarted(Payload):
     facet_fields: ClassVar[tuple[str, ...]] = ("kind",)
 
     type: Literal["run.started"] = "run.started"
-    kind: Literal["normal", "compaction"] = "normal"
+    kind: RunKind = "normal"
     context: CallerContext = CallerContext()
     parent_run_id: RunId | None = None
     parent_call_id: str | None = None
@@ -666,6 +671,45 @@ class ArtifactStored(Payload):
         )
 
 
+# --- Session -----------------------------------------------------------------
+
+
+class SessionSnapshot(Payload):
+    """Historique de la session matérialisé à la fin d'un run (#22).
+
+    Le journal reste la source : le snapshot n'est qu'une vue déjà calculée,
+    pour ne pas relire toute la session à chaque run. ``messages`` est
+    exactement ce que rend la projection d'historique pour les événements
+    jusqu'à ``up_to_seq``, résumé de compaction compris. Un lecteur qui
+    l'ignore obtient le même historique, plus lentement.
+
+    ``up_to_seq`` s'arrête avant le premier événement d'un run encore en
+    cours : sinon la relecture reprendrait un run au milieu.
+    """
+
+    category: ClassVar[EventCategory] = "session"
+    facet_fields: ClassVar[tuple[str, ...]] = ("up_to_seq", "messages", "tokens")
+
+    type: Literal["session.snapshot"] = "session.snapshot"
+    up_to_seq: NonNegativeInt
+    messages: tuple[Message, ...] = ()
+    # Estimation de la taille de l'historique, pour les seuils de compaction (#23).
+    tokens: NonNegativeInt = 0
+
+    @model_validator(mode="after")
+    def _check_messages(self) -> Self:
+        for message in self.messages:
+            _no_inline_data(message, "session.snapshot")
+        return self
+
+    def facets(self) -> dict[str, FacetValue]:
+        return {
+            "up_to_seq": self.up_to_seq,
+            "messages": len(self.messages),
+            "tokens": self.tokens,
+        }
+
+
 type DurablePayload = Annotated[
     RunStarted
     | StepStarted
@@ -685,7 +729,8 @@ type DurablePayload = Annotated[
     | GuardChecked
     | JudgeEvaluated
     | BudgetExceeded
-    | ArtifactStored,
+    | ArtifactStored
+    | SessionSnapshot,
     Field(discriminator="type"),
 ]
 
@@ -709,4 +754,5 @@ DURABLE_PAYLOADS: tuple[type[Payload], ...] = (
     JudgeEvaluated,
     BudgetExceeded,
     ArtifactStored,
+    SessionSnapshot,
 )

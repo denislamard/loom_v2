@@ -16,6 +16,9 @@ arguments remplacés d'un appel, la réponse finale remplacée — et compte les
 réparations de chaque politique. Le message de réparation (``message.user``
 de ``kind: repair``) entre dans la conversation du run, et sa position est
 retenue pour l'exclure de l'historique de session.
+
+Les événements de catégorie ``session`` (J4.1) sont ignorés : ils décrivent
+la session, pas le run, et s'écrivent après sa clôture.
 """
 
 from collections.abc import Iterable
@@ -35,6 +38,7 @@ from loom_ia.core.events import (
     RunFailed,
     RunStarted,
     RunTransitioned,
+    SessionSnapshot,
     StepCompleted,
     StepStarted,
     ToolCalled,
@@ -77,6 +81,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
             parent_call_id=payload.parent_call_id,
             depth=payload.depth,
             agent=event.agent or "",
+            kind=payload.kind,
             context=payload.context,
             judges=payload.judges,
             budget=payload.budget,
@@ -85,6 +90,11 @@ def apply(state: RunState | None, event: Event) -> RunState:
 
     if event.run_id != state.run_id:
         raise ProjectionError(f"Événement du run {event.run_id} appliqué au run {state.run_id}")
+    if isinstance(payload, SessionSnapshot):
+        # Marqueur de session : il parle de la session, pas du run qui l'écrit,
+        # et arrive après sa clôture. Seule la position lue avance. Les autres
+        # marqueurs (compaction) le rejoindront ici.
+        return state.model_copy(update={"last_seq": event.seq})
     if state.finished or (state.status.is_terminal and not _closes(state.status, event)):
         raise ProjectionError(
             f"Run {state.run_id} : {event.type} (seq {event.seq}) après l'état {state.status}"
@@ -255,7 +265,7 @@ def fold(events: Iterable[Event], run_id: RunId) -> RunState:
     """Reconstruit l'état d'un run à partir du journal (autres runs ignorés)."""
     state: RunState | None = None
     for event in events:
-        if event.run_id == run_id:
+        if event.run_id == run_id and event.category != "session":
             state = apply(state, event)
     if state is None:
         raise ProjectionError(f"Aucun événement pour le run {run_id}")
@@ -263,10 +273,15 @@ def fold(events: Iterable[Event], run_id: RunId) -> RunState:
 
 
 def fold_all(events: Iterable[Event]) -> dict[RunId, RunState]:
-    """États de tous les runs d'un journal, dans l'ordre de leur démarrage."""
+    """États de tous les runs d'un journal, dans l'ordre de leur démarrage.
+
+    Les marqueurs de session n'y entrent pas : ils décrivent la session, et
+    celui qui les écrit peut ne pas être dans la fenêtre relue.
+    """
     states: dict[RunId, RunState] = {}
     for event in events:
-        states[event.run_id] = apply(states.get(event.run_id), event)
+        if event.category != "session":
+            states[event.run_id] = apply(states.get(event.run_id), event)
     return states
 
 

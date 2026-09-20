@@ -22,6 +22,7 @@ from loom_ia.config.later import (
     LATER_API_KEY,
     LATER_MCP_ACCESS,
     LATER_ROOT,
+    LATER_SESSIONS,
     LATER_STORAGE,
     LATER_TELEMETRY,
 )
@@ -36,26 +37,36 @@ from loom_ia.core.model import (
 from loom_ia.telemetry.logs import LogFormat
 
 SCHEMA_VERSION: Final = 1
-EVENT_BACKENDS: Final = ("memory", "jsonl")
-# Dossier des artefacts sous celui du journal JSONL, quand la config n'en donne pas.
+EVENT_BACKENDS: Final = ("memory", "jsonl", "sqlite")
+# Journaux rangés hors de la mémoire : ils donnent aussi le dossier des artefacts.
+FILE_BACKENDS: Final = ("jsonl", "sqlite")
+# Dossier des artefacts sous celui du journal, quand la config n'en donne pas.
 ARTIFACTS_SUBDIR: Final = ".artifacts"
 
 
 class EventsStorage(DomainModel):
     backend: str = "memory"
-    # Dossier des journaux JSONL, relatif au fichier de config.
+    # ``jsonl`` : dossier des journaux. ``sqlite`` : fichier de la base.
+    # Relatif au fichier de config.
     path: Path | None = None
 
     @model_validator(mode="after")
     def _check_backend(self) -> Self:
         if self.backend not in EVENT_BACKENDS:
             raise ValueError(
-                f"Journal {self.backend!r} : seuls {' et '.join(EVENT_BACKENDS)} "
-                "sont disponibles au jalon J1"
+                f"Journal {self.backend!r} : seuls {', '.join(EVENT_BACKENDS)} "
+                "sont disponibles à ce jalon"
             )
-        if self.backend == "jsonl" and self.path is None:
-            raise ValueError("Journal 'jsonl' : 'path' est obligatoire")
+        if self.backend in FILE_BACKENDS and self.path is None:
+            raise ValueError(f"Journal {self.backend!r} : 'path' est obligatoire")
         return self
+
+    @property
+    def directory(self) -> Path | None:
+        """Dossier du journal : celui des fichiers JSONL, celui de la base SQLite."""
+        if self.path is None:
+            return None
+        return self.path if self.backend == "jsonl" else self.path.parent
 
 
 class ArtifactsStorage(DomainModel):
@@ -96,7 +107,7 @@ class StorageConfig(DomainModel):
         """Stockage d'artefacts effectif : celui déclaré, sinon celui qui suit le journal."""
         if self.artifacts.backend is not None:
             return self.artifacts.backend
-        return "local" if self.events.backend == "jsonl" else "memory"
+        return "local" if self.events.backend in FILE_BACKENDS else "memory"
 
     @property
     def artifacts_path(self) -> Path | None:
@@ -105,7 +116,23 @@ class StorageConfig(DomainModel):
             return None
         if self.artifacts.path is not None:
             return self.artifacts.path
-        return None if self.events.path is None else self.events.path / ARTIFACTS_SUBDIR
+        directory = self.events.directory
+        return None if directory is None else directory / ARTIFACTS_SUBDIR
+
+
+class SessionsConfig(DomainModel):
+    """Vie d'une session : historique matérialisé, puis compaction (J4.1b)."""
+
+    # Événements ajoutés depuis le dernier marqueur avant qu'un snapshot de
+    # l'historique soit écrit (§11.2). Le relire coûte moins que de rejouer
+    # ce qu'il couvre ; l'écrire recopie l'historique dans le journal.
+    snapshot_every: PositiveInt = 50
+
+    @model_validator(mode="before")
+    @classmethod
+    def _later(cls, data: object) -> object:
+        reject_later(data, LATER_SESSIONS)
+        return data
 
 
 class ToolsExecution(DomainModel):
@@ -227,6 +254,7 @@ class LoomConfig(DomainModel):
     # Serveurs MCP, référencés par les agents (#19).
     mcp_servers: tuple[McpServerSpec, ...] = ()
     storage: StorageConfig = StorageConfig()
+    sessions: SessionsConfig = SessionsConfig()
     execution: ExecutionConfig = ExecutionConfig()
     # Budgets par défaut des agents ; un agent les surcharge par son ``budget`` (J4).
     budgets: Budgets = Budgets()

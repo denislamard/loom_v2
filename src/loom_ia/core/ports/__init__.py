@@ -6,6 +6,7 @@ from loom_ia.core.ports.event_store import (
     EventStore,
     JournalCorrupted,
     SequenceConflict,
+    SessionRecord,
     journal_key,
 )
 from loom_ia.core.ports.model_client import (
@@ -37,6 +38,7 @@ __all__ = [
     "ModelError",
     "Policy",
     "SequenceConflict",
+    "SessionRecord",
     "SourceContext",
     "SourceUnavailable",
     "Tool",

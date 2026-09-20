@@ -153,8 +153,18 @@ def create_mcp_pool(config: LoomConfig, environ: Mapping[str, str] | None = None
 def create_event_store(config: LoomConfig) -> EventStore:
     """Journal déclaré dans ``storage.events``."""
     events = config.storage.events
-    if events.backend == "jsonl" and events.path is not None:
-        return JsonlEventStore(events.path)
+    if events.path is not None:
+        if events.backend == "jsonl":
+            return JsonlEventStore(events.path)
+        if events.backend == "sqlite":
+            try:
+                from loom_ia.adapters.stores.sqlite import SqliteEventStore
+            except ImportError as exc:
+                raise ConfigError(
+                    "Journal 'sqlite' : le paquet 'aiosqlite' n'est pas installé "
+                    "(installer l'extra : loom-ia[sqlite])"
+                ) from exc
+            return SqliteEventStore(events.path)
     return InMemoryEventStore()
 
 

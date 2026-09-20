@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId
-from loom_ia.core.ports import SequenceConflict, journal_key
+from loom_ia.core.ports import SequenceConflict, SessionRecord, journal_key
 
 
 class InMemoryEventStore:
@@ -56,6 +56,20 @@ class InMemoryEventStore:
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
         journal = self._journals.get((tenant_id, session_id))
         return journal[-1].seq if journal else 0
+
+    async def sessions(self, tenant_id: TenantId) -> list[SessionRecord]:
+        records = [
+            SessionRecord(
+                session_id=session_id, last_seq=journal[-1].seq, updated_at=journal[-1].ts
+            )
+            for (owner, session_id), journal in self._journals.items()
+            if owner == tenant_id and journal
+        ]
+        records.sort(key=lambda record: record.updated_at, reverse=True)
+        return records
+
+    async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        return len(self._journals.pop((tenant_id, session_id), []))
 
     async def aclose(self) -> None:
         return None

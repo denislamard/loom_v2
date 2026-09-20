@@ -12,10 +12,11 @@ lecteur ne voie jamais un fichier à moitié écrit.
 
 import asyncio
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
-from loom_ia.core.model import ArtifactLocation
+from loom_ia.core.model import ArtifactLocation, SessionId, TenantId
 from loom_ia.core.ports import ArtifactNotFound
 
 
@@ -39,11 +40,28 @@ class LocalArtifactStore:
         except FileNotFoundError:
             raise ArtifactNotFound(uri) from None
 
+    def session_path(self, tenant_id: TenantId, session_id: SessionId) -> Path:
+        """Dossier d'une session ; lève ``ValueError`` si les segments sont invalides."""
+        location = ArtifactLocation(tenant=tenant_id, session=session_id, name="-")
+        return (self.root / location.relative_path()).parent
+
+    async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        return await asyncio.to_thread(_remove, self.session_path(tenant_id, session_id))
+
     async def aclose(self) -> None:
         pass
 
     def __repr__(self) -> str:
         return f"LocalArtifactStore({str(self.root)!r})"
+
+
+def _remove(directory: Path) -> int:
+    """Supprime le dossier d'une session et rend le nombre de fichiers retirés."""
+    if not directory.is_dir():
+        return 0
+    count = sum(1 for entry in directory.iterdir() if entry.is_file())
+    shutil.rmtree(directory)
+    return count
 
 
 def _write(path: Path, data: bytes) -> None:

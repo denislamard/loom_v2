@@ -19,6 +19,10 @@ from loom_ia.core.model.media import ArtifactRecord
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.usage import Usage
 
+# Un run de compaction résume une session (#23) : il vit dans le journal de
+# cette session, mais n'entre ni dans son historique ni dans son arbre.
+type RunKind = Literal["normal", "compaction"]
+
 
 class RunStatus(StrEnum):
     READY_FOR_MODEL = "ready_for_model"
@@ -71,6 +75,8 @@ class RunState(DomainModel):
     parent_call_id: str | None = None
     depth: NonNegativeInt = 0
     agent: str
+    # Run ordinaire, ou run système de compaction (#23).
+    kind: RunKind = "normal"
     context: CallerContext = CallerContext()
     # Juges choisis par l'appelant (#21) : selon leur ``when``, tous, ou aucun.
     judges: JudgesMode = "auto"

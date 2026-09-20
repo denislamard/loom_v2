@@ -27,7 +27,7 @@ from typing import Self
 
 from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId
-from loom_ia.core.ports import EventStore
+from loom_ia.core.ports import EventStore, SessionRecord
 
 type EventSink = Callable[[Event], None]
 type EventFilter = Callable[[Event], bool]
@@ -146,6 +146,12 @@ class NotifyingEventStore:
 
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
         return await self._inner.last_seq(tenant_id, session_id)
+
+    async def sessions(self, tenant_id: TenantId) -> list[SessionRecord]:
+        return await self._inner.sessions(tenant_id)
+
+    async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        return await self._inner.delete(tenant_id, session_id)
 
     async def aclose(self) -> None:
         self._sinks.clear()

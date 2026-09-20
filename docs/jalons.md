@@ -132,7 +132,8 @@ Les commandes ci-dessous sont indicatives.
 
 | Phase | Contenu | Fonctions |
 |---|---|---|
-| 4.1 Sessions | `session_id`, snapshots, `expected_seq`, compaction (`_compaction`, fidélité, `ensure_fits`), export et suppression RGPD ; `EventStore` SQLite | F1–F5, F7, #23, #24 |
+| 4.1a Journal de session | `session_id`, snapshots d'historique, écrivain partagé et reprise sur conflit (`expected_seq`), lister, exporter et supprimer (RGPD) ; `EventStore` SQLite | F1, F2, F5, F7, #22, #24 |
+| 4.1b Compaction | `TaskQueue` et adaptateur asyncio, agent interne `_compaction`, config `sessions.compaction`, contrôle de fidélité, `ensure_fits`, contextes `session_summary` et `last_turns`, portée `scope: session` de `tool_results` | F3, F4, #12, #23 |
 | 4.2 Exécution durable | `TaskQueue` asyncio, runs en arrière-plan, `recover()`, concession, annulation, timeout global | A5, A6, H2, H3, H5, #25–#27 |
 | 4.3 Approbations | `side_effects` et `approval`, pause, approbation, refus, expiration, approbateur en ligne, `WAITING_CHILD` | D10, H4, #17, #28 |
 | 4.4 Idempotence | `IdempotencyStore` (`journal`, `memory`, `sqlite`), `@idempotent`, clés métier, règles de reprise | D11, #18, #49 |
@@ -149,12 +150,12 @@ Les commandes ci-dessous sont indicatives.
 
 | Accès | Exécution |
 |---|---|
-| Python | `examples/j4/run.py`, avec approbation asynchrone puis approbateur en ligne |
+| Python | Un exemple par phase, sur la config `examples/j4/relance/` : `sessions.py` (4.1a), `compaction.py` (4.1b), `durable.py` (4.2), `approbation.py` (4.3), `idempotence.py` (4.4) ; puis `acces.py` (4.5) : le scénario complet par les trois accès, avec approbation asynchrone puis approbateur en ligne |
 | CLI | `loom run relance "…" --session c-42 --background`, puis `loom resume` ou reprise automatique au redémarrage |
 | REST | `POST …/runs` en arrière-plan, puis `POST …/runs/<id>/approve`, puis `GET …/sessions/c-42` |
 | MCP | Elicitation si le client la prend en charge, sinon pause, `run_status`, puis approbation via REST |
 
-**Tests automatisés :** `expected_seq` (deux runs concurrents sur une session) ; snapshots, compaction et contrôle de fidélité ; `ensure_fits` ; `recover()` et concession (deux workers simulés) ; approbation, refus et expiration ; `@idempotent` avec clés technique et métier ; reprise d'un outil non idempotent interrompu ; suppression RGPD ; `kill -9` réel en test d'intégration (sous-process).
+**Tests automatisés :** `expected_seq` (deux runs concurrents sur une session) ; snapshots, compaction et contrôle de fidélité ; `ensure_fits` ; `EventStore` SQLite sur la suite de contrat du port ; lister, exporter et supprimer une session ; `recover()` et concession (deux workers simulés) ; approbation, refus et expiration ; `@idempotent` avec clés technique et métier ; reprise d'un outil non idempotent interrompu ; `kill -9` réel en test d'intégration (sous-process).
 
 **Critère de sortie :** après `kill -9`, le run reprend, l'e-mail n'est jamais envoyé deux fois, et l'approbation est tracée avec son auteur.
 

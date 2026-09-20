@@ -42,13 +42,14 @@ lisible (``error``). Les trois accès rendent ce même résultat.
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 from typing import Self
 
-from pydantic import JsonValue, PositiveInt
+from pydantic import JsonValue, NonNegativeInt, PositiveInt
 
 from loom_ia.adapters.stores import NotifyingEventStore
 from loom_ia.agents.registry import AgentRegistry
@@ -74,9 +75,16 @@ from loom_ia.core.model import (
     new_run_id,
 )
 from loom_ia.core.model.base import DomainModel
-from loom_ia.core.ports import ArtifactStore, ChunkCallback, EventStore
+from loom_ia.core.ports import ArtifactStore, ChunkCallback, EventStore, SessionRecord
 from loom_ia.core.projections import RunTree, fold
-from loom_ia.engine import CircuitBreakers, RunContext, begin_run, drive
+from loom_ia.engine import (
+    CircuitBreakers,
+    RunContext,
+    SessionWriter,
+    SessionWriters,
+    begin_run,
+    drive,
+)
 from loom_ia.runtime import (
     Agent,
     build_agent,
@@ -85,7 +93,10 @@ from loom_ia.runtime import (
     create_mcp_pool,
     load_registry,
 )
+from loom_ia.sessions import write_snapshot
 from loom_ia.usage import UsageReport, usage_report
+
+logger = logging.getLogger(__name__)
 
 # Ce qu'un run donne à voir pendant qu'il se déroule.
 type StreamItem = Event | ModelChunk
@@ -102,6 +113,22 @@ class UnknownRun(KeyError):
     def __init__(self, run_id: RunId) -> None:
         super().__init__(f"Run {run_id} inconnu")
         self.run_id = run_id
+
+
+class UnknownSession(KeyError):
+    """Aucune session de cet identifiant dans le journal."""
+
+    def __init__(self, session_id: SessionId) -> None:
+        super().__init__(f"Session {session_id} inconnue")
+        self.session_id = session_id
+
+
+class SessionDeletion(DomainModel):
+    """Ce qu'a retiré la suppression d'une session (RGPD, F7)."""
+
+    session_id: SessionId
+    events: NonNegativeInt = 0
+    artifacts: NonNegativeInt = 0
 
 
 class JudgeVerdict(DomainModel):
@@ -236,6 +263,9 @@ class Loom:
         self._mcp = create_mcp_pool(config, environ)
         # Disjoncteurs des modèles et des serveurs MCP, communs à tous les runs.
         self._breakers = breakers if breakers is not None else CircuitBreakers()
+        # Un écrivain par session : deux runs d'une même session écrivent par
+        # le même, et ne se refusent pas l'un l'autre (#22).
+        self._writers = SessionWriters()
 
     @classmethod
     def from_config(
@@ -371,6 +401,7 @@ class Loom:
             run_id,
             session_id=state.session_id,
             tenant_id=state.context.tenant_id,
+            writer=await self._writer(state.context.tenant_id, state.session_id),
         )
         return await self._result(final)
 
@@ -417,7 +448,9 @@ class Loom:
         tenant = tenant_id or DEFAULT_TENANT
         session = session_id or SessionId(run_id)
         if not subruns:
-            return await self._store.read(tenant, session, after_seq=after_seq, run_id=run_id)
+            own = RunTree(run_id, subruns=False)
+            read = await self._store.read(tenant, session, after_seq=after_seq, run_id=run_id)
+            return own.select(read)
         tree = RunTree(run_id)
         return [
             event
@@ -522,6 +555,39 @@ class Loom:
         """Octets d'un fichier du stockage ; lève ``ArtifactNotFound``."""
         return await self._artifacts.get(uri)
 
+    # --- Sessions (F7) --------------------------------------------------------
+
+    async def sessions(self, *, tenant_id: TenantId | None = None) -> list[SessionRecord]:
+        """Sessions du client, de la plus récemment écrite à la plus ancienne."""
+        return await self._store.sessions(tenant_id or DEFAULT_TENANT)
+
+    async def export_session(
+        self, session_id: SessionId, *, tenant_id: TenantId | None = None
+    ) -> list[Event]:
+        """Tous les événements d'une session, dans l'ordre du journal.
+
+        Les fichiers n'y sont pas : chaque événement porte leur URI, et
+        ``artifact(uri)`` en rend les octets.
+        """
+        events = await self._store.read(tenant_id or DEFAULT_TENANT, session_id)
+        if not events:
+            raise UnknownSession(session_id)
+        return events
+
+    async def delete_session(
+        self, session_id: SessionId, *, tenant_id: TenantId | None = None
+    ) -> SessionDeletion:
+        """Supprime physiquement une session : ses fichiers, puis son journal (RGPD).
+
+        Les fichiers partent d'abord : tant que le journal est là, on sait ce
+        qu'il reste à retirer.
+        """
+        tenant = tenant_id or DEFAULT_TENANT
+        artifacts = await self._artifacts.delete(tenant, session_id)
+        events = await self._store.delete(tenant, session_id)
+        self._writers.forget(tenant, session_id)
+        return SessionDeletion(session_id=session_id, events=events, artifacts=artifacts)
+
     # --- Cycle de vie ---------------------------------------------------------
 
     async def aclose(self) -> None:
@@ -531,6 +597,7 @@ class Loom:
         if self._mcp is not None:
             await self._mcp.aclose()
         self._built.clear()
+        self._writers.clear()
         if self._owns_store:
             await self._store.aclose()
         if self._owns_artifacts:
@@ -545,7 +612,37 @@ class Loom:
     async def _result(self, state: RunState) -> RunResult:
         """Résultat d'un run qui vient de s'arrêter, avec son rapport et ses verdicts."""
         events = await self._store.read(state.context.tenant_id, state.session_id)
+        await self._snapshot(state, events)
         return RunResult.of(state, events)
+
+    async def _snapshot(self, state: RunState, events: Sequence[Event]) -> None:
+        """Matérialise l'historique de la session, si le gain le justifie (§11.2).
+
+        Le snapshot n'est qu'une vue : s'il ne peut pas être écrit, le run
+        reste juste et la session se relit entièrement.
+        """
+        if state.parent_run_id is not None or not state.finished:
+            return
+        if state.session_id == SessionId(state.run_id):
+            # Run sans session nommée : personne ne relira ce journal.
+            return
+        try:
+            writer = await self._writers.open(
+                self._store, state.context.tenant_id, state.session_id
+            )
+            await write_snapshot(writer, events, state, every=self._config.sessions.snapshot_every)
+        except Exception:
+            logger.warning(
+                "Session %s : snapshot d'historique non écrit", state.session_id, exc_info=True
+            )
+
+    async def _writer(
+        self, tenant_id: TenantId, session_id: SessionId | None
+    ) -> SessionWriter | None:
+        """Écrivain partagé d'une session nommée ; None pour un run anonyme."""
+        if session_id is None:
+            return None
+        return await self._writers.open(self._store, tenant_id, session_id)
 
     async def _start(
         self,
@@ -557,6 +654,8 @@ class Loom:
         run_id: RunId | None,
         judges: JudgesMode = "auto",
     ) -> RunState:
+        tenant = (context or CallerContext()).tenant_id
+        writer = await self._writer(tenant, session_id)
         state = await begin_run(
             ctx,
             message,
@@ -565,12 +664,14 @@ class Loom:
             context=context,
             run_id=run_id,
             judges=judges,
+            writer=writer,
         )
         return await drive(
             ctx,
             state.run_id,
             session_id=state.session_id,
             tenant_id=state.context.tenant_id,
+            writer=writer,
         )
 
 

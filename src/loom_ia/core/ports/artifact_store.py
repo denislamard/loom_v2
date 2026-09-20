@@ -9,6 +9,8 @@ rendre des octets.
 
 from typing import Protocol
 
+from loom_ia.core.model.ids import SessionId, TenantId
+
 
 class ArtifactNotFound(KeyError):
     """Aucun artefact à cette URI."""
@@ -25,6 +27,10 @@ class ArtifactStore(Protocol):
 
     async def get(self, uri: str) -> bytes:
         """Octets de l'artefact ; lève ``ArtifactNotFound``."""
+        ...
+
+    async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Supprime les fichiers d'une session et rend leur nombre (RGPD, §11.5)."""
         ...
 
     async def aclose(self) -> None: ...

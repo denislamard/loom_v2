@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Stockage d'artefacts en mémoire : tests et journaux ``memory``."""
 
-from loom_ia.core.model import ArtifactLocation
+from loom_ia.core.model import ArtifactLocation, SessionId, TenantId
 from loom_ia.core.ports import ArtifactNotFound
 
 
@@ -20,6 +20,17 @@ class InMemoryArtifactStore:
             return self._files[uri]
         except KeyError:
             raise ArtifactNotFound(uri) from None
+
+    async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        doomed = [
+            uri
+            for uri in self._files
+            if (location := ArtifactLocation.parse(uri)).tenant == tenant_id
+            and location.session == session_id
+        ]
+        for uri in doomed:
+            del self._files[uri]
+        return len(doomed)
 
     async def aclose(self) -> None:
         pass

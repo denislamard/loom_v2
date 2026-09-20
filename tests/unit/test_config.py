@@ -135,8 +135,13 @@ def test_config_can_be_written_in_python() -> None:
         ({"execution": {"tools": {"offload_over": 0}}}, None, "greater than 0"),
         ({"telemetry": {"redaction": {}}}, None, "'redaction' : prévu pour le jalon J4"),
         ({"inconnu": 1}, None, "Extra inputs are not permitted"),
-        ({"storage": {"events": {"backend": "sqlite"}}}, None, "seuls memory et jsonl"),
+        (
+            {"storage": {"events": {"backend": "postgres"}}},
+            None,
+            "seuls memory, jsonl, sqlite",
+        ),
         ({"storage": {"events": {"backend": "jsonl"}}}, None, "'path' est obligatoire"),
+        ({"storage": {"events": {"backend": "sqlite"}}}, None, "'path' est obligatoire"),
         ({"telemetry": {"logging": {"level": "BAVARD"}}}, None, "Niveau de log 'BAVARD' inconnu"),
         (
             {},

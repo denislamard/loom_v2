@@ -16,13 +16,20 @@ qui la suit (``message.user`` de ``kind: repair``) restent dans le journal,
 mais pas dans l'historique : seule la réponse acceptée y figure. Une réponse
 finale remplacée par une politique y figure sous sa forme retenue.
 
-Les snapshots et la compaction (J4) s'ajouteront ici.
+Marqueurs de session (J4.1) : un ``session.snapshot`` porte l'historique déjà
+calculé jusqu'à une position du journal. L'historique repart du marqueur au
+plus grand ``up_to_seq``, puis rejoue la suite. Sans marqueur, tout le
+journal est relu : le résultat est le même, la relecture plus longue.
+
+Un run de compaction (``kind: compaction``) vit dans le journal de la
+session mais n'entre pas dans son historique : il la résume, il ne la
+poursuit pas.
 """
 
 from collections.abc import Iterable
 from typing import Final
 
-from loom_ia.core.events import Event
+from loom_ia.core.events import Event, RunStarted, SessionSnapshot
 from loom_ia.core.model import (
     Message,
     RunState,
@@ -38,9 +45,12 @@ TERMINAL_MARKER: Final = "[Sortie transmise telle quelle comme réponse finale.]
 
 def history(events: Iterable[Event]) -> list[Message]:
     """Messages des runs racine terminés, dans l'ordre du journal."""
-    messages: list[Message] = []
-    for state in fold_all(events).values():
-        if state.parent_run_id is not None or state.status is not RunStatus.COMPLETED:
+    base, after = _from_marker(list(events))
+    messages: list[Message] = list(base)
+    for state in _replayed(after):
+        if state.parent_run_id is not None or state.kind != "normal":
+            continue
+        if state.status is not RunStatus.COMPLETED:
             continue
         for message in _conversation(state):
             kept = message.without_reasoning()
@@ -49,6 +59,42 @@ def history(events: Iterable[Event]) -> list[Message]:
             if kept is not None:
                 messages.append(kept)
     return messages
+
+
+def _marker(event: Event) -> tuple[int, tuple[Message, ...]] | None:
+    """Position couverte et historique repris, pour un marqueur de session."""
+    match event.payload:
+        case SessionSnapshot(up_to_seq=up_to_seq, messages=messages):
+            return up_to_seq, messages
+        case _:
+            return None
+
+
+def _from_marker(events: list[Event]) -> tuple[tuple[Message, ...], list[Event]]:
+    """Base de l'historique et événements restant à rejouer.
+
+    Le marqueur retenu est celui qui couvre le plus de journal : après une
+    compaction, le snapshot qui la suit la contient déjà.
+    """
+    best: tuple[int, tuple[Message, ...]] | None = None
+    for event in events:
+        marker = _marker(event)
+        if marker is not None and (best is None or marker[0] >= best[0]):
+            best = marker
+    if best is None:
+        return (), events
+    up_to_seq, base = best
+    return base, [event for event in events if event.seq > up_to_seq]
+
+
+def _replayed(events: list[Event]) -> list[RunState]:
+    """États des runs dont le journal commence dans ces événements.
+
+    Un run commencé avant le marqueur y est déjà pris en compte : le reprendre
+    au milieu lèverait une erreur de projection.
+    """
+    started = {e.run_id for e in events if isinstance(e.payload, RunStarted)}
+    return list(fold_all(e for e in events if e.run_id in started).values())
 
 
 def _conversation(state: RunState) -> tuple[Message, ...]:

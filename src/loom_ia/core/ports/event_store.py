@@ -9,9 +9,21 @@ run_id``.
 from collections.abc import Sequence
 from typing import Protocol
 
+from pydantic import AwareDatetime, NonNegativeInt
+
 from loom_ia.core.events.envelope import Event, EventDraft
 from loom_ia.core.events.query import EventQuery
+from loom_ia.core.model.base import DomainModel
 from loom_ia.core.model.ids import RunId, SessionId, TenantId
+
+
+class SessionRecord(DomainModel):
+    """Repère d'une session, pour la lister (F7)."""
+
+    session_id: SessionId
+    # Dernier ``seq`` écrit : la taille du journal.
+    last_seq: NonNegativeInt = 0
+    updated_at: AwareDatetime
 
 
 class SequenceConflict(Exception):
@@ -70,6 +82,18 @@ class EventStore(Protocol):
 
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
         """Dernier ``seq`` du journal, 0 s'il est vide."""
+        ...
+
+    async def sessions(self, tenant_id: TenantId) -> list[SessionRecord]:
+        """Sessions du client, de la plus récemment écrite à la plus ancienne (F7)."""
+        ...
+
+    async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        """Supprime le journal d'une session et rend le nombre d'événements retirés.
+
+        Exception assumée à l'immuabilité du journal : le RGPD demande une
+        suppression physique (§11.5).
+        """
         ...
 
     async def aclose(self) -> None: ...

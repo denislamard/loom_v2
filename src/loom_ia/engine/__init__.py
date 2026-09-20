@@ -69,7 +69,7 @@ from loom_ia.engine.subagents import (
     AgentTool,
     SubAgentDefinition,
 )
-from loom_ia.engine.writer import SessionWriter
+from loom_ia.engine.writer import SessionWriter, SessionWriters
 
 __all__ = [
     "AGENT_HINT",
@@ -117,6 +117,7 @@ __all__ = [
     "RunContext",
     "RunView",
     "SessionWriter",
+    "SessionWriters",
     "Stored",
     "SubAgentDefinition",
     "ToolEvent",

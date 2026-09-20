@@ -8,7 +8,6 @@ ces clés sont refusées en nommant le jalon qui les apportera.
 from typing import Final
 
 LATER_ROOT: Final[dict[str, str]] = {
-    "sessions": "J4 (sessions et compaction)",
     "tenants": "J5 (multi-clients)",
     "profile": "J5 (profils dev et prod)",
     "profiles": "J5 (profils dev et prod)",
@@ -21,6 +20,9 @@ LATER_API_KEY: Final[dict[str, str]] = {
 LATER_MCP_ACCESS: Final[dict[str, str]] = {
     "http": "J5 (serveur MCP en HTTP)",
     "allowed_origins": "J5 (serveur MCP en HTTP)",
+}
+LATER_SESSIONS: Final[dict[str, str]] = {
+    "compaction": "J4.1b (compaction)",
 }
 LATER_STORAGE: Final[dict[str, str]] = {
     "idempotency": "J4.4 (idempotence)",

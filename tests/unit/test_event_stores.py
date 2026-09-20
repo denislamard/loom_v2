@@ -4,6 +4,7 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -30,12 +31,22 @@ SESSION = SessionId("c-42")
 type StoreFactory = Callable[[], EventStore]
 
 
-@pytest.fixture(params=["memory", "jsonl"])
+_SQLITE = pytest.param(
+    "sqlite",
+    marks=pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent"),
+)
+
+
+@pytest.fixture(params=["memory", "jsonl", _SQLITE])
 def make_store(request: pytest.FixtureRequest, tmp_path: Path) -> StoreFactory:
     """Fabrique de stores partageant le même stockage (pour la réouverture)."""
     if request.param == "memory":
         shared = InMemoryEventStore()
         return lambda: shared
+    if request.param == "sqlite":
+        from loom_ia.adapters.stores.sqlite import SqliteEventStore
+
+        return lambda: SqliteEventStore(tmp_path / "journal.sqlite3")
     return lambda: JsonlEventStore(tmp_path / "journal")
 
 
@@ -174,6 +185,53 @@ async def test_journal_survives_reopening(make_store: StoreFactory) -> None:
     events = await second.read(DEFAULT_TENANT, SESSION)
     assert fold(events, journal.run_id).output == Message.assistant("4")
     assert await second.last_seq(DEFAULT_TENANT, SESSION) == len(drafts)
+
+
+# --- Sessions : lister et supprimer (F7) -------------------------------------
+
+
+async def test_sessions_lists_journals_newest_first(store: EventStore) -> None:
+    written = 0
+    for session in (SessionId("c-1"), SessionId("c-2")):
+        _, drafts = run_drafts(session)
+        written = len(drafts)
+        await store.append(drafts, expected_seq=0)
+
+    records = await store.sessions(DEFAULT_TENANT)
+
+    assert {record.session_id for record in records} == {"c-1", "c-2"}
+    assert all(record.last_seq == written for record in records)
+    assert [record.updated_at for record in records] == sorted(
+        (record.updated_at for record in records), reverse=True
+    )
+
+
+async def test_sessions_ignores_another_tenant(store: EventStore) -> None:
+    _, mine = run_drafts(SESSION)
+    _, theirs = run_drafts(SessionId("c-eux"), TenantId("autre"))
+    await store.append(mine, expected_seq=0)
+    await store.append(theirs, expected_seq=0)
+
+    assert [record.session_id for record in await store.sessions(DEFAULT_TENANT)] == [SESSION]
+    assert [record.session_id for record in await store.sessions(TenantId("autre"))] == ["c-eux"]
+
+
+async def test_delete_removes_a_journal_and_counts_it(store: EventStore) -> None:
+    _, drafts = run_drafts()
+    await store.append(drafts, expected_seq=0)
+
+    assert await store.delete(DEFAULT_TENANT, SESSION) == len(drafts)
+
+    assert await store.read(DEFAULT_TENANT, SESSION) == []
+    assert await store.last_seq(DEFAULT_TENANT, SESSION) == 0
+    assert await store.sessions(DEFAULT_TENANT) == []
+    # Le journal repart de 1 : rien ne reste de l'ancien.
+    again = await store.append(drafts[:1], expected_seq=0)
+    assert [event.seq for event in again] == [1]
+
+
+async def test_delete_of_an_unknown_session_removes_nothing(store: EventStore) -> None:
+    assert await store.delete(DEFAULT_TENANT, SessionId("jamais-vue")) == 0
 
 
 # --- Spécifique au JSONL ---------------------------------------------------

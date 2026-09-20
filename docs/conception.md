@@ -811,6 +811,8 @@ EventQuery(tenant, session, run, types, categories, status,
 | SQLite / Postgres | Mode service | Colonnes pour l'enveloppe et les facettes, payload en JSONB, index composés dont `(session_id, seq)` ; RLS en Postgres |
 | Firestore | Mode service | Sous-collection `events` par session, quelques facettes indexées |
 
+**Réalisation (phase 4.1a)** (détails : `fonctions.md`, point 22) : le port gagne `sessions(tenant)` (un `SessionRecord` par journal : session, dernier `seq`, dernière écriture) et `delete(tenant, session)` (suppression physique, F7 et §11.5) ; `ArtifactStore` gagne `delete(tenant, session)`. Backends réalisés : mémoire, JSONL et SQLite (extra `sqlite`, `aiosqlite` : une table `events`, clé primaire `(tenant_id, session_id, seq)`, l'événement entier en JSON, les facettes à part et filtrées par `json_extract` ; contrôle de séquence et écriture dans une transaction `BEGIN IMMEDIATE`, WAL et commits synchrones). Une écriture refusée est reprise par l'écrivain de session, qui relit la position et réécrit ; deux runs d'une même session partagent leur écrivain dans l'instance.
+
 ### 11.2 Projections
 
 ```
@@ -827,6 +829,8 @@ Journal (append) ───┼─▶ RunState         (reprise, pause, checkpoint
 - **`run_summaries` :** run_id, agent, statut, durées, coût, tokens, nombre d'étapes, erreurs ; mise à jour à chaque `run.transitioned` (#32).
 
 **Snapshot et compaction ne se confondent pas :** le snapshot est une vue matérialisée sans LLM, pour lire vite ; la compaction est un résumé par LLM, pour réduire le contexte.
+
+**Réalisation (phase 4.1a) :** le snapshot est un événement du journal, `session.snapshot`, de la nouvelle catégorie `session` : il porte l'historique matérialisé et `up_to_seq`, la position jusqu'à laquelle il le remplace. Il est écrit à la fin d'un run racine terminé d'une session nommée, et seulement si le gain le justifie : au moins `sessions.snapshot_every` événements depuis le dernier marqueur. Sa position s'arrête avant le premier événement d'un run encore en cours. L'historique repart du marqueur au plus grand `up_to_seq` et rejoue la suite ; un lecteur qui ignore les marqueurs obtient le même historique, plus lentement. Les marqueurs sont écartés de la projection d'un run et de son arbre : ils décrivent la session, pas le run qui les écrit. La lecture du journal, elle, reste entière à chaque run : le snapshot évite le rejeu, pas l'entrée-sortie (backlog #017).
 
 ### 11.3 Compaction
 
@@ -862,6 +866,8 @@ runtime (fin du run) ──enqueue──▶ TaskQueue ──▶ worker
 - Suppression physique par `session_id` ou `tenant_id`, artefacts compris : exception assumée à l'immuabilité du journal.
 - Option : chiffrement des payloads avec une clé par client ; supprimer la clé rend son journal illisible, sauvegardes comprises (*crypto-shredding*) (#30).
 - Sessions listables et exportables (F7). Les résumés de compaction sont supprimés avec la session.
+
+**Réalisation (phase 4.1a) :** `Loom.sessions()` liste les sessions d'un client (la plus récemment écrite d'abord), `Loom.export_session()` rend tous les événements d'une session dans l'ordre du journal (les fichiers restent désignés par leur URI, `Loom.artifact()` en rend les octets), `Loom.delete_session()` supprime les fichiers puis le journal — dans cet ordre, car tant que le journal est là on sait ce qu'il reste à retirer — et rend le compte de ce qui est parti. En ligne de commande : `loom sessions list`, `loom sessions export <id> [--out]`, `loom sessions delete <id> [--yes]`. Le chiffrement par client (J5) n'est pas là.
 
 ## 12. Exécution durable
 
@@ -1206,6 +1212,7 @@ Un agent peut référencer plusieurs serveurs : voir §9.5.
 ```yaml
 storage:
   events:      {backend: jsonl, path: data/events}      # memory|jsonl|sqlite|postgres|firestore (+ dsn_env)
+                                                        # jsonl : dossier ; sqlite : fichier de la base
   artifacts:   {backend: local, path: data/artifacts}   # local|memory|gcs (+ bucket) ; défaut : suit le journal
   idempotency: {backend: journal}                       # journal|memory|sqlite|postgres|firestore|redis
   bus:         {backend: memory}                        # memory|postgres|redis|rabbitmq
@@ -1214,6 +1221,7 @@ storage:
   retention:   {events_days: null}
 
 sessions:
+  snapshot_every: 50                  # événements depuis le dernier marqueur avant un snapshot
   compaction:
     model: HAIKU
     over_tokens: 12000
@@ -1322,6 +1330,7 @@ async with loom:
 - `report(run_id)` ou `report(session_id=…)` rend la consommation d'un run (et de ses sous-runs) ou d'une session : total, par run, par rôle, par modèle (depuis 3.4).
 - Les disjoncteurs des modèles et des serveurs MCP sont communs aux runs d'une instance ; `Loom(config, breakers=…)` les partage entre instances (depuis 3.5a).
 - `stream()`, `follow()` et `events()` rendent l'arbre du run : ses événements et ceux de ses sous-runs, dans l'ordre du journal ; `subruns=False` s'en tient au run.
+- `sessions()`, `export_session(session_id)` et `delete_session(session_id)` listent, exportent et suppriment les journaux de session (F7, depuis 4.1a) ; REST et MCP les exposeront en 4.5.
 
 ### 18.2 HTTP REST
 
@@ -1360,7 +1369,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
 ### 18.4 CLI
 
-Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4).
+Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `sessions list | export | delete` (F7, 4.1a).
 
 ## 19. Projet
 

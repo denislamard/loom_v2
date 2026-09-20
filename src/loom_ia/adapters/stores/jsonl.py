@@ -26,7 +26,7 @@ from pydantic import ValidationError
 
 from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId
-from loom_ia.core.ports import JournalCorrupted, SequenceConflict, journal_key
+from loom_ia.core.ports import JournalCorrupted, SequenceConflict, SessionRecord, journal_key
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 _SAFE_COMPONENT: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 SUFFIX: Final = ".jsonl"
 CORRUPT_SUFFIX: Final = ".corrupt"
+# Fin de fichier lue pour connaître le dernier événement sans relire tout le
+# journal ; au-delà (un événement plus gros que ça), on relit le fichier.
+TAIL_BYTES: Final = 64 * 1024
 
 
 def _component(value: str, kind: str) -> str:
@@ -54,6 +57,31 @@ def _parse(path: Path, content: bytes) -> list[Event]:
         except ValidationError as exc:
             raise JournalCorrupted(f"{path}, ligne {number} : {exc}") from exc
     return events
+
+
+def _tail(path: Path, size: int) -> bytes:
+    """Fin du fichier, sous verrou partagé."""
+    try:
+        with path.open("rb") as fh:
+            fcntl.flock(fh, fcntl.LOCK_SH)
+            try:
+                fh.seek(max(0, os.fstat(fh.fileno()).st_size - size))
+                return fh.read()
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+    except FileNotFoundError:
+        return b""
+
+
+def _last_parsed(content: bytes) -> Event | None:
+    """Dernier événement lisible : la ligne finale peut être incomplète, la
+    première tronquée par une lecture partielle."""
+    for line in reversed([line for line in content.split(b"\n") if line]):
+        try:
+            return Event.model_validate_json(line)
+        except ValidationError:
+            continue
+    return None
 
 
 def _locked_read(path: Path) -> bytes:
@@ -176,6 +204,47 @@ class JsonlEventStore:
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
         events = await self.read(tenant_id, session_id)
         return events[-1].seq if events else 0
+
+    # --- Sessions (F7) ----------------------------------------------------
+
+    async def sessions(self, tenant_id: TenantId) -> list[SessionRecord]:
+        return await asyncio.to_thread(self._sessions_sync, tenant_id)
+
+    def _sessions_sync(self, tenant_id: TenantId) -> list[SessionRecord]:
+        tenant_dir = self._root / _component(tenant_id, "Client")
+        if not tenant_dir.is_dir():
+            return []
+        records: list[SessionRecord] = []
+        for path in sorted(tenant_dir.glob(f"*{SUFFIX}")):
+            last = self._last_event(path)
+            if last is not None:
+                records.append(
+                    SessionRecord(session_id=last.session_id, last_seq=last.seq, updated_at=last.ts)
+                )
+        records.sort(key=lambda record: record.updated_at, reverse=True)
+        return records
+
+    def _last_event(self, path: Path) -> Event | None:
+        """Dernier événement du journal, lu par la fin du fichier."""
+        tail = _tail(path, TAIL_BYTES)
+        found = _last_parsed(tail)
+        if found is None and len(tail) >= TAIL_BYTES:
+            # Un événement plus gros que la fenêtre : on relit tout le journal.
+            found = _last_parsed(_locked_read(path))
+        return found
+
+    async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
+        path = self.path(tenant_id, session_id)
+        return await asyncio.to_thread(self._delete_sync, path)
+
+    def _delete_sync(self, path: Path) -> int:
+        """Supprime le fichier de la session, ligne incomplète mise de côté comprise."""
+        count = _locked_read(path).count(b"\n")
+        path.unlink(missing_ok=True)
+        path.with_name(path.name + CORRUPT_SUFFIX).unlink(missing_ok=True)
+        with self._tails_lock:
+            self._tails.pop(path, None)
+        return count
 
     async def aclose(self) -> None:
         return None

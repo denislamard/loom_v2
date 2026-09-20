@@ -127,7 +127,13 @@ from loom_ia.core.model.policy import (
     Retry,
     Stop,
 )
-from loom_ia.core.model.run_state import PendingCall, PendingRepair, RunState, RunStatus
+from loom_ia.core.model.run_state import (
+    PendingCall,
+    PendingRepair,
+    RunKind,
+    RunState,
+    RunStatus,
+)
 from loom_ia.core.model.streaming import (
     INVALID_JSON_KEY,
     ModelChunk,
@@ -262,6 +268,7 @@ __all__ = [
     "Role",
     "RunBudget",
     "RunId",
+    "RunKind",
     "RunState",
     "RunStatus",
     "Sdk",

@@ -242,3 +242,25 @@ L'orchestrateur (MiniMax-M3) a chaque fois vu la réponse inutilisable et refait
 **À trancher :** nom de la commande ; projet neuf seulement ou ajout d'un agent à un projet existant ; création d'un projet uv dépendant de loom ou usage de l'environnement du dépôt ; entrée du client MCP affichée ou écrite ; mode sans questions (options en ligne de commande) pour les scripts. Phase à fixer (aucune ne le prévoit dans `jalons.md`).
 
 **Statut :** à placer.
+
+---
+
+## #017 — Le journal d'une session est relu en entier à chaque run
+
+**Origine :** phase 4.1a (snapshots d'historique).
+
+**Constat :** le snapshot (#22) supprime le **rejeu** de la session — la projection de tous ses runs et la reconstruction des messages — mais pas la **lecture** : `drive` appelle toujours `store.read(tenant, session)` sans position de départ, puis l'historique repart du dernier marqueur. Sur une longue conversation, l'entrée-sortie et la désérialisation continuent donc de grandir avec la session. Même remarque pour le rapport et les verdicts d'un résultat, déjà notés en 3.6.
+
+**Pourquoi ce n'est pas bloquant :** le coût qui explosait était celui du rejeu (une projection par run, des `model_copy` en cascade) ; la lecture d'un fichier JSONL ou d'une table indexée est linéaire et bien plus légère. La compaction (4.1b) borne par ailleurs la taille de l'historique, pas celle du journal.
+
+**Pistes :**
+
+| Piste | Effet | Coût |
+|---|---|---|
+| Position du dernier marqueur tenue par l'écrivain de session | Une seule lecture `after_seq` dans le process qui vient d'écrire | Ne sert à rien au premier run d'un process ou d'un worker |
+| Opération de port « dernier marqueur d'une session » | Lecture `after_seq` dans tous les cas | Une méthode de plus à écrire dans chaque adaptateur |
+| `EventQuery` qui sait rendre les derniers événements d'un type | Même effet, sans nouvelle méthode | Change un modèle du noyau pour un seul usage |
+
+**À trancher :** faut-il le faire avant que les journaux ne grossissent (J5, Postgres et multi-workers), ou attendre une mesure sur une vraie session longue ?
+
+**Statut :** à traiter plus tard.

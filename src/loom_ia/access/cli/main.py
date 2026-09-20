@@ -23,7 +23,14 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Final
 
-from loom_ia.access.api import Loom, RunResult, StreamItem, UnknownRun
+from loom_ia.access.api import (
+    Loom,
+    RunResult,
+    SessionDeletion,
+    StreamItem,
+    UnknownRun,
+    UnknownSession,
+)
 from loom_ia.access.progress import Progress, notes
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.config import ConfigError, config_json_schema, load_config
@@ -40,7 +47,7 @@ from loom_ia.core.model import (
     TextDelta,
     new_run_id,
 )
-from loom_ia.core.ports import Policy, SourceContext, Tool
+from loom_ia.core.ports import Policy, SessionRecord, SourceContext, Tool
 from loom_ia.engine import ToolExecutor
 from loom_ia.runtime import apply_logging, load_registry
 from loom_ia.usage import UsageReport
@@ -150,6 +157,37 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--session", type=str, default=None, help="journal du run, ou session")
     report.add_argument("--json", action="store_true", help="affiche le rapport en JSON")
     report.set_defaults(handler=cmd_report)
+
+    sessions = commands.add_parser(
+        "sessions", help="journaux de session : lister, exporter, supprimer"
+    )
+    session_actions = sessions.add_subparsers(dest="action", required=True)
+
+    listing = session_actions.add_parser(
+        "list", help="sessions du journal, la plus récente d'abord"
+    )
+    listing.add_argument("--json", action="store_true", help="affiche la liste en JSON")
+    listing.set_defaults(handler=cmd_sessions_list)
+
+    export = session_actions.add_parser(
+        "export", help="écrit les événements d'une session en JSONL"
+    )
+    export.add_argument("session_id")
+    export.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        metavar="FICHIER",
+        help="fichier de sortie (défaut : la sortie standard)",
+    )
+    export.set_defaults(handler=cmd_sessions_export)
+
+    remove = session_actions.add_parser(
+        "delete", help="supprime une session : son journal et ses fichiers (RGPD)"
+    )
+    remove.add_argument("session_id")
+    remove.add_argument("--yes", action="store_true", help="ne demande pas confirmation")
+    remove.set_defaults(handler=cmd_sessions_delete)
 
     schema = commands.add_parser("schema", help="JSON Schema du fichier de configuration")
     schema.set_defaults(handler=cmd_schema)
@@ -297,6 +335,79 @@ def cmd_report(args: argparse.Namespace) -> int:
         print(report.model_dump_json(indent=2))
     else:
         print("\n".join(render_report(report)))
+    return OK
+
+
+def cmd_sessions_list(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    apply_logging(config)
+
+    async def go() -> list[SessionRecord]:
+        async with Loom(config) as loom:
+            return await loom.sessions()
+
+    records = asyncio.run(go())
+    if args.json:
+        print(
+            json.dumps([r.model_dump(mode="json") for r in records], ensure_ascii=False, indent=2)
+        )
+        return OK
+    if not records:
+        print("Aucune session.")
+        return OK
+    for record in records:
+        moment = record.updated_at.astimezone().strftime("%Y-%m-%d %H:%M")
+        print(f"{record.session_id:<24} {record.last_seq:>6} événements   {moment}")
+    return OK
+
+
+def cmd_sessions_export(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    apply_logging(config)
+    session = SessionId(args.session_id)
+
+    async def go() -> list[Event]:
+        async with Loom(config) as loom:
+            return await loom.export_session(session)
+
+    try:
+        events = asyncio.run(go())
+    except UnknownSession as error:
+        print(error.args[0], file=sys.stderr)
+        return FAILED
+    lines = "".join(f"{event.model_dump_json()}\n" for event in events)
+    if args.out is None:
+        sys.stdout.write(lines)
+    else:
+        args.out.write_text(lines, encoding="utf-8")
+        print(f"{len(events)} événements écrits dans {args.out}")
+    return OK
+
+
+def cmd_sessions_delete(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    apply_logging(config)
+    session = SessionId(args.session_id)
+    if not args.yes:
+        asked = input(
+            f"Supprimer définitivement la session {session} (journal et fichiers) ? [o/N] "
+        )
+        if asked.strip().lower() not in {"o", "oui", "y", "yes"}:
+            print("Rien n'a été supprimé.")
+            return REFUSED
+
+    async def go() -> SessionDeletion:
+        async with Loom(config) as loom:
+            return await loom.delete_session(session)
+
+    removed = asyncio.run(go())
+    if not removed.events and not removed.artifacts:
+        print(f"Session {session} inconnue : rien à supprimer.", file=sys.stderr)
+        return FAILED
+    print(
+        f"Session {session} supprimée : {removed.events} événement(s), "
+        f"{removed.artifacts} fichier(s)."
+    )
     return OK
 
 
