@@ -12,17 +12,23 @@ Vise les fournisseurs compatibles (Together, vLLM, Ollama…) ; sans
   ``image_url`` en URL ``data:`` ; l'API n'accepte pas d'image dans un
   résultat d'outil (``tool_result_media: false``) ;
 - le raisonnement est lu dans les champs ``reasoning_content`` ou
-  ``reasoning`` que ces fournisseurs ajoutent, mais n'est jamais renvoyé ;
+  ``reasoning`` que ces fournisseurs ajoutent ; il n'est renvoyé qu'à un
+  modèle déclaré ``thinking: true``, pour la boucle d'outils en cours, dans le
+  champ où il est arrivé (#7, backlog #015 : gpt-oss l'attend) — certains
+  fournisseurs refusent ce champ ;
 - la limite de sortie passe par ``max_tokens``, qu'ils reconnaissent tous ;
 - ``tool_choice`` passe tel quel (``auto``, ``none``, ``required``) ;
-- un identifiant d'appel d'outil manquant est généré.
+- un identifiant d'appel d'outil manquant est généré ;
+- le schéma de sortie (``output_schema``) devient ``response_format``
+  (``json_schema``) pour un modèle déclaré ``native_json: true`` ; ``strict``
+  seulement si le schéma en suit les règles (B9).
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 """
 
 import logging
 from collections.abc import AsyncGenerator, Sequence
-from typing import Final
+from typing import Final, cast
 
 import httpx2
 import openai
@@ -37,14 +43,18 @@ from openai.types.chat import (
     ChatCompletionMessageParam,
     ChatCompletionToolChoiceOptionParam,
 )
-from pydantic import BaseModel
+from openai.types.chat.completion_create_params import ResponseFormat
+from pydantic import BaseModel, JsonValue
 
 from loom_ia.adapters.models._common import (
     ERROR_PREFIX,
+    OUTPUT_SCHEMA_NAME,
     classify_error,
     image_data,
+    is_strict,
     json_text,
     output_text,
+    reasoning_loop,
     retry_after,
     unresolved,
 )
@@ -57,6 +67,9 @@ from loom_ia.core.model import (
     ModelChunk,
     ModelRequest,
     ModelSpec,
+    OpenAIMeta,
+    ProviderMeta,
+    ReasoningBlock,
     ReasoningDelta,
     Stopped,
     StopReason,
@@ -79,6 +92,8 @@ PROVIDER: Final = "openai"
 DEFAULT_BASE_URL: Final = "https://api.openai.com/v1"
 # Champs de raisonnement ajoutés par les fournisseurs compatibles.
 REASONING_FIELDS: Final = ("reasoning_content", "reasoning")
+# Champ de renvoi d'un raisonnement dont l'origine est inconnue (convention d'OpenAI pour gpt-oss).
+DEFAULT_REASONING_FIELD: Final = "reasoning"
 
 _FINISH_REASONS: Final[dict[str, StopReason]] = {
     "stop": "end",
@@ -119,12 +134,18 @@ class OpenAIChatModel:
         return f"OpenAIChatModel({self.spec.id!r}, model={self.spec.model!r})"
 
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
-        messages = to_openai_messages(request.system, request.messages)
+        capabilities = self.spec.capabilities
+        messages = to_openai_messages(
+            request.system, request.messages, reasoning=capabilities.thinking
+        )
         tools = to_openai_tools(request)
         tool_choice: ChatCompletionToolChoiceOptionParam | openai.Omit = openai.omit
         if tools:
             tool_choice = request.tool_choice
         max_tokens = request.max_tokens or self.spec.max_tokens or openai.omit
+        response_format: ResponseFormat | openai.Omit = openai.omit
+        if request.output_schema is not None and capabilities.native_json:
+            response_format = to_response_format(request.output_schema)
         extra_body = dict(request.params) or None
         completions = self._client.chat.completions
         try:
@@ -135,6 +156,7 @@ class OpenAIChatModel:
                     tools=tools or openai.omit,
                     tool_choice=tool_choice,
                     max_tokens=max_tokens,
+                    response_format=response_format,
                     extra_body=extra_body,
                 )
                 chunks = completion_to_chunks(completion)
@@ -146,6 +168,7 @@ class OpenAIChatModel:
                     tools=tools or openai.omit,
                     tool_choice=tool_choice,
                     max_tokens=max_tokens,
+                    response_format=response_format,
                     extra_body=extra_body,
                     stream=True,
                     stream_options={"include_usage": True},
@@ -167,17 +190,23 @@ class OpenAIChatModel:
 
 
 def to_openai_messages(
-    system: str, messages: Sequence[Message]
+    system: str, messages: Sequence[Message], *, reasoning: bool = False
 ) -> list[ChatCompletionMessageParam]:
+    """Messages neutres → messages de l'API.
+
+    ``reasoning`` : le raisonnement des réponses de la boucle d'outils en
+    cours est renvoyé (modèle ``thinking: true``).
+    """
     result: list[ChatCompletionMessageParam] = []
     if system:
         result.append({"role": "system", "content": system})
-    for message in messages:
+    echoed = reasoning_loop(messages) if reasoning else set[int]()
+    for position, message in enumerate(messages):
         match message.role:
             case "user":
                 result.append({"role": "user", "content": _user_content(message)})
             case "assistant":
-                result.append(_assistant(message))
+                result.append(_assistant(message, reasoning=position in echoed))
             case "tool":
                 for block in message.blocks:
                     if isinstance(block, ToolResultBlock):
@@ -188,6 +217,14 @@ def to_openai_messages(
                             {"role": "tool", "tool_call_id": block.call_id, "content": text}
                         )
     return result
+
+
+def to_response_format(schema: dict[str, JsonValue]) -> ResponseFormat:
+    """Schéma de sortie du contrat → ``response_format`` (B9)."""
+    definition: dict[str, object] = {"name": OUTPUT_SCHEMA_NAME, "schema": {**schema}}
+    if is_strict(schema):
+        definition["strict"] = True
+    return cast(ResponseFormat, {"type": "json_schema", "json_schema": definition})
 
 
 def to_openai_tools(request: ModelRequest) -> list[ChatCompletionFunctionToolParam]:
@@ -243,7 +280,7 @@ def _text(block: ContentBlock) -> str:
             return ""
 
 
-def _assistant(message: Message) -> ChatCompletionAssistantMessageParam:
+def _assistant(message: Message, *, reasoning: bool = False) -> ChatCompletionAssistantMessageParam:
     param: ChatCompletionAssistantMessageParam = {"role": "assistant"}
     calls: list[ChatCompletionMessageFunctionToolCallParam] = [
         {
@@ -259,7 +296,23 @@ def _assistant(message: Message) -> ChatCompletionAssistantMessageParam:
         param["content"] = text or None
     else:
         param["content"] = text
+    if reasoning and (echo := _reasoning_echo(message)) is not None:
+        field, thought = echo
+        return cast(ChatCompletionAssistantMessageParam, {**param, field: thought})
     return param
+
+
+def _reasoning_echo(message: Message) -> tuple[str, str] | None:
+    """Champ et texte du raisonnement d'une réponse, pour le lui renvoyer."""
+    blocks = [b for b in message.blocks if isinstance(b, ReasoningBlock) and b.text]
+    if not blocks:
+        return None
+    field = DEFAULT_REASONING_FIELD
+    for block in blocks:
+        meta = block.provider_meta.get(PROVIDER)
+        if isinstance(meta, OpenAIMeta) and meta.reasoning_field in REASONING_FIELDS:
+            field = meta.reasoning_field
+    return field, "\n\n".join(block.text for block in blocks)
 
 
 # --- Réponse -------------------------------------------------------------------
@@ -285,9 +338,14 @@ class StreamParser:
             if choice.index != 0:
                 continue
             delta = choice.delta
-            reasoning = _reasoning(delta)
+            field, reasoning = _reasoning(delta)
             if reasoning:
-                chunks.append(ReasoningDelta(text=reasoning, start=not self._reasoning))
+                start = not self._reasoning
+                chunks.append(
+                    ReasoningDelta(text=reasoning, start=start, provider_meta=_origin(field))
+                    if start
+                    else ReasoningDelta(text=reasoning)
+                )
                 self._reasoning = True
             text = (delta.content or "") + (delta.refusal or "")
             if text:
@@ -322,9 +380,9 @@ class StreamParser:
         choice = completion.choices[0]
         message = choice.message
         chunks: list[ModelChunk] = []
-        reasoning = _reasoning(message)
+        field, reasoning = _reasoning(message)
         if reasoning:
-            chunks.append(ReasoningDelta(text=reasoning, start=True))
+            chunks.append(ReasoningDelta(text=reasoning, start=True, provider_meta=_origin(field)))
         text = (message.content or "") + (message.refusal or "")
         if text:
             chunks.append(TextDelta(text=text))
@@ -379,13 +437,18 @@ def to_usage(usage: CompletionUsage) -> Usage:
     )
 
 
-def _reasoning(part: BaseModel) -> str:
+def _reasoning(part: BaseModel) -> tuple[str, str]:
+    """Champ et texte du raisonnement d'un morceau ou d'une réponse (texte vide sans lui)."""
     extra = part.model_extra or {}
     for field in REASONING_FIELDS:
         value = extra.get(field)
         if isinstance(value, str) and value:
-            return value
-    return ""
+            return field, value
+    return DEFAULT_REASONING_FIELD, ""
+
+
+def _origin(field: str) -> dict[str, ProviderMeta]:
+    return {PROVIDER: OpenAIMeta(reasoning_field=field)}
 
 
 # --- Erreurs -------------------------------------------------------------------

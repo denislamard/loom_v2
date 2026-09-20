@@ -215,7 +215,19 @@ storage:
 
 **Avancement (3.5a) :** chaque bloc de raisonnement porte désormais le modèle qui l'a produit (`model_id`, posé par le moteur pour tous les adaptateurs). Le renvoi du raisonnement et le nouvel essai avec gpt-oss restent pour 3.5b.
 
-**Statut :** à faire en 3.5b.
+**Réalisation (3.5b) :** avec l'API Chat, un modèle déclaré `capabilities.thinking: true` reçoit le raisonnement de sa boucle d'outils en cours (les réponses qui suivent sa dernière réponse sans appel d'outil), dans le champ où le fournisseur l'a donné (`reasoning` chez Together) ; sans `thinking`, rien n'est renvoyé.
+
+**Essais réels (3.5b, 20/09, `sous_agent.py --reel` avec `verificateur_reel` sur gpt-oss-120b chez Together, `thinking: true`) :** le renvoi fonctionne (champ `reasoning` accepté), mais ne règle rien, car le défaut est dans le service de Together :
+
+- dès sa première réponse, sans historique à renvoyer, gpt-oss continue d'écrire après un appel d'outil comme si le résultat était arrivé : 8 appels dans la même réponse (4 fois `time__maintenant`, un `2+2`), puis une conclusion inventée ;
+- avec `params: {parallel_tool_calls: false}`, Together ne garde que le premier appel, mais le modèle continue de même et invente la conclusion (« 2026-09-20 12:00:00 ») ;
+- au tour suivant, raisonnement renvoyé, il écrit son format interne en texte (« analysis… assistantcommentary to=functions.time__jours_entre json{…} »), rendu comme réponse finale du sous-agent.
+
+L'orchestrateur (MiniMax-M3) a chaque fois vu la réponse inutilisable et refait le calcul lui-même : réponse finale juste. L'exemple garde GLM-5.3-Flash sur le sous-agent.
+
+**Pistes :** un autre fournisseur de gpt-oss (vLLM, Groq, OpenRouter), ou l'API Responses si Together la propose pour ce modèle ; un contrat de sortie sur l'agent appelé, qui refuserait le format interne.
+
+**Statut :** renvoi du raisonnement fait en 3.5b ; gpt-oss chez Together toujours inutilisable avec des outils, ouvert.
 
 ---
 

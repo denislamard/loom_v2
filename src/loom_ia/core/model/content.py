@@ -22,8 +22,12 @@ class AnthropicMeta(DomainModel):
 
 class OpenAIMeta(DomainModel):
     provider: Literal["openai"] = "openai"
+    # API Responses : élément de raisonnement et son contenu chiffré, à renvoyer.
     item_id: str | None = None
     encrypted_content: str | None = None
+    # API Chat : champ où le fournisseur a donné le raisonnement (``reasoning``,
+    # ``reasoning_content``) ; il y est renvoyé (#7, backlog #015).
+    reasoning_field: str | None = None
 
 
 type ProviderMeta = Annotated[AnthropicMeta | OpenAIMeta, Field(discriminator="provider")]

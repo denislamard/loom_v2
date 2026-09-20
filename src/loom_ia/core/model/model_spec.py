@@ -19,6 +19,8 @@ from loom_ia.core.model.media import ImageFormat
 from loom_ia.core.model.usage import Pricing
 
 type Sdk = Literal["anthropic", "openai", "fake"]
+# Durée de vie d'une entrée du cache de prompt (B5).
+type CacheTtl = Literal["5m", "1h"]
 type ModelApi = Literal["chat", "responses"]
 # Formes sous lesquelles un modèle accepte une image (#14).
 type ImageInput = Literal["base64", "url", "file_id"]
@@ -69,6 +71,24 @@ class CircuitBreaker(DomainModel):
     cooldown: PositiveFloat = 60.0
 
 
+class PromptCache(DomainModel):
+    """Points de cache de prompt d'un modèle ``sdk: anthropic`` (B5).
+
+    ``system`` : sur le prompt système ; ``tools`` : sur le dernier outil ;
+    ``messages`` : sur le dernier bloc de la conversation, un point qui avance
+    à chaque appel. L'adaptateur les traduit en ``cache_control`` (au plus
+    quatre par requête, blocs marqués ``cache_breakpoint`` compris). Le prix
+    d'écriture (``pricing.cache_write``) est celui de la durée choisie.
+
+    Les API OpenAI et leurs compatibles cachent seules : ``cache`` y est refusé.
+    """
+
+    system: bool = False
+    tools: bool = False
+    messages: bool = False
+    ttl: CacheTtl = "5m"
+
+
 class ModelCapabilities(DomainModel):
     """Capacités déclarées, contrôlées au démarrage (B9).
 
@@ -79,8 +99,11 @@ class ModelCapabilities(DomainModel):
 
     ``tools`` : le modèle sait appeler des outils ; exigé d'un orchestrateur
     qui en a, d'un juge (verdict par outil imposé) et de leurs secours.
-    ``thinking`` : il produit un raisonnement. ``native_json`` : il accepte un
-    schéma de sortie JSON (utilisé à partir de la phase 3.5b).
+    ``thinking`` : il produit un raisonnement et l'attend en retour pendant
+    ses tours d'outils ; avec l'API Chat, le raisonnement de la boucle en
+    cours lui est renvoyé (#7, backlog #015). ``native_json`` : il accepte un
+    schéma de sortie JSON ; celui du contrat lui est transmis pour un appel
+    sans outils (B9).
     """
 
     tools: bool = True
@@ -131,11 +154,18 @@ class ModelSpec(DomainModel):
     pricing: Pricing = Pricing()
     # Disjoncteur (#10) ; ``null`` le retire.
     circuit_breaker: CircuitBreaker | None = CircuitBreaker()
+    # Points de cache de prompt (B5), pour sdk: anthropic.
+    cache: PromptCache | None = None
 
     @model_validator(mode="after")
     def _check_api(self) -> Self:
         if self.api is not None and self.sdk != "openai":
             raise ValueError(f"Modèle {self.id!r} : le champ 'api' n'existe que pour sdk: openai")
+        if self.cache is not None and self.sdk == "openai":
+            raise ValueError(
+                f"Modèle {self.id!r} : 'cache' pose des points de cache pour sdk: anthropic ; "
+                "les API OpenAI et leurs compatibles cachent seules"
+            )
         return self
 
     @property

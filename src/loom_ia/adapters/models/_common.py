@@ -13,7 +13,7 @@ import base64
 import json
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from email.utils import parsedate_to_datetime
 from typing import Final
 
@@ -23,6 +23,7 @@ from loom_ia.core.model import (
     ArtifactRefBlock,
     InlineDataBlock,
     JsonBlock,
+    Message,
     ModelErrorKind,
     OutputBlock,
     TextBlock,
@@ -33,6 +34,34 @@ from loom_ia.core.ports import ModelError
 
 # Préfixe d'un résultat d'outil en erreur, pour les API sans indicateur dédié.
 ERROR_PREFIX: Final = "[erreur] "
+# Nom du schéma de sortie transmis aux API OpenAI (B9).
+OUTPUT_SCHEMA_NAME: Final = "output"
+# Mots-clés de schéma que le mode strict des API OpenAI accepte.
+_STRICT_KEYWORDS: Final = frozenset(
+    {
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "enum",
+        "const",
+        "description",
+        "title",
+        "anyOf",
+        "$defs",
+        "$ref",
+        "pattern",
+        "format",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "minItems",
+        "maxItems",
+    }
+)
 
 _QUOTA_HINTS: Final = frozenset(
     {"insufficient_quota", "billing_error", "billing_hard_limit_reached"}
@@ -163,3 +192,49 @@ def _block_text(block: OutputBlock) -> str:
                 "Image dans un résultat d'outil : cette API ne l'accepte pas "
                 "(déclarer tool_result_media: false)",
             )
+
+
+def is_strict(schema: Mapping[str, JsonValue]) -> bool:
+    """Vrai si le schéma suit les règles du mode strict des API OpenAI.
+
+    Objets fermés (``additionalProperties: false``), toutes leurs propriétés
+    requises, et seulement des mots-clés que ce mode accepte. Sinon, le schéma
+    est transmis sans ``strict`` : le fournisseur le suit au mieux, et le
+    contrat de sortie le vérifie de toute façon.
+    """
+    if not set(schema) <= _STRICT_KEYWORDS:
+        return False
+    properties = schema.get("properties")
+    if schema.get("type") == "object" or properties is not None:
+        if schema.get("additionalProperties") is not False:
+            return False
+        names = set(properties) if isinstance(properties, dict) else set[str]()
+        required = schema.get("required", [])
+        if not isinstance(required, list) or set(map(str, required)) != names:
+            return False
+    children: list[JsonValue] = []
+    if isinstance(properties, dict):
+        children += properties.values()
+    if "items" in schema:
+        children.append(schema["items"])
+    variants = schema.get("anyOf")
+    if isinstance(variants, list):
+        children += variants
+    definitions = schema.get("$defs")
+    if isinstance(definitions, dict):
+        children += definitions.values()
+    return all(isinstance(child, dict) and is_strict(child) for child in children)
+
+
+def reasoning_loop(messages: Sequence[Message]) -> set[int]:
+    """Positions des réponses du modèle dans la boucle d'outils en cours (#7, backlog #015).
+
+    Ce sont celles qui suivent sa dernière réponse sans appel d'outil : leur
+    raisonnement lui est renvoyé ; celui des tours déjà conclus est écarté,
+    comme le recommande OpenAI pour gpt-oss.
+    """
+    final = max(
+        (i for i, m in enumerate(messages) if m.role == "assistant" and not m.tool_calls),
+        default=-1,
+    )
+    return {i for i, m in enumerate(messages) if i > final and m.role == "assistant"}

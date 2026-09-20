@@ -48,10 +48,11 @@ def create_model_client(
         return AnthropicModel(spec, api_key=api_key, http_client=http_client)
 
     if spec.effective_api == "responses":
-        raise ModelConfigError(
-            f"Modèle {spec.id!r} : l'API 'responses' n'est pas encore disponible ; "
-            "utiliser api: chat"
-        )
+        try:
+            from loom_ia.adapters.models.openai_responses import OpenAIResponsesModel
+        except ImportError as exc:
+            raise _missing_extra(spec, "openai") from exc
+        return OpenAIResponsesModel(spec, api_key=api_key, http_client=http_client)
     try:
         from loom_ia.adapters.models.openai_chat import OpenAIChatModel
     except ImportError as exc:

@@ -26,6 +26,7 @@ from loom_ia.core.model import (
     Message,
     ModelRequest,
     ModelSpec,
+    OpenAIMeta,
     ProviderMeta,
     ReasoningBlock,
     TextBlock,
@@ -62,6 +63,11 @@ def chunk(delta: dict[str, Any] | None = None, finish: str | None = None, **extr
         **extra,
     }
     return f"data: {json.dumps(body)}\n\n"
+
+
+def origin(field: str) -> dict[str, ProviderMeta]:
+    """Champ où le fournisseur a donné le raisonnement."""
+    return {"openai": OpenAIMeta(reasoning_field=field)}
 
 
 def streamed(*parts: str) -> httpx2.Response:
@@ -142,7 +148,12 @@ async def test_stream_is_read_in_order() -> None:
 
     blocks = response.message.blocks
     assert blocks[:3] == (
-        ReasoningBlock(text="Je pose le calcul.", model_id="oss-120b"),
+        # Le champ d'origine est retenu : le raisonnement y sera renvoyé (#015).
+        ReasoningBlock(
+            text="Je pose le calcul.",
+            provider_meta=origin("reasoning_content"),
+            model_id="oss-120b",
+        ),
         TextBlock(text="Je calcule."),
         ToolCallBlock(call_id="call_a", name="calculer", arguments={"expr": "1+1"}),
     )
@@ -272,7 +283,7 @@ async def test_other_choices_and_reasoning_field() -> None:
     )
     response = await complete(server.model(), request())
     assert response.message.blocks == (
-        ReasoningBlock(text="pensée", model_id="oss-120b"),
+        ReasoningBlock(text="pensée", provider_meta=origin("reasoning"), model_id="oss-120b"),
         TextBlock(text="Réponse"),
     )
     assert response.stop_reason == "end"
@@ -310,7 +321,9 @@ async def test_non_streaming_models() -> None:
     response = await complete(server.model(spec), request())
     assert "stream" not in server.body
     assert response.message.blocks == (
-        ReasoningBlock(text="réflexion", model_id="oss-120b"),
+        ReasoningBlock(
+            text="réflexion", provider_meta=origin("reasoning_content"), model_id="oss-120b"
+        ),
         TextBlock(text="Je calcule."),
         ToolCallBlock(call_id="call_z", name="calculer", arguments={"expr": "3"}),
     )
@@ -417,3 +430,81 @@ async def test_images_go_in_user_content_parts() -> None:
                 Message(role="tool", blocks=(result,)),
             ),
         )
+
+
+# --- Raisonnement renvoyé (#015) et schéma natif (B9) ----------------------------------------
+
+
+def with_capabilities(**capabilities: bool) -> ModelSpec:
+    return SPEC.model_copy(
+        update={"capabilities": SPEC.capabilities.model_copy(update=capabilities)}
+    )
+
+
+def reasoned(text: str, field: str | None = None, *, calls: bool = True) -> Message:
+    meta: dict[str, ProviderMeta] = origin(field) if field else {}
+    blocks: list[ReasoningBlock | TextBlock | ToolCallBlock] = [
+        ReasoningBlock(text=text, provider_meta=meta)
+    ]
+    if calls:
+        blocks.append(ToolCallBlock(call_id=f"c_{text}", name="calculer"))
+    else:
+        blocks.append(TextBlock(text="Réponse"))
+    return Message(role="assistant", blocks=tuple(blocks))
+
+
+def result(call_id: str) -> Message:
+    return Message(
+        role="tool", blocks=(ToolResultBlock(call_id=call_id, output=ToolOutput.text("1")),)
+    )
+
+
+HISTORY = (
+    Message.user("Premier"),
+    reasoned("clos", "reasoning", calls=False),
+    Message.user("Second"),
+    reasoned("a", "reasoning_content"),
+    result("c_a"),
+    reasoned("b"),
+    result("c_b"),
+)
+
+
+async def test_reasoning_goes_back_to_a_thinking_model_in_the_open_loop() -> None:
+    server = Server(streamed(chunk({"content": "ok"}, finish="stop")))
+    await complete(server.model(with_capabilities(thinking=True)), request(*HISTORY))
+    assistants = [m for m in server.body["messages"] if m["role"] == "assistant"]
+    # Le tour conclu garde son silence ; la boucle en cours renvoie son raisonnement,
+    # dans le champ où il est arrivé (« reasoning » par défaut).
+    assert "reasoning" not in assistants[0] and "reasoning_content" not in assistants[0]
+    assert assistants[1]["reasoning_content"] == "a"
+    assert assistants[2]["reasoning"] == "b"
+
+
+async def test_reasoning_is_not_sent_back_without_thinking() -> None:
+    server = Server(streamed(chunk({"content": "ok"}, finish="stop")))
+    await complete(server.model(), request(*HISTORY))
+    for message in server.body["messages"]:
+        assert "reasoning" not in message and "reasoning_content" not in message
+
+
+async def test_output_schema_becomes_response_format_with_native_json() -> None:
+    closed: dict[str, Any] = {
+        "type": "object",
+        "properties": {"objet": {"type": "string"}},
+        "required": ["objet"],
+        "additionalProperties": False,
+    }
+    loose: dict[str, Any] = {**closed, "properties": {"objet": {"type": "string", "minLength": 5}}}
+    server = Server(*(streamed(chunk({"content": "{}"}, finish="stop")) for _ in range(3)))
+    await complete(server.model(), request(output_schema=closed))
+    assert "response_format" not in server.body
+    native = server.model(with_capabilities(native_json=True))
+    await complete(native, request(output_schema=closed))
+    assert server.body["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "output", "schema": closed, "strict": True},
+    }
+    # Hors des règles du mode strict : transmis sans « strict ».
+    await complete(native, request(output_schema=loose))
+    assert server.body["response_format"]["json_schema"] == {"name": "output", "schema": loose}

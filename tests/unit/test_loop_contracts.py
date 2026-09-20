@@ -540,3 +540,24 @@ async def test_role_repairs_do_not_use_up_the_final_answer_repairs(store: EventS
         ("output", "failed", 1),
         ("output", "passed", 2),
     ]
+
+
+# --- Schéma natif (B9) -----------------------------------------------------------------------
+
+
+async def test_the_output_schema_goes_with_calls_that_cannot_call_tools(store: EventStore) -> None:
+    writer = scripted(Message.assistant(EMAIL))
+    model = scripted(
+        tool_call_message(("c1", "rediger", {"ton": "cordial"})),
+        Message.assistant("Voici la relance."),
+        Message.assistant(EMAIL),
+    )
+    ctx = context(store, model, role(writer), output=contract())
+    state = await run(ctx)
+
+    assert state.status is RunStatus.COMPLETED and state.output_data == DATA
+    # Le rôle n'a pas d'outils : son schéma part toujours.
+    assert [r.output_schema for r in writer.requests] == [SCHEMA]
+    # L'orchestrateur : seulement pour la réparation sans outils de sa réponse finale.
+    assert [r.output_schema for r in model.requests] == [None, None, SCHEMA]
+    assert [r.tool_choice for r in model.requests] == ["auto", "auto", "none"]

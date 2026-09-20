@@ -418,11 +418,19 @@ Le LLM `main` n'est pas forcément Anthropic.
 
 **Réalisation (phase 3.5a) :** chaque bloc de raisonnement porte le modèle qui l'a produit (`model_id` : le modèle du fournisseur dans la requête), posé par le moteur quel que soit l'adaptateur. À chaque appel, la chaîne de secours (point 10) retire des messages le raisonnement d'un autre modèle ; un raisonnement sans marque (journal antérieur) est gardé. Ce que chaque adaptateur renvoie de son propre raisonnement (API Responses, gpt-oss : backlog #015) arrive en 3.5b.
 
+**Réalisation (phase 3.5b) :**
+
+- **Anthropic :** inchangé, les blocs signés (ou masqués) sont renvoyés, les autres omis.
+- **API Chat** (`sdk: openai`, `api: chat`) : le raisonnement est lu dans `reasoning_content` ou `reasoning`, et le champ d'origine est retenu (`OpenAIMeta.reasoning_field`). Il n'est renvoyé qu'à un modèle déclaré `capabilities.thinking: true`, et seulement pour la boucle d'outils en cours : les réponses qui suivent sa dernière réponse sans appel d'outil (règle d'OpenAI pour gpt-oss : le raisonnement d'un tour conclu est écarté). Il repart dans le champ où il est arrivé (`reasoning` par défaut). Sans `thinking`, rien n'est renvoyé : certains fournisseurs refusent ce champ.
+- **API Responses** (`api: responses`) : sans état chez le fournisseur (`store: false`), le raisonnement revient chiffré (`include: reasoning.encrypted_content`, `OpenAIMeta.encrypted_content`) et repart toujours, sans son identifiant ; un raisonnement en clair (gpt-oss servi par cette API) repart comme dans l'API Chat, avec `thinking: true`.
+
 ### 8. `provider_meta` typé
 
 - **Structure :** `provider_meta: dict[provider, Meta]`, où chaque `Meta` est un modèle Pydantic typé, par exemple `AnthropicMeta(signature, redacted_data)` ou `OpenAIMeta(item_id, encrypted_content)`.
 - **Qui lit quoi :** l'adaptateur remplit sa propre entrée en lisant la réponse, puis la relit pour construire la requête suivante. Il ignore les entrées des autres fournisseurs.
 - **Ce qui reste hors de `provider_meta` :** les notions qui existent chez tous les fournisseurs, comme un point de cache, restent neutres dans le noyau (`cache_breakpoint`), et chaque adaptateur les traduit.
+
+**Réalisation (phase 3.5b) :** `OpenAIMeta` porte `item_id` et `encrypted_content` (API Responses) et `reasoning_field` (API Chat). Cache de prompt (B5) : `cache: {system, tools, messages, ttl: 5m | 1h}` sur un modèle `sdk: anthropic` ; l'adaptateur pose un `cache_control` sur le prompt système, sur le dernier outil et sur le dernier bloc de la conversation (un point qui avance à chaque appel), puis sur les blocs marqués `cache_breakpoint`, des plus récents aux plus anciens, au plus quatre par requête et jamais sur un bloc de raisonnement. `pricing.cache_write` est le prix de la durée choisie. Refusé au chargement avec `sdk: openai` : OpenAI et les fournisseurs compatibles (Together) cachent seuls, et MiniMax-M3 aussi (lectures de cache vues sans point de cache). Un prompt plus court que le minimum du modèle n'est pas caché (4 096 tokens pour Claude Haiku 4.5).
 
 ### 9. Accès aux modèles : SDK officiels
 
@@ -447,6 +455,8 @@ Le LLM `main` n'est pas forcément Anthropic.
 - **SDK en extras** (`loom-ia[anthropic]`, `loom-ia[openai]`), importés à la demande. Ils n'apparaissent que dans leur adaptateur.
 - **Retries internes du SDK désactivés** (`max_retries=0`) : une seule politique de retry, celle de loom, visible dans le journal.
 - **Tests de contrat par adaptateur**, avec des réponses HTTP enregistrées (respx).
+
+**Réalisation (phase 3.5b) :** adaptateur `api: responses` (`openai_responses.py`), testé seulement sur des réponses HTTP enregistrées. Sans état chez le fournisseur (`store: false`, toute la conversation à chaque appel) ; `instructions` pour le prompt système ; une réponse du modèle redevient ses éléments `reasoning`, son message `assistant` et ses `function_call`, dans l'ordre ; résultats d'outils en `function_call_output` (texte, ou texte et images ; préfixe d'erreur) ; `max_output_tokens` ; un outil est `strict` si son schéma en suit les règles ; lecture des événements `response.*` (résumés et texte du raisonnement, texte, refus, arguments), avec repli sur les éléments complets quand un fournisseur ne donne pas de deltas ; `incomplete` → `max_tokens` ou `refusal` ; tokens en cache retirés des tokens d'entrée ; `response.failed` et `error` classés comme les erreurs HTTP.
 
 ### 10. Modèle de secours
 
@@ -726,7 +736,7 @@ model.responded → guard.checked (échec, motif, tentative 1)
   | `unverified` | réponse gardée (normalisée), `run.completed.unverified` | sortie gardée, `ToolOutput.unverified` |
   | `fallback` | `fallback_message` devient la réponse | `fallback_message` devient le résultat |
 
-- **Sortie structurée (A7) :** avec un schéma, `run.completed.data` porte l'objet JSON de la réponse finale ; pour un rôle terminal, c'est le `data` de son `tool.completed`. Côté Python : `RunResult.data` et `RunResult.unverified`. Le schéma JSON natif du fournisseur (B9) est reporté en 3.5.
+- **Sortie structurée (A7) :** avec un schéma, `run.completed.data` porte l'objet JSON de la réponse finale ; pour un rôle terminal, c'est le `data` de son `tool.completed`. Côté Python : `RunResult.data` et `RunResult.unverified`. Schéma JSON natif du fournisseur (B9, réalisé en 3.5b) : la requête porte le schéma du contrat (`ModelRequest.output_schema`) pour un appel qui ne peut pas appeler d'outil — toujours pour un rôle, pour l'orchestrateur en réponse forcée, en réparation sans outils ou sans outils du tout ; l'adaptateur le transmet si le modèle est déclaré `capabilities.native_json: true` : `response_format` (API Chat) ou `text.format` (API Responses) en `json_schema`, `strict` seulement si le schéma en suit les règles ; `output_config.format` chez Anthropic, après adaptation par le SDK (`transform_schema` : objets fermés, mots-clés non pris en charge reportés dans les descriptions). Le contrat vérifie toujours le schéma d'origine. Sans schéma, l'empreinte de la requête (`request_hash`) est celle d'avant.
 - **Streaming :** voir point 11 (`after_guards` par défaut quand la réponse finale est contrôlée).
 - **Séquence pour un rôle réparé :**
 

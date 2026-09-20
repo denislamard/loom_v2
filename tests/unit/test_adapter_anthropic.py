@@ -28,6 +28,7 @@ from loom_ia.core.model import (
     ModelRequest,
     ModelSpec,
     OpenAIMeta,
+    PromptCache,
     ProviderMeta,
     ReasoningBlock,
     TextBlock,
@@ -470,3 +471,129 @@ async def test_images_are_sent_in_base64() -> None:
     pdf = InlineDataBlock(media_type="application/pdf", data=b"%PDF")
     with pytest.raises(ModelError, match="seules les images"):
         await complete(server.model(), request(Message(role="user", blocks=(pdf,))))
+
+
+# --- Cache de prompt (B5) et schéma natif (B9) -----------------------------------------------
+
+
+def cached_spec(**cache: Any) -> ModelSpec:
+    return SPEC.model_copy(update={"cache": PromptCache.model_validate(cache)})
+
+
+def answered() -> httpx2.Response:
+    return streamed(
+        start(), block_start(0, {"type": "text", "text": ""}), stop(0), *end("end_turn")
+    )
+
+
+EPHEMERAL: dict[str, Any] = {"type": "ephemeral"}
+
+
+async def test_cache_points_on_tools_system_and_last_message() -> None:
+    server = Server(answered(), answered())
+    history = (
+        Message.user("Bonjour"),
+        Message(
+            role="assistant",
+            blocks=(
+                ReasoningBlock(
+                    text="calcul", provider_meta={"anthropic": AnthropicMeta(signature="s")}
+                ),
+                ToolCallBlock(call_id="t1", name="calculer", arguments={"expr": "1"}),
+            ),
+        ),
+        Message(role="tool", blocks=(ToolResultBlock(call_id="t1", output=ToolOutput.text("1")),)),
+    )
+    await complete(
+        server.model(cached_spec(system=True, tools=True, messages=True)),
+        request(*history, system="Tu calcules.", tools=(TOOL,)),
+    )
+    body = server.body
+    assert body["system"] == [{"type": "text", "text": "Tu calcules.", "cache_control": EPHEMERAL}]
+    assert body["tools"][-1]["cache_control"] == EPHEMERAL
+    # Le point de la conversation avance : sur le dernier bloc.
+    last = body["messages"][-1]["content"][-1]
+    assert (last["type"], last["cache_control"]) == ("tool_result", EPHEMERAL)
+    others = [b for m in body["messages"][:-1] for b in m["content"]]
+    assert all("cache_control" not in b for b in others)
+
+    # Une heure ; sans réglage « messages », rien sur la conversation.
+    await complete(server.model(cached_spec(system=True, ttl="1h")), request(*history, system="S"))
+    body = server.body
+    assert body["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert all("cache_control" not in b for m in body["messages"] for b in m["content"])
+
+
+async def test_marked_blocks_and_the_four_points_limit() -> None:
+    server = Server(answered(), answered())
+    marked = [
+        Message(role="user", blocks=(TextBlock(text=f"partie {n}", cache_breakpoint=True),))
+        for n in range(3)
+    ]
+    thinking = Message(
+        role="assistant",
+        blocks=(
+            ReasoningBlock(
+                text="x",
+                provider_meta={"anthropic": AnthropicMeta(signature="s")},
+                cache_breakpoint=True,
+            ),
+            TextBlock(text="suite"),
+        ),
+    )
+    # Sans réglage cache, les marques suffisent ; jamais sur un raisonnement.
+    await complete(server.model(), request(marked[0], thinking, Message.user("?")))
+    body = server.body
+    assert body["messages"][0]["content"][0]["cache_control"] == EPHEMERAL
+    assert all("cache_control" not in b for b in body["messages"][1]["content"])
+
+    await complete(
+        server.model(cached_spec(system=True, tools=True, messages=True)),
+        request(*marked, Message.user("fin"), system="S", tools=(TOOL,)),
+    )
+    body = server.body
+    placed = [
+        n
+        for n, message in enumerate(body["messages"])
+        for b in message["content"]
+        if "cache_control" in b
+    ]
+    # Système, outils, dernier message, puis la marque la plus récente : quatre au plus.
+    assert "cache_control" in body["system"][0] and "cache_control" in body["tools"][0]
+    assert len(body["messages"]) == 1
+    contents = body["messages"][0]["content"]
+    assert [("cache_control" in b) for b in contents] == [False, False, True, True]
+    assert placed == [0, 0]
+
+
+async def test_output_schema_goes_to_output_config_with_native_json() -> None:
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"objet": {"type": "string", "minLength": 5}},
+        "required": ["objet"],
+    }
+    server = Server(answered(), answered(), answered())
+    await complete(server.model(), request(output_schema=schema))
+    assert "output_config" not in server.body
+    native = SPEC.model_copy(
+        update={"capabilities": SPEC.capabilities.model_copy(update={"native_json": True})}
+    )
+    await complete(
+        server.model(native),
+        request(output_schema=schema, params={"output_config": {"effort": "low"}}),
+    )
+    config = server.body["output_config"]
+    assert config["effort"] == "low"
+    # Adapté par le SDK : objet fermé, contrainte non prise en charge reportée en description.
+    assert config["format"] == {
+        "type": "json_schema",
+        "schema": {
+            "type": "object",
+            "properties": {"objet": {"type": "string", "description": "{minLength: 5}"}},
+            "additionalProperties": False,
+            "required": ["objet"],
+        },
+    }
+    # Schéma que le SDK ne sait pas adapter : non transmis, l'appel part quand même.
+    await complete(server.model(native), request(output_schema={"properties": {}}))
+    assert "output_config" not in server.body

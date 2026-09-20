@@ -2,6 +2,8 @@
 """Appel de modèle : définition, retry, délais, fenêtre de contexte, intégration à la boucle."""
 
 import asyncio
+import hashlib
+import json
 from collections.abc import AsyncGenerator, Callable
 
 import pytest
@@ -16,6 +18,7 @@ from loom_ia.core.model import (
     ModelRequest,
     ModelResponse,
     ModelSpec,
+    PromptCache,
     RetryPolicy,
     RunStatus,
     StreamReset,
@@ -103,6 +106,22 @@ def test_model_spec_rules() -> None:
         spec(sdk="anthropic", api="chat")
     with pytest.raises(ValidationError):
         spec(api_key="secret")
+
+
+def test_prompt_cache_is_for_anthropic_and_the_hash_ignores_an_absent_schema() -> None:
+    assert spec(sdk="anthropic", cache={"system": True}).cache == PromptCache(system=True)
+    with pytest.raises(
+        ValidationError, match="'cache' pose des points de cache pour sdk: anthropic"
+    ):
+        spec(sdk="openai", cache={"system": True})
+    with pytest.raises(ValidationError):
+        spec(sdk="anthropic", cache={"ttl": "2h"})
+    # Sans schéma de sortie, l'empreinte est celle d'avant la phase 3.5b.
+    before = REQUEST.model_dump(mode="json", exclude={"output_schema"})
+    canonical = json.dumps(before, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    assert REQUEST.request_hash() == hashlib.sha256(canonical.encode()).hexdigest()
+    with_schema = REQUEST.model_copy(update={"output_schema": {"type": "object"}})
+    assert with_schema.request_hash() != REQUEST.request_hash()
 
 
 def test_backoff() -> None:

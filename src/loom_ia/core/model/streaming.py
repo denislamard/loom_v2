@@ -57,11 +57,19 @@ class ModelRequest(DomainModel):
     tool_choice: ToolChoice = "auto"
     max_tokens: PositiveInt | None = None
     params: dict[str, JsonValue] = Field(default_factory=dict)
+    # Schéma JSON de la réponse attendue (contrat de sortie) : l'adaptateur le
+    # transmet au fournisseur si le modèle a la capacité ``native_json`` (B9).
+    output_schema: dict[str, JsonValue] | None = None
 
     def request_hash(self) -> str:
-        """Empreinte SHA-256 du JSON canonique de la requête (#31)."""
+        """Empreinte SHA-256 du JSON canonique de la requête (#31).
+
+        Sans schéma de sortie, le champ est omis : les empreintes des
+        journaux antérieurs restent les mêmes.
+        """
+        omitted = {"output_schema"} if self.output_schema is None else None
         canonical = json.dumps(
-            self.model_dump(mode="json"),
+            self.model_dump(mode="json", exclude=omitted),
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,

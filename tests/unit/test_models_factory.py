@@ -150,10 +150,14 @@ def test_api_keys_come_from_the_environment() -> None:
     assert NO_API_KEY == "not-needed"
 
 
-def test_responses_api_is_not_available_yet() -> None:
+def test_the_responses_api_has_its_adapter() -> None:
+    pytest.importorskip("openai")
+    from loom_ia.adapters.models.openai_responses import OpenAIResponsesModel
+
     spec = ModelSpec(id="GPT", sdk="openai", api="responses", model="gpt", api_key_env=None)
-    with pytest.raises(ModelConfigError, match="'responses' n'est pas encore disponible"):
-        create_model_client(spec)
+    client = create_model_client(spec)
+    assert isinstance(client, OpenAIResponsesModel)
+    assert repr(client) == "OpenAIResponsesModel('GPT', model='gpt')"
 
 
 @pytest.mark.parametrize(

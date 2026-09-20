@@ -13,14 +13,23 @@ Traduction des messages :
   (signature ou contenu masqué) ; les autres blocs de raisonnement sont omis ;
 - une image (``inline_data``) devient un bloc ``image`` en base64, dans un
   message comme dans un résultat d'outil ;
-- ``tool_choice: required`` devient ``{"type": "any"}``.
+- ``tool_choice: required`` devient ``{"type": "any"}`` ;
+- cache de prompt (B5) : les points déclarés par ``cache`` (prompt système,
+  dernier outil, dernier bloc de la conversation) et les blocs marqués
+  ``cache_breakpoint`` reçoivent un ``cache_control``, au plus quatre par
+  requête (les marques les plus récentes d'abord) ; jamais sur un bloc de
+  raisonnement ;
+- le schéma de sortie (``output_schema``) devient ``output_config.format``
+  pour un modèle déclaré ``native_json: true``, après adaptation par le SDK
+  (``transform_schema`` : mots-clés non pris en charge reportés dans les
+  descriptions ; le contrat de sortie vérifie le schéma d'origine) (B9).
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 """
 
 import logging
 from collections.abc import AsyncGenerator, Sequence
-from typing import Final, Literal, cast
+from typing import Any, Final, Literal, cast
 
 import anthropic
 import anthropic.types as sdk
@@ -44,6 +53,7 @@ from loom_ia.core.model import (
     ModelChunk,
     ModelRequest,
     ModelSpec,
+    PromptCache,
     ProviderMeta,
     ReasoningBlock,
     ReasoningDelta,
@@ -70,6 +80,10 @@ PROVIDER: Final = "anthropic"
 DEFAULT_BASE_URL: Final = "https://api.anthropic.com"
 # L'API exige max_tokens.
 DEFAULT_MAX_TOKENS: Final = 4096
+# Points de cache permis par requête.
+MAX_CACHE_POINTS: Final = 4
+# Blocs qui ne peuvent pas porter de point de cache.
+_UNCACHEABLE: Final = frozenset({"thinking", "redacted_thinking"})
 
 _STOP_REASONS: Final[dict[str, StopReason]] = {
     "end_turn": "end",
@@ -115,14 +129,21 @@ class AnthropicModel:
         return f"AnthropicModel({self.spec.id!r}, model={self.spec.model!r})"
 
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
-        messages = to_anthropic_messages(request.messages)
+        cache = self.spec.cache
+        marks: list[_Mark] = []
+        messages = to_anthropic_messages(request.messages, marks=marks)
         tools = to_anthropic_tools(request)
         tool_choice: sdk.ToolChoiceParam | anthropic.Omit = anthropic.omit
         if tools:
             tool_choice = _tool_choice(request)
         max_tokens = request.max_tokens or self.spec.max_tokens or DEFAULT_MAX_TOKENS
-        system = request.system or anthropic.omit
-        extra_body = dict(request.params) or None
+        system: str | list[sdk.TextBlockParam] | anthropic.Omit = request.system or anthropic.omit
+        if request.system and cache is not None and cache.system:
+            system = [{"type": "text", "text": request.system}]
+        place_cache_points(cache, system, tools, messages, marks)
+        params = dict(request.params)
+        output_config = self._output_config(request, params)
+        extra_body = params or None
         messages_api = self._client.messages
         try:
             if not self.spec.capabilities.streaming:
@@ -133,6 +154,7 @@ class AnthropicModel:
                     system=system,
                     tools=tools or anthropic.omit,
                     tool_choice=tool_choice,
+                    output_config=output_config,
                     extra_body=extra_body,
                 )
                 chunks = response_to_chunks(message)
@@ -145,6 +167,7 @@ class AnthropicModel:
                     system=system,
                     tools=tools or anthropic.omit,
                     tool_choice=tool_choice,
+                    output_config=output_config,
                     extra_body=extra_body,
                     stream=True,
                 )
@@ -158,23 +181,107 @@ class AnthropicModel:
         for chunk in chunks:
             yield chunk
 
+    def _output_config(
+        self, request: ModelRequest, params: dict[str, JsonValue]
+    ) -> sdk.OutputConfigParam | anthropic.Omit:
+        """``output_config`` : schéma de sortie (``native_json``), ajouté à celui des ``params``."""
+        schema = request.output_schema
+        if schema is None or not self.spec.capabilities.native_json:
+            return anthropic.omit
+        try:
+            transformed = anthropic.transform_schema({**schema})
+        except ValueError as exc:
+            logger.warning(
+                "Modèle %s : schéma de sortie non transmis au fournisseur (%s)", self.spec.id, exc
+            )
+            return anthropic.omit
+        declared = params.pop("output_config", None)
+        config: dict[str, Any] = {**declared} if isinstance(declared, dict) else {}
+        config["format"] = {"type": "json_schema", "schema": transformed}
+        return cast(sdk.OutputConfigParam, config)
+
 
 # --- Requête -------------------------------------------------------------------
 
+# Bloc d'un message marqué ``cache_breakpoint`` : (tour, position dans le tour).
+type _Mark = tuple[int, int]
 
-def to_anthropic_messages(messages: Sequence[Message]) -> list[sdk.MessageParam]:
-    """Messages neutres → messages de l'API, fusionnés par rôle."""
+
+def to_anthropic_messages(
+    messages: Sequence[Message], *, marks: list[_Mark] | None = None
+) -> list[sdk.MessageParam]:
+    """Messages neutres → messages de l'API, fusionnés par rôle.
+
+    ``marks`` reçoit la place des blocs marqués ``cache_breakpoint``.
+    """
     turns: list[tuple[_Role, list[sdk.ContentBlockParam]]] = []
     for message in messages:
         role: _Role = "assistant" if message.role == "assistant" else "user"
-        content = [block for b in message.blocks if (block := _to_block(b)) is not None]
-        if not content:
+        converted = [(b, block) for b in message.blocks if (block := _to_block(b)) is not None]
+        if not converted:
             continue
-        if turns and turns[-1][0] == role:
-            turns[-1][1].extend(content)
-        else:
-            turns.append((role, content))
+        if not (turns and turns[-1][0] == role):
+            turns.append((role, []))
+        content = turns[-1][1]
+        for neutral, block in converted:
+            if neutral.cache_breakpoint and marks is not None:
+                marks.append((len(turns) - 1, len(content)))
+            content.append(block)
     return [{"role": role, "content": content} for role, content in turns]
+
+
+def place_cache_points(
+    cache: PromptCache | None,
+    system: str | list[sdk.TextBlockParam] | anthropic.Omit,
+    tools: list[sdk.ToolParam],
+    messages: list[sdk.MessageParam],
+    marks: Sequence[_Mark] = (),
+) -> None:
+    """Pose les ``cache_control`` : réglage ``cache`` du modèle, puis blocs marqués (B5).
+
+    Au plus quatre : ceux du réglage d'abord (outils, système, conversation),
+    puis les marques, des plus récentes aux plus anciennes.
+    """
+    control: sdk.CacheControlEphemeralParam = {"type": "ephemeral"}
+    if cache is not None and cache.ttl != "5m":
+        control["ttl"] = cache.ttl
+    targets: list[dict[str, Any]] = []
+    if cache is not None:
+        if cache.tools and tools:
+            targets.append(cast(dict[str, Any], tools[-1]))
+        if cache.system and isinstance(system, list) and system:
+            targets.append(cast(dict[str, Any], system[-1]))
+        if cache.messages and (last := _last_cacheable(messages)) is not None:
+            targets.append(last)
+    for turn, index in reversed(marks):
+        content = messages[turn]["content"]
+        if isinstance(content, str):
+            continue
+        block = cast(dict[str, Any], list(content)[index])
+        if block.get("type") not in _UNCACHEABLE and all(block is not t for t in targets):
+            targets.append(block)
+    if len(targets) > MAX_CACHE_POINTS:
+        logger.warning(
+            "%d points de cache demandés : seuls les %d premiers sont posés",
+            len(targets),
+            MAX_CACHE_POINTS,
+        )
+    for block in targets[:MAX_CACHE_POINTS]:
+        block["cache_control"] = dict(control)
+
+
+def _last_cacheable(messages: list[sdk.MessageParam]) -> dict[str, Any] | None:
+    """Dernier bloc de la conversation qui peut porter un point de cache."""
+    if not messages:
+        return None
+    content = messages[-1]["content"]
+    if isinstance(content, str):
+        return None
+    for block in reversed(list(content)):
+        typed = cast(dict[str, Any], block)
+        if typed.get("type") not in _UNCACHEABLE:
+            return typed
+    return None
 
 
 def _tool_choice(request: ModelRequest) -> sdk.ToolChoiceParam:

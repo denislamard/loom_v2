@@ -50,6 +50,11 @@ au fil de l'eau, et une réparation envoie d'abord un ``StreamReset`` ; avec
 de cette réponse, et la réponse finale seulement une fois ses contrôles
 passés, qu'elle vienne de l'orchestrateur ou d'un rôle terminal.
 
+Schéma natif (B9) : un appel de l'orchestrateur qui ne peut pas appeler
+d'outil (réponse forcée, réparation sans outils, agent sans outils) porte le
+schéma de la réponse finale (``output_schema``) ; l'adaptateur le transmet
+au fournisseur si le modèle a la capacité ``native_json``.
+
 Secours (B4, #10) : l'appel de l'orchestrateur passe par sa chaîne
 (``RunContext.chain``, ``main`` puis ``fallbacks``) : tentatives, bascules
 (``model.fell_back``) et disjoncteur ouvert (``circuit.opened``) sont écrits
@@ -630,6 +635,10 @@ def _failure_type(verdict: Verdict) -> str:
     return f"guard.{failed.guard}" if failed is not None else f"policy.{verdict.by}"
 
 
+def _schema(contract: OutputContract | None) -> dict[str, JsonValue] | None:
+    return contract.json_schema if contract is not None else None
+
+
 def _structured(contract: OutputContract | None, output: Message) -> JsonValue:
     """Objet JSON de la réponse finale quand l'agent déclare un schéma de sortie (A7)."""
     if contract is None or contract.json_schema is None:
@@ -920,14 +929,18 @@ async def _model_step(
         system = f"{system}\n\n{REFS_HINT}" if system else REFS_HINT
     # Réponse forcée : sa consigne en dernier message, dans la requête seulement.
     hint = (Message.user(FINALIZE_HINT),) if forced else ()
+    tools = ctx.tools.definitions(view)
+    without_tools = forced or state.repair_without_tools or not tools
     request = ModelRequest(
         model_id=spec.model,
         system=system,
         messages=(*in_call_order(previous), *messages, *hint),
-        tools=ctx.tools.definitions(view),
+        tools=tools,
         tool_choice="none" if forced or state.repair_without_tools else "auto",
         max_tokens=ctx.max_tokens or spec.max_tokens,
         params={**spec.params, **ctx.params},
+        # Schéma natif (B9) : seulement pour un appel qui ne peut pas appeler d'outil.
+        output_schema=_schema(ctx.output) if without_tools else None,
     )
     verdict = await ctx.policies.run(
         BeforeModel(state=state, request=request, finalizing=forced, session=session),

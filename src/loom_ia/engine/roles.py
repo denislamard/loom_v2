@@ -48,6 +48,10 @@ celui qui répare.
 
 Diffusion (backlog #009) : un rôle terminal appelé seul diffuse sa sortie en
 direct quand l'agent diffuse en ``live`` (``RunView.on_chunk``).
+
+Schéma natif (B9) : un rôle sous contrat avec schéma le transmet dans sa
+requête (``output_schema``) ; l'adaptateur le donne au fournisseur si le
+modèle a la capacité ``native_json``.
 """
 
 import json
@@ -258,6 +262,7 @@ class RoleTool(DelegatedTool):
             messages=(built,),
             max_tokens=role.max_tokens or spec.max_tokens,
             params={**spec.params, **role.params},
+            output_schema=role.output.json_schema if role.output is not None else None,
         )
         async with aclosing(self._call(chain, request, current, context)) as produced:
             async for item in produced:

@@ -703,6 +703,7 @@ Les tentatives refusées restent dans le journal mais sont exclues de l'historiq
 | Capacités | Vision, outils (`tools`, vrai par défaut), thinking, JSON natif, `image_input` (`base64`, `url`, `file_id`), taille et formats d'image, `tool_result_media`, `streaming`, fenêtre de contexte |
 | Tarifs | Prix d'entrée, de sortie, de cache |
 | Disjoncteur | `circuit_breaker: {failures, cooldown}` (5 échecs, 60 s par défaut ; `null` le retire), §10.3 |
+| Cache | `cache: {system, tools, messages, ttl}` : points de cache, pour `sdk: anthropic` seulement (B5) |
 
 ```yaml
 # Exemple indicatif
@@ -724,6 +725,12 @@ models:
 - Les SDK sont des extras (`loom-ia[anthropic]`, `loom-ia[openai]`), importés à la demande, et n'apparaissent que dans leur adaptateur.
 - Leurs retries internes sont désactivés (`max_retries=0`) : une seule politique de retry, celle de loom-ia.
 - Chaque adaptateur a des tests de contrat avec des réponses HTTP enregistrées (respx).
+
+**Réalisation (3.5b) :**
+
+- `api: responses` : adaptateur `openai_responses.py`, sans état chez le fournisseur (`store: false`, raisonnement chiffré renvoyé sans identifiant), testé sur réponses enregistrées.
+- Cache de prompt (B5) : `cache` sur un modèle `sdk: anthropic` → `cache_control` sur le prompt système, le dernier outil et le dernier bloc de la conversation, puis sur les blocs `cache_breakpoint` (au plus quatre, jamais sur un raisonnement) ; refusé avec `sdk: openai`, dont les fournisseurs cachent seuls.
+- Schéma JSON natif (B9) : `ModelRequest.output_schema` pour un appel sans outils possibles (rôle ; orchestrateur en réponse forcée, en réparation sans outils ou sans outils) ; transmis si `capabilities.native_json` : `response_format` (Chat), `text.format` (Responses), `output_config.format` (Anthropic, schéma adapté par le SDK).
 
 ### 10.2 Streaming
 
@@ -772,7 +779,7 @@ models:
 
 ### 10.4 Raisonnement et images
 
-**Raisonnement** (#7) : le `RunState` garde un bloc `Reasoning` neutre. L'adaptateur décide quoi renvoyer selon les capacités du modèle : Anthropic exige les blocs signés pendant une boucle d'outils ; l'API Responses d'OpenAI accepte le raisonnement chiffré ; d'autres API compatibles l'ignorent ou le refusent. Après une bascule de modèle, le raisonnement d'un autre fournisseur est écarté : chaque bloc porte le modèle qui l'a produit (`model_id`, posé par le moteur), et la chaîne de secours retire celui d'un autre modèle (3.5a). Il est retiré au stockage de la session.
+**Raisonnement** (#7) : le `RunState` garde un bloc `Reasoning` neutre. L'adaptateur décide quoi renvoyer selon les capacités du modèle : Anthropic exige les blocs signés pendant une boucle d'outils ; l'API Responses d'OpenAI accepte le raisonnement chiffré ; d'autres API compatibles l'ignorent ou le refusent. Après une bascule de modèle, le raisonnement d'un autre fournisseur est écarté : chaque bloc porte le modèle qui l'a produit (`model_id`, posé par le moteur), et la chaîne de secours retire celui d'un autre modèle (3.5a). Réalisé en 3.5b : l'API Chat renvoie le raisonnement de la boucle d'outils en cours à un modèle déclaré `thinking: true`, dans le champ où il est arrivé (gpt-oss, backlog #015) ; l'API Responses renvoie toujours le raisonnement chiffré. Il est retiré au stockage de la session.
 
 **Images** (#14) : le `RunState` ne garde qu'une référence. Juste avant l'appel, le moteur la résout selon les capacités du modèle : un modèle avec `vision` reçoit les octets, lus dans le stockage d'artefacts et envoyés en base64 par l'adaptateur ; un modèle sans `vision`, ou un fichier qui n'est pas une image, donne une mention textuelle (nom, type, taille). URL signée à courte durée de vie seulement si le modèle l'accepte et que la config l'autorise (RGPD), plus tard : `image_input` doit aujourd'hui contenir `base64`. Si le format (`image_formats`) ou la taille (`max_image_bytes`) ne conviennent pas : erreur explicite avant l'appel (`model.invalid_request`), ou conversion par un hook (3.1). `request_hash` est calculé sur la requête avant résolution, et la fenêtre de contexte compte 1 600 tokens par image envoyée.
 
@@ -1047,7 +1054,7 @@ models:
     timeouts: {first_token: 20, idle: 30, total: 120}
     retry: {max_attempts: 3, max_delay: 30}
     circuit_breaker: {failures: 5, cooldown: 60}
-    cache: {system: true}
+    cache: {system: true, tools: true, messages: true, ttl: 5m}   # sdk: anthropic ; 5m | 1h
     capabilities:
       tools: true
       vision: true

@@ -85,12 +85,14 @@ from loom_ia.core.model.media import (
 )
 from loom_ia.core.model.messages import Message, Role
 from loom_ia.core.model.model_spec import (
+    CacheTtl,
     CircuitBreaker,
     ImageInput,
     ModelApi,
     ModelCapabilities,
     ModelSpec,
     ModelTimeouts,
+    PromptCache,
     RetryPolicy,
     Sdk,
 )
@@ -198,6 +200,7 @@ __all__ = [
     "BudgetLimit",
     "BudgetScope",
     "Budgets",
+    "CacheTtl",
     "CallerContext",
     "CheckOutcome",
     "CheckResolution",
@@ -246,6 +249,7 @@ __all__ = [
     "PolicySubject",
     "PriceTier",
     "Pricing",
+    "PromptCache",
     "ProviderMeta",
     "ReasoningBlock",
     "ReasoningDelta",
