@@ -100,6 +100,7 @@ from loom_ia.guards import (
 from loom_ia.policies import BUILTIN_POLICIES
 from loom_ia.telemetry import configure_logging
 from loom_ia.tools import FunctionTool, configure
+from loom_ia.usage import BudgetGuard
 
 if TYPE_CHECKING:
     from loom_ia.adapters.mcp import McpPool
@@ -212,14 +213,21 @@ def build_agent(
         )
         for judged in spec.judges
     ]
-    for warning in judge_warnings(config, spec):
+    for warning in [*judge_warnings(config, spec), *budget_warnings(config, spec)]:
         logger.warning(warning)
+    budgets = config.budget_of(spec.name)
+    shared = any(
+        ref.agent == spec.name and ref.budget_share is not None
+        for agent in config.agents
+        for ref in agent.subagents
+    )
     policies = build_policies(
         spec,
         known,
         config.base_dir,
         contracts=_has_contracts(config, spec),
         judges=judges,
+        budget=BudgetGuard(budgets) if budgets.limited or shared else None,
     )
     sources, owned = _mcp_sources(config, spec, environ, mcp_pool)
     if spec.subagents and agents is None:
@@ -277,12 +285,14 @@ def build_policies(
     *,
     contracts: bool | None = None,
     judges: Sequence[JudgeGuard] = (),
+    budget: BudgetGuard | None = None,
 ) -> Policies:
     """Politiques de l'agent, résolues et contrôlées, dans l'ordre déclaré.
 
-    Le guard des contrats passe en tête quand l'agent en déclare
-    (``contracts``, déduit de l'agent si absent), puis les juges (``judges``) :
-    la forme d'une sortie est contrôlée avant son fond.
+    Les politiques fournies passent en tête : le guard des contrats quand
+    l'agent en déclare (``contracts``, déduit de l'agent si absent), puis les
+    juges (``judges``) — la forme d'une sortie est contrôlée avant son fond —,
+    puis le budget (``budget``).
     """
     bound: list[BoundPolicy] = []
     if contracts if contracts is not None else spec.contracts:
@@ -304,6 +314,9 @@ def build_policies(
                 max_attempts=None,
             )
         )
+    if budget is not None:
+        # Une erreur du budget arrête le run (défaut des politiques, #2).
+        bound.append(BoundPolicy(policy=budget, name=budget.name, points=budget.points))
     for ref in spec.policies:
         found = _policy(spec, ref, registry, base_dir)
         points = frozenset(ref.points) if ref.points is not None else found.points
@@ -447,6 +460,25 @@ def judge_definition(
     )
 
 
+def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
+    """Budget en dollars sur un agent dont un modèle n'a pas de tarif (backlog #010).
+
+    Ses appels comptent 0 $ : le plafond ne les voit pas. Une erreur en profil
+    prod arrivera avec les profils (J5) ; un budget en tokens reste efficace.
+    """
+    if not config.budget_of(spec.name).in_dollars:
+        return []
+    used = [spec.main.model, *(role.model for role in spec.roles)]
+    used += [judge.model for _, _, judge in spec.judges]
+    unpriced = [m for m in dict.fromkeys(used) if not config.model_spec(m).pricing.priced]
+    if not unpriced:
+        return []
+    return [
+        f"Agent {spec.name!r} : budget en dollars, mais sans tarif pour "
+        f"{', '.join(unpriced)} : leurs appels comptent 0 $"
+    ]
+
+
 def judge_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
     """Avertissements sur les juges de l'agent (E6, #21) ; des erreurs en profil prod (J5)."""
     warnings: list[str] = []
@@ -483,6 +515,8 @@ def _subagent_definition(
         agent=ref.agent,
         description=ref.description or target.description,
         max_depth=spec.max_depth,
+        budget_share=ref.budget_share,
+        parent_budget=config.budget_of(spec.name).run,
     )
 
 

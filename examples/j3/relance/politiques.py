@@ -53,7 +53,13 @@ def plafond_appels(subject: BeforeModel, context: PolicyContext) -> Decision:
 
 @policy(points=["on_output"], decisions=["retry"])
 def cite_le_devis(subject: OnOutput) -> Decision:
-    """La relance doit citer le numéro du devis trouvé dans le run."""
+    """La relance doit citer le numéro du devis trouvé dans le run.
+
+    Pendant la réponse forcée (``finalizing``), plus d'outil : le rôle ne peut
+    pas être rappelé, et la réponse n'est pas une relance ; rien à demander.
+    """
+    if subject.finalizing:
+        return CONTINUE
     numero = devis_trouve(subject.state)
     if numero is None or numero in subject.output.text:
         return CONTINUE

@@ -147,7 +147,9 @@ storage:
 
 **À faire en 3.4 :** contrôle au démarrage quand un budget s'applique à un agent dont un modèle (`main`, rôle, juge, secours) n'a pas de tarif : avertissement en profil dev, erreur en profil prod. Les tarifs par palier (MiniMax-M3 double ses prix au-delà de 512k tokens d'entrée) sont une question voisine, à trancher au même moment.
 
-**Statut :** à faire en 3.4.
+**Réalisation (3.4) :** au montage d'un agent dont le budget a une limite en dollars (run ou session), un avertissement (logs) nomme ses modèles sans tarif (`main`, rôles, juges ; les secours s'y ajouteront en 3.5) : « budget en dollars, mais sans tarif pour … : leurs appels comptent 0 $ ». L'erreur en profil prod arrivera avec les profils (J5). Un budget en tokens (`max_tokens`) reste efficace sans tarif. Paliers réalisés : `pricing.tiers` ; la config de l'exemple J3 déclare celui de MiniMax-M3.
+
+**Statut :** fait en 3.4 (erreur en profil prod : J5).
 
 ---
 

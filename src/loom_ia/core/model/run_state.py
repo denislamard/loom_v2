@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import Field, JsonValue, NonNegativeFloat, NonNegativeInt
 
 from loom_ia.core.model.base import DomainModel
+from loom_ia.core.model.budget import RunBudget, Spent
 from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import RunId, SessionId, SpanId
 from loom_ia.core.model.judge import JudgesMode
@@ -73,6 +74,9 @@ class RunState(DomainModel):
     context: CallerContext = CallerContext()
     # Juges choisis par l'appelant (#21) : selon leur ``when``, tous, ou aucun.
     judges: JudgesMode = "auto"
+    # Part de budget reçue du run parent (``budget_share``) ; les limites de
+    # l'agent s'y ajoutent, la plus basse l'emporte.
+    budget: RunBudget | None = None
 
     status: RunStatus = RunStatus.READY_FOR_MODEL
     # Numéro de la dernière étape commencée.
@@ -83,6 +87,11 @@ class RunState(DomainModel):
     pending_calls: tuple[PendingCall, ...] = ()
     usage: Usage = Usage()
     cost_usd: NonNegativeFloat = 0.0
+    # Appels de modèle du run : orchestrateur, rôles et juges (``max_calls``) ;
+    # ceux d'un sous-agent se comptent dans son propre run.
+    model_calls: NonNegativeInt = 0
+    # Limites de budget déjà signalées (``budget.exceeded``) : ``run.max_cost``…
+    exceeded: tuple[str, ...] = ()
     # Fichiers du run (pièces jointes, sorties d'outils, déports), une fois par URI.
     artifacts: tuple[ArtifactRecord, ...] = ()
 
@@ -111,6 +120,11 @@ class RunState(DomainModel):
     finished: bool = False
     # Dernier événement appliqué.
     last_seq: NonNegativeInt = 0
+
+    @property
+    def spent(self) -> Spent:
+        """Consommation du run : usage et coût (sous-agents compris), ses appels de modèle."""
+        return Spent(self.usage, self.cost_usd, self.model_calls)
 
     def pending(self, call_id: str) -> PendingCall | None:
         return next((c for c in self.pending_calls if c.call_id == call_id), None)

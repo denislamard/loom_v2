@@ -16,7 +16,10 @@ d'outil commencé mais non terminé est traité par l'exécuteur (#18).
 
 Plafond d'itérations : au retour des outils, si le modèle a été appelé
 ``max_iterations`` fois, le run passe en ``FINALIZING`` ; le dépassement est
-borné à cette dernière génération.
+borné à cette dernière génération (et à ses réparations éventuelles). La
+réponse forcée part sans outils, avec une consigne en dernier message de sa
+requête (``FINALIZE_HINT``, jamais journalisée) : répondre en texte avec ce
+qui est déjà obtenu.
 
 Outil terminal (#13) : seul dans son tour et sans erreur, sa sortie devient
 la réponse finale. ``run.completed`` désigne alors son ``tool.completed``
@@ -46,6 +49,10 @@ au fil de l'eau, et une réparation envoie d'abord un ``StreamReset`` ; avec
 ``after_guards``, le texte d'une réponse qui appelle des outils part à la fin
 de cette réponse, et la réponse finale seulement une fois ses contrôles
 passés, qu'elle vienne de l'orchestrateur ou d'un rôle terminal.
+
+Budgets (J4) : ``before_model`` reçoit la consommation des runs précédents
+de la session (``session``), calculée dans le journal par ``drive`` ; un
+sous-run reçoit la part de budget de son parent dans son ``run.started``.
 
 Juges (#21) : un juge est une politique fournie qui appelle son modèle ; cet
 appel est écrit dans son propre span, au nom de ``judge:<nom>``, avant son
@@ -92,6 +99,7 @@ from loom_ia.core.events import (
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    FINALIZE_HINT,
     MAIN_ROLE,
     REPAIR_PREFIX,
     AfterModel,
@@ -110,11 +118,13 @@ from loom_ia.core.model import (
     OutputContract,
     PendingRepair,
     Retry,
+    RunBudget,
     RunId,
     RunState,
     RunStatus,
     SessionId,
     SpanId,
+    Spent,
     Stop,
     StreamOutput,
     StreamReset,
@@ -137,7 +147,7 @@ from loom_ia.core.ports import (
     ModelError,
     SourceContext,
 )
-from loom_ia.core.projections import apply, fold, history
+from loom_ia.core.projections import apply, fold, history, spent
 from loom_ia.engine.executor import Decided, Delegated, Stored, ToolExecutor
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.model_call import ModelCall, responded
@@ -210,6 +220,8 @@ class ParentRun:
     span_id: SpanId | None = None
     # Juges choisis pour le parent : l'enfant hérite du même choix (#21).
     judges: JudgesMode = "auto"
+    # Part du budget du parent donnée à l'enfant (``budget_share``, J4).
+    budget: RunBudget | None = None
 
 
 async def begin_run(
@@ -263,6 +275,7 @@ async def begin_run(
             parent_call_id=parent.call_id,
             depth=parent.depth + 1,
             judges=parent.judges,
+            budget=parent.budget,
         )
     if chosen and await ctx.store.read(scope.tenant_id, scope.session_id, run_id=run_id):
         raise ValueError(f"Le run {run_id} existe déjà")
@@ -331,9 +344,10 @@ async def drive(
         raise ValueError(f"Le run {run_id} appartient à l'agent {state.agent!r}, pas {ctx.agent!r}")
     if state.finished or state.status not in _ACTIONABLE:
         return state
-    previous = (
-        history(e for e in events if e.seq < own[0].seq) if state.parent_run_id is None else []
-    )
+    earlier = [e for e in events if e.seq < own[0].seq] if state.parent_run_id is None else []
+    previous = history(earlier)
+    # Consommation des runs précédents de la session : budget de session (J4).
+    session_spent = spent(earlier)
     cause = next((e for e in reversed(own) if e.category in {"model", "tool"}), None)
     if writer is None:
         writer = SessionWriter(ctx.store, tenant, session, events[-1].seq)
@@ -372,7 +386,9 @@ async def drive(
         run_ctx = replace(ctx, tools=opened.tools, writer=journal)
         while not state.finished and state.status in _ACTIONABLE:
             emitted = 0
-            async with aclosing(step(state, run_ctx, previous, cause=cause)) as drafts:
+            async with aclosing(
+                step(state, run_ctx, previous, cause=cause, session=session_spent)
+            ) as drafts:
                 async for draft in drafts:
                     await write(draft)
                     emitted += 1
@@ -399,12 +415,15 @@ async def step(
     previous: Sequence[Message] = (),
     *,
     cause: Event | None = None,
+    session: Spent | None = None,
 ) -> AsyncGenerator[EventDraft]:
     """Événements de la prochaine étape du run.
 
     ``previous`` est l'historique de la session avant ce run ; ``cause`` le
-    dernier événement d'effet, référencé par les transitions.
+    dernier événement d'effet, référencé par les transitions ; ``session`` la
+    consommation des runs précédents de la session (budget de session).
     """
+    session = session or Spent()
     scope = _scope(state)
     decision = await _decide(state, ctx, scope, cause)
     if decision is not None:
@@ -413,9 +432,9 @@ async def step(
         return
     match state.status:
         case RunStatus.READY_FOR_MODEL:
-            effect = _model_step(state, ctx, scope, previous, forced=False)
+            effect = _model_step(state, ctx, scope, previous, forced=False, session=session)
         case RunStatus.FINALIZING:
-            effect = _model_step(state, ctx, scope, previous, forced=True)
+            effect = _model_step(state, ctx, scope, previous, forced=True, session=session)
         case RunStatus.AWAITING_TOOLS:
             effect = _tool_step(state, ctx, scope)
         case _:
@@ -534,6 +553,7 @@ async def _final(
         output=output,
         source="model" if terminal is None else "terminal",
         tool=None if terminal is None else terminal.name,
+        finalizing=state.status is RunStatus.FINALIZING,
     )
     verdict = await ctx.policies.run(subject)
     drafts = _policy_drafts(scope, verdict.events)
@@ -849,9 +869,12 @@ async def _model_step(
     previous: Sequence[Message],
     *,
     forced: bool,
+    session: Spent,
 ) -> AsyncGenerator[EventDraft]:
     current = _Step(state, scope, "finalize" if forced else "model_call")
     yield current.started()
+    # État vu par les transitions écrites pendant l'étape : son numéro est celui-ci.
+    stepped = state.model_copy(update={"step": current.no})
     spec = ctx.model_spec
     started = time.perf_counter()
     emitted = attempts = 0
@@ -861,17 +884,19 @@ async def _model_step(
     if ctx.tools.shows_refs(view):
         messages = mark_results(messages, ResultIndex(messages))
         system = f"{system}\n\n{REFS_HINT}" if system else REFS_HINT
+    # Réponse forcée : sa consigne en dernier message, dans la requête seulement.
+    hint = (Message.user(FINALIZE_HINT),) if forced else ()
     request = ModelRequest(
         model_id=spec.model,
         system=system,
-        messages=(*in_call_order(previous), *messages),
+        messages=(*in_call_order(previous), *messages, *hint),
         tools=ctx.tools.definitions(view),
         tool_choice="none" if forced or state.repair_without_tools else "auto",
         max_tokens=ctx.max_tokens or spec.max_tokens,
         params={**spec.params, **ctx.params},
     )
     verdict = await ctx.policies.run(
-        BeforeModel(state=state, request=request, finalizing=forced),
+        BeforeModel(state=state, request=request, finalizing=forced, session=session),
         ignore=frozenset({"stop"}) if forced else frozenset(),
     )
     decided = [current.draft(payload) for payload in verdict.events]
@@ -882,11 +907,11 @@ async def _model_step(
     match verdict.decision:
         case Stop():
             yield current.completed(emitted)
-            yield _transition(state, scope, RunStatus.FINALIZING, reason)
+            yield _transition(stepped, scope, RunStatus.FINALIZING, reason)
             return
         case Fail(error=error):
             yield current.completed(emitted, ok=False)
-            for draft in _fail(state, scope, _failure_type(verdict), error, reason):
+            for draft in _fail(stepped, scope, _failure_type(verdict), error, reason):
                 yield draft
             return
         case _:
@@ -929,8 +954,8 @@ async def _model_step(
             extra={"run_id": state.run_id, "span_id": current.span},
         )
         yield current.completed(emitted, ok=False)
-        yield _transition(state, scope, RunStatus.FAILED, failure)
-        yield scope.draft(_failed(state, failure, str(exc)))
+        yield _transition(stepped, scope, RunStatus.FAILED, failure)
+        yield scope.draft(_failed(stepped, failure, str(exc)))
         return
     message = response.message
     if forced and message.tool_calls:
@@ -1022,7 +1047,7 @@ async def _tool_step(
         draft, decided = failure
         yield current.completed(emitted, ok=False)
         for event in _fail(
-            state,
+            state.model_copy(update={"step": current.no}),
             scope,
             f"policy.{decided.policy}",
             decided.reason,

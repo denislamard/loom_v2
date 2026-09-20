@@ -22,6 +22,7 @@ from collections.abc import Iterable
 
 from loom_ia.core.events import (
     ArtifactStored,
+    BudgetExceeded,
     Event,
     GuardChecked,
     JudgeEvaluated,
@@ -48,6 +49,7 @@ from loom_ia.core.model import (
     RunStatus,
     TextBlock,
     ToolResultBlock,
+    Usage,
 )
 
 
@@ -75,6 +77,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
             agent=event.agent or "",
             context=payload.context,
             judges=payload.judges,
+            budget=payload.budget,
             last_seq=event.seq,
         )
 
@@ -101,15 +104,13 @@ def apply(state: RunState | None, event: Event) -> RunState:
             update["messages"] = (*state.messages, message)
         case ModelResponded(judge=str(), usage=usage, cost_usd=cost):
             # Appel d'un juge : son coût compte, pas sa réponse ni une itération.
-            update |= {"usage": state.usage + usage, "cost_usd": state.cost_usd + cost}
+            update |= _consumed(state, usage, cost)
         case ModelResponded(call_id=str() as call_id, usage=usage, cost_usd=cost):
             _require_pending(state, call_id, event)
-            update |= {"usage": state.usage + usage, "cost_usd": state.cost_usd + cost}
+            update |= _consumed(state, usage, cost)
         case ModelResponded(message=message, usage=usage, cost_usd=cost):
-            update |= {
+            update |= _consumed(state, usage, cost) | {
                 "messages": (*state.messages, message),
-                "usage": state.usage + usage,
-                "cost_usd": state.cost_usd + cost,
                 "iterations": state.iterations + 1,
                 "pending_calls": tuple(
                     PendingCall(call_id=c.call_id, name=c.name, arguments=c.arguments)
@@ -144,6 +145,9 @@ def apply(state: RunState | None, event: Event) -> RunState:
             update["unverified"] = True
         case GuardChecked() | JudgeEvaluated():
             pass
+        case BudgetExceeded() as exceeded:
+            if exceeded.key not in state.exceeded:
+                update["exceeded"] = (*state.exceeded, exceeded.key)
         case StepCompleted() | ModelRetried() | ToolSourceUnavailable():
             pass
         case RunTransitioned(from_state=from_state, to_state=to_state):
@@ -259,3 +263,12 @@ def fold_all(events: Iterable[Event]) -> dict[RunId, RunState]:
     for event in events:
         states[event.run_id] = apply(states.get(event.run_id), event)
     return states
+
+
+def _consumed(state: RunState, usage: Usage, cost: float) -> dict[str, object]:
+    """Un appel de modèle du run : usage, coût et compte des appels."""
+    return {
+        "usage": state.usage + usage,
+        "cost_usd": state.cost_usd + cost,
+        "model_calls": state.model_calls + 1,
+    }

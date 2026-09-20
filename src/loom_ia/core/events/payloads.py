@@ -22,6 +22,9 @@ l'appel donne l'identifiant de l'enfant (``child_run_id``), et le
 Guards (#20) : chaque contrôle d'une sortie écrit un ``guard.checked``,
 réussi ou non, avant la décision qu'il motive.
 
+Budgets (J4) : une limite atteinte écrit un ``budget.exceeded``, une fois
+par limite, avant le ``policy.decided`` qui arrête le run (``on_exceed: stop``).
+
 Juges (#21) : l'appel du modèle d'un juge est journalisé dans le run jugé
 (``model.retried``, ``model.responded`` avec ``judge``, enveloppe au nom de
 ``judge:<nom>``) : son coût s'ajoute au run, pas ses itérations. Son verdict
@@ -49,6 +52,7 @@ from pydantic import (
 )
 
 from loom_ia.core.model.base import DomainModel
+from loom_ia.core.model.budget import BudgetLimit, BudgetScope, OnExceed, RunBudget
 from loom_ia.core.model.content import ToolOutput, has_inline_data
 from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import EventId, RunId
@@ -109,6 +113,8 @@ class RunStarted(Payload):
     triggered_by: RunId | None = None
     # Juges choisis par l'appelant (#21) ; un sous-run hérite du choix de son parent.
     judges: JudgesMode = "auto"
+    # Part de budget donnée par le run parent à un sous-run (``budget_share``, #4).
+    budget: RunBudget | None = None
 
     def facets(self) -> dict[str, FacetValue]:
         facets = super().facets()
@@ -466,6 +472,35 @@ class GuardChecked(Payload):
         return "error" if self.resolution == "fail" else "warning"
 
 
+class BudgetExceeded(Payload):
+    """Limite d'un budget atteinte, vue avant un appel de l'orchestrateur (J4).
+
+    Écrit une fois par limite et par run ; avec ``action: stop``, il précède le
+    ``policy.decided`` qui fait passer le run en ``FINALIZING``.
+    """
+
+    category: ClassVar[EventCategory] = "policy"
+    facet_fields: ClassVar[tuple[str, ...]] = ("scope", "limit", "action")
+
+    type: Literal["budget.exceeded"] = "budget.exceeded"
+    scope: BudgetScope
+    limit: BudgetLimit
+    # Plafond, et consommation au moment du contrôle ($, tokens ou appels).
+    value: NonNegativeFloat
+    spent: NonNegativeFloat
+    action: OnExceed
+    policy: str | None = None
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning"
+
+    @property
+    def key(self) -> str:
+        """Limite concernée : ``run.max_cost``, ``session.max_tokens``…"""
+        return f"{self.scope}.{self.limit}"
+
+
 class JudgeEvaluated(Payload):
     """Verdict d'un juge sur une sortie : une note par critère (#21).
 
@@ -555,6 +590,7 @@ type DurablePayload = Annotated[
     | PolicyDecided
     | GuardChecked
     | JudgeEvaluated
+    | BudgetExceeded
     | ArtifactStored,
     Field(discriminator="type"),
 ]
@@ -575,5 +611,6 @@ DURABLE_PAYLOADS: tuple[type[Payload], ...] = (
     PolicyDecided,
     GuardChecked,
     JudgeEvaluated,
+    BudgetExceeded,
     ArtifactStored,
 )

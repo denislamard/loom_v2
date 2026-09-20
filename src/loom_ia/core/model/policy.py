@@ -29,6 +29,7 @@ from typing import ClassVar, Final, Literal
 
 from pydantic import JsonValue
 
+from loom_ia.core.model.budget import Spent
 from loom_ia.core.model.content import ToolOutput
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.run_state import PendingCall, RunState
@@ -69,6 +70,16 @@ LATER_DECISIONS: Final[Mapping[DecisionKind, str]] = {"pause": "J4.3 (approbatio
 
 # Début du message qui demande une réparation au modèle orchestrateur (#20).
 REPAIR_PREFIX: Final = "Réponse refusée par un contrôle"
+
+# Consigne de la réponse forcée (A4) : dernier message de sa requête, jamais
+# journalisé. Sans elle, un modèle privé d'outils (``tool_choice: none``) peut
+# écrire son appel d'outil en texte (vu avec MiniMax-M3 en 3.4) ; en dernier
+# message plutôt que dans le prompt système, elle pèse plus et laisse le cache
+# du préfixe intact.
+FINALIZE_HINT: Final = (
+    "Tu ne peux plus appeler d'outil. Réponds maintenant à la demande, en texte, avec "
+    "les informations déjà obtenues ; si tu n'as pas pu tout faire, dis ce qui reste à faire."
+)
 
 # Préfixe réservé aux politiques fournies par loom-ia et aux règles du moteur.
 RESERVED_PREFIX: Final = "loom."
@@ -162,6 +173,9 @@ class BeforeModel:
     request: ModelRequest
     # Réponse forcée sans outils (``FINALIZING``) : ``Stop`` n'y a plus d'effet.
     finalizing: bool = False
+    # Consommation des runs précédents de la session (budget de session, J4) ;
+    # vide pour un sous-run.
+    session: Spent = field(default_factory=Spent)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -211,6 +225,8 @@ class OnOutput:
     output: Message
     source: Literal["model", "terminal"] = "model"
     tool: str | None = None
+    # Réponse forcée sans outils (``FINALIZING``) : une réparation se fera sans outils.
+    finalizing: bool = False
 
 
 type PolicySubject = BeforeModel | AfterModel | BeforeTool | AfterTool | OnOutput

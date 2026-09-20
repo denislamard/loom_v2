@@ -25,7 +25,14 @@ from loom_ia.config.later import (
     LATER_STORAGE,
     LATER_TELEMETRY,
 )
-from loom_ia.core.model import AttachmentPolicy, DomainModel, McpServerSpec, ModelSpec, reject_later
+from loom_ia.core.model import (
+    AttachmentPolicy,
+    Budgets,
+    DomainModel,
+    McpServerSpec,
+    ModelSpec,
+    reject_later,
+)
 from loom_ia.telemetry.logs import LogFormat
 
 SCHEMA_VERSION: Final = 1
@@ -221,6 +228,8 @@ class LoomConfig(DomainModel):
     mcp_servers: tuple[McpServerSpec, ...] = ()
     storage: StorageConfig = StorageConfig()
     execution: ExecutionConfig = ExecutionConfig()
+    # Budgets par défaut des agents ; un agent les surcharge par son ``budget`` (J4).
+    budgets: Budgets = Budgets()
     telemetry: TelemetryConfig = TelemetryConfig()
     security: SecurityConfig = SecurityConfig()
     server: ServerConfig = ServerConfig()
@@ -288,6 +297,11 @@ class LoomConfig(DomainModel):
         agents = {agent.name: agent for agent in self.agents}
         for agent in self.agents:
             for ref in agent.subagents:
+                if ref.budget_share is not None and not self.budget_of(agent.name).run.limited:
+                    raise ValueError(
+                        f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : budget_share "
+                        "demande un budget du run (max_cost, max_tokens ou max_calls)"
+                    )
                 target = agents.get(ref.agent)
                 if target is None:
                     raise ValueError(
@@ -300,6 +314,11 @@ class LoomConfig(DomainModel):
                         f"manquante (ni dans la référence ni dans l'agent {ref.agent!r})"
                     )
         return self
+
+    def budget_of(self, agent: str) -> Budgets:
+        """Budgets d'un agent : ceux de la racine, surchargés par son ``budget``."""
+        spec = next((a for a in self.agents if a.name == agent), None)
+        return self.budgets.merged(spec.budget if spec is not None else None)
 
     def mcp_server(self, name: str) -> McpServerSpec:
         """Définition d'un serveur MCP par son nom."""

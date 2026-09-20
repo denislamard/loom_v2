@@ -43,6 +43,7 @@ from typing import Final, Literal, cast
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from loom_ia.core.events import (
+    BudgetExceeded,
     GuardChecked,
     JudgeEvaluated,
     ModelResponded,
@@ -109,14 +110,15 @@ class BoundPolicy:
     max_attempts: int | None = 1
 
 
-# Ce qu'une politique fournie journalise de son propre travail (appel et verdict d'un juge).
-type TracedEvent = ModelRetried | ModelResponded | JudgeEvaluated
+# Ce qu'une politique fournie journalise de son propre travail : appel et verdict
+# d'un juge, limite de budget atteinte.
+type TracedEvent = ModelRetried | ModelResponded | JudgeEvaluated | BudgetExceeded
 type Trace = Callable[[TracedEvent], None]
 type PolicyEvent = PolicyDecided | GuardChecked | TracedEvent
 
 
 class TracingPolicy(ABC):
-    """Politique fournie par loom-ia qui journalise son travail (juge, #21).
+    """Politique fournie par loom-ia qui journalise son travail (juge, #21 ; budget, J4).
 
     ``decide_traced`` remplace ``decide`` quand le moteur l'exécute : ``trace``
     reçoit les événements à écrire (appel de modèle, verdict), dans l'ordre,

@@ -40,6 +40,7 @@ from loom_ia.core.model import (
     Message,
     OutputBlock,
     PendingCall,
+    RunBudget,
     RunId,
     RunState,
     RunStatus,
@@ -87,6 +88,10 @@ class SubAgentDefinition:
     description: str
     # ``max_depth`` de l'agent appelant : profondeur au-delà de laquelle il est masqué.
     max_depth: int = 1
+    # Part de ce qui reste au budget du run appelant, donnée à l'enfant (J4).
+    budget_share: float | None = None
+    # Limites du run de l'agent appelant (sa config) ; s'y ajoute sa propre part reçue.
+    parent_budget: RunBudget | None = None
 
 
 class AgentTool(DelegatedTool):
@@ -120,6 +125,17 @@ class AgentTool(DelegatedTool):
     def child_run_id(self, call: PendingCall) -> RunId:
         return call.child_run_id or new_run_id()
 
+    def _budget(self, parent: RunState) -> tuple[bool, RunBudget | None]:
+        """Part de budget de l'enfant (None sans part), et vrai si le parent n'a plus rien."""
+        share = self.definition.budget_share
+        if share is None:
+            return False, None
+        limits = (self.definition.parent_budget or RunBudget()).tightest(parent.budget)
+        if not limits.limited:
+            return False, None
+        given = limits.share(share, parent.spent)
+        return given is None, given
+
     async def run(
         self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
     ) -> AsyncGenerator[DelegatedPayload | Consumption | ToolOutput]:
@@ -132,6 +148,12 @@ class AgentTool(DelegatedTool):
         # L'enfant écrit dans le journal du parent, et ne diffuse rien en direct.
         ctx = replace(agent, store=writer.store, on_chunk=None)
         if not await ctx.store.read(tenant, session, run_id=child_id):
+            exhausted, budget = self._budget(parent)
+            if exhausted:
+                yield ToolOutput.error(
+                    f"Budget du run atteint : le sous-agent {name} n'est pas lancé."
+                )
+                return
             await begin_run(
                 ctx,
                 Message.user(str(arguments["message"])),
@@ -145,6 +167,7 @@ class AgentTool(DelegatedTool):
                     depth=parent.depth,
                     span_id=run.spans.get(context.call_id),
                     judges=parent.judges,
+                    budget=budget,
                 ),
                 writer=writer,
             )

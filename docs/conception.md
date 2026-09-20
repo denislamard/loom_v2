@@ -314,7 +314,7 @@ Event
 
 | Type | Champs principaux |
 |---|---|
-| `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte, `judges` (`auto`, `force`, `skip`) |
+| `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte, `judges` (`auto`, `force`, `skip`), `budget` (part reçue du parent) |
 | `message.user` | blocs de contenu ; `kind` (`request`, `repair`), politique et `tools` d'une réparation |
 | `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué), `judge` (appel d'un juge) |
 | `model.retried` | tentative, type d'erreur, délai, call_id (rôle délégué) |
@@ -325,6 +325,7 @@ Event
 | `tool.source_unavailable` | source (serveur MCP), erreur, required |
 | `guard.checked` | guard, cible (`output`, `role:<nom>`, `tool:<nom>`), outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized, resolution, politique, call_id |
 | `judge.evaluated` | juge, cible, modèle juge, notes par critère (note, seuil, bloquant, motif), `passed`, `blocked`, tentative, politique, call_id |
+| `budget.exceeded` | portée (`run`, `session`), limite (`max_cost`, `max_tokens`, `max_calls`), plafond, consommation, action (`warn`, `stop`), politique |
 | `policy.decided` | politique, point, décision, motif, call_id, tentative et `tools` (`Retry`), arguments ou réponse remplacés, `error` |
 | `approval.requested` / `.granted` / `.rejected` / `.expired` | tool_name, call_id, arguments, auteur, motif, scope, expire_at |
 | `artifact.stored` | uri, type MIME, taille, nom, origine (`attachment`, `tool_output`, `offload`), call_id |
@@ -450,7 +451,7 @@ Decision = Continue
 - Une politique est une fonction décorée par `@policy(points, decisions)` (`loom_ia.policies`) ; elle reçoit le sujet du point (`BeforeModel`, `AfterModel`, `BeforeTool`, `AfterTool`, `OnOutput`) et son `PolicyContext` (nom, `params`, réparations déjà demandées). Port `Policy` dans le noyau ; exécution de la chaîne dans `engine/hooks.py`.
 - `before_model` s'exécute dans l'étape d'appel du modèle ; `after_model` et `on_output` au moment de décider la suite d'une réponse (réévalués à la reprise tant que leur décision n'est pas appliquée) ; `before_tool` et `after_tool` dans l'exécuteur.
 - `Retry` à `after_model` et `on_output` : réparation par l'orchestrateur (diagnostic en `message.user` de `kind: repair`, exclu de l'historique de session avec la réponse refusée) ; à `after_tool`, un rôle est réparé par son propre modèle (depuis 3.2, §9.7) et le résultat d'un outil revient à l'orchestrateur en erreur avec le diagnostic. `Pause` est refusée au démarrage jusqu'en J4.3.
-- Défauts : délai 5 s, `on_error: block`, `max_attempts: 1` (par run à `after_model` et `on_output`, par appel à `after_tool`). Politiques fournies : `loom.require_tool` (`tool_choice: required` tant qu'aucun outil n'a été appelé, jamais en `FINALIZING`) ; `loom.contract` (contrats de sortie, 3.2, §9.7) ; `loom.judge.<nom>` (juges, 3.3, §9.7).
+- Défauts : délai 5 s, `on_error: block`, `max_attempts: 1` (par run à `after_model` et `on_output`, par appel à `after_tool`). Politiques fournies : `loom.require_tool` (`tool_choice: required` tant qu'aucun outil n'a été appelé, jamais en `FINALIZING`) ; `loom.contract` (contrats de sortie, 3.2, §9.7) ; `loom.judge.<nom>` (juges, 3.3, §9.7) ; `loom.budget` (budgets, 3.4, §15).
 
 ### 9.5 Outils
 
@@ -947,6 +948,15 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - **Sous-agents :** chacun reçoit une part du budget de son parent.
 - **Rapport :** consommation détaillée d'un run ou d'une session (J5).
 
+**Réalisation (phase 3.4)** (détails : `fonctions.md`, point 1) :
+
+- Tarifs par palier (`pricing.tiers`), choisis par appel selon ses tokens d'entrée.
+- Ledger : projection des `model.responded` (`core/projections/ledger.py`), sans double compte des sous-agents ; ventilation par run, rôle (`main`, rôles, `judge:<nom>`), modèle et session.
+- Budgets : `budgets` (racine) et `budget` (agent), fusionnés clé par clé ; `run: {max_cost, max_tokens, max_calls}`, `session: {max_cost, max_tokens}`, `on_exceed: stop | warn`. Politique fournie `loom.budget` à `before_model` : `budget.exceeded` une fois par limite, puis `Stop` avec `stop`. Le budget de session compte les runs précédents de la session (calculé dans le journal par `drive`).
+- Sous-agents : `budget_share` = part de ce qui reste au parent au moment de l'appel, écrite dans le `run.started` de l'enfant ; parent épuisé : l'enfant n'est pas lancé.
+- Rapport : `Loom.report(run_id | session_id=…)`, `loom report`. Modèle sans tarif sous budget en dollars : avertissement (backlog #010). Par client et par période : J5.
+- Réponse forcée : consigne en dernier message de sa requête (`FINALIZE_HINT`, jamais journalisée) ; `OnOutput.finalizing` ; une réparation de la réponse forcée est une génération de plus que celle qui borne le dépassement.
+
 ## 16. Sécurité
 
 ### 16.1 Clés API
@@ -1039,7 +1049,13 @@ models:
       max_image_bytes: 5242880
       tool_result_media: true
       context_window: 200000
-    pricing: {input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25}   # $ / M tokens
+    pricing:                          # $ / M tokens
+      input: 1.0
+      output: 5.0
+      cache_read: 0.1
+      cache_write: 1.25
+      tiers:                          # au-delà de `above` tokens d'entrée par appel (cache compris)
+        - {above: 200000, input: 2.0, output: 10.0}   # un prix absent reprend celui de base
 ```
 
 ### 17.4 Agents (`agents/*.yaml`)
@@ -1095,7 +1111,7 @@ subagents:                            # outils de kind agent, un argument : mess
   - agent: verifier_devis
     name: verifier                    # défaut : le nom de l'agent
     description: Vérifie la cohérence d'un devis.   # défaut : celle de l'agent
-    budget_share: 0.3                 # J3.4
+    budget_share: 0.3                 # part de ce qui reste au budget du run appelant
 policies:
   - hook: loom.require_tool           # politique fournie : un premier appel d'outil imposé
   - hook: myapp.policies:plafond_montant   # nom enregistré (imports) ou module:attr
@@ -1196,10 +1212,10 @@ execution:
 ### 17.7 Budgets et télémétrie
 
 ```yaml
-budgets:
-  run:     {max_cost: 0.05, max_calls: 25}
-  session: {max_cost: 1.0}
-  tenant:  {max_cost_per_day: 10.0}
+budgets:                              # défauts ; un agent les surcharge par `budget`, clé par clé
+  run:     {max_cost: 0.05, max_tokens: 200000, max_calls: 25}   # max_calls : orchestrateur, rôles, juges
+  session: {max_cost: 1.0, max_tokens: 2000000}                  # runs précédents + run en cours
+  tenant:  {max_cost_per_day: 10.0}   # J5
   on_exceed: stop                     # warn | stop
 
 telemetry:
@@ -1283,6 +1299,7 @@ async with loom:
 
 - `run()` accepte `session_id`, `tenant`, des pièces jointes, `judges` (`auto`, `force`, `skip` ; depuis 3.3) et un `approver` optionnel ; il renvoie un `RunResult` (statut, réponse, `run_id`, approbations en attente).
 - `stream()` renvoie un itérateur d'événements (durables et éphémères).
+- `report(run_id)` ou `report(session_id=…)` rend la consommation d'un run (et de ses sous-runs) ou d'une session : total, par run, par rôle, par modèle (depuis 3.4).
 - `stream()`, `follow()` et `events()` rendent l'arbre du run : ses événements et ceux de ses sous-runs, dans l'ordre du journal ; `subruns=False` s'en tient au run.
 
 ### 18.2 HTTP REST
@@ -1318,7 +1335,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
 ### 18.4 CLI
 
-Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config.
+Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4).
 
 ## 19. Projet
 

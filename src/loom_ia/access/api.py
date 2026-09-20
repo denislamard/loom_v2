@@ -73,6 +73,7 @@ from loom_ia.runtime import (
     create_mcp_pool,
     load_registry,
 )
+from loom_ia.usage import UsageReport, usage_report
 
 # Ce qu'un run donne à voir pendant qu'il se déroule.
 type StreamItem = Event | ModelChunk
@@ -424,6 +425,26 @@ class Loom:
         """Ce qu'un run a produit, relu depuis son journal."""
         state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
         return RunResult.of(state)
+
+    async def report(
+        self,
+        run_id: RunId | None = None,
+        *,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+    ) -> UsageReport:
+        """Rapport de consommation (J5) : d'un run et de ses sous-runs, ou de toute une session.
+
+        Sans ``run_id``, ``session_id`` est requis.
+        """
+        if run_id is None and session_id is None:
+            raise ValueError("report() demande un run_id ou un session_id")
+        tenant = tenant_id or DEFAULT_TENANT
+        session = session_id or SessionId(str(run_id))
+        events = await self._store.read(tenant, session)
+        if run_id is not None and not any(e.run_id == run_id for e in events):
+            raise UnknownRun(run_id)
+        return usage_report(events, session, run_id)
 
     async def artifact(self, uri: str) -> bytes:
         """Octets d'un fichier du stockage ; lève ``ArtifactNotFound``."""

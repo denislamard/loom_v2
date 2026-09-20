@@ -4,8 +4,8 @@
 Le direct de la CLI (``loom run --stream``) et les notifications de
 progression du serveur MCP décrivent un run de la même façon : un appel
 d'outil et son issue, un fichier rangé, un serveur indisponible, une
-décision de politique, un contrôle de sortie et le verdict d'un juge, un
-sous-agent qui démarre puis se termine. Les lignes d'un sous-run sont
+décision de politique, un contrôle de sortie et le verdict d'un juge, une
+limite de budget atteinte, un sous-agent qui démarre puis se termine. Les lignes d'un sous-run sont
 décalées selon sa profondeur :
 
     · verifier(message='Vérifie : …')
@@ -20,6 +20,7 @@ from typing import Final
 
 from loom_ia.core.events import (
     ArtifactStored,
+    BudgetExceeded,
     Event,
     GuardChecked,
     JudgeEvaluated,
@@ -32,6 +33,7 @@ from loom_ia.core.events import (
     ToolSourceUnavailable,
 )
 from loom_ia.core.model import RunId
+from loom_ia.usage import describe as describe_budget
 
 INDENT: Final = "  "
 STORED: Final = {
@@ -110,10 +112,15 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
                 for c in payload.criteria
             )
             return f"juge {payload.judge} ({payload.model_id}) : {notes}"
-        case PolicyDecided(policy=policy) if policy == "loom.contract" or policy.startswith(
-            "loom.judge."
-        ):
-            # La ligne du contrôle dit déjà tout.
+        case BudgetExceeded():
+            action = "arrêt" if payload.action == "stop" else "avertissement"
+            text = describe_budget(payload.scope, payload.limit, payload.value, payload.spent)
+            return f"{text} — {action}"
+        case PolicyDecided(policy=policy) if policy in {
+            "loom.contract",
+            "loom.budget",
+        } or policy.startswith("loom.judge."):
+            # La ligne du contrôle ou du budget dit déjà tout.
             return None
         case PolicyDecided():
             reason = f" — {payload.reason}" if payload.reason else ""

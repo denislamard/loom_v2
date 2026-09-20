@@ -33,6 +33,7 @@ from loom_ia.core.model import (
     DEFAULT_TENANT,
     JUDGES_MODES,
     Attachment,
+    Budgets,
     RunId,
     SessionId,
     StreamReset,
@@ -42,6 +43,8 @@ from loom_ia.core.model import (
 from loom_ia.core.ports import Policy, SourceContext, Tool
 from loom_ia.engine import ToolExecutor
 from loom_ia.runtime import apply_logging, load_registry
+from loom_ia.usage import UsageReport
+from loom_ia.usage import render as render_report
 
 PROG: Final = "loom"
 DEFAULT_CONFIG: Final = Path("loom.yaml")
@@ -140,6 +143,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create.set_defaults(handler=cmd_keys_create)
 
+    report = commands.add_parser(
+        "report", help="consommation d'un run (et de ses sous-runs) ou d'une session"
+    )
+    report.add_argument("run_id", nargs="?", default=None)
+    report.add_argument("--session", type=str, default=None, help="journal du run, ou session")
+    report.add_argument("--json", action="store_true", help="affiche le rapport en JSON")
+    report.set_defaults(handler=cmd_report)
+
     schema = commands.add_parser("schema", help="JSON Schema du fichier de configuration")
     schema.set_defaults(handler=cmd_schema)
     return parser
@@ -187,6 +198,9 @@ async def _validate(args: argparse.Namespace) -> int:
             )
             for bound in context.policies.bound:
                 print(f"    politique {bound.name} : {', '.join(sorted(bound.points))}")
+            budgets = config.budget_of(spec.name)
+            if budgets.limited:
+                print(f"    budget : {_budget_line(budgets)}")
             for name, role, judge in spec.judges:
                 target = f"rôle {role.name}" if role is not None else "réponse finale"
                 sample = f", sample {judge.when.sample:g}" if judge.when.sample < 1 else ""
@@ -254,6 +268,31 @@ def cmd_resume(args: argparse.Namespace) -> int:
             return await loom.resume(RunId(args.run_id), session_id=session)
 
     return _report(asyncio.run(go()), as_json=args.json)
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    apply_logging(config)
+    if args.run_id is None and args.session is None:
+        print("Donner un run_id ou --session.", file=sys.stderr)
+        return REFUSED
+    run_id = RunId(args.run_id) if args.run_id else None
+    session = SessionId(args.session) if args.session else None
+
+    async def go() -> UsageReport:
+        async with Loom(config) as loom:
+            return await loom.report(run_id, session_id=session)
+
+    try:
+        report = asyncio.run(go())
+    except UnknownRun as error:
+        print(error.args[0], file=sys.stderr)
+        return FAILED
+    if args.json:
+        print(report.model_dump_json(indent=2))
+    else:
+        print("\n".join(render_report(report)))
+    return OK
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -348,6 +387,18 @@ class _Live:
             print(file=sys.stdout, flush=True)
             self._open = False
         print(line, file=sys.stderr)
+
+
+def _budget_line(budgets: Budgets) -> str:
+    """Limites d'un agent, en une ligne : « run max_cost 0.05, max_calls 20 ; stop »."""
+    parts: list[str] = []
+    for scope, limits in (("run", budgets.run), ("session", budgets.session)):
+        given = [
+            f"{name} {value:g}" for name, value in limits.model_dump().items() if value is not None
+        ]
+        if given:
+            parts.append(f"{scope} {', '.join(given)}")
+    return f"{' ; '.join(parts)} ; {budgets.on_exceed}"
 
 
 async def _show_sources(agent: str, tools: ToolExecutor) -> None:

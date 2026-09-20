@@ -201,7 +201,7 @@ def broken(**changes: Any) -> dict[str, Any]:
         (agent(subagents=[{"agent": "x"}]), "sous-agent 'x' : agent 'x' non déclaré"),
         (
             agent(subagents=[{"agent": "demo", "budget_share": 0.3}]),
-            "'budget_share' : prévu pour le jalon J3.4",
+            "budget_share demande un budget du run",
         ),
         (
             agent(subagents=[{"agent": "demo"}, {"agent": "demo"}]),

@@ -5,6 +5,7 @@ from loom_ia.core.events.envelope import SCHEMA_VERSION, Event, EventDraft, RunS
 from loom_ia.core.events.payloads import (
     DURABLE_PAYLOADS,
     ArtifactStored,
+    BudgetExceeded,
     DurablePayload,
     Effect,
     EventCategory,
@@ -34,6 +35,7 @@ __all__ = [
     "DURABLE_PAYLOADS",
     "SCHEMA_VERSION",
     "ArtifactStored",
+    "BudgetExceeded",
     "DurablePayload",
     "Effect",
     "Event",

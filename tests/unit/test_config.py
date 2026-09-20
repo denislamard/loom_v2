@@ -114,7 +114,7 @@ def test_config_can_be_written_in_python() -> None:
     ("root", "agents", "message"),
     [
         ({"version": 2}, None, "Version de config 2 non prise en charge"),
-        ({"budgets": {}}, None, "'budgets' : prévu pour le jalon J3"),
+        ({"budgets": {"tenant": {}}}, None, "'tenant' : prévu pour le jalon J5"),
         ({"profiles": {}}, None, "'profiles' : prévu pour le jalon J5"),
         ({"storage": {"idempotency": {}}}, None, "'idempotency' : prévu pour le jalon J4"),
         (
@@ -145,8 +145,8 @@ def test_config_can_be_written_in_python() -> None:
         ),
         (
             {},
-            {"demo": {**AGENT, "budget": {"max_usd": 1}}},
-            "'budget' : prévu pour le jalon J3",
+            {"demo": {**AGENT, "approval": {}}},
+            "'approval' : prévu pour le jalon J4.3",
         ),
         (
             {},

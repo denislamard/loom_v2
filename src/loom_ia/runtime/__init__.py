@@ -4,6 +4,7 @@
 from loom_ia.runtime.wiring import (
     Agent,
     apply_logging,
+    budget_warnings,
     build_agent,
     build_policies,
     create_artifact_store,
@@ -21,6 +22,7 @@ from loom_ia.runtime.wiring import (
 __all__ = [
     "Agent",
     "apply_logging",
+    "budget_warnings",
     "build_agent",
     "build_policies",
     "create_artifact_store",

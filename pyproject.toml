@@ -141,6 +141,7 @@ forbidden_modules = [
     "loom_ia.policies",
     "loom_ia.testing",
     "loom_ia.tools",
+    "loom_ia.usage",
 ]
 
 [[tool.importlinter.contracts]]

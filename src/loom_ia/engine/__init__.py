@@ -33,6 +33,7 @@ from loom_ia.engine.hooks import (
 )
 from loom_ia.engine.loop import (
     DEFAULT_MAX_ITERATIONS,
+    FINALIZE_HINT,
     TERMINAL_RULE,
     ParentRun,
     RunContext,
@@ -75,6 +76,7 @@ __all__ = [
     "DEFAULT_OFFLOAD_OVER",
     "DEFAULT_POLICY_TIMEOUT",
     "DEFAULT_TOOL_TIMEOUT",
+    "FINALIZE_HINT",
     "IMAGE_TOKENS",
     "REFS_HINT",
     "REF_KEY",

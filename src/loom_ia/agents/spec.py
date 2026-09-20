@@ -3,9 +3,9 @@
 
 Sous-ensemble des jalons J1 à J3 : orchestrateur (``main``), outils Python,
 serveurs MCP, rôles délégués (dont le rôle vision, qui reçoit les pièces
-jointes), sous-agents, politiques (J3.1), contrats de sortie (J3.2) et juges
-(J3.3). Le budget arrive avec sa phase ; le déclarer aujourd'hui donne une
-erreur qui nomme la phase.
+jointes), sous-agents, politiques (J3.1), contrats de sortie (J3.2), juges
+(J3.3) et budgets (J3.4). Ce qui arrive plus tard (approbations, délai d'un
+run, secours) donne une erreur qui nomme sa phase.
 
 ``main`` est lui-même un rôle (C6) : il partage avec les rôles délégués le
 modèle, le prompt système et les réglages ``llm``.
@@ -35,6 +35,7 @@ from loom_ia.core.model import (
     RESERVED_PREFIX,
     TOOL_NAME_PATTERN,
     Approval,
+    Budgets,
     Criterion,
     DomainModel,
     HookPoint,
@@ -55,7 +56,6 @@ AGENT_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 # Clés du schéma complet d'un agent, prévues pour plus tard (§17.4).
 LATER_AGENT: Final[dict[str, str]] = {
     "approval": "J4.3 (approbations)",
-    "budget": "J3.4 (coûts et budgets)",
     "timeout": "J4.2 (cycle de vie des runs : délai, annulation)",
 }
 LATER_MAIN: Final[dict[str, str]] = {
@@ -64,9 +64,7 @@ LATER_MAIN: Final[dict[str, str]] = {
 LATER_ROLE: Final[dict[str, str]] = {
     "fallbacks": "J3.5 (modèle de secours)",
 }
-LATER_SUBAGENT: Final[dict[str, str]] = {
-    "budget_share": "J3.4 (coûts et budgets)",
-}
+LATER_SUBAGENT: Final[dict[str, str]] = {}
 LATER_CONTEXT: Final[dict[str, str]] = {
     "session_summary": "J4.1 (sessions)",
     "last_turns": "J4.1 (sessions)",
@@ -394,6 +392,8 @@ class SubAgentRef(DomainModel):
     # Nom de l'outil vu par l'orchestrateur ; par défaut, celui de l'agent.
     name: str | None = Field(default=None, pattern=TOOL_NAME_PATTERN)
     description: str | None = None
+    # Part de ce qui reste au budget du run appelant au moment de l'appel (J4).
+    budget_share: float | None = Field(default=None, gt=0.0, le=1.0)
 
     @model_validator(mode="before")
     @classmethod
@@ -460,6 +460,8 @@ class AgentSpec(DomainModel):
     output: OutputContract | None = None
     # Juge de la réponse finale (E3, #21), après son contrat.
     judge: JudgeSpec | None = None
+    # Budgets de l'agent (J4) : surchargent ceux de la racine, clé par clé.
+    budget: Budgets | None = None
     # Diffusion de la réponse finale ; par défaut ``after_guards`` si elle est
     # contrôlée (contrat, juge, politique on_output, rôle terminal sous contrat
     # ou jugé), sinon ``live`` (#11).

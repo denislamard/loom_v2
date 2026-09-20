@@ -2,6 +2,16 @@
 """Modèle de domaine : messages, blocs, fichiers, usage, outils, flux des modèles, état d'un run."""
 
 from loom_ia.core.model.base import DomainModel, UnsupportedKey, reject_later
+from loom_ia.core.model.budget import (
+    LATER_BUDGETS,
+    BudgetLimit,
+    Budgets,
+    BudgetScope,
+    OnExceed,
+    RunBudget,
+    SessionBudget,
+    Spent,
+)
 from loom_ia.core.model.content import (
     AnthropicMeta,
     ArtifactRefBlock,
@@ -87,6 +97,7 @@ from loom_ia.core.model.policy import (
     ALLOWED_DECISIONS,
     CONTINUE,
     DECISION_KINDS,
+    FINALIZE_HINT,
     HOOK_POINTS,
     LATER_DECISIONS,
     POLICY_NAME_PATTERN,
@@ -144,7 +155,7 @@ from loom_ia.core.model.tooling import (
     ToolOverrides,
     ToolSpec,
 )
-from loom_ia.core.model.usage import Pricing, Usage
+from loom_ia.core.model.usage import PriceTier, Pricing, Usage
 
 __all__ = [
     "ALLOWED_DECISIONS",
@@ -154,10 +165,12 @@ __all__ = [
     "DECISION_KINDS",
     "DEFAULT_MIN_SCORE",
     "DEFAULT_TENANT",
+    "FINALIZE_HINT",
     "HOOK_POINTS",
     "IMAGE_TYPES",
     "INVALID_JSON_KEY",
     "JUDGES_MODES",
+    "LATER_BUDGETS",
     "LATER_DECISIONS",
     "MAIN_ROLE",
     "MCP_NAME_PATTERN",
@@ -181,6 +194,9 @@ __all__ = [
     "AttachmentPolicy",
     "BeforeModel",
     "BeforeTool",
+    "BudgetLimit",
+    "BudgetScope",
+    "Budgets",
     "CallerContext",
     "CheckOutcome",
     "CheckResolution",
@@ -215,6 +231,7 @@ __all__ = [
     "ModelResponse",
     "ModelSpec",
     "ModelTimeouts",
+    "OnExceed",
     "OnFailure",
     "OnOutput",
     "OpenAIMeta",
@@ -225,6 +242,7 @@ __all__ = [
     "PendingRepair",
     "PolicyContext",
     "PolicySubject",
+    "PriceTier",
     "Pricing",
     "ProviderMeta",
     "ReasoningBlock",
@@ -236,14 +254,17 @@ __all__ = [
     "Retry",
     "RetryPolicy",
     "Role",
+    "RunBudget",
     "RunId",
     "RunState",
     "RunStatus",
     "Sdk",
+    "SessionBudget",
     "SessionId",
     "SideEffects",
     "SkipReason",
     "SpanId",
+    "Spent",
     "Stop",
     "StopReason",
     "Stopped",

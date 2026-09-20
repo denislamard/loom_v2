@@ -9,7 +9,6 @@ from typing import Final
 
 LATER_ROOT: Final[dict[str, str]] = {
     "sessions": "J4 (sessions et compaction)",
-    "budgets": "J3 (coûts et budgets)",
     "tenants": "J5 (multi-clients)",
     "profile": "J5 (profils dev et prod)",
     "profiles": "J5 (profils dev et prod)",

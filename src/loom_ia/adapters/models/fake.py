@@ -36,7 +36,8 @@ Comme un fournisseur, le modèle respecte ``tool_choice`` : avec ``required``,
 une réponse sans appel d'outil est une erreur du script ; avec ``none``, une
 réponse qui appelle des outils donne à la place son texte ``forced`` (la
 réponse forcée d'un run arrêté), ou à défaut son texte. Un diagnostic de
-réparation (#20) n'est pas une nouvelle demande : le script continue.
+réparation (#20) n'est pas une nouvelle demande, ni la consigne de la réponse
+forcée : le script continue.
 """
 
 from collections.abc import AsyncGenerator
@@ -45,6 +46,7 @@ from typing import Final
 from pydantic import Field, JsonValue, TypeAdapter
 
 from loom_ia.core.model import (
+    FINALIZE_HINT,
     MOVED_IMAGES,
     REPAIR_PREFIX,
     ContentBlock,
@@ -150,11 +152,11 @@ def _turn(request: ModelRequest) -> int:
     """Réponses déjà données depuis la dernière demande de l'utilisateur.
 
     Ne sont pas des demandes : le message qui porte les images des résultats
-    d'outils, et le diagnostic d'une réparation.
+    d'outils, le diagnostic d'une réparation, la consigne de la réponse forcée.
     """
     count = 0
     for message in reversed(request.messages):
-        if message.role == "user" and not _moved_images(message) and not _repair(message):
+        if message.role == "user" and not _engine_note(message):
             break
         if message.role == "assistant":
             count += 1
@@ -171,10 +173,15 @@ def _repair(message: Message) -> bool:
     return isinstance(first, TextBlock) and first.text.startswith(REPAIR_PREFIX)
 
 
+def _engine_note(message: Message) -> bool:
+    """Message ajouté par le moteur : images déplacées, réparation, réponse forcée."""
+    return _moved_images(message) or _repair(message) or message.text == FINALIZE_HINT
+
+
 def _last_user_text(request: ModelRequest) -> str:
-    """Dernière demande de l'utilisateur (ni images déplacées, ni diagnostic de réparation)."""
+    """Dernière demande de l'utilisateur, sans les messages ajoutés par le moteur."""
     for message in reversed(request.messages):
-        if message.role == "user" and not _moved_images(message) and not _repair(message):
+        if message.role == "user" and not _engine_note(message):
             return message.text
     return ""
 

@@ -216,6 +216,18 @@ Les métriques et le masquage relèvent de l'observation, pas des hooks.
 | `after_tool` | contrat ou juge d'un rôle, déport des gros résultats |
 | `on_output` | juge sur la réponse finale |
 
+**Réalisation (phase 3.4, coûts et budgets, J1 à J5 hors client et période) :**
+
+- **Comptage et coût (J1, J2) :** déjà dans chaque `model.responded` (usage, coût). Les tarifs gagnent des paliers : `pricing.tiers: [{above, input, output, cache_read, cache_write}]`, le palier le plus haut dont le seuil est dépassé par les tokens d'entrée de l'appel (cache compris) s'applique à tout l'appel ; un prix absent reprend celui de base. MiniMax-M3 double ses prix au-delà de 512k.
+- **Ledger (J3) :** projection du journal (`core/projections/ledger.py`) : une ligne par `model.responded` (run, run racine, session, client, agent, rôle de l'enveloppe — `main`, un rôle, `judge:<nom>` —, modèle, usage, coût). La consommation d'un sous-agent recopiée dans le `tool.completed` de son appel n'y entre pas : ses appels y sont déjà. `spent(events)` en fait la somme.
+- **Budgets (J4) :** `budgets:` à la racine (défauts des agents) et `budget:` dans un agent, fusionnés clé par clé (`null` retire une limite) : `run: {max_cost, max_tokens, max_calls}`, `session: {max_cost, max_tokens}`, `on_exceed: stop | warn` (`stop` par défaut). `max_calls` compte les appels de modèle du run (orchestrateur, rôles, juges) ; `max_tokens` et `max_cost` comprennent la consommation des sous-agents. Budgets par client et par période : J5 (`tenant` refusé).
+- **Politique fournie `loom.budget`** (`loom_ia.usage`, `BudgetGuard`) au point `before_model`, jamais pendant la réponse forcée : une limite atteinte (consommation ≥ plafond) écrit un `budget.exceeded` (une fois par limite et par run), puis, avec `stop`, `Stop` : `FINALIZING`, réponse forcée sans outils, dépassement borné à cette génération. Le budget de session (run racine) ajoute la consommation des runs précédents de la session, calculée par `drive` dans le journal et donnée à la politique (`BeforeModel.session`). Branchée après les juges, avant les politiques de l'utilisateur, pour tout agent qui a une limite ou qui peut recevoir une part.
+- **Sous-agent (`budget_share`) :** l'enfant reçoit la part donnée de ce qui reste au run appelant (ses limites de run, et sa propre part s'il en a reçu une), au moment de l'appel ; les limites entières valent au moins 1. Elle est écrite dans le `run.started` de l'enfant (`budget`), et s'ajoute au budget propre de son agent (la limite la plus basse l'emporte). Si une limite du parent est déjà atteinte, l'enfant n'est pas lancé : le résultat est une erreur. `budget_share` exige un budget du run pour l'agent appelant (contrôle au chargement).
+- **Rapport (J5) :** `Loom.report(run_id)` (le run et ses sous-runs) ou `Loom.report(session_id=…)` : `UsageReport` (total, par run avec agent, profondeur et statut, par rôle — préfixé par l'agent quand plusieurs agents ont travaillé —, par modèle) ; `loom report <run_id> [--session] [--json]`. REST et MCP : 3.6.
+- **Modèle sans tarif sous budget en dollars (backlog #010) :** avertissement au montage (logs) ; erreur en profil prod avec les profils (J5). Un budget en tokens reste efficace.
+- **Accès :** ligne de déroulé « budget du run atteint : 0,00318 $ (plafond 0,00200 $) — arrêt » ; le `policy.decided` de `loom.budget` n'a pas de ligne ; `loom validate` affiche le budget de chaque agent.
+- **Réponse forcée (après les runs réels) :** la requête de la réponse forcée se termine par une consigne (`FINALIZE_HINT` : plus d'outil, répondre en texte avec ce qui est déjà obtenu, dire ce qui reste à faire), jamais journalisée ; en dernier message plutôt que dans le prompt système (premier essai, sans effet sur MiniMax-M3), elle pèse plus et laisse intact le cache du préfixe. Sans consigne, MiniMax-M3 privé d'outils (`tool_choice: none`) écrit son appel d'outil en texte, dans son format interne. `OnOutput.finalizing` dit aux politiques que la réponse est forcée : une réparation s'y fait sans outils, et chaque réparation est une génération de plus que celle qui borne le dépassement. Les transitions écrites pendant une étape (arrêt ou échec avant l'appel du modèle, échec du modèle ou d'un lot d'outils) portent le numéro de cette étape.
+
 ### 2. Décisions des hooks
 
 Un hook renvoie une décision typée :
@@ -269,7 +281,7 @@ Une décision non autorisée à un point donné est une erreur de config, détec
 - **Où :** `before_model` dans l'étape d'appel du modèle ; `after_model` et `on_output` au moment de décider la suite d'une réponse, pour qu'une reprise les réévalue tant que leur décision n'est pas appliquée ; `before_tool` et `after_tool` dans l'exécuteur. Un appel repris après une interruption n'est pas réévalué : ses arguments remplacés sont repris du journal.
 - **Journal :** `policy.decided` (catégorie `policy`) : politique, point, décision, motif, `call_id` ; `attempt` et `tools` d'un `Retry` ; `arguments` d'un `Replace` d'arguments ; `output` d'un `Replace` de réponse finale ; `error`. Il est écrit avant son effet, dans le span de l'étape, de l'appel ou du run. `RunState` : compteurs `retries` par politique, `pending_repair` (réparation décidée, pas encore demandée), positions des diagnostics (exclus de l'historique de session avec la réponse refusée), `replaced_output`, `PendingCall.replaced_arguments`.
 - **Garde-fous :** délai par politique (5 s par défaut) ; `on_error: block` (défaut, donne `Fail`) ou `allow` (`policy.decided` de décision `continue` avec `error`, statut `warning`). Exception, délai dépassé, décision non déclarée ou non permise, valeur de remplacement du mauvais type : erreurs de la politique. `max_attempts` (1 par défaut) borne les `Retry` d'une politique : dans le run à `after_model` et `on_output`, par appel à `after_tool` (depuis la phase 3.2, où le compteur du `RunState` ne compte plus que les réparations de l'orchestrateur) ; au-delà, `Fail`.
-- **Politique fournie :** `loom.require_tool` (backlog #012) impose `tool_choice: required` tant que le run n'a appelé aucun outil. Jamais en `FINALIZING` : le moteur remet `none`, quoi qu'une politique demande. `ToolChoice` gagne `required` : `{"type": "any"}` chez Anthropic, `"required"` chez OpenAI. Depuis, deux politiques fournies sont branchées d'office : `loom.contract` (3.2, point 20) et `loom.judge.<nom>` (3.3, point 21).
+- **Politique fournie :** `loom.require_tool` (backlog #012) impose `tool_choice: required` tant que le run n'a appelé aucun outil. Jamais en `FINALIZING` : le moteur remet `none`, quoi qu'une politique demande. `ToolChoice` gagne `required` : `{"type": "any"}` chez Anthropic, `"required"` chez OpenAI. Depuis, d'autres politiques fournies sont branchées d'office : `loom.contract` (3.2, point 20), `loom.judge.<nom>` (3.3, point 21) et `loom.budget` (3.4, point 1).
 - **Accès :** le déroulé (CLI `--stream`, progression MCP) a une ligne par décision ; SSE et `events()` portent les `policy.decided` ; `loom validate` liste les politiques. Avec `--stream` en diffusion `live`, une réponse remplacée après sa diffusion est réaffichée (« Réponse retenue ») ; depuis la phase 3.2, une réponse finale contrôlée n'est diffusée qu'après ses contrôles (`stream_output: after_guards`, point 11).
 
 ### 3. Boucle : machine à états pilotée par événements (option B)
@@ -363,7 +375,7 @@ RunState
 
 **Réalisation (phase 2.4) :**
 
-- **Appel :** un sous-agent est un outil délégué (`kind: agent`) qui ne prend qu'un argument, `message` ; sa description reçoit une consigne : il ne voit ni la conversation ni les résultats précédents. Config : `subagents: [{agent, name?, description?}]` (nom et description de l'agent par défaut) ; `budget_share` arrive en 3.4.
+- **Appel :** un sous-agent est un outil délégué (`kind: agent`) qui ne prend qu'un argument, `message` ; sa description reçoit une consigne : il ne voit ni la conversation ni les résultats précédents. Config : `subagents: [{agent, name?, description?}]` (nom et description de l'agent par défaut)  ; `budget_share` depuis 3.4 (point 1).
 - **Run enfant :** écrit dans le journal du parent (même session), avec le `root_run_id` du parent, `parent_run_id`, `parent_call_id`, `depth + 1` et le contexte de l'appelant ; son span racine est rattaché au span de l'appel. Il n'a ni l'historique de session ni celui du parent, et `history` l'ignore.
 - **Écritures :** parent et enfants partagent un écrivain de session (verrou et dernier `seq`), ce qui permet plusieurs sous-agents en parallèle dans le même journal.
 - **Retour :** la réponse finale de l'enfant devient le résultat d'outil ; un échec ou une réponse vide deviennent un résultat d'erreur. `tool.completed` porte la consommation de l'enfant (usage et coût de tout son run), ajoutée au parent.
@@ -783,7 +795,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 
 | Type | Champs principaux |
 |---|---|
-| `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte, `judges` (`auto`, `force`, `skip` ; facette si autre que `auto`) |
+| `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte, `judges` (`auto`, `force`, `skip` ; facette si autre que `auto`), `budget` (part reçue du parent, voir point 1) |
 | `message.user` | blocs de contenu (pièces jointes par référence) ; `kind` : `request`, ou `repair` pour le diagnostic d'une réparation (politique, `tools`) |
 | `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué), `judge` (appel d'un juge : coût compté, ni message ni itération) |
 | `tool.called` | tool_name, tool_kind, call_id, arguments, refs, child_run_id (sous-agent) |
@@ -791,6 +803,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `tool.source_unavailable` | source (serveur MCP), erreur, required (voir point 19) |
 | `guard.checked` | guard, cible (`output`, `role:<nom>`, `tool:<nom>`), outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized, resolution (`retry`, `fail`, `unverified`, `fallback`), politique, call_id (voir points 20 et 21) |
 | `judge.evaluated` | juge, cible, modèle juge, notes par critère (note, seuil, bloquant, motif), `passed`, `blocked`, tentative, politique, call_id (voir point 21) |
+| `budget.exceeded` | portée (`run`, `session`), limite (`max_cost`, `max_tokens`, `max_calls`), plafond, consommation, action (`warn`, `stop`), politique (voir point 1) |
 | `approval.requested` / `.granted` / `.rejected` / `.expired` | tool_name, call_id, arguments, auteur, motif, scope, expire_at (voir point 17) |
 | `artifact.stored` | uri, type MIME, taille |
 | `session.compacted` | résumé, up_to_seq, tokens avant/après |
