@@ -23,9 +23,11 @@ from collections.abc import Iterable
 from loom_ia.core.events import (
     ArtifactStored,
     BudgetExceeded,
+    CircuitOpened,
     Event,
     GuardChecked,
     JudgeEvaluated,
+    ModelFellBack,
     ModelResponded,
     ModelRetried,
     PolicyDecided,
@@ -148,7 +150,9 @@ def apply(state: RunState | None, event: Event) -> RunState:
         case BudgetExceeded() as exceeded:
             if exceeded.key not in state.exceeded:
                 update["exceeded"] = (*state.exceeded, exceeded.key)
-        case StepCompleted() | ModelRetried() | ToolSourceUnavailable():
+        case ModelFellBack(slot=slot, to_model=to_model):
+            update["models"] = {**state.models, slot: to_model}
+        case StepCompleted() | ModelRetried() | ToolSourceUnavailable() | CircuitOpened():
             pass
         case RunTransitioned(from_state=from_state, to_state=to_state):
             if from_state != state.status:

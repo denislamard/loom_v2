@@ -57,6 +57,7 @@ from pydantic import JsonValue
 
 from loom_ia.core.events import (
     ArtifactStored,
+    CircuitOpened,
     ToolCalled,
     ToolCompleted,
     ToolSourceUnavailable,
@@ -67,6 +68,7 @@ from loom_ia.core.model import (
     AfterTool,
     ArtifactRefBlock,
     BeforeTool,
+    CircuitBreaker,
     Deny,
     Fail,
     InlineDataBlock,
@@ -95,6 +97,7 @@ from loom_ia.core.ports import (
     ToolError,
     ToolSource,
 )
+from loom_ia.engine.circuit import CircuitBreakers, mcp_key
 from loom_ia.engine.delegated import (
     Consumption,
     DelegatedPayload,
@@ -175,8 +178,13 @@ class OpenedTools:
     """Outils d'un run : ceux de l'agent, plus ceux de ses sources disponibles."""
 
     tools: ToolExecutor
-    # Sources injoignables à l'ouverture, à journaliser.
-    unavailable: tuple[ToolSourceUnavailable, ...] = ()
+    # À journaliser, dans l'ordre : disjoncteurs ouverts, sources injoignables.
+    events: tuple[CircuitOpened | ToolSourceUnavailable, ...] = ()
+
+    @property
+    def unavailable(self) -> tuple[ToolSourceUnavailable, ...]:
+        """Sources injoignables à l'ouverture."""
+        return tuple(e for e in self.events if isinstance(e, ToolSourceUnavailable))
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +201,10 @@ class ToolExecutor:
     d'outils, résultats déportés. Avec lui, l'outil intégré ``artifact_read``
     est déclaré. ``offload_over`` est le seuil de déport des outils qui n'en
     fixent pas ; ``None`` le désactive.
+
+    ``breakers`` : disjoncteurs des sources (#19, backlog #011), réglés par
+    ``circuits`` (nom de la source → réglage, ``None`` pour aucun ; réglage
+    par défaut pour une source absente). Sans eux, pas de disjoncteur.
     """
 
     def __init__(
@@ -204,11 +216,15 @@ class ToolExecutor:
         validate_arguments: bool = True,
         artifacts: ArtifactStore | None = None,
         offload_over: int | None = DEFAULT_OFFLOAD_OVER,
+        breakers: CircuitBreakers | None = None,
+        circuits: Mapping[str, CircuitBreaker | None] | None = None,
     ) -> None:
         self.default_timeout = default_timeout
         self.validate_arguments = validate_arguments
         self.artifacts = artifacts
         self.offload_over = offload_over
+        self.breakers = breakers
+        self.circuits: dict[str, CircuitBreaker | None] = dict(circuits or {})
         # Sources ouvertes au début de chaque run (serveurs MCP, #19).
         self.sources: tuple[ToolSource, ...] = tuple(sources)
         self._tools: dict[str, AnyTool] = {}
@@ -226,14 +242,39 @@ class ToolExecutor:
         injoignable est écartée et signalée, les autres restent utilisables.
         Un outil de source dont le nom ou le schéma pose problème est écarté,
         avec un avertissement.
+
+        Disjoncteur : une source écartée n'est pas contactée ; une connexion
+        ratée compte un échec, et celle qui ouvre le disjoncteur est signalée
+        (``circuit.opened``) ; une connexion réussie remet le compte à zéro.
         """
         if not self.sources:
             yield OpenedTools(tools=self)
             return
         async with AsyncExitStack() as stack:
             tools = self._copy()
-            unavailable: list[ToolSourceUnavailable] = []
+            events: list[CircuitOpened | ToolSourceUnavailable] = []
             for source in self.sources:
+                setting = self.circuits.get(source.name, CircuitBreaker())
+                key = mcp_key(source.name)
+                left = (
+                    self.breakers.remaining(key)
+                    if self.breakers is not None and setting is not None
+                    else None
+                )
+                if left is not None:
+                    message = f"disjoncteur ouvert : pas de nouvel essai avant {left:.0f} s"
+                    logger.warning(
+                        "Source d'outils %s écartée : %s",
+                        source.name,
+                        message,
+                        extra={"run_id": context.run_id},
+                    )
+                    events.append(
+                        ToolSourceUnavailable(
+                            source=source.name, error=message, required=source.required
+                        )
+                    )
+                    continue
                 try:
                     provided = await stack.enter_async_context(source.open(context))
                 except Exception as exc:
@@ -245,12 +286,27 @@ class ToolExecutor:
                         exc_info=not isinstance(exc, SourceUnavailable),
                         extra={"run_id": context.run_id},
                     )
-                    unavailable.append(
+                    attempted = not isinstance(exc, SourceUnavailable) or exc.attempted
+                    if self.breakers is not None and setting is not None and attempted:
+                        tripped = self.breakers.failed(key, setting)
+                        if tripped is not None:
+                            events.append(
+                                CircuitOpened(
+                                    target_kind="mcp",
+                                    target=source.name,
+                                    failures=tripped.failures,
+                                    cooldown_s=tripped.cooldown,
+                                    error=message,
+                                )
+                            )
+                    events.append(
                         ToolSourceUnavailable(
                             source=source.name, error=message, required=source.required
                         )
                     )
                     continue
+                if self.breakers is not None:
+                    self.breakers.succeeded(key)
                 for tool in provided:
                     try:
                         tools.add(tool)
@@ -262,7 +318,7 @@ class ToolExecutor:
                             exc,
                             extra={"run_id": context.run_id},
                         )
-            yield OpenedTools(tools=tools, unavailable=tuple(unavailable))
+            yield OpenedTools(tools=tools, events=tuple(events))
 
     def _copy(self) -> ToolExecutor:
         """Mêmes outils et réglages, sans les sources : base des outils d'un run."""
@@ -271,6 +327,8 @@ class ToolExecutor:
             validate_arguments=self.validate_arguments,
             artifacts=self.artifacts,
             offload_over=self.offload_over,
+            breakers=self.breakers,
+            circuits=self.circuits,
         )
         copy._tools = dict(self._tools)
         copy._validators = dict(self._validators)

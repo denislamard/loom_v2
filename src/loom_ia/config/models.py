@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from typing import Final, Literal, Self
 
-from pydantic import Field, PositiveFloat, PositiveInt, model_validator
+from pydantic import Field, JsonValue, PositiveFloat, PositiveInt, model_validator
 
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config.keys import ALGORITHM, matches
@@ -261,39 +261,29 @@ class LoomConfig(DomainModel):
                         f"Agent {agent.name!r} : serveur MCP {ref.mcp!r} non déclaré "
                         f"dans mcp_servers (serveurs : {declared})"
                     )
-        ids = [spec.id for spec in self.models]
-        _reject_doubles("Modèle", ids)
-        known = ", ".join(ids) or "aucun"
+        _reject_doubles("Modèle", [spec.id for spec in self.models])
         for agent in self.agents:
-            if agent.main.model not in ids:
-                raise ValueError(
-                    f"Agent {agent.name!r} : modèle {agent.main.model!r} non déclaré "
-                    f"(modèles connus : {known})"
-                )
+            # Un orchestrateur qui a des outils les appelle : son modèle et ses secours aussi.
+            tools = bool(agent.tools or agent.roles or agent.subagents)
+            self._check_chain(f"Agent {agent.name!r}", agent.main.chain, tools=tools)
             for role in agent.roles:
-                if role.model not in ids:
-                    raise ValueError(
-                        f"Agent {agent.name!r}, rôle {role.name!r} : modèle {role.model!r} "
-                        f"non déclaré (modèles connus : {known})"
-                    )
-                if role.wants_attachments and not self.model_spec(role.model).capabilities.vision:
-                    raise ValueError(
-                        f"Agent {agent.name!r}, rôle {role.name!r} : il reçoit les pièces "
-                        f"jointes, mais le modèle {role.model!r} n'a pas la capacité vision "
-                        "(capabilities.vision: true)"
-                    )
+                self._check_chain(
+                    f"Agent {agent.name!r}, rôle {role.name!r}",
+                    role.chain,
+                    vision=role.wants_attachments,
+                )
             for name, _, judge in agent.judges:
-                if judge.model not in ids:
-                    raise ValueError(
-                        f"Agent {agent.name!r}, juge {name!r} : modèle {judge.model!r} "
-                        f"non déclaré (modèles connus : {known})"
-                    )
-                if judge.wants_attachments and not self.model_spec(judge.model).capabilities.vision:
-                    raise ValueError(
-                        f"Agent {agent.name!r}, juge {name!r} : il reçoit les pièces "
-                        f"jointes, mais le modèle {judge.model!r} n'a pas la capacité vision "
-                        "(capabilities.vision: true)"
-                    )
+                # Le verdict passe par un outil imposé (tool_choice: required).
+                label = f"Agent {agent.name!r}, juge {name!r}"
+                self._check_chain(label, judge.chain, vision=judge.wants_attachments, tools=True)
+                for model in judge.chain:
+                    spec = self.model_spec(model)
+                    if spec.sdk == "anthropic" and _thinking({**spec.params, **judge.llm.params}):
+                        raise ValueError(
+                            f"{label} : le modèle {model!r} a le raisonnement étendu activé "
+                            "(params.thinking), que l'API Anthropic refuse avec un outil "
+                            "imposé (verdict du juge)"
+                        )
         agents = {agent.name: agent for agent in self.agents}
         for agent in self.agents:
             for ref in agent.subagents:
@@ -315,6 +305,30 @@ class LoomConfig(DomainModel):
                     )
         return self
 
+    def _check_chain(
+        self, label: str, chain: tuple[str, ...], *, vision: bool = False, tools: bool = False
+    ) -> None:
+        """Modèles d'une chaîne de secours déclarés, avec les capacités exigées (B9, #10)."""
+        ids = [spec.id for spec in self.models]
+        for position, model in enumerate(chain):
+            which = "modèle" if position == 0 else "modèle de secours"
+            if model not in ids:
+                raise ValueError(
+                    f"{label} : {which} {model!r} non déclaré "
+                    f"(modèles connus : {', '.join(ids) or 'aucun'})"
+                )
+            capabilities = self.model_spec(model).capabilities
+            if vision and not capabilities.vision:
+                raise ValueError(
+                    f"{label} : il reçoit les pièces jointes, mais le {which} {model!r} "
+                    "n'a pas la capacité vision (capabilities.vision: true)"
+                )
+            if tools and not capabilities.tools:
+                raise ValueError(
+                    f"{label} : il appelle des outils, mais le {which} {model!r} ne sait pas "
+                    "le faire (capabilities.tools: false)"
+                )
+
     def budget_of(self, agent: str) -> Budgets:
         """Budgets d'un agent : ceux de la racine, surchargés par son ``budget``."""
         spec = next((a for a in self.agents if a.name == agent), None)
@@ -333,6 +347,12 @@ class LoomConfig(DomainModel):
             if spec.id == model_id:
                 return spec
         raise KeyError(model_id)
+
+
+def _thinking(params: dict[str, JsonValue]) -> bool:
+    """Vrai si les réglages activent le raisonnement étendu d'Anthropic (``thinking``)."""
+    value = params.get("thinking")
+    return isinstance(value, dict) and value.get("type") not in (None, "disabled")
 
 
 def _reject_doubles(kind: str, names: list[str]) -> None:

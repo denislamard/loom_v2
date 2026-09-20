@@ -68,7 +68,8 @@ def test_accumulator_keeps_block_order() -> None:
     ).result(model_id="m", provider="fake")
 
     assert response.message.blocks == (
-        ReasoningBlock(text="je calcule", provider_meta=meta),
+        # Marqué du modèle de la requête : écarté après une bascule (#7).
+        ReasoningBlock(text="je calcule", provider_meta=meta, model_id="m"),
         TextBlock(text="Je lance"),
         ToolCallBlock(call_id="c1", name="calculer", arguments={"expr": "1+1"}),
         ToolCallBlock(call_id="c2", name="meteo", arguments={"ville": "Lyon"}),
@@ -158,7 +159,9 @@ async def test_complete_rebuilds_the_scripted_message() -> None:
     message = Message(
         role="assistant",
         blocks=(
-            ReasoningBlock(text="un raisonnement assez long", provider_meta=meta),
+            ReasoningBlock(
+                text="un raisonnement assez long", provider_meta=meta, model_id="fake-1"
+            ),
             TextBlock(text="Je calcule, puis je réponds."),
             ToolCallBlock(call_id="c1", name="calculer", arguments={"expr": "12*7+3"}),
             ToolCallBlock(call_id="c2", name="heure"),

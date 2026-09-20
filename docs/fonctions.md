@@ -416,6 +416,8 @@ Le LLM `main` n'est pas forcément Anthropic.
 - Si le modèle change en cours de run (modèle de secours), le raisonnement produit par un autre fournisseur est écarté.
 - Le raisonnement est retiré au stockage de la session.
 
+**Réalisation (phase 3.5a) :** chaque bloc de raisonnement porte le modèle qui l'a produit (`model_id` : le modèle du fournisseur dans la requête), posé par le moteur quel que soit l'adaptateur. À chaque appel, la chaîne de secours (point 10) retire des messages le raisonnement d'un autre modèle ; un raisonnement sans marque (journal antérieur) est gardé. Ce que chaque adaptateur renvoie de son propre raisonnement (API Responses, gpt-oss : backlog #015) arrive en 3.5b.
+
 ### 8. `provider_meta` typé
 
 - **Structure :** `provider_meta: dict[provider, Meta]`, où chaque `Meta` est un modèle Pydantic typé, par exemple `AnthropicMeta(signature, redacted_data)` ou `OpenAIMeta(item_id, encrypted_content)`.
@@ -469,6 +471,16 @@ Le LLM `main` n'est pas forcément Anthropic.
 - Coût : le cache de prompt est perdu à la bascule ; le budget utilise le tarif du modèle de secours.
 - Juge corrélé (21) : les chaînes de secours sont aussi vérifiées.
 - Événements durables : `model.retried` (tentative, type d'erreur, délai) et `model.fell_back` (ancien modèle, nouveau modèle, motif).
+
+**Réalisation (phase 3.5a) :**
+
+- **Déclarer :** `fallbacks: [SONNET, …]` sur `main`, sur un rôle et sur un juge (identifiants de `models`, dans l'ordre). Chaque modèle garde ses propres délais et nouvelles tentatives ; les réglages de l'emplacement (`llm.max_tokens`, `llm.params`) s'appliquent au secours comme au modèle.
+- **Bascule** (`ModelChain`, `engine/fallback.py`) : `transient` et `overloaded` une fois les tentatives épuisées ; `quota_exhausted` aussitôt ; `context_overflow` vers le premier secours dont la fenêtre déclarée dépasse celle du modèle qui a débordé (sans fenêtre déclarée des deux côtés, pas de bascule) ; `auth`, `invalid_request` et `content_filtered` font échouer l'appel. La requête du secours est celle du modèle précédent, avec l'identifiant, le `max_tokens` et les `params` du secours, sans le raisonnement d'un autre modèle (point 7). Si le modèle qui a échoué avait déjà diffusé des morceaux, `on_chunk` reçoit un `StreamReset`.
+- **Journal :** `model.fell_back` (emplacement `main`, nom du rôle ou `judge:<nom>` ; ancien et nouveau modèle, identifiants de la config ; motif : type d'erreur ou `circuit_open` ; erreur ; `call_id` pour un rôle, `judge` pour un juge ; statut `warning`), dans le span de l'appel, entre les `model.retried` du modèle et ceux du secours. Le `model.responded` porte le modèle qui a répondu et le coût à son tarif.
+- **Adhérence :** `RunState.models` (emplacement → modèle courant), projeté des `model.fell_back` : dans le run, chaque appel suivant de l'emplacement part du secours. La réparation d'un rôle va au modèle qui a répondu (`Exchange.model`).
+- **Disjoncteur** (`CircuitBreakers`, `engine/circuit.py`) : `circuit_breaker: {failures: 5, cooldown: 60}` par défaut sur chaque modèle et chaque serveur MCP, `null` le retire. Comptent les appels ratés après leurs tentatives (`transient`, `overloaded`, `quota_exhausted`) et les connexions MCP ratées ; une réussite remet le compte à zéro. Au seuil, `circuit.opened` (catégorie `circuit`, statut `warning`) dans le run dont l'échec l'a ouvert, et la cible est écartée pendant `cooldown` secondes pour tous les runs de l'instance `Loom` (un agent monté seul a les siens, communs à ses sous-agents) : un modèle écarté est sauté sans appel (`model.fell_back`, motif `circuit_open`). Ensuite, un essai : réussi, le disjoncteur se referme ; raté, il se rouvre aussitôt. Si la fin de la chaîne est écartée, l'appel échoue en `model.unavailable` (le run échoue pour `main`, l'orchestrateur reçoit une erreur pour un rôle, `on_error` décide pour un juge).
+- **Contrôles au démarrage :** modèles et secours déclarés, sans doublon dans une chaîne ; capacité `tools` (vraie par défaut) pour toute la chaîne d'un orchestrateur qui a des outils et d'un juge (verdict par outil imposé) ; capacité `vision` pour toute la chaîne d'un rôle ou d'un juge qui reçoit les pièces jointes ; juge Anthropic avec `params.thinking` activé refusé (l'API refuse un outil imposé avec le raisonnement étendu). Avertissements au montage : secours dont la fenêtre déclarée est plus petite ; juge corrélé chaînes comprises (point 21) ; modèles sans tarif sous un budget en dollars, secours compris (#010).
+- **Accès :** ligne de déroulé par bascule (« secours main : M3_PANNE → M3_MAIN — model.transient : … ») et par disjoncteur ouvert (« disjoncteur ouvert : modèle M3_PANNE écarté 60 s (échecs de suite : 2) ») ; `loom validate` montre les chaînes (`M3_MAIN → SONNET`) ; `Loom(breakers=…)` pour partager des disjoncteurs entre instances. Modèle simulé : une réponse `error: overloaded` (ou un autre type) lève cette erreur, de quoi simuler une panne.
 
 ### 11. Streaming comme primitive de base
 
@@ -635,7 +647,7 @@ ToolOutput
 - **Source d'outils :** chaque serveur référencé par un agent est une source (port `ToolSource`), ouverte au début de chaque `drive` et refermée à la fin. Les outils obtenus restent fixes pendant tout le `drive` : les requêtes au modèle restent stables. Une nouvelle liste (`tools/list_changed`) vaut pour les runs suivants.
 - **Portées :** `shared` (connexion gardée par l'instance `Loom`, partagée par les runs et les agents, fermée après `idle_timeout`) et `run` (connexion ouverte et fermée avec chaque `drive` ; après une reprise, c'est une nouvelle connexion, donc l'état d'un serveur à état est perdu). `tenant` arrive en 5.1.
 - **Contrôle de santé :** un `ping` à chaque réutilisation d'une connexion partagée pour un nouveau run ; une connexion morte est rouverte.
-- **Reconnexion :** après un échec de connexion, attentes de 1, 2, 5, 10 puis 30 s ; entre-temps, le serveur est déclaré indisponible sans nouvel essai. Le disjoncteur commun aux modèles et aux serveurs MCP arrive en 3.5.
+- **Reconnexion :** après un échec de connexion, attentes de 1, 2, 5, 10 puis 30 s ; entre-temps, le serveur est déclaré indisponible sans nouvel essai. Disjoncteur (réalisé en 3.5a, backlog #011, point 10) : `circuit_breaker` du serveur ; une connexion ratée compte un échec (pas un refus pendant l'attente du backoff) ; ouvert, le serveur est déclaré indisponible sans nouvel essai (`tool.source_unavailable`, précédé du `circuit.opened` qui l'a ouvert).
 - **Serveur indisponible au démarrage :** ses outils sont retirés pour le run, et l'événement durable `tool.source_unavailable` (serveur, erreur, `required`) est écrit avant la première étape. Avec `required: true`, le run passe en `FAILED`.
 - **Connexion perdue pendant un appel :** l'appel est rejoué une fois après reconnexion s'il est sans risque (`side_effects: none` ou idempotent) ; sinon, le modèle reçoit l'erreur « état inconnu » (#18).
 - **Noms :** `serveur__outil`, ou `alias__outil`. Les noms de serveurs et les alias n'ont pas de `__`. Un outil dont le nom préfixé sort du format des API (lettres, chiffres, `_`, `-`, 64 caractères) est écarté, avec un avertissement.
@@ -759,7 +771,7 @@ model.responded → guard.checked (échec, motif, tentative 1)
 - **Verdict par un outil imposé :** un seul outil, `verdict` (`tool_choice: required`), dont le schéma liste les critères : une note entre 0 et 1 et un motif pour chacun. Réponse sans appel à `verdict`, arguments hors schéma ou critère noté deux fois : erreur du juge, comme un échec du modèle après ses nouvelles tentatives (`on_error`).
 - **Suite :** un critère réussit si sa note atteint son seuil. Un critère bloquant sous son seuil fait refuser la sortie : `Retry` avec le diagnostic (critères refusés, notes, seuils, motifs), réparé par l'orchestrateur (qui garde ses outils avec `repair.tools: auto` : échec de fond) ou par le modèle du rôle, dans sa conversation ; ensuite `on_failure`, comme un contrat (point 20). Un critère non bloquant sous son seuil est seulement signalé : `guard.checked` réussi avec un motif « non bloquant », `judge.evaluated` de statut `warning`.
 - **Journal :** l'appel du juge écrit ses `model.retried` et son `model.responded` (champ `judge`, enveloppe au rôle `judge:<nom>`, span propre sous celui du point ; `call_id` de l'appel pour un rôle), puis `judge.evaluated`, `guard.checked` (garde `judge`) et, s'il y a lieu, `policy.decided`. Le coût du juge s'ajoute au run, pas ses itérations ; `run.completed` et `run.failed` le comptent (ils reprennent aussi la consommation d'un lot d'outils qui échoue).
-- **Juge corrélé et juge bloquant échantillonné :** avertissements au montage (logs), le juge corrélé quand il a le même modèle fournisseur (`sdk`, `base_url`, `model`) que la sortie évaluée (`main` ou le rôle). Les erreurs en profil prod arrivent avec les profils (J5), comme la restriction de `skip`.
+- **Juge corrélé et juge bloquant échantillonné :** avertissements au montage (logs), le juge corrélé quand il a le même modèle fournisseur (`sdk`, `base_url`, `model`) que la sortie évaluée (`main` ou le rôle), chaînes de secours comprises depuis 3.5a (un secours du juge contre un secours de l'évalué). Les erreurs en profil prod arrivent avec les profils (J5), comme la restriction de `skip`.
 - **Forçage :** `Loom.run/stream(..., judges="force" | "skip")`, `loom run --judges` ; écrit dans `run.started`, hérité par les sous-runs. REST et MCP en 3.6.
 - **Accès :** une ligne de déroulé par verdict (« juge rediger_relance (fake-judge) : fidele 0,10 (seuil 0,80), ton 0,90 ») et par contrôle ; les `policy.decided` des juges n'ont pas de ligne. `loom validate` liste les juges.
 
@@ -813,7 +825,8 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `step.started` / `.completed` | step_no, état, effet, durée, statut (voir point 3) |
 | `policy.decided` | politique, point, décision, motif, call_id, tentative, arguments ou réponse remplacés (voir point 2) |
 | `model.retried` | tentative, type d'erreur, délai (voir point 10) |
-| `model.fell_back` | ancien modèle, nouveau modèle, motif (voir point 10) |
+| `model.fell_back` | emplacement (`main`, rôle, `judge:<nom>`), ancien modèle, nouveau modèle, motif (type d'erreur ou `circuit_open`), erreur, call_id, judge (voir point 10) |
+| `circuit.opened` | cible (`model`, `mcp`), identifiant du modèle ou nom du serveur, échecs de suite, pause, dernière erreur (voir point 10) |
 | `idempotency.recorded` | clé, call_id, résultat (voir point 49) |
 | `run.completed` / `.failed` / `.cancelled` | itérations, usage total, coût total, erreur ; `data` (objet JSON de la réponse finale) et `unverified` (voir point 20) |
 

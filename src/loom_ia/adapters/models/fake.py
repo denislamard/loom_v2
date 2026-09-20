@@ -32,6 +32,12 @@ seulement si le dernier message de l'utilisateur contient ce texte,
 ``without_text`` seulement s'il ne le contient pas. Un rôle, appelé à chaque
 fois avec un seul message, répond ainsi selon ce qu'on lui demande.
 
+Une réponse peut être une panne : ``error`` (``transient``, ``overloaded``,
+``quota_exhausted``…) fait lever l'erreur de ce type à la place de la réponse,
+à chaque tentative. Un modèle dont le script ne contient que ``- error:
+overloaded`` est en panne pour tous les appels : de quoi montrer un secours
+(#10).
+
 Comme un fournisseur, le modèle respecte ``tool_choice`` : avec ``required``,
 une réponse sans appel d'outil est une erreur du script ; avec ``none``, une
 réponse qui appelle des outils donne à la place son texte ``forced`` (la
@@ -53,6 +59,7 @@ from loom_ia.core.model import (
     DomainModel,
     Message,
     ModelChunk,
+    ModelErrorKind,
     ModelRequest,
     ModelSpec,
     ReasoningBlock,
@@ -84,6 +91,8 @@ class FakeReply(DomainModel):
     without_text: str | None = None
     # Texte rendu à la place des appels d'outils quand la requête les interdit.
     forced: str | None = None
+    # Panne simulée : erreur de ce type levée à la place de la réponse.
+    error: ModelErrorKind | None = None
 
     def fits(self, tools: set[str], asked: str) -> bool:
         if self.with_tool is not None and self.with_tool not in tools:
@@ -130,6 +139,12 @@ class FakeModel:
                 "invalid_request",
                 f"Script du modèle {self.spec.id!r} épuisé : réponse n°{turn + 1} demandée, "
                 f"{len(script)} prévue(s) avec ces outils",
+            )
+        if reply.error is not None:
+            raise ModelError(
+                reply.error,
+                f"Panne simulée par le script du modèle {self.spec.id!r} "
+                f"(réponse n°{turn + 1} : {reply.error})",
             )
         if request.tool_choice == "none" and reply.tool_calls:
             reply = FakeReply(text=reply.forced if reply.forced is not None else reply.text)

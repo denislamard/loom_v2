@@ -178,8 +178,9 @@ async def test_stream_is_read_in_order() -> None:
     signed: dict[str, ProviderMeta] = {"anthropic": AnthropicMeta(signature="sig-1")}
     redacted: dict[str, ProviderMeta] = {"anthropic": AnthropicMeta(redacted_data="chiffré")}
     assert response.message.blocks == (
-        ReasoningBlock(text="Je pose le calcul.", provider_meta=signed),
-        ReasoningBlock(provider_meta=redacted),
+        # Le raisonnement est marqué du modèle qui l'a produit (#7).
+        ReasoningBlock(text="Je pose le calcul.", provider_meta=signed, model_id="claude-test"),
+        ReasoningBlock(provider_meta=redacted, model_id="claude-test"),
         TextBlock(text="Je calcule."),
         ToolCallBlock(call_id="toolu_1", name="calculer", arguments={"expr": "12*7+3"}),
     )

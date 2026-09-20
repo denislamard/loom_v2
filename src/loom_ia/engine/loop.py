@@ -50,6 +50,13 @@ au fil de l'eau, et une réparation envoie d'abord un ``StreamReset`` ; avec
 de cette réponse, et la réponse finale seulement une fois ses contrôles
 passés, qu'elle vienne de l'orchestrateur ou d'un rôle terminal.
 
+Secours (B4, #10) : l'appel de l'orchestrateur passe par sa chaîne
+(``RunContext.chain``, ``main`` puis ``fallbacks``) : tentatives, bascules
+(``model.fell_back``) et disjoncteur ouvert (``circuit.opened``) sont écrits
+dans le span de l'étape. Après une bascule, le run reste sur le secours
+(``RunState.models``) ; la requête est construite pour lui, avant les
+politiques ``before_model``.
+
 Budgets (J4) : ``before_model`` reçoit la consommation des runs précédents
 de la session (``session``), calculée dans le journal par ``drive`` ; un
 sous-run reçoit la part de budget de son parent dans son ``run.started``.
@@ -79,9 +86,11 @@ from pydantic import JsonValue
 
 from loom_ia.core.events import (
     ArtifactStored,
+    CircuitOpened,
     Effect,
     Event,
     EventDraft,
+    ModelFellBack,
     ModelResponded,
     ModelRetried,
     PolicyDecided,
@@ -112,7 +121,6 @@ from loom_ia.core.model import (
     JudgesMode,
     Message,
     ModelRequest,
-    ModelResponse,
     ModelSpec,
     OnOutput,
     OutputContract,
@@ -148,9 +156,11 @@ from loom_ia.core.ports import (
     SourceContext,
 )
 from loom_ia.core.projections import apply, fold, history, spent
+from loom_ia.engine.circuit import CircuitBreakers
 from loom_ia.engine.executor import Decided, Delegated, Stored, ToolExecutor
+from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
-from loom_ia.engine.model_call import ModelCall, responded
+from loom_ia.engine.model_call import responded
 from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
 from loom_ia.engine.writer import SessionWriter
 
@@ -159,6 +169,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_ITERATIONS: Final = 10
 # Règle du moteur journalisée comme une décision de politique (#13, backlog #008).
 TERMINAL_RULE: Final = "loom.terminal"
+
+# Événements d'un appel de modèle, journalisés dans son span.
+_CALL_EVENTS: Final = (ModelRetried, ModelFellBack, CircuitOpened, ModelResponded)
 
 # États où ``step`` a quelque chose à faire (effet ou clôture).
 _ACTIONABLE: Final = frozenset(
@@ -200,11 +213,27 @@ class RunContext:
     output: OutputContract | None = None
     # Diffusion de la réponse finale : au fil de l'eau, ou après ses contrôles (#11).
     stream_output: StreamOutput = "live"
+    # Secours du modèle ``main``, dans l'ordre (B4, #10).
+    fallbacks: tuple[ModelLink, ...] = ()
+    # Disjoncteurs des modèles, partagés par les runs d'une instance ``Loom``.
+    breakers: CircuitBreakers | None = None
 
     @property
     def artifacts(self) -> ArtifactStore | None:
         """Stockage des fichiers du run : celui de l'exécuteur d'outils."""
         return self.tools.artifacts
+
+    def chain(self, *, on_chunk: ChunkCallback | None = None) -> ModelChain:
+        """Modèle ``main`` et ses secours, avec les réglages du rôle (B6)."""
+        return ModelChain(
+            links=(ModelLink(self.model_spec, self.model), *self.fallbacks),
+            slot=MAIN_ROLE,
+            breakers=self.breakers,
+            max_tokens=self.max_tokens,
+            params=self.params,
+            on_chunk=on_chunk,
+            artifacts=self.artifacts,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -372,9 +401,9 @@ async def drive(
     async with ctx.tools.opened(sources) as opened:
         scope = _scope(state)
         blocking: tuple[Event, ToolSourceUnavailable] | None = None
-        for payload in opened.unavailable:
+        for payload in opened.events:
             event = await write(scope.draft(payload))
-            if payload.required and blocking is None:
+            if isinstance(payload, ToolSourceUnavailable) and payload.required and not blocking:
                 blocking = event, payload
         if blocking is not None:
             event, payload = blocking
@@ -799,13 +828,13 @@ def _policy_drafts(
     """Événements des politiques d'un point, dans leur span.
 
     Les appels de modèle d'un juge ont leur propre span, sous celui du point, au
-    nom de ``judge:<nom>`` : un span par appel (ses nouvelles tentatives, puis
-    sa réponse).
+    nom de ``judge:<nom>`` : un span par appel (ses nouvelles tentatives, ses
+    bascules, puis sa réponse).
     """
     drafts: list[EventDraft] = []
     judged: SpanId | None = None
     for event in events:
-        if isinstance(event, ModelRetried | ModelResponded) and event.judge is not None:
+        if isinstance(event, _CALL_EVENTS) and event.judge is not None:
             judged = judged or new_span_id()
             drafts.append(
                 scope.draft(
@@ -843,7 +872,7 @@ class _Step:
 
     def draft(self, payload: StepStarted | StepCompleted | PolicyEvent) -> EventDraft:
         role: str | None = None
-        if isinstance(payload, ModelResponded | ModelRetried):
+        if isinstance(payload, _CALL_EVENTS):
             # Les appels de modèle de l'orchestrateur sont ceux du rôle ``main`` (C6).
             role = judge_role(payload.judge) if payload.judge is not None else MAIN_ROLE
         return self._scope.draft(payload, span_id=self.span, role=role)
@@ -875,10 +904,15 @@ async def _model_step(
     yield current.started()
     # État vu par les transitions écrites pendant l'étape : son numéro est celui-ci.
     stepped = state.model_copy(update={"step": current.no})
-    spec = ctx.model_spec
+    # En after_guards, rien ne part pendant l'appel : la réponse est d'abord contrôlée.
+    live = ctx.on_chunk if ctx.stream_output == "live" else None
+    chain = ctx.chain(on_chunk=live)
+    # Adhérence (#10) : après une bascule, le run reste sur le secours.
+    adhered = state.models.get(MAIN_ROLE)
+    spec = chain.link(adhered).spec
     started = time.perf_counter()
-    emitted = attempts = 0
-    response: ModelResponse | None = None
+    emitted = 0
+    answered: Answered | None = None
     view = ctx.tools.view(state)
     system, messages = ctx.system, in_call_order(state.messages)
     if ctx.tools.shows_refs(view):
@@ -927,18 +961,14 @@ async def _model_step(
         )
         request = request.model_copy(update={"tool_choice": "none"})
     try:
-        # En after_guards, rien ne part pendant l'appel : la réponse est d'abord contrôlée.
-        live = ctx.on_chunk if ctx.stream_output == "live" else None
-        call = ModelCall(ctx.model, spec, on_chunk=live, artifacts=ctx.artifacts)
-        async with aclosing(call.run(request)) as outcomes:
+        async with aclosing(chain.run(request, current=adhered)) as outcomes:
             async for outcome in outcomes:
-                attempts += 1
-                if isinstance(outcome, ModelResponse):
-                    response = outcome
+                if isinstance(outcome, Answered):
+                    answered = outcome
                 else:
                     yield current.draft(outcome)
                     emitted += 1
-        if response is None:
+        if answered is None:
             raise RuntimeError("Appel de modèle terminé sans réponse")
     except Exception as exc:
         failure = f"model.{exc.kind}" if isinstance(exc, ModelError) else type(exc).__name__
@@ -957,6 +987,7 @@ async def _model_step(
         yield _transition(stepped, scope, RunStatus.FAILED, failure)
         yield scope.draft(_failed(stepped, failure, str(exc)))
         return
+    response = answered.response
     message = response.message
     if forced and message.tool_calls:
         logger.warning(
@@ -971,10 +1002,10 @@ async def _model_step(
         await ctx.on_chunk(TextDelta(text=message.text))
     yield current.draft(
         responded(
-            request,
+            answered.request,
             response,
-            spec,
-            attempts=attempts,
+            answered.spec,
+            attempts=answered.attempts,
             latency_ms=(time.perf_counter() - started) * 1000,
             message=message,
         )
@@ -1018,7 +1049,7 @@ async def _tool_step(
                 yield scope.draft(item.payload, span_id=inner, parent_span_id=span, role=item.role)
             elif (
                 isinstance(item, Decided)
-                and isinstance(item.payload, ModelRetried | ModelResponded)
+                and isinstance(item.payload, _CALL_EVENTS)
                 and item.payload.judge is not None
             ):
                 judged = judge_spans.setdefault(item.call_id, new_span_id())

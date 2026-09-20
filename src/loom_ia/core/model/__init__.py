@@ -85,6 +85,7 @@ from loom_ia.core.model.media import (
 )
 from loom_ia.core.model.messages import Message, Role
 from loom_ia.core.model.model_spec import (
+    CircuitBreaker,
     ImageInput,
     ModelApi,
     ModelCapabilities,
@@ -200,6 +201,7 @@ __all__ = [
     "CallerContext",
     "CheckOutcome",
     "CheckResolution",
+    "CircuitBreaker",
     "ContentBlock",
     "Continue",
     "Criterion",

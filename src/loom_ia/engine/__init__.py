@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Moteur d'exécution : boucle d'un run, outils, rôles délégués, sous-agents, fichiers (#3)."""
 
+from loom_ia.engine.circuit import CIRCUIT_ERRORS, CircuitBreakers, Tripped
 from loom_ia.engine.delegated import (
     Consumption,
     DelegatedPayload,
@@ -19,6 +20,7 @@ from loom_ia.engine.executor import (
     ToolEvent,
     ToolExecutor,
 )
+from loom_ia.engine.fallback import FALLBACK_ERRORS, Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import (
     DEFAULT_POLICY_TIMEOUT,
     BoundPolicy,
@@ -72,10 +74,12 @@ from loom_ia.engine.writer import SessionWriter
 __all__ = [
     "AGENT_HINT",
     "ARTIFACT_READ",
+    "CIRCUIT_ERRORS",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_OFFLOAD_OVER",
     "DEFAULT_POLICY_TIMEOUT",
     "DEFAULT_TOOL_TIMEOUT",
+    "FALLBACK_ERRORS",
     "FINALIZE_HINT",
     "IMAGE_TOKENS",
     "REFS_HINT",
@@ -85,9 +89,11 @@ __all__ = [
     "UNKNOWN_STATE",
     "AgentResolver",
     "AgentTool",
+    "Answered",
     "AnyTool",
     "ArtifactReadTool",
     "BoundPolicy",
+    "CircuitBreakers",
     "Consumption",
     "ContextItem",
     "Decided",
@@ -96,6 +102,8 @@ __all__ = [
     "DelegatedTool",
     "Exchange",
     "MediaResolver",
+    "ModelChain",
+    "ModelLink",
     "OnError",
     "OpenedTools",
     "ParentRun",
@@ -117,6 +125,7 @@ __all__ = [
     "Trace",
     "TracedEvent",
     "TracingPolicy",
+    "Tripped",
     "Verdict",
     "begin_run",
     "drive",

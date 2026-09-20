@@ -80,12 +80,17 @@ class SourceContext:
 
 
 class SourceUnavailable(Exception):
-    """La source ne peut pas fournir ses outils (serveur injoignable, erreur de protocole…)."""
+    """La source ne peut pas fournir ses outils (serveur injoignable, erreur de protocole…).
 
-    def __init__(self, source: str, message: str) -> None:
+    ``attempted`` est faux quand la source a refusé sans essayer (attente
+    avant une nouvelle connexion) : ce refus ne compte pas pour le disjoncteur.
+    """
+
+    def __init__(self, source: str, message: str, *, attempted: bool = True) -> None:
         super().__init__(f"{source} : {message}")
         self.source = source
         self.message = message
+        self.attempted = attempted
 
 
 @runtime_checkable

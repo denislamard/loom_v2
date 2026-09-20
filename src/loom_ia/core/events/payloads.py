@@ -25,6 +25,12 @@ réussi ou non, avant la décision qu'il motive.
 Budgets (J4) : une limite atteinte écrit un ``budget.exceeded``, une fois
 par limite, avant le ``policy.decided`` qui arrête le run (``on_exceed: stop``).
 
+Secours (B4, #10) : un modèle en échec après ses nouvelles tentatives, ou
+écarté par son disjoncteur, passe la main au suivant de sa chaîne : un
+``model.fell_back``, dans le span de l'appel, avant les tentatives du
+secours. Un disjoncteur qui s'ouvre (modèle ou serveur MCP) écrit un
+``circuit.opened`` dans le run dont l'échec l'a ouvert.
+
 Juges (#21) : l'appel du modèle d'un juge est journalisé dans le run jugé
 (``model.retried``, ``model.responded`` avec ``judge``, enveloppe au nom de
 ``judge:<nom>``) : son coût s'ajoute au run, pas ses itérations. Son verdict
@@ -47,6 +53,7 @@ from pydantic import (
     JsonValue,
     NonNegativeFloat,
     NonNegativeInt,
+    PositiveFloat,
     PositiveInt,
     model_validator,
 )
@@ -66,7 +73,16 @@ from loom_ia.core.model.tooling import ToolKind
 from loom_ia.core.model.usage import Usage
 
 type EventCategory = Literal[
-    "run", "message", "model", "tool", "guard", "policy", "approval", "artifact", "session"
+    "run",
+    "message",
+    "model",
+    "tool",
+    "guard",
+    "policy",
+    "approval",
+    "artifact",
+    "session",
+    "circuit",
 ]
 type EventStatus = Literal["ok", "warning", "error"]
 type FacetValue = str | int | float | bool | None
@@ -304,6 +320,82 @@ class ModelRetried(Payload):
     # Appel d'outil servi par cet appel de modèle (rôle délégué).
     call_id: str | None = None
     # Juge qui a fait cet appel (#21).
+    judge: str | None = None
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning"
+
+    def facets(self) -> dict[str, FacetValue]:
+        facets = super().facets()
+        if self.judge is not None:
+            facets["judge"] = self.judge
+        return facets
+
+
+# Motif d'une bascule : erreur du modèle après ses tentatives, ou disjoncteur ouvert.
+type FallbackReason = ModelErrorKind | Literal["circuit_open"]
+# Cible d'un disjoncteur.
+type CircuitTarget = Literal["model", "mcp"]
+
+
+class ModelFellBack(Payload):
+    """Bascule vers le modèle suivant de la chaîne de secours (B4, #10).
+
+    Le modèle qui a échoué après ses nouvelles tentatives, ou qu'écarte son
+    disjoncteur (``circuit_open``), passe la main au suivant. Adhérence : le
+    reste du run garde le secours pour cet emplacement (``slot`` : ``main``,
+    le nom d'un rôle ou ``judge:<nom>``).
+    """
+
+    category: ClassVar[EventCategory] = "model"
+    facet_fields: ClassVar[tuple[str, ...]] = ("slot", "from_model", "to_model", "reason")
+
+    type: Literal["model.fell_back"] = "model.fell_back"
+    slot: str
+    # Identifiants des modèles dans la config.
+    from_model: str
+    to_model: str
+    reason: FallbackReason
+    error: str = ""
+    # Appel d'outil servi (rôle délégué).
+    call_id: str | None = None
+    # Juge qui a fait cet appel (#21).
+    judge: str | None = None
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning"
+
+    def facets(self) -> dict[str, FacetValue]:
+        facets = super().facets()
+        if self.judge is not None:
+            facets["judge"] = self.judge
+        return facets
+
+
+class CircuitOpened(Payload):
+    """Disjoncteur ouvert : la cible est écartée pendant ``cooldown_s`` secondes (#10, #19).
+
+    Pour tous les runs de l'instance : un modèle passe directement à son
+    secours (``model.fell_back``, motif ``circuit_open``), un serveur MCP est
+    déclaré indisponible (``tool.source_unavailable``) sans nouvel essai.
+    Écrit dans le run dont l'échec l'a ouvert.
+    """
+
+    category: ClassVar[EventCategory] = "circuit"
+    facet_fields: ClassVar[tuple[str, ...]] = ("target_kind", "target", "failures")
+
+    type: Literal["circuit.opened"] = "circuit.opened"
+    target_kind: CircuitTarget
+    # Identifiant du modèle dans la config, ou nom du serveur MCP.
+    target: str
+    # Échecs de suite qui l'ont ouvert ; 1 quand l'essai d'après la pause a raté.
+    failures: PositiveInt
+    cooldown_s: PositiveFloat
+    # Dernière erreur.
+    error: str = ""
+    call_id: str | None = None
     judge: str | None = None
 
     @property
@@ -584,6 +676,8 @@ type DurablePayload = Annotated[
     | UserMessage
     | ModelResponded
     | ModelRetried
+    | ModelFellBack
+    | CircuitOpened
     | ToolCalled
     | ToolCompleted
     | ToolSourceUnavailable
@@ -605,6 +699,8 @@ DURABLE_PAYLOADS: tuple[type[Payload], ...] = (
     UserMessage,
     ModelResponded,
     ModelRetried,
+    ModelFellBack,
+    CircuitOpened,
     ToolCalled,
     ToolCompleted,
     ToolSourceUnavailable,

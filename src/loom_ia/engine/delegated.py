@@ -34,7 +34,7 @@ from typing import Self
 
 from pydantic import JsonValue
 
-from loom_ia.core.events import ModelResponded, ModelRetried
+from loom_ia.core.events import CircuitOpened, ModelFellBack, ModelResponded, ModelRetried
 from loom_ia.core.model import (
     ArtifactRefBlock,
     Message,
@@ -69,10 +69,12 @@ class Exchange:
 
     request: ModelRequest
     answer: Message
+    # Modèle de la chaîne qui a répondu (identifiant dans la config) : il répare.
+    model: str | None = None
 
 
 # Ce qu'un outil délégué peut produire pendant son appel, avant son résultat.
-type DelegatedPayload = ModelRetried | ModelResponded
+type DelegatedPayload = ModelRetried | ModelFellBack | CircuitOpened | ModelResponded
 
 
 @dataclass(frozen=True, slots=True)

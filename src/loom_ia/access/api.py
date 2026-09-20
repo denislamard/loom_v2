@@ -28,6 +28,10 @@ l'instance ; ``RunResult.artifacts`` liste les fichiers du run, et
 
     photo = Attachment.from_path("photo.jpg")
     result = await loom.run("assistant", "Que montre la photo ?", attachments=[photo])
+
+Disjoncteurs (#10) : ceux des modèles et des serveurs MCP sont communs à
+tous les runs de l'instance. Un modèle écarté après ses échecs l'est pour
+tous ses agents, qui passent directement à leur secours.
 """
 
 import asyncio
@@ -64,7 +68,7 @@ from loom_ia.core.model import (
 from loom_ia.core.model.base import DomainModel
 from loom_ia.core.ports import ArtifactStore, ChunkCallback, EventStore
 from loom_ia.core.projections import RunTree, fold
-from loom_ia.engine import RunContext, begin_run, drive
+from loom_ia.engine import CircuitBreakers, RunContext, begin_run, drive
 from loom_ia.runtime import (
     Agent,
     build_agent,
@@ -151,6 +155,7 @@ class Loom:
         registry: Registry | None = None,
         environ: Mapping[str, str] | None = None,
         artifacts: ArtifactStore | None = None,
+        breakers: CircuitBreakers | None = None,
     ) -> None:
         self._config = config
         self._registry = registry if registry is not None else load_registry(config)
@@ -168,6 +173,8 @@ class Loom:
         self._built: dict[str, Agent] = {}
         # Connexions MCP de portée shared, communes à tous les agents.
         self._mcp = create_mcp_pool(config, environ)
+        # Disjoncteurs des modèles et des serveurs MCP, communs à tous les runs.
+        self._breakers = breakers if breakers is not None else CircuitBreakers()
 
     @classmethod
     def from_config(
@@ -323,6 +330,7 @@ class Loom:
                 mcp_pool=self._mcp,
                 artifacts=self._artifacts,
                 agents=self.context,
+                breakers=self._breakers,
             )
             self._built[agent] = built
         if on_chunk is None:

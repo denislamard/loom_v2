@@ -151,7 +151,7 @@ def test_config_can_be_written_in_python() -> None:
         (
             {},
             {"demo": {"name": "demo", "main": {"model": "FAKE", "fallbacks": ["FAKE"]}}},
-            "'fallbacks' : prévu pour le jalon J3",
+            "Modèle en double dans la chaîne de secours : FAKE",
         ),
         (
             {},

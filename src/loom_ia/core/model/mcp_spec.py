@@ -16,6 +16,7 @@ from typing import Final, Literal, Self, cast
 from pydantic import Field, PositiveFloat, model_validator
 
 from loom_ia.core.model.base import DomainModel
+from loom_ia.core.model.model_spec import CircuitBreaker
 from loom_ia.core.model.tooling import ToolOverrides
 
 type McpTransport = Literal["stdio", "http"]
@@ -52,6 +53,8 @@ class McpServerSpec(DomainModel):
     idle_timeout: PositiveFloat | None = 300.0
     # Déclarations par outil, sur celles que le serveur annonce.
     tools: dict[str, ToolOverrides] = Field(default_factory=dict)
+    # Disjoncteur (backlog #011) : connexions ratées de suite ; ``null`` le retire.
+    circuit_breaker: CircuitBreaker | None = CircuitBreaker()
 
     @model_validator(mode="before")
     @classmethod

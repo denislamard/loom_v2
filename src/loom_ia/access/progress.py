@@ -5,8 +5,9 @@ Le direct de la CLI (``loom run --stream``) et les notifications de
 progression du serveur MCP décrivent un run de la même façon : un appel
 d'outil et son issue, un fichier rangé, un serveur indisponible, une
 décision de politique, un contrôle de sortie et le verdict d'un juge, une
-limite de budget atteinte, un sous-agent qui démarre puis se termine. Les lignes d'un sous-run sont
-décalées selon sa profondeur :
+limite de budget atteinte, une bascule vers un modèle de secours, un
+disjoncteur qui s'ouvre, un sous-agent qui démarre puis se termine. Les
+lignes d'un sous-run sont décalées selon sa profondeur :
 
     · verifier(message='Vérifie : …')
       · sous-agent verificateur : démarré
@@ -21,9 +22,11 @@ from typing import Final
 from loom_ia.core.events import (
     ArtifactStored,
     BudgetExceeded,
+    CircuitOpened,
     Event,
     GuardChecked,
     JudgeEvaluated,
+    ModelFellBack,
     PolicyDecided,
     RunCompleted,
     RunFailed,
@@ -36,6 +39,8 @@ from loom_ia.core.model import RunId
 from loom_ia.usage import describe as describe_budget
 
 INDENT: Final = "  "
+# Longueur au-delà de laquelle un message d'erreur est coupé.
+ERROR_CHARS: Final = 160
 STORED: Final = {
     "attachment": "pièce jointe rangée",
     "tool_output": "fichier rangé",
@@ -112,6 +117,22 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
                 for c in payload.criteria
             )
             return f"juge {payload.judge} ({payload.model_id}) : {notes}"
+        case ModelFellBack(reason="circuit_open"):
+            return (
+                f"secours {payload.slot} : {payload.from_model} → {payload.to_model} — "
+                f"{payload.error}"
+            )
+        case ModelFellBack():
+            return (
+                f"secours {payload.slot} : {payload.from_model} → {payload.to_model} — "
+                f"model.{payload.reason} : {_short(payload.error)}"
+            )
+        case CircuitOpened():
+            target = "modèle" if payload.target_kind == "model" else "serveur"
+            return (
+                f"disjoncteur ouvert : {target} {payload.target} écarté {payload.cooldown_s:g} s "
+                f"(échecs de suite : {payload.failures})"
+            )
         case BudgetExceeded():
             action = "arrêt" if payload.action == "stop" else "avertissement"
             text = describe_budget(payload.scope, payload.limit, payload.value, payload.spent)
@@ -150,3 +171,9 @@ def _score(value: float) -> str:
 def arguments(called: ToolCalled) -> str:
     """Arguments d'un appel, en ``nom=valeur``."""
     return ", ".join(f"{name}={value!r}" for name, value in called.arguments.items())
+
+
+def _short(text: str) -> str:
+    """Message d'erreur sur une ligne, coupé s'il est long."""
+    line = " ".join(text.split())
+    return line if len(line) <= ERROR_CHARS else f"{line[: ERROR_CHARS - 1]}…"

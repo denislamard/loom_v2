@@ -37,6 +37,8 @@ type ModelErrorKind = Literal[
     "auth",
     "invalid_request",
     "content_filtered",
+    # Tous les modèles de la chaîne sont écartés par leur disjoncteur (#10).
+    "unavailable",
 ]
 
 # Clé posée dans les arguments quand le modèle a produit un JSON illisible :
@@ -225,7 +227,10 @@ class ResponseAccumulator:
     def result(self, *, model_id: str, provider: str) -> ModelResponse:
         self._flush_text()
         self._flush_reasoning()
-        blocks = tuple(p.block() if isinstance(p, _PendingCall) else p for p in self._parts)
+        blocks = tuple(
+            p.block() if isinstance(p, _PendingCall) else self._stamped(p, model_id)
+            for p in self._parts
+        )
         if not blocks:
             blocks = (TextBlock(text=""),)
         has_calls = any(isinstance(b, ToolCallBlock) for b in blocks)
@@ -250,6 +255,13 @@ class ResponseAccumulator:
             )
             self._reasoning = None
             self._reasoning_meta = {}
+
+    @staticmethod
+    def _stamped(block: ContentBlock, model_id: str) -> ContentBlock:
+        """Raisonnement marqué du modèle demandé : après une bascule, il sera écarté (#7)."""
+        if isinstance(block, ReasoningBlock) and block.model_id is None:
+            return block.model_copy(update={"model_id": model_id})
+        return block
 
 
 def message_to_chunks(

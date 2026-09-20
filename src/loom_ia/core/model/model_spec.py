@@ -56,14 +56,36 @@ class RetryPolicy(DomainModel):
         return base * (0.5 + jitter / 2)
 
 
+class CircuitBreaker(DomainModel):
+    """Disjoncteur d'un modèle ou d'un serveur MCP (#10, #19, backlog #011).
+
+    Après ``failures`` échecs de suite, la cible est écartée pendant
+    ``cooldown`` secondes, pour tous les runs de l'instance : un modèle passe
+    directement à son secours, un serveur MCP est indisponible. Ensuite, un
+    essai : réussi, le disjoncteur se referme ; raté, il se rouvre.
+    """
+
+    failures: PositiveInt = 5
+    cooldown: PositiveFloat = 60.0
+
+
 class ModelCapabilities(DomainModel):
-    """Capacités déclarées (sous-ensemble ; les autres arrivent avec leurs phases).
+    """Capacités déclarées, contrôlées au démarrage (B9).
 
     Images (#14) : un modèle sans ``vision`` n'en reçoit qu'une mention
     textuelle. Pour un modèle avec ``vision``, chaque image est lue dans le
     stockage d'artefacts et envoyée en base64, après contrôle de son format
     (``image_formats``) et de sa taille (``max_image_bytes``).
+
+    ``tools`` : le modèle sait appeler des outils ; exigé d'un orchestrateur
+    qui en a, d'un juge (verdict par outil imposé) et de leurs secours.
+    ``thinking`` : il produit un raisonnement. ``native_json`` : il accepte un
+    schéma de sortie JSON (utilisé à partir de la phase 3.5b).
     """
+
+    tools: bool = True
+    thinking: bool = False
+    native_json: bool = False
 
     # False : appel non streamé, dont la réponse est rejouée en un flux simulé.
     streaming: bool = True
@@ -107,6 +129,8 @@ class ModelSpec(DomainModel):
     retry: RetryPolicy = RetryPolicy()
     capabilities: ModelCapabilities = ModelCapabilities()
     pricing: Pricing = Pricing()
+    # Disjoncteur (#10) ; ``null`` le retire.
+    circuit_breaker: CircuitBreaker | None = CircuitBreaker()
 
     @model_validator(mode="after")
     def _check_api(self) -> Self:

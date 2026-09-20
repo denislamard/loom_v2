@@ -92,6 +92,9 @@ class RunState(DomainModel):
     model_calls: NonNegativeInt = 0
     # Limites de budget déjà signalées (``budget.exceeded``) : ``run.max_cost``…
     exceeded: tuple[str, ...] = ()
+    # Modèle courant des emplacements qui ont basculé vers un secours (``main``,
+    # rôle, ``judge:<nom>``) : le run le garde jusqu'à la fin (adhérence, #10).
+    models: dict[str, str] = Field(default_factory=dict[str, str])
     # Fichiers du run (pièces jointes, sorties d'outils, déports), une fois par URI.
     artifacts: tuple[ArtifactRecord, ...] = ()
 

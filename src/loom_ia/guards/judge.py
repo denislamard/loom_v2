@@ -23,15 +23,20 @@ Déroulé, pour chaque sortie :
    ``repair.max_attempts`` le permet ; ensuite ``on_failure`` décide, comme
    pour un contrat (``fail``, ``unverified``, ``fallback``).
 
-Une erreur du juge (modèle en échec après ses nouvelles tentatives, verdict
-absent ou invalide, délai dépassé) est une erreur de la politique : selon son
-``on_error``, le run échoue ou la sortie passe sans jugement.
+Secours (B4, #10) : un juge peut déclarer ses ``fallbacks``. Une bascule est
+journalisée dans le span de l'appel du juge ; le run garde ensuite le secours
+pour ce juge (adhérence, emplacement ``judge:<nom>``).
+
+Une erreur du juge (modèle en échec après ses nouvelles tentatives et ses
+secours, verdict absent ou invalide, délai dépassé) est une erreur de la
+politique : selon son ``on_error``, le run échoue ou la sortie passe sans
+jugement.
 """
 
 import inspect
 import json
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Final, cast
@@ -56,7 +61,6 @@ from loom_ia.core.model import (
     JudgeInput,
     Message,
     ModelRequest,
-    ModelResponse,
     ModelSpec,
     OnFailure,
     OnOutput,
@@ -74,18 +78,23 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import ArtifactStore, ModelClient, ModelError
 from loom_ia.engine import (
+    Answered,
+    CircuitBreakers,
     ContextItem,
+    ModelChain,
+    ModelLink,
     OnError,
     PolicyFailure,
     ResultIndex,
     ToolResults,
     Trace,
     TracingPolicy,
+    judge_role,
     tagged,
     user_input,
 )
 from loom_ia.engine.media import describe
-from loom_ia.engine.model_call import ModelCall, responded
+from loom_ia.engine.model_call import responded
 from loom_ia.engine.refs import RefError
 
 JUDGE_POLICY_PREFIX: Final = "loom.judge"
@@ -168,11 +177,16 @@ class JudgeGuard(TracingPolicy):
         model_spec: ModelSpec,
         *,
         artifacts: ArtifactStore | None = None,
+        fallbacks: Sequence[ModelLink] = (),
+        breakers: CircuitBreakers | None = None,
     ) -> None:
         self.definition = definition
         self.model = model
         self.model_spec = model_spec
         self.artifacts = artifacts
+        # Secours du modèle du juge, dans l'ordre (B4, #10).
+        self.fallbacks = tuple(fallbacks)
+        self.breakers = breakers
         self.tool = verdict_tool(definition.criteria)
         self._validator: Validator = Draft202012Validator(self.tool.input_schema)
 
@@ -209,14 +223,14 @@ class JudgeGuard(TracingPolicy):
                 )
             )
             return CONTINUE
-        scores = await self._evaluate(state, judged, trace)
+        scores, spec = await self._evaluate(state, judged, trace)
         failed = tuple(s for s in scores if not s.passed)
         blocking = tuple(s for s in failed if s.blocking)
         trace(
             JudgeEvaluated(
                 judge=definition.name,
                 target=definition.target,
-                model_id=self.model_spec.model,
+                model_id=spec.model,
                 criteria=scores,
                 passed=not failed,
                 blocked=bool(blocking),
@@ -298,11 +312,26 @@ class JudgeGuard(TracingPolicy):
                 return "condition_false"
         return None
 
+    def chain(self) -> ModelChain:
+        """Modèle du juge et ses secours, avec les réglages du juge (B6)."""
+        definition = self.definition
+        return ModelChain(
+            links=(ModelLink(self.model_spec, self.model), *self.fallbacks),
+            slot=judge_role(definition.name),
+            breakers=self.breakers,
+            max_tokens=definition.max_tokens,
+            params=definition.params,
+            artifacts=self.artifacts,
+        )
+
     async def _evaluate(
         self, state: RunState, judged: _Judged, trace: Trace
-    ) -> tuple[CriterionScore, ...]:
-        """Appel du modèle du juge, journalisé ; les notes de son verdict."""
-        definition, spec = self.definition, self.model_spec
+    ) -> tuple[tuple[CriterionScore, ...], ModelSpec]:
+        """Appel du juge, secours compris, journalisé ; les notes et le modèle qui a jugé."""
+        definition, chain = self.definition, self.chain()
+        # Adhérence (#10) : après une bascule, le run reste sur le secours du juge.
+        current = state.models.get(chain.slot)
+        spec = chain.link(current).spec
         request = ModelRequest(
             model_id=spec.model,
             system=JUDGE_SYSTEM,
@@ -313,15 +342,12 @@ class JudgeGuard(TracingPolicy):
             params={**spec.params, **definition.params},
         )
         started = time.perf_counter()
-        attempts = 0
-        response: ModelResponse | None = None
+        answered: Answered | None = None
         try:
-            call = ModelCall(self.model, spec, artifacts=self.artifacts)
-            async with aclosing(call.run(request)) as outcomes:
+            async with aclosing(chain.run(request, current=current)) as outcomes:
                 async for outcome in outcomes:
-                    attempts += 1
-                    if isinstance(outcome, ModelResponse):
-                        response = outcome
+                    if isinstance(outcome, Answered):
+                        answered = outcome
                     else:
                         trace(
                             outcome.model_copy(
@@ -332,19 +358,19 @@ class JudgeGuard(TracingPolicy):
             raise PolicyFailure(
                 f"juge {definition.name} : model.{exc.kind} — {exc.message}"
             ) from exc
-        if response is None:
+        if answered is None:
             raise PolicyFailure(f"juge {definition.name} : appel terminé sans réponse")
         trace(
             responded(
-                request,
-                response,
-                spec,
-                attempts=attempts,
+                answered.request,
+                answered.response,
+                answered.spec,
+                attempts=answered.attempts,
                 latency_ms=(time.perf_counter() - started) * 1000,
                 call_id=judged.call_id,
             ).model_copy(update={"judge": definition.name})
         )
-        return self._scores(response.message)
+        return self._scores(answered.response.message), answered.spec
 
     async def _message(self, state: RunState, judged: _Judged) -> Message:
         """Ce que le juge reçoit : critères, contexte déclaré, arguments du rôle, sortie."""

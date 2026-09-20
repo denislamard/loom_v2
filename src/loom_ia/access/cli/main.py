@@ -188,12 +188,12 @@ async def _validate(args: argparse.Namespace) -> int:
     async with Loom(config, registry=registry) as loom:
         for spec in config.agents:
             context = loom.context(spec.name)
-            roles = "".join(f", rôle {role.name} ({role.model})" for role in spec.roles)
+            roles = "".join(f", rôle {role.name} ({_chain(role.chain)})" for role in spec.roles)
             subagents = "".join(
                 f", sous-agent {ref.tool_name} ({ref.agent})" for ref in spec.subagents
             )
             print(
-                f"  {spec.name} : modèle {context.model_spec.id}, "
+                f"  {spec.name} : modèle {_chain(spec.main.chain)}, "
                 f"{len(spec.python_tools)} outil(s) Python{roles}{subagents}"
             )
             for bound in context.policies.bound:
@@ -205,13 +205,18 @@ async def _validate(args: argparse.Namespace) -> int:
                 target = f"rôle {role.name}" if role is not None else "réponse finale"
                 sample = f", sample {judge.when.sample:g}" if judge.when.sample < 1 else ""
                 print(
-                    f"    juge {name} ({target}) : modèle {judge.model}, "
+                    f"    juge {name} ({target}) : modèle {_chain(judge.chain)}, "
                     f"{len(judge.criteria)} critère(s){sample}"
                 )
 
             await _show_sources(spec.name, context.tools)
     print(f"\n{len(config.agents)} agent(s) monté(s) sans erreur.")
     return OK
+
+
+def _chain(models: tuple[str, ...]) -> str:
+    """Modèle et ses secours : ``M3_MAIN → SONNET``."""
+    return " → ".join(models)
 
 
 def cmd_run(args: argparse.Namespace) -> int:

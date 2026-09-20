@@ -44,8 +44,10 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from loom_ia.core.events import (
     BudgetExceeded,
+    CircuitOpened,
     GuardChecked,
     JudgeEvaluated,
+    ModelFellBack,
     ModelResponded,
     ModelRetried,
     PolicyDecided,
@@ -111,8 +113,10 @@ class BoundPolicy:
 
 
 # Ce qu'une politique fournie journalise de son propre travail : appel et verdict
-# d'un juge, limite de budget atteinte.
-type TracedEvent = ModelRetried | ModelResponded | JudgeEvaluated | BudgetExceeded
+# d'un juge (secours et disjoncteur compris), limite de budget atteinte.
+type TracedEvent = (
+    ModelRetried | ModelFellBack | CircuitOpened | ModelResponded | JudgeEvaluated | BudgetExceeded
+)
 type Trace = Callable[[TracedEvent], None]
 type PolicyEvent = PolicyDecided | GuardChecked | TracedEvent
 

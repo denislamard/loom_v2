@@ -166,7 +166,7 @@ def broken(**changes: Any) -> dict[str, Any]:
         (broken(system_file="absent.md"), "roles[rediger].system_file — prompt introuvable"),
         (broken(system="x", system_file="rediger.md"), "ne peuvent pas être donnés ensemble"),
         (broken(output={"on_failure": "fallback"}), "demande un 'fallback_message'"),
-        (broken(fallbacks=["MAIN"]), "'fallbacks' : prévu pour le jalon J3.5"),
+        (broken(fallbacks=["ABSENT"]), "rôle 'rediger' : modèle de secours 'ABSENT' non déclaré"),
         (
             broken(context=["user_input", {"tool_results": ["calculer"]}, "attachments"]),
             "rôle 'rediger' : il reçoit les pièces jointes, mais le modèle 'ROLE' n'a pas "
@@ -207,7 +207,10 @@ def broken(**changes: Any) -> dict[str, Any]:
             agent(subagents=[{"agent": "demo"}, {"agent": "demo"}]),
             "Sous-agent déclaré deux fois : demo",
         ),
-        (agent(main={"model": "MAIN", "fallbacks": ["ROLE"]}), "prévu pour le jalon J3.5"),
+        (
+            agent(main={"model": "MAIN", "fallbacks": ["ROLE", "ROLE"]}),
+            "Modèle en double dans la chaîne de secours : ROLE",
+        ),
     ],
 )
 def test_role_checks_at_load(tmp_path: Path, spec: dict[str, Any], message: str) -> None:

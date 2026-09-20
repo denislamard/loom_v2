@@ -236,12 +236,13 @@ class McpServer:
 
     async def _connect_locked(self) -> ClientSession:
         if self._closed:
-            raise SourceUnavailable(self.name, "connexion fermée")
+            raise SourceUnavailable(self.name, "connexion fermée", attempted=False)
         now = self._clock()
         if now < self._retry_at:
             raise SourceUnavailable(
                 self.name,
                 f"{self._last_error} ; nouvelle tentative dans {self._retry_at - now:.0f} s",
+                attempted=False,
             )
         held = _Held(self.name, self._factory, self)
         try:

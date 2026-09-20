@@ -41,6 +41,11 @@ une politique la refuse (contrat de sortie…), le même modèle reçoit, à la
 suite de sa conversation, sa réponse puis le diagnostic, et répond de
 nouveau ; chaque réponse est journalisée dans le span de l'appel.
 
+Secours (B4, #10) : un rôle peut déclarer ses ``fallbacks``. Une bascule
+(``model.fell_back``) est journalisée dans le span de l'appel ; le run garde
+ensuite le secours pour ce rôle (adhérence), et le modèle qui a répondu est
+celui qui répare.
+
 Diffusion (backlog #009) : un rôle terminal appelé seul diffuse sa sortie en
 direct quand l'agent diffuse en ``live`` (``RunView.on_chunk``).
 """
@@ -48,7 +53,7 @@ direct quand l'agent diffuse en ``live`` (``RunView.on_chunk``).
 import json
 import logging
 import time
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Final, Literal
@@ -60,7 +65,6 @@ from loom_ia.core.model import (
     ContentBlock,
     Message,
     ModelRequest,
-    ModelResponse,
     ModelSpec,
     OutputContract,
     RunState,
@@ -72,9 +76,11 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import ModelClient, ModelError, ToolContext
 from loom_ia.core.template import Template
+from loom_ia.engine.circuit import CircuitBreakers
 from loom_ia.engine.delegated import DelegatedPayload, DelegatedTool, Exchange, RunView
+from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.media import describe
-from loom_ia.engine.model_call import ModelCall, responded
+from loom_ia.engine.model_call import responded
 from loom_ia.engine.refs import RefError
 
 logger = logging.getLogger(__name__)
@@ -121,10 +127,21 @@ class RoleDefinition:
 class RoleTool(DelegatedTool):
     """Outil qui délègue l'appel à un rôle."""
 
-    def __init__(self, definition: RoleDefinition, model: ModelClient, model_spec: ModelSpec):
+    def __init__(
+        self,
+        definition: RoleDefinition,
+        model: ModelClient,
+        model_spec: ModelSpec,
+        *,
+        fallbacks: Sequence[ModelLink] = (),
+        breakers: CircuitBreakers | None = None,
+    ):
         self.definition = definition
         self.model = model
         self.model_spec = model_spec
+        # Secours du modèle du rôle, dans l'ordre (B4, #10).
+        self.fallbacks = tuple(fallbacks)
+        self.breakers = breakers
         self._spec = ToolSpec(
             name=definition.name,
             description=described(definition),
@@ -210,14 +227,31 @@ class RoleTool(DelegatedTool):
             return f"Le rôle {role.name} n'a rien reçu : donne-lui ses arguments."
         return Message(role="user", blocks=(TextBlock(text=text), *files))
 
+    def chain(self, run: RunView) -> ModelChain:
+        """Modèle du rôle et ses secours, avec les réglages du rôle (B6)."""
+        role = self.definition
+        return ModelChain(
+            links=(ModelLink(self.model_spec, self.model), *self.fallbacks),
+            slot=role.name,
+            breakers=self.breakers,
+            max_tokens=role.max_tokens,
+            params=role.params,
+            on_chunk=run.on_chunk,
+            artifacts=run.artifacts,
+        )
+
     async def run(
         self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
     ) -> AsyncGenerator[DelegatedPayload | Exchange | ToolOutput]:
-        role, spec = self.definition, self.model_spec
+        role = self.definition
         built = await self.message(arguments, run)
         if isinstance(built, str):
             yield ToolOutput.error(built)
             return
+        chain = self.chain(run)
+        # Adhérence (#10) : après une bascule, le run reste sur le secours du rôle.
+        current = run.state.models.get(role.name)
+        spec = chain.link(current).spec
         request = ModelRequest(
             model_id=spec.model,
             system=role.system,
@@ -225,7 +259,7 @@ class RoleTool(DelegatedTool):
             max_tokens=role.max_tokens or spec.max_tokens,
             params={**spec.params, **role.params},
         )
-        async with aclosing(self._call(request, context, run)) as produced:
+        async with aclosing(self._call(chain, request, current, context)) as produced:
             async for item in produced:
                 yield item
 
@@ -238,7 +272,7 @@ class RoleTool(DelegatedTool):
         context: ToolContext,
         run: RunView,
     ) -> AsyncGenerator[DelegatedPayload | Exchange | ToolOutput]:
-        """Même modèle, même conversation : sa réponse, puis le diagnostic (#20)."""
+        """Modèle qui a répondu, même conversation : sa réponse, puis le diagnostic (#20)."""
         diagnostic = Message.user(f"{REPAIR_PREFIX} ({policy}) : {feedback}")
         request = exchange.request.model_copy(
             update={"messages": (*exchange.request.messages, exchange.answer, diagnostic)}
@@ -246,25 +280,26 @@ class RoleTool(DelegatedTool):
         if run.on_chunk is not None:
             # La sortie déjà diffusée est refusée : elle doit être effacée.
             await run.on_chunk(StreamReset(attempt=len(request.messages) // 2 + 1))
-        async with aclosing(self._call(request, context, run)) as produced:
+        chain = self.chain(run)
+        async with aclosing(self._call(chain, request, exchange.model, context)) as produced:
             async for item in produced:
                 yield item
 
     async def _call(
-        self, request: ModelRequest, context: ToolContext, run: RunView
+        self, chain: ModelChain, request: ModelRequest, current: str | None, context: ToolContext
     ) -> AsyncGenerator[DelegatedPayload | Exchange | ToolOutput]:
-        """Un appel du modèle du rôle : ses événements, l'échange, puis la sortie."""
-        role, spec = self.definition, self.model_spec
+        """Un appel du rôle, secours compris : ses événements, l'échange, puis la sortie.
+
+        ``request`` est construite pour le modèle ``current`` de la chaîne.
+        """
+        role = self.definition
         started = time.perf_counter()
-        attempts = 0
-        response: ModelResponse | None = None
+        answered: Answered | None = None
         try:
-            call = ModelCall(self.model, spec, on_chunk=run.on_chunk, artifacts=run.artifacts)
-            async with aclosing(call.run(request)) as outcomes:
+            async with aclosing(chain.run(request, current=current)) as outcomes:
                 async for outcome in outcomes:
-                    attempts += 1
-                    if isinstance(outcome, ModelResponse):
-                        response = outcome
+                    if isinstance(outcome, Answered):
+                        answered = outcome
                     else:
                         yield outcome.model_copy(update={"call_id": context.call_id})
         except ModelError as exc:
@@ -272,7 +307,7 @@ class RoleTool(DelegatedTool):
             logger.warning(
                 "Échec du rôle %s (modèle %s) : model.%s — %s",
                 role.name,
-                spec.id,
+                chain.link(current).spec.id,
                 exc.kind,
                 exc.message,
                 extra={"run_id": context.run_id},
@@ -281,19 +316,20 @@ class RoleTool(DelegatedTool):
                 f"Le rôle {role.name} n'a pas pu répondre (model.{exc.kind}) : {exc.message}"
             )
             return
-        if response is None:
+        if answered is None:
             raise RuntimeError(f"Rôle {role.name} : appel de modèle terminé sans réponse")
+        response = answered.response
         message = _without_tool_calls(response.message)
         yield responded(
-            request,
+            answered.request,
             response,
-            spec,
-            attempts=attempts,
+            answered.spec,
+            attempts=answered.attempts,
             latency_ms=(time.perf_counter() - started) * 1000,
             message=message,
             call_id=context.call_id,
         )
-        yield Exchange(request=request, answer=message)
+        yield Exchange(request=answered.request, answer=message, model=answered.spec.id)
         if not message.text.strip():
             yield ToolOutput.error(
                 f"Le rôle {role.name} n'a rien produit (arrêt : {response.stop_reason})."

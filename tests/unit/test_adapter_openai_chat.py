@@ -142,7 +142,7 @@ async def test_stream_is_read_in_order() -> None:
 
     blocks = response.message.blocks
     assert blocks[:3] == (
-        ReasoningBlock(text="Je pose le calcul."),
+        ReasoningBlock(text="Je pose le calcul.", model_id="oss-120b"),
         TextBlock(text="Je calcule."),
         ToolCallBlock(call_id="call_a", name="calculer", arguments={"expr": "1+1"}),
     )
@@ -271,7 +271,10 @@ async def test_other_choices_and_reasoning_field() -> None:
         )
     )
     response = await complete(server.model(), request())
-    assert response.message.blocks == (ReasoningBlock(text="pensée"), TextBlock(text="Réponse"))
+    assert response.message.blocks == (
+        ReasoningBlock(text="pensée", model_id="oss-120b"),
+        TextBlock(text="Réponse"),
+    )
     assert response.stop_reason == "end"
 
 
@@ -307,7 +310,7 @@ async def test_non_streaming_models() -> None:
     response = await complete(server.model(spec), request())
     assert "stream" not in server.body
     assert response.message.blocks == (
-        ReasoningBlock(text="réflexion"),
+        ReasoningBlock(text="réflexion", model_id="oss-120b"),
         TextBlock(text="Je calcule."),
         ToolCallBlock(call_id="call_z", name="calculer", arguments={"expr": "3"}),
     )

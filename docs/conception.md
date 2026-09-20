@@ -282,12 +282,13 @@ Un message a un rôle et une liste de blocs typés :
 ```
 RunState
   run_id, root_run_id, parent_run_id, parent_call_id, depth
-  agent, status, step, messages, pending_calls, usage, budget, context
+  agent, status, step, messages, pending_calls, usage, budget, context, models
 ```
 
 - `status` suit la machine à états (§9.1).
 - `pending_calls` : appels d'outils en cours, avec leur éventuel run enfant.
 - Les compteurs de tentatives (`Retry`) vivent dans l'état (#2).
+- `models` : modèle courant de chaque emplacement qui a basculé vers un secours (adhérence, §10.3).
 - Le `RunState` ne contient que des données sérialisables ; modèles, outils, stores et hooks sont passés à part, dans le `RunContext` (#3).
 - Il n'est jamais stocké comme tel : c'est la projection des événements de son `run_id` (#24).
 
@@ -300,7 +301,7 @@ Event
   event_id (UUIDv7, triable)   seq   ts   schema_version
   tenant_id  session_id  run_id  root_run_id  span_id  parent_span_id
   type       ex. "tool.completed"
-  category   run | message | model | tool | guard | policy | approval | artifact | session
+  category   run | message | model | tool | guard | policy | approval | artifact | session | circuit
   status     ok | warning | error
   agent  role                (si applicable)
   facets     champs de recherche remontés par le payload
@@ -318,7 +319,8 @@ Event
 | `message.user` | blocs de contenu ; `kind` (`request`, `repair`), politique et `tools` d'une réparation |
 | `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué), `judge` (appel d'un juge) |
 | `model.retried` | tentative, type d'erreur, délai, call_id (rôle délégué) |
-| `model.fell_back` | ancien modèle, nouveau modèle, motif |
+| `model.fell_back` | emplacement (`main`, rôle, `judge:<nom>`), ancien modèle, nouveau modèle, motif (type d'erreur ou `circuit_open`), erreur, call_id, judge |
+| `circuit.opened` | cible (`model`, `mcp`), modèle ou serveur, échecs de suite, pause, dernière erreur |
 | `idempotency.recorded` | clé, call_id, résultat |
 | `tool.called` | tool_name, tool_kind, call_id, arguments, refs, child_run_id (sous-agent) |
 | `tool.completed` | tool_name, call_id, is_error, sortie (blocs, références de fichiers, aperçu et référence si déportée), latence, taille, consommation d'un sous-agent (usage, coût) ; facette `offloaded` |
@@ -698,8 +700,9 @@ Les tentatives refusées restent dans le journal mais sont exclues de l'historiq
 | `base_url`, `model` | Point d'accès et modèle du fournisseur ; sans `base_url`, l'adresse officielle du fournisseur du SDK, jamais une variable d'environnement (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) |
 | `api_key_env` | Nom de la variable qui contient la clé |
 | Réglages | `max_tokens`, `params` (fusion par bloc entier, B6) |
-| Capacités | Vision, outils, thinking, JSON natif, `image_input` (`base64`, `url`, `file_id`), taille et formats d'image, `tool_result_media`, `streaming`, fenêtre de contexte |
+| Capacités | Vision, outils (`tools`, vrai par défaut), thinking, JSON natif, `image_input` (`base64`, `url`, `file_id`), taille et formats d'image, `tool_result_media`, `streaming`, fenêtre de contexte |
 | Tarifs | Prix d'entrée, de sortie, de cache |
+| Disjoncteur | `circuit_breaker: {failures, cooldown}` (5 échecs, 60 s par défaut ; `null` le retire), §10.3 |
 
 ```yaml
 # Exemple indicatif
@@ -760,9 +763,16 @@ models:
 - À la bascule, le cache de prompt est perdu et le budget utilise le tarif du secours.
 - Événements : `model.retried`, `model.fell_back`.
 
+**Réalisation (3.5a) :**
+
+- `fallbacks` sur `main`, les rôles et les juges. `ModelChain` (`engine/fallback.py`) appelle le modèle courant de l'emplacement avec ses tentatives (`ModelCall`), puis le suivant selon l'erreur ; `context_overflow` va au premier secours dont la fenêtre déclarée est plus grande. Requête du secours : identifiant, `max_tokens` et `params` du secours (ceux de l'emplacement par-dessus), sans le raisonnement d'un autre modèle ; `StreamReset` si des morceaux étaient partis.
+- Adhérence : `RunState.models`, projeté des `model.fell_back` (emplacement : `main`, nom du rôle, `judge:<nom>`). La réparation d'un rôle va au modèle qui a répondu.
+- Disjoncteurs (`engine/circuit.py`) : un par modèle (`model:<id>`) et par serveur MCP (`mcp:<nom>`), partagés par les runs d'une instance `Loom`. Comptent les appels ratés après leurs tentatives (`transient`, `overloaded`, `quota_exhausted`) et les connexions MCP ratées (pas un refus pendant le backoff du serveur) ; une réussite remet à zéro. Au seuil : `circuit.opened`, cible écartée pendant `cooldown`, puis un essai qui la referme ou la rouvre. Toute la fin de la chaîne écartée : erreur `unavailable`.
+- Contrôles au démarrage : chaînes déclarées et sans doublon, `tools` pour un orchestrateur qui a des outils et pour un juge, `vision` pour un rôle ou un juge qui reçoit les pièces jointes, juge Anthropic avec `params.thinking` refusé. Avertissements : secours à fenêtre plus petite, juge corrélé chaînes comprises, secours sans tarif sous budget en dollars.
+
 ### 10.4 Raisonnement et images
 
-**Raisonnement** (#7) : le `RunState` garde un bloc `Reasoning` neutre. L'adaptateur décide quoi renvoyer selon les capacités du modèle : Anthropic exige les blocs signés pendant une boucle d'outils ; l'API Responses d'OpenAI accepte le raisonnement chiffré ; d'autres API compatibles l'ignorent ou le refusent. Après une bascule de modèle, le raisonnement d'un autre fournisseur est écarté. Il est retiré au stockage de la session.
+**Raisonnement** (#7) : le `RunState` garde un bloc `Reasoning` neutre. L'adaptateur décide quoi renvoyer selon les capacités du modèle : Anthropic exige les blocs signés pendant une boucle d'outils ; l'API Responses d'OpenAI accepte le raisonnement chiffré ; d'autres API compatibles l'ignorent ou le refusent. Après une bascule de modèle, le raisonnement d'un autre fournisseur est écarté : chaque bloc porte le modèle qui l'a produit (`model_id`, posé par le moteur), et la chaîne de secours retire celui d'un autre modèle (3.5a). Il est retiré au stockage de la session.
 
 **Images** (#14) : le `RunState` ne garde qu'une référence. Juste avant l'appel, le moteur la résout selon les capacités du modèle : un modèle avec `vision` reçoit les octets, lus dans le stockage d'artefacts et envoyés en base64 par l'adaptateur ; un modèle sans `vision`, ou un fichier qui n'est pas une image, donne une mention textuelle (nom, type, taille). URL signée à courte durée de vie seulement si le modèle l'accepte et que la config l'autorise (RGPD), plus tard : `image_input` doit aujourd'hui contenir `base64`. Si le format (`image_formats`) ou la taille (`max_image_bytes`) ne conviennent pas : erreur explicite avant l'appel (`model.invalid_request`), ou conversion par un hook (3.1). `request_hash` est calculé sur la requête avant résolution, et la fenêtre de contexte compte 1 600 tokens par image envoyée.
 
@@ -1138,6 +1148,7 @@ output:
 
 judge:
   model: SONNET
+  fallbacks: [HAIKU]                  # secours, comme pour main et les rôles
   name: engagements                   # défaut : output (réponse finale), nom du rôle (rôle)
   context: [user_input, {tool_results: [chercher_devis]}]   # liste fixe des rôles
   when:                               # toutes les clauses présentes ; absent : toujours
@@ -1167,6 +1178,7 @@ mcp_servers:
     scope: tenant                     # shared | tenant (J5.1) | run
     connect_timeout: 10               # connexion et initialisation
     idle_timeout: 300                 # shared : fermeture après inactivité ; null la garde
+    circuit_breaker: {failures: 5, cooldown: 60}   # défaut ; null le retire
     tools:
       envoyer_email: {side_effects: irreversible, approval: always}
   - name: math
@@ -1300,6 +1312,7 @@ async with loom:
 - `run()` accepte `session_id`, `tenant`, des pièces jointes, `judges` (`auto`, `force`, `skip` ; depuis 3.3) et un `approver` optionnel ; il renvoie un `RunResult` (statut, réponse, `run_id`, approbations en attente).
 - `stream()` renvoie un itérateur d'événements (durables et éphémères).
 - `report(run_id)` ou `report(session_id=…)` rend la consommation d'un run (et de ses sous-runs) ou d'une session : total, par run, par rôle, par modèle (depuis 3.4).
+- Les disjoncteurs des modèles et des serveurs MCP sont communs aux runs d'une instance ; `Loom(config, breakers=…)` les partage entre instances (depuis 3.5a).
 - `stream()`, `follow()` et `events()` rendent l'arbre du run : ses événements et ceux de ses sous-runs, dans l'ordre du journal ; `subruns=False` s'en tient au run.
 
 ### 18.2 HTTP REST

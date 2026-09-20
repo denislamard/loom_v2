@@ -49,7 +49,7 @@ async def test_fake_model_follows_its_script_within_a_run() -> None:
 
     first = await complete(model, request(Message.user("Combien font 12 * 7 + 3 ?")))
     assert first.message.blocks == (
-        ReasoningBlock(text="hmm"),
+        ReasoningBlock(text="hmm", model_id="fake-1"),
         ToolCallBlock(call_id="fake_0_0", name="calculer", arguments={"expr": "12*7+3"}),
     )
     assert first.stop_reason == "tool_use"

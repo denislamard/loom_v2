@@ -27,6 +27,11 @@ outil Python ou MCP), le guard ``loom.contract`` est placé en tête de ses
 politiques. La diffusion de la réponse finale (``stream_output``) vaut par
 défaut ``after_guards`` quand elle est contrôlée, ``live`` sinon.
 
+Secours (B4, #10) : ``main``, chaque rôle et chaque juge reçoivent leur
+chaîne (modèle, puis ``fallbacks``), avec un client par modèle. Les
+disjoncteurs des modèles et des serveurs MCP sont communs aux agents d'une
+instance ``Loom`` (``breakers``) ; sans elle, à l'agent et à ses sous-agents.
+
 Sous-agents (C5) : l'agent appelé n'est monté qu'au premier appel, par
 ``agents`` (``Loom.context`` dans une instance). Deux agents peuvent ainsi
 s'appeler l'un l'autre sans que le montage boucle ; la profondeur borne les
@@ -80,7 +85,9 @@ from loom_ia.engine import (
     AgentTool,
     AnyTool,
     BoundPolicy,
+    CircuitBreakers,
     ContextItem,
+    ModelLink,
     Policies,
     RoleDefinition,
     RoleTool,
@@ -182,6 +189,7 @@ def build_agent(
     mcp_pool: McpPool | None = None,
     artifacts: ArtifactStore | None = None,
     agents: AgentResolver | None = None,
+    breakers: CircuitBreakers | None = None,
 ) -> Agent:
     """Assemble l'agent ``name`` de la config.
 
@@ -190,6 +198,8 @@ def build_agent(
     fichiers ; sans lui, les pièces jointes sont refusées et les gros
     résultats tronqués. ``agents`` donne le contexte d'un sous-agent par son
     nom ; sans lui, l'agent monte ses sous-agents lui-même, au premier appel.
+    ``breakers`` : disjoncteurs partagés (ceux de l'instance) ; sans eux,
+    l'agent a les siens, communs à ses sous-agents.
     """
     spec = AgentRegistry.from_config(config).get(name)
     known = registry if registry is not None else load_registry(config)
@@ -198,11 +208,15 @@ def build_agent(
     _check_names(spec, [tool.spec.name for tool in tools])
 
     clients: dict[str, ModelClient] = {}
+    breakers = breakers if breakers is not None else CircuitBreakers()
 
     def client(model_id: str) -> ModelClient:
         if model_id not in clients:
             clients[model_id] = create_model_client(config.model_spec(model_id), environ=environ)
         return clients[model_id]
+
+    def links(model_ids: tuple[str, ...]) -> tuple[ModelLink, ...]:
+        return tuple(ModelLink(config.model_spec(m), client(m)) for m in model_ids)
 
     judges = [
         JudgeGuard(
@@ -210,10 +224,17 @@ def build_agent(
             client(judged[2].model),
             config.model_spec(judged[2].model),
             artifacts=artifacts,
+            fallbacks=links(judged[2].fallbacks),
+            breakers=breakers,
         )
         for judged in spec.judges
     ]
-    for warning in [*judge_warnings(config, spec), *budget_warnings(config, spec)]:
+    warnings = [
+        *judge_warnings(config, spec),
+        *budget_warnings(config, spec),
+        *fallback_warnings(config, spec),
+    ]
+    for warning in warnings:
         logger.warning(warning)
     budgets = config.budget_of(spec.name)
     shared = any(
@@ -238,12 +259,19 @@ def build_agent(
             environ=environ,
             mcp_pool=mcp_pool,
             artifacts=artifacts,
+            breakers=breakers,
         )
         agents = nested
         owned = (*owned, nested)
 
     delegated: list[AnyTool] = [
-        RoleTool(definition, client(role.model), config.model_spec(role.model))
+        RoleTool(
+            definition,
+            client(role.model),
+            config.model_spec(role.model),
+            fallbacks=links(role.fallbacks),
+            breakers=breakers,
+        )
         for role, definition in zip(spec.roles, roles, strict=True)
     ]
     if agents is not None:
@@ -264,6 +292,8 @@ def build_agent(
             validate_arguments=execution.validate_arguments,
             artifacts=artifacts,
             offload_over=execution.offload_over,
+            breakers=breakers,
+            circuits={server.name: server.circuit_breaker for server in config.mcp_servers},
         ),
         system=system_prompt(spec),
         max_iterations=spec.max_iterations,
@@ -274,6 +304,8 @@ def build_agent(
         policies=policies,
         output=spec.output,
         stream_output=stream_output(spec, policies),
+        fallbacks=links(spec.main.fallbacks),
+        breakers=breakers,
     )
     return Agent(spec=spec, context=context, clients=tuple(clients.values()), owned=owned)
 
@@ -468,8 +500,8 @@ def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
     """
     if not config.budget_of(spec.name).in_dollars:
         return []
-    used = [spec.main.model, *(role.model for role in spec.roles)]
-    used += [judge.model for _, _, judge in spec.judges]
+    used = [*spec.main.chain, *(m for role in spec.roles for m in role.chain)]
+    used += [m for _, _, judge in spec.judges for m in judge.chain]
     unpriced = [m for m in dict.fromkeys(used) if not config.model_spec(m).pricing.priced]
     if not unpriced:
         return []
@@ -484,16 +516,52 @@ def judge_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
     warnings: list[str] = []
     for name, role, judge in spec.judges:
         label = f"Agent {spec.name!r}, juge {name!r}"
-        evaluated = role.model if role is not None else spec.main.model
-        if correlated(config.model_spec(judge.model), config.model_spec(evaluated)):
+        # Chaînes de secours comprises (#10) : un secours peut rendre le juge corrélé.
+        evaluated = role.chain if role is not None else spec.main.chain
+        pairs = [
+            (mine, theirs)
+            for mine in judge.chain
+            for theirs in evaluated
+            if correlated(config.model_spec(mine), config.model_spec(theirs))
+        ]
+        if pairs:
+            same = ", ".join(
+                mine if mine == theirs else f"{mine} et {theirs}" for mine, theirs in pairs
+            )
             warnings.append(
-                f"{label} : même modèle que la sortie qu'il évalue ({evaluated}) : juge corrélé"
+                f"{label} : même modèle que la sortie qu'il évalue ({same}) : juge corrélé"
             )
         if judge.blocking and judge.when.sample < 1:
             warnings.append(
                 f"{label} : bloquant, mais ne juge qu'une partie des runs "
                 f"(sample {judge.when.sample:g})"
             )
+    return warnings
+
+
+def fallback_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
+    """Secours à la fenêtre de contexte déclarée plus petite que celle du modèle (#10).
+
+    Une requête qui tient dans la fenêtre du modèle peut déborder de celle du
+    secours : la bascule échouera alors en ``context_overflow``.
+    """
+    chains = [(f"Agent {spec.name!r}", spec.main.chain)]
+    chains += [(f"Agent {spec.name!r}, rôle {role.name!r}", role.chain) for role in spec.roles]
+    chains += [
+        (f"Agent {spec.name!r}, juge {name!r}", judge.chain) for name, _, judge in spec.judges
+    ]
+    warnings: list[str] = []
+    for label, (model, *fallbacks) in chains:
+        window = config.model_spec(model).capabilities.context_window
+        if window is None:
+            continue
+        for fallback in fallbacks:
+            smaller = config.model_spec(fallback).capabilities.context_window
+            if smaller is not None and smaller < window:
+                warnings.append(
+                    f"{label} : le secours {fallback} a une fenêtre de contexte plus petite "
+                    f"que {model} ({smaller} < {window} tokens)"
+                )
     return warnings
 
 
@@ -532,6 +600,7 @@ class _SubAgents:
         environ: Mapping[str, str] | None,
         mcp_pool: McpPool | None,
         artifacts: ArtifactStore | None,
+        breakers: CircuitBreakers,
     ) -> None:
         self._config = config
         self._store = store
@@ -539,6 +608,7 @@ class _SubAgents:
         self._environ = environ
         self._mcp_pool = mcp_pool
         self._artifacts = artifacts
+        self._breakers = breakers
         self._built: dict[str, Agent] = {}
 
     def __call__(self, name: str) -> RunContext:
@@ -553,6 +623,7 @@ class _SubAgents:
                 mcp_pool=self._mcp_pool,
                 artifacts=self._artifacts,
                 agents=self,
+                breakers=self._breakers,
             )
             self._built[name] = built
         return built.context

@@ -161,7 +161,9 @@ storage:
 
 **À faire en 3.5 :** un mécanisme commun aux modèles et aux serveurs MCP, avec son événement.
 
-**Statut :** à faire en 3.5.
+**Réalisation (3.5a) :** `circuit_breaker: {failures: 5, cooldown: 60}` par défaut sur chaque modèle et chaque serveur MCP (`null` le retire), disjoncteurs communs aux runs d'une instance `Loom` (`engine/circuit.py`). Côté MCP, une connexion ratée compte un échec, un refus pendant le backoff du serveur (`SourceUnavailable(attempted=False)`) non ; ouvert, le serveur est déclaré indisponible sans nouvel essai. Événement `circuit.opened` (catégorie `circuit`), écrit dans le run dont l'échec l'a ouvert, avant le `tool.source_unavailable`.
+
+**Statut :** fait en 3.5a.
 
 ---
 
@@ -211,7 +213,9 @@ storage:
 
 **À faire en 3.5 :** avec le raisonnement (#7), renvoyer le raisonnement des tours d'outils aux modèles qui l'attendent, puis refaire l'essai avec gpt-oss.
 
-**Statut :** à faire en 3.5.
+**Avancement (3.5a) :** chaque bloc de raisonnement porte désormais le modèle qui l'a produit (`model_id`, posé par le moteur pour tous les adaptateurs). Le renvoi du raisonnement et le nouvel essai avec gpt-oss restent pour 3.5b.
+
+**Statut :** à faire en 3.5b.
 
 ---
 

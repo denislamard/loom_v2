@@ -58,12 +58,8 @@ LATER_AGENT: Final[dict[str, str]] = {
     "approval": "J4.3 (approbations)",
     "timeout": "J4.2 (cycle de vie des runs : délai, annulation)",
 }
-LATER_MAIN: Final[dict[str, str]] = {
-    "fallbacks": "J3.5 (modèle de secours)",
-}
-LATER_ROLE: Final[dict[str, str]] = {
-    "fallbacks": "J3.5 (modèle de secours)",
-}
+LATER_MAIN: Final[dict[str, str]] = {}
+LATER_ROLE: Final[dict[str, str]] = {}
 LATER_SUBAGENT: Final[dict[str, str]] = {}
 LATER_CONTEXT: Final[dict[str, str]] = {
     "session_summary": "J4.1 (sessions)",
@@ -87,15 +83,35 @@ class LlmSettings(DomainModel):
     params: dict[str, JsonValue] = Field(default_factory=dict)
 
 
+def _check_chain(model: str, fallbacks: tuple[str, ...]) -> None:
+    """Chaîne de secours sans doublon, sans le modèle lui-même (B4)."""
+    chain = [model, *fallbacks]
+    doubles = sorted({name for name in chain if chain.count(name) > 1})
+    if doubles:
+        raise ValueError(f"Modèle en double dans la chaîne de secours : {', '.join(doubles)}")
+
+
 class BaseRole(DomainModel):
     """Ce que ``main`` et les rôles délégués ont en commun (C6)."""
 
     # Identifiant d'un modèle déclaré dans ``models``.
     model: str = Field(min_length=1)
+    # Modèles de secours, dans l'ordre (B4, #10) : identifiants déclarés dans ``models``.
+    fallbacks: tuple[str, ...] = ()
     system: str = ""
     # Chemin relatif à ``prompts_dir`` ; lu au chargement.
     system_file: Path | None = None
     llm: LlmSettings = LlmSettings()
+
+    @model_validator(mode="after")
+    def _check_fallbacks(self) -> Self:
+        _check_chain(self.model, self.fallbacks)
+        return self
+
+    @property
+    def chain(self) -> tuple[str, ...]:
+        """Modèle, puis ses secours."""
+        return (self.model, *self.fallbacks)
 
 
 class MainRole(BaseRole):
@@ -133,6 +149,8 @@ class JudgeSpec(DomainModel):
 
     # Identifiant d'un modèle déclaré dans ``models``.
     model: str = Field(min_length=1)
+    # Modèles de secours, dans l'ordre (B4, #10).
+    fallbacks: tuple[str, ...] = ()
     # Nom dans le journal (tirage, rôle ``judge:<nom>``) ; par défaut ``output``
     # pour la réponse finale, le nom du rôle pour un rôle.
     name: str | None = Field(default=None, pattern=CRITERION_NAME_PATTERN)
@@ -156,6 +174,7 @@ class JudgeSpec(DomainModel):
 
     @model_validator(mode="after")
     def _check(self) -> Self:
+        _check_chain(self.model, self.fallbacks)
         names = [criterion.name for criterion in self.criteria]
         doubles = sorted({name for name in names if names.count(name) > 1})
         if doubles:
@@ -176,6 +195,11 @@ class JudgeSpec(DomainModel):
     @property
     def wants_attachments(self) -> bool:
         return "attachments" in self.context
+
+    @property
+    def chain(self) -> tuple[str, ...]:
+        """Modèle, puis ses secours."""
+        return (self.model, *self.fallbacks)
 
 
 def _empty_object() -> dict[str, JsonValue]:
