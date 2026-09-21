@@ -48,6 +48,7 @@ import time
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
 from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from typing import Final
 
 from jsonschema import Draft202012Validator, SchemaError
@@ -56,6 +57,9 @@ from jsonschema.validators import validator_for
 from pydantic import JsonValue
 
 from loom_ia.core.events import (
+    ApprovalGranted,
+    ApprovalRejected,
+    ApprovalRequested,
     ArtifactStored,
     CircuitOpened,
     ToolCalled,
@@ -66,6 +70,9 @@ from loom_ia.core.model import (
     CONTINUE,
     INVALID_JSON_KEY,
     AfterTool,
+    ApprovalDecision,
+    ApprovalSettings,
+    Approver,
     ArtifactRefBlock,
     BeforeTool,
     CircuitBreaker,
@@ -74,7 +81,10 @@ from loom_ia.core.model import (
     InlineDataBlock,
     Message,
     OutputBlock,
+    Pause,
+    PendingApproval,
     PendingCall,
+    Rejected,
     Retry,
     RunId,
     RunState,
@@ -158,7 +168,16 @@ class Decided:
     payload: PolicyEvent
 
 
-type ToolEvent = ToolCalled | ToolCompleted | Stored | Delegated | Decided
+type ToolEvent = (
+    ToolCalled
+    | ToolCompleted
+    | Stored
+    | Delegated
+    | Decided
+    | ApprovalRequested
+    | ApprovalGranted
+    | ApprovalRejected
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,8 +238,11 @@ class ToolExecutor:
         offload_over: int | None = DEFAULT_OFFLOAD_OVER,
         breakers: CircuitBreakers | None = None,
         circuits: Mapping[str, CircuitBreaker | None] | None = None,
+        approval: ApprovalSettings | None = None,
     ) -> None:
         self.default_timeout = default_timeout
+        # Délai, effet d'une expiration et droit exigé (#17).
+        self.approval = approval or ApprovalSettings()
         self.validate_arguments = validate_arguments
         self.artifacts = artifacts
         self.offload_over = offload_over
@@ -330,6 +352,7 @@ class ToolExecutor:
             offload_over=self.offload_over,
             breakers=self.breakers,
             circuits=self.circuits,
+            approval=self.approval,
         )
         copy._tools = dict(self._tools)
         copy._validators = dict(self._validators)
@@ -397,6 +420,7 @@ class ToolExecutor:
         on_chunk: ChunkCallback | None = None,
         turns: tuple[tuple[Message, ...], ...] = (),
         summary: str | None = None,
+        approver: Approver | None = None,
     ) -> AsyncGenerator[ToolEvent]:
         """Traite les appels en attente du run et émet leurs événements.
 
@@ -404,7 +428,8 @@ class ToolExecutor:
         leur run, et le span de leur appel. ``policies`` : celles de l'agent.
         Une décision ``Fail`` à ``before_tool`` arrête le lot avant tout
         lancement. ``on_chunk`` : diffusion en direct, pour un rôle terminal
-        seul dans son lot.
+        seul dans son lot. ``approver`` : approbateur en ligne (#28) — il
+        tranche ici même, et le run ne passe jamais par ``PAUSED``.
         """
         policies = policies or Policies()
         view = self.view(state, writer=writer, spans=spans, turns=turns, summary=summary)
@@ -413,6 +438,7 @@ class ToolExecutor:
             if isinstance(alone, DelegatedTool) and alone.spec.terminal:
                 view = replace(view, on_chunk=on_chunk)
         ready: list[_Ready] = []
+        held: list[tuple[_Ready, ApprovalRequested]] = []
         for call in state.pending_calls:
             tool = self._tools.get(call.name)
             prepared = (
@@ -420,24 +446,59 @@ class ToolExecutor:
                 if tool is None or not _offered(tool, view)
                 else await self._prepare(call, tool, view)
             )
-            if isinstance(prepared, _Ready):
-                verdict = await self._before_tool(prepared, view, policies)
-                for decided in verdict.decided:
-                    yield Decided(call_id=call.call_id, payload=decided)
-                match verdict.decision:
-                    case Fail():
-                        return
-                    case Deny(reason=reason):
-                        text = f"Appel refusé ({verdict.by}) : {reason}"
-                        yield _completed(call, ToolOutput.error(text), started=None)
-                        continue
-                    case _:
-                        pass
-                if isinstance(verdict.subject, BeforeTool):
-                    prepared = replace(prepared, arguments=verdict.subject.arguments)
-                ready.append(prepared)
-            else:
+            if not isinstance(prepared, _Ready):
                 yield _completed(call, ToolOutput.error(prepared), started=None)
+                continue
+            # Approbation déjà tranchée : on applique la décision, on ne la
+            # redemande pas — même si une politique la redemanderait.
+            settled = state.approval(call.call_id)
+            if settled is not None and settled.outcome is not None:
+                outcome = settled.outcome
+                if outcome.verdict != "granted":
+                    text = _refused(settled.tool_name, outcome.verdict, outcome.reason)
+                    yield _completed(call, ToolOutput.error(text), started=None)
+                    continue
+                if outcome.arguments is not None:
+                    prepared = replace(prepared, arguments=outcome.arguments)
+                ready.append(prepared)
+                continue
+            verdict = await self._before_tool(prepared, view, policies)
+            for decided in verdict.decided:
+                yield Decided(call_id=call.call_id, payload=decided)
+            match verdict.decision:
+                case Fail():
+                    return
+                case Deny(reason=reason):
+                    text = f"Appel refusé ({verdict.by}) : {reason}"
+                    yield _completed(call, ToolOutput.error(text), started=None)
+                    continue
+                case _:
+                    pass
+            if isinstance(verdict.subject, BeforeTool):
+                prepared = replace(prepared, arguments=verdict.subject.arguments)
+            # Un `approval: always` ne se lève pas : seule la config admin le
+            # peut, et une politique qui dit `Continue` ne l'a pas levé (#17).
+            asked = _asks_approval(prepared.tool.spec, verdict)
+            if asked is None:
+                ready.append(prepared)
+                continue
+            request = _request(prepared, asked, self.approval)
+            if approver is None:
+                held.append((prepared, request))
+                continue
+            # Approbateur en ligne : il décide dans la boucle. La demande et sa
+            # décision sont journalisées quand même — c'est le seul endroit où
+            # l'on saura qui a validé quoi (#17).
+            yield request
+            decided = await approver(_asked(request))
+            yield _decision(request, decided)
+            if isinstance(decided, Rejected):
+                text = _refused(request.tool_name, "rejected", decided.reason)
+                yield _completed(call, ToolOutput.error(text), started=None)
+                continue
+            if decided.arguments is not None:
+                prepared = replace(prepared, arguments=decided.arguments)
+            ready.append(prepared)
 
         for item in ready:
             yield ToolCalled(
@@ -478,6 +539,13 @@ class ToolExecutor:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Les appels qui ne demandent rien se sont exécutés ; le run passe en
+        # pause pour les autres (#17). La demande est écrite après le lot, et
+        # non avant : une décision qui arriverait pendant qu'il tourne
+        # trouverait le run encore piloté, et se ferait refuser sa reprise.
+        for _, request in held:
+            yield request
 
     # --- Interne ---------------------------------------------------------
 
@@ -821,6 +889,81 @@ async def _delegated(
             state,
         )
     return output, consumption, exchange
+
+
+def _asks_approval(spec: ToolSpec, verdict: Verdict) -> tuple[str, str | None] | None:
+    """Motif et politique de l'approbation à demander, ou None s'il n'y en a pas.
+
+    Deux sources : la déclaration de l'outil (``approval: always``), que rien
+    ne lève — une politique qui rend ``Continue`` ne l'a pas levée —, et une
+    politique ``before_tool`` qui rend ``Pause``, laquelle peut en exiger une
+    sur n'importe quel outil.
+    """
+    if spec.approval == "always":
+        return f"outil déclaré à approbation obligatoire (effets : {spec.side_effects})", None
+    if isinstance(verdict.decision, Pause):
+        return verdict.decision.reason, verdict.by
+    return None
+
+
+def _request(
+    item: _Ready, asked: tuple[str, str | None], settings: ApprovalSettings
+) -> ApprovalRequested:
+    """Demande d'approbation d'un appel, prête à écrire."""
+    reason, policy = asked
+    expire_at = (
+        None
+        if settings.expires_in is None
+        else datetime.now(UTC) + timedelta(seconds=settings.expires_in)
+    )
+    return ApprovalRequested(
+        call_id=item.call.call_id,
+        tool_name=item.call.name,
+        arguments=item.arguments,
+        reason=reason,
+        policy=policy,
+        scope=settings.scope,
+        expire_at=expire_at,
+    )
+
+
+def _asked(request: ApprovalRequested) -> PendingApproval:
+    """Ce que l'approbateur en ligne reçoit : la demande, telle qu'elle attendrait."""
+    return PendingApproval(
+        call_id=request.call_id,
+        tool_name=request.tool_name,
+        arguments=request.arguments,
+        reason=request.reason,
+        policy=request.policy,
+        scope=request.scope,
+        expire_at=request.expire_at,
+    )
+
+
+def _decision(
+    request: ApprovalRequested, decided: ApprovalDecision
+) -> ApprovalGranted | ApprovalRejected:
+    """Décision d'un approbateur en ligne, telle qu'elle s'écrit au journal."""
+    if isinstance(decided, Rejected):
+        return ApprovalRejected(
+            call_id=request.call_id,
+            tool_name=request.tool_name,
+            by=decided.by,
+            reason=decided.reason,
+        )
+    return ApprovalGranted(
+        call_id=request.call_id,
+        tool_name=request.tool_name,
+        by=decided.by,
+        reason=decided.reason,
+        arguments=decided.arguments,
+    )
+
+
+def _refused(tool_name: str, verdict: str, reason: str) -> str:
+    """Ce que le modèle lit d'un appel qu'une approbation n'a pas autorisé."""
+    head = "refusé" if verdict == "rejected" else "sans approbation dans le délai imparti"
+    return f"Appel à {tool_name} {head}" + (f" : {reason}" if reason else ".")
 
 
 def _offered(tool: AnyTool, run: RunView) -> bool:

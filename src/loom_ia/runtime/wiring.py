@@ -64,7 +64,7 @@ from loom_ia.agents.spec import (
 from loom_ia.agents.spec import ContextItem as DeclaredContext
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.errors import ConfigError
-from loom_ia.config.models import LoomConfig
+from loom_ia.config.models import FILE_BACKENDS, LoomConfig
 from loom_ia.config.references import Registry, import_modules, resolve
 from loom_ia.core.model import (
     ALLOWED_DECISIONS,
@@ -300,6 +300,7 @@ def build_agent(
         delegated += [
             AgentTool(_subagent_definition(config, spec, ref), agents) for ref in spec.subagents
         ]
+    _check_durable_journal(config, spec, [*tools, *delegated], policies)
     execution = config.execution.tools
     llm = spec.main.llm
     context = RunContext(
@@ -316,6 +317,7 @@ def build_agent(
             offload_over=execution.offload_over,
             breakers=breakers,
             circuits={server.name: server.circuit_breaker for server in config.mcp_servers},
+            approval=spec.approval,
         ),
         system=system_prompt(spec),
         max_iterations=spec.max_iterations,
@@ -329,6 +331,7 @@ def build_agent(
         stream_output=stream_output(spec, policies),
         fallbacks=links(spec.main.fallbacks),
         breakers=breakers,
+        approval=spec.approval,
     )
     return Agent(spec=spec, context=context, clients=tuple(clients.values()), owned=owned)
 
@@ -525,6 +528,33 @@ def judge_definition(
         timeout=judge.timeout,
         on_error=judge.on_error,
     )
+
+
+def _check_durable_journal(
+    config: LoomConfig, spec: AgentSpec, tools: Sequence[AnyTool], policies: Policies
+) -> None:
+    """Un agent qui peut se mettre en pause exige un journal durable (#28).
+
+    En pause, le run n'existe plus que dans le journal : le process peut
+    s'arrêter, l'approbateur prendre son temps, un autre worker reprendre. Un
+    journal en mémoire perdrait le run à la première fermeture, et
+    l'approbation n'aurait rien à reprendre. Une erreur, donc, et non un
+    avertissement — les profils, qui permettront de l'assouplir en dev,
+    arrivent en J5.
+    """
+    if config.storage.events.backend not in FILE_BACKENDS:
+        obligatoires = [t.spec.name for t in tools if t.spec.approval == "always"]
+        pausing = sorted({b.name for b in policies.bound if "pause" in b.policy.decisions})
+        causes = [
+            *(f"outil {name!r} en approval: always" for name in obligatoires),
+            *(f"politique {name!r} qui peut rendre Pause" for name in pausing),
+        ]
+        if causes:
+            raise ConfigError(
+                f"Agent {spec.name!r} : {', '.join(causes)} — une approbation exige un "
+                f"journal durable ({' ou '.join(FILE_BACKENDS)}), "
+                f"pas {config.storage.events.backend!r} (#28)"
+            )
 
 
 def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:

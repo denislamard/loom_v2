@@ -23,7 +23,13 @@ la session, pas le run, et s'écrivent après sa clôture.
 
 from collections.abc import Iterable
 
+from pydantic import JsonValue
+
 from loom_ia.core.events import (
+    ApprovalExpired,
+    ApprovalGranted,
+    ApprovalRejected,
+    ApprovalRequested,
     ArtifactStored,
     BudgetExceeded,
     CircuitOpened,
@@ -51,7 +57,9 @@ from loom_ia.core.events import (
     UserMessage,
 )
 from loom_ia.core.model import (
+    ApprovalOutcome,
     Message,
+    PendingApproval,
     PendingCall,
     PendingRepair,
     RunClaim,
@@ -59,6 +67,7 @@ from loom_ia.core.model import (
     RunState,
     RunStatus,
     TextBlock,
+    ToolCallBlock,
     ToolResultBlock,
     Usage,
 )
@@ -209,6 +218,42 @@ def apply(state: RunState | None, event: Event) -> RunState:
             }
         case RunClaimed(worker_id=worker, lease_until=until):
             update["claim"] = RunClaim(worker_id=worker, lease_until=until)
+        case ApprovalRequested() as asked:
+            update["approvals"] = (*state.approvals, _asked(asked))
+        case ApprovalGranted(call_id=call_id) as granted:
+            corriges = granted.arguments
+            if corriges is not None:
+                # L'approbateur a corrigé l'appel : la conversation doit dire ce
+                # qui part, sans quoi le résultat contredira l'appel du modèle.
+                update["messages"] = _restated(state.messages, call_id, corriges)
+            update["approvals"] = _settled(
+                state,
+                call_id,
+                event,
+                ApprovalOutcome(
+                    verdict="granted",
+                    by=granted.by,
+                    reason=granted.reason,
+                    arguments=corriges,
+                ),
+            )
+        case ApprovalRejected(call_id=call_id) as refused:
+            update["approvals"] = _settled(
+                state,
+                call_id,
+                event,
+                ApprovalOutcome(verdict="rejected", by=refused.by, reason=refused.reason),
+            )
+        case ApprovalExpired(call_id=call_id, expire_at=expire_at):
+            update["approvals"] = _settled(
+                state,
+                call_id,
+                event,
+                ApprovalOutcome(
+                    verdict="expired",
+                    reason=f"sans réponse avant {expire_at.isoformat(timespec='seconds')}",
+                ),
+            )
         case RunCancelled(reason=reason):
             update |= {
                 "status": RunStatus.CANCELLED,
@@ -216,6 +261,75 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 "finished": True,
             }
     return state.model_copy(update=update)
+
+
+def _restated(
+    messages: tuple[Message, ...], call_id: str, arguments: dict[str, JsonValue]
+) -> tuple[Message, ...]:
+    """Réécrit un appel de la conversation avec les arguments qui vont vraiment partir.
+
+    Le modèle doit lire ce qui a eu lieu, et non ce qu'il avait demandé :
+    sinon le résultat de l'outil contredit son propre appel, et il en conclut
+    à une panne. Vu au run réel du 21/09 — l'approbateur avait corrigé le
+    destinataire d'un e-mail, et MiniMax, voyant partir une adresse qu'il
+    n'avait pas écrite, a proposé de renvoyer l'e-mail déjà parti.
+
+    Le journal ne bouge pas : ``tool.called`` garde les arguments du modèle,
+    et la décision qui les a corrigés dit qui a voulu quoi.
+    """
+    return tuple(
+        message.model_copy(update={"blocks": blocks})
+        if (
+            blocks := tuple(
+                block.model_copy(update={"arguments": arguments})
+                if isinstance(block, ToolCallBlock) and block.call_id == call_id
+                else block
+                for block in message.blocks
+            )
+        )
+        != message.blocks
+        else message
+        for message in messages
+    )
+
+
+def _asked(payload: ApprovalRequested) -> PendingApproval:
+    """Demande d'approbation, telle qu'elle attend dans l'état."""
+    return PendingApproval(
+        call_id=payload.call_id,
+        tool_name=payload.tool_name,
+        arguments=payload.arguments,
+        reason=payload.reason,
+        policy=payload.policy,
+        scope=payload.scope,
+        expire_at=payload.expire_at,
+    )
+
+
+def _settled(
+    state: RunState, call_id: str, event: Event, outcome: ApprovalOutcome
+) -> tuple[PendingApproval, ...]:
+    """Demande refermée par sa décision ; les autres sont laissées telles quelles.
+
+    Une décision qui ne désigne aucune demande est une incohérence du journal,
+    pas un cas à absorber : deux décisions pour un même appel s'annuleraient
+    en silence.
+    """
+    asked = state.approval(call_id)
+    if asked is None:
+        raise ProjectionError(
+            f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, "
+            f"sans demande d'approbation (seq {event.seq})"
+        )
+    if asked.outcome is not None:
+        raise ProjectionError(
+            f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, "
+            f"déjà tranché ({asked.outcome.verdict}) (seq {event.seq})"
+        )
+    return tuple(
+        a.model_copy(update={"outcome": outcome}) if a.call_id == call_id else a
+        for a in state.approvals
+    )
 
 
 def _decided(state: RunState, decided: PolicyDecided, event: Event) -> dict[str, object]:
@@ -235,14 +349,19 @@ def _decided(state: RunState, decided: PolicyDecided, event: Event) -> dict[str,
                 tools=decided.tools is not False,
             )
         case PolicyDecided(
-            decision="replace", point="before_tool", call_id=str() as call_id, arguments=dict()
+            decision="replace",
+            point="before_tool",
+            call_id=str() as call_id,
+            arguments=dict() as remplaces,
         ):
             update["pending_calls"] = tuple(
-                c.model_copy(update={"replaced_arguments": decided.arguments})
+                c.model_copy(update={"replaced_arguments": remplaces})
                 if c.call_id == call_id
                 else c
                 for c in _require_pending(state, call_id, event)
             )
+            # Comme pour une approbation : le modèle lit l'appel qui part.
+            update["messages"] = _restated(state.messages, call_id, remplaces)
         case PolicyDecided(decision="replace", point="on_output", output=Message() as output):
             update["replaced_output"] = output
         case _:

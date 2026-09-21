@@ -5,6 +5,8 @@ Le ``RunState`` n'est jamais stocké : c'est la projection des événements de
 son ``run_id`` (#24). Il ne contient que des données sérialisables.
 """
 
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal
@@ -58,6 +60,75 @@ class PendingCall(DomainModel):
     # Arguments remplacés par une politique ``before_tool`` : repris tels quels
     # si l'appel est relancé après une interruption (#2).
     replaced_arguments: dict[str, JsonValue] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Approved:
+    """L'approbateur autorise l'appel, avec d'autres arguments s'il le veut (#17)."""
+
+    by: str | None = None
+    reason: str = ""
+    arguments: dict[str, JsonValue] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Rejected:
+    """L'approbateur refuse l'appel : le motif revient au modèle (#17)."""
+
+    reason: str = ""
+    by: str | None = None
+
+
+type ApprovalDecision = Approved | Rejected
+
+
+type ApprovalVerdict = Literal["granted", "rejected", "expired"]
+
+
+class ApprovalOutcome(DomainModel):
+    """Ce qu'une demande d'approbation est devenue (#17)."""
+
+    verdict: ApprovalVerdict
+    # Qui a tranché : clé d'API, utilisateur, ou nom rendu par un approbateur
+    # en ligne. C'est l'audit demandé par #17, et il n'est nulle part ailleurs.
+    by: str | None = None
+    reason: str = ""
+    # Arguments corrigés en accordant ; absents, ceux de la demande valent.
+    arguments: dict[str, JsonValue] | None = None
+
+
+class PendingApproval(DomainModel):
+    """Demande d'approbation écrite au journal (#17, D10).
+
+    Elle attend tant qu'``outcome`` est absent, et c'est ce qui tient le run
+    en ``PAUSED``. Une décision la referme sans l'effacer : le déroulé se
+    relit entier, et la reprise sait quoi faire de l'appel.
+    """
+
+    call_id: str
+    tool_name: str
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    reason: str = ""
+    # Politique qui l'a exigée ; absente pour un outil en ``approval: always``.
+    policy: str | None = None
+    scope: str = "approve"
+    expire_at: datetime | None = None
+    outcome: ApprovalOutcome | None = None
+
+    def stale(self, now: datetime) -> bool:
+        """Demande sans réponse dont la date est passée.
+
+        C'est le journal qui fait foi, pas le travail différé : une file
+        perdue dans un redémarrage ne peut pas laisser une demande
+        approuvable indéfiniment.
+        """
+        return self.outcome is None and self.expire_at is not None and now >= self.expire_at
+
+
+# Approbateur en ligne (#28) : il décide dans la boucle, sans que le run
+# passe par l'état PAUSED. Ce qu'il rend est écrit au journal comme une
+# décision ordinaire — l'audit de #17 vaut aussi pour les scripts.
+type Approver = Callable[[PendingApproval], Awaitable[ApprovalDecision]]
 
 
 class PendingRepair(DomainModel):
@@ -157,6 +228,10 @@ class RunState(DomainModel):
     # Dernière concession prise sur ce run (#27) ; None si personne ne l'a
     # encore pilotée, ou si le journal est antérieur à 4.2b.
     claim: RunClaim | None = None
+    # Approbations du run (#17), dans l'ordre des demandes. Celles qui
+    # attendent encore tiennent le run en PAUSED ; les autres gardent leur
+    # décision, que la reprise applique à l'appel.
+    approvals: tuple[PendingApproval, ...] = ()
     # Vrai après run.completed, run.failed ou run.cancelled : plus rien n'est accepté.
     finished: bool = False
     # Dernier événement appliqué.
@@ -169,6 +244,15 @@ class RunState(DomainModel):
 
     def pending(self, call_id: str) -> PendingCall | None:
         return next((c for c in self.pending_calls if c.call_id == call_id), None)
+
+    @property
+    def awaiting(self) -> tuple[PendingApproval, ...]:
+        """Demandes d'approbation sans réponse : le run les attend (#17)."""
+        return tuple(a for a in self.approvals if a.outcome is None)
+
+    def approval(self, call_id: str) -> PendingApproval | None:
+        """Demande d'approbation de cet appel, tranchée ou non."""
+        return next((a for a in self.approvals if a.call_id == call_id), None)
 
     @property
     def attachments(self) -> tuple[ArtifactRecord, ...]:

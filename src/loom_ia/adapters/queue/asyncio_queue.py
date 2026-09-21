@@ -34,10 +34,17 @@ class _Entry:
     key: str | None
     state: JobState
     task: asyncio.Task[None] | None = None
+    # Travail qui attend son heure (``delay``) et n'a rien commencé.
+    delayed: bool = False
 
     @property
     def open(self) -> bool:
         return self.state in {"pending", "running"}
+
+    @property
+    def busy(self) -> bool:
+        """Travail en cours, par opposition à un travail qui dort encore."""
+        return self.open and not self.delayed
 
 
 class AsyncioTaskQueue:
@@ -60,7 +67,7 @@ class AsyncioTaskQueue:
             if waiting is not None and waiting.open:
                 return self._by_key[key]
         job_id = new_id()
-        entry = _Entry(job=job, key=key, state="pending")
+        entry = _Entry(job=job, key=key, state="pending", delayed=bool(delay))
         self._entries[job_id] = entry
         if key is not None:
             self._by_key[key] = job_id
@@ -80,16 +87,28 @@ class AsyncioTaskQueue:
         return True
 
     async def drain(self) -> None:
-        """Attend les tâches en cours, sans en accepter de nouvelles."""
+        """Attend les tâches en cours, sans en accepter de nouvelles.
+
+        Un travail différé qui dort encore n'est pas une tâche en cours : il
+        n'a rien commencé, et l'attendre bloquerait pour toute la durée de son
+        délai. Ce qu'il devait faire se retrouve de toute façon au journal.
+        """
         while True:
-            running = [e.task for e in self._entries.values() if e.open and e.task is not None]
+            running = [e.task for e in self._entries.values() if e.busy and e.task is not None]
             if not running:
                 return
             await asyncio.gather(*running, return_exceptions=True)
 
     async def aclose(self) -> None:
-        """Attend les tâches en cours, puis abandonne celles qui traînent."""
+        """Attend les tâches en cours, puis abandonne celles qui traînent.
+
+        Les travaux différés qui dorment encore sont abandonnés sans attendre :
+        rien ne justifie de retenir la fermeture pour un réveil à venir.
+        """
         self._closed = True
+        for entry in self._entries.values():
+            if entry.delayed and entry.task is not None:
+                entry.task.cancel()
         try:
             async with asyncio.timeout(self._shutdown_timeout):
                 await self.drain()
@@ -111,6 +130,7 @@ class AsyncioTaskQueue:
         try:
             if delay:
                 await asyncio.sleep(delay)
+            entry.delayed = False
             entry.state = "running"
             handler = self._handlers.get(entry.job.kind)
             if handler is None:

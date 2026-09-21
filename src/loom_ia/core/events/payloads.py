@@ -52,7 +52,7 @@ run les ignore (ils peuvent arriver après sa clôture).
 """
 
 from datetime import datetime
-from typing import Annotated, ClassVar, Final, Literal, Self
+from typing import Annotated, ClassVar, Final, Literal, Self, get_args
 
 from pydantic import (
     Field,
@@ -75,7 +75,7 @@ from loom_ia.core.model.messages import Message
 from loom_ia.core.model.policy import CheckOutcome, CheckResolution, DecisionKind, HookPoint
 from loom_ia.core.model.run_state import CancelReason, RunKind, RunStatus
 from loom_ia.core.model.streaming import ModelErrorKind, StopReason
-from loom_ia.core.model.tooling import ToolKind
+from loom_ia.core.model.tooling import ExpiryAction, ToolKind
 from loom_ia.core.model.usage import Usage
 
 type EventCategory = Literal[
@@ -681,6 +681,99 @@ class JudgeEvaluated(Payload):
         return "ok" if self.passed else "warning"
 
 
+# --- Approbations ------------------------------------------------------------
+
+
+class ApprovalRequested(Payload):
+    """Appel d'outil suspendu en attendant une décision humaine (#17, D10).
+
+    Écrit par l'exécuteur, après les appels du lot qui ne demandent rien : le
+    run passe alors en ``PAUSED``. Ce que l'approbateur doit voir est ici —
+    l'outil, ses arguments, le motif —, car c'est la seule chose qu'il lira.
+
+    ``expire_at`` fait foi : passé cette date, la demande est expirée, qu'un
+    travail différé ait tourné ou non. Une file perdue dans un redémarrage ne
+    peut donc pas laisser une demande approuvable indéfiniment.
+    """
+
+    category: ClassVar[EventCategory] = "approval"
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "scope")
+
+    type: Literal["approval.requested"] = "approval.requested"
+    call_id: str
+    tool_name: str
+    # Tels qu'ils seront exécutés : références déjà résolues.
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    # Pourquoi l'approbation est demandée : déclaration de l'outil, ou motif
+    # de la politique qui l'a exigée.
+    reason: str = ""
+    # Politique qui l'a exigée ; absente pour un outil en ``approval: always``.
+    policy: str | None = None
+    # Droit exigé de l'approbateur, côté REST (N2).
+    scope: str = "approve"
+    expire_at: datetime | None = None
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning"
+
+
+class ApprovalGranted(Payload):
+    """Appel autorisé : il s'exécute, éventuellement avec d'autres arguments (#17)."""
+
+    category: ClassVar[EventCategory] = "approval"
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by")
+
+    type: Literal["approval.granted"] = "approval.granted"
+    call_id: str
+    tool_name: str
+    # Identité de l'approbateur : clé d'API, utilisateur, ou nom rendu par un
+    # approbateur en ligne. L'audit de #17 tient dans ce champ.
+    by: str | None = None
+    reason: str = ""
+    # Arguments corrigés par l'approbateur ; absents, ceux de la demande valent.
+    arguments: dict[str, JsonValue] | None = None
+
+
+class ApprovalRejected(Payload):
+    """Appel refusé : le motif part au modèle comme résultat d'erreur (#17)."""
+
+    category: ClassVar[EventCategory] = "approval"
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by")
+
+    type: Literal["approval.rejected"] = "approval.rejected"
+    call_id: str
+    tool_name: str
+    by: str | None = None
+    reason: str = ""
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning"
+
+
+class ApprovalExpired(Payload):
+    """Demande laissée sans réponse jusqu'à son ``expire_at`` (#17).
+
+    ``action`` dit ce qu'il advient du run : ``deny``, l'appel est refusé et
+    le modèle continue ; ``fail``, le run échoue. C'est un « non » prudent par
+    défaut : personne n'a dit oui.
+    """
+
+    category: ClassVar[EventCategory] = "approval"
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "action")
+
+    type: Literal["approval.expired"] = "approval.expired"
+    call_id: str
+    tool_name: str
+    action: ExpiryAction = "deny"
+    expire_at: datetime
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning"
+
+
 # --- Artefacts ---------------------------------------------------------------
 
 
@@ -834,6 +927,10 @@ type DurablePayload = Annotated[
     | GuardChecked
     | JudgeEvaluated
     | BudgetExceeded
+    | ApprovalRequested
+    | ApprovalGranted
+    | ApprovalRejected
+    | ApprovalExpired
     | ArtifactStored
     | SessionSnapshot
     | SessionCompacted
@@ -841,27 +938,6 @@ type DurablePayload = Annotated[
     Field(discriminator="type"),
 ]
 
-DURABLE_PAYLOADS: tuple[type[Payload], ...] = (
-    RunStarted,
-    StepStarted,
-    StepCompleted,
-    RunTransitioned,
-    RunCompleted,
-    RunFailed,
-    UserMessage,
-    ModelResponded,
-    ModelRetried,
-    ModelFellBack,
-    CircuitOpened,
-    ToolCalled,
-    ToolCompleted,
-    ToolSourceUnavailable,
-    PolicyDecided,
-    GuardChecked,
-    JudgeEvaluated,
-    BudgetExceeded,
-    ArtifactStored,
-    SessionSnapshot,
-    SessionCompacted,
-    SessionTrimmed,
-)
+# Tirés de l'union, et non recopiés : une liste tenue à la main dérive — elle
+# avait perdu `run.cancelled` et `run.claimed` (J4.2).
+DURABLE_PAYLOADS: tuple[type[Payload], ...] = get_args(get_args(DurablePayload.__value__)[0])

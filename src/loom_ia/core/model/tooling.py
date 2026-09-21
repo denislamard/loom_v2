@@ -15,6 +15,8 @@ from loom_ia.core.model.contract import OutputContract
 type ToolKind = Literal["python", "mcp", "role", "agent", "builtin"]
 type SideEffects = Literal["none", "reversible", "irreversible"]
 type Approval = Literal["never", "always", "policy"]
+# Ce qu'il advient d'une demande d'approbation laissée sans réponse (#17).
+type ExpiryAction = Literal["deny", "fail"]
 
 # Contrainte commune aux API des fournisseurs sur les noms d'outils.
 TOOL_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
@@ -28,6 +30,18 @@ TERMINAL_HINT: Final = "À appeler seul : sa sortie est la réponse finale, tran
 
 def _empty_object_schema() -> dict[str, JsonValue]:
     return {"type": "object", "properties": {}}
+
+
+class ApprovalSettings(DomainModel):
+    """Ce qu'un agent fait des approbations qu'il demande (#17, #28)."""
+
+    # Délai laissé à l'approbateur ; sans lui, une demande attend indéfiniment.
+    expires_in: PositiveFloat | None = None
+    # Ce qu'il advient d'une demande périmée : un « non » prudent par défaut,
+    # personne n'ayant dit oui.
+    on_expiry: ExpiryAction = "deny"
+    # Droit exigé de l'approbateur, côté REST (N2).
+    scope: str = "approve"
 
 
 class ToolDefinition(DomainModel):

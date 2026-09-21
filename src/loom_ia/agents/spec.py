@@ -35,6 +35,7 @@ from loom_ia.core.model import (
     RESERVED_PREFIX,
     TOOL_NAME_PATTERN,
     Approval,
+    ApprovalSettings,
     Budgets,
     Criterion,
     DomainModel,
@@ -54,9 +55,7 @@ from loom_ia.core.template import Template, TemplateError
 AGENT_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 
 # Clés du schéma complet d'un agent, prévues pour plus tard (§17.4).
-LATER_AGENT: Final[dict[str, str]] = {
-    "approval": "J4.3 (approbations)",
-}
+LATER_AGENT: Final[dict[str, str]] = {}
 LATER_MAIN: Final[dict[str, str]] = {}
 LATER_ROLE: Final[dict[str, str]] = {}
 LATER_SUBAGENT: Final[dict[str, str]] = {}
@@ -505,6 +504,10 @@ class AgentSpec(DomainModel):
     # écrit ``run.failed`` avec ``error_type: timeout``, donc le run reste
     # reprenable — avec un délai relevé. Sans valeur, pas de délai.
     timeout: PositiveFloat | None = None
+    # Approbations de l'agent (#17) : délai laissé à l'approbateur, effet
+    # d'une demande périmée, droit exigé côté REST. Un outil les demande
+    # par sa déclaration (``approval: always``) ou par une politique.
+    approval: ApprovalSettings = ApprovalSettings()
     # Contrat de la réponse finale (A7, E1) : réparée par l'orchestrateur.
     output: OutputContract | None = None
     # Juge de la réponse finale (E3, #21), après son contrat.

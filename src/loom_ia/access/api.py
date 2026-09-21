@@ -43,9 +43,10 @@ lisible (``error``). Les trois accès rendent ce même résultat.
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self
 
@@ -59,6 +60,8 @@ from loom_ia.config import LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.references import Registry
 from loom_ia.core.events import (
+    ApprovalGranted,
+    ApprovalRejected,
     Event,
     JudgeEvaluated,
     RunCompleted,
@@ -67,6 +70,7 @@ from loom_ia.core.events import (
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    Approver,
     ArtifactRecord,
     Attachment,
     CallerContext,
@@ -74,6 +78,7 @@ from loom_ia.core.model import (
     JudgesMode,
     Message,
     ModelChunk,
+    PendingApproval,
     RunId,
     RunState,
     RunStatus,
@@ -102,6 +107,7 @@ from loom_ia.engine import (
     begin_run,
     cancellation,
     drive,
+    run_scope,
 )
 from loom_ia.runtime import (
     Agent,
@@ -131,6 +137,13 @@ class UnknownRun(KeyError):
     def __init__(self, run_id: RunId) -> None:
         super().__init__(f"Run {run_id} inconnu")
         self.run_id = run_id
+
+
+class UnknownApproval(KeyError):
+    """Aucune demande d'approbation en attente pour cet appel."""
+
+    def __init__(self, run_id: RunId, call_id: str) -> None:
+        super().__init__(f"Run {run_id} : aucune approbation en attente pour l'appel {call_id!r}")
 
 
 class UnknownSession(KeyError):
@@ -209,6 +222,8 @@ class RunResult(DomainModel):
     report: UsageReport | None = None
     # Verdicts des juges du run et de ses sous-runs, dans l'ordre du journal.
     verdicts: tuple[JudgeVerdict, ...] = ()
+    # Approbations que le run attend (#17) : non vide quand il est en pause.
+    pending_approvals: tuple[PendingApproval, ...] = ()
 
     @classmethod
     def of(cls, state: RunState, events: Sequence[Event] = ()) -> Self:
@@ -238,6 +253,7 @@ class RunResult(DomainModel):
                 for event in tree
                 if isinstance(payload := event.payload, JudgeEvaluated)
             ),
+            pending_approvals=state.awaiting,
         )
 
     @property
@@ -327,7 +343,11 @@ class Loom:
             if compaction is not None
             else None
         )
-        handlers: dict[JobKind, Handler] = {"run": self._piloted_job}
+        handlers: dict[JobKind, Handler] = {
+            "run": self._piloted_job,
+            "resume": self._piloted_job,
+            "expire_approval": self._piloted_job,
+        }
         if self._compaction is not None:
             handlers["compaction"] = self._compacted
         # La file existe toujours depuis 4.2b : elle porte les runs de fond,
@@ -397,14 +417,21 @@ class Loom:
         run_id: RunId | None = None,
         on_chunk: ChunkCallback | None = None,
         judges: JudgesMode = "auto",
+        approver: Approver | None = None,
     ) -> RunResult:
         """Fait tourner un run jusqu'au bout et renvoie ce qu'il a produit.
 
         Une pièce jointe refusée (format, taille) lève ``AttachmentError``
         avant que le run ne commence. ``judges`` (#21) : ``auto``, chaque juge
         selon son ``when`` ; ``force``, tous (audit, évals) ; ``skip``, aucun.
+
+        ``approver`` (#28) : un approbateur en ligne, appelé dans la boucle
+        pour chaque appel qui demande une approbation. Le run ne passe alors
+        jamais en pause — c'est le mode des scripts, de la CLI et des tests.
+        Sans lui, l'approbation est asynchrone : le run s'arrête en ``PAUSED``
+        et ``approve()`` le reprend.
         """
-        ctx = self.context(agent, on_chunk=on_chunk)
+        ctx = self.context(agent, on_chunk=on_chunk, approver=approver)
         state = await self._start(ctx, message, attachments, session_id, context, run_id, judges)
         return await self._result(state)
 
@@ -466,7 +493,13 @@ class Loom:
         writer = await self._writer(state.context.tenant_id, state.session_id)
         return await self._result(await self._piloted(ctx, state, writer))
 
-    def context(self, agent: str, *, on_chunk: ChunkCallback | None = None) -> RunContext:
+    def context(
+        self,
+        agent: str,
+        *,
+        on_chunk: ChunkCallback | None = None,
+        approver: Approver | None = None,
+    ) -> RunContext:
         """Contexte d'exécution d'un agent, monté au premier appel.
 
         Le client de modèle et les outils sont gardés d'un run à l'autre ; le
@@ -490,9 +523,13 @@ class Loom:
         context = replace(
             built.context, worker_id=self._worker_id, lease=self._config.execution.lease
         )
-        if on_chunk is None:
+        if on_chunk is None and approver is None:
             return context
-        return replace(context, on_chunk=on_chunk)
+        return replace(
+            context,
+            on_chunk=on_chunk or context.on_chunk,
+            approver=approver or context.approver,
+        )
 
     # --- Relire un run --------------------------------------------------------
 
@@ -734,6 +771,97 @@ class Loom:
         await writer.append(cancellation(state, by=by))
         return True
 
+    async def approve(
+        self,
+        run_id: RunId,
+        *,
+        call_id: str | None = None,
+        by: str | None = None,
+        reason: str = "",
+        arguments: dict[str, JsonValue] | None = None,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+    ) -> tuple[str, ...]:
+        """Autorise un appel que le run attend, et remet son pilotage en file (#17).
+
+        Sans ``call_id``, toutes les demandes en attente sont accordées —
+        le cas courant, un seul appel à valider. ``arguments`` corrige ceux de
+        l'appel, et ne vaut que pour un ``call_id`` désigné. ``by`` est
+        l'identité de l'approbateur : c'est tout l'audit qu'il y aura.
+
+        Rend les appels accordés ; vide si le run n'attendait rien.
+        """
+        return await self._decided(
+            run_id,
+            call_id,
+            session_id=session_id,
+            tenant_id=tenant_id,
+            payload=lambda asked: ApprovalGranted(
+                call_id=asked.call_id,
+                tool_name=asked.tool_name,
+                by=by,
+                reason=reason,
+                arguments=arguments if call_id is not None else None,
+            ),
+        )
+
+    async def reject(
+        self,
+        run_id: RunId,
+        *,
+        call_id: str | None = None,
+        by: str | None = None,
+        reason: str = "",
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+    ) -> tuple[str, ...]:
+        """Refuse un appel que le run attend (#17) : le motif revient au modèle.
+
+        Le run n'échoue pas : l'appel rend une erreur, et l'orchestrateur fait
+        ce qu'il peut de ce refus.
+        """
+        return await self._decided(
+            run_id,
+            call_id,
+            session_id=session_id,
+            tenant_id=tenant_id,
+            payload=lambda asked: ApprovalRejected(
+                call_id=asked.call_id, tool_name=asked.tool_name, by=by, reason=reason
+            ),
+        )
+
+    async def _decided(
+        self,
+        run_id: RunId,
+        call_id: str | None,
+        *,
+        session_id: SessionId | None,
+        tenant_id: TenantId | None,
+        payload: Callable[[PendingApproval], ApprovalGranted | ApprovalRejected],
+    ) -> tuple[str, ...]:
+        """Écrit une décision d'approbation, puis remet le run en file."""
+        state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
+        if state.finished:
+            return ()
+        asked = [a for a in state.awaiting if call_id is None or a.call_id == call_id]
+        if call_id is not None and not asked:
+            raise UnknownApproval(run_id, call_id)
+        if not asked:
+            return ()
+        writer = await self._writers.open(self._store, state.context.tenant_id, state.session_id)
+        scope = run_scope(state)
+        await writer.append([scope.draft(payload(a)) for a in asked])
+        await self._queue.submit(
+            Job(
+                kind="resume",
+                tenant_id=state.context.tenant_id,
+                session_id=state.session_id,
+                run_id=state.run_id,
+            ),
+            key=f"run:{state.run_id}",
+        )
+        return tuple(a.call_id for a in asked)
+
     async def submit(
         self,
         agent: str,
@@ -836,16 +964,21 @@ class Loom:
         ctx = self.context(state.agent)
         writer = await self._writer(state.context.tenant_id, state.session_id)
         try:
-            await self._piloted(ctx, state, writer)
+            final = await self._piloted(ctx, state, writer)
         except ClaimConflict as conflict:
             # Un autre pilote le tient : c'est le but de la concession.
             logger.info("%s", conflict)
+            return
+        # Un run de fond a droit au même traitement qu'un run appelé en direct :
+        # snapshot d'historique, compaction en file, réveil d'une approbation.
+        await self._result(final)
 
     async def _result(self, state: RunState) -> RunResult:
         """Résultat d'un run qui vient de s'arrêter, avec son rapport et ses verdicts."""
         events = await self._store.read(state.context.tenant_id, state.session_id)
         await self._snapshot(state, events)
         await self._schedule(state, events)
+        await self._expiring(state)
         return RunResult.of(state, events)
 
     async def compact(
@@ -887,6 +1020,29 @@ class Loom:
                 run_id=state.run_id,
             ),
             key=self._compaction.key(state.session_id, up_to_seq),
+        )
+
+    async def _expiring(self, state: RunState) -> None:
+        """Ramène un run en pause à l'échéance de sa première demande (#17).
+
+        Le travail ne décide rien : c'est ``expire_at``, au journal, qui fait
+        expirer une demande, et ``drive`` le lit en reprenant. Le travail ne
+        fait qu'y revenir au bon moment, pour que personne n'ait à repasser.
+        Différé, il ne retient ni ``drain()`` ni la fermeture : s'il est
+        abandonné, la demande n'en est pas moins périmée.
+        """
+        deadlines = [a.expire_at for a in state.awaiting if a.expire_at is not None]
+        if not deadlines:
+            return
+        await self._queue.submit(
+            Job(
+                kind="expire_approval",
+                tenant_id=state.context.tenant_id,
+                session_id=state.session_id,
+                run_id=state.run_id,
+            ),
+            key=f"expire:{state.run_id}",
+            delay=max((min(deadlines) - datetime.now(UTC)).total_seconds(), 0.0),
         )
 
     async def _snapshot(self, state: RunState, events: Sequence[Event]) -> None:

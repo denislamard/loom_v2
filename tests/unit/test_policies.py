@@ -437,7 +437,6 @@ async def test_policies_from_the_config(tmp_path: Path) -> None:
         ({"hook": "pas_une_politique"}, "introuvable"),
         ({"hook": "politiques_test:pas_une_politique"}, "n'est pas une politique"),
         ({"hook": "prudente", "points": ["on_output"]}, "ne s'applique pas à on_output"),
-        ({"hook": "attente"}, "prévue pour le jalon J4.3"),
     ],
 )
 def test_policy_reference_errors(tmp_path: Path, declared: dict[str, Any], message: str) -> None:

@@ -21,6 +21,10 @@ from collections.abc import Iterable
 from typing import Final
 
 from loom_ia.core.events import (
+    ApprovalExpired,
+    ApprovalGranted,
+    ApprovalRejected,
+    ApprovalRequested,
     ArtifactStored,
     BudgetExceeded,
     CircuitOpened,
@@ -146,6 +150,26 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
                 f"politique {payload.policy} ({payload.point}) : "
                 f"{DECISIONS[payload.decision]}{reason}"
             )
+        case ApprovalRequested():
+            delai = (
+                ""
+                if payload.expire_at is None
+                else f", jusqu'à {payload.expire_at.isoformat(timespec='seconds')}"
+            )
+            return f"approbation demandée : {payload.tool_name} — {payload.reason}{delai}"
+        case ApprovalGranted(by=str() as author):
+            return f"approbation accordée par {author} : {payload.tool_name}"
+        case ApprovalGranted():
+            return f"approbation accordée : {payload.tool_name}"
+        case ApprovalRejected(by=str() as author):
+            motif = f" — {payload.reason}" if payload.reason else ""
+            return f"approbation refusée par {author} : {payload.tool_name}{motif}"
+        case ApprovalRejected():
+            motif = f" — {payload.reason}" if payload.reason else ""
+            return f"approbation refusée : {payload.tool_name}{motif}"
+        case ApprovalExpired():
+            suite = "appel refusé" if payload.action == "deny" else "run en échec"
+            return f"approbation périmée : {payload.tool_name} — {suite}"
         case ArtifactStored():
             return (
                 f"{STORED[payload.origin]} : {payload.name or payload.uri} "

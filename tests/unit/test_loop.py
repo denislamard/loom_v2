@@ -25,10 +25,12 @@ from loom_ia.core.events import (
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    ApprovalOutcome,
     CallerContext,
     Message,
     ModelChunk,
     ModelSpec,
+    PendingApproval,
     Pricing,
     RetryPolicy,
     RunId,
@@ -571,10 +573,37 @@ async def test_transitions_are_logged(store: EventStore, caplog: pytest.LogCaptu
 
 
 async def test_step_does_nothing_in_a_waiting_state(store: EventStore) -> None:
+    """Un run qui attend quelqu'un d'autre n'avance pas tout seul."""
     ctx = context(store, scripted())
     state = await begin_run(ctx, "?")
-    paused = state.model_copy(update={"status": RunStatus.PAUSED})
-    assert [d async for d in step(paused, ctx)] == []
+    enfant = state.model_copy(update={"status": RunStatus.WAITING_CHILD})
+    assert [d async for d in step(enfant, ctx)] == []
+    en_attente = state.model_copy(
+        update={
+            "status": RunStatus.PAUSED,
+            "approvals": (PendingApproval(call_id="c1", tool_name="envoyer_email"),),
+        }
+    )
+    assert [d async for d in step(en_attente, ctx)] == []
+
+
+async def test_a_paused_run_whose_approvals_are_settled_goes_back_to_its_tools(
+    store: EventStore,
+) -> None:
+    """Plus rien n'attend : le run repart où il s'était arrêté."""
+    ctx = context(store, scripted())
+    state = await begin_run(ctx, "?")
+    tranchee = PendingApproval(
+        call_id="c1",
+        tool_name="envoyer_email",
+        outcome=ApprovalOutcome(verdict="granted", by="denis"),
+    )
+    repris = state.model_copy(update={"status": RunStatus.PAUSED, "approvals": (tranchee,)})
+    drafts = [d async for d in step(repris, ctx)]
+    assert [d.payload.type for d in drafts] == ["run.transitioned"]
+    transition = drafts[0].payload
+    assert isinstance(transition, RunTransitioned)
+    assert transition.to_state is RunStatus.AWAITING_TOOLS
 
 
 async def test_drive_refuses_a_step_without_progress(

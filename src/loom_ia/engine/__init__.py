@@ -44,6 +44,7 @@ from loom_ia.engine.loop import (
     cancellation,
     drive,
     judge_role,
+    run_scope,
     step,
 )
 from loom_ia.engine.media import IMAGE_TOKENS, MediaResolver
@@ -152,6 +153,7 @@ __all__ = [
     "judge_role",
     "mark_results",
     "rendered",
+    "run_scope",
     "step",
     "tagged",
     "transcript",

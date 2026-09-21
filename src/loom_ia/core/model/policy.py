@@ -66,7 +66,7 @@ ALLOWED_DECISIONS: Final[Mapping[HookPoint, frozenset[DecisionKind]]] = {
 }
 
 # Décisions prévues pour plus tard, refusées au démarrage.
-LATER_DECISIONS: Final[Mapping[DecisionKind, str]] = {"pause": "J4.3 (approbations)"}
+LATER_DECISIONS: Final[Mapping[DecisionKind, str]] = {}
 
 # Début du message qui demande une réparation au modèle orchestrateur (#20).
 REPAIR_PREFIX: Final = "Réponse refusée par un contrôle"

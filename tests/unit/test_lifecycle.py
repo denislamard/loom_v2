@@ -291,16 +291,6 @@ def test_a_deadline_must_be_positive(patient: ConfigFactory) -> None:
         load_config(patient(timeout=0))
 
 
-def test_approval_is_still_deferred(patient: ConfigFactory, tmp_path: Path) -> None:
-    path = patient()
-    agent = yaml.safe_load((tmp_path / "agents" / "demo.yaml").read_text(encoding="utf-8"))
-    agent["approval"] = "always"
-    (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
-
-    with pytest.raises(ConfigError, match=r"J4\.3"):
-        load_config(path)
-
-
 # --- Utilitaires --------------------------------------------------------------
 
 

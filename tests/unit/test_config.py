@@ -150,8 +150,8 @@ def test_config_can_be_written_in_python() -> None:
         ),
         (
             {},
-            {"demo": {**AGENT, "approval": {}}},
-            "'approval' : prévu pour le jalon J4.3",
+            {"demo": {**AGENT, "approval": {"on_expiry": "ignorer"}}},
+            "on_expiry",
         ),
         (
             {},

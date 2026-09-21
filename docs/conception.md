@@ -506,6 +506,16 @@ Pause → approval.requested (outil, arguments, motif, scope requis, expire_at)
       | approval.expired  (→ Deny ou Fail, configurable)
 ```
 
+Réalisation (phase 4.3a) : la demande est écrite **après** le reste du lot —
+une décision qui arriverait pendant qu'il tourne se ferait refuser sa reprise
+par la concession —, et `drive`, en laissant le run en pause, rend cette
+concession (une dernière `run.claimed` expirée à l'écriture) pour que la
+reprise soit immédiate. `expire_at` fait foi : une demande dont la date est
+passée est expirée à la reprise, qu'un travail différé ait tourné ou non ;
+`expire_approval` ne fait que ramener le run à l'échéance, et comme il dort,
+il ne retient ni `drain()` ni la fermeture. Un appel refusé n'est **jamais**
+appelé : pas de `tool.called`, seulement un `tool.completed` en erreur.
+
 L'identité de l'approbateur est enregistrée. Canaux : API REST (scope `approve`), elicitation MCP, API Python ; jamais un outil MCP.
 
 **Reprise d'un appel interrompu** (#18, #26) :
@@ -908,9 +918,12 @@ Port `TaskQueue` (#27) : `submit(job, key, delay?)`, `status(job_id)`, `cancel(j
 
 La concession est appliquée : `drive` écrit `run.claimed` avant de piloter et lève `ClaimConflict` si une concession vivante appartient à un autre worker. Le `worker_id` est engendré à la construction de l'instance ; le bail (`execution.lease`, 60 s) se renouvelle par minuteur au tiers de sa durée, et non entre deux étapes — un run bloqué dans une étape plus longue que son bail est vivant, et le perdrait. Un sous-run ne prend pas de concession : il tourne dans l'étape de son parent, qui tient la sienne. Le revers est assumé : un run dont le porteur est mort attend l'expiration du bail avant d'être repris, ce qui évite de doubler un worker simplement lent.
 
+**Réalisation (phase 4.3a) :** les travaux `resume` et `expire_approval` sont traités, par le même pilote que `run`. Un travail **différé** n'est plus considéré comme en cours : `drain()` ne l'attend pas et la fermeture l'abandonne, au lieu de retenir le process pour un réveil à venir. Un run mené par la file reçoit le même traitement qu'un run appelé en direct — snapshot d'historique, compaction mise en file, réveil d'une approbation.
+
 ### 12.2 Pause en mode librairie
 
 - Un agent qui peut se mettre en pause (outil en `approval: always | policy`, ou politique qui peut renvoyer `Pause`) exige un `EventStore` durable (JSONL au minimum) : erreur de config, avertissement seulement en profil dev (#28).
+- **Réalisation (phase 4.3a) :** le contrôle est une erreur de chargement, les profils arrivant en J5. `Loom.approve()` et `Loom.reject()` écrivent la décision et mettent un travail `resume` en file ; `run(..., approver=…)` décide dans la boucle, sans passer par `PAUSED`, et journalise quand même la demande et sa décision. Réglages sur l'agent : `approval: {expires_in, on_expiry, scope}`.
 - Approbation asynchrone (défaut) : `run()` renvoie `RunResult(status=paused, run_id, pending_approvals)` ; plus tard, `await loom.approve(run_id, décision)` écrit la décision et met un `resume` en file.
 - Approbateur en ligne : `run(..., approver=callback)` appelle le callback dans le process, sans état `PAUSED` durable (scripts, CLI, tests).
 - Un job `expire_approval` est planifié dès la demande.

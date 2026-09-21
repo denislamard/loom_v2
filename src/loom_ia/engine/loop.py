@@ -92,6 +92,10 @@ from typing import Final
 from pydantic import JsonValue
 
 from loom_ia.core.events import (
+    ApprovalExpired,
+    ApprovalGranted,
+    ApprovalRejected,
+    ApprovalRequested,
     ArtifactStored,
     CircuitOpened,
     Effect,
@@ -121,6 +125,8 @@ from loom_ia.core.model import (
     MAIN_ROLE,
     REPAIR_PREFIX,
     AfterModel,
+    ApprovalSettings,
+    Approver,
     ArtifactRefBlock,
     Attachment,
     AttachmentPolicy,
@@ -202,6 +208,15 @@ class ClaimConflict(RuntimeError):
         )
 
 
+# Événements que l'exécuteur rend tels quels, sans enveloppe d'appel.
+_BARE_EVENTS: Final = (
+    ToolCalled,
+    ToolCompleted,
+    ApprovalRequested,
+    ApprovalGranted,
+    ApprovalRejected,
+)
+
 _ACTIONABLE: Final = frozenset(
     {
         RunStatus.READY_FOR_MODEL,
@@ -259,6 +274,11 @@ class RunContext:
     worker_id: str | None = None
     # Durée de la concession, en secondes ; renouvelée au tiers.
     lease: float = DEFAULT_LEASE
+    # Approbations de l'agent (#17) : délai, effet d'une expiration, droit exigé.
+    approval: ApprovalSettings = field(default_factory=ApprovalSettings)
+    # Approbateur en ligne (#28) : il tranche dans la boucle, et le run ne
+    # passe jamais par ``PAUSED``. Sans lui, l'approbation est asynchrone.
+    approver: Approver | None = None
 
     @property
     def artifacts(self) -> ArtifactStore | None:
@@ -423,7 +443,7 @@ async def drive(
     state = fold(own, run_id)
     if state.agent != ctx.agent:
         raise ValueError(f"Le run {run_id} appartient à l'agent {state.agent!r}, pas {ctx.agent!r}")
-    if state.finished or state.status not in _ACTIONABLE:
+    if state.finished or not _actionable(state):
         return state
     rooted = state.parent_run_id is None and state.kind == "normal"
     earlier = [e for e in events if e.seq < own[0].seq] if rooted else []
@@ -435,7 +455,7 @@ async def drive(
     if writer is None:
         writer = SessionWriter(ctx.store, tenant, session, events[-1].seq)
     journal = writer
-    scope = _scope(state)
+    scope = run_scope(state)
     claimed = await _claim(state, ctx, journal, scope)
 
     async def write(draft: EventDraft) -> Event:
@@ -474,7 +494,7 @@ async def drive(
             turns=session_turns,
             summary=last_summary(earlier),
         )
-        while not state.finished and state.status in _ACTIONABLE:
+        while not state.finished and _actionable(state):
             emitted = 0
             left = _remaining(state, run_ctx)
             if left is not None and left <= 0:
@@ -499,7 +519,42 @@ async def drive(
                 raise RuntimeError(
                     f"Run {run_id} : aucune progression depuis l'état {state.status}"
                 )
+        # Le run s'arrête sans être fini — en pause, le temps qu'on l'approuve.
+        # Sa concession n'a plus de porteur : la garder vivante ferait refuser
+        # la reprise pendant tout ce qu'il reste du bail (jusqu'à 60 s).
+        await _handed_back(write, state, scope, claimed)
     return state
+
+
+def _actionable(state: RunState) -> bool:
+    """Le run peut-il avancer par lui-même ?
+
+    Un run en pause ne le peut que si ses demandes d'approbation sont
+    tranchées — ou périmées, ce qui est une décision du journal et de personne
+    d'autre. Sinon il attend un humain, et ``drive`` n'a rien à y faire.
+    """
+    if state.status is RunStatus.PAUSED:
+        now = datetime.now(UTC)
+        return not state.awaiting or any(a.stale(now) for a in state.awaiting)
+    return state.status in _ACTIONABLE
+
+
+async def _handed_back(
+    write: Callable[[EventDraft], Awaitable[Event]],
+    state: RunState,
+    scope: RunScope,
+    claim: RunClaim | None,
+) -> None:
+    """Rend la concession d'un run laissé en plan volontairement (#27, #17).
+
+    Une concession expirée à l'écriture : le premier pilote venu peut
+    reprendre le run dès qu'une décision arrive, sans attendre la fin d'un
+    bail que plus personne ne renouvelle. Un run fini n'en a pas besoin —
+    plus rien ne le reprendra.
+    """
+    if claim is None or state.finished:
+        return
+    await write(scope.draft(RunClaimed(worker_id=claim.worker_id, lease_until=datetime.now(UTC))))
 
 
 async def _claim(
@@ -567,7 +622,7 @@ def cancellation(
     la distingue d'un run simplement interrompu — plantage, flux abandonné —,
     qui ne laisse rien au journal et repart où il s'était arrêté.
     """
-    scope = _scope(state)
+    scope = run_scope(state)
     return [
         _transition(state, scope, RunStatus.CANCELLED, "cancel"),
         scope.draft(
@@ -646,7 +701,7 @@ async def step(
     consommation des runs précédents de la session (budget de session).
     """
     session = session or Spent()
-    scope = _scope(state)
+    scope = run_scope(state)
     decision = await _decide(state, ctx, scope, cause)
     if decision is not None:
         for draft in decision:
@@ -701,6 +756,11 @@ async def _decide(
             ]
         case RunStatus.READY_FOR_MODEL | RunStatus.FINALIZING if answered and last is not None:
             return await _review(state, ctx, scope, cause, last)
+        case RunStatus.PAUSED:
+            return _resumed(state, ctx, scope, cause)
+        case RunStatus.AWAITING_TOOLS if state.awaiting:
+            # Le reste du lot est passé ; ces appels-là attendent un humain (#17).
+            return [_transition(state, scope, RunStatus.PAUSED, cause)]
         case RunStatus.AWAITING_TOOLS if not state.pending_calls:
             terminal, parallel = _terminal(state, ctx)
             if terminal is not None:
@@ -723,6 +783,53 @@ async def _decide(
             return [*drafts, _transition(state, scope, _after_tools(state, ctx), cause)]
         case _:
             return None
+
+
+def _resumed(
+    state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None
+) -> list[EventDraft] | None:
+    """Ce qu'un run en pause peut faire des décisions qui lui sont parvenues (#17).
+
+    Une demande dont la date est passée expire **ici**, au moment où on la
+    regarde : c'est l'``expire_at`` du journal qui fait foi, et non le travail
+    différé qui devait la réveiller — perdu dans un redémarrage, il laisserait
+    sinon la demande approuvable indéfiniment.
+
+    Le run repart en ``AWAITING_TOOLS`` dès que plus rien n'attend : l'appel
+    approuvé est rejoué, l'appel refusé rend son motif au modèle. Si une
+    expiration est réglée sur ``fail``, le run échoue au lieu de repartir.
+    """
+    now = datetime.now(UTC)
+    action = ctx.approval.on_expiry
+    stale = [a for a in state.awaiting if a.stale(now) and a.expire_at is not None]
+    drafts = [
+        scope.draft(
+            ApprovalExpired(
+                call_id=a.call_id,
+                tool_name=a.tool_name,
+                action=action,
+                expire_at=a.expire_at,
+            )
+        )
+        for a in stale
+        if a.expire_at is not None
+    ]
+    if stale and action == "fail":
+        names = ", ".join(sorted({a.tool_name for a in stale}))
+        return [
+            *drafts,
+            *_fail(
+                state,
+                scope,
+                "approval.expired",
+                f"approbation non obtenue dans le délai imparti ({names})",
+                cause,
+            ),
+        ]
+    if len(stale) < len(state.awaiting):
+        # Il en reste qui attendent vraiment : le run se rendort.
+        return drafts
+    return [*drafts, _transition(state, scope, RunStatus.AWAITING_TOOLS, cause)]
 
 
 async def _review(
@@ -903,7 +1010,7 @@ def _fail(
     scope: RunScope,
     error_type: str,
     error: str,
-    cause: EventDraft | None,
+    cause: Event | EventDraft | None,
     *,
     spent: tuple[Usage, float] = (Usage(), 0.0),
 ) -> list[EventDraft]:
@@ -1242,11 +1349,12 @@ async def _tool_step(
         on_chunk=ctx.on_chunk if ctx.stream_output == "live" else None,
         turns=ctx.turns,
         summary=ctx.summary,
+        approver=ctx.approver,
     )
     async with aclosing(batch) as events:
         async for item in events:
             span = spans.setdefault(item.call_id, new_span_id())
-            seen = item if isinstance(item, ToolCalled | ToolCompleted) else item.payload
+            seen = item if isinstance(item, _BARE_EVENTS) else item.payload
             if isinstance(seen, ModelResponded):
                 usage, cost = usage + seen.usage, cost + seen.cost_usd
             elif isinstance(seen, ToolCompleted) and seen.usage is not None:
@@ -1300,7 +1408,8 @@ async def _tool_step(
 # --- Interne -----------------------------------------------------------------
 
 
-def _scope(state: RunState) -> RunScope:
+def run_scope(state: RunState) -> RunScope:
+    """Portée où écrire les événements d'un run : son span, son arbre, son agent."""
     return RunScope(
         tenant_id=state.context.tenant_id,
         session_id=state.session_id,

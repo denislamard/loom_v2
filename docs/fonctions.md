@@ -627,6 +627,20 @@ ToolOutput
 - **Audit :** l'identité de l'approbateur (clé API ou utilisateur) est enregistrée.
 - **Canal :** l'API REST (scope `approve`) ou l'elicitation MCP, jamais un outil MCP (point 39).
 
+**Réalisation (phase 4.3a) :**
+
+- **Quatre événements.** `approval.requested` (outil, arguments résolus, motif, politique qui l'a exigée, droit attendu, `expire_at`), puis `approval.granted` (auteur, arguments corrigés s'il y en a), `approval.rejected` (auteur, motif) ou `approval.expired` (effet appliqué). Ils portent tous le `call_id` de l'appel : c'est ce qui les relie entre eux et à l'appel d'outil.
+- **Qui la demande.** La déclaration de l'outil (`approval: always`), que rien ne lève — une politique qui rend `Continue` ne l'a pas levée —, ou une politique `before_tool` qui rend `Pause`, laquelle peut en exiger une sur n'importe quel outil. `Pause` est débloquée (elle était refusée au chargement).
+- **Lot partiel.** Les appels qui ne demandent rien s'exécutent et finissent ; le run passe ensuite en `PAUSED` pour les autres. La demande est écrite **après** le lot, et non avant : une décision qui arriverait pendant qu'il tourne trouverait le run encore piloté et se ferait refuser sa reprise.
+- **La concession est rendue.** En laissant un run en plan volontairement, `drive` écrit une dernière concession expirée à l'écriture. Sans cela, la reprise après une approbation se ferait refuser pendant tout ce qui reste du bail (jusqu'à 60 s) par un pilote qui n'existe plus.
+- **Reprise.** `Loom.approve(run_id, call_id=…, by=…, arguments=…)` et `Loom.reject(…)` écrivent la décision et mettent un travail `resume` en file. Sans `call_id`, toutes les demandes en attente sont tranchées. Le run repart en `AWAITING_TOOLS` dès que plus rien n'attend : un appel accordé est rejoué (avec les arguments de l'approbateur), un appel refusé rend son motif au modèle **sans jamais être appelé** — pas de `tool.called`, seulement un `tool.completed` en erreur.
+- **Expiration.** `expire_at` fait foi : à la reprise, une demande dont la date est passée est expirée, qu'un travail différé ait tourné ou non. Ce travail (`expire_approval`) ne fait que ramener le run à l'échéance ; comme il dort, il ne retient ni `drain()` ni la fermeture, et s'il est abandonné la demande n'en est pas moins périmée. L'effet est `deny` par défaut (l'appel est refusé, le run continue) ou `fail` (`error_type: approval.expired`).
+- **Config.** Bloc `approval` sur l'agent : `expires_in`, `on_expiry`, `scope`. Les déclarations d'un outil (`side_effects`, `approval`) restent à leur place, surchargeables par la référence dans l'agent.
+- **Audit.** `by` est renseigné par l'appelant de `approve`/`reject`, ou par l'approbateur en ligne. C'est tout l'audit qu'il y aura, et il est dans le journal.
+- **Le modèle lit l'appel qui part.** Quand une approbation corrige les arguments — ou qu'une politique `before_tool` les remplace (3.1) —, la conversation rend l'appel avec les arguments **effectifs**. Sans cela, le résultat de l'outil contredit l'appel que le modèle croit avoir fait, et il en conclut à une panne : au run réel du 21/09, l'approbateur avait corrigé le destinataire, MiniMax a vu partir une adresse qu'il n'avait pas écrite et a proposé de **renvoyer** un e-mail déjà parti. Le journal ne bouge pas : `tool.called` garde les arguments du modèle, `approval.granted` et `policy.decided` la correction — qui a voulu quoi reste lisible.
+- **Ce qu'une approbation ne fait pas.** Elle protège un appel, pas sa répétition : un second appel du même outil redemande simplement une approbation. Empêcher de refaire un effet déjà obtenu est le travail de l'idempotence (#18, J4.4).
+- **Reste à faire en 4.3b :** `WAITING_CHILD` — un sous-agent qui se met en pause, et ce que devient son parent.
+
 ### 18. Idempotence
 
 - **Clé stable :** `hash(run_id, call_id)`, transmise dans le `ToolContext`. Elle reste identique après une reprise ou un retry.
@@ -1016,6 +1030,12 @@ Réglé par le point 18 : réexécution si l'outil est sans effet de bord ou ide
 | Approbateur en ligne | Scripts, CLI, tests | `run(..., approver=callback)` : le callback est appelé dans le process, sans passer par l'état `PAUSED` durable |
 
 - **Expiration :** un job `expire_approval` est planifié dès la demande d'approbation.
+
+**Réalisation (phase 4.3a) :**
+
+- **Contrôle au chargement.** Un agent qui peut se mettre en pause — un outil en `approval: always`, ou une politique qui déclare la décision `pause` — est refusé si le journal n'est pas durable (`jsonl` ou `sqlite`). Une **erreur**, pas un avertissement : en pause, le run n'existe plus que dans le journal, et un journal en mémoire le perdrait à la première fermeture. L'assouplissement en profil dev arrivera avec les profils (J5).
+- **Asynchrone (défaut).** `run()` rend un `RunResult(status=paused)` dont `pending_approvals` porte les demandes ; `approve()` ou `reject()` les tranchent plus tard, de n'importe où, et remettent le run en file.
+- **Approbateur en ligne.** `run(..., approver=callback)` : le rappel reçoit la demande (`PendingApproval`) et rend `Approved(by=…, arguments=…)` ou `Rejected(reason=…)`. Il décide **dans la boucle**, avant que le lot ne parte, et le run ne passe jamais par `PAUSED`. La demande et sa décision sont journalisées quand même : le déroulé d'un run se lit pareil dans les deux modes, et l'audit vaut aussi pour les scripts et les tests.
 
 ### 29. Spans : modèle maison, export OpenTelemetry
 
