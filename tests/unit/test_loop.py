@@ -572,12 +572,10 @@ async def test_transitions_are_logged(store: EventStore, caplog: pytest.LogCaptu
     assert record.__dict__["run_id"] == state.run_id
 
 
-async def test_step_does_nothing_in_a_waiting_state(store: EventStore) -> None:
-    """Un run qui attend quelqu'un d'autre n'avance pas tout seul."""
+async def test_step_does_nothing_while_an_approval_is_awaited(store: EventStore) -> None:
+    """Un run qui attend un humain n'avance pas tout seul."""
     ctx = context(store, scripted())
     state = await begin_run(ctx, "?")
-    enfant = state.model_copy(update={"status": RunStatus.WAITING_CHILD})
-    assert [d async for d in step(enfant, ctx)] == []
     en_attente = state.model_copy(
         update={
             "status": RunStatus.PAUSED,
@@ -585,6 +583,18 @@ async def test_step_does_nothing_in_a_waiting_state(store: EventStore) -> None:
         }
     )
     assert [d async for d in step(en_attente, ctx)] == []
+
+
+async def test_a_parent_whose_child_can_go_on_replays_its_call(store: EventStore) -> None:
+    """``step`` n'est atteint que si l'enfant peut repartir : le parent rejoue."""
+    ctx = context(store, scripted())
+    state = await begin_run(ctx, "?")
+    parent = state.model_copy(update={"status": RunStatus.WAITING_CHILD})
+    drafts = [d async for d in step(parent, ctx)]
+    assert [d.payload.type for d in drafts] == ["run.transitioned"]
+    transition = drafts[0].payload
+    assert isinstance(transition, RunTransitioned)
+    assert transition.to_state is RunStatus.AWAITING_TOOLS
 
 
 async def test_a_paused_run_whose_approvals_are_settled_goes_back_to_its_tools(

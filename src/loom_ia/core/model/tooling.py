@@ -32,11 +32,19 @@ def _empty_object_schema() -> dict[str, JsonValue]:
     return {"type": "object", "properties": {}}
 
 
+# Une journée : de quoi couvrir une nuit et un jour ouvré, sans qu'un run
+# oublié attende pour toujours (#17).
+DEFAULT_APPROVAL_DELAY: Final = 24 * 3600.0
+
+
 class ApprovalSettings(DomainModel):
     """Ce qu'un agent fait des approbations qu'il demande (#17, #28)."""
 
-    # Délai laissé à l'approbateur ; sans lui, une demande attend indéfiniment.
-    expires_in: PositiveFloat | None = None
+    # Délai laissé à l'approbateur. ``null`` le retire — et une demande attend
+    # alors indéfiniment, ce qui est un choix, pas un défaut : rien d'autre ne
+    # borne cette attente, ni le délai de l'agent (qui ne compte que le
+    # pilotage) ni la reprise (qui ne fait que reconstater l'attente).
+    expires_in: PositiveFloat | None = DEFAULT_APPROVAL_DELAY
     # Ce qu'il advient d'une demande périmée : un « non » prudent par défaut,
     # personne n'ayant dit oui.
     on_expiry: ExpiryAction = "deny"

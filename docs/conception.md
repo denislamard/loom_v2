@@ -640,7 +640,7 @@ Le message du rôle est construit par un `input_template` explicite (`{{ args.x 
 - L'annulation se propage du parent vers ses enfants.
 - Un enfant est éphémère par défaut, sans session propre.
 
-Réalisation (phase 2.4) : l'orchestrateur passe un seul argument, `message` ; l'enfant écrit son run dans le journal du parent, par un écrivain de session partagé (plusieurs enfants peuvent tourner en parallèle) ; `tool.called` porte `child_run_id`, `tool.completed` la consommation de l'enfant ; `max_depth` est propre à chaque agent (défaut 1) : un sous-agent n'est proposé que si la profondeur du run appelant est inférieure au `max_depth` de son agent. `WAITING_CHILD` arrive avec les approbations (J4.3), `run.cancelled` avec le cycle de vie des runs (J4.2).
+Réalisation (phase 2.4) : l'orchestrateur passe un seul argument, `message` ; l'enfant écrit son run dans le journal du parent, par un écrivain de session partagé (plusieurs enfants peuvent tourner en parallèle) ; `tool.called` porte `child_run_id`, `tool.completed` la consommation de l'enfant ; `max_depth` est propre à chaque agent (défaut 1) : un sous-agent n'est proposé que si la profondeur du run appelant est inférieure au `max_depth` de son agent. `run.cancelled` arrive avec le cycle de vie des runs (J4.2). **Réalisation (phase 4.3b) :** un enfant qui se met en pause laisse son appel en suspens — pas de `tool.completed` — et son parent passe en `WAITING_CHILD`, concession rendue. Les demandes de tout l'arbre remontent dans `RunResult.pending_approvals` de la racine, et c'est sur elle qu'on approuve ; elle rejoue alors l'appel délégant, qui reprend l'enfant là où il en était.
 
 ### 9.7 Fiabilité des sorties
 
@@ -923,7 +923,7 @@ La concession est appliquée : `drive` écrit `run.claimed` avant de piloter et 
 ### 12.2 Pause en mode librairie
 
 - Un agent qui peut se mettre en pause (outil en `approval: always | policy`, ou politique qui peut renvoyer `Pause`) exige un `EventStore` durable (JSONL au minimum) : erreur de config, avertissement seulement en profil dev (#28).
-- **Réalisation (phase 4.3a) :** le contrôle est une erreur de chargement, les profils arrivant en J5. `Loom.approve()` et `Loom.reject()` écrivent la décision et mettent un travail `resume` en file ; `run(..., approver=…)` décide dans la boucle, sans passer par `PAUSED`, et journalise quand même la demande et sa décision. Réglages sur l'agent : `approval: {expires_in, on_expiry, scope}`.
+- **Réalisation (phase 4.3a) :** le contrôle est une erreur de chargement, les profils arrivant en J5. `Loom.approve()` et `Loom.reject()` écrivent la décision et mettent un travail `resume` en file ; `run(..., approver=…)` décide dans la boucle, sans passer par `PAUSED`, et journalise quand même la demande et sa décision. Réglages sur l'agent : `approval: {expires_in, on_expiry, scope}`, `expires_in` valant 24 h par défaut — rien d'autre ne borne l'attente d'un humain, et `null` la rend explicitement illimitée.
 - Approbation asynchrone (défaut) : `run()` renvoie `RunResult(status=paused, run_id, pending_approvals)` ; plus tard, `await loom.approve(run_id, décision)` écrit la décision et met un `resume` en file.
 - Approbateur en ligne : `run(..., approver=callback)` appelle le callback dans le process, sans état `PAUSED` durable (scripts, CLI, tests).
 - Un job `expire_approval` est planifié dès la demande.

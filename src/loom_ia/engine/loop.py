@@ -175,6 +175,7 @@ from loom_ia.core.ports import (
 )
 from loom_ia.core.projections import apply, fold, last_summary, spent, turns
 from loom_ia.engine.circuit import CircuitBreakers
+from loom_ia.engine.delegated import Waiting
 from loom_ia.engine.executor import Decided, Delegated, Stored, ToolExecutor
 from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
@@ -443,7 +444,7 @@ async def drive(
     state = fold(own, run_id)
     if state.agent != ctx.agent:
         raise ValueError(f"Le run {run_id} appartient à l'agent {state.agent!r}, pas {ctx.agent!r}")
-    if state.finished or not _actionable(state):
+    if state.finished or not await _advances(state, ctx, tenant, session):
         return state
     rooted = state.parent_run_id is None and state.kind == "normal"
     earlier = [e for e in events if e.seq < own[0].seq] if rooted else []
@@ -494,7 +495,7 @@ async def drive(
             turns=session_turns,
             summary=last_summary(earlier),
         )
-        while not state.finished and _actionable(state):
+        while not state.finished and await _advances(state, ctx, tenant, session):
             emitted = 0
             left = _remaining(state, run_ctx)
             if left is not None and left <= 0:
@@ -537,6 +538,39 @@ def _actionable(state: RunState) -> bool:
         now = datetime.now(UTC)
         return not state.awaiting or any(a.stale(now) for a in state.awaiting)
     return state.status in _ACTIONABLE
+
+
+async def _advances(state: RunState, ctx: RunContext, tenant: TenantId, session: SessionId) -> bool:
+    """Le run peut-il avancer ? Pour un parent, cela dépend de son enfant.
+
+    Parent et enfant partagent le journal de la session : le parent y relit
+    l'état de l'enfant plutôt que de le rejouer pour voir. Rien n'est écrit
+    tant que la décision n'est pas là, et une reprise pour rien ne coûte
+    qu'une lecture.
+    """
+    if state.status is not RunStatus.WAITING_CHILD:
+        return _actionable(state)
+    children = [c.child_run_id for c in state.pending_calls if c.child_run_id is not None]
+    if not children:
+        # Plus rien à attendre : le parent rejoue son appel et conclut.
+        return True
+    events = await ctx.store.read(tenant, session)
+    return any(_ready(events, child) for child in children)
+
+
+def _ready(events: Sequence[Event], run_id: RunId) -> bool:
+    """Un run délégué peut-il repartir ? Récursif : un enfant peut en attendre un."""
+    own = [e for e in events if e.run_id == run_id]
+    if not own:
+        # Jamais démarré : l'appel le lancera.
+        return True
+    state = fold(own, run_id)
+    if state.finished:
+        return True
+    if state.status is RunStatus.WAITING_CHILD:
+        kids = [c.child_run_id for c in state.pending_calls if c.child_run_id is not None]
+        return any(_ready(events, kid) for kid in kids) if kids else True
+    return _actionable(state)
 
 
 async def _handed_back(
@@ -713,7 +747,7 @@ async def step(
         case RunStatus.FINALIZING:
             effect = _model_step(state, ctx, scope, previous, forced=True, session=session)
         case RunStatus.AWAITING_TOOLS:
-            effect = _tool_step(state, ctx, scope)
+            effect = _tool_step(state, ctx, scope, cause)
         case _:
             return
     async with aclosing(effect) as drafts:
@@ -758,6 +792,10 @@ async def _decide(
             return await _review(state, ctx, scope, cause, last)
         case RunStatus.PAUSED:
             return _resumed(state, ctx, scope, cause)
+        case RunStatus.WAITING_CHILD:
+            # Un enfant peut repartir : on rejoue l'appel qui l'a lancé, et
+            # c'est lui qui le reprendra là où il en était (C5, #26).
+            return [_transition(state, scope, RunStatus.AWAITING_TOOLS, cause)]
         case RunStatus.AWAITING_TOOLS if state.awaiting:
             # Le reste du lot est passé ; ces appels-là attendent un humain (#17).
             return [_transition(state, scope, RunStatus.PAUSED, cause)]
@@ -1326,7 +1364,7 @@ async def _model_step(
 
 
 async def _tool_step(
-    state: RunState, ctx: RunContext, scope: RunScope
+    state: RunState, ctx: RunContext, scope: RunScope, cause: Event | None = None
 ) -> AsyncGenerator[EventDraft]:
     current = _Step(state, scope, "tool_batch")
     yield current.started()
@@ -1351,8 +1389,14 @@ async def _tool_step(
         summary=ctx.summary,
         approver=ctx.approver,
     )
+    # Appels laissés en suspens : leur run délégué attend une décision humaine.
+    attente: list[RunId] = []
     async with aclosing(batch) as events:
         async for item in events:
+            if isinstance(item, Waiting):
+                # Rien à écrire pour cet appel : il n'a pas de résultat.
+                attente.append(item.run_id)
+                continue
             span = spans.setdefault(item.call_id, new_span_id())
             seen = item if isinstance(item, _BARE_EVENTS) else item.payload
             if isinstance(seen, ModelResponded):
@@ -1403,6 +1447,16 @@ async def _tool_step(
             yield event
         return
     yield current.completed(emitted)
+    if attente:
+        # Le parent s'arrête là : il reprendra en rejouant l'appel, qui
+        # reprendra l'enfant (C5, H4). Son délai ne court pas pendant ce
+        # temps — l'étape est terminée, et l'attente n'en fait pas partie.
+        yield _transition(
+            state.model_copy(update={"step": current.no}),
+            scope,
+            RunStatus.WAITING_CHILD,
+            cause,
+        )
 
 
 # --- Interne -----------------------------------------------------------------

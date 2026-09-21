@@ -50,7 +50,13 @@ from loom_ia.core.model import (
     new_run_id,
 )
 from loom_ia.core.ports import ToolContext
-from loom_ia.engine.delegated import Consumption, DelegatedPayload, DelegatedTool, RunView
+from loom_ia.engine.delegated import (
+    Consumption,
+    DelegatedPayload,
+    DelegatedTool,
+    RunView,
+    Waiting,
+)
 from loom_ia.engine.loop import ParentRun, RunContext, begin_run, drive
 from loom_ia.engine.writer import SessionWriter
 
@@ -92,6 +98,10 @@ class SubAgentDefinition:
     budget_share: float | None = None
     # Limites du run de l'agent appelant (sa config) ; s'y ajoute sa propre part reçue.
     parent_budget: RunBudget | None = None
+
+
+# États dans lesquels un enfant attend quelqu'un : son parent attend avec lui.
+_WAITING: Final = frozenset({RunStatus.PAUSED, RunStatus.WAITING_CHILD})
 
 
 class AgentTool(DelegatedTool):
@@ -138,7 +148,7 @@ class AgentTool(DelegatedTool):
 
     async def run(
         self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
-    ) -> AsyncGenerator[DelegatedPayload | Consumption | ToolOutput]:
+    ) -> AsyncGenerator[DelegatedPayload | Consumption | ToolOutput | Waiting]:
         name = self.definition.name
         child_id = run.children[context.call_id]
         parent = run.state
@@ -172,6 +182,11 @@ class AgentTool(DelegatedTool):
                 writer=writer,
             )
         final = await drive(ctx, child_id, session_id=session, tenant_id=tenant, writer=writer)
+        if final.status in _WAITING:
+            # L'enfant attend une décision humaine : l'appel n'a pas de
+            # résultat, et le parent l'attend avec lui (H4, #17).
+            yield Waiting(call_id=context.call_id, run_id=child_id)
+            return
         yield Consumption(usage=final.usage, cost_usd=final.cost_usd)
         yield _output(name, final)
 

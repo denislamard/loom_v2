@@ -3,6 +3,7 @@
 
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from loom_ia.core.events import (
     Event,
     FacetValue,
     RunClaimed,
+    RunTransitioned,
     ToolCalled,
     ToolCompleted,
 )
@@ -128,6 +130,60 @@ def atelier(tmp_path: Path) -> ConfigFactory:
         }
         (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
         return tmp_path / "loom.yaml"
+
+    return build
+
+
+# Le patron délègue tout au secrétaire, qui seul porte l'outil sensible.
+PATRON: list[dict[str, Any]] = [
+    {
+        "text": "Je confie ça au secrétaire.",
+        "tool_calls": [{"name": "secretaire", "arguments": {"message": "Relance la cliente."}}],
+    },
+    {"text": "C'est fait."},
+]
+SECRETAIRE: list[dict[str, Any]] = [
+    {
+        "text": "J'envoie.",
+        "tool_calls": [
+            {"name": "envoyer_email", "arguments": {"destinataire": "mme.martin@example.com"}}
+        ],
+    },
+    {"text": "Relance envoyée."},
+]
+
+
+@pytest.fixture
+def delegue(atelier: ConfigFactory, tmp_path: Path) -> ConfigFactory:
+    """Un agent qui délègue à un sous-agent, lequel porte l'outil sensible."""
+
+    def build(**kwargs: Any) -> Path:
+        path = atelier(**kwargs)
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        config["models"] = [
+            {"id": "FAKE", "sdk": "fake", "model": "f1", "params": {"script": PATRON}},
+            {"id": "FAKE_ENFANT", "sdk": "fake", "model": "f2", "params": {"script": SECRETAIRE}},
+        ]
+        path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        demo = yaml.safe_load((tmp_path / "agents" / "demo.yaml").read_text(encoding="utf-8"))
+        secretaire = {
+            **demo,
+            "name": "secretaire",
+            "description": "Écrit et envoie les relances.",
+            "main": {"model": "FAKE_ENFANT", "system": "Tu envoies."},
+            "expose": {"rest": False, "mcp": False},
+        }
+        (tmp_path / "agents" / "secretaire.yaml").write_text(
+            yaml.safe_dump(secretaire), encoding="utf-8"
+        )
+        patron = {
+            "name": "demo",
+            "description": "Délègue.",
+            "main": {"model": "FAKE", "system": "Tu délègues."},
+            "subagents": [{"agent": "secretaire", "description": "Écrit et envoie les relances."}],
+        }
+        (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(patron), encoding="utf-8")
+        return path
 
     return build
 
@@ -319,6 +375,29 @@ def test_deciding_a_finished_run_changes_nothing(atelier: ConfigFactory) -> None
 # --- Expiration ---------------------------------------------------------------
 
 
+def test_a_request_is_bounded_by_default(atelier: ConfigFactory) -> None:
+    """Sans délai, une attente ne finirait jamais : rien d'autre ne la borne.
+
+    Ni le délai de l'agent, qui ne compte que le temps de pilotage (A6), ni la
+    reprise, qui ne fait que reconstater l'attente.
+    """
+
+    async def go() -> tuple[datetime | None, datetime | None]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            defaut = run.pending_approvals[0].expire_at
+        async with Loom.from_config(atelier(settings={"expires_in": None})) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SessionId("sans-delai"))
+            retire = run.pending_approvals[0].expire_at
+        return defaut, retire
+
+    defaut, retire = asyncio.run(go())
+    assert defaut is not None
+    assert timedelta(hours=23) < defaut - datetime.now(UTC) <= timedelta(hours=24)
+    # ``null`` le retire explicitement : c'est un choix, pas un oubli.
+    assert retire is None
+
+
 def test_an_unanswered_request_expires_from_the_journal(atelier: ConfigFactory) -> None:
     """Sans personne pour répondre, `expire_at` suffit : le travail ne décide rien."""
 
@@ -427,6 +506,148 @@ def test_an_inline_approver_records_who_decided(atelier: ConfigFactory) -> None:
     assert asyncio.run(go()) == ["denis"]
 
 
+# --- Sous-agent en pause (4.3b) -----------------------------------------------
+
+
+def test_a_paused_child_puts_its_parent_on_hold(delegue: ConfigFactory) -> None:
+    """L'appel délégant reste en suspens : pas de résultat, donc pas de conclusion."""
+
+    async def go() -> tuple[list[str], Any]:
+        async with Loom.from_config(delegue()) as loom:
+            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            events = await loom.export_session(SESSION)
+        parent = [e for e in events if e.run_id == result.run_id]
+        return [e.type for e in parent], result
+
+    types, result = asyncio.run(go())
+    assert result.status is RunStatus.WAITING_CHILD
+    # L'appel au sous-agent est parti, mais rien ne l'a conclu.
+    assert types.count("tool.called") == 1
+    assert "tool.completed" not in types
+    assert types[-1] == "run.claimed"
+
+
+def test_the_waiting_transition_says_what_caused_it(delegue: ConfigFactory) -> None:
+    """Toute transition se relie à l'événement qui l'a provoquée, celle-ci comprise."""
+
+    async def go() -> tuple[str | None, str | None]:
+        async with Loom.from_config(delegue()) as loom:
+            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            events = await loom.export_session(SESSION)
+        transition = next(
+            e.payload
+            for e in events
+            if e.run_id == result.run_id and e.facets.get("to_state") == "waiting_child"
+        )
+        assert isinstance(transition, RunTransitioned)
+        return transition.cause_type, transition.cause_event_id
+
+    cause_type, cause_id = asyncio.run(go())
+    assert cause_type == "model.responded"
+    assert cause_id is not None
+
+
+def test_the_root_shows_what_its_child_awaits(delegue: ConfigFactory) -> None:
+    """L'appelant n'a pas à savoir qu'un sous-agent existe pour savoir quoi trancher."""
+
+    async def go() -> tuple[list[str], int]:
+        async with Loom.from_config(delegue()) as loom:
+            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            racine = await loom.state(result.run_id, session_id=SESSION)
+        return [a.tool_name for a in result.pending_approvals], len(racine.awaiting)
+
+    rendues, propres = asyncio.run(go())
+    assert rendues == ["envoyer_email"]
+    # La racine, elle, n'attend rien elle-même : c'est son enfant qui attend.
+    assert propres == 0
+
+
+def test_approving_on_the_root_resumes_the_whole_tree(delegue: ConfigFactory) -> None:
+    """On tranche là où on a lu, et c'est la racine qui repart."""
+
+    async def go() -> tuple[str, list[tuple[str, bool]], int]:
+        async with Loom.from_config(delegue()) as loom:
+            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            assert await loom.approve(result.run_id, by="denis", session_id=SESSION)
+            await loom.drain()
+            fin = await loom.result(result.run_id, session_id=SESSION)
+            events = await loom.export_session(SESSION)
+        appels = [
+            (str(e.facets["tool_name"]), bool(getattr(e.payload, "resumed", False)))
+            for e in events
+            if e.type == "tool.called"
+        ]
+        enfants = len([e for e in events if e.type == "run.started"])
+        return str(fin.status), appels, enfants
+
+    status, appels, runs = asyncio.run(go())
+    assert status == RunStatus.COMPLETED
+    # L'enfant est repris, pas relancé : deux runs en tout, et l'appel délégant rejoué.
+    assert runs == 2
+    assert appels == [("secretaire", False), ("secretaire", True), ("envoyer_email", False)]
+
+
+def test_a_refused_child_call_lets_the_tree_finish(delegue: ConfigFactory) -> None:
+    """Un refus dans un sous-agent n'est pas une panne, pour lui ni pour son parent."""
+
+    async def go() -> tuple[str, int]:
+        async with Loom.from_config(delegue()) as loom:
+            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            await loom.reject(
+                result.run_id, by="denis", reason="pas ce destinataire", session_id=SESSION
+            )
+            await loom.drain()
+            fin = await loom.result(result.run_id, session_id=SESSION)
+            events = await loom.export_session(SESSION)
+        envois = [
+            e
+            for e in events
+            if e.type == "tool.called" and e.facets["tool_name"] == "envoyer_email"
+        ]
+        return str(fin.status), len(envois)
+
+    status, envois = asyncio.run(go())
+    assert status == RunStatus.COMPLETED
+    assert envois == 0
+
+
+def test_a_waiting_parent_hands_its_lease_back(delegue: ConfigFactory) -> None:
+    """Comme une pause : sans quoi la reprise se ferait refuser (#27)."""
+
+    async def go() -> list[tuple[str, bool]]:
+        async with Loom.from_config(delegue()) as loom:
+            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            events = await loom.export_session(SESSION)
+        return [
+            (str(e.facets["worker_id"]), _handed(e))
+            for e in events
+            if e.type == "run.claimed" and e.run_id == result.run_id
+        ]
+
+    claims = asyncio.run(go())
+    assert [rendue for _, rendue in claims] == [False, True]
+
+
+def test_a_childs_deadline_wakes_the_whole_tree(delegue: ConfigFactory) -> None:
+    """La racine n'a pas de demande à elle : personne ne serait venu la réveiller."""
+
+    async def go() -> tuple[str, int]:
+        path = delegue(settings={"expires_in": 0.3})
+        async with Loom.from_config(path) as loom:
+            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            assert result.status is RunStatus.WAITING_CHILD
+            # Personne n'appelle rien : c'est le réveil différé qui reprend.
+            await asyncio.sleep(0.8)
+            await loom.drain()
+            fin = await loom.result(result.run_id, session_id=SESSION)
+            events = await loom.export_session(SESSION)
+        return str(fin.status), len([e for e in events if e.type == "approval.expired"])
+
+    status, expirees = asyncio.run(go())
+    assert status == RunStatus.COMPLETED
+    assert expirees == 1
+
+
 # --- Config -------------------------------------------------------------------
 
 
@@ -470,6 +691,13 @@ def _text(event: Event) -> str:
     payload = event.payload
     assert isinstance(payload, ToolCompleted)
     return "".join(getattr(block, "text", "") for block in payload.output.blocks)
+
+
+def _handed(event: Event) -> bool:
+    """Concession rendue : son bail était déjà passé à l'écriture."""
+    payload = event.payload
+    assert isinstance(payload, RunClaimed)
+    return payload.lease_until <= event.ts
 
 
 def _paused(events: list[Event]) -> list[Event]:

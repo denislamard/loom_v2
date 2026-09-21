@@ -115,6 +115,7 @@ from loom_ia.engine.delegated import (
     DelegatedTool,
     Exchange,
     RunView,
+    Waiting,
 )
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.media import size_label
@@ -177,6 +178,7 @@ type ToolEvent = (
     | ApprovalRequested
     | ApprovalGranted
     | ApprovalRejected
+    | Waiting
 )
 
 
@@ -532,7 +534,10 @@ class ToolExecutor:
                 event = await queue.get()
                 if isinstance(event, _Crashed):
                     raise event.error
-                if isinstance(event, ToolCompleted):
+                # Un appel se solde par un résultat, ou par une attente : un
+                # run délégué en pause n'en rendra pas, et le lot l'attendrait
+                # indéfiniment.
+                if isinstance(event, ToolCompleted | Waiting):
                     remaining -= 1
                 yield event
         finally:
@@ -646,6 +651,11 @@ class ToolExecutor:
             )
         else:
             output = await _invoked(tool, item.arguments, context, timeout, state)
+        if isinstance(output, Waiting):
+            # Rien à contrôler ni à conclure : l'appel reste en suspens, et
+            # le parent attend avec son enfant (H4).
+            emit(output)
+            return
         if policies:
             output = await self._after_tool(item, output, exchange, context, view, emit, policies)
         output = await self._settle(output, spec, call.call_id, view, emit)
@@ -704,9 +714,15 @@ class ToolExecutor:
                             }
                         )
                     attempts[verdict.by] = attempts.get(verdict.by, 0) + 1
-                    output, _, exchange = await _delegated(
+                    again, _, exchange = await _delegated(
                         repaired, tool, context, emit, tool.spec.timeout, view.state
                     )
+                    if isinstance(again, Waiting):
+                        # Seul un sous-agent attend, et un sous-agent ne se répare pas.
+                        return ToolOutput.error(
+                            f"Réparation de {tool.spec.name} : run délégué en attente."
+                        )
+                    output = again
                     continue
                 case Fail():
                     return output
@@ -845,19 +861,20 @@ async def _invoked(
 
 
 async def _delegated(
-    produced: AsyncGenerator[DelegatedPayload | Consumption | Exchange | ToolOutput],
+    produced: AsyncGenerator[DelegatedPayload | Consumption | Exchange | ToolOutput | Waiting],
     tool: DelegatedTool,
     context: ToolContext,
     emit: Callable[[ToolEvent], None],
     limit: float | None,
     state: RunState,
-) -> tuple[ToolOutput, Consumption | None, Exchange | None]:
+) -> tuple[ToolOutput | Waiting, Consumption | None, Exchange | None]:
     """Déroule un outil délégué (appel ou réparation) avec son délai.
 
     Ses événements sont émis ; son résultat, sa consommation et son échange
-    sont renvoyés. Toute erreur devient un résultat d'erreur.
+    sont renvoyés. Toute erreur devient un résultat d'erreur. Un run délégué
+    qui attend une décision humaine rend ``Waiting`` : pas de résultat.
     """
-    output: ToolOutput | None = None
+    output: ToolOutput | Waiting | None = None
     consumption: Consumption | None = None
     exchange: Exchange | None = None
     scope = asyncio.timeout(limit)
@@ -865,7 +882,7 @@ async def _delegated(
         async with scope, aclosing(produced) as items:
             async for item in items:
                 match item:
-                    case ToolOutput():
+                    case ToolOutput() | Waiting():
                         output = item
                     case Consumption():
                         consumption = item

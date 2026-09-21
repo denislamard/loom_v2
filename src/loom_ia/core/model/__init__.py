@@ -163,6 +163,7 @@ from loom_ia.core.model.streaming import (
     message_to_chunks,
 )
 from loom_ia.core.model.tooling import (
+    DEFAULT_APPROVAL_DELAY,
     MAIN_ROLE,
     TERMINAL_HINT,
     TOOL_NAME_PATTERN,
@@ -183,6 +184,7 @@ __all__ = [
     "CONTINUE",
     "CRITERION_NAME_PATTERN",
     "DECISION_KINDS",
+    "DEFAULT_APPROVAL_DELAY",
     "DEFAULT_MIN_SCORE",
     "DEFAULT_TENANT",
     "FINALIZE_HINT",

@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,11 @@ pytestmark = pytest.mark.integration
 
 SESSION = SessionId("atelier")
 QUESTION = "Combien font 12 fois 7, plus 3 ?"
-BAIL = 3.0
+# Assez long pour que la première reprise tombe franchement dedans, même sur
+# une machine chargée : sinon le test court après son propre bail.
+BAIL = 6.0
+# De quoi être sûr d'être passé de l'autre côté.
+MARGE = 0.3
 # L'outil dort le temps qu'il faut pour se faire tuer en plein appel — la
 # mise à mort suit de quelques millisecondes le ``tool.called`` au journal.
 SOMMEIL = 3.0
@@ -129,10 +134,14 @@ def test_a_killed_run_is_taken_back_once_its_lease_expires(atelier: Path, tmp_pa
     assert not [e for e in events if e.type == "run.completed"]
     mort = _worker(events)
 
-    # Le bail du mort court encore : personne ne touche au run.
+    # Le bail du mort court encore : personne ne touche au run. On le lit au
+    # journal plutôt que de compter sur l'horloge — il court depuis le dernier
+    # renouvellement, pas depuis la mise à mort.
+    bail = _lease(events)
+    assert datetime.now(UTC) < bail, "le bail avait déjà expiré : essai non concluant"
     assert asyncio.run(_take_back(atelier, run_id)) is not RunStatus.COMPLETED
 
-    time.sleep(BAIL)
+    time.sleep(max((bail - datetime.now(UTC)).total_seconds(), 0.0) + MARGE)
     assert asyncio.run(_take_back(atelier, run_id)) is RunStatus.COMPLETED
 
     # Un autre pilote a pris la concession, rejoué l'appel resté en suspens
@@ -162,6 +171,11 @@ async def _take_back(config: Path, run_id: str) -> RunStatus:
 def _worker(events: list[Any]) -> str:
     """Le worker de la dernière concession prise sur le run."""
     return [e.payload.worker_id for e in events if e.type == "run.claimed"][-1]
+
+
+def _lease(events: list[Any]) -> datetime:
+    """Jusqu'à quand court la concession du mort."""
+    return [e.payload.lease_until for e in events if e.type == "run.claimed"][-1]
 
 
 def _wait_for(root: Path, kind: str, limite: float = 30.0) -> None:

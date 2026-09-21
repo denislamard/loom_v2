@@ -27,6 +27,12 @@ façons pour cette attente de finir :
 * **en ligne** (``--cas en_ligne``) : ``run(..., approver=…)``. Le rappel
   tranche dans la boucle, le run ne passe jamais par ``PAUSED``, et la demande
   comme la décision sont journalisées avec l'identité de l'approbateur.
+* **sous-agent** (``--cas sous_agent``) : c'est un **enfant** qui attend.
+  L'envoi est confié à un second agent, ``secretaire`` ; il se met en pause,
+  et son parent passe en ``WAITING_CHILD``. La racine rend pourtant la demande
+  de son enfant, et l'approbation se donne sur elle : l'appelant n'a pas à
+  savoir qu'un sous-agent existe. À la reprise, la racine rejoue l'appel
+  délégant, qui **reprend** l'enfant là où il s'était arrêté.
 
 Dans tous les cas, le lot partiel se voit : ``chercher_devis`` et le rôle
 s'exécutent, et le run ne s'arrête que pour l'envoi.
@@ -41,6 +47,7 @@ from typing import Any
 
 from loom_ia.access.api import Loom, RunResult
 from loom_ia.adapters.models import ModelConfigError
+from loom_ia.agents import SubAgentRef
 from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.core.events import ApprovalRequested, Event, ToolCalled, ToolCompleted
 from loom_ia.core.model import (
@@ -58,7 +65,7 @@ from loom_ia.tools import tool
 
 CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
 DEMANDE = "Relance le client du devis D-2026-042, sur un ton cordial."
-CAS = ("accord", "refus", "delai", "en_ligne")
+CAS = ("accord", "refus", "delai", "en_ligne", "sous_agent")
 ENVOI = "envoyer_email"
 # Délai laissé à l'approbateur dans le cas `delai`. Assez court pour que
 # l'exemple ne traîne pas, assez long pour que la pause s'installe d'abord.
@@ -109,6 +116,63 @@ def main_script(envoye: bool) -> list[dict[str, Any]]:
     ]
 
 
+SECRETAIRE_NOM = "secretaire"
+SECRETAIRE_SYSTEM = (
+    "Tu es le secrétaire de l'artisan. On te confie une relance déjà rédigée : "
+    "envoie-la avec `envoyer_email` au destinataire indiqué, puis dis en une "
+    "phrase que c'est fait, en citant le numéro du devis. N'écris rien d'autre."
+)
+CONSIGNE_DELEGUE = (
+    "\n\nUne fois la relance rédigée, confie-la au sous-agent `secretaire` : "
+    "passe-lui l'objet, le corps et le destinataire `mme.martin@example.com`. "
+    "C'est lui qui l'envoie, pas toi.\n"
+)
+
+
+def delegue_script() -> list[dict[str, Any]]:
+    """Script de l'orchestrateur qui délègue l'envoi."""
+    return [
+        {
+            "text": "Je relis le devis.",
+            "tool_calls": [{"name": "chercher_devis", "arguments": {"numero": "D-2026-042"}}],
+        },
+        {"tool_calls": [{"name": "rediger_relance", "arguments": {"ton": "cordial"}}]},
+        {
+            "text": "Je confie l'envoi au secrétaire.",
+            "tool_calls": [
+                {
+                    "name": "secretaire",
+                    "arguments": {
+                        "message": (
+                            "Envoie à mme.martin@example.com la relance du devis D-2026-042, "
+                            "objet « Votre devis D-2026-042 »."
+                        )
+                    },
+                }
+            ],
+        },
+        {"text": "La relance du devis D-2026-042 est partie."},
+    ]
+
+
+SECRETAIRE: list[dict[str, Any]] = [
+    {
+        "text": "J'envoie.",
+        "tool_calls": [
+            {
+                "name": ENVOI,
+                "arguments": {
+                    "destinataire": "mme.martin@example.com",
+                    "objet": "Votre devis D-2026-042",
+                    "corps": "Bonjour Madame Martin, …",
+                },
+            }
+        ],
+    },
+    {"text": "Relance du devis D-2026-042 envoyée."},
+]
+
+
 ROLE: list[dict[str, Any]] = [
     {
         "text": (
@@ -126,18 +190,28 @@ def shown(path: Path) -> str:
 
 
 def adjusted(
-    config: LoomConfig, *, reel: bool, envoye: bool, delai: float | None
+    config: LoomConfig,
+    *,
+    reel: bool,
+    envoye: bool,
+    delai: float | None,
+    delegue: bool = False,
 ) -> tuple[LoomConfig, str]:
     """Ajoute l'outil sensible à l'agent, et rend le rôle non terminal.
 
     Le rôle de ``relance/`` est terminal : sa sortie **est** la réponse finale,
     et le run s'arrêterait là. Ici l'orchestrateur doit la recevoir pour
     l'envoyer : c'est tout ce qui change du rôle.
+
+    Avec ``delegue``, l'envoi passe à un second agent (``secretaire``) qui seul
+    porte l'outil sensible : c'est lui qui se met en pause, et son parent
+    attend avec lui.
     """
     base = "relance_reel" if reel else "relance"
     spec = next(a for a in config.agents if a.name == base)
+    consigne = CONSIGNE_DELEGUE if delegue else CONSIGNE_ENVOI
     main = spec.main.model_copy(
-        update={"system": prompt_text(spec.main) + CONSIGNE_ENVOI, "system_file": None}
+        update={"system": prompt_text(spec.main) + consigne, "system_file": None}
     )
     roles = tuple(
         role.model_copy(update={"terminal": False}) if role.name == "rediger_relance" else role
@@ -149,10 +223,14 @@ def adjusted(
         update={
             "main": main,
             "roles": roles,
-            "tools": (*spec.tools, sensible),
+            "tools": spec.tools if delegue else (*spec.tools, sensible),
             "approval": approval,
+            "subagents": (_secretaire_ref(),) if delegue else spec.subagents,
         }
     )
+    agents = tuple(agent if a.name == base else a for a in config.agents)
+    if delegue:
+        agents = (*agents, _secretaire(spec, sensible, approval, reel=reel))
     models = list(config.models)
     if not reel:
 
@@ -160,15 +238,43 @@ def adjusted(
             return spec.model_copy(update={"params": {**spec.params, "script": replies}})
 
         models = [
-            script(m, main_script(envoye))
+            script(m, delegue_script() if delegue else main_script(envoye))
             if m.id == "FAKE_MAIN"
+            else script(m, SECRETAIRE)
+            if m.id == "FAKE_RESUME" and delegue
             else script(m, ROLE)
             if m.id == "FAKE_ROLE"
             else m
             for m in models
         ]
-    agents = tuple(agent if a.name == base else a for a in config.agents)
     return config.model_copy(update={"models": tuple(models), "agents": agents}), base
+
+
+def _secretaire(spec: Any, sensible: Any, approval: ApprovalSettings, *, reel: bool) -> Any:
+    """Second agent : il ne sait qu'envoyer, et c'est lui qui demande l'approbation."""
+    modele = "HAIKU" if reel else "FAKE_RESUME"
+    return spec.model_copy(
+        update={
+            "name": SECRETAIRE_NOM,
+            "description": "Envoie une relance déjà rédigée.",
+            "main": spec.main.model_copy(
+                update={"model": modele, "system": SECRETAIRE_SYSTEM, "system_file": None}
+            ),
+            "tools": (sensible,),
+            "roles": (),
+            "judges": (),
+            "subagents": (),
+            "policies": (),
+            "approval": approval,
+            "expose": spec.expose.model_copy(update={"rest": False, "mcp": False}),
+            "max_iterations": 4,
+        }
+    )
+
+
+def _secretaire_ref() -> SubAgentRef:
+    """Référence au sous-agent, telle que l'écrirait la config."""
+    return SubAgentRef(agent=SECRETAIRE_NOM, description="Envoie une relance déjà rédigée.")
 
 
 def _outil_sensible() -> Any:
@@ -309,14 +415,42 @@ async def en_ligne(loom: Loom, agent: str, session: SessionId) -> None:
     print(f"  réponse   : {result.text.splitlines()[0][:70] if result.text else '—'}\n")
 
 
+async def sous_agent(loom: Loom, agent: str, session: SessionId) -> None:
+    print("— Sous-agent : c'est l'enfant qui attend, et son parent avec lui\n")
+    result = await loom.run(agent, DEMANDE, session_id=session)
+    events = await loom.export_session(session)
+    enfants = {e.run_id for e in events if e.run_id != result.run_id}
+    print(f"  racine    : {outcome(result)} ({len(enfants)} sous-run)")
+    entete(events)
+    asked = result.pending_approvals[0]
+    print(f"  la racine rend la demande de son enfant : {asked.tool_name}")
+    print("  l'artisan valide, sur la racine")
+    await loom.approve(result.run_id, by="l'artisan", session_id=session)
+    await loom.drain()
+    fin = await loom.result(result.run_id, session_id=session)
+    events = await loom.export_session(session)
+    rejoue = [e for e in events if e.type == "tool.called" and getattr(e.payload, "resumed", False)]
+    demarres = len([e for e in events if e.type == "run.started"])
+    print(f"  reprise   : {outcome(fin)} — {len(rejoue)} appel délégant rejoué")
+    print(f"  runs      : {demarres} au total — l'enfant est repris, pas relancé")
+    print(f"  envoi     : {envoi(events)}")
+    print(f"  réponse   : {fin.text.splitlines()[0][:70] if fin.text else '—'}\n")
+
+
 async def jouer(nom: str, config: LoomConfig, session: SessionId) -> None:
     """Un cas, dans son instance : chacun a ses réglages d'approbation."""
     async with Loom(config) as loom:
         loom.register(ENVOI, envoyer_email)
+        # L'agent à lancer est la racine : celui qui n'est pas un sous-agent.
+        enfants = {ref.agent for a in config.agents for ref in a.subagents}
         agent = next(
             a.name
             for a in config.agents
-            if any(getattr(t, "python", None) == ENVOI for t in a.tools)
+            if a.name not in enfants
+            and (
+                any(getattr(t, "python", None) == ENVOI for t in a.tools)
+                or any(ref.agent == SECRETAIRE_NOM for ref in a.subagents)
+            )
         )
         if nom == "accord":
             await accord(loom, agent, session)
@@ -324,8 +458,10 @@ async def jouer(nom: str, config: LoomConfig, session: SessionId) -> None:
             await refus(loom, agent, session)
         elif nom == "delai":
             await delai(loom, agent, session)
-        else:
+        elif nom == "en_ligne":
             await en_ligne(loom, agent, session)
+        else:
+            await sous_agent(loom, agent, session)
 
 
 async def main(argv: list[str]) -> int:
@@ -352,6 +488,7 @@ async def main(argv: list[str]) -> int:
                 reel=args.reel,
                 envoye=nom in {"accord", "en_ligne"},
                 delai=DELAI if nom == "delai" else None,
+                delegue=nom == "sous_agent",
             )
             await jouer(nom, config, SessionId(f"{prefixe}-{nom}"))
         except (ModelConfigError, ConfigError) as error:

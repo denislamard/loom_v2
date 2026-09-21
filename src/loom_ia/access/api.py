@@ -222,7 +222,9 @@ class RunResult(DomainModel):
     report: UsageReport | None = None
     # Verdicts des juges du run et de ses sous-runs, dans l'ordre du journal.
     verdicts: tuple[JudgeVerdict, ...] = ()
-    # Approbations que le run attend (#17) : non vide quand il est en pause.
+    # Approbations qu'il faut trancher pour que ce run avance (#17), celles
+    # de ses sous-runs comprises : l'appelant n'a pas à savoir qu'un
+    # sous-agent existe pour savoir ce qu'on lui demande.
     pending_approvals: tuple[PendingApproval, ...] = ()
 
     @classmethod
@@ -253,7 +255,7 @@ class RunResult(DomainModel):
                 for event in tree
                 if isinstance(payload := event.payload, JudgeEvaluated)
             ),
-            pending_approvals=state.awaiting,
+            pending_approvals=_awaited(state, tree),
         )
 
     @property
@@ -264,6 +266,30 @@ class RunResult(DomainModel):
     def produced(self) -> tuple[ArtifactRecord, ...]:
         """Fichiers produits par les outils du run."""
         return tuple(a for a in self.artifacts if a.origin == "tool_output")
+
+
+def _awaited(state: RunState, tree: Sequence[Event]) -> tuple[PendingApproval, ...]:
+    """Demandes d'approbation en attente dans tout l'arbre d'un run (#17).
+
+    Un sous-agent qui se met en pause arrête son parent : ce qu'il faut
+    trancher pour que le run avance n'est pas forcément dans le run lui-même.
+    """
+    runs = dict.fromkeys(event.run_id for event in tree if event.run_id != state.run_id)
+    inner = [
+        approval
+        for run_id in runs
+        for approval in fold([e for e in tree if e.run_id == run_id], run_id).awaiting
+    ]
+    return (*state.awaiting, *inner)
+
+
+def _awaiting_runs(tree: Sequence[Event]) -> list[RunState]:
+    """Runs de l'arbre qui attendent une approbation, dans l'ordre du journal."""
+    states = [
+        fold([e for e in tree if e.run_id == run_id], run_id)
+        for run_id in dict.fromkeys(e.run_id for e in tree if e.category != "session")
+    ]
+    return [state for state in states if state.awaiting]
 
 
 def _unfinished(events: Sequence[Event]) -> list[RunState]:
@@ -839,28 +865,41 @@ class Loom:
         tenant_id: TenantId | None,
         payload: Callable[[PendingApproval], ApprovalGranted | ApprovalRejected],
     ) -> tuple[str, ...]:
-        """Écrit une décision d'approbation, puis remet le run en file."""
-        state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
-        if state.finished:
+        """Écrit une décision d'approbation, puis remet la racine en file.
+
+        La demande est cherchée dans tout l'arbre du run : on tranche là où on
+        a lu, et c'est toujours la racine qui repart — c'est elle qui rejouera
+        l'appel menant au sous-run qui attend.
+        """
+        tenant = tenant_id or DEFAULT_TENANT
+        events = await self._store.read(tenant, session_id or SessionId(run_id))
+        tree = RunTree(run_id).select(events)
+        if not tree:
+            raise UnknownRun(run_id)
+        root = fold([e for e in tree if e.run_id == run_id], run_id)
+        if root.finished and not _awaited(root, tree):
             return ()
-        asked = [a for a in state.awaiting if call_id is None or a.call_id == call_id]
-        if call_id is not None and not asked:
+        decided: list[tuple[RunState, PendingApproval]] = []
+        for owner in _awaiting_runs(tree):
+            decided += [
+                (owner, a) for a in owner.awaiting if call_id is None or a.call_id == call_id
+            ]
+        if call_id is not None and not decided:
             raise UnknownApproval(run_id, call_id)
-        if not asked:
+        if not decided:
             return ()
-        writer = await self._writers.open(self._store, state.context.tenant_id, state.session_id)
-        scope = run_scope(state)
-        await writer.append([scope.draft(payload(a)) for a in asked])
+        writer = await self._writers.open(self._store, tenant, root.session_id)
+        await writer.append([run_scope(owner).draft(payload(asked)) for owner, asked in decided])
         await self._queue.submit(
             Job(
                 kind="resume",
-                tenant_id=state.context.tenant_id,
-                session_id=state.session_id,
-                run_id=state.run_id,
+                tenant_id=tenant,
+                session_id=root.session_id,
+                run_id=root.root_run_id,
             ),
-            key=f"run:{state.run_id}",
+            key=f"run:{root.root_run_id}",
         )
-        return tuple(a.call_id for a in asked)
+        return tuple(asked.call_id for _, asked in decided)
 
     async def submit(
         self,
@@ -978,7 +1017,7 @@ class Loom:
         events = await self._store.read(state.context.tenant_id, state.session_id)
         await self._snapshot(state, events)
         await self._schedule(state, events)
-        await self._expiring(state)
+        await self._expiring(state, events)
         return RunResult.of(state, events)
 
     async def compact(
@@ -1022,16 +1061,21 @@ class Loom:
             key=self._compaction.key(state.session_id, up_to_seq),
         )
 
-    async def _expiring(self, state: RunState) -> None:
-        """Ramène un run en pause à l'échéance de sa première demande (#17).
+    async def _expiring(self, state: RunState, events: Sequence[Event]) -> None:
+        """Ramène un run en attente à l'échéance de sa première demande (#17).
 
         Le travail ne décide rien : c'est ``expire_at``, au journal, qui fait
         expirer une demande, et ``drive`` le lit en reprenant. Le travail ne
         fait qu'y revenir au bon moment, pour que personne n'ait à repasser.
         Différé, il ne retient ni ``drain()`` ni la fermeture : s'il est
         abandonné, la demande n'en est pas moins périmée.
+
+        Les échéances sont cherchées dans tout l'arbre : quand c'est un
+        sous-agent qui attend, la racine n'a pas de demande à elle, et
+        personne ne serait venu la réveiller.
         """
-        deadlines = [a.expire_at for a in state.awaiting if a.expire_at is not None]
+        tree = RunTree(state.run_id).select(events)
+        deadlines = [a.expire_at for a in _awaited(state, tree) if a.expire_at is not None]
         if not deadlines:
             return
         await self._queue.submit(

@@ -137,7 +137,7 @@ Les commandes ci-dessous sont indicatives.
 | 4.2a Cycle de vie d'un run | `run.cancelled`, `Loom.cancel()`, délai maximal par agent (`timeout`), temps de pilotage cumulé | A5, A6, #006 |
 | 4.2b Exécution durable | Job `run` de la `TaskQueue`, `Loom.submit()`, `Loom.recover()`, concession appliquée (`run.claimed`, `execution.lease`, `ClaimConflict`), `kill -9` réel en test d'intégration | H2, H3, H5, #25–#27 |
 | 4.3a Approbations | `side_effects` et `approval`, `Pause` débloquée, `PAUSED`, lot partiel, `Loom.approve()` et `reject()`, expiration lue au journal, approbateur en ligne, journal durable exigé | D10, H4, #17, #28 |
-| 4.3b Sous-agent en pause | `WAITING_CHILD` : un enfant qui attend une approbation, et ce que devient son parent | C5, H4, #4 |
+| 4.3b Sous-agent en pause | `WAITING_CHILD`, appel délégant laissé en suspens, demandes de l'arbre remontées à la racine, `approve()` depuis n'importe quel run, reprise par rejeu de l'appel délégant | C5, H4, #4 |
 | 4.4 Idempotence | `IdempotencyStore` (`journal`, `memory`, `sqlite`), `@idempotent`, clés métier, règles de reprise | D11, #18, #49 |
 | 4.5 Accès | REST : `approve`, `cancel`, runs en arrière-plan, sessions. MCP : elicitation, ou pause avec `run_status`. Python : `approve()` | — |
 

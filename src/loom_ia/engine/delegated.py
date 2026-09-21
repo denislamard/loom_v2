@@ -61,6 +61,20 @@ class Consumption:
 
 
 @dataclass(frozen=True, slots=True)
+class Waiting:
+    """Le run délégué s'est arrêté en attendant une décision humaine (H4, #17).
+
+    Ce n'est pas un résultat : l'appel reste en suspens, sans ``tool.completed``.
+    Le parent passe en ``WAITING_CHILD`` et reprendra en rejouant cet appel,
+    lequel reprendra l'enfant là où il en était.
+    """
+
+    call_id: str
+    # Run délégué qui attend : celui du sous-agent.
+    run_id: RunId
+
+
+@dataclass(frozen=True, slots=True)
 class Exchange:
     """Conversation d'un appel délégué : la requête envoyée et la réponse retenue.
 
@@ -158,8 +172,11 @@ class DelegatedTool(ABC):
     @abstractmethod
     def run(
         self, arguments: dict[str, JsonValue], context: ToolContext, run: RunView
-    ) -> AsyncGenerator[DelegatedPayload | Consumption | Exchange | ToolOutput]:
-        """Événements de l'appel, sa consommation (run enfant), son échange, puis son résultat."""
+    ) -> AsyncGenerator[DelegatedPayload | Consumption | Exchange | ToolOutput | Waiting]:
+        """Événements de l'appel, sa consommation, son échange, puis son résultat.
+
+        ``Waiting`` tient lieu de résultat quand le run délégué s'arrête en
+        attendant une décision humaine : il n'y en a pas encore."""
         ...
 
     def repair(

@@ -8,6 +8,7 @@ from loom_ia.engine.delegated import (
     DelegatedTool,
     Exchange,
     RunView,
+    Waiting,
 )
 from loom_ia.engine.executor import (
     DEFAULT_TOOL_TIMEOUT,
@@ -146,6 +147,7 @@ __all__ = [
     "TracingPolicy",
     "Tripped",
     "Verdict",
+    "Waiting",
     "begin_run",
     "cancellation",
     "drive",
