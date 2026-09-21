@@ -146,6 +146,11 @@ class ExecutionConfig(DomainModel):
     attachments: AttachmentPolicy = AttachmentPolicy()
     # Délai laissé aux tâches de fond (compaction) à la fermeture de l'instance.
     shutdown_timeout: PositiveFloat = 30.0
+    # Durée de la concession prise sur un run par l'instance qui le pilote
+    # (#27), en secondes ; elle est renouvelée au tiers tant qu'il tourne.
+    # Passée, un autre worker peut reprendre le run — ce qui n'arrive que si
+    # le porteur est mort.
+    lease: PositiveFloat = 60.0
 
 
 class LoggingConfig(DomainModel):

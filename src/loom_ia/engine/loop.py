@@ -84,8 +84,9 @@ import json
 import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from typing import Final
 
 from pydantic import JsonValue
@@ -101,6 +102,7 @@ from loom_ia.core.events import (
     ModelRetried,
     PolicyDecided,
     RunCancelled,
+    RunClaimed,
     RunCompleted,
     RunFailed,
     RunScope,
@@ -135,6 +137,7 @@ from loom_ia.core.model import (
     PendingRepair,
     Retry,
     RunBudget,
+    RunClaim,
     RunId,
     RunKind,
     RunState,
@@ -183,6 +186,22 @@ TERMINAL_RULE: Final = "loom.terminal"
 _CALL_EVENTS: Final = (ModelRetried, ModelFellBack, CircuitOpened, ModelResponded)
 
 # États où ``step`` a quelque chose à faire (effet ou clôture).
+DEFAULT_LEASE: Final = 60.0
+
+
+class ClaimConflict(RuntimeError):
+    """Un autre pilote tient la concession de ce run, et elle est vivante (#27)."""
+
+    def __init__(self, run_id: RunId, worker_id: str, until: datetime) -> None:
+        self.run_id = run_id
+        self.worker_id = worker_id
+        self.lease_until = until
+        super().__init__(
+            f"Run {run_id} : piloté par {worker_id}, concession valable jusqu'à "
+            f"{until.isoformat(timespec='seconds')}"
+        )
+
+
 _ACTIONABLE: Final = frozenset(
     {
         RunStatus.READY_FOR_MODEL,
@@ -234,6 +253,12 @@ class RunContext:
     # cumulé (``RunState.active_ms``), pas l'horloge : une reprise garde le
     # budget qui reste. ``None`` : pas de délai.
     timeout: float | None = None
+    # Instance qui pilote, pour la concession (#27). ``None`` : pas de
+    # concession — un ``drive`` appelé directement, ou un sous-run, que son
+    # parent pilote déjà.
+    worker_id: str | None = None
+    # Durée de la concession, en secondes ; renouvelée au tiers.
+    lease: float = DEFAULT_LEASE
 
     @property
     def artifacts(self) -> ArtifactStore | None:
@@ -410,6 +435,8 @@ async def drive(
     if writer is None:
         writer = SessionWriter(ctx.store, tenant, session, events[-1].seq)
     journal = writer
+    scope = _scope(state)
+    claimed = await _claim(state, ctx, journal, scope)
 
     async def write(draft: EventDraft) -> Event:
         nonlocal state, cause
@@ -427,8 +454,7 @@ async def drive(
         run_id=run_id,
         agent=state.agent,
     )
-    async with ctx.tools.opened(sources) as opened:
-        scope = _scope(state)
+    async with ctx.tools.opened(sources) as opened, _renewed(claimed, journal, scope):
         blocking: tuple[Event, ToolSourceUnavailable] | None = None
         for payload in opened.events:
             event = await write(scope.draft(payload))
@@ -474,6 +500,62 @@ async def drive(
                     f"Run {run_id} : aucune progression depuis l'état {state.status}"
                 )
     return state
+
+
+async def _claim(
+    state: RunState, ctx: RunContext, journal: SessionWriter, scope: RunScope
+) -> RunClaim | None:
+    """Prend la concession du run, ou lève si un autre pilote la tient (#27).
+
+    Sans ``worker_id`` — un ``drive`` appelé directement, un sous-run que son
+    parent pilote déjà —, il n'y a pas de concession à prendre.
+    """
+    if ctx.worker_id is None or state.parent_run_id is not None:
+        return None
+    held = state.claim
+    now = datetime.now(UTC)
+    if held is not None and held.worker_id != ctx.worker_id and held.alive(now):
+        raise ClaimConflict(state.run_id, held.worker_id, held.lease_until)
+    mine = RunClaim(worker_id=ctx.worker_id, lease_until=now + timedelta(seconds=ctx.lease))
+    await journal.append(
+        [scope.draft(RunClaimed(worker_id=mine.worker_id, lease_until=mine.lease_until))]
+    )
+    return mine
+
+
+@asynccontextmanager
+async def _renewed(
+    claim: RunClaim | None, journal: SessionWriter, scope: RunScope
+) -> AsyncGenerator[None]:
+    """Renouvelle la concession au tiers du bail, tant que le run est piloté.
+
+    Un minuteur, et pas un renouvellement entre deux étapes : un run bloqué
+    dans une étape plus longue que son bail est bien vivant, et perdrait sa
+    concession au profit d'un second pilote.
+    """
+    if claim is None:
+        yield
+        return
+    period = max((claim.lease_until - datetime.now(UTC)).total_seconds() / 3, 1.0)
+
+    async def renew() -> None:
+        while True:
+            await asyncio.sleep(period)
+            until = datetime.now(UTC) + timedelta(seconds=period * 3)
+            draft = scope.draft(RunClaimed(worker_id=claim.worker_id, lease_until=until))
+            try:
+                await journal.append([draft])
+            except Exception:
+                logger.warning("Concession du run %s : renouvellement raté", scope.run_id)
+                return
+
+    task = asyncio.create_task(renew())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 def cancellation(

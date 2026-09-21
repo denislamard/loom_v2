@@ -2,6 +2,7 @@
 """Points d'accès à une instance loom : Python, REST, MCP, CLI (N1 à N5)."""
 
 from loom_ia.access.api import (
+    ClaimConflict,
     JudgeVerdict,
     Loom,
     RunResult,
@@ -12,6 +13,7 @@ from loom_ia.access.api import (
 )
 
 __all__ = [
+    "ClaimConflict",
     "JudgeVerdict",
     "Loom",
     "RunResult",

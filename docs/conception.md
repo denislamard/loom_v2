@@ -904,6 +904,10 @@ Port `TaskQueue` (#27) : `submit(job, key, delay?)`, `status(job_id)`, `cancel(j
 
 **Réalisation (phase 4.1b) :** le port est livré avec son adaptateur asyncio (une tâche par travail, dédoublonnage par `key`, `drain` et fermeture bornée par `execution.shutdown_timeout`). Un seul type de tâche est traité, `compaction` ; `run`, `resume` et `expire_approval` sont déclarés et refusés tant que leur phase n'est pas là. Une tâche en échec est journalisée et ne fait jamais échouer le run qui l'a demandée. `Loom.compact(session_id)` résume à la demande, sans tenir compte du seuil ; `Loom.drain()` attend les tâches en cours.
 
+**Réalisation (phase 4.2b) :** le job `run` est traité. `Loom.submit(agent, message)` ouvre le run — inscrit au journal **avant le retour**, donc suivable, interrogeable et annulable aussitôt — et met son pilotage en file sous la clé `run:<run_id>` ; `result(run_id)` relit ce qu'il a produit. `Loom.recover()` balaie les sessions du locataire (ou une seule, avec `session_id`), remet en file les runs racine encore actionnables et rend leurs identifiants ; il est à appeler soi-même, car une instance ne redémarre pas les runs d'un autre process à l'insu de son appelant.
+
+La concession est appliquée : `drive` écrit `run.claimed` avant de piloter et lève `ClaimConflict` si une concession vivante appartient à un autre worker. Le `worker_id` est engendré à la construction de l'instance ; le bail (`execution.lease`, 60 s) se renouvelle par minuteur au tiers de sa durée, et non entre deux étapes — un run bloqué dans une étape plus longue que son bail est vivant, et le perdrait. Un sous-run ne prend pas de concession : il tourne dans l'étape de son parent, qui tient la sienne. Le revers est assumé : un run dont le porteur est mort attend l'expiration du bail avant d'être repris, ce qui évite de doubler un worker simplement lent.
+
 ### 12.2 Pause en mode librairie
 
 - Un agent qui peut se mettre en pause (outil en `approval: always | policy`, ou politique qui peut renvoyer `Pause`) exige un `EventStore` durable (JSONL au minimum) : erreur de config, avertissement seulement en profil dev (#28).

@@ -35,6 +35,7 @@ from loom_ia.core.events import (
     ModelRetried,
     PolicyDecided,
     RunCancelled,
+    RunClaimed,
     RunCompleted,
     RunFailed,
     RunStarted,
@@ -53,6 +54,7 @@ from loom_ia.core.model import (
     Message,
     PendingCall,
     PendingRepair,
+    RunClaim,
     RunId,
     RunState,
     RunStatus,
@@ -205,6 +207,8 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 "error": error,
                 "finished": True,
             }
+        case RunClaimed(worker_id=worker, lease_until=until):
+            update["claim"] = RunClaim(worker_id=worker, lease_until=until)
         case RunCancelled(reason=reason):
             update |= {
                 "status": RunStatus.CANCELLED,

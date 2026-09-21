@@ -51,7 +51,7 @@ from typing import Self
 
 from pydantic import JsonValue, NonNegativeInt, PositiveInt
 
-from loom_ia.adapters.queue import AsyncioTaskQueue
+from loom_ia.adapters.queue import AsyncioTaskQueue, Handler
 from loom_ia.adapters.stores import NotifyingEventStore
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import AgentSpec
@@ -80,13 +80,22 @@ from loom_ia.core.model import (
     SessionId,
     TenantId,
     Usage,
+    new_id,
     new_run_id,
 )
 from loom_ia.core.model.base import DomainModel
-from loom_ia.core.ports import ArtifactStore, ChunkCallback, EventStore, Job, SessionRecord
+from loom_ia.core.ports import (
+    ArtifactStore,
+    ChunkCallback,
+    EventStore,
+    Job,
+    JobKind,
+    SessionRecord,
+)
 from loom_ia.core.projections import RunTree, fold
 from loom_ia.engine import (
     CircuitBreakers,
+    ClaimConflict,
     RunContext,
     SessionWriter,
     SessionWriters,
@@ -241,6 +250,25 @@ class RunResult(DomainModel):
         return tuple(a for a in self.artifacts if a.origin == "tool_output")
 
 
+def _unfinished(events: Sequence[Event]) -> list[RunState]:
+    """Runs racine d'un journal qui peuvent encore avancer (#27, H3).
+
+    Un sous-run n'y est pas : son parent le reprend en rejouant l'appel
+    d'outil qui l'a lancé. Un run de compaction non plus — il sera refait si
+    la session en a besoin.
+
+    Les marqueurs de session sont écartés : ils portent l'identifiant de leur
+    session, pas celui d'un run, et une session résumée en a.
+    """
+    states: list[RunState] = []
+    runs = (e.run_id for e in events if e.category != "session")
+    for run_id in dict.fromkeys(runs):
+        state = fold([e for e in events if e.run_id == run_id], RunId(run_id))
+        if state.parent_run_id is None and state.kind == "normal" and not state.finished:
+            states.append(state)
+    return states
+
+
 class Loom:
     """Une configuration chargée, prête à faire tourner ses agents."""
 
@@ -275,6 +303,9 @@ class Loom:
         # Un écrivain par session : deux runs d'une même session écrivent par
         # le même, et ne se refusent pas l'un l'autre (#22).
         self._writers = SessionWriters()
+        # Identité de cette instance : c'est elle qui prend les concessions
+        # sur les runs qu'elle pilote (#27).
+        self._worker_id = f"worker-{new_id()[-12:]}"
         # Runs pilotés ici, pour que ``cancel`` puisse les atteindre (A5).
         self._driving: dict[RunId, asyncio.Task[RunState]] = {}
         # Compaction : agent interne et file de tâches, seulement si la config
@@ -296,14 +327,12 @@ class Loom:
             if compaction is not None
             else None
         )
-        self._queue = (
-            AsyncioTaskQueue(
-                {"compaction": self._compacted},
-                shutdown_timeout=config.execution.shutdown_timeout,
-            )
-            if self._compaction is not None
-            else None
-        )
+        handlers: dict[JobKind, Handler] = {"run": self._piloted_job}
+        if self._compaction is not None:
+            handlers["compaction"] = self._compacted
+        # La file existe toujours depuis 4.2b : elle porte les runs de fond,
+        # que la compaction soit configurée ou non.
+        self._queue = AsyncioTaskQueue(handlers, shutdown_timeout=config.execution.shutdown_timeout)
 
     @classmethod
     def from_config(
@@ -457,9 +486,13 @@ class Loom:
                 breakers=self._breakers,
             )
             self._built[agent] = built
+        # La concession appartient à l'instance, pas à la config de l'agent.
+        context = replace(
+            built.context, worker_id=self._worker_id, lease=self._config.execution.lease
+        )
         if on_chunk is None:
-            return built.context
-        return replace(built.context, on_chunk=on_chunk)
+            return context
+        return replace(context, on_chunk=on_chunk)
 
     # --- Relire un run --------------------------------------------------------
 
@@ -624,9 +657,8 @@ class Loom:
 
     async def aclose(self) -> None:
         """Ferme les clients de modèle, les connexions MCP, et les stockages venus de la config."""
-        if self._queue is not None:
-            # Les tâches de fond se servent des agents : on les attend d'abord.
-            await self._queue.aclose()
+        # Les tâches de fond se servent des agents : on les attend d'abord.
+        await self._queue.aclose()
         for built in self._built.values():
             await built.aclose()
         if self._mcp is not None:
@@ -702,6 +734,113 @@ class Loom:
         await writer.append(cancellation(state, by=by))
         return True
 
+    async def submit(
+        self,
+        agent: str,
+        message: str | Message,
+        *,
+        attachments: Sequence[Attachment] = (),
+        session_id: SessionId | None = None,
+        context: CallerContext | None = None,
+        run_id: RunId | None = None,
+        judges: JudgesMode = "auto",
+    ) -> RunId:
+        """Ouvre un run et met son pilotage en file ; rend son identifiant (H5).
+
+        Le run est **inscrit au journal avant le retour** : l'identifiant rendu
+        désigne un run qui existe, qu'on peut suivre (``follow``), interroger
+        (``state``) ou arrêter (``cancel``) aussitôt. Son résultat se relit
+        ensuite avec ``result(run_id)``, ou s'attend avec ``drain()``.
+
+        Une pièce jointe refusée lève ``AttachmentError`` avant l'ouverture.
+        """
+        ctx = self.context(agent)
+        tenant = (context or CallerContext()).tenant_id
+        if self._compaction is not None and session_id is not None:
+            await self._compaction.ensure_fits(tenant, session_id)
+        state = await begin_run(
+            ctx,
+            message,
+            attachments=attachments,
+            session_id=session_id,
+            context=context,
+            run_id=run_id,
+            judges=judges,
+            writer=await self._writer(tenant, session_id),
+        )
+        await self._queue.submit(
+            Job(
+                kind="run",
+                tenant_id=tenant,
+                session_id=state.session_id,
+                run_id=state.run_id,
+            ),
+            key=f"run:{state.run_id}",
+        )
+        return state.run_id
+
+    async def recover(
+        self, *, session_id: SessionId | None = None, tenant_id: TenantId | None = None
+    ) -> tuple[RunId, ...]:
+        """Remet en file les runs racine laissés en plan, et rend leurs identifiants (H3).
+
+        À appeler soi-même : une instance ne redémarre pas les runs d'un autre
+        process à l'insu de son appelant. Un run déjà piloté par un worker
+        vivant sera refusé par sa concession, donc le remettre en file est sans
+        risque. Un run dont l'agent n'est plus déclaré est ignoré, avec un
+        avertissement.
+
+        Sans ``session_id``, toutes les sessions du locataire sont balayées —
+        c'est la reprise au démarrage d'un process. Avec, une seule l'est.
+        """
+        tenant = tenant_id or DEFAULT_TENANT
+        known = set(self.names)
+        found: list[RunId] = []
+        sessions = (
+            [session_id]
+            if session_id is not None
+            else [record.session_id for record in await self.store.sessions(tenant)]
+        )
+        for session in sessions:
+            events = await self._store.read(tenant, session)
+            for state in _unfinished(events):
+                if state.agent not in known:
+                    logger.warning(
+                        "Reprise : run %s ignoré, agent %r absent de la configuration",
+                        state.run_id,
+                        state.agent,
+                    )
+                    continue
+                await self._queue.submit(
+                    Job(
+                        kind="run",
+                        tenant_id=tenant,
+                        session_id=state.session_id,
+                        run_id=state.run_id,
+                    ),
+                    key=f"run:{state.run_id}",
+                )
+                found.append(state.run_id)
+        return tuple(found)
+
+    async def _piloted_job(self, job: Job) -> None:
+        """Pilote un run mis en file : soumission (H5) ou reprise (H3)."""
+        assert job.run_id is not None, "un travail `run` désigne toujours un run"
+        try:
+            state = await self.state(job.run_id, session_id=job.session_id)
+        except UnknownRun:
+            logger.warning("Travail `run` : run %s introuvable", job.run_id)
+            return
+        if state.finished:
+            return
+        ctx = self.context(state.agent)
+        writer = await self._writer(state.context.tenant_id, state.session_id)
+        try:
+            await self._piloted(ctx, state, writer)
+        except ClaimConflict as conflict:
+            # Un autre pilote le tient : c'est le but de la concession.
+            logger.info("%s", conflict)
+
     async def _result(self, state: RunState) -> RunResult:
         """Résultat d'un run qui vient de s'arrêter, avec son rapport et ses verdicts."""
         events = await self._store.read(state.context.tenant_id, state.session_id)
@@ -723,9 +862,8 @@ class Loom:
         return await self._compaction.compact(tenant_id or DEFAULT_TENANT, session_id, limit=0)
 
     async def drain(self) -> None:
-        """Attend les tâches de fond en cours (compaction)."""
-        if self._queue is not None:
-            await self._queue.drain()
+        """Attend les tâches de fond en cours : runs soumis, résumés."""
+        await self._queue.drain()
 
     async def _compacted(self, job: Job) -> None:
         """Tâche de compaction, sortie de la file."""
@@ -734,7 +872,7 @@ class Loom:
 
     async def _schedule(self, state: RunState, events: Sequence[Event]) -> None:
         """Met un résumé en file si la session a dépassé son seuil (#23)."""
-        if self._compaction is None or self._queue is None or not state.finished:
+        if self._compaction is None or not state.finished:
             return
         if state.parent_run_id is not None or state.kind != "normal":
             return

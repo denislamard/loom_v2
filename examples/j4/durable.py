@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 4.2a : arrêter un run — à la demande, ou parce que le délai est passé.
+"""Phase 4.2 : un run survit à ce qui l'arrête — décision, délai, ou panne.
 
-    uv run python examples/j4/durable.py                    # les trois cas
+    uv run python examples/j4/durable.py                    # les cinq cas
     uv run python examples/j4/durable.py --cas delai
     uv run --env-file .env --extra anthropic --extra openai \\
         python examples/j4/durable.py --reel
@@ -11,7 +11,7 @@ outil lent — ``consulter_erp`` — et les agents qui s'en servent. Les fichier
 de ``relance/`` ne changent pas.
 
 Trois façons pour un run de s'arrêter avant sa réponse, et elles ne se
-ressemblent pas :
+ressemblent pas (4.2a) :
 
 * **annulé** (``--cas annulation``) : ``Loom.cancel()`` interrompt le pilotage
   puis écrit ``run.cancelled``. C'est **terminal** — le run ne se reprend pas,
@@ -27,6 +27,22 @@ ressemblent pas :
 Le délai ne borne pas l'horloge mais le **temps de pilotage cumulé**
 (``step.completed``) : l'attente en file et le temps entre un plantage et sa
 reprise ne comptent pas.
+
+Puis deux cas sur le pilotage lui-même (4.2b) :
+
+* **arrière-plan** (``--cas arriere_plan``) : ``submit()`` met le run en file
+  et rend son identifiant sans attendre. Le run est **inscrit au journal
+  avant le retour** — on peut le suivre, l'interroger ou l'annuler aussitôt.
+  ``drain()`` attend la file, ``result()`` relit ce qu'il a produit.
+* **concession** (``--cas concession``) : deux instances, un seul pilote.
+  Celle qui tient la concession pilote ; l'autre se fait refuser. Quand la
+  première disparaît, sa concession expire et la seconde reprend le run là
+  où il en était. Le délai d'expiration est le prix à payer pour qu'un
+  worker simplement lent ne se fasse pas doubler.
+
+Ici le pilote est « tué » en abandonnant sa tâche, ce qui laisse le journal
+dans le même état qu'un process mort. Un vrai ``kill -9``, avec un vrai
+sous-process, est dans ``tests/integration/test_kill.py``.
 """
 
 import argparse
@@ -35,13 +51,22 @@ import os
 import sys
 import time
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from loom_ia.access import ClaimConflict
 from loom_ia.access.api import Loom, RunResult, UnknownSession
 from loom_ia.adapters.models import ModelConfigError
 from loom_ia.config import ConfigError, LoomConfig, load_config
-from loom_ia.core.events import Event, RunCancelled, RunFailed, ToolCalled, ToolCompleted
+from loom_ia.core.events import (
+    Event,
+    RunCancelled,
+    RunClaimed,
+    RunFailed,
+    ToolCalled,
+    ToolCompleted,
+)
 from loom_ia.core.model import (
     ModelSpec,
     RunId,
@@ -68,7 +93,12 @@ DELAI_REEL = 6.0
 _latence = LATENCE
 # De quoi laisser un vrai modèle répondre avant d'arrêter le run.
 ATTENTE_MAX = 60.0
-CAS = ("annulation", "delai", "interruption")
+# Bail de la concession, pour le cas `concession` seulement : le défaut (60 s)
+# ferait attendre l'exemple une minute pour montrer l'expiration.
+BAIL = 3.0
+# De quoi être sûr d'être passé de l'autre côté du bail.
+MARGE = 0.2
+CAS = ("annulation", "delai", "interruption", "arriere_plan", "concession")
 ERP = "consulter_erp"
 FINALS = frozenset({"completed", "failed", "cancelled"})
 CONSIGNE_ERP = (
@@ -224,6 +254,22 @@ async def dans_l_erp(loom: Loom, run_id: RunId, session: SessionId) -> None:
     raise TimeoutError(f"le run {run_id} n'a pas appelé {ERP} en {ATTENTE_MAX:g} s")
 
 
+async def expiration(loom: Loom, run_id: RunId, session: SessionId) -> float:
+    """Attend que la concession du run soit passée, et rend ce qu'il en restait.
+
+    Dormir la durée du bail depuis l'abandon ne suffit pas : le bail court
+    depuis le **dernier renouvellement**, pas depuis l'abandon, et il peut
+    donc être déjà presque fini. C'est ce que fait un vrai repreneur — il
+    compare ``lease_until`` à l'heure qu'il est (marge de 0,27 s au run réel
+    du 21/09, avec l'attente naïve).
+    """
+    claim = (await loom.state(run_id, session_id=session)).claim
+    assert claim is not None, "le run devrait porter la concession du mort"
+    reste = (claim.lease_until - datetime.now(UTC)).total_seconds()
+    await asyncio.sleep(max(reste, 0.0) + MARGE)
+    return reste
+
+
 async def annulation(loom: Loom, agent: str, session: SessionId) -> None:
     print("— Annulé : la décision d'arrêter, écrite au journal\n")
     run_id = new_run_id()
@@ -291,6 +337,70 @@ async def interruption(loom: Loom, agent: str, session: SessionId) -> None:
     print(f"  réponse  : {repris.text.splitlines()[0][:70] if repris.text else '—'}\n")
 
 
+async def arriere_plan(loom: Loom, agent: str, session: SessionId) -> None:
+    """``submit()`` : le run part en file, l'appelant garde la main."""
+    print("— Arrière-plan : le run part en file, l'appelant garde la main\n")
+    depart = time.monotonic()
+    run_id = await loom.submit(agent, DEMANDE, session_id=session)
+    rendu = time.monotonic() - depart
+    # Le run est au journal avant le retour : son état est lisible aussitôt.
+    state = await loom.state(run_id, session_id=session)
+    print(f"  submit() : {run_id} rendu en {rendu:.2f} s, déjà {state.status} au journal")
+    print("  l'appelant fait autre chose pendant que le run avance…")
+    await loom.drain()
+    result = await loom.result(run_id, session_id=session)
+    events = await loom.export_session(session)
+    print(f"  drain()  : file vide — {outcome(result)} en {result.iterations} itération(s)")
+    print(f"  pilotage : {piloting(events, run_id):.2f} s")
+    print(f"  réponse  : {result.text.splitlines()[0][:70] if result.text else '—'}\n")
+
+
+async def concession(config: LoomConfig, agent: str, session: SessionId) -> None:
+    """Deux instances, un seul pilote — et la reprise quand celui-ci meurt."""
+    print(f"— Concession : un run ne se pilote qu'à un (bail de {BAIL:g} s)\n")
+    court = config.model_copy(
+        update={"execution": config.execution.model_copy(update={"lease": BAIL})}
+    )
+    async with Loom(court) as un, Loom(court) as deux:
+        un.register("consulter_erp", consulter_erp)
+        deux.register("consulter_erp", consulter_erp)
+        run_id = new_run_id()
+        pilotage = asyncio.create_task(un.run(agent, DEMANDE, session_id=session, run_id=run_id))
+        await dans_l_erp(un, run_id, session)
+        print("  l'instance 1 pilote le run (elle est dans l'ERP)")
+        try:
+            await deux.resume(run_id, session_id=session)
+        except ClaimConflict as refus:
+            print(f"  l'instance 2 tente de le reprendre : refusé, {refus.worker_id} le tient")
+
+        # Le pilote disparaît : machine coupée, process tué. Sa tâche est
+        # abandonnée, donc plus rien n'est écrit — ni clôture, ni
+        # renouvellement de la concession.
+        pilotage.cancel()
+        with suppress(asyncio.CancelledError):
+            await pilotage
+        print("  l'instance 1 disparaît en plein appel — rien de plus au journal")
+
+        repris = await deux.recover(session_id=session)
+        await deux.drain()
+        state = await deux.state(run_id, session_id=session)
+        print(f"  reprise aussitôt : {len(repris)} run remis en file, et toujours {state.status}")
+        reste = await expiration(deux, run_id, session)
+        print(f"    — le bail du mort court encore {reste:.1f} s, personne n'y touche")
+
+        await deux.recover(session_id=session)
+        await deux.drain()
+        result = await deux.result(run_id, session_id=session)
+        print(f"  bail passé, reprise : {outcome(result)} en {result.iterations} itération(s)")
+        events = [e for e in await deux.export_session(session) if e.run_id == run_id]
+        pilotes = [p.worker_id for e in events if isinstance(p := e.payload, RunClaimed)]
+        print(
+            f"  concessions : {len(pilotes)} écrites (prises et renouvelées), "
+            f"{len(set(pilotes))} pilotes"
+        )
+        print(f"  réponse  : {result.text.splitlines()[0][:70] if result.text else '—'}\n")
+
+
 async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Arrêter un run : annulation, délai, reprise")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
@@ -322,8 +432,12 @@ async def main(argv: list[str]) -> int:
                     await annulation(loom, agent, session)
                 elif nom == "delai":
                     await delai(loom, presse, session, reel=args.reel)
-                else:
+                elif nom == "interruption":
                     await interruption(loom, agent, session)
+                elif nom == "arriere_plan":
+                    await arriere_plan(loom, agent, session)
+                else:
+                    await concession(config, agent, session)
         except (ModelConfigError, ConfigError) as error:
             print(f"Configuration : {error}", file=sys.stderr)
             return 2

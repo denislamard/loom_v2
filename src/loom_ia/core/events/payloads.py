@@ -51,6 +51,7 @@ position jusqu'à laquelle ils remplacent l'historique, et la projection d'un
 run les ignore (ils peuvent arriver après sa clôture).
 """
 
+from datetime import datetime
 from typing import Annotated, ClassVar, Final, Literal, Self
 
 from pydantic import (
@@ -219,6 +220,25 @@ class RunCompleted(Payload):
             # Absente sinon : les journaux antérieurs restent lisibles.
             facets["unverified"] = True
         return facets
+
+
+class RunClaimed(Payload):
+    """Concession prise sur un run : un seul pilote à la fois (#27).
+
+    La durabilité vient du journal, pas de la file : une livraison en double
+    est sans risque puisque l'état se reconstruit. Mais deux pilotes en même
+    temps écriraient deux fois les mêmes effets. La concession les départage :
+    qui la tient pilote, et elle expire si son porteur meurt.
+    """
+
+    category: ClassVar[EventCategory] = "run"
+    facet_fields: ClassVar[tuple[str, ...]] = ("worker_id",)
+
+    type: Literal["run.claimed"] = "run.claimed"
+    # Instance qui pilote : engendré à sa construction, pas configuré.
+    worker_id: str
+    # Échéance de la concession. Passée, un autre pilote peut la reprendre.
+    lease_until: datetime
 
 
 class RunCancelled(Payload):
@@ -801,6 +821,7 @@ type DurablePayload = Annotated[
     | RunCompleted
     | RunFailed
     | RunCancelled
+    | RunClaimed
     | UserMessage
     | ModelResponded
     | ModelRetried

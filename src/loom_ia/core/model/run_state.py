@@ -5,6 +5,7 @@ Le ``RunState`` n'est jamais stocké : c'est la projection des événements de
 son ``run_id`` (#24). Il ne contient que des données sérialisables.
 """
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
@@ -67,6 +68,20 @@ class PendingRepair(DomainModel):
     feedback: str
     # Faux : l'orchestrateur répare sans outils (échec de forme).
     tools: bool = True
+
+
+class RunClaim(DomainModel):
+    """Concession en cours sur un run : qui le pilote, et jusqu'à quand (#27).
+
+    Un seul pilote à la fois. Le porteur la renouvelle tant qu'il vit ; s'il
+    meurt, elle expire et un autre worker peut reprendre le run.
+    """
+
+    worker_id: str
+    lease_until: datetime
+
+    def alive(self, now: datetime) -> bool:
+        return now < self.lease_until
 
 
 class RunState(DomainModel):
@@ -139,6 +154,9 @@ class RunState(DomainModel):
     error: str | None = None
     # Motif de l'annulation, s'il y en a eu une (A5).
     cancelled: CancelReason | None = None
+    # Dernière concession prise sur ce run (#27) ; None si personne ne l'a
+    # encore pilotée, ou si le journal est antérieur à 4.2b.
+    claim: RunClaim | None = None
     # Vrai après run.completed, run.failed ou run.cancelled : plus rien n'est accepté.
     finished: bool = False
     # Dernier événement appliqué.

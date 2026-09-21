@@ -46,7 +46,8 @@ async def test_run_journal_holds_the_whole_story(demo: ConfigFactory) -> None:
         events = await loom.events(result.run_id)
         state = await loom.state(result.run_id)
 
-    assert kinds(events)[:3] == ["run.started", "message.user", "step.started"]
+    # `run.claimed` : la concession de l'instance qui pilote (#27, 4.2b).
+    assert kinds(events)[:4] == ["run.started", "message.user", "run.claimed", "step.started"]
     assert kinds(events)[-1] == "run.completed"
     assert [e.type for e in events if e.type == "tool.called"] == ["tool.called"]
     assert state.finished and state.output is not None

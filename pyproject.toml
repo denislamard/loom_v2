@@ -91,6 +91,7 @@ include = ["src", "tests", "examples"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = ["integration: lance de vrais sous-process (plus lent)"]
 
 [tool.importlinter]
 root_package = "loom_ia"

@@ -328,7 +328,7 @@ Chaque état correspond à un seul type d'effet : appel modèle, lot d'outils, r
 - Annulation et timeout (A5, A6) : le délai est contrôlé avant chaque étape **et** borne celle qui commence (`asyncio.timeout`) ; l'annulation vient de `Loom.cancel`, qui interrompt le pilotage puis écrit `run.cancelled` (réalisation 4.2a sous #27).
 - Sous-agent (C5) : l'outil lance le `drive` de l'enfant ; le parent passe en `WAITING_CHILD` si l'enfant se met en pause.
 - Streaming (I1) : pendant l'appel modèle, `step` publie des `model.delta` éphémères sur le bus.
-- Arrière-plan (H5) : n'importe quel worker peut reprendre `drive(run_id)`.
+- Arrière-plan (H5) : n'importe quel worker peut reprendre `drive(run_id)`, à une concession près — un seul pilote à la fois (réalisation 4.2b sous #27).
 - Tests : `apply` se teste sans rien simuler, `step` avec un faux modèle.
 
 **Règles :**
@@ -996,6 +996,14 @@ Réglé par le point 18 : réexécution si l'outil est sans effet de bord ou ide
 - **Deux façons de dépasser, deux messages.** L'étape coupée en plein effet n'a pas de `step.completed`, donc son temps n'est nulle part ; le message le dit au lieu de le confondre avec le cumul.
 - **Config.** `timeout` sur un agent, en secondes, sans défaut global : sans valeur, pas de délai (backlog #006 clos). `loom validate` l'affiche.
 - **Sous-runs.** Un enfant tourne dans l'étape de son parent : le délai du parent le coupe avec elle, et l'enfant, simplement interrompu, reste reprenable.
+
+**Réalisation (phase 4.2b) :**
+
+- **Arrière-plan.** `Loom.submit(agent, message)` ouvre le run, met un job `run` en file et rend son identifiant. Le run est **inscrit au journal avant le retour** : l'identifiant désigne un run qui existe, qu'on peut suivre (`follow`), interroger (`state`) ou arrêter (`cancel`) aussitôt. Son résultat se relit avec `result(run_id)` ou s'attend avec `drain()`. La clé `run:<run_id>` empêche deux jobs pour le même run, et `aclose()` attend les runs en cours comme il attend les compactions.
+- **Reprise.** `Loom.recover()` balaie les sessions du locataire, relève les runs **racine** encore actionnables et les remet en file ; il rend leurs identifiants. Un sous-run n'en est pas : son parent le reprend en rejouant l'appel d'outil qui l'a lancé. Un run de compaction non plus — il sera refait si la session en a besoin. Un run dont l'agent a disparu de la configuration est ignoré, avec un avertissement. `recover(session_id=…)` vise une seule session ; sans argument, c'est la reprise au démarrage d'un process. La méthode est **à appeler soi-même** : une instance ne redémarre pas les runs d'un autre process à l'insu de son appelant.
+- **Concession.** Avant de piloter, `drive` écrit `run.claimed` (`worker_id`, `lease_until`) ; si une concession vivante appartient à un autre worker, il lève `ClaimConflict` sans rien écrire. Le `worker_id` est engendré à la construction de l'instance, jamais configuré : deux process ne peuvent pas porter le même par erreur. Un sous-run n'en prend pas — il tourne dans l'étape de son parent, qui tient déjà la sienne. Le bail se renouvelle par **minuteur**, au tiers de sa durée (`execution.lease`, 60 s par défaut), et pas entre deux étapes : un run bloqué dans une étape plus longue que son bail est bien vivant, et le perdrait au profit d'un second pilote.
+- **Ce que la concession coûte.** Un run dont le porteur est mort n'est repris qu'une fois le bail expiré. C'est le prix à payer pour qu'un worker simplement lent ne se fasse pas doubler : entre reprendre trop tôt (deux pilotes, deux fois les mêmes effets) et reprendre trop tard (le run attend), la concession choisit le second.
+- **Ce qui le prouve.** `tests/integration/test_kill.py` lance un vrai sous-process, le tue par `SIGKILL` en plein appel d'outil, vérifie que le journal s'arrête sur `tool.called` sans clôture, qu'une autre instance **ne** reprend **pas** tant que le bail court, et qu'elle reprend et termine une fois le bail passé — en rejouant l'appel resté en suspens, l'outil étant déclaré idempotent.
 
 ### 28. Pause humaine en mode librairie
 

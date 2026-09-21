@@ -34,6 +34,9 @@ from loom_ia.core.projections import RunTree
 TREE_TYPES = [
     "run.started",
     "message.user",
+    # Concession prise par l'instance avant de piloter (#27, 4.2b). Un
+    # sous-run n'en prend pas : son parent le pilote déjà.
+    "run.claimed",
     "step.started",
     "model.responded",
     "step.completed",
