@@ -157,7 +157,7 @@ def test_judge_warnings_at_startup(demo: ConfigFactory, caplog: pytest.LogCaptur
         ({"on_failure": "fallback"}, "on_failure: fallback demande un 'fallback_message'"),
         ({"criteria": [CRITERIA[0], CRITERIA[0]]}, "Critère déclaré deux fois : exact"),
         ({"criteria": []}, "criteria"),
-        ({"context": ["session_summary"]}, "'session_summary' : prévu pour le jalon J4.1"),
+        ({"context": ["session_summary", "session_summary"]}, "Contexte déclaré deux fois"),
         ({"context": ["attachments"]}, "n'a pas la capacité vision"),
     ],
 )

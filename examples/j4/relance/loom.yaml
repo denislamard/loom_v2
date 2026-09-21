@@ -84,6 +84,26 @@ models:
             {"objet": "Votre devis D-2026-042",
             "corps": "Bonjour Madame Martin,\n\nOù en êtes-vous du devis D-2026-042 de 1 840 €, envoyé le 2 septembre ? Un mot suffit.\n\nBien cordialement,\nPlomberie Dupont"}
 
+  # Résumé simulé (phase 4.1b) : le premier oublie le montant, le contrôle de
+  # fidélité le renvoie au modèle, le second le garde. Tarifs de Haiku, pour
+  # voir ce que la compaction coûte dans le rapport de la session.
+  - id: FAKE_RESUME
+    sdk: fake
+    model: fake-resume
+    pricing: {input: 1.0, output: 5.0}
+    params:
+      script:
+        - text: >-
+            L'artisan a demandé la relance du devis D-2026-042 de Mme Martin
+            (remplacement d'un chauffe-eau de 200 L, envoyé le 2 septembre),
+            puis a fait raccourcir l'e-mail. La relance a été rédigée et
+            contrôlée à chaque tour.
+        - text: >-
+            L'artisan a demandé la relance du devis D-2026-042 de Mme Martin
+            (chauffe-eau de 200 L, 1 840 € TTC, envoyé le 2026-09-02, statut en
+            attente), puis a fait raccourcir l'e-mail. La relance a été rédigée
+            et contrôlée à chaque tour.
+
   # Juge simulé : les deux relances reprennent le devis sans rien inventer.
   # Tarifs de Claude Haiku 4.5, pour voir le coût du juge s'ajouter au run.
   - id: FAKE_JUDGE
@@ -144,6 +164,16 @@ budgets:
 # en repart au lieu de rejouer toute la conversation.
 sessions:
   snapshot_every: 5
+  # Compaction (phase 4.1b) : au-delà d'``over_tokens``, l'historique ancien est
+  # résumé en tâche de fond à la fin d'un run, les ``keep_last`` derniers tours
+  # restant intacts. ``hard_tokens`` est le filet : au-delà, le résumé devient
+  # bloquant, et s'il échoue les plus vieux tours sont retirés.
+  compaction:
+    model: FAKE_RESUME
+    over_tokens: 1200
+    hard_tokens: 4000
+    keep_last: 2
+    fidelity_check: true
 
 storage:
   events: {backend: jsonl, path: data}   # ignoré par git

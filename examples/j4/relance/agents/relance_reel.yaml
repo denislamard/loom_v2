@@ -24,7 +24,11 @@ roles:
         ton: {type: string, description: "Ton de l'e-mail : cordial, ferme, bref…"}
         consignes: {type: string, description: Corrections demandées après un refus, s'il y en a}
       required: [ton]
-    context: [user_input, {tool_results: [chercher_devis]}]
+    # Portée session (4.1b) : faute de résultat dans le run courant, le rôle
+    # prend le dernier devis connu de la session. Sans elle, en conversation,
+    # l'orchestrateur appelle le rôle sans avoir cherché, l'appel est refusé,
+    # et il faut une recherche de plus par tour (vu aux runs réels).
+    context: [user_input, {tool_results: [chercher_devis], scope: session}]
     input_template: |-
       Demande : {{ context.user_input }}
 
@@ -53,13 +57,15 @@ roles:
     # une fois par le rôle lui-même, puis l'orchestrateur reçoit une erreur.
     judge:
       model: HAIKU
-      context: [user_input, {tool_results: [chercher_devis]}]
+      context: [user_input, {tool_results: [chercher_devis], scope: session}]
       criteria:
         - name: fidele
           rule: >-
-            Chaque montant, date, délai et engagement de l'e-mail figure dans le
-            devis ou dans la demande : rien d'inventé (réduction, délai
-            d'intervention, garantie…).
+            Chaque montant, date, horaire, délai et engagement de l'e-mail
+            figure dans le devis ou dans la demande de l'artisan : rien
+            d'inventé (réduction, horaire de disponibilité, délai
+            d'intervention, garantie…). Les consignes passées au rôle ne sont
+            pas une source : un fait qu'elles seules portent est inventé.
         - name: ton
           rule: Le ton de l'e-mail est celui demandé (argument ton).
           min_score: 0.6

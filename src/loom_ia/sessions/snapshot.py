@@ -25,7 +25,7 @@ from typing import Final
 
 from loom_ia.core.events import Event, RunScope, SessionSnapshot
 from loom_ia.core.model import Message, RunId, RunState
-from loom_ia.core.projections import fold_all, history
+from loom_ia.core.projections import fold_all, history, last_marker
 from loom_ia.engine import SessionWriter
 
 # Estimation sans tokenizer : la sérialisation JSON d'un message, divisée par
@@ -52,13 +52,9 @@ def due(events: Sequence[Event], *, every: int) -> bool:
 
 
 def marked(events: Sequence[Event]) -> int:
-    """Position couverte par le dernier marqueur de session, 0 s'il n'y en a pas."""
-    covered = 0
-    for event in events:
-        payload = event.payload
-        if isinstance(payload, SessionSnapshot):
-            covered = max(covered, payload.up_to_seq)
-    return covered
+    """Position couverte par le dernier marqueur de session écrit, 0 s'il n'y en a pas."""
+    found = last_marker(events)
+    return found[0] if found is not None else 0
 
 
 def boundary(events: Sequence[Event]) -> int:

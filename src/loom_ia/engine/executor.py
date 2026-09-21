@@ -72,6 +72,7 @@ from loom_ia.core.model import (
     Deny,
     Fail,
     InlineDataBlock,
+    Message,
     OutputBlock,
     PendingCall,
     Retry,
@@ -367,9 +368,13 @@ class ToolExecutor:
         *,
         writer: SessionWriter | None = None,
         spans: Mapping[str, SpanId] | None = None,
+        turns: tuple[tuple[Message, ...], ...] = (),
+        summary: str | None = None,
     ) -> RunView:
         """Ce que les outils délégués voient du run."""
-        return RunView.of(state, self.artifacts, writer=writer, spans=spans)
+        return RunView.of(
+            state, self.artifacts, writer=writer, spans=spans, turns=turns, summary=summary
+        )
 
     def definitions(self, run: RunView | None = None) -> tuple[ToolDefinition, ...]:
         """Ce que le modèle voit des outils, dans l'ordre de déclaration.
@@ -390,6 +395,8 @@ class ToolExecutor:
         spans: Mapping[str, SpanId] | None = None,
         policies: Policies | None = None,
         on_chunk: ChunkCallback | None = None,
+        turns: tuple[tuple[Message, ...], ...] = (),
+        summary: str | None = None,
     ) -> AsyncGenerator[ToolEvent]:
         """Traite les appels en attente du run et émet leurs événements.
 
@@ -400,7 +407,7 @@ class ToolExecutor:
         seul dans son lot.
         """
         policies = policies or Policies()
-        view = self.view(state, writer=writer, spans=spans)
+        view = self.view(state, writer=writer, spans=spans, turns=turns, summary=summary)
         if on_chunk is not None and len(state.pending_calls) == 1:
             alone = self._tools.get(state.pending_calls[0].name)
             if isinstance(alone, DelegatedTool) and alone.spec.terminal:
@@ -524,6 +531,8 @@ class ToolExecutor:
             subject,
             call_id=call.call_id,
             check_arguments=lambda arguments: self._schema_errors(call.name, arguments),
+            turns=view.turns,
+            summary=view.summary,
         )
 
     def _schema_errors(self, name: str, arguments: dict[str, JsonValue]) -> str | None:
@@ -603,6 +612,8 @@ class ToolExecutor:
                 ),
                 call_id=call.call_id,
                 attempts=attempts,
+                turns=view.turns,
+                summary=view.summary,
             )
             for event in verdict.events:
                 emit(Decided(call_id=call.call_id, payload=event))

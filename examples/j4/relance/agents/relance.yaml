@@ -57,9 +57,11 @@ roles:
       criteria:
         - name: fidele
           rule: >-
-            Chaque montant, date, délai et engagement de l'e-mail figure dans le
-            devis ou dans la demande : rien d'inventé (réduction, délai
-            d'intervention, garantie…).
+            Chaque montant, date, horaire, délai et engagement de l'e-mail
+            figure dans le devis ou dans la demande de l'artisan : rien
+            d'inventé (réduction, horaire de disponibilité, délai
+            d'intervention, garantie…). Les consignes passées au rôle ne sont
+            pas une source : un fait qu'elles seules portent est inventé.
         - name: ton
           rule: Le ton de l'e-mail est celui demandé (argument ton).
           min_score: 0.6

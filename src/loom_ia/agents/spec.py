@@ -61,10 +61,7 @@ LATER_AGENT: Final[dict[str, str]] = {
 LATER_MAIN: Final[dict[str, str]] = {}
 LATER_ROLE: Final[dict[str, str]] = {}
 LATER_SUBAGENT: Final[dict[str, str]] = {}
-LATER_CONTEXT: Final[dict[str, str]] = {
-    "session_summary": "J4.1 (sessions)",
-    "last_turns": "J4.1 (sessions)",
-}
+LATER_CONTEXT: Final[dict[str, str]] = {}
 
 
 class Expose(DomainModel):
@@ -125,14 +122,26 @@ class MainRole(BaseRole):
         return data
 
 
+type ContextScope = Literal["run", "session"]
+
+
 class ToolResultsContext(DomainModel):
-    """Contexte ``tool_results`` : résultats réussis des outils nommés, dans le run."""
+    """Contexte ``tool_results`` : résultats réussis des outils nommés."""
 
     tool_results: tuple[str, ...] = Field(min_length=1)
+    # ``run`` : seulement ce que le run a obtenu. ``session`` : à défaut, le
+    # dernier résultat connu de la session — qui peut dater d'un tour ancien.
+    scope: ContextScope = "run"
 
 
-type ContextName = Literal["user_input", "caller_context", "attachments"]
-type ContextItem = ContextName | ToolResultsContext
+class LastTurnsContext(DomainModel):
+    """Contexte ``last_turns`` : derniers tours de la session (un tour = un run)."""
+
+    last_turns: PositiveInt
+
+
+type ContextName = Literal["user_input", "caller_context", "attachments", "session_summary"]
+type ContextItem = ContextName | ToolResultsContext | LastTurnsContext
 
 # Nom d'un juge pour la réponse finale, quand il n'en déclare pas.
 OUTPUT_JUDGE: Final = "output"
@@ -276,6 +285,8 @@ def _declared_context(context: tuple[ContextItem, ...]) -> list[str]:
     for item in context:
         if isinstance(item, ToolResultsContext):
             names += [f"tool_results.{tool}" for tool in item.tool_results]
+        elif isinstance(item, LastTurnsContext):
+            names.append("last_turns")
         else:
             names.append(item)
     return names
@@ -323,7 +334,15 @@ def _check_template(source: str, properties: set[str], declared: list[str]) -> N
                     raise ValueError(
                         f"input_template : {shown} — {name!r} absent de input_schema.properties"
                     )
-            case ("context", "user_input" | "caller_context" | "attachments" as name, *rest):
+            case (
+                "context",
+                "user_input"
+                | "caller_context"
+                | "attachments"
+                | "session_summary"
+                | "last_turns" as name,
+                *rest,
+            ):
                 if name not in declared:
                     raise ValueError(f"input_template : {shown} — contexte {name!r} non déclaré")
                 if rest and name != "caller_context":
@@ -336,7 +355,8 @@ def _check_template(source: str, properties: set[str], declared: list[str]) -> N
             case _:
                 raise ValueError(
                     f"input_template : variable inconnue {shown} (attendu args.<argument>, "
-                    "context.user_input, context.caller_context, context.attachments "
+                    "context.user_input, context.caller_context, context.attachments, "
+                    "context.session_summary, context.last_turns "
                     "ou context.tool_results.<outil>)"
                 )
     # Les pièces jointes partent en images après le texte : les citer est facultatif.

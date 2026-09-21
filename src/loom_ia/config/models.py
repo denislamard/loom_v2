@@ -17,12 +17,12 @@ from typing import Final, Literal, Self
 from pydantic import Field, JsonValue, PositiveFloat, PositiveInt, model_validator
 
 from loom_ia.agents.spec import AgentSpec
+from loom_ia.config.compaction import COMPACTION_AGENT, CompactionConfig, compaction_agent
 from loom_ia.config.keys import ALGORITHM, matches
 from loom_ia.config.later import (
     LATER_API_KEY,
     LATER_MCP_ACCESS,
     LATER_ROOT,
-    LATER_SESSIONS,
     LATER_STORAGE,
     LATER_TELEMETRY,
 )
@@ -121,18 +121,15 @@ class StorageConfig(DomainModel):
 
 
 class SessionsConfig(DomainModel):
-    """Vie d'une session : historique matérialisé, puis compaction (J4.1b)."""
+    """Vie d'une session : historique matérialisé et compaction (F1 à F4)."""
 
     # Événements ajoutés depuis le dernier marqueur avant qu'un snapshot de
     # l'historique soit écrit (§11.2). Le relire coûte moins que de rejouer
     # ce qu'il couvre ; l'écrire recopie l'historique dans le journal.
     snapshot_every: PositiveInt = 50
-
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_SESSIONS)
-        return data
+    # Sans ce bloc, une session n'est jamais résumée : elle grandit jusqu'à
+    # la fenêtre du modèle.
+    compaction: CompactionConfig | None = None
 
 
 class ToolsExecution(DomainModel):
@@ -147,6 +144,8 @@ class ExecutionConfig(DomainModel):
     tools: ToolsExecution = ToolsExecution()
     # Pièces jointes acceptées à l'entrée d'un run (G1) : images, taille maximale.
     attachments: AttachmentPolicy = AttachmentPolicy()
+    # Délai laissé aux tâches de fond (compaction) à la fermeture de l'instance.
+    shutdown_timeout: PositiveFloat = 30.0
 
 
 class LoggingConfig(DomainModel):
@@ -254,6 +253,8 @@ class LoomConfig(DomainModel):
     # Serveurs MCP, référencés par les agents (#19).
     mcp_servers: tuple[McpServerSpec, ...] = ()
     storage: StorageConfig = StorageConfig()
+    # Snapshots d'historique et compaction ; l'agent interne ``_compaction``
+    # en sort (voir ``all_agents``).
     sessions: SessionsConfig = SessionsConfig()
     execution: ExecutionConfig = ExecutionConfig()
     # Budgets par défaut des agents ; un agent les surcharge par son ``budget`` (J4).
@@ -278,6 +279,14 @@ class LoomConfig(DomainModel):
                 f"(attendue : {SCHEMA_VERSION})"
             )
         _reject_doubles("Agent", [agent.name for agent in self.agents])
+        if any(agent.name == COMPACTION_AGENT for agent in self.agents):
+            raise ValueError(
+                f"Agent {COMPACTION_AGENT!r} : ce nom est réservé à l'agent interne de "
+                "compaction, produit par 'sessions.compaction'"
+            )
+        compaction = self.sessions.compaction
+        if compaction is not None:
+            self._check_chain(f"Compaction ({COMPACTION_AGENT})", (compaction.model,))
         _reject_doubles("Clé", [key.id for key in self.security.api_keys])
         servers = [server.name for server in self.mcp_servers]
         _reject_doubles("Serveur MCP", servers)
@@ -356,6 +365,14 @@ class LoomConfig(DomainModel):
                     f"{label} : il appelle des outils, mais le {which} {model!r} ne sait pas "
                     "le faire (capabilities.tools: false)"
                 )
+
+    @property
+    def all_agents(self) -> tuple[AgentSpec, ...]:
+        """Agents déclarés, plus l'agent interne de compaction s'il est configuré."""
+        compaction = self.sessions.compaction
+        if compaction is None:
+            return self.agents
+        return (*self.agents, compaction_agent(compaction))
 
     def budget_of(self, agent: str) -> Budgets:
         """Budgets d'un agent : ceux de la racine, surchargés par son ``budget``."""

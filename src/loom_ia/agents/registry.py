@@ -35,8 +35,8 @@ class AgentRegistry:
 
     @classmethod
     def from_config(cls, config: LoomConfig) -> Self:
-        """Registre des agents d'une configuration."""
-        return cls(config.agents)
+        """Registre des agents d'une configuration, agents internes compris."""
+        return cls(config.all_agents)
 
     def get(self, name: str) -> AgentSpec:
         try:

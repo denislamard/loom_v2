@@ -10,6 +10,13 @@ from loom_ia.guards.contract import (
     diagnostic,
     normalize,
 )
+from loom_ia.guards.fidelity import (
+    FIDELITY_GUARD,
+    FIDELITY_POLICY,
+    FidelityGuard,
+    markers,
+    missing,
+)
 from loom_ia.guards.judge import (
     JUDGE_GUARD,
     JUDGE_POLICY_PREFIX,
@@ -25,6 +32,8 @@ from loom_ia.guards.judge import (
 
 __all__ = [
     "CONTRACT_POLICY",
+    "FIDELITY_GUARD",
+    "FIDELITY_POLICY",
     "GUARD",
     "JUDGE_GUARD",
     "JUDGE_POLICY_PREFIX",
@@ -33,12 +42,15 @@ __all__ = [
     "Checked",
     "Condition",
     "ContractGuard",
+    "FidelityGuard",
     "JudgeDefinition",
     "JudgeGuard",
     "check",
     "correlated",
     "diagnostic",
     "judge_policy_name",
+    "markers",
+    "missing",
     "normalize",
     "verdict_tool",
 ]

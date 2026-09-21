@@ -47,6 +47,7 @@ def load_config(path: str | Path) -> LoomConfig:
             "agents_dir": base_dir / config.agents_dir,
             "prompts_dir": base_dir / config.prompts_dir,
             "storage": _absolute_storage(config, base_dir),
+            "sessions": _absolute_sessions(config, base_dir / config.prompts_dir, source=root),
             "server": _absolute_server(config, base_dir),
             "mcp_servers": tuple(_launched_from(server, base_dir) for server in servers),
         }
@@ -134,6 +135,22 @@ def _with_prompt[R: BaseRole](role: R, prompts_dir: Path, label: str, *, source:
     except OSError as exc:
         raise ConfigError(f"{label}.system_file — prompt illisible : {exc}", source=source) from exc
     return role.model_copy(update={"system_file": prompt})
+
+
+def _absolute_sessions(config: LoomConfig, prompts_dir: Path, *, source: Path) -> object:
+    """Prompt surchargé de la compaction, rapporté au dossier des prompts."""
+    sessions = config.sessions
+    compaction = sessions.compaction
+    if compaction is None or compaction.system_file is None:
+        return sessions
+    prompt = prompts_dir / compaction.system_file
+    if not prompt.is_file():
+        raise ConfigError(
+            f"sessions.compaction.system_file — prompt introuvable : {prompt}", source=source
+        )
+    return sessions.model_copy(
+        update={"compaction": compaction.model_copy(update={"system_file": prompt})}
+    )
 
 
 def _absolute_storage(config: LoomConfig, base_dir: Path) -> object:

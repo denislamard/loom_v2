@@ -269,6 +269,10 @@ class PolicyContext:
     # dans le run pour la réponse finale, dans l'appel pour un rôle.
     attempt: int = 0
     checks: list[GuardCheck] = field(default_factory=list[GuardCheck])
+    # Historique de la session avant ce run, groupé par tour, et dernier
+    # résumé de compaction : ce qu'un juge reçoit s'il les déclare (#12).
+    turns: tuple[tuple[Message, ...], ...] = ()
+    summary: str | None = None
 
     def record(self, check: GuardCheck) -> None:
         """Enregistre un contrôle, journalisé en ``guard.checked``."""

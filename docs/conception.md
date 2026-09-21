@@ -331,7 +331,9 @@ Event
 | `policy.decided` | politique, point, décision, motif, call_id, tentative et `tools` (`Retry`), arguments ou réponse remplacés, `error` |
 | `approval.requested` / `.granted` / `.rejected` / `.expired` | tool_name, call_id, arguments, auteur, motif, scope, expire_at |
 | `artifact.stored` | uri, type MIME, taille, nom, origine (`attachment`, `tool_output`, `offload`), call_id |
-| `session.compacted` | résumé, up_to_seq, tokens avant/après |
+| `session.snapshot` | historique matérialisé, up_to_seq, messages, tokens estimés |
+| `session.compacted` | résumé, up_to_seq, tours gardés, tokens avant/après, coût, fidélité |
+| `session.trimmed` | up_to_seq, messages retirés, motif |
 | `step.started` / `.completed` | step_no, état, effet, durée, statut |
 | `run.transitioned` | from, to, step_no, cause |
 | `run.paused` / `.resumed` | motif |
@@ -599,9 +601,9 @@ tools:
 |---|---|
 | `user_input` | Message original de l'utilisateur, mot pour mot |
 | `attachments` | Pièces jointes du run (références) |
-| `tool_results: [noms]` | Tous les résultats réussis de ces outils dans le run ; sans aucun, le rôle est refusé |
+| `tool_results: [noms]` | Tous les résultats réussis de ces outils dans le run ; sans aucun, le rôle est refusé. `scope: session` prend, à défaut, le dernier résultat connu de la session |
 | `session_summary` | Dernier résumé de compaction |
-| `last_turns: N` | N derniers échanges de la session |
+| `last_turns: N` | N derniers tours de la session (un tour = un run) |
 | `caller_context` | Métadonnées de l'appelant (A8) |
 
 Le message du rôle est construit par un `input_template` explicite (`{{ args.x }}`, `{{ context.y }}`, #50) ; sans template, le rôle reçoit les blocs de contexte balisés, suivis des arguments en JSON.
@@ -830,7 +832,7 @@ Journal (append) ───┼─▶ RunState         (reprise, pause, checkpoint
 
 **Snapshot et compaction ne se confondent pas :** le snapshot est une vue matérialisée sans LLM, pour lire vite ; la compaction est un résumé par LLM, pour réduire le contexte.
 
-**Réalisation (phase 4.1a) :** le snapshot est un événement du journal, `session.snapshot`, de la nouvelle catégorie `session` : il porte l'historique matérialisé et `up_to_seq`, la position jusqu'à laquelle il le remplace. Il est écrit à la fin d'un run racine terminé d'une session nommée, et seulement si le gain le justifie : au moins `sessions.snapshot_every` événements depuis le dernier marqueur. Sa position s'arrête avant le premier événement d'un run encore en cours. L'historique repart du marqueur au plus grand `up_to_seq` et rejoue la suite ; un lecteur qui ignore les marqueurs obtient le même historique, plus lentement. Les marqueurs sont écartés de la projection d'un run et de son arbre : ils décrivent la session, pas le run qui les écrit. La lecture du journal, elle, reste entière à chaque run : le snapshot évite le rejeu, pas l'entrée-sortie (backlog #017).
+**Réalisation (phase 4.1a) :** le snapshot est un événement du journal, `session.snapshot`, de la nouvelle catégorie `session` : il porte l'historique matérialisé et `up_to_seq`, la position jusqu'à laquelle il le remplace. Il est écrit à la fin d'un run racine terminé d'une session nommée, et seulement si le gain le justifie : au moins `sessions.snapshot_every` événements depuis le dernier marqueur. Sa position s'arrête avant le premier événement d'un run encore en cours. L'historique repart du dernier marqueur écrit et rejoue la suite (4.1a prenait le plus grand `up_to_seq` ; corrigé en 4.1b, §11.3) ; un lecteur qui ignore les marqueurs obtient le même historique, plus lentement. Les marqueurs sont écartés de la projection d'un run et de son arbre : ils décrivent la session, pas le run qui les écrit. La lecture du journal, elle, reste entière à chaque run : le snapshot évite le rejeu, pas l'entrée-sortie (backlog #017).
 
 ### 11.3 Compaction
 
@@ -853,6 +855,8 @@ runtime (fin du run) ──enqueue──▶ TaskQueue ──▶ worker
 - **Filet de sécurité :** au démarrage d'un run, si l'historique dépasse `compact_hard_tokens` sans résumé disponible, `sessions.ensure_fits()` lance `_compaction` en synchrone ; en cas d'échec, les tours les plus anciens sont retirés, avec un avertissement.
 - **Exécutant :** tâche asyncio dans le process en mode librairie (`aclose()` attend les compactions en cours, dans la limite d'un timeout) ; tout worker en mode service.
 - **Mesure :** tokens avant et après, coût.
+
+**Réalisation (phase 4.1b)** (détails : `fonctions.md`, point 23) : `sessions.compaction` produit un agent ordinaire, `_compaction` (sans outils, une itération, non publié, nom réservé), monté comme les autres ; le job lit le journal, choisit la coupe sur une frontière de run (`keep_last` tours gardés), rend le segment en texte et fait tourner l'agent — sans l'historique de la session, qui doublerait la requête et déborderait la coupe —, puis écrit `session.compacted` sans contrôle de séquence, suivi d'un snapshot rafraîchi qui contient déjà le résumé. Quand plusieurs marqueurs coexistent, c'est le **dernier écrit** qui fait foi, pas le plus large : sinon un snapshot antérieur mais couvrant un tour de plus masquerait le résumé. Le contrôle de fidélité est la politique fournie `loom.fidelity` (`on_output`, branchée d'office sur cet agent) : elle relève les repères du segment — références, adresses, nombres d'au moins trois chiffres — et demande une réparation s'il en manque, puis garde le résumé avec `fidelity: warning`. `ensure_fits` compacte en synchrone au démarrage d'un run au-delà de `hard_tokens` ; si la compaction échoue, `session.trimmed` retire les tours les plus anciens.
 
 ### 11.4 Artefacts
 
@@ -896,6 +900,8 @@ Port `TaskQueue` (#27) : `submit(job, key, delay?)`, `status(job_id)`, `cancel(j
 | Service | RabbitMQ | Acquittement en fin de job ; relivraison sans risque |
 
 **Déclencheurs :** webhook (endpoint REST qui crée le run), planification (adaptateur cron qui met en file), file de messages (consommateur qui crée les runs).
+
+**Réalisation (phase 4.1b) :** le port est livré avec son adaptateur asyncio (une tâche par travail, dédoublonnage par `key`, `drain` et fermeture bornée par `execution.shutdown_timeout`). Un seul type de tâche est traité, `compaction` ; `run`, `resume` et `expire_approval` sont déclarés et refusés tant que leur phase n'est pas là. Une tâche en échec est journalisée et ne fait jamais échouer le run qui l'a demandée. `Loom.compact(session_id)` résume à la demande, sans tenir compte du seuil ; `Loom.drain()` attend les tâches en cours.
 
 ### 12.2 Pause en mode librairie
 
@@ -966,7 +972,7 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 
 - **Comptage :** tokens d'entrée, de sortie, de cache et de raisonnement, lus dans `model.responded` (J1).
 - **Coût :** calculé avec la grille tarifaire du modèle réellement utilisé, secours compris (J2).
-- **Ventilation :** par run, rôle, modèle, session et client (J3). La consommation des sous-agents remonte au parent ; la compaction est comptée comme un run système avec le rôle `compaction`.
+- **Ventilation :** par run, rôle, modèle, session et client (J3). La consommation des sous-agents remonte au parent ; la compaction est comptée comme un run système de l'agent `_compaction` (réalisation 4.1b : c'est l'agent qui la distingue dans le rapport, son appel de modèle restant le rôle `main`).
 - **Plafonds :** par run, session, client et période ; action : avertir ou arrêter (J4). Le budget est une politique `before_model` : `Stop` fait passer le run en `FINALIZING`, qui produit une réponse forcée sans outils (dépassement borné à une génération).
 - **Sous-agents :** chacun reçoit une part du budget de son parent.
 - **Rapport :** consommation détaillée d'un run ou d'une session (J5).
@@ -1222,7 +1228,7 @@ storage:
 
 sessions:
   snapshot_every: 50                  # événements depuis le dernier marqueur avant un snapshot
-  compaction:
+  compaction:                         # absent : la session n'est jamais résumée
     model: HAIKU
     over_tokens: 12000
     hard_tokens: 150000
@@ -1231,6 +1237,7 @@ sessions:
     system_file: null                 # surcharge du prompt interne
 
 execution:
+  shutdown_timeout: 30                # délai laissé aux tâches de fond à la fermeture
   tools: {timeout: 30, validate_arguments: true, offload_over: 50000}
   attachments: {max_bytes: 5242880, max_files: 10, types: [image/jpeg, image/png, image/gif, image/webp]}
   lease: {ttl: 60, renew_every: 20}
@@ -1331,6 +1338,7 @@ async with loom:
 - Les disjoncteurs des modèles et des serveurs MCP sont communs aux runs d'une instance ; `Loom(config, breakers=…)` les partage entre instances (depuis 3.5a).
 - `stream()`, `follow()` et `events()` rendent l'arbre du run : ses événements et ceux de ses sous-runs, dans l'ordre du journal ; `subruns=False` s'en tient au run.
 - `sessions()`, `export_session(session_id)` et `delete_session(session_id)` listent, exportent et suppriment les journaux de session (F7, depuis 4.1a) ; REST et MCP les exposeront en 4.5.
+- `compact(session_id)` résume une session à la demande et `drain()` attend les tâches de fond (depuis 4.1b) ; `aclose()` les attend aussi, dans la limite d'`execution.shutdown_timeout`.
 
 ### 18.2 HTTP REST
 

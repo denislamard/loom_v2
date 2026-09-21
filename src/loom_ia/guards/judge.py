@@ -81,6 +81,7 @@ from loom_ia.engine import (
     Answered,
     CircuitBreakers,
     ContextItem,
+    LastTurns,
     ModelChain,
     ModelLink,
     OnError,
@@ -91,6 +92,7 @@ from loom_ia.engine import (
     TracingPolicy,
     judge_role,
     tagged,
+    transcript,
     user_input,
 )
 from loom_ia.engine.media import describe
@@ -223,7 +225,7 @@ class JudgeGuard(TracingPolicy):
                 )
             )
             return CONTINUE
-        scores, spec = await self._evaluate(state, judged, trace)
+        scores, spec = await self._evaluate(state, judged, trace, context)
         failed = tuple(s for s in scores if not s.passed)
         blocking = tuple(s for s in failed if s.blocking)
         trace(
@@ -325,7 +327,7 @@ class JudgeGuard(TracingPolicy):
         )
 
     async def _evaluate(
-        self, state: RunState, judged: _Judged, trace: Trace
+        self, state: RunState, judged: _Judged, trace: Trace, context: PolicyContext
     ) -> tuple[tuple[CriterionScore, ...], ModelSpec]:
         """Appel du juge, secours compris, journalisé ; les notes et le modèle qui a jugé."""
         definition, chain = self.definition, self.chain()
@@ -335,7 +337,7 @@ class JudgeGuard(TracingPolicy):
         request = ModelRequest(
             model_id=spec.model,
             system=JUDGE_SYSTEM,
-            messages=(await self._message(state, judged),),
+            messages=(await self._message(state, judged, context),),
             tools=(self.tool,),
             tool_choice="required",
             max_tokens=definition.max_tokens or spec.max_tokens,
@@ -372,7 +374,7 @@ class JudgeGuard(TracingPolicy):
         )
         return self._scores(answered.response.message), answered.spec
 
-    async def _message(self, state: RunState, judged: _Judged) -> Message:
+    async def _message(self, state: RunState, judged: _Judged, context: PolicyContext) -> Message:
         """Ce que le juge reçoit : critères, contexte déclaré, arguments du rôle, sortie."""
         definition = self.definition
         rules = "\n".join(f"- {c.name} : {c.rule}" for c in definition.criteria)
@@ -395,19 +397,37 @@ class JudgeGuard(TracingPolicy):
                     ]
                     listing = "\n".join(f"- {describe(block)}" for block in files)
                     sections.append(tagged("attachments", listing or "(aucune pièce jointe)"))
-                case ToolResults(tools=names):
+                case "session_summary":
+                    summary = context.summary or "(la conversation n'a pas encore été résumée)"
+                    sections.append(tagged("session_summary", summary))
+                case LastTurns(count=count):
+                    listing = transcript(context.turns[-count:])
+                    sections.append(
+                        tagged("last_turns", listing or "(aucun tour précédent dans la session)")
+                    )
+                case ToolResults(tools=names, scope=scope):
                     for name in names:
-                        records = results.results_of(name)
+                        index = results
+                        records = index.results_of(name)
+                        if not records and scope == "session":
+                            session = tuple(m for turn in context.turns for m in turn)
+                            index = ResultIndex(session, self.artifacts)
+                            records = index.results_of(name)[-1:]
                         if not records:
                             sections.append(
                                 tagged("tool_result", "(aucun résultat dans ce run)", tool=name)
                             )
+                        own = index is results
                         for record in records:
                             try:
-                                text = await results.text(record)
+                                text = await index.text(record)
                             except RefError as exc:
                                 text = f"(résultat illisible : {exc.message})"
-                            sections.append(tagged("tool_result", text, tool=name, ref=record.ref))
+                            sections.append(
+                                tagged("tool_result", text, tool=name, ref=record.ref)
+                                if own
+                                else tagged("tool_result", text, tool=name)
+                            )
         if definition.role is not None:
             arguments = json.dumps(dict(judged.arguments), ensure_ascii=False)
             sections.append(tagged("arguments", arguments))

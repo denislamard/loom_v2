@@ -54,6 +54,7 @@ from loom_ia.agents.spec import (
     AgentSpec,
     BaseRole,
     JudgeSpec,
+    LastTurnsContext,
     PolicyRef,
     PythonTool,
     RoleSpec,
@@ -61,6 +62,7 @@ from loom_ia.agents.spec import (
     ToolResultsContext,
 )
 from loom_ia.agents.spec import ContextItem as DeclaredContext
+from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.errors import ConfigError
 from loom_ia.config.models import LoomConfig
 from loom_ia.config.references import Registry, import_modules, resolve
@@ -87,6 +89,7 @@ from loom_ia.engine import (
     BoundPolicy,
     CircuitBreakers,
     ContextItem,
+    LastTurns,
     ModelLink,
     Policies,
     RoleDefinition,
@@ -100,6 +103,7 @@ from loom_ia.guards import (
     CONTRACT_POLICY,
     Condition,
     ContractGuard,
+    FidelityGuard,
     JudgeDefinition,
     JudgeGuard,
     correlated,
@@ -252,6 +256,7 @@ def build_agent(
         for agent in config.agents
         for ref in agent.subagents
     )
+    compaction = config.sessions.compaction
     policies = build_policies(
         spec,
         known,
@@ -259,6 +264,13 @@ def build_agent(
         contracts=_has_contracts(config, spec),
         judges=judges,
         budget=BudgetGuard(budgets) if budgets.limited or shared else None,
+        fidelity=(
+            FidelityGuard()
+            if spec.name == COMPACTION_AGENT
+            and compaction is not None
+            and compaction.fidelity_check
+            else None
+        ),
     )
     sources, owned = _mcp_sources(config, spec, environ, mcp_pool)
     if spec.subagents and agents is None:
@@ -328,15 +340,27 @@ def build_policies(
     contracts: bool | None = None,
     judges: Sequence[JudgeGuard] = (),
     budget: BudgetGuard | None = None,
+    fidelity: FidelityGuard | None = None,
 ) -> Policies:
     """Politiques de l'agent, résolues et contrôlées, dans l'ordre déclaré.
 
     Les politiques fournies passent en tête : le guard des contrats quand
     l'agent en déclare (``contracts``, déduit de l'agent si absent), puis les
     juges (``judges``) — la forme d'une sortie est contrôlée avant son fond —,
-    puis le budget (``budget``).
+    puis le budget (``budget``). ``fidelity`` n'est branché que sur l'agent
+    interne de compaction (#23).
     """
     bound: list[BoundPolicy] = []
+    if fidelity is not None:
+        # Le guard borne lui-même ses tentatives, puis garde le résumé.
+        bound.append(
+            BoundPolicy(
+                policy=fidelity,
+                name=fidelity.name,
+                points=fidelity.points,
+                max_attempts=None,
+            )
+        )
     if contracts if contracts is not None else spec.contracts:
         guard = ContractGuard(spec.output)
         # Le guard borne lui-même ses réparations (repair.max_attempts du contrat).
@@ -577,9 +601,11 @@ def fallback_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
 
 def _context_item(item: DeclaredContext) -> ContextItem:
     match item:
-        case ToolResultsContext(tool_results=tools):
-            return ToolResults(tools=tools)
-        case "user_input" | "caller_context" | "attachments":
+        case ToolResultsContext(tool_results=tools, scope=scope):
+            return ToolResults(tools=tools, scope=scope)
+        case LastTurnsContext(last_turns=count):
+            return LastTurns(count=count)
+        case "user_input" | "caller_context" | "attachments" | "session_summary":
             return item
 
 

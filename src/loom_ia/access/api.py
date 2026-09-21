@@ -51,12 +51,20 @@ from typing import Self
 
 from pydantic import JsonValue, NonNegativeInt, PositiveInt
 
+from loom_ia.adapters.queue import AsyncioTaskQueue
 from loom_ia.adapters.stores import NotifyingEventStore
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import LoomConfig, load_config
+from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.references import Registry
-from loom_ia.core.events import Event, JudgeEvaluated, RunCompleted, RunFailed
+from loom_ia.core.events import (
+    Event,
+    JudgeEvaluated,
+    RunCompleted,
+    RunFailed,
+    SessionCompacted,
+)
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     ArtifactRecord,
@@ -75,7 +83,7 @@ from loom_ia.core.model import (
     new_run_id,
 )
 from loom_ia.core.model.base import DomainModel
-from loom_ia.core.ports import ArtifactStore, ChunkCallback, EventStore, SessionRecord
+from loom_ia.core.ports import ArtifactStore, ChunkCallback, EventStore, Job, SessionRecord
 from loom_ia.core.projections import RunTree, fold
 from loom_ia.engine import (
     CircuitBreakers,
@@ -93,7 +101,7 @@ from loom_ia.runtime import (
     create_mcp_pool,
     load_registry,
 )
-from loom_ia.sessions import write_snapshot
+from loom_ia.sessions import CompactionJob, CompactionPlan, write_snapshot
 from loom_ia.usage import UsageReport, usage_report
 
 logger = logging.getLogger(__name__)
@@ -266,6 +274,33 @@ class Loom:
         # Un écrivain par session : deux runs d'une même session écrivent par
         # le même, et ne se refusent pas l'un l'autre (#22).
         self._writers = SessionWriters()
+        # Compaction : agent interne et file de tâches, seulement si la config
+        # la déclare (#23).
+        compaction = config.sessions.compaction
+        self._compaction = (
+            CompactionJob(
+                self.context,
+                self._store,
+                self._writers,
+                CompactionPlan(
+                    agent=COMPACTION_AGENT,
+                    over_tokens=compaction.over_tokens,
+                    hard_tokens=compaction.hard_tokens,
+                    keep_last=compaction.keep_last,
+                    fidelity_check=compaction.fidelity_check,
+                ),
+            )
+            if compaction is not None
+            else None
+        )
+        self._queue = (
+            AsyncioTaskQueue(
+                {"compaction": self._compacted},
+                shutdown_timeout=config.execution.shutdown_timeout,
+            )
+            if self._compaction is not None
+            else None
+        )
 
     @classmethod
     def from_config(
@@ -592,6 +627,9 @@ class Loom:
 
     async def aclose(self) -> None:
         """Ferme les clients de modèle, les connexions MCP, et les stockages venus de la config."""
+        if self._queue is not None:
+            # Les tâches de fond se servent des agents : on les attend d'abord.
+            await self._queue.aclose()
         for built in self._built.values():
             await built.aclose()
         if self._mcp is not None:
@@ -613,7 +651,50 @@ class Loom:
         """Résultat d'un run qui vient de s'arrêter, avec son rapport et ses verdicts."""
         events = await self._store.read(state.context.tenant_id, state.session_id)
         await self._snapshot(state, events)
+        await self._schedule(state, events)
         return RunResult.of(state, events)
+
+    async def compact(
+        self, session_id: SessionId, *, tenant_id: TenantId | None = None
+    ) -> SessionCompacted | None:
+        """Résume maintenant les échanges anciens d'une session (#23).
+
+        Ne tient pas compte du seuil ``over_tokens`` : c'est la compaction à
+        la demande. Rend ``None`` si la session n'a rien de neuf à résumer, ou
+        si la configuration ne déclare pas de compaction.
+        """
+        if self._compaction is None:
+            return None
+        return await self._compaction.compact(tenant_id or DEFAULT_TENANT, session_id, limit=0)
+
+    async def drain(self) -> None:
+        """Attend les tâches de fond en cours (compaction)."""
+        if self._queue is not None:
+            await self._queue.drain()
+
+    async def _compacted(self, job: Job) -> None:
+        """Tâche de compaction, sortie de la file."""
+        if self._compaction is not None:
+            await self._compaction.compact(job.tenant_id, job.session_id, triggered_by=job.run_id)
+
+    async def _schedule(self, state: RunState, events: Sequence[Event]) -> None:
+        """Met un résumé en file si la session a dépassé son seuil (#23)."""
+        if self._compaction is None or self._queue is None or not state.finished:
+            return
+        if state.parent_run_id is not None or state.kind != "normal":
+            return
+        up_to_seq = self._compaction.pending(events)
+        if up_to_seq is None:
+            return
+        await self._queue.submit(
+            Job(
+                kind="compaction",
+                tenant_id=state.context.tenant_id,
+                session_id=state.session_id,
+                run_id=state.run_id,
+            ),
+            key=self._compaction.key(state.session_id, up_to_seq),
+        )
 
     async def _snapshot(self, state: RunState, events: Sequence[Event]) -> None:
         """Matérialise l'historique de la session, si le gain le justifie (§11.2).
@@ -655,6 +736,10 @@ class Loom:
         judges: JudgesMode = "auto",
     ) -> RunState:
         tenant = (context or CallerContext()).tenant_id
+        if self._compaction is not None and session_id is not None:
+            # Filet de sécurité : une session trop longue est résumée avant
+            # que le run ne commence (#23).
+            await self._compaction.ensure_fits(tenant, session_id)
         writer = await self._writer(tenant, session_id)
         state = await begin_run(
             ctx,

@@ -17,9 +17,16 @@ mais pas dans l'historique : seule la réponse acceptée y figure. Une réponse
 finale remplacée par une politique y figure sous sa forme retenue.
 
 Marqueurs de session (J4.1) : un ``session.snapshot`` porte l'historique déjà
-calculé jusqu'à une position du journal. L'historique repart du marqueur au
-plus grand ``up_to_seq``, puis rejoue la suite. Sans marqueur, tout le
-journal est relu : le résultat est le même, la relecture plus longue.
+calculé jusqu'à une position du journal, un ``session.compacted`` le résumé
+qui le remplace (#23), un ``session.trimmed`` la coupe faite sans résumé.
+L'historique repart du dernier marqueur écrit, puis rejoue la suite. Sans
+marqueur, tout le journal est relu : le résultat est le même, la relecture
+plus longue.
+
+Le résumé entre dans l'historique comme un message de l'utilisateur, précédé
+d'une ligne qui le désigne. Les adaptateurs fusionnent les messages
+consécutifs d'un même rôle : il se colle donc au tour suivant sans casser
+l'alternance attendue par les fournisseurs.
 
 Un run de compaction (``kind: compaction``) vit dans le journal de la
 session mais n'entre pas dans son historique : il la résume, il ne la
@@ -29,7 +36,13 @@ poursuit pas.
 from collections.abc import Iterable
 from typing import Final
 
-from loom_ia.core.events import Event, RunStarted, SessionSnapshot
+from loom_ia.core.events import (
+    Event,
+    RunStarted,
+    SessionCompacted,
+    SessionSnapshot,
+    SessionTrimmed,
+)
 from loom_ia.core.model import (
     Message,
     RunState,
@@ -41,24 +54,50 @@ from loom_ia.core.model import (
 from loom_ia.core.projections.run_state import fold_all
 
 TERMINAL_MARKER: Final = "[Sortie transmise telle quelle comme réponse finale.]"
+SUMMARY_MARKER: Final = "[Résumé des échanges précédents de cette conversation.]"
 
 
 def history(events: Iterable[Event]) -> list[Message]:
     """Messages des runs racine terminés, dans l'ordre du journal."""
+    return [message for turn in turns(events) for message in turn]
+
+
+def turns(events: Iterable[Event]) -> list[tuple[Message, ...]]:
+    """Historique groupé par tour : un tour est un run racine terminé.
+
+    Le premier tour, s'il existe, est ce que reprend le dernier marqueur de
+    session (résumé de compaction, ou snapshot). Grouper ainsi permet de
+    couper l'historique sur une frontière de run (``keep_last``,
+    ``last_turns``), là où une coupe au message séparerait un appel d'outil
+    de son résultat.
+    """
     base, after = _from_marker(list(events))
-    messages: list[Message] = list(base)
+    grouped: list[tuple[Message, ...]] = [base] if base else []
     for state in _replayed(after):
         if state.parent_run_id is not None or state.kind != "normal":
             continue
         if state.status is not RunStatus.COMPLETED:
             continue
+        messages: list[Message] = []
         for message in _conversation(state):
             kept = message.without_reasoning()
             if kept is not None:
                 kept = _without_empty_text(kept)
             if kept is not None:
                 messages.append(kept)
-    return messages
+        if messages:
+            grouped.append(tuple(messages))
+    return grouped
+
+
+def last_summary(events: Iterable[Event]) -> str | None:
+    """Dernier résumé de compaction de la session, s'il y en a un (#23)."""
+    summary: str | None = None
+    for event in events:
+        payload = event.payload
+        if isinstance(payload, SessionCompacted):
+            summary = payload.summary
+    return summary
 
 
 def _marker(event: Event) -> tuple[int, tuple[Message, ...]] | None:
@@ -66,24 +105,37 @@ def _marker(event: Event) -> tuple[int, tuple[Message, ...]] | None:
     match event.payload:
         case SessionSnapshot(up_to_seq=up_to_seq, messages=messages):
             return up_to_seq, messages
+        case SessionCompacted(up_to_seq=up_to_seq, summary=summary):
+            return up_to_seq, (Message.user(f"{SUMMARY_MARKER}\n\n{summary}"),)
+        case SessionTrimmed(up_to_seq=up_to_seq):
+            # Rien à la place : les tours retirés sont perdus pour le modèle.
+            return up_to_seq, ()
         case _:
             return None
 
 
-def _from_marker(events: list[Event]) -> tuple[tuple[Message, ...], list[Event]]:
-    """Base de l'historique et événements restant à rejouer.
+def last_marker(events: Iterable[Event]) -> tuple[int, tuple[Message, ...]] | None:
+    """Dernier marqueur de session écrit : position couverte et base reprise.
 
-    Le marqueur retenu est celui qui couvre le plus de journal : après une
-    compaction, le snapshot qui la suit la contient déjà.
+    C'est le **dernier écrit** qui fait foi, pas celui qui couvre le plus de
+    journal : une compaction écrite après un snapshot le périme, puisqu'elle
+    réécrit la région qu'il portait. Le snapshot rafraîchi qui suit une
+    compaction contient déjà le résumé, et reprend la main.
     """
-    best: tuple[int, tuple[Message, ...]] | None = None
+    found: tuple[int, tuple[Message, ...]] | None = None
     for event in events:
         marker = _marker(event)
-        if marker is not None and (best is None or marker[0] >= best[0]):
-            best = marker
-    if best is None:
+        if marker is not None:
+            found = marker
+    return found
+
+
+def _from_marker(events: list[Event]) -> tuple[tuple[Message, ...], list[Event]]:
+    """Base de l'historique et événements restant à rejouer."""
+    found = last_marker(events)
+    if found is None:
         return (), events
-    up_to_seq, base = best
+    up_to_seq, base = found
     return base, [event for event in events if event.seq > up_to_seq]
 
 

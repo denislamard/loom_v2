@@ -176,7 +176,11 @@ def broken(**changes: Any) -> dict[str, Any]:
             broken(context=["attachments"], input_template="{{ context.attachments.x }}"),
             "attachments est un texte",
         ),
-        (broken(context=[{"last_turns": 3}]), "'last_turns' : prévu pour le jalon J4.1"),
+        (broken(context=[{"last_turns": 0}]), "greater than 0"),
+        (
+            broken(context=[{"tool_results": ["calculer"], "scope": "autre"}]),
+            "scope",
+        ),
         (broken(context=["user_input", "user_input"]), "Contexte déclaré deux fois : user_input"),
         (broken(context=[], input_schema={"type": "object"}), "ne recevrait rien"),
         (broken(input_schema={"type": "array"}), "'type: object' attendu"),

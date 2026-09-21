@@ -264,3 +264,23 @@ L'orchestrateur (MiniMax-M3) a chaque fois vu la réponse inutilisable et refait
 **À trancher :** faut-il le faire avant que les journaux ne grossissent (J5, Postgres et multi-workers), ou attendre une mesure sur une vraie session longue ?
 
 **Statut :** à traiter plus tard.
+
+## #018 — Le contrôle de fidélité ne regarde que dans un sens
+
+**Origine :** phase 4.1b (compaction), run réel du 21/09.
+
+**Constat :** `loom.fidelity` relève les repères du **segment** — références, adresses e-mail, nombres d'au moins trois chiffres — et vérifie qu'ils sont dans le résumé. Il ne fait jamais l'inverse : un résumé qui affirme ce qui n'est pas dans son segment passe sans un mot. Le run réel l'a montré, par un chemin qui est depuis corrigé : le run de compaction recevait l'historique de sa session en plus de son segment, et son second résumé décrivait un tour situé au-delà de sa coupe. Le contrôle n'a rien vu, et a écrit `fidelity: ok`.
+
+**Pourquoi ce n'est pas bloquant :** la cause de ce cas précis est corrigée (un run `kind: compaction` n'a plus l'historique), et perdre un chiffre reste la faute la plus coûteuse — c'est elle que le contrôle attrape. Inventer relève d'abord du prompt (« N'invente rien et ne conclus rien qui ne soit pas dans les échanges »).
+
+**Pistes :**
+
+| Piste | Effet | Coût |
+|---|---|---|
+| Repères du résumé absents du segment → reprise | Symétrique, déterministe, même mécanique | Bruyant : un résumé reformule « 2026-09-02 » en « 2 septembre 2026 » et « 1840.0 » en « 1 840,00 € » — il faut normaliser dates et montants avant de comparer, sinon faux positifs à chaque fois |
+| Ne contrôler que les références et les e-mails dans ce sens | Peu de faux positifs (formes stables) | Laisse passer un montant ou une date inventés, qui sont justement le risque |
+| Un juge (3.3) sur l'agent `_compaction` | Juge le fond, pas la forme | Un appel de modèle de plus par résumé, sur un chemin dont le coût est déjà le sujet |
+
+**À trancher :** faut-il un contrôle symétrique, ou le prompt et le juge suffisent-ils ?
+
+**Statut :** à traiter plus tard.

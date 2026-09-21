@@ -204,6 +204,8 @@ class Policies:
         ignore: frozenset[DecisionKind] = frozenset(),
         check_arguments: ArgumentsCheck | None = None,
         attempts: Mapping[str, int] | None = None,
+        turns: tuple[tuple[Message, ...], ...] = (),
+        summary: str | None = None,
     ) -> Verdict:
         """Évalue la chaîne du point de ``subject``.
 
@@ -220,7 +222,11 @@ class Policies:
             state = current.state
             counts = attempts if attempts is not None else state.retries
             context = PolicyContext(
-                name=bound.name, params=bound.params, attempt=counts.get(bound.name, 0)
+                name=bound.name,
+                params=bound.params,
+                attempt=counts.get(bound.name, 0),
+                turns=turns,
+                summary=summary,
             )
             traced: list[TracedEvent] = []
             try:

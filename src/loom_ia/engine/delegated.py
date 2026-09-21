@@ -93,6 +93,15 @@ class RunView:
     children: Mapping[str, RunId] = field(default_factory=dict[str, RunId])
     # Diffusion en direct de la sortie d'un rôle terminal (backlog #009).
     on_chunk: ChunkCallback | None = None
+    # Historique de la session avant ce run, groupé par tour, et dernier
+    # résumé de compaction : un rôle les reçoit s'il les déclare (#12).
+    turns: tuple[tuple[Message, ...], ...] = ()
+    summary: str | None = None
+
+    @property
+    def session(self) -> tuple[Message, ...]:
+        """Historique de la session avant ce run, à plat."""
+        return tuple(message for turn in self.turns for message in turn)
 
     @classmethod
     def of(
@@ -102,6 +111,8 @@ class RunView:
         *,
         writer: SessionWriter | None = None,
         spans: Mapping[str, SpanId] | None = None,
+        turns: tuple[tuple[Message, ...], ...] = (),
+        summary: str | None = None,
     ) -> Self:
         return cls(
             state=state,
@@ -109,6 +120,8 @@ class RunView:
             artifacts=artifacts,
             writer=writer,
             spans=dict(spans or {}),
+            turns=turns,
+            summary=summary,
         )
 
     @property

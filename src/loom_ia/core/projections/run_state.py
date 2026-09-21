@@ -38,7 +38,9 @@ from loom_ia.core.events import (
     RunFailed,
     RunStarted,
     RunTransitioned,
+    SessionCompacted,
     SessionSnapshot,
+    SessionTrimmed,
     StepCompleted,
     StepStarted,
     ToolCalled,
@@ -90,10 +92,9 @@ def apply(state: RunState | None, event: Event) -> RunState:
 
     if event.run_id != state.run_id:
         raise ProjectionError(f"Événement du run {event.run_id} appliqué au run {state.run_id}")
-    if isinstance(payload, SessionSnapshot):
+    if isinstance(payload, SessionSnapshot | SessionCompacted | SessionTrimmed):
         # Marqueur de session : il parle de la session, pas du run qui l'écrit,
-        # et arrive après sa clôture. Seule la position lue avance. Les autres
-        # marqueurs (compaction) le rejoindront ici.
+        # et arrive après sa clôture. Seule la position lue avance.
         return state.model_copy(update={"last_seq": event.seq})
     if state.finished or (state.status.is_terminal and not _closes(state.status, event)):
         raise ProjectionError(

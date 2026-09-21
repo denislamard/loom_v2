@@ -85,7 +85,8 @@ from loom_ia.engine.delegated import DelegatedPayload, DelegatedTool, Exchange, 
 from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.media import describe
 from loom_ia.engine.model_call import responded
-from loom_ia.engine.refs import RefError
+from loom_ia.engine.refs import RefError, ResultIndex
+from loom_ia.engine.transcript import transcript
 
 logger = logging.getLogger(__name__)
 
@@ -93,14 +94,30 @@ logger = logging.getLogger(__name__)
 CONTEXT_HINT: Final = "Reçoit déjà, inutile de les transmettre"
 
 
+type ContextScope = Literal["run", "session"]
+
+
 @dataclass(frozen=True, slots=True)
 class ToolResults:
     """Contexte ``tool_results`` : résultats des outils nommés."""
 
     tools: tuple[str, ...]
+    # ``session`` : à défaut de résultat dans le run, le dernier de la session.
+    scope: ContextScope = "run"
 
 
-type ContextItem = Literal["user_input", "caller_context", "attachments"] | ToolResults
+@dataclass(frozen=True, slots=True)
+class LastTurns:
+    """Contexte ``last_turns`` : derniers tours de la session (un tour = un run)."""
+
+    count: int
+
+
+type ContextItem = (
+    Literal["user_input", "caller_context", "attachments", "session_summary"]
+    | ToolResults
+    | LastTurns
+)
 
 
 def _empty_object() -> dict[str, JsonValue]:
@@ -202,21 +219,40 @@ class RoleTool(DelegatedTool):
                     listing = "\n".join(f"- {describe(block)}" for block in run.attachments)
                     values["attachments"] = listing
                     sections.append(tagged("attachments", listing))
-                case ToolResults(tools=names):
+                case "session_summary":
+                    text = run.summary or ""
+                    values["session_summary"] = text
+                    if text:
+                        sections.append(tagged("session_summary", text))
+                case LastTurns(count=count):
+                    listing = transcript(run.turns[-count:])
+                    values["last_turns"] = listing
+                    if listing:
+                        sections.append(tagged("last_turns", listing))
+                case ToolResults(tools=names, scope=scope):
                     for name in names:
-                        records = run.results.results_of(name)
+                        index = run.results
+                        records = index.results_of(name)
+                        if not records and scope == "session":
+                            # Dernier résultat connu de la session : il peut
+                            # dater d'un tour ancien, et le rôle l'assume.
+                            index = ResultIndex(run.session, run.artifacts)
+                            records = index.results_of(name)[-1:]
                         if not records:
                             return (
                                 f"Le rôle {role.name} a besoin d'un résultat de {name} : "
                                 "appelle d'abord cet outil."
                             )
                         try:
-                            texts = [await run.results.text(record) for record in records]
+                            texts = [await index.text(record) for record in records]
                         except RefError as exc:
                             return exc.message
                         results[name] = "\n\n".join(texts)
+                        own = index is run.results
                         sections += [
                             tagged("tool_result", text, tool=name, ref=record.ref)
+                            if own
+                            else tagged("tool_result", text, tool=name)
                             for record, text in zip(records, texts, strict=True)
                         ]
         if results:
@@ -354,6 +390,10 @@ def described(definition: RoleDefinition) -> str:
                 received.append("le contexte de l'appelant")
             case "attachments":
                 received.append("les pièces jointes de la demande (images)")
+            case "session_summary":
+                received.append("le résumé des échanges précédents")
+            case LastTurns(count=count):
+                received.append(f"les {count} derniers tours de la conversation")
             case ToolResults(tools=names):
                 received.append(f"les résultats de {', '.join(names)}")
     if not received:

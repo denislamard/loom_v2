@@ -57,6 +57,8 @@ from loom_ia.engine.refs import (
 )
 from loom_ia.engine.roles import (
     ContextItem,
+    ContextScope,
+    LastTurns,
     RoleDefinition,
     RoleTool,
     ToolResults,
@@ -69,12 +71,20 @@ from loom_ia.engine.subagents import (
     AgentTool,
     SubAgentDefinition,
 )
+from loom_ia.engine.transcript import (
+    CUT_MARK,
+    MAX_RESULT_CHARS,
+    TURN_SEPARATOR,
+    rendered,
+    transcript,
+)
 from loom_ia.engine.writer import SessionWriter, SessionWriters
 
 __all__ = [
     "AGENT_HINT",
     "ARTIFACT_READ",
     "CIRCUIT_ERRORS",
+    "CUT_MARK",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_OFFLOAD_OVER",
     "DEFAULT_POLICY_TIMEOUT",
@@ -82,10 +92,12 @@ __all__ = [
     "FALLBACK_ERRORS",
     "FINALIZE_HINT",
     "IMAGE_TOKENS",
+    "MAX_RESULT_CHARS",
     "REFS_HINT",
     "REF_KEY",
     "REF_PREFIX",
     "TERMINAL_RULE",
+    "TURN_SEPARATOR",
     "UNKNOWN_STATE",
     "AgentResolver",
     "AgentTool",
@@ -96,11 +108,13 @@ __all__ = [
     "CircuitBreakers",
     "Consumption",
     "ContextItem",
+    "ContextScope",
     "Decided",
     "Delegated",
     "DelegatedPayload",
     "DelegatedTool",
     "Exchange",
+    "LastTurns",
     "MediaResolver",
     "ModelChain",
     "ModelLink",
@@ -133,7 +147,9 @@ __all__ = [
     "in_call_order",
     "judge_role",
     "mark_results",
+    "rendered",
     "step",
     "tagged",
+    "transcript",
     "user_input",
 ]

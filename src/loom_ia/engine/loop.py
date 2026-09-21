@@ -133,6 +133,7 @@ from loom_ia.core.model import (
     Retry,
     RunBudget,
     RunId,
+    RunKind,
     RunState,
     RunStatus,
     SessionId,
@@ -160,7 +161,7 @@ from loom_ia.core.ports import (
     ModelError,
     SourceContext,
 )
-from loom_ia.core.projections import apply, fold, history, spent
+from loom_ia.core.projections import apply, fold, last_summary, spent, turns
 from loom_ia.engine.circuit import CircuitBreakers
 from loom_ia.engine.executor import Decided, Delegated, Stored, ToolExecutor
 from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
@@ -214,6 +215,10 @@ class RunContext:
     writer: SessionWriter | None = None
     # Politiques de l'agent, dans l'ordre déclaré (#1, #2) ; les guards en tête.
     policies: Policies = field(default_factory=Policies)
+    # Historique de la session avant ce run, groupé par tour, et dernier résumé
+    # de compaction : posés par ``drive`` pour les contextes déclarés (#12, #23).
+    turns: tuple[tuple[Message, ...], ...] = ()
+    summary: str | None = None
     # Contrat de la réponse finale : son schéma donne la réponse structurée (A7).
     output: OutputContract | None = None
     # Diffusion de la réponse finale : au fil de l'eau, ou après ses contrôles (#11).
@@ -269,6 +274,8 @@ async def begin_run(
     parent: ParentRun | None = None,
     writer: SessionWriter | None = None,
     judges: JudgesMode = "auto",
+    kind: RunKind = "normal",
+    triggered_by: RunId | None = None,
 ) -> RunState:
     """Écrit le démarrage d'un run et la demande de l'utilisateur.
 
@@ -281,6 +288,10 @@ async def begin_run(
 
     ``judges`` (#21) : ``auto``, chaque juge selon son ``when`` ; ``force``,
     tous les juges ; ``skip``, aucun.
+
+    ``kind`` et ``triggered_by`` marquent un run système : la compaction d'une
+    session (#23) tourne dans le journal de cette session sans entrer dans son
+    historique.
     """
     message = Message.user(prompt) if isinstance(prompt, str) else prompt
     if message.role != "user":
@@ -301,7 +312,7 @@ async def begin_run(
         agent=ctx.agent,
         parent_span_id=parent.span_id if parent is not None else None,
     )
-    started = RunStarted(context=context, judges=judges)
+    started = RunStarted(context=context, judges=judges, kind=kind, triggered_by=triggered_by)
     if parent is not None:
         started = RunStarted(
             context=context,
@@ -310,6 +321,8 @@ async def begin_run(
             depth=parent.depth + 1,
             judges=parent.judges,
             budget=parent.budget,
+            kind=kind,
+            triggered_by=triggered_by,
         )
     if chosen and await ctx.store.read(scope.tenant_id, scope.session_id, run_id=run_id):
         raise ValueError(f"Le run {run_id} existe déjà")
@@ -367,7 +380,9 @@ async def drive(
     le run ne peut pas s'en passer, il échoue.
 
     Un sous-run reçoit l'écrivain de son parent (``writer``) : ils écrivent
-    dans le même journal. Il n'a pas d'historique de session.
+    dans le même journal. Il n'a pas d'historique de session. Un run de
+    compaction non plus : son segment est déjà dans sa demande, et lui ajouter
+    l'historique le ferait payer deux fois et résumer au-delà de sa coupe.
     """
     tenant = tenant_id or DEFAULT_TENANT
     session = session_id or SessionId(run_id)
@@ -378,8 +393,10 @@ async def drive(
         raise ValueError(f"Le run {run_id} appartient à l'agent {state.agent!r}, pas {ctx.agent!r}")
     if state.finished or state.status not in _ACTIONABLE:
         return state
-    earlier = [e for e in events if e.seq < own[0].seq] if state.parent_run_id is None else []
-    previous = history(earlier)
+    rooted = state.parent_run_id is None and state.kind == "normal"
+    earlier = [e for e in events if e.seq < own[0].seq] if rooted else []
+    session_turns = tuple(turns(earlier))
+    previous = [message for turn in session_turns for message in turn]
     # Consommation des runs précédents de la session : budget de session (J4).
     session_spent = spent(earlier)
     cause = next((e for e in reversed(own) if e.category in {"model", "tool"}), None)
@@ -417,7 +434,13 @@ async def drive(
             await write(scope.draft(_failed(state, payload.type, reason)))
             return state
 
-        run_ctx = replace(ctx, tools=opened.tools, writer=journal)
+        run_ctx = replace(
+            ctx,
+            tools=opened.tools,
+            writer=journal,
+            turns=session_turns,
+            summary=last_summary(earlier),
+        )
         while not state.finished and state.status in _ACTIONABLE:
             emitted = 0
             async with aclosing(
@@ -545,6 +568,8 @@ async def _review(
     verdict = await ctx.policies.run(
         AfterModel(state=state, response=answer, finalizing=finalizing),
         ignore=frozenset({"stop"}) if finalizing else frozenset(),
+        turns=ctx.turns,
+        summary=ctx.summary,
     )
     drafts = _policy_drafts(scope, verdict.events)
     reason = _stopping(verdict, drafts)
@@ -589,7 +614,7 @@ async def _final(
         tool=None if terminal is None else terminal.name,
         finalizing=state.status is RunStatus.FINALIZING,
     )
-    verdict = await ctx.policies.run(subject)
+    verdict = await ctx.policies.run(subject, turns=ctx.turns, summary=ctx.summary)
     drafts = _policy_drafts(scope, verdict.events)
     reason = _stopping(verdict, drafts)
     match verdict.decision:
@@ -945,6 +970,8 @@ async def _model_step(
     verdict = await ctx.policies.run(
         BeforeModel(state=state, request=request, finalizing=forced, session=session),
         ignore=frozenset({"stop"}) if forced else frozenset(),
+        turns=ctx.turns,
+        summary=ctx.summary,
     )
     decided = [current.draft(payload) for payload in verdict.events]
     for draft in decided:
@@ -1048,6 +1075,8 @@ async def _tool_step(
         spans=spans,
         policies=ctx.policies,
         on_chunk=ctx.on_chunk if ctx.stream_output == "live" else None,
+        turns=ctx.turns,
+        summary=ctx.summary,
     )
     async with aclosing(batch) as events:
         async for item in events:

@@ -710,6 +710,64 @@ class SessionSnapshot(Payload):
         }
 
 
+type Fidelity = Literal["ok", "warning", "skipped"]
+
+
+class SessionCompacted(Payload):
+    """Segment ancien de la session remplacé par un résumé (#23).
+
+    La compaction ne réécrit rien : elle ajoute ce marqueur, et l'historique
+    repart du résumé pour tout ce qui précède ``up_to_seq``. Les ``kept``
+    derniers tours, eux, restent intacts et sont rejoués.
+    """
+
+    category: ClassVar[EventCategory] = "session"
+    facet_fields: ClassVar[tuple[str, ...]] = (
+        "up_to_seq",
+        "kept",
+        "tokens_before",
+        "tokens_after",
+        "fidelity",
+    )
+
+    type: Literal["session.compacted"] = "session.compacted"
+    up_to_seq: NonNegativeInt
+    summary: str = Field(min_length=1)
+    # Tours laissés intacts après le résumé (``keep_last``).
+    kept: NonNegativeInt = 0
+    tokens_before: NonNegativeInt = 0
+    tokens_after: NonNegativeInt = 0
+    cost_usd: NonNegativeFloat = 0.0
+    # Contrôle déterministe des repères du segment : ``warning`` s'il en manque.
+    fidelity: Fidelity = "ok"
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning" if self.fidelity == "warning" else "ok"
+
+
+class SessionTrimmed(Payload):
+    """Tours les plus anciens retirés faute de résumé (filet de sécurité, #23).
+
+    Écrit quand l'historique dépasse la fenêtre du modèle et que la
+    compaction n'a pas pu résumer : l'historique repart après ``up_to_seq``,
+    sans rien à la place.
+    """
+
+    category: ClassVar[EventCategory] = "session"
+    facet_fields: ClassVar[tuple[str, ...]] = ("up_to_seq", "dropped")
+
+    type: Literal["session.trimmed"] = "session.trimmed"
+    up_to_seq: NonNegativeInt
+    # Messages d'historique retirés.
+    dropped: NonNegativeInt = 0
+    reason: str = ""
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning"
+
+
 type DurablePayload = Annotated[
     RunStarted
     | StepStarted
@@ -730,7 +788,9 @@ type DurablePayload = Annotated[
     | JudgeEvaluated
     | BudgetExceeded
     | ArtifactStored
-    | SessionSnapshot,
+    | SessionSnapshot
+    | SessionCompacted
+    | SessionTrimmed,
     Field(discriminator="type"),
 ]
 
@@ -755,4 +815,6 @@ DURABLE_PAYLOADS: tuple[type[Payload], ...] = (
     BudgetExceeded,
     ArtifactStored,
     SessionSnapshot,
+    SessionCompacted,
+    SessionTrimmed,
 )

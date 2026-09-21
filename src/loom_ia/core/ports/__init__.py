@@ -17,6 +17,7 @@ from loom_ia.core.ports.model_client import (
     complete,
 )
 from loom_ia.core.ports.policy import Policy
+from loom_ia.core.ports.queue import Job, JobKind, JobState, TaskQueue
 from loom_ia.core.ports.tool import (
     SourceContext,
     SourceUnavailable,
@@ -33,6 +34,9 @@ __all__ = [
     "ArtifactStore",
     "ChunkCallback",
     "EventStore",
+    "Job",
+    "JobKind",
+    "JobState",
     "JournalCorrupted",
     "ModelClient",
     "ModelError",
@@ -41,6 +45,7 @@ __all__ = [
     "SessionRecord",
     "SourceContext",
     "SourceUnavailable",
+    "TaskQueue",
     "Tool",
     "ToolContext",
     "ToolError",
