@@ -325,7 +325,7 @@ Chaque état correspond à un seul type d'effet : appel modèle, lot d'outils, r
 
 - Reprise (H3, 26) : l'état est reconstruit depuis le journal ; seuls les appels d'outils sans `tool.completed` sont relancés.
 - Pause (H4) : `PAUSED` n'exécute rien, le process peut s'arrêter ; un `approval.granted` venu de l'API relance `drive`.
-- Annulation et timeout (A5, A6) : vérifiés entre deux étapes ; pendant une étape, l'annulation asyncio de l'effet émet `run.cancelled`.
+- Annulation et timeout (A5, A6) : le délai est contrôlé avant chaque étape **et** borne celle qui commence (`asyncio.timeout`) ; l'annulation vient de `Loom.cancel`, qui interrompt le pilotage puis écrit `run.cancelled` (réalisation 4.2a sous #27).
 - Sous-agent (C5) : l'outil lance le `drive` de l'enfant ; le parent passe en `WAITING_CHILD` si l'enfant se met en pause.
 - Streaming (I1) : pendant l'appel modèle, `step` publie des `model.delta` éphémères sur le bus.
 - Arrière-plan (H5) : n'importe quel worker peut reprendre `drive(run_id)`.
@@ -834,6 +834,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `session.snapshot` | historique matérialisé, up_to_seq, tokens estimés (voir plus bas) |
 | `session.compacted` | résumé, up_to_seq, tours gardés, tokens avant/après, coût, fidélité (`ok`, `warning`, `skipped`) (voir point 23) |
 | `session.trimmed` | up_to_seq, messages retirés, motif (voir point 23) |
+| `run.cancelled` | motif (`requested`, `parent`), auteur, itérations, usage, coût (voir point 27) |
 | `run.paused` / `.resumed` | motif |
 | `run.claimed` | worker_id, lease_until (voir point 27) |
 | `run.transitioned` | from, to, step_no, cause (voir point 3) |
@@ -986,6 +987,15 @@ Réglé par le point 18 : réexécution si l'outil est sans effet de bord ou ide
 | Service | RabbitMQ (adaptateur) | Acquittement en fin de job ; une relivraison est sans risque |
 
 **Déclencheurs (H6) :** webhook (un endpoint REST crée le run), planification (un adaptateur cron met en file), file de messages (un consommateur crée les runs).
+
+**Réalisation (phase 4.2a) :**
+
+- **Deux arrêts, pas un.** `run.cancelled` est une **décision** : `Loom.cancel(run_id)` interrompt le pilotage, puis l'écrit au journal (catégorie `run`, facette `reason`, statut `warning` ; `by` porte l'auteur quand on le connaît). Un dépassement du délai est **subi** : il s'écrit `run.failed` avec `error_type: timeout`, comme les autres échecs. Les deux ferment le run : un run clos ne se rouvre pas.
+- **Interrompu n'est pas annulé.** Un appelant qui abandonne, un flux fermé, un process tué n'écrivent rien. Le run reste dans son dernier état actionnable et `resume()` le termine là où il en était. C'est ce que montre l'exemple, côte à côte.
+- **Le délai borne le pilotage, pas l'horloge.** `RunState.active_ms` cumule les `step.completed.duration_ms` du journal. L'attente en file, une pause d'approbation (4.3) et le temps entre un plantage et sa reprise n'en font pas partie. `drive` refuse de commencer une étape s'il ne reste rien, et borne celle qu'il commence par `asyncio.timeout` : une étape qui s'éternise — un outil lent, un sous-agent bloqué — est donc coupée, pas seulement constatée après coup.
+- **Deux façons de dépasser, deux messages.** L'étape coupée en plein effet n'a pas de `step.completed`, donc son temps n'est nulle part ; le message le dit au lieu de le confondre avec le cumul.
+- **Config.** `timeout` sur un agent, en secondes, sans défaut global : sans valeur, pas de délai (backlog #006 clos). `loom validate` l'affiche.
+- **Sous-runs.** Un enfant tourne dans l'étape de son parent : le délai du parent le coupe avec elle, et l'enfant, simplement interrompu, reste reprenable.
 
 ### 28. Pause humaine en mode librairie
 

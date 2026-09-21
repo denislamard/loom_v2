@@ -91,6 +91,7 @@ from loom_ia.engine import (
     SessionWriter,
     SessionWriters,
     begin_run,
+    cancellation,
     drive,
 )
 from loom_ia.runtime import (
@@ -274,6 +275,8 @@ class Loom:
         # Un écrivain par session : deux runs d'une même session écrivent par
         # le même, et ne se refusent pas l'un l'autre (#22).
         self._writers = SessionWriters()
+        # Runs pilotés ici, pour que ``cancel`` puisse les atteindre (A5).
+        self._driving: dict[RunId, asyncio.Task[RunState]] = {}
         # Compaction : agent interne et file de tâches, seulement si la config
         # la déclare (#23).
         compaction = config.sessions.compaction
@@ -431,14 +434,8 @@ class Loom:
         """Reprend un run interrompu, là où son journal s'est arrêté."""
         state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
         ctx = self.context(state.agent, on_chunk=on_chunk)
-        final = await drive(
-            ctx,
-            run_id,
-            session_id=state.session_id,
-            tenant_id=state.context.tenant_id,
-            writer=await self._writer(state.context.tenant_id, state.session_id),
-        )
-        return await self._result(final)
+        writer = await self._writer(state.context.tenant_id, state.session_id)
+        return await self._result(await self._piloted(ctx, state, writer))
 
     def context(self, agent: str, *, on_chunk: ChunkCallback | None = None) -> RunContext:
         """Contexte d'exécution d'un agent, monté au premier appel.
@@ -647,6 +644,64 @@ class Loom:
     async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
 
+    async def _piloted(
+        self, ctx: RunContext, state: RunState, writer: SessionWriter | None
+    ) -> RunState:
+        """Pilote un run dans une tâche suivie, que ``cancel`` sait retrouver.
+
+        Si l'appelant est annulé, la tâche l'est aussi : elle n'écrit rien de
+        plus et le run reste reprenable. Seul ``cancel`` écrit ``run.cancelled``.
+        """
+        task = asyncio.create_task(
+            drive(
+                ctx,
+                state.run_id,
+                session_id=state.session_id,
+                tenant_id=state.context.tenant_id,
+                writer=writer,
+            )
+        )
+        self._driving[state.run_id] = task
+        try:
+            return await task
+        finally:
+            self._driving.pop(state.run_id, None)
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+    async def cancel(
+        self,
+        run_id: RunId,
+        *,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+        by: str | None = None,
+    ) -> bool:
+        """Arrête un run et écrit ``run.cancelled`` (A5) ; faux s'il est déjà fini.
+
+        Le run piloté ici est d'abord interrompu, puis clos au journal. Un run
+        que cette instance ne pilote pas — repris ailleurs, ou laissé en plan
+        par un plantage — est clos directement.
+
+        Un run annulé est **terminal** : il ne se reprend pas. Un run seulement
+        interrompu, lui, ne laisse rien au journal et repart où il en était.
+        """
+        task = self._driving.get(run_id)
+        if task is not None and not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
+        if state.finished:
+            return False
+        # ``state.session_id`` vaut le run_id pour un run anonyme : l'écrivain
+        # partagé de l'instance vaut donc dans les deux cas.
+        writer = await self._writers.open(self._store, state.context.tenant_id, state.session_id)
+        await writer.append(cancellation(state, by=by))
+        return True
+
     async def _result(self, state: RunState) -> RunResult:
         """Résultat d'un run qui vient de s'arrêter, avec son rapport et ses verdicts."""
         events = await self._store.read(state.context.tenant_id, state.session_id)
@@ -751,13 +806,7 @@ class Loom:
             judges=judges,
             writer=writer,
         )
-        return await drive(
-            ctx,
-            state.run_id,
-            session_id=state.session_id,
-            tenant_id=state.context.tenant_id,
-            writer=writer,
-        )
+        return await self._piloted(ctx, state, writer)
 
 
 def _closes(event: Event, run_id: RunId) -> bool:

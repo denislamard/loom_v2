@@ -95,7 +95,9 @@ storage:
 
 **Décision (phase 2.4) :** J4.2, qui prévoit déjà l'annulation et le timeout global. En 2.4, l'annulation d'un parent se propage à ses sous-agents par asyncio (même arbre de tâches), sans rien écrire : les runs restent reprenables. `run.cancelled`, le délai d'un agent et l'API `cancel` arrivent en J4.2. Le message de refus de `timeout` nomme désormais J4.2.
 
-**Statut :** tranché, à faire en J4.2.
+**Réalisation (phase 4.2a) :** `timeout` est accepté sur un agent, en secondes ; il borne le temps de pilotage cumulé, et un dépassement écrit `run.failed` avec `error_type: timeout`. `run.cancelled` et `Loom.cancel()` sont livrés avec.
+
+**Statut :** fait en 4.2a.
 
 ---
 

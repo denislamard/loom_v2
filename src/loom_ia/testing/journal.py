@@ -62,6 +62,7 @@ class RunJournal:
         session_id: SessionId | None = None,
         run_id: RunId | None = None,
         root_run_id: RunId | None = None,
+        step_ms: float = 1.0,
     ) -> None:
         run_id = run_id or new_run_id()
         self.scope = RunScope(
@@ -72,6 +73,9 @@ class RunJournal:
             agent=agent,
         )
         self.status = RunStatus.READY_FOR_MODEL
+        # Durée écrite dans chaque ``step.completed`` : c'est elle que cumule
+        # ``RunState.active_ms``, donc ce que borne le délai d'un run (A6).
+        self.step_ms = step_ms
         self.step = 0
         self.iterations = 0
         self.usage = Usage()
@@ -230,4 +234,4 @@ class RunJournal:
         self._add(StepStarted(step_no=self.step, state=self.status, effect=effect))
 
     def _end_step(self) -> None:
-        self._add(StepCompleted(step_no=self.step, duration_ms=1.0))
+        self._add(StepCompleted(step_no=self.step, duration_ms=self.step_ms))

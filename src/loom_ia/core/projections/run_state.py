@@ -34,6 +34,7 @@ from loom_ia.core.events import (
     ModelResponded,
     ModelRetried,
     PolicyDecided,
+    RunCancelled,
     RunCompleted,
     RunFailed,
     RunStarted,
@@ -163,7 +164,10 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 update["exceeded"] = (*state.exceeded, exceeded.key)
         case ModelFellBack(slot=slot, to_model=to_model):
             update["models"] = {**state.models, slot: to_model}
-        case StepCompleted() | ModelRetried() | ToolSourceUnavailable() | CircuitOpened():
+        case StepCompleted(duration_ms=elapsed):
+            # Temps de pilotage cumulé : c'est lui que borne le délai (A6).
+            update["active_ms"] = state.active_ms + elapsed
+        case ModelRetried() | ToolSourceUnavailable() | CircuitOpened():
             pass
         case RunTransitioned(from_state=from_state, to_state=to_state):
             if from_state != state.status:
@@ -199,6 +203,12 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 "status": RunStatus.FAILED,
                 "error_type": error_type,
                 "error": error,
+                "finished": True,
+            }
+        case RunCancelled(reason=reason):
+            update |= {
+                "status": RunStatus.CANCELLED,
+                "cancelled": reason,
                 "finished": True,
             }
     return state.model_copy(update=update)
@@ -238,7 +248,11 @@ def _decided(state: RunState, decided: PolicyDecided, event: Event) -> dict[str,
 
 def _closes(status: RunStatus, event: Event) -> bool:
     """Vrai pour l'événement de clôture qui suit la transition vers un état final."""
-    closing = {RunStatus.COMPLETED: RunCompleted, RunStatus.FAILED: RunFailed}.get(status)
+    closing = {
+        RunStatus.COMPLETED: RunCompleted,
+        RunStatus.FAILED: RunFailed,
+        RunStatus.CANCELLED: RunCancelled,
+    }.get(status)
     return closing is not None and isinstance(event.payload, closing)
 
 

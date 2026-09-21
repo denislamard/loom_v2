@@ -29,6 +29,7 @@ from loom_ia.core.events import (
     JudgeEvaluated,
     ModelFellBack,
     PolicyDecided,
+    RunCancelled,
     RunCompleted,
     RunFailed,
     RunStarted,
@@ -156,6 +157,12 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             return f"sous-agent {event.agent} : terminé"
         case RunFailed() if subrun:
             return f"sous-agent {event.agent} : échec — {payload.error}"
+        case RunCancelled(reason="parent") if subrun:
+            return f"sous-agent {event.agent} : annulé avec son parent"
+        case RunCancelled(by=str() as author):
+            return f"run annulé par {author}"
+        case RunCancelled():
+            return "run annulé"
         case _:
             return None
 

@@ -56,7 +56,6 @@ AGENT_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 # Clés du schéma complet d'un agent, prévues pour plus tard (§17.4).
 LATER_AGENT: Final[dict[str, str]] = {
     "approval": "J4.3 (approbations)",
-    "timeout": "J4.2 (cycle de vie des runs : délai, annulation)",
 }
 LATER_MAIN: Final[dict[str, str]] = {}
 LATER_ROLE: Final[dict[str, str]] = {}
@@ -500,6 +499,12 @@ class AgentSpec(DomainModel):
     expose: Expose = Expose()
     main: MainRole
     max_iterations: PositiveInt = 10
+    # Délai maximal d'un run, en secondes (A6, backlog #006). Il borne le temps
+    # de pilotage cumulé, pas l'horloge : l'attente en file, une pause et le
+    # temps entre un plantage et sa reprise ne comptent pas. Un dépassement
+    # écrit ``run.failed`` avec ``error_type: timeout``, donc le run reste
+    # reprenable — avec un délai relevé. Sans valeur, pas de délai.
+    timeout: PositiveFloat | None = None
     # Contrat de la réponse finale (A7, E1) : réparée par l'orchestrateur.
     output: OutputContract | None = None
     # Juge de la réponse finale (E3, #21), après son contrat.

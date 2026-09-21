@@ -336,6 +336,7 @@ Event
 | `session.trimmed` | up_to_seq, messages retirés, motif |
 | `step.started` / `.completed` | step_no, état, effet, durée, statut |
 | `run.transitioned` | from, to, step_no, cause |
+| `run.cancelled` | motif, auteur, itérations, usage, coût |
 | `run.paused` / `.resumed` | motif |
 | `run.claimed` | worker_id, lease_until |
 | `run.completed` / `.failed` / `.cancelled` | itérations, usage total, coût total, erreur ; `data` et `unverified` (réponse finale) |
@@ -398,7 +399,7 @@ drive(run_id, deps):                          # le pilote
 
 - Reprise : l'état est reconstruit depuis le journal ; seuls les appels sans `tool.completed` sont examinés (§9.5).
 - Pause : `PAUSED` n'exécute rien ; un `approval.granted` relance `drive`.
-- Annulation et timeout : vérifiés entre deux étapes ; pendant une étape, l'annulation asyncio de l'effet émet `run.cancelled`.
+- Annulation et timeout : le délai est contrôlé avant chaque étape et borne celle qui commence ; l'annulation vient de `Loom.cancel`, seule à écrire `run.cancelled` — un run seulement interrompu ne laisse rien et reste reprenable (4.2a).
 - Arrière-plan : n'importe quel worker peut reprendre `drive(run_id)`.
 - Tests : `apply` se teste sans rien simuler, `step` avec un faux modèle.
 

@@ -72,7 +72,7 @@ from loom_ia.core.model.judge import CriterionScore, JudgesMode
 from loom_ia.core.model.media import ArtifactOrigin, ArtifactRecord
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.policy import CheckOutcome, CheckResolution, DecisionKind, HookPoint
-from loom_ia.core.model.run_state import RunKind, RunStatus
+from loom_ia.core.model.run_state import CancelReason, RunKind, RunStatus
 from loom_ia.core.model.streaming import ModelErrorKind, StopReason
 from loom_ia.core.model.tooling import ToolKind
 from loom_ia.core.model.usage import Usage
@@ -219,6 +219,31 @@ class RunCompleted(Payload):
             # Absente sinon : les journaux antérieurs restent lisibles.
             facets["unverified"] = True
         return facets
+
+
+class RunCancelled(Payload):
+    """Run arrêté avant sa fin, à la demande (A5).
+
+    Il est terminal : un run annulé ne se reprend pas. L'état reconstruit
+    reste juste — les étapes déjà écrites sont dans le journal —, mais plus
+    aucun événement n'est accepté après lui.
+    """
+
+    category: ClassVar[EventCategory] = "run"
+    facet_fields: ClassVar[tuple[str, ...]] = ("reason",)
+
+    type: Literal["run.cancelled"] = "run.cancelled"
+    reason: CancelReason = "requested"
+    # Auteur de la demande, quand on le connaît (``user_id`` de l'appelant,
+    # identifiant du worker, run parent).
+    by: str | None = None
+    iterations: NonNegativeInt = 0
+    usage: Usage = Usage()
+    cost_usd: NonNegativeFloat = 0.0
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning"
 
 
 class RunFailed(Payload):
@@ -775,6 +800,7 @@ type DurablePayload = Annotated[
     | RunTransitioned
     | RunCompleted
     | RunFailed
+    | RunCancelled
     | UserMessage
     | ModelResponded
     | ModelRetried

@@ -134,7 +134,8 @@ Les commandes ci-dessous sont indicatives.
 |---|---|---|
 | 4.1a Journal de session | `session_id`, snapshots d'historique, écrivain partagé et reprise sur conflit (`expected_seq`), lister, exporter et supprimer (RGPD) ; `EventStore` SQLite | F1, F2, F5, F7, #22, #24 |
 | 4.1b Compaction | `TaskQueue` et adaptateur asyncio, agent interne `_compaction`, config `sessions.compaction`, contrôle de fidélité, `ensure_fits`, contextes `session_summary` et `last_turns`, portée `scope: session` de `tool_results` | F3, F4, #12, #23 |
-| 4.2 Exécution durable | `TaskQueue` asyncio, runs en arrière-plan, `recover()`, concession, annulation, timeout global | A5, A6, H2, H3, H5, #25–#27 |
+| 4.2a Cycle de vie d'un run | `run.cancelled`, `Loom.cancel()`, délai maximal par agent (`timeout`), temps de pilotage cumulé | A5, A6, #006 |
+| 4.2b Exécution durable | Job `run` de la `TaskQueue`, runs en arrière-plan, `recover()`, concession (`run.claimed`), `kill -9` réel | H2, H3, H5, #25–#27 |
 | 4.3 Approbations | `side_effects` et `approval`, pause, approbation, refus, expiration, approbateur en ligne, `WAITING_CHILD` | D10, H4, #17, #28 |
 | 4.4 Idempotence | `IdempotencyStore` (`journal`, `memory`, `sqlite`), `@idempotent`, clés métier, règles de reprise | D11, #18, #49 |
 | 4.5 Accès | REST : `approve`, `cancel`, runs en arrière-plan, sessions. MCP : elicitation, ou pause avec `run_status`. Python : `approve()` | — |

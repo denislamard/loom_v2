@@ -319,6 +319,7 @@ def build_agent(
         ),
         system=system_prompt(spec),
         max_iterations=spec.max_iterations,
+        timeout=spec.timeout,
         max_tokens=llm.max_tokens,
         params=llm.params,
         on_chunk=on_chunk,

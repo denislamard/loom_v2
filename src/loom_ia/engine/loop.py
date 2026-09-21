@@ -79,10 +79,11 @@ taille), rangées dans le stockage d'artefacts, annoncées par un
 références. Chaque appel de modèle les résout selon ses capacités (#14).
 """
 
+import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field, replace
 from typing import Final
@@ -99,6 +100,7 @@ from loom_ia.core.events import (
     ModelResponded,
     ModelRetried,
     PolicyDecided,
+    RunCancelled,
     RunCompleted,
     RunFailed,
     RunScope,
@@ -122,6 +124,7 @@ from loom_ia.core.model import (
     AttachmentPolicy,
     BeforeModel,
     CallerContext,
+    CancelReason,
     Fail,
     JudgesMode,
     Message,
@@ -227,6 +230,10 @@ class RunContext:
     fallbacks: tuple[ModelLink, ...] = ()
     # Disjoncteurs des modèles, partagés par les runs d'une instance ``Loom``.
     breakers: CircuitBreakers | None = None
+    # Délai maximal du run, en secondes (A6). Il borne le temps de pilotage
+    # cumulé (``RunState.active_ms``), pas l'horloge : une reprise garde le
+    # budget qui reste. ``None`` : pas de délai.
+    timeout: float | None = None
 
     @property
     def artifacts(self) -> ArtifactStore | None:
@@ -443,19 +450,95 @@ async def drive(
         )
         while not state.finished and state.status in _ACTIONABLE:
             emitted = 0
-            async with aclosing(
-                step(state, run_ctx, previous, cause=cause, session=session_spent)
-            ) as drafts:
-                async for draft in drafts:
-                    await write(draft)
-                    emitted += 1
-                    if isinstance(draft.payload, RunCompleted):
-                        await _release(ctx, state)
+            left = _remaining(state, run_ctx)
+            if left is not None and left <= 0:
+                await _expired(write, state, scope, run_ctx, cut=False)
+                return state
+            try:
+                async with asyncio.timeout(left):
+                    async with aclosing(
+                        step(state, run_ctx, previous, cause=cause, session=session_spent)
+                    ) as drafts:
+                        async for draft in drafts:
+                            await write(draft)
+                            emitted += 1
+                            if isinstance(draft.payload, RunCompleted):
+                                await _release(ctx, state)
+            except TimeoutError:
+                # L'étape a été interrompue en plein effet : ce qu'elle avait
+                # déjà écrit reste au journal, et le run se clôt sur l'échec.
+                await _expired(write, state, scope, run_ctx, cut=True)
+                return state
             if emitted == 0:
                 raise RuntimeError(
                     f"Run {run_id} : aucune progression depuis l'état {state.status}"
                 )
     return state
+
+
+def cancellation(
+    state: RunState, *, reason: CancelReason = "requested", by: str | None = None
+) -> list[EventDraft]:
+    """Transition et clôture d'un run arrêté à la demande (A5).
+
+    L'annulation est terminale : un run annulé ne se reprend pas. C'est ce qui
+    la distingue d'un run simplement interrompu — plantage, flux abandonné —,
+    qui ne laisse rien au journal et repart où il s'était arrêté.
+    """
+    scope = _scope(state)
+    return [
+        _transition(state, scope, RunStatus.CANCELLED, "cancel"),
+        scope.draft(
+            RunCancelled(
+                reason=reason,
+                by=by,
+                iterations=state.iterations,
+                usage=state.usage,
+                cost_usd=state.cost_usd,
+            )
+        ),
+    ]
+
+
+def _remaining(state: RunState, ctx: RunContext) -> float | None:
+    """Secondes de pilotage qui restent au run, ou ``None`` s'il n'a pas de délai."""
+    if ctx.timeout is None:
+        return None
+    return ctx.timeout - state.active_ms / 1000
+
+
+async def _expired(
+    write: Callable[[EventDraft], Awaitable[Event]],
+    state: RunState,
+    scope: RunScope,
+    ctx: RunContext,
+    *,
+    cut: bool,
+) -> None:
+    """Clôture d'un run qui a dépassé son délai maximal (A6).
+
+    Un dépassement est subi, pas décidé : il s'écrit en ``run.failed``, pas en
+    ``run.cancelled``. Comme toute clôture, il ferme le run.
+
+    ``cut`` distingue les deux façons de dépasser : une étape coupée en plein
+    effet, ou un budget déjà épuisé avant même de commencer la suivante. Le
+    temps de l'étape coupée n'est nulle part — elle n'a pas de
+    ``step.completed`` —, donc le message ne le confond pas avec le cumul.
+    """
+    await write(_transition(state, scope, RunStatus.FAILED, "timeout"))
+    done = state.active_ms / 1000
+    limit = ctx.timeout or 0.0
+    if cut:
+        reason = (
+            f"délai maximal de {limit:.1f} s dépassé : l'étape {state.step} a été "
+            f"interrompue en cours ({done:.1f} s d'étapes déjà terminées)"
+        )
+    else:
+        reason = (
+            f"délai maximal de {limit:.1f} s dépassé : {done:.1f} s de pilotage "
+            "déjà écoulées avant l'étape suivante"
+        )
+    await write(scope.draft(_failed(state, "timeout", reason)))
 
 
 async def _release(ctx: RunContext, state: RunState) -> None:

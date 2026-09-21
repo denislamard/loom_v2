@@ -128,6 +128,7 @@ from loom_ia.core.model.policy import (
     Stop,
 )
 from loom_ia.core.model.run_state import (
+    CancelReason,
     PendingCall,
     PendingRepair,
     RunKind,
@@ -208,6 +209,7 @@ __all__ = [
     "Budgets",
     "CacheTtl",
     "CallerContext",
+    "CancelReason",
     "CheckOutcome",
     "CheckResolution",
     "CircuitBreaker",

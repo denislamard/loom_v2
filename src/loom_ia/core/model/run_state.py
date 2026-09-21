@@ -23,6 +23,11 @@ from loom_ia.core.model.usage import Usage
 # cette session, mais n'entre ni dans son historique ni dans son arbre.
 type RunKind = Literal["normal", "compaction"]
 
+# Pourquoi un run a été arrêté avant sa fin (A5). Un dépassement du délai
+# maximal n'est pas ici : il est subi, donc écrit en ``run.failed`` avec
+# ``error_type: timeout`` (A6).
+type CancelReason = Literal["requested", "parent"]
+
 
 class RunStatus(StrEnum):
     READY_FOR_MODEL = "ready_for_model"
@@ -87,6 +92,11 @@ class RunState(DomainModel):
     status: RunStatus = RunStatus.READY_FOR_MODEL
     # Numéro de la dernière étape commencée.
     step: NonNegativeInt = 0
+    # Temps passé à piloter ce run : somme des étapes terminées. C'est lui que
+    # borne le délai maximal d'un agent (A6) — pas l'horloge depuis
+    # ``run.started``, qui compterait aussi l'attente en file, une pause
+    # d'approbation ou une nuit entre un plantage et sa reprise.
+    active_ms: NonNegativeFloat = 0.0
     # Appels du modèle orchestrateur (borné par max_iterations).
     iterations: NonNegativeInt = 0
     messages: tuple[Message, ...] = ()
@@ -127,7 +137,9 @@ class RunState(DomainModel):
     # Échec : son type (``guard.judge``, ``model.auth``, ``policy.<nom>``…) et son message.
     error_type: str | None = None
     error: str | None = None
-    # Vrai après run.completed ou run.failed : plus aucun événement accepté.
+    # Motif de l'annulation, s'il y en a eu une (A5).
+    cancelled: CancelReason | None = None
+    # Vrai après run.completed, run.failed ou run.cancelled : plus rien n'est accepté.
     finished: bool = False
     # Dernier événement appliqué.
     last_seq: NonNegativeInt = 0

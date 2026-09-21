@@ -230,9 +230,10 @@ async def _validate(args: argparse.Namespace) -> int:
             subagents = "".join(
                 f", sous-agent {ref.tool_name} ({ref.agent})" for ref in spec.subagents
             )
+            delay = f", délai {spec.timeout:g} s" if spec.timeout is not None else ""
             print(
                 f"  {spec.name} : modèle {_chain(spec.main.chain)}, "
-                f"{len(spec.python_tools)} outil(s) Python{roles}{subagents}"
+                f"{len(spec.python_tools)} outil(s) Python{roles}{subagents}{delay}"
             )
             for bound in context.policies.bound:
                 print(f"    politique {bound.name} : {', '.join(sorted(bound.points))}")
