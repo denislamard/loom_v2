@@ -35,6 +35,8 @@ from loom_ia.core.events import (
     CircuitOpened,
     Event,
     GuardChecked,
+    IdempotencyRecorded,
+    IdempotencyReused,
     JudgeEvaluated,
     ModelFellBack,
     ModelResponded,
@@ -169,6 +171,10 @@ def apply(state: RunState | None, event: Event) -> RunState:
         case GuardChecked(target="output", resolution="unverified"):
             update["unverified"] = True
         case GuardChecked() | JudgeEvaluated():
+            pass
+        case IdempotencyRecorded() | IdempotencyReused():
+            # Comptabilité d'un effet déjà appliqué par ailleurs : l'état
+            # du run n'en dépend pas. C'est le magasin qui le relit.
             pass
         case BudgetExceeded() as exceeded:
             if exceeded.key not in state.exceeded:

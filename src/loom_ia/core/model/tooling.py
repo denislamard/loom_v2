@@ -5,6 +5,8 @@
 le moteur doit savoir pour exécuter l'outil sans risque.
 """
 
+import json
+from datetime import datetime
 from typing import Final, Literal
 
 from pydantic import Field, JsonValue, PositiveFloat, PositiveInt
@@ -35,6 +37,66 @@ def _empty_object_schema() -> dict[str, JsonValue]:
 # Une journée : de quoi couvrir une nuit et un jour ouvré, sans qu'un run
 # oublié attende pour toujours (#17).
 DEFAULT_APPROVAL_DELAY: Final = 24 * 3600.0
+
+
+type IdempotencyStatus = Literal["in_progress", "completed"]
+# Ce qu'il advient d'un appel interrompu dont l'effet est peut-être produit (#18).
+type UnknownState = Literal["error", "pause"]
+
+# Au-delà, un résultat n'est pas mémorisé : l'enregistrement échoue avec un
+# message à l'auteur de l'outil. Le décorateur agit avant le déport de
+# l'exécuteur, donc rien ne réduira ce résultat pour nous.
+MAX_RECORDED: Final = 50_000
+
+# Durée pendant laquelle un résultat mémorisé reste consultable, quand ni
+# l'outil ni le magasin n'en fixent d'autre. Une journée : au-delà, l'appel
+# qui le redemanderait est hors de portée de toute reprise.
+DEFAULT_RETENTION: Final = 24 * 3600.0
+
+
+class IdempotencyRecord(DomainModel):
+    """Ce qu'un magasin d'idempotence sait d'une clé (#18, #49).
+
+    ``in_progress`` : quelqu'un a réservé la clé et n'a pas encore fini —
+    l'effet est peut-être en train de se produire. ``completed`` : il s'est
+    produit, et ``result`` est ce qu'il a rendu.
+    """
+
+    key: str
+    status: IdempotencyStatus
+    # Ce que l'outil avait rendu ; absent tant que la clé est réservée.
+    result: JsonValue = None
+    expires_at: datetime
+
+    def alive(self, now: datetime) -> bool:
+        """Réservation encore tenue : personne d'autre ne doit y toucher."""
+        return now < self.expires_at
+
+
+class ResultTooLarge(ValueError):
+    """Résultat trop volumineux pour être mémorisé sous une clé d'idempotence."""
+
+
+def recordable(result: object) -> JsonValue:
+    """Le résultat, prêt à être mémorisé ; refuse ce qui ne l'est pas.
+
+    Mémoriser est un service rendu à l'outil, pas un fourre-tout : le résultat
+    voyage vers un magasin partagé et y reste. Au-delà de ``MAX_RECORDED``
+    caractères il est refusé, bruyamment, à l'auteur de l'outil — un gros
+    résultat se range dans un artefact, et c'est sa référence qui se mémorise.
+
+    Un résultat que JSON ne porte pas lève ``TypeError`` : le message du
+    module ``json`` nomme déjà le type fautif.
+    """
+    encoded = json.dumps(result, ensure_ascii=False)
+    if len(encoded) > MAX_RECORDED:
+        raise ResultTooLarge(
+            f"Résultat de {len(encoded)} caractères non mémorisé : "
+            f"la limite est de {MAX_RECORDED}. Rangez-le dans un artefact et "
+            f"mémorisez sa référence."
+        )
+    # json.dumps a déjà prouvé que la valeur est du JSON.
+    return result  # pyright: ignore[reportReturnType]
 
 
 class ApprovalSettings(DomainModel):
@@ -86,6 +148,13 @@ class ToolSpec(ToolDefinition):
     offload_over: PositiveInt | None = None
     # Sortie transmise telle quelle comme réponse finale s'il est seul dans son tour (#13).
     terminal: bool = False
+    # Sort d'un appel repris dont l'effet est peut-être produit (#18) : le
+    # dire au modèle, ou suspendre le run pour qu'un humain vérifie.
+    on_unknown: UnknownState = "error"
+    # L'outil mémorise ses effets sous une clé **métier**, donc visible d'un
+    # run à l'autre (#49). Il lui faut alors un magasin partagé et durable,
+    # ce que le chargement vérifie : le journal d'un run ne l'est pas.
+    business_key: bool = False
     # Contrat de sortie (E5) : contrôlé après chaque appel ; un rôle se répare, un outil non.
     output: OutputContract | None = None
 

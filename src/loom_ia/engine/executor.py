@@ -62,6 +62,8 @@ from loom_ia.core.events import (
     ApprovalRequested,
     ArtifactStored,
     CircuitOpened,
+    IdempotencyReused,
+    RunScope,
     ToolCalled,
     ToolCompleted,
     ToolSourceUnavailable,
@@ -101,12 +103,14 @@ from loom_ia.core.model import (
 from loom_ia.core.ports import (
     ArtifactStore,
     ChunkCallback,
+    IdempotencyStore,
     SourceContext,
     SourceUnavailable,
     Tool,
     ToolContext,
     ToolError,
     ToolSource,
+    UnknownEffect,
 )
 from loom_ia.engine.circuit import CircuitBreakers, mcp_key
 from loom_ia.engine.delegated import (
@@ -118,6 +122,7 @@ from loom_ia.engine.delegated import (
     Waiting,
 )
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
+from loom_ia.engine.idempotency import JournalIdempotency
 from loom_ia.engine.media import size_label
 from loom_ia.engine.offload import (
     DEFAULT_OFFLOAD_OVER,
@@ -172,6 +177,7 @@ class Decided:
 type ToolEvent = (
     ToolCalled
     | ToolCompleted
+    | IdempotencyReused
     | Stored
     | Delegated
     | Decided
@@ -193,6 +199,9 @@ class _Ready:
     refs: tuple[str, ...]
     # Run enfant d'un sous-agent.
     child_run_id: RunId | None = None
+    # Un humain a approuvé cet appel : il repart, y compris sur une
+    # réservation périmée (#17, #18).
+    approved: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +223,18 @@ class _Crashed:
     """Exception sortie d'une tâche d'exécution : elle interrompt le lot."""
 
     error: BaseException
+
+
+@dataclass(frozen=True, slots=True)
+class _Unknown:
+    """Appel dont l'effet est d'état inconnu (#18) : il solde l'appel sans le conclure.
+
+    Ni résultat ni attente : ce que l'appel devient est décidé après le lot,
+    selon ce que son outil a déclaré en ``on_unknown``.
+    """
+
+    call_id: str
+    message: str
 
 
 class ToolExecutor:
@@ -241,10 +262,14 @@ class ToolExecutor:
         breakers: CircuitBreakers | None = None,
         circuits: Mapping[str, CircuitBreaker | None] | None = None,
         approval: ApprovalSettings | None = None,
+        idempotency: IdempotencyStore | None = None,
     ) -> None:
         self.default_timeout = default_timeout
         # Délai, effet d'une expiration et droit exigé (#17).
         self.approval = approval or ApprovalSettings()
+        # Magasin partagé (#49) ; sans lui, chaque appel reçoit le magasin
+        # adossé au journal de son run.
+        self.idempotency = idempotency
         self.validate_arguments = validate_arguments
         self.artifacts = artifacts
         self.offload_over = offload_over
@@ -355,6 +380,7 @@ class ToolExecutor:
             breakers=self.breakers,
             circuits=self.circuits,
             approval=self.approval,
+            idempotency=self.idempotency,
         )
         copy._tools = dict(self._tools)
         copy._validators = dict(self._validators)
@@ -392,13 +418,22 @@ class ToolExecutor:
         state: RunState,
         *,
         writer: SessionWriter | None = None,
+        scope: RunScope | None = None,
         spans: Mapping[str, SpanId] | None = None,
+        step_span: SpanId | None = None,
         turns: tuple[tuple[Message, ...], ...] = (),
         summary: str | None = None,
     ) -> RunView:
         """Ce que les outils délégués voient du run."""
         return RunView.of(
-            state, self.artifacts, writer=writer, spans=spans, turns=turns, summary=summary
+            state,
+            self.artifacts,
+            writer=writer,
+            scope=scope,
+            spans=spans,
+            step_span=step_span,
+            turns=turns,
+            summary=summary,
         )
 
     def definitions(self, run: RunView | None = None) -> tuple[ToolDefinition, ...]:
@@ -417,7 +452,9 @@ class ToolExecutor:
         state: RunState,
         *,
         writer: SessionWriter | None = None,
+        scope: RunScope | None = None,
         spans: Mapping[str, SpanId] | None = None,
+        step_span: SpanId | None = None,
         policies: Policies | None = None,
         on_chunk: ChunkCallback | None = None,
         turns: tuple[tuple[Message, ...], ...] = (),
@@ -426,15 +463,25 @@ class ToolExecutor:
     ) -> AsyncGenerator[ToolEvent]:
         """Traite les appels en attente du run et émet leurs événements.
 
-        ``writer`` et ``spans`` servent aux sous-agents : le journal où écrire
-        leur run, et le span de leur appel. ``policies`` : celles de l'agent.
+        ``writer``, ``scope``, ``spans`` et ``step_span`` situent le run dans
+        le journal : le journal où écrire (les sous-agents y écrivent le
+        leur), la portée de ses événements, le span de chaque appel et celui
+        de l'étape qui les porte. ``policies`` : celles de l'agent.
         Une décision ``Fail`` à ``before_tool`` arrête le lot avant tout
         lancement. ``on_chunk`` : diffusion en direct, pour un rôle terminal
         seul dans son lot. ``approver`` : approbateur en ligne (#28) — il
         tranche ici même, et le run ne passe jamais par ``PAUSED``.
         """
         policies = policies or Policies()
-        view = self.view(state, writer=writer, spans=spans, turns=turns, summary=summary)
+        view = self.view(
+            state,
+            writer=writer,
+            scope=scope,
+            spans=spans,
+            step_span=step_span,
+            turns=turns,
+            summary=summary,
+        )
         if on_chunk is not None and len(state.pending_calls) == 1:
             alone = self._tools.get(state.pending_calls[0].name)
             if isinstance(alone, DelegatedTool) and alone.spec.terminal:
@@ -462,7 +509,14 @@ class ToolExecutor:
                     continue
                 if outcome.arguments is not None:
                     prepared = replace(prepared, arguments=outcome.arguments)
-                ready.append(prepared)
+                ready.append(replace(prepared, approved=True))
+                continue
+            # Reprise d'un appel dont l'effet est peut-être produit (#18) :
+            # il n'est pas relancé de lui-même. L'outil dit ce qu'il advient
+            # — le modèle est prévenu, ou un humain tranche.
+            unknown = call.started and not prepared.tool.spec.safe_to_retry
+            if unknown and prepared.tool.spec.on_unknown == "error":
+                yield _completed(call, ToolOutput.error(UNKNOWN_STATE), started=None)
                 continue
             verdict = await self._before_tool(prepared, view, policies)
             for decided in verdict.decided:
@@ -480,7 +534,9 @@ class ToolExecutor:
                 prepared = replace(prepared, arguments=verdict.subject.arguments)
             # Un `approval: always` ne se lève pas : seule la config admin le
             # peut, et une politique qui dit `Continue` ne l'a pas levé (#17).
-            asked = _asks_approval(prepared.tool.spec, verdict)
+            asked = (
+                (UNKNOWN_STATE, None) if unknown else _asks_approval(prepared.tool.spec, verdict)
+            )
             if asked is None:
                 ready.append(prepared)
                 continue
@@ -516,7 +572,9 @@ class ToolExecutor:
         if children:
             view = replace(view, children=children)
 
-        queue: asyncio.Queue[ToolEvent | _Crashed] = asyncio.Queue()
+        # Appels dont l'effet est d'état inconnu, et le motif à en dire.
+        inconnus: dict[str, str] = {}
+        queue: asyncio.Queue[ToolEvent | _Crashed | _Unknown] = asyncio.Queue()
 
         def crashed(task: asyncio.Task[None]) -> None:
             if not task.cancelled() and (error := task.exception()) is not None:
@@ -534,16 +592,42 @@ class ToolExecutor:
                 event = await queue.get()
                 if isinstance(event, _Crashed):
                     raise event.error
-                # Un appel se solde par un résultat, ou par une attente : un
-                # run délégué en pause n'en rendra pas, et le lot l'attendrait
-                # indéfiniment.
-                if isinstance(event, ToolCompleted | Waiting):
+                # Un appel se solde par un résultat, une attente, ou un effet
+                # d'état inconnu : un run délégué en pause ne rend pas de
+                # résultat, et le lot l'attendrait indéfiniment.
+                if isinstance(event, ToolCompleted | Waiting | _Unknown):
                     remaining -= 1
+                if isinstance(event, _Unknown):
+                    inconnus[event.call_id] = event.message
+                    continue
                 yield event
         finally:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Un appel d'état inconnu n'a ni résultat ni conclusion : c'est son
+        # outil qui dit ce qu'il advient (#18). L'erreur revient au modèle ;
+        # la pause demande une approbation, comme la règle de reprise.
+        lances = {item.call.call_id: item for item in ready}
+        for call_id, message in inconnus.items():
+            item = lances[call_id]
+            if item.tool.spec.on_unknown == "error":
+                yield _completed(item.call, ToolOutput.error(message), started=None)
+                continue
+            request = _request(item, (message, None), self.approval)
+            if approver is None:
+                held.append((item, request))
+                continue
+            # L'approbateur tranche ici, mais l'appel ne peut plus repartir :
+            # son lot est fini. Accordé, il repartira au tour suivant, avec
+            # la décision au journal ; refusé, il se conclut en erreur.
+            yield request
+            decided = await approver(_asked(request))
+            yield _decision(request, decided)
+            if isinstance(decided, Rejected):
+                text = _refused(request.tool_name, "rejected", decided.reason)
+                yield _completed(item.call, ToolOutput.error(text), started=None)
 
         # Les appels qui ne demandent rien se sont exécutés ; le run passe en
         # pause pour les autres (#17). La demande est écrite après le lot, et
@@ -560,8 +644,6 @@ class ToolExecutor:
 
     async def _prepare(self, call: PendingCall, tool: AnyTool, view: RunView) -> _Ready | str:
         """Appel prêt à partir, ou motif de refus destiné au modèle."""
-        if call.started and not tool.spec.safe_to_retry:
-            return UNKNOWN_STATE
         if set(call.arguments) == {INVALID_JSON_KEY}:
             raw = str(call.arguments[INVALID_JSON_KEY])
             return f"Arguments illisibles : ce n'est pas un objet JSON valide.\nReçu : {raw[:500]}"
@@ -625,7 +707,7 @@ class ToolExecutor:
         self,
         item: _Ready,
         view: RunView,
-        emit: Callable[[ToolEvent], None],
+        emit: Callable[[ToolEvent | _Unknown], None],
         policies: Policies | None = None,
     ) -> None:
         """Exécute un appel ; ses événements et son résultat partent dans la file du lot."""
@@ -640,6 +722,11 @@ class ToolExecutor:
             call_id=call.call_id,
             agent=state.agent,
             caller=state.context,
+            idempotency=self._idempotency(call.call_id, spec.name, view),
+            replay_unknown=item.approved,
+            on_reuse=lambda key: emit(
+                IdempotencyReused(key=key, call_id=call.call_id, tool_name=spec.name)
+            ),
         )
         started = time.perf_counter()
         consumption: Consumption | None = None
@@ -650,7 +737,12 @@ class ToolExecutor:
                 produced, tool, context, emit, timeout, state
             )
         else:
-            output = await _invoked(tool, item.arguments, context, timeout, state)
+            try:
+                output = await _invoked(tool, item.arguments, context, timeout, state)
+            except UnknownEffect as unknown:
+                # Ni résultat ni attente : le lot décidera, après coup.
+                emit(_Unknown(call_id=call.call_id, message=unknown.message))
+                return
         if isinstance(output, Waiting):
             # Rien à contrôler ni à conclure : l'appel reste en suspens, et
             # le parent attend avec son enfant (H4).
@@ -660,6 +752,25 @@ class ToolExecutor:
             output = await self._after_tool(item, output, exchange, context, view, emit, policies)
         output = await self._settle(output, spec, call.call_id, view, emit)
         emit(_completed(call, output, started=started, consumption=consumption))
+
+    def _idempotency(self, call_id: str, tool_name: str, view: RunView) -> IdempotencyStore | None:
+        """Magasin donné à cet appel : le partagé s'il y en a un, sinon le journal.
+
+        Sans écrivain ni portée — outil appelé hors moteur —, il n'y en a pas :
+        un outil décoré s'exécute alors tel quel.
+        """
+        if self.idempotency is not None:
+            return self.idempotency
+        if view.writer is None or view.scope is None:
+            return None
+        return JournalIdempotency(
+            view.writer,
+            view.scope,
+            call_id=call_id,
+            tool_name=tool_name,
+            span_id=view.spans.get(call_id),
+            parent_span_id=view.step_span,
+        )
 
     async def _after_tool(
         self,
@@ -854,6 +965,10 @@ async def _invoked(
             return ToolOutput.error(f"Délai dépassé : pas de réponse en {limit:g} s.")
         # TimeoutError levée par l'outil lui-même.
         return _unexpected(tool.spec.name, exc, state)
+    except UnknownEffect:
+        # Ce n'est pas un résultat d'erreur : l'outil a déclaré ce qu'il
+        # advient d'un effet d'état inconnu, et c'est le lot qui l'applique.
+        raise
     except ToolError as exc:
         return ToolOutput.error(exc.message)
     except Exception as exc:

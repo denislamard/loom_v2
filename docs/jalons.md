@@ -138,7 +138,8 @@ Les commandes ci-dessous sont indicatives.
 | 4.2b Exécution durable | Job `run` de la `TaskQueue`, `Loom.submit()`, `Loom.recover()`, concession appliquée (`run.claimed`, `execution.lease`, `ClaimConflict`), `kill -9` réel en test d'intégration | H2, H3, H5, #25–#27 |
 | 4.3a Approbations | `side_effects` et `approval`, `Pause` débloquée, `PAUSED`, lot partiel, `Loom.approve()` et `reject()`, expiration lue au journal, approbateur en ligne, journal durable exigé | D10, H4, #17, #28 |
 | 4.3b Sous-agent en pause | `WAITING_CHILD`, appel délégant laissé en suspens, demandes de l'arbre remontées à la racine, `approve()` depuis n'importe quel run, reprise par rejeu de l'appel délégant | C5, H4, #4 |
-| 4.4 Idempotence | `IdempotencyStore` (`journal`, `memory`, `sqlite`), `@idempotent`, clés métier, règles de reprise | D11, #18, #49 |
+| 4.4a Idempotence, clé technique | `IdempotencyStore` (`journal`, `memory`), `@idempotent`, `idempotency.recorded`, règle de reprise complétée (`on_unknown` : erreur ou pause), `storage.idempotency` | D11, #18, #49 |
+| 4.4b Clés métier | Magasin partagé `sqlite`, clé métier fournie par l'outil (`key=`), contrôle au démarrage (clé métier ⇒ magasin partagé et durable), durée de vie par outil et préfixe par client, `on_unknown` sur une réservation périmée, `idempotency.reused` au journal, oubli des clés avec la session (RGPD) | D11, #49 |
 | 4.5 Accès | REST : `approve`, `cancel`, runs en arrière-plan, sessions. MCP : elicitation, ou pause avec `run_status`. Python : `approve()` | — |
 
 ### Test et exécution

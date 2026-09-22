@@ -34,7 +34,13 @@ from typing import Self
 
 from pydantic import JsonValue
 
-from loom_ia.core.events import CircuitOpened, ModelFellBack, ModelResponded, ModelRetried
+from loom_ia.core.events import (
+    CircuitOpened,
+    ModelFellBack,
+    ModelResponded,
+    ModelRetried,
+    RunScope,
+)
 from loom_ia.core.model import (
     ArtifactRefBlock,
     Message,
@@ -95,15 +101,19 @@ type DelegatedPayload = ModelRetried | ModelFellBack | CircuitOpened | ModelResp
 class RunView:
     """Ce qu'un outil délégué voit du run : état au début du lot, résultats, fichiers.
 
-    ``writer`` écrit dans le journal du run ; ``spans`` donne le span de
-    chaque appel du lot, et ``children`` le run enfant choisi pour un appel.
+    ``writer`` écrit dans le journal du run et ``scope`` situe ce qu'il écrit ;
+    ``spans`` donne le span de chaque appel du lot, et ``children`` le run
+    enfant choisi pour un appel.
     """
 
     state: RunState
     results: ResultIndex
     artifacts: ArtifactStore | None = None
     writer: SessionWriter | None = None
+    scope: RunScope | None = None
     spans: Mapping[str, SpanId] = field(default_factory=dict[str, SpanId])
+    # Span de l'étape en cours : parent de celui de chaque appel du lot.
+    step_span: SpanId | None = None
     children: Mapping[str, RunId] = field(default_factory=dict[str, RunId])
     # Diffusion en direct de la sortie d'un rôle terminal (backlog #009).
     on_chunk: ChunkCallback | None = None
@@ -124,7 +134,9 @@ class RunView:
         artifacts: ArtifactStore | None = None,
         *,
         writer: SessionWriter | None = None,
+        scope: RunScope | None = None,
         spans: Mapping[str, SpanId] | None = None,
+        step_span: SpanId | None = None,
         turns: tuple[tuple[Message, ...], ...] = (),
         summary: str | None = None,
     ) -> Self:
@@ -133,7 +145,9 @@ class RunView:
             results=ResultIndex(state.messages, artifacts),
             artifacts=artifacts,
             writer=writer,
+            scope=scope,
             spans=dict(spans or {}),
+            step_span=step_span,
             turns=turns,
             summary=summary,
         )

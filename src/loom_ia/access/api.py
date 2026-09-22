@@ -114,6 +114,7 @@ from loom_ia.runtime import (
     build_agent,
     create_artifact_store,
     create_event_store,
+    create_idempotency_store,
     create_mcp_pool,
     load_registry,
 )
@@ -160,6 +161,9 @@ class SessionDeletion(DomainModel):
     session_id: SessionId
     events: NonNegativeInt = 0
     artifacts: NonNegativeInt = 0
+    # Clés d'idempotence oubliées : celles d'un magasin partagé, le magasin
+    # ``journal`` gardant les siennes dans les événements ci-dessus.
+    keys: NonNegativeInt = 0
 
 
 class JudgeVerdict(DomainModel):
@@ -336,6 +340,9 @@ class Loom:
         # Stockage des fichiers, commun aux agents ; même règle de fermeture.
         self._artifacts = artifacts if artifacts is not None else create_artifact_store(config)
         self._owns_artifacts = artifacts is None
+        # Magasin d'idempotence partagé par les agents de l'instance (#49) ;
+        # ``None`` quand chaque run se sert de son journal.
+        self._idempotency = create_idempotency_store(config)
         self._environ = environ
         self._built: dict[str, Agent] = {}
         # Connexions MCP de portée shared, communes à tous les agents.
@@ -541,6 +548,7 @@ class Loom:
                 environ=self._environ,
                 mcp_pool=self._mcp,
                 artifacts=self._artifacts,
+                idempotency=self._idempotency,
                 agents=self.context,
                 breakers=self._breakers,
             )
@@ -705,16 +713,21 @@ class Loom:
     async def delete_session(
         self, session_id: SessionId, *, tenant_id: TenantId | None = None
     ) -> SessionDeletion:
-        """Supprime physiquement une session : ses fichiers, puis son journal (RGPD).
+        """Supprime physiquement une session : ses clés, ses fichiers, son journal (RGPD).
 
-        Les fichiers partent d'abord : tant que le journal est là, on sait ce
-        qu'il reste à retirer.
+        Le journal part en dernier : tant qu'il est là, on sait ce qu'il reste
+        à retirer. Les clés d'idempotence partent avec lui — une clé métier
+        peut porter une référence client (« relance:D-2026-042 »), et l'effet
+        qu'elle protégeait n'a plus de trace de toute façon.
         """
         tenant = tenant_id or DEFAULT_TENANT
+        keys = 0
+        if self._idempotency is not None:
+            keys = await self._idempotency.forget(tenant, session_id)
         artifacts = await self._artifacts.delete(tenant, session_id)
         events = await self._store.delete(tenant, session_id)
         self._writers.forget(tenant, session_id)
-        return SessionDeletion(session_id=session_id, events=events, artifacts=artifacts)
+        return SessionDeletion(session_id=session_id, events=events, artifacts=artifacts, keys=keys)
 
     # --- Cycle de vie ---------------------------------------------------------
 
@@ -732,6 +745,9 @@ class Loom:
             await self._store.aclose()
         if self._owns_artifacts:
             await self._artifacts.aclose()
+        closing = getattr(self._idempotency, "aclose", None)
+        if closing is not None:
+            await closing()
 
     async def __aenter__(self) -> Self:
         return self

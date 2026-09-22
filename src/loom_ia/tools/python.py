@@ -44,6 +44,7 @@ from loom_ia.core.model import (
     ToolKind,
     ToolOutput,
     ToolSpec,
+    UnknownState,
     sniff,
 )
 from loom_ia.core.ports import ToolContext, ToolError
@@ -91,6 +92,7 @@ class FunctionTool[**P, R]:
         side_effects: SideEffects = "none",
         approval: Approval = "never",
         idempotent: bool = False,
+        on_unknown: UnknownState = "error",
         timeout: float | None = None,
         offload_over: int | None = None,
     ) -> None:
@@ -111,6 +113,7 @@ class FunctionTool[**P, R]:
             side_effects=side_effects,
             approval=approval,
             idempotent=idempotent,
+            on_unknown=on_unknown,
             timeout=timeout,
             offload_over=offload_over,
         )
@@ -171,6 +174,7 @@ def tool[**P, R](
     side_effects: SideEffects = "none",
     approval: Approval = "never",
     idempotent: bool = False,
+    on_unknown: UnknownState = "error",
     timeout: float | None = None,
     offload_over: int | None = None,
 ) -> Callable[[Callable[P, R]], FunctionTool[P, R]]: ...
@@ -185,6 +189,7 @@ def tool[**P, R](
     side_effects: SideEffects = "none",
     approval: Approval = "never",
     idempotent: bool = False,
+    on_unknown: UnknownState = "error",
     timeout: float | None = None,
     offload_over: int | None = None,
 ) -> FunctionTool[P, R] | Callable[[Callable[P, R]], FunctionTool[P, R]]:
@@ -198,6 +203,7 @@ def tool[**P, R](
             side_effects=side_effects,
             approval=approval,
             idempotent=idempotent,
+            on_unknown=on_unknown,
             timeout=timeout,
             offload_over=offload_over,
         )

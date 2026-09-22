@@ -101,6 +101,7 @@ from loom_ia.core.events import (
     Effect,
     Event,
     EventDraft,
+    IdempotencyReused,
     ModelFellBack,
     ModelResponded,
     ModelRetried,
@@ -213,6 +214,7 @@ class ClaimConflict(RuntimeError):
 _BARE_EVENTS: Final = (
     ToolCalled,
     ToolCompleted,
+    IdempotencyReused,
     ApprovalRequested,
     ApprovalGranted,
     ApprovalRejected,
@@ -1382,7 +1384,9 @@ async def _tool_step(
     batch = ctx.tools.run_batch(
         state,
         writer=ctx.writer,
+        scope=scope,
         spans=spans,
+        step_span=current.span,
         policies=ctx.policies,
         on_chunk=ctx.on_chunk if ctx.stream_output == "live" else None,
         turns=ctx.turns,

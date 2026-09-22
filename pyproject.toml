@@ -163,4 +163,5 @@ modules = [
     "loom_ia.adapters.queue",
     "loom_ia.adapters.mcp",
     "loom_ia.adapters.telemetry",
+    "loom_ia.adapters.idempotency",
 ]

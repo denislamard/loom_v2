@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
 from loom_ia.adapters.artifacts import InMemoryArtifactStore, LocalArtifactStore
+from loom_ia.adapters.idempotency import InMemoryIdempotency
 from loom_ia.adapters.models import create_model_client
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.agents.registry import AgentRegistry
@@ -64,7 +65,7 @@ from loom_ia.agents.spec import (
 from loom_ia.agents.spec import ContextItem as DeclaredContext
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.errors import ConfigError
-from loom_ia.config.models import FILE_BACKENDS, LoomConfig
+from loom_ia.config.models import FILE_BACKENDS, SHARED_IDEMPOTENCY, LoomConfig
 from loom_ia.config.references import Registry, import_modules, resolve
 from loom_ia.core.model import (
     ALLOWED_DECISIONS,
@@ -76,6 +77,7 @@ from loom_ia.core.ports import (
     ArtifactStore,
     ChunkCallback,
     EventStore,
+    IdempotencyStore,
     ModelClient,
     Policy,
     Tool,
@@ -181,6 +183,28 @@ def create_artifact_store(config: LoomConfig) -> ArtifactStore:
     return InMemoryArtifactStore()
 
 
+def create_idempotency_store(config: LoomConfig) -> IdempotencyStore | None:
+    """Magasin d'idempotence déclaré dans ``storage.idempotency``.
+
+    ``journal`` ne rend rien : il n'y a pas de magasin commun à monter, chaque
+    run écrit ses enregistrements dans son journal et l'exécuteur le lui donne
+    au moment de l'appel.
+    """
+    declared = config.storage.idempotency
+    if declared.backend == "memory":
+        return InMemoryIdempotency()
+    if declared.backend == "sqlite" and declared.path is not None:
+        try:
+            from loom_ia.adapters.idempotency.sqlite import SqliteIdempotency
+        except ImportError as exc:
+            raise ConfigError(
+                "Magasin d'idempotence 'sqlite' : le paquet 'aiosqlite' n'est pas "
+                "installé (installer l'extra : loom-ia[sqlite])"
+            ) from exc
+        return SqliteIdempotency(declared.path)
+    return None
+
+
 def load_registry(config: LoomConfig) -> Registry:
     """Charge les modules de ``imports`` et enregistre leurs outils."""
     return import_modules(config.imports, base_dir=config.base_dir)
@@ -202,6 +226,7 @@ def build_agent(
     on_chunk: ChunkCallback | None = None,
     mcp_pool: McpPool | None = None,
     artifacts: ArtifactStore | None = None,
+    idempotency: IdempotencyStore | None = None,
     agents: AgentResolver | None = None,
     breakers: CircuitBreakers | None = None,
 ) -> Agent:
@@ -213,7 +238,8 @@ def build_agent(
     résultats tronqués. ``agents`` donne le contexte d'un sous-agent par son
     nom ; sans lui, l'agent monte ses sous-agents lui-même, au premier appel.
     ``breakers`` : disjoncteurs partagés (ceux de l'instance) ; sans eux,
-    l'agent a les siens, communs à ses sous-agents.
+    l'agent a les siens, communs à ses sous-agents. ``idempotency`` : magasin
+    partagé (#49) ; sans lui, chaque appel reçoit celui de son journal.
     """
     spec = AgentRegistry.from_config(config).get(name)
     known = registry if registry is not None else load_registry(config)
@@ -281,6 +307,7 @@ def build_agent(
             environ=environ,
             mcp_pool=mcp_pool,
             artifacts=artifacts,
+            idempotency=idempotency,
             breakers=breakers,
         )
         agents = nested
@@ -301,6 +328,7 @@ def build_agent(
             AgentTool(_subagent_definition(config, spec, ref), agents) for ref in spec.subagents
         ]
     _check_durable_journal(config, spec, [*tools, *delegated], policies)
+    _check_shared_idempotency(config, spec, [*tools, *delegated])
     execution = config.execution.tools
     llm = spec.main.llm
     context = RunContext(
@@ -318,6 +346,7 @@ def build_agent(
             breakers=breakers,
             circuits={server.name: server.circuit_breaker for server in config.mcp_servers},
             approval=spec.approval,
+            idempotency=idempotency,
         ),
         system=system_prompt(spec),
         max_iterations=spec.max_iterations,
@@ -557,6 +586,29 @@ def _check_durable_journal(
             )
 
 
+def _check_shared_idempotency(
+    config: LoomConfig, spec: AgentSpec, tools: Sequence[AnyTool]
+) -> None:
+    """Une clé métier exige un magasin partagé et durable (#49).
+
+    Une clé métier dit « cette relance est déjà partie » à qui la demande,
+    d'un run à l'autre et d'une conversation à l'autre. Le magasin ``journal``
+    ne voit que son run et ``memory`` que son process : la promesse serait
+    tenue là où elle ne sert à rien, et rompue partout ailleurs. Une erreur,
+    donc — un doublon silencieux se remarque trop tard.
+    """
+    declared = config.storage.idempotency
+    if declared.shared:
+        return
+    metier = [tool.spec.name for tool in tools if tool.spec.business_key]
+    if metier:
+        raise ConfigError(
+            f"Agent {spec.name!r} : outil(s) {', '.join(repr(n) for n in metier)} à clé "
+            f"métier — il leur faut un magasin d'idempotence partagé et durable "
+            f"({' ou '.join(SHARED_IDEMPOTENCY)}), pas {declared.backend!r} (#49)"
+        )
+
+
 def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
     """Budget en dollars sur un agent dont un modèle n'a pas de tarif (backlog #010).
 
@@ -667,6 +719,7 @@ class _SubAgents:
         environ: Mapping[str, str] | None,
         mcp_pool: McpPool | None,
         artifacts: ArtifactStore | None,
+        idempotency: IdempotencyStore | None,
         breakers: CircuitBreakers,
     ) -> None:
         self._config = config
@@ -675,6 +728,7 @@ class _SubAgents:
         self._environ = environ
         self._mcp_pool = mcp_pool
         self._artifacts = artifacts
+        self._idempotency = idempotency
         self._breakers = breakers
         self._built: dict[str, Agent] = {}
 
@@ -689,6 +743,7 @@ class _SubAgents:
                 environ=self._environ,
                 mcp_pool=self._mcp_pool,
                 artifacts=self._artifacts,
+                idempotency=self._idempotency,
                 agents=self,
                 breakers=self._breakers,
             )

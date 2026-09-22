@@ -183,7 +183,7 @@ def build_parser() -> argparse.ArgumentParser:
     export.set_defaults(handler=cmd_sessions_export)
 
     remove = session_actions.add_parser(
-        "delete", help="supprime une session : son journal et ses fichiers (RGPD)"
+        "delete", help="supprime une session : journal, fichiers et clés (RGPD)"
     )
     remove.add_argument("session_id")
     remove.add_argument("--yes", action="store_true", help="ne demande pas confirmation")
@@ -221,6 +221,9 @@ async def _validate(args: argparse.Namespace) -> int:
         print(f"Politiques : {_listed(policies)}")
     print(f"Journal    : {journal}")
     print(f"Artefacts  : {artifacts}")
+    magasin = storage.idempotency
+    cles = f"{magasin.backend} ({magasin.path})" if magasin.path else magasin.backend
+    print(f"Idempotence: {cles}")
     print(f"Clés d'API : {keys or 'aucune (API REST ouverte)'}")
 
     async with Loom(config, registry=registry) as loom:
@@ -391,7 +394,8 @@ def cmd_sessions_delete(args: argparse.Namespace) -> int:
     session = SessionId(args.session_id)
     if not args.yes:
         asked = input(
-            f"Supprimer définitivement la session {session} (journal et fichiers) ? [o/N] "
+            f"Supprimer définitivement la session {session} "
+            "(journal, fichiers et clés d'idempotence) ? [o/N] "
         )
         if asked.strip().lower() not in {"o", "oui", "y", "yes"}:
             print("Rien n'a été supprimé.")
@@ -402,12 +406,12 @@ def cmd_sessions_delete(args: argparse.Namespace) -> int:
             return await loom.delete_session(session)
 
     removed = asyncio.run(go())
-    if not removed.events and not removed.artifacts:
+    if not removed.events and not removed.artifacts and not removed.keys:
         print(f"Session {session} inconnue : rien à supprimer.", file=sys.stderr)
         return FAILED
     print(
         f"Session {session} supprimée : {removed.events} événement(s), "
-        f"{removed.artifacts} fichier(s)."
+        f"{removed.artifacts} fichier(s), {removed.keys} clé(s)."
     )
     return OK
 

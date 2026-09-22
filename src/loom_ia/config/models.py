@@ -38,6 +38,10 @@ from loom_ia.telemetry.logs import LogFormat
 
 SCHEMA_VERSION: Final = 1
 EVENT_BACKENDS: Final = ("memory", "jsonl", "sqlite")
+IDEMPOTENCY_BACKENDS: Final = ("journal", "memory", "sqlite")
+# Magasins qu'une clé métier peut exiger : partagés entre runs **et**
+# durables. Le journal ne voit que son run, la mémoire que son process.
+SHARED_IDEMPOTENCY: Final = ("sqlite",)
 # Journaux rangés hors de la mémoire : ils donnent aussi le dossier des artefacts.
 FILE_BACKENDS: Final = ("jsonl", "sqlite")
 # Dossier des artefacts sous celui du journal, quand la config n'en donne pas.
@@ -81,9 +85,44 @@ class ArtifactsStorage(DomainModel):
     path: Path | None = None
 
 
+class IdempotencyStorage(DomainModel):
+    """Magasin des clés d'idempotence (#18, #49).
+
+    ``journal`` n'a pas de stockage propre : chaque run garde ses
+    enregistrements dans son journal, ce qui suffit aux clés techniques d'un
+    appel. ``memory`` voit tout un process, mais ne survit pas à sa
+    fermeture. Une clé **métier** exige d'être vue de partout et de durer :
+    seul ``sqlite`` s'en charge, et le chargement le vérifie.
+    """
+
+    backend: str = "journal"
+    # Fichier de la base ``sqlite``, relatif au fichier de config. Sa propre
+    # base : ses écritures ne se disputent pas le verrou du journal.
+    path: Path | None = None
+
+    @model_validator(mode="after")
+    def _check_backend(self) -> Self:
+        if self.backend not in IDEMPOTENCY_BACKENDS:
+            raise ValueError(
+                f"Magasin d'idempotence {self.backend!r} : seuls "
+                f"{', '.join(IDEMPOTENCY_BACKENDS)} sont disponibles à ce jalon"
+            )
+        if self.backend == "sqlite" and self.path is None:
+            raise ValueError("Magasin d'idempotence 'sqlite' : 'path' est obligatoire")
+        if self.backend != "sqlite" and self.path is not None:
+            raise ValueError(f"Magasin d'idempotence {self.backend!r} : 'path' n'a pas de sens")
+        return self
+
+    @property
+    def shared(self) -> bool:
+        """Vrai si ce magasin est vu de tous les runs et survit au process (#49)."""
+        return self.backend in SHARED_IDEMPOTENCY
+
+
 class StorageConfig(DomainModel):
     events: EventsStorage = EventsStorage()
     artifacts: ArtifactsStorage = ArtifactsStorage()
+    idempotency: IdempotencyStorage = IdempotencyStorage()
 
     @model_validator(mode="before")
     @classmethod

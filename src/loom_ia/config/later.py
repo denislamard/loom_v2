@@ -23,7 +23,6 @@ LATER_MCP_ACCESS: Final[dict[str, str]] = {
 }
 
 LATER_STORAGE: Final[dict[str, str]] = {
-    "idempotency": "J4.4 (idempotence)",
     "bus": "J4 (bus et observabilité)",
     "queue": "J4 (arrière-plan)",
     "encryption": "J5 (chiffrement par client)",

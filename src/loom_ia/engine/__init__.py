@@ -34,6 +34,7 @@ from loom_ia.engine.hooks import (
     TracingPolicy,
     Verdict,
 )
+from loom_ia.engine.idempotency import JournalIdempotency
 from loom_ia.engine.loop import (
     DEFAULT_MAX_ITERATIONS,
     FINALIZE_HINT,
@@ -119,6 +120,7 @@ __all__ = [
     "DelegatedPayload",
     "DelegatedTool",
     "Exchange",
+    "JournalIdempotency",
     "LastTurns",
     "MediaResolver",
     "ModelChain",

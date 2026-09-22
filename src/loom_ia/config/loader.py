@@ -154,7 +154,7 @@ def _absolute_sessions(config: LoomConfig, prompts_dir: Path, *, source: Path) -
 
 
 def _absolute_storage(config: LoomConfig, base_dir: Path) -> object:
-    """Chemins du journal et des artefacts rapportés au dossier de la config."""
+    """Chemins du journal, des artefacts et des clés rapportés au dossier de la config."""
     storage = config.storage
     update: dict[str, object] = {}
     if storage.events.path is not None:
@@ -164,6 +164,10 @@ def _absolute_storage(config: LoomConfig, base_dir: Path) -> object:
     if storage.artifacts.path is not None:
         update["artifacts"] = storage.artifacts.model_copy(
             update={"path": base_dir / storage.artifacts.path}
+        )
+    if storage.idempotency.path is not None:
+        update["idempotency"] = storage.idempotency.model_copy(
+            update={"path": base_dir / storage.idempotency.path}
         )
     return storage.model_copy(update=update) if update else storage
 

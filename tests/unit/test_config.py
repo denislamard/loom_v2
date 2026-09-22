@@ -116,7 +116,12 @@ def test_config_can_be_written_in_python() -> None:
         ({"version": 2}, None, "Version de config 2 non prise en charge"),
         ({"budgets": {"tenant": {}}}, None, "'tenant' : prévu pour le jalon J5"),
         ({"profiles": {}}, None, "'profiles' : prévu pour le jalon J5"),
-        ({"storage": {"idempotency": {}}}, None, "'idempotency' : prévu pour le jalon J4"),
+        ({"storage": {"bus": {}}}, None, "'bus' : prévu pour le jalon J4"),
+        (
+            {"storage": {"idempotency": {"backend": "postgres"}}},
+            None,
+            "Magasin d'idempotence 'postgres' : seuls journal, memory",
+        ),
         (
             {"storage": {"artifacts": {"backend": "local"}}},
             None,

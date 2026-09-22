@@ -177,6 +177,12 @@ sessions:
 
 storage:
   events: {backend: jsonl, path: data}   # ignoré par git
+  # Magasin d'idempotence (phase 4.4). Partagé et durable : c'est ce qu'exige
+  # une clé métier — « cette relance est déjà partie » doit valoir d'un run à
+  # l'autre et d'une conversation à l'autre. Le magasin `journal`, lui, ne voit
+  # que son run ; idempotence.py le rétablit en code pour les cas qui le
+  # montrent.
+  idempotency: {backend: sqlite, path: data/keys.db}
 
 telemetry:
   logging: {level: WARNING, format: console}

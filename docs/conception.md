@@ -322,6 +322,7 @@ Event
 | `model.fell_back` | emplacement (`main`, rôle, `judge:<nom>`), ancien modèle, nouveau modèle, motif (type d'erreur ou `circuit_open`), erreur, call_id, judge |
 | `circuit.opened` | cible (`model`, `mcp`), modèle ou serveur, échecs de suite, pause, dernière erreur |
 | `idempotency.recorded` | clé, call_id, résultat |
+| `idempotency.reused` | clé, call_id, outil |
 | `tool.called` | tool_name, tool_kind, call_id, arguments, refs, child_run_id (sous-agent) |
 | `tool.completed` | tool_name, call_id, is_error, sortie (blocs, références de fichiers, aperçu et référence si déportée), latence, taille, consommation d'un sous-agent (usage, coût) ; facette `offloaded` |
 | `tool.source_unavailable` | source (serveur MCP), erreur, required |
@@ -567,6 +568,47 @@ IdempotencyStore
 - Une clé métier exige un backend partagé (ni `journal` ni `memory`) : vérifié au démarrage.
 - Chaque clé a une durée de vie (TTL) par outil et est préfixée par le client.
 - Les clés sont supprimées avec le client ou la session (RGPD).
+
+**Réalisation (phase 4.4a) :** le port, les magasins `journal` (défaut) et `memory`, le décorateur
+`@idempotent` et la règle de reprise complétée. Les clés sont **techniques** — `sha256(run_id:call_id)`,
+portée par `ToolContext` ; la clé métier et le magasin partagé viennent en 4.4b, et un magasin déclaré
+autrement que `journal` ou `memory` est refusé au chargement.
+
+- `@idempotent` se pose au-dessus de `@tool` : décorer, c'est déclarer (`idempotent: true`), et c'est
+  le décorateur qui tient la promesse. La réservation est rendue si l'outil lève — un outil qui échoue
+  est réputé n'avoir rien produit.
+- Le magasin `journal` n'a pas de stockage propre : `reserve` rend toujours vrai, le `tool.called` de
+  l'appel tenant lieu de réservation et la concession (#27) garantissant un seul pilote ;
+  `complete` écrit `idempotency.recorded` par l'écrivain de session, **hors de la file du lot**, pour
+  couvrir l'accident entre l'effet et le `tool.completed`. Cet événement a sa propre catégorie :
+  rangé dans `tool`, il deviendrait la cause d'une transition alors qu'il n'est l'effet de rien.
+- Un appel repris dont la reprise n'est pas sûre n'est pas relancé : l'outil déclare `on_unknown` —
+  `error` (défaut) rend l'erreur au modèle, `pause` écrit une demande d'approbation et laisse un
+  humain trancher, l'accord relançant l'appel.
+- Fenêtre résiduelle assumée : l'effet est mémorisé après coup, donc une interruption entre l'effet
+  et son enregistrement laisse l'appel rejoué le refaire. Le magasin `journal` réduit la fenêtre à
+  une écriture ; il ne la supprime pas.
+
+**Réalisation (phase 4.4b) :** la clé **métier** et le magasin partagé.
+
+- `@idempotent(key=…)` tire la clé des arguments, préfixée par le client : deux appels, deux runs,
+  deux sessions, deux process demandent la même chose et n'en font qu'un seul effet.
+- Magasin `sqlite`, sa propre base, `path` obligatoire. `reserve` tient en une seule instruction
+  (`INSERT … ON CONFLICT DO UPDATE … WHERE expires_at < maintenant`) : c'est SQLite qui arbitre, et
+  non un `get` suivi d'un `INSERT`, que deux workers traverseraient. C'est la date qui protège, pas
+  le statut ; `get` ne rend pas un résultat hors de sa durée de vie, mais rend une réservation
+  périmée, qui est la trace d'un effet d'état inconnu.
+- Contrôle au chargement : un outil à clé métier exige un magasin partagé **et** durable —
+  `journal` ne voit que son run, `memory` que son process.
+- `on_unknown` vaut désormais pour les deux chemins : l'appel repris que le moteur refuse de
+  relancer, et la réservation périmée que le magasin rend à l'outil. Une approbation accordée fait
+  reprendre la réservation, donc l'appel repart une fois et une seule.
+- RGPD : les clés portent la session qui les a créées et partent avec elle
+  (`Loom.delete_session`, `SessionDeletion.keys`). Une clé oubliée rend son effet reproductible,
+  mais la trace de cet effet a disparu de toute façon.
+- Un appel qui rend un effet déjà mémorisé écrit `idempotency.reused` (clé, call_id, outil), sous
+  le span de l'appel : le run dit pourquoi il n'a rien fait. L'outil le signale par
+  `ToolContext.on_reuse`, le moteur l'écrit — lui seul sait écrire, l'outil seul connaît sa clé.
 
 **Serveurs MCP** (#19) :
 
@@ -1238,7 +1280,7 @@ storage:
   events:      {backend: jsonl, path: data/events}      # memory|jsonl|sqlite|postgres|firestore (+ dsn_env)
                                                         # jsonl : dossier ; sqlite : fichier de la base
   artifacts:   {backend: local, path: data/artifacts}   # local|memory|gcs (+ bucket) ; défaut : suit le journal
-  idempotency: {backend: journal}                       # journal|memory|sqlite|postgres|firestore|redis
+  idempotency: {backend: journal}                       # journal|memory|sqlite (+ path) ; postgres|firestore|redis plus tard
   bus:         {backend: memory}                        # memory|postgres|redis|rabbitmq
   queue:       {backend: asyncio}                       # asyncio|rabbitmq (+ url_env)
   encryption:  {per_tenant_keys: false}

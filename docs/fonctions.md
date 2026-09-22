@@ -663,6 +663,21 @@ ToolOutput
   - clé à transmettre aux API externes qui la prennent en charge (en-tête `Idempotency-Key`), seule vraie protection si le plantage survient entre l'action externe et l'enregistrement du résultat.
 - **MCP :** la clé est transmise dans le champ `_meta` de l'appel (convention loom, que le serveur doit exploiter).
 
+**Réalisation (phase 4.4a) :**
+
+- `ToolContext.idempotency_key` rend la clé technique `sha256(run_id:call_id)` ; `ToolContext.idempotency` porte le magasin de l'appel, donné par l'exécuteur.
+- `@idempotent`, au-dessus de `@tool`, **déclare** l'outil idempotent (`spec.idempotent: true`) et tient la promesse : `get` → `reserve` → effet → `complete`, la réservation étant rendue si l'outil lève. Un appel rejoué dont l'effet a eu lieu rend le résultat mémorisé sans rien refaire.
+- La règle de reprise est complétée : un appel repris dont la reprise n'est pas sûre n'est pas relancé, et l'outil dit ce qu'il advient — `on_unknown: error` (défaut) rend l'erreur « état inconnu » au modèle, `on_unknown: pause` écrit une demande d'approbation et met le run en pause. Une approbation accordée relance l'appel ; un refus le termine en erreur. `on_unknown` se déclare sur l'outil, pas dans la config : c'est son auteur qui sait ce que refaire coûte.
+- Fenêtre résiduelle assumée : l'effet est mémorisé **après** qu'il a eu lieu. Une interruption entre les deux laisse la clé sans trace, et l'appel rejoué refait l'effet. Le magasin `journal` réduit la fenêtre à une écriture ; l'en-tête `Idempotency-Key` d'une API externe reste la seule protection complète.
+- Portée assumée : la règle protège **un appel**, pas une intention. Un modèle à qui l'on rend l'erreur « état inconnu » peut redemander la même action sous un autre `call_id` — c'est un autre appel, donc une autre clé technique, et rien ne l'arrête (constaté en réel le 21/09). Il y faut une clé métier et un magasin partagé.
+
+**Réalisation (phase 4.4b) :**
+
+- `@idempotent(key=…)` tire la clé des arguments de l'appel (`key=lambda a: f"relance:{a['devis']}"`), préfixée par le client. Deux appels, deux runs, deux sessions, deux process : la même clé, donc un seul effet.
+- `on_unknown` vaut désormais pour les **deux** chemins : l'appel repris que le moteur refuse de relancer, et la réservation périmée que le magasin rend à l'outil. Le décorateur lève `UnknownEffect`, le lot l'applique — erreur au modèle, ou demande d'approbation écrite après le lot. Une approbation accordée pose `ToolContext.replay_unknown`, qui fait reprendre la réservation : pas de boucle.
+- La clé qui protège un effet se supprime avec la session qui l'a produite : `Loom.delete_session` efface les clés avant les fichiers et le journal, et `SessionDeletion.keys` en rend le compte.
+- Un appel qui rend un effet déjà mémorisé **le dit** : `idempotency.reused` (clé, call_id, outil), écrit par le moteur sous le span de l'appel, juste avant son `tool.completed`. C'est l'outil décoré qui le signale, par le rappel `ToolContext.on_reuse` — lui seul connaît sa clé, et un magasin partagé n'a pas d'écrivain de journal. Sans cet événement, un run dédoublonné montrerait un appel, un résultat venu d'ailleurs, et rien qui l'explique.
+
 ### 19. Sessions MCP
 
 | `scope` | Connexion | Usage |
@@ -864,6 +879,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `model.fell_back` | emplacement (`main`, rôle, `judge:<nom>`), ancien modèle, nouveau modèle, motif (type d'erreur ou `circuit_open`), erreur, call_id, judge (voir point 10) |
 | `circuit.opened` | cible (`model`, `mcp`), identifiant du modèle ou nom du serveur, échecs de suite, pause, dernière erreur (voir point 10) |
 | `idempotency.recorded` | clé, call_id, résultat (voir point 49) |
+| `idempotency.reused` | clé, call_id, outil : l'appel n'a rien fait, son effet était déjà mémorisé |
 | `run.completed` / `.failed` / `.cancelled` | itérations, usage total, coût total, erreur ; `data` (objet JSON de la réponse finale) et `unverified` (voir point 20) |
 
 Les tokens streamés (`model.delta`) sont des événements éphémères : ils passent sur le bus mais ne sont pas persistés. Seule la réponse complète est écrite.
@@ -1340,6 +1356,22 @@ IdempotencyStore
 - Une clé métier exige un backend partagé (ni `journal` ni `memory`) : vérifié au démarrage.
 - Chaque clé a une durée de vie (TTL) par outil et est préfixée par le client.
 - Les clés sont supprimées avec le client ou la session (RGPD).
+
+**Réalisation (phase 4.4a) :** le port et deux implémentations, `journal` (défaut) et `memory`, choisies par `storage.idempotency.backend` ; les autres sont refusées au chargement en nommant ce qui manque. Les clés sont **techniques** : la clé métier et le magasin partagé viennent en 4.4b.
+
+- `journal` n'a pas de stockage propre. `reserve` rend toujours vrai — la réservation est déjà au journal, c'est le `tool.called` de l'appel, écrit avant son exécution, et la concession (#27) garantit un seul pilote. `complete` écrit un `idempotency.recorded` **tout de suite**, par l'écrivain de session et non par la file du lot : c'est justement entre l'effet et le `tool.completed` que se situe l'accident à couvrir. `get` relit les événements du run. `release` n'a rien à faire.
+- `idempotency.recorded` a sa **propre catégorie** : rangé dans `tool`, il deviendrait la cause d'une transition (`drive` la choisit parmi `model` et `tool`), alors qu'il n'est l'effet de rien.
+- `memory` tient un dictionnaire par process : `reserve` est atomique (aucun `await`), une réservation périmée est reprenable, un résultat s'oublie après sa rétention (24 h par défaut) et une réservation périmée, **jamais** — l'effacer la ferait passer pour un appel jamais lancé.
+- Un résultat mémorisé est refusé au-delà de `MAX_RECORDED` (50 000 caractères), bruyamment, à l'auteur de l'outil : un gros résultat se range dans un artefact, et c'est sa référence qui se mémorise.
+- `retry_unknown=True` reprend une réservation périmée et refait l'effet, au lieu de le signaler.
+
+**Réalisation (phase 4.4b) :** le magasin `sqlite` (extra `sqlite`, sa propre base, `path` obligatoire), que réclame une clé métier.
+
+- Une table, une ligne par clé `(key, tenant_id, session_id, status, result, expires_at)`. `reserve` tient en **une seule instruction** — `INSERT … ON CONFLICT(key) DO UPDATE … WHERE expires_at < <maintenant>` — et c'est SQLite qui arbitre : un `get` suivi d'un `INSERT` serait un check-then-act, qu'un second worker traverserait. Le nombre de lignes touchées fait foi.
+- C'est la **date** qui protège, pas le statut : une réservation encore tenue ou un résultat encore mémorisé gardent la clé ; passée leur échéance, la clé est libre. `get` ne rend pas un résultat hors de sa durée de vie — il n'a plus cours —, mais rend une réservation périmée telle quelle, parce que c'est la trace d'un effet d'état inconnu.
+- `ttl` par outil sur `complete`, sinon la rétention du magasin (24 h). Les résultats périmés s'effacent au fil des écritures ; les réservations, jamais.
+- `forget(tenant, session=None)` : RGPD. Le magasin `journal` n'a rien à oublier — ses enregistrements sont des événements, et partent avec le journal de leur session.
+- Contrôle au chargement : un outil à clé métier (`ToolSpec.business_key`) exige un magasin partagé **et** durable. `journal` ne voit que son run, `memory` que son process : la promesse serait tenue là où elle ne sert à rien. Erreur, pas avertissement — un doublon silencieux se remarque trop tard.
 
 ### 50. Schéma de la config
 

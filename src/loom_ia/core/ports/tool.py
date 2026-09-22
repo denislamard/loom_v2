@@ -11,7 +11,7 @@ run, pour que les requêtes au modèle restent stables.
 """
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
@@ -22,11 +22,16 @@ from loom_ia.core.model.content import ToolOutput
 from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import RunId, SessionId, TenantId
 from loom_ia.core.model.tooling import ToolSpec
+from loom_ia.core.ports.idempotency import IdempotencyStore
 
 
 def idempotency_key(run_id: RunId, call_id: str) -> str:
     """Clé technique d'un appel : identique à chaque reprise du même appel (#18)."""
     return hashlib.sha256(f"{run_id}:{call_id}".encode()).hexdigest()
+
+
+# Signalement d'un effet déjà mémorisé, avec la clé sous laquelle il l'est.
+type ReuseNote = Callable[[str], None]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -39,6 +44,18 @@ class ToolContext:
     call_id: str
     agent: str
     caller: CallerContext = field(default_factory=CallerContext)
+    # Magasin d'idempotence du run (#18, #49) : c'est par ici qu'un outil
+    # décoré retrouve l'effet qu'il a déjà produit. Absent hors moteur.
+    idempotency: IdempotencyStore | None = field(default=None, compare=False)
+    # Un humain a approuvé cet appel après un effet d'état inconnu (#17, #18) :
+    # l'outil décoré reprend la réservation périmée et refait l'effet. Vaut
+    # pour ce seul appel, et pour personne d'autre.
+    replay_unknown: bool = False
+    # Appelé, avec sa clé, par un outil qui rend un effet déjà mémorisé au
+    # lieu d'agir (#49). Le moteur en fait un ``idempotency.reused`` : sans
+    # lui, le journal ne dirait pas pourquoi l'appel n'a rien fait, le
+    # magasin partagé n'y écrivant rien. Absent hors moteur.
+    on_reuse: ReuseNote | None = field(default=None, compare=False)
 
     @property
     def idempotency_key(self) -> str:
@@ -51,6 +68,16 @@ class ToolError(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
+
+
+class UnknownEffect(ToolError):
+    """Réservation périmée : l'effet a peut-être eu lieu, personne ne le sait (#18).
+
+    C'est une ``ToolError``, donc son message vaut pour le modèle. Mais
+    l'exécuteur la reconnaît et applique ce que l'outil a déclaré en
+    ``on_unknown`` : rendre l'erreur, ou suspendre le run pour qu'un humain
+    vérifie avant de refaire.
+    """
 
 
 @runtime_checkable

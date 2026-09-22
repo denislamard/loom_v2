@@ -9,6 +9,7 @@ from loom_ia.core.ports.event_store import (
     SessionRecord,
     journal_key,
 )
+from loom_ia.core.ports.idempotency import IdempotencyStore, KeyScope
 from loom_ia.core.ports.model_client import (
     RETRYABLE_ERRORS,
     ChunkCallback,
@@ -19,12 +20,14 @@ from loom_ia.core.ports.model_client import (
 from loom_ia.core.ports.policy import Policy
 from loom_ia.core.ports.queue import Job, JobKind, JobState, TaskQueue
 from loom_ia.core.ports.tool import (
+    ReuseNote,
     SourceContext,
     SourceUnavailable,
     Tool,
     ToolContext,
     ToolError,
     ToolSource,
+    UnknownEffect,
     idempotency_key,
 )
 
@@ -34,13 +37,16 @@ __all__ = [
     "ArtifactStore",
     "ChunkCallback",
     "EventStore",
+    "IdempotencyStore",
     "Job",
     "JobKind",
     "JobState",
     "JournalCorrupted",
+    "KeyScope",
     "ModelClient",
     "ModelError",
     "Policy",
+    "ReuseNote",
     "SequenceConflict",
     "SessionRecord",
     "SourceContext",
@@ -50,6 +56,7 @@ __all__ = [
     "ToolContext",
     "ToolError",
     "ToolSource",
+    "UnknownEffect",
     "complete",
     "idempotency_key",
     "journal_key",

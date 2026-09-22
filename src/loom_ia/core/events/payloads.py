@@ -86,6 +86,7 @@ type EventCategory = Literal[
     "guard",
     "policy",
     "approval",
+    "idempotency",
     "artifact",
     "session",
     "circuit",
@@ -774,6 +775,57 @@ class ApprovalExpired(Payload):
         return "warning"
 
 
+# --- Idempotence -------------------------------------------------------------
+
+
+class IdempotencyRecorded(Payload):
+    """Effet d'un outil mémorisé sous sa clé, pour ne pas le refaire (#18, #49).
+
+    Écrit par le magasin ``journal``, qui n'a pas d'autre stockage que le
+    journal du run : la trace est durable dès que le journal l'est. Une clé
+    réservée puis non tenue n'écrit rien — c'est la clé **technique** d'un
+    appel, et le journal du run suffit à la porter.
+
+    Sa catégorie lui est propre : rangé dans ``tool``, cet événement
+    deviendrait la cause d'une transition (``drive`` la choisit parmi les
+    catégories ``model`` et ``tool``), alors qu'il n'est l'effet de rien — il
+    en garde la trace.
+    """
+
+    category: ClassVar[EventCategory] = "idempotency"
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "key")
+
+    type: Literal["idempotency.recorded"] = "idempotency.recorded"
+    key: str
+    call_id: str
+    tool_name: str
+    # Ce que l'outil a rendu, tel qu'il sera rendu au rejeu de l'appel.
+    result: JsonValue = None
+
+
+class IdempotencyReused(Payload):
+    """Appel qui n'a rien fait : son effet était déjà mémorisé sous sa clé (#18, #49).
+
+    Écrit par le moteur, quel que soit le magasin — c'est l'outil décoré qui
+    le lui signale, puisque lui seul connaît sa clé. Sans cet événement, un
+    run dont l'effet a été dédoublonné ne le raconte pas : on y lit un appel,
+    puis un résultat venu d'ailleurs, et rien qui l'explique. Le magasin
+    ``journal`` laissait au moins son ``idempotency.recorded`` ; un magasin
+    partagé, lui, ne laisse rien dans le journal du run.
+
+    Il ne porte pas le résultat : celui-ci est dans le ``tool.completed`` de
+    l'appel, et le redire ne dirait rien de plus.
+    """
+
+    category: ClassVar[EventCategory] = "idempotency"
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "key")
+
+    type: Literal["idempotency.reused"] = "idempotency.reused"
+    key: str
+    call_id: str
+    tool_name: str
+
+
 # --- Artefacts ---------------------------------------------------------------
 
 
@@ -931,6 +983,8 @@ type DurablePayload = Annotated[
     | ApprovalGranted
     | ApprovalRejected
     | ApprovalExpired
+    | IdempotencyRecorded
+    | IdempotencyReused
     | ArtifactStored
     | SessionSnapshot
     | SessionCompacted
