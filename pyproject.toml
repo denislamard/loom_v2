@@ -103,6 +103,7 @@ type = "layers"
 layers = [
     "loom_ia.access",
     "loom_ia.runtime",
+    "loom_ia.tenancy",
     "loom_ia.sessions",
     "loom_ia.engine",
     "loom_ia.core",
@@ -138,7 +139,7 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Moteur indépendant de la config, des outils et du kit de test"
+name = "Moteur indépendant de la config, des clients, des outils et du kit de test"
 type = "forbidden"
 source_modules = ["loom_ia.engine"]
 forbidden_modules = [
@@ -147,6 +148,7 @@ forbidden_modules = [
     "loom_ia.guards",
     "loom_ia.policies",
     "loom_ia.sessions",
+    "loom_ia.tenancy",
     "loom_ia.testing",
     "loom_ia.tools",
     "loom_ia.usage",

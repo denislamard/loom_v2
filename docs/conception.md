@@ -196,6 +196,8 @@ L'API HTTP peut tourner seule ou être montée dans un projet FastAPI existant, 
 - Un client peut surcharger une liste fermée de réglages : agents et outils autorisés, correspondance des modèles, budgets et quotas, politiques d'approbation, secrets. Les prompts ne sont pas surchargeables ; seules des variables injectées le sont.
 - Les clients sont définis dans la config en V2 ; une API d'administration viendra plus tard.
 
+**Réalisation (phase 5.1a)** (détails : `fonctions.md`, points 33 et 34) : section `tenants` ; **sans elle, seul `default` existe, avec elle la liste est fermée** et un client inconnu est refusé. Surcharges réalisées : `agents`, `tools_deny`, `models`, `approvals`, `secrets`, `variables`, `storage`. La correspondance des modèles porte sur la **définition** du modèle, donc elle vaut partout à la fois, et la config d'un client repasse les contrôles de cohérence. Un agent est monté par client. `TenantRouter` choisit le journal et les artefacts d'un client qui déclare son propre `storage`. Budgets et quotas par client : 5.1b.
+
 ---
 
 # Partie II — Vue technique
@@ -1071,6 +1073,8 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - Secrets lus via `SecretProvider` ; la config ne contient que des noms de variables (`api_key_env`).
 - Chiffrement au repos du journal ; clé par client en option (§11.5).
 
+**Réalisation (phase 5.1a) :** port `SecretProvider` (`secrets(tenant_id) -> Mapping[str, str]` : la table d'un client, telle qu'elle descend aux adaptateurs) et adaptateur `EnvironmentSecrets`, qui résout la redirection `secrets` d'un client sur l'environnement. Ce qu'un client ne redirige pas y est lu tel quel ; une redirection vers une variable absente vaut **vide**, jamais le secret commun. Le client d'une requête REST vient de sa **clé d'API** et de nulle part ailleurs ; en MCP stdio, où il n'y a pas de clé, un serveur sert un client, choisi à son lancement. RLS et chiffrement : J5.3 et J5.5.
+
 ## 17. Configuration
 
 ### 17.1 Principes
@@ -1325,13 +1329,13 @@ telemetry:
 ### 17.8 Clients, sécurité, serveur
 
 ```yaml
-tenants:
+tenants:                              # sans cette section, seul `default` existe (#33)
   - id: dupont-plomberie
-    agents: [relance_devis]
-    tools_deny: []
+    agents: [relance_devis]           # ce qu'il peut lancer ; vide signifie tous
+    tools_deny: []                    # outils retirés, sous le nom que voit le modèle
     models: {M3_MAIN: SONNET}         # correspondance des modèles
-    budgets: {tenant: {max_cost_per_day: 5.0}}
-    quotas: {runs_per_minute: 30}
+    budgets: {tenant: {max_cost_per_day: 5.0}}   # J5.1b
+    quotas: {runs_per_minute: 30}                # J5.1b
     approvals: {envoyer_email: always}
     secrets: {CRM_TOKEN: DUPONT_CRM_TOKEN}
     variables: {entreprise: Dupont Plomberie}
@@ -1352,6 +1356,8 @@ server:
   mcp:  {http: true, allowed_origins: [], file_roots: []}   # file_roots : dossiers lisibles par un lien file://
 ```
 
+**Réalisation (phase 5.1a) :** `tenants` et `security.api_keys[].tenant` sont débloqués ; la liste des clients est **fermée** dès qu'elle existe, et une clé dont le client n'est pas déclaré est refusée au chargement. `storage` d'un client accepte `events` et `artifacts` ; `idempotency` y est refusé en nommant 5.3 (le port n'a le client que sur `reserve`). Contrôles au démarrage ajoutés : client en double, agent ou modèle de remplacement inconnu, modèle qui se remplace lui-même, variable `{{ }}` d'un prompt non définie pour un client, clé d'API sur un client non déclaré. `rate_limit` et `expires` d'une clé attendent 5.2, `budgets`/`quotas` d'un client 5.1b.
+
 ### 17.9 Profils et contrôles
 
 - Profils `dev` et `prod` (M4), dans `profiles:`. Fusion profonde des objets, remplacement des listes, `params` et `llm` remplacés en bloc. Différences décidées : juge corrélé et juge bloquant échantillonné en avertissement (dev) ou en erreur (prod ; avertissements seulement depuis 3.3, jusqu'aux profils) ; stockage non durable pour un agent qui peut se mettre en pause toléré en dev seulement ; `judges="skip"` autorisé en dev seulement.
@@ -1367,7 +1373,8 @@ server:
 - clé métier d'idempotence avec un backend `journal` ou `memory` ;
 - juge bloquant échantillonné ;
 - `scope: tenant` sans secrets pour un client ;
-- serveur MCP référencé mais non déclaré, préfixes MCP en double.
+- serveur MCP référencé mais non déclaré, préfixes MCP en double ;
+- client déclaré deux fois, agent ou modèle de remplacement d'un client inconnu, modèle qui se remplace lui-même, clé d'API sur un client non déclaré, variable `{{ }}` d'un prompt non définie pour un client (5.1a).
 
 ## 18. Accès
 
@@ -1400,6 +1407,7 @@ async with loom:
 - `stream()`, `follow()` et `events()` rendent l'arbre du run : ses événements et ceux de ses sous-runs, dans l'ordre du journal ; `subruns=False` s'en tient au run.
 - `sessions()`, `export_session(session_id)` et `delete_session(session_id)` listent, exportent et suppriment les journaux de session (F7, depuis 4.1a) ; `session(session_id)` en rend la fiche — ses runs, et les approbations qu'il faut trancher pour que la conversation avance (4.5). L'API REST les expose toutes (18.2).
 - `compact(session_id)` résume une session à la demande et `drain()` attend les tâches de fond (depuis 4.1b) ; `aclose()` les attend aussi, dans la limite d'`execution.shutdown_timeout`.
+- **Client (5.1a) :** `run()`, `stream()` et `submit()` prennent `tenant=`, raccourci de `CallerContext(tenant_id=…)` ; toutes les lectures prennent `tenant_id=`. `tenants` liste les clients de l'instance, `tenant(id)` rend ce qu'un client surcharge, et `context(agent, tenant_id)` monte l'agent **pour ce client**. Un agent fermé à un client lève `AgentNotAllowed` ; un client non déclaré, `UnknownTenant`.
 
 ### 18.2 HTTP REST
 
@@ -1431,6 +1439,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - **Rapport de session (3.6) :** `GET /v1/sessions/{id}/report`, la consommation de toute la session (portée `read`, droit sur chaque agent de la session).
 - **Arrière-plan (4.5) :** `background: true` rend 202 et `{run_id, session_id, status}` — le run est inscrit au journal avant la réponse, donc lisible et suivable aussitôt.
 - **Décisions (4.5) :** `approve` et `reject` prennent un `call_id` optionnel (sans lui, tout ce que le run attend est tranché), un motif, et pour un accord des arguments corrigés. L'approbateur inscrit au journal est **l'identifiant de la clé d'API**, qu'un `by` dans le corps remplace : une passerelle nomme ainsi l'humain qui a tranché.
+- **Client (5.1a) :** il vient de la **clé d'API**, et de nulle part ailleurs — rien dans le corps d'une requête ne le change. Toute lecture est donc bornée au client de la clé : la session d'un autre est « introuvable », pas « interdite », puisqu'on n'a aucun moyen d'apprendre qu'elle existe. Un agent publié mais fermé à ce client donne 403, comme pour une clé limitée à certains agents. Sans clé déclarée, l'instance agit pour `default` : si la config nomme ses clients et pas `default`, tout est refusé, et `create_app` le dit au démarrage.
 - **Sessions (4.5) :** la liste est refusée à une clé limitée à certains agents — elle ne dit pas de quels agents sont les runs d'une session, et la filtrer honnêtement demanderait de lire chaque journal. La fiche et l'export vérifient le droit sur chaque agent rencontré ; l'effacement, irréversible et commun à tous les agents de la session, demande `admin`.
 
 ### 18.3 Serveur MCP
@@ -1444,10 +1453,11 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - **Progression :** si le client fournit un `progressToken`, le déroulé du run (appels d'outils, fichiers, sous-agents et leurs appels) lui arrive en notifications de progression.
 - **Résultat (3.6) :** le texte est la réponse ; le résultat structuré est celui de l'API Python (`unverified`, usage, coût, ventilation, verdicts). Une réponse non vérifiée est suivie d'un second texte qui le dit. Un run échoué est un résultat d'erreur (`isError`) dont le texte dit en clair ce qui l'a arrêté (« Échec de l'agent … : … ») ; son type est dans `error_type`. Les juges suivent leur `when` (pas de forçage par MCP).
 - **Rapport (3.6) :** outil `run_report` (`run_id` ou `session_id`) : consommation d'un run et de ses sous-runs, ou d'une session, en texte et en structuré.
+- **Client (5.1a) :** en stdio il n'y a pas de clé, donc rien dans le protocole ne dirait au nom de qui une requête arrive : **un serveur sert un client**, choisi à son lancement (`loom mcp --tenant`, `create_server(loom, tenant=…)`). Tout ce qu'il publie, lance et relit porte ce client-là. Le choix par requête attend le transport HTTP et ses en-têtes (5.2).
 
 ### 18.4 CLI
 
-Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort.
+Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**.
 
 ## 19. Projet
 

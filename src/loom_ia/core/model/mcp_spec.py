@@ -6,8 +6,10 @@ agents. La config ne contient jamais de secret : seulement le nom des
 variables d'environnement qui les portent (``env_from``, ``headers_env``).
 
 Portées : ``shared`` (défaut), une connexion par process partagée par les
-runs ; ``run``, une connexion ouverte et fermée avec chaque run. La portée
-``tenant`` arrive avec le multi-clients (J5.1).
+runs ; ``run``, une connexion ouverte et fermée avec chaque run ;
+``tenant`` (J5.1a), une connexion par client, partagée par ses runs et
+ouverte avec ses secrets à lui — deux artisans ne parlent jamais au même
+CRM sous la même session.
 """
 
 from pathlib import Path
@@ -20,7 +22,7 @@ from loom_ia.core.model.model_spec import CircuitBreaker
 from loom_ia.core.model.tooling import ToolOverrides
 
 type McpTransport = Literal["stdio", "http"]
-type McpScope = Literal["shared", "run"]
+type McpScope = Literal["shared", "run", "tenant"]
 
 # Nom de serveur ou alias : il préfixe les outils (``crm__rechercher``), donc
 # sans ``__`` pour que le préfixe se lise sans ambiguïté.
@@ -28,7 +30,7 @@ MCP_NAME_PATTERN: Final = r"^[A-Za-z0-9-]+(_[A-Za-z0-9-]+)*$"
 # Séparateur entre le préfixe et le nom de l'outil.
 MCP_PREFIX_SEPARATOR: Final = "__"
 
-LATER_SCOPES: Final[dict[str, str]] = {"tenant": "J5.1 (multi-clients)"}
+LATER_SCOPES: Final[dict[str, str]] = {}
 
 
 class McpServerSpec(DomainModel):
@@ -46,6 +48,8 @@ class McpServerSpec(DomainModel):
     # http : point d'accès, et en-têtes lus dans l'environnement {En-tête: VARIABLE}.
     url: str | None = None
     headers_env: dict[str, str] = Field(default_factory=dict)
+    # ``shared`` : une connexion pour tout le process ; ``tenant`` : une par
+    # client (L1, #34) ; ``run`` : une par run.
     scope: McpScope = "shared"
     # Délai d'établissement de la connexion, initialisation comprise.
     connect_timeout: PositiveFloat = 10.0

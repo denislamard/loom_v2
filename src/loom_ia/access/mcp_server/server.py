@@ -70,6 +70,7 @@ from loom_ia.core.model import (
     RunId,
     RunStatus,
     SessionId,
+    TenantId,
     Usage,
     new_run_id,
 )
@@ -209,14 +210,22 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
 }
 
 
-def create_server(loom: Loom, *, name: str = SERVER_NAME) -> Server[object, Any]:
-    """Serveur MCP publiant les agents d'une instance."""
-    server = Server[object, Any](name, version=_package_version(), instructions=_instructions(loom))
-    # Le serveur MCP n'a qu'un client : celui par défaut (les clients viendront en J5).
+def create_server(
+    loom: Loom, *, name: str = SERVER_NAME, tenant: TenantId = DEFAULT_TENANT
+) -> Server[object, Any]:
+    """Serveur MCP publiant les agents d'une instance, au nom d'un client.
+
+    En stdio il n'y a pas de clé d'API, donc rien dans le protocole ne dirait
+    au nom de qui une requête arrive : un serveur sert **un** client, choisi
+    à son lancement (``loom mcp --tenant``). Le choix par requête attend le
+    transport HTTP et ses en-têtes (J5.2).
+    """
+    instructions = _instructions(loom, tenant)
+    server = Server[object, Any](name, version=_package_version(), instructions=instructions)
     reader = AttachmentReader(
         loom.artifacts,
         loom.config.execution.attachments,
-        tenant=DEFAULT_TENANT,
+        tenant=tenant,
         roots=loom.config.server.mcp.file_roots,
     )
 
@@ -229,7 +238,7 @@ def create_server(loom: Loom, *, name: str = SERVER_NAME) -> Server[object, Any]
                 inputSchema=AGENT_INPUT,
                 outputSchema=RUN_OUTPUT,
             )
-            for spec in loom.exposed("mcp")
+            for spec in loom.exposed("mcp", tenant)
         ]
         tools.append(
             types.Tool(
@@ -260,16 +269,16 @@ def create_server(loom: Loom, *, name: str = SERVER_NAME) -> Server[object, Any]
         run_id = RunId(str(run)) if run else None
         try:
             if tool == REPORT_TOOL:
-                return await _report(loom, run_id, session_id)
+                return await _report(loom, run_id, session_id, tenant)
             if tool == STATUS_TOOL:
-                found = await loom.result(RunId(str(run)), session_id=session_id)
+                found = await loom.result(RunId(str(run)), session_id=session_id, tenant_id=tenant)
                 return answer(found, ran=False)
-            _published(loom, tool)
+            _published(loom, tool, tenant)
         except (UnknownAgent, UnknownRun) as exc:
             return _refused(str(exc.args[0]))
         attachments = await reader.read(arguments.get("attachments"))
         message = str(arguments["message"])
-        return answer(await _run(server, loom, tool, message, attachments, session_id))
+        return answer(await _run(server, loom, tool, message, attachments, session_id, tenant))
 
     return server
 
@@ -281,6 +290,7 @@ async def _run(
     message: str,
     attachments: list[Attachment],
     session_id: SessionId | None,
+    tenant: TenantId = DEFAULT_TENANT,
 ) -> RunResult:
     """Fait tourner le run ; suit sa progression et fait trancher, si le client le sait."""
     ctx = server.request_context
@@ -288,7 +298,12 @@ async def _run(
     approver = _elicited(ctx)
     if token is None:
         return await loom.run(
-            agent, message, attachments=attachments, session_id=session_id, approver=approver
+            agent,
+            message,
+            attachments=attachments,
+            session_id=session_id,
+            approver=approver,
+            tenant=tenant,
         )
     run_id = new_run_id()
     progress = Progress()
@@ -300,13 +315,14 @@ async def _run(
         session_id=session_id,
         run_id=run_id,
         approver=approver,
+        tenant=tenant,
     ):
         if isinstance(item, Event) and (line := progress.line(item)) is not None:
             sent += 1
             await ctx.session.send_progress_notification(
                 token, sent, message=line, related_request_id=str(ctx.request_id)
             )
-    return await loom.result(run_id, session_id=session_id)
+    return await loom.result(run_id, session_id=session_id, tenant_id=tenant)
 
 
 def _elicited(ctx: RequestContext[Any, Any, Any]) -> Approver | None:
@@ -356,9 +372,11 @@ def _question(asked: PendingApproval) -> str:
     return "\n".join(lines)
 
 
-async def run_stdio(loom: Loom, *, name: str = SERVER_NAME) -> None:
+async def run_stdio(
+    loom: Loom, *, name: str = SERVER_NAME, tenant: TenantId = DEFAULT_TENANT
+) -> None:
     """Sert l'instance sur l'entrée et la sortie standard, jusqu'à la fin du flux."""
-    server = create_server(loom, name=name)
+    server = create_server(loom, name=name, tenant=tenant)
     async with stdio_server() as (reader, writer):
         await server.run(reader, writer, server.create_initialization_options())
 
@@ -425,12 +443,15 @@ def _awaiting(result: RunResult) -> str:
 
 
 async def _report(
-    loom: Loom, run_id: RunId | None, session_id: SessionId | None
+    loom: Loom,
+    run_id: RunId | None,
+    session_id: SessionId | None,
+    tenant: TenantId = DEFAULT_TENANT,
 ) -> types.CallToolResult:
     """Consommation d'un run ou d'une session : le rapport en texte et en structuré."""
     if run_id is None and session_id is None:
         return _refused("Donner un run_id ou un session_id")
-    report = await loom.report(run_id, session_id=session_id)
+    report = await loom.report(run_id, session_id=session_id, tenant_id=tenant)
     if not report.runs:
         return _refused(f"Session {session_id} inconnue")
     return types.CallToolResult(
@@ -445,13 +466,13 @@ def _refused(message: str) -> types.CallToolResult:
     )
 
 
-def _instructions(loom: Loom) -> str:
-    published = ", ".join(spec.name for spec in loom.exposed("mcp")) or "aucun"
+def _instructions(loom: Loom, tenant: TenantId = DEFAULT_TENANT) -> str:
+    published = ", ".join(spec.name for spec in loom.exposed("mcp", tenant)) or "aucun"
     return f"Agents loom disponibles : {published}."
 
 
-def _published(loom: Loom, name: str) -> None:
-    published = [spec.name for spec in loom.exposed("mcp")]
+def _published(loom: Loom, name: str, tenant: TenantId = DEFAULT_TENANT) -> None:
+    published = [spec.name for spec in loom.exposed("mcp", tenant)]
     if name not in published:
         raise UnknownAgent(name, published)
 

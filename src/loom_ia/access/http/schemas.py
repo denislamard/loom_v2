@@ -6,7 +6,14 @@ from typing import Self
 from pydantic import Field, JsonValue
 
 from loom_ia.agents.spec import AgentSpec
-from loom_ia.core.model import CallerContext, JudgesMode, RunId, RunStatus, SessionId
+from loom_ia.core.model import (
+    CallerContext,
+    JudgesMode,
+    RunId,
+    RunStatus,
+    SessionId,
+    TenantId,
+)
 from loom_ia.core.model.base import DomainModel
 
 
@@ -37,8 +44,11 @@ class RunRequest(DomainModel):
     # Arrière-plan (H5) : la réponse est l'identifiant du run, pas son résultat.
     background: bool = False
 
-    def context(self) -> CallerContext:
-        return CallerContext(user_id=self.user_id, metadata=dict(self.metadata))
+    def context(self, tenant_id: TenantId) -> CallerContext:
+        """Contexte appelant du run ; le client vient de la clé, jamais du corps (#34)."""
+        return CallerContext(
+            tenant_id=tenant_id, user_id=self.user_id, metadata=dict(self.metadata)
+        )
 
 
 class RunAccepted(DomainModel):

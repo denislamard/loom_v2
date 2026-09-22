@@ -109,6 +109,13 @@ class BaseRole(DomainModel):
         return (self.model, *self.fallbacks)
 
 
+def system_text(role: BaseRole) -> str:
+    """Prompt système d'un rôle : texte en ligne, ou fichier relu à chaque montage."""
+    if role.system_file is None:
+        return role.system
+    return role.system_file.read_text(encoding="utf-8")
+
+
 class MainRole(BaseRole):
     """Rôle orchestrateur : le modèle qui mène le run."""
 

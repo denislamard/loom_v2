@@ -38,6 +38,9 @@ logger = logging.getLogger(__name__)
 # Clé de ``_meta`` qui porte la clé d'idempotence d'un appel (§9.5).
 IDEMPOTENCY_META: Final = "loom-ia/idempotency_key"
 
+# Portées dont la connexion vit dans le pool, au-delà d'un run.
+POOLED: Final = frozenset({"shared", "tenant"})
+
 LOST: Final = (
     "Connexion au serveur perdue pendant l'appel : l'outil a peut-être produit son effet. "
     "Il n'a pas été relancé automatiquement ; vérifie avant de le rappeler."
@@ -95,13 +98,18 @@ class McpSource:
         *,
         factory: SessionFactory,
         pool: McpPool | None = None,
+        pool_key: str | None = None,
     ) -> None:
-        if spec.scope == "shared" and pool is None:
-            raise ValueError(f"Serveur MCP {spec.name!r} de portée shared : pool requis")
+        if spec.scope in POOLED and pool is None:
+            raise ValueError(f"Serveur MCP {spec.name!r} de portée {spec.scope} : pool requis")
         self.spec = spec
         self.selection = selection
         self._factory = factory
         self._pool = pool
+        # Clé de pool : le nom du serveur en portée ``shared``, son nom et son
+        # client en portée ``tenant`` (#34) — c'est l'appelant qui la pose,
+        # parce que lui seul sait pour qui il monte l'agent.
+        self.pool_key = pool_key or spec.name
         self._warned = False
 
     @property
@@ -117,17 +125,17 @@ class McpSource:
 
     @asynccontextmanager
     async def open(self, context: SourceContext) -> AsyncGenerator[Sequence[Tool]]:
-        shared = self._pool is not None and self.spec.scope == "shared"
+        pooled = self._pool is not None and self.spec.scope in POOLED
         server = (
-            self._pool.server(self.spec)
-            if self._pool is not None and shared
+            self._pool.server(self.spec, self.pool_key, self._factory)
+            if self._pool is not None and pooled
             else McpServer(self.spec, self._factory)
         )
         try:
             listed = await server.tools()
             yield self.select(server, listed)
         finally:
-            if not shared:
+            if not pooled:
                 await server.aclose()
 
     def select(self, server: McpServer, listed: Sequence[types.Tool]) -> list[Tool]:

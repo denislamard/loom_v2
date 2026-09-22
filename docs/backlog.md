@@ -286,3 +286,25 @@ L'orchestrateur (MiniMax-M3) a chaque fois vu la réponse inutilisable et refait
 **À trancher :** faut-il un contrôle symétrique, ou le prompt et le juge suffisent-ils ?
 
 **Statut :** à traiter plus tard.
+
+## #019 — Une empreinte de requête peut être commune à deux clients
+
+**Origine :** phase 5.1a, run réel du 22/09 (`clients.py --reel`).
+
+**Constat :** `request_hash` est calculé sur ce qui part au modèle — prompt système, outils, messages. Le `tenant_id` n'y entre pas. Au run réel, l'empreinte `e3118b30b02e` apparaît quatre fois, chez **les deux clients** : le cas « devis de l'autre » fait envoyer à `martin-chauffage` la phrase exacte de `dupont-plomberie`, et `relance.md` ne porte aucune variable — mêmes octets, donc même empreinte. Conséquence mesurée au passage : le cache de prompt du fournisseur étant lui aussi indexé par le contenu, la même entrée est alimentée et lue par les deux clients (les trois premières requêtes identiques ne lisent que 128 tokens de cache, la quatrième en lit 911).
+
+**Pourquoi ce n'est pas une fuite :** ces octets ne contiennent rien d'un client ni de l'autre — prompt système commun, définitions d'outils communes, et une demande qui se trouve être la même phrase. Les empreintes **divergent dès que la donnée d'un client entre dans la requête** : le second appel de l'orchestrateur, qui porte le devis, n'est jamais commun aux deux. Et le prompt d'un rôle qui cite `{{ entreprise }}` a, par construction, un préfixe propre à chaque client.
+
+**Ce que ça touche :** le rejeu (K6, #31, J6.2) s'appuiera sur `request_hash` pour rejouer à l'identique et détecter une divergence. Une empreinte qui ne désigne pas un client oblige le rejeu à apparier sur le `tenant_id` de l'événement en plus de l'empreinte — ce qu'il a sous la main, mais qu'il faut avoir décidé avant de l'écrire.
+
+**Pistes :**
+
+| Piste | Effet | Coût |
+|---|---|---|
+| Ne rien changer | L'empreinte décrit ce qui est parti au modèle, et deux requêtes identiques n'en ont qu'une ; le client reste porté par chaque événement | Le rejeu doit apparier sur `(tenant_id, request_hash)`, jamais sur l'empreinte seule |
+| Faire entrer `tenant_id` dans l'empreinte | Une empreinte désigne un client ; l'appariement du rejeu tient en une clé | L'empreinte ne décrit plus les octets envoyés — deux requêtes identiques en auraient deux —, et les empreintes des journaux antérieurs changent de sens |
+| Porter le client dans un champ de `model.responded` | Explicite, sans toucher au calcul | Redondant : le `tenant_id` est déjà sur l'enveloppe de l'événement |
+
+**À trancher :** faut-il que `request_hash` désigne un client, ou l'appariement du rejeu se fait-il sur `(tenant_id, request_hash)` ? Mon avis : la seconde — l'empreinte doit rester la description de ce qui est parti au modèle.
+
+**Statut :** à trancher avant J6.2 (rejeu).

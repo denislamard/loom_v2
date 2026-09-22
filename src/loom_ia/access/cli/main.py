@@ -28,6 +28,7 @@ from typing import Final, cast
 from pydantic import JsonValue
 
 from loom_ia.access.api import (
+    AgentNotAllowed,
     Loom,
     RunResult,
     SessionDeletion,
@@ -38,6 +39,7 @@ from loom_ia.access.api import (
 )
 from loom_ia.access.progress import Progress, notes
 from loom_ia.agents.registry import UnknownAgent
+from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, config_json_schema, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.core.events import Event
@@ -49,12 +51,14 @@ from loom_ia.core.model import (
     RunId,
     SessionId,
     StreamReset,
+    TenantId,
     TextDelta,
     new_run_id,
 )
 from loom_ia.core.ports import Policy, SessionRecord, SourceContext, Tool
 from loom_ia.engine import ToolExecutor
 from loom_ia.runtime import apply_logging, load_registry
+from loom_ia.tenancy import Tenant, UnknownTenant
 from loom_ia.usage import UsageReport
 from loom_ia.usage import render as render_report
 
@@ -76,7 +80,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as error:
         print(f"Configuration : {error}", file=sys.stderr)
         return REFUSED
-    except (UnknownAgent, UnknownApproval, UnknownRun) as error:
+    except (UnknownAgent, UnknownApproval, UnknownRun, UnknownTenant) as error:
+        print(_message(error), file=sys.stderr)
+        return REFUSED
+    except AgentNotAllowed as error:
         print(_message(error), file=sys.stderr)
         return REFUSED
     except ValueError as error:
@@ -97,10 +104,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
+    def tenanted(command: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        """Ajoute ``--tenant`` : au nom de quel client la commande agit (L1)."""
+        command.add_argument(
+            "--tenant",
+            type=str,
+            default=None,
+            help="client au nom duquel agir (défaut : celui de la config, sinon 'default')",
+        )
+        return command
+
     validate = commands.add_parser("validate", help="vérifie la config et monte les agents")
     validate.set_defaults(handler=cmd_validate)
 
-    run = commands.add_parser("run", help="lance un run et attend sa fin")
+    run = tenanted(commands.add_parser("run", help="lance un run et attend sa fin"))
     run.add_argument("agent")
     run.add_argument("message")
     run.add_argument("--stream", action="store_true", help="affiche la réponse au fil de l'eau")
@@ -123,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.set_defaults(handler=cmd_run)
 
-    resume = commands.add_parser("resume", help="reprend un run interrompu")
+    resume = tenanted(commands.add_parser("resume", help="reprend un run interrompu"))
     resume.add_argument("run_id")
     resume.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
     resume.add_argument("--session", type=str, default=None, help="journal du run")
@@ -133,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("approve", "autorise un appel que le run attend"),
         ("reject", "refuse un appel que le run attend"),
     ):
-        decision = commands.add_parser(verbe, help=aide)
+        decision = tenanted(commands.add_parser(verbe, help=aide))
         decision.add_argument("run_id")
         decision.add_argument(
             "--call",
@@ -172,7 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=None)
     serve.set_defaults(handler=cmd_serve)
 
-    mcp = commands.add_parser("mcp", help="sert les agents en MCP, sur stdio")
+    mcp = tenanted(commands.add_parser("mcp", help="sert les agents en MCP, sur stdio"))
     mcp.set_defaults(handler=cmd_mcp)
 
     keys = commands.add_parser("keys", help="clés d'API de l'accès REST")
@@ -268,35 +285,75 @@ async def _validate(args: argparse.Namespace) -> int:
     cles = f"{magasin.backend} ({magasin.path})" if magasin.path else magasin.backend
     print(f"Idempotence: {cles}")
     print(f"Clés d'API : {keys or 'aucune (API REST ouverte)'}")
+    if config.tenants:
+        print(f"Clients    : {_listed(tenant.id for tenant in config.tenants)}")
 
+    mounted = 0
     async with Loom(config, registry=registry) as loom:
-        for spec in config.agents:
-            context = loom.context(spec.name)
-            roles = "".join(f", rôle {role.name} ({_chain(role.chain)})" for role in spec.roles)
-            subagents = "".join(
-                f", sous-agent {ref.tool_name} ({ref.agent})" for ref in spec.subagents
-            )
-            delay = f", délai {spec.timeout:g} s" if spec.timeout is not None else ""
-            print(
-                f"  {spec.name} : modèle {_chain(spec.main.chain)}, "
-                f"{len(spec.python_tools)} outil(s) Python{roles}{subagents}{delay}"
-            )
-            for bound in context.policies.bound:
-                print(f"    politique {bound.name} : {', '.join(sorted(bound.points))}")
-            budgets = config.budget_of(spec.name)
-            if budgets.limited:
-                print(f"    budget : {_budget_line(budgets)}")
-            for name, role, judge in spec.judges:
-                target = f"rôle {role.name}" if role is not None else "réponse finale"
-                sample = f", sample {judge.when.sample:g}" if judge.when.sample < 1 else ""
-                print(
-                    f"    juge {name} ({target}) : modèle {_chain(judge.chain)}, "
-                    f"{len(judge.criteria)} critère(s){sample}"
-                )
-
-            await _show_sources(spec.name, context.tools)
-    print(f"\n{len(config.agents)} agent(s) monté(s) sans erreur.")
+        for tenant_id in config.tenant_ids:
+            tenant = loom.tenant(tenant_id)
+            if config.tenants:
+                print(f"\n  client {tenant_id}")
+                for line in _tenant_lines(tenant):
+                    print(f"    {line}")
+            for spec in config.agents:
+                if not tenant.allows(spec.name):
+                    continue
+                mounted += 1
+                await _show_agent(loom, tenant_id, spec, indent="  " if config.tenants else "")
+    print(f"\n{mounted} agent(s) monté(s) sans erreur.")
     return OK
+
+
+def _tenant_lines(tenant: Tenant) -> list[str]:
+    """Ce qu'un client surcharge, en quelques lignes lisibles (L1, #34)."""
+    spec = tenant.spec
+    if spec is None:
+        return []
+    lines: list[str] = []
+    if spec.agents:
+        lines.append(f"agents : {_listed(spec.agents)}")
+    if spec.models:
+        lines.append(f"modèles : {', '.join(f'{a} → {b}' for a, b in spec.models.items())}")
+    if spec.secrets:
+        lines.append(f"secrets : {', '.join(f'{a} → {b}' for a, b in spec.secrets.items())}")
+    if spec.tools_deny:
+        lines.append(f"outils retirés : {_listed(spec.tools_deny)}")
+    if spec.approvals:
+        lines.append(f"approbations : {', '.join(f'{a} : {b}' for a, b in spec.approvals.items())}")
+    if spec.variables:
+        lines.append(f"variables : {_listed(spec.variables)}")
+    if spec.storage is not None:
+        events = spec.storage.events
+        where = f" ({events.path})" if events.path else ""
+        lines.append(f"stockage : {events.backend}{where}")
+    return lines or ["rien de surchargé"]
+
+
+async def _show_agent(loom: Loom, tenant_id: TenantId, spec: AgentSpec, *, indent: str) -> None:
+    """Une fiche d'agent, montée pour un client."""
+    config = loom.config
+    context = loom.context(spec.name, tenant_id)
+    roles = "".join(f", rôle {role.name} ({_chain(role.chain)})" for role in spec.roles)
+    subagents = "".join(f", sous-agent {ref.tool_name} ({ref.agent})" for ref in spec.subagents)
+    delay = f", délai {spec.timeout:g} s" if spec.timeout is not None else ""
+    print(
+        f"{indent}  {spec.name} : modèle {_chain(spec.main.chain)}, "
+        f"{len(spec.python_tools)} outil(s) Python{roles}{subagents}{delay}"
+    )
+    for bound in context.policies.bound:
+        print(f"{indent}    politique {bound.name} : {', '.join(sorted(bound.points))}")
+    budgets = config.budget_of(spec.name)
+    if budgets.limited:
+        print(f"{indent}    budget : {_budget_line(budgets)}")
+    for name, role, judge in spec.judges:
+        target = f"rôle {role.name}" if role is not None else "réponse finale"
+        sample = f", sample {judge.when.sample:g}" if judge.when.sample < 1 else ""
+        print(
+            f"{indent}    juge {name} ({target}) : modèle {_chain(judge.chain)}, "
+            f"{len(judge.criteria)} critère(s){sample}"
+        )
+    await _show_sources(spec.name, context.tools)
 
 
 def _chain(models: tuple[str, ...]) -> str:
@@ -308,6 +365,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     apply_logging(config)
     session = SessionId(args.session) if args.session else None
+    tenant = _tenant(args)
     run_id = RunId(args.run_id) if args.run_id else new_run_id()
     paths: list[Path] = args.attach or []
     try:
@@ -327,15 +385,16 @@ def cmd_run(args: argparse.Namespace) -> int:
                     session_id=session,
                     run_id=run_id,
                     judges=args.judges,
+                    tenant=tenant,
                 ):
                     live.show(item)
                 print()
-                state = await loom.state(run_id, session_id=session)
-                live = loom.context(args.agent).stream_output == "live"
+                state = await loom.state(run_id, session_id=session, tenant_id=tenant)
+                live = loom.context(args.agent, tenant).stream_output == "live"
                 if live and state.replaced_output is not None and state.output is not None:
                     # Réponse remplacée par une politique après sa diffusion.
                     print(f"[Réponse retenue]\n{state.output.text}")
-                return await loom.result(run_id, session_id=session)
+                return await loom.result(run_id, session_id=session, tenant_id=tenant)
             return await loom.run(
                 args.agent,
                 args.message,
@@ -343,6 +402,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 session_id=session,
                 run_id=run_id,
                 judges=args.judges,
+                tenant=tenant,
             )
 
     return _report(asyncio.run(go()), as_json=args.json, quiet=args.stream)
@@ -355,7 +415,9 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
     async def go() -> RunResult:
         async with Loom(config) as loom:
-            return await loom.resume(RunId(args.run_id), session_id=session)
+            return await loom.resume(
+                RunId(args.run_id), session_id=session, tenant_id=_tenant(args)
+            )
 
     return _report(asyncio.run(go()), as_json=args.json)
 
@@ -372,6 +434,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
     apply_logging(config)
     run_id = RunId(args.run_id)
     session = SessionId(args.session) if args.session else None
+    tenant = _tenant(args)
     arguments = getattr(args, "arguments", None)
     if arguments is not None and args.call is None:
         print("--arguments corrige un appel désigné : ajouter --call.", file=sys.stderr)
@@ -390,6 +453,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
                     reason=args.reason,
                     arguments=corrected,
                     session_id=session,
+                    tenant_id=tenant,
                 )
             else:
                 calls = await loom.reject(
@@ -398,12 +462,13 @@ def cmd_decide(args: argparse.Namespace) -> int:
                     by=args.by,
                     reason=args.reason,
                     session_id=session,
+                    tenant_id=tenant,
                 )
             if not calls or args.no_wait:
                 return calls, None
             # Le travail de reprise est en file ici : on l'attend.
             await loom.drain()
-            return calls, await loom.result(run_id, session_id=session)
+            return calls, await loom.result(run_id, session_id=session, tenant_id=tenant)
 
     calls, result = asyncio.run(go())
     if not calls:
@@ -440,7 +505,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
     async def go() -> UsageReport:
         async with Loom(config) as loom:
-            return await loom.report(run_id, session_id=session)
+            return await loom.report(run_id, session_id=session, tenant_id=_tenant(args))
 
     try:
         report = asyncio.run(go())
@@ -460,7 +525,7 @@ def cmd_sessions_list(args: argparse.Namespace) -> int:
 
     async def go() -> list[SessionRecord]:
         async with Loom(config) as loom:
-            return await loom.sessions()
+            return await loom.sessions(tenant_id=_tenant(args))
 
     records = asyncio.run(go())
     if args.json:
@@ -484,7 +549,7 @@ def cmd_sessions_export(args: argparse.Namespace) -> int:
 
     async def go() -> list[Event]:
         async with Loom(config) as loom:
-            return await loom.export_session(session)
+            return await loom.export_session(session, tenant_id=_tenant(args))
 
     try:
         events = asyncio.run(go())
@@ -515,7 +580,7 @@ def cmd_sessions_delete(args: argparse.Namespace) -> int:
 
     async def go() -> SessionDeletion:
         async with Loom(config) as loom:
-            return await loom.delete_session(session)
+            return await loom.delete_session(session, tenant_id=_tenant(args))
 
     removed = asyncio.run(go())
     if not removed.events and not removed.artifacts and not removed.keys:
@@ -557,7 +622,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     async def go() -> None:
         # Rien ne doit aller sur stdout : le protocole y passe.
         async with Loom(config) as loom:
-            await run_stdio(loom)
+            await run_stdio(loom, tenant=_tenant(args) or DEFAULT_TENANT)
 
     asyncio.run(go())
     return OK
@@ -620,6 +685,12 @@ class _Live:
             print(file=sys.stdout, flush=True)
             self._open = False
         print(line, file=sys.stderr)
+
+
+def _tenant(args: argparse.Namespace) -> TenantId | None:
+    """Client demandé par ``--tenant`` ; ``None`` laisse la config décider (#33)."""
+    given = getattr(args, "tenant", None)
+    return TenantId(given) if given else None
 
 
 def _budget_line(budgets: Budgets) -> str:

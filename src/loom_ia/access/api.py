@@ -33,6 +33,13 @@ Disjoncteurs (#10) : ceux des modèles et des serveurs MCP sont communs à
 tous les runs de l'instance. Un modèle écarté après ses échecs l'est pour
 tous ses agents, qui passent directement à leur secours.
 
+Clients (L1, #33) : un run appartient toujours à un client — ``default``
+en mode librairie, où il ne surcharge rien. ``tenant=`` le nomme sur
+``run``, ``stream`` et ``submit``, et il se relit ensuite sur chaque
+opération qui vise un run ou une session. Les agents sont montés **par
+client** : deux clients du même agent n'ont ni les mêmes modèles, ni les
+mêmes secrets, ni les mêmes connexions MCP.
+
 Résultat (J3) : ``RunResult`` dit, en plus de la réponse, si elle a été
 gardée sans respecter son contrat ou son juge (``unverified``), la
 consommation ventilée du run et de ses sous-runs (``report`` : par run, par
@@ -47,6 +54,7 @@ from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Self
 
@@ -98,6 +106,7 @@ from loom_ia.core.ports import (
     EventStore,
     Job,
     JobKind,
+    SecretProvider,
     SessionRecord,
 )
 from loom_ia.core.projections import RunTree, fold
@@ -122,6 +131,13 @@ from loom_ia.runtime import (
     load_registry,
 )
 from loom_ia.sessions import CompactionJob, CompactionPlan, write_snapshot
+from loom_ia.tenancy import (
+    RoutedArtifactStore,
+    RoutedEventStore,
+    Tenant,
+    TenantRouter,
+    Tenants,
+)
 from loom_ia.usage import UsageReport, usage_report
 
 logger = logging.getLogger(__name__)
@@ -133,6 +149,15 @@ type StreamItem = Event | ModelChunk
 def is_final(event: Event) -> bool:
     """Vrai sur l'événement qui clôt un run."""
     return isinstance(event.payload, RunCompleted | RunFailed)
+
+
+class AgentNotAllowed(PermissionError):
+    """Cet agent n'est pas ouvert à ce client (L1)."""
+
+    def __init__(self, agent: str, tenant_id: TenantId) -> None:
+        super().__init__(f"Agent {agent!r} non ouvert au client {tenant_id!r}")
+        self.agent = agent
+        self.tenant_id = tenant_id
 
 
 class UnknownRun(KeyError):
@@ -402,24 +427,47 @@ class Loom:
         environ: Mapping[str, str] | None = None,
         artifacts: ArtifactStore | None = None,
         breakers: CircuitBreakers | None = None,
+        secrets: SecretProvider | None = None,
     ) -> None:
         self._config = config
         self._registry = registry if registry is not None else load_registry(config)
         self._agents = AgentRegistry.from_config(config)
-        inner = store if store is not None else create_event_store(config)
-        self._store = (
-            inner if isinstance(inner, NotifyingEventStore) else NotifyingEventStore(inner)
-        )
+        # Clients (L1) : résolus ici, pour qu'une surcharge incohérente soit
+        # une erreur de démarrage et non une erreur au premier run du client.
+        self._tenants = Tenants(config, environ=environ, secrets=secrets)
+        shared = store if store is not None else create_event_store(config)
+        self._shared_store = shared
         # Un journal fourni par l'appelant reste à lui de fermer.
         self._owns_store = store is None
         # Stockage des fichiers, commun aux agents ; même règle de fermeture.
-        self._artifacts = artifacts if artifacts is not None else create_artifact_store(config)
+        self._shared_artifacts = (
+            artifacts if artifacts is not None else create_artifact_store(config)
+        )
         self._owns_artifacts = artifacts is None
+        # Isolation physique (#34) : un client qui déclare son propre stockage
+        # a le sien, les autres partagent celui de la racine. Le routeur est
+        # un journal comme un autre : le reste de l'instance ne le voit pas.
+        self._router = TenantRouter(
+            self._tenants,
+            events=create_event_store,
+            artifacts=create_artifact_store,
+            shared_events=shared,
+            shared_artifacts=self._shared_artifacts,
+        )
+        inner: EventStore = RoutedEventStore(self._router) if self._router.routed else shared
+        self._artifacts: ArtifactStore = (
+            RoutedArtifactStore(self._router) if self._router.routed else self._shared_artifacts
+        )
+        self._store = (
+            inner if isinstance(inner, NotifyingEventStore) else NotifyingEventStore(inner)
+        )
         # Magasin d'idempotence partagé par les agents de l'instance (#49) ;
         # ``None`` quand chaque run se sert de son journal.
         self._idempotency = create_idempotency_store(config)
         self._environ = environ
-        self._built: dict[str, Agent] = {}
+        # Un agent monté par client : ses modèles, ses secrets et ses
+        # connexions MCP ne sont pas ceux du voisin.
+        self._built: dict[tuple[str, TenantId], Agent] = {}
         # Connexions MCP de portée shared, communes à tous les agents.
         self._mcp = create_mcp_pool(config, environ)
         # Disjoncteurs des modèles et des serveurs MCP, communs à tous les runs.
@@ -500,9 +548,15 @@ class Loom:
     def names(self) -> tuple[str, ...]:
         return self._agents.names
 
-    def exposed(self, access: str) -> tuple[AgentSpec, ...]:
-        """Agents publiés par un point d'accès (``rest`` ou ``mcp``)."""
-        return self._agents.exposed("rest" if access == "rest" else "mcp")
+    def exposed(self, access: str, tenant_id: TenantId | None = None) -> tuple[AgentSpec, ...]:
+        """Agents publiés par un point d'accès (``rest`` ou ``mcp``), pour un client."""
+        published = self._agents.exposed("rest" if access == "rest" else "mcp")
+        if tenant_id is None:
+            # Personne n'est nommé : rien à filtrer, et surtout pas au nom
+            # d'un client par défaut qui n'existe peut-être pas.
+            return published
+        allowed = self._tenants.get(tenant_id)
+        return tuple(spec for spec in published if allowed.allows(spec.name))
 
     def register(self, name: str, obj: object) -> None:
         """Rend un objet Python référençable par son nom dans la config.
@@ -513,6 +567,32 @@ class Loom:
         self._registry.add(name, obj, source="register()")
 
     # --- Faire tourner un agent ----------------------------------------------
+
+    @property
+    def tenants(self) -> tuple[TenantId, ...]:
+        """Clients de l'instance ; ``default`` seul quand la config n'en nomme aucun."""
+        return self._tenants.ids
+
+    def tenant(self, tenant_id: TenantId | None = None) -> Tenant:
+        """Un client et ses surcharges ; lève ``UnknownTenant`` s'il n'est pas déclaré."""
+        return self._tenants.get(tenant_id)
+
+    def _for(
+        self, agent: str, context: CallerContext | None, tenant: TenantId | None
+    ) -> tuple[CallerContext, Tenant]:
+        """Contexte appelant et client d'un lancement, l'agent vérifié ouvert à lui."""
+        caller = context or CallerContext()
+        if tenant is not None and tenant != caller.tenant_id:
+            if context is not None and "tenant_id" in context.model_fields_set:
+                raise ValueError(
+                    f"Client contradictoire : tenant={tenant!r} et "
+                    f"context.tenant_id={caller.tenant_id!r}"
+                )
+            caller = caller.model_copy(update={"tenant_id": tenant})
+        found = self._tenants.get(caller.tenant_id)
+        if not found.allows(agent):
+            raise AgentNotAllowed(agent, found.id)
+        return caller, found
 
     async def run(
         self,
@@ -526,6 +606,7 @@ class Loom:
         on_chunk: ChunkCallback | None = None,
         judges: JudgesMode = "auto",
         approver: Approver | None = None,
+        tenant: TenantId | None = None,
     ) -> RunResult:
         """Fait tourner un run jusqu'au bout et renvoie ce qu'il a produit.
 
@@ -539,8 +620,9 @@ class Loom:
         Sans lui, l'approbation est asynchrone : le run s'arrête en ``PAUSED``
         et ``approve()`` le reprend.
         """
-        ctx = self.context(agent, on_chunk=on_chunk, approver=approver)
-        state = await self._start(ctx, message, attachments, session_id, context, run_id, judges)
+        caller, who = self._for(agent, context, tenant)
+        ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
+        state = await self._start(ctx, message, attachments, session_id, caller, run_id, judges)
         return await self._result(state)
 
     async def stream(
@@ -555,6 +637,7 @@ class Loom:
         subruns: bool = True,
         judges: JudgesMode = "auto",
         approver: Approver | None = None,
+        tenant: TenantId | None = None,
     ) -> AsyncGenerator[StreamItem]:
         """Événements du journal et morceaux du modèle, dans l'ordre d'arrivée.
 
@@ -569,12 +652,13 @@ class Loom:
         async def on_chunk(chunk: ModelChunk) -> None:
             items.put_nowait(chunk)
 
-        ctx = self.context(agent, on_chunk=on_chunk, approver=approver)
+        caller, who = self._for(agent, context, tenant)
+        ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
         tree = RunTree(run_id, subruns=subruns)
         # Écoute posée avant le démarrage : l'arbre se reconnaît dans l'ordre d'écriture.
         with self._store.listen(items.put_nowait, accept=tree.admit):
             task = asyncio.create_task(
-                self._start(ctx, message, attachments, session_id, context, run_id, judges)
+                self._start(ctx, message, attachments, session_id, caller, run_id, judges)
             )
             task.add_done_callback(lambda _: items.put_nowait(None))
             try:
@@ -598,26 +682,31 @@ class Loom:
     ) -> RunResult:
         """Reprend un run interrompu, là où son journal s'est arrêté."""
         state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
-        ctx = self.context(state.agent, on_chunk=on_chunk)
+        ctx = self.context(state.agent, state.context.tenant_id, on_chunk=on_chunk)
         writer = await self._writer(state.context.tenant_id, state.session_id)
         return await self._result(await self._piloted(ctx, state, writer))
 
     def context(
         self,
         agent: str,
+        tenant_id: TenantId | None = None,
         *,
         on_chunk: ChunkCallback | None = None,
         approver: Approver | None = None,
     ) -> RunContext:
-        """Contexte d'exécution d'un agent, monté au premier appel.
+        """Contexte d'exécution d'un agent pour un client, monté au premier appel.
 
         Le client de modèle et les outils sont gardés d'un run à l'autre ; le
-        contexte est gelé, ``on_chunk`` en donne donc une copie.
+        contexte est gelé, ``on_chunk`` en donne donc une copie. Le montage a
+        lieu **par client** (L1) : la configuration qu'il voit, ses secrets,
+        ses outils et ses connexions MCP lui appartiennent.
         """
-        built = self._built.get(agent)
+        tenant = self._tenants.get(tenant_id)
+        key = (agent, tenant.id)
+        built = self._built.get(key)
         if built is None:
             built = build_agent(
-                self._config,
+                tenant.config,
                 agent,
                 self._store,
                 registry=self._registry,
@@ -625,10 +714,11 @@ class Loom:
                 mcp_pool=self._mcp,
                 artifacts=self._artifacts,
                 idempotency=self._idempotency,
-                agents=self.context,
+                agents=partial(self.context, tenant_id=tenant.id),
                 breakers=self._breakers,
+                tenant=tenant,
             )
-            self._built[agent] = built
+            self._built[key] = built
         # La concession appartient à l'instance, pas à la config de l'agent.
         context = replace(
             built.context, worker_id=self._worker_id, lease=self._config.execution.lease
@@ -837,10 +927,13 @@ class Loom:
             await self._mcp.aclose()
         self._built.clear()
         self._writers.clear()
+        # Les stockages créés pour un client appartiennent au routeur, quoi
+        # qu'il advienne de celui de la racine.
+        await self._router.aclose()
         if self._owns_store:
-            await self._store.aclose()
+            await self._shared_store.aclose()
         if self._owns_artifacts:
-            await self._artifacts.aclose()
+            await self._shared_artifacts.aclose()
         closing = getattr(self._idempotency, "aclose", None)
         if closing is not None:
             await closing()
@@ -1029,6 +1122,7 @@ class Loom:
         context: CallerContext | None = None,
         run_id: RunId | None = None,
         judges: JudgesMode = "auto",
+        tenant: TenantId | None = None,
     ) -> RunId:
         """Ouvre un run et met son pilotage en file ; rend son identifiant (H5).
 
@@ -1039,24 +1133,24 @@ class Loom:
 
         Une pièce jointe refusée lève ``AttachmentError`` avant l'ouverture.
         """
-        ctx = self.context(agent)
-        tenant = (context or CallerContext()).tenant_id
+        caller, who = self._for(agent, context, tenant)
+        ctx = self.context(agent, who.id)
         if self._compaction is not None and session_id is not None:
-            await self._compaction.ensure_fits(tenant, session_id)
+            await self._compaction.ensure_fits(who.id, session_id)
         state = await begin_run(
             ctx,
             message,
             attachments=attachments,
             session_id=session_id,
-            context=context,
+            context=caller,
             run_id=run_id,
             judges=judges,
-            writer=await self._writer(tenant, session_id),
+            writer=await self._writer(who.id, session_id),
         )
         await self._queue.submit(
             Job(
                 kind="run",
-                tenant_id=tenant,
+                tenant_id=who.id,
                 session_id=state.session_id,
                 run_id=state.run_id,
             ),
@@ -1112,13 +1206,13 @@ class Loom:
         """Pilote un run mis en file : soumission (H5) ou reprise (H3)."""
         assert job.run_id is not None, "un travail `run` désigne toujours un run"
         try:
-            state = await self.state(job.run_id, session_id=job.session_id)
+            state = await self.state(job.run_id, session_id=job.session_id, tenant_id=job.tenant_id)
         except UnknownRun:
             logger.warning("Travail `run` : run %s introuvable", job.run_id)
             return
         if state.finished:
             return
-        ctx = self.context(state.agent)
+        ctx = self.context(state.agent, state.context.tenant_id)
         writer = await self._writer(state.context.tenant_id, state.session_id)
         try:
             final = await self._piloted(ctx, state, writer)

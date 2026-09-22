@@ -2,9 +2,9 @@
 """Vie d'une session : historique matérialisé, compaction, nettoyage (F1 à F5, F7)."""
 
 from loom_ia.sessions.compaction import (
-    AgentResolver,
     CompactionJob,
     CompactionPlan,
+    SummaryResolver,
     cut,
     oversized,
     run_starts,
@@ -22,9 +22,9 @@ from loom_ia.sessions.snapshot import (
 
 __all__ = [
     "CHARS_PER_TOKEN",
-    "AgentResolver",
     "CompactionJob",
     "CompactionPlan",
+    "SummaryResolver",
     "boundary",
     "cut",
     "due",

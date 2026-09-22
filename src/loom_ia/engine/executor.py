@@ -72,6 +72,7 @@ from loom_ia.core.model import (
     CONTINUE,
     INVALID_JSON_KEY,
     AfterTool,
+    Approval,
     ApprovalDecision,
     ApprovalSettings,
     Approver,
@@ -263,10 +264,19 @@ class ToolExecutor:
         circuits: Mapping[str, CircuitBreaker | None] | None = None,
         approval: ApprovalSettings | None = None,
         idempotency: IdempotencyStore | None = None,
+        denied: Iterable[str] = (),
+        imposed: Mapping[str, Approval] | None = None,
     ) -> None:
         self.default_timeout = default_timeout
         # Délai, effet d'une expiration et droit exigé (#17).
         self.approval = approval or ApprovalSettings()
+        # Outils retirés, et approbations imposées quoi qu'en dise leur
+        # déclaration : posés par l'appelant sous le nom que voit le modèle,
+        # donc préfixe compris pour un outil MCP. C'est ici qu'ils s'appliquent,
+        # parce que les outils d'une source n'existent qu'une fois la connexion
+        # ouverte — le moteur n'a pas à savoir d'où vient la consigne.
+        self.denied = frozenset(denied)
+        self.imposed: dict[str, Approval] = dict(imposed or {})
         # Magasin partagé (#49) ; sans lui, chaque appel reçoit le magasin
         # adossé au journal de son run.
         self.idempotency = idempotency
@@ -381,6 +391,8 @@ class ToolExecutor:
             circuits=self.circuits,
             approval=self.approval,
             idempotency=self.idempotency,
+            denied=self.denied,
+            imposed=self.imposed,
         )
         copy._tools = dict(self._tools)
         copy._validators = dict(self._validators)
@@ -388,6 +400,9 @@ class ToolExecutor:
 
     def add(self, tool: AnyTool) -> None:
         spec = tool.spec
+        if spec.name in self.denied:
+            logger.debug("Outil %s retiré : il n'est pas ouvert à cet appelant", spec.name)
+            return
         if spec.name in self._tools:
             raise ValueError(f"Outil {spec.name!r} déjà déclaré")
         cls = validator_for(spec.input_schema, default=Draft202012Validator)
@@ -397,6 +412,11 @@ class ToolExecutor:
 
     def get(self, name: str) -> AnyTool | None:
         return self._tools.get(name)
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        """Noms des outils déclarés, dans l'ordre où ils ont été ajoutés."""
+        return tuple(self._tools)
 
     def shows_refs(self, run: RunView) -> bool:
         """Vrai si les références ``$ref`` sont montrées : un rôle ou un sous-agent est proposé.
@@ -535,7 +555,9 @@ class ToolExecutor:
             # Un `approval: always` ne se lève pas : seule la config admin le
             # peut, et une politique qui dit `Continue` ne l'a pas levé (#17).
             asked = (
-                (UNKNOWN_STATE, None) if unknown else _asks_approval(prepared.tool.spec, verdict)
+                (UNKNOWN_STATE, None)
+                if unknown
+                else _asks_approval(prepared.tool.spec, verdict, self.imposed)
             )
             if asked is None:
                 ready.append(prepared)
@@ -1023,15 +1045,19 @@ async def _delegated(
     return output, consumption, exchange
 
 
-def _asks_approval(spec: ToolSpec, verdict: Verdict) -> tuple[str, str | None] | None:
+def _asks_approval(
+    spec: ToolSpec, verdict: Verdict, imposed: Mapping[str, Approval] | None = None
+) -> tuple[str, str | None] | None:
     """Motif et politique de l'approbation à demander, ou None s'il n'y en a pas.
 
-    Deux sources : la déclaration de l'outil (``approval: always``), que rien
-    ne lève — une politique qui rend ``Continue`` ne l'a pas levée —, et une
-    politique ``before_tool`` qui rend ``Pause``, laquelle peut en exiger une
-    sur n'importe quel outil.
+    Trois sources : la déclaration de l'outil (``approval: always``), que rien
+    ne lève — une politique qui rend ``Continue`` ne l'a pas levée —, une
+    consigne de l'appelant qui la remplace (``imposed``), et une politique
+    ``before_tool`` qui rend ``Pause``, laquelle peut en exiger une sur
+    n'importe quel outil.
     """
-    if spec.approval == "always":
+    approval = (imposed or {}).get(spec.name, spec.approval)
+    if approval == "always":
         return f"outil déclaré à approbation obligatoire (effets : {spec.side_effects})", None
     if isinstance(verdict.decision, Pause):
         return verdict.decision.reason, verdict.by

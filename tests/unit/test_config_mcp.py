@@ -140,10 +140,6 @@ def test_servers_and_references_are_loaded(tmp_path: Path) -> None:
             {"transport": "http", "url": "http://a", "command": "x", "env": {"A": "1"}},
             "command, env sans effet en http",
         ),
-        (
-            {"transport": "stdio", "command": "x", "scope": "tenant"},
-            "scope 'tenant' : prévu pour le jalon J5.1",
-        ),
         ({"transport": "stdio", "command": "x", "name": "a__b"}, "String should match pattern"),
     ],
 )

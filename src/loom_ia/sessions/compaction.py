@@ -59,7 +59,10 @@ from loom_ia.sessions.snapshot import boundary, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
-type AgentResolver = Callable[[str], RunContext]
+# L'agent interne, monté pour le client dont on résume la session (L1) : deux
+# clients ne résument pas leurs conversations avec le même modèle ni les mêmes
+# identifiants.
+type SummaryResolver = Callable[[str, TenantId], RunContext]
 
 # Résultat d'outil tronqué dans le segment : le résumé n'a pas besoin du
 # détail, et le contrôle de fidélité compare au segment tel qu'il est envoyé.
@@ -120,7 +123,7 @@ class CompactionJob:
 
     def __init__(
         self,
-        resolve: AgentResolver,
+        resolve: SummaryResolver,
         store: EventStore,
         writers: SessionWriters,
         plan: CompactionPlan,
@@ -260,7 +263,7 @@ class CompactionJob:
         triggered_by: RunId | None,
     ) -> RunState | None:
         """Fait tourner l'agent interne sur le segment ; ``None`` s'il échoue."""
-        context = self._resolve(self.plan.agent)
+        context = self._resolve(self.plan.agent, tenant_id)
         writer = await self._writers.open(context.store, tenant_id, session_id)
         run_id = new_run_id()
         state = await begin_run(

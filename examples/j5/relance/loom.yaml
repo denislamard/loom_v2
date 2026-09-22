@@ -1,0 +1,197 @@
+# Configuration des exemples du jalon J5 : la relance de devis, pour deux artisans.
+# Elle part de celle du jalon J4 (sessions, compaction, exécution durable,
+# approbations, idempotence) et lui ajoute ce que J5 apporte : des clients.
+#
+# Deux agents, même scénario :
+#   relance       modèles simulés (sdk: fake), sans clé ni réseau ;
+#   relance_reel  MiniMax-M3 pour l'orchestrateur (clé dans M3_API_KEY),
+#                 GLM-5.3-Flash chez Together pour le rôle (clé dans TOGETHER_API_KEY),
+#                 Claude Haiku 4.5 pour le juge (clé dans ANTHROPIC_API_KEY).
+#
+# Deux clients, même agent : Dupont Plomberie et Chauffage Martin. Chacun a son
+# carnet de devis, ses modèles, ses variables de prompt et, pour l'un des deux,
+# son propre journal. Voir clients.py (à côté).
+version: 1
+
+imports: [outils, politiques]     # modules voisins de ce fichier
+agents_dir: agents/
+prompts_dir: prompts/
+
+models:
+  # Orchestrateur simulé. Une demande par artisan, sur son devis à lui : la
+  # réponse est choisie sur le numéro cité, donc le même script sert les deux.
+  - id: FAKE_MAIN
+    sdk: fake
+    model: fake-main
+    pricing: {input: 0.30, output: 1.20}     # tarifs de MiniMax-M3
+    params:
+      script:
+        - with_text: D-2026-042
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: "D-2026-042"}
+        - with_text: D-2026-042
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+          forced: Relance du devis D-2026-042 non rédigée.
+        # Troisième tour : il n'a lieu que si la recherche a échoué — le devis
+        # n'est pas dans le carnet de ce client-là (cas `isolation`).
+        - with_text: D-2026-042
+          text: >-
+            Le devis D-2026-042 ne figure pas dans votre carnet : je n'ai rien
+            à relancer.
+        - with_text: D-2026-117
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: "D-2026-117"}
+        - with_text: D-2026-117
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+          forced: Relance du devis D-2026-117 non rédigée.
+        - with_text: D-2026-117
+          text: >-
+            Le devis D-2026-117 ne figure pas dans votre carnet : je n'ai rien
+            à relancer.
+
+  # Rôle simulé, celui de Dupont Plomberie : il rédige au long.
+  - id: FAKE_ROLE
+    sdk: fake
+    model: fake-role
+    pricing: {input: 0.15, output: 0.50}     # tarifs de GLM-5.3-Flash
+    params:
+      script:
+        - with_text: D-2026-042
+          text: >-
+            {"objet": "Votre devis D-2026-042",
+            "corps": "Bonjour Madame Martin,\n\nJe reviens vers vous au sujet du devis D-2026-042 de 1 840 € pour le remplacement de votre chauffe-eau, envoyé le 2 septembre. Avez-vous pu en prendre connaissance ? Je reste disponible pour en parler.\n\nBien cordialement,\nPlomberie Dupont"}
+        - with_text: D-2026-117
+          text: >-
+            {"objet": "Votre devis D-2026-117",
+            "corps": "Bonjour Monsieur Leroy,\n\nJe reviens vers vous au sujet du devis D-2026-117 de 210 € pour l'entretien annuel de votre chaudière, envoyé le 5 septembre. Avez-vous pu en prendre connaissance ? Je reste disponible pour en parler.\n\nBien cordialement,\nChauffage Martin"}
+
+  # Second modèle de rôle, celui que Chauffage Martin s'est choisi : il écrit
+  # plus court. Même rôle, même prompt, même contrat — seul le modèle change,
+  # et c'est la correspondance `models` du client qui le dit.
+  - id: FAKE_ROLE_BREF
+    sdk: fake
+    model: fake-role-bref
+    pricing: {input: 1.0, output: 5.0}       # tarifs de Haiku
+    params:
+      script:
+        - with_text: D-2026-117
+          text: >-
+            {"objet": "Devis D-2026-117",
+            "corps": "Bonjour Monsieur Leroy,\n\nOù en êtes-vous du devis D-2026-117 de 210 € pour l'entretien annuel de votre chaudière, envoyé le 5 septembre ? Un mot suffit.\n\nBien cordialement,\nChauffage Martin"}
+        - with_text: D-2026-042
+          text: >-
+            {"objet": "Devis D-2026-042",
+            "corps": "Bonjour Madame Martin,\n\nOù en êtes-vous du devis D-2026-042 de 1 840 € pour le remplacement de votre chauffe-eau, envoyé le 2 septembre ? Un mot suffit.\n\nBien cordialement,\nPlomberie Dupont"}
+
+  # Résumé simulé (phase 4.1b). Tarifs de Haiku, pour voir ce que la compaction
+  # coûte dans le rapport de la session.
+  - id: FAKE_RESUME
+    sdk: fake
+    model: fake-resume
+    pricing: {input: 1.0, output: 5.0}
+    params:
+      script:
+        - text: >-
+            L'artisan a demandé la relance d'un devis en attente. La relance a
+            été rédigée et contrôlée.
+
+  # Juge simulé : les relances reprennent le devis sans rien inventer.
+  - id: FAKE_JUDGE
+    sdk: fake
+    model: fake-judge
+    pricing: {input: 1.0, output: 5.0}
+    params:
+      script:
+        - tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Montant, date d'envoi et objet repris du devis."}
+                  - {name: ton, score: 0.9, reason: "Ton conforme à la demande."}
+
+  # Tarifs en $ par million de tokens, relevés le 18/09/2026 ; au-delà de 512k
+  # tokens d'entrée par appel, MiniMax double ses prix (palier, phase 3.4).
+  - id: M3_MAIN
+    sdk: anthropic
+    base_url: https://api.minimax.io/anthropic
+    model: MiniMax-M3
+    api_key_env: M3_API_KEY
+    max_tokens: 4096
+    pricing:
+      input: 0.30
+      output: 1.20
+      cache_read: 0.06
+      cache_write: 0.30
+      tiers:
+        - {above: 512000, input: 0.60, output: 2.40, cache_read: 0.12, cache_write: 0.60}
+  # GLM-5.3-Flash chez Together (API compatible OpenAI), relevé le 19/09/2026.
+  - id: GLM_FLASH
+    sdk: openai
+    api: chat
+    base_url: https://api.together.xyz/v1
+    model: zai-org/GLM-5.3-Flash
+    api_key_env: TOGETHER_API_KEY
+    max_tokens: 4096
+    pricing: {input: 0.15, output: 0.50, cache_read: 0.03}
+  # Claude Haiku 4.5, juge réel (phase 3.3) — et rôle de Chauffage Martin.
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-4-5-20251001
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 1024
+    pricing: {input: 1.0, output: 5.0, cache_read: 0.10, cache_write: 1.25}
+
+# Les clients (phase 5.1a). La liste est fermée : un client qui n'y figure pas
+# est refusé, et `default` n'existe plus. Chacun ne surcharge que ce qui le
+# distingue — le reste de ce fichier lui est commun, prompts compris.
+tenants:
+  - id: dupont-plomberie
+    # Ce que valent les `{{ }}` de ses prompts (§6).
+    variables: {entreprise: Plomberie Dupont}
+    # Son propre journal et ses propres fichiers : isolation physique, en plus
+    # du `tenant_id` que porte chaque événement (TenantRouter, #34).
+    storage:
+      events: {backend: jsonl, path: data/dupont}
+    # Les noms que sa configuration cite, redirigés vers ses variables à lui.
+    # La config ne porte jamais un secret, seulement le nom qui le porte.
+    secrets: {CRM_TOKEN: DUPONT_CRM_TOKEN}
+  - id: martin-chauffage
+    variables: {entreprise: Chauffage Martin}
+    # Il paie un autre modèle pour la rédaction : l'identifiant ne bouge pas,
+    # c'est ce qu'il désigne qui change (simulé et réel).
+    models: {FAKE_ROLE: FAKE_ROLE_BREF, GLM_FLASH: HAIKU}
+    secrets: {CRM_TOKEN: MARTIN_CRM_TOKEN}
+    # Pas de `storage` : il partage le journal commun, où seul son `tenant_id`
+    # le distingue. C'est le cas courant.
+
+# Budgets par défaut des agents (phase 3.4). Par client et par période : 5.1b.
+budgets:
+  run: {max_cost: 0.05, max_calls: 20}
+  session: {max_cost: 1.0}
+  on_exceed: stop
+
+sessions:
+  snapshot_every: 5
+  compaction:
+    model: FAKE_RESUME
+    over_tokens: 12000
+    hard_tokens: 150000
+    keep_last: 6
+    fidelity_check: true
+
+storage:
+  events: {backend: jsonl, path: data}   # ignoré par git
+  # Magasin d'idempotence partagé (phase 4.4) : les clés y sont déjà préfixées
+  # par le client. Un magasin par client attend J5.3.
+  idempotency: {backend: sqlite, path: data/keys.db}
+
+telemetry:
+  logging: {level: WARNING, format: console}

@@ -1104,6 +1104,9 @@ Un client est toujours présent, mais implicite : `tenant_id = "default"`. Le co
 - API Python : `loom.run(..., tenant="dupont-plomberie")` est optionnel.
 - Config : la section `tenants` est optionnelle ; sans elle, seul `default` existe.
 
+**Réalisation (phase 5.1a) :** `tenants` est débloquée dans la config, et la règle est celle-ci — **sans la section, seul `default` existe ; avec elle, la liste est fermée**. Un client qu'elle ne nomme pas est refusé (`UnknownTenant`), `default` compris : mieux vaut un refus qu'un run servi en silence avec les réglages de tout le monde. En Python, `loom.run(..., tenant=…)` est le raccourci de `CallerContext(tenant_id=…)` ; les deux ensemble et contradictoires sont une erreur. `Loom.tenants` liste les clients, `Loom.tenant(id)` rend ce qu'un client surcharge.
+
+
 ### 34. Isolation des clients
 
 **Logique par défaut, avec une défense en profondeur :**
@@ -1122,6 +1125,20 @@ Un client est toujours présent, mais implicite : `tenant_id = "default"`. Le co
 **Surcharges par client (liste fermée) :** agents et outils autorisés, correspondance des modèles, budgets et quotas, politiques d'approbation, identifiants des serveurs MCP et secrets. Les prompts ne sont pas surchargeables (logique métier, hors périmètre) ; seules des variables injectées dans les prompts le sont.
 
 **Définition des clients :** statique dans la config en V2 ; plus tard, un port `TenantStore` et une API d'administration.
+
+**Réalisation (phase 5.1a) :**
+
+- **Ce qu'un client surcharge (liste fermée)** — `agents` (ce qu'il peut lancer), `tools_deny` (outils retirés, sous le nom que voit le modèle, préfixe MCP compris), `models` (correspondance), `approvals` (approbation imposée par outil), `secrets`, `variables` (valeurs des `{{ }}` des prompts), `storage` (isolation physique). Les prompts ne le sont pas (§6). `budgets` et `quotas` sont refusés en nommant 5.1b, `storage.idempotency` en nommant 5.3.
+- **La correspondance des modèles porte sur la définition, pas sur les références.** Dans la config d'un client, l'identifiant `M3_MAIN` désigne le modèle qu'il a choisi. Un seul endroit à réécrire, et la correspondance vaut donc partout d'un coup — orchestrateur, rôles, juges, chaînes de secours, compaction — sans qu'aucun agent ne change. La configuration ainsi obtenue **repasse les contrôles de cohérence** (M5) : un remplacement qui ne sait pas appeler d'outils ou lire une image est refusé au démarrage, pour le client qui le demande.
+- **Un agent est monté par client** (`Loom._built` indexé par `(agent, client)`) : ses clients de modèle, ses outils, ses connexions MCP et son prompt rendu lui appartiennent.
+- **Secrets (L2) :** port `SecretProvider`, qui rend pour un client la **table** de ses secrets — c'est déjà ce que les adaptateurs attendent (`Mapping[str, str]`), et l'isolation se lit d'un coup d'œil. `EnvironmentSecrets` la résout depuis l'environnement : ce que le client ne redirige pas y est lu tel quel, mais une redirection vers une variable **absente** vaut vide, jamais le secret commun.
+- **Serveurs MCP `scope: tenant` :** la connexion vit dans le pool comme une `shared`, sous une clé qui nomme le client (`crm#dupont-plomberie`), et elle est ouverte avec **ses** identifiants.
+- **Outils retirés et approbations imposées** s'appliquent dans l'exécuteur, seul endroit qui voie tous les outils sous leur nom final — ceux d'un serveur MCP n'existant qu'une fois la connexion ouverte. Le moteur ne sait pas d'où vient la consigne : il reçoit des noms.
+- **`TenantRouter` :** il **est** un journal et un stockage d'artefacts, qui choisissent le leur au vu du client. Toutes les opérations des deux ports nomment déjà le client — directement pour le journal, par l'URI pour les artefacts —, si bien que le reste de loom-ia ne voit qu'un stockage de plus. Un client sans bloc `storage` partage celui de la racine, et l'isolation y reste logique.
+- **Le client vient de la clé en REST**, et de nulle part ailleurs : rien dans le corps d'une requête ne peut le changer, donc une lecture est toujours bornée au client de la clé. En MCP stdio, où il n'y a pas de clé, un serveur sert **un** client, choisi à son lancement (`loom mcp --tenant`) ; le choix par requête attend le transport HTTP (5.2).
+
+**Reste connu (5.1a) :** le magasin d'idempotence reste commun (le port n'a le client que sur `reserve`) ; `tools_deny` et `approvals` ne sont pas contrôlés au chargement, un nom d'outil n'étant connu qu'au montage ; un sous-agent hérite du client de son parent, `agents` ne bornant que ce qu'on **lance** ; `TenantRouter` ne route que le journal et les artefacts.
+
 
 ### 35. Format de config : YAML, avec un JSON Schema pour l'éditeur
 

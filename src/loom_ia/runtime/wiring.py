@@ -17,6 +17,12 @@ Stockage d'artefacts (G2) : un seul par instance, partagé par ses agents. Il
 suit le journal par défaut (dossier ``.artifacts`` d'un journal JSONL,
 mémoire sinon).
 
+Clients (L1, #34) : ``tenant`` dit pour qui l'agent est monté. Il apporte la
+table des secrets à lire, les outils retirés, les approbations imposées et
+les valeurs des variables citées par les prompts ; la correspondance des
+modèles, elle, est déjà dans la config qu'il porte. Sans lui, l'agent est
+monté pour ``default``, qui ne surcharge rien (#33).
+
 Politiques (#2) : chaque référence est résolue (politique fournie ``loom.…``,
 nom enregistré ou ``module:attr``), puis contrôlée avant le premier run : ses
 points parmi ceux qu'elle déclare, ses décisions permises à chacun de ses
@@ -46,6 +52,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
+from pydantic import JsonValue
+
 from loom_ia.adapters.artifacts import InMemoryArtifactStore, LocalArtifactStore
 from loom_ia.adapters.idempotency import InMemoryIdempotency
 from loom_ia.adapters.models import create_model_client
@@ -61,17 +69,26 @@ from loom_ia.agents.spec import (
     RoleSpec,
     SubAgentRef,
     ToolResultsContext,
+    system_text,
 )
 from loom_ia.agents.spec import ContextItem as DeclaredContext
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.errors import ConfigError
-from loom_ia.config.models import FILE_BACKENDS, SHARED_IDEMPOTENCY, LoomConfig
+from loom_ia.config.models import (
+    FILE_BACKENDS,
+    SHARED_IDEMPOTENCY,
+    LoomConfig,
+    StorageConfig,
+)
 from loom_ia.config.references import Registry, import_modules, resolve
 from loom_ia.core.model import (
     ALLOWED_DECISIONS,
+    DEFAULT_TENANT,
     LATER_DECISIONS,
     RESERVED_PREFIX,
+    Approval,
     StreamOutput,
+    TenantId,
 )
 from loom_ia.core.ports import (
     ArtifactStore,
@@ -112,6 +129,7 @@ from loom_ia.guards import (
 )
 from loom_ia.policies import BUILTIN_POLICIES
 from loom_ia.telemetry import configure_logging
+from loom_ia.tenancy import Tenant
 from loom_ia.tools import FunctionTool, configure
 from loom_ia.usage import BudgetGuard
 
@@ -156,9 +174,9 @@ def create_mcp_pool(config: LoomConfig, environ: Mapping[str, str] | None = None
     return McpPool(lambda spec: session_factory(spec, environ=env))
 
 
-def create_event_store(config: LoomConfig) -> EventStore:
-    """Journal déclaré dans ``storage.events``."""
-    events = config.storage.events
+def create_event_store(config: LoomConfig | StorageConfig) -> EventStore:
+    """Journal déclaré dans ``storage.events``, d'une config ou d'un client."""
+    events = _storage(config).events
     if events.path is not None:
         if events.backend == "jsonl":
             return JsonlEventStore(events.path)
@@ -174,13 +192,17 @@ def create_event_store(config: LoomConfig) -> EventStore:
     return InMemoryEventStore()
 
 
-def create_artifact_store(config: LoomConfig) -> ArtifactStore:
+def create_artifact_store(config: LoomConfig | StorageConfig) -> ArtifactStore:
     """Stockage d'artefacts déclaré dans ``storage.artifacts``, ou celui qui suit le journal."""
-    storage = config.storage
+    storage = _storage(config)
     path = storage.artifacts_path
     if storage.artifacts_backend == "local" and path is not None:
         return LocalArtifactStore(path)
     return InMemoryArtifactStore()
+
+
+def _storage(config: LoomConfig | StorageConfig) -> StorageConfig:
+    return config if isinstance(config, StorageConfig) else config.storage
 
 
 def create_idempotency_store(config: LoomConfig) -> IdempotencyStore | None:
@@ -229,6 +251,7 @@ def build_agent(
     idempotency: IdempotencyStore | None = None,
     agents: AgentResolver | None = None,
     breakers: CircuitBreakers | None = None,
+    tenant: Tenant | None = None,
 ) -> Agent:
     """Assemble l'agent ``name`` de la config.
 
@@ -240,11 +263,18 @@ def build_agent(
     ``breakers`` : disjoncteurs partagés (ceux de l'instance) ; sans eux,
     l'agent a les siens, communs à ses sous-agents. ``idempotency`` : magasin
     partagé (#49) ; sans lui, chaque appel reçoit celui de son journal.
+    ``tenant`` : le client pour qui l'agent est monté (L1) ; ses secrets
+    remplacent alors ``environ``.
     """
     spec = AgentRegistry.from_config(config).get(name)
     known = registry if registry is not None else load_registry(config)
+    secrets = tenant.secrets if tenant is not None else environ
+    tenant_id = tenant.id if tenant is not None else DEFAULT_TENANT
+    variables: Mapping[str, JsonValue] = tenant.variables if tenant is not None else {}
+    denied: frozenset[str] = tenant.denied if tenant is not None else frozenset()
+    imposed: Mapping[str, Approval] = tenant.approvals if tenant is not None else {}
     tools = [_tool(declared, known, config.base_dir) for declared in spec.python_tools]
-    roles = [role_definition(role) for role in spec.roles]
+    roles = [role_definition(role, variables) for role in spec.roles]
     _check_names(spec, [tool.spec.name for tool in tools])
 
     clients: dict[str, ModelClient] = {}
@@ -252,7 +282,7 @@ def build_agent(
 
     def client(model_id: str) -> ModelClient:
         if model_id not in clients:
-            clients[model_id] = create_model_client(config.model_spec(model_id), environ=environ)
+            clients[model_id] = create_model_client(config.model_spec(model_id), environ=secrets)
         return clients[model_id]
 
     def links(model_ids: tuple[str, ...]) -> tuple[ModelLink, ...]:
@@ -298,7 +328,7 @@ def build_agent(
             else None
         ),
     )
-    sources, owned = _mcp_sources(config, spec, environ, mcp_pool)
+    sources, owned = _mcp_sources(config, spec, secrets, mcp_pool, tenant_id)
     if spec.subagents and agents is None:
         nested = _SubAgents(
             config,
@@ -309,6 +339,7 @@ def build_agent(
             artifacts=artifacts,
             idempotency=idempotency,
             breakers=breakers,
+            tenant=tenant,
         )
         agents = nested
         owned = (*owned, nested)
@@ -327,7 +358,7 @@ def build_agent(
         delegated += [
             AgentTool(_subagent_definition(config, spec, ref), agents) for ref in spec.subagents
         ]
-    _check_durable_journal(config, spec, [*tools, *delegated], policies)
+    _check_durable_journal(config, spec, [*tools, *delegated], policies, imposed)
     _check_shared_idempotency(config, spec, [*tools, *delegated])
     execution = config.execution.tools
     llm = spec.main.llm
@@ -347,8 +378,10 @@ def build_agent(
             circuits={server.name: server.circuit_breaker for server in config.mcp_servers},
             approval=spec.approval,
             idempotency=idempotency,
+            denied=denied,
+            imposed=imposed,
         ),
-        system=system_prompt(spec),
+        system=system_prompt(spec, variables),
         max_iterations=spec.max_iterations,
         timeout=spec.timeout,
         max_tokens=llm.max_tokens,
@@ -492,25 +525,35 @@ def _policy(spec: AgentSpec, ref: PolicyRef, registry: Registry, base_dir: Path 
     return found
 
 
-def system_prompt(spec: AgentSpec) -> str:
-    """Prompt système de l'orchestrateur : texte en ligne ou fichier."""
-    return prompt_text(spec.main)
+def system_prompt(spec: AgentSpec, variables: Mapping[str, JsonValue] | None = None) -> str:
+    """Prompt système de l'orchestrateur, ses variables rendues."""
+    return prompt_text(spec.main, variables)
 
 
-def prompt_text(role: BaseRole) -> str:
-    """Prompt système d'un rôle : texte en ligne ou fichier."""
-    if role.system_file is None:
-        return role.system
-    return role.system_file.read_text(encoding="utf-8")
+def prompt_text(role: BaseRole, variables: Mapping[str, JsonValue] | None = None) -> str:
+    """Prompt système d'un rôle : texte en ligne ou fichier, ses variables rendues.
+
+    Un prompt appartient à la configuration : il est le même pour tout le
+    monde (§6). Ce qu'un client y change, ce sont les valeurs qu'il cite —
+    ``{{ entreprise }}`` —, et le chargement a déjà vérifié qu'aucune ne
+    manque à aucun client (M5). Un prompt sans ``{{ }}`` traverse ce rendu
+    sans y laisser de trace.
+    """
+    source = system_text(role)
+    if "{{" not in source:
+        return source
+    return Template.parse(source).render(dict(variables or {}))
 
 
-def role_definition(role: RoleSpec) -> RoleDefinition:
+def role_definition(
+    role: RoleSpec, variables: Mapping[str, JsonValue] | None = None
+) -> RoleDefinition:
     """Rôle délégué tel que le moteur l'exécute."""
     template = Template.parse(role.input_template) if role.input_template is not None else None
     return RoleDefinition(
         name=role.name,
         description=role.description,
-        system=prompt_text(role),
+        system=prompt_text(role, variables),
         input_schema=role.input_schema,
         template=template,
         context=tuple(_context_item(item) for item in role.context),
@@ -560,7 +603,11 @@ def judge_definition(
 
 
 def _check_durable_journal(
-    config: LoomConfig, spec: AgentSpec, tools: Sequence[AnyTool], policies: Policies
+    config: LoomConfig,
+    spec: AgentSpec,
+    tools: Sequence[AnyTool],
+    policies: Policies,
+    imposed: Mapping[str, Approval] | None = None,
 ) -> None:
     """Un agent qui peut se mettre en pause exige un journal durable (#28).
 
@@ -572,7 +619,10 @@ def _check_durable_journal(
     arrivent en J5.
     """
     if config.storage.events.backend not in FILE_BACKENDS:
-        obligatoires = [t.spec.name for t in tools if t.spec.approval == "always"]
+        forced = imposed or {}
+        obligatoires = [
+            t.spec.name for t in tools if forced.get(t.spec.name, t.spec.approval) == "always"
+        ]
         pausing = sorted({b.name for b in policies.bound if "pause" in b.policy.decisions})
         causes = [
             *(f"outil {name!r} en approval: always" for name in obligatoires),
@@ -721,6 +771,7 @@ class _SubAgents:
         artifacts: ArtifactStore | None,
         idempotency: IdempotencyStore | None,
         breakers: CircuitBreakers,
+        tenant: Tenant | None = None,
     ) -> None:
         self._config = config
         self._store = store
@@ -730,6 +781,7 @@ class _SubAgents:
         self._artifacts = artifacts
         self._idempotency = idempotency
         self._breakers = breakers
+        self._tenant = tenant
         self._built: dict[str, Agent] = {}
 
     def __call__(self, name: str) -> RunContext:
@@ -746,6 +798,7 @@ class _SubAgents:
                 idempotency=self._idempotency,
                 agents=self,
                 breakers=self._breakers,
+                tenant=self._tenant,
             )
             self._built[name] = built
         return built.context
@@ -790,8 +843,14 @@ def _mcp_sources(
     spec: AgentSpec,
     environ: Mapping[str, str] | None,
     pool: McpPool | None,
+    tenant_id: TenantId = DEFAULT_TENANT,
 ) -> tuple[list[ToolSource], tuple[_Closable, ...]]:
-    """Sources d'outils des serveurs MCP de l'agent, et le pool créé pour lui s'il en faut un."""
+    """Sources d'outils des serveurs MCP de l'agent, et le pool créé pour lui s'il en faut un.
+
+    Portée ``tenant`` (#34) : la connexion vit dans le pool comme une
+    ``shared``, mais sous une clé qui nomme le client — deux clients du même
+    serveur ont chacun la leur, ouverte avec ses identifiants.
+    """
     if not spec.mcp_tools:
         return [], ()
     try:
@@ -807,7 +866,7 @@ def _mcp_sources(
     env = os.environ if environ is None else environ
     owned: tuple[_Closable, ...] = ()
     servers = [config.mcp_server(ref.mcp) for ref in spec.mcp_tools]
-    if pool is None and any(server.scope == "shared" for server in servers):
+    if pool is None and any(server.scope in {"shared", "tenant"} for server in servers):
         pool = McpPool(lambda server: session_factory(server, environ=env))
         owned = (pool,)
     sources: list[ToolSource] = []
@@ -823,7 +882,8 @@ def _mcp_sources(
             required=ref.required,
             tools=ref.tools,
         )
-        sources.append(McpSource(server, selection, factory=factory, pool=pool))
+        key = f"{server.name}#{tenant_id}" if server.scope == "tenant" else server.name
+        sources.append(McpSource(server, selection, factory=factory, pool=pool, pool_key=key))
     return sources, owned
 
 

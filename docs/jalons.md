@@ -170,7 +170,8 @@ Les commandes ci-dessous sont indicatives.
 
 | Phase | Contenu | Fonctions |
 |---|---|---|
-| 5.1 Multi-clients | Clients dans la config, surcharges, secrets, MCP `scope: tenant`, quotas, budgets par client et par période, `TenantRouter` | L1–L3, J3, J4, #33, #34 |
+| 5.1a Clients | Clients dans la config (liste fermée), surcharges (agents, outils, modèles, approbations), secrets par client, variables des prompts, MCP `scope: tenant`, `TenantRouter` | L1, L2, #33, #34 |
+| 5.1b Consommation | Budgets par client et par période, quotas et limitation de débit | L3, J3, J4 |
 | 5.2 Sécurité | Clés API complètes (scopes, agents, débit, expiration, `loom keys create`), `read_content`, sécurité MCP HTTP (`Origin`, `localhost`) | N3, #39 |
 | 5.3 Stockages de service | `EventStore` Postgres (avec RLS) et Firestore, bus Postgres et Redis, file RabbitMQ, `loom worker`, GCS, idempotence Postgres, Firestore et Redis | F5, H6, #5, #27 |
 | 5.4 Accès complets | REST : sessions, traces, `run_summaries`, `EventQuery`, OpenAPI, reprise SSE par `Last-Event-ID`. MCP HTTP monté avec REST, ressources `loom://runs`. Déclencheurs webhook et planification | K5, N2, #32, #38 |
@@ -182,12 +183,12 @@ Les commandes ci-dessous sont indicatives.
 
 | Accès | Exécution |
 |---|---|
-| Python | `examples/j5/run.py` avec `tenant=…`, sur le stockage Postgres |
+| Python | Un exemple par phase, sur la config `examples/j5/relance/` : `clients.py` (5.1a) ; puis `tenant=…` sur le stockage Postgres |
 | CLI | `loom worker` (x2), `loom serve`, `loom keys create` |
 | REST | Clés API par client, scopes, `run_summaries`, `EventQuery`, reprise SSE par `Last-Event-ID` |
 | MCP | MCP HTTP monté avec REST ; ressources `loom://runs/{id}` ; `Origin` refusé si invalide |
 
-**Tests automatisés :** isolation (un client ne lit jamais les données d'un autre, RLS) ; scopes et débit des clés ; quotas et budgets par période ; MCP `scope: tenant` ; adaptateurs Postgres, Redis, RabbitMQ, Firestore et GCS (conteneurs de test ou émulateurs) ; reprise SSE ; sécurité MCP HTTP ; profils dev et prod.
+**Tests automatisés :** isolation (un client ne lit jamais les données d'un autre, RLS) ; liste fermée des clients et client inconnu refusé ; correspondance des modèles qui repasse les contrôles de cohérence ; secrets par client, et redirection vers une variable absente qui ne retombe pas sur le secret commun ; `TenantRouter` (un journal propre, un journal commun) ; scopes et débit des clés ; quotas et budgets par période ; MCP `scope: tenant` ; adaptateurs Postgres, Redis, RabbitMQ, Firestore et GCS (conteneurs de test ou émulateurs) ; reprise SSE ; sécurité MCP HTTP ; profils dev et prod.
 
 **Critère de sortie :** le scénario docker-compose passe en CI ; aucune fuite entre clients ; reprise sur un autre worker.
 

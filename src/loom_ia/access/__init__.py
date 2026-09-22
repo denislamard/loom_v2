@@ -2,6 +2,7 @@
 """Points d'accès à une instance loom : Python, REST, MCP, CLI (N1 à N5)."""
 
 from loom_ia.access.api import (
+    AgentNotAllowed,
     ClaimConflict,
     JudgeVerdict,
     Loom,
@@ -13,8 +14,10 @@ from loom_ia.access.api import (
     UnknownRun,
     UnknownSession,
 )
+from loom_ia.tenancy import UnknownTenant
 
 __all__ = [
+    "AgentNotAllowed",
     "ClaimConflict",
     "JudgeVerdict",
     "Loom",
@@ -25,4 +28,5 @@ __all__ = [
     "StreamItem",
     "UnknownRun",
     "UnknownSession",
+    "UnknownTenant",
 ]

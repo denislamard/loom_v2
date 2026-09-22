@@ -132,12 +132,13 @@ def test_mcp_serves_on_stdio(
     server = pytest.importorskip("loom_ia.access.mcp_server", reason="extra 'mcp' absent")
     served: dict[str, Any] = {}
 
-    async def fake_stdio(loom: Any) -> None:
+    async def fake_stdio(loom: Any, tenant: str = "default") -> None:
         served["agents"] = loom.names
+        served["tenant"] = tenant
 
     monkeypatch.setattr(server, "run_stdio", fake_stdio)
     assert main(["--config", str(demo()), "mcp"]) == 0
-    assert served == {"agents": ("demo",)}
+    assert served == {"agents": ("demo",), "tenant": "default"}
     # Rien sur stdout : le protocole y passe.
     assert capsys.readouterr().out == ""
 

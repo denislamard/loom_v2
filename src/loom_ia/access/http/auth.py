@@ -9,6 +9,11 @@ prévient si elle écoute ailleurs que sur la machine.
 Portées vérifiées : ``run`` pour lancer un run, ``read`` pour lire agents,
 statuts, événements et rapports, ``admin`` pour lancer un run sans ses juges
 (``judges: skip``, J3). Une clé peut en outre être limitée à certains agents.
+
+Client (L1, #34) : une clé agit **au nom d'un client**, et c'est la seule
+chose qui le dit en REST — rien dans le corps d'une requête ne peut le
+changer. Toute lecture est donc bornée au client de la clé : on ne peut pas
+demander le journal d'un autre, faute de façon de le nommer.
 """
 
 from dataclasses import dataclass
@@ -17,6 +22,7 @@ from typing import Final
 from fastapi import HTTPException, Request, status
 
 from loom_ia.config.models import ApiKey, Scope, SecurityConfig
+from loom_ia.core.model import DEFAULT_TENANT, TenantId
 
 BEARER: Final = "bearer "
 API_KEY_HEADER: Final = "x-api-key"
@@ -32,6 +38,11 @@ class Caller:
     @property
     def anonymous(self) -> bool:
         return self.key is None
+
+    @property
+    def tenant(self) -> TenantId:
+        """Client au nom duquel cette clé agit ; ``default`` sur une instance ouverte."""
+        return self.key.tenant if self.key is not None else DEFAULT_TENANT
 
     def may(self, scope: Scope) -> bool:
         return self.key is None or scope in self.key.scopes

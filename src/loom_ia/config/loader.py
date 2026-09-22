@@ -17,10 +17,16 @@ from typing import Any, cast
 import yaml
 from pydantic import ValidationError
 
-from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools
+from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools, system_text
 from loom_ia.config.errors import ConfigError, from_validation
-from loom_ia.config.models import LoomConfig
-from loom_ia.core.model import McpServerSpec, OutputContract, ToolOverrides
+from loom_ia.config.models import LoomConfig, StorageConfig, TenantSpec
+from loom_ia.core.model import (
+    DEFAULT_TENANT,
+    McpServerSpec,
+    OutputContract,
+    ToolOverrides,
+)
+from loom_ia.core.template import Template, TemplateError
 
 AGENT_SUFFIXES = (".yaml", ".yml")
 
@@ -41,17 +47,20 @@ def load_config(path: str | Path) -> LoomConfig:
         server.model_copy(update={"tools": _with_schemas(server.tools, base_dir, source=root)})
         for server in config.mcp_servers
     )
-    return config.model_copy(
+    loaded = config.model_copy(
         update={
             "base_dir": base_dir,
             "agents_dir": base_dir / config.agents_dir,
             "prompts_dir": base_dir / config.prompts_dir,
-            "storage": _absolute_storage(config, base_dir),
+            "storage": _absolute_storage(config.storage, base_dir),
             "sessions": _absolute_sessions(config, base_dir / config.prompts_dir, source=root),
             "server": _absolute_server(config, base_dir),
             "mcp_servers": tuple(_launched_from(server, base_dir) for server in servers),
+            "tenants": tuple(_absolute_tenant(tenant, base_dir) for tenant in config.tenants),
         }
     )
+    _check_variables(loaded, source=root)
+    return loaded
 
 
 def _launched_from(server: McpServerSpec, base_dir: Path) -> McpServerSpec:
@@ -153,9 +162,51 @@ def _absolute_sessions(config: LoomConfig, prompts_dir: Path, *, source: Path) -
     )
 
 
-def _absolute_storage(config: LoomConfig, base_dir: Path) -> object:
+def _absolute_tenant(tenant: TenantSpec, base_dir: Path) -> TenantSpec:
+    """Chemins du stockage propre à un client, rapportés au dossier de la config."""
+    if tenant.storage is None:
+        return tenant
+    return tenant.model_copy(update={"storage": _absolute_storage(tenant.storage, base_dir)})
+
+
+def _check_variables(config: LoomConfig, *, source: Path) -> None:
+    """Variables citées par les prompts définies pour chaque client (§6, M5).
+
+    Un prompt appartient à la configuration, pas au client : la même phrase
+    sert tout le monde. Ce qui change d'un client à l'autre, ce sont les
+    valeurs — et un client à qui il en manque une écrirait un trou dans son
+    prompt sans que rien ne le dise. Le chargement l'attrape.
+    """
+    tenants: tuple[TenantSpec | None, ...] = config.tenants or (None,)
+    for spec in config.all_agents:
+        for label, role in (("main", spec.main), *((f"roles[{r.name}]", r) for r in spec.roles)):
+            try:
+                template = Template.parse(system_text(role))
+            except TemplateError as exc:
+                raise ConfigError(
+                    f"Agent {spec.name!r}, {label}.system — {exc}", source=source
+                ) from exc
+            except OSError as exc:
+                raise ConfigError(
+                    f"Agent {spec.name!r}, {label}.system_file — prompt illisible : {exc}",
+                    source=source,
+                ) from exc
+            for path in template.variables:
+                for tenant in tenants:
+                    known = tenant.variables if tenant is not None else {}
+                    if path[0] in known:
+                        continue
+                    who = tenant.id if tenant is not None else DEFAULT_TENANT
+                    shown = "{{ " + ".".join(path) + " }}"
+                    raise ConfigError(
+                        f"Agent {spec.name!r}, {label}.system — {shown} : variable non "
+                        f"définie pour le client {who!r} (tenants[].variables)",
+                        source=source,
+                    )
+
+
+def _absolute_storage(storage: StorageConfig, base_dir: Path) -> StorageConfig:
     """Chemins du journal, des artefacts et des clés rapportés au dossier de la config."""
-    storage = config.storage
     update: dict[str, object] = {}
     if storage.events.path is not None:
         update["events"] = storage.events.model_copy(

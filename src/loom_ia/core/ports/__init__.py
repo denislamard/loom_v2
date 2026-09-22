@@ -19,6 +19,7 @@ from loom_ia.core.ports.model_client import (
 )
 from loom_ia.core.ports.policy import Policy
 from loom_ia.core.ports.queue import Job, JobKind, JobState, TaskQueue
+from loom_ia.core.ports.secrets import SecretProvider
 from loom_ia.core.ports.tool import (
     ReuseNote,
     SourceContext,
@@ -47,6 +48,7 @@ __all__ = [
     "ModelError",
     "Policy",
     "ReuseNote",
+    "SecretProvider",
     "SequenceConflict",
     "SessionRecord",
     "SourceContext",

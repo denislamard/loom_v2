@@ -11,12 +11,13 @@ Sous-ensemble des jalons J1 et J2 ; le schéma complet est dans
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Final, Literal, Self
 
 from pydantic import Field, JsonValue, PositiveFloat, PositiveInt, model_validator
 
-from loom_ia.agents.spec import AgentSpec
+from loom_ia.agents.spec import AGENT_NAME_PATTERN, AgentSpec
 from loom_ia.config.compaction import COMPACTION_AGENT, CompactionConfig, compaction_agent
 from loom_ia.config.keys import ALGORITHM, matches
 from loom_ia.config.later import (
@@ -25,13 +26,17 @@ from loom_ia.config.later import (
     LATER_ROOT,
     LATER_STORAGE,
     LATER_TELEMETRY,
+    LATER_TENANT,
 )
 from loom_ia.core.model import (
+    DEFAULT_TENANT,
+    Approval,
     AttachmentPolicy,
     Budgets,
     DomainModel,
     McpServerSpec,
     ModelSpec,
+    TenantId,
     reject_later,
 )
 from loom_ia.telemetry.logs import LogFormat
@@ -216,6 +221,71 @@ class TelemetryConfig(DomainModel):
         return data
 
 
+class TenantSpec(DomainModel):
+    """Un client, et la liste fermée de ce qu'il surcharge (L1, #33, #34, §17.8).
+
+    Tout le reste de la configuration lui est commun : mêmes agents, mêmes
+    prompts, mêmes outils. Un client ne redéfinit que ce qui le distingue —
+    les modèles qu'il paie, les secrets qu'il apporte, ce qu'on lui permet.
+    Les prompts ne sont **pas** surchargeables (§6) : seules les variables
+    qu'ils citent le sont, ce qui garde la logique métier dans un seul
+    endroit.
+    """
+
+    id: TenantId
+    # Agents que ce client peut lancer ; vide signifie tous ceux de la config.
+    agents: tuple[str, ...] = ()
+    # Outils retirés à ce client, sous le nom que voit le modèle (préfixe MCP
+    # compris) : un rôle, un sous-agent ou un outil qu'on ne lui ouvre pas.
+    tools_deny: tuple[str, ...] = ()
+    # Correspondance des modèles : {modèle de la config: modèle de ce client}.
+    # Elle vaut partout — orchestrateur, rôles, juges, chaînes de secours,
+    # compaction —, la cible devant être déclarée dans ``models``.
+    models: dict[str, str] = Field(default_factory=dict[str, str])
+    # Approbation imposée par outil, quoi qu'en dise sa déclaration (#17) :
+    # c'est le client qui sait ce qui l'engage.
+    approvals: dict[str, Approval] = Field(default_factory=dict[str, Approval])
+    # Secrets : {nom attendu par la config: variable d'environnement de ce
+    # client}. Ce qui n'y est pas reste lu dans l'environnement commun.
+    secrets: dict[str, str] = Field(default_factory=dict[str, str])
+    # Variables citées par les prompts système ({{ entreprise }}).
+    variables: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
+    # Stockage propre à ce client (isolation physique, ``TenantRouter``) ;
+    # sans lui, celui de la racine, où seul le ``tenant_id`` le distingue.
+    storage: StorageConfig | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _later(cls, data: object) -> object:
+        reject_later(data, LATER_TENANT)
+        return data
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        if not self.id.strip():
+            raise ValueError("Client : 'id' ne peut pas être vide")
+        for agent in self.agents:
+            if not re.fullmatch(AGENT_NAME_PATTERN, agent):
+                raise ValueError(f"Client {self.id!r} : nom d'agent invalide : {agent!r}")
+        for source, target in self.models.items():
+            if source == target:
+                raise ValueError(
+                    f"Client {self.id!r} : le modèle {source!r} se remplace par lui-même"
+                )
+        if self.storage is not None and self.storage.idempotency != IdempotencyStorage():
+            # Le port d'idempotence n'a le client que sur ``reserve`` : un
+            # magasin par client demanderait de le porter jusqu'à ``get``.
+            raise ValueError(
+                f"Client {self.id!r} : 'storage.idempotency' propre à un client est prévu "
+                "pour le jalon J5.3 (magasins de service) ; les clés sont déjà préfixées "
+                "par le client dans le magasin commun"
+            )
+        return self
+
+    def allows(self, agent: str) -> bool:
+        return not self.agents or agent in self.agents
+
+
 type Scope = Literal["run", "read", "read_content", "approve", "admin"]
 
 
@@ -225,6 +295,8 @@ class ApiKey(DomainModel):
     id: str = Field(min_length=1)
     # Empreinte ``sha256:…`` donnée par ``loom keys create``.
     hash: str
+    # Client au nom duquel cette clé agit (L1) ; ``default`` en mono-client.
+    tenant: TenantId = DEFAULT_TENANT
     scopes: tuple[Scope, ...] = ("run", "read")
     # Agents autorisés ; vide signifie tous.
     agents: tuple[str, ...] = ()
@@ -304,6 +376,9 @@ class LoomConfig(DomainModel):
     # Budgets par défaut des agents ; un agent les surcharge par son ``budget`` (J4).
     budgets: Budgets = Budgets()
     telemetry: TelemetryConfig = TelemetryConfig()
+    # Clients (L1, #33) : sans cette liste, seul ``default`` existe ; avec
+    # elle, la liste est fermée et un client inconnu est refusé.
+    tenants: tuple[TenantSpec, ...] = ()
     security: SecurityConfig = SecurityConfig()
     server: ServerConfig = ServerConfig()
     # Remplis depuis ``agents_dir`` au chargement, ou donnés directement en Python.
@@ -317,6 +392,16 @@ class LoomConfig(DomainModel):
 
     @model_validator(mode="after")
     def _check(self) -> Self:
+        self.check()
+        return self
+
+    def check(self) -> None:
+        """Contrôles de cohérence (M5).
+
+        Détaché du validateur pour être rejoué sur la configuration résolue
+        d'un client : la correspondance des modèles d'un client doit passer
+        les mêmes contrôles que la configuration d'origine (L1, #34).
+        """
         if self.version != SCHEMA_VERSION:
             raise ValueError(
                 f"Version de config {self.version!r} non prise en charge "
@@ -332,6 +417,7 @@ class LoomConfig(DomainModel):
         if compaction is not None:
             self._check_chain(f"Compaction ({COMPACTION_AGENT})", (compaction.model,))
         _reject_doubles("Clé", [key.id for key in self.security.api_keys])
+        self._check_tenants()
         servers = [server.name for server in self.mcp_servers]
         _reject_doubles("Serveur MCP", servers)
         for agent in self.agents:
@@ -384,7 +470,41 @@ class LoomConfig(DomainModel):
                         f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : description "
                         f"manquante (ni dans la référence ni dans l'agent {ref.agent!r})"
                     )
-        return self
+
+    def _check_tenants(self) -> None:
+        """Clients déclarés une fois, sur des agents et des modèles qui existent (L1, M5).
+
+        Les agents ne sont contrôlés que lorsqu'il y en a : le chargement
+        valide d'abord le fichier racine seul, pour savoir où lire
+        ``agents_dir``, et la liste est alors vide. C'est la seconde
+        validation, agents lus, qui fait foi.
+        """
+        _reject_doubles("Client", [tenant.id for tenant in self.tenants])
+        agents = {agent.name for agent in self.agents}
+        models = {spec.id for spec in self.models}
+        for tenant in self.tenants:
+            for agent in tenant.agents if agents else ():
+                if agent not in agents:
+                    raise ValueError(
+                        f"Client {tenant.id!r} : agent {agent!r} non déclaré "
+                        f"(agents : {', '.join(sorted(agents)) or 'aucun'})"
+                    )
+            for source, target in tenant.models.items():
+                for model, which in ((source, "modèle"), (target, "modèle de remplacement")):
+                    if model not in models:
+                        raise ValueError(
+                            f"Client {tenant.id!r} : {which} {model!r} non déclaré "
+                            f"(modèles : {', '.join(sorted(models)) or 'aucun'})"
+                        )
+        if not self.tenants:
+            return
+        declared = {tenant.id for tenant in self.tenants}
+        for key in self.security.api_keys:
+            if key.tenant not in declared:
+                raise ValueError(
+                    f"Clé {key.id!r} : client {key.tenant!r} non déclaré "
+                    f"(clients : {', '.join(sorted(declared))})"
+                )
 
     def _check_chain(
         self, label: str, chain: tuple[str, ...], *, vision: bool = False, tools: bool = False
@@ -422,6 +542,20 @@ class LoomConfig(DomainModel):
         """Budgets d'un agent : ceux de la racine, surchargés par son ``budget``."""
         spec = next((a for a in self.agents if a.name == agent), None)
         return self.budgets.merged(spec.budget if spec is not None else None)
+
+    @property
+    def tenant_ids(self) -> tuple[TenantId, ...]:
+        """Clients déclarés ; ``default`` seul quand la config n'en nomme aucun (#33)."""
+        if not self.tenants:
+            return (DEFAULT_TENANT,)
+        return tuple(tenant.id for tenant in self.tenants)
+
+    def tenant_spec(self, tenant_id: TenantId) -> TenantSpec | None:
+        """Fiche d'un client déclaré ; ``None`` s'il ne surcharge rien."""
+        for tenant in self.tenants:
+            if tenant.id == tenant_id:
+                return tenant
+        return None
 
     def mcp_server(self, name: str) -> McpServerSpec:
         """Définition d'un serveur MCP par son nom."""
