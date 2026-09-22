@@ -22,7 +22,7 @@ import subprocess
 import sys
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 import yaml
@@ -34,6 +34,12 @@ pytestmark = [
 
 DEMANDE = "Relance le client du devis D-2026-042."
 KEYS = "keys.db"
+# Patience laissée à un pilote. Au-delà, il vide la pile de **tous** ses fils
+# et meurt : un blocage se raconte au lieu de faire expirer le test en
+# silence. Vu une fois en intégration continue le 22/09 — le run avait fini
+# et son résultat était écrit, mais le process ne rendait pas la main ; rien
+# n'a permis de le reproduire depuis, d'où cette trace armée d'avance.
+PATIENCE: Final = 60.0
 
 OUTILS = '''
 import os
@@ -54,8 +60,14 @@ async def envoyer_relance(devis: str) -> str:
 
 PILOTE = """
 import asyncio
+import faulthandler
 import json
 import sys
+
+# Armé avant tout le reste : il couvre aussi la fermeture de l'instance et la
+# sortie de l'interpréteur, où un fil de travail non terminé retiendrait le
+# process sans rien dire.
+faulthandler.dump_traceback_later(PATIENCE, exit=True)
 
 from loom_ia.access.api import Loom
 
@@ -72,11 +84,27 @@ asyncio.run(main())
 """
 
 
+def _attendu(pilote: subprocess.Popen[str]) -> tuple[str, str]:
+    """Sortie d'un pilote, sans attendre indéfiniment.
+
+    Le pilote se tue lui-même au bout de ``PATIENCE`` en vidant ses piles ;
+    la marge d'ici ne sert qu'à le laisser le faire. S'il n'y arrive pas
+    non plus, on le tue et on rend ce qu'il a écrit — c'est encore ce qui
+    renseigne le plus.
+    """
+    try:
+        return pilote.communicate(timeout=PATIENCE + 15)
+    except subprocess.TimeoutExpired:
+        pilote.kill()
+        return pilote.communicate()
+
+
 @pytest.fixture
 def atelier(tmp_path: Path) -> Path:
     (tmp_path / "agents").mkdir()
     (tmp_path / "outil_poste.py").write_text(OUTILS, encoding="utf-8")
-    (tmp_path / "pilote.py").write_text(PILOTE.replace("DEMANDE", DEMANDE), encoding="utf-8")
+    pilote = PILOTE.replace("DEMANDE", DEMANDE).replace("PATIENCE", repr(PATIENCE))
+    (tmp_path / "pilote.py").write_text(pilote, encoding="utf-8")
     config: dict[str, Any] = {
         "version": 1,
         "imports": ["outil_poste"],
@@ -132,7 +160,7 @@ def test_two_processes_send_the_reminder_once(atelier: Path, tmp_path: Path) -> 
         )
         for session in ("atelier-un", "atelier-deux")
     ]
-    sorties = [pilote.communicate(timeout=120) for pilote in pilotes]
+    sorties = [_attendu(pilote) for pilote in pilotes]
 
     for pilote, (_, erreurs) in zip(pilotes, sorties, strict=True):
         assert pilote.returncode == 0, erreurs
