@@ -75,5 +75,5 @@ policies:
   - hook: numero_devis               # before_tool : numéro normalisé, ou appel refusé
   - hook: plafond_appels             # before_model : arrêt au-delà de max_appels
     params: {max_appels: 6}
-  - hook: cite_le_devis              # on_output : la relance doit citer le numéro
+  - hook: cite_le_devis              # after_tool : l'e-mail rédigé cite le numéro
     max_attempts: 2

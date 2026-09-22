@@ -14,7 +14,8 @@ from conftest import ANSWER, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.config.keys import fingerprint, new_api_key
-from loom_ia.core.model import new_run_id
+from loom_ia.core.events import Event
+from loom_ia.core.model import SessionId, new_run_id
 
 pytest.importorskip("fastapi", reason="extra 'http' absent")
 pytest.importorskip("httpx2", reason="client HTTP de test absent")
@@ -210,6 +211,218 @@ async def test_an_owned_instance_is_closed_at_shutdown(demo: ConfigFactory) -> N
         pass
     # L'arrêt du serveur a fermé l'instance : l'agent est remonté au suivant.
     assert loom.context("demo") is not before
+
+
+# --- Approbations, annulation et sessions (J4.5) ------------------------------
+
+APPROBATEUR = new_api_key()
+ADMIN = new_api_key()
+LECTEUR = new_api_key()
+CLES = {
+    "api_keys": [
+        {"id": "atelier", "hash": fingerprint(CLE), "scopes": ["run", "read"]},
+        {
+            "id": "mme-durand",
+            "hash": fingerprint(APPROBATEUR),
+            "scopes": ["run", "read", "approve"],
+        },
+        {"id": "console", "hash": fingerprint(ADMIN), "scopes": ["read", "admin"]},
+        {"id": "lecture", "hash": fingerprint(LECTEUR), "scopes": ["read"]},
+    ]
+}
+
+
+async def test_a_run_can_be_left_in_the_background(demo: ConfigFactory) -> None:
+    async with serving(demo()) as (loom, http):
+        started = await http.post(
+            "/v1/agents/demo/runs", json={"message": QUESTION, "background": True}
+        )
+        assert started.status_code == 202
+        accepted = started.json()
+        # Le run est inscrit au journal avant la réponse : il se lit aussitôt.
+        assert (await http.get(f"/v1/runs/{accepted['run_id']}")).status_code == 200
+
+        await loom.drain()
+        finished = await http.get(f"/v1/runs/{accepted['run_id']}")
+
+    assert set(accepted) == {"run_id", "session_id", "status"}
+    assert finished.json()["text"] == ANSWER
+
+
+async def test_an_approval_is_granted_over_rest(atelier: ConfigFactory) -> None:
+    async with serving(atelier(security=CLES)) as (loom, http):
+        entete = {"Authorization": f"Bearer {APPROBATEUR}"}
+        started = await http.post(
+            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
+        )
+        paused = started.json()
+        attente = paused["pending_approvals"]
+
+        decided = await http.post(f"/v1/runs/{paused['run_id']}/approve", json={}, headers=entete)
+        await loom.drain()
+        finished = await http.get(f"/v1/runs/{paused['run_id']}", headers=entete)
+        events = await loom.export_session(SessionId(paused["session_id"]))
+
+    assert paused["status"] == "paused"
+    assert [a["tool_name"] for a in attente] == ["envoyer_email"]
+    assert decided.status_code == 200
+    assert decided.json() == {"run_id": paused["run_id"], "calls": [attente[0]["call_id"]]}
+    assert finished.json()["status"] == "completed"
+    # Sans ``by`` dans le corps, c'est la clé d'API qui signe l'accord.
+    assert _by(events, "approval.granted") == ["mme-durand"]
+
+
+async def test_the_body_names_the_human_behind_the_key(
+    atelier: ConfigFactory,
+) -> None:
+    async with serving(atelier(security=CLES)) as (loom, http):
+        entete = {"Authorization": f"Bearer {APPROBATEUR}"}
+        started = await http.post(
+            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
+        )
+        run = started.json()
+        await http.post(
+            f"/v1/runs/{run['run_id']}/approve",
+            json={"by": "denis", "reason": "devis vérifié"},
+            headers=entete,
+        )
+        await loom.drain()
+        events = await loom.export_session(SessionId(run["session_id"]))
+
+    assert _by(events, "approval.granted") == ["denis"]
+
+
+async def test_an_approval_can_be_rejected_over_rest(atelier: ConfigFactory) -> None:
+    async with serving(atelier(security=CLES)) as (loom, http):
+        entete = {"Authorization": f"Bearer {APPROBATEUR}"}
+        started = await http.post(
+            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
+        )
+        run = started.json()
+        refus = await http.post(
+            f"/v1/runs/{run['run_id']}/reject",
+            json={"reason": "mauvais destinataire"},
+            headers=entete,
+        )
+        await loom.drain()
+        finished = await http.get(f"/v1/runs/{run['run_id']}", headers=entete)
+        events = await loom.export_session(SessionId(run["session_id"]))
+
+    assert refus.json()["calls"] == [run["pending_approvals"][0]["call_id"]]
+    # Le run ne s'arrête pas sur un refus : le modèle en fait ce qu'il peut.
+    assert finished.json()["status"] == "completed"
+    assert _by(events, "approval.rejected") == ["mme-durand"]
+    assert "tool.called" not in [event.type for event in events]
+
+
+async def test_deciding_needs_the_approve_scope(atelier: ConfigFactory) -> None:
+    async with serving(atelier(security=CLES)) as (_, http):
+        started = await http.post(
+            "/v1/agents/demo/runs",
+            json={"message": "Relance."},
+            headers={"Authorization": f"Bearer {CLE}"},
+        )
+        run_id = started.json()["run_id"]
+        for route in ("approve", "reject"):
+            refused = await http.post(
+                f"/v1/runs/{run_id}/{route}",
+                json={},
+                headers={"Authorization": f"Bearer {CLE}"},
+            )
+            assert refused.status_code == 403 and "approve" in refused.json()["detail"]
+
+
+async def test_a_paused_run_can_be_cancelled_over_rest(
+    atelier: ConfigFactory,
+) -> None:
+    async with serving(atelier(security=CLES)) as (_, http):
+        entete = {"Authorization": f"Bearer {CLE}"}
+        started = await http.post(
+            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
+        )
+        run_id = started.json()["run_id"]
+        stopped = await http.post(f"/v1/runs/{run_id}/cancel", json={}, headers=entete)
+        again = await http.post(f"/v1/runs/{run_id}/cancel", json={}, headers=entete)
+        finished = await http.get(f"/v1/runs/{run_id}", headers=entete)
+
+    assert stopped.json() == {"run_id": run_id, "cancelled": True}
+    # Un run annulé est terminal : la seconde demande ne trouve plus rien à arrêter.
+    assert again.json()["cancelled"] is False
+    assert finished.json()["status"] == "cancelled"
+
+
+async def test_sessions_are_listed_read_and_exported(demo: ConfigFactory) -> None:
+    path = demo(storage={"events": {"backend": "jsonl", "path": "data"}})
+    async with serving(path) as (_, http):
+        await http.post("/v1/agents/demo/runs", json={"message": QUESTION, "session_id": "c-42"})
+        listed = await http.get("/v1/sessions")
+        fiche = await http.get("/v1/sessions/c-42")
+        export = await http.get("/v1/sessions/c-42/events")
+        absent = await http.get("/v1/sessions/c-99")
+
+    assert [record["session_id"] for record in listed.json()] == ["c-42"]
+    assert [run["agent"] for run in fiche.json()["runs"]] == ["demo"]
+    assert fiche.json()["last_seq"] > 0 and fiche.json()["pending_approvals"] == []
+    assert export.headers["content-type"].startswith("application/x-ndjson")
+    assert len(export.text.splitlines()) == fiche.json()["last_seq"]
+    assert absent.status_code == 404
+
+
+async def test_a_session_shows_what_awaits_a_human(atelier: ConfigFactory) -> None:
+    async with serving(atelier()) as (_, http):
+        await http.post("/v1/agents/demo/runs", json={"message": "Relance.", "session_id": "c-7"})
+        fiche = (await http.get("/v1/sessions/c-7")).json()
+
+    assert [run["status"] for run in fiche["runs"]] == ["paused"]
+    assert [a["tool_name"] for a in fiche["pending_approvals"]] == ["envoyer_email"]
+
+
+async def test_deleting_a_session_needs_admin(demo: ConfigFactory) -> None:
+    path = demo(
+        storage={"events": {"backend": "jsonl", "path": "data"}},
+        security=CLES,
+    )
+    async with serving(path) as (_, http):
+        await http.post(
+            "/v1/agents/demo/runs",
+            json={"message": QUESTION, "session_id": "c-42"},
+            headers={"Authorization": f"Bearer {CLE}"},
+        )
+        refused = await http.delete("/v1/sessions/c-42", headers={"Authorization": f"Bearer {CLE}"})
+        removed = await http.delete(
+            "/v1/sessions/c-42", headers={"Authorization": f"Bearer {ADMIN}"}
+        )
+        gone = await http.get("/v1/sessions/c-42", headers={"Authorization": f"Bearer {ADMIN}"})
+        twice = await http.delete("/v1/sessions/c-42", headers={"Authorization": f"Bearer {ADMIN}"})
+
+    assert refused.status_code == 403
+    assert removed.json()["session_id"] == "c-42" and removed.json()["events"] > 0
+    assert gone.status_code == 404 and twice.status_code == 404
+
+
+async def test_a_key_limited_to_agents_cannot_list_sessions(demo: ConfigFactory) -> None:
+    limitee = new_api_key()
+    security = {
+        "api_keys": [
+            {
+                "id": "limitee",
+                "hash": fingerprint(limitee),
+                "scopes": ["run", "read"],
+                "agents": ["ailleurs"],
+            }
+        ]
+    }
+    path = demo(storage={"events": {"backend": "jsonl", "path": "data"}}, security=security)
+    async with serving(path) as (_, http):
+        refused = await http.get("/v1/sessions", headers={"Authorization": f"Bearer {limitee}"})
+
+    assert refused.status_code == 403 and "filtrée" in refused.json()["detail"]
+
+
+def _by(events: list[Event], type_: str) -> list[str | None]:
+    """Auteurs inscrits au journal pour un type d'événement."""
+    found = [event.facets.get("by") for event in events if event.type == type_]
+    return [value if value is None or isinstance(value, str) else str(value) for value in found]
 
 
 async def _sse(

@@ -506,6 +506,49 @@ def test_an_inline_approver_records_who_decided(atelier: ConfigFactory) -> None:
     assert asyncio.run(go()) == ["denis"]
 
 
+def test_a_decision_is_written_where_its_request_waited(atelier: ConfigFactory) -> None:
+    """Demande et décision partagent un span, par les deux chemins (4.5).
+
+    Une décision prise hors de la boucle n'a pas d'étape à elle ; la ranger
+    au span racine du run la séparait de la demande qu'elle tranche, alors
+    qu'un approbateur en ligne les écrit d'un bloc.
+    """
+
+    # Deux journaux : chaque moitié doit trouver une seule demande.
+    boucle, dehors = SessionId("en-ligne"), SessionId("asynchrone")
+
+    async def en_ligne() -> tuple[str, str]:
+        async def approbateur(demande: PendingApproval) -> ApprovalDecision:
+            return Approved(by="denis")
+
+        async with Loom.from_config(atelier()) as loom:
+            await loom.run("demo", DEMANDE, session_id=boucle, approver=approbateur)
+            return _spans(await loom.export_session(boucle))
+
+    async def asynchrone() -> tuple[str, str, str]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=dehors)
+            await loom.approve(run.run_id, by="denis", session_id=dehors)
+            await loom.drain()
+            events = await loom.export_session(dehors)
+            racine = next(e.span_id for e in events if e.type == "run.started")
+            return (*_spans(events), racine)
+
+    demande, accord = asyncio.run(en_ligne())
+    assert demande == accord
+
+    demande, accord, racine = asyncio.run(asynchrone())
+    assert demande == accord
+    assert accord != racine
+
+
+def _spans(events: list[Event]) -> tuple[str, str]:
+    """Spans de la demande d'approbation et de la décision qui la tranche."""
+    [demande] = [e.span_id for e in events if e.type == "approval.requested"]
+    [accord] = [e.span_id for e in events if e.type == "approval.granted"]
+    return demande, accord
+
+
 # --- Sous-agent en pause (4.3b) -----------------------------------------------
 
 

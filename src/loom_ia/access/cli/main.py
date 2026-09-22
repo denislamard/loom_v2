@@ -5,6 +5,8 @@
     loom run demo "Bonjour"        lance un run (``--stream`` pour le direct,
                                    ``--attach photo.jpg`` pour joindre une image)
     loom resume <run_id>           reprend un run interrompu
+    loom approve <run_id>          autorise ce que le run attend, et le reprend
+    loom reject <run_id>           refuse ce que le run attend, et le reprend
     loom serve                     sert l'API REST
     loom mcp                       sert les agents en MCP, sur stdio
     loom keys create <nom>         fabrique une clé d'API
@@ -21,13 +23,16 @@ import json
 import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
+
+from pydantic import JsonValue
 
 from loom_ia.access.api import (
     Loom,
     RunResult,
     SessionDeletion,
     StreamItem,
+    UnknownApproval,
     UnknownRun,
     UnknownSession,
 )
@@ -71,7 +76,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as error:
         print(f"Configuration : {error}", file=sys.stderr)
         return REFUSED
-    except (UnknownAgent, UnknownRun) as error:
+    except (UnknownAgent, UnknownApproval, UnknownRun) as error:
         print(_message(error), file=sys.stderr)
         return REFUSED
     except ValueError as error:
@@ -123,6 +128,44 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
     resume.add_argument("--session", type=str, default=None, help="journal du run")
     resume.set_defaults(handler=cmd_resume)
+
+    for verbe, aide in (
+        ("approve", "autorise un appel que le run attend"),
+        ("reject", "refuse un appel que le run attend"),
+    ):
+        decision = commands.add_parser(verbe, help=aide)
+        decision.add_argument("run_id")
+        decision.add_argument(
+            "--call",
+            type=str,
+            default=None,
+            metavar="CALL_ID",
+            help="appel visé ; sans lui, tout ce que le run attend est tranché",
+        )
+        decision.add_argument(
+            "--by",
+            type=str,
+            default=None,
+            metavar="NOM",
+            help="qui tranche : inscrit au journal, et c'est tout l'audit qu'il y aura",
+        )
+        decision.add_argument("--reason", type=str, default="", help="motif de la décision")
+        if verbe == "approve":
+            decision.add_argument(
+                "--arguments",
+                type=str,
+                default=None,
+                metavar="JSON",
+                help="arguments corrigés de l'appel (objet JSON) ; demande --call",
+            )
+        decision.add_argument("--session", type=str, default=None, help="journal du run")
+        decision.add_argument(
+            "--no-wait",
+            action="store_true",
+            help="écrit la décision et sort, sans piloter la reprise",
+        )
+        decision.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
+        decision.set_defaults(handler=cmd_decide, verdict=verbe)
 
     serve = commands.add_parser("serve", help="sert l'API REST")
     serve.add_argument("--host", default=None)
@@ -315,6 +358,75 @@ def cmd_resume(args: argparse.Namespace) -> int:
             return await loom.resume(RunId(args.run_id), session_id=session)
 
     return _report(asyncio.run(go()), as_json=args.json)
+
+
+def cmd_decide(args: argparse.Namespace) -> int:
+    """Tranche ce qu'un run attend, puis pilote sa reprise (#17).
+
+    La décision met un travail ``resume`` en file **dans cette instance** :
+    sans ``--no-wait``, c'est donc ce terminal qui mène le run à son terme et
+    en affiche la réponse. Avec, la reprise revient à qui écoute ailleurs —
+    ``loom resume``, ou un serveur qui tourne.
+    """
+    config = load_config(args.config)
+    apply_logging(config)
+    run_id = RunId(args.run_id)
+    session = SessionId(args.session) if args.session else None
+    arguments = getattr(args, "arguments", None)
+    if arguments is not None and args.call is None:
+        print("--arguments corrige un appel désigné : ajouter --call.", file=sys.stderr)
+        return REFUSED
+    corrected = _json_object(arguments) if arguments is not None else None
+    if arguments is not None and corrected is None:
+        return REFUSED
+
+    async def go() -> tuple[tuple[str, ...], RunResult | None]:
+        async with Loom(config) as loom:
+            if args.verdict == "approve":
+                calls = await loom.approve(
+                    run_id,
+                    call_id=args.call,
+                    by=args.by,
+                    reason=args.reason,
+                    arguments=corrected,
+                    session_id=session,
+                )
+            else:
+                calls = await loom.reject(
+                    run_id,
+                    call_id=args.call,
+                    by=args.by,
+                    reason=args.reason,
+                    session_id=session,
+                )
+            if not calls or args.no_wait:
+                return calls, None
+            # Le travail de reprise est en file ici : on l'attend.
+            await loom.drain()
+            return calls, await loom.result(run_id, session_id=session)
+
+    calls, result = asyncio.run(go())
+    if not calls:
+        print(f"Run {run_id} : rien n'attend de décision.", file=sys.stderr)
+        return REFUSED
+    verdict = "Accordé" if args.verdict == "approve" else "Refusé"
+    print(f"{verdict} : {', '.join(calls)}", file=sys.stderr)
+    if result is None:
+        return OK
+    return _report(result, as_json=args.json)
+
+
+def _json_object(text: str) -> dict[str, JsonValue] | None:
+    """Objet JSON d'un argument de ligne de commande, ou None avec un message."""
+    try:
+        value = cast(JsonValue, json.loads(text))
+    except json.JSONDecodeError as error:
+        print(f"--arguments : JSON invalide ({error.msg}).", file=sys.stderr)
+        return None
+    if not isinstance(value, dict):
+        print("--arguments attend un objet JSON.", file=sys.stderr)
+        return None
+    return value
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -561,6 +673,12 @@ def _report(result: RunResult, *, as_json: bool = False, quiet: bool = False) ->
             )
         for line in _verdicts(result):
             print(f"Juge       : {line}", file=sys.stderr)
+        for asked in result.pending_approvals:
+            print(
+                f"En attente : {asked.tool_name} ({asked.call_id}) — "
+                f"loom approve {result.run_id} --call {asked.call_id}",
+                file=sys.stderr,
+            )
         if result.unverified:
             print("Vérifiée   : non (gardée malgré son contrat ou son juge)", file=sys.stderr)
         if result.error:

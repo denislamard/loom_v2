@@ -140,7 +140,7 @@ Les commandes ci-dessous sont indicatives.
 | 4.3b Sous-agent en pause | `WAITING_CHILD`, appel délégant laissé en suspens, demandes de l'arbre remontées à la racine, `approve()` depuis n'importe quel run, reprise par rejeu de l'appel délégant | C5, H4, #4 |
 | 4.4a Idempotence, clé technique | `IdempotencyStore` (`journal`, `memory`), `@idempotent`, `idempotency.recorded`, règle de reprise complétée (`on_unknown` : erreur ou pause), `storage.idempotency` | D11, #18, #49 |
 | 4.4b Clés métier | Magasin partagé `sqlite`, clé métier fournie par l'outil (`key=`), contrôle au démarrage (clé métier ⇒ magasin partagé et durable), durée de vie par outil et préfixe par client, `on_unknown` sur une réservation périmée, `idempotency.reused` au journal, oubli des clés avec la session (RGPD) | D11, #49 |
-| 4.5 Accès | REST : `approve`, `cancel`, runs en arrière-plan, sessions. MCP : elicitation, ou pause avec `run_status`. Python : `approve()` | — |
+| 4.5 Accès | REST : `background: true`, `approve`, `reject`, `cancel`, routes de session (lister, fiche, export, effacement RGPD sous `admin`), portée `approve` et clé qui signe la décision ; MCP : approbateur en ligne bâti sur l'elicitation, sinon run rendu en pause avec `pending_approvals` et relu par `run_status` ; CLI : `loom approve` et `reject` ; Python : `Loom.session()` | N1, N2, N3, N4, #17, #39, #40 |
 
 ### Test et exécution
 
@@ -153,10 +153,10 @@ Les commandes ci-dessous sont indicatives.
 
 | Accès | Exécution |
 |---|---|
-| Python | Un exemple par phase, sur la config `examples/j4/relance/` : `sessions.py` (4.1a), `compaction.py` (4.1b), `durable.py` (4.2), `approbation.py` (4.3), `idempotence.py` (4.4) ; puis `acces.py` (4.5) : le scénario complet par les trois accès, avec approbation asynchrone puis approbateur en ligne |
-| CLI | `loom run relance "…" --session c-42 --background`, puis `loom resume` ou reprise automatique au redémarrage |
-| REST | `POST …/runs` en arrière-plan, puis `POST …/runs/<id>/approve`, puis `GET …/sessions/c-42` |
-| MCP | Elicitation si le client la prend en charge, sinon pause, `run_status`, puis approbation via REST |
+| Python | Un exemple par phase, sur la config `examples/j4/relance/` : `sessions.py` (4.1a), `compaction.py` (4.1b), `durable.py` (4.2), `approbation.py` (4.3), `idempotence.py` (4.4) ; puis `acces.py` (4.5) : le même scénario par les trois accès, avec approbation asynchrone (Python, REST) puis approbateur en ligne (elicitation MCP) |
+| CLI | `loom run relance "…" --session c-42`, puis `loom approve <run_id> --session c-42` depuis un autre terminal, qui pilote la reprise et affiche la réponse |
+| REST | `POST …/runs` avec `background: true`, puis `POST …/runs/<id>/approve` (portée `approve`), puis `GET …/sessions/c-42` |
+| MCP | Elicitation si le client la déclare — la décision tranche dans la boucle ; sinon l'outil rend le run en pause, un humain tranche par REST ou en CLI, et `run_status` relit |
 
 **Tests automatisés :** `expected_seq` (deux runs concurrents sur une session) ; snapshots, compaction et contrôle de fidélité ; `ensure_fits` ; `EventStore` SQLite sur la suite de contrat du port ; lister, exporter et supprimer une session ; `recover()` et concession (deux workers simulés) ; approbation, refus et expiration ; `@idempotent` avec clés technique et métier ; reprise d'un outil non idempotent interrompu ; `kill -9` réel en test d'intégration (sous-process).
 

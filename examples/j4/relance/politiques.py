@@ -12,11 +12,11 @@ from typing import Final
 from loom_ia.core.model import RunState, ToolResultBlock
 from loom_ia.policies import (
     CONTINUE,
+    AfterTool,
     BeforeModel,
     BeforeTool,
     Decision,
     Deny,
-    OnOutput,
     PolicyContext,
     Replace,
     Retry,
@@ -51,22 +51,28 @@ def plafond_appels(subject: BeforeModel, context: PolicyContext) -> Decision:
     return CONTINUE
 
 
-@policy(points=["on_output"], decisions=["retry"])
-def cite_le_devis(subject: OnOutput) -> Decision:
+@policy(points=["after_tool"], decisions=["retry"])
+def cite_le_devis(subject: AfterTool) -> Decision:
     """La relance doit citer le numéro du devis trouvé dans le run.
 
-    Pendant la réponse forcée (``finalizing``), plus d'outil : le rôle ne peut
-    pas être rappelé, et la réponse n'est pas une relance ; rien à demander.
+    Le contrôle porte sur **l'e-mail, là où il est produit** : la sortie du
+    rôle qui le rédige. Il valait auparavant sur la réponse finale du run,
+    ce qui était juste tant que le rôle était terminal — sa sortie *était*
+    la réponse. Dès qu'un agent ajoute un outil d'envoi, le rôle cesse de
+    l'être et la réponse finale devient un compte rendu : exiger le numéro
+    du devis dans « E-mail envoyé à Mme Martin. » n'a pas de sens, et
+    demander alors de rédiger à nouveau fait refaire un travail déjà fait —
+    au run réel du 21/09, cela a fait partir un second e-mail.
+
+    Ici la réparation rappelle le rôle lui-même, qui est justement ce qu'il
+    faut corriger, et aucune réponse finale n'est jamais concernée.
     """
-    if subject.finalizing:
+    if subject.spec.name != "rediger_relance":
         return CONTINUE
     numero = devis_trouve(subject.state)
-    if numero is None or numero in subject.output.text:
+    if numero is None or numero in subject.output.as_text:
         return CONTINUE
-    return Retry(
-        f"la relance doit citer le numéro du devis {numero}. Rappelle rediger_relance "
-        "en le demandant dans consignes."
-    )
+    return Retry(f"la relance doit citer le numéro du devis {numero}.")
 
 
 def devis_trouve(state: RunState) -> str | None:

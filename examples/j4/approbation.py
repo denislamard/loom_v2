@@ -86,8 +86,9 @@ async def envoyer_email(destinataire: str, objet: str = "", corps: str = "") -> 
 
 def main_script(envoye: bool) -> list[dict[str, Any]]:
     """Script de l'orchestrateur ; sa dernière réponse dit ce qui s'est passé."""
-    # Le numéro du devis est exigé par la politique `cite_le_devis` de
-    # `relance/` : sans lui, la réponse est refusée et coûte une réparation.
+    # Le numéro du devis y figure parce qu'un compte rendu utile le nomme —
+    # plus parce qu'un contrôle l'exige : depuis 4.5, `cite_le_devis` porte
+    # sur l'e-mail rédigé, jamais sur la réponse finale.
     fin = (
         "La relance du devis D-2026-042 est partie à Mme Martin."
         if envoye

@@ -55,6 +55,7 @@ RUN_BODY: Final[dict[str, Any]] = {
                         "user_id": {"type": "string"},
                         "metadata": {"type": "string", "description": "Objet JSON"},
                         "judges": {"type": "string", "enum": list(JUDGES_MODES)},
+                        "background": {"type": "boolean"},
                         FILES_FIELD: {
                             "type": "array",
                             "items": {"type": "string", "format": "binary"},

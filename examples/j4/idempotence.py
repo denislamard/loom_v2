@@ -193,10 +193,10 @@ async def relecture(subject: AfterTool) -> Decision:
     return CONTINUE
 
 
-# Dernière réponse de l'orchestrateur simulé, par cas : elle cite le devis
-# (politique ``cite_le_devis`` de ``relance/``) et dit ce qui s'est passé. Un
-# vrai modèle la tire du résultat de l'appel ; ici c'est le script qui la
-# porte, le ``with_text`` du modèle simulé ne voyant que la demande.
+# Dernière réponse de l'orchestrateur simulé, par cas : elle nomme le devis et
+# dit ce qui s'est passé, comme le ferait un compte rendu utile. Un vrai modèle
+# la tire du résultat de l'appel ; ici c'est le script qui la porte, le
+# ``with_text`` du modèle simulé ne voyant que la demande.
 FINS = {
     "etat_inconnu": (
         "Je n'ai pas pu confirmer l'envoi de la relance du devis D-2026-042 : "

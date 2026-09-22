@@ -50,7 +50,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self
 
-from pydantic import JsonValue, NonNegativeInt, PositiveInt
+from pydantic import AwareDatetime, JsonValue, NonNegativeInt, PositiveInt
 
 from loom_ia.adapters.queue import AsyncioTaskQueue, Handler
 from loom_ia.adapters.stores import NotifyingEventStore
@@ -62,7 +62,9 @@ from loom_ia.config.references import Registry
 from loom_ia.core.events import (
     ApprovalGranted,
     ApprovalRejected,
+    ApprovalRequested,
     Event,
+    EventDraft,
     JudgeEvaluated,
     RunCompleted,
     RunFailed,
@@ -83,6 +85,7 @@ from loom_ia.core.model import (
     RunState,
     RunStatus,
     SessionId,
+    SpanId,
     TenantId,
     Usage,
     new_id,
@@ -164,6 +167,49 @@ class SessionDeletion(DomainModel):
     # Clés d'idempotence oubliées : celles d'un magasin partagé, le magasin
     # ``journal`` gardant les siennes dans les événements ci-dessus.
     keys: NonNegativeInt = 0
+
+
+class RunSummary(DomainModel):
+    """Un run de la session, tel que la fiche le montre (F7)."""
+
+    run_id: RunId
+    agent: str
+    status: RunStatus
+    # Run délégant, pour le run d'un sous-agent (#4).
+    parent_run_id: RunId | None = None
+    iterations: NonNegativeInt = 0
+    usage: Usage = Usage()
+    cost_usd: float = 0.0
+
+    @classmethod
+    def of(cls, state: RunState) -> Self:
+        return cls(
+            run_id=state.run_id,
+            agent=state.agent,
+            status=state.status,
+            parent_run_id=state.parent_run_id,
+            iterations=state.iterations,
+            usage=state.usage,
+            cost_usd=state.cost_usd,
+        )
+
+
+class SessionInfo(DomainModel):
+    """Ce qu'une session contient, sans dérouler son journal (F7).
+
+    Les événements eux-mêmes se relisent avec ``export_session``.
+    """
+
+    session_id: SessionId
+    # Dernier ``seq`` écrit : la taille du journal.
+    last_seq: NonNegativeInt = 0
+    updated_at: AwareDatetime
+    # Les runs de la session, dans l'ordre où ils y sont entrés ; ceux des
+    # sous-agents compris, chacun nommant son délégant.
+    runs: tuple[RunSummary, ...] = ()
+    # Ce qui attend un humain, tous runs confondus (#17) : sans cela,
+    # l'appelant devrait ouvrir chaque run pour savoir ce qu'on lui demande.
+    pending_approvals: tuple[PendingApproval, ...] = ()
 
 
 class JudgeVerdict(DomainModel):
@@ -287,13 +333,42 @@ def _awaited(state: RunState, tree: Sequence[Event]) -> tuple[PendingApproval, .
     return (*state.awaiting, *inner)
 
 
+def _run_states(events: Sequence[Event]) -> list[RunState]:
+    """État de chaque run d'un journal, dans l'ordre où ils y sont entrés.
+
+    Les marqueurs de session sont écartés : ils portent l'identifiant de leur
+    session, pas celui d'un run.
+    """
+    return [
+        fold([e for e in events if e.run_id == run_id], run_id)
+        for run_id in dict.fromkeys(e.run_id for e in events if e.category != "session")
+    ]
+
+
 def _awaiting_runs(tree: Sequence[Event]) -> list[RunState]:
     """Runs de l'arbre qui attendent une approbation, dans l'ordre du journal."""
-    states = [
-        fold([e for e in tree if e.run_id == run_id], run_id)
-        for run_id in dict.fromkeys(e.run_id for e in tree if e.category != "session")
-    ]
-    return [state for state in states if state.awaiting]
+    return [state for state in _run_states(tree) if state.awaiting]
+
+
+def _where(
+    tree: Sequence[Event], run_id: RunId, call_id: str
+) -> tuple[SpanId | None, SpanId | None]:
+    """Span de la demande qu'une décision vient trancher (#17).
+
+    Une décision prise hors de la boucle — par REST, par la CLI, par
+    ``approve()`` — n'a pas d'étape à elle : elle se range donc **là où la
+    demande attendait**, et les deux se lisent d'un bloc, comme lorsqu'un
+    approbateur en ligne tranche dans le lot. Sans demande retrouvée, le span
+    racine du run vaut.
+    """
+    for event in reversed(tree):
+        if (
+            event.run_id == run_id
+            and isinstance(request := event.payload, ApprovalRequested)
+            and request.call_id == call_id
+        ):
+            return event.span_id, event.parent_span_id
+    return None, None
 
 
 def _unfinished(events: Sequence[Event]) -> list[RunState]:
@@ -479,13 +554,14 @@ class Loom:
         run_id: RunId | None = None,
         subruns: bool = True,
         judges: JudgesMode = "auto",
+        approver: Approver | None = None,
     ) -> AsyncGenerator[StreamItem]:
         """Événements du journal et morceaux du modèle, dans l'ordre d'arrivée.
 
         Le run est lancé en tâche de fond ; abandonner l'itération l'annule.
         Son résultat se relit ensuite avec ``result(run_id)``. Avec
         ``subruns``, les événements des sous-runs sont mêlés au flux.
-        ``judges`` : comme pour ``run``.
+        ``judges`` et ``approver`` : comme pour ``run``.
         """
         run_id = run_id or new_run_id()
         items: asyncio.Queue[StreamItem | None] = asyncio.Queue()
@@ -493,7 +569,7 @@ class Loom:
         async def on_chunk(chunk: ModelChunk) -> None:
             items.put_nowait(chunk)
 
-        ctx = self.context(agent, on_chunk=on_chunk)
+        ctx = self.context(agent, on_chunk=on_chunk, approver=approver)
         tree = RunTree(run_id, subruns=subruns)
         # Écoute posée avant le démarrage : l'arbre se reconnaît dans l'ordre d'écriture.
         with self._store.listen(items.put_nowait, accept=tree.admit):
@@ -696,6 +772,26 @@ class Loom:
     async def sessions(self, *, tenant_id: TenantId | None = None) -> list[SessionRecord]:
         """Sessions du client, de la plus récemment écrite à la plus ancienne."""
         return await self._store.sessions(tenant_id or DEFAULT_TENANT)
+
+    async def session(
+        self, session_id: SessionId, *, tenant_id: TenantId | None = None
+    ) -> SessionInfo:
+        """Fiche d'une session : ses runs, et ce qu'il faut trancher pour qu'elle avance.
+
+        Le journal est lu une fois et replié run par run. Une session inconnue
+        lève ``UnknownSession`` — un journal vide n'existe pas.
+        """
+        events = await self._store.read(tenant_id or DEFAULT_TENANT, session_id)
+        if not events:
+            raise UnknownSession(session_id)
+        states = _run_states(events)
+        return SessionInfo(
+            session_id=session_id,
+            last_seq=events[-1].seq,
+            updated_at=events[-1].ts,
+            runs=tuple(RunSummary.of(state) for state in states),
+            pending_approvals=tuple(approval for state in states for approval in state.awaiting),
+        )
 
     async def export_session(
         self, session_id: SessionId, *, tenant_id: TenantId | None = None
@@ -905,7 +1001,13 @@ class Loom:
         if not decided:
             return ()
         writer = await self._writers.open(self._store, tenant, root.session_id)
-        await writer.append([run_scope(owner).draft(payload(asked)) for owner, asked in decided])
+        drafts: list[EventDraft] = []
+        for owner, asked in decided:
+            span, parent = _where(tree, owner.run_id, asked.call_id)
+            drafts.append(
+                run_scope(owner).draft(payload(asked), span_id=span, parent_span_id=parent)
+            )
+        await writer.append(drafts)
         await self._queue.submit(
             Job(
                 kind="resume",

@@ -1,9 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Configuration de démonstration, partagée par les tests des trois accès.
+"""Configurations de démonstration, partagées par les tests des trois accès.
 
 L'agent ``demo`` calcule : le modèle est scripté (``sdk: fake``), l'outil
 ``calculer`` vient d'un module voisin du fichier de config. C'est le scénario
 du jalon J1, celui des exemples.
+
+L'``atelier``, lui, relance une cliente par e-mail : son unique outil demande
+une approbation, et c'est ce qu'il faut pour éprouver les chemins d'un run qui
+s'arrête en attendant un humain (J4.5).
 """
 
 from collections.abc import Callable
@@ -148,6 +152,65 @@ def tree(tmp_path: Path) -> ConfigFactory:
         for agent in agents:
             path = tmp_path / "agents" / f"{agent['name']}.yaml"
             path.write_text(yaml.safe_dump(agent), encoding="utf-8")
+        return tmp_path / "loom.yaml"
+
+    return build
+
+
+# --- Un outil qui demande une approbation (J4.5) ------------------------------
+
+OUTIL_SENSIBLE = '''
+from loom_ia.tools import tool
+
+
+@tool
+async def envoyer_email(destinataire: str) -> str:
+    """Envoie un e-mail."""
+    return f"envoyé à {destinataire}"
+'''
+
+RELANCE: list[dict[str, Any]] = [
+    {
+        "text": "J'envoie.",
+        "tool_calls": [
+            {"name": "envoyer_email", "arguments": {"destinataire": "mme.martin@example.com"}}
+        ],
+    },
+    {"text": "Relance envoyée."},
+]
+
+
+@pytest.fixture
+def atelier(tmp_path: Path) -> Callable[..., Path]:
+    """Config dont l'unique outil demande une approbation ; journal JSONL (#28)."""
+
+    def build(**root: Any) -> Path:
+        (tmp_path / "agents").mkdir(exist_ok=True)
+        (tmp_path / "outils_atelier.py").write_text(OUTIL_SENSIBLE, encoding="utf-8")
+        config: dict[str, Any] = {
+            "version": 1,
+            "imports": ["outils_atelier"],
+            "models": [
+                {"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": RELANCE}}
+            ],
+            "storage": {"events": {"backend": "jsonl", "path": "data"}},
+            "telemetry": {"logging": {"level": "CRITICAL"}},
+            **root,
+        }
+        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        agent: dict[str, Any] = {
+            "name": "demo",
+            "description": "Relance.",
+            "main": {"model": "FAKE", "system": "Tu relances."},
+            "tools": [
+                {
+                    "python": "envoyer_email",
+                    "side_effects": "irreversible",
+                    "approval": "always",
+                }
+            ],
+        }
+        (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
         return tmp_path / "loom.yaml"
 
     return build

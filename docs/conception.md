@@ -143,6 +143,7 @@ L'artisan écrit : « Relance M. Dupont pour le devis 2026-042. »
 - Un outil déclare s'il a des effets de bord et s'il exige une approbation ; une politique peut en exiger une selon le client, l'agent ou les arguments (#17).
 - Le run se met en pause, le process peut s'arrêter. L'approbateur valide (éventuellement en modifiant les arguments), refuse (le motif est renvoyé au modèle), ou laisse expirer la demande.
 - En Python, l'approbation est asynchrone par défaut ; un « approbateur en ligne » (callback) sert aux scripts et aux tests (#28).
+- Une décision s'écrit dans le span de la demande qu'elle tranche, quel que soit le canal : une décision venue de l'extérieur n'a pas d'étape à elle, et les deux chemins se lisent de la même façon (4.5).
 - Une approbation ne passe jamais par un outil MCP : un LLM client ne peut pas valider lui-même une action sensible (#39).
 
 ### 3.5 Arrière-plan et reprise
@@ -1397,7 +1398,7 @@ async with loom:
 - `report(run_id)` ou `report(session_id=…)` rend la consommation d'un run (et de ses sous-runs) ou d'une session : total, par run, par rôle, par modèle (depuis 3.4).
 - Les disjoncteurs des modèles et des serveurs MCP sont communs aux runs d'une instance ; `Loom(config, breakers=…)` les partage entre instances (depuis 3.5a).
 - `stream()`, `follow()` et `events()` rendent l'arbre du run : ses événements et ceux de ses sous-runs, dans l'ordre du journal ; `subruns=False` s'en tient au run.
-- `sessions()`, `export_session(session_id)` et `delete_session(session_id)` listent, exportent et suppriment les journaux de session (F7, depuis 4.1a) ; REST et MCP les exposeront en 4.5.
+- `sessions()`, `export_session(session_id)` et `delete_session(session_id)` listent, exportent et suppriment les journaux de session (F7, depuis 4.1a) ; `session(session_id)` en rend la fiche — ses runs, et les approbations qu'il faut trancher pour que la conversation avance (4.5). L'API REST les expose toutes (18.2).
 - `compact(session_id)` résume une session à la demande et `drain()` attend les tâches de fond (depuis 4.1b) ; `aclose()` les attend aussi, dans la limite d'`execution.shutdown_timeout`.
 
 ### 18.2 HTTP REST
@@ -1408,14 +1409,19 @@ Application ASGI (FastAPI, extra `loom-ia[http]`), autonome ou montée dans un p
 app.mount("/loom", loom.asgi_app(rest=True, mcp=True))
 ```
 
-| Méthode | Route | Rôle |
-|---|---|---|
-| `GET` | `/v1/agents` | Lister les agents |
-| `POST` | `/v1/agents/{name}/runs` | Lancer un run (synchrone ou arrière-plan) |
-| `GET` | `/v1/runs/{id}` | Statut et résultat |
-| `GET` | `/v1/runs/{id}/events` | Streaming SSE |
-| `POST` | `/v1/runs/{id}/approve` · `/cancel` | Validation humaine, annulation |
-| `GET` | `/v1/sessions/{id}` · `/v1/traces/...` | Sessions, traces |
+| Méthode | Route | Rôle | Portée |
+|---|---|---|---|
+| `GET` | `/v1/agents` | Lister les agents | `read` |
+| `POST` | `/v1/agents/{name}/runs` | Lancer un run (synchrone, ou `background: true`) | `run` |
+| `GET` | `/v1/runs/{id}` | Statut et résultat | `read` |
+| `GET` | `/v1/runs/{id}/events` | Streaming SSE | `read` |
+| `POST` | `/v1/runs/{id}/approve` · `/reject` | Validation humaine | `approve` |
+| `POST` | `/v1/runs/{id}/cancel` | Annulation | `run` |
+| `GET` | `/v1/sessions` | Lister les sessions | `read` |
+| `GET` | `/v1/sessions/{id}` | Fiche : runs et approbations en attente | `read` |
+| `GET` | `/v1/sessions/{id}/events` | Journal entier en JSONL | `read` |
+| `GET` | `/v1/sessions/{id}/report` | Consommation de la session | `read` |
+| `DELETE` | `/v1/sessions/{id}` | Effacement RGPD | `admin` |
 
 OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
@@ -1423,13 +1429,17 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - **Sous-runs :** le flux SSE d'un run contient les événements de ses sous-runs (`?subruns=false` pour le run seul) ; il se ferme sur la clôture du run demandé.
 - **Résultat (3.6) :** celui de l'API Python (`RunResult`, voir 18.1), en JSON. Un run échoué garde le code 201 (`status: failed`, `error_type`, `error`). Le champ `judges` du corps règle les juges du run ; `skip` demande la portée `admin`.
 - **Rapport de session (3.6) :** `GET /v1/sessions/{id}/report`, la consommation de toute la session (portée `read`, droit sur chaque agent de la session).
+- **Arrière-plan (4.5) :** `background: true` rend 202 et `{run_id, session_id, status}` — le run est inscrit au journal avant la réponse, donc lisible et suivable aussitôt.
+- **Décisions (4.5) :** `approve` et `reject` prennent un `call_id` optionnel (sans lui, tout ce que le run attend est tranché), un motif, et pour un accord des arguments corrigés. L'approbateur inscrit au journal est **l'identifiant de la clé d'API**, qu'un `by` dans le corps remplace : une passerelle nomme ainsi l'humain qui a tranché.
+- **Sessions (4.5) :** la liste est refusée à une clé limitée à certains agents — elle ne dit pas de quels agents sont les runs d'une session, et la filtrer honnêtement demanderait de lire chaque journal. La fiche et l'export vérifient le droit sur chaque agent rencontré ; l'effacement, irréversible et commun à tous les agents de la session, demande `admin`.
 
 ### 18.3 Serveur MCP
 
 - Chaque agent devient un outil MCP ; deux outils de contrôle s'ajoutent : `run_status` et `cancel`.
 - Traces et sessions exposées en ressources en lecture seule (`loom://runs/{id}`).
 - Transports : stdio (local, `loom mcp`) et HTTP, monté dans la même application que l'API REST.
-- Limites : notifications de progression seulement ; validation humaine par elicitation, sinon pause et validation via l'API REST.
+- Limites : notifications de progression seulement, pas de flux d'événements complet.
+- **Approbations (4.5) :** `approve` n'est jamais un outil MCP (16.2). Si le client déclare l'`elicitation`, chaque demande part en formulaire (accorder ou refuser, avec un motif) et la réponse est tranchée **dans la boucle** : le run ne passe pas par `PAUSED`, et le journal garde qui a décidé (`mcp:<client>`, faute d'identité plus précise sur stdio). Un formulaire ne corrige pas les arguments d'un appel : cela reste à l'API. Sinon, le run s'arrête en pause et l'outil **rend la main aussitôt, sans erreur** : le texte dit ce qui attend, le résultat structuré porte `run_id` et `pending_approvals`, un humain tranche ailleurs, et `run_status` relit le run.
 - **Pièces jointes :** argument `attachments` de l'outil d'un agent : image en base64, ou lien `artifact://` (fichier déjà rangé, même client) ou `file://` (seulement sous `server.mcp.file_roots`, vide par défaut). Le résultat structuré liste les fichiers du run.
 - **Progression :** si le client fournit un `progressToken`, le déroulé du run (appels d'outils, fichiers, sous-agents et leurs appels) lui arrive en notifications de progression.
 - **Résultat (3.6) :** le texte est la réponse ; le résultat structuré est celui de l'API Python (`unverified`, usage, coût, ventilation, verdicts). Une réponse non vérifiée est suivie d'un second texte qui le dit. Un run échoué est un résultat d'erreur (`isError`) dont le texte dit en clair ce qui l'a arrêté (« Échec de l'agent … : … ») ; son type est dans `error_type`. Les juges suivent leur `when` (pas de forçage par MCP).
@@ -1437,7 +1447,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
 ### 18.4 CLI
 
-Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `sessions list | export | delete` (F7, 4.1a).
+Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort.
 
 ## 19. Projet
 

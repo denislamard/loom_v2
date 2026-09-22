@@ -20,6 +20,20 @@ Progression (D4) : si le client en demande une (``progressToken``), chaque
 démarrent et se terminent, avec leurs propres appels — lui est envoyée en
 notification de progression, dans l'ordre du journal.
 
+Approbations (#17, #39, J4.5) : ``approve`` n'est **jamais** un outil MCP —
+le LLM du client validerait lui-même les effets qu'il demande. Deux chemins,
+selon ce que le client sait faire :
+
+- il déclare l'``elicitation`` : chaque demande part en formulaire (accorder
+  ou refuser, avec un motif) et la réponse de l'humain est tranchée **dans la
+  boucle** — le run ne passe pas par ``PAUSED``, et le journal garde qui a
+  décidé (``mcp:<client>``, faute d'identité plus précise sur stdio). Un
+  formulaire ne corrige pas les arguments d'un appel : cela reste à l'API ;
+- il ne la déclare pas : le run s'arrête en ``PAUSED`` et l'outil **rend la
+  main aussitôt**, sans erreur — le texte dit ce qui attend, le résultat
+  structuré porte ``run_id`` et ``pending_approvals``. Un humain tranche
+  ailleurs (API REST ou ``loom approve``), et ``run_status`` relit le run.
+
 Le transport du jalon J1 est stdio : le client lance le process et parle sur
 son entrée et sa sortie standard. Les logs de loom vont sur la sortie
 d'erreur, jamais sur stdout — le protocole y passe.
@@ -30,12 +44,14 @@ Le serveur est bâti sur l'API bas niveau du SDK MCP : les outils sont
 déclarés dynamiquement, puisqu'ils viennent de la configuration.
 """
 
+import json
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Final
 
 import mcp.types as types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
+from mcp.shared.context import RequestContext
 from pydantic.json_schema import models_json_schema
 
 from loom_ia.access.api import JudgeVerdict, Loom, RunResult, UnknownRun
@@ -45,7 +61,12 @@ from loom_ia.agents.registry import UnknownAgent
 from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    ApprovalDecision,
+    Approved,
+    Approver,
     Attachment,
+    PendingApproval,
+    Rejected,
     RunId,
     RunStatus,
     SessionId,
@@ -57,6 +78,9 @@ from loom_ia.usage import UsageReport, render
 SERVER_NAME: Final = "loom"
 STATUS_TOOL: Final = "run_status"
 REPORT_TOOL: Final = "run_report"
+# Ce qu'un formulaire d'elicitation peut rendre, par champ.
+type FormValue = str | int | float | bool | list[str] | None
+
 UNVERIFIED_NOTE: Final = (
     "Réponse non vérifiée : elle a été gardée sans respecter son contrat ou son juge."
 )
@@ -101,11 +125,38 @@ REPORT_INPUT: Final[dict[str, Any]] = {
     "additionalProperties": False,
 }
 
-# Schémas de l'usage, du rapport et d'un verdict, rangés à la racine du schéma de sortie.
+# Schémas de l'usage, du rapport, d'un verdict et d'une demande d'approbation,
+# rangés à la racine du schéma de sortie.
 _REFS, _DEFS = models_json_schema(
-    [(Usage, "serialization"), (UsageReport, "serialization"), (JudgeVerdict, "serialization")],
+    [
+        (Usage, "serialization"),
+        (UsageReport, "serialization"),
+        (JudgeVerdict, "serialization"),
+        (PendingApproval, "serialization"),
+    ],
     ref_template="#/$defs/{model}",
 )
+
+# Ce qu'un client capable d'elicitation montre à l'humain : accorder ou
+# refuser, et pourquoi. Un formulaire MCP n'a qu'un niveau de propriétés :
+# corriger les arguments d'un appel n'y entre pas, et reste à l'API.
+DECISION_SCHEMA: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "decision": {
+            "type": "string",
+            "title": "Décision",
+            "description": "Autoriser l'appel, ou le refuser",
+            "enum": ["accorder", "refuser"],
+        },
+        "motif": {
+            "type": "string",
+            "title": "Motif",
+            "description": "Ce qui motive la décision ; inscrit au journal",
+        },
+    },
+    "required": ["decision"],
+}
 
 REPORT_OUTPUT: Final[dict[str, Any]] = UsageReport.model_json_schema(mode="serialization")
 
@@ -130,6 +181,12 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
         # Consommation ventilée du run et de ses sous-runs.
         "report": {"anyOf": [_REFS[(UsageReport, "serialization")], {"type": "null"}]},
         "verdicts": {"type": "array", "items": _REFS[(JudgeVerdict, "serialization")]},
+        # Approbations qu'il faut trancher pour que le run avance, celles de
+        # ses sous-runs comprises : un run en ``paused`` n'a pas fini.
+        "pending_approvals": {
+            "type": "array",
+            "items": _REFS[(PendingApproval, "serialization")],
+        },
         # Fichiers du run : pièces jointes, fichiers produits, déports.
         "artifacts": {
             "type": "array",
@@ -225,16 +282,24 @@ async def _run(
     attachments: list[Attachment],
     session_id: SessionId | None,
 ) -> RunResult:
-    """Fait tourner le run ; suit sa progression si le client en demande une."""
+    """Fait tourner le run ; suit sa progression et fait trancher, si le client le sait."""
     ctx = server.request_context
     token = ctx.meta.progressToken if ctx.meta is not None else None
+    approver = _elicited(ctx)
     if token is None:
-        return await loom.run(agent, message, attachments=attachments, session_id=session_id)
+        return await loom.run(
+            agent, message, attachments=attachments, session_id=session_id, approver=approver
+        )
     run_id = new_run_id()
     progress = Progress()
     sent = 0
     async for item in loom.stream(
-        agent, message, attachments=attachments, session_id=session_id, run_id=run_id
+        agent,
+        message,
+        attachments=attachments,
+        session_id=session_id,
+        run_id=run_id,
+        approver=approver,
     ):
         if isinstance(item, Event) and (line := progress.line(item)) is not None:
             sent += 1
@@ -242,6 +307,53 @@ async def _run(
                 token, sent, message=line, related_request_id=str(ctx.request_id)
             )
     return await loom.result(run_id, session_id=session_id)
+
+
+def _elicited(ctx: RequestContext[Any, Any, Any]) -> Approver | None:
+    """Approbateur en ligne bâti sur l'elicitation, si le client la déclare (#17).
+
+    Sans elle, rien n'est monté : le run se mettra en pause, et l'outil rendra
+    la main avec ce qu'il faut trancher.
+    """
+    capable = types.ClientCapabilities(elicitation=types.ElicitationCapability())
+    if not ctx.session.check_client_capability(capable):
+        return None
+    client = ctx.session.client_params
+    by = f"mcp:{client.clientInfo.name}" if client is not None else "mcp"
+
+    async def decide(asked: PendingApproval) -> ApprovalDecision:
+        answered = await ctx.session.elicit_form(
+            _question(asked), DECISION_SCHEMA, related_request_id=str(ctx.request_id)
+        )
+        content: dict[str, FormValue] = answered.content or {}
+        motif = str(content.get("motif") or "")
+        if answered.action != "accept":
+            # Refusé, ou fermé sans répondre : dans les deux cas l'effet
+            # n'a pas été autorisé, et c'est tout ce que le journal dira.
+            return Rejected(by=by, reason=motif or _CLOSED[answered.action])
+        if content.get("decision") == "accorder":
+            return Approved(by=by, reason=motif)
+        return Rejected(by=by, reason=motif)
+
+    return decide
+
+
+_CLOSED: Final[dict[str, str]] = {
+    "decline": "refusé par le client MCP",
+    "cancel": "demande fermée sans réponse",
+}
+
+
+def _question(asked: PendingApproval) -> str:
+    """Ce que l'humain lit avant de trancher : l'appel, ses arguments, le motif."""
+    lines = [f"Approbation demandée pour l'outil {asked.tool_name}."]
+    if asked.arguments:
+        lines.append(f"Arguments : {json.dumps(asked.arguments, ensure_ascii=False)}")
+    if asked.reason:
+        lines.append(f"Motif : {asked.reason}")
+    if asked.policy:
+        lines.append(f"Exigée par la politique {asked.policy}.")
+    return "\n".join(lines)
 
 
 async def run_stdio(loom: Loom, *, name: str = SERVER_NAME) -> None:
@@ -283,6 +395,9 @@ def structured(result: RunResult) -> dict[str, Any]:
         "unverified": result.unverified,
         "report": result.report.model_dump(mode="json") if result.report else None,
         "verdicts": [verdict.model_dump(mode="json") for verdict in result.verdicts],
+        "pending_approvals": [
+            approval.model_dump(mode="json") for approval in result.pending_approvals
+        ],
         "artifacts": [
             artifact.model_dump(mode="json", exclude_none=True) for artifact in result.artifacts
         ],
@@ -290,10 +405,23 @@ def structured(result: RunResult) -> dict[str, Any]:
 
 
 def _text(result: RunResult) -> str:
-    """La réponse ; pour un échec, ce qui l'a arrêté, en clair."""
+    """La réponse ; pour un échec, ce qui l'a arrêté ; pour une pause, ce qui attend."""
     if result.status is RunStatus.FAILED:
         return f"Échec de l'agent {result.agent} : {result.error}"
+    if result.pending_approvals:
+        return _awaiting(result)
     return result.text or f"Run {result.run_id} : {result.status}"
+
+
+def _awaiting(result: RunResult) -> str:
+    """Ce qu'un run arrêté sur une approbation dit au client : quoi, et comment reprendre."""
+    asked = ", ".join(f"{a.tool_name} ({a.call_id})" for a in result.pending_approvals)
+    return (
+        f"Run {result.run_id} en attente d'approbation : {asked}. "
+        "Un humain doit trancher (API REST ou « loom approve »), "
+        f"puis {STATUS_TOOL} relit le run "
+        f"(run_id={result.run_id}, session_id={result.session_id})."
+    )
 
 
 async def _report(
