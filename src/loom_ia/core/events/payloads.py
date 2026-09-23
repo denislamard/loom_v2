@@ -106,6 +106,15 @@ def _no_inline_data(message: Message | None, label: str) -> None:
 class Payload(DomainModel):
     category: ClassVar[EventCategory]
     facet_fields: ClassVar[tuple[str, ...]] = ()
+    # Champs qui portent du **contenu** : ce qu'un utilisateur a écrit, ce
+    # qu'un modèle a répondu, ce qu'un outil a reçu et rendu. Ils sont retirés
+    # quand la portée `read_content` manque (J5.2a, §14.2), et c'est aussi ce
+    # que les exports et le masquage de J6 auront à connaître. Un chemin peut
+    # descendre d'un cran : `context.metadata`, `criteria[].reason`.
+    #
+    # Chaque charge la déclare, même vide : un essai l'exige, pour qu'une
+    # charge nouvelle ne porte pas du contenu sans le dire.
+    content_fields: ClassVar[tuple[str, ...]] = ()
 
     @property
     def event_status(self) -> EventStatus:
@@ -126,6 +135,7 @@ class RunStarted(Payload):
     category: ClassVar[EventCategory] = "run"
     facet_fields: ClassVar[tuple[str, ...]] = ("kind",)
 
+    content_fields: ClassVar[tuple[str, ...]] = ("context.metadata",)
     type: Literal["run.started"] = "run.started"
     kind: RunKind = "normal"
     context: CallerContext = CallerContext()
@@ -154,6 +164,7 @@ class StepStarted(Payload):
     category: ClassVar[EventCategory] = "run"
     facet_fields: ClassVar[tuple[str, ...]] = ("effect",)
 
+    content_fields: ClassVar[tuple[str, ...]] = ()
     type: Literal["step.started"] = "step.started"
     step_no: PositiveInt
     state: RunStatus
@@ -164,6 +175,7 @@ class StepCompleted(Payload):
     category: ClassVar[EventCategory] = "run"
     facet_fields: ClassVar[tuple[str, ...]] = ("outcome", "duration_ms")
 
+    content_fields: ClassVar[tuple[str, ...]] = ()
     type: Literal["step.completed"] = "step.completed"
     step_no: PositiveInt
     duration_ms: NonNegativeFloat
@@ -179,6 +191,7 @@ class RunTransitioned(Payload):
     category: ClassVar[EventCategory] = "run"
     facet_fields: ClassVar[tuple[str, ...]] = ("from_state", "to_state")
 
+    content_fields: ClassVar[tuple[str, ...]] = ()
     type: Literal["run.transitioned"] = "run.transitioned"
     from_state: RunStatus
     to_state: RunStatus
@@ -192,6 +205,10 @@ class RunCompleted(Payload):
     category: ClassVar[EventCategory] = "run"
     facet_fields: ClassVar[tuple[str, ...]] = ("iterations", "cost_usd")
 
+    content_fields: ClassVar[tuple[str, ...]] = (
+        "output",
+        "data",
+    )
     type: Literal["run.completed"] = "run.completed"
     # Réponse finale. Absente quand elle est la sortie d'un outil terminal,
     # sauf si une politique ``on_output`` l'a remplacée.
@@ -235,6 +252,7 @@ class RunClaimed(Payload):
     category: ClassVar[EventCategory] = "run"
     facet_fields: ClassVar[tuple[str, ...]] = ("worker_id",)
 
+    content_fields: ClassVar[tuple[str, ...]] = ()
     type: Literal["run.claimed"] = "run.claimed"
     # Instance qui pilote : engendré à sa construction, pas configuré.
     worker_id: str
@@ -253,6 +271,7 @@ class RunCancelled(Payload):
     category: ClassVar[EventCategory] = "run"
     facet_fields: ClassVar[tuple[str, ...]] = ("reason",)
 
+    content_fields: ClassVar[tuple[str, ...]] = ()
     type: Literal["run.cancelled"] = "run.cancelled"
     reason: CancelReason = "requested"
     # Auteur de la demande, quand on le connaît (``user_id`` de l'appelant,
@@ -271,6 +290,7 @@ class RunFailed(Payload):
     category: ClassVar[EventCategory] = "run"
     facet_fields: ClassVar[tuple[str, ...]] = ("error_type",)
 
+    content_fields: ClassVar[tuple[str, ...]] = ("error",)
     type: Literal["run.failed"] = "run.failed"
     error_type: str
     error: str
@@ -297,6 +317,7 @@ class UserMessage(Payload):
 
     category: ClassVar[EventCategory] = "message"
 
+    content_fields: ClassVar[tuple[str, ...]] = ("message",)
     type: Literal["message.user"] = "message.user"
     message: Message
     kind: Literal["request", "repair"] = "request"
@@ -324,6 +345,7 @@ class ModelResponded(Payload):
         "latency_ms",
     )
 
+    content_fields: ClassVar[tuple[str, ...]] = ("message",)
     type: Literal["model.responded"] = "model.responded"
     model_id: str
     provider: str
@@ -358,6 +380,7 @@ class ModelRetried(Payload):
     category: ClassVar[EventCategory] = "model"
     facet_fields: ClassVar[tuple[str, ...]] = ("model_id", "provider", "error_kind", "attempt")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("error",)
     type: Literal["model.retried"] = "model.retried"
     model_id: str
     provider: str
@@ -402,6 +425,7 @@ class ModelFellBack(Payload):
     category: ClassVar[EventCategory] = "model"
     facet_fields: ClassVar[tuple[str, ...]] = ("slot", "from_model", "to_model", "reason")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("error",)
     type: Literal["model.fell_back"] = "model.fell_back"
     slot: str
     # Identifiants des modèles dans la config.
@@ -437,6 +461,7 @@ class CircuitOpened(Payload):
     category: ClassVar[EventCategory] = "circuit"
     facet_fields: ClassVar[tuple[str, ...]] = ("target_kind", "target", "failures")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("error",)
     type: Literal["circuit.opened"] = "circuit.opened"
     target_kind: CircuitTarget
     # Identifiant du modèle dans la config, ou nom du serveur MCP.
@@ -467,6 +492,7 @@ class ToolCalled(Payload):
     category: ClassVar[EventCategory] = "tool"
     facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "tool_kind")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("arguments",)
     type: Literal["tool.called"] = "tool.called"
     call_id: str
     tool_name: str
@@ -485,6 +511,7 @@ class ToolCompleted(Payload):
     category: ClassVar[EventCategory] = "tool"
     facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "latency_ms", "size")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("output",)
     type: Literal["tool.completed"] = "tool.completed"
     call_id: str
     tool_name: str
@@ -519,6 +546,7 @@ class ToolSourceUnavailable(Payload):
     category: ClassVar[EventCategory] = "tool"
     facet_fields: ClassVar[tuple[str, ...]] = ("source", "required")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("error",)
     type: Literal["tool.source_unavailable"] = "tool.source_unavailable"
     source: str
     error: str
@@ -551,6 +579,11 @@ class PolicyDecided(Payload):
     category: ClassVar[EventCategory] = "policy"
     facet_fields: ClassVar[tuple[str, ...]] = ("policy", "point", "decision")
 
+    content_fields: ClassVar[tuple[str, ...]] = (
+        "reason",
+        "arguments",
+        "output",
+    )
     type: Literal["policy.decided"] = "policy.decided"
     policy: str
     point: HookPoint
@@ -595,6 +628,7 @@ class GuardChecked(Payload):
     category: ClassVar[EventCategory] = "guard"
     facet_fields: ClassVar[tuple[str, ...]] = ("guard", "target", "outcome")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("reason",)
     type: Literal["guard.checked"] = "guard.checked"
     guard: str
     # ``output`` (réponse finale), ``role:<nom>`` ou ``tool:<nom>``.
@@ -625,6 +659,7 @@ class BudgetExceeded(Payload):
     category: ClassVar[EventCategory] = "policy"
     facet_fields: ClassVar[tuple[str, ...]] = ("scope", "limit", "action")
 
+    content_fields: ClassVar[tuple[str, ...]] = ()
     type: Literal["budget.exceeded"] = "budget.exceeded"
     scope: BudgetScope
     limit: BudgetLimit
@@ -655,6 +690,7 @@ class JudgeEvaluated(Payload):
     category: ClassVar[EventCategory] = "guard"
     facet_fields: ClassVar[tuple[str, ...]] = ("judge", "target", "model_id", "passed", "blocked")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("criteria[].reason",)
     type: Literal["judge.evaluated"] = "judge.evaluated"
     judge: str
     # ``output`` (réponse finale) ou ``role:<nom>``.
@@ -700,6 +736,10 @@ class ApprovalRequested(Payload):
     category: ClassVar[EventCategory] = "approval"
     facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "scope")
 
+    content_fields: ClassVar[tuple[str, ...]] = (
+        "arguments",
+        "reason",
+    )
     type: Literal["approval.requested"] = "approval.requested"
     call_id: str
     tool_name: str
@@ -725,6 +765,10 @@ class ApprovalGranted(Payload):
     category: ClassVar[EventCategory] = "approval"
     facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by")
 
+    content_fields: ClassVar[tuple[str, ...]] = (
+        "arguments",
+        "reason",
+    )
     type: Literal["approval.granted"] = "approval.granted"
     call_id: str
     tool_name: str
@@ -742,6 +786,7 @@ class ApprovalRejected(Payload):
     category: ClassVar[EventCategory] = "approval"
     facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("reason",)
     type: Literal["approval.rejected"] = "approval.rejected"
     call_id: str
     tool_name: str
@@ -764,6 +809,7 @@ class ApprovalExpired(Payload):
     category: ClassVar[EventCategory] = "approval"
     facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "action")
 
+    content_fields: ClassVar[tuple[str, ...]] = ()
     type: Literal["approval.expired"] = "approval.expired"
     call_id: str
     tool_name: str
@@ -795,6 +841,7 @@ class IdempotencyRecorded(Payload):
     category: ClassVar[EventCategory] = "idempotency"
     facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "key")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("result",)
     type: Literal["idempotency.recorded"] = "idempotency.recorded"
     key: str
     call_id: str
@@ -820,6 +867,7 @@ class IdempotencyReused(Payload):
     category: ClassVar[EventCategory] = "idempotency"
     facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "key")
 
+    content_fields: ClassVar[tuple[str, ...]] = ()
     type: Literal["idempotency.reused"] = "idempotency.reused"
     key: str
     call_id: str
@@ -840,6 +888,7 @@ class ArtifactStored(Payload):
     category: ClassVar[EventCategory] = "artifact"
     facet_fields: ClassVar[tuple[str, ...]] = ("origin", "media_type", "size")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("name",)
     type: Literal["artifact.stored"] = "artifact.stored"
     uri: str
     media_type: str
@@ -880,6 +929,7 @@ class SessionSnapshot(Payload):
     category: ClassVar[EventCategory] = "session"
     facet_fields: ClassVar[tuple[str, ...]] = ("up_to_seq", "messages", "tokens")
 
+    content_fields: ClassVar[tuple[str, ...]] = ("messages",)
     type: Literal["session.snapshot"] = "session.snapshot"
     up_to_seq: NonNegativeInt
     messages: tuple[Message, ...] = ()
@@ -920,6 +970,7 @@ class SessionCompacted(Payload):
         "fidelity",
     )
 
+    content_fields: ClassVar[tuple[str, ...]] = ("summary",)
     type: Literal["session.compacted"] = "session.compacted"
     up_to_seq: NonNegativeInt
     summary: str = Field(min_length=1)
@@ -947,6 +998,7 @@ class SessionTrimmed(Payload):
     category: ClassVar[EventCategory] = "session"
     facet_fields: ClassVar[tuple[str, ...]] = ("up_to_seq", "dropped")
 
+    content_fields: ClassVar[tuple[str, ...]] = ()
     type: Literal["session.trimmed"] = "session.trimmed"
     up_to_seq: NonNegativeInt
     # Messages d'historique retirés.

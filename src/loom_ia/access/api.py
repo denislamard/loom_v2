@@ -208,6 +208,18 @@ class SessionDeletion(DomainModel):
     keys: NonNegativeInt = 0
 
 
+def _masked_approvals(approvals: tuple[PendingApproval, ...]) -> tuple[PendingApproval, ...]:
+    """Demandes d'approbation sans leurs arguments ni leur motif.
+
+    Conséquence assumée : **approuver demande de lire**. Une clé qui a
+    ``approve`` sans ``read_content`` trancherait à l'aveugle, et
+    ``loom validate`` le signale.
+    """
+    return tuple(
+        approval.model_copy(update={"arguments": {}, "reason": ""}) for approval in approvals
+    )
+
+
 class RunSummary(DomainModel):
     """Un run de la session, tel que la fiche le montre (F7)."""
 
@@ -250,6 +262,12 @@ class SessionInfo(DomainModel):
     # l'appelant devrait ouvrir chaque run pour savoir ce qu'on lui demande.
     pending_approvals: tuple[PendingApproval, ...] = ()
 
+    def masked(self) -> Self:
+        """Fiche sans le contenu : les runs et leurs coûts, pas les arguments."""
+        return self.model_copy(
+            update={"pending_approvals": _masked_approvals(self.pending_approvals)}
+        )
+
 
 class JudgeVerdict(DomainModel):
     """Verdict d'un juge sur une sortie du run ou d'un de ses sous-runs (``judge.evaluated``)."""
@@ -268,6 +286,12 @@ class JudgeVerdict(DomainModel):
     blocked: bool
     attempt: PositiveInt = 1
     criteria: tuple[CriterionScore, ...] = ()
+
+    def masked(self) -> Self:
+        """Verdict sans ses motifs : les notes restent, la prose part."""
+        return self.model_copy(
+            update={"criteria": tuple(c.model_copy(update={"reason": ""}) for c in self.criteria)}
+        )
 
     @classmethod
     def of(cls, event: Event, verdict: JudgeEvaluated) -> Self:
@@ -315,6 +339,30 @@ class RunResult(DomainModel):
     # de ses sous-runs comprises : l'appelant n'a pas à savoir qu'un
     # sous-agent existe pour savoir ce qu'on lui demande.
     pending_approvals: tuple[PendingApproval, ...] = ()
+
+    def masked(self) -> Self:
+        """Résultat sans le contenu, pour une clé qui n'a pas ``read_content``.
+
+        Ce qui reste est ce dont une supervision a besoin : l'agent, le
+        statut, les itérations, la consommation, la ventilation, et le verdict
+        de chaque juge — sans les motifs, qui citent la sortie. Ce qui part est
+        la correspondance : réponse, objet structuré, message d'erreur, noms de
+        fichiers et arguments des approbations en attente.
+
+        Le type de l'erreur reste : « pourquoi ça a échoué » n'est pas du
+        contenu, et sans lui il n'y aurait plus rien à superviser.
+        """
+        return self.model_copy(
+            update={
+                "text": "",
+                "output": None,
+                "error": None,
+                "data": None,
+                "artifacts": tuple(a.model_copy(update={"name": None}) for a in self.artifacts),
+                "verdicts": tuple(v.masked() for v in self.verdicts),
+                "pending_approvals": _masked_approvals(self.pending_approvals),
+            }
+        )
 
     @classmethod
     def of(cls, state: RunState, events: Sequence[Event] = ()) -> Self:

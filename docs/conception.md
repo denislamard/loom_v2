@@ -1012,6 +1012,8 @@ drive ──append──▶ EventStore ──publish──▶ Bus ──▶ abon
 | Exports (OTel, logs) | Métadonnées par défaut, contenus en opt-in | Masquage configurable (e-mails, téléphones, IBAN…) |
 | API de traces / interface | Selon le scope de la clé (`read` ou `read_content`) | Masquage à l'affichage |
 
+**Réalisation (phase 5.2a)** (détails : `fonctions.md`, point 39) : chaque charge d'événement déclare ses `content_fields` — les champs qui portent ce qu'un utilisateur a écrit, ce qu'un modèle a répondu, ce qu'un outil a reçu et rendu —, et `redacted(event)` rend le JSON privé de ces champs, en nommant à côté ce qui est parti. Sans la portée `read_content`, les relectures REST passent par là : statuts, durées, coûts, ventilation et notes des juges restent, la correspondance part. Le **journal garde tout** : c'est un réglage d'accès, pas de stockage. Les niveaux de capture des exports et le masquage fin (e-mails, IBAN) restent à J6.
+
 ### 14.3 Rejeu
 
 Le rejeu est toujours possible, puisque le journal contient les réponses des modèles et les résultats d'outils (#31).
@@ -1068,6 +1070,8 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - Rotation, révocation et limitation de débit par clé.
 - En V2, les clés sont déclarées hachées dans la config ; `loom keys create` affiche la clé une seule fois et donne le hash (#50).
 - Portées vérifiées : `run` (lancer), `read` (agents, statuts, événements, rapports) et, depuis 3.6, `admin` pour lancer un run sans ses juges (`judges: skip`).
+
+**Réalisation (phase 5.2a) :** `expires` sur une clé — elle est reconnue puis **refusée** (401 « expirée le … »), et rien ne tombe au chargement ; `loom validate` signale une clé périmée ou qui expire sous sept jours. `read_content` est vérifiée : sans elle, une relecture rend l'enveloppe sans le contenu (§14.2). `approve` sans `read_content` fait trancher à l'aveugle, et les deux commandes le disent. Rotation et révocation restent ce qu'elles sont en V2 : deux clés déclarées en même temps, et une clé retirée de la config. `read_content` et `rate_limit` sont des notions REST — Python, la CLI et le MCP en stdio n'ont pas de clé.
 
 ### 16.2 Point d'accès MCP
 
@@ -1358,8 +1362,8 @@ security:
       hash: "sha256:…"
       scopes: [run, read, approve]
       agents: [relance_devis]
-      rate_limit: {per_minute: 60}
-      expires: 2027-01-01
+      rate_limit: {per_minute: 60}      # débit de la clé (5.1b)
+      expires: 2027-01-01T00:00:00Z     # fin de validité (5.2a) ; date avec fuseau
 
 server:
   http: {host: 127.0.0.1, port: 8000, base_path: /loom}
@@ -1369,6 +1373,8 @@ server:
 **Réalisation (phase 5.1a) :** `tenants` et `security.api_keys[].tenant` sont débloqués ; la liste des clients est **fermée** dès qu'elle existe, et une clé dont le client n'est pas déclaré est refusée au chargement. `storage` d'un client accepte `events` et `artifacts` ; `idempotency` y est refusé en nommant 5.3 (le port n'a le client que sur `reserve`). Contrôles au démarrage ajoutés : client en double, agent ou modèle de remplacement inconnu, modèle qui se remplace lui-même, variable `{{ }}` d'un prompt non définie pour un client, clé d'API sur un client non déclaré. `rate_limit` et `expires` d'une clé attendent 5.2, `budgets`/`quotas` d'un client 5.1b.
 
 **Réalisation (phase 5.1b) :** `budgets` et `quotas` d'un client sont débloqués, ainsi que `rate_limit` d'une clé d'API (#39) ; `expires` reste renvoyé à 5.2. `budgets` d'un client surcharge celui de la racine clé par clé et porte en plus `tenant: {max_cost_per_day, max_tokens_per_day, max_cost_per_month, max_tokens_per_month}`.
+
+**Réalisation (phase 5.2a) :** `expires` d'une clé est débloqué — dernière clé de `LATER_API_KEY`, qui se vide. La date doit porter un fuseau ; une clé déjà expirée charge sans erreur et est refusée à l'appel. `server.mcp.http` et `allowed_origins` restent refusés en nommant 5.2b.
 
 ### 17.9 Profils et contrôles
 
@@ -1453,6 +1459,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - **Arrière-plan (4.5) :** `background: true` rend 202 et `{run_id, session_id, status}` — le run est inscrit au journal avant la réponse, donc lisible et suivable aussitôt.
 - **Décisions (4.5) :** `approve` et `reject` prennent un `call_id` optionnel (sans lui, tout ce que le run attend est tranché), un motif, et pour un accord des arguments corrigés. L'approbateur inscrit au journal est **l'identifiant de la clé d'API**, qu'un `by` dans le corps remplace : une passerelle nomme ainsi l'humain qui a tranché.
 - **Client (5.1a) :** il vient de la **clé d'API**, et de nulle part ailleurs — rien dans le corps d'une requête ne le change. Toute lecture est donc bornée au client de la clé : la session d'un autre est « introuvable », pas « interdite », puisqu'on n'a aucun moyen d'apprendre qu'elle existe. Un agent publié mais fermé à ce client donne 403, comme pour une clé limitée à certains agents. Sans clé déclarée, l'instance agit pour `default` : si la config nomme ses clients et pas `default`, tout est refusé, et `create_app` le dit au démarrage.
+- **Contenu et expiration (5.2a) :** une clé expirée est reconnue puis refusée (401, avec sa date). Sans la portée `read_content`, les **relectures** sont masquées — `GET /runs/{id}`, le SSE d'un run, l'export JSONL d'une session, la fiche d'une session — tandis que la réponse d'un `POST …/runs` ne l'est jamais : ce qu'une clé lance, elle le reçoit. Une clé qui lance en arrière-plan et relit son résultat a donc besoin de `read_content`, et une clé qui approuve aussi, faute de voir ce qu'elle tranche.
 - **Débit et budgets (5.1b) :** un client qui a épuisé son enveloppe de la période, ou dépassé ses runs par minute, reçoit **429** avec un `Retry-After` — quelques secondes pour un débit, la bascule de la fenêtre pour une journée épuisée. Le `rate_limit` d'une **clé** donne le même 429, mais il compte toutes ses requêtes, lectures comprises, et vaut avant même que la demande ne soit servie.
 - **Sessions (4.5) :** la liste est refusée à une clé limitée à certains agents — elle ne dit pas de quels agents sont les runs d'une session, et la filtrer honnêtement demanderait de lire chaque journal. La fiche et l'export vérifient le droit sur chaque agent rencontré ; l'effacement, irréversible et commun à tous les agents de la session, demande `admin`.
 
@@ -1471,7 +1478,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
 ### 18.4 CLI
 
-Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --periode jour|mois` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`.
+Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --periode jour|mois` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`. Depuis 5.2a, `keys create` prend `--tenant`, `--expires` (date ISO ou durée : `90j`, `12h`) et `--rate-limit`, et imprime le bloc YAML complet ; `validate` montre une ligne par clé — client, portées, agents, débit, état de l'expiration — et signale une clé qui approuve sans pouvoir lire.
 
 ## 19. Projet
 

@@ -12,10 +12,18 @@ Sous-ensemble des jalons J1 et J2 ; le schéma complet est dans
 
 import logging
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Literal, Self
 
-from pydantic import Field, JsonValue, PositiveFloat, PositiveInt, model_validator
+from pydantic import (
+    AwareDatetime,
+    Field,
+    JsonValue,
+    PositiveFloat,
+    PositiveInt,
+    model_validator,
+)
 
 from loom_ia.agents.spec import AGENT_NAME_PATTERN, AgentSpec
 from loom_ia.config.compaction import COMPACTION_AGENT, CompactionConfig, compaction_agent
@@ -306,6 +314,11 @@ class ApiKey(DomainModel):
     tenant: TenantId = DEFAULT_TENANT
     # Débit de cette clé, vérifié par l'accès HTTP (#39) ; ``null`` : aucun.
     rate_limit: RateLimit | None = None
+    # Fin de validité (J5.2a) ; ``null`` : la clé ne périme pas. Une clé déjà
+    # expirée n'empêche pas le démarrage — elle est refusée à l'appel, et
+    # ``loom validate`` la signale. Une rotation, c'est deux clés déclarées en
+    # même temps, l'ancienne portant sa date de fin.
+    expires: AwareDatetime | None = None
     scopes: tuple[Scope, ...] = ("run", "read")
     # Agents autorisés ; vide signifie tous.
     agents: tuple[str, ...] = ()
@@ -324,6 +337,12 @@ class ApiKey(DomainModel):
 
     def accepts(self, key: str) -> bool:
         return matches(key, self.hash)
+
+    def expired(self, now: datetime | None = None) -> bool:
+        """Vrai si la clé a passé sa date de fin."""
+        if self.expires is None:
+            return False
+        return (now or datetime.now(UTC)) >= self.expires
 
     def allows(self, agent: str) -> bool:
         return not self.agents or agent in self.agents

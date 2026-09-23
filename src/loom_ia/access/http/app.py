@@ -50,6 +50,7 @@ Tout passe par la façade ``Loom`` : le journal d'un run est le même que par
 la CLI ou par MCP.
 """
 
+import json
 import logging
 import math
 from collections.abc import AsyncGenerator
@@ -92,7 +93,7 @@ from loom_ia.access.http.schemas import (
 )
 from loom_ia.access.http.uploads import RUN_BODY, run_request
 from loom_ia.agents.registry import UnknownAgent
-from loom_ia.core.events import Event
+from loom_ia.core.events import Event, redacted
 from loom_ia.core.model import DEFAULT_TENANT, AttachmentError, RunId, SessionId
 from loom_ia.core.ports import SessionRecord
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
@@ -245,7 +246,9 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         require(who, "read")
         found = await loom.result(run_id, session_id=session_id, tenant_id=who.tenant)
         require(who, "read", found.agent)
-        return found
+        # Relire un run, c'est lire le journal : sans `read_content`, le
+        # statut et les coûts passent, la correspondance non.
+        return found.masked() if who.masks else found
 
     @router.get("/runs/{run_id}/events", summary="Journal du run en SSE")
     async def events(
@@ -268,7 +271,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
             subruns=subruns,
             tenant_id=who.tenant,
         )
-        return EventSourceResponse(_messages(followed))
+        return EventSourceResponse(_messages(followed, masked=who.masks))
 
     @router.post("/runs/{run_id}/approve", summary="Autorise un appel que le run attend")
     async def approve(
@@ -334,7 +337,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         found = await loom.session(session_id, tenant_id=who.tenant)
         for agent in dict.fromkeys(run.agent for run in found.runs):
             require(who, "read", agent)
-        return found
+        return found.masked() if who.masks else found
 
     @router.get("/sessions/{session_id}/events", summary="Journal d'une session en JSONL")
     async def export(who: Who, session_id: SessionId) -> Response:
@@ -342,8 +345,11 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         events = await loom.export_session(session_id, tenant_id=who.tenant)
         for agent in dict.fromkeys(event.agent for event in events if event.agent):
             require(who, "read", agent)
-        lines = "".join(f"{event.model_dump_json()}\n" for event in events)
-        return Response(lines, media_type=NDJSON)
+        if who.masks:
+            dumped = (json.dumps(redacted(event), ensure_ascii=False) for event in events)
+        else:
+            dumped = (event.model_dump_json() for event in events)
+        return Response("".join(f"{line}\n" for line in dumped), media_type=NDJSON)
 
     @router.delete("/sessions/{session_id}", summary="Supprime une session (RGPD)")
     async def forget(who: Who, session_id: SessionId) -> SessionDeletion:
@@ -370,16 +376,19 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
     return app
 
 
-def sse(item: StreamItem) -> dict[str, str]:
+def sse(item: StreamItem, *, masked: bool = False) -> dict[str, str]:
     """Message SSE d'un événement du journal ou d'un morceau du modèle."""
     if isinstance(item, Event):
-        return {"event": item.type, "id": str(item.seq), "data": item.model_dump_json()}
+        body = json.dumps(redacted(item), ensure_ascii=False) if masked else item.model_dump_json()
+        return {"event": item.type, "id": str(item.seq), "data": body}
     return {"event": f"chunk.{item.type}", "data": item.model_dump_json()}
 
 
-async def _messages(events: AsyncGenerator[Event]) -> AsyncGenerator[dict[str, str]]:
+async def _messages(
+    events: AsyncGenerator[Event], *, masked: bool = False
+) -> AsyncGenerator[dict[str, str]]:
     async for event in events:
-        yield sse(event)
+        yield sse(event, masked=masked)
 
 
 def _signature(who: Caller) -> str | None:

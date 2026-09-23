@@ -19,6 +19,13 @@ Débit (#39, J5.1b) : une clé peut porter un ``rate_limit``. Il protège le
 serveur, il ne dit rien du métier — c'est le quota du client qui le fait, et
 lui vaut par tous les accès. Vérifié à l'identification, donc sur **toutes**
 les routes, et répondu par un 429 avec un ``Retry-After``.
+
+Expiration et contenu (J5.2a) : une clé peut porter une date de fin — elle
+est alors reconnue puis **refusée** (401), pour que le message dise « expirée »
+et non « inconnue ». Et la portée ``read_content`` décide de ce qu'une lecture
+montre : sans elle, les routes répondent, mais privées de ce qu'un utilisateur
+a écrit et de ce qu'un modèle a répondu (§14.2). Ce qu'une clé **lance**, elle
+le reçoit : c'est la relecture qui demande la portée.
 """
 
 import math
@@ -54,6 +61,11 @@ class Caller:
     def may(self, scope: Scope) -> bool:
         return self.key is None or scope in self.key.scopes
 
+    @property
+    def masks(self) -> bool:
+        """Vrai si les lectures de cet appelant doivent être privées de contenu."""
+        return not self.may("read_content")
+
     def allows(self, agent: str) -> bool:
         return self.key is None or self.key.allows(agent)
 
@@ -78,8 +90,17 @@ def identify(security: SecurityConfig, request: Request) -> Caller:
             headers=_CHALLENGE,
         )
     for key in security.api_keys:
-        if key.accepts(given):
-            return Caller(key)
+        if not key.accepts(given):
+            continue
+        if key.expired():
+            # Reconnue, puis refusée : « expirée » se corrige, « inconnue »
+            # envoie chercher au mauvais endroit.
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                f"Clé {key.id!r} expirée le {key.expires:%Y-%m-%d %H:%M} UTC",
+                headers=_CHALLENGE,
+            )
+        return Caller(key)
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Clé d'API refusée", headers=_CHALLENGE)
 
 

@@ -11,9 +11,7 @@ LATER_ROOT: Final[dict[str, str]] = {
     "profile": "J5.5 (profils dev et prod)",
     "profiles": "J5.5 (profils dev et prod)",
 }
-LATER_API_KEY: Final[dict[str, str]] = {
-    "expires": "J5.2 (rotation des clés)",
-}
+LATER_API_KEY: Final[dict[str, str]] = {}
 # Surcharges d'un client prévues pour plus tard (§17.8).
 LATER_TENANT: Final[dict[str, str]] = {}
 LATER_MCP_ACCESS: Final[dict[str, str]] = {

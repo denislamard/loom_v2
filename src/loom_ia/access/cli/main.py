@@ -22,6 +22,7 @@ import asyncio
 import json
 import sys
 from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final, cast
 
@@ -72,6 +73,8 @@ MISSING_EXTRA: Final = "{what} demande l'extra '{extra}' : uv sync --extra {extr
 OK: Final = 0
 FAILED: Final = 1
 REFUSED: Final = 2
+# Délai au-delà duquel `loom validate` ne dit plus qu'une clé expire bientôt.
+_BIENTOT: Final = timedelta(days=7)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -210,6 +213,25 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="agent autorisé (répétable ; défaut : tous)",
     )
+    create.add_argument(
+        "--tenant",
+        default=None,
+        metavar="CLIENT",
+        help="client au nom duquel la clé agit (défaut : default)",
+    )
+    create.add_argument(
+        "--expires",
+        default=None,
+        metavar="QUAND",
+        help="fin de validité : une date (2027-01-01) ou une durée (90j, 12h)",
+    )
+    create.add_argument(
+        "--rate-limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="requêtes par minute accordées à cette clé (défaut : aucune limite)",
+    )
     create.set_defaults(handler=cmd_keys_create)
 
     report = tenanted(
@@ -298,6 +320,8 @@ async def _validate(args: argparse.Namespace) -> int:
     cles = f"{magasin.backend} ({magasin.path})" if magasin.path else magasin.backend
     print(f"Idempotence: {cles}")
     print(f"Clés d'API : {keys or 'aucune (API REST ouverte)'}")
+    for line in _key_lines(config):
+        print(f"    {line}")
     if config.tenants:
         print(f"Clients    : {_listed(tenant.id for tenant in config.tenants)}")
 
@@ -316,6 +340,33 @@ async def _validate(args: argparse.Namespace) -> int:
                 await _show_agent(loom, tenant_id, spec, indent="  " if config.tenants else "")
     print(f"\n{mounted} agent(s) monté(s) sans erreur.")
     return OK
+
+
+def _key_lines(config: LoomConfig) -> list[str]:
+    """Ce que chaque clé d'API permet, et ce qui cloche (J5.2a, #39)."""
+    now = datetime.now(UTC)
+    lines: list[str] = []
+    for key in config.security.api_keys:
+        details = [f"client {key.tenant}", f"portées {', '.join(key.scopes)}"]
+        if key.agents:
+            details.append(f"agents {_listed(key.agents)}")
+        if key.rate_limit is not None:
+            details.append(f"débit {key.rate_limit.per_minute}/min")
+        if key.expires is not None:
+            reste = key.expires - now
+            if key.expired(now):
+                etat = "EXPIRÉE"
+            elif reste <= _BIENTOT:
+                etat = f"expire dans {reste.days} j"
+            else:
+                etat = f"expire le {key.expires:%Y-%m-%d}"
+            details.append(etat)
+        lines.append(f"{key.id} : {', '.join(details)}")
+        if "approve" in key.scopes and "read_content" not in key.scopes:
+            # Approuver sans lire, c'est trancher à l'aveugle : les arguments
+            # de l'appel en attente lui sont masqués.
+            lines.append(f"  {key.id} peut approuver sans lire : ajouter 'read_content'")
+    return lines
 
 
 def _tenant_lines(tenant: Tenant) -> list[str]:
@@ -698,6 +749,11 @@ def cmd_keys_create(args: argparse.Namespace) -> int:
     key = new_api_key()
     scopes: list[str] = args.scope or ["run", "read"]
     agents: list[str] = args.agent or []
+    try:
+        expires = _deadline(args.expires)
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return REFUSED
     print(f"Clé        : {key}")
     print("Elle n'est affichée qu'ici : la config ne garde que son empreinte.\n")
     print("À ajouter dans la configuration :\n")
@@ -705,10 +761,38 @@ def cmd_keys_create(args: argparse.Namespace) -> int:
     print("  api_keys:")
     print(f"    - id: {args.id}")
     print(f"      hash: {fingerprint(key)}")
+    if args.tenant:
+        print(f"      tenant: {args.tenant}")
     print(f"      scopes: [{', '.join(scopes)}]")
     if agents:
         print(f"      agents: [{', '.join(agents)}]")
+    if args.rate_limit is not None:
+        print(f"      rate_limit: {{per_minute: {args.rate_limit}}}")
+    if expires is not None:
+        print(f"      expires: {expires.isoformat().replace('+00:00', 'Z')}")
+    if "approve" in scopes and "read_content" not in scopes:
+        print(
+            "\nCette clé peut approuver sans pouvoir lire : sans 'read_content', "
+            "les arguments d'un appel en attente lui sont masqués.",
+            file=sys.stderr,
+        )
     return OK
+
+
+def _deadline(given: str | None) -> datetime | None:
+    """Une date (``2027-01-01``) ou une durée à partir de maintenant (``90j``)."""
+    if not given:
+        return None
+    unites = {"j": "days", "h": "hours", "m": "minutes"}
+    if given[-1] in unites and given[:-1].isdigit():
+        return datetime.now(UTC) + timedelta(**{unites[given[-1]]: int(given[:-1])})
+    try:
+        moment = datetime.fromisoformat(given)
+    except ValueError:
+        raise ValueError(
+            f"--expires : date ISO (2027-01-01) ou durée (90j, 12h) attendue, reçu {given!r}"
+        ) from None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
 def cmd_schema(args: argparse.Namespace) -> int:
