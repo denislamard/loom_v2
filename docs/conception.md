@@ -1081,6 +1081,8 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - La spec MCP recommande OAuth pour les serveurs distants : il faudra vérifier que les clients visés acceptent une clé dans l'en-tête.
 - Les sorties des agents sont renvoyées à un LLM tiers : risque d'injection de prompt à garder en tête.
 
+**Réalisation (phase 5.2b)** (détails : `fonctions.md`, point 39) : le serveur MCP est monté dans l'application REST sous `<base_path>/mcp` quand `server.mcp.http` est vrai, et **il exige des clés** — le contrôle tombe au chargement. La clé est lue **à chaque requête**, avant le protocole : un 401 ordinaire si elle manque, est inconnue ou a expiré ; sinon elle donne le client et les portées, si bien qu'un **seul serveur sert tous les clients**. Lancer demande `run`, relire demande `read`, et sans `read_content` une relecture est masquée comme en REST. `Origin` absent passe, déclaré passe, inconnu donne 403 ; un `Host` étranger donne 421, la liste des hôtes étant remplie par loom avec son adresse d'écoute. `approve` n'est toujours pas un outil MCP.
+
 ### 16.3 Isolation et secrets
 
 - Isolation logique par client sur le journal, les artefacts, les connexions MCP (`scope: tenant`), les secrets, les budgets (#34) ; RLS en Postgres ; `TenantRouter` pour une isolation physique.
@@ -1367,14 +1369,20 @@ security:
 
 server:
   http: {host: 127.0.0.1, port: 8000, base_path: /loom}
-  mcp:  {http: true, allowed_origins: [], file_roots: []}   # file_roots : dossiers lisibles par un lien file://
+  mcp:
+    http: true                      # monte le MCP sous <base_path>/mcp (exige des clés)
+    allowed_origins: []             # Origin acceptés ; absent = client natif, il passe
+    allowed_hosts: []               # en plus de l'adresse d'écoute, que loom ajoute
+    file_roots: []                  # dossiers lisibles par un lien file://
 ```
 
 **Réalisation (phase 5.1a) :** `tenants` et `security.api_keys[].tenant` sont débloqués ; la liste des clients est **fermée** dès qu'elle existe, et une clé dont le client n'est pas déclaré est refusée au chargement. `storage` d'un client accepte `events` et `artifacts` ; `idempotency` y est refusé en nommant 5.3 (le port n'a le client que sur `reserve`). Contrôles au démarrage ajoutés : client en double, agent ou modèle de remplacement inconnu, modèle qui se remplace lui-même, variable `{{ }}` d'un prompt non définie pour un client, clé d'API sur un client non déclaré. `rate_limit` et `expires` d'une clé attendent 5.2, `budgets`/`quotas` d'un client 5.1b.
 
 **Réalisation (phase 5.1b) :** `budgets` et `quotas` d'un client sont débloqués, ainsi que `rate_limit` d'une clé d'API (#39) ; `expires` reste renvoyé à 5.2. `budgets` d'un client surcharge celui de la racine clé par clé et porte en plus `tenant: {max_cost_per_day, max_tokens_per_day, max_cost_per_month, max_tokens_per_month}`.
 
-**Réalisation (phase 5.2a) :** `expires` d'une clé est débloqué — dernière clé de `LATER_API_KEY`, qui se vide. La date doit porter un fuseau ; une clé déjà expirée charge sans erreur et est refusée à l'appel. `server.mcp.http` et `allowed_origins` restent refusés en nommant 5.2b.
+**Réalisation (phase 5.2a) :** `expires` d'une clé est débloqué — dernière clé de `LATER_API_KEY`, qui se vide. La date doit porter un fuseau ; une clé déjà expirée charge sans erreur et est refusée à l'appel.
+
+**Réalisation (phase 5.2b) :** `server.mcp.http`, `allowed_origins` et `allowed_hosts` sont débloqués — `LATER_MCP_ACCESS` se vide. `http: true` sans `security.api_keys` est une erreur de chargement : le MCP publie des outils, il ne s'ouvre pas sans clé.
 
 ### 17.9 Profils et contrôles
 
@@ -1474,7 +1482,8 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - **Progression :** si le client fournit un `progressToken`, le déroulé du run (appels d'outils, fichiers, sous-agents et leurs appels) lui arrive en notifications de progression.
 - **Résultat (3.6) :** le texte est la réponse ; le résultat structuré est celui de l'API Python (`unverified`, usage, coût, ventilation, verdicts). Une réponse non vérifiée est suivie d'un second texte qui le dit. Un run échoué est un résultat d'erreur (`isError`) dont le texte dit en clair ce qui l'a arrêté (« Échec de l'agent … : … ») ; son type est dans `error_type`. Les juges suivent leur `when` (pas de forçage par MCP).
 - **Rapport (3.6) :** outil `run_report` (`run_id` ou `session_id`) : consommation d'un run et de ses sous-runs, ou d'une session, en texte et en structuré.
-- **Client (5.1a) :** en stdio il n'y a pas de clé, donc rien dans le protocole ne dirait au nom de qui une requête arrive : **un serveur sert un client**, choisi à son lancement (`loom mcp --tenant`, `create_server(loom, tenant=…)`). Tout ce qu'il publie, lance et relit porte ce client-là. Le choix par requête attend le transport HTTP et ses en-têtes (5.2).
+- **Client (5.1a) :** en stdio il n'y a pas de clé, donc rien dans le protocole ne dirait au nom de qui une requête arrive : **un serveur sert un client**, choisi à son lancement (`loom mcp --tenant`, `create_server(loom, tenant=…)`). Tout ce qu'il publie, lance et relit porte ce client-là.
+- **HTTP (5.2b) :** monté sous `<base_path>/mcp` dans l'application REST, et il exige des clés. La clé est lue **à chaque requête**, avant le protocole (401 ordinaire si elle manque, est inconnue ou a expiré), si bien qu'un **seul serveur sert tous les clients** : `list_tools` ne publie que les agents ouverts à cette clé-là, `call_tool` exige `run` pour lancer et `read` pour relire, et `run_status` est masqué sans `read_content`. `Origin` et `Host` sont validés (spec MCP) : 403 pour une origine inconnue, 421 pour un hôte étranger.
 
 ### 18.4 CLI
 

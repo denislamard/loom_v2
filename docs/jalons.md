@@ -173,7 +173,7 @@ Les commandes ci-dessous sont indicatives.
 | 5.1a Clients | Clients dans la config (liste fermée), surcharges (agents, outils, modèles, approbations), secrets par client, variables des prompts, MCP `scope: tenant`, `TenantRouter` | L1, L2, #33, #34 |
 | 5.1b Consommation | Budgets par client et par période (`budgets.tenant`, fenêtres calendaires UTC, contrôle au lancement du run), port `UsageCounter` réchauffé depuis le journal, quota de runs par minute (fenêtre glissante), débit d'une clé d'API, `loom report --periode` | L3, J3, J4, #39 |
 | 5.2a Clés et contenu | Expiration d'une clé (401 à l'identification), `read_content` : chaque charge déclare ses `content_fields`, les relectures sont masquées sans la portée ; `loom keys create --tenant --expires --rate-limit`, état des clés dans `loom validate` | N3, #39 |
-| 5.2b Sécurité MCP HTTP | Serveur MCP en HTTP monté avec REST (`server.mcp.http`), clé dans `Authorization`, en-tête `Origin` validé, écoute sur `localhost` | N5, #39 |
+| 5.2b Sécurité MCP HTTP | Serveur MCP en HTTP monté avec REST (`server.mcp.http`), clé dans `Authorization` **à chaque requête** — un serveur, tous les clients —, portées et `read_content` comme en REST, `Origin` et `Host` validés, clés exigées | N5, #39 |
 | 5.3 Stockages de service | `EventStore` Postgres (avec RLS) et Firestore, bus Postgres et Redis, file RabbitMQ, `loom worker`, GCS, idempotence Postgres, Firestore et Redis | F5, H6, #5, #27 |
 | 5.4 Accès complets | REST : sessions, traces, `run_summaries`, `EventQuery`, OpenAPI, reprise SSE par `Last-Event-ID`. MCP HTTP monté avec REST, ressources `loom://runs`. Déclencheurs webhook et planification | K5, N2, #32, #38 |
 | 5.5 Exploitation | Profils dev/prod, chiffrement par client, rétention | M4, #30 |
@@ -184,7 +184,7 @@ Les commandes ci-dessous sont indicatives.
 
 | Accès | Exécution |
 |---|---|
-| Python | Un exemple par phase, sur la config `examples/j5/relance/` : `clients.py` (5.1a), `quotas.py` (5.1b), `securite.py` (5.2a) ; puis `tenant=…` sur le stockage Postgres |
+| Python | Un exemple par phase, sur la config `examples/j5/relance/` : `clients.py` (5.1a), `quotas.py` (5.1b), `securite.py` (5.2a), `serveur_mcp.py` (5.2b) ; puis `tenant=…` sur le stockage Postgres |
 | CLI | `loom worker` (x2), `loom serve`, `loom keys create` |
 | REST | Clés API par client, scopes, `run_summaries`, `EventQuery`, reprise SSE par `Last-Event-ID` |
 | MCP | MCP HTTP monté avec REST ; ressources `loom://runs/{id}` ; `Origin` refusé si invalide |

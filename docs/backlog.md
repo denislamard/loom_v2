@@ -308,3 +308,37 @@ L'orchestrateur (MiniMax-M3) a chaque fois vu la réponse inutilisable et refait
 **À trancher :** faut-il que `request_hash` désigne un client, ou l'appariement du rejeu se fait-il sur `(tenant_id, request_hash)` ? Mon avis : la seconde — l'empreinte doit rester la description de ce qui est parti au modèle.
 
 **Statut :** à trancher avant J6.2 (rejeu).
+
+---
+
+## #020 — Un second serveur MCP en HTTP dans le même process ne répond plus
+
+**Origine :** phase 5.2b, en écrivant `examples/j5/serveur_mcp.py` — les cas 2 et 3 restaient sans réponse.
+
+**Constat :** le premier échange MCP passe, les suivants non, dès qu'un **second** `StreamableHTTPSessionManager` est servi par uvicorn dans le même process. Côté serveur la requête entre bien, le groupe de tâches du gestionnaire est vivant et `handle_request` rend la main ; côté uvicorn, « ASGI callable returned without completing response » ; côté client, rien n'arrive. Mesuré sur les trois montages :
+
+| Montage | Résultat |
+|---|---|
+| Un serveur uvicorn, plusieurs sessions MCP | marche (l'exemple en ouvre huit sur ses trois cas) |
+| Deux serveurs uvicorn successifs, un gestionnaire chacun | le premier répond, les suivants non |
+| Plusieurs applications et gestionnaires **sans socket** (transport ASGI en process) | marche (les onze essais en créent un par essai) |
+
+Ce n'est donc pas « un second gestionnaire dans le process » : c'est un second gestionnaire **servi sur une socket**. Le chemin en process y échappe, ce qui explique que les essais ne le voient jamais.
+
+**Ce n'est pas notre défaut :** réduit à vingt lignes sans une seule de loom — API bas niveau du SDK, deux serveurs uvicorn successifs, `stateless=True`, chaque gestionnaire lancé par le cycle de vie de son application. `tour 1 : 1 outil(s)`, puis `tour 2 : ÉCHEC`, `tour 3 : ÉCHEC`.
+
+**En amont, le cas n'a pas été retrouvé.** Deux issues de la même famille de symptômes, toutes deux fermées et toutes deux différentes : [#713](https://github.com/modelcontextprotocol/python-sdk/issues/713) (plusieurs gestionnaires dans une seule application, un seul lancé — le nôtre l'est, vérifié) et [#737](https://github.com/modelcontextprotocol/python-sdk/issues/737) (corps de réponse vide en embarquant FastMCP dans FastAPI, mais par une course au démarrage — le nôtre est déterministe).
+
+**Ce que ça touche :** les exemples et les essais, pas un déploiement — un service a une application et un gestionnaire, pour la vie du process. La contrainte est donc **un serveur MCP par process** : `serveur_mcp.py` monte un seul serveur pour ses trois cas (ce qui est aussi la démonstration la plus juste), et `tests/unit/test_access_mcp_http.py` parle au serveur sans socket. Un utilisateur de loom qui monterait l'application deux fois dans une même suite d'essais, sur une vraie socket, le rencontrerait.
+
+**Pistes :**
+
+| Piste | Effet | Coût |
+|---|---|---|
+| Ne rien faire de plus | Le reste connu et cette entrée disent la contrainte ; elle ne gêne aucun déploiement | On ne saura pas quand elle tombe |
+| Signaler en amont, avec le repro | Le SDK peut corriger, et d'autres cesseront de chercher | Rédiger le signalement et le suivre |
+| Reprendre l'essai à chaque montée de version du SDK | On sait quand la contrainte tombe, et les exemples peuvent redevenir libres | Une ligne de plus dans la vérification d'une phase qui touche au MCP |
+
+**À trancher :** signale-t-on en amont, et reprend-on l'essai à chaque montée de version du SDK ? Mon avis : les deux — le repro est déjà écrit, et l'essai coûte une minute quand on touche au MCP.
+
+**Statut :** sans échéance — ne bloque aucun jalon.

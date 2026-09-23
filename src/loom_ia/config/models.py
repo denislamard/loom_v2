@@ -366,11 +366,22 @@ class HttpServer(DomainModel):
 
 
 class McpAccess(DomainModel):
-    """Serveur MCP de l'instance (``loom mcp``)."""
+    """Serveur MCP de l'instance : stdio (``loom mcp``) et HTTP (J5.2b)."""
 
     # Dossiers où un lien ``file://`` joint à un appel peut être lu ; aucun par
     # défaut : les liens ``file://`` sont refusés. Relatifs au dossier de la config.
     file_roots: tuple[Path, ...] = ()
+    # Monte le serveur MCP dans l'application REST, sous ``<base_path>/mcp``.
+    # Il expose des **outils** à un LLM tiers : il exige des clés d'API.
+    http: bool = False
+    # Origines acceptées par le transport (spec MCP, protection contre le
+    # rebinding DNS). Une requête **sans** ``Origin`` passe — un client natif
+    # n'en envoie pas ; avec un ``Origin``, il doit figurer ici.
+    allowed_origins: tuple[str, ...] = ()
+    # Hôtes acceptés, **en plus** de l'adresse d'écoute que loom ajoute lui-même
+    # (``127.0.0.1:*``, ``localhost:*``, et ``server.http.host``). À renseigner
+    # derrière un nom de domaine ou un proxy.
+    allowed_hosts: tuple[str, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -445,6 +456,14 @@ class LoomConfig(DomainModel):
         if compaction is not None:
             self._check_chain(f"Compaction ({COMPACTION_AGENT})", (compaction.model,))
         _reject_doubles("Clé", [key.id for key in self.security.api_keys])
+        if self.server.mcp.http and not self.security.api_keys:
+            # Le MCP publie des outils à un LLM tiers, sur le réseau : sans
+            # clé, n'importe qui les appellerait. Le stdio, lui, n'a pas de
+            # clé, mais c'est le process qui l'a lancé qui décide.
+            raise ValueError(
+                "'server.mcp.http' expose les agents comme outils : déclarer au moins une "
+                "clé dans 'security.api_keys' (loom keys create)"
+            )
         self._check_tenants()
         servers = [server.name for server in self.mcp_servers]
         _reject_doubles("Serveur MCP", servers)

@@ -29,45 +29,17 @@ le reçoit : c'est la relecture qui demande la portée.
 """
 
 import math
-from dataclasses import dataclass
 from typing import Final
 
 from fastapi import HTTPException, Request, status
 
-from loom_ia.config.models import ApiKey, Scope, SecurityConfig
-from loom_ia.core.model import DEFAULT_TENANT, TenantId
+from loom_ia.access.caller import Caller
+from loom_ia.config.models import Scope, SecurityConfig
 from loom_ia.tenancy import RateWindow
 
 BEARER: Final = "bearer "
 API_KEY_HEADER: Final = "x-api-key"
 _CHALLENGE: Final = {"WWW-Authenticate": "Bearer"}
-
-
-@dataclass(frozen=True, slots=True)
-class Caller:
-    """Qui appelle : une clé reconnue, ou personne sur une instance ouverte."""
-
-    key: ApiKey | None = None
-
-    @property
-    def anonymous(self) -> bool:
-        return self.key is None
-
-    @property
-    def tenant(self) -> TenantId:
-        """Client au nom duquel cette clé agit ; ``default`` sur une instance ouverte."""
-        return self.key.tenant if self.key is not None else DEFAULT_TENANT
-
-    def may(self, scope: Scope) -> bool:
-        return self.key is None or scope in self.key.scopes
-
-    @property
-    def masks(self) -> bool:
-        """Vrai si les lectures de cet appelant doivent être privées de contenu."""
-        return not self.may("read_content")
-
-    def allows(self, agent: str) -> bool:
-        return self.key is None or self.key.allows(agent)
 
 
 def presented(request: Request) -> str | None:

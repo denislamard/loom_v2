@@ -55,7 +55,7 @@ import logging
 import math
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Annotated, Final
+from typing import TYPE_CHECKING, Annotated, Final
 
 from fastapi import (
     APIRouter,
@@ -98,6 +98,9 @@ from loom_ia.core.model import DEFAULT_TENANT, AttachmentError, RunId, SessionId
 from loom_ia.core.ports import SessionRecord
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
 from loom_ia.usage import UsageReport
+
+if TYPE_CHECKING:
+    from loom_ia.access.mcp_server.http import McpHttp
 
 logger = logging.getLogger(__name__)
 
@@ -144,9 +147,19 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
             http.host,
         )
 
+    # Serveur MCP monté dans la même application (J5.2b) : un seul port, une
+    # seule authentification, et la clé donne le client à chaque requête.
+    served = _mcp(loom) if loom.config.server.mcp.http else None
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-        yield
+        if served is None:
+            yield
+        else:
+            # Le gestionnaire de session du SDK a son propre cycle de vie :
+            # il vit aussi longtemps que l'application qui le sert.
+            async with served.running():
+                yield
         if own:
             await loom.aclose()
 
@@ -373,7 +386,20 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         return found
 
     app.include_router(router)
+    if served is not None:
+        app.mount(f"{http.base_path}{served.path}", served)
     return app
+
+
+def _mcp(loom: Loom) -> McpHttp:
+    """Monte le serveur MCP, ou dit ce qui manque pour l'extra ``mcp``."""
+    try:
+        from loom_ia.access.mcp_server.http import McpHttp
+    except ImportError as manque:  # pragma: no cover - dépend de l'installation
+        raise RuntimeError(
+            "'server.mcp.http' demande l'extra 'mcp' : uv sync --extra http --extra mcp"
+        ) from manque
+    return McpHttp(loom)
 
 
 def sse(item: StreamItem, *, masked: bool = False) -> dict[str, str]:

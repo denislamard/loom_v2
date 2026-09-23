@@ -320,6 +320,10 @@ async def _validate(args: argparse.Namespace) -> int:
     cles = f"{magasin.backend} ({magasin.path})" if magasin.path else magasin.backend
     print(f"Idempotence: {cles}")
     print(f"Clés d'API : {keys or 'aucune (API REST ouverte)'}")
+    mcp = config.server.mcp
+    if mcp.http:
+        origines = _listed(mcp.allowed_origins) if mcp.allowed_origins else "aucune déclarée"
+        print(f"MCP HTTP   : monté sous {config.server.http.base_path}/mcp, origines : {origines}")
     for line in _key_lines(config):
         print(f"    {line}")
     if config.tenants:
@@ -723,6 +727,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
     port = args.port or http.port
     print(f"API REST   : http://{host}:{port}{http.base_path}/v1")
     print(f"Agents     : {_listed(agent.name for agent in config.agents if agent.expose.rest)}")
+    if config.server.mcp.http:
+        # Même port, même authentification : la clé dit le client à chaque
+        # requête, ce que le stdio ne peut pas faire (J5.2b).
+        publies = _listed(agent.name for agent in config.agents if agent.expose.mcp)
+        print(f"MCP HTTP   : http://{host}:{port}{http.base_path}/mcp")
+        print(f"Outils MCP : {publies}")
     serve(Loom(config), host=args.host, port=args.port)
     return OK
 

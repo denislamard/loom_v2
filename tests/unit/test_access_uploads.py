@@ -32,7 +32,9 @@ def test_mcp_access_config(demo: ConfigFactory, tmp_path: Path) -> None:
     assert config.server.mcp.file_roots == (tmp_path / "photos", Path("/srv/images"))
     assert load_config(demo()).server.mcp.file_roots == ()
     assert load_config(demo()).execution.attachments.max_files == 10
-    with pytest.raises(ConfigError, match="J5"):
+    # Depuis 5.2b, `http` n'est plus refusé en nommant la phase : il est
+    # accepté, mais il exige des clés d'API (le MCP publie des outils).
+    with pytest.raises(ConfigError, match=r"security\.api_keys"):
         load_config(demo(server={"mcp": {"http": True}}))
 
 

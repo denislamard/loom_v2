@@ -14,10 +14,7 @@ LATER_ROOT: Final[dict[str, str]] = {
 LATER_API_KEY: Final[dict[str, str]] = {}
 # Surcharges d'un client prévues pour plus tard (§17.8).
 LATER_TENANT: Final[dict[str, str]] = {}
-LATER_MCP_ACCESS: Final[dict[str, str]] = {
-    "http": "J5.2 (serveur MCP en HTTP)",
-    "allowed_origins": "J5.2 (serveur MCP en HTTP)",
-}
+LATER_MCP_ACCESS: Final[dict[str, str]] = {}
 
 LATER_STORAGE: Final[dict[str, str]] = {
     "bus": "J4 (bus et observabilité)",

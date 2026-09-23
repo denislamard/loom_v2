@@ -45,6 +45,7 @@ déclarés dynamiquement, puisqu'ils viennent de la configuration.
 """
 
 import json
+from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Final
 
@@ -55,9 +56,11 @@ from mcp.shared.context import RequestContext
 from pydantic.json_schema import models_json_schema
 
 from loom_ia.access.api import JudgeVerdict, Loom, RunResult, UnknownRun
+from loom_ia.access.caller import Caller
 from loom_ia.access.mcp_server.attachments import ATTACHMENTS_INPUT, AttachmentReader
 from loom_ia.access.progress import Progress
 from loom_ia.agents.registry import UnknownAgent
+from loom_ia.config.models import Scope
 from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -77,6 +80,14 @@ from loom_ia.core.model import (
 from loom_ia.usage import UsageReport, render
 
 SERVER_NAME: Final = "loom"
+# Un serveur HTTP sert tous les clients : ce qu'il publie dépend de la clé,
+# donc ses instructions ne peuvent pas nommer des agents à l'avance.
+_INSTRUCTIONS: Final = (
+    "Agents loom : ceux que la clé d'API de la requête peut lancer (outil par agent)."
+)
+
+# Ce qui rend l'appelant de la requête en cours ; absent en stdio.
+type CallerSource = Callable[[], Caller]
 STATUS_TOOL: Final = "run_status"
 REPORT_TOOL: Final = "run_report"
 # Ce qu'un formulaire d'elicitation peut rendre, par champ.
@@ -211,26 +222,41 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
 
 
 def create_server(
-    loom: Loom, *, name: str = SERVER_NAME, tenant: TenantId = DEFAULT_TENANT
+    loom: Loom,
+    *,
+    name: str = SERVER_NAME,
+    tenant: TenantId = DEFAULT_TENANT,
+    callers: CallerSource | None = None,
 ) -> Server[object, Any]:
-    """Serveur MCP publiant les agents d'une instance, au nom d'un client.
+    """Serveur MCP publiant les agents d'une instance, au nom d'un appelant.
 
-    En stdio il n'y a pas de clé d'API, donc rien dans le protocole ne dirait
-    au nom de qui une requête arrive : un serveur sert **un** client, choisi
-    à son lancement (``loom mcp --tenant``). Le choix par requête attend le
-    transport HTTP et ses en-têtes (J5.2).
+    En **stdio** il n'y a pas de clé d'API, donc rien dans le protocole ne
+    dirait au nom de qui une requête arrive : un serveur sert **un** client,
+    choisi à son lancement (``loom mcp --tenant``), et tout lui est permis.
+
+    En **HTTP** (J5.2b), ``callers`` rend l'appelant de la requête en cours,
+    tiré de sa clé : un même serveur sert alors tous les clients, publie à
+    chacun ses agents, et refuse ce que sa clé ne permet pas.
     """
-    instructions = _instructions(loom, tenant)
+    fixed = Caller(without_key=tenant)
+
+    def who() -> Caller:
+        return fixed if callers is None else callers()
+
+    instructions = _INSTRUCTIONS if callers is not None else _instructions(loom, tenant)
     server = Server[object, Any](name, version=_package_version(), instructions=instructions)
-    reader = AttachmentReader(
-        loom.artifacts,
-        loom.config.execution.attachments,
-        tenant=tenant,
-        roots=loom.config.server.mcp.file_roots,
-    )
+
+    def attachments_of(caller: Caller) -> AttachmentReader:
+        return AttachmentReader(
+            loom.artifacts,
+            loom.config.execution.attachments,
+            tenant=caller.tenant,
+            roots=loom.config.server.mcp.file_roots,
+        )
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
+        caller = who()
         tools = [
             types.Tool(
                 name=spec.name,
@@ -238,7 +264,8 @@ def create_server(
                 inputSchema=AGENT_INPUT,
                 outputSchema=RUN_OUTPUT,
             )
-            for spec in loom.exposed("mcp", tenant)
+            for spec in loom.exposed("mcp", caller.tenant)
+            if caller.allows(spec.name)
         ]
         tools.append(
             types.Tool(
@@ -263,22 +290,39 @@ def create_server(
 
     @server.call_tool()
     async def call_tool(tool: str, arguments: dict[str, Any]) -> types.CallToolResult:
+        caller = who()
         session = arguments.get("session_id")
         session_id = SessionId(str(session)) if session else None
         run = arguments.get("run_id")
         run_id = RunId(str(run)) if run else None
+        # Lire et lancer ne demandent pas la même chose : relire un run est
+        # une lecture, faire travailler un agent en est une autre (#39).
+        needed: Scope = "read" if tool in (STATUS_TOOL, REPORT_TOOL) else "run"
+        if not caller.may(needed):
+            return _refused(f"Clé sans la portée {needed!r}")
         try:
             if tool == REPORT_TOOL:
-                return await _report(loom, run_id, session_id, tenant)
+                return await _report(loom, run_id, session_id, caller.tenant)
             if tool == STATUS_TOOL:
-                found = await loom.result(RunId(str(run)), session_id=session_id, tenant_id=tenant)
-                return answer(found, ran=False)
-            _published(loom, tool, tenant)
+                found = await loom.result(
+                    RunId(str(run)), session_id=session_id, tenant_id=caller.tenant
+                )
+                if not caller.allows(found.agent):
+                    return _refused(f"Clé non autorisée sur l'agent {found.agent!r}")
+                # Relire, c'est lire le journal : sans `read_content`, le
+                # statut et les coûts passent, la correspondance non (J5.2a).
+                return answer(found.masked() if caller.masks else found, ran=False)
+            if not caller.allows(tool):
+                return _refused(f"Clé non autorisée sur l'agent {tool!r}")
+            _published(loom, tool, caller.tenant)
         except (UnknownAgent, UnknownRun) as exc:
             return _refused(str(exc.args[0]))
-        attachments = await reader.read(arguments.get("attachments"))
+        attachments = await attachments_of(caller).read(arguments.get("attachments"))
         message = str(arguments["message"])
-        return answer(await _run(server, loom, tool, message, attachments, session_id, tenant))
+        # Ce qu'une clé lance, elle le reçoit : la réponse d'un run n'est
+        # jamais masquée, c'est la relecture qui demande la portée.
+        ran = await _run(server, loom, tool, message, attachments, session_id, caller.tenant)
+        return answer(ran)
 
     return server
 
