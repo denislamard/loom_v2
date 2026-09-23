@@ -33,6 +33,7 @@ from loom_ia.access.api import (
     RunResult,
     SessionDeletion,
     StreamItem,
+    TenantConsumption,
     UnknownApproval,
     UnknownRun,
     UnknownSession,
@@ -40,13 +41,14 @@ from loom_ia.access.api import (
 from loom_ia.access.progress import Progress, notes
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.agents.spec import AgentSpec
-from loom_ia.config import ConfigError, config_json_schema, load_config
+from loom_ia.config import ConfigError, LoomConfig, config_json_schema, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     JUDGES_MODES,
     Attachment,
+    BudgetPeriod,
     Budgets,
     RunId,
     SessionId,
@@ -59,7 +61,7 @@ from loom_ia.core.ports import Policy, SessionRecord, SourceContext, Tool
 from loom_ia.engine import ToolExecutor
 from loom_ia.runtime import apply_logging, load_registry
 from loom_ia.tenancy import Tenant, UnknownTenant
-from loom_ia.usage import UsageReport
+from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import render as render_report
 
 PROG: Final = "loom"
@@ -210,11 +212,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create.set_defaults(handler=cmd_keys_create)
 
-    report = commands.add_parser(
-        "report", help="consommation d'un run (et de ses sous-runs) ou d'une session"
+    report = tenanted(
+        commands.add_parser(
+            "report",
+            help="consommation d'un run, d'une session, ou d'un client sur une période",
+        )
     )
     report.add_argument("run_id", nargs="?", default=None)
     report.add_argument("--session", type=str, default=None, help="journal du run, ou session")
+    report.add_argument(
+        "--periode",
+        choices=("jour", "mois"),
+        default=None,
+        help="consommation du client sur la journée ou le mois en cours (J5.1b)",
+    )
     report.add_argument("--json", action="store_true", help="affiche le rapport en JSON")
     report.set_defaults(handler=cmd_report)
 
@@ -223,14 +234,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     session_actions = sessions.add_subparsers(dest="action", required=True)
 
-    listing = session_actions.add_parser(
-        "list", help="sessions du journal, la plus récente d'abord"
+    listing = tenanted(
+        session_actions.add_parser("list", help="sessions du journal, la plus récente d'abord")
     )
     listing.add_argument("--json", action="store_true", help="affiche la liste en JSON")
     listing.set_defaults(handler=cmd_sessions_list)
 
-    export = session_actions.add_parser(
-        "export", help="écrit les événements d'une session en JSONL"
+    export = tenanted(
+        session_actions.add_parser("export", help="écrit les événements d'une session en JSONL")
     )
     export.add_argument("session_id")
     export.add_argument(
@@ -242,8 +253,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export.set_defaults(handler=cmd_sessions_export)
 
-    remove = session_actions.add_parser(
-        "delete", help="supprime une session : journal, fichiers et clés (RGPD)"
+    remove = tenanted(
+        session_actions.add_parser(
+            "delete", help="supprime une session : journal, fichiers et clés (RGPD)"
+        )
     )
     remove.add_argument("session_id")
     remove.add_argument("--yes", action="store_true", help="ne demande pas confirmation")
@@ -323,6 +336,16 @@ def _tenant_lines(tenant: Tenant) -> list[str]:
         lines.append(f"approbations : {', '.join(f'{a} : {b}' for a, b in spec.approvals.items())}")
     if spec.variables:
         lines.append(f"variables : {_listed(spec.variables)}")
+    par_periode = tenant.budget
+    if par_periode.limited:
+        posees = [
+            f"{limit} par {'jour' if kind == 'day' else 'mois'} {amount(limit, value)}"
+            for kind in par_periode.periods
+            for limit, value in par_periode.limits(kind)
+        ]
+        lines.append(f"budget : {', '.join(posees)}")
+    if tenant.quotas.runs_per_minute is not None:
+        lines.append(f"quota : {tenant.quotas.runs_per_minute} run(s) par minute")
     if spec.storage is not None:
         events = spec.storage.events
         where = f" ({events.path})" if events.path else ""
@@ -497,8 +520,10 @@ def _json_object(text: str) -> dict[str, JsonValue] | None:
 def cmd_report(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     apply_logging(config)
+    if args.periode is not None:
+        return _cmd_consumption(args, config)
     if args.run_id is None and args.session is None:
-        print("Donner un run_id ou --session.", file=sys.stderr)
+        print("Donner un run_id, --session ou --periode.", file=sys.stderr)
         return REFUSED
     run_id = RunId(args.run_id) if args.run_id else None
     session = SessionId(args.session) if args.session else None
@@ -517,6 +542,47 @@ def cmd_report(args: argparse.Namespace) -> int:
     else:
         print("\n".join(render_report(report)))
     return OK
+
+
+def _cmd_consumption(args: argparse.Namespace, config: LoomConfig) -> int:
+    """``loom report --periode jour|mois`` : la dépense d'un client et ce qui lui reste."""
+    period: BudgetPeriod = "day" if args.periode == "jour" else "month"
+
+    async def go() -> TenantConsumption:
+        async with Loom(config) as loom:
+            return await loom.consumption(_tenant(args), period=period)
+
+    found = asyncio.run(go())
+    if args.json:
+        print(json.dumps(_consumption_json(found), ensure_ascii=False, indent=2))
+        return OK
+    fenetre = "journée" if period == "day" else "mois"
+    print(f"Client     : {found.tenant_id}")
+    print(f"Période    : {fenetre} en cours, depuis {found.period.start:%Y-%m-%d %H:%M} UTC")
+    print(f"Runs       : {found.runs}")
+    print(f"Dépense    : {found.spent.cost:.6f} $, {found.spent.tokens} tokens")
+    for limit, value in found.limits:
+        left = found.left(limit)
+        reste = "" if left is None else f" — reste {amount(limit, left)}"
+        print(f"  plafond {limit} : {amount(limit, value)}{reste}")
+    if not found.limits:
+        print("  aucun plafond sur cette période")
+    print(f"Remise à 0 : {found.resets_at:%Y-%m-%d %H:%M} UTC")
+    return OK
+
+
+def _consumption_json(found: TenantConsumption) -> dict[str, JsonValue]:
+    return {
+        "tenant_id": found.tenant_id,
+        "period": found.period.key,
+        "since": found.period.start.isoformat(),
+        "resets_at": found.resets_at.isoformat(),
+        "runs": found.runs,
+        "cost_usd": found.spent.cost,
+        "tokens": found.spent.tokens,
+        "limits": {limit: value for limit, value in found.limits},
+        "left": {limit: found.left(limit) for limit, _ in found.limits},
+    }
 
 
 def cmd_sessions_list(args: argparse.Namespace) -> int:

@@ -36,6 +36,8 @@ from loom_ia.core.model import (
     DomainModel,
     McpServerSpec,
     ModelSpec,
+    Quotas,
+    RateLimit,
     TenantId,
     reject_later,
 )
@@ -250,6 +252,11 @@ class TenantSpec(DomainModel):
     secrets: dict[str, str] = Field(default_factory=dict[str, str])
     # Variables citées par les prompts système ({{ entreprise }}).
     variables: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
+    # Budgets de ce client : ils surchargent ceux de la racine clé par clé, et
+    # portent en plus ses plafonds par période (``tenant``, J5.1b).
+    budgets: Budgets | None = None
+    # Débit accordé à ce client, quel que soit l'accès emprunté (L3).
+    quotas: Quotas = Quotas()
     # Stockage propre à ce client (isolation physique, ``TenantRouter``) ;
     # sans lui, celui de la racine, où seul le ``tenant_id`` le distingue.
     storage: StorageConfig | None = None
@@ -297,6 +304,8 @@ class ApiKey(DomainModel):
     hash: str
     # Client au nom duquel cette clé agit (L1) ; ``default`` en mono-client.
     tenant: TenantId = DEFAULT_TENANT
+    # Débit de cette clé, vérifié par l'accès HTTP (#39) ; ``null`` : aucun.
+    rate_limit: RateLimit | None = None
     scopes: tuple[Scope, ...] = ("run", "read")
     # Agents autorisés ; vide signifie tous.
     agents: tuple[str, ...] = ()

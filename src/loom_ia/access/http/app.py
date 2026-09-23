@@ -51,6 +51,7 @@ la CLI ou par MCP.
 """
 
 import logging
+import math
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Annotated, Final
@@ -79,7 +80,7 @@ from loom_ia.access.api import (
     UnknownRun,
     UnknownSession,
 )
-from loom_ia.access.http.auth import Caller, identify, require
+from loom_ia.access.http.auth import Caller, identify, require, throttle
 from loom_ia.access.http.schemas import (
     AgentInfo,
     Approval,
@@ -94,7 +95,7 @@ from loom_ia.agents.registry import UnknownAgent
 from loom_ia.core.events import Event
 from loom_ia.core.model import DEFAULT_TENANT, AttachmentError, RunId, SessionId
 from loom_ia.core.ports import SessionRecord
-from loom_ia.tenancy import UnknownTenant
+from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
 from loom_ia.usage import UsageReport
 
 logger = logging.getLogger(__name__)
@@ -105,9 +106,15 @@ NDJSON: Final = "application/x-ndjson"
 
 
 async def caller(request: Request) -> Caller:
-    """Appelant de la requête, reconnu par les clés de l'instance servie."""
+    """Appelant de la requête, reconnu par les clés de l'instance servie.
+
+    Le débit de la clé est compté ici, donc sur toutes les routes : une clé qui
+    s'emballe est arrêtée avant qu'on ne lise son corps (#39).
+    """
     loom: Loom = request.app.state.loom
-    return identify(loom.config.security, request)
+    who = identify(loom.config.security, request)
+    throttle(who, request.app.state.rates)
+    return who
 
 
 # L'appelant, injecté dans chaque route.
@@ -144,6 +151,8 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
 
     app = FastAPI(title="loom-ia", summary="Agents loom exposés en HTTP", lifespan=lifespan)
     app.state.loom = loom
+    # Débit des clés d'API (#39) : une fenêtre glissante par application servie.
+    app.state.rates = RateWindow()
     router = APIRouter(prefix=f"{http.base_path}/v1")
 
     @app.exception_handler(UnknownAgent)
@@ -152,6 +161,20 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
     @app.exception_handler(UnknownSession)
     async def _not_found(request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse({"detail": _message(exc)}, status_code=status.HTTP_404_NOT_FOUND)
+
+    @app.exception_handler(BudgetExhausted)
+    @app.exception_handler(QuotaExceeded)
+    async def _too_many(request: Request, exc: Exception) -> JSONResponse:
+        # Un budget de journée épuisé et un débit dépassé disent la même chose
+        # à l'appelant — reviens plus tard —, et ``Retry-After`` porte la
+        # différence : quelques secondes pour l'un, la bascule de la période
+        # pour l'autre.
+        after = getattr(exc, "retry_after", 1.0)
+        return JSONResponse(
+            {"detail": _message(exc)},
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            headers={"Retry-After": str(max(1, math.ceil(float(after))))},
+        )
 
     @app.exception_handler(AgentNotAllowed)
     @app.exception_handler(UnknownTenant)

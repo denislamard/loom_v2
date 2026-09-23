@@ -6,6 +6,11 @@ ne surcharge rien (#33). Dès que la config déclare des ``tenants``, la liste
 est **fermée** : un client qu'elle ne nomme pas est refusé, plutôt que servi
 en silence avec les réglages de tout le monde.
 
+Deux surcharges sont appliquées **dans la configuration** que le client voit,
+plutôt que portées à côté : ses modèles et ses budgets. Les autres — agents
+ouverts, outils retirés, approbations imposées, secrets, variables, stockage —
+sont des autorisations et des valeurs, et voyagent avec ``Tenant``.
+
 La correspondance des modèles est appliquée **sur la définition** du modèle,
 pas sur les références qui le citent : dans la config d'un client,
 l'identifiant ``M3_MAIN`` désigne le modèle qu'il a choisi. Un seul endroit
@@ -15,8 +20,11 @@ agent ne change. La config ainsi obtenue repasse les contrôles de cohérence
 (M5) : un remplacement qui ne sait pas appeler d'outils ou lire une image
 est refusé au démarrage, pour le client qui le demande.
 
-Le reste des surcharges ne réécrit pas la config : ce sont des autorisations
-et des valeurs, portées par ``Tenant`` jusqu'au montage des agents.
+Ses budgets suivent le même chemin : le ``budgets`` de la racine, surchargé
+clé par clé par celui du client, remplace celui de la config résolue. Un agent
+monté pour ce client reçoit donc les bons plafonds de run et de session sans
+que ``build_agent`` ait à connaître les clients, et les plafonds par période
+(``budgets.tenant``, J5.1b) voyagent au même endroit.
 """
 
 from collections.abc import Mapping
@@ -27,7 +35,14 @@ from pydantic import JsonValue
 
 from loom_ia.config.errors import ConfigError
 from loom_ia.config.models import LoomConfig, StorageConfig, TenantSpec
-from loom_ia.core.model import DEFAULT_TENANT, Approval, ModelSpec, TenantId
+from loom_ia.core.model import (
+    DEFAULT_TENANT,
+    Approval,
+    ModelSpec,
+    Quotas,
+    TenantBudget,
+    TenantId,
+)
 from loom_ia.core.ports import SecretProvider
 from loom_ia.tenancy.secrets import EnvironmentSecrets
 
@@ -79,6 +94,16 @@ class Tenant:
         """Stockage propre à ce client ; ``None`` s'il partage celui de la racine."""
         return self.spec.storage if self.spec is not None else None
 
+    @property
+    def budget(self) -> TenantBudget:
+        """Plafonds de ce client par période (J5.1b) ; déjà fusionnés dans sa config."""
+        return self.config.budgets.tenant
+
+    @property
+    def quotas(self) -> Quotas:
+        """Débit accordé à ce client (L3)."""
+        return self.spec.quotas if self.spec is not None else Quotas()
+
 
 class Tenants:
     """Les clients d'une configuration, résolus une fois pour toutes.
@@ -126,7 +151,7 @@ class Tenants:
 
     def _resolve(self, spec: TenantSpec | None) -> Tenant:
         tenant_id = spec.id if spec is not None else DEFAULT_TENANT
-        config = self._config if spec is None else _mapped(self._config, spec)
+        config = self._config if spec is None else _resolved(self._config, spec)
         return Tenant(
             id=tenant_id,
             config=config,
@@ -135,19 +160,30 @@ class Tenants:
         )
 
 
-def _mapped(config: LoomConfig, spec: TenantSpec) -> LoomConfig:
-    """Config vue par un client : ses modèles à la place de ceux de la racine."""
-    if not spec.models:
+def _resolved(config: LoomConfig, spec: TenantSpec) -> LoomConfig:
+    """Config vue par un client : ses modèles et ses budgets à la place de ceux de la racine."""
+    update: dict[str, object] = {}
+    if spec.models:
+        update["models"] = _mapped(config, spec)
+    if spec.budgets is not None:
+        update["budgets"] = config.budgets.merged(spec.budgets)
+    if not update:
         return config
-    by_id = {model.id: model for model in config.models}
-    models: list[ModelSpec] = []
-    for model in config.models:
-        target = spec.models.get(model.id)
-        replaced = model if target is None else by_id[target].model_copy(update={"id": model.id})
-        models.append(replaced)
-    resolved = config.model_copy(update={"models": tuple(models)})
+    resolved = config.model_copy(update=update)
     try:
         resolved.check()
     except ValueError as exc:
         raise ConfigError(f"Client {spec.id!r} : {exc}") from exc
     return resolved
+
+
+def _mapped(config: LoomConfig, spec: TenantSpec) -> tuple[ModelSpec, ...]:
+    """Modèles de la config, ceux que le client remplace pris à leur cible."""
+    by_id = {model.id: model for model in config.models}
+    models: list[ModelSpec] = []
+    for model in config.models:
+        target = spec.models.get(model.id)
+        models.append(
+            model if target is None else by_id[target].model_copy(update={"id": model.id})
+        )
+    return tuple(models)

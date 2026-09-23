@@ -198,6 +198,8 @@ L'API HTTP peut tourner seule ou être montée dans un projet FastAPI existant, 
 
 **Réalisation (phase 5.1a)** (détails : `fonctions.md`, points 33 et 34) : section `tenants` ; **sans elle, seul `default` existe, avec elle la liste est fermée** et un client inconnu est refusé. Surcharges réalisées : `agents`, `tools_deny`, `models`, `approvals`, `secrets`, `variables`, `storage`. La correspondance des modèles porte sur la **définition** du modèle, donc elle vaut partout à la fois, et la config d'un client repasse les contrôles de cohérence. Un agent est monté par client. `TenantRouter` choisit le journal et les artefacts d'un client qui déclare son propre `storage`. Budgets et quotas par client : 5.1b.
 
+**Réalisation (phase 5.1b)** (détails : `fonctions.md`, point 34) : `budgets.tenant` (`max_cost_per_day`, `max_tokens_per_day`, et leurs équivalents par mois) et `quotas.runs_per_minute` dans la fiche d'un client, plus `rate_limit` sur une clé d'API. Le budget d'un client est lu **une fois, au lancement du run** — une enveloppe épuisée dit « reviens demain », pas « réponds vite » — et un run refusé n'écrit rien. Le quota et le débit d'une clé sont des fenêtres **glissantes** d'une minute ; les budgets, des fenêtres **calendaires** en UTC.
+
 ---
 
 # Partie II — Vue technique
@@ -1049,6 +1051,14 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - Rapport : `Loom.report(run_id | session_id=…)`, `loom report` ; depuis 3.6, dans le résultat de chaque run (`report`) et par REST (`GET /v1/sessions/{id}/report`) et MCP (`run_report`), voir §18. Modèle sans tarif sous budget en dollars : avertissement (backlog #010). Par client et par période : J5.
 - Réponse forcée : consigne en dernier message de sa requête (`FINALIZE_HINT`, jamais journalisée) ; `OnOutput.finalizing` ; une réparation de la réponse forcée est une génération de plus que celle qui borne le dépassement.
 
+**Réalisation (phase 5.1b)** (détails : `fonctions.md`, point 34) :
+
+- Budget d'un client : `budgets.tenant` — `max_cost_per_day`, `max_tokens_per_day`, `max_cost_per_month`, `max_tokens_per_month` —, fusionné clé par clé comme les autres budgets. Fenêtres **calendaires, en UTC** : un compteur par fenêtre suffit, il se reconstruit depuis le journal, et la remise à zéro est une date.
+- Contrôle **au lancement du run**, une fois, et non avant chaque appel : le run qui franchit le plafond va jusqu'au bout, le suivant est refusé (`BudgetExhausted`, avec les secondes jusqu'à la remise à zéro). Un run refusé n'écrit rien au journal, donc pas de `budget.exceeded` : `BudgetScope` reste `run | session`.
+- Compteur : port `UsageCounter` et adaptateur mémoire (Postgres et Redis en 5.3). `record` **pose** ce qu'a coûté un run racine au lieu de l'ajouter, ce qui rend l'enregistrement idempotent et permet au réchauffage depuis le journal de chevaucher la vie courante sans compter deux fois.
+- Quota d'un client : `quotas.runs_per_minute`, fenêtre **glissante** de 60 s, vérifiée à la façade (donc par les quatre accès). Débit d'une clé d'API : `rate_limit.per_minute`, même fenêtre, vérifié par l'accès HTTP — c'est la clé qu'il protège, lectures comprises, et non le client.
+- Rapport : `Loom.consumption(tenant_id, period=…)` et `loom report --periode jour|mois`, relus dans le journal à chaque appel, donc valables même pour un client sans budget.
+
 ## 16. Sécurité
 
 ### 16.1 Clés API
@@ -1315,7 +1325,7 @@ execution:
 budgets:                              # défauts ; un agent les surcharge par `budget`, clé par clé
   run:     {max_cost: 0.05, max_tokens: 200000, max_calls: 25}   # max_calls : orchestrateur, rôles, juges
   session: {max_cost: 1.0, max_tokens: 2000000}                  # runs précédents + run en cours
-  tenant:  {max_cost_per_day: 10.0}   # J5
+  tenant:  {max_cost_per_day: 10.0, max_tokens_per_month: 20000000}   # par client et par période (5.1b)
   on_exceed: stop                     # warn | stop
 
 telemetry:
@@ -1334,8 +1344,8 @@ tenants:                              # sans cette section, seul `default` exist
     agents: [relance_devis]           # ce qu'il peut lancer ; vide signifie tous
     tools_deny: []                    # outils retirés, sous le nom que voit le modèle
     models: {M3_MAIN: SONNET}         # correspondance des modèles
-    budgets: {tenant: {max_cost_per_day: 5.0}}   # J5.1b
-    quotas: {runs_per_minute: 30}                # J5.1b
+    budgets: {tenant: {max_cost_per_day: 5.0}}   # fenêtres calendaires, en UTC
+    quotas: {runs_per_minute: 30}                # fenêtre glissante de 60 s
     approvals: {envoyer_email: always}
     secrets: {CRM_TOKEN: DUPONT_CRM_TOKEN}
     variables: {entreprise: Dupont Plomberie}
@@ -1357,6 +1367,8 @@ server:
 ```
 
 **Réalisation (phase 5.1a) :** `tenants` et `security.api_keys[].tenant` sont débloqués ; la liste des clients est **fermée** dès qu'elle existe, et une clé dont le client n'est pas déclaré est refusée au chargement. `storage` d'un client accepte `events` et `artifacts` ; `idempotency` y est refusé en nommant 5.3 (le port n'a le client que sur `reserve`). Contrôles au démarrage ajoutés : client en double, agent ou modèle de remplacement inconnu, modèle qui se remplace lui-même, variable `{{ }}` d'un prompt non définie pour un client, clé d'API sur un client non déclaré. `rate_limit` et `expires` d'une clé attendent 5.2, `budgets`/`quotas` d'un client 5.1b.
+
+**Réalisation (phase 5.1b) :** `budgets` et `quotas` d'un client sont débloqués, ainsi que `rate_limit` d'une clé d'API (#39) ; `expires` reste renvoyé à 5.2. `budgets` d'un client surcharge celui de la racine clé par clé et porte en plus `tenant: {max_cost_per_day, max_tokens_per_day, max_cost_per_month, max_tokens_per_month}`.
 
 ### 17.9 Profils et contrôles
 
@@ -1407,6 +1419,7 @@ async with loom:
 - `stream()`, `follow()` et `events()` rendent l'arbre du run : ses événements et ceux de ses sous-runs, dans l'ordre du journal ; `subruns=False` s'en tient au run.
 - `sessions()`, `export_session(session_id)` et `delete_session(session_id)` listent, exportent et suppriment les journaux de session (F7, depuis 4.1a) ; `session(session_id)` en rend la fiche — ses runs, et les approbations qu'il faut trancher pour que la conversation avance (4.5). L'API REST les expose toutes (18.2).
 - `compact(session_id)` résume une session à la demande et `drain()` attend les tâches de fond (depuis 4.1b) ; `aclose()` les attend aussi, dans la limite d'`execution.shutdown_timeout`.
+- **Consommation (5.1b) :** `consumption(tenant_id, period="day" | "month")` rend ce qu'un client a dépensé sur la fenêtre en cours, ce qu'il lui reste sur chaque plafond et la date de remise à zéro ; elle relit le journal, donc elle vaut aussi pour un client sans budget. `run()`, `stream()` et `submit()` lèvent `BudgetExhausted` (enveloppe de la période épuisée) ou `QuotaExceeded` (runs par minute) **avant** d'ouvrir le run : rien n'est écrit.
 - **Client (5.1a) :** `run()`, `stream()` et `submit()` prennent `tenant=`, raccourci de `CallerContext(tenant_id=…)` ; toutes les lectures prennent `tenant_id=`. `tenants` liste les clients de l'instance, `tenant(id)` rend ce qu'un client surcharge, et `context(agent, tenant_id)` monte l'agent **pour ce client**. Un agent fermé à un client lève `AgentNotAllowed` ; un client non déclaré, `UnknownTenant`.
 
 ### 18.2 HTTP REST
@@ -1440,6 +1453,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - **Arrière-plan (4.5) :** `background: true` rend 202 et `{run_id, session_id, status}` — le run est inscrit au journal avant la réponse, donc lisible et suivable aussitôt.
 - **Décisions (4.5) :** `approve` et `reject` prennent un `call_id` optionnel (sans lui, tout ce que le run attend est tranché), un motif, et pour un accord des arguments corrigés. L'approbateur inscrit au journal est **l'identifiant de la clé d'API**, qu'un `by` dans le corps remplace : une passerelle nomme ainsi l'humain qui a tranché.
 - **Client (5.1a) :** il vient de la **clé d'API**, et de nulle part ailleurs — rien dans le corps d'une requête ne le change. Toute lecture est donc bornée au client de la clé : la session d'un autre est « introuvable », pas « interdite », puisqu'on n'a aucun moyen d'apprendre qu'elle existe. Un agent publié mais fermé à ce client donne 403, comme pour une clé limitée à certains agents. Sans clé déclarée, l'instance agit pour `default` : si la config nomme ses clients et pas `default`, tout est refusé, et `create_app` le dit au démarrage.
+- **Débit et budgets (5.1b) :** un client qui a épuisé son enveloppe de la période, ou dépassé ses runs par minute, reçoit **429** avec un `Retry-After` — quelques secondes pour un débit, la bascule de la fenêtre pour une journée épuisée. Le `rate_limit` d'une **clé** donne le même 429, mais il compte toutes ses requêtes, lectures comprises, et vaut avant même que la demande ne soit servie.
 - **Sessions (4.5) :** la liste est refusée à une clé limitée à certains agents — elle ne dit pas de quels agents sont les runs d'une session, et la filtrer honnêtement demanderait de lire chaque journal. La fiche et l'export vérifient le droit sur chaque agent rencontré ; l'effacement, irréversible et commun à tous les agents de la session, demande `admin`.
 
 ### 18.3 Serveur MCP
@@ -1457,7 +1471,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
 ### 18.4 CLI
 
-Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**.
+Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --periode jour|mois` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`.
 
 ## 19. Projet
 

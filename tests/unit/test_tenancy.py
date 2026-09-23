@@ -280,19 +280,12 @@ def test_a_key_on_an_undeclared_tenant_is_refused(demo: ConfigFactory) -> None:
 # --- Ce qui attend les phases suivantes ---------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("override", "message"),
-    [
-        ({"budgets": {"tenant": {"max_cost_per_day": 5.0}}}, "J5.1b"),
-        ({"quotas": {"runs_per_minute": 30}}, "J5.1b"),
-        ({"storage": {"idempotency": {"backend": "memory"}}}, "J5.3"),
-    ],
-)
-def test_later_overrides_name_their_phase(
-    demo: ConfigFactory, override: dict[str, Any], message: str
-) -> None:
-    with pytest.raises(ConfigError, match=message):
-        load_config(demo(tenants=[{"id": DUPONT, **override}]))
+def test_a_tenant_storage_cannot_carry_its_own_idempotency(demo: ConfigFactory) -> None:
+    # Le port n'a le client que sur ``reserve`` : un magasin par client attend J5.3.
+    with pytest.raises(ConfigError, match=r"J5\.3"):
+        load_config(
+            demo(tenants=[{"id": DUPONT, "storage": {"idempotency": {"backend": "memory"}}}])
+        )
 
 
 # --- Serveurs MCP de portée ``tenant`` (#19, #34) ------------------------------

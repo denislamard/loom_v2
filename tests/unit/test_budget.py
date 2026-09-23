@@ -176,8 +176,9 @@ def test_agent_budgets_override_the_defaults_key_by_key() -> None:
     assert root.merged(budgets(run={"max_calls": None})).run == RunBudget(max_cost=0.05)
     assert root.merged(None) is root
     assert merged.limited and merged.in_dollars and not Budgets().limited
-    with pytest.raises(ValidationError, match="prévu pour le jalon J5"):
-        budgets(tenant={"max_cost_per_day": 5})
+    # Les plafonds par période d'un client (J5.1b) fusionnent comme le reste.
+    par_periode = root.merged(budgets(tenant={"max_cost_per_day": 5}))
+    assert par_periode.tenant.max_cost_per_day == 5 and par_periode.run.max_cost == 0.05
 
 
 def test_a_share_is_part_of_what_is_left() -> None:

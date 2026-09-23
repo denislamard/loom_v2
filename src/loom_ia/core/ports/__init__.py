@@ -31,6 +31,7 @@ from loom_ia.core.ports.tool import (
     UnknownEffect,
     idempotency_key,
 )
+from loom_ia.core.ports.usage_counter import UsageCounter
 
 __all__ = [
     "RETRYABLE_ERRORS",
@@ -59,6 +60,7 @@ __all__ = [
     "ToolError",
     "ToolSource",
     "UnknownEffect",
+    "UsageCounter",
     "complete",
     "idempotency_key",
     "journal_key",

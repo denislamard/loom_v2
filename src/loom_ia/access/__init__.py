@@ -14,18 +14,26 @@ from loom_ia.access.api import (
     UnknownRun,
     UnknownSession,
 )
-from loom_ia.tenancy import UnknownTenant
+from loom_ia.tenancy import (
+    BudgetExhausted,
+    QuotaExceeded,
+    TenantConsumption,
+    UnknownTenant,
+)
 
 __all__ = [
     "AgentNotAllowed",
+    "BudgetExhausted",
     "ClaimConflict",
     "JudgeVerdict",
     "Loom",
+    "QuotaExceeded",
     "RunResult",
     "RunSummary",
     "SessionDeletion",
     "SessionInfo",
     "StreamItem",
+    "TenantConsumption",
     "UnknownRun",
     "UnknownSession",
     "UnknownTenant",

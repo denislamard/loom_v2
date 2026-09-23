@@ -166,4 +166,5 @@ modules = [
     "loom_ia.adapters.mcp",
     "loom_ia.adapters.telemetry",
     "loom_ia.adapters.idempotency",
+    "loom_ia.adapters.usage",
 ]

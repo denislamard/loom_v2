@@ -14,8 +14,14 @@ Client (L1, #34) : une clé agit **au nom d'un client**, et c'est la seule
 chose qui le dit en REST — rien dans le corps d'une requête ne peut le
 changer. Toute lecture est donc bornée au client de la clé : on ne peut pas
 demander le journal d'un autre, faute de façon de le nommer.
+
+Débit (#39, J5.1b) : une clé peut porter un ``rate_limit``. Il protège le
+serveur, il ne dit rien du métier — c'est le quota du client qui le fait, et
+lui vaut par tous les accès. Vérifié à l'identification, donc sur **toutes**
+les routes, et répondu par un 429 avec un ``Retry-After``.
 """
 
+import math
 from dataclasses import dataclass
 from typing import Final
 
@@ -23,6 +29,7 @@ from fastapi import HTTPException, Request, status
 
 from loom_ia.config.models import ApiKey, Scope, SecurityConfig
 from loom_ia.core.model import DEFAULT_TENANT, TenantId
+from loom_ia.tenancy import RateWindow
 
 BEARER: Final = "bearer "
 API_KEY_HEADER: Final = "x-api-key"
@@ -74,6 +81,21 @@ def identify(security: SecurityConfig, request: Request) -> Caller:
         if key.accepts(given):
             return Caller(key)
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Clé d'API refusée", headers=_CHALLENGE)
+
+
+def throttle(caller: Caller, window: RateWindow) -> None:
+    """Compte la requête de cette clé, ou refuse en 429 avec son ``Retry-After``."""
+    key = caller.key
+    if key is None or key.rate_limit is None:
+        return
+    waiting = window.take(f"key:{key.id}", key.rate_limit.per_minute)
+    if waiting is None:
+        return
+    raise HTTPException(
+        status.HTTP_429_TOO_MANY_REQUESTS,
+        f"Clé {key.id!r} : {key.rate_limit.per_minute} requêtes par minute dépassé",
+        headers={"Retry-After": str(max(1, math.ceil(waiting)))},
+    )
 
 
 def require(caller: Caller, scope: Scope, agent: str | None = None) -> None:

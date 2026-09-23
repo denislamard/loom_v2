@@ -11,7 +11,11 @@ l'orchestrateur (politique fournie ``loom.budget``) : une limite atteinte
 borné à cette dernière génération.
 
 Le budget de session compte la consommation des runs précédents de la
-session, plus celle du run en cours. Budgets par client et par période : J5.
+session, plus celle du run en cours.
+
+Le budget d'un **client** (``tenant``, J5.1b) est d'une autre nature : il
+borne ce qu'il a le droit de lancer sur une journée ou un mois, et se lit
+donc une fois, avant d'ouvrir le run, et non avant chaque appel.
 
 Sous-agent (C5) : ``budget_share`` lui donne une part de ce qui reste au run
 parent au moment de l'appel ; cette part est écrite dans le ``run.started``
@@ -31,9 +35,11 @@ from loom_ia.core.model.usage import Usage
 type BudgetScope = Literal["run", "session"]
 type BudgetLimit = Literal["max_cost", "max_tokens", "max_calls"]
 type OnExceed = Literal["warn", "stop"]
+# Fenêtres calendaires d'un budget de client (J5.1b) ; UTC.
+type BudgetPeriod = Literal["day", "month"]
 
 # Clés prévues pour plus tard.
-LATER_BUDGETS: Final[dict[str, str]] = {"tenant": "J5 (budgets par client et par période)"}
+LATER_BUDGETS: Final[dict[str, str]] = {}
 
 
 class RunBudget(DomainModel):
@@ -88,11 +94,52 @@ class SessionBudget(DomainModel):
         return self.max_cost is not None or self.max_tokens is not None
 
 
+class TenantBudget(DomainModel):
+    """Plafonds d'un client sur une fenêtre calendaire, en UTC (J4, L3).
+
+    Ce n'est pas un budget de run : il ne borne pas ce qu'un run dépense, il
+    borne ce qu'un client a le droit de **lancer**. Il est donc lu une fois,
+    avant d'ouvrir le run — la journée d'un artisan est finie ou elle ne l'est
+    pas, et l'avertir en cours de route par une réponse forcée lui ferait
+    payer une génération pour l'apprendre.
+
+    Pas de ``max_calls`` : compter les appels de modèle d'une journée n'apprend
+    rien de plus que ses tokens, et ce que le schéma annonce (§17.7) est le
+    coût et les tokens.
+    """
+
+    max_cost_per_day: NonNegativeFloat | None = None
+    max_tokens_per_day: NonNegativeInt | None = None
+    max_cost_per_month: NonNegativeFloat | None = None
+    max_tokens_per_month: NonNegativeInt | None = None
+
+    @property
+    def limited(self) -> bool:
+        return any(getattr(self, name) is not None for name in type(self).model_fields)
+
+    @property
+    def periods(self) -> tuple[BudgetPeriod, ...]:
+        """Fenêtres qui portent au moins une limite ; vide si le client n'en a aucune."""
+        return tuple(period for period in ("day", "month") if self.limits(period))
+
+    def limits(self, period: BudgetPeriod) -> tuple[tuple[BudgetLimit, float], ...]:
+        """Limites de cette fenêtre : ``(max_cost, 5.0)``, ``(max_tokens, 200000)``…"""
+        found: list[tuple[BudgetLimit, float]] = []
+        for limit in ("max_cost", "max_tokens"):
+            value = getattr(self, f"{limit}_per_{period}")
+            if value is not None:
+                found.append((limit, float(value)))
+        return tuple(found)
+
+
 class Budgets(DomainModel):
     """Budgets d'un agent : défauts de ``budgets`` (racine), surchargés par son ``budget``."""
 
     run: RunBudget = RunBudget()
     session: SessionBudget = SessionBudget()
+    # Plafonds du client sur une période (J5.1b) ; ils ne dépendent pas de l'agent,
+    # et c'est la fiche du client qui les porte le plus souvent.
+    tenant: TenantBudget = TenantBudget()
     on_exceed: OnExceed = "stop"
 
     @model_validator(mode="before")
@@ -115,10 +162,10 @@ class Budgets(DomainModel):
             return self
         given = override.model_fields_set
         update: dict[str, object] = {}
-        for part in ("run", "session"):
+        for part in ("run", "session", "tenant"):
             if part in given:
-                mine: RunBudget | SessionBudget = getattr(self, part)
-                theirs: RunBudget | SessionBudget = getattr(override, part)
+                mine: RunBudget | SessionBudget | TenantBudget = getattr(self, part)
+                theirs: RunBudget | SessionBudget | TenantBudget = getattr(override, part)
                 update[part] = mine.model_copy(
                     update={name: getattr(theirs, name) for name in theirs.model_fields_set}
                 )

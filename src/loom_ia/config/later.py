@@ -12,14 +12,10 @@ LATER_ROOT: Final[dict[str, str]] = {
     "profiles": "J5.5 (profils dev et prod)",
 }
 LATER_API_KEY: Final[dict[str, str]] = {
-    "rate_limit": "J5.1b (quotas et débit)",
     "expires": "J5.2 (rotation des clés)",
 }
-# Surcharges d'un client prévues pour la phase suivante (§17.8).
-LATER_TENANT: Final[dict[str, str]] = {
-    "budgets": "J5.1b (budgets par client et par période)",
-    "quotas": "J5.1b (quotas et débit)",
-}
+# Surcharges d'un client prévues pour plus tard (§17.8).
+LATER_TENANT: Final[dict[str, str]] = {}
 LATER_MCP_ACCESS: Final[dict[str, str]] = {
     "http": "J5.2 (serveur MCP en HTTP)",
     "allowed_origins": "J5.2 (serveur MCP en HTTP)",

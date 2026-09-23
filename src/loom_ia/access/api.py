@@ -40,6 +40,12 @@ opération qui vise un run ou une session. Les agents sont montés **par
 client** : deux clients du même agent n'ont ni les mêmes modèles, ni les
 mêmes secrets, ni les mêmes connexions MCP.
 
+Budgets et quotas d'un client (L3, J5.1b) : ils bornent ce qu'un client a le
+droit de **lancer**, et sont donc vérifiés avant d'ouvrir le run — un budget
+de journée épuisé lève ``BudgetExhausted``, un débit dépassé
+``QuotaExceeded``, et rien n'est écrit au journal. Les deux portent les
+secondes à attendre.
+
 Résultat (J3) : ``RunResult`` dit, en plus de la réponse, si elle a été
 gardée sans respecter son contrat ou son juge (``unverified``), la
 consommation ventilée du run et de ses sous-runs (``report`` : par run, par
@@ -62,6 +68,7 @@ from pydantic import AwareDatetime, JsonValue, NonNegativeInt, PositiveInt
 
 from loom_ia.adapters.queue import AsyncioTaskQueue, Handler
 from loom_ia.adapters.stores import NotifyingEventStore
+from loom_ia.adapters.usage import InMemoryUsageCounter
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import LoomConfig, load_config
@@ -83,6 +90,7 @@ from loom_ia.core.model import (
     Approver,
     ArtifactRecord,
     Attachment,
+    BudgetPeriod,
     CallerContext,
     CriterionScore,
     JudgesMode,
@@ -94,6 +102,7 @@ from loom_ia.core.model import (
     RunStatus,
     SessionId,
     SpanId,
+    Spent,
     TenantId,
     Usage,
     new_id,
@@ -108,6 +117,7 @@ from loom_ia.core.ports import (
     JobKind,
     SecretProvider,
     SessionRecord,
+    UsageCounter,
 )
 from loom_ia.core.projections import RunTree, fold
 from loom_ia.engine import (
@@ -132,11 +142,15 @@ from loom_ia.runtime import (
 )
 from loom_ia.sessions import CompactionJob, CompactionPlan, write_snapshot
 from loom_ia.tenancy import (
+    Quota,
     RoutedArtifactStore,
     RoutedEventStore,
     Tenant,
+    TenantConsumption,
     TenantRouter,
     Tenants,
+    TenantUsage,
+    UnknownTenant,
 )
 from loom_ia.usage import UsageReport, usage_report
 
@@ -428,6 +442,7 @@ class Loom:
         artifacts: ArtifactStore | None = None,
         breakers: CircuitBreakers | None = None,
         secrets: SecretProvider | None = None,
+        counter: UsageCounter | None = None,
     ) -> None:
         self._config = config
         self._registry = registry if registry is not None else load_registry(config)
@@ -472,6 +487,14 @@ class Loom:
         self._mcp = create_mcp_pool(config, environ)
         # Disjoncteurs des modèles et des serveurs MCP, communs à tous les runs.
         self._breakers = breakers if breakers is not None else CircuitBreakers()
+        # Consommation par client et par période (J5.1b) : le compteur est un
+        # cache du journal, et c'est lui qui rend un budget de journée lisible
+        # avant chaque lancement sans relire toutes les sessions du client.
+        self._counter = counter if counter is not None else InMemoryUsageCounter()
+        self._owns_counter = counter is None
+        self._usage = TenantUsage(self._counter, self._store)
+        # Débit accordé aux clients, commun aux runs de l'instance (L3).
+        self._quota = Quota()
         # Un écrivain par session : deux runs d'une même session écrivent par
         # le même, et ne se refusent pas l'un l'autre (#22).
         self._writers = SessionWriters()
@@ -594,6 +617,21 @@ class Loom:
             raise AgentNotAllowed(agent, found.id)
         return caller, found
 
+    async def _admitted(
+        self, agent: str, context: CallerContext | None, tenant: TenantId | None
+    ) -> tuple[CallerContext, Tenant]:
+        """Ce qu'il faut vérifier avant d'ouvrir un run, dans l'ordre du moins cher.
+
+        Le client, puis l'agent qu'on lui ouvre, puis son débit (en mémoire),
+        puis son budget de période (qui peut relire le journal). Rien n'est
+        écrit tant que les quatre ne sont pas passés : un run refusé n'a pas
+        existé.
+        """
+        caller, found = self._for(agent, context, tenant)
+        self._quota.check(found.id, found.quotas.runs_per_minute)
+        await self._usage.check(found)
+        return caller, found
+
     async def run(
         self,
         agent: str,
@@ -620,7 +658,7 @@ class Loom:
         Sans lui, l'approbation est asynchrone : le run s'arrête en ``PAUSED``
         et ``approve()`` le reprend.
         """
-        caller, who = self._for(agent, context, tenant)
+        caller, who = await self._admitted(agent, context, tenant)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
         state = await self._start(ctx, message, attachments, session_id, caller, run_id, judges)
         return await self._result(state)
@@ -652,7 +690,7 @@ class Loom:
         async def on_chunk(chunk: ModelChunk) -> None:
             items.put_nowait(chunk)
 
-        caller, who = self._for(agent, context, tenant)
+        caller, who = await self._admitted(agent, context, tenant)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
         tree = RunTree(run_id, subruns=subruns)
         # Écoute posée avant le démarrage : l'arbre se reconnaît dans l'ordre d'écriture.
@@ -833,6 +871,21 @@ class Loom:
             raise UnknownRun(run_id)
         return RunResult.of(fold(events, run_id), events)
 
+    async def consumption(
+        self,
+        tenant_id: TenantId | None = None,
+        *,
+        period: BudgetPeriod = "day",
+    ) -> TenantConsumption:
+        """Ce qu'un client a dépensé sur la journée ou le mois en cours (L3, J5.1b).
+
+        Relu dans le journal à chaque appel, et non pris au compteur : c'est
+        une question qu'un humain pose, et elle doit valoir même pour un client
+        sans budget — dont le compteur ne retient rien.
+        """
+        tenant = self._tenants.get(tenant_id)
+        return await self._usage.consumption(tenant.id, tenant.budget, period)
+
     async def report(
         self,
         run_id: RunId | None = None,
@@ -937,6 +990,8 @@ class Loom:
         closing = getattr(self._idempotency, "aclose", None)
         if closing is not None:
             await closing()
+        if self._owns_counter:
+            await self._counter.aclose()
 
     async def __aenter__(self) -> Self:
         return self
@@ -1133,7 +1188,7 @@ class Loom:
 
         Une pièce jointe refusée lève ``AttachmentError`` avant l'ouverture.
         """
-        caller, who = self._for(agent, context, tenant)
+        caller, who = await self._admitted(agent, context, tenant)
         ctx = self.context(agent, who.id)
         if self._compaction is not None and session_id is not None:
             await self._compaction.ensure_fits(who.id, session_id)
@@ -1230,7 +1285,34 @@ class Loom:
         await self._snapshot(state, events)
         await self._schedule(state, events)
         await self._expiring(state, events)
-        return RunResult.of(state, events)
+        result = RunResult.of(state, events)
+        await self._counted(state, result)
+        return result
+
+    async def _counted(self, state: RunState, result: RunResult) -> None:
+        """Porte au compteur du client ce que ce run a coûté, sous-runs compris.
+
+        Seulement pour un run racine : la consommation d'un sous-agent est déjà
+        dans le total de son parent. Le compteur pose une valeur par run, donc
+        repasser ici pour le même run — une reprise, par exemple — ne double
+        rien. Un compteur qui refuse n'a pas à faire échouer un run terminé.
+        """
+        if state.parent_run_id is not None:
+            return
+        if result.report is None:
+            return
+        total = result.report.total
+        try:
+            tenant = self._tenants.get(state.context.tenant_id)
+        except UnknownTenant:
+            # Un client retiré de la config depuis le lancement du run.
+            return
+        try:
+            await self._usage.record(
+                tenant, state.run_id, Spent(total.usage, total.cost, total.calls)
+            )
+        except Exception:
+            logger.warning("Consommation du run %s non enregistrée", state.run_id, exc_info=True)
 
     async def compact(
         self, session_id: SessionId, *, tenant_id: TenantId | None = None

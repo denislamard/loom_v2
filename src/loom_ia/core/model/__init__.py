@@ -5,12 +5,14 @@ from loom_ia.core.model.base import DomainModel, UnsupportedKey, reject_later
 from loom_ia.core.model.budget import (
     LATER_BUDGETS,
     BudgetLimit,
+    BudgetPeriod,
     Budgets,
     BudgetScope,
     OnExceed,
     RunBudget,
     SessionBudget,
     Spent,
+    TenantBudget,
 )
 from loom_ia.core.model.content import (
     AnthropicMeta,
@@ -127,6 +129,7 @@ from loom_ia.core.model.policy import (
     Retry,
     Stop,
 )
+from loom_ia.core.model.quota import WINDOW, Quotas, RateLimit
 from loom_ia.core.model.run_state import (
     ApprovalDecision,
     ApprovalOutcome,
@@ -212,6 +215,7 @@ __all__ = [
     "RESERVED_PREFIX",
     "TERMINAL_HINT",
     "TOOL_NAME_PATTERN",
+    "WINDOW",
     "AfterModel",
     "AfterTool",
     "AnthropicMeta",
@@ -232,6 +236,7 @@ __all__ = [
     "BeforeModel",
     "BeforeTool",
     "BudgetLimit",
+    "BudgetPeriod",
     "BudgetScope",
     "Budgets",
     "CacheTtl",
@@ -290,6 +295,8 @@ __all__ = [
     "Pricing",
     "PromptCache",
     "ProviderMeta",
+    "Quotas",
+    "RateLimit",
     "ReasoningBlock",
     "ReasoningDelta",
     "Rejected",
@@ -319,6 +326,7 @@ __all__ = [
     "Stopped",
     "StreamOutput",
     "StreamReset",
+    "TenantBudget",
     "TenantId",
     "TextBlock",
     "TextDelta",
