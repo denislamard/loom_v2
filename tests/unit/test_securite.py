@@ -335,6 +335,42 @@ async def test_the_export_of_a_session_is_masked(demo: ConfigFactory) -> None:
     assert appels_modele and all("cost_usd" in e["payload"] for e in appels_modele)
 
 
+async def test_a_search_of_events_is_masked(demo: ConfigFactory) -> None:
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    pytest.importorskip("httpx2", reason="client HTTP de test absent")
+    import httpx2
+
+    from loom_ia.access.http import create_app
+
+    security, jetons = cles(
+        complete={"scopes": ["run", "read", "read_content"]},
+        supervision={"scopes": ["run", "read"]},
+    )
+    path = demo(storage=JOURNAL, security=security)
+    async with Loom.from_config(path) as loom:
+        transport = httpx2.ASGITransport(create_app(loom))
+        async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
+            await http.post(
+                "/v1/agents/demo/runs",
+                json={"message": QUESTION},
+                headers=porteur(jetons["complete"]),
+            )
+            masque = await http.get("/v1/events", headers=porteur(jetons["supervision"]))
+            entier = await http.get("/v1/events", headers=porteur(jetons["complete"]))
+            liste = await http.get("/v1/runs", headers=porteur(jetons["supervision"]))
+
+    assert masque.status_code == 200
+    # Même journal, mêmes événements : seule la charge est privée de contenu.
+    assert [e["type"] for e in masque.json()] == [e["type"] for e in entier.json()]
+    assert QUESTION not in masque.text and ANSWER not in masque.text
+    assert QUESTION in entier.text and ANSWER in entier.text
+    appels = [e for e in masque.json() if e["type"] == "tool.called"]
+    assert appels and all(a["payload"]["redacted"] == ["arguments"] for a in appels)
+    # Une liste de runs ne porte pas de contenu : elle n'a rien à masquer.
+    assert liste.status_code == 200 and liste.json()["runs"]
+    assert QUESTION not in liste.text and ANSWER not in liste.text
+
+
 async def test_the_sse_stream_is_masked(demo: ConfigFactory) -> None:
     pytest.importorskip("fastapi", reason="extra 'http' absent")
     pytest.importorskip("httpx2", reason="client HTTP de test absent")

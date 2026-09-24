@@ -419,6 +419,206 @@ async def test_a_key_limited_to_agents_cannot_list_sessions(demo: ConfigFactory)
     assert refused.status_code == 403 and "filtrée" in refused.json()["detail"]
 
 
+# --- Document OpenAPI (J5.4a, N2) ---------------------------------------------
+
+
+async def test_the_openapi_document_describes_every_route(demo: ConfigFactory) -> None:
+    async with serving(demo(security=SECURITY)) as (_, http):
+        document = (await http.get("/openapi.json")).json()
+        page = await http.get("/docs")
+
+    assert document["info"]["title"] == "loom-ia" and document["info"]["version"]
+    declared = {tag["name"] for tag in document["tags"]}
+    assert declared == {"agents", "runs", "sessions", "journal"}
+    operations = [
+        (path, method, spec)
+        for path, methods in document["paths"].items()
+        for method, spec in methods.items()
+    ]
+    assert operations
+    for path, method, spec in operations:
+        assert spec.get("summary"), f"{method} {path} sans résumé"
+        # Une famille, et une qui soit décrite : sinon la route n'est nulle part
+        # dans la page de l'API.
+        assert set(spec.get("tags", [])) <= declared, f"{method} {path} mal rangée"
+        assert spec.get("tags"), f"{method} {path} sans famille"
+        assert spec.get("operationId")
+    # Les deux façons de présenter une clé sont déclarées, et chaque route les porte.
+    schemes = document["components"]["securitySchemes"]
+    assert set(schemes) == {"HTTPBearer", "APIKeyHeader"}
+    assert schemes["APIKeyHeader"] == {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "Clé d'API de l'instance",
+    }
+    for path, method, spec in operations:
+        names = {name for entry in spec.get("security", []) for name in entry}
+        assert names == set(schemes), f"{method} {path} sans schéma d'authentification"
+    assert page.status_code == 200
+
+
+async def test_the_listing_routes_are_documented(demo: ConfigFactory) -> None:
+    async with serving(demo()) as (_, http):
+        paths = (await http.get("/openapi.json")).json()["paths"]
+
+    runs = paths["/v1/runs"]["get"]
+    assert runs["tags"] == ["journal"]
+    assert {param["name"] for param in runs["parameters"]} == {
+        "agent",
+        "status",
+        "since",
+        "until",
+        "limit",
+        "sessions",
+    }
+    events = paths["/v1/events"]["get"]
+    assert events["tags"] == ["journal"]
+    assert {param["name"] for param in events["parameters"]} == {
+        "session_id",
+        "run_id",
+        "type",
+        "category",
+        "status",
+        "agent",
+        "role",
+        "tool_name",
+        "model_id",
+        "since",
+        "until",
+        "after",
+        "limit",
+    }
+
+
+# --- Listes et recherche (J5.4a, K5, #32) -------------------------------------
+
+
+async def test_runs_are_listed_and_filtered(demo: ConfigFactory) -> None:
+    path = demo(agents=[demo_agent(), demo_agent(name="autre")])
+    async with serving(path) as (_, http):
+        first = await http.post(
+            "/v1/agents/demo/runs", json={"message": QUESTION, "session_id": "c-1"}
+        )
+        second = await http.post(
+            "/v1/agents/autre/runs", json={"message": QUESTION, "session_id": "c-2"}
+        )
+        page = (await http.get("/v1/runs")).json()
+        named = (await http.get("/v1/runs?agent=autre")).json()
+        done = (await http.get("/v1/runs?status=completed&status=failed")).json()
+        none = (await http.get("/v1/runs?status=failed")).json()
+        bounded = (await http.get("/v1/runs?limit=1")).json()
+
+    ordered = [run["run_id"] for run in page["runs"]]
+    assert ordered == [second.json()["run_id"], first.json()["run_id"]]
+    assert page["scanned"] == 2 and page["truncated"] is False
+    listed = page["runs"][0]
+    assert listed["agent"] == "autre" and listed["status"] == "completed"
+    assert listed["session_id"] == "c-2" and listed["parent_run_id"] is None
+    assert listed["started_at"] <= listed["updated_at"] and listed["cost_usd"] >= 0
+    # Une liste ne porte aucun contenu : ni la réponse, ni le message d'erreur.
+    assert "text" not in listed and "error" not in listed and listed["error_type"] is None
+    assert [run["agent"] for run in named["runs"]] == ["autre"]
+    assert len(done["runs"]) == 2 and none["runs"] == []
+    assert len(bounded["runs"]) == 1 and bounded["truncated"] is True
+
+
+async def test_a_bad_bound_on_a_list_is_refused(demo: ConfigFactory) -> None:
+    async with serving(demo()) as (_, http):
+        zero = await http.get("/v1/runs?limit=0")
+        huge = await http.get("/v1/runs?sessions=100000")
+        unknown = await http.get("/v1/runs?status=parti")
+
+    assert zero.status_code == 422 and huge.status_code == 422 and unknown.status_code == 422
+
+
+async def test_a_key_limited_to_agents_gets_only_its_runs(demo: ConfigFactory) -> None:
+    limitee = new_api_key()
+    security = {
+        "api_keys": [
+            {"id": "atelier", "hash": fingerprint(CLE), "scopes": ["run", "read"]},
+            {
+                "id": "limitee",
+                "hash": fingerprint(limitee),
+                "scopes": ["run", "read"],
+                "agents": ["autre"],
+            },
+        ]
+    }
+    path = demo(agents=[demo_agent(), demo_agent(name="autre")], security=security)
+    async with serving(path) as (_, http):
+        ouverte = {"Authorization": f"Bearer {CLE}"}
+        bornee = {"Authorization": f"Bearer {limitee}"}
+        await http.post("/v1/agents/demo/runs", json={"message": QUESTION}, headers=ouverte)
+        await http.post("/v1/agents/autre/runs", json={"message": QUESTION}, headers=ouverte)
+        page = (await http.get("/v1/runs", headers=bornee)).json()
+        refused = await http.get("/v1/runs?agent=demo", headers=bornee)
+
+    # Contrairement aux sessions, la liste des runs se filtre honnêtement :
+    # chaque run dit de quel agent il est.
+    assert [run["agent"] for run in page["runs"]] == ["autre"]
+    # Nommer un agent qu'on n'a pas le droit de lire est un refus, pas un vide.
+    assert refused.status_code == 403
+
+
+async def test_events_are_searched_in_the_journal(demo: ConfigFactory) -> None:
+    async with serving(demo()) as (_, http):
+        started = await http.post(
+            "/v1/agents/demo/runs", json={"message": QUESTION, "session_id": "c-1"}
+        )
+        run_id = started.json()["run_id"]
+        calls = (await http.get("/v1/events?type=tool.called")).json()
+        named = (await http.get("/v1/events?tool_name=calculer")).json()
+        owned = (await http.get(f"/v1/events?run_id={run_id}&category=run")).json()
+        first = (await http.get("/v1/events?limit=1")).json()
+        after = (await http.get(f"/v1/events?limit=1&after={first[0]['event_id']}")).json()
+        elsewhere = (await http.get("/v1/events?session_id=c-99")).json()
+
+    assert [event["type"] for event in calls] == ["tool.called"]
+    assert {event["type"] for event in named} == {"tool.called", "tool.completed"}
+    assert {event["run_id"] for event in owned} == {run_id}
+    assert first[0]["type"] == "run.started"
+    assert after[0]["event_id"] > first[0]["event_id"]
+    assert elsewhere == []
+
+
+async def test_a_search_never_leaves_the_client_of_the_key(demo: ConfigFactory) -> None:
+    autre = new_api_key()
+    security = {
+        "api_keys": [
+            {"id": "atelier", "hash": fingerprint(CLE), "scopes": ["run", "read"]},
+            {
+                "id": "cabinet",
+                "hash": fingerprint(autre),
+                "scopes": ["run", "read"],
+                "tenant": "martin",
+            },
+        ]
+    }
+    path = demo(tenants=[{"id": "default"}, {"id": "martin"}], security=security)
+    async with serving(path) as (_, http):
+        await http.post(
+            "/v1/agents/demo/runs",
+            json={"message": QUESTION},
+            headers={"Authorization": f"Bearer {CLE}"},
+        )
+        mine = (await http.get("/v1/events", headers={"Authorization": f"Bearer {CLE}"})).json()
+        theirs = (await http.get("/v1/events", headers={"Authorization": f"Bearer {autre}"})).json()
+        runs = (await http.get("/v1/runs", headers={"Authorization": f"Bearer {autre}"})).json()
+
+    # Rien dans l'URL ne nomme un client : la clé le dit, et elle seule.
+    assert mine and theirs == []
+    assert runs["runs"] == []
+
+
+async def test_a_bad_search_is_refused(demo: ConfigFactory) -> None:
+    async with serving(demo()) as (_, http):
+        category = await http.get("/v1/events?category=inconnue")
+        limit = await http.get("/v1/events?limit=0")
+
+    assert category.status_code == 422 and limit.status_code == 422
+
+
 def _by(events: list[Event], type_: str) -> list[str | None]:
     """Auteurs inscrits au journal pour un type d'événement."""
     found = [event.facets.get("by") for event in events if event.type == type_]

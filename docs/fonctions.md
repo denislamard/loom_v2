@@ -1126,7 +1126,14 @@ Réglé par le journal : réponses des modèles et résultats d'outils sont touj
 
 Réglé par le point 22 : les traces sont le journal lui-même, interrogé via `EventQuery` (JSONL et DuckDB en mode librairie, SQLite ou Postgres en mode service).
 
-**Projection `run_summaries`** : run_id, agent, statut, durées, coût, tokens, nombre d'étapes, erreurs. Mise à jour à chaque `run.transitioned`, elle permet à l'interface de lister et filtrer les runs sans parcourir le journal.
+**Résumés de runs** : run_id, session, agent, statut, dates, tours, coût, tokens, type d'erreur. De quoi lister et filtrer les runs d'un client sans ouvrir chaque run.
+
+**Réalisation (phase 5.4a — les deux lectures, en REST et en Python) :**
+
+- **Une requête, pas une projection.** La conception prévoyait une projection `run_summaries` tenue à jour à chaque `run.transitioned`. Elle a été écartée : `Loom.runs()` lit le journal, session par session, de la plus récemment écrite à la plus ancienne, et replie chaque run à la lecture. Les chiffres sont donc exactement ceux de la fiche d'une session, il n'y a rien à tenir à jour, rien à reconstruire après un import ou une migration, et rien à resynchroniser quand deux process écrivent — une projection matérialisée aurait ajouté un second état à garder juste, pour une lecture que personne ne fait en boucle.
+- **Le prix est dit, pas caché.** Une lecture par journal ouvert : deux bornes le tiennent (`limit` runs rendus, `sessions` journaux ouverts), et la page rend ce qu'elle a coûté (`scanned`) et si une borne l'a arrêtée (`truncated`). Un filtre ne baisse pas le prix — il s'applique après le repli —, ce que l'exemple montre en comparant les deux `scanned`. C'est ici que la projection reviendra si le nombre de sessions par client la rend nécessaire : les bornes et `truncated` sont déjà là pour l'absorber.
+- **Une liste ne porte aucun contenu** : ni la réponse, ni le message d'erreur, seulement son **type**. Elle n'a donc rien à masquer (5.2a), et une clé de supervision la lit entière. Elle se filtre aussi honnêtement pour une clé limitée à certains agents — chaque run dit de quel agent il est —, là où `/sessions` doit refuser faute de pouvoir le dire.
+- **`GET /events`** expose `EventQuery` en paramètres d'URL, `after` compris, et **le client vient de la clé** : rien dans l'URL ne le nomme, donc on ne cherche que chez soi. Sans `read_content`, les mêmes événements arrivent privés de leur contenu. Les facettes libres ne sont pas interrogeables par l'URL ; les deux que `EventQuery` nomme (`tool_name`, `model_id`) le sont.
 
 ### 33. Client en mode librairie
 

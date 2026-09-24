@@ -1466,6 +1466,7 @@ async with loom:
 - `compact(session_id)` résume une session à la demande et `drain()` attend les tâches de fond (depuis 4.1b) ; `aclose()` les attend aussi, dans la limite d'`execution.shutdown_timeout`.
 - **Consommation (5.1b) :** `consumption(tenant_id, period="day" | "month")` rend ce qu'un client a dépensé sur la fenêtre en cours, ce qu'il lui reste sur chaque plafond et la date de remise à zéro ; elle relit le journal, donc elle vaut aussi pour un client sans budget. `run()`, `stream()` et `submit()` lèvent `BudgetExhausted` (enveloppe de la période épuisée) ou `QuotaExceeded` (runs par minute) **avant** d'ouvrir le run : rien n'est écrit.
 - **Client (5.1a) :** `run()`, `stream()` et `submit()` prennent `tenant=`, raccourci de `CallerContext(tenant_id=…)` ; toutes les lectures prennent `tenant_id=`. `tenants` liste les clients de l'instance, `tenant(id)` rend ce qu'un client surcharge, et `context(agent, tenant_id)` monte l'agent **pour ce client**. Un agent fermé à un client lève `AgentNotAllowed` ; un client non déclaré, `UnknownTenant`.
+- **Listes et recherche (5.4a) :** `runs(agent=…, status=…, since=…, until=…, limit=…, sessions=…)` rend une `RunPage` — les runs du client repliés au journal, du plus récent au plus ancien, avec ce que la page a coûté (`scanned`) et si une borne l'a arrêtée (`truncated`). `query(EventQuery)` interroge le journal ; l'ordre est celui des identifiants d'événement et `after` reprend la pagination. Les deux accès REST (18.2) s'y adossent.
 
 ### 18.2 HTTP REST
 
@@ -1488,6 +1489,8 @@ app.mount("/loom", loom.asgi_app(rest=True, mcp=True))
 | `GET` | `/v1/sessions/{id}/events` | Journal entier en JSONL | `read` |
 | `GET` | `/v1/sessions/{id}/report` | Consommation de la session | `read` |
 | `DELETE` | `/v1/sessions/{id}` | Effacement RGPD | `admin` |
+| `GET` | `/v1/runs` | Résumés des runs du client | `read` |
+| `GET` | `/v1/events` | Recherche au journal (`EventQuery`) | `read` |
 
 OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
@@ -1501,6 +1504,9 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - **Contenu et expiration (5.2a) :** une clé expirée est reconnue puis refusée (401, avec sa date). Sans la portée `read_content`, les **relectures** sont masquées — `GET /runs/{id}`, le SSE d'un run, l'export JSONL d'une session, la fiche d'une session — tandis que la réponse d'un `POST …/runs` ne l'est jamais : ce qu'une clé lance, elle le reçoit. Une clé qui lance en arrière-plan et relit son résultat a donc besoin de `read_content`, et une clé qui approuve aussi, faute de voir ce qu'elle tranche.
 - **Débit et budgets (5.1b) :** un client qui a épuisé son enveloppe de la période, ou dépassé ses runs par minute, reçoit **429** avec un `Retry-After` — quelques secondes pour un débit, la bascule de la fenêtre pour une journée épuisée. Le `rate_limit` d'une **clé** donne le même 429, mais il compte toutes ses requêtes, lectures comprises, et vaut avant même que la demande ne soit servie.
 - **Sessions (4.5) :** la liste est refusée à une clé limitée à certains agents — elle ne dit pas de quels agents sont les runs d'une session, et la filtrer honnêtement demanderait de lire chaque journal. La fiche et l'export vérifient le droit sur chaque agent rencontré ; l'effacement, irréversible et commun à tous les agents de la session, demande `admin`.
+- **Résumés de runs (5.4a, #32) :** `GET /v1/runs` rend les runs du client, du plus récemment écrit au plus ancien, filtrables par `agent`, `status` (répétable), `since` et `until`. Ils sont **lus au journal** — session par session, repliés à la lecture — et non tenus dans une projection : aucun second état à garder juste, et les chiffres sont ceux de la fiche d'une session. Le prix est une lecture par journal ouvert, borné par `limit` (runs rendus) et `sessions` (journaux ouverts) ; la page dit ce qu'elle a coûté (`scanned`) et si une borne l'a arrêtée (`truncated`). Un filtre ne baisse pas ce prix, il s'applique après le repli. Aucun contenu dans une liste — seulement le **type** d'un échec —, donc rien à masquer, et une clé limitée à certains agents y a droit : chaque run dit de quel agent il est, si bien que la liste se filtre honnêtement, là où `/sessions` doit refuser.
+- **Recherche au journal (5.4a, #22, #32) :** `GET /v1/events` expose `EventQuery` en paramètres — `session_id`, `run_id`, `type`, `category`, `status`, `agent`, `role`, `tool_name`, `model_id`, `since`, `until`, `after`, `limit`. Le client vient de la clé : rien dans l'URL ne le nomme, donc on ne cherche que chez soi. L'ordre est celui des identifiants d'événement (UUIDv7, donc du temps) et `after` reprend la pagination après le dernier rendu. Sans `read_content`, les mêmes événements arrivent privés de leur contenu. Les facettes libres ne sont pas interrogeables par l'URL ; les deux que `EventQuery` nomme le sont.
+- **Document OpenAPI (5.4a) :** chaque route porte un résumé et une famille (`agents`, `runs`, `sessions`, `journal`), chaque famille est décrite, et les deux façons de présenter une clé (`Authorization: Bearer`, `X-API-Key`) sont déclarées — de quoi essayer l'API depuis sa propre page. Un test vérifie que le document reste complet quand une route s'ajoute.
 
 ### 18.3 Serveur MCP
 

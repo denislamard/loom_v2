@@ -4,16 +4,18 @@
 from contextlib import aclosing
 
 import pytest
-from conftest import ANSWER, QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom, UnknownRun
 from loom_ia.agents import UnknownAgent
-from loom_ia.core.events import Event, ToolCalled
+from loom_ia.core.events import Event, EventQuery, ToolCalled
 from loom_ia.core.model import (
+    DEFAULT_TENANT,
     ModelChunk,
     RunId,
     RunStatus,
     SessionId,
+    TenantId,
     TextDelta,
     ToolOutput,
     new_run_id,
@@ -157,3 +159,100 @@ async def test_two_runs_share_one_session(demo: ConfigFactory) -> None:
 
 def _is(item: Event | ModelChunk, type_: str) -> bool:
     return isinstance(item, Event) and item.type == type_
+
+
+# --- Listes et recherche (J5.4a, K5, #32) -------------------------------------
+
+
+async def test_runs_lists_the_runs_of_every_session(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo()) as loom:
+        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
+        second = await loom.run("demo", QUESTION, session_id=SessionId("c-2"))
+        page = await loom.runs()
+
+    # Du plus récemment écrit au plus ancien, et un run par entrée.
+    assert [run.run_id for run in page.runs] == [second.run_id, first.run_id]
+    assert page.scanned == 2 and page.truncated is False
+    listed = page.runs[0]
+    assert (listed.session_id, listed.agent, listed.status) == (
+        SessionId("c-2"),
+        "demo",
+        RunStatus.COMPLETED,
+    )
+    assert listed.kind == "normal" and listed.parent_run_id is None
+    assert listed.iterations == second.iterations and listed.cost_usd == second.cost_usd
+    assert listed.usage.output_tokens > 0
+    assert listed.started_at <= listed.updated_at
+    assert listed.error_type is None
+
+
+async def test_runs_filters_on_agent_status_and_dates(demo: ConfigFactory) -> None:
+    path = demo(agents=[demo_agent(), demo_agent(name="autre")])
+    async with Loom.from_config(path) as loom:
+        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
+        second = await loom.run("autre", QUESTION, session_id=SessionId("c-2"))
+        # Dernière écriture du second run : la borne à éprouver.
+        border = (await loom.runs()).runs[0].updated_at
+
+        named = await loom.runs(agent="autre")
+        done = await loom.runs(status=[RunStatus.COMPLETED])
+        none = await loom.runs(status=[RunStatus.FAILED])
+        recent = await loom.runs(since=border)
+        older = await loom.runs(until=border)
+
+    assert [run.run_id for run in named.runs] == [second.run_id]
+    assert len(done.runs) == 2 and none.runs == ()
+    # Les bornes se comparent à la dernière écriture du run, ``since`` comprise
+    # et ``until`` exclue — comme celles d'une recherche d'événements.
+    assert [run.run_id for run in recent.runs] == [second.run_id]
+    assert [run.run_id for run in older.runs] == [first.run_id]
+
+
+async def test_runs_says_when_a_bound_stopped_the_search(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo()) as loom:
+        for number in range(3):
+            await loom.run("demo", QUESTION, session_id=SessionId(f"c-{number}"))
+        bounded = await loom.runs(limit=2)
+        shallow = await loom.runs(sessions=1)
+        whole = await loom.runs()
+
+    assert len(bounded.runs) == 2 and bounded.truncated is True
+    assert len(shallow.runs) == 1 and shallow.scanned == 1 and shallow.truncated is True
+    assert len(whole.runs) == 3 and whole.scanned == 3 and whole.truncated is False
+
+
+async def test_runs_lists_a_subrun_naming_its_delegate(tree: ConfigFactory) -> None:
+    async with Loom.from_config(tree()) as loom:
+        result = await loom.run("demo", TREE_QUESTION)
+        page = await loom.runs()
+
+    assert len(page.runs) == 2 and page.scanned == 1
+    parents = {run.agent: run.parent_run_id for run in page.runs}
+    assert parents == {"demo": None, "verificateur": result.run_id}
+
+
+async def test_runs_of_another_tenant_are_not_listed(demo: ConfigFactory) -> None:
+    path = demo(tenants=[{"id": "dupont"}, {"id": "martin"}])
+    async with Loom.from_config(path) as loom:
+        await loom.run("demo", QUESTION, tenant=TenantId("dupont"))
+        mine = await loom.runs(tenant_id=TenantId("dupont"))
+        theirs = await loom.runs(tenant_id=TenantId("martin"))
+
+    assert len(mine.runs) == 1 and theirs.runs == ()
+
+
+async def test_query_searches_the_journal_and_paginates(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo()) as loom:
+        await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
+        calls = await loom.query(EventQuery(tenant_id=DEFAULT_TENANT, types=("tool.called",)))
+        first = await loom.query(EventQuery(tenant_id=DEFAULT_TENANT, limit=1))
+        after = await loom.query(
+            EventQuery(tenant_id=DEFAULT_TENANT, limit=1, after=first[0].event_id)
+        )
+        named = await loom.query(EventQuery(tenant_id=DEFAULT_TENANT, tool_name="calculer"))
+        elsewhere = await loom.query(EventQuery(tenant_id=TenantId("absent")))
+
+    assert [event.type for event in calls] == ["tool.called"]
+    assert first[0].type == "run.started" and after[0].event_id > first[0].event_id
+    assert {event.type for event in named} == {"tool.called", "tool.completed"}
+    assert elsewhere == []

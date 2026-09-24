@@ -1,12 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Recherche d'événements par enveloppe et facettes (#22)."""
 
+from typing import Final
+
 from pydantic import AwareDatetime, Field
 
 from loom_ia.core.events.envelope import Event
 from loom_ia.core.events.payloads import EventCategory, EventStatus, FacetValue
 from loom_ia.core.model.base import DomainModel
 from loom_ia.core.model.ids import EventId, RunId, SessionId, TenantId
+
+# Bornes d'une recherche : ce qu'une page rend faute de le dire, et ce qu'elle
+# peut rendre au plus. Nommées pour que les accès les annoncent sans les redire.
+EVENTS_LIMIT: Final = 100
+EVENTS_MAX: Final = 10_000
 
 
 class EventQuery(DomainModel):
@@ -31,7 +38,7 @@ class EventQuery(DomainModel):
     since: AwareDatetime | None = None
     until: AwareDatetime | None = None
     after: EventId | None = None
-    limit: int = Field(default=100, ge=1, le=10_000)
+    limit: int = Field(default=EVENTS_LIMIT, ge=1, le=EVENTS_MAX)
 
     def matches(self, event: Event) -> bool:
         """Vrai si l'événement satisfait tous les critères (hors pagination)."""

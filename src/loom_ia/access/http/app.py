@@ -35,6 +35,26 @@ Et les sessions (F7) :
   clés d'idempotence. Irréversible, et il concerne tous les agents de la
   session : portée ``admin``.
 
+Et le journal lui-même (K5, #32) :
+
+- ``GET /runs`` : les runs du client, du plus récemment écrit au plus ancien,
+  avec ``agent``, ``status`` (répétable), ``since`` et ``until``. Ils sont
+  **lus au journal**, session par session : il n'y a pas de projection à
+  tenir à jour, et le prix est une lecture par journal ouvert. Deux bornes le
+  tiennent — ``limit`` runs rendus, ``sessions`` journaux ouverts —, et la
+  page dit ce qu'elle a coûté (``scanned``) et si une borne l'a arrêtée
+  (``truncated``). Une clé limitée à certains agents y a droit, contrairement
+  à ``/sessions`` : chaque run dit de quel agent il est, si bien que la liste
+  se filtre honnêtement. Aucun contenu là-dedans, seulement le type d'un
+  échec ;
+- ``GET /events`` : la recherche au journal (``EventQuery``) — ``session_id``,
+  ``run_id``, ``type``, ``category``, ``status``, ``agent``, ``role``,
+  ``tool_name``, ``model_id``, ``since``, ``until``, et ``after`` pour
+  reprendre la pagination après un événement. Le client vient de la clé : rien
+  dans l'URL ne le nomme, donc on ne cherche que chez soi. Les facettes
+  libres ne sont pas interrogeables par l'URL ; les deux que ``EventQuery``
+  nomme (``tool_name``, ``model_id``) le sont.
+
 Résultat d'un run (J3) : la réponse, ``unverified`` si elle a été gardée sans
 respecter son contrat ou son juge, l'usage et le coût, leur ventilation
 (``report``) et les verdicts des juges (``verdicts``). Un run échoué garde le
@@ -48,6 +68,10 @@ le corps de la requête : il peut ouvrir le flux sans attendre la réponse.
 
 Tout passe par la façade ``Loom`` : le journal d'un run est le même que par
 la CLI ou par MCP.
+
+Document OpenAPI : chaque route porte un résumé et une famille (``TAGS``), et
+les deux façons de présenter une clé y sont déclarées — de quoi essayer l'API
+depuis sa propre page, sans lire ce fichier.
 """
 
 import json
@@ -55,6 +79,7 @@ import logging
 import math
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Annotated, Final
 
 from fastapi import (
@@ -68,11 +93,19 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader, HTTPBearer
+from fastapi.security.http import HTTPAuthorizationCredentials
+from pydantic import AwareDatetime
 from sse_starlette.sse import EventSourceResponse
 
 from loom_ia.access.api import (
+    RUNS_LIMIT,
+    RUNS_MAX,
+    SESSIONS_MAX,
+    SESSIONS_READ,
     AgentNotAllowed,
     Loom,
+    RunPage,
     RunResult,
     SessionDeletion,
     SessionInfo,
@@ -81,7 +114,7 @@ from loom_ia.access.api import (
     UnknownRun,
     UnknownSession,
 )
-from loom_ia.access.http.auth import Caller, identify, require, throttle
+from loom_ia.access.http.auth import API_KEY_HEADER, Caller, identify, require, throttle
 from loom_ia.access.http.schemas import (
     AgentInfo,
     Approval,
@@ -93,8 +126,24 @@ from loom_ia.access.http.schemas import (
 )
 from loom_ia.access.http.uploads import RUN_BODY, run_request
 from loom_ia.agents.registry import UnknownAgent
-from loom_ia.core.events import Event, redacted
-from loom_ia.core.model import DEFAULT_TENANT, AttachmentError, RunId, SessionId
+from loom_ia.core.events import (
+    EVENTS_LIMIT,
+    EVENTS_MAX,
+    Event,
+    EventCategory,
+    EventQuery,
+    EventStatus,
+    redacted,
+    redacted_all,
+)
+from loom_ia.core.model import (
+    DEFAULT_TENANT,
+    AttachmentError,
+    EventId,
+    RunId,
+    RunStatus,
+    SessionId,
+)
 from loom_ia.core.ports import SessionRecord
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
 from loom_ia.usage import UsageReport
@@ -108,12 +157,47 @@ LOCAL_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1"})
 # Un événement par ligne : le format d'export du journal, celui de la CLI.
 NDJSON: Final = "application/x-ndjson"
 
+# Familles de routes du document OpenAPI : chaque route en porte une, et le
+# document les décrit — c'est ce qui rend l'API lisible sans ce fichier.
+TAGS: Final[tuple[dict[str, str], ...]] = (
+    {"name": "agents", "description": "Les agents que cette instance publie en REST."},
+    {"name": "runs", "description": "Lancer un run, le suivre, le trancher, l'arrêter."},
+    {"name": "sessions", "description": "Les journaux du client : fiches, export, effacement."},
+    {
+        "name": "journal",
+        "description": "Recherche au journal : les runs d'un client et leurs événements.",
+    },
+)
 
-async def caller(request: Request) -> Caller:
+# Schémas d'authentification déclarés au document : la clé est lue sur l'un ou
+# l'autre en-tête (``identify``), et les déclarer ici la rend saisissable depuis
+# la page de l'API. Ils ne refusent rien eux-mêmes — c'est ``caller`` qui le fait.
+BEARER_SCHEME: Final = HTTPBearer(auto_error=False, description="Clé d'API de l'instance")
+HEADER_SCHEME: Final = APIKeyHeader(
+    name=API_KEY_HEADER, auto_error=False, description="Clé d'API de l'instance"
+)
+
+
+def package_version() -> str:
+    """Version du paquet servi, ou ``0`` hors installation."""
+    try:
+        return version("loom-ia")
+    except PackageNotFoundError:  # pragma: no cover - dépend de l'installation
+        return "0"
+
+
+async def caller(
+    request: Request,
+    bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(BEARER_SCHEME)] = None,
+    header: Annotated[str | None, Depends(HEADER_SCHEME)] = None,
+) -> Caller:
     """Appelant de la requête, reconnu par les clés de l'instance servie.
 
     Le débit de la clé est compté ici, donc sur toutes les routes : une clé qui
     s'emballe est arrêtée avant qu'on ne lise son corps (#39).
+
+    Les deux schémas sont là pour le document OpenAPI ; la clé se relit sur la
+    requête elle-même, une instance ouverte n'en demandant aucune.
     """
     loom: Loom = request.app.state.loom
     who = identify(loom.config.security, request)
@@ -163,7 +247,13 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         if own:
             await loom.aclose()
 
-    app = FastAPI(title="loom-ia", summary="Agents loom exposés en HTTP", lifespan=lifespan)
+    app = FastAPI(
+        title="loom-ia",
+        summary="Agents loom exposés en HTTP",
+        version=package_version(),
+        openapi_tags=list(TAGS),
+        lifespan=lifespan,
+    )
     app.state.loom = loom
     # Débit des clés d'API (#39) : une fenêtre glissante par application servie.
     app.state.rates = RateWindow()
@@ -197,7 +287,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         # c'est une demande que cette clé n'a pas le droit de faire.
         return JSONResponse({"detail": _message(exc)}, status_code=status.HTTP_403_FORBIDDEN)
 
-    @router.get("/agents", summary="Agents publiés par l'API")
+    @router.get("/agents", tags=["agents"], summary="Agents publiés par l'API")
     async def agents(who: Who) -> list[AgentInfo]:
         require(who, "read")
         published = loom.exposed("rest", who.tenant)
@@ -205,6 +295,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
 
     @router.post(
         "/agents/{name}/runs",
+        tags=["runs"],
         summary="Lance un run et attend sa fin, ou le laisse en arrière-plan",
         status_code=status.HTTP_201_CREATED,
         openapi_extra=RUN_BODY,
@@ -254,7 +345,83 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
-    @router.get("/runs/{run_id}", summary="Statut et résultat d'un run")
+    @router.get("/runs", tags=["journal"], summary="Runs du client, le plus récent d'abord")
+    async def listed(
+        who: Who,
+        agent: str | None = None,
+        statuses: Annotated[tuple[RunStatus, ...], Query(alias="status")] = (),
+        since: AwareDatetime | None = None,
+        until: AwareDatetime | None = None,
+        limit: Annotated[int, Query(ge=1, le=RUNS_MAX)] = RUNS_LIMIT,
+        sessions: Annotated[int, Query(ge=1, le=SESSIONS_MAX)] = SESSIONS_READ,
+    ) -> RunPage:
+        require(who, "read")
+        if agent is not None:
+            # Demander un agent qu'on n'a pas le droit de lire est un refus, pas
+            # une page vide : l'appelant saurait sinon que l'agent existe.
+            require(who, "read", agent)
+        found = await loom.runs(
+            tenant_id=who.tenant,
+            agent=agent,
+            status=statuses,
+            since=since,
+            until=until,
+            limit=limit,
+            sessions=sessions,
+        )
+        # Contrairement à la liste des sessions, celle des runs se filtre
+        # honnêtement : chaque run dit de quel agent il est.
+        return found.model_copy(
+            update={"runs": tuple(run for run in found.runs if who.allows(run.agent))}
+        )
+
+    @router.get(
+        "/events",
+        tags=["journal"],
+        summary="Recherche d'événements au journal",
+        response_model=list[Event],
+    )
+    async def found_events(
+        who: Who,
+        session_id: SessionId | None = None,
+        run_id: RunId | None = None,
+        types: Annotated[tuple[str, ...], Query(alias="type")] = (),
+        categories: Annotated[tuple[EventCategory, ...], Query(alias="category")] = (),
+        statuses: Annotated[tuple[EventStatus, ...], Query(alias="status")] = (),
+        agent: str | None = None,
+        role: str | None = None,
+        tool_name: str | None = None,
+        model_id: str | None = None,
+        since: AwareDatetime | None = None,
+        until: AwareDatetime | None = None,
+        after: EventId | None = None,
+        limit: Annotated[int, Query(ge=1, le=EVENTS_MAX)] = EVENTS_LIMIT,
+    ) -> Response | list[Event]:
+        require(who, "read")
+        if agent is not None:
+            require(who, "read", agent)
+        query = EventQuery(
+            tenant_id=who.tenant,
+            session_id=session_id,
+            run_id=run_id,
+            types=types,
+            categories=categories,
+            status=statuses,
+            agent=agent,
+            role=role,
+            tool_name=tool_name,
+            model_id=model_id,
+            since=since,
+            until=until,
+            after=after,
+            limit=limit,
+        )
+        events = await loom.query(query)
+        for named in dict.fromkeys(event.agent for event in events if event.agent):
+            require(who, "read", named)
+        return JSONResponse(redacted_all(events)) if who.masks else events
+
+    @router.get("/runs/{run_id}", tags=["runs"], summary="Statut et résultat d'un run")
     async def result(who: Who, run_id: RunId, session_id: SessionId | None = None) -> RunResult:
         require(who, "read")
         found = await loom.result(run_id, session_id=session_id, tenant_id=who.tenant)
@@ -263,7 +430,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         # statut et les coûts passent, la correspondance non.
         return found.masked() if who.masks else found
 
-    @router.get("/runs/{run_id}/events", summary="Journal du run en SSE")
+    @router.get("/runs/{run_id}/events", tags=["runs"], summary="Journal du run en SSE")
     async def events(
         request: Request,
         who: Who,
@@ -286,7 +453,9 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         )
         return EventSourceResponse(_messages(followed, masked=who.masks))
 
-    @router.post("/runs/{run_id}/approve", summary="Autorise un appel que le run attend")
+    @router.post(
+        "/runs/{run_id}/approve", tags=["runs"], summary="Autorise un appel que le run attend"
+    )
     async def approve(
         who: Who, run_id: RunId, body: Approval, session_id: SessionId | None = None
     ) -> Decided:
@@ -304,7 +473,9 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         )
         return Decided(run_id=run_id, calls=calls)
 
-    @router.post("/runs/{run_id}/reject", summary="Refuse un appel que le run attend")
+    @router.post(
+        "/runs/{run_id}/reject", tags=["runs"], summary="Refuse un appel que le run attend"
+    )
     async def reject(
         who: Who, run_id: RunId, body: Decision, session_id: SessionId | None = None
     ) -> Decided:
@@ -321,7 +492,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         )
         return Decided(run_id=run_id, calls=calls)
 
-    @router.post("/runs/{run_id}/cancel", summary="Arrête un run")
+    @router.post("/runs/{run_id}/cancel", tags=["runs"], summary="Arrête un run")
     async def cancel(
         who: Who, run_id: RunId, body: Cancellation, session_id: SessionId | None = None
     ) -> Cancelled:
@@ -332,7 +503,9 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         )
         return Cancelled(run_id=run_id, cancelled=stopped)
 
-    @router.get("/sessions", summary="Sessions du client, la plus récente d'abord")
+    @router.get(
+        "/sessions", tags=["sessions"], summary="Sessions du client, la plus récente d'abord"
+    )
     async def sessions(who: Who) -> list[SessionRecord]:
         require(who, "read")
         if who.key is not None and who.key.agents:
@@ -344,7 +517,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
             )
         return await loom.sessions(tenant_id=who.tenant)
 
-    @router.get("/sessions/{session_id}", summary="Fiche d'une session")
+    @router.get("/sessions/{session_id}", tags=["sessions"], summary="Fiche d'une session")
     async def session(who: Who, session_id: SessionId) -> SessionInfo:
         require(who, "read")
         found = await loom.session(session_id, tenant_id=who.tenant)
@@ -352,7 +525,11 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
             require(who, "read", agent)
         return found.masked() if who.masks else found
 
-    @router.get("/sessions/{session_id}/events", summary="Journal d'une session en JSONL")
+    @router.get(
+        "/sessions/{session_id}/events",
+        tags=["sessions"],
+        summary="Journal d'une session en JSONL",
+    )
     async def export(who: Who, session_id: SessionId) -> Response:
         require(who, "read")
         events = await loom.export_session(session_id, tenant_id=who.tenant)
@@ -364,7 +541,9 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
             dumped = (event.model_dump_json() for event in events)
         return Response("".join(f"{line}\n" for line in dumped), media_type=NDJSON)
 
-    @router.delete("/sessions/{session_id}", summary="Supprime une session (RGPD)")
+    @router.delete(
+        "/sessions/{session_id}", tags=["sessions"], summary="Supprime une session (RGPD)"
+    )
     async def forget(who: Who, session_id: SessionId) -> SessionDeletion:
         # Effacer un journal, ses fichiers et ses clés est irréversible et
         # concerne tous les agents de la session : portée ``admin``, sans
@@ -375,7 +554,9 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
             raise UnknownSession(session_id)
         return removed
 
-    @router.get("/sessions/{session_id}/report", summary="Consommation d'une session")
+    @router.get(
+        "/sessions/{session_id}/report", tags=["sessions"], summary="Consommation d'une session"
+    )
     async def report(who: Who, session_id: SessionId) -> UsageReport:
         require(who, "read")
         found = await loom.report(session_id=session_id, tenant_id=who.tenant)

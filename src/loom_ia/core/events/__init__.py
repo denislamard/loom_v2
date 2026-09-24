@@ -44,12 +44,14 @@ from loom_ia.core.events.payloads import (
     ToolSourceUnavailable,
     UserMessage,
 )
-from loom_ia.core.events.query import EventQuery
+from loom_ia.core.events.query import EVENTS_LIMIT, EVENTS_MAX, EventQuery
 from loom_ia.core.events.redaction import redacted, redacted_all
 from loom_ia.core.events.schema import event_json_schema
 
 __all__ = [
     "DURABLE_PAYLOADS",
+    "EVENTS_LIMIT",
+    "EVENTS_MAX",
     "SCHEMA_VERSION",
     "ApprovalExpired",
     "ApprovalGranted",

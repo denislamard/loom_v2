@@ -80,6 +80,7 @@ from loom_ia.core.events import (
     ApprovalRequested,
     Event,
     EventDraft,
+    EventQuery,
     JudgeEvaluated,
     RunCompleted,
     RunFailed,
@@ -98,6 +99,7 @@ from loom_ia.core.model import (
     ModelChunk,
     PendingApproval,
     RunId,
+    RunKind,
     RunState,
     RunStatus,
     SessionId,
@@ -168,6 +170,15 @@ type StreamItem = Event | ModelChunk
 # d'un bail avant d'être abandonné au journal, et de combien on dépasse ce bail.
 MAX_CLAIM_WAITS: Final = 20
 CLAIM_MARGIN: Final = 0.5
+
+# Bornes d'une liste de runs (K5) : runs rendus, et journaux ouverts pour les
+# trouver. La seconde est celle qui tient le coût d'une lecture sans projection.
+RUNS_LIMIT: Final = 50
+SESSIONS_READ: Final = 50
+# Ce qu'un appelant peut demander au plus : une lecture par journal ouvert, donc
+# une borne bien plus basse que celle d'une recherche d'événements.
+RUNS_MAX: Final = 200
+SESSIONS_MAX: Final = 200
 
 
 def is_final(event: Event) -> bool:
@@ -253,6 +264,62 @@ class RunSummary(DomainModel):
             usage=state.usage,
             cost_usd=state.cost_usd,
         )
+
+
+class RunListed(DomainModel):
+    """Un run tel qu'une liste le montre (K5) : de quoi le situer et le retrouver.
+
+    Aucun contenu ici, et c'est voulu : ni la réponse, ni le message d'erreur,
+    seulement son **type**. Une liste n'a donc pas à être masquée (5.2a), et la
+    portée ``read`` suffit à la lire.
+    """
+
+    run_id: RunId
+    session_id: SessionId
+    agent: str
+    status: RunStatus
+    kind: RunKind = "normal"
+    parent_run_id: RunId | None = None
+    # Premier et dernier événement du run au journal.
+    started_at: AwareDatetime
+    updated_at: AwareDatetime
+    iterations: NonNegativeInt = 0
+    usage: Usage = Usage()
+    cost_usd: float = 0.0
+    # Type de l'échec (``guard.judge``, ``model.auth``, ``timeout``…), jamais
+    # son message : celui-là est du contenu, et se lit sur le run.
+    error_type: str | None = None
+
+    @classmethod
+    def of(cls, state: RunState, events: Sequence[Event]) -> Self:
+        return cls(
+            run_id=state.run_id,
+            session_id=state.session_id,
+            agent=state.agent,
+            status=state.status,
+            kind=state.kind,
+            parent_run_id=state.parent_run_id,
+            started_at=events[0].ts,
+            updated_at=events[-1].ts,
+            iterations=state.iterations,
+            usage=state.usage,
+            cost_usd=state.cost_usd,
+            error_type=state.error_type,
+        )
+
+
+class RunPage(DomainModel):
+    """Une page de runs, et ce qu'il a fallu lire pour l'obtenir (K5).
+
+    ``scanned`` et ``truncated`` disent le prix et l'incomplétude : la liste
+    est tirée du journal, session par session, sans projection à tenir à jour.
+    """
+
+    runs: tuple[RunListed, ...] = ()
+    # Journaux de session ouverts pour cette page.
+    scanned: NonNegativeInt = 0
+    # Vrai si une borne a arrêté la recherche : il peut y en avoir d'autres.
+    truncated: bool = False
 
 
 class SessionInfo(DomainModel):
@@ -430,16 +497,41 @@ def _awaited(state: RunState, tree: Sequence[Event]) -> tuple[PendingApproval, .
     return (*state.awaiting, *inner)
 
 
-def _run_states(events: Sequence[Event]) -> list[RunState]:
-    """État de chaque run d'un journal, dans l'ordre où ils y sont entrés.
+def _keeps(
+    run: RunListed,
+    *,
+    agent: str | None,
+    status: Sequence[RunStatus],
+    since: datetime | None,
+    until: datetime | None,
+) -> bool:
+    """Vrai si ce run passe les filtres d'une liste."""
+    return all(
+        (
+            agent is None or run.agent == agent,
+            not status or run.status in status,
+            since is None or run.updated_at >= since,
+            until is None or run.updated_at < until,
+        )
+    )
+
+
+def _by_run(events: Sequence[Event]) -> dict[RunId, list[Event]]:
+    """Événements d'un journal rangés par run, dans l'ordre où les runs y sont entrés.
 
     Les marqueurs de session sont écartés : ils portent l'identifiant de leur
     session, pas celui d'un run.
     """
-    return [
-        fold([e for e in events if e.run_id == run_id], run_id)
-        for run_id in dict.fromkeys(e.run_id for e in events if e.category != "session")
-    ]
+    owned: dict[RunId, list[Event]] = {}
+    for event in events:
+        if event.category != "session":
+            owned.setdefault(event.run_id, []).append(event)
+    return owned
+
+
+def _run_states(events: Sequence[Event]) -> list[RunState]:
+    """État de chaque run d'un journal, dans l'ordre où ils y sont entrés."""
+    return [fold(own, run_id) for run_id, own in _by_run(events).items()]
 
 
 def _awaiting_runs(tree: Sequence[Event]) -> list[RunState]:
@@ -996,6 +1088,60 @@ class Loom:
     async def sessions(self, *, tenant_id: TenantId | None = None) -> list[SessionRecord]:
         """Sessions du client, de la plus récemment écrite à la plus ancienne."""
         return await self._store.sessions(tenant_id or DEFAULT_TENANT)
+
+    async def runs(
+        self,
+        *,
+        tenant_id: TenantId | None = None,
+        agent: str | None = None,
+        status: Sequence[RunStatus] = (),
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = RUNS_LIMIT,
+        sessions: int = SESSIONS_READ,
+    ) -> RunPage:
+        """Runs du client, du plus récent au plus ancien (K5, #32).
+
+        Lus **au journal**, session par session, de la plus récemment écrite à
+        la plus ancienne : les chiffres sont exactement ceux de la fiche d'une
+        session, et il n'y a aucune projection à tenir à jour, à reconstruire
+        ou à resynchroniser. Le prix est une lecture par session ouverte, et
+        deux bornes le tiennent : ``limit`` runs rendus au plus, ``sessions``
+        journaux ouverts au plus. Quand une borne arrête la recherche, la page
+        le dit (``truncated``) — il peut y avoir d'autres runs derrière.
+
+        ``since`` et ``until`` se comparent à la **dernière** écriture du run.
+        Un sous-run est listé comme les autres, en nommant son délégant.
+        """
+        tenant = tenant_id or DEFAULT_TENANT
+        known = await self._store.sessions(tenant)
+        found: list[RunListed] = []
+        scanned = 0
+        truncated = False
+        for record in known:
+            if scanned >= sessions or len(found) >= limit:
+                truncated = True
+                break
+            scanned += 1
+            events = await self._store.read(tenant, record.session_id)
+            for own in _by_run(events).values():
+                listed = RunListed.of(fold(own, own[0].run_id), own)
+                if _keeps(listed, agent=agent, status=status, since=since, until=until):
+                    found.append(listed)
+        found.sort(key=lambda run: run.updated_at, reverse=True)
+        if len(found) > limit:
+            found, truncated = found[:limit], True
+        return RunPage(runs=tuple(found), scanned=scanned, truncated=truncated)
+
+    async def query(self, query: EventQuery) -> list[Event]:
+        """Événements du journal qui satisfont ces critères (#32, K5).
+
+        C'est la lecture des traces : le journal **est** la trace, et
+        ``EventQuery`` est la façon de l'interroger. L'ordre est celui des
+        identifiants d'événement — donc celui du temps —, et ``after`` reprend
+        la pagination où elle s'était arrêtée.
+        """
+        return await self._store.query(query)
 
     async def session(
         self, session_id: SessionId, *, tenant_id: TenantId | None = None
