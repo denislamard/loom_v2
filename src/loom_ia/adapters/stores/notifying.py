@@ -21,13 +21,16 @@ passeront par un courtier, seuls ces deux abonnements changeront de source.
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from typing import Self
 
 from loom_ia.core.events import Event, EventDraft, EventQuery
-from loom_ia.core.model import RunId, SessionId, TenantId
-from loom_ia.core.ports import EventStore, SessionRecord
+from loom_ia.core.model import RunId, SessionId, TenantId, new_id
+from loom_ia.core.ports import EventBus, EventStore, Notice, SessionRecord
+
+logger = logging.getLogger(__name__)
 
 type EventSink = Callable[[Event], None]
 type EventFilter = Callable[[Event], bool]
@@ -70,10 +73,23 @@ class Subscription:
 
 
 class NotifyingEventStore:
-    """Enrobe un journal et remet ce qu'il écrit aux abonnés du process."""
+    """Enrobe un journal et remet ce qu'il écrit aux abonnés du process.
 
-    def __init__(self, inner: EventStore) -> None:
+    Avec un ``bus`` (5.3c), il remet aussi ce que **les autres process**
+    écrivent : leurs nouvelles disent où regarder, le journal est relu, et les
+    événements retrouvés vont aux mêmes abonnés. Un abonné ne sait pas d'où
+    vient ce qu'il reçoit, et c'est tout l'intérêt — SSE, ``Loom.stream()``,
+    la progression MCP et la CLI n'ont pas changé d'une ligne.
+    """
+
+    def __init__(self, inner: EventStore, *, bus: EventBus | None = None, source: str = "") -> None:
         self._inner = inner
+        self._bus = bus
+        # Qui écrit, pour ne pas se réécouter soi-même : ce que cette instance
+        # écrit, elle l'a déjà remis à ses abonnés.
+        self._source = source or new_id()
+        # Position atteinte par journal, pour relire ce qui manque et pas plus.
+        self._cursors: dict[tuple[TenantId, SessionId], int] = {}
         self._sinks: list[tuple[EventSink, RunId | None, EventFilter | None]] = []
 
     @property
@@ -124,12 +140,83 @@ class NotifyingEventStore:
     ) -> list[Event]:
         events = await self._inner.append(drafts, expected_seq=expected_seq)
         for event in events:
-            for sink, run_id, accept in tuple(self._sinks):
-                if run_id is not None and event.run_id != run_id:
-                    continue
-                if accept is None or accept(event):
-                    sink(event)
+            self._offer(event)
+        await self._announce(events)
         return events
+
+    def _offer(self, event: Event) -> None:
+        """Remet un événement aux abonnés que son run et leur filtre acceptent."""
+        for sink, run_id, accept in tuple(self._sinks):
+            if run_id is not None and event.run_id != run_id:
+                continue
+            if accept is None or accept(event):
+                sink(event)
+
+    # --- Bus (5.3c) -------------------------------------------------------
+
+    @property
+    def source(self) -> str:
+        """Identité de cette instance sur le bus."""
+        return self._source
+
+    async def _announce(self, events: Sequence[Event]) -> None:
+        """Dit aux autres process qu'il y a du neuf. N'échoue jamais.
+
+        Une écriture au journal a eu lieu : la manquer sur le bus coûte une
+        notification, pas un événement, et celui qui la rate rattrape à la
+        suivante. Faire échouer l'écriture pour un bus en panne serait
+        disproportionné.
+        """
+        if self._bus is None or not events:
+            return
+        first, last = events[0], events[-1]
+        key = (last.tenant_id, last.session_id)
+        # Ce qui vient d'être écrit ici est déjà remis : la position avance,
+        # et notre propre nouvelle ne fera rien relire.
+        self._cursors[key] = max(self._cursors.get(key, 0), last.seq)
+        notice = Notice(
+            tenant_id=last.tenant_id,
+            session_id=last.session_id,
+            first_seq=first.seq,
+            last_seq=last.seq,
+            source=self._source,
+        )
+        try:
+            await self._bus.publish(notice)
+        except Exception as error:  # le bus ne met jamais une écriture en échec
+            logger.warning("Bus : nouvelle non publiée (%s)", error)
+
+    async def follow(self) -> None:
+        """Suit le bus jusqu'à sa fermeture, et remet ce que les autres écrivent."""
+        if self._bus is None:
+            return
+        async for notice in self._bus.notices():
+            if notice.source == self._source:
+                continue
+            try:
+                await self._catch_up(notice)
+            except Exception:
+                logger.exception("Bus : nouvelle de %s non suivie", notice.session_id)
+
+    async def _catch_up(self, notice: Notice) -> None:
+        """Relit ce qui manque pour ce journal et le remet aux abonnés.
+
+        Depuis notre position s'il y en a une — ce qui rattrape ce que le bus
+        aurait laissé passer —, depuis le début du lot annoncé sinon.
+        """
+        key = (notice.tenant_id, notice.session_id)
+        seen = self._cursors.get(key)
+        after = notice.first_seq - 1 if seen is None else seen
+        if after >= notice.last_seq:
+            return
+        if not self._sinks:
+            # Personne n'écoute : inutile de relire, la position suffit.
+            self._cursors[key] = notice.last_seq
+            return
+        events = await self._inner.read(notice.tenant_id, notice.session_id, after_seq=after)
+        for event in events:
+            self._offer(event)
+        self._cursors[key] = max(notice.last_seq, events[-1].seq if events else 0)
 
     async def read(
         self,

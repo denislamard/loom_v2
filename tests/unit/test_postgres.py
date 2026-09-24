@@ -302,5 +302,5 @@ def test_the_dsn_is_never_written_to_a_file(tmp_path: Path) -> None:
 def test_a_backend_still_to_come_is_refused() -> None:
     with pytest.raises(ValueError, match="seuls memory, jsonl, sqlite, postgres"):
         EventsStorage(backend="firestore")
-    with pytest.raises(ValueError, match="seuls journal, memory, sqlite, postgres"):
-        IdempotencyStorage(backend="redis")
+    with pytest.raises(ValueError, match="seuls journal, memory, sqlite, postgres, redis"):
+        IdempotencyStorage(backend="firestore")

@@ -137,6 +137,7 @@ from loom_ia.runtime import (
     Agent,
     build_agent,
     create_artifact_store,
+    create_bus,
     create_event_store,
     create_idempotency_store,
     create_mcp_pool,
@@ -501,6 +502,10 @@ class Loom:
         counter: UsageCounter | None = None,
     ) -> None:
         self._config = config
+        # Identité de cette instance : c'est elle qui prend les concessions sur
+        # les runs qu'elle pilote (#27), et qui signe ses nouvelles sur le bus
+        # (5.3c) pour ne pas se réécouter.
+        self._worker_id = f"worker-{new_id()[-12:]}"
         self._registry = registry if registry is not None else load_registry(config)
         self._agents = AgentRegistry.from_config(config)
         # Clients (L1) : résolus ici, pour qu'une surcharge incohérente soit
@@ -529,9 +534,17 @@ class Loom:
         self._artifacts: ArtifactStore = (
             RoutedArtifactStore(self._router) if self._router.routed else self._shared_artifacts
         )
+        # Bus des nouvelles d'écriture (5.3c) : sans lui, un abonné ne voit
+        # que ce que son propre process écrit. Un journal notifiant fourni par
+        # l'appelant garde le sien, s'il en a un.
+        self._bus = create_bus(config) if not isinstance(inner, NotifyingEventStore) else None
         self._store = (
-            inner if isinstance(inner, NotifyingEventStore) else NotifyingEventStore(inner)
+            inner
+            if isinstance(inner, NotifyingEventStore)
+            else NotifyingEventStore(inner, bus=self._bus, source=self._worker_id)
         )
+        # Tâche qui suit le bus, lancée à l'entrée du contexte.
+        self._following: asyncio.Task[None] | None = None
         # Magasin d'idempotence partagé par les agents de l'instance (#49) ;
         # ``None`` quand chaque run se sert de son journal.
         self._idempotency = create_idempotency_store(config)
@@ -554,9 +567,6 @@ class Loom:
         # Un écrivain par session : deux runs d'une même session écrivent par
         # le même, et ne se refusent pas l'un l'autre (#22).
         self._writers = SessionWriters()
-        # Identité de cette instance : c'est elle qui prend les concessions
-        # sur les runs qu'elle pilote (#27).
-        self._worker_id = f"worker-{new_id()[-12:]}"
         # Runs pilotés ici, pour que ``cancel`` puisse les atteindre (A5).
         self._driving: dict[RunId, asyncio.Task[RunState]] = {}
         # Compaction : agent interne et file de tâches, seulement si la config
@@ -1055,6 +1065,12 @@ class Loom:
             await self._shared_store.aclose()
         if self._owns_artifacts:
             await self._shared_artifacts.aclose()
+        # Le bus d'abord : sa fermeture met fin au suivi, qu'on attend ensuite.
+        if self._bus is not None:
+            await self._bus.aclose()
+        following, self._following = self._following, None
+        if following is not None:
+            await following
         closing = getattr(self._idempotency, "aclose", None)
         if closing is not None:
             await closing()
@@ -1062,6 +1078,14 @@ class Loom:
             await self._counter.aclose()
 
     async def __aenter__(self) -> Self:
+        """Ouvre l'instance, et met une oreille sur le bus s'il y en a un.
+
+        Le suivi du bus demande une boucle : il ne peut pas démarrer à la
+        construction. Une instance utilisée sans ``async with`` écrit et lit
+        normalement, mais ne verra pas ce que les autres process écrivent.
+        """
+        if self._bus is not None and self._following is None:
+            self._following = asyncio.create_task(self._store.follow(), name="loom-bus")
         return self
 
     async def __aexit__(self, *exc: object) -> None:

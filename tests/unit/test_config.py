@@ -115,7 +115,21 @@ def test_config_can_be_written_in_python() -> None:
     [
         ({"version": 2}, None, "Version de config 2 non prise en charge"),
         ({"profiles": {}}, None, "'profiles' : prévu pour le jalon J5"),
-        ({"storage": {"bus": {}}}, None, "'bus' : prévu pour le jalon J5.3c"),
+        (
+            {"storage": {"bus": {"backend": "kafka"}}},
+            None,
+            "Bus 'kafka' : seuls memory, postgres, redis",
+        ),
+        (
+            {"storage": {"bus": {"backend": "redis"}}},
+            None,
+            "Bus 'redis' : 'url_env' est obligatoire",
+        ),
+        (
+            {"storage": {"bus": {"backend": "postgres", "url_env": "R"}}},
+            None,
+            "Bus 'postgres' : 'url_env' n'a pas de sens",
+        ),
         (
             {"storage": {"queue": {"backend": "sqs"}}},
             None,

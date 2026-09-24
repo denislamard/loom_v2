@@ -31,6 +31,7 @@ from loom_ia.adapters.postgres.sql import EVENTS_TABLE, IDEMPOTENCY_TABLE
 
 POSTGRES_ENV = "LOOM_TEST_POSTGRES"
 RABBITMQ_ENV = "LOOM_TEST_RABBITMQ"
+REDIS_ENV = "LOOM_TEST_REDIS"
 
 
 @pytest.fixture
@@ -116,3 +117,29 @@ async def _empty(url: str) -> None:
         await work.purge()
     finally:
         await connection.close()
+
+
+@pytest.fixture
+def redis_url() -> str:
+    """URL d'un Redis de test, base vidée ; saute l'essai s'il n'y en a pas.
+
+    Vidée, parce que les clés d'un essai seraient vues du suivant — Redis n'a
+    ni table ni schéma à recréer, seulement un espace de noms partagé.
+    """
+    url = os.environ.get(REDIS_ENV, "")
+    if not url:
+        pytest.skip(f"{REDIS_ENV} absent : pas de Redis pour cet essai")
+    if find_spec("redis") is None:  # pragma: no cover - dépend de l'extra installé
+        pytest.skip("extra 'redis' absent")
+    _apart(lambda: _flush(url))
+    return url
+
+
+async def _flush(url: str) -> None:
+    import redis.asyncio as redis
+
+    client = redis.from_url(url)
+    try:
+        await client.flushdb()  # pyright: ignore[reportUnknownMemberType]
+    finally:
+        await client.aclose()

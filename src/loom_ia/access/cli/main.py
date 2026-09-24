@@ -48,7 +48,12 @@ from loom_ia.agents.registry import UnknownAgent
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, LoomConfig, config_json_schema, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
-from loom_ia.config.models import EventsStorage, IdempotencyStorage, QueueStorage
+from loom_ia.config.models import (
+    BusStorage,
+    EventsStorage,
+    IdempotencyStorage,
+    QueueStorage,
+)
 from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -341,6 +346,7 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Artefacts  : {artifacts}")
     print(f"Idempotence: {_storage_line(storage.idempotency)}")
     print(f"File       : {_queue_line(storage.queue)}")
+    print(f"Bus        : {_bus_line(storage.bus)}")
     if storage.queue.brokered:
         # Le piège de la file servie : tout se met en file, rien ne tourne.
         print("    les tâches de fond attendent un worker : loom worker")
@@ -904,6 +910,14 @@ def _on_signals(loom: Loom) -> Callable[[], None]:
             loop.remove_signal_handler(number)
 
     return undo
+
+
+def _bus_line(bus: BusStorage) -> str:
+    """Le bus tel que ``loom validate`` l'affiche, sans jamais son raccordement."""
+    if bus.variable is None:
+        return f"{bus.backend} (les nouvelles ne sortent pas de ce process)"
+    lue = "renseignée" if os.environ.get(bus.variable) else "ABSENTE"
+    return f"{bus.backend} ({bus.variable} : {lue})"
 
 
 def _queue_line(queue: QueueStorage) -> str:

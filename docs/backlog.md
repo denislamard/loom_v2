@@ -369,6 +369,8 @@ Ce qui manque, c'est la **défense en profondeur** : un `SELECT` sans `WHERE ten
 | Porter le client jusqu'au port | `get`, `complete` et `release` prennent le `KeyScope` que `reserve` prend déjà ; la politique devient possible partout | Un port du noyau, quatre adaptateurs et leurs appelants ; à faire avant que d'autres magasins ne s'ajoutent (Firestore, Redis, 5.3c et 5.3d) |
 | Politique sur la seule écriture (`WITH CHECK`) | Empêche d'écrire une clé pour un autre client, sans gêner la relecture | Demi-mesure : la lecture reste ouverte, et c'est elle qui fuirait |
 
-**À trancher :** porte-t-on le client jusqu'au port ? Mon avis : oui, mais **avant 5.3c** — chaque magasin ajouté rend le changement plus cher, et Redis comme Firestore arrivent là.
+**À trancher :** porte-t-on le client jusqu'au port ? Mon avis : oui, mais **avant 5.3d** — chaque magasin ajouté rend le changement plus cher.
+
+**Mise à jour (5.3c, 24/09) :** le magasin **Redis** est arrivé sans que le port change. Il en tient compte à sa façon — l'appartenance d'une clé (client, session) est rangée dans un ensemble à part, ce qui donne l'oubli RGPD sans balayage —, mais il n'a pas plus de barrière que les tables SQL. Le changement de port coûte donc maintenant **trois** adaptateurs au lieu de deux, et Firestore (5.3d) en ferait quatre.
 
 **Statut :** sans échéance — ne bloque aucun jalon.

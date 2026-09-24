@@ -255,7 +255,7 @@ Transverse     Config/Builder · Kit de test
 | `EventStore` | Écrire et interroger le journal | Mémoire, JSONL, SQLite, Postgres, Firestore |
 | `ArtifactStore` | Stocker les fichiers hors journal | Fichier local, GCS |
 | `EventSink` | Exporter les événements | OpenTelemetry, logs |
-| `BusBackend` | Notifier entre workers | Mémoire (défaut), Postgres `LISTEN/NOTIFY`, Redis, RabbitMQ |
+| `EventBus` | Notifier entre workers (nouvelles d'écriture, pas d'événements) | Mémoire (défaut), Postgres `LISTEN/NOTIFY`, Redis |
 | `IdempotencyStore` | Mémoriser les résultats par clé d'idempotence | Journal (défaut), mémoire, SQLite, Postgres, Firestore, Redis (§9.5) |
 | `SecretProvider` | Lire les secrets | Variables d'environnement, gestionnaire de secrets |
 | `TaskQueue` | Exécuter des jobs en arrière-plan | asyncio (défaut), RabbitMQ |
@@ -984,6 +984,16 @@ fois** ; délai imité par une file d'attente à durée de vie qui retombe dans 
 reposé pour l'après-bail : c'est ce qui fait qu'un run passe d'un worker mort à un vivant sans
 intervention.
 
+**Réalisation (phase 5.3c)** (détails : `fonctions.md`, point 5) : port `EventBus` (`publish`,
+`notices`) et adaptateurs `postgres` (`LISTEN`/`NOTIFY`, connexion dédiée) et `redis` (pub/sub). Une
+`Notice` porte le client, la session, l'étendue du lot et la **source** qui l'a écrit ; le contenu
+reste au journal, que l'abonné relit — imposé par la borne de 8 000 octets d'un `NOTIFY`, et
+souhaitable pour que RLS et le masquage gardent la main. Le journal notifiant publie après écriture
+et suit le bus : ce qu'il relit va aux mêmes abonnés, donc SSE et les autres accès ne changent pas.
+Chacun garde sa position par journal, ce qui rattrape une nouvelle perdue ; un process sans abonné
+ne relit rien. Un bus en panne n'échoue pas une écriture. Magasin d'idempotence `redis` au passage
+(réservation par script Lua, appartenances dans un ensemble, oubli automatique à la rétention).
+
 ### 12.2 Pause en mode librairie
 
 - Un agent qui peut se mettre en pause (outil en `approval: always | policy`, ou politique qui peut renvoyer `Pause`) exige un `EventStore` durable (JSONL au minimum) : erreur de config, avertissement seulement en profil dev (#28).
@@ -1321,7 +1331,8 @@ storage:
   artifacts:   {backend: local, path: data/artifacts}   # local|memory|gcs (+ bucket) ; défaut : suit le journal
   idempotency: {backend: journal}                       # journal|memory|sqlite (+ path)|postgres (+ dsn_env)
                                                         # firestore|redis plus tard
-  bus:         {backend: memory}                        # memory|postgres|redis|rabbitmq
+  bus:         {backend: memory}                        # memory|postgres (+ dsn_env)|redis (+ url_env)
+                                                        # ne porte que des nouvelles ; le contenu reste au journal
   queue:       {backend: asyncio}                       # asyncio|rabbitmq (+ url_env)
                                                         # rabbitmq : les tâches tournent dans `loom worker`
   encryption:  {per_tenant_keys: false}

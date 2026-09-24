@@ -53,10 +53,10 @@ from loom_ia.telemetry.logs import LogFormat
 
 SCHEMA_VERSION: Final = 1
 EVENT_BACKENDS: Final = ("memory", "jsonl", "sqlite", "postgres")
-IDEMPOTENCY_BACKENDS: Final = ("journal", "memory", "sqlite", "postgres")
+IDEMPOTENCY_BACKENDS: Final = ("journal", "memory", "sqlite", "postgres", "redis")
 # Magasins qu'une clé métier peut exiger : partagés entre runs **et**
 # durables. Le journal ne voit que son run, la mémoire que son process.
-SHARED_IDEMPOTENCY: Final = ("sqlite", "postgres")
+SHARED_IDEMPOTENCY: Final = ("sqlite", "postgres", "redis")
 # Journaux rangés hors de la mémoire : ils donnent aussi le dossier des artefacts.
 FILE_BACKENDS: Final = ("jsonl", "sqlite")
 # Journaux qui survivent au process : ce qu'exige une approbation (#28).
@@ -64,6 +64,10 @@ DURABLE_BACKENDS: Final = ("jsonl", "sqlite", "postgres")
 # Stockages dont le raccordement passe par un DSN, jamais par un chemin.
 DSN_BACKENDS: Final = ("postgres",)
 QUEUE_BACKENDS: Final = ("asyncio", "rabbitmq")
+BUS_BACKENDS: Final = ("memory", "postgres", "redis")
+# Bus qui franchissent la frontière d'un process : eux seuls servent à
+# quelque chose quand le service tourne à plusieurs.
+SHARED_BUSES: Final = ("postgres", "redis")
 # Files servies par un courtier : les tâches tournent dans un autre process,
 # celui de ``loom worker``, et pas dans celui qui les met en file.
 BROKERED_QUEUES: Final = ("rabbitmq",)
@@ -147,6 +151,8 @@ class IdempotencyStorage(DomainModel):
     # journal — les deux tables cohabitent sans se gêner, Postgres ne se
     # verrouille pas par fichier.
     dsn_env: str | None = None
+    # ``redis`` : nom de la variable qui porte l'URL du serveur.
+    url_env: str | None = None
     role: str | None = DEFAULT_DB_ROLE
 
     @model_validator(mode="after")
@@ -167,6 +173,13 @@ class IdempotencyStorage(DomainModel):
             )
         if self.backend not in DSN_BACKENDS and self.dsn_env is not None:
             raise ValueError(f"Magasin d'idempotence {self.backend!r} : 'dsn_env' n'a pas de sens")
+        if self.backend == "redis" and self.url_env is None:
+            raise ValueError(
+                "Magasin d'idempotence 'redis' : 'url_env' est obligatoire — le nom de la "
+                "variable d'environnement qui porte l'URL, jamais l'URL elle-même"
+            )
+        if self.backend != "redis" and self.url_env is not None:
+            raise ValueError(f"Magasin d'idempotence {self.backend!r} : 'url_env' n'a pas de sens")
         return self
 
     @property
@@ -212,11 +225,59 @@ class QueueStorage(DomainModel):
         return self.backend in BROKERED_QUEUES
 
 
+class BusStorage(DomainModel):
+    """Bus des nouvelles d'écriture, entre les process d'un même service (#5).
+
+    ``memory`` ne franchit aucune frontière : dans un seul process, le journal
+    remet déjà ses écritures à ses abonnés. Les deux autres servent dès qu'un
+    `loom serve` doit suivre un run piloté par un `loom worker`.
+    """
+
+    backend: str = "memory"
+    # ``postgres`` : nom de la variable qui porte le DSN — celle du journal si
+    # c'est la même base. ``redis`` : nom de la variable qui porte l'URL.
+    dsn_env: str | None = None
+    url_env: str | None = None
+
+    @model_validator(mode="after")
+    def _check_backend(self) -> Self:
+        if self.backend not in BUS_BACKENDS:
+            raise ValueError(
+                f"Bus {self.backend!r} : seuls {', '.join(BUS_BACKENDS)} "
+                "sont disponibles à ce jalon"
+            )
+        attendu = {"postgres": "dsn_env", "redis": "url_env"}.get(self.backend)
+        # La clé de trop d'abord : elle dit mieux la confusion qu'une clé
+        # manquante (``url_env`` pour un bus Postgres, par exemple).
+        for name in ("dsn_env", "url_env"):
+            if name != attendu and getattr(self, name) is not None:
+                juste = f", c'est {attendu!r} qu'il faut" if attendu else ""
+                raise ValueError(f"Bus {self.backend!r} : {name!r} n'a pas de sens{juste}")
+        if attendu is not None and getattr(self, attendu) is None:
+            porte = "le DSN" if attendu == "dsn_env" else "l'URL"
+            raise ValueError(
+                f"Bus {self.backend!r} : {attendu!r} est obligatoire — le nom de la variable "
+                f"d'environnement qui porte {porte}, jamais {porte} elle-même"
+            )
+        return self
+
+    @property
+    def shared(self) -> bool:
+        """Vrai si ce bus porte les nouvelles au-delà de ce process."""
+        return self.backend in SHARED_BUSES
+
+    @property
+    def variable(self) -> str | None:
+        """Nom de la variable d'environnement qui porte le raccordement."""
+        return self.dsn_env or self.url_env
+
+
 class StorageConfig(DomainModel):
     events: EventsStorage = EventsStorage()
     artifacts: ArtifactsStorage = ArtifactsStorage()
     idempotency: IdempotencyStorage = IdempotencyStorage()
     queue: QueueStorage = QueueStorage()
+    bus: BusStorage = BusStorage()
 
     @model_validator(mode="before")
     @classmethod

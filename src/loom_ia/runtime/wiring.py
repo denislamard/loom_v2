@@ -78,6 +78,7 @@ from loom_ia.config.errors import ConfigError
 from loom_ia.config.models import (
     DURABLE_BACKENDS,
     SHARED_IDEMPOTENCY,
+    BusStorage,
     EventsStorage,
     IdempotencyStorage,
     LoomConfig,
@@ -96,6 +97,7 @@ from loom_ia.core.model import (
 from loom_ia.core.ports import (
     ArtifactStore,
     ChunkCallback,
+    EventBus,
     EventStore,
     IdempotencyStore,
     JobKind,
@@ -250,6 +252,47 @@ def create_task_queue(config: LoomConfig, handlers: Mapping[JobKind, Handler]) -
     return AsyncioTaskQueue(handlers, shutdown_timeout=config.execution.shutdown_timeout)
 
 
+def create_bus(config: LoomConfig) -> EventBus | None:
+    """Bus déclaré dans ``storage.bus``, ou ``None`` s'il n'y a rien à traverser.
+
+    ``memory`` rend ``None`` : dans un seul process, le journal remet déjà ses
+    écritures à ses abonnés, et un bus de plus ne ferait que les recopier.
+    """
+    declared = config.storage.bus
+    if declared.backend == "postgres":
+        try:
+            from loom_ia.adapters.bus.postgres import PostgresBus
+        except ImportError as exc:
+            raise _missing_asyncpg("Bus") from exc
+        return PostgresBus(_variable(declared, "Bus", "le DSN"))
+    if declared.backend == "redis":
+        try:
+            from loom_ia.adapters.bus.redis import RedisBus
+        except ImportError as exc:
+            raise _missing_redis("Bus") from exc
+        return RedisBus(_variable(declared, "Bus", "l'URL"))
+    return None
+
+
+def _variable(declared: BusStorage, what: str, porte: str) -> str:
+    """Valeur de la variable d'environnement que la config nomme (§16.3)."""
+    name = declared.variable or ""
+    value = os.environ.get(name, "")
+    if not value:
+        raise ConfigError(
+            f"{what} {declared.backend!r} : la variable {name!r} est vide ou absente — "
+            f"c'est elle qui porte {porte}"
+        )
+    return value
+
+
+def _missing_redis(what: str) -> ConfigError:
+    return ConfigError(
+        f"{what} 'redis' : le paquet 'redis' n'est pas installé "
+        "(installer l'extra : loom-ia[redis])"
+    )
+
+
 def postgres_ddl(config: LoomConfig | StorageConfig) -> str:
     """Le SQL du stockage Postgres déclaré par la config (``loom storage sql``).
 
@@ -308,6 +351,18 @@ def create_idempotency_store(config: LoomConfig) -> IdempotencyStore | None:
         except ImportError as exc:
             raise _missing_asyncpg("Magasin d'idempotence") from exc
         return PostgresIdempotency(_dsn(declared, "Magasin d'idempotence"), role=declared.role)
+    if declared.backend == "redis":
+        try:
+            from loom_ia.adapters.idempotency.redis import RedisIdempotency
+        except ImportError as exc:
+            raise _missing_redis("Magasin d'idempotence") from exc
+        url = os.environ.get(declared.url_env or "", "")
+        if not url:
+            raise ConfigError(
+                f"Magasin d'idempotence 'redis' : la variable {declared.url_env!r} est vide "
+                "ou absente — c'est elle qui porte l'URL"
+            )
+        return RedisIdempotency(url)
     if declared.backend == "sqlite" and declared.path is not None:
         try:
             from loom_ia.adapters.idempotency.sqlite import SqliteIdempotency
