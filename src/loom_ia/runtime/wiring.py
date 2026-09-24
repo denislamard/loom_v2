@@ -438,7 +438,7 @@ def build_agent(
 
     judges = [
         JudgeGuard(
-            judge_definition(spec, judged, known, config.base_dir),
+            judge_definition(spec, judged, known, config.base_dir, config.profile),
             client(judged[2].model),
             config.model_spec(judged[2].model),
             artifacts=artifacts,
@@ -452,8 +452,7 @@ def build_agent(
         *budget_warnings(config, spec),
         *fallback_warnings(config, spec),
     ]
-    for warning in warnings:
-        logger.warning(warning)
+    announce(config, warnings)
     budgets = config.budget_of(spec.name)
     shared = any(
         ref.agent == spec.name and ref.budget_share is not None
@@ -718,6 +717,7 @@ def judge_definition(
     judged: tuple[str, RoleSpec | None, JudgeSpec],
     registry: Registry,
     base_dir: Path | None = None,
+    profile: str | None = None,
 ) -> JudgeDefinition:
     """Juge tel que le moteur l'exécute : condition résolue, contexte converti."""
     name, role, judge = judged
@@ -732,6 +732,7 @@ def judge_definition(
             )
         condition = cast(Condition, found)
     tenants = judge.when.tenants
+    profiles = judge.when.profiles
     return JudgeDefinition(
         name=name,
         role=role.name if role is not None else None,
@@ -740,6 +741,8 @@ def judge_definition(
         sample=judge.when.sample,
         condition=condition,
         tenants=frozenset(tenants) if tenants is not None else None,
+        profiles=frozenset(profiles) if profiles is not None else None,
+        profile=profile,
         repair=judge.repair,
         on_failure=judge.on_failure,
         fallback_message=judge.fallback_message,
@@ -763,8 +766,8 @@ def _check_durable_journal(
     s'arrêter, l'approbateur prendre son temps, un autre worker reprendre. Un
     journal en mémoire perdrait le run à la première fermeture, et
     l'approbation n'aurait rien à reprendre. Une erreur, donc, et non un
-    avertissement — les profils, qui permettront de l'assouplir en dev,
-    arrivent en J5.
+    avertissement — sauf en profil ``dev`` (5.5a), où perdre un run en pause à
+    la fermeture est le prix d'un essai.
     """
     if config.storage.events.backend not in DURABLE_BACKENDS:
         forced = imposed or {}
@@ -777,10 +780,16 @@ def _check_durable_journal(
             *(f"politique {name!r} qui peut rendre Pause" for name in pausing),
         ]
         if causes:
-            raise ConfigError(
-                f"Agent {spec.name!r} : {', '.join(causes)} — une approbation exige un "
-                f"journal durable ({' ou '.join(DURABLE_BACKENDS)}), "
-                f"pas {config.storage.events.backend!r} (#28)"
+            # Assoupli en dev seulement : sur une machine, perdre un run en
+            # pause à la fermeture est le prix d'un essai (M4).
+            announce(
+                config,
+                [
+                    f"Agent {spec.name!r} : {', '.join(causes)} — une approbation exige un "
+                    f"journal durable ({' ou '.join(DURABLE_BACKENDS)}), "
+                    f"pas {config.storage.events.backend!r} (#28)"
+                ],
+                refuse=not config.lax,
             )
 
 
@@ -805,6 +814,22 @@ def _check_shared_idempotency(
             f"métier — il leur faut un magasin d'idempotence partagé et durable "
             f"({' ou '.join(SHARED_IDEMPOTENCY)}), pas {declared.backend!r} (#49)"
         )
+
+
+def announce(config: LoomConfig, warnings: Sequence[str], *, refuse: bool | None = None) -> None:
+    """Dit ce qui ne va pas — un avertissement, ou une erreur en profil ``prod`` (M4).
+
+    C'est ici que les profils prennent leur sens : la même config charge sur
+    une machine et refuse de partir en production. ``refuse`` tranche à la
+    place du profil quand la règle a son propre arbitrage.
+    """
+    if not warnings:
+        return
+    said = " ; ".join(warnings)
+    if config.strict if refuse is None else refuse:
+        raise ConfigError(f"Profil prod : {said}" if config.strict else said)
+    for warning in warnings:
+        logger.warning(warning)
 
 
 def storage_warnings(config: LoomConfig) -> list[str]:

@@ -3,6 +3,7 @@
 
 from loom_ia.runtime.wiring import (
     Agent,
+    announce,
     apply_logging,
     budget_warnings,
     build_agent,
@@ -27,6 +28,7 @@ from loom_ia.runtime.wiring import (
 
 __all__ = [
     "Agent",
+    "announce",
     "apply_logging",
     "budget_warnings",
     "build_agent",

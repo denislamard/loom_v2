@@ -181,7 +181,9 @@ Les commandes ci-dessous sont indicatives.
 | 5.4a Lectures REST | `GET /runs` (les résumés, lus au journal et non projetés), `GET /events` (`EventQuery` en paramètres, `after`), document OpenAPI soigné — familles, résumés, clés déclarées. La reprise SSE par `Last-Event-ID` était déjà là depuis 1.6 | K5, N2, #32 |
 | 5.4b Ressources MCP | Ressources `loom://` en lecture seule (deux index, cinq gabarits), les octets d'un fichier enfin lisibles, outil `cancel` | N5, #32 |
 | 5.4c Déclencheurs | Portes déclarées (`triggers`), `POST /v1/hooks/{nom}`, gabarit de message sur la charge reçue, relivraison sans doublon ; planification confiée à la plateforme | H6 |
-| 5.5 Exploitation | Profils dev/prod, chiffrement par client, rétention | M4, #30 |
+| 5.5a Profils | `profile` et `profiles` : trois états (absent, dev, prod), surcharges fusionnées au chargement, provenance imprimée, `when.profiles` d'un juge | M4 |
+| 5.5b Chiffrement | Chiffrement des charges par client, clé par client, crypto-shredding | #30 |
+| 5.5c Rétention | `storage.retention`, effacement des événements passés | #30 |
 
 ### Test et exécution
 
@@ -189,7 +191,7 @@ Les commandes ci-dessous sont indicatives.
 
 | Accès | Exécution |
 |---|---|
-| Python | Un exemple par phase, sur la config `examples/j5/relance/` : `clients.py` (5.1a), `quotas.py` (5.1b), `securite.py` (5.2a), `serveur_mcp.py` (5.2b), `journal_postgres.py` (5.3a), `file_et_worker.py` (5.3b), `bus_et_sse.py` (5.3c), `lectures_rest.py` (5.4a), `ressources_mcp.py` (5.4b), `declencheurs.py` (5.4c) |
+| Python | Un exemple par phase, sur la config `examples/j5/relance/` : `clients.py` (5.1a), `quotas.py` (5.1b), `securite.py` (5.2a), `serveur_mcp.py` (5.2b), `journal_postgres.py` (5.3a), `file_et_worker.py` (5.3b), `bus_et_sse.py` (5.3c), `lectures_rest.py` (5.4a), `ressources_mcp.py` (5.4b), `declencheurs.py` (5.4c), `profils.py` (5.5a) |
 | CLI | `loom worker` (x2), `loom serve`, `loom keys create` |
 | REST | Clés API par client, scopes, `run_summaries`, `EventQuery`, reprise SSE par `Last-Event-ID`, portes `POST /v1/hooks/{nom}` |
 | MCP | MCP HTTP monté avec REST ; ressources `loom://` (deux index, cinq gabarits, les octets d'un fichier) ; outil `cancel` ; `Origin` refusé si invalide |

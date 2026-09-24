@@ -580,8 +580,21 @@ class TriggerSpec(DomainModel):
         return (self.message,) if self.session is None else (self.message, self.session)
 
 
+type Profile = Literal["dev", "prod"]
+PROFILES: Final[tuple[Profile, ...]] = ("dev", "prod")
+
+
 class LoomConfig(DomainModel):
     version: int
+    # Profil actif (M4) : `dev` assouplit, `prod` durcit, absent ne change
+    # rien. Posé au chargement, où l'option et la variable d'environnement
+    # l'emportent sur le fichier.
+    profile: Profile | None = None
+    # Surcharges partielles par profil, fusionnées au chargement : les objets
+    # en profondeur, les listes remplacées.
+    profiles: dict[Profile, dict[str, JsonValue]] = Field(
+        default_factory=dict[Profile, dict[str, JsonValue]]
+    )
     # Dossier du fichier de config, posé au chargement : les modules voisins
     # sont importables et les chemins relatifs s'y rapportent.
     base_dir: Path | None = None
@@ -615,6 +628,16 @@ class LoomConfig(DomainModel):
     def _later(cls, data: object) -> object:
         reject_later(data, LATER_ROOT)
         return data
+
+    @property
+    def strict(self) -> bool:
+        """Vrai en profil ``prod`` : ce qui avertit ailleurs y est une erreur."""
+        return self.profile == "prod"
+
+    @property
+    def lax(self) -> bool:
+        """Vrai en profil ``dev`` : ce qui refuse ailleurs y est un avertissement."""
+        return self.profile == "dev"
 
     @model_validator(mode="after")
     def _check(self) -> Self:

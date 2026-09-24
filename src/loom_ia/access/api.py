@@ -140,6 +140,7 @@ from loom_ia.engine import (
 )
 from loom_ia.runtime import (
     Agent,
+    announce,
     build_agent,
     create_artifact_store,
     create_bus,
@@ -684,8 +685,8 @@ class Loom:
         )
         # Tâche qui suit le bus, lancée à l'entrée du contexte.
         self._following: asyncio.Task[None] | None = None
-        for warning in storage_warnings(config):
-            logger.warning(warning)
+        # Profil prod : ce qui avertit ailleurs refuse ici (M4, 5.5a).
+        announce(config, storage_warnings(config))
         # Magasin d'idempotence partagé par les agents de l'instance (#49) ;
         # ``None`` quand chaque run se sert de son journal.
         self._idempotency = create_idempotency_store(config)
@@ -748,9 +749,14 @@ class Loom:
         path: Path | str,
         *,
         environ: Mapping[str, str] | None = None,
+        profile: str | None = None,
     ) -> Self:
-        """Charge un fichier de configuration et ouvre l'instance."""
-        return cls(load_config(Path(path)), environ=environ)
+        """Charge un fichier de configuration et ouvre l'instance.
+
+        ``profile`` l'emporte sur ``LOOM_PROFILE`` et sur ``profile:`` du
+        fichier (M4).
+        """
+        return cls(load_config(Path(path), profile=profile), environ=environ)
 
     # --- Ce que l'instance héberge -------------------------------------------
 
@@ -850,6 +856,20 @@ class Loom:
         self._quota.check(found.id, found.quotas.runs_per_minute)
         await self._usage.check(found)
         return caller, found
+
+    def _judged(self, judges: JudgesMode) -> JudgesMode:
+        """Ce que l'appelant demande aux juges, si le profil le permet (M4).
+
+        ``skip`` retire un contrôle : c'est bon pour une mise au point, et
+        c'est précisément ce qu'un profil ``prod`` refuse. Sans profil déclaré,
+        rien ne change — la portée ``admin`` de l'accès REST reste la seule
+        barrière, comme depuis 3.3.
+        """
+        if judges == "skip" and self.config.strict:
+            raise ConfigError(
+                "Profil prod : judges='skip' retire un contrôle et n'y est pas permis"
+            )
+        return judges
 
     async def run(
         self,
@@ -1487,7 +1507,7 @@ class Loom:
             session_id=session_id,
             context=caller,
             run_id=run_id,
-            judges=judges,
+            judges=self._judged(judges),
             trigger=trigger,
             writer=await self._writer(who.id, session_id),
         )
@@ -1876,7 +1896,7 @@ class Loom:
             session_id=session_id,
             context=context,
             run_id=run_id,
-            judges=judges,
+            judges=self._judged(judges),
             writer=writer,
         )
         return await self._piloted(ctx, state, writer)

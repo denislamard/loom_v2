@@ -246,9 +246,11 @@ def test_sampling_is_deterministic_and_proportional() -> None:
     assert not any(sampled(r, "output", 0.0) for r in runs[:10])
 
 
-def test_when_refuses_profiles_until_j5() -> None:
-    with pytest.raises(ValidationError, match="prévu pour le jalon J5"):
-        JudgeWhen.model_validate({"profiles": ["prod"]})
+def test_when_refuses_what_it_cannot_mean() -> None:
+    # `profiles` est débloqué depuis 5.5a ; une liste vide, elle, ne dit rien.
+    assert JudgeWhen.model_validate({"profiles": ["prod"]}).profiles == ("prod",)
+    with pytest.raises(ValidationError):
+        JudgeWhen.model_validate({"profiles": []})
     with pytest.raises(ValidationError):
         JudgeWhen(sample=1.5)
     with pytest.raises(ValidationError):

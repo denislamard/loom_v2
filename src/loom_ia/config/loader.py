@@ -11,15 +11,16 @@ Un serveur MCP stdio sans ``cwd`` se lance depuis le dossier de la config. Un
 le démarrage.
 """
 
+import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import yaml
 from pydantic import ValidationError
 
 from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools, system_text
 from loom_ia.config.errors import ConfigError, from_validation
-from loom_ia.config.models import LoomConfig, StorageConfig, TenantSpec
+from loom_ia.config.models import PROFILES, LoomConfig, Profile, StorageConfig, TenantSpec
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     McpServerSpec,
@@ -29,13 +30,27 @@ from loom_ia.core.model import (
 from loom_ia.core.template import Template, TemplateError
 
 AGENT_SUFFIXES = (".yaml", ".yml")
+# Variable qui l'emporte sur le fichier : ce qu'un conteneur sait poser.
+PROFILE_ENV: Final = "LOOM_PROFILE"
+# Blocs remplacés en entier par une surcharge de profil, jamais fusionnés :
+# ils sont transmis tels quels au fournisseur, et une moitié de l'un n'a pas
+# de sens (décision de conception, §17.9).
+WHOLE: Final = frozenset({"params", "llm"})
 
 
-def load_config(path: str | Path) -> LoomConfig:
-    """Config complète : fichier racine, puis les agents de ``agents_dir``."""
+def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
+    """Config complète : fichier racine, surcharges du profil, puis les agents.
+
+    Le profil se choisit à trois endroits, du plus fort au plus faible :
+    l'argument (``--profile``), ``LOOM_PROFILE``, puis ``profile:`` dans le
+    fichier. ``chosen_profile`` rend le même arbitrage avec sa provenance,
+    pour qui veut l'afficher.
+    """
     root = Path(path).resolve()
     data = _read_yaml(root)
     base_dir = root.parent
+    active, _ = chosen_profile(profile, data.get("profile"))
+    data = _merged(data, active, source=root)
     draft = _validate(LoomConfig, {**data, "agents": data.get("agents", [])}, source=root)
 
     agents = [
@@ -49,6 +64,9 @@ def load_config(path: str | Path) -> LoomConfig:
     )
     loaded = config.model_copy(
         update={
+            # L'option et la variable l'emportent sur le fichier : la config
+            # chargée porte le profil qui s'applique vraiment.
+            "profile": active,
             "base_dir": base_dir,
             "agents_dir": base_dir / config.agents_dir,
             "prompts_dir": base_dir / config.prompts_dir,
@@ -61,6 +79,60 @@ def load_config(path: str | Path) -> LoomConfig:
     )
     _check_variables(loaded, source=root)
     return loaded
+
+
+def chosen_profile(given: str | None, in_file: object = None) -> tuple[Profile | None, str]:
+    """Le profil actif et d'où il vient : option, environnement, fichier, ou rien.
+
+    Un profil qu'on ne voit pas est un profil qu'on oublie : la provenance est
+    rendue avec lui pour que ``loom validate`` et ``loom serve`` la disent.
+    """
+    candidats: tuple[tuple[object, str], ...] = (
+        (given, "option"),
+        (os.environ.get(PROFILE_ENV), PROFILE_ENV),
+        (in_file, "config"),
+    )
+    for value, source in candidats:
+        if value is None:
+            continue
+        if not isinstance(value, str) or value not in PROFILES:
+            known = " ou ".join(PROFILES)
+            raise ConfigError(f"Profil {value!r} inconnu ({source}) : attendu {known}")
+        return value, source
+    return None, "aucun"
+
+
+def _merged(data: dict[str, Any], active: Profile | None, *, source: Path) -> dict[str, Any]:
+    """Applique les surcharges du profil actif au fichier racine (M4).
+
+    Les objets fusionnent en profondeur, les listes sont **remplacées** : une
+    liste partiellement fusionnée ne veut rien dire — que ferait-on d'un
+    troisième modèle à demi surchargé ?
+    """
+    declared = data.get("profiles")
+    if active is None or not isinstance(declared, dict):
+        return data
+    table = cast("dict[str, Any]", declared)
+    overrides = table.get(active)
+    if overrides is None:
+        return data
+    if not isinstance(overrides, dict):
+        raise ConfigError(f"{source} : 'profiles.{active}' doit être un objet")
+    return _deep_merge(data, cast("dict[str, Any]", overrides))
+
+
+def _deep_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    """Fusion profonde des objets ; toute autre valeur remplace, listes comprises."""
+    merged = dict(base)
+    for key, value in over.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict) and key not in WHOLE:
+            merged[key] = _deep_merge(
+                cast("dict[str, Any]", current), cast("dict[str, Any]", value)
+            )
+        else:
+            merged[key] = value
+    return merged
 
 
 def _launched_from(server: McpServerSpec, base_dir: Path) -> McpServerSpec:

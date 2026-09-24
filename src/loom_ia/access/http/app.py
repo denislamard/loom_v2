@@ -129,6 +129,7 @@ from loom_ia.access.http.schemas import (
 )
 from loom_ia.access.http.uploads import RUN_BODY, run_request
 from loom_ia.agents.registry import UnknownAgent
+from loom_ia.config import LoomConfig
 from loom_ia.core.events import (
     EVENTS_LIMIT,
     EVENTS_MAX,
@@ -148,6 +149,7 @@ from loom_ia.core.model import (
     SessionId,
 )
 from loom_ia.core.ports import SessionRecord
+from loom_ia.runtime import announce
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
 from loom_ia.usage import UsageReport
 
@@ -183,6 +185,26 @@ BEARER_SCHEME: Final = HTTPBearer(auto_error=False, description="Clé d'API de l
 HEADER_SCHEME: Final = APIKeyHeader(
     name=API_KEY_HEADER, auto_error=False, description="Clé d'API de l'instance"
 )
+
+
+def _open_warnings(config: LoomConfig) -> list[str]:
+    """Ce qu'une API sans clé déclarée laisse passer (#39)."""
+    if config.security.api_keys:
+        return []
+    warnings: list[str] = []
+    if config.tenants:
+        named = ", ".join(config.tenant_ids)
+        warnings.append(
+            f"API REST sans clé déclarée alors que la config nomme des clients ({named}) : "
+            f"tout passera par {DEFAULT_TENANT!r}, puisque c'est la clé qui dit au nom de "
+            "qui elle agit"
+        )
+    if config.server.http.host not in LOCAL_HOSTS:
+        warnings.append(
+            f"API REST ouverte sur {config.server.http.host} sans clé déclarée : ajouter "
+            "'security.api_keys' (loom keys create) pour en exiger une"
+        )
+    return warnings
 
 
 async def _payload(request: Request) -> JsonValue:
@@ -241,20 +263,8 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
     serveur. Sans lui, la fermeture reste à l'appelant.
     """
     http = loom.config.server.http
-    security = loom.config.security
-    if loom.config.tenants and not security.api_keys:
-        logger.warning(
-            "API REST sans clé déclarée alors que la config nomme des clients (%s) : "
-            "tout passera par %r, puisque c'est la clé qui dit au nom de qui elle agit",
-            ", ".join(loom.config.tenant_ids),
-            DEFAULT_TENANT,
-        )
-    if not security.api_keys and http.host not in LOCAL_HOSTS:
-        logger.warning(
-            "API REST ouverte sur %s sans clé déclarée : ajouter 'security.api_keys' "
-            "(loom keys create) pour en exiger une",
-            http.host,
-        )
+    # Profil prod : une API sans clé y est une erreur, pas un avertissement (M4).
+    announce(loom.config, _open_warnings(loom.config))
 
     # Serveur MCP monté dans la même application (J5.2b) : un seul port, une
     # seule authentification, et la clé donne le client à chaque requête.

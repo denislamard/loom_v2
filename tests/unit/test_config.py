@@ -114,7 +114,6 @@ def test_config_can_be_written_in_python() -> None:
     ("root", "agents", "message"),
     [
         ({"version": 2}, None, "Version de config 2 non prise en charge"),
-        ({"profiles": {}}, None, "'profiles' : prévu pour le jalon J5"),
         (
             {"storage": {"bus": {"backend": "kafka"}}},
             None,

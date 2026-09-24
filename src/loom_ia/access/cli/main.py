@@ -51,7 +51,9 @@ from loom_ia.agents.registry import UnknownAgent
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, LoomConfig, config_json_schema, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
+from loom_ia.config.loader import PROFILE_ENV, chosen_profile
 from loom_ia.config.models import (
+    PROFILES,
     BusStorage,
     EventsStorage,
     IdempotencyStorage,
@@ -119,6 +121,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_CONFIG,
         help=f"fichier de configuration (défaut : {DEFAULT_CONFIG})",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=PROFILES,
+        default=None,
+        help=f"profil actif ; l'emporte sur {PROFILE_ENV} et sur la config",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -329,7 +337,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 async def _validate(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     registry = load_registry(config)
     storage = config.storage
@@ -338,6 +346,7 @@ async def _validate(args: argparse.Namespace) -> int:
     artifacts = f"{storage.artifacts_backend} ({files})" if files else storage.artifacts_backend
     keys = ", ".join(key.id for key in config.security.api_keys)
     print(f"Config     : {args.config}")
+    print(f"Profil     : {_profile_line(config, args)}")
     print(f"Modèles    : {_listed(spec.id for spec in config.models)}")
     print(f"Agents     : {_listed(agent.name for agent in config.agents)}")
     named = [(name, registry.get(name)) for name in registry.names]
@@ -397,6 +406,20 @@ async def _validate(args: argparse.Namespace) -> int:
                 await _show_agent(loom, tenant_id, spec, indent="  " if config.tenants else "")
     print(f"\n{mounted} agent(s) monté(s) sans erreur.")
     return OK
+
+
+def _profile_line(config: LoomConfig, args: argparse.Namespace) -> str:
+    """Le profil actif, d'où il vient, et ce qu'il change.
+
+    Un profil qu'on ne voit pas est un profil qu'on oublie : un déploiement
+    qui croit être en prod doit pouvoir le lire ici.
+    """
+    active, source = chosen_profile(args.profile, config.profile)
+    declared = _listed(sorted(config.profiles)) if config.profiles else "aucune"
+    if active is None:
+        return f"aucun (ni --profile, ni {PROFILE_ENV}, ni 'profile:') ; surcharges : {declared}"
+    effet = "les avertissements sont des erreurs" if active == "prod" else "assoupli"
+    return f"{active} (par {source}) — {effet} ; surcharges : {declared}"
 
 
 def _storage_line(declared: EventsStorage | IdempotencyStorage) -> str:
@@ -507,7 +530,7 @@ def _chain(models: tuple[str, ...]) -> str:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     session = SessionId(args.session) if args.session else None
     tenant = _tenant(args)
@@ -554,7 +577,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     session = SessionId(args.session) if args.session else None
 
@@ -575,7 +598,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
     en affiche la réponse. Avec, la reprise revient à qui écoute ailleurs —
     ``loom resume``, ou un serveur qui tourne.
     """
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     run_id = RunId(args.run_id)
     session = SessionId(args.session) if args.session else None
@@ -640,7 +663,7 @@ def _json_object(text: str) -> dict[str, JsonValue] | None:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     if args.periode is not None:
         return _cmd_consumption(args, config)
@@ -708,7 +731,7 @@ def _consumption_json(found: TenantConsumption) -> dict[str, JsonValue]:
 
 
 def cmd_sessions_list(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile)
     apply_logging(config)
 
     async def go() -> list[SessionRecord]:
@@ -731,7 +754,7 @@ def cmd_sessions_list(args: argparse.Namespace) -> int:
 
 
 def cmd_sessions_export(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     session = SessionId(args.session_id)
 
@@ -754,7 +777,7 @@ def cmd_sessions_export(args: argparse.Namespace) -> int:
 
 
 def cmd_sessions_delete(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     session = SessionId(args.session_id)
     if not args.yes:
@@ -782,7 +805,7 @@ def cmd_sessions_delete(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     try:
         from loom_ia.access.http import serve
@@ -792,6 +815,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     http = config.server.http
     host = args.host or http.host
     port = args.port or http.port
+    print(f"Profil     : {_profile_line(config, args)}")
     print(f"API REST   : http://{host}:{port}{http.base_path}/v1")
     print(f"Agents     : {_listed(agent.name for agent in config.agents if agent.expose.rest)}")
     if config.server.mcp.http:
@@ -812,7 +836,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     try:
         from loom_ia.access.mcp_server import run_stdio
@@ -890,7 +914,7 @@ async def _worker(args: argparse.Namespace) -> int:
     un worker mort, et ce qui restait en plan n'est dans aucune file — il est
     au journal (H3).
     """
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     if args.jobs < 1:
         raise ValueError(f"--jobs : au moins 1, reçu {args.jobs}")
@@ -963,7 +987,7 @@ def cmd_storage_sql(args: argparse.Namespace) -> int:
     avec le rôle qui en a le droit (``psql -f``). loom l'applique aussi de
     lui-même à la première ouverture, si le rôle connecté le peut.
     """
-    print(postgres_ddl(load_config(args.config)), end="")
+    print(postgres_ddl(load_config(args.config, profile=args.profile)), end="")
     return OK
 
 

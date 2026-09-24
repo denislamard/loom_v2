@@ -35,14 +35,16 @@ from loom_ia.core.model.context import CallerContext
 # Juges d'un run, choisis par l'appelant : selon leur ``when``, tous, ou aucun.
 type JudgesMode = Literal["auto", "force", "skip"]
 # Motif d'un juge qui ne s'exécute pas.
-type SkipReason = Literal["filtered", "sampled_out", "condition_false", "caller_skip"]
+type SkipReason = Literal[
+    "filtered", "sampled_out", "condition_false", "caller_skip", "other_profile"
+]
 
 JUDGES_MODES: Final[tuple[JudgesMode, ...]] = ("auto", "force", "skip")
 CRITERION_NAME_PATTERN: Final = r"^[A-Za-z0-9_-]{1,64}$"
 DEFAULT_MIN_SCORE: Final = 0.8
 
 # Clés de ``when`` prévues pour plus tard.
-LATER_WHEN: Final[dict[str, str]] = {"profiles": "J5 (profils dev et prod)"}
+LATER_WHEN: Final[dict[str, str]] = {}
 
 
 class Criterion(DomainModel):
@@ -65,6 +67,10 @@ class JudgeWhen(DomainModel):
     condition: str | None = Field(default=None, min_length=1)
     # Clients dont les runs sont jugés.
     tenants: tuple[str, ...] | None = Field(default=None, min_length=1)
+    # Profils où ce juge travaille (5.5a) : ailleurs il est sauté, et le
+    # journal le dit (``other_profile``) — un juge déclaré ne disparaît pas en
+    # silence parce qu'on a changé de profil.
+    profiles: tuple[str, ...] | None = Field(default=None, min_length=1)
 
     @model_validator(mode="before")
     @classmethod

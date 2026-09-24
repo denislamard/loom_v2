@@ -153,7 +153,6 @@ def test_judge_warnings_at_startup(demo: ConfigFactory, caplog: pytest.LogCaptur
     ("judge", "message"),
     [
         ({"model": "ABSENT"}, "juge 'output' : modèle 'ABSENT' non déclaré"),
-        ({"when": {"profiles": ["prod"]}}, "'profiles' : prévu pour le jalon J5"),
         ({"on_failure": "fallback"}, "on_failure: fallback demande un 'fallback_message'"),
         ({"criteria": [CRITERIA[0], CRITERIA[0]]}, "Critère déclaré deux fois : exact"),
         ({"criteria": []}, "criteria"),

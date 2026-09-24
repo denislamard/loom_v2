@@ -136,6 +136,11 @@ class JudgeDefinition:
     sample: float = 1.0
     condition: Condition | None = None
     tenants: frozenset[str] | None = None
+    # Profils où ce juge travaille, et celui qui est actif (5.5a) : les deux
+    # sont connus au montage, mais comparés à l'exécution pour que le journal
+    # dise qu'un juge déclaré a été sauté, et pourquoi.
+    profiles: frozenset[str] | None = None
+    profile: str | None = None
     repair: RepairSettings = field(default_factory=RepairSettings)
     on_failure: OnFailure = "fail"
     fallback_message: str | None = None
@@ -286,6 +291,8 @@ class JudgeGuard(TracingPolicy):
                 return None
             case "auto":
                 pass
+        if definition.profiles is not None and definition.profile not in definition.profiles:
+            return "other_profile"
         if definition.tenants is not None and state.context.tenant_id not in definition.tenants:
             return "filtered"
         if not sampled(state.run_id, definition.name, definition.sample):

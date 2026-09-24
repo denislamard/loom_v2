@@ -7,10 +7,7 @@ ces clés sont refusées en nommant le jalon qui les apportera.
 
 from typing import Final
 
-LATER_ROOT: Final[dict[str, str]] = {
-    "profile": "J5.5 (profils dev et prod)",
-    "profiles": "J5.5 (profils dev et prod)",
-}
+LATER_ROOT: Final[dict[str, str]] = {}
 LATER_API_KEY: Final[dict[str, str]] = {}
 # Surcharges d'un client prévues pour plus tard (§17.8).
 LATER_TENANT: Final[dict[str, str]] = {}
