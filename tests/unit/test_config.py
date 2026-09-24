@@ -117,9 +117,19 @@ def test_config_can_be_written_in_python() -> None:
         ({"profiles": {}}, None, "'profiles' : prévu pour le jalon J5"),
         ({"storage": {"bus": {}}}, None, "'bus' : prévu pour le jalon J4"),
         (
+            {"storage": {"idempotency": {"backend": "firestore"}}},
+            None,
+            "Magasin d'idempotence 'firestore' : seuls journal, memory, sqlite, postgres",
+        ),
+        (
             {"storage": {"idempotency": {"backend": "postgres"}}},
             None,
-            "Magasin d'idempotence 'postgres' : seuls journal, memory",
+            "Magasin d'idempotence 'postgres' : 'dsn_env' est obligatoire",
+        ),
+        (
+            {"storage": {"idempotency": {"backend": "memory", "dsn_env": "PG"}}},
+            None,
+            "Magasin d'idempotence 'memory' : 'dsn_env' n'a pas de sens",
         ),
         (
             {"storage": {"artifacts": {"backend": "local"}}},
@@ -140,9 +150,29 @@ def test_config_can_be_written_in_python() -> None:
         ({"telemetry": {"redaction": {}}}, None, "'redaction' : prévu pour le jalon J4"),
         ({"inconnu": 1}, None, "Extra inputs are not permitted"),
         (
+            {"storage": {"events": {"backend": "firestore"}}},
+            None,
+            "seuls memory, jsonl, sqlite, postgres",
+        ),
+        (
             {"storage": {"events": {"backend": "postgres"}}},
             None,
-            "seuls memory, jsonl, sqlite",
+            "Journal 'postgres' : 'dsn_env' est obligatoire",
+        ),
+        (
+            {"storage": {"events": {"backend": "postgres", "dsn_env": "PG", "path": "a"}}},
+            None,
+            "Journal 'postgres' : 'path' n'a pas de sens",
+        ),
+        (
+            {"storage": {"events": {"backend": "sqlite", "path": "a", "dsn_env": "PG"}}},
+            None,
+            "Journal 'sqlite' : 'dsn_env' n'a pas de sens",
+        ),
+        (
+            {"storage": {"events": {"backend": "postgres", "dsn_env": "PG"}}},
+            None,
+            "Journal 'postgres' : déclarer 'storage.artifacts'",
         ),
         ({"storage": {"events": {"backend": "jsonl"}}}, None, "'path' est obligatoire"),
         ({"storage": {"events": {"backend": "sqlite"}}}, None, "'path' est obligatoire"),

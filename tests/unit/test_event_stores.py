@@ -35,9 +35,12 @@ _SQLITE = pytest.param(
     "sqlite",
     marks=pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent"),
 )
+# Postgres demande un service : la fixture ``postgres_dsn`` saute l'essai s'il
+# n'y en a pas, et vide les tables avant chacun.
+_POSTGRES = pytest.param("postgres", marks=pytest.mark.integration)
 
 
-@pytest.fixture(params=["memory", "jsonl", _SQLITE])
+@pytest.fixture(params=["memory", "jsonl", _SQLITE, _POSTGRES])
 def make_store(request: pytest.FixtureRequest, tmp_path: Path) -> StoreFactory:
     """Fabrique de stores partageant le même stockage (pour la réouverture)."""
     if request.param == "memory":
@@ -47,6 +50,11 @@ def make_store(request: pytest.FixtureRequest, tmp_path: Path) -> StoreFactory:
         from loom_ia.adapters.stores.sqlite import SqliteEventStore
 
         return lambda: SqliteEventStore(tmp_path / "journal.sqlite3")
+    if request.param == "postgres":
+        from loom_ia.adapters.stores.postgres import PostgresEventStore
+
+        dsn = str(request.getfixturevalue("postgres_dsn"))
+        return lambda: PostgresEventStore(dsn)
     return lambda: JsonlEventStore(tmp_path / "journal")
 
 

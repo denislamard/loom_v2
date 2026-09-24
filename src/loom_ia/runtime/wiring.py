@@ -75,8 +75,10 @@ from loom_ia.agents.spec import ContextItem as DeclaredContext
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.errors import ConfigError
 from loom_ia.config.models import (
-    FILE_BACKENDS,
+    DURABLE_BACKENDS,
     SHARED_IDEMPOTENCY,
+    EventsStorage,
+    IdempotencyStorage,
     LoomConfig,
     StorageConfig,
 )
@@ -174,9 +176,34 @@ def create_mcp_pool(config: LoomConfig, environ: Mapping[str, str] | None = None
     return McpPool(lambda spec: session_factory(spec, environ=env))
 
 
+def _dsn(declared: EventsStorage | IdempotencyStorage, what: str) -> str:
+    """DSN lu dans la variable que la config nomme : elle ne porte pas le secret (§16.3)."""
+    variable = declared.dsn_env or ""
+    dsn = os.environ.get(variable, "")
+    if not dsn:
+        raise ConfigError(
+            f"{what} {declared.backend!r} : la variable {variable!r} est vide ou absente — "
+            "c'est elle qui porte le DSN"
+        )
+    return dsn
+
+
+def _missing_asyncpg(what: str) -> ConfigError:
+    return ConfigError(
+        f"{what} 'postgres' : le paquet 'asyncpg' n'est pas installé "
+        "(installer l'extra : loom-ia[postgres])"
+    )
+
+
 def create_event_store(config: LoomConfig | StorageConfig) -> EventStore:
     """Journal déclaré dans ``storage.events``, d'une config ou d'un client."""
     events = _storage(config).events
+    if events.backend == "postgres":
+        try:
+            from loom_ia.adapters.stores.postgres import PostgresEventStore
+        except ImportError as exc:
+            raise _missing_asyncpg("Journal") from exc
+        return PostgresEventStore(_dsn(events, "Journal"), role=events.role)
     if events.path is not None:
         if events.backend == "jsonl":
             return JsonlEventStore(events.path)
@@ -190,6 +217,35 @@ def create_event_store(config: LoomConfig | StorageConfig) -> EventStore:
                 ) from exc
             return SqliteEventStore(events.path)
     return InMemoryEventStore()
+
+
+def postgres_ddl(config: LoomConfig | StorageConfig) -> str:
+    """Le SQL du stockage Postgres déclaré par la config (``loom storage sql``).
+
+    Une config qui n'en déclare aucun rend le SQL complet avec le rôle par
+    défaut : de quoi préparer une base avant de la déclarer.
+    """
+    from loom_ia.adapters.postgres import sql
+
+    storage = _storage(config)
+    declared = (
+        (storage.events, sql.EVENTS_TABLE, sql.EVENTS_DDL, False),
+        (storage.idempotency, sql.IDEMPOTENCY_TABLE, sql.IDEMPOTENCY_DDL, True),
+    )
+    used = [d for d in declared if d[0].backend == "postgres"]
+    if not used:
+        return sql.ddl()
+    blocks: list[str] = []
+    roles: set[str] = set()
+    for storage_declared, table, table_ddl, update in used:
+        role = storage_declared.role
+        if role is not None and role not in roles:
+            roles.add(role)
+            blocks.extend([sql.role_ddl(role), sql.membership_ddl(role)])
+        blocks.append(table_ddl)
+        if role is not None:
+            blocks.append(sql.grants_ddl(role, table=table, update=update))
+    return "\n".join(blocks) + "\n"
 
 
 def create_artifact_store(config: LoomConfig | StorageConfig) -> ArtifactStore:
@@ -215,6 +271,12 @@ def create_idempotency_store(config: LoomConfig) -> IdempotencyStore | None:
     declared = config.storage.idempotency
     if declared.backend == "memory":
         return InMemoryIdempotency()
+    if declared.backend == "postgres":
+        try:
+            from loom_ia.adapters.idempotency.postgres import PostgresIdempotency
+        except ImportError as exc:
+            raise _missing_asyncpg("Magasin d'idempotence") from exc
+        return PostgresIdempotency(_dsn(declared, "Magasin d'idempotence"), role=declared.role)
     if declared.backend == "sqlite" and declared.path is not None:
         try:
             from loom_ia.adapters.idempotency.sqlite import SqliteIdempotency
@@ -618,7 +680,7 @@ def _check_durable_journal(
     avertissement — les profils, qui permettront de l'assouplir en dev,
     arrivent en J5.
     """
-    if config.storage.events.backend not in FILE_BACKENDS:
+    if config.storage.events.backend not in DURABLE_BACKENDS:
         forced = imposed or {}
         obligatoires = [
             t.spec.name for t in tools if forced.get(t.spec.name, t.spec.approval) == "always"
@@ -631,7 +693,7 @@ def _check_durable_journal(
         if causes:
             raise ConfigError(
                 f"Agent {spec.name!r} : {', '.join(causes)} — une approbation exige un "
-                f"journal durable ({' ou '.join(FILE_BACKENDS)}), "
+                f"journal durable ({' ou '.join(DURABLE_BACKENDS)}), "
                 f"pas {config.storage.events.backend!r} (#28)"
             )
 

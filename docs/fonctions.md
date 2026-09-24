@@ -937,6 +937,17 @@ Exemples : les échecs d'un outil sur une période, les runs où le juge a bloqu
 - **Sessions (F7).** `EventStore.sessions(tenant)` rend un `SessionRecord` par journal (session, dernier `seq`, dernière écriture) ; `EventStore.delete(tenant, session)` supprime le journal ; `ArtifactStore.delete(tenant, session)` ses fichiers. Façade : `Loom.sessions()`, `Loom.export_session()`, `Loom.delete_session()` (fichiers d'abord, journal ensuite). CLI : `loom sessions list | export | delete`.
 - **Config.** La clé racine `sessions` n'est plus refusée : `sessions.snapshot_every` (50 par défaut) ; `sessions.compaction` reste refusée, avec le renvoi à 4.1b (acceptée depuis).
 
+**Réalisation (phase 5.3a) :**
+
+- **Journal Postgres.** Extra `postgres` (`asyncpg`) : table `loom_events`, mêmes colonnes et mêmes index que la version SQLite, plus un index GIN sur les facettes. L'événement entier est rangé en texte — le relire le reconstruit tel quel, sans réencodage — et les facettes à part en `jsonb`, filtrées par **contenance** (`facets @> '{"nom": valeur}'`) : exact, y compris pour une facette nulle, et indexable. Déclaration : `storage.events: {backend: postgres, dsn_env: NOM_DE_VARIABLE}` — la config nomme la variable qui porte le DSN, jamais le DSN (§16.3) — et `path` n'y a pas de sens.
+- **Un seul écrivain à la fois par journal.** Le contrôle de séquence et l'insertion tiennent dans une transaction ouverte par un verrou consultatif (`pg_advisory_xact_lock`) sur `(tenant, session)` : deux process qui écrivent dans la même session attendent leur tour au lieu de s'entrelacer. La clé primaire `(tenant_id, session_id, seq)` reste le dernier mot — une violation d'unicité devient un `SequenceConflict`, que l'écrivain de session reprend comme un `expected_seq` périmé.
+- **Sécurité au niveau des lignes (RLS).** La table porte une politique qui compare `tenant_id` à `current_setting('loom.tenant_id')`, posé par transaction (`set_config(..., true)`) — à la lecture (`USING`) comme à l'écriture (`WITH CHECK`). Le réglage absent rend NULL, la comparaison rend NULL, et **aucune ligne** ne passe : l'oubli donne un journal vide, jamais le journal d'un autre. Le `WHERE tenant_id` de chaque requête reste écrit, mais ce n'est plus lui qui protège ; un essai l'oublie exprès pour le prouver. `FORCE ROW LEVEL SECURITY` étend la politique au propriétaire des tables, pour que la barrière tienne même quand loom se connecte avec le rôle qui les a créées.
+- **Deux rôles.** Le propriétaire applique le DDL ; l'exécution passe par un rôle applicatif (`storage.events.role`, `loom_app` par défaut) que chaque connexion prend à son ouverture (`SET ROLE`). Ce rôle n'a pas `UPDATE` sur le journal : l'immuabilité cesse d'être une convention de code pour devenir un privilège de la base. `DELETE` lui reste accordé — c'est l'effacement RGPD d'une session. `role: null` s'en passe : la politique tient encore par `FORCE`, mais le journal redevient modifiable.
+- **Ce que la politique coûte à l'exploitation.** Lire la table à la main sans poser `loom.tenant_id` ne rend **rien**, même au propriétaire (`FORCE`) : un client à la fois, par `SET loom.tenant_id = '<client>'`. Une sauvegarde **logique** échoue pour la même raison (« query would be affected by row-level security policy »), et `pg_dump --enable-row-security` la rend partielle sans le dire — il faut un rôle `BYPASSRLS`, créé par un superutilisateur et réservé à l'exploitation ; une sauvegarde physique n'est pas concernée. Le DDL imprimé s'ouvre sur ces deux points en commentaires, seule place où l'exploitant les lira à coup sûr.
+- **Schéma à la demande, SQL imprimable.** À la première requête, si la table manque, loom applique le DDL ; le rôle qui ne peut pas le faire reçoit une erreur qui reprend le mot de Postgres et renvoie vers `loom storage sql`, dont la sortie (tables, index, rôle, droits, politiques) s'applique à la main avec le rôle qui en a le droit. Le DDL est rejouable : `IF NOT EXISTS` là où Postgres le propose, un bloc qui avale `duplicate_object` pour les politiques et les rôles.
+- **Artefacts.** Un journal Postgres ne donne pas de dossier : `storage.artifacts` devient obligatoire dès que le journal est Postgres (`local` avec son `path`, ou `memory` explicitement). Le défaut silencieux aurait laissé les artefacts en mémoire sous un journal durable, et le journal aurait gardé la trace de fichiers disparus à la fermeture.
+- **Durabilité.** `postgres` rejoint `jsonl` et `sqlite` parmi les journaux durables : un agent qui peut se mettre en pause est désormais accepté avec lui (#28).
+
 ### 23. Compaction : en tâche de fond après le run
 
 Compacter ne réécrit rien : on ajoute `session.compacted` (résumé, `up_to_seq`), et l'historique LLM repart de ce résumé.
@@ -1059,7 +1070,7 @@ Réglé par le point 18 : réexécution si l'outil est sans effet de bord ou ide
 
 **Réalisation (phase 4.3a) :**
 
-- **Contrôle au chargement.** Un agent qui peut se mettre en pause — un outil en `approval: always`, ou une politique qui déclare la décision `pause` — est refusé si le journal n'est pas durable (`jsonl` ou `sqlite`). Une **erreur**, pas un avertissement : en pause, le run n'existe plus que dans le journal, et un journal en mémoire le perdrait à la première fermeture. L'assouplissement en profil dev arrivera avec les profils (J5).
+- **Contrôle au chargement.** Un agent qui peut se mettre en pause — un outil en `approval: always`, ou une politique qui déclare la décision `pause` — est refusé si le journal n'est pas durable (`jsonl`, `sqlite` ou `postgres` depuis 5.3a). Une **erreur**, pas un avertissement : en pause, le run n'existe plus que dans le journal, et un journal en mémoire le perdrait à la première fermeture. L'assouplissement en profil dev arrivera avec les profils (J5).
 - **Asynchrone (défaut).** `run()` rend un `RunResult(status=paused)` dont `pending_approvals` porte les demandes ; `approve()` ou `reject()` les tranchent plus tard, de n'importe où, et remettent le run en file.
 - **Approbateur en ligne.** `run(..., approver=callback)` : le rappel reçoit la demande (`PendingApproval`) et rend `Approved(by=…, arguments=…)` ou `Rejected(reason=…)`. Il décide **dans la boucle**, avant que le lot ne parte, et le run ne passe jamais par `PAUSED`. La demande et sa décision sont journalisées quand même : le déroulé d'un run se lit pareil dans les deux modes, et l'audit vaut aussi pour les scripts et les tests.
 
@@ -1120,7 +1131,7 @@ Un client est toujours présent, mais implicite : `tenant_id = "default"`. Le co
 | Budgets, quotas | Par client et par période (J4) ; débit par client et par clé d'API (L3, #39) |
 | Chiffrement | Clé par client en option (point 30) |
 
-**Isolation physique possible par adaptateur :** un `TenantRouter` choisit le stockage selon le client (fichier SQLite, schéma Postgres, collection Firestore ou bucket dédiés).
+**Isolation physique possible par adaptateur :** un `TenantRouter` choisit le stockage selon le client (fichier SQLite, base ou `search_path` Postgres — un client déclare son propre `dsn_env` —, collection Firestore ou bucket dédiés). En Postgres, elle est facultative : la politique de lignes garde déjà une table partagée.
 
 **Surcharges par client (liste fermée) :** agents et outils autorisés, correspondance des modèles, budgets et quotas, politiques d'approbation, identifiants des serveurs MCP et secrets. Les prompts ne sont pas surchargeables (logique métier, hors périmètre) ; seules des variables injectées dans les prompts le sont.
 
@@ -1444,6 +1455,12 @@ IdempotencyStore
 - `ttl` par outil sur `complete`, sinon la rétention du magasin (24 h). Les résultats périmés s'effacent au fil des écritures ; les réservations, jamais.
 - `forget(tenant, session=None)` : RGPD. Le magasin `journal` n'a rien à oublier — ses enregistrements sont des événements, et partent avec le journal de leur session.
 - Contrôle au chargement : un outil à clé métier (`ToolSpec.business_key`) exige un magasin partagé **et** durable. `journal` ne voit que son run, `memory` que son process : la promesse serait tenue là où elle ne sert à rien. Erreur, pas avertissement — un doublon silencieux se remarque trop tard.
+
+**Réalisation (phase 5.3a) :** le magasin `postgres` (extra `postgres`, `dsn_env` obligatoire, la même variable que le journal si la base est la même), que réclame aussi une clé métier.
+
+- Table `loom_idempotency`, mêmes colonnes et même instruction unique qu'en SQLite (`INSERT … ON CONFLICT (key) DO UPDATE … WHERE expires_at < <maintenant>`) : c'est Postgres qui arbitre, et le nombre de lignes touchées fait foi. Ce qui change, c'est la portée — deux workers sur deux machines voient la même réservation, là où `sqlite` demande un fichier partagé.
+- Le rôle applicatif a `UPDATE` sur cette table, contrairement au journal : une réservation **devient** un résultat, c'est sa raison d'être.
+- **Pas de politique de lignes ici**, et ce n'est pas un oubli : `IdempotencyStore.get(key)` ne nomme pas de client, et une politique par client rendrait invisible la ligne qu'il faut justement relire. Ce qui cadre une clé, c'est son préfixe par client ; les colonnes `tenant_id` et `session_id` servent à l'oublier avec sa session. Ouvrir cette table à RLS demanderait de porter le client jusqu'à `get` : backlog #021.
 
 ### 50. Schéma de la config
 

@@ -10,6 +10,7 @@
     loom serve                     sert l'API REST
     loom mcp                       sert les agents en MCP, sur stdio
     loom keys create <nom>         fabrique une clé d'API
+    loom storage sql               SQL du stockage Postgres déclaré
     loom schema                    JSON Schema du fichier de configuration
 
 ``--config`` désigne le fichier de configuration (``./loom.yaml`` par
@@ -20,6 +21,7 @@ configuration ou la demande est en cause.
 import argparse
 import asyncio
 import json
+import os
 import sys
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
@@ -44,6 +46,7 @@ from loom_ia.agents.registry import UnknownAgent
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, LoomConfig, config_json_schema, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
+from loom_ia.config.models import EventsStorage, IdempotencyStorage
 from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -60,7 +63,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import Policy, SessionRecord, SourceContext, Tool
 from loom_ia.engine import ToolExecutor
-from loom_ia.runtime import apply_logging, load_registry
+from loom_ia.runtime import apply_logging, load_registry, postgres_ddl
 from loom_ia.tenancy import Tenant, UnknownTenant
 from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import render as render_report
@@ -284,6 +287,13 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("--yes", action="store_true", help="ne demande pas confirmation")
     remove.set_defaults(handler=cmd_sessions_delete)
 
+    storage = commands.add_parser("storage", help="stockages de service : le SQL à appliquer")
+    storage_actions = storage.add_subparsers(dest="action", required=True)
+    ddl = storage_actions.add_parser(
+        "sql", help="imprime le SQL du stockage Postgres déclaré (tables, rôle, politiques)"
+    )
+    ddl.set_defaults(handler=cmd_storage_sql)
+
     schema = commands.add_parser("schema", help="JSON Schema du fichier de configuration")
     schema.set_defaults(handler=cmd_schema)
     return parser
@@ -301,8 +311,7 @@ async def _validate(args: argparse.Namespace) -> int:
     apply_logging(config)
     registry = load_registry(config)
     storage = config.storage
-    events = storage.events
-    journal = f"{events.backend} ({events.path})" if events.path else events.backend
+    journal = _storage_line(storage.events)
     files = storage.artifacts_path
     artifacts = f"{storage.artifacts_backend} ({files})" if files else storage.artifacts_backend
     keys = ", ".join(key.id for key in config.security.api_keys)
@@ -316,9 +325,7 @@ async def _validate(args: argparse.Namespace) -> int:
         print(f"Politiques : {_listed(policies)}")
     print(f"Journal    : {journal}")
     print(f"Artefacts  : {artifacts}")
-    magasin = storage.idempotency
-    cles = f"{magasin.backend} ({magasin.path})" if magasin.path else magasin.backend
-    print(f"Idempotence: {cles}")
+    print(f"Idempotence: {_storage_line(storage.idempotency)}")
     print(f"Clés d'API : {keys or 'aucune (API REST ouverte)'}")
     mcp = config.server.mcp
     if mcp.http:
@@ -344,6 +351,20 @@ async def _validate(args: argparse.Namespace) -> int:
                 await _show_agent(loom, tenant_id, spec, indent="  " if config.tenants else "")
     print(f"\n{mounted} agent(s) monté(s) sans erreur.")
     return OK
+
+
+def _storage_line(declared: EventsStorage | IdempotencyStorage) -> str:
+    """Un stockage tel que ``loom validate`` l'affiche.
+
+    Le DSN n'est jamais imprimé : seulement le nom de la variable qui le
+    porte, et si elle est renseignée ici et maintenant — c'est ce qui manque
+    le plus souvent quand un service refuse de démarrer.
+    """
+    if declared.dsn_env is not None:
+        lue = "renseignée" if os.environ.get(declared.dsn_env) else "ABSENTE"
+        role = declared.role or "aucun (propriétaire)"
+        return f"{declared.backend} (DSN dans {declared.dsn_env} : {lue}, rôle : {role})"
+    return f"{declared.backend} ({declared.path})" if declared.path else declared.backend
 
 
 def _key_lines(config: LoomConfig) -> list[str]:
@@ -803,6 +824,17 @@ def _deadline(given: str | None) -> datetime | None:
             f"--expires : date ISO (2027-01-01) ou durée (90j, 12h) attendue, reçu {given!r}"
         ) from None
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def cmd_storage_sql(args: argparse.Namespace) -> int:
+    """Le SQL à appliquer pour le stockage Postgres que la config déclare.
+
+    Rien n'est exécuté : la sortie se relit, se met en revue et s'applique
+    avec le rôle qui en a le droit (``psql -f``). loom l'applique aussi de
+    lui-même à la première ouverture, si le rôle connecté le peut.
+    """
+    print(postgres_ddl(load_config(args.config)), end="")
+    return OK
 
 
 def cmd_schema(args: argparse.Namespace) -> int:

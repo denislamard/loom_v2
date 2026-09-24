@@ -342,3 +342,33 @@ Ce n'est donc pas « un second gestionnaire dans le process » : c'est un second
 **À trancher :** signale-t-on en amont, et reprend-on l'essai à chaque montée de version du SDK ? Mon avis : les deux — le repro est déjà écrit, et l'essai coûte une minute quand on touche au MCP.
 
 **Statut :** sans échéance — ne bloque aucun jalon.
+
+---
+
+## #021 — La table d'idempotence est hors de la politique de lignes
+
+**Origine :** phase 5.3a, en écrivant le DDL Postgres — le journal a sa politique par client, l'autre table n'en a pas.
+
+**Constat :** `loom_events` porte une politique qui compare `tenant_id` au réglage de la transaction, en lecture comme en écriture. `loom_idempotency` n'en porte pas, parce que le port ne le permet pas : `IdempotencyStore.get(key)` ne nomme aucun client. Poser la même politique rendrait invisible la ligne qu'il faut justement relire, et `complete(key, …)` comme `release(key)` tomberaient de même.
+
+**Ce qui cadre la table aujourd'hui :**
+
+| Moyen | Portée |
+|---|---|
+| Préfixe du client dans la clé métier (#49) | Deux artisans ne partagent pas « relance du devis D-2026-042 » |
+| Colonnes `tenant_id` et `session_id` | `forget(tenant, session)` efface les clés d'un client ou d'une session (RGPD) |
+| Droits du rôle applicatif | Ni `TRUNCATE`, ni `ALTER` ; la table n'est pas lisible hors de la base |
+
+Ce qui manque, c'est la **défense en profondeur** : un `SELECT` sans `WHERE tenant_id` sur cette table rendrait les clés de tous, là où le journal, lui, ne rendrait rien. Le risque est celui d'une faute de code dans loom, pas d'un client qui déborde — les clés ne sont pas adressables de l'extérieur.
+
+**Pistes :**
+
+| Piste | Effet | Coût |
+|---|---|---|
+| Ne rien faire | La clé porte son client, et personne ne lit cette table à la main | La table reste la seule sans barrière de base |
+| Porter le client jusqu'au port | `get`, `complete` et `release` prennent le `KeyScope` que `reserve` prend déjà ; la politique devient possible partout | Un port du noyau, quatre adaptateurs et leurs appelants ; à faire avant que d'autres magasins ne s'ajoutent (Firestore, Redis, 5.3c et 5.3d) |
+| Politique sur la seule écriture (`WITH CHECK`) | Empêche d'écrire une clé pour un autre client, sans gêner la relecture | Demi-mesure : la lecture reste ouverte, et c'est elle qui fuirait |
+
+**À trancher :** porte-t-on le client jusqu'au port ? Mon avis : oui, mais **avant 5.3c** — chaque magasin ajouté rend le changement plus cher, et Redis comme Firestore arrivent là.
+
+**Statut :** sans échéance — ne bloque aucun jalon.

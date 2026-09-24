@@ -608,6 +608,12 @@ autrement que `journal` ou `memory` est refusé au chargement.
 - `on_unknown` vaut désormais pour les deux chemins : l'appel repris que le moteur refuse de
   relancer, et la réservation périmée que le magasin rend à l'outil. Une approbation accordée fait
   reprendre la réservation, donc l'appel repart une fois et une seule.
+
+**Réalisation (phase 5.3a) :** magasin `postgres`, même instruction unique, même arbitrage par la
+base. Ce qui change est la portée : deux workers sur deux machines partagent leurs clés, là où
+`sqlite` demande un fichier commun. Pas de politique de lignes sur cette table — `get(key)` ne
+nomme pas de client, et une politique la rendrait invisible ; le cadrage vient du préfixe de la clé
+et des colonnes `tenant_id`/`session_id` (backlog #021).
 - RGPD : les clés portent la session qui les a créées et partent avec elle
   (`Loom.delete_session`, `SessionDeletion.keys`). Une clé oubliée rend son effet reproductible,
   mais la trace de cet effet a disparu de toute façon.
@@ -873,6 +879,8 @@ EventQuery(tenant, session, run, types, categories, status,
 
 **Réalisation (phase 4.1a)** (détails : `fonctions.md`, point 22) : le port gagne `sessions(tenant)` (un `SessionRecord` par journal : session, dernier `seq`, dernière écriture) et `delete(tenant, session)` (suppression physique, F7 et §11.5) ; `ArtifactStore` gagne `delete(tenant, session)`. Backends réalisés : mémoire, JSONL et SQLite (extra `sqlite`, `aiosqlite` : une table `events`, clé primaire `(tenant_id, session_id, seq)`, l'événement entier en JSON, les facettes à part et filtrées par `json_extract` ; contrôle de séquence et écriture dans une transaction `BEGIN IMMEDIATE`, WAL et commits synchrones). Une écriture refusée est reprise par l'écrivain de session, qui relit la position et réécrit ; deux runs d'une même session partagent leur écrivain dans l'instance.
 
+**Réalisation (phase 5.3a)** (détails : `fonctions.md`, point 22) : backend `postgres` (extra `postgres`, `asyncpg`). Table `loom_events`, mêmes colonnes et index qu'en SQLite, facettes en `jsonb` filtrées par contenance, index GIN. Le DSN vient de la variable que `storage.events.dsn_env` nomme, jamais de la config. Contrôle de séquence et insertion sous verrou consultatif par `(tenant, session)`, clé primaire en dernier mot (`SequenceConflict`). **Sécurité au niveau des lignes** : politique sur `tenant_id = current_setting('loom.tenant_id')` — posé par transaction —, en lecture et en écriture, `FORCE` pour qu'elle vaille aussi pour le propriétaire ; le réglage absent ne laisse rien passer. **Deux rôles** : le propriétaire pose le schéma, un rôle applicatif (`role`, `loom_app` par défaut) exécute, sans `UPDATE` sur le journal — l'immuabilité devient un privilège. Schéma créé à la première requête si le rôle le peut, sinon `loom storage sql` l'imprime pour un DBA. Un journal Postgres oblige à déclarer `storage.artifacts` : il ne donne pas de dossier.
+
 ### 11.2 Projections
 
 ```
@@ -1089,7 +1097,7 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - Secrets lus via `SecretProvider` ; la config ne contient que des noms de variables (`api_key_env`).
 - Chiffrement au repos du journal ; clé par client en option (§11.5).
 
-**Réalisation (phase 5.1a) :** port `SecretProvider` (`secrets(tenant_id) -> Mapping[str, str]` : la table d'un client, telle qu'elle descend aux adaptateurs) et adaptateur `EnvironmentSecrets`, qui résout la redirection `secrets` d'un client sur l'environnement. Ce qu'un client ne redirige pas y est lu tel quel ; une redirection vers une variable absente vaut **vide**, jamais le secret commun. Le client d'une requête REST vient de sa **clé d'API** et de nulle part ailleurs ; en MCP stdio, où il n'y a pas de clé, un serveur sert un client, choisi à son lancement. RLS et chiffrement : J5.3 et J5.5.
+**Réalisation (phase 5.1a) :** port `SecretProvider` (`secrets(tenant_id) -> Mapping[str, str]` : la table d'un client, telle qu'elle descend aux adaptateurs) et adaptateur `EnvironmentSecrets`, qui résout la redirection `secrets` d'un client sur l'environnement. Ce qu'un client ne redirige pas y est lu tel quel ; une redirection vers une variable absente vaut **vide**, jamais le secret commun. Le client d'une requête REST vient de sa **clé d'API** et de nulle part ailleurs ; en MCP stdio, où il n'y a pas de clé, un serveur sert un client, choisi à son lancement. Chiffrement : J5.5 ; RLS : faite en 5.3a, avec le journal Postgres (§11.1).
 
 ## 17. Configuration
 
@@ -1300,8 +1308,10 @@ Un agent peut référencer plusieurs serveurs : voir §9.5.
 storage:
   events:      {backend: jsonl, path: data/events}      # memory|jsonl|sqlite|postgres|firestore (+ dsn_env)
                                                         # jsonl : dossier ; sqlite : fichier de la base
+                                                        # postgres : dsn_env, et role (défaut loom_app, null pour s'en passer)
   artifacts:   {backend: local, path: data/artifacts}   # local|memory|gcs (+ bucket) ; défaut : suit le journal
-  idempotency: {backend: journal}                       # journal|memory|sqlite (+ path) ; postgres|firestore|redis plus tard
+  idempotency: {backend: journal}                       # journal|memory|sqlite (+ path)|postgres (+ dsn_env)
+                                                        # firestore|redis plus tard
   bus:         {backend: memory}                        # memory|postgres|redis|rabbitmq
   queue:       {backend: asyncio}                       # asyncio|rabbitmq (+ url_env)
   encryption:  {per_tenant_keys: false}

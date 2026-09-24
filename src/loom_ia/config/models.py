@@ -52,13 +52,20 @@ from loom_ia.core.model import (
 from loom_ia.telemetry.logs import LogFormat
 
 SCHEMA_VERSION: Final = 1
-EVENT_BACKENDS: Final = ("memory", "jsonl", "sqlite")
-IDEMPOTENCY_BACKENDS: Final = ("journal", "memory", "sqlite")
+EVENT_BACKENDS: Final = ("memory", "jsonl", "sqlite", "postgres")
+IDEMPOTENCY_BACKENDS: Final = ("journal", "memory", "sqlite", "postgres")
 # Magasins qu'une clé métier peut exiger : partagés entre runs **et**
 # durables. Le journal ne voit que son run, la mémoire que son process.
-SHARED_IDEMPOTENCY: Final = ("sqlite",)
+SHARED_IDEMPOTENCY: Final = ("sqlite", "postgres")
 # Journaux rangés hors de la mémoire : ils donnent aussi le dossier des artefacts.
 FILE_BACKENDS: Final = ("jsonl", "sqlite")
+# Journaux qui survivent au process : ce qu'exige une approbation (#28).
+DURABLE_BACKENDS: Final = ("jsonl", "sqlite", "postgres")
+# Stockages dont le raccordement passe par un DSN, jamais par un chemin.
+DSN_BACKENDS: Final = ("postgres",)
+# Rôle applicatif Postgres par défaut, celui que crée le DDL de loom. Écrit
+# ici plutôt qu'importé : la config ne dépend pas d'un pilote de base.
+DEFAULT_DB_ROLE: Final = "loom_app"
 # Dossier des artefacts sous celui du journal, quand la config n'en donne pas.
 ARTIFACTS_SUBDIR: Final = ".artifacts"
 
@@ -68,6 +75,14 @@ class EventsStorage(DomainModel):
     # ``jsonl`` : dossier des journaux. ``sqlite`` : fichier de la base.
     # Relatif au fichier de config.
     path: Path | None = None
+    # ``postgres`` : **nom** de la variable d'environnement qui porte le DSN.
+    # La config ne porte jamais un secret, seulement où le lire (§16.3).
+    dsn_env: str | None = None
+    # Rôle applicatif pris par chaque connexion : c'est à lui que s'applique
+    # la politique de lignes, et il n'a pas le droit de modifier un événement
+    # écrit. ``null`` s'en passe — la politique tient encore, par ``FORCE``,
+    # mais le journal redevient modifiable.
+    role: str | None = DEFAULT_DB_ROLE
 
     @model_validator(mode="after")
     def _check_backend(self) -> Self:
@@ -78,6 +93,16 @@ class EventsStorage(DomainModel):
             )
         if self.backend in FILE_BACKENDS and self.path is None:
             raise ValueError(f"Journal {self.backend!r} : 'path' est obligatoire")
+        if self.backend in DSN_BACKENDS:
+            if self.dsn_env is None:
+                raise ValueError(
+                    f"Journal {self.backend!r} : 'dsn_env' est obligatoire — le nom de la "
+                    "variable d'environnement qui porte le DSN, jamais le DSN lui-même"
+                )
+            if self.path is not None:
+                raise ValueError(f"Journal {self.backend!r} : 'path' n'a pas de sens")
+        elif self.dsn_env is not None:
+            raise ValueError(f"Journal {self.backend!r} : 'dsn_env' n'a pas de sens")
         return self
 
     @property
@@ -114,6 +139,11 @@ class IdempotencyStorage(DomainModel):
     # Fichier de la base ``sqlite``, relatif au fichier de config. Sa propre
     # base : ses écritures ne se disputent pas le verrou du journal.
     path: Path | None = None
+    # ``postgres`` : nom de la variable qui porte le DSN. Peut être celle du
+    # journal — les deux tables cohabitent sans se gêner, Postgres ne se
+    # verrouille pas par fichier.
+    dsn_env: str | None = None
+    role: str | None = DEFAULT_DB_ROLE
 
     @model_validator(mode="after")
     def _check_backend(self) -> Self:
@@ -126,6 +156,13 @@ class IdempotencyStorage(DomainModel):
             raise ValueError("Magasin d'idempotence 'sqlite' : 'path' est obligatoire")
         if self.backend != "sqlite" and self.path is not None:
             raise ValueError(f"Magasin d'idempotence {self.backend!r} : 'path' n'a pas de sens")
+        if self.backend in DSN_BACKENDS and self.dsn_env is None:
+            raise ValueError(
+                f"Magasin d'idempotence {self.backend!r} : 'dsn_env' est obligatoire — le nom "
+                "de la variable d'environnement qui porte le DSN, jamais le DSN lui-même"
+            )
+        if self.backend not in DSN_BACKENDS and self.dsn_env is not None:
+            raise ValueError(f"Magasin d'idempotence {self.backend!r} : 'dsn_env' n'a pas de sens")
         return self
 
     @property
@@ -153,6 +190,14 @@ class StorageConfig(DomainModel):
         if artifacts.backend == "local" and artifacts.path is None and self.events.path is None:
             raise ValueError(
                 "Artefacts 'local' : 'path' est obligatoire quand le journal n'est pas en fichiers"
+            )
+        if self.events.backend in DSN_BACKENDS and artifacts.backend is None:
+            # Un journal durable qui laisserait les artefacts en mémoire
+            # garderait la trace de fichiers disparus à la fermeture : le
+            # piège est trop silencieux pour un défaut.
+            raise ValueError(
+                f"Journal {self.events.backend!r} : déclarer 'storage.artifacts' — 'local' "
+                "avec son 'path', ou 'memory' si les artefacts n'ont pas à survivre"
             )
         return self
 

@@ -153,6 +153,8 @@ _SQLITE = pytest.param(
     "sqlite",
     marks=pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent"),
 )
+# Postgres demande un service : ``postgres_dsn`` saute l'essai s'il n'y en a pas.
+_POSTGRES = pytest.param("postgres", marks=pytest.mark.integration)
 
 
 def _sqlite(path: Path, **options: float) -> IdempotencyStore:
@@ -162,17 +164,26 @@ def _sqlite(path: Path, **options: float) -> IdempotencyStore:
     return SqliteIdempotency(path, **options)  # pyright: ignore[reportArgumentType]
 
 
-@pytest.fixture(params=["memory", _SQLITE])
+def _postgres(dsn: str, **options: float) -> IdempotencyStore:
+    """Magasin Postgres, importé au besoin : l'extra peut être absent."""
+    from loom_ia.adapters.idempotency.postgres import PostgresIdempotency
+
+    return PostgresIdempotency(dsn, **options)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.fixture(params=["memory", _SQLITE, _POSTGRES])
 async def magasin(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncGenerator[Magasin]:
     """Fabrique un magasin partagé du type demandé, et le referme après l'essai."""
     ouverts: list[IdempotencyStore] = []
+    dsn = str(request.getfixturevalue("postgres_dsn")) if request.param == "postgres" else ""
 
     def build(**options: float) -> IdempotencyStore:
-        store: IdempotencyStore = (
-            InMemoryIdempotency(**options)  # pyright: ignore[reportArgumentType]
-            if request.param == "memory"
-            else _sqlite(tmp_path / "idempotence.db", **options)
-        )
+        if request.param == "memory":
+            store: IdempotencyStore = InMemoryIdempotency(**options)  # pyright: ignore[reportArgumentType]
+        elif request.param == "postgres":
+            store = _postgres(dsn, **options)
+        else:
+            store = _sqlite(tmp_path / "idempotence.db", **options)
         ouverts.append(store)
         return store
 
