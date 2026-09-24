@@ -4,7 +4,9 @@
 Demande l'extra ``mcp`` : ``uv sync --extra mcp``.
 """
 
+from loom_ia.access.mcp_server.resources import ResourceReader
 from loom_ia.access.mcp_server.server import (
+    CANCEL_TOOL,
     REPORT_TOOL,
     SERVER_NAME,
     STATUS_TOOL,
@@ -15,9 +17,11 @@ from loom_ia.access.mcp_server.server import (
 )
 
 __all__ = [
+    "CANCEL_TOOL",
     "REPORT_TOOL",
     "SERVER_NAME",
     "STATUS_TOOL",
+    "ResourceReader",
     "answer",
     "create_server",
     "run_stdio",

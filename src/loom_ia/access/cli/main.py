@@ -44,6 +44,9 @@ from loom_ia.access.api import (
     UnknownSession,
 )
 from loom_ia.access.progress import Progress, notes
+from loom_ia.access.resources import RUNS as MCP_RUNS
+from loom_ia.access.resources import SESSIONS as MCP_SESSIONS
+from loom_ia.access.resources import TEMPLATES as MCP_TEMPLATES
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, LoomConfig, config_json_schema, load_config
@@ -357,6 +360,10 @@ async def _validate(args: argparse.Namespace) -> int:
     if mcp.http:
         origines = _listed(mcp.allowed_origins) if mcp.allowed_origins else "aucune déclarée"
         print(f"MCP HTTP   : monté sous {config.server.http.base_path}/mcp, origines : {origines}")
+        gabarits = len(MCP_TEMPLATES)
+        print(
+            f"    ressources en lecture seule : {MCP_RUNS}, {MCP_SESSIONS}, et {gabarits} gabarits"
+        )
     for line in _key_lines(config):
         print(f"    {line}")
     if config.tenants:
@@ -780,6 +787,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
         publies = _listed(agent.name for agent in config.agents if agent.expose.mcp)
         print(f"MCP HTTP   : http://{host}:{port}{http.base_path}/mcp")
         print(f"Outils MCP : {publies}")
+        # Les ressources ne dépendent d'aucune config : elles sont le journal,
+        # en lecture seule, et la clé de la requête dit ce qu'elle en voit.
+        print(f"Ressources : {MCP_RUNS}, {MCP_SESSIONS}, et {len(MCP_TEMPLATES)} gabarits")
     serve(Loom(config), host=args.host, port=args.port)
     return OK
 

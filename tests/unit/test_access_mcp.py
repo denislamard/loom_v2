@@ -1,33 +1,46 @@
 # SPDX-License-Identifier: Apache-2.0
 """Accès MCP : les agents publiés en outils, client et serveur en process."""
 
+import base64
+import json
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
 import pytest
-from conftest import ANSWER, QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, PNG, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
-from loom_ia.core.events import Event
-from loom_ia.core.model import SessionId
+from loom_ia.core.events import Event, RunCancelled
+from loom_ia.core.model import Attachment, SessionId
 
 pytest.importorskip("mcp", reason="extra 'mcp' absent")
 
 from mcp import ClientSession
 from mcp.client.session import ElicitationFnT
 from mcp.shared.context import RequestContext
+from mcp.shared.exceptions import McpError
 from mcp.shared.memory import create_connected_server_and_client_session as connected
 from mcp.types import (
+    BlobResourceContents,
     ContentBlock,
     ElicitRequestParams,
     ElicitResult,
     Implementation,
+    ReadResourceResult,
     TextContent,
+    TextResourceContents,
 )
+from pydantic import AnyUrl
 
-from loom_ia.access.mcp_server import REPORT_TOOL, STATUS_TOOL, create_server
+from loom_ia.access.mcp_server import (
+    CANCEL_TOOL,
+    REPORT_TOOL,
+    STATUS_TOOL,
+    create_server,
+)
+from loom_ia.access.resources import RUNS, SESSIONS, TEMPLATES
 
 # Le rappel qu'un client branche pour répondre aux formulaires du serveur.
 type Elicitation = ElicitationFnT
@@ -59,7 +72,7 @@ async def test_each_published_agent_is_a_tool(demo: ConfigFactory) -> None:
         listed = await client.list_tools()
 
     tools = {tool.name: tool for tool in listed.tools}
-    assert set(tools) == {"demo", STATUS_TOOL, REPORT_TOOL}
+    assert set(tools) == {"demo", STATUS_TOOL, REPORT_TOOL, CANCEL_TOOL}
     assert tools["demo"].description == "Répond aux questions de calcul."
     assert tools["demo"].inputSchema["required"] == ["message"]
     assert "run_id" in (tools["demo"].outputSchema or {})["properties"]
@@ -124,6 +137,128 @@ async def test_the_journal_is_the_same_as_by_the_python_access(demo: ConfigFacto
         by_python = await loom.events(direct.run_id)
 
     assert [event.type for event in by_mcp] == [event.type for event in by_python]
+
+
+# --- Ressources et arrêt (J5.4b) ---------------------------------------------
+
+
+async def test_the_two_indexes_are_listed_and_the_rest_is_templated(demo: ConfigFactory) -> None:
+    async with serving(demo()) as (_, client):
+        listed = await client.list_resources()
+        gabarits = await client.list_resource_templates()
+
+    assert [str(entry.uri) for entry in listed.resources] == [RUNS, SESSIONS]
+    assert all(entry.mimeType == "application/json" for entry in listed.resources)
+    # Ce qu'on ne peut pas énumérer sans tout ouvrir se construit d'un gabarit.
+    assert [template.uriTemplate for template in gabarits.resourceTemplates] == [
+        uri for uri, _, _ in TEMPLATES
+    ]
+    assert all(template.description for template in gabarits.resourceTemplates)
+
+
+async def test_the_index_of_runs_is_the_page_of_the_python_access(demo: ConfigFactory) -> None:
+    async with serving(demo()) as (loom, client):
+        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
+        await loom.run("demo", QUESTION, session_id=SessionId("c-2"))
+        page = _read(await client.read_resource(AnyUrl(RUNS)))
+        journaux = _read(await client.read_resource(AnyUrl(SESSIONS)))
+        direct = await loom.runs()
+
+    assert [run["run_id"] for run in page["runs"]] == [run.run_id for run in direct.runs]
+    assert first.run_id in [run["run_id"] for run in page["runs"]]
+    # La ressource dit ce que la page dit : ce qu'elle a coûté, et si elle est bornée.
+    assert page["scanned"] == direct.scanned and page["truncated"] is direct.truncated
+    assert [record["session_id"] for record in journaux] == ["c-2", "c-1"]
+
+
+async def test_a_run_and_its_trace_are_read_by_uri(demo: ConfigFactory) -> None:
+    async with serving(demo()) as (loom, client):
+        ran = await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
+        dans = "?session_id=c-1"
+        run = _read(await client.read_resource(AnyUrl(f"{RUNS}/{ran.run_id}{dans}")))
+        trace = _read(await client.read_resource(AnyUrl(f"{RUNS}/{ran.run_id}/events{dans}")))
+        fiche = _read(await client.read_resource(AnyUrl(f"{SESSIONS}/c-1")))
+        journal = _read(await client.read_resource(AnyUrl(f"{SESSIONS}/c-1/events")))
+        entiers = await loom.events(ran.run_id, session_id=SessionId("c-1"))
+
+    assert (run["status"], run["text"]) == ("completed", ANSWER)
+    assert [event["type"] for event in trace] == [event.type for event in entiers]
+    assert fiche["session_id"] == "c-1" and [r["agent"] for r in fiche["runs"]] == ["demo"]
+    # Le journal de la session porte ses marqueurs, l'arbre du run non.
+    assert len(journal) >= len(trace)
+
+
+async def test_an_unknown_resource_says_so(demo: ConfigFactory) -> None:
+    async with serving(demo()) as (_, client):
+        for uri in (
+            f"{RUNS}/run-absent",
+            f"{SESSIONS}/c-absente",
+            f"{SESSIONS}/c-absente/events",
+            "loom://autre-chose",
+        ):
+            with pytest.raises(McpError, match="introuvable"):
+                await client.read_resource(AnyUrl(uri))
+
+
+async def test_the_bytes_of_a_file_are_read_by_resource(tree: ConfigFactory) -> None:
+    async with serving(tree()) as (loom, client):
+        photo = Attachment(data=PNG, media_type="image/png", name="photo.png")
+        ran = await loom.run("demo", TREE_QUESTION, attachments=[photo])
+        [record] = [art for art in ran.artifacts if art.origin == "attachment"]
+        # L'URI que le journal publie se lit telle quelle : un lien rendu par
+        # loom n'est plus un lien mort.
+        directe = await client.read_resource(AnyUrl(record.uri))
+        alias = record.uri.replace("artifact://", "loom://artifacts/")
+        par_alias = await client.read_resource(AnyUrl(alias))
+
+    assert _blob(directe) == PNG and _blob(par_alias) == PNG
+    assert directe.contents[0].mimeType == "image/png"
+
+
+async def test_a_file_beyond_the_read_bound_is_refused(demo: ConfigFactory) -> None:
+    # Le déport d'une sortie d'outil peut passer la borne de lecture ; l'octet
+    # est là, la ressource refuse de le rendre, et elle dit laquelle borne.
+    path = demo(execution={"attachments": {"max_bytes": 64}})
+    uri = "artifact://default/c-1/gros.bin"
+    async with serving(path) as (loom, client):
+        await loom.artifacts.put(uri, b"x" * 65)
+        with pytest.raises(McpError, match="au-delà de la limite de lecture"):
+            await client.read_resource(AnyUrl(uri))
+
+
+async def test_a_file_of_another_client_is_not_found(demo: ConfigFactory) -> None:
+    path = demo(tenants=[{"id": "default"}, {"id": "dupont"}])
+    sien = "artifact://dupont/c-1/abc.png"
+    mien = "artifact://default/c-1/abc.png"
+    async with serving(path) as (loom, client):
+        await loom.artifacts.put(sien, PNG)
+        await loom.artifacts.put(mien, PNG)
+        # Le serveur en stdio sert `default` : le fichier existe, et il est
+        # pourtant « introuvable » — on n'apprend pas qu'il est là.
+        with pytest.raises(McpError, match="introuvable"):
+            await client.read_resource(AnyUrl(sien))
+        # Le même, chez soi, se lit.
+        assert _blob(await client.read_resource(AnyUrl(mien))) == PNG
+
+
+async def test_cancel_stops_a_run_and_says_when_there_was_nothing_to_stop(
+    demo: ConfigFactory,
+) -> None:
+    async with serving(demo()) as (loom, client):
+        ran = await loom.run("demo", QUESTION)
+        fini = await client.call_tool(CANCEL_TOOL, {"run_id": ran.run_id})
+        laisse = await loom.submit("demo", QUESTION)
+        arrete = await client.call_tool(CANCEL_TOOL, {"run_id": laisse, "by": "l'artisan"})
+        events = await loom.events(laisse)
+
+    # Un run déjà terminé n'est pas une erreur : il n'y avait rien à arrêter.
+    assert fini.isError is not True
+    assert fini.structuredContent == {"run_id": ran.run_id, "cancelled": False}
+    assert "déjà terminé" in _text(fini.content)
+    assert arrete.structuredContent == {"run_id": laisse, "cancelled": True}
+    # `by` est de l'audit, porté par la charge et non par une facette.
+    [stopped] = [event.payload for event in events if event.type == "run.cancelled"]
+    assert isinstance(stopped, RunCancelled) and stopped.by == "l'artisan"
 
 
 # --- Approbations : elicitation, ou pause (J4.5) ------------------------------
@@ -227,3 +362,17 @@ def _reason(events: Sequence[Event], type_: str) -> str:
 
 def _text(content: Sequence[ContentBlock]) -> str:
     return " ".join(part.text for part in content if isinstance(part, TextContent))
+
+
+def _read(result: ReadResourceResult) -> Any:
+    """Le JSON d'une ressource lue."""
+    [content] = result.contents
+    assert isinstance(content, TextResourceContents)
+    assert content.mimeType == "application/json"
+    return json.loads(content.text)
+
+
+def _blob(result: ReadResourceResult) -> bytes:
+    [content] = result.contents
+    assert isinstance(content, BlobResourceContents)
+    return base64.b64decode(content.blob)

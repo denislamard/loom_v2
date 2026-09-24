@@ -51,13 +51,16 @@ from typing import Any, Final
 
 import mcp.types as types
 from mcp.server.lowlevel import Server
+from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.stdio import stdio_server
 from mcp.shared.context import RequestContext
+from pydantic import AnyUrl
 from pydantic.json_schema import models_json_schema
 
 from loom_ia.access.api import JudgeVerdict, Loom, RunResult, UnknownRun
 from loom_ia.access.caller import Caller
 from loom_ia.access.mcp_server.attachments import ATTACHMENTS_INPUT, AttachmentReader
+from loom_ia.access.mcp_server.resources import ResourceReader
 from loom_ia.access.progress import Progress
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.config.models import Scope
@@ -90,6 +93,9 @@ _INSTRUCTIONS: Final = (
 type CallerSource = Callable[[], Caller]
 STATUS_TOOL: Final = "run_status"
 REPORT_TOOL: Final = "run_report"
+# Nommé `cancel` comme #40 l'annonce depuis J1, et non `run_cancel` : la
+# famille des deux autres outils de contrôle ferait pourtant la paire.
+CANCEL_TOOL: Final = "cancel"
 # Ce qu'un formulaire d'elicitation peut rendre, par champ.
 type FormValue = str | int | float | bool | list[str] | None
 
@@ -118,6 +124,31 @@ STATUS_INPUT: Final[dict[str, Any]] = {
         "session_id": {"type": "string", "description": "Journal du run, s'il en a un"},
     },
     "required": ["run_id"],
+    "additionalProperties": False,
+}
+
+CANCEL_INPUT: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "run_id": {"type": "string", "description": "Identifiant du run à arrêter"},
+        "session_id": {"type": "string", "description": "Journal du run, s'il en a un"},
+        "by": {
+            "type": "string",
+            "description": "Qui demande l'arrêt ; inscrit au journal",
+        },
+    },
+    "required": ["run_id"],
+    "additionalProperties": False,
+}
+
+CANCEL_OUTPUT: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "run_id": {"type": "string"},
+        # Faux si le run était déjà terminé : il n'y avait rien à arrêter.
+        "cancelled": {"type": "boolean"},
+    },
+    "required": ["run_id", "cancelled"],
     "additionalProperties": False,
 }
 
@@ -286,7 +317,31 @@ def create_server(
                 outputSchema=REPORT_OUTPUT,
             )
         )
+        tools.append(
+            types.Tool(
+                name=CANCEL_TOOL,
+                description="Arrête un run en cours ; faux s'il était déjà terminé",
+                inputSchema=CANCEL_INPUT,
+                outputSchema=CANCEL_OUTPUT,
+                annotations=types.ToolAnnotations(destructiveHint=True, idempotentHint=True),
+            )
+        )
         return tools
+
+    def reader(caller: Caller) -> ResourceReader:
+        return ResourceReader(loom, caller, policy=loom.config.execution.attachments)
+
+    @server.list_resources()
+    async def list_resources() -> list[types.Resource]:
+        return reader(who()).listed()
+
+    @server.list_resource_templates()
+    async def list_resource_templates() -> list[types.ResourceTemplate]:
+        return reader(who()).templates()
+
+    @server.read_resource()
+    async def read_resource(uri: AnyUrl) -> list[ReadResourceContents]:
+        return await reader(who()).read(str(uri))
 
     @server.call_tool()
     async def call_tool(tool: str, arguments: dict[str, Any]) -> types.CallToolResult:
@@ -301,6 +356,8 @@ def create_server(
         if not caller.may(needed):
             return _refused(f"Clé sans la portée {needed!r}")
         try:
+            if tool == CANCEL_TOOL:
+                return await _cancel(loom, RunId(str(run)), session_id, arguments, caller)
             if tool == REPORT_TOOL:
                 return await _report(loom, run_id, session_id, caller.tenant)
             if tool == STATUS_TOOL:
@@ -502,6 +559,46 @@ async def _report(
         content=[types.TextContent(type="text", text="\n".join(render(report)))],
         structuredContent=report.model_dump(mode="json"),
     )
+
+
+async def _cancel(
+    loom: Loom,
+    run_id: RunId,
+    session_id: SessionId | None,
+    arguments: dict[str, Any],
+    caller: Caller,
+) -> types.CallToolResult:
+    """Arrête un run : l'agent du run décide du droit, comme en REST.
+
+    Arrêter un run qu'on peut lancer n'est pas une permission de plus : c'est
+    la portée ``run`` sur **son** agent, vérifiée après avoir lu de quel agent
+    il est. Un run déjà terminé n'est pas une erreur — il n'y avait rien à
+    arrêter, et la réponse le dit.
+    """
+    state = await loom.state(run_id, session_id=session_id, tenant_id=caller.tenant)
+    if not caller.allows(state.agent):
+        return _refused(f"Clé non autorisée sur l'agent {state.agent!r}")
+    by = arguments.get("by")
+    stopped = await loom.cancel(
+        run_id,
+        session_id=session_id,
+        by=str(by) if by else _signed(caller),
+        tenant_id=caller.tenant,
+    )
+    said = "arrêté" if stopped else "déjà terminé, rien à arrêter"
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=f"Run {run_id} : {said}.")],
+        structuredContent={"run_id": run_id, "cancelled": stopped},
+    )
+
+
+def _signed(caller: Caller) -> str | None:
+    """Qui signe un arrêt faute d'un ``by`` : la clé d'API, sinon personne.
+
+    En stdio il n'y a pas de clé, donc personne à nommer : l'audit tiendra à
+    ce que l'appelant a bien voulu dire.
+    """
+    return caller.key.id if caller.key is not None else None
 
 
 def _refused(message: str) -> types.CallToolResult:

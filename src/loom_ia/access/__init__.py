@@ -16,6 +16,15 @@ from loom_ia.access.api import (
     UnknownRun,
     UnknownSession,
 )
+from loom_ia.access.resources import (
+    ARTIFACTS,
+    EVENTS,
+    JSON_TYPE,
+    RUNS,
+    SCHEME,
+    SESSIONS,
+    TEMPLATES,
+)
 from loom_ia.tenancy import (
     BudgetExhausted,
     QuotaExceeded,
@@ -24,6 +33,13 @@ from loom_ia.tenancy import (
 )
 
 __all__ = [
+    "ARTIFACTS",
+    "EVENTS",
+    "JSON_TYPE",
+    "RUNS",
+    "SCHEME",
+    "SESSIONS",
+    "TEMPLATES",
     "AgentNotAllowed",
     "BudgetExhausted",
     "ClaimConflict",
