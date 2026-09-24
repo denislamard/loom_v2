@@ -115,7 +115,22 @@ def test_config_can_be_written_in_python() -> None:
     [
         ({"version": 2}, None, "Version de config 2 non prise en charge"),
         ({"profiles": {}}, None, "'profiles' : prévu pour le jalon J5"),
-        ({"storage": {"bus": {}}}, None, "'bus' : prévu pour le jalon J4"),
+        ({"storage": {"bus": {}}}, None, "'bus' : prévu pour le jalon J5.3c"),
+        (
+            {"storage": {"queue": {"backend": "sqs"}}},
+            None,
+            "File 'sqs' : seuls asyncio, rabbitmq",
+        ),
+        (
+            {"storage": {"queue": {"backend": "rabbitmq"}}},
+            None,
+            "File 'rabbitmq' : 'url_env' est obligatoire",
+        ),
+        (
+            {"storage": {"queue": {"backend": "asyncio", "url_env": "URL"}}},
+            None,
+            "File 'asyncio' : 'url_env' n'a pas de sens",
+        ),
         (
             {"storage": {"idempotency": {"backend": "firestore"}}},
             None,

@@ -15,8 +15,12 @@ vérifie, un superutilisateur contournant tout ce qui suit.
 import asyncio
 from urllib.parse import urlsplit, urlunsplit
 
-import asyncpg
 import pytest
+
+# Le module importe le pilote : sans l'extra, tout l'essai se saute.
+pytest.importorskip("asyncpg", reason="extra 'postgres' absent")
+
+import asyncpg
 
 from loom_ia.adapters.postgres.pool import PostgresNotPrepared, RoleUnavailable
 from loom_ia.adapters.postgres.sql import DEFAULT_ROLE, EVENTS_TABLE

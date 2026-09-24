@@ -187,7 +187,7 @@ Les commandes ci-dessous sont indicatives.
 
 | Accès | Exécution |
 |---|---|
-| Python | Un exemple par phase, sur la config `examples/j5/relance/` : `clients.py` (5.1a), `quotas.py` (5.1b), `securite.py` (5.2a), `serveur_mcp.py` (5.2b), `journal_postgres.py` (5.3a) |
+| Python | Un exemple par phase, sur la config `examples/j5/relance/` : `clients.py` (5.1a), `quotas.py` (5.1b), `securite.py` (5.2a), `serveur_mcp.py` (5.2b), `journal_postgres.py` (5.3a), `file_et_worker.py` (5.3b) |
 | CLI | `loom worker` (x2), `loom serve`, `loom keys create` |
 | REST | Clés API par client, scopes, `run_summaries`, `EventQuery`, reprise SSE par `Last-Event-ID` |
 | MCP | MCP HTTP monté avec REST ; ressources `loom://runs/{id}` ; `Origin` refusé si invalide |

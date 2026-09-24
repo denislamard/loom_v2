@@ -975,6 +975,15 @@ La concession est appliquée : `drive` écrit `run.claimed` avant de piloter et 
 
 **Réalisation (phase 4.3a) :** les travaux `resume` et `expire_approval` sont traités, par le même pilote que `run`. Un travail **différé** n'est plus considéré comme en cours : `drain()` ne l'attend pas et la fermeture l'abandonne, au lieu de retenir le process pour un réveil à venir. Un run mené par la file reçoit le même traitement qu'un run appelé en direct — snapshot d'historique, compaction mise en file, réveil d'une approbation.
 
+**Réalisation (phase 5.3b)** (détails : `fonctions.md`, point 27) : file `rabbitmq` (extra `rabbitmq`)
+et commande `loom worker`. Une instance ne fait alors que publier, les workers consomment ; le port
+gagne `drain()` (une file qui publie n'a rien à attendre) et un raffinement `ServedQueue` (`serve`,
+`stop`), à quoi `loom worker` s'adresse. Acquittement après exécution, donc livraison **au moins une
+fois** ; délai imité par une file d'attente à durée de vie qui retombe dans la file de travail ;
+`state` et `cancel` rendent `unknown` et faux. Un travail qui bute sur une concession vivante est
+reposé pour l'après-bail : c'est ce qui fait qu'un run passe d'un worker mort à un vivant sans
+intervention.
+
 ### 12.2 Pause en mode librairie
 
 - Un agent qui peut se mettre en pause (outil en `approval: always | policy`, ou politique qui peut renvoyer `Pause`) exige un `EventStore` durable (JSONL au minimum) : erreur de config, avertissement seulement en profil dev (#28).
@@ -1314,6 +1323,7 @@ storage:
                                                         # firestore|redis plus tard
   bus:         {backend: memory}                        # memory|postgres|redis|rabbitmq
   queue:       {backend: asyncio}                       # asyncio|rabbitmq (+ url_env)
+                                                        # rabbitmq : les tâches tournent dans `loom worker`
   encryption:  {per_tenant_keys: false}
   retention:   {events_days: null}
 

@@ -10,6 +10,7 @@
     loom serve                     sert l'API REST
     loom mcp                       sert les agents en MCP, sur stdio
     loom keys create <nom>         fabrique une clé d'API
+    loom worker                    consomme la file des tâches de fond
     loom storage sql               SQL du stockage Postgres déclaré
     loom schema                    JSON Schema du fichier de configuration
 
@@ -22,8 +23,9 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final, cast
@@ -46,7 +48,7 @@ from loom_ia.agents.registry import UnknownAgent
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, LoomConfig, config_json_schema, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
-from loom_ia.config.models import EventsStorage, IdempotencyStorage
+from loom_ia.config.models import EventsStorage, IdempotencyStorage, QueueStorage
 from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -287,6 +289,18 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("--yes", action="store_true", help="ne demande pas confirmation")
     remove.set_defaults(handler=cmd_sessions_delete)
 
+    worker = commands.add_parser(
+        "worker", help="consomme la file des tâches de fond (runs, reprises, résumés)"
+    )
+    worker.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        metavar="N",
+        help="tâches menées de front (défaut : 1)",
+    )
+    worker.set_defaults(handler=cmd_worker)
+
     storage = commands.add_parser("storage", help="stockages de service : le SQL à appliquer")
     storage_actions = storage.add_subparsers(dest="action", required=True)
     ddl = storage_actions.add_parser(
@@ -326,6 +340,10 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Journal    : {journal}")
     print(f"Artefacts  : {artifacts}")
     print(f"Idempotence: {_storage_line(storage.idempotency)}")
+    print(f"File       : {_queue_line(storage.queue)}")
+    if storage.queue.brokered:
+        # Le piège de la file servie : tout se met en file, rien ne tourne.
+        print("    les tâches de fond attendent un worker : loom worker")
     print(f"Clés d'API : {keys or 'aucune (API REST ouverte)'}")
     mcp = config.server.mcp
     if mcp.http:
@@ -824,6 +842,75 @@ def _deadline(given: str | None) -> datetime | None:
             f"--expires : date ISO (2027-01-01) ou durée (90j, 12h) attendue, reçu {given!r}"
         ) from None
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def cmd_worker(args: argparse.Namespace) -> int:
+    return asyncio.run(_worker(args))
+
+
+async def _worker(args: argparse.Namespace) -> int:
+    """Consomme la file jusqu'à Ctrl-C, après avoir repris ce qui traînait.
+
+    La reprise d'abord : un worker qui démarre est souvent celui qui remplace
+    un worker mort, et ce qui restait en plan n'est dans aucune file — il est
+    au journal (H3).
+    """
+    config = load_config(args.config)
+    apply_logging(config)
+    if args.jobs < 1:
+        raise ValueError(f"--jobs : au moins 1, reçu {args.jobs}")
+    queue = config.storage.queue
+    print(f"Config   : {args.config}")
+    print(f"File     : {_queue_line(queue)}")
+    print(f"Agents   : {_listed(agent.name for agent in config.agents)}")
+    print(f"Clients  : {_listed(config.tenant_ids)}")
+    async with Loom(config) as loom:
+        repris = [
+            run for tenant in config.tenant_ids for run in await loom.recover(tenant_id=tenant)
+        ]
+        print(f"Reprise  : {len(repris)} run(s) remis en file")
+        stop = _on_signals(loom)
+        print(f"En écoute, {args.jobs} tâche(s) de front. Ctrl-C pour arrêter.", flush=True)
+        try:
+            await loom.work(jobs=args.jobs)
+        finally:
+            stop()
+    print("Worker arrêté : plus rien en cours.")
+    return OK
+
+
+def _on_signals(loom: Loom) -> Callable[[], None]:
+    """Fait finir le worker proprement sur SIGINT et SIGTERM ; rend de quoi défaire.
+
+    Un arrêt demandé n'interrompt pas la tâche en cours : elle va au bout, et
+    c'est ce qui évite de la faire redélivrer pour rien.
+    """
+    loop = asyncio.get_running_loop()
+    signals = (signal.SIGINT, signal.SIGTERM)
+    # Gardée le temps de l'arrêt : une tâche sans référence peut être ramassée.
+    asking: set[asyncio.Task[None]] = set()
+
+    def asked() -> None:
+        print("\nArrêt demandé : la tâche en cours va au bout.", file=sys.stderr, flush=True)
+        task = asyncio.create_task(loom.stop_work())
+        asking.add(task)
+        task.add_done_callback(asking.discard)
+
+    for number in signals:
+        loop.add_signal_handler(number, asked)
+
+    def undo() -> None:
+        for number in signals:
+            loop.remove_signal_handler(number)
+
+    return undo
+
+
+def _queue_line(queue: QueueStorage) -> str:
+    if queue.url_env is None:
+        return queue.backend
+    renseignee = "renseignée" if os.environ.get(queue.url_env) else "ABSENTE"
+    return f"{queue.backend} (URL dans {queue.url_env} : {renseignee})"
 
 
 def cmd_storage_sql(args: argparse.Namespace) -> int:

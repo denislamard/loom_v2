@@ -18,7 +18,7 @@ from loom_ia.core.ports.model_client import (
     complete,
 )
 from loom_ia.core.ports.policy import Policy
-from loom_ia.core.ports.queue import Job, JobKind, JobState, TaskQueue
+from loom_ia.core.ports.queue import Job, JobKind, JobState, ServedQueue, TaskQueue
 from loom_ia.core.ports.secrets import SecretProvider
 from loom_ia.core.ports.tool import (
     ReuseNote,
@@ -51,6 +51,7 @@ __all__ = [
     "ReuseNote",
     "SecretProvider",
     "SequenceConflict",
+    "ServedQueue",
     "SessionRecord",
     "SourceContext",
     "SourceUnavailable",

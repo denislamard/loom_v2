@@ -65,7 +65,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "asyncpg-stubs>=0.31.3",
     "httpx2>=2.13.0",
     "import-linter>=2.15",
     "pyright>=1.1.414",
@@ -75,6 +74,13 @@ dev = [
     "ruff>=0.16.8",
     "types-jsonschema>=4.26.0.20260518",
     "types-pyyaml>=6.0.12.20260906",
+]
+# Types des paquets d'extras, pour pyright : ils tirent le paquet lui-même
+# (asyncpg-stubs dépend d'asyncpg), donc ils restent hors de `dev` — sinon la
+# passe « noyau seul » n'éprouverait plus le refus d'un extra absent.
+# Vérification complète : uv sync --all-extras --group types
+types = [
+    "asyncpg-stubs>=0.31.3",
 ]
 
 [tool.ruff]

@@ -51,9 +51,11 @@ def make_store(request: pytest.FixtureRequest, tmp_path: Path) -> StoreFactory:
 
         return lambda: SqliteEventStore(tmp_path / "journal.sqlite3")
     if request.param == "postgres":
+        # Le DSN d'abord : la fixture saute l'essai sans base ni extra, et
+        # l'import du pilote ne doit pas précéder ce saut.
+        dsn = str(request.getfixturevalue("postgres_dsn"))
         from loom_ia.adapters.stores.postgres import PostgresEventStore
 
-        dsn = str(request.getfixturevalue("postgres_dsn"))
         return lambda: PostgresEventStore(dsn)
     return lambda: JsonlEventStore(tmp_path / "journal")
 

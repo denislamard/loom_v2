@@ -63,6 +63,10 @@ FILE_BACKENDS: Final = ("jsonl", "sqlite")
 DURABLE_BACKENDS: Final = ("jsonl", "sqlite", "postgres")
 # Stockages dont le raccordement passe par un DSN, jamais par un chemin.
 DSN_BACKENDS: Final = ("postgres",)
+QUEUE_BACKENDS: Final = ("asyncio", "rabbitmq")
+# Files servies par un courtier : les tâches tournent dans un autre process,
+# celui de ``loom worker``, et pas dans celui qui les met en file.
+BROKERED_QUEUES: Final = ("rabbitmq",)
 # Rôle applicatif Postgres par défaut, celui que crée le DDL de loom. Écrit
 # ici plutôt qu'importé : la config ne dépend pas d'un pilote de base.
 DEFAULT_DB_ROLE: Final = "loom_app"
@@ -171,10 +175,48 @@ class IdempotencyStorage(DomainModel):
         return self.backend in SHARED_IDEMPOTENCY
 
 
+class QueueStorage(DomainModel):
+    """File des tâches de fond : runs soumis, reprises, résumés (#27).
+
+    ``asyncio`` exécute dans le process qui met en file : c'est le mode
+    librairie, et la durabilité vient du journal, pas de la file. ``rabbitmq``
+    ne fait que **publier** — les tâches tournent dans les workers
+    (``loom worker``), et un process qui met en file sans worker derrière voit
+    ses tâches attendre.
+    """
+
+    backend: str = "asyncio"
+    # ``rabbitmq`` : nom de la variable d'environnement qui porte l'URL du
+    # courtier (``amqp://…``). La config ne porte jamais un secret (§16.3).
+    url_env: str | None = None
+
+    @model_validator(mode="after")
+    def _check_backend(self) -> Self:
+        if self.backend not in QUEUE_BACKENDS:
+            raise ValueError(
+                f"File {self.backend!r} : seuls {', '.join(QUEUE_BACKENDS)} "
+                "sont disponibles à ce jalon"
+            )
+        if self.backend == "rabbitmq" and self.url_env is None:
+            raise ValueError(
+                "File 'rabbitmq' : 'url_env' est obligatoire — le nom de la variable "
+                "d'environnement qui porte l'URL du courtier, jamais l'URL elle-même"
+            )
+        if self.backend != "rabbitmq" and self.url_env is not None:
+            raise ValueError(f"File {self.backend!r} : 'url_env' n'a pas de sens")
+        return self
+
+    @property
+    def brokered(self) -> bool:
+        """Vrai si les tâches tournent dans un autre process que celui qui les met en file."""
+        return self.backend in BROKERED_QUEUES
+
+
 class StorageConfig(DomainModel):
     events: EventsStorage = EventsStorage()
     artifacts: ArtifactsStorage = ArtifactsStorage()
     idempotency: IdempotencyStorage = IdempotencyStorage()
+    queue: QueueStorage = QueueStorage()
 
     @model_validator(mode="before")
     @classmethod

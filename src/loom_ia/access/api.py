@@ -62,16 +62,16 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Self
+from typing import Final, Self
 
 from pydantic import AwareDatetime, JsonValue, NonNegativeInt, PositiveInt
 
-from loom_ia.adapters.queue import AsyncioTaskQueue, Handler
+from loom_ia.adapters.queue import Handler
 from loom_ia.adapters.stores import NotifyingEventStore
 from loom_ia.adapters.usage import InMemoryUsageCounter
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import AgentSpec
-from loom_ia.config import LoomConfig, load_config
+from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.references import Registry
 from loom_ia.core.events import (
@@ -116,7 +116,9 @@ from loom_ia.core.ports import (
     Job,
     JobKind,
     SecretProvider,
+    ServedQueue,
     SessionRecord,
+    TaskQueue,
     UsageCounter,
 )
 from loom_ia.core.projections import RunTree, fold
@@ -138,6 +140,7 @@ from loom_ia.runtime import (
     create_event_store,
     create_idempotency_store,
     create_mcp_pool,
+    create_task_queue,
     load_registry,
 )
 from loom_ia.sessions import CompactionJob, CompactionPlan, write_snapshot
@@ -158,6 +161,11 @@ logger = logging.getLogger(__name__)
 
 # Ce qu'un run donne à voir pendant qu'il se déroule.
 type StreamItem = Event | ModelChunk
+
+# File servie par un courtier (5.3b) : combien de fois un travail attend la fin
+# d'un bail avant d'être abandonné au journal, et de combien on dépasse ce bail.
+MAX_CLAIM_WAITS: Final = 20
+CLAIM_MARGIN: Final = 0.5
 
 
 def is_final(event: Event) -> bool:
@@ -578,8 +586,10 @@ class Loom:
         if self._compaction is not None:
             handlers["compaction"] = self._compacted
         # La file existe toujours depuis 4.2b : elle porte les runs de fond,
-        # que la compaction soit configurée ou non.
-        self._queue = AsyncioTaskQueue(handlers, shutdown_timeout=config.execution.shutdown_timeout)
+        # que la compaction soit configurée ou non. Servie par un courtier
+        # (5.3b), elle ne fait que publier : les traitements ci-dessus ne
+        # servent alors qu'aux workers, où la même instance les consomme.
+        self._queue: TaskQueue = create_task_queue(config, handlers)
 
     @classmethod
     def from_config(
@@ -596,6 +606,16 @@ class Loom:
     @property
     def config(self) -> LoomConfig:
         return self._config
+
+    @property
+    def worker_id(self) -> str:
+        """Identité que ce process inscrit dans la concession d'un run (#27).
+
+        C'est elle qui départage deux pilotes au journal : un `run.claimed`
+        la porte, et la lire dit qui tient le run — utile dès qu'il y a
+        plusieurs workers (5.3b).
+        """
+        return self._worker_id
 
     @property
     def store(self) -> NotifyingEventStore:
@@ -1322,10 +1342,50 @@ class Loom:
         except ClaimConflict as conflict:
             # Un autre pilote le tient : c'est le but de la concession.
             logger.info("%s", conflict)
+            await self._after_the_lease(job, conflict)
             return
         # Un run de fond a droit au même traitement qu'un run appelé en direct :
         # snapshot d'historique, compaction en file, réveil d'une approbation.
         await self._result(final)
+
+    async def _after_the_lease(self, job: Job, conflict: ClaimConflict) -> None:
+        """Repose le travail pour la fin du bail, quand la file est servie (H6).
+
+        Avec une file en mémoire, le pilote qui tient le run est dans ce
+        process : il le mènera au bout, et il n'y a rien à reprogrammer.
+
+        Avec un courtier, c'est autre chose. Un worker tué n'acquitte pas son
+        travail, donc le courtier le redélivre **tout de suite** — mais le bail
+        du mort court encore, et personne ne le renouvellera. Le second pilote
+        arrive donc trop tôt, et s'il en restait là le run attendrait la
+        prochaine reprise au démarrage. On repose le travail pour l'après-bail,
+        et c'est ainsi qu'un run passe d'un worker à l'autre sans qu'on s'en
+        occupe.
+
+        Si le bail appartient à un pilote bien vivant, la même chose se répète
+        au rythme des renouvellements : c'est une surveillance, et elle
+        s'arrête d'elle-même quand le run se termine. Bornée quand même — au
+        bout de ``MAX_CLAIM_WAITS`` attentes, on laisse le run au journal.
+        """
+        if not self._config.storage.queue.brokered:
+            return
+        waited = job.params.get("claim_waits")
+        waits = int(waited) + 1 if isinstance(waited, int) else 1
+        if waits > MAX_CLAIM_WAITS:
+            logger.warning(
+                "Run %s : bail tenu par %s après %d attentes, travail abandonné — "
+                "le run reste au journal, une reprise le retrouvera",
+                job.run_id,
+                conflict.worker_id,
+                MAX_CLAIM_WAITS,
+            )
+            return
+        left = (conflict.lease_until - datetime.now(UTC)).total_seconds()
+        await self._queue.submit(
+            replace(job, params={**job.params, "claim_waits": waits}),
+            key=f"run:{job.run_id}",
+            delay=max(left, 0.0) + CLAIM_MARGIN,
+        )
 
     async def _result(self, state: RunState) -> RunResult:
         """Résultat d'un run qui vient de s'arrêter, avec son rapport et ses verdicts."""
@@ -1378,6 +1438,34 @@ class Loom:
     async def drain(self) -> None:
         """Attend les tâches de fond en cours : runs soumis, résumés."""
         await self._queue.drain()
+
+    # --- Worker (5.3b) --------------------------------------------------------
+
+    async def work(self, *, jobs: int = 1) -> None:
+        """Consomme la file jusqu'à l'arrêt : ce que fait ``loom worker`` (H6).
+
+        Ne rend la main qu'une fois ``stop_work`` demandé **et** les tâches en
+        cours menées au bout. Une file qui exécute chez elle n'a rien à
+        consommer : la demande est alors refusée en nommant ce qu'il faut
+        déclarer.
+        """
+        queue = self._served()
+        logger.info("Worker en écoute, %d tâche(s) de front", jobs)
+        await queue.serve(jobs=jobs)
+
+    async def stop_work(self) -> None:
+        """Demande au worker de s'arrêter : plus de tâche prise, celles en cours finissent."""
+        await self._served().stop()
+
+    def _served(self) -> ServedQueue:
+        queue = self._queue
+        if not isinstance(queue, ServedQueue):
+            raise ConfigError(
+                "Un worker demande une file servie par un courtier "
+                f"('storage.queue.backend: rabbitmq'), pas {self._config.storage.queue.backend!r} "
+                "— qui exécute déjà ses tâches dans le process qui les met en file"
+            )
+        return queue
 
     async def _compacted(self, job: Job) -> None:
         """Tâche de compaction, sortie de la file."""

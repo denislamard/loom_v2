@@ -57,6 +57,7 @@ from pydantic import JsonValue
 from loom_ia.adapters.artifacts import InMemoryArtifactStore, LocalArtifactStore
 from loom_ia.adapters.idempotency import InMemoryIdempotency
 from loom_ia.adapters.models import create_model_client
+from loom_ia.adapters.queue import AsyncioTaskQueue, Handler
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import (
@@ -97,8 +98,10 @@ from loom_ia.core.ports import (
     ChunkCallback,
     EventStore,
     IdempotencyStore,
+    JobKind,
     ModelClient,
     Policy,
+    TaskQueue,
     Tool,
     ToolSource,
 )
@@ -217,6 +220,34 @@ def create_event_store(config: LoomConfig | StorageConfig) -> EventStore:
                 ) from exc
             return SqliteEventStore(events.path)
     return InMemoryEventStore()
+
+
+def create_task_queue(config: LoomConfig, handlers: Mapping[JobKind, Handler]) -> TaskQueue:
+    """File déclarée dans ``storage.queue``.
+
+    ``asyncio`` exécute les tâches ici même ; ``rabbitmq`` les publie, et
+    c'est ``loom worker`` qui les mène. Les traitements sont passés dans les
+    deux cas : c'est le même objet qui sert de file dans un process qui
+    publie et de consommateur dans un worker.
+    """
+    declared = config.storage.queue
+    if declared.backend == "rabbitmq":
+        try:
+            from loom_ia.adapters.queue.rabbitmq import RabbitMqTaskQueue
+        except ImportError as exc:
+            raise ConfigError(
+                "File 'rabbitmq' : le paquet 'aio-pika' n'est pas installé "
+                "(installer l'extra : loom-ia[rabbitmq])"
+            ) from exc
+        variable = declared.url_env or ""
+        url = os.environ.get(variable, "")
+        if not url:
+            raise ConfigError(
+                f"File 'rabbitmq' : la variable {variable!r} est vide ou absente — "
+                "c'est elle qui porte l'URL du courtier"
+            )
+        return RabbitMqTaskQueue(url, handlers)
+    return AsyncioTaskQueue(handlers, shutdown_timeout=config.execution.shutdown_timeout)
 
 
 def postgres_ddl(config: LoomConfig | StorageConfig) -> str:

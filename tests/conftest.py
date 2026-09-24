@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Ce dont les essais Postgres ont besoin, partagé par les suites qui en font.
+"""Ce dont les essais de service ont besoin, partagé par les suites qui en font.
+
+Deux services, deux variables : ``LOOM_TEST_POSTGRES`` et ``LOOM_TEST_RABBITMQ``.
+Ce qui suit vaut pour Postgres ; le courtier, plus bas, se contente d'être là et
+de voir ses files vidées avant chaque essai.
 
 Un vrai Postgres, désigné par la variable ``LOOM_TEST_POSTGRES`` : sans elle,
 les essais qui en dépendent sont sautés, comme ceux d'un extra absent.
@@ -18,6 +22,7 @@ import asyncio
 import os
 from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
+from importlib.util import find_spec
 from typing import Any
 
 import pytest
@@ -25,6 +30,7 @@ import pytest
 from loom_ia.adapters.postgres.sql import EVENTS_TABLE, IDEMPOTENCY_TABLE
 
 POSTGRES_ENV = "LOOM_TEST_POSTGRES"
+RABBITMQ_ENV = "LOOM_TEST_RABBITMQ"
 
 
 @pytest.fixture
@@ -76,5 +82,37 @@ async def _clean(dsn: str) -> None:
                 "ordinaire, propriétaire de sa base."
             )
         await connection.execute(f"DROP TABLE IF EXISTS {EVENTS_TABLE}, {IDEMPOTENCY_TABLE}")
+    finally:
+        await connection.close()
+
+
+@pytest.fixture
+def rabbitmq_url() -> str:
+    """URL d'un RabbitMQ de test, files vidées ; saute l'essai s'il n'y en a pas.
+
+    Les deux files de loom sont purgées avant chaque essai : un travail resté
+    d'un essai précédent serait pris par le worker du suivant.
+    """
+    url = os.environ.get(RABBITMQ_ENV, "")
+    if not url:
+        pytest.skip(f"{RABBITMQ_ENV} absent : pas de courtier pour cet essai")
+    if find_spec("aio_pika") is None:  # pragma: no cover - dépend de l'extra installé
+        pytest.skip("extra 'rabbitmq' absent")
+    _apart(lambda: _empty(url))
+    return url
+
+
+async def _empty(url: str) -> None:
+    import aio_pika
+
+    from loom_ia.adapters.queue.rabbitmq import DELAY_ARGUMENTS, DELAY_QUEUE, WORK_QUEUE
+
+    connection = await aio_pika.connect_robust(url)
+    try:
+        channel = await connection.channel()
+        delayed = await channel.declare_queue(DELAY_QUEUE, durable=True, arguments=DELAY_ARGUMENTS)
+        await delayed.purge()
+        work = await channel.declare_queue(WORK_QUEUE, durable=True)
+        await work.purge()
     finally:
         await connection.close()

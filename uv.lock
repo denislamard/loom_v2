@@ -946,7 +946,6 @@ sqlite = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "asyncpg-stubs" },
     { name = "httpx2" },
     { name = "import-linter" },
     { name = "pyright" },
@@ -956,6 +955,9 @@ dev = [
     { name = "ruff" },
     { name = "types-jsonschema" },
     { name = "types-pyyaml" },
+]
+types = [
+    { name = "asyncpg-stubs" },
 ]
 
 [package.metadata]
@@ -984,7 +986,6 @@ provides-extras = ["anthropic", "openai", "mcp", "http", "sqlite", "postgres", "
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "asyncpg-stubs", specifier = ">=0.31.3" },
     { name = "httpx2", specifier = ">=2.13.0" },
     { name = "import-linter", specifier = ">=2.15" },
     { name = "pyright", specifier = ">=1.1.414" },
@@ -995,6 +996,7 @@ dev = [
     { name = "types-jsonschema", specifier = ">=4.26.0.20260518" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260906" },
 ]
+types = [{ name = "asyncpg-stubs", specifier = ">=0.31.3" }]
 
 [[package]]
 name = "markdown-it-py"

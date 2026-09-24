@@ -9,6 +9,7 @@ politique de lignes, les droits du rôle — est dans
 ``tests/integration/test_postgres.py``.
 """
 
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,6 @@ import yaml
 from conftest import ConfigFactory
 
 from loom_ia.access.cli import main
-from loom_ia.adapters.postgres.pool import rows_touched
 from loom_ia.adapters.postgres.sql import (
     DEFAULT_ROLE,
     EVENTS_TABLE,
@@ -36,6 +36,11 @@ from loom_ia.config.models import (
     StorageConfig,
 )
 from loom_ia.runtime import create_event_store, create_idempotency_store, postgres_ddl
+
+# Ce qui demande le pilote : le SQL, la config et la CLI s'en passent.
+sans_extra = pytest.mark.skipif(find_spec("asyncpg") is None, reason="extra 'postgres' absent")
+# L'inverse : ce qui ne se voit que sans l'extra, dans la passe noyau seul.
+avec_extra = pytest.mark.skipif(find_spec("asyncpg") is not None, reason="extra 'postgres' présent")
 
 DSN = "postgresql://loom_owner:secret@127.0.0.1:5432/loom_test"
 VARIABLE = "LOOM_PG_DSN_ESSAI"
@@ -112,10 +117,13 @@ def test_a_plain_role_name_passes() -> None:
     assert check_name("loom_app_2") == "loom_app_2"
 
 
+@sans_extra
 @pytest.mark.parametrize(
     ("status", "expected"), [("INSERT 0 1", 1), ("UPDATE 0", 0), ("DELETE 12", 12), ("", 0)]
 )
 def test_how_many_rows_a_command_touched(status: str, expected: int) -> None:
+    from loom_ia.adapters.postgres.pool import rows_touched
+
     assert rows_touched(status) == expected
 
 
@@ -159,6 +167,7 @@ def test_the_idempotency_store_can_share_the_journals_variable() -> None:
 # --- Le câblage --------------------------------------------------------------
 
 
+@sans_extra
 def test_an_empty_variable_is_named_in_the_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(VARIABLE, raising=False)
     storage = StorageConfig.model_validate(PG_STORAGE)
@@ -166,6 +175,7 @@ def test_an_empty_variable_is_named_in_the_error(monkeypatch: pytest.MonkeyPatch
         create_event_store(storage)
 
 
+@sans_extra
 def test_the_journal_is_built_from_the_variable(
     demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -176,6 +186,7 @@ def test_the_journal_is_built_from_the_variable(
     assert repr(store) == f"PostgresEventStore({EVENTS_TABLE!r})"
 
 
+@sans_extra
 def test_the_idempotency_store_too(demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(VARIABLE, DSN)
     config = load_config(
@@ -183,6 +194,16 @@ def test_the_idempotency_store_too(demo: ConfigFactory, monkeypatch: pytest.Monk
     )
     store = create_idempotency_store(config)
     assert repr(store) == f"PostgresIdempotency({IDEMPOTENCY_TABLE!r})"
+
+
+@avec_extra
+def test_without_the_extra_the_refusal_names_it(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ce que voit qui déclare un journal postgres sans avoir installé l'extra."""
+    monkeypatch.setenv(VARIABLE, DSN)
+    with pytest.raises(ConfigError, match=r"loom-ia\[postgres\]"):
+        create_event_store(load_config(demo(storage=PG_STORAGE)))
 
 
 # --- Le SQL que la config demande -------------------------------------------
@@ -241,6 +262,7 @@ def test_storage_sql_prints_what_there_is_to_apply(
     assert "loom_owner" not in out
 
 
+@sans_extra
 def test_validate_says_whether_the_variable_is_filled(
     demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

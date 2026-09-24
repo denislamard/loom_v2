@@ -17,8 +17,7 @@ LATER_TENANT: Final[dict[str, str]] = {}
 LATER_MCP_ACCESS: Final[dict[str, str]] = {}
 
 LATER_STORAGE: Final[dict[str, str]] = {
-    "bus": "J4 (bus et observabilité)",
-    "queue": "J4 (arrière-plan)",
+    "bus": "J5.3c (bus Postgres et Redis)",
     "encryption": "J5.5 (chiffrement par client)",
     "retention": "J5.5 (rétention)",
 }
