@@ -1055,6 +1055,8 @@ Réglé par le point 18 : réexécution si l'outil est sans effet de bord ou ide
 - **Un bus en panne ne fait pas échouer une écriture.** Elle a eu lieu ; la nouvelle manquée coûte une notification, et le prochain lot rattrapera. `storage.bus: {backend: memory}` (défaut) ne monte aucun bus : dans un seul process, il n'y a rien à traverser.
 - **Idempotence Redis.** `reserve` tient en un script Lua exécuté d'un bloc — lire la clé, la reprendre si sa date est passée, ne rien faire sinon : le même arbitrage que le `ON CONFLICT … WHERE` des magasins SQL. L'appartenance d'une clé (client, session) est tenue dans un ensemble à part, faute de quoi l'oubli RGPD devrait balayer la base. Différence à connaître : **Redis oublie tout seul** au bout de la rétention, y compris une réservation périmée que SQLite et Postgres gardent indéfiniment.
 
+- **Ce que le bus ne règle pas : les fichiers.** Le journal et les nouvelles traversent les process, les artefacts non — `local` est un dossier, `memory` ne sort pas du process qui écrit. Un run repris ailleurs (5.3b) n'y retrouverait ni ses pièces jointes ni ses résultats déportés. Un service à plusieurs process reçoit donc un **avertissement au chargement** (`storage_warnings`, repris par `loom validate`), et non une erreur : un volume partagé est un montage légitime, que la config ne distingue pas d'un dossier propre à chaque machine. Le stockage partagé (GCS) est reporté avec 5.3d.
+
 **Déclencheurs (H6) :** webhook (un endpoint REST crée le run), planification (un adaptateur cron met en file), file de messages (un consommateur crée les runs).
 
 **Réalisation (phase 4.2a) :**

@@ -807,6 +807,41 @@ def _check_shared_idempotency(
         )
 
 
+def storage_warnings(config: LoomConfig) -> list[str]:
+    """Ce qui ne va pas ensemble dans un service à plusieurs process (5.3).
+
+    Un tel service partage son journal et ses nouvelles, mais **pas forcément
+    ses fichiers** : les artefacts ``local`` exigent un dossier commun aux
+    process, et ``memory`` ne sort pas de celui qui écrit. Un run repris
+    ailleurs (5.3b) ne retrouverait alors ni ses pièces jointes ni ses
+    résultats déportés.
+
+    Un avertissement, pas une erreur : un volume partagé est un montage
+    parfaitement légitime, que la config ne peut pas distinguer d'un dossier
+    propre à chaque machine, et un agent qui ne produit aucun fichier n'est de
+    toute façon pas concerné. Le stockage partagé (GCS) est reporté avec 5.3d.
+    """
+    storage = config.storage
+    if not (storage.queue.brokered or storage.bus.shared):
+        return []
+    eparpille = (
+        "file servie par un courtier" if storage.queue.brokered else "bus partagé entre process"
+    )
+    if storage.artifacts_backend == "local":
+        return [
+            f"Stockage : {eparpille} et artefacts 'local' ({storage.artifacts_path}) — les "
+            "process doivent partager ce dossier, sinon un run repris ailleurs ne retrouvera "
+            "ni ses pièces jointes ni ses résultats déportés"
+        ]
+    if storage.artifacts_backend == "memory":
+        return [
+            f"Stockage : {eparpille} et artefacts 'memory' — un fichier écrit par un process "
+            "est perdu pour les autres et à sa fermeture ; un run repris ailleurs ne le "
+            "retrouvera pas"
+        ]
+    return []
+
+
 def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
     """Budget en dollars sur un agent dont un modèle n'a pas de tarif (backlog #010).
 

@@ -70,7 +70,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import Policy, SessionRecord, SourceContext, Tool
 from loom_ia.engine import ToolExecutor
-from loom_ia.runtime import apply_logging, load_registry, postgres_ddl
+from loom_ia.runtime import apply_logging, load_registry, postgres_ddl, storage_warnings
 from loom_ia.tenancy import Tenant, UnknownTenant
 from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import render as render_report
@@ -350,6 +350,8 @@ async def _validate(args: argparse.Namespace) -> int:
     if storage.queue.brokered:
         # Le piège de la file servie : tout se met en file, rien ne tourne.
         print("    les tâches de fond attendent un worker : loom worker")
+    for warning in storage_warnings(config):
+        print(f"    {warning}")
     print(f"Clés d'API : {keys or 'aucune (API REST ouverte)'}")
     mcp = config.server.mcp
     if mcp.http:

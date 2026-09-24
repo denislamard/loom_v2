@@ -143,6 +143,7 @@ from loom_ia.runtime import (
     create_mcp_pool,
     create_task_queue,
     load_registry,
+    storage_warnings,
 )
 from loom_ia.sessions import CompactionJob, CompactionPlan, write_snapshot
 from loom_ia.tenancy import (
@@ -545,6 +546,8 @@ class Loom:
         )
         # Tâche qui suit le bus, lancée à l'entrée du contexte.
         self._following: asyncio.Task[None] | None = None
+        for warning in storage_warnings(config):
+            logger.warning(warning)
         # Magasin d'idempotence partagé par les agents de l'instance (#49) ;
         # ``None`` quand chaque run se sert de son journal.
         self._idempotency = create_idempotency_store(config)

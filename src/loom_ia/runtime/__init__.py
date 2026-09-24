@@ -20,6 +20,7 @@ from loom_ia.runtime.wiring import (
     postgres_ddl,
     prompt_text,
     role_definition,
+    storage_warnings,
     stream_output,
     system_prompt,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "postgres_ddl",
     "prompt_text",
     "role_definition",
+    "storage_warnings",
     "stream_output",
     "system_prompt",
 ]

@@ -25,7 +25,7 @@ from loom_ia.config.models import BUS_BACKENDS, SHARED_BUSES, BusStorage
 from loom_ia.core.events import Event, EventDraft
 from loom_ia.core.model import DEFAULT_TENANT, Message, SessionId, ToolOutput
 from loom_ia.core.ports import Notice
-from loom_ia.runtime import create_bus
+from loom_ia.runtime import create_bus, storage_warnings
 from loom_ia.testing import RunJournal, tool_call_message
 
 SESSION = SessionId("atelier")
@@ -36,6 +36,7 @@ REDIS: dict[str, Any] = {"bus": {"backend": "redis", "url_env": VARIABLE}}
 sans_redis = pytest.mark.skipif(find_spec("redis") is None, reason="extra 'redis' absent")
 avec_redis = pytest.mark.skipif(find_spec("redis") is not None, reason="extra 'redis' présent")
 sans_pg = pytest.mark.skipif(find_spec("asyncpg") is None, reason="extra 'postgres' absent")
+sans_rabbit = pytest.mark.skipif(find_spec("aio_pika") is None, reason="extra 'rabbitmq' absent")
 avec_pg = pytest.mark.skipif(find_spec("asyncpg") is not None, reason="extra 'postgres' présent")
 # Un bus déclaré est monté avant d'être joint : l'extra manquant se dit d'abord.
 DECLARES = [pytest.param(POSTGRES, marks=sans_pg), pytest.param(REDIS, marks=sans_redis)]
@@ -302,3 +303,42 @@ def test_validate_says_when_the_bus_variable_is_missing(
     monkeypatch.delenv(VARIABLE, raising=False)
     assert main(["--config", str(demo(storage=POSTGRES)), "validate"]) == 2
     assert f"Bus        : postgres ({VARIABLE} : ABSENTE)" in capsys.readouterr().out
+
+
+# --- Ce qui ne va pas ensemble à plusieurs process ---------------------------
+
+
+def test_a_single_process_service_is_warned_of_nothing(demo: ConfigFactory) -> None:
+    assert storage_warnings(load_config(demo())) == []
+
+
+@pytest.mark.parametrize("storage", [POSTGRES, REDIS])
+def test_a_shared_bus_with_local_files_says_they_must_be_shared_too(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, storage: dict[str, Any]
+) -> None:
+    """Le trou des artefacts : le journal et les nouvelles traversent, pas les fichiers."""
+    monkeypatch.setenv(VARIABLE, "peu importe")
+    path = demo(storage={**storage, "events": {"backend": "jsonl", "path": "data"}})
+    (warning,) = storage_warnings(load_config(path))
+    assert "artefacts 'local'" in warning
+    assert "partager ce dossier" in warning
+
+
+def test_a_brokered_queue_with_files_in_memory_says_they_go_nowhere(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(VARIABLE, "amqp://loom@127.0.0.1:5672/")
+    path = demo(storage={"queue": {"backend": "rabbitmq", "url_env": VARIABLE}})
+    (warning,) = storage_warnings(load_config(path))
+    assert "artefacts 'memory'" in warning
+    assert "file servie par un courtier" in warning
+
+
+@sans_rabbit
+def test_validate_says_it_too(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(VARIABLE, "amqp://loom@127.0.0.1:5672/")
+    path = demo(storage={"queue": {"backend": "rabbitmq", "url_env": VARIABLE}})
+    assert main(["--config", str(path), "validate"]) == 0
+    assert "artefacts 'memory'" in capsys.readouterr().out

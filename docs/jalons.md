@@ -177,7 +177,7 @@ Les commandes ci-dessous sont indicatives.
 | 5.3a Journal Postgres | `EventStore` Postgres (extra `postgres`), sécurité au niveau des lignes (politique par client posée par transaction, `FORCE`), rôle applicatif sans `UPDATE`, schéma créé à la demande et `loom storage sql`, idempotence Postgres | F5, #5 |
 | 5.3b File et worker | File RabbitMQ (`storage.queue`), `loom worker`, reprise d'un run sur un autre worker | H6, #27 |
 | 5.3c Bus | Port `EventBus` (nouvelles d'écriture, pas d'événements), adaptateurs Postgres (`LISTEN/NOTIFY`) et Redis, position par abonné, idempotence Redis, SSE entre process | H6, #5 |
-| 5.3d Google | `EventStore` et idempotence Firestore, artefacts GCS | F5, #5 |
+| 5.3d Google — **reportée, sans échéance** | `EventStore` et idempotence Firestore, artefacts GCS. Rien n'en dépend : Postgres tient le journal et l'idempotence, Redis le bus. Seul manque un stockage de fichiers **partagé** entre process, dont l'absence est dite au chargement (5.3c) | F5, #5 |
 | 5.4 Accès complets | REST : sessions, traces, `run_summaries`, `EventQuery`, OpenAPI, reprise SSE par `Last-Event-ID`. MCP HTTP monté avec REST, ressources `loom://runs`. Déclencheurs webhook et planification | K5, N2, #32, #38 |
 | 5.5 Exploitation | Profils dev/prod, chiffrement par client, rétention | M4, #30 |
 
@@ -194,7 +194,7 @@ Les commandes ci-dessous sont indicatives.
 
 **Tests automatisés :** isolation (un client ne lit jamais les données d'un autre, RLS) ; liste fermée des clients et client inconnu refusé ; correspondance des modèles qui repasse les contrôles de cohérence ; secrets par client, et redirection vers une variable absente qui ne retombe pas sur le secret commun ; `TenantRouter` (un journal propre, un journal commun) ; scopes et débit des clés ; quotas et budgets par période ; MCP `scope: tenant` ; adaptateurs Postgres, Redis, RabbitMQ, Firestore et GCS (conteneurs de test ou émulateurs) ; reprise SSE ; sécurité MCP HTTP ; profils dev et prod.
 
-**Critère de sortie :** le scénario docker-compose passe en CI ; aucune fuite entre clients ; reprise sur un autre worker.
+**Critère de sortie :** le scénario docker-compose passe en CI ; aucune fuite entre clients ; reprise sur un autre worker. Firestore et GCS (5.3d) n'en font pas partie : reportés, sans échéance.
 
 ---
 
