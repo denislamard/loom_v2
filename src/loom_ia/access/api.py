@@ -56,6 +56,7 @@ lisible (``error``). Les trois accès rendent ce même résultat.
 
 import asyncio
 import logging
+import re
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
@@ -73,6 +74,7 @@ from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
+from loom_ia.config.models import TriggerSpec
 from loom_ia.config.references import Registry
 from loom_ia.core.events import (
     ApprovalGranted,
@@ -124,6 +126,7 @@ from loom_ia.core.ports import (
     UsageCounter,
 )
 from loom_ia.core.projections import RunTree, fold
+from loom_ia.core.template import Template
 from loom_ia.engine import (
     CircuitBreakers,
     ClaimConflict,
@@ -175,6 +178,10 @@ CLAIM_MARGIN: Final = 0.5
 # trouver. La seconde est celle qui tient le coût d'une lecture sans projection.
 RUNS_LIMIT: Final = 50
 SESSIONS_READ: Final = 50
+# Un identifiant de livraison, et la session qu'un déclencheur en tire : ce que
+# le journal JSONL accepte comme nom de fichier (adapters/stores/jsonl.py).
+_SAFE_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
 # Ce qu'un appelant peut demander au plus : une lecture par journal ouvert, donc
 # une borne bien plus basse que celle d'une recherche d'événements.
 RUNS_MAX: Final = 200
@@ -216,6 +223,31 @@ class UnknownSession(KeyError):
     def __init__(self, session_id: SessionId) -> None:
         super().__init__(f"Session {session_id} inconnue")
         self.session_id = session_id
+
+
+class UnknownTrigger(KeyError):
+    """Aucune porte d'entrée de ce nom dans la configuration (H6)."""
+
+    def __init__(self, name: str, declared: Sequence[str]) -> None:
+        known = ", ".join(declared) or "aucun"
+        super().__init__(f"Déclencheur {name!r} non déclaré (déclencheurs : {known})")
+        self.name = name
+
+
+class DeliveryRefused(ValueError):
+    """La livraison porte un identifiant ou une session inutilisables (H6)."""
+
+
+class Triggered(DomainModel):
+    """Ce qu'une livraison a ouvert (H6, J5.4c)."""
+
+    trigger: str
+    run_id: RunId
+    session_id: SessionId
+    status: RunStatus
+    # Vrai si cette livraison avait déjà été reçue : le run est retrouvé, pas
+    # rouvert. Les plateformes réessaient, et une relance ne part qu'une fois.
+    repeated: bool = False
 
 
 class SessionDeletion(DomainModel):
@@ -495,6 +527,20 @@ def _awaited(state: RunState, tree: Sequence[Event]) -> tuple[PendingApproval, .
         for approval in fold([e for e in tree if e.run_id == run_id], run_id).awaiting
     ]
     return (*state.awaiting, *inner)
+
+
+def _usable(what: str, value: str) -> str:
+    """Un identifiant qui peut servir de nom de journal, ou un refus qui le dit.
+
+    Une livraison porte ce que l'appelant veut : l'en-tête d'un service tiers
+    finit en ``run_id``, donc en nom de session, donc en nom de fichier pour le
+    journal JSONL. Il est contrôlé à la porte, et non au moment d'écrire.
+    """
+    if not _SAFE_ID.fullmatch(value):
+        raise DeliveryRefused(
+            f"{what} inutilisable : {value!r} (attendu lettres, chiffres, '.', '_' ou '-')"
+        )
+    return value
 
 
 def _keeps(
@@ -1419,6 +1465,7 @@ class Loom:
         run_id: RunId | None = None,
         judges: JudgesMode = "auto",
         tenant: TenantId | None = None,
+        trigger: str | None = None,
     ) -> RunId:
         """Ouvre un run et met son pilotage en file ; rend son identifiant (H5).
 
@@ -1441,6 +1488,7 @@ class Loom:
             context=caller,
             run_id=run_id,
             judges=judges,
+            trigger=trigger,
             writer=await self._writer(who.id, session_id),
         )
         await self._queue.submit(
@@ -1453,6 +1501,90 @@ class Loom:
             key=f"run:{state.run_id}",
         )
         return state.run_id
+
+    # --- Déclencheurs (H6, J5.4c) ---------------------------------------------
+
+    @property
+    def triggers(self) -> tuple[TriggerSpec, ...]:
+        """Portes d'entrée déclarées par la configuration."""
+        return self.config.triggers
+
+    def trigger_spec(self, name: str) -> TriggerSpec:
+        """Un déclencheur par son nom ; lève ``UnknownTrigger``."""
+        for spec in self.config.triggers:
+            if spec.name == name:
+                return spec
+        raise UnknownTrigger(name, [spec.name for spec in self.config.triggers])
+
+    async def trigger(
+        self,
+        name: str,
+        payload: JsonValue = None,
+        *,
+        delivery_id: str | None = None,
+        tenant_id: TenantId | None = None,
+    ) -> Triggered:
+        """Ouvre le run d'un déclencheur, depuis la charge reçue (H6).
+
+        Le message est rendu depuis ``{{ payload.… }}``, plus ``{{ trigger }}``
+        et ``{{ delivery }}``. Une variable absente donne une chaîne vide : une
+        charge incomplète fait un message plus pauvre, pas une livraison
+        perdue.
+
+        ``delivery_id`` devient le ``run_id`` : une **seconde livraison de la
+        même chose retrouve son run** au lieu d'en ouvrir un autre
+        (``repeated``). C'est ce qui rend une porte tenable — les plateformes
+        réessaient, et une relance ne doit partir qu'une fois.
+
+        Le run est lancé en arrière-plan : celui qui livre attend un accusé,
+        pas une réponse de modèle.
+        """
+        spec = self.trigger_spec(name)
+        tenant = tenant_id or DEFAULT_TENANT
+        values: dict[str, JsonValue] = {
+            "payload": payload,
+            "trigger": name,
+            "delivery": delivery_id or "",
+        }
+        run_id = RunId(_usable("Identifiant de livraison", delivery_id)) if delivery_id else None
+        session_id = None
+        if spec.session is not None:
+            rendered = Template.parse(spec.session).render(values)
+            session_id = SessionId(_usable(f"Session du déclencheur {name!r}", rendered))
+        if run_id is not None:
+            seen = await self._already(name, run_id, session_id, tenant)
+            if seen is not None:
+                return seen
+        message = Template.parse(spec.message).render(values)
+        opened = await self.submit(
+            spec.agent,
+            message,
+            session_id=session_id,
+            context=CallerContext(tenant_id=tenant, metadata={"trigger": name}),
+            run_id=run_id,
+            tenant=tenant,
+            trigger=name,
+        )
+        state = await self.state(opened, session_id=session_id, tenant_id=tenant)
+        return Triggered(
+            trigger=name, run_id=opened, session_id=state.session_id, status=state.status
+        )
+
+    async def _already(
+        self, name: str, run_id: RunId, session_id: SessionId | None, tenant: TenantId
+    ) -> Triggered | None:
+        """Le run de cette livraison s'il existe déjà, sinon rien."""
+        try:
+            state = await self.state(run_id, session_id=session_id, tenant_id=tenant)
+        except UnknownRun:
+            return None
+        return Triggered(
+            trigger=name,
+            run_id=run_id,
+            session_id=state.session_id,
+            status=state.status,
+            repeated=True,
+        )
 
     async def recover(
         self, *, session_id: SessionId | None = None, tenant_id: TenantId | None = None

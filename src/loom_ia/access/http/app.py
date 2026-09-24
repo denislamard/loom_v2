@@ -80,7 +80,7 @@ import math
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
-from typing import TYPE_CHECKING, Annotated, Final
+from typing import TYPE_CHECKING, Annotated, Final, cast
 
 from fastapi import (
     APIRouter,
@@ -95,7 +95,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader, HTTPBearer
 from fastapi.security.http import HTTPAuthorizationCredentials
-from pydantic import AwareDatetime
+from pydantic import AwareDatetime, JsonValue
 from sse_starlette.sse import EventSourceResponse
 
 from loom_ia.access.api import (
@@ -104,15 +104,18 @@ from loom_ia.access.api import (
     SESSIONS_MAX,
     SESSIONS_READ,
     AgentNotAllowed,
+    DeliveryRefused,
     Loom,
     RunPage,
     RunResult,
     SessionDeletion,
     SessionInfo,
     StreamItem,
+    Triggered,
     UnknownApproval,
     UnknownRun,
     UnknownSession,
+    UnknownTrigger,
 )
 from loom_ia.access.http.auth import API_KEY_HEADER, Caller, identify, require, throttle
 from loom_ia.access.http.schemas import (
@@ -164,6 +167,10 @@ TAGS: Final[tuple[dict[str, str], ...]] = (
     {"name": "runs", "description": "Lancer un run, le suivre, le trancher, l'arrêter."},
     {"name": "sessions", "description": "Les journaux du client : fiches, export, effacement."},
     {
+        "name": "hooks",
+        "description": "Portes d'entrée déclarées : un appel extérieur ouvre un run.",
+    },
+    {
         "name": "journal",
         "description": "Recherche au journal : les runs d'un client et leurs événements.",
     },
@@ -176,6 +183,24 @@ BEARER_SCHEME: Final = HTTPBearer(auto_error=False, description="Clé d'API de l
 HEADER_SCHEME: Final = APIKeyHeader(
     name=API_KEY_HEADER, auto_error=False, description="Clé d'API de l'instance"
 )
+
+
+async def _payload(request: Request) -> JsonValue:
+    """La charge d'une livraison : du JSON, ou rien.
+
+    Un corps vide est légitime — un planificateur n'a rien à dire d'autre que
+    « c'est l'heure ». Un corps illisible est refusé, pour ne pas lancer un run
+    sur une charge que le gabarit lira vide.
+    """
+    raw = await request.body()
+    if not raw.strip():
+        return None
+    try:
+        return cast("JsonValue", json.loads(raw))
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"Charge illisible : {exc}"
+        ) from exc
 
 
 def package_version() -> str:
@@ -263,6 +288,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
     @app.exception_handler(UnknownApproval)
     @app.exception_handler(UnknownRun)
     @app.exception_handler(UnknownSession)
+    @app.exception_handler(UnknownTrigger)
     async def _not_found(request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse({"detail": _message(exc)}, status_code=status.HTTP_404_NOT_FOUND)
 
@@ -344,6 +370,39 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+    @router.post(
+        "/hooks/{name}",
+        tags=["hooks"],
+        summary="Livraison d'un déclencheur : ouvre le run qu'il déclare",
+        status_code=status.HTTP_202_ACCEPTED,
+        responses={
+            status.HTTP_200_OK: {
+                "model": Triggered,
+                "description": "Livraison déjà reçue : son run est retrouvé, pas rouvert",
+            }
+        },
+    )
+    async def hook(name: str, request: Request, response: Response, who: Who) -> Triggered:
+        spec = loom.trigger_spec(name)
+        # Le déclencheur nomme son agent : c'est sur lui que porte le droit,
+        # et la liste `agents` d'une clé borne donc ce qu'elle peut déclencher.
+        require(who, "run", spec.agent)
+        delivery = request.headers.get(spec.delivery_header) if spec.delivery_header else None
+        try:
+            opened = await loom.trigger(
+                name,
+                await _payload(request),
+                delivery_id=delivery,
+                tenant_id=who.tenant,
+            )
+        except DeliveryRefused as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+        if opened.repeated:
+            # Rien n'a été relancé : le code le dit, pour qu'une plateforme qui
+            # réessaie ne croie pas avoir ouvert un second run.
+            response.status_code = status.HTTP_200_OK
+        return opened
 
     @router.get("/runs", tags=["journal"], summary="Runs du client, le plus récent d'abord")
     async def listed(

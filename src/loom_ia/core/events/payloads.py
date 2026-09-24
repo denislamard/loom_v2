@@ -144,6 +144,10 @@ class RunStarted(Payload):
     depth: NonNegativeInt = 0
     # Run qui a déclenché celui-ci (compaction, #23).
     triggered_by: RunId | None = None
+    # Porte d'entrée qui a ouvert ce run (H6, J5.4c) : le nom du déclencheur
+    # déclaré. Une **facette**, et non du contenu : c'est de la provenance, et
+    # une clé de supervision doit pouvoir demander ce qu'une porte a lancé.
+    trigger: str | None = None
     # Juges choisis par l'appelant (#21) ; un sous-run hérite du choix de son parent.
     judges: JudgesMode = "auto"
     # Part de budget donnée par le run parent à un sous-run (``budget_share``, #4).
@@ -154,6 +158,8 @@ class RunStarted(Payload):
         if self.judges != "auto":
             # Absente sinon : les journaux antérieurs restent lisibles.
             facets["judges"] = self.judges
+        if self.trigger is not None:
+            facets["trigger"] = self.trigger
         return facets
 
 

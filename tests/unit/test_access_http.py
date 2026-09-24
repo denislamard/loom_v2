@@ -429,7 +429,7 @@ async def test_the_openapi_document_describes_every_route(demo: ConfigFactory) -
 
     assert document["info"]["title"] == "loom-ia" and document["info"]["version"]
     declared = {tag["name"] for tag in document["tags"]}
-    assert declared == {"agents", "runs", "sessions", "journal"}
+    assert declared == {"agents", "runs", "sessions", "journal", "hooks"}
     operations = [
         (path, method, spec)
         for path, methods in document["paths"].items()

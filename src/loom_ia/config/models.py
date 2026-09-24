@@ -49,6 +49,7 @@ from loom_ia.core.model import (
     TenantId,
     reject_later,
 )
+from loom_ia.core.template import Template, TemplateError
 from loom_ia.telemetry.logs import LogFormat
 
 SCHEMA_VERSION: Final = 1
@@ -543,6 +544,42 @@ class ServerConfig(DomainModel):
     mcp: McpAccess = McpAccess()
 
 
+class TriggerSpec(DomainModel):
+    """Une porte d'entrée déclarée : ce qu'un appel extérieur ouvre (H6, J5.4c).
+
+    Un déclencheur existe parce que celui qui appelle **ne connaît pas l'API
+    de loom** : un planificateur, un CRM, une passerelle de paiement envoient
+    leur charge à eux. La config dit donc quoi en faire — quel agent, et quel
+    message, rendu depuis la charge reçue.
+
+    Le client vient de la **clé d'API** et de nulle part ailleurs (#34) : un
+    déclencheur ne le nomme pas, sans quoi une clé pourrait lancer un run au
+    nom d'un autre. La même liste ``agents`` d'une clé borne ce qu'elle peut
+    déclencher, puisqu'un déclencheur nomme son agent.
+    """
+
+    # Dernier segment de la route (``POST /v1/hooks/<name>``) : un identifiant
+    # sûr, qui sert aussi de facette au journal.
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
+    agent: str
+    # Gabarit du message, rendu sur ``{payload, trigger, delivery}``. Une
+    # variable absente donne une chaîne vide (#50) : une charge incomplète ne
+    # fait pas échouer la livraison, elle fait un message plus pauvre.
+    message: str
+    # Gabarit de la session, pour rattacher les livraisons d'un même sujet au
+    # même journal. Sans lui, chaque run a sa session, comme ailleurs.
+    session: str | None = None
+    # En-tête qui porte l'identifiant de livraison (``X-Delivery-Id``,
+    # ``Stripe-Id``…). Il devient le ``run_id``, si bien qu'une seconde
+    # livraison **retrouve** le run au lieu d'en ouvrir un autre.
+    delivery_header: str | None = None
+
+    @property
+    def templates(self) -> tuple[str, ...]:
+        """Les gabarits à analyser au chargement."""
+        return (self.message,) if self.session is None else (self.message, self.session)
+
+
 class LoomConfig(DomainModel):
     version: int
     # Dossier du fichier de config, posé au chargement : les modules voisins
@@ -568,6 +605,8 @@ class LoomConfig(DomainModel):
     tenants: tuple[TenantSpec, ...] = ()
     security: SecurityConfig = SecurityConfig()
     server: ServerConfig = ServerConfig()
+    # Portes d'entrée déclarées (H6) : ce qu'un appel extérieur ouvre.
+    triggers: tuple[TriggerSpec, ...] = ()
     # Remplis depuis ``agents_dir`` au chargement, ou donnés directement en Python.
     agents: tuple[AgentSpec, ...] = ()
 
@@ -604,6 +643,7 @@ class LoomConfig(DomainModel):
         if compaction is not None:
             self._check_chain(f"Compaction ({COMPACTION_AGENT})", (compaction.model,))
         _reject_doubles("Clé", [key.id for key in self.security.api_keys])
+        self._check_triggers()
         if self.server.mcp.http and not self.security.api_keys:
             # Le MCP publie des outils à un LLM tiers, sur le réseau : sans
             # clé, n'importe qui les appellerait. Le stdio, lui, n'a pas de
@@ -665,6 +705,31 @@ class LoomConfig(DomainModel):
                         f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : description "
                         f"manquante (ni dans la référence ni dans l'agent {ref.agent!r})"
                     )
+
+    def _check_triggers(self) -> None:
+        """Déclencheurs nommés une fois, sur des agents qui existent, gabarits valides.
+
+        Comme pour les clients, les agents ne sont contrôlés que lorsqu'il y en
+        a : la première validation ne connaît pas encore ``agents_dir``.
+
+        Un agent **non publié en REST** est accepté : un déclencheur est une
+        porte déclarée, pas l'API ouverte — c'est même la façon de n'ouvrir un
+        agent qu'à un planificateur.
+        """
+        _reject_doubles("Déclencheur", [trigger.name for trigger in self.triggers])
+        agents = {agent.name for agent in self.agents}
+        for trigger in self.triggers:
+            label = f"Déclencheur {trigger.name!r}"
+            if agents and trigger.agent not in agents:
+                declared = ", ".join(sorted(agents)) or "aucun"
+                raise ValueError(
+                    f"{label} : agent {trigger.agent!r} non déclaré (agents : {declared})"
+                )
+            for source in trigger.templates:
+                try:
+                    Template.parse(source)
+                except TemplateError as exc:
+                    raise ValueError(f"{label} : {exc}") from exc
 
     def _check_tenants(self) -> None:
         """Clients déclarés une fois, sur des agents et des modèles qui existent (L1, M5).

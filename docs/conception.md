@@ -967,6 +967,8 @@ Port `TaskQueue` (#27) : `submit(job, key, delay?)`, `status(job_id)`, `cancel(j
 
 **Déclencheurs :** webhook (endpoint REST qui crée le run), planification (adaptateur cron qui met en file), file de messages (consommateur qui crée les runs).
 
+**Réalisation (phase 5.4c) :** le **webhook**, sous la forme d'une porte déclarée. `triggers:` nomme une porte, son agent et un gabarit de message rendu sur la charge reçue (`{{ payload.… }}`, plus `{{ trigger }}` et `{{ delivery }}`) ; `POST /v1/hooks/{nom}` la sonne, et le run part en arrière-plan. Une porte ne nomme **pas** de client : il vient de la clé (#34), dont la liste `agents` borne du même coup ce qu'elle peut déclencher. L'en-tête de livraison déclaré devient le `run_id`, si bien qu'une relivraison retrouve son run (200, `repeated`) au lieu d'en ouvrir un second. La **planification est celle de la plateforme** : loom ne tient aucun cron, et un en-tête de livraison daté rend une tournée quotidienne idempotente. Le déclencheur « file de messages » reste ouvert.
+
 **Réalisation (phase 4.1b) :** le port est livré avec son adaptateur asyncio (une tâche par travail, dédoublonnage par `key`, `drain` et fermeture bornée par `execution.shutdown_timeout`). Un seul type de tâche est traité, `compaction` ; `run`, `resume` et `expire_approval` sont déclarés et refusés tant que leur phase n'est pas là. Une tâche en échec est journalisée et ne fait jamais échouer le run qui l'a demandée. `Loom.compact(session_id)` résume à la demande, sans tenir compte du seuil ; `Loom.drain()` attend les tâches en cours.
 
 **Réalisation (phase 4.2b) :** le job `run` est traité. `Loom.submit(agent, message)` ouvre le run — inscrit au journal **avant le retour**, donc suivable, interrogeable et annulable aussitôt — et met son pilotage en file sous la clé `run:<run_id>` ; `result(run_id)` relit ce qu'il a produit. `Loom.recover()` balaie les sessions du locataire (ou une seule, avec `session_id`), remet en file les runs racine encore actionnables et rend leurs identifiants ; il est à appeler soi-même, car une instance ne redémarre pas les runs d'un autre process à l'insu de son appelant.
@@ -1405,6 +1407,17 @@ server:
     allowed_origins: []             # Origin acceptés ; absent = client natif, il passe
     allowed_hosts: []               # en plus de l'adresse d'écoute, que loom ajoute
     file_roots: []                  # dossiers lisibles par un lien file://
+
+triggers:                           # portes d'entrée déclarées (H6, 5.4c)
+  - name: relance-du-matin          # POST /v1/hooks/relance-du-matin
+    agent: relance_devis
+    message: "C'est l'heure de la tournée : relance les devis en attente."
+    delivery_header: X-Delivery-Id   # devient le run_id : une relivraison ne relance rien
+  - name: devis-signe
+    agent: relance_devis
+    message: "Relance {{ payload.client.nom }} sur le devis {{ payload.devis.numero }}."
+    session: "devis-{{ payload.devis.numero }}"
+    delivery_header: Stripe-Id
 ```
 
 **Réalisation (phase 5.1a) :** `tenants` et `security.api_keys[].tenant` sont débloqués ; la liste des clients est **fermée** dès qu'elle existe, et une clé dont le client n'est pas déclaré est refusée au chargement. `storage` d'un client accepte `events` et `artifacts` ; `idempotency` y est refusé en nommant 5.3 (le port n'a le client que sur `reserve`). Contrôles au démarrage ajoutés : client en double, agent ou modèle de remplacement inconnu, modèle qui se remplace lui-même, variable `{{ }}` d'un prompt non définie pour un client, clé d'API sur un client non déclaré. `rate_limit` et `expires` d'une clé attendent 5.2, `budgets`/`quotas` d'un client 5.1b.
@@ -1414,6 +1427,8 @@ server:
 **Réalisation (phase 5.2a) :** `expires` d'une clé est débloqué — dernière clé de `LATER_API_KEY`, qui se vide. La date doit porter un fuseau ; une clé déjà expirée charge sans erreur et est refusée à l'appel.
 
 **Réalisation (phase 5.2b) :** `server.mcp.http`, `allowed_origins` et `allowed_hosts` sont débloqués — `LATER_MCP_ACCESS` se vide. `http: true` sans `security.api_keys` est une erreur de chargement : le MCP publie des outils, il ne s'ouvre pas sans clé.
+
+**Réalisation (phase 5.4c) :** `triggers` apparaît. Une porte porte un `name` (dernier segment de la route : minuscules, chiffres, `_` et `-`), un `agent`, un `message` (gabarit), et deux réglages optionnels — `session` (gabarit aussi, pour rassembler les livraisons d'un même sujet) et `delivery_header`. Contrôles au chargement : noms uniques, agent déclaré, gabarits analysables. Un agent **non publié en REST** est accepté : une porte déclarée n'est pas l'API ouverte, et c'est la façon de n'ouvrir un agent qu'à un planificateur. Une porte ne nomme **pas** de client — il vient de la clé (#34).
 
 ### 17.9 Profils et contrôles
 
@@ -1466,6 +1481,7 @@ async with loom:
 - `compact(session_id)` résume une session à la demande et `drain()` attend les tâches de fond (depuis 4.1b) ; `aclose()` les attend aussi, dans la limite d'`execution.shutdown_timeout`.
 - **Consommation (5.1b) :** `consumption(tenant_id, period="day" | "month")` rend ce qu'un client a dépensé sur la fenêtre en cours, ce qu'il lui reste sur chaque plafond et la date de remise à zéro ; elle relit le journal, donc elle vaut aussi pour un client sans budget. `run()`, `stream()` et `submit()` lèvent `BudgetExhausted` (enveloppe de la période épuisée) ou `QuotaExceeded` (runs par minute) **avant** d'ouvrir le run : rien n'est écrit.
 - **Client (5.1a) :** `run()`, `stream()` et `submit()` prennent `tenant=`, raccourci de `CallerContext(tenant_id=…)` ; toutes les lectures prennent `tenant_id=`. `tenants` liste les clients de l'instance, `tenant(id)` rend ce qu'un client surcharge, et `context(agent, tenant_id)` monte l'agent **pour ce client**. Un agent fermé à un client lève `AgentNotAllowed` ; un client non déclaré, `UnknownTenant`.
+- **Déclencheurs (5.4c) :** `triggers` liste les portes déclarées, `trigger_spec(nom)` en rend une, et `trigger(nom, charge, delivery_id=…, tenant_id=…)` ouvre son run en arrière-plan et rend un `Triggered` — la porte, le run, sa session, son statut, et `repeated` si cette livraison avait déjà été reçue. La route REST s'y adosse.
 - **Listes et recherche (5.4a) :** `runs(agent=…, status=…, since=…, until=…, limit=…, sessions=…)` rend une `RunPage` — les runs du client repliés au journal, du plus récent au plus ancien, avec ce que la page a coûté (`scanned`) et si une borne l'a arrêtée (`truncated`). `query(EventQuery)` interroge le journal ; l'ordre est celui des identifiants d'événement et `after` reprend la pagination. Les deux accès REST (18.2) s'y adossent.
 
 ### 18.2 HTTP REST
@@ -1491,6 +1507,7 @@ app.mount("/loom", loom.asgi_app(rest=True, mcp=True))
 | `DELETE` | `/v1/sessions/{id}` | Effacement RGPD | `admin` |
 | `GET` | `/v1/runs` | Résumés des runs du client | `read` |
 | `GET` | `/v1/events` | Recherche au journal (`EventQuery`) | `read` |
+| `POST` | `/v1/hooks/{nom}` | Livraison d'un déclencheur (H6) | `run` |
 
 OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
@@ -1506,6 +1523,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - **Sessions (4.5) :** la liste est refusée à une clé limitée à certains agents — elle ne dit pas de quels agents sont les runs d'une session, et la filtrer honnêtement demanderait de lire chaque journal. La fiche et l'export vérifient le droit sur chaque agent rencontré ; l'effacement, irréversible et commun à tous les agents de la session, demande `admin`.
 - **Résumés de runs (5.4a, #32) :** `GET /v1/runs` rend les runs du client, du plus récemment écrit au plus ancien, filtrables par `agent`, `status` (répétable), `since` et `until`. Ils sont **lus au journal** — session par session, repliés à la lecture — et non tenus dans une projection : aucun second état à garder juste, et les chiffres sont ceux de la fiche d'une session. Le prix est une lecture par journal ouvert, borné par `limit` (runs rendus) et `sessions` (journaux ouverts) ; la page dit ce qu'elle a coûté (`scanned`) et si une borne l'a arrêtée (`truncated`). Un filtre ne baisse pas ce prix, il s'applique après le repli. Aucun contenu dans une liste — seulement le **type** d'un échec —, donc rien à masquer, et une clé limitée à certains agents y a droit : chaque run dit de quel agent il est, si bien que la liste se filtre honnêtement, là où `/sessions` doit refuser.
 - **Recherche au journal (5.4a, #22, #32) :** `GET /v1/events` expose `EventQuery` en paramètres — `session_id`, `run_id`, `type`, `category`, `status`, `agent`, `role`, `tool_name`, `model_id`, `since`, `until`, `after`, `limit`. Le client vient de la clé : rien dans l'URL ne le nomme, donc on ne cherche que chez soi. L'ordre est celui des identifiants d'événement (UUIDv7, donc du temps) et `after` reprend la pagination après le dernier rendu. Sans `read_content`, les mêmes événements arrivent privés de leur contenu. Les facettes libres ne sont pas interrogeables par l'URL ; les deux que `EventQuery` nomme le sont.
+- **Déclencheurs (5.4c, H6) :** `POST /v1/hooks/{nom}` sonne une porte déclarée (`triggers:`). Le corps est la charge de l'appelant — du JSON, ou rien : un planificateur n'a que l'heure à dire. Le message part du gabarit de la porte, le run est lancé en **arrière-plan** (202, `Triggered`), et la portée `run` est exigée sur **l'agent que la porte nomme**. L'en-tête déclaré (`delivery_header`) devient le `run_id` : une relivraison rend 200 avec `repeated`, sans rien relancer. Une charge illisible ou un identifiant de livraison inutilisable donnent 422 ; une porte inconnue, 404 en nommant celles qui existent.
 - **Document OpenAPI (5.4a) :** chaque route porte un résumé et une famille (`agents`, `runs`, `sessions`, `journal`), chaque famille est décrite, et les deux façons de présenter une clé (`Authorization: Bearer`, `X-API-Key`) sont déclarées — de quoi essayer l'API depuis sa propre page. Un test vérifie que le document reste complet quand une route s'ajoute.
 
 ### 18.3 Serveur MCP
@@ -1526,7 +1544,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
 ### 18.4 CLI
 
-Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --periode jour|mois` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`. Depuis 5.2a, `keys create` prend `--tenant`, `--expires` (date ISO ou durée : `90j`, `12h`) et `--rate-limit`, et imprime le bloc YAML complet ; `validate` montre une ligne par clé — client, portées, agents, débit, état de l'expiration — et signale une clé qui approuve sans pouvoir lire. Depuis 5.4b, `validate` et `serve` annoncent les ressources MCP quand le serveur HTTP est monté : elles ne dépendent d'aucun réglage, et c'est la clé de la requête qui dit ce qu'une lecture en voit.
+Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --periode jour|mois` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`. Depuis 5.2a, `keys create` prend `--tenant`, `--expires` (date ISO ou durée : `90j`, `12h`) et `--rate-limit`, et imprime le bloc YAML complet ; `validate` montre une ligne par clé — client, portées, agents, débit, état de l'expiration — et signale une clé qui approuve sans pouvoir lire. Depuis 5.4b, `validate` et `serve` annoncent les ressources MCP quand le serveur HTTP est monté : elles ne dépendent d'aucun réglage, et c'est la clé de la requête qui dit ce qu'une lecture en voit. Depuis 5.4c, `validate` liste les **portes** déclarées avec leur route, leur agent, leur session et leur en-tête de livraison — et signale celle qui n'en a pas, dont une relivraison rouvrirait un run ; `serve` imprime l'adresse de chaque porte, celle qu'on donne au planificateur de la plateforme.
 
 ## 19. Projet
 

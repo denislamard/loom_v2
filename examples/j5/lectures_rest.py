@@ -65,8 +65,6 @@ DUPONT = TenantId("dupont-plomberie")
 MARTIN = TenantId("martin-chauffage")
 # Chaque artisan a son carnet : le devis de l'autre n'y figure pas.
 DEVIS = {DUPONT: "D-2026-042", MARTIN: "D-2026-117"}
-# Familles de routes attendues au document : celles que l'API déclare.
-FAMILLES = ("agents", "runs", "sessions", "journal")
 
 
 def demande(tenant: TenantId) -> str:
@@ -614,9 +612,15 @@ async def openapi(config: LoomConfig, agent: str, prefixe: str, controle: Contro
             "  et une famille qui est décrite : "
             + controle.tient(f"routes mal rangées : {', '.join(mal_rangees)}", not mal_rangees)
         )
+        # Une liste figée de familles vieillirait au premier ajout de route :
+        # ce qui doit tenir, c'est qu'aucune ne soit décrite sans servir.
+        servies = {famille for _, _, spec in routes for famille in spec.get("tags", [])}
+        orphelines = sorted(declarees_ - servies)
         print(
-            "  les familles annoncées sont là : "
-            + controle.tient("une famille annoncée manque au document", declarees_ == set(FAMILLES))
+            "  et aucune n'est décrite sans servir : "
+            + controle.tient(
+                f"familles décrites sans route : {', '.join(orphelines)}", not orphelines
+            )
         )
 
         schemes = document["components"].get("securitySchemes", {})

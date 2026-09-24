@@ -331,6 +331,7 @@ async def begin_run(
     judges: JudgesMode = "auto",
     kind: RunKind = "normal",
     triggered_by: RunId | None = None,
+    trigger: str | None = None,
 ) -> RunState:
     """Écrit le démarrage d'un run et la demande de l'utilisateur.
 
@@ -346,7 +347,8 @@ async def begin_run(
 
     ``kind`` et ``triggered_by`` marquent un run système : la compaction d'une
     session (#23) tourne dans le journal de cette session sans entrer dans son
-    historique.
+    historique. ``trigger`` nomme la porte d'entrée déclarée qui a ouvert le
+    run (H6) : une facette du journal, pour savoir ce qu'une porte a lancé.
     """
     message = Message.user(prompt) if isinstance(prompt, str) else prompt
     if message.role != "user":
@@ -367,7 +369,13 @@ async def begin_run(
         agent=ctx.agent,
         parent_span_id=parent.span_id if parent is not None else None,
     )
-    started = RunStarted(context=context, judges=judges, kind=kind, triggered_by=triggered_by)
+    started = RunStarted(
+        context=context,
+        judges=judges,
+        kind=kind,
+        triggered_by=triggered_by,
+        trigger=trigger,
+    )
     if parent is not None:
         started = RunStarted(
             context=context,
@@ -378,6 +386,7 @@ async def begin_run(
             budget=parent.budget,
             kind=kind,
             triggered_by=triggered_by,
+            trigger=trigger,
         )
     if chosen and await ctx.store.read(scope.tenant_id, scope.session_id, run_id=run_id):
         raise ValueError(f"Le run {run_id} existe déjà")

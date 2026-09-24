@@ -366,6 +366,19 @@ async def _validate(args: argparse.Namespace) -> int:
         )
     for line in _key_lines(config):
         print(f"    {line}")
+    if config.triggers:
+        base = config.server.http.base_path
+        print(f"Portes     : {_listed(trigger.name for trigger in config.triggers)}")
+        for trigger in config.triggers:
+            print(f"    POST {base}/v1/hooks/{trigger.name} → agent {trigger.agent}")
+            details = [f"session {trigger.session}"] if trigger.session else ["session par run"]
+            if trigger.delivery_header:
+                details.append(f"livraison sur {trigger.delivery_header}")
+            else:
+                # Sans en-tête de livraison, une plateforme qui réessaie ouvre
+                # un second run : le dire ici, c'est le dire avant la panne.
+                details.append("aucun en-tête de livraison : une relivraison rouvre un run")
+            print(f"    {'':<4}{', '.join(details)}")
     if config.tenants:
         print(f"Clients    : {_listed(tenant.id for tenant in config.tenants)}")
 
@@ -790,6 +803,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
         # Les ressources ne dépendent d'aucune config : elles sont le journal,
         # en lecture seule, et la clé de la requête dit ce qu'elle en voit.
         print(f"Ressources : {MCP_RUNS}, {MCP_SESSIONS}, et {len(MCP_TEMPLATES)} gabarits")
+    for trigger in config.triggers:
+        # L'adresse qu'on donne au planificateur de la plateforme : loom ne
+        # tient pas de cron, il attend qu'on sonne à la porte.
+        print(f"Porte      : POST http://{host}:{port}{http.base_path}/v1/hooks/{trigger.name}")
     serve(Loom(config), host=args.host, port=args.port)
     return OK
 

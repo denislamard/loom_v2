@@ -4,6 +4,7 @@
 from loom_ia.access.api import (
     AgentNotAllowed,
     ClaimConflict,
+    DeliveryRefused,
     JudgeVerdict,
     Loom,
     RunListed,
@@ -13,8 +14,10 @@ from loom_ia.access.api import (
     SessionDeletion,
     SessionInfo,
     StreamItem,
+    Triggered,
     UnknownRun,
     UnknownSession,
+    UnknownTrigger,
 )
 from loom_ia.access.resources import (
     ARTIFACTS,
@@ -43,6 +46,7 @@ __all__ = [
     "AgentNotAllowed",
     "BudgetExhausted",
     "ClaimConflict",
+    "DeliveryRefused",
     "JudgeVerdict",
     "Loom",
     "QuotaExceeded",
@@ -54,7 +58,9 @@ __all__ = [
     "SessionInfo",
     "StreamItem",
     "TenantConsumption",
+    "Triggered",
     "UnknownRun",
     "UnknownSession",
     "UnknownTenant",
+    "UnknownTrigger",
 ]
