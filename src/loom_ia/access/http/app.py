@@ -148,7 +148,7 @@ from loom_ia.core.model import (
     RunStatus,
     SessionId,
 )
-from loom_ia.core.ports import SessionRecord
+from loom_ia.core.ports import SealError, SessionRecord
 from loom_ia.runtime import announce
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
 from loom_ia.usage import UsageReport
@@ -314,6 +314,16 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
             {"detail": _message(exc)},
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             headers={"Retry-After": str(max(1, math.ceil(float(after))))},
+        )
+
+    @app.exception_handler(SealError)
+    async def _sealed(request: Request, exc: Exception) -> JSONResponse:
+        # Un journal scellé dont la clé a disparu n'est pas une panne : c'est
+        # un état voulu (5.5b), et 424 le dit mieux qu'un 500 — la demande est
+        # juste, ce qui manque est ailleurs, et le message nomme l'empreinte
+        # attendue.
+        return JSONResponse(
+            {"detail": _message(exc)}, status_code=status.HTTP_424_FAILED_DEPENDENCY
         )
 
     @app.exception_handler(AgentNotAllowed)

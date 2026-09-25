@@ -182,7 +182,7 @@ Les commandes ci-dessous sont indicatives.
 | 5.4b Ressources MCP | Ressources `loom://` en lecture seule (deux index, cinq gabarits), les octets d'un fichier enfin lisibles, outil `cancel` | N5, #32 |
 | 5.4c Déclencheurs | Portes déclarées (`triggers`), `POST /v1/hooks/{nom}`, gabarit de message sur la charge reçue, relivraison sans doublon ; planification confiée à la plateforme | H6 |
 | 5.5a Profils | `profile` et `profiles` : trois états (absent, dev, prod), surcharges fusionnées au chargement, provenance imprimée, `when.profiles` d'un juge | M4 |
-| 5.5b Chiffrement | Chiffrement des charges par client, clé par client, crypto-shredding | #30 |
+| 5.5b Chiffrement | `storage.encryption` : charges et fichiers scellés en AES-256-GCM, clé par client prise dans ses secrets, empreinte de clé et renouvellement, journal listable et supprimable sans la clé (crypto-shredding), extra `crypto` | #30 |
 | 5.5c Rétention | `storage.retention`, effacement des événements passés | #30 |
 
 ### Test et exécution
@@ -191,12 +191,12 @@ Les commandes ci-dessous sont indicatives.
 
 | Accès | Exécution |
 |---|---|
-| Python | Un exemple par phase, sur la config `examples/j5/relance/` : `clients.py` (5.1a), `quotas.py` (5.1b), `securite.py` (5.2a), `serveur_mcp.py` (5.2b), `journal_postgres.py` (5.3a), `file_et_worker.py` (5.3b), `bus_et_sse.py` (5.3c), `lectures_rest.py` (5.4a), `ressources_mcp.py` (5.4b), `declencheurs.py` (5.4c), `profils.py` (5.5a) |
+| Python | Un exemple par phase, sur la config `examples/j5/relance/` : `clients.py` (5.1a), `quotas.py` (5.1b), `securite.py` (5.2a), `serveur_mcp.py` (5.2b), `journal_postgres.py` (5.3a), `file_et_worker.py` (5.3b), `bus_et_sse.py` (5.3c), `lectures_rest.py` (5.4a), `ressources_mcp.py` (5.4b), `declencheurs.py` (5.4c), `profils.py` (5.5a), `chiffrement.py` (5.5b) |
 | CLI | `loom worker` (x2), `loom serve`, `loom keys create` |
 | REST | Clés API par client, scopes, `run_summaries`, `EventQuery`, reprise SSE par `Last-Event-ID`, portes `POST /v1/hooks/{nom}` |
 | MCP | MCP HTTP monté avec REST ; ressources `loom://` (deux index, cinq gabarits, les octets d'un fichier) ; outil `cancel` ; `Origin` refusé si invalide |
 
-**Tests automatisés :** isolation (un client ne lit jamais les données d'un autre, RLS) ; liste fermée des clients et client inconnu refusé ; correspondance des modèles qui repasse les contrôles de cohérence ; secrets par client, et redirection vers une variable absente qui ne retombe pas sur le secret commun ; `TenantRouter` (un journal propre, un journal commun) ; scopes et débit des clés ; quotas et budgets par période ; MCP `scope: tenant` ; adaptateurs Postgres, Redis, RabbitMQ, Firestore et GCS (conteneurs de test ou émulateurs) ; reprise SSE ; sécurité MCP HTTP ; profils dev et prod.
+**Tests automatisés :** isolation (un client ne lit jamais les données d'un autre, RLS) ; liste fermée des clients et client inconnu refusé ; correspondance des modèles qui repasse les contrôles de cohérence ; secrets par client, et redirection vers une variable absente qui ne retombe pas sur le secret commun ; `TenantRouter` (un journal propre, un journal commun) ; scopes et débit des clés ; quotas et budgets par période ; MCP `scope: tenant` ; adaptateurs Postgres, Redis, RabbitMQ, Firestore et GCS (conteneurs de test ou émulateurs) ; reprise SSE ; sécurité MCP HTTP ; profils dev et prod ; sceau des contenus (charge fermée, enveloppe en clair, clé par client, sceau qui ne se déplace pas, journal listable et supprimable sans sa clé).
 
 **Critère de sortie :** le scénario docker-compose passe en CI ; aucune fuite entre clients ; reprise sur un autre worker. Firestore et GCS (5.3d) n'en font pas partie : reportés, sans échéance.
 

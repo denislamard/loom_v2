@@ -32,6 +32,7 @@ import asyncpg
 
 from loom_ia.adapters.postgres.pool import Held, PostgresPool, rows_touched
 from loom_ia.adapters.postgres.sql import DEFAULT_ROLE, EVENTS_TABLE, ddl
+from loom_ia.adapters.stores.codec import PLAIN, JournalCodec
 from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId
 from loom_ia.core.ports import SequenceConflict, SessionRecord, journal_key
@@ -52,7 +53,7 @@ _LAST_SEQ: Final = (
 )
 
 
-def _row(event: Event) -> tuple[Any, ...]:
+def _row(event: Event, codec: JournalCodec) -> tuple[Any, ...]:
     return (
         event.tenant_id,
         event.session_id,
@@ -67,7 +68,7 @@ def _row(event: Event) -> tuple[Any, ...]:
         event.agent,
         event.role,
         json.dumps(event.facets, ensure_ascii=False),
-        event.model_dump_json(),
+        codec.dumps(event),
     )
 
 
@@ -126,7 +127,14 @@ def _conditions(query: EventQuery) -> _Conditions:
 class PostgresEventStore:
     """Journal durable dans une base Postgres, sous politique de lignes."""
 
-    def __init__(self, dsn: str, *, role: str | None = DEFAULT_ROLE) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        role: str | None = DEFAULT_ROLE,
+        codec: JournalCodec = PLAIN,
+    ) -> None:
+        self._codec = codec
         self._pg = PostgresPool(
             dsn,
             table=EVENTS_TABLE,
@@ -152,7 +160,9 @@ class PostgresEventStore:
                 raise SequenceConflict(session_id, expected_seq, last)
             events = [draft.to_event(last + i) for i, draft in enumerate(drafts, start=1)]
             try:
-                await connection.executemany(_INSERT, [_row(event) for event in events])
+                await connection.executemany(
+                    _INSERT, [_row(event, self._codec) for event in events]
+                )
             except asyncpg.UniqueViolationError as exc:
                 # Deux écrivains ont franchi le verrou : la clé primaire a
                 # tranché. L'appelant relit et rejoue, comme sur conflit.
@@ -191,7 +201,7 @@ class PostgresEventStore:
     async def _events(self, tenant_id: TenantId, sql: str, values: Sequence[Any]) -> list[Event]:
         async with self._pg.transaction(tenant_id) as connection:
             rows = await connection.fetch(sql, *values)
-        return [Event.model_validate_json(str(row["event"])) for row in rows]
+        return [self._codec.loads(str(row["event"])) for row in rows]
 
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
         async with self._pg.transaction(tenant_id) as connection:

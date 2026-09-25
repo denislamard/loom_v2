@@ -73,9 +73,16 @@ from loom_ia.core.model import (
     TextDelta,
     new_run_id,
 )
-from loom_ia.core.ports import Policy, SessionRecord, SourceContext, Tool
+from loom_ia.core.ports import Policy, SealError, SessionRecord, SourceContext, Tool
 from loom_ia.engine import ToolExecutor
-from loom_ia.runtime import apply_logging, load_registry, postgres_ddl, storage_warnings
+from loom_ia.runtime import (
+    apply_logging,
+    create_keyring,
+    encryption_warnings,
+    load_registry,
+    postgres_ddl,
+    storage_warnings,
+)
 from loom_ia.tenancy import Tenant, UnknownTenant
 from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import render as render_report
@@ -359,6 +366,9 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Idempotence: {_storage_line(storage.idempotency)}")
     print(f"File       : {_queue_line(storage.queue)}")
     print(f"Bus        : {_bus_line(storage.bus)}")
+    print(f"Chiffrement: {_sealing_line(config)}")
+    for line in _sealing_report(config):
+        print(f"    {line}")
     if storage.queue.brokered:
         # Le piège de la file servie : tout se met en file, rien ne tourne.
         print("    les tâches de fond attendent un worker : loom worker")
@@ -420,6 +430,47 @@ def _profile_line(config: LoomConfig, args: argparse.Namespace) -> str:
         return f"aucun (ni --profile, ni {PROFILE_ENV}, ni 'profile:') ; surcharges : {declared}"
     effet = "les avertissements sont des erreurs" if active == "prod" else "assoupli"
     return f"{active} (par {source}) — {effet} ; surcharges : {declared}"
+
+
+def _sealing_line(config: LoomConfig) -> str:
+    """L'état du sceau : quels secrets portent les clés, lequel ferme."""
+    declared = config.storage.encryption
+    if declared is None:
+        return "aucun (contenus en clair au repos)"
+    ferme, *ouvrent = declared.keys
+    secrets = f"secret {ferme!r} ferme"
+    if ouvrent:
+        secrets += f", {_listed(ouvrent)} ouvre(nt) encore"
+    return f"charges et fichiers scellés — {secrets}"
+
+
+def _sealing_report(config: LoomConfig) -> list[str]:
+    """Une ligne par client — l'empreinte de sa clé ou son absence —, puis les
+    avertissements du trousseau.
+
+    L'empreinte est imprimée, jamais la clé : elle suffit à voir que deux
+    clients scellent avec la même, ou que celle d'un client a changé. Un
+    client sans clé ne fait pas échouer la commande : c'est justement l'état
+    d'un client dont on a effacé la clé, et le reste de la config reste à
+    valider.
+    """
+    if config.storage.encryption is None:
+        return []
+    try:
+        keyring = create_keyring(config)
+    except ConfigError as error:  # extra 'crypto' absent
+        return [str(error)]
+    if keyring is None:
+        return []
+    lines: list[str] = []
+    for tenant_id in config.tenant_ids:
+        try:
+            ciphers = keyring.ciphers(tenant_id)
+        except SealError:
+            lines.append(f"{tenant_id} : SANS CLÉ")
+            continue
+        lines.append(f"{tenant_id} : clé {', '.join(cipher.key_id for cipher in ciphers)}")
+    return lines + encryption_warnings(config, keyring)
 
 
 def _storage_line(declared: EventsStorage | IdempotencyStorage) -> str:

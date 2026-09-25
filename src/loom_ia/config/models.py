@@ -14,7 +14,7 @@ import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final, Literal, Self
+from typing import Annotated, Final, Literal, Self
 
 from pydantic import (
     AwareDatetime,
@@ -273,18 +273,61 @@ class BusStorage(DomainModel):
         return self.dsn_env or self.url_env
 
 
+class EncryptionStorage(DomainModel):
+    """Sceau des contenus au repos, avec la clé de chaque client (#30, §11.5).
+
+    Déclarer ce bloc scelle la **charge** de chaque événement écrit et les
+    **octets** de chaque fichier rangé. L'enveloppe du journal reste en clair
+    — identifiants, horodatage, type, statut, agent, facettes —, si bien que
+    tout ce qui se filtre continue de se filtrer ; ce qui part, c'est le
+    contenu.
+
+    ``keys`` ne porte pas de clés mais des **noms de secrets**, comme partout
+    ailleurs dans la config. Chaque client redirige ce nom vers sa variable
+    (``secrets: {journal_key: MARTIN_JOURNAL_KEY}``) : c'est ainsi qu'une clé
+    est propre à un client, et effacer sa variable rend son journal illisible
+    pour de bon — *crypto-shredding* —, sans toucher à celui du voisin.
+
+    Plusieurs noms, dans l'ordre : le premier ferme, tous ouvrent. C'est le
+    renouvellement d'une clé, l'ancienne restant le temps que les anciens
+    journaux servent.
+    """
+
+    keys: Annotated[tuple[str, ...], Field(min_length=1)]
+
+
 class StorageConfig(DomainModel):
     events: EventsStorage = EventsStorage()
     artifacts: ArtifactsStorage = ArtifactsStorage()
     idempotency: IdempotencyStorage = IdempotencyStorage()
     queue: QueueStorage = QueueStorage()
     bus: BusStorage = BusStorage()
+    # Sans ce bloc, les contenus sont rangés en clair : c'est le journal de
+    # toujours, et l'isolation par client, les portées de clés et la
+    # suppression RGPD restent ce qui les protège.
+    encryption: EncryptionStorage | None = None
 
     @model_validator(mode="before")
     @classmethod
     def _later(cls, data: object) -> object:
         reject_later(data, LATER_STORAGE)
         return data
+
+    @model_validator(mode="after")
+    def _check_encryption(self) -> Self:
+        if self.encryption is None:
+            return self
+        if self.events.backend == "memory":
+            # Rien n'est rangé, donc rien n'est scellé : la config promettrait
+            # une protection que le journal n'a pas les moyens de tenir.
+            raise ValueError(
+                "Chiffrement déclaré avec un journal 'memory' : rien n'y est écrit, donc rien "
+                "n'y est scellé — déclarer un journal durable (jsonl, sqlite, postgres)"
+            )
+        doubles = [name for name in self.encryption.keys if self.encryption.keys.count(name) > 1]
+        if doubles:
+            raise ValueError(f"Chiffrement : secret déclaré deux fois — {doubles[0]!r}")
+        return self
 
     @model_validator(mode="after")
     def _check_artifacts(self) -> Self:
@@ -436,6 +479,16 @@ class TenantSpec(DomainModel):
                 raise ValueError(
                     f"Client {self.id!r} : le modèle {source!r} se remplace par lui-même"
                 )
+        if self.storage is not None and self.storage.encryption is not None:
+            # Le sceau est une propriété du déploiement, la clé est celle du
+            # client : les mélanger ferait de « scellé » une question à poser
+            # client par client, alors que la réponse doit être la même pour
+            # tout le journal.
+            raise ValueError(
+                f"Client {self.id!r} : 'storage.encryption' ne se surcharge pas — le sceau se "
+                "déclare à la racine, et ce qui est propre à un client, c'est sa clé (une "
+                "redirection 'secrets' vers sa variable)"
+            )
         if self.storage is not None and self.storage.idempotency != IdempotencyStorage():
             # Le port d'idempotence n'a le client que sur ``reserve`` : un
             # magasin par client demanderait de le porter jusqu'à ``get``.

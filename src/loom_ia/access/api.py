@@ -68,7 +68,7 @@ from typing import Final, Self
 from pydantic import AwareDatetime, JsonValue, NonNegativeInt, PositiveInt
 
 from loom_ia.adapters.queue import Handler
-from loom_ia.adapters.stores import NotifyingEventStore
+from loom_ia.adapters.stores import PLAIN, JournalCodec, NotifyingEventStore, SealingCodec
 from loom_ia.adapters.usage import InMemoryUsageCounter
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import AgentSpec
@@ -146,13 +146,16 @@ from loom_ia.runtime import (
     create_bus,
     create_event_store,
     create_idempotency_store,
+    create_keyring,
     create_mcp_pool,
     create_task_queue,
+    encryption_warnings,
     load_registry,
     storage_warnings,
 )
 from loom_ia.sessions import CompactionJob, CompactionPlan, write_snapshot
 from loom_ia.tenancy import (
+    EnvironmentSecrets,
     Quota,
     RoutedArtifactStore,
     RoutedEventStore,
@@ -650,14 +653,25 @@ class Loom:
         self._agents = AgentRegistry.from_config(config)
         # Clients (L1) : résolus ici, pour qu'une surcharge incohérente soit
         # une erreur de démarrage et non une erreur au premier run du client.
-        self._tenants = Tenants(config, environ=environ, secrets=secrets)
-        shared = store if store is not None else create_event_store(config)
+        provider: SecretProvider = (
+            secrets if secrets is not None else EnvironmentSecrets(config, environ)
+        )
+        self._tenants = Tenants(config, environ=environ, secrets=provider)
+        # Sceau des contenus au repos (5.5b) : un trousseau quand la config le
+        # déclare, et c'est lui qui donne son codec au journal et sa clé aux
+        # fichiers. Un seul trousseau pour l'instance : les clés d'un client
+        # sont résolues une fois, pas à chaque événement.
+        self._keyring = create_keyring(config, provider)
+        codec: JournalCodec = PLAIN if self._keyring is None else SealingCodec(self._keyring)
+        shared = store if store is not None else create_event_store(config, codec=codec)
         self._shared_store = shared
         # Un journal fourni par l'appelant reste à lui de fermer.
         self._owns_store = store is None
         # Stockage des fichiers, commun aux agents ; même règle de fermeture.
         self._shared_artifacts = (
-            artifacts if artifacts is not None else create_artifact_store(config)
+            artifacts
+            if artifacts is not None
+            else create_artifact_store(config, keyring=self._keyring)
         )
         self._owns_artifacts = artifacts is None
         # Isolation physique (#34) : un client qui déclare son propre stockage
@@ -665,8 +679,8 @@ class Loom:
         # un journal comme un autre : le reste de l'instance ne le voit pas.
         self._router = TenantRouter(
             self._tenants,
-            events=create_event_store,
-            artifacts=create_artifact_store,
+            events=partial(create_event_store, codec=codec),
+            artifacts=partial(create_artifact_store, keyring=self._keyring),
             shared_events=shared,
             shared_artifacts=self._shared_artifacts,
         )
@@ -687,6 +701,10 @@ class Loom:
         self._following: asyncio.Task[None] | None = None
         # Profil prod : ce qui avertit ailleurs refuse ici (M4, 5.5a).
         announce(config, storage_warnings(config))
+        # Le sceau, lui, avertit dans tous les profils : un client dont la clé a
+        # été effacée est un état voulu, pas une config à corriger, et refuser
+        # de démarrer arrêterait le service de tous les autres (5.5b).
+        announce(config, encryption_warnings(config, self._keyring), refuse=False)
         # Magasin d'idempotence partagé par les agents de l'instance (#49) ;
         # ``None`` quand chaque run se sert de son journal.
         self._idempotency = create_idempotency_store(config)

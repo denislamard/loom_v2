@@ -3,6 +3,13 @@
 
 from loom_ia.core.ports.artifact_store import ArtifactNotFound, ArtifactStore
 from loom_ia.core.ports.bus import BusUnavailable, EventBus, Notice
+from loom_ia.core.ports.cipher import (
+    Cipher,
+    Keyring,
+    MissingKey,
+    SealBroken,
+    SealError,
+)
 from loom_ia.core.ports.event_store import (
     EventStore,
     JournalCorrupted,
@@ -40,6 +47,7 @@ __all__ = [
     "ArtifactStore",
     "BusUnavailable",
     "ChunkCallback",
+    "Cipher",
     "EventBus",
     "EventStore",
     "IdempotencyStore",
@@ -48,11 +56,15 @@ __all__ = [
     "JobState",
     "JournalCorrupted",
     "KeyScope",
+    "Keyring",
+    "MissingKey",
     "ModelClient",
     "ModelError",
     "Notice",
     "Policy",
     "ReuseNote",
+    "SealBroken",
+    "SealError",
     "SecretProvider",
     "SequenceConflict",
     "ServedQueue",

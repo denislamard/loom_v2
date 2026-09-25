@@ -26,6 +26,7 @@ from typing import Any, Final
 
 import aiosqlite
 
+from loom_ia.adapters.stores.codec import PLAIN, JournalCodec
 from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId
 from loom_ia.core.ports import SequenceConflict, SessionRecord, journal_key
@@ -60,7 +61,7 @@ _INSERT: Final = (
 )
 
 
-def _row(event: Event) -> tuple[Any, ...]:
+def _row(event: Event, codec: JournalCodec) -> tuple[Any, ...]:
     return (
         event.tenant_id,
         event.session_id,
@@ -75,7 +76,7 @@ def _row(event: Event) -> tuple[Any, ...]:
         event.agent,
         event.role,
         json.dumps(event.facets, ensure_ascii=False),
-        event.model_dump_json(),
+        codec.dumps(event),
     )
 
 
@@ -124,8 +125,9 @@ def _conditions(query: EventQuery) -> tuple[str, list[Any]]:
 class SqliteEventStore:
     """Journal durable dans un fichier SQLite."""
 
-    def __init__(self, path: str | os.PathLike[str]) -> None:
+    def __init__(self, path: str | os.PathLike[str], *, codec: JournalCodec = PLAIN) -> None:
         self.path = Path(path)
+        self._codec = codec
         self._connection: aiosqlite.Connection | None = None
         self._lock = asyncio.Lock()
 
@@ -157,7 +159,9 @@ class SqliteEventStore:
                 if expected_seq is not None and expected_seq != last:
                     raise SequenceConflict(session_id, expected_seq, last)
                 events = [draft.to_event(last + i) for i, draft in enumerate(drafts, start=1)]
-                await connection.executemany(_INSERT, [_row(event) for event in events])
+                await connection.executemany(
+                    _INSERT, [_row(event, self._codec) for event in events]
+                )
             except BaseException:
                 await connection.execute("ROLLBACK")
                 raise
@@ -196,7 +200,7 @@ class SqliteEventStore:
                 rows = await cursor.fetchall()
             finally:
                 await cursor.close()
-        return [Event.model_validate_json(str(row[0])) for row in rows]
+        return [self._codec.loads(str(row[0])) for row in rows]
 
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
         async with self._lock:

@@ -894,6 +894,7 @@ all = [
     { name = "aiosqlite" },
     { name = "anthropic" },
     { name = "asyncpg" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "google-cloud-firestore" },
     { name = "google-cloud-storage" },
@@ -908,6 +909,9 @@ all = [
 ]
 anthropic = [
     { name = "anthropic" },
+]
+crypto = [
+    { name = "cryptography" },
 ]
 firestore = [
     { name = "google-cloud-firestore" },
@@ -966,11 +970,12 @@ requires-dist = [
     { name = "aiosqlite", marker = "extra == 'sqlite'", specifier = ">=0.22.1" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.6.0" },
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.31.0" },
+    { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=50.0.1" },
     { name = "fastapi", marker = "extra == 'http'", specifier = ">=0.141.1" },
     { name = "google-cloud-firestore", marker = "extra == 'firestore'", specifier = ">=2.30.0" },
     { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=3.14.1" },
     { name = "jsonschema", specifier = ">=4.26.0" },
-    { name = "loom-ia", extras = ["anthropic", "openai", "mcp", "http", "sqlite", "postgres", "firestore", "gcs", "rabbitmq", "redis", "otel"], marker = "extra == 'all'" },
+    { name = "loom-ia", extras = ["anthropic", "openai", "mcp", "http", "sqlite", "postgres", "firestore", "gcs", "rabbitmq", "redis", "otel", "crypto"], marker = "extra == 'all'" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = "<2" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=3.14.1" },
     { name = "opentelemetry-exporter-otlp", marker = "extra == 'otel'", specifier = ">=1.44.0" },
@@ -982,7 +987,7 @@ requires-dist = [
     { name = "sse-starlette", marker = "extra == 'http'", specifier = ">=3.4.11" },
     { name = "uvicorn", marker = "extra == 'http'", specifier = ">=0.53.0" },
 ]
-provides-extras = ["anthropic", "openai", "mcp", "http", "sqlite", "postgres", "firestore", "gcs", "rabbitmq", "redis", "otel", "all"]
+provides-extras = ["anthropic", "openai", "mcp", "http", "sqlite", "crypto", "postgres", "firestore", "gcs", "rabbitmq", "redis", "otel", "all"]
 
 [package.metadata.requires-dev]
 dev = [

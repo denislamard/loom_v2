@@ -6,6 +6,12 @@ par ligne. Plusieurs process peuvent écrire dans le même journal : chaque
 écriture prend un verrou exclusif ``flock`` (POSIX : Linux, macOS) et se
 termine par un ``fsync``, car chaque événement sert de point de reprise.
 
+Ce qu'une ligne contient dépend du codec (``codec.py``) : le JSON de
+l'événement en clair, ou la même enveloppe avec sa charge scellée. Lister les
+sessions et connaître la longueur d'un journal ne lisent que la **marque** de
+la dernière ligne, jamais sa charge : un journal dont la clé est effacée se
+laisse encore voir et supprimer.
+
 Plantage en cours d'écriture : la dernière ligne peut rester incomplète.
 Elle est ignorée à la lecture ; à l'écriture suivante, elle est déplacée
 dans ``<session>.jsonl.corrupt`` puis retirée du journal. Une ligne
@@ -24,6 +30,7 @@ from typing import BinaryIO, Final
 
 from pydantic import ValidationError
 
+from loom_ia.adapters.stores.codec import PLAIN, EventMark, JournalCodec
 from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId
 from loom_ia.core.ports import JournalCorrupted, SequenceConflict, SessionRecord, journal_key
@@ -45,7 +52,7 @@ def _component(value: str, kind: str) -> str:
     return value
 
 
-def _parse(path: Path, content: bytes) -> list[Event]:
+def _parse(path: Path, content: bytes, codec: JournalCodec) -> list[Event]:
     """Événements des lignes complètes ; la ligne finale incomplète est ignorée."""
     lines = content.split(b"\n")
     if lines[-1]:
@@ -53,10 +60,18 @@ def _parse(path: Path, content: bytes) -> list[Event]:
     events: list[Event] = []
     for number, line in enumerate(lines[:-1], start=1):
         try:
-            events.append(Event.model_validate_json(line))
-        except ValidationError as exc:
+            events.append(codec.loads(line))
+        except (ValidationError, JournalCorrupted) as exc:
             raise JournalCorrupted(f"{path}, ligne {number} : {exc}") from exc
     return events
+
+
+def _mark(path: Path, line: bytes, codec: JournalCodec) -> EventMark:
+    """Repères d'une ligne complète, sans l'ouvrir ; ``JournalCorrupted`` sinon."""
+    try:
+        return codec.mark(line)
+    except ValidationError as exc:
+        raise JournalCorrupted(f"{path} : {exc}") from exc
 
 
 def _tail(path: Path, size: int) -> bytes:
@@ -73,13 +88,18 @@ def _tail(path: Path, size: int) -> bytes:
         return b""
 
 
-def _last_parsed(content: bytes) -> Event | None:
-    """Dernier événement lisible : la ligne finale peut être incomplète, la
-    première tronquée par une lecture partielle."""
+def _last_mark(content: bytes, codec: JournalCodec) -> EventMark | None:
+    """Repères de la dernière ligne lisible, sans l'ouvrir.
+
+    La ligne finale peut être incomplète, la première tronquée par une
+    lecture partielle : celles-là sont passées. Lire une **marque** et non un
+    événement, c'est ce qui laisse un journal scellé se lister et se
+    supprimer sans sa clé.
+    """
     for line in reversed([line for line in content.split(b"\n") if line]):
         try:
-            return Event.model_validate_json(line)
-        except ValidationError:
+            return codec.mark(line)
+        except ValidationError, JournalCorrupted:
             continue
     return None
 
@@ -97,8 +117,9 @@ def _locked_read(path: Path) -> bytes:
 
 
 class JsonlEventStore:
-    def __init__(self, root: str | os.PathLike[str]) -> None:
+    def __init__(self, root: str | os.PathLike[str], *, codec: JournalCodec = PLAIN) -> None:
         self._root = Path(root)
+        self._codec = codec
         # Dernier seq connu par fichier, valable tant que la taille n'a pas changé.
         self._tails: dict[Path, tuple[int, int]] = {}
         self._tails_lock = threading.Lock()
@@ -136,7 +157,7 @@ class JsonlEventStore:
                 if expected_seq is not None and expected_seq != last:
                     raise SequenceConflict(session_id, expected_seq, last)
                 events = [draft.to_event(last + i) for i, draft in enumerate(drafts, start=1)]
-                fh.write(b"".join(e.model_dump_json().encode() + b"\n" for e in events))
+                fh.write(b"".join(self._codec.dumps(e).encode() + b"\n" for e in events))
                 fh.flush()
                 os.fsync(fh.fileno())
                 self._remember(path, os.fstat(fh.fileno()).st_size, events[-1].seq)
@@ -163,8 +184,10 @@ class JsonlEventStore:
             logger.warning("%s : ligne finale incomplète déplacée dans %s", path, corrupt.name)
             content = content[:complete]
 
-        events = _parse(path, content[content.rfind(b"\n", 0, -1) + 1 :]) if content else []
-        last = events[-1].seq if events else 0
+        # La dernière ligne complète suffit, et sa marque suffit : écrire à la
+        # suite demande le numéro, pas le contenu.
+        tail = content[content.rfind(b"\n", 0, -1) + 1 :].rstrip(b"\n")
+        last = _mark(path, tail, self._codec).seq if tail else 0
         self._remember(path, len(content), last)
         return last
 
@@ -187,7 +210,7 @@ class JsonlEventStore:
         return [e for e in events if e.seq > after_seq and (run_id is None or e.run_id == run_id)]
 
     def _read_sync(self, path: Path) -> list[Event]:
-        return _parse(path, _locked_read(path))
+        return _parse(path, _locked_read(path), self._codec)
 
     async def query(self, query: EventQuery) -> list[Event]:
         return await asyncio.to_thread(self._query_sync, query)
@@ -202,8 +225,9 @@ class JsonlEventStore:
         return query.select(candidates)
 
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
-        events = await self.read(tenant_id, session_id)
-        return events[-1].seq if events else 0
+        path = self.path(tenant_id, session_id)
+        last = await asyncio.to_thread(self._last_mark_of, path)
+        return last.seq if last is not None else 0
 
     # --- Sessions (F7) ----------------------------------------------------
 
@@ -216,7 +240,7 @@ class JsonlEventStore:
             return []
         records: list[SessionRecord] = []
         for path in sorted(tenant_dir.glob(f"*{SUFFIX}")):
-            last = self._last_event(path)
+            last = self._last_mark_of(path)
             if last is not None:
                 records.append(
                     SessionRecord(session_id=last.session_id, last_seq=last.seq, updated_at=last.ts)
@@ -224,13 +248,13 @@ class JsonlEventStore:
         records.sort(key=lambda record: record.updated_at, reverse=True)
         return records
 
-    def _last_event(self, path: Path) -> Event | None:
-        """Dernier événement du journal, lu par la fin du fichier."""
+    def _last_mark_of(self, path: Path) -> EventMark | None:
+        """Repères du dernier événement du journal, lus par la fin du fichier."""
         tail = _tail(path, TAIL_BYTES)
-        found = _last_parsed(tail)
+        found = _last_mark(tail, self._codec)
         if found is None and len(tail) >= TAIL_BYTES:
             # Un événement plus gros que la fenêtre : on relit tout le journal.
-            found = _last_parsed(_locked_read(path))
+            found = _last_mark(_locked_read(path), self._codec)
         return found
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:

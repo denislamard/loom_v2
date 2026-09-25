@@ -54,11 +54,21 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 from pydantic import JsonValue
 
-from loom_ia.adapters.artifacts import InMemoryArtifactStore, LocalArtifactStore
+from loom_ia.adapters.artifacts import (
+    InMemoryArtifactStore,
+    LocalArtifactStore,
+    SealingArtifactStore,
+)
 from loom_ia.adapters.idempotency import InMemoryIdempotency
 from loom_ia.adapters.models import create_model_client
 from loom_ia.adapters.queue import AsyncioTaskQueue, Handler
-from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
+from loom_ia.adapters.stores import (
+    PLAIN,
+    InMemoryEventStore,
+    JournalCodec,
+    JsonlEventStore,
+    SealingCodec,
+)
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import (
     AgentSpec,
@@ -101,8 +111,11 @@ from loom_ia.core.ports import (
     EventStore,
     IdempotencyStore,
     JobKind,
+    Keyring,
     ModelClient,
     Policy,
+    SealError,
+    SecretProvider,
     TaskQueue,
     Tool,
     ToolSource,
@@ -136,7 +149,7 @@ from loom_ia.guards import (
 )
 from loom_ia.policies import BUILTIN_POLICIES
 from loom_ia.telemetry import configure_logging
-from loom_ia.tenancy import Tenant
+from loom_ia.tenancy import EnvironmentSecrets, Tenant
 from loom_ia.tools import FunctionTool, configure
 from loom_ia.usage import BudgetGuard
 
@@ -200,18 +213,54 @@ def _missing_asyncpg(what: str) -> ConfigError:
     )
 
 
-def create_event_store(config: LoomConfig | StorageConfig) -> EventStore:
-    """Journal déclaré dans ``storage.events``, d'une config ou d'un client."""
+def create_keyring(config: LoomConfig, secrets: SecretProvider | None = None) -> Keyring | None:
+    """Trousseau des clients déclaré dans ``storage.encryption`` ; ``None`` sans sceau.
+
+    Les clés viennent des secrets, jamais de la config : celle-ci ne nomme
+    que le secret qui les porte, et chaque client redirige ce nom vers sa
+    variable (5.1a).
+    """
+    declared = config.storage.encryption
+    if declared is None:
+        return None
+    try:
+        from loom_ia.adapters.crypto import SecretKeyring
+    except ImportError as exc:
+        raise ConfigError(
+            "Chiffrement : le paquet 'cryptography' n'est pas installé "
+            "(installer l'extra : loom-ia[crypto])"
+        ) from exc
+    table = secrets if secrets is not None else EnvironmentSecrets(config)
+    return SecretKeyring(table, declared.keys)
+
+
+def create_journal_codec(config: LoomConfig, secrets: SecretProvider | None = None) -> JournalCodec:
+    """Codec du journal : scellant quand ``storage.encryption`` est déclaré."""
+    keyring = create_keyring(config, secrets)
+    return PLAIN if keyring is None else SealingCodec(keyring)
+
+
+def create_event_store(
+    config: LoomConfig | StorageConfig, *, codec: JournalCodec | None = None
+) -> EventStore:
+    """Journal déclaré dans ``storage.events``, d'une config ou d'un client.
+
+    ``codec`` dit comment une ligne est rangée : en clair, ou la charge
+    scellée. Sans lui, il est tiré de la config — un journal de client n'en
+    déclare pas (le sceau se déclare à la racine), si bien qu'un journal créé
+    pour un client reçoit celui de l'instance.
+    """
     events = _storage(config).events
+    chosen = codec if codec is not None else _own_codec(config)
     if events.backend == "postgres":
         try:
             from loom_ia.adapters.stores.postgres import PostgresEventStore
         except ImportError as exc:
             raise _missing_asyncpg("Journal") from exc
-        return PostgresEventStore(_dsn(events, "Journal"), role=events.role)
+        return PostgresEventStore(_dsn(events, "Journal"), role=events.role, codec=chosen)
     if events.path is not None:
         if events.backend == "jsonl":
-            return JsonlEventStore(events.path)
+            return JsonlEventStore(events.path, codec=chosen)
         if events.backend == "sqlite":
             try:
                 from loom_ia.adapters.stores.sqlite import SqliteEventStore
@@ -220,8 +269,20 @@ def create_event_store(config: LoomConfig | StorageConfig) -> EventStore:
                     "Journal 'sqlite' : le paquet 'aiosqlite' n'est pas installé "
                     "(installer l'extra : loom-ia[sqlite])"
                 ) from exc
-            return SqliteEventStore(events.path)
+            return SqliteEventStore(events.path, codec=chosen)
     return InMemoryEventStore()
+
+
+def _own_codec(config: LoomConfig | StorageConfig) -> JournalCodec:
+    if isinstance(config, StorageConfig) or config.storage.encryption is None:
+        return PLAIN
+    return create_journal_codec(config)
+
+
+def _own_keyring(config: LoomConfig | StorageConfig) -> Keyring | None:
+    if isinstance(config, StorageConfig):
+        return None
+    return create_keyring(config)
 
 
 def create_task_queue(config: LoomConfig, handlers: Mapping[JobKind, Handler]) -> TaskQueue:
@@ -322,13 +383,24 @@ def postgres_ddl(config: LoomConfig | StorageConfig) -> str:
     return "\n".join(blocks) + "\n"
 
 
-def create_artifact_store(config: LoomConfig | StorageConfig) -> ArtifactStore:
-    """Stockage d'artefacts déclaré dans ``storage.artifacts``, ou celui qui suit le journal."""
+def create_artifact_store(
+    config: LoomConfig | StorageConfig, *, keyring: Keyring | None = None
+) -> ArtifactStore:
+    """Stockage d'artefacts déclaré dans ``storage.artifacts``, ou celui qui suit le journal.
+
+    Avec un trousseau, les octets sont scellés comme les charges du journal :
+    un gros résultat déporté ou une pièce jointe porte du contenu, et le
+    laisser en clair ferait du sceau une demi-mesure.
+    """
     storage = _storage(config)
     path = storage.artifacts_path
-    if storage.artifacts_backend == "local" and path is not None:
-        return LocalArtifactStore(path)
-    return InMemoryArtifactStore()
+    inner: ArtifactStore = (
+        LocalArtifactStore(path)
+        if storage.artifacts_backend == "local" and path is not None
+        else InMemoryArtifactStore()
+    )
+    ring = keyring if keyring is not None else _own_keyring(config)
+    return inner if ring is None else SealingArtifactStore(inner, ring)
 
 
 def _storage(config: LoomConfig | StorageConfig) -> StorageConfig:
@@ -865,6 +937,42 @@ def storage_warnings(config: LoomConfig) -> list[str]:
             "retrouvera pas"
         ]
     return []
+
+
+def encryption_warnings(config: LoomConfig, keyring: Keyring | None) -> list[str]:
+    """Ce que le trousseau dit des clients déclarés (5.5b).
+
+    Deux choses valent d'être dites au chargement. Un client **sans clé** :
+    son journal reste illisible et ses runs seront refusés à leur premier
+    événement. C'est l'effet voulu d'un effacement de clé, et la config ne
+    peut pas le distinguer d'une variable oubliée — donc un avertissement, pas
+    un refus, même en profil prod : refuser de démarrer parce qu'un client a
+    été effacé arrêterait le service de tous les autres.
+
+    Deux clients qui **partagent une clé** : c'est un montage possible, mais
+    effacer cette clé efface le contenu des deux, et c'est le genre de chose
+    qu'on découvre au mauvais moment.
+    """
+    if keyring is None:
+        return []
+    warnings: list[str] = []
+    sealing: dict[str, list[TenantId]] = {}
+    for tenant_id in config.tenant_ids:
+        try:
+            ciphers = keyring.ciphers(tenant_id)
+        except SealError as error:
+            warnings.append(f"Chiffrement : {error}")
+            continue
+        sealing.setdefault(ciphers[0].key_id, []).append(tenant_id)
+    for key_id, shared in sealing.items():
+        if len(shared) > 1:
+            named = ", ".join(repr(str(tenant_id)) for tenant_id in shared)
+            warnings.append(
+                f"Chiffrement : les clients {named} scellent avec la même clé ({key_id}) — "
+                "l'effacer rendrait leurs journaux illisibles ensemble ; une clé par client "
+                "demande une redirection 'secrets' par client"
+            )
+    return warnings
 
 
 def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:

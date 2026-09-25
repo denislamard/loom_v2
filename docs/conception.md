@@ -939,6 +939,8 @@ runtime (fin du run) ──enqueue──▶ TaskQueue ──▶ worker
 
 **Réalisation (phase 4.1a) :** `Loom.sessions()` liste les sessions d'un client (la plus récemment écrite d'abord), `Loom.export_session()` rend tous les événements d'une session dans l'ordre du journal (les fichiers restent désignés par leur URI, `Loom.artifact()` en rend les octets), `Loom.delete_session()` supprime les fichiers puis le journal — dans cet ordre, car tant que le journal est là on sait ce qu'il reste à retirer — et rend le compte de ce qui est parti. En ligne de commande : `loom sessions list`, `loom sessions export <id> [--out]`, `loom sessions delete <id> [--yes]`. Le chiffrement par client (J5) n'est pas là.
 
+**Réalisation (phase 5.5b) :** le chiffrement par client est là (§16.3, `fonctions.md` point 30). Le *crypto-shredding* est l'affaire de l'opérateur — loom ne détient pas les clés —, et ce que loom en tient, c'est le comportement : une clé effacée, la charge ne s'ouvre plus, mais **lister et supprimer marchent encore**, puisqu'ils ne lisent que la marque d'une ligne. Les deux voies de la suppression se complètent donc au lieu de se gêner : effacer la clé rend illisible ce qui existe, y compris les sauvegardes qu'on ne peut plus atteindre ; `delete_session` retire les octets qu'on atteint encore.
+
 ## 12. Exécution durable
 
 ### 12.1 File de tâches
@@ -1119,6 +1121,8 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - Chiffrement au repos du journal ; clé par client en option (§11.5).
 
 **Réalisation (phase 5.1a) :** port `SecretProvider` (`secrets(tenant_id) -> Mapping[str, str]` : la table d'un client, telle qu'elle descend aux adaptateurs) et adaptateur `EnvironmentSecrets`, qui résout la redirection `secrets` d'un client sur l'environnement. Ce qu'un client ne redirige pas y est lu tel quel ; une redirection vers une variable absente vaut **vide**, jamais le secret commun. Le client d'une requête REST vient de sa **clé d'API** et de nulle part ailleurs ; en MCP stdio, où il n'y a pas de clé, un serveur sert un client, choisi à son lancement. Chiffrement : J5.5 ; RLS : faite en 5.3a, avec le journal Postgres (§11.1).
+
+**Réalisation (phase 5.5b — le sceau ; détails : `fonctions.md`, point 30) :** `storage.encryption: {keys: [NOM_DU_SECRET]}` scelle la charge de chaque événement et les octets de chaque fichier, en AES-256-GCM. Port `Cipher`/`Keyring` (`core/ports/cipher.py`), codec de ligne (`adapters/stores/codec.py`, partagé par les trois journaux qui sérialisent), enrobage `SealingArtifactStore`, adaptateur `AesGcmCipher` et trousseau `SecretKeyring` dans l'extra **`crypto`**. La **clé vient des secrets du client** : le sceau se déclare à la racine — un client ne le surcharge pas —, et ce qui lui est propre est sa clé, par la redirection de 5.1a. Effacer sa variable rend son journal illisible pour de bon (*crypto-shredding*) sans toucher au voisin ; deux clients qui partagent une clé sont **dits** au chargement, comme un client qui n'en a plus. L'enveloppe du journal reste en clair, donc les requêtes filtrent comme avant, et lister comme supprimer une session ne demandent pas la clé — c'est ce que le RGPD exige. Un magasin d'idempotence **partagé** (`sqlite`, `postgres`, `redis`), lui, garde en clair les résultats qu'il mémorise ; le magasin `journal` les range dans le journal, donc sous le sceau.
 
 ## 17. Configuration
 

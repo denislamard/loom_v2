@@ -3,5 +3,6 @@
 
 from loom_ia.adapters.artifacts.local import LocalArtifactStore
 from loom_ia.adapters.artifacts.memory import InMemoryArtifactStore
+from loom_ia.adapters.artifacts.sealing import SealingArtifactStore
 
-__all__ = ["InMemoryArtifactStore", "LocalArtifactStore"]
+__all__ = ["InMemoryArtifactStore", "LocalArtifactStore", "SealingArtifactStore"]

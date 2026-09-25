@@ -14,7 +14,6 @@ LATER_TENANT: Final[dict[str, str]] = {}
 LATER_MCP_ACCESS: Final[dict[str, str]] = {}
 
 LATER_STORAGE: Final[dict[str, str]] = {
-    "encryption": "J5.5 (chiffrement par client)",
     "retention": "J5.5 (rétention)",
 }
 LATER_TELEMETRY: Final[dict[str, str]] = {
