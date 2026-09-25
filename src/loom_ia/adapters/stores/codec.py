@@ -24,12 +24,17 @@ par client, session, run, type, agent, outil, modèle —, et une page de
 ``GET /events`` ne coûte pas plus cher. Le contenu, lui, est dans la charge,
 et une facette est par règle un champ qui n'en porte pas (5.4c).
 
-**Ce que l'AAD couvre :** le journal (client, session), la position (``seq``)
-et l'identité (``event_id``). Pas le type ni les facettes — l'enveloppe les
-recopie de la charge et les vérifie à la relecture, si bien qu'une facette
-changée sous un sceau ouvert est déjà une erreur de validation. Une charge
-déplacée d'un journal à un autre, ou d'une position à une autre, ne se
-verrait pas : c'est ce que l'AAD refuse.
+**Ce que l'AAD couvre :** le journal (client, session), la position (``seq``),
+l'identité (``event_id``) et l'**horodatage** (``ts``). Pas le type ni les
+facettes — l'enveloppe les recopie de la charge et les vérifie à la relecture,
+si bien qu'une facette changée sous un sceau ouvert est déjà une erreur de
+validation. Une charge déplacée d'un journal à un autre, d'une position à une
+autre, ou re-datée, ne se verrait pas : c'est ce que l'AAD refuse.
+
+L'horodatage y est entré en 5.5c, et pour une raison précise : la rétention
+décide d'**effacer** une session sur la date de sa dernière écriture. Re-dater
+une ligne, ce serait donc garder un journal pour toujours ou le faire
+supprimer avant l'heure — un champ dont dépend une suppression doit être tenu.
 
 **Une ligne en clair reste lisible par un codec scellant.** Sceller un
 journal qui existe déjà ne le réécrit pas : l'ancien se relit tel quel, et
@@ -40,6 +45,7 @@ sans la clé, ce qui a été fermé ne s'ouvre plus.
 import json
 from base64 import b64decode, b64encode
 from binascii import Error as Base64Error
+from datetime import UTC, datetime
 from typing import Any, Final, Protocol, cast
 
 from pydantic import AwareDatetime, ConfigDict, PositiveInt, ValidationError
@@ -126,7 +132,7 @@ class SealingCodec:
 
     def dumps(self, event: Event) -> str:
         cipher = self._sealer(event.tenant_id)
-        aad = aad_of(event.tenant_id, event.session_id, event.seq, event.event_id)
+        aad = aad_of(event.tenant_id, event.session_id, event.seq, event.event_id, event.ts)
         closed = cipher.seal(event.payload.model_dump_json().encode(), aad)
         # Le JSON de l'événement, relu puis recomposé : l'enveloppe rangée est
         # exactement celle que Pydantic écrit, à la charge près.
@@ -143,7 +149,7 @@ class SealingCodec:
         seal = _seal(cast("dict[str, Any]", payload))
         mark = _mark(shell)
         cipher = self._opener(mark.tenant_id, seal.key_id)
-        aad = aad_of(mark.tenant_id, mark.session_id, mark.seq, mark.event_id)
+        aad = aad_of(mark.tenant_id, mark.session_id, mark.seq, mark.event_id, mark.ts)
         shell["payload"] = _clear(cipher.unseal(_closed(seal), aad))
         return Event.model_validate(shell)
 
@@ -174,10 +180,22 @@ class SealingCodec:
         return f"SealingCodec({self._keyring!r})"
 
 
-def aad_of(tenant_id: str, session_id: str, seq: int, event_id: str) -> bytes:
-    """Ce que le sceau authentifie sans le chiffrer : le journal et la place."""
+def aad_of(tenant_id: str, session_id: str, seq: int, event_id: str, ts: datetime) -> bytes:
+    """Ce que le sceau authentifie sans le chiffrer : le journal, la place, l'heure.
+
+    L'horodatage est ramené à UTC avant d'être écrit : l'écriture part d'un
+    ``datetime``, la relecture d'un texte analysé, et deux représentations du
+    même instant donneraient sinon deux AAD différentes.
+    """
     return b"\n".join(
-        (AAD_PREFIX, tenant_id.encode(), session_id.encode(), str(seq).encode(), event_id.encode())
+        (
+            AAD_PREFIX,
+            tenant_id.encode(),
+            session_id.encode(),
+            str(seq).encode(),
+            event_id.encode(),
+            ts.astimezone(UTC).isoformat().encode(),
+        )
     )
 
 

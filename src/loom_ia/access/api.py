@@ -60,12 +60,12 @@ import re
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Final, Self
 
-from pydantic import AwareDatetime, JsonValue, NonNegativeInt, PositiveInt
+from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt
 
 from loom_ia.adapters.queue import Handler
 from loom_ia.adapters.stores import PLAIN, JournalCodec, NotifyingEventStore, SealingCodec
@@ -263,6 +263,46 @@ class SessionDeletion(DomainModel):
     # Clés d'idempotence oubliées : celles d'un magasin partagé, le magasin
     # ``journal`` gardant les siennes dans les événements ci-dessus.
     keys: NonNegativeInt = 0
+
+
+class SessionSwept(DomainModel):
+    """Une session que la rétention a retirée, ou retirerait (5.5c)."""
+
+    tenant_id: TenantId
+    session_id: SessionId
+    # Dernière écriture : c'est elle, et elle seule, qui décide.
+    last_write: AwareDatetime
+    # Longueur du journal, connue par la marque de la session : vraie dans les
+    # deux modes, sans rien ouvrir.
+    events: NonNegativeInt = 0
+    # Fichiers et clés : connus en supprimant, donc ``None`` en essai à blanc.
+    # Un zéro y mentirait — « aucun fichier » n'est pas « je n'ai pas regardé ».
+    artifacts: NonNegativeInt | None = None
+    keys: NonNegativeInt | None = None
+
+
+class RetentionReport(DomainModel):
+    """Ce qu'un balayage a fait, ou ferait (5.5c).
+
+    ``dry_run`` dit lequel des deux : sans lui, rien n'a été supprimé. Le
+    rapport dit aussi son **prix** — combien de sessions ont été regardées —
+    et la borne appliquée à chaque client, parce qu'une rétention qui n'efface
+    rien et une rétention non déclarée se ressemblent trop.
+    """
+
+    dry_run: bool
+    # Borne par client, telle qu'elle a été lue ; ``None`` : aucune règle.
+    days: dict[TenantId, NonNegativeInt | None] = Field(
+        default_factory=dict[TenantId, NonNegativeInt | None]
+    )
+    scanned: NonNegativeInt = 0
+    kept: NonNegativeInt = 0
+    swept: tuple[SessionSwept, ...] = ()
+
+    @property
+    def events(self) -> int:
+        """Événements retirés, ou qui le seraient."""
+        return sum(session.events for session in self.swept)
 
 
 def _masked_approvals(approvals: tuple[PendingApproval, ...]) -> tuple[PendingApproval, ...]:
@@ -1278,6 +1318,71 @@ class Loom:
         events = await self._store.delete(tenant, session_id)
         self._writers.forget(tenant, session_id)
         return SessionDeletion(session_id=session_id, events=events, artifacts=artifacts, keys=keys)
+
+    async def apply_retention(
+        self,
+        *,
+        tenant_id: TenantId | None = None,
+        dry_run: bool = True,
+        now: datetime | None = None,
+    ) -> RetentionReport:
+        """Efface les sessions dormantes au-delà de la borne (`storage.retention`, 5.5c).
+
+        Une session est choisie sur sa **dernière écriture**, et sur rien
+        d'autre : aucun contenu n'est lu, si bien qu'un journal scellé dont la
+        clé a disparu s'efface aussi — c'est là que la place serait perdue pour
+        de bon. Conséquence assumée : une session qui portait un run en pause
+        part comme les autres si elle est restée muette plus longtemps que la
+        borne.
+
+        ``dry_run`` est le défaut : le rapport dit ce qui partirait, et rien
+        n'est supprimé. Les fichiers et les clés d'une session ne se comptent
+        qu'en la supprimant, donc ils restent inconnus (``None``) en essai à
+        blanc ; le nombre d'événements, lui, est la longueur du journal, que la
+        marque de la session donne sans rien ouvrir.
+
+        Rien ne se déclenche tout seul : c'est `loom retention` qui appelle, et
+        la plateforme qui le met à l'heure (5.4c).
+        """
+        moment = now or datetime.now(UTC)
+        tenants = (tenant_id,) if tenant_id is not None else self._config.tenant_ids
+        days = {tenant: self._config.retention_days(tenant) for tenant in tenants}
+        scanned = 0
+        kept = 0
+        swept: list[SessionSwept] = []
+        for tenant, bound in days.items():
+            if bound is None:
+                continue
+            limit = moment - timedelta(days=bound)
+            for record in await self._store.sessions(tenant):
+                scanned += 1
+                if record.updated_at >= limit:
+                    kept += 1
+                    continue
+                swept.append(await self._sweep(tenant, record, dry_run=dry_run))
+        return RetentionReport(
+            dry_run=dry_run, days=days, scanned=scanned, kept=kept, swept=tuple(swept)
+        )
+
+    async def _sweep(
+        self, tenant: TenantId, record: SessionRecord, *, dry_run: bool
+    ) -> SessionSwept:
+        found = SessionSwept(
+            tenant_id=tenant,
+            session_id=record.session_id,
+            last_write=record.updated_at,
+            events=record.last_seq,
+        )
+        if dry_run:
+            return found
+        removed = await self.delete_session(record.session_id, tenant_id=tenant)
+        return found.model_copy(
+            update={
+                "events": removed.events,
+                "artifacts": removed.artifacts,
+                "keys": removed.keys,
+            }
+        )
 
     # --- Cycle de vie ---------------------------------------------------------
 

@@ -296,6 +296,29 @@ class EncryptionStorage(DomainModel):
     keys: Annotated[tuple[str, ...], Field(min_length=1)]
 
 
+class RetentionStorage(DomainModel):
+    """Combien de temps une session dormante est gardée (#30, §11.5).
+
+    ``events_days`` est un nombre de jours **depuis la dernière écriture** d'une
+    session. Au-delà, la session part en entier — journal, fichiers, clés
+    d'idempotence —, comme une suppression RGPD demandée à la main. ``null``
+    (le défaut) n'efface rien : c'est le comportement de toujours.
+
+    La borne se décide sur la **marque** d'une session (sa dernière écriture),
+    jamais sur son contenu : c'est ce qui permet d'effacer un journal scellé
+    dont la clé a disparu (5.5b) — là justement où la place est perdue si on ne
+    peut pas la reprendre. Une session **est donc effacée même si un run y
+    attendait une approbation** : une borne plus courte que le délai d'une
+    approbation détruit des approbations en attente, et c'est au déploiement de
+    ne pas s'y mettre.
+
+    Rien ne s'efface tout seul : ``loom retention`` balaie, et c'est la
+    plateforme qui le met à l'heure (comme les portes de 5.4c).
+    """
+
+    events_days: PositiveInt | None = None
+
+
 class StorageConfig(DomainModel):
     events: EventsStorage = EventsStorage()
     artifacts: ArtifactsStorage = ArtifactsStorage()
@@ -306,6 +329,8 @@ class StorageConfig(DomainModel):
     # toujours, et l'isolation par client, les portées de clés et la
     # suppression RGPD restent ce qui les protège.
     encryption: EncryptionStorage | None = None
+    # Rétention des sessions dormantes ; sans borne, rien ne s'efface.
+    retention: RetentionStorage = RetentionStorage()
 
     @model_validator(mode="before")
     @classmethod
@@ -460,6 +485,11 @@ class TenantSpec(DomainModel):
     # Stockage propre à ce client (isolation physique, ``TenantRouter``) ;
     # sans lui, celui de la racine, où seul le ``tenant_id`` le distingue.
     storage: StorageConfig | None = None
+    # Rétention propre à ce client, à côté de ``storage`` et non dedans : le
+    # bloc ``storage`` dit **où** ses données vivent, et le déclarer lui
+    # donnerait son propre journal. Combien de temps elles vivent est une autre
+    # question — souvent contractuelle, et propre au client (5.5c).
+    retention: RetentionStorage | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -892,6 +922,18 @@ class LoomConfig(DomainModel):
             if tenant.id == tenant_id:
                 return tenant
         return None
+
+    def retention_days(self, tenant_id: TenantId) -> int | None:
+        """Borne de rétention de ce client : la sienne, sinon celle de la racine.
+
+        ``None`` : ce client ne perd rien. Un client peut aussi **annuler** la
+        règle commune en déclarant ``retention: {events_days: null}``, ce qui se
+        lit comme ce que c'est — une exception assumée, écrite noir sur blanc.
+        """
+        spec = self.tenant_spec(tenant_id)
+        if spec is not None and spec.retention is not None:
+            return spec.retention.events_days
+        return self.storage.retention.events_days
 
     def mcp_server(self, name: str) -> McpServerSpec:
         """Définition d'un serveur MCP par son nom."""

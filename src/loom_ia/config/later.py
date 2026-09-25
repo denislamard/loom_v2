@@ -13,9 +13,7 @@ LATER_API_KEY: Final[dict[str, str]] = {}
 LATER_TENANT: Final[dict[str, str]] = {}
 LATER_MCP_ACCESS: Final[dict[str, str]] = {}
 
-LATER_STORAGE: Final[dict[str, str]] = {
-    "retention": "J5.5 (rétention)",
-}
+LATER_STORAGE: Final[dict[str, str]] = {}
 LATER_TELEMETRY: Final[dict[str, str]] = {
     "capture": "J4 (niveaux de capture)",
     "redaction": "J4 (masquage)",

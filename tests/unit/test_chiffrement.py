@@ -244,6 +244,23 @@ async def test_a_sealed_payload_moved_elsewhere_does_not_open(tmp_path: Path) ->
     await store.aclose()
 
 
+async def test_a_re_dated_line_does_not_open(tmp_path: Path) -> None:
+    await _write_sealed(tmp_path)
+    path = tmp_path / "journal" / DEFAULT_TENANT / f"{SESSION}.jsonl"
+    premiere = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    # Re-dater une ligne, c'est décider de ce que la rétention efface (5.5c) :
+    # un journal gardé pour toujours, ou supprimé avant l'heure. L'AAD tient
+    # donc l'horodatage, que rien d'autre ne vérifie.
+    path.write_text(
+        json.dumps({**premiere, "ts": "2019-01-01T00:00:00Z"}) + "\n",
+        encoding="utf-8",
+    )
+    store = sealed_store(tmp_path, keyring())
+    with pytest.raises(SealBroken):
+        await store.read(DEFAULT_TENANT, SESSION)
+    await store.aclose()
+
+
 async def test_a_sealed_payload_of_another_session_does_not_open(tmp_path: Path) -> None:
     await _write_sealed(tmp_path)
     path = tmp_path / "journal" / DEFAULT_TENANT / f"{SESSION}.jsonl"

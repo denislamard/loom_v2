@@ -35,6 +35,7 @@ from pydantic import JsonValue
 from loom_ia.access.api import (
     AgentNotAllowed,
     Loom,
+    RetentionReport,
     RunResult,
     SessionDeletion,
     StreamItem,
@@ -324,6 +325,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     worker.set_defaults(handler=cmd_worker)
 
+    retention = commands.add_parser(
+        "retention",
+        help="efface les sessions dormantes au-delà de la borne déclarée (RGPD)",
+    )
+    retention.add_argument(
+        "--tenant",
+        type=str,
+        default=None,
+        help="un seul client (défaut : tous les clients déclarés)",
+    )
+    retention.add_argument(
+        "--yes",
+        action="store_true",
+        help="supprime pour de bon ; sans cette option, rien n'est touché",
+    )
+    retention.add_argument("--json", action="store_true", help="affiche le rapport en JSON")
+    retention.set_defaults(handler=cmd_retention)
+
     storage = commands.add_parser("storage", help="stockages de service : le SQL à appliquer")
     storage_actions = storage.add_subparsers(dest="action", required=True)
     ddl = storage_actions.add_parser(
@@ -369,6 +388,7 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Chiffrement: {_sealing_line(config)}")
     for line in _sealing_report(config):
         print(f"    {line}")
+    print(f"Rétention  : {_retention_line(config)}")
     if storage.queue.brokered:
         # Le piège de la file servie : tout se met en file, rien ne tourne.
         print("    les tâches de fond attendent un worker : loom worker")
@@ -430,6 +450,25 @@ def _profile_line(config: LoomConfig, args: argparse.Namespace) -> str:
         return f"aucun (ni --profile, ni {PROFILE_ENV}, ni 'profile:') ; surcharges : {declared}"
     effet = "les avertissements sont des erreurs" if active == "prod" else "assoupli"
     return f"{active} (par {source}) — {effet} ; surcharges : {declared}"
+
+
+def _retention_line(config: LoomConfig) -> str:
+    """La borne de rétention, et les clients qui n'ont pas la même.
+
+    Une règle qui efface des journaux doit se lire ici : elle ne se rappelle à
+    personne avant d'avoir supprimé quelque chose.
+    """
+    racine = config.storage.retention.events_days
+    propres = [
+        f"{tenant}: {days} jour(s)" if days is not None else f"{tenant}: aucune"
+        for tenant in config.tenant_ids
+        if (days := config.retention_days(tenant)) != racine
+    ]
+    if racine is None and not propres:
+        return "aucune (rien ne s'efface)"
+    commune = f"sessions effacées après {racine} jour(s)" if racine else "aucune à la racine"
+    dit = f"{commune} ; {', '.join(propres)}" if propres else commune
+    return f"{dit} — par « loom retention », que la plateforme met à l'heure"
 
 
 def _sealing_line(config: LoomConfig) -> str:
@@ -852,6 +891,48 @@ def cmd_sessions_delete(args: argparse.Namespace) -> int:
         f"Session {session} supprimée : {removed.events} événement(s), "
         f"{removed.artifacts} fichier(s), {removed.keys} clé(s)."
     )
+    return OK
+
+
+def cmd_retention(args: argparse.Namespace) -> int:
+    """Balaie les sessions dormantes ; sans ``--yes``, dit seulement ce qui partirait.
+
+    L'essai à blanc est le défaut, et il n'y a pas de question posée : cette
+    commande est faite pour être mise à l'heure par une plateforme, et une
+    question sans personne pour y répondre bloquerait le balayage.
+    """
+    config = load_config(args.config, profile=args.profile)
+    apply_logging(config)
+
+    async def go() -> RetentionReport:
+        async with Loom(config) as loom:
+            return await loom.apply_retention(tenant_id=_tenant(args), dry_run=not args.yes)
+
+    report = asyncio.run(go())
+    if args.json:
+        print(report.model_dump_json(indent=2))
+        return OK
+    for tenant, days in report.days.items():
+        borne = f"{days} jour(s)" if days is not None else "aucune règle"
+        print(f"{tenant} : {borne}")
+    for session in report.swept:
+        parts = [f"{session.events} événement(s)"]
+        if session.artifacts is not None:
+            parts.append(f"{session.artifacts} fichier(s)")
+        if session.keys is not None:
+            parts.append(f"{session.keys} clé(s)")
+        verbe = "à effacer" if report.dry_run else "effacée"
+        print(
+            f"  {session.session_id} ({session.tenant_id}) {verbe} — dernière écriture "
+            f"{session.last_write:%Y-%m-%d %H:%M} UTC, {', '.join(parts)}"
+        )
+    faites = "seraient effacées" if report.dry_run else "effacées"
+    print(
+        f"{len(report.swept)} session(s) {faites}, {report.events} événement(s) ; "
+        f"{report.kept} gardée(s) sur {report.scanned} regardée(s)."
+    )
+    if report.dry_run:
+        print("Essai à blanc : rien n'a été supprimé. Ajouter --yes pour effacer.")
     return OK
 
 

@@ -941,6 +941,8 @@ runtime (fin du run) ──enqueue──▶ TaskQueue ──▶ worker
 
 **Réalisation (phase 5.5b) :** le chiffrement par client est là (§16.3, `fonctions.md` point 30). Le *crypto-shredding* est l'affaire de l'opérateur — loom ne détient pas les clés —, et ce que loom en tient, c'est le comportement : une clé effacée, la charge ne s'ouvre plus, mais **lister et supprimer marchent encore**, puisqu'ils ne lisent que la marque d'une ligne. Les deux voies de la suppression se complètent donc au lieu de se gêner : effacer la clé rend illisible ce qui existe, y compris les sauvegardes qu'on ne peut plus atteindre ; `delete_session` retire les octets qu'on atteint encore.
 
+**Réalisation (phase 5.5c) :** la rétention est là (détails : `fonctions.md`, point 30). `storage.retention: {events_days: N}` efface les **sessions dormantes** — celles dont la dernière écriture dépasse la borne — par le chemin de `delete_session` : journal, fichiers et clés d'idempotence ensemble. `tenants[].retention` donne sa borne à un client, à côté de `storage` et non dedans (`storage` dit *où* ses données vivent ; déclarer ce bloc lui donnerait son propre journal), et `{events_days: null}` lui laisse annuler la règle commune. La décision ne lit **que la marque** d'une session, jamais son contenu : un journal scellé sans sa clé s'efface donc comme les autres, et c'est pour cela que le sceau tient l'horodatage depuis 5.5c. `loom retention` balaie — essai à blanc par défaut, `--yes` pour supprimer, `--json` pour un journal de sortie —, et la planification reste à la plateforme (comme en 5.4c). Conséquence assumée : une session muette plus longtemps que la borne part même si un run y attendait une approbation.
+
 ## 12. Exécution durable
 
 ### 12.1 File de tâches
@@ -1341,8 +1343,12 @@ storage:
                                                         # ne porte que des nouvelles ; le contenu reste au journal
   queue:       {backend: asyncio}                       # asyncio|rabbitmq (+ url_env)
                                                         # rabbitmq : les tâches tournent dans `loom worker`
-  encryption:  {per_tenant_keys: false}
-  retention:   {events_days: null}
+  encryption:  {keys: [LOOM_JOURNAL_KEY]}               # absent : contenus en clair au repos (5.5b)
+                                                        # noms de secrets ; le premier ferme, tous ouvrent
+                                                        # chaque client redirige ce nom vers sa variable
+  retention:   {events_days: null}                      # null : rien ne s'efface (5.5c)
+                                                        # sinon : sessions dormantes effacées par `loom retention`
+                                                        # un client peut avoir la sienne : `tenants[].retention`
 
 sessions:
   snapshot_every: 50                  # événements depuis le dernier marqueur avant un snapshot
