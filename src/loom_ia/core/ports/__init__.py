@@ -17,6 +17,7 @@ from loom_ia.core.ports.event_store import (
     SessionRecord,
     journal_key,
 )
+from loom_ia.core.ports.exchanges import ExchangeLog, RawExchange, exchange_log, recording
 from loom_ia.core.ports.idempotency import IdempotencyStore, KeyScope
 from loom_ia.core.ports.model_client import (
     RETRYABLE_ERRORS,
@@ -50,6 +51,7 @@ __all__ = [
     "Cipher",
     "EventBus",
     "EventStore",
+    "ExchangeLog",
     "IdempotencyStore",
     "Job",
     "JobKind",
@@ -62,6 +64,7 @@ __all__ = [
     "ModelError",
     "Notice",
     "Policy",
+    "RawExchange",
     "ReuseNote",
     "SealBroken",
     "SealError",
@@ -79,6 +82,8 @@ __all__ = [
     "UnknownEffect",
     "UsageCounter",
     "complete",
+    "exchange_log",
     "idempotency_key",
     "journal_key",
+    "recording",
 ]

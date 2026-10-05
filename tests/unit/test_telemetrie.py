@@ -180,7 +180,7 @@ def test_a_tenant_overrides_the_capture_and_only_it() -> None:
     ("telemetry", "message"),
     [
         ({"bus": {}}, "le bus se déclare dans 'storage.bus'"),
-        ({"capture": {"raw_exchanges": True}}, "prévu pour le jalon J6.1b"),
+        ({"capture": {"raw_max_bytes": 0}}, "greater than 0"),
         ({"exporters": [{"type": "jsonl"}]}, "seul 'otel' existe"),
         ({"redaction": {"patterns": ["email", "nir"]}}, "motif 'nir' inconnu"),
         ({"redaction": {"patterns": ["email", "email"]}}, "déclaré deux fois : email"),

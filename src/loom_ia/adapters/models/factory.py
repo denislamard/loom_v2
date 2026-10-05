@@ -29,10 +29,14 @@ def create_model_client(
     *,
     environ: Mapping[str, str] | None = None,
     http_client: httpx2.AsyncClient | None = None,
+    record: bool = False,
 ) -> ModelClient:
     """Client du modèle ``spec``.
 
-    ``http_client`` remplace le client HTTP du SDK (tests, proxy).
+    ``http_client`` remplace le client HTTP du SDK (tests, proxy). ``record``
+    lui donne un client qui garde ses échanges bruts (J6.1b) — dans le
+    registre que le moteur ouvre, et seulement là ; le modèle simulé, qui n'a
+    pas d'HTTP, y dépose un échange synthétique de lui-même.
     """
     if spec.sdk == "fake":
         from loom_ia.adapters.models.fake import FakeModel
@@ -45,19 +49,29 @@ def create_model_client(
             from loom_ia.adapters.models.anthropic import AnthropicModel
         except ImportError as exc:
             raise _missing_extra(spec, "anthropic") from exc
-        return AnthropicModel(spec, api_key=api_key, http_client=http_client)
+        return AnthropicModel(spec, api_key=api_key, http_client=_http(http_client, record))
 
     if spec.effective_api == "responses":
         try:
             from loom_ia.adapters.models.openai_responses import OpenAIResponsesModel
         except ImportError as exc:
             raise _missing_extra(spec, "openai") from exc
-        return OpenAIResponsesModel(spec, api_key=api_key, http_client=http_client)
+        return OpenAIResponsesModel(spec, api_key=api_key, http_client=_http(http_client, record))
     try:
         from loom_ia.adapters.models.openai_chat import OpenAIChatModel
     except ImportError as exc:
         raise _missing_extra(spec, "openai") from exc
-    return OpenAIChatModel(spec, api_key=api_key, http_client=http_client)
+    return OpenAIChatModel(spec, api_key=api_key, http_client=_http(http_client, record))
+
+
+def _http(given: httpx2.AsyncClient | None, record: bool) -> httpx2.AsyncClient | None:
+    """Le client HTTP à passer au SDK : celui donné, sinon un client qui garde, sinon aucun."""
+    if given is not None or not record:
+        return given
+    # Importé ici : ``httpx2`` vient avec les SDK, pas avec le noyau.
+    from loom_ia.adapters.models.recording import RecordingClient
+
+    return RecordingClient()
 
 
 def _api_key(spec: ModelSpec, environ: Mapping[str, str]) -> str:

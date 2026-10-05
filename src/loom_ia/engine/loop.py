@@ -102,6 +102,7 @@ from loom_ia.core.events import (
     Event,
     EventDraft,
     IdempotencyReused,
+    ModelExchanged,
     ModelFellBack,
     ModelResponded,
     ModelRetried,
@@ -191,7 +192,7 @@ DEFAULT_MAX_ITERATIONS: Final = 10
 TERMINAL_RULE: Final = "loom.terminal"
 
 # Événements d'un appel de modèle, journalisés dans son span.
-_CALL_EVENTS: Final = (ModelRetried, ModelFellBack, CircuitOpened, ModelResponded)
+_CALL_EVENTS: Final = (ModelExchanged, ModelRetried, ModelFellBack, CircuitOpened, ModelResponded)
 
 # États où ``step`` a quelque chose à faire (effet ou clôture).
 DEFAULT_LEASE: Final = 60.0
@@ -477,6 +478,8 @@ async def drive(
             cause = event
         if isinstance(event.payload, RunTransitioned):
             _log_transition(event, event.payload)
+        elif isinstance(event.payload, ModelResponded | ToolCompleted):
+            _log_call(event, event.payload)
         state = apply(state, event)
         return event
 
@@ -1485,6 +1488,39 @@ def run_scope(state: RunState) -> RunScope:
         agent=state.agent,
         span_id=state.span_id,
         parent_span_id=state.parent_span_id,
+    )
+
+
+def _log_call(event: Event, payload: ModelResponded | ToolCompleted) -> None:
+    """Une ligne par appel de modèle ou d'outil (K7, 6.1b) : son coût, jamais son contenu.
+
+    Écrite par le process qui écrit l'événement, une fois : les logs d'un
+    service suivent ses appels sans collecteur. Un outil en erreur reste en
+    ``INFO`` — c'est un résultat que le modèle lira, pas une panne de loom.
+    """
+    context = {"run_id": event.run_id, "span_id": event.span_id, "tenant_id": event.tenant_id}
+    match payload:
+        case ModelResponded(judge=str(judge)):
+            who = f"juge {judge}"
+        case ModelResponded():
+            who = f"rôle {event.role or MAIN_ROLE}"
+        case ToolCompleted(tool_name=name, latency_ms=latency, output=output):
+            logger.info(
+                "Outil %s : %.0f ms%s",
+                name,
+                latency,
+                " (erreur)" if output.is_error else "",
+                extra=context,
+            )
+            return
+    logger.info(
+        "Modèle %s (%s) : %.2f s, %d tokens, %.5f $",
+        payload.model_id,
+        who,
+        payload.latency_ms / 1000,
+        payload.usage.total_tokens,
+        payload.cost_usd,
+        extra=context,
     )
 
 

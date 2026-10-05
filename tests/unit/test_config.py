@@ -175,11 +175,7 @@ def test_config_can_be_written_in_python() -> None:
             "types : application/pdf non pris en charge",
         ),
         ({"execution": {"tools": {"offload_over": 0}}}, None, "greater than 0"),
-        (
-            {"telemetry": {"capture": {"raw_exchanges": True}}},
-            None,
-            "'raw_exchanges' : prévu pour le jalon J6.1b",
-        ),
+        ({"telemetry": {"capture": {"raw_max_bytes": 0}}}, None, "greater than 0"),
         ({"telemetry": {"bus": {}}}, None, "le bus se déclare dans 'storage.bus'"),
         ({"inconnu": 1}, None, "Extra inputs are not permitted"),
         (

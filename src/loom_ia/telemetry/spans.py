@@ -35,6 +35,7 @@ from pydantic import JsonValue
 from loom_ia.core.events import (
     Event,
     JudgeEvaluated,
+    ModelExchanged,
     ModelFellBack,
     ModelResponded,
     ModelRetried,
@@ -148,7 +149,10 @@ def _kind(members: Sequence[Event]) -> SpanKind:
         isinstance(p, ModelResponded) and p.judge is not None for p in payloads
     ):
         return "judge"
-    if all(isinstance(p, ModelResponded | ModelRetried | ModelFellBack) for p in payloads):
+    if all(
+        isinstance(p, ModelResponded | ModelRetried | ModelExchanged | ModelFellBack)
+        for p in payloads
+    ):
         return "model"
     return "other"
 
@@ -302,7 +306,9 @@ def _event(event: Event, content: bool, redactor: Redactor | None) -> SpanEvent:
     for name, value in event.facets.items():
         if value is not None:
             attributes[f"{PREFIX}{name}"] = value
-    if content:
+    # Les corps bruts d'un échange ne partent jamais (6.1b) : trop gros pour un
+    # attribut, et le journal est leur place. Leurs tailles sont des facettes.
+    if content and event.payload.export_content:
         for path, value in contents(event).items():
             attributes[f"{CONTENT_PREFIX}{path}"] = _text(value, redactor)
     return SpanEvent(name=event.type, at=event.ts, attributes=attributes)

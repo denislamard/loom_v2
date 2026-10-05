@@ -211,7 +211,7 @@ Les commandes ci-dessous sont indicatives.
 | Phase | Contenu | Fonctions |
 |---|---|---|
 | 6.1a Exports | Spans tirés du journal (`run_spans`), export OTel en OTLP (extra `otel`) à la clôture d'un run, par le process qui l'écrit ; capture `metadata` / `content` (racine et client), masquage par motifs (e-mail, téléphone, IBAN, motifs à soi) ; `telemetry.bus` renvoyé à `storage.bus` | K3, K4, #29, #30 |
-| 6.1b Échanges bruts et logs | `model.exchange` en opt-in (`capture.raw_exchanges`), une ligne INFO par appel de modèle et d'outil ; `configure_logging` existe depuis J1 | K7, #30, #31 |
+| 6.1b Échanges bruts et logs | `model.exchanged` en opt-in (`capture.raw_exchanges`, racine et client) : chaque requête HTTP au fournisseur et sa réponse, secrets et octets de fichier retirés, corps bornés (`raw_max_bytes`), jamais exportés que par leurs métadonnées ; une ligne INFO par appel de modèle et d'outil ; `configure_logging` existe depuis J1 | K7, #30, #31 |
 | 6.2 Rejeu | Modes identique et variante, détection de divergence, CLI `replay` et `inspect` | K6, #31 |
 | 6.3 Qualité | Runner d'évals, non-régression depuis les traces, kit `testing` publié | O1–O3 |
 | 6.4 Compléments | `serve --reload`, sandbox Firecracker et mémoire long terme en packages externes (entry points), démo voix via Pipecat, publication PyPI | D9, F6, I3, #48 |
@@ -227,11 +227,11 @@ Les commandes ci-dessous sont indicatives.
 
 | Accès | Exécution |
 |---|---|
-| Python | Un exemple par phase : `traces.py` (6.1a, sur la config `examples/j5/relance/`, collecteur OTLP dans l'exemple, `--collecteur URL` pour le sien) ; `loom.replay(run_id, mode="exact" \| "variant")` |
+| Python | Un exemple par phase : `traces.py` (6.1a et 6.1b, sur la config `examples/j5/relance/`, collecteur OTLP dans l'exemple, `--collecteur URL` pour le sien ; cas `otel`, `masquage`, `clients`, `bruts`, `logs`) ; `loom.replay(run_id, mode="exact" \| "variant")` |
 | CLI | `loom replay <run_id>`, `loom inspect <run_id>`, `loom eval suite.yaml` |
 | REST | `GET …/traces/<run_id>` selon le scope (`read` ou `read_content`) |
 | MCP | Ressources de traces en lecture seule |
 
-**Tests automatisés :** rejeu identique sans aucun appel réseau ; détection de divergence (`request_hash`, transitions) ; outils à effet de bord jamais réexécutés en variante ; masquage dans les exports (6.1a : `metadata` sans aucun contenu, `content` masqué, capture par client, motifs fournis et à soi, numéros métier épargnés) ; export OTel (6.1a : l'arbre du journal, un sous-agent sous son appel, un span `chat` par réponse et sa durée, un export par run à sa clôture, rien pour un run inachevé ni pour ce que rapporte le bus, un collecteur en panne qui ne fait pas échouer le run, jusqu'au réseau avec un collecteur OTLP/HTTP qui décode) ; non-régression construite à partir de traces de J1 à J5.
+**Tests automatisés :** rejeu identique sans aucun appel réseau ; détection de divergence (`request_hash`, transitions) ; outils à effet de bord jamais réexécutés en variante ; masquage dans les exports (6.1a : `metadata` sans aucun contenu, `content` masqué, capture par client, motifs fournis et à soi, numéros métier épargnés) ; export OTel (6.1a : l'arbre du journal, un sous-agent sous son appel, un span `chat` par réponse et sa durée, un export par run à sa clôture, rien pour un run inachevé ni pour ce que rapporte le bus, un collecteur en panne qui ne fait pas échouer le run, jusqu'au réseau avec un collecteur OTLP/HTTP qui décode) ; échanges bruts (6.1b : secrets et octets de fichier retirés, coupe bornée, ordre par tentative, dernière tentative ratée avant l'erreur, un échange qui n'est pas une tentative, flux recopié en lisant, Anthropic et OpenAI derrière un faux transport, capture par client, corps jamais exportés) ; une ligne de log par appel, sans contenu ; non-régression construite à partir de traces de J1 à J5.
 
 **Critère de sortie :** un run de J4 est rejoué à l'identique ; une divergence volontaire est détectée ; les traces apparaissent dans le collecteur.

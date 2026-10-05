@@ -47,6 +47,7 @@ from loom_ia.core.events import (
     CircuitOpened,
     GuardChecked,
     JudgeEvaluated,
+    ModelExchanged,
     ModelFellBack,
     ModelResponded,
     ModelRetried,
@@ -115,7 +116,13 @@ class BoundPolicy:
 # Ce qu'une politique fournie journalise de son propre travail : appel et verdict
 # d'un juge (secours et disjoncteur compris), limite de budget atteinte.
 type TracedEvent = (
-    ModelRetried | ModelFellBack | CircuitOpened | ModelResponded | JudgeEvaluated | BudgetExceeded
+    ModelExchanged
+    | ModelRetried
+    | ModelFellBack
+    | CircuitOpened
+    | ModelResponded
+    | JudgeEvaluated
+    | BudgetExceeded
 )
 type Trace = Callable[[TracedEvent], None]
 type PolicyEvent = PolicyDecided | GuardChecked | TracedEvent

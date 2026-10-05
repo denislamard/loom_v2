@@ -38,6 +38,11 @@ Une réponse peut être une panne : ``error`` (``transient``, ``overloaded``,
 overloaded`` est en panne pour tous les appels : de quoi montrer un secours
 (#10).
 
+Sans HTTP, pas d'échange brut à garder : quand le moteur ouvre un registre
+(``telemetry.capture.raw_exchanges``, J6.1b), le modèle y dépose un échange
+**synthétique** — la requête reçue et la réponse rendue, en JSON, marquées
+``synthetic`` — pour que le chemin des échanges s'éprouve sans réseau.
+
 Comme un fournisseur, le modèle respecte ``tool_choice`` : avec ``required``,
 une réponse sans appel d'outil est une erreur du script ; avec ``none``, une
 réponse qui appelle des outils donne à la place son texte ``forced`` (la
@@ -46,6 +51,7 @@ réparation (#20) n'est pas une nouvelle demande, ni la consigne de la réponse
 forcée : le script continue.
 """
 
+import json
 from collections.abc import AsyncGenerator
 from typing import Final
 
@@ -68,7 +74,7 @@ from loom_ia.core.model import (
     Usage,
     message_to_chunks,
 )
-from loom_ia.core.ports import ModelError
+from loom_ia.core.ports import ModelError, RawExchange, exchange_log
 
 PROVIDER: Final = "fake"
 _CHARS_PER_TOKEN: Final = 4
@@ -125,6 +131,25 @@ class FakeModel:
     def __repr__(self) -> str:
         return f"FakeModel({self.spec.id!r}, {len(self.script)} réponse(s))"
 
+    def _deposit(self, request: ModelRequest, message: Message | None, error: str | None) -> None:
+        """Échange synthétique, si le moteur en garde : ce qui a été reçu et rendu."""
+        log = exchange_log()
+        if log is None:
+            return
+        log.record(
+            RawExchange(
+                method="POST",
+                url=f"fake://{self.spec.model}",
+                request_body=_json(request.model_dump(mode="json")),
+                response_body=b"" if message is None else _json(message.model_dump(mode="json")),
+                status=None if message is None else 200,
+                request_headers={"content-type": "application/json"},
+                response_headers={} if message is None else {"content-type": "application/json"},
+                error=error,
+                synthetic=True,
+            )
+        )
+
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
         turn = _turn(request)
         offered = {tool.name for tool in request.tools}
@@ -141,11 +166,13 @@ class FakeModel:
                 f"{len(script)} prévue(s) avec ces outils",
             )
         if reply.error is not None:
-            raise ModelError(
+            error = ModelError(
                 reply.error,
                 f"Panne simulée par le script du modèle {self.spec.id!r} "
                 f"(réponse n°{turn + 1} : {reply.error})",
             )
+            self._deposit(request, None, error.message)
+            raise error
         if request.tool_choice == "none" and reply.tool_calls:
             reply = FakeReply(text=reply.forced if reply.forced is not None else reply.text)
         message = _message(reply, turn)
@@ -159,8 +186,13 @@ class FakeModel:
             input_tokens=len(request.model_dump_json()) // _CHARS_PER_TOKEN,
             output_tokens=len(message.model_dump_json()) // _CHARS_PER_TOKEN,
         )
+        self._deposit(request, message, None)
         for chunk in message_to_chunks(message, usage=usage, model_id=request.model_id):
             yield chunk
+
+
+def _json(value: object) -> bytes:
+    return json.dumps(value, ensure_ascii=False).encode("utf-8")
 
 
 def _turn(request: ModelRequest) -> int:

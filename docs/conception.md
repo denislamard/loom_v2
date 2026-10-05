@@ -324,6 +324,7 @@ Event
 | `message.user` | blocs de contenu ; `kind` (`request`, `repair`), politique et `tools` d'une réparation |
 | `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué), `judge` (appel d'un juge) |
 | `model.retried` | tentative, type d'erreur, délai, call_id (rôle délégué) |
+| `model.exchanged` | en opt-in (6.1b) : tentative, méthode, adresse, statut HTTP, durée, en-têtes et corps de la requête et de la réponse (secrets et octets de fichier retirés, corps bornés), tailles et empreintes, `synthetic` (modèle simulé), call_id, judge |
 | `model.fell_back` | emplacement (`main`, rôle, `judge:<nom>`), ancien modèle, nouveau modèle, motif (type d'erreur ou `circuit_open`), erreur, call_id, judge |
 | `circuit.opened` | cible (`model`, `mcp`), modèle ou serveur, échecs de suite, pause, dernière erreur |
 | `idempotency.recorded` | clé, call_id, résultat |
@@ -1063,6 +1064,8 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - **Détection de divergence :** `request_hash` dans `model.responded` (empreinte de la requête) et comparaison des transitions (§9.3).
 - **Décisions des politiques :** réutilisées en mode identique, réévaluées en variante.
 - **Échanges HTTP bruts :** opt-in, pour le débogage.
+
+**Réalisation (phase 6.1b)** (détails : `fonctions.md`, point 31) : `telemetry.capture.raw_exchanges` (racine ou client) ajoute au journal un `model.exchanged` par requête HTTP au fournisseur, à chaque tentative, avant le `model.retried` ou le `model.responded` qu'elle précède. Le moteur ouvre un registre autour de chaque tentative ; le client HTTP du SDK (`RecordingClient`, qui enrobe `send`) y dépose ce qu'il a envoyé et lu, décompressé ; le modèle simulé y dépose un échange synthétique. Avant l'écriture : en-têtes et paramètres secrets remplacés par `[retiré]`, octets de fichier par leur taille et leur empreinte, corps coupés à `raw_max_bytes` (256 Kio par défaut) en le disant. Sous le sceau et la rétention comme le reste ; jamais exportés que par leurs métadonnées. Le rejeu (6.2) les ignore.
 - **Usages :** diagnostic, évals comparatives entre modèles et configurations (O1), tests de non-régression à partir de traces (O3).
 
 ### 14.4 Logs
@@ -1071,6 +1074,8 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - `run_id`, `span_id` et `tenant_id` passent dans `extra`.
 - `loom_ia.telemetry.configure_logging()` (JSON ou console), optionnel, est utilisé par la CLI et le mode service.
 - Les logs restent secondaires : l'observabilité passe d'abord par le journal (K7).
+
+**Réalisation (phase 6.1b)** : en `INFO`, en plus des transitions et de la vie des connexions MCP, une ligne par appel de modèle (`Modèle <modèle> (rôle <nom> | juge <nom>) : durée, tokens, coût`) et une par appel d'outil (`Outil <nom> : durée`, suivi de `(erreur)` si le résultat en est une), avec `run_id`, `span_id` et `tenant_id`, sans aucun contenu. Elles sont écrites par le process qui écrit l'événement : une fois.
 
 ## 15. Coûts et budgets
 
@@ -1383,7 +1388,10 @@ budgets:                              # défauts ; un agent les surcharge par `b
 
 telemetry:
   logging:   {level: INFO, format: console}             # console | json
-  capture:   {exports: metadata}                        # metadata | content ; un client la surcharge
+  capture:                                              # un client la surcharge, clé par clé
+    exports: metadata                                   # metadata | content
+    raw_exchanges: false                                # échanges HTTP bruts au journal (6.1b)
+    raw_max_bytes: 262144                               # borne d'un corps brut, coupé au-delà
   redaction:                                            # masqué dans le contenu exporté, dans l'ordre
     patterns: [email, phone, iban, {name: devis, regex: "D-\\d{4}-\\d{3}"}]
   exporters:                                            # sans collecteur, rien ne sort que les logs
@@ -1395,7 +1403,7 @@ telemetry:
       timeout: 10
 ```
 
-`capture.raw_exchanges` (échanges HTTP bruts en opt-in) arrive en 6.1b. Le bus,
+Le bus,
 que la conception plaçait ici (`telemetry.bus`), est un stockage partagé entre
 process : il se déclare dans `storage.bus` (5.3c), et `telemetry.bus` est refusé
 en le disant. La file d'un abonné n'a pas de borne réglable.

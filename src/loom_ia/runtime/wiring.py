@@ -131,6 +131,7 @@ from loom_ia.engine import (
     LastTurns,
     ModelLink,
     Policies,
+    Recorded,
     RoleDefinition,
     RoleTool,
     RunContext,
@@ -556,9 +557,16 @@ def build_agent(
     clients: dict[str, ModelClient] = {}
     breakers = breakers if breakers is not None else CircuitBreakers()
 
+    # Échanges bruts (6.1b) : ceux de ce client de loom, pour tous ses modèles.
+    capture = config.capture_for(tenant_id)
+    raw = capture.raw_max_bytes if capture.raw_exchanges else None
+
     def client(model_id: str) -> ModelClient:
         if model_id not in clients:
-            clients[model_id] = create_model_client(config.model_spec(model_id), environ=secrets)
+            made = create_model_client(
+                config.model_spec(model_id), environ=secrets, record=raw is not None
+            )
+            clients[model_id] = made if raw is None else Recorded(made, raw)
         return clients[model_id]
 
     def links(model_ids: tuple[str, ...]) -> tuple[ModelLink, ...]:

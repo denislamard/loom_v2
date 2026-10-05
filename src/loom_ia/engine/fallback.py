@@ -40,7 +40,13 @@ from typing import Final
 
 from pydantic import JsonValue
 
-from loom_ia.core.events import CircuitOpened, FallbackReason, ModelFellBack, ModelRetried
+from loom_ia.core.events import (
+    CircuitOpened,
+    FallbackReason,
+    ModelExchanged,
+    ModelFellBack,
+    ModelRetried,
+)
 from loom_ia.core.model import (
     ContentBlock,
     Message,
@@ -62,7 +68,7 @@ FALLBACK_ERRORS: Final[frozenset[ModelErrorKind]] = frozenset(
     {"transient", "overloaded", "quota_exhausted"}
 )
 
-type ChainEvent = ModelRetried | ModelFellBack | CircuitOpened
+type ChainEvent = ModelExchanged | ModelRetried | ModelFellBack | CircuitOpened
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,7 +196,9 @@ class ModelChain:
             try:
                 async with aclosing(call.run(sent)) as outcomes:
                     async for outcome in outcomes:
-                        attempts += 1
+                        # Un échange brut n'est pas une tentative : il en raconte une.
+                        if not isinstance(outcome, ModelExchanged):
+                            attempts += 1
                         if isinstance(outcome, ModelResponse):
                             response = outcome
                         else:

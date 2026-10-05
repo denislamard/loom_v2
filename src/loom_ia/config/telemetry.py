@@ -14,14 +14,18 @@ Ces réglages disent ce qui **sort** du journal vers un collecteur.
   (``{name, regex}``). Le masquage ne touche que les exports : le journal et
   l'API (portée ``read_content``) ne le voient pas.
 - ``exporters`` : les collecteurs. Un seul type à ce jalon, ``otel`` (OTLP).
+- ``capture.raw_exchanges`` (6.1b) : en opt-in, chaque échange HTTP avec un
+  fournisseur entre **au journal** (``model.exchanged``), sous le sceau et la
+  rétention comme le reste ; il ne part jamais vers un collecteur que par ses
+  métadonnées.
 """
 
 import re
 from typing import Annotated, Final, Literal, Self
 
-from pydantic import Discriminator, Field, PositiveFloat, Tag, model_validator
+from pydantic import Discriminator, Field, PositiveFloat, PositiveInt, Tag, model_validator
 
-from loom_ia.core.model import DomainModel, reject_later
+from loom_ia.core.model import DomainModel
 from loom_ia.telemetry.redaction import BUILTIN_PATTERNS, Redactor
 
 type CaptureLevel = Literal["metadata", "content"]
@@ -31,35 +35,41 @@ EXPORTER_TYPES: Final = ("otel",)
 # Variable lue par défaut : celle que nomme la spécification OTLP.
 OTLP_ENDPOINT_ENV: Final = "OTEL_EXPORTER_OTLP_ENDPOINT"
 
-# Clés de ``capture`` prévues pour une phase suivante.
-LATER_CAPTURE: Final[dict[str, str]] = {"raw_exchanges": "J6.1b (échanges bruts)"}
+# Borne d'un corps brut par défaut : de quoi lire une requête de belle taille
+# sans que chaque appel d'une longue session ne pèse des mégaoctets.
+RAW_MAX_BYTES: Final = 256 * 1024
 
 
 class CaptureConfig(DomainModel):
-    """Niveau de détail des exports (§14.2)."""
+    """Ce qui sort du journal vers un collecteur, et ce qui s'y ajoute en opt-in (§14.2).
+
+    ``raw_exchanges`` ajoute au journal — et non aux exports — chaque requête
+    HTTP au fournisseur et sa réponse (``model.exchanged``, 6.1b), corps bornés
+    à ``raw_max_bytes`` chacun.
+    """
 
     exports: CaptureLevel = "metadata"
-
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_CAPTURE)
-        return data
+    raw_exchanges: bool = False
+    raw_max_bytes: PositiveInt = RAW_MAX_BYTES
 
 
 class CaptureOverride(DomainModel):
     """Capture propre à un client : chaque clé absente reste celle de la racine."""
 
     exports: CaptureLevel | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_CAPTURE)
-        return data
+    raw_exchanges: bool | None = None
+    raw_max_bytes: PositiveInt | None = None
 
     def over(self, root: CaptureConfig) -> CaptureConfig:
-        return CaptureConfig(exports=self.exports if self.exports is not None else root.exports)
+        return CaptureConfig(
+            exports=self.exports if self.exports is not None else root.exports,
+            raw_exchanges=(
+                self.raw_exchanges if self.raw_exchanges is not None else root.raw_exchanges
+            ),
+            raw_max_bytes=(
+                self.raw_max_bytes if self.raw_max_bytes is not None else root.raw_max_bytes
+            ),
+        )
 
 
 class TenantTelemetry(DomainModel):

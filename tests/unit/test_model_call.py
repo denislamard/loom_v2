@@ -10,7 +10,13 @@ import pytest
 from pydantic import ValidationError
 
 from loom_ia.adapters.stores import InMemoryEventStore
-from loom_ia.core.events import ModelResponded, ModelRetried, RunFailed, StepCompleted
+from loom_ia.core.events import (
+    ModelExchanged,
+    ModelResponded,
+    ModelRetried,
+    RunFailed,
+    StepCompleted,
+)
 from loom_ia.core.model import (
     Message,
     ModelCapabilities,
@@ -94,7 +100,7 @@ def call(
     )
 
 
-async def outcomes(model_call: ModelCall) -> list[ModelRetried | ModelResponse]:
+async def outcomes(model_call: ModelCall) -> list[ModelExchanged | ModelRetried | ModelResponse]:
     return [item async for item in model_call.run(REQUEST)]
 
 
@@ -170,7 +176,7 @@ async def test_attempts_are_bounded() -> None:
     plans: list[list[Step]] = [[ModelError("transient", f"essai {n}")] for n in (1, 2, 3)]
     model = FlakyModel(*plans)
     run = call(model, recorder, retry={"max_attempts": 3, "initial_delay": 2})
-    retried: list[ModelRetried | ModelResponse] = []
+    retried: list[ModelExchanged | ModelRetried | ModelResponse] = []
     with pytest.raises(ModelError, match="essai 3"):
         async for item in run.run(REQUEST):
             retried.append(item)

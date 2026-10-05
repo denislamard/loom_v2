@@ -880,6 +880,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `step.started` / `.completed` | step_no, état, effet, durée, statut (voir point 3) |
 | `policy.decided` | politique, point, décision, motif, call_id, tentative, arguments ou réponse remplacés (voir point 2) |
 | `model.retried` | tentative, type d'erreur, délai (voir point 10) |
+| `model.exchanged` | en opt-in : une requête HTTP au fournisseur et sa réponse, brutes à trois retouches près (voir point 31) |
 | `model.fell_back` | emplacement (`main`, rôle, `judge:<nom>`), ancien modèle, nouveau modèle, motif (type d'erreur ou `circuit_open`), erreur, call_id, judge (voir point 10) |
 | `circuit.opened` | cible (`model`, `mcp`), identifiant du modèle ou nom du serveur, échecs de suite, pause, dernière erreur (voir point 10) |
 | `idempotency.recorded` | clé, call_id, résultat (voir point 49) |
@@ -1118,7 +1119,7 @@ Les spans découlent du journal (`span_id`, `parent_span_id`) : modèle maison p
 - **Un collecteur ne fait jamais échouer un run.** Une panne d'envoi est un avertissement (celui de loom, ou celui du SDK, qui réessaie) ; la fermeture de `Loom` attend les exports en cours, dans la limite de `execution.shutdown_timeout`, puis vide le processeur.
 - **Une variable d'adresse vide ne monte rien, et le dit** — un avertissement, une erreur en profil prod : le SDK enverrait sinon à son adresse par défaut, qu'on n'a pas demandée. Sans collecteur monté, pas d'abonné du tout.
 
-**Reste connu (6.1a) :** un run **inachevé** n'est pas exporté — en pause, il n'apparaît qu'à sa fin ; un process qui meurt entre la clôture d'un run et l'envoi perd cette trace, faute de curseur gardé quelque part (la conception en prévoyait un, §13 : la relecture à la clôture l'a remplacé, et c'est ce qu'elle coûte). Les spans d'un run partent d'un bloc à sa fin, pas au fil de l'eau. Le temps d'un `chat` repose sur `latency_ms`, mesurée par loom autour de l'appel (nouvelles tentatives non comprises). DuckDB (K4) n'est pas un export mais une façon d'interroger le JSONL : rien n'est fait.
+**Reste connu (6.1a) :** un run **inachevé** n'est pas exporté — en pause, il n'apparaît qu'à sa fin ; un process qui meurt entre la clôture d'un run et l'envoi perd cette trace, faute de curseur gardé quelque part (la conception en prévoyait un, §13 : la relecture à la clôture l'a remplacé, et c'est ce qu'elle coûte). Les spans d'un run partent d'un bloc à sa fin, pas au fil de l'eau. Le temps d'un `chat` repose sur `latency_ms`, mesurée par loom autour de tout l'appel — nouvelles tentatives et secours compris (corrigé en 6.1b : la première version de ce texte disait l'inverse). DuckDB (K4) n'est pas un export mais une façon d'interroger le JSONL : rien n'est fait.
 
 ### 30. Capture des contenus et masquage
 
@@ -1175,6 +1176,16 @@ Réglé par le journal : réponses des modèles et résultats d'outils sont touj
 |---|---|---|
 | Identique | Réponses lues dans le journal | Résultats lus dans le journal |
 | Variante (autre modèle, prompt ou config) | Appels réels | Lus dans le journal quand l'appel correspond ; jamais réexécutés s'ils ont des effets de bord (doublure ou erreur) |
+
+**Réalisation (phase 6.1b — les échanges bruts ; #31) :** `telemetry.capture.raw_exchanges: true` et `raw_max_bytes` (256 Kio par défaut), à la racine ou chez un client.
+
+- **Un événement du journal, pas un export.** `model.exchanged` : méthode, adresse, statut HTTP, durée, en-têtes et corps de la requête et de la réponse, tailles et empreintes, tentative, `synthetic`, `call_id`, `judge`. Il est écrit **à chaque tentative**, réussie ou non, **avant** le `model.retried` ou le `model.responded` qu'il précède, dans le même span et au nom du même rôle ; la dernière tentative ratée écrit le sien avant que l'erreur ne remonte — c'est celui qu'on voudra lire. Il est donc sous le sceau (5.5b), la rétention (5.5c), la suppression RGPD et le masquage par portée (`read_content`) comme le reste. Le type suit la règle `<catégorie>.<action au passé>` (`model.exchanged`).
+- **Le moteur ouvre, l'adaptateur dépose.** `ModelCall` ouvre un registre (`recording`, un `ContextVar` du port `core/ports/exchanges.py`) le temps de chaque tentative, quand son client est un `Recorded` — l'enrobage que `build_agent` pose sur tous les clients de modèle d'un client de loom qui a demandé ses échanges : orchestrateur, rôles, juges, secours. Le client HTTP du SDK, `RecordingClient` (`adapters/models/recording.py`), enrobe `send` — au-dessus des proxys de l'environnement, qu'un transport enrobé ne verrait pas — et dépose la requête et la réponse ; un corps diffusé (SSE) est recopié au fil de la lecture et déposé à la fermeture du flux, décompressé par httpx lui-même. Le modèle simulé (`sdk: fake`) n'a pas d'HTTP : il dépose un échange **synthétique** (sa requête et sa réponse en JSON). Une erreur de transport (connexion, délai) donne un échange sans statut, avec son erreur.
+- **Trois retouches avant d'écrire, et rien d'autre.** Les en-têtes et paramètres d'adresse dont le nom dit une clé, un jeton, un mot de passe, un cookie (`x-api-key`, `authorization`, `?key=`) sont remplacés par `[retiré]`, le nom restant ; les octets d'un fichier — URI `data:…;base64`, objet `{"type": "base64", "data"}`, bloc `inline_data` — par leur type, leur taille et leur empreinte ; un corps plus long que `raw_max_bytes` est coupé sur une frontière de caractère, et `*_truncated`, `*_bytes`, `*_sha256` décrivent le corps entier. Une signature de raisonnement, qui ressemble à du base64 sans être un fichier, reste telle quelle.
+- **Un échange n'est pas une tentative.** Le compte des tentatives (`model.responded.attempts`) ne bouge pas avec la capture.
+- **Jamais de corps vers un collecteur.** `ModelExchanged.export_content` est faux : même en capture `content`, un export ne porte que ses facettes (statut, durée, tailles, tentative, modèle).
+
+**Reste connu (6.1b) :** le `RecordingClient` reprend les réglages de connexion des SDK (limites, redirections) mais pas les options de keepalive TCP du client par défaut d'Anthropic ; il ne sert que quand la capture est demandée. Les corps sont gardés tels que le SDK les a envoyés et lus, en texte UTF-8 (un octet invalide devient `�`) ; un corps JSON qui portait un fichier est réécrit après remplacement, sans sa mise en forme d'origine. Une longue session paie chaque requête en entier jusqu'à la borne : c'est le prix d'un opt-in de débogage. Les échanges n'ont pas été vus contre une API réelle ici (pas de clé dans la VM) : le chemin HTTP est éprouvé par des essais avec un faux transport — Anthropic avec une erreur 529 puis une réponse, OpenAI Chat en flux réel morceau par morceau —, le reste par ton run réel.
 
 ### 32. Stockage des traces pour l'interface
 
@@ -1492,6 +1503,8 @@ Le package s'appelle `loom-ia` et vit dans un nouveau dépôt. Les extras s'écr
 - **Contexte :** `run_id`, `span_id` et `tenant_id` passent dans `extra`.
 - **Configuration :** utilitaire optionnel `loom_ia.telemetry.configure_logging()` (JSON ou console), utilisé par la CLI et le mode service.
 - **Priorité :** les logs restent secondaires ; l'observabilité passe d'abord par le journal (K7).
+
+**Réalisation (phase 6.1b — une ligne par appel ; K7) :** en `INFO`, une ligne par `model.responded` — `Modèle <modèle> (rôle <nom>) : 1.29 s, 1234 tokens, 0.00120 $`, ou `(juge <nom>)` — et une par `tool.completed` — `Outil <nom> : 4 ms`, suivie de ` (erreur)` quand le résultat en est une, qui reste en `INFO` : c'est un résultat que le modèle lira, pas une panne de loom. Le contexte (`run_id`, `span_id`, `tenant_id`) passe par `extra`, aucun contenu n'y entre. La ligne est écrite là où l'événement l'est, par le process qui l'écrit : un service à plusieurs workers ne la répète pas.
 
 ### 46. Licence : Apache 2.0
 

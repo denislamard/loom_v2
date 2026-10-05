@@ -38,6 +38,7 @@ from loom_ia.core.events import (
     IdempotencyRecorded,
     IdempotencyReused,
     JudgeEvaluated,
+    ModelExchanged,
     ModelFellBack,
     ModelResponded,
     ModelRetried,
@@ -184,7 +185,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
         case StepCompleted(duration_ms=elapsed):
             # Temps de pilotage cumulé : c'est lui que borne le délai (A6).
             update["active_ms"] = state.active_ms + elapsed
-        case ModelRetried() | ToolSourceUnavailable() | CircuitOpened():
+        case ModelRetried() | ModelExchanged() | ToolSourceUnavailable() | CircuitOpened():
             pass
         case RunTransitioned(from_state=from_state, to_state=to_state):
             if from_state != state.status:

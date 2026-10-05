@@ -10,6 +10,11 @@ des morceaux avaient déjà été diffusés, ``on_chunk`` reçoit d'abord un
 Avant la première tentative, les références de fichiers de la requête sont
 résolues selon les capacités du modèle (``MediaResolver``) ; la fenêtre de
 contexte est estimée sur la requête non résolue, plus une part fixe par image.
+
+Échanges bruts (J6.1b) : avec ``raw_max_bytes``, chaque tentative ouvre un
+registre (``recording``) où le client HTTP de l'adaptateur dépose ce qu'il a
+envoyé et reçu ; à la fin de la tentative, réussie ou non, chaque échange sort
+en ``model.exchanged``, **avant** le ``model.retried`` ou la réponse.
 """
 
 import asyncio
@@ -17,11 +22,11 @@ import json
 import logging
 import random
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import aclosing
+from contextlib import aclosing, nullcontext
 from dataclasses import dataclass
 from typing import Final
 
-from loom_ia.core.events import ModelResponded, ModelRetried
+from loom_ia.core.events import ModelExchanged, ModelResponded, ModelRetried
 from loom_ia.core.model import (
     Message,
     ModelRequest,
@@ -30,7 +35,15 @@ from loom_ia.core.model import (
     ResponseAccumulator,
     StreamReset,
 )
-from loom_ia.core.ports import ArtifactStore, ChunkCallback, ModelClient, ModelError
+from loom_ia.core.ports import (
+    ArtifactStore,
+    ChunkCallback,
+    ExchangeLog,
+    ModelClient,
+    ModelError,
+    recording,
+)
+from loom_ia.engine.exchange import Recorded, exchanged
 from loom_ia.engine.media import IMAGE_TOKENS, MediaResolver
 
 logger = logging.getLogger(__name__)
@@ -98,28 +111,47 @@ class ModelCall:
         self.media = MediaResolver(spec, artifacts)
         self._sleep = sleep
         self._jitter = jitter
+        # Borne d'un corps brut ; ``None`` : les échanges ne sont pas gardés.
+        # C'est le client qui la porte (``Recorded``) : monté pour un client de
+        # loom qui a demandé ses échanges, il les garde partout où il sert —
+        # orchestrateur, rôles, juges, secours.
+        self.raw_max_bytes = client.raw_max_bytes if isinstance(client, Recorded) else None
 
-    async def run(self, request: ModelRequest) -> AsyncGenerator[ModelRetried | ModelResponse]:
+    async def run(
+        self, request: ModelRequest
+    ) -> AsyncGenerator[ModelExchanged | ModelRetried | ModelResponse]:
         """Émet un ``ModelRetried`` par tentative ratée, puis la réponse.
 
-        Lève ``ModelError`` si l'erreur n'est pas rejouable, si les tentatives
-        sont épuisées, ou si un fichier de la requête ne peut pas être envoyé.
+        Avec la capture des échanges bruts, chaque tentative émet d'abord ses
+        ``ModelExchanged``. Lève ``ModelError`` si l'erreur n'est pas
+        rejouable, si les tentatives sont épuisées, ou si un fichier de la
+        requête ne peut pas être envoyé — après les échanges de la dernière
+        tentative, qui sont justement ceux qu'on voudra lire.
         """
         self._check_context(request)
         sent = await self.media.resolve(request)
         attempt = 1
         while True:
             progress = _Progress()
+            log = ExchangeLog() if self.raw_max_bytes is not None else None
+            failure: ModelError | None = None
+            response: ModelResponse | None = None
             try:
-                response = await self._attempt(sent, progress)
+                # Le registre n'est ouvert que le temps de la tentative, sans
+                # rien céder entre-temps : il reste dans le contexte de la tâche.
+                with recording(log) if log is not None else nullcontext():
+                    response = await self._attempt(sent, progress)
             except ModelError as error:
-                delay = self._retry_delay(error, attempt)
-                if delay is None:
-                    raise
                 failure = error
-            else:
+            for payload in self._exchanged(log, sent, attempt):
+                yield payload
+            if failure is None:
+                assert response is not None
                 yield response
                 return
+            delay = self._retry_delay(failure, attempt)
+            if delay is None:
+                raise failure
             logger.warning(
                 "Tentative %d/%d du modèle %s ratée (%s) : nouvel essai dans %.1f s",
                 attempt,
@@ -143,6 +175,22 @@ class ModelCall:
             await self._sleep(delay)
 
     # --- Interne ---------------------------------------------------------
+
+    def _exchanged(
+        self, log: ExchangeLog | None, request: ModelRequest, attempt: int
+    ) -> list[ModelExchanged]:
+        if log is None or self.raw_max_bytes is None:
+            return []
+        return [
+            exchanged(
+                raw,
+                attempt=attempt,
+                model_id=request.model_id,
+                provider=self.client.provider,
+                max_bytes=self.raw_max_bytes,
+            )
+            for raw in log.exchanges
+        ]
 
     def _check_context(self, request: ModelRequest) -> None:
         window = self.spec.capabilities.context_window

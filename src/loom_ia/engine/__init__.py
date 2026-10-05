@@ -10,6 +10,7 @@ from loom_ia.engine.delegated import (
     RunView,
     Waiting,
 )
+from loom_ia.engine.exchange import Recorded, exchanged
 from loom_ia.engine.executor import (
     DEFAULT_TOOL_TIMEOUT,
     UNKNOWN_STATE,
@@ -131,6 +132,7 @@ __all__ = [
     "Policies",
     "PolicyEvent",
     "PolicyFailure",
+    "Recorded",
     "RefError",
     "ResultIndex",
     "RoleDefinition",
@@ -153,6 +155,7 @@ __all__ = [
     "begin_run",
     "cancellation",
     "drive",
+    "exchanged",
     "in_call_order",
     "judge_role",
     "mark_results",

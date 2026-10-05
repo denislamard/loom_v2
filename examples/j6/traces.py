@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 6.1a : les traces d'un run dans un collecteur OpenTelemetry.
+"""Phase 6.1 : les traces d'un run dans un collecteur OpenTelemetry, ses échanges, ses logs.
 
-    uv run --extra otel python examples/j6/traces.py                  # les trois cas
+    uv run --extra otel python examples/j6/traces.py                  # les cinq cas
     uv run --extra otel python examples/j6/traces.py --cas otel
     uv run --extra otel python examples/j6/traces.py --cas otel --collecteur http://localhost:4318
     uv run --env-file .env --extra otel --extra anthropic --extra openai \\
         python examples/j6/traces.py --reel
 
-Tous les cas demandent l'extra ``otel`` ; sans lui, ils se sautent et le bilan
-le dit. Config : ``examples/j5/relance/``, celle de 5.1a (la relance de devis,
+Les cas demandent l'extra ``otel``, sauf ``logs`` ; sans lui, ils se sautent
+et le bilan le dit. Config : ``examples/j5/relance/``, celle de 5.1a (la relance de devis,
 deux artisans). Le journal va dans un dossier **temporaire** ; la télémétrie
 est posée **en code**.
 
@@ -26,11 +26,21 @@ pas relire celui-là, il le dit.
   elle sort, mais l'e-mail et le téléphone qu'elle cite sont masqués.
 * **clients** : la capture se règle client par client — le contenu de Dupont
   part, celui de Martin non, dans le même process.
+* **bruts** (6.1b) : avec ``capture.raw_exchanges``, chaque appel de modèle
+  laisse au journal ses échanges bruts (``model.exchanged``), juste avant sa
+  réponse ; aucune clé d'API n'y est, un corps trop long est coupé en le
+  disant, et les corps ne partent jamais vers le collecteur — même en
+  ``content``. En simulé, l'échange est **synthétique** (le faux modèle n'a
+  pas d'HTTP) et l'absence de clé n'a rien à éprouver : le bilan le dit.
+* **logs** (6.1b) : une ligne ``INFO`` par appel de modèle et par appel
+  d'outil, autant que le journal compte de réponses et de résultats, sans
+  rien de la demande.
 """
 
 import argparse
 import asyncio
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -49,12 +59,15 @@ from loom_ia.adapters.models import ModelConfigError
 from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.models import ArtifactsStorage, IdempotencyStorage, TelemetryConfig
 from loom_ia.config.telemetry import CaptureConfig, CaptureOverride, ExporterConfig, TenantTelemetry
-from loom_ia.core.events import Event
+from loom_ia.core.events import Event, ModelExchanged
 from loom_ia.core.model import SessionId, TenantId, new_id
 from loom_ia.runtime import apply_logging
 
 CONFIG = Path(__file__).parent.parent / "j5" / "relance" / "loom.yaml"
-CAS = ("otel", "masquage", "clients")
+CAS = ("otel", "masquage", "clients", "bruts", "logs")
+# Borne des corps bruts dans le cas `bruts` : assez basse pour qu'une requête
+# soit coupée, ce que l'exemple veut montrer.
+BORNE = 2048
 
 DUPONT = TenantId("dupont-plomberie")
 MARTIN = TenantId("martin-chauffage")
@@ -245,6 +258,8 @@ def deplacee(
     capture: str = "metadata",
     par_client: dict[TenantId, str] | None = None,
     externe: bool = False,
+    bruts: int | None = None,
+    collecteurs: bool = True,
 ) -> LoomConfig:
     """La config de ``relance/``, journal dans ``dossier``, collecteurs déclarés.
 
@@ -282,14 +297,20 @@ def deplacee(
         )
         for tenant in config.tenants
     )
-    exporters = [ExporterConfig(type="otel", endpoint_env=ICI, service_name="loom-exemple")]
+    exporters: list[ExporterConfig] = []
+    if collecteurs:
+        exporters.append(ExporterConfig(type="otel", endpoint_env=ICI, service_name="loom-exemple"))
     if externe:
         exporters.append(
             ExporterConfig(type="otel", endpoint_env=AILLEURS, service_name="loom-exemple")
         )
     telemetry = TelemetryConfig(
         logging=config.telemetry.logging,
-        capture=CaptureConfig.model_validate({"exports": capture}),
+        capture=CaptureConfig.model_validate(
+            {"exports": capture}
+            if bruts is None
+            else {"exports": capture, "raw_exchanges": True, "raw_max_bytes": bruts}
+        ),
         exporters=tuple(exporters),
     )
     # ``model_copy`` et non une nouvelle validation : la config chargée a déjà
@@ -530,11 +551,219 @@ async def clients(args: argparse.Namespace, controle: Controle) -> None:
     )
 
 
+# --- Cas 4 : bruts (6.1b) -------------------------------------------------------
+
+
+def cles_d_api(config: LoomConfig) -> dict[str, str]:
+    """Les clés d'API que les modèles de la config lisent, et leur valeur ici."""
+    trouvees: dict[str, str] = {}
+    for spec in config.models:
+        if spec.api_key_env and os.environ.get(spec.api_key_env):
+            trouvees[spec.api_key_env] = os.environ[spec.api_key_env]
+    return trouvees
+
+
+async def bruts(args: argparse.Namespace, controle: Controle) -> None:
+    with tempfile.TemporaryDirectory(prefix="loom-traces-") as dossier:
+        config = deplacee(Path(dossier), capture="content", bruts=BORNE)
+        titre(f"Échanges bruts gardés, corps bornés à {BORNE} octets, capture 'content'")
+        [tour] = await lancer(config, args, [DUPONT])
+    print(f"  run {tour.run_id} : {tour.statut}")
+    echanges = [e for e in tour.events if isinstance(e.payload, ModelExchanged)]
+    reponses = [e for e in tour.events if e.type == "model.responded"]
+    print(f"\n  {'seq':>4}  {'rôle':<28}{'essai':>6}{'statut':>8}{'requête':>16}{'réponse':>16}")
+    for event in echanges:
+        brut = event.payload
+        assert isinstance(brut, ModelExchanged)
+        # La taille est celle du corps entier ; « coupé » dit qu'au journal il
+        # n'en reste que la borne — pour la requête comme pour la réponse.
+        requete = f"{brut.request_bytes} o" + (" coupée" if brut.request_truncated else "")
+        reponse = f"{brut.response_bytes} o" + (" coupée" if brut.response_truncated else "")
+        print(
+            f"  {event.seq:>4}  {event.role or '':<28}{brut.attempt:>6}"
+            f"{brut.status_code if brut.status_code is not None else '—':>8}"
+            f"{requete:>16}{reponse:>16}"
+        )
+    print(
+        f"\n  au moins un échange par réponse de modèle ({len(echanges)} échange(s), "
+        f"{len(reponses)} réponse(s)) : "
+        + controle.tient(
+            "bruts : une réponse de modèle sans échange gardé",
+            bool(reponses) and len(echanges) >= len(reponses),
+        )
+    )
+    par_seq = {e.seq: e for e in tour.events}
+    precedes = all(
+        any(
+            isinstance(par_seq[s].payload, ModelExchanged)
+            and (par_seq[s].span_id, par_seq[s].role) == (r.span_id, r.role)
+            for s in range(1, r.seq)
+            if s in par_seq
+        )
+        for r in reponses
+    )
+    print(
+        "  chaque réponse a ses échanges avant elle, dans son span, au nom de son rôle : "
+        + controle.tient("bruts : une réponse sans échange dans son span", precedes)
+    )
+    synthetiques = {e.payload.synthetic for e in echanges if isinstance(e.payload, ModelExchanged)}
+    attendu = {not args.reel}
+    print(
+        f"  échanges {'réels (HTTP)' if args.reel else 'synthétiques (modèle simulé)'} : "
+        + controle.tient(
+            "bruts : la nature des échanges n'est pas celle du mode joué", synthetiques == attendu
+        )
+    )
+    coupes = [
+        e.payload
+        for e in echanges
+        if isinstance(e.payload, ModelExchanged) and e.payload.request_truncated
+    ]
+    print(
+        f"  une requête plus longue que la borne est coupée et le dit ({len(coupes)} coupée(s)) : "
+        + controle.tient(
+            "bruts : aucune requête coupée, ou une coupe qui ne tient pas sa borne",
+            bool(coupes)
+            and all(len(c.request_body.encode()) <= BORNE < c.request_bytes for c in coupes),
+        )
+    )
+    cles = cles_d_api(config)
+    if cles:
+        journal = "\n".join(e.model_dump_json() for e in tour.events)
+        print(
+            f"  aucune des {len(cles)} clé(s) d'API ({', '.join(cles)}) n'est au journal : "
+            + controle.tient(
+                "bruts : une clé d'API est au journal",
+                all(valeur not in journal for valeur in cles.values()),
+            )
+        )
+    else:
+        controle.non_verifies.append(
+            "bruts : l'absence de clé d'API au journal — aucune clé lue ici"
+            + (" (modèles simulés)" if not args.reel else "")
+        )
+    sortis = [
+        key
+        for span in tour.spans
+        for name, attributes in span.events
+        if name == "model.exchanged"
+        for key in attributes
+        if key.startswith("loom.content.")
+    ]
+    vus = sum(1 for span in tour.spans for name, _ in span.events if name == "model.exchanged")
+    print(
+        f"  au collecteur, les échanges n'ont que leurs métadonnées ({vus} reçu(s)) : "
+        + controle.tient(
+            "bruts : un corps d'échange est parti au collecteur",
+            vus == len(echanges) and not sortis,
+        )
+    )
+    dernier = next(
+        (e.payload for e in reversed(echanges) if isinstance(e.payload, ModelExchanged)), None
+    )
+    if dernier is not None:
+        # Les lignes se comptent sur ce que le journal garde, la taille est celle
+        # du corps entier : les deux se disent séparément, sans se mélanger.
+        lignes = dernier.response_body.splitlines()
+        garde = (
+            f"coupé à {len(dernier.response_body.encode())} octets sur {dernier.response_bytes}"
+            if dernier.response_truncated
+            else f"entier, {dernier.response_bytes} octets"
+        )
+        print(
+            f"\n  début de la dernière réponse brute — {min(len(lignes), 6)} ligne(s) sur "
+            f"les {len(lignes)} gardées au journal (corps {garde}) :"
+        )
+        for ligne in lignes[:6]:
+            enonce("    ", ligne or "(vide)")
+
+
+# --- Cas 5 : logs (6.1b) ---------------------------------------------------------
+
+
+class Recueil(logging.Handler):
+    """Garde les lignes du moteur, le temps d'un cas."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.lignes: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lignes.append(record)
+
+
+async def logs(args: argparse.Namespace, controle: Controle) -> None:
+    moteur = logging.getLogger("loom_ia.engine.loop")
+    recueil = Recueil()
+    # Le temps du cas, les lignes du moteur vont au recueil et à lui seul : la
+    # console de l'exemple reste à son niveau habituel (WARNING).
+    niveau, propage = moteur.level, moteur.propagate
+    moteur.addHandler(recueil)
+    moteur.setLevel(logging.INFO)
+    moteur.propagate = False
+    try:
+        with tempfile.TemporaryDirectory(prefix="loom-traces-") as dossier:
+            config = deplacee(Path(dossier), collecteurs=False)
+            titre("Une ligne par appel de modèle et d'outil")
+            session = SessionId(f"traces-{new_id()[-8:]}")
+            async with Loom(config) as loom:
+                result = await loom.run(
+                    agent_de(args), demande(DUPONT), session_id=session, tenant=DUPONT
+                )
+                events = [
+                    e for e in await loom.store.read(DUPONT, session) if e.run_id == result.run_id
+                ]
+    finally:
+        moteur.removeHandler(recueil)
+        moteur.setLevel(niveau)
+        moteur.propagate = propage
+    print(f"  run {result.run_id} : {result.status}")
+    lignes = [r.getMessage() for r in recueil.lignes]
+    modeles = [ligne for ligne in lignes if ligne.startswith("Modèle ")]
+    outils = [ligne for ligne in lignes if ligne.startswith("Outil ")]
+    for ligne in modeles + outils:
+        enonce("    ", ligne)
+    reponses = sum(1 for e in events if e.type == "model.responded")
+    resultats = sum(1 for e in events if e.type == "tool.completed")
+    print(
+        f"\n  une ligne par réponse de modèle ({reponses} au journal, {len(modeles)} ligne(s)) : "
+        + controle.tient(
+            "logs : le nombre de lignes de modèle n'est pas celui des réponses",
+            len(modeles) == reponses > 0,
+        )
+    )
+    print(
+        f"  une ligne par résultat d'outil ({resultats} au journal, {len(outils)} ligne(s)) : "
+        + controle.tient(
+            "logs : le nombre de lignes d'outil n'est pas celui des résultats",
+            len(outils) == resultats > 0,
+        )
+    )
+    print(
+        "  chaque ligne porte le run : "
+        + controle.tient(
+            "logs : une ligne sans run_id",
+            all(getattr(r, "run_id", None) == result.run_id for r in recueil.lignes),
+        )
+    )
+    texte = "\n".join(lignes)
+    print(
+        "  rien de la demande dans les logs (ni le devis demandé, ni l'e-mail) : "
+        + controle.tient(
+            "logs : un contenu est dans les logs",
+            f"devis {DEVIS[DUPONT]}, sur" not in texte and COURRIEL not in texte,
+        )
+    )
+
+
 # --- Lancement -------------------------------------------------------------------
 
 
 async def jouer(nom: str, args: argparse.Namespace, controle: Controle) -> None:
     print(f"\n{'─' * 78}\nCas {nom}\n{'─' * 78}")
+    if nom == "logs":
+        await logs(args, controle)
+        return
     if find_spec("opentelemetry") is None:
         print("  extra 'otel' absent : cas non joué")
         controle.saute(f"{nom} (extra 'otel' absent : uv run --extra otel …)")
@@ -543,8 +772,10 @@ async def jouer(nom: str, args: argparse.Namespace, controle: Controle) -> None:
         await otel(args, controle)
     elif nom == "masquage":
         await masquage(args, controle)
-    else:
+    elif nom == "clients":
         await clients(args, controle)
+    else:
+        await bruts(args, controle)
 
 
 async def main(argv: list[str]) -> int:

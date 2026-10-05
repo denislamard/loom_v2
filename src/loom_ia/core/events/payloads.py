@@ -115,6 +115,10 @@ class Payload(DomainModel):
     # Chaque charge la déclare, même vide : un essai l'exige, pour qu'une
     # charge nouvelle ne porte pas du contenu sans le dire.
     content_fields: ClassVar[tuple[str, ...]] = ()
+    # Faux pour une charge dont le contenu ne part jamais vers un collecteur,
+    # même en capture ``content`` : les corps bruts d'un échange (6.1b) sont
+    # trop gros pour un attribut, et le journal est leur place.
+    export_content: ClassVar[bool] = True
 
     @property
     def event_status(self) -> EventStatus:
@@ -408,6 +412,89 @@ class ModelRetried(Payload):
 
     def facets(self) -> dict[str, FacetValue]:
         facets = super().facets()
+        if self.judge is not None:
+            facets["judge"] = self.judge
+        return facets
+
+
+class ModelExchanged(Payload):
+    """Une requête HTTP au fournisseur et sa réponse, brutes (#31, J6.1b).
+
+    Écrit en opt-in (``telemetry.capture.raw_exchanges``), une fois par
+    tentative d'appel — réussie ou non —, avant le ``model.retried`` ou le
+    ``model.responded`` qu'elle précède, dans le même span. Les corps sont du
+    texte tel qu'il a circulé, à trois retouches près, toutes dites :
+
+    - les en-têtes d'authentification et les paramètres d'adresse qui portent
+      un secret sont remplacés par ``[retiré]`` avant toute écriture ;
+    - les octets d'un fichier (image en base64) sont remplacés par leur taille
+      et leur empreinte : le journal ne porte pas d'octets de fichier ;
+    - un corps plus long que ``capture.raw_max_bytes`` est coupé, et
+      ``*_truncated`` le dit ; ``*_bytes`` et ``*_sha256`` décrivent alors le
+      corps entier (après les deux premières retouches).
+
+    Ni les corps ni les en-têtes ne partent vers un collecteur, même en
+    capture ``content`` (``export_content``) : seulement le statut, la durée
+    et les tailles.
+    """
+
+    category: ClassVar[EventCategory] = "model"
+    facet_fields: ClassVar[tuple[str, ...]] = (
+        "model_id",
+        "provider",
+        "attempt",
+        "status_code",
+        "duration_ms",
+        "request_bytes",
+        "response_bytes",
+    )
+
+    content_fields: ClassVar[tuple[str, ...]] = (
+        "request_headers",
+        "request_body",
+        "response_headers",
+        "response_body",
+        "error",
+    )
+    export_content: ClassVar[bool] = False
+    type: Literal["model.exchanged"] = "model.exchanged"
+    model_id: str
+    provider: str
+    # Tentative de l'appel à laquelle appartient cet échange.
+    attempt: PositiveInt
+    method: str
+    url: str
+    # Absent si aucune réponse n'est arrivée (réseau, délai) : ``error`` dit pourquoi.
+    status_code: int | None = None
+    duration_ms: NonNegativeFloat = 0.0
+    request_headers: dict[str, str] = Field(default_factory=dict[str, str])
+    request_body: str = ""
+    request_bytes: NonNegativeInt = 0
+    request_sha256: str = ""
+    request_truncated: bool = False
+    response_headers: dict[str, str] = Field(default_factory=dict[str, str])
+    response_body: str = ""
+    response_bytes: NonNegativeInt = 0
+    response_sha256: str = ""
+    response_truncated: bool = False
+    error: str | None = None
+    # Échange d'un modèle simulé (``sdk: fake``), qui n'a pas fait d'HTTP.
+    synthetic: bool = False
+    # Appel d'outil servi par cet appel de modèle (rôle délégué).
+    call_id: str | None = None
+    # Juge qui a fait cet appel (#21).
+    judge: str | None = None
+
+    @property
+    def event_status(self) -> EventStatus:
+        if self.error is not None or (self.status_code is not None and self.status_code >= 400):
+            return "warning"
+        return "ok"
+
+    def facets(self) -> dict[str, FacetValue]:
+        facets = super().facets()
+        if self.synthetic:
+            facets["synthetic"] = True
         if self.judge is not None:
             facets["judge"] = self.judge
         return facets
@@ -1028,6 +1115,7 @@ type DurablePayload = Annotated[
     | UserMessage
     | ModelResponded
     | ModelRetried
+    | ModelExchanged
     | ModelFellBack
     | CircuitOpened
     | ToolCalled

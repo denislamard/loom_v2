@@ -36,6 +36,7 @@ from pydantic import JsonValue
 
 from loom_ia.core.events import (
     CircuitOpened,
+    ModelExchanged,
     ModelFellBack,
     ModelResponded,
     ModelRetried,
@@ -94,7 +95,9 @@ class Exchange:
 
 
 # Ce qu'un outil délégué peut produire pendant son appel, avant son résultat.
-type DelegatedPayload = ModelRetried | ModelFellBack | CircuitOpened | ModelResponded
+type DelegatedPayload = (
+    ModelExchanged | ModelRetried | ModelFellBack | CircuitOpened | ModelResponded
+)
 
 
 @dataclass(frozen=True, slots=True)
