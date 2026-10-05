@@ -1020,7 +1020,7 @@ drive ──append──▶ EventStore ──publish──▶ Bus ──▶ abon
 - **Ordre :** écriture, puis publication ; un événement notifié existe toujours dans le journal.
 - **Publication non bloquante :** le run n'attend jamais un abonné.
 - **File bornée par abonné :** en cas de débordement, l'abonné perd les éphémères, reçoit un marqueur de trou et se resynchronise depuis le journal (`after_seq`).
-- **Abonnés exhaustifs** (exports OTel, ledger persistant) : ils lisent le journal avec un curseur ; le bus ne leur sert que de signal.
+- **Abonnés exhaustifs** (exports OTel, ledger persistant) : ils lisent le journal avec un curseur ; le bus ne leur sert que de signal. *Réalisé autrement pour l'export OTel (6.1a) : pas de curseur gardé, mais une relecture du run au journal à sa clôture, par le process qui l'a écrite. Prix : un process qui meurt entre la clôture et l'envoi perd cette trace (le journal, lui, a tout).*
 - **Plusieurs workers :** `BusBackend` distribué (Postgres `LISTEN/NOTIFY`, Redis ou RabbitMQ).
 
 **Streaming HTTP** (#38) :
@@ -1037,6 +1037,8 @@ drive ──append──▶ EventStore ──publish──▶ Bus ──▶ abon
 - OpenTelemetry est un export, via un `EventSink` qui traduit les événements en spans.
 - L'API de lecture (`EventQuery`, `run_summaries`) sert l'interface : lister, filtrer, afficher l'arbre et la chronologie d'un run (K5).
 
+**Réalisation (phase 6.1a)** (détails : `fonctions.md`, point 29) : `telemetry/spans.py` tire les spans d'un run de son journal, sans OpenTelemetry — un span par `span_id` (run, étape, appel d'outil, rôle, juge) et un span `chat` par `model.responded`, qui dure ce qu'a duré l'appel. Les noms suivent les conventions GenAI d'OTel (`invoke_agent`, `execute_tool`, `chat`), les attributs aussi (`gen_ai.*`), le reste est sous `loom.*`. L'adaptateur `adapters/telemetry/otel.py` (extra `otel`) les traduit avec les identifiants du journal : `trace_id` = `root_run_id`, `span_id` = 64 bits du `span_id` de loom. L'export part **à la clôture d'un run**, relu au journal, par le process qui l'a écrit (`listen(own=True)`) : un run repris ailleurs part entier et une fois ; un run inachevé ne part pas.
+
 ### 14.2 Niveaux de capture
 
 | Niveau | Contenus | Protection |
@@ -1046,6 +1048,8 @@ drive ──append──▶ EventStore ──publish──▶ Bus ──▶ abon
 | API de traces / interface | Selon le scope de la clé (`read` ou `read_content`) | Masquage à l'affichage |
 
 **Réalisation (phase 5.2a)** (détails : `fonctions.md`, point 39) : chaque charge d'événement déclare ses `content_fields` — les champs qui portent ce qu'un utilisateur a écrit, ce qu'un modèle a répondu, ce qu'un outil a reçu et rendu —, et `redacted(event)` rend le JSON privé de ces champs, en nommant à côté ce qui est parti. Sans la portée `read_content`, les relectures REST passent par là : statuts, durées, coûts, ventilation et notes des juges restent, la correspondance part. Le **journal garde tout** : c'est un réglage d'accès, pas de stockage. Les niveaux de capture des exports et le masquage fin (e-mails, IBAN) restent à J6.
+
+**Réalisation (phase 6.1a)** : `telemetry.capture.exports` vaut `metadata` (défaut) ou `content`, et un client a la sienne (`tenants[].telemetry.capture`). En `metadata`, seuls l'enveloppe, les facettes, l'usage, les coûts et les durées sortent ; en `content`, chaque champ déclaré `content_fields` part en plus, sous `loom.content.<chemin>`, après masquage par motifs (`telemetry.redaction` : `email`, `phone`, `iban` fournis, et des `{name, regex}`). Le masquage par motifs ne touche que les exports : l'API garde sa règle de portée (`read_content`). Un `content` sans collecteur est refusé au chargement.
 
 ### 14.3 Rejeu
 
@@ -1379,11 +1383,22 @@ budgets:                              # défauts ; un agent les surcharge par `b
 
 telemetry:
   logging:   {level: INFO, format: console}             # console | json
-  capture:   {exports: metadata, raw_exchanges: false}  # metadata | content
-  redaction: {patterns: [email, phone, iban]}
-  exporters: [{type: otel, endpoint_env: OTEL_EXPORTER_OTLP_ENDPOINT}]
-  bus:       {subscriber_queue: 1000}
+  capture:   {exports: metadata}                        # metadata | content ; un client la surcharge
+  redaction:                                            # masqué dans le contenu exporté, dans l'ordre
+    patterns: [email, phone, iban, {name: devis, regex: "D-\\d{4}-\\d{3}"}]
+  exporters:                                            # sans collecteur, rien ne sort que les logs
+    - type: otel                                        # seul type à ce jalon (OTLP)
+      endpoint_env: OTEL_EXPORTER_OTLP_ENDPOINT         # variable qui porte l'adresse
+      protocol: http/protobuf                           # http/protobuf | grpc
+      headers_env: OTEL_EXPORTER_OTLP_HEADERS           # en-têtes (clé=valeur,…), secrets
+      service_name: loom-ia
+      timeout: 10
 ```
+
+`capture.raw_exchanges` (échanges HTTP bruts en opt-in) arrive en 6.1b. Le bus,
+que la conception plaçait ici (`telemetry.bus`), est un stockage partagé entre
+process : il se déclare dans `storage.bus` (5.3c), et `telemetry.bus` est refusé
+en le disant. La file d'un abonné n'a pas de borne réglable.
 
 ### 17.8 Clients, sécurité, serveur
 
@@ -1399,6 +1414,7 @@ tenants:                              # sans cette section, seul `default` exist
     secrets: {CRM_TOKEN: DUPONT_CRM_TOKEN}
     variables: {entreprise: Dupont Plomberie}
     storage: null                     # isolation physique (TenantRouter)
+    telemetry: {capture: {exports: content}}     # sa capture des exports (6.1a)
 
 security:
   api_keys:

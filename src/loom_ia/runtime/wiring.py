@@ -148,7 +148,7 @@ from loom_ia.guards import (
     correlated,
 )
 from loom_ia.policies import BUILTIN_POLICIES
-from loom_ia.telemetry import configure_logging
+from loom_ia.telemetry import RunExporter, SpanSink, configure_logging
 from loom_ia.tenancy import EnvironmentSecrets, Tenant
 from loom_ia.tools import FunctionTool, configure
 from loom_ia.usage import BudgetGuard
@@ -345,6 +345,62 @@ def _variable(declared: BusStorage, what: str, porte: str) -> str:
             f"c'est elle qui porte {porte}"
         )
     return value
+
+
+def create_run_exporter(
+    config: LoomConfig, store: EventStore, environ: Mapping[str, str] | None = None
+) -> tuple[RunExporter | None, list[str]]:
+    """Les collecteurs de ``telemetry.exporters``, et ce qui empêche d'en monter (6.1a).
+
+    Un collecteur dont la variable d'adresse est vide n'est **pas monté**, et
+    c'est dit — un avertissement, une erreur en profil prod : le SDK enverrait
+    sinon à son adresse par défaut, ce qu'on n'a pas demandé. Sans collecteur
+    monté, pas d'abonné du tout : rien ne coûte rien.
+    """
+    declared = config.telemetry.exporters
+    if not declared:
+        return None, []
+    try:
+        from loom_ia.adapters.telemetry.otel import OtelSpanSink, parse_headers
+    except ImportError as exc:
+        raise ConfigError(
+            "Télémétrie : 'telemetry.exporters' demande OpenTelemetry, qui n'est pas installé "
+            "(installer l'extra : loom-ia[otel])"
+        ) from exc
+    variables = os.environ if environ is None else environ
+    sinks: list[SpanSink] = []
+    warnings: list[str] = []
+    for exporter in declared:
+        endpoint = variables.get(exporter.endpoint_env, "")
+        if not endpoint:
+            warnings.append(
+                f"Télémétrie : la variable {exporter.endpoint_env!r} est vide ou absente — "
+                "ce collecteur n'est pas monté, aucune trace n'en partira"
+            )
+            continue
+        headers = (
+            parse_headers(variables.get(exporter.headers_env))
+            if exporter.headers_env is not None
+            else {}
+        )
+        sinks.append(
+            OtelSpanSink.otlp(
+                endpoint,
+                protocol=exporter.protocol,
+                headers=headers,
+                timeout=exporter.timeout,
+                service_name=exporter.service_name,
+            )
+        )
+    if not sinks:
+        return None, warnings
+    exporter = RunExporter(
+        store,
+        sinks,
+        content_for=lambda tenant_id: config.capture_for(tenant_id).exports == "content",
+        redactor=config.telemetry.redaction.redactor(),
+    )
+    return exporter, warnings
 
 
 def _missing_redis(what: str) -> ConfigError:

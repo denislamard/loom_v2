@@ -90,7 +90,8 @@ class NotifyingEventStore:
         self._source = source or new_id()
         # Position atteinte par journal, pour relire ce qui manque et pas plus.
         self._cursors: dict[tuple[TenantId, SessionId], int] = {}
-        self._sinks: list[tuple[EventSink, RunId | None, EventFilter | None]] = []
+        # (abonné, run, filtre, seulement ce que ce process écrit)
+        self._sinks: list[tuple[EventSink, RunId | None, EventFilter | None, bool]] = []
 
     @property
     def inner(self) -> EventStore:
@@ -107,14 +108,17 @@ class NotifyingEventStore:
         run_id: RunId | None = None,
         *,
         accept: EventFilter | None = None,
+        own: bool = False,
     ) -> Generator[EventSink]:
         """Appelle ``sink`` à chaque écriture, le temps du bloc.
 
         Sans ``run_id`` ni ``accept``, tous les événements écrits sont remis.
         ``sink`` et ``accept`` sont appelés depuis ``append`` : ils ne doivent
-        rien attendre.
+        rien attendre. ``own`` écarte ce que le bus rapporte des autres
+        process : l'abonné ne reçoit que ce que cette instance écrit — c'est
+        ce qu'il faut à un export, que chaque process fait pour sa part (6.1a).
         """
-        entry = (sink, run_id, accept)
+        entry = (sink, run_id, accept, own)
         self._sinks.append(entry)
         try:
             yield sink
@@ -140,13 +144,15 @@ class NotifyingEventStore:
     ) -> list[Event]:
         events = await self._inner.append(drafts, expected_seq=expected_seq)
         for event in events:
-            self._offer(event)
+            self._offer(event, own=True)
         await self._announce(events)
         return events
 
-    def _offer(self, event: Event) -> None:
+    def _offer(self, event: Event, *, own: bool) -> None:
         """Remet un événement aux abonnés que son run et leur filtre acceptent."""
-        for sink, run_id, accept in tuple(self._sinks):
+        for sink, run_id, accept, only_own in tuple(self._sinks):
+            if only_own and not own:
+                continue
             if run_id is not None and event.run_id != run_id:
                 continue
             if accept is None or accept(event):
@@ -215,7 +221,7 @@ class NotifyingEventStore:
             return
         events = await self._inner.read(notice.tenant_id, notice.session_id, after_seq=after)
         for event in events:
-            self._offer(event)
+            self._offer(event, own=False)
         self._cursors[key] = max(notice.last_seq, events[-1].seq if events else 0)
 
     async def read(

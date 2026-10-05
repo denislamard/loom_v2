@@ -58,7 +58,7 @@ import asyncio
 import logging
 import re
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -148,12 +148,14 @@ from loom_ia.runtime import (
     create_idempotency_store,
     create_keyring,
     create_mcp_pool,
+    create_run_exporter,
     create_task_queue,
     encryption_warnings,
     load_registry,
     storage_warnings,
 )
 from loom_ia.sessions import CompactionJob, CompactionPlan, write_snapshot
+from loom_ia.telemetry import RunExporter
 from loom_ia.tenancy import (
     EnvironmentSecrets,
     Quota,
@@ -739,6 +741,14 @@ class Loom:
         )
         # Tâche qui suit le bus, lancée à l'entrée du contexte.
         self._following: asyncio.Task[None] | None = None
+        # Export des runs terminés vers les collecteurs (6.1a) : un abonné du
+        # journal, qui n'écoute que ce que ce process écrit — chaque worker
+        # exporte sa part, et aucune trace ne part deux fois.
+        self._exporter, said = create_run_exporter(config, self._store, environ)
+        announce(config, said)
+        self._exporting = ExitStack()
+        if self._exporter is not None:
+            self._exporting.enter_context(self._store.listen(self._exporter, own=True))
         # Profil prod : ce qui avertit ailleurs refuse ici (M4, 5.5a).
         announce(config, storage_warnings(config))
         # Le sceau, lui, avertit dans tous les profils : un client dont la clé a
@@ -836,6 +846,11 @@ class Loom:
     def store(self) -> NotifyingEventStore:
         """Journal de l'instance, abonnable pendant qu'un run se déroule."""
         return self._store
+
+    @property
+    def exporter(self) -> RunExporter | None:
+        """Export des runs terminés ici vers les collecteurs ; ``None`` sans collecteur monté."""
+        return self._exporter
 
     @property
     def artifacts(self) -> ArtifactStore:
@@ -1390,6 +1405,11 @@ class Loom:
         """Ferme les clients de modèle, les connexions MCP, et les stockages venus de la config."""
         # Les tâches de fond se servent des agents : on les attend d'abord.
         await self._queue.aclose()
+        # Les runs sont finis : ce qui reste à exporter se relit au journal,
+        # donc avant de le fermer.
+        self._exporting.close()
+        if self._exporter is not None:
+            await self._exporter.aclose(self._config.execution.shutdown_timeout)
         for built in self._built.values():
             await built.aclose()
         if self._mcp is not None:

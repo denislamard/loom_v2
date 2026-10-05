@@ -14,9 +14,7 @@ LATER_TENANT: Final[dict[str, str]] = {}
 LATER_MCP_ACCESS: Final[dict[str, str]] = {}
 
 LATER_STORAGE: Final[dict[str, str]] = {}
-LATER_TELEMETRY: Final[dict[str, str]] = {
-    "capture": "J4 (niveaux de capture)",
-    "redaction": "J4 (masquage)",
-    "exporters": "J4 (exports)",
-    "bus": "J4 (bus)",
-}
+# ``capture``, ``redaction`` et ``exporters`` sont arrivés en 6.1a ; ``bus``
+# n'est pas « pour plus tard » mais ailleurs (``storage.bus``, 5.3c) : il est
+# refusé par ``TelemetryConfig`` avec un message qui le dit.
+LATER_TELEMETRY: Final[dict[str, str]] = {}

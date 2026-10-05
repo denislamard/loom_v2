@@ -14,7 +14,7 @@ import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Final, Literal, Self
+from typing import Annotated, Final, Literal, Self, cast
 
 from pydantic import (
     AwareDatetime,
@@ -35,6 +35,12 @@ from loom_ia.config.later import (
     LATER_STORAGE,
     LATER_TELEMETRY,
     LATER_TENANT,
+)
+from loom_ia.config.telemetry import (
+    CaptureConfig,
+    ExporterConfig,
+    RedactionConfig,
+    TenantTelemetry,
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -424,6 +430,11 @@ class ExecutionConfig(DomainModel):
     lease: PositiveFloat = 60.0
 
 
+def _declares(data: object, key: str) -> bool:
+    """Vrai si le bloc brut (avant validation) porte cette clé."""
+    return isinstance(data, dict) and key in cast(dict[object, object], data)
+
+
 class LoggingConfig(DomainModel):
     level: str = "INFO"
     format: LogFormat = "console"
@@ -439,12 +450,25 @@ class LoggingConfig(DomainModel):
 
 
 class TelemetryConfig(DomainModel):
+    """Logs, capture des exports, masquage et collecteurs (K3, K4, K7, §17.7)."""
+
     logging: LoggingConfig = LoggingConfig()
+    capture: CaptureConfig = CaptureConfig()
+    redaction: RedactionConfig = RedactionConfig()
+    # Sans collecteur, rien ne sort du journal que les logs.
+    exporters: tuple[ExporterConfig, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
     def _later(cls, data: object) -> object:
         reject_later(data, LATER_TELEMETRY)
+        if _declares(data, "bus"):
+            # Prévu ici par la conception, réalisé ailleurs : le bus est un
+            # stockage partagé entre process (5.3c), pas un réglage d'export.
+            raise ValueError(
+                "'telemetry.bus' : le bus se déclare dans 'storage.bus' (5.3c) ; la file d'un "
+                "abonné n'a pas de borne réglable"
+            )
         return data
 
 
@@ -490,6 +514,9 @@ class TenantSpec(DomainModel):
     # donnerait son propre journal. Combien de temps elles vivent est une autre
     # question — souvent contractuelle, et propre au client (5.5c).
     retention: RetentionStorage | None = None
+    # Capture des exports propre à ce client (6.1a) : la sienne, clé par clé,
+    # sur celle de la racine. Ses collecteurs et ses motifs restent communs.
+    telemetry: TenantTelemetry = TenantTelemetry()
 
     @model_validator(mode="before")
     @classmethod
@@ -750,6 +777,7 @@ class LoomConfig(DomainModel):
             self._check_chain(f"Compaction ({COMPACTION_AGENT})", (compaction.model,))
         _reject_doubles("Clé", [key.id for key in self.security.api_keys])
         self._check_triggers()
+        self._check_telemetry()
         if self.server.mcp.http and not self.security.api_keys:
             # Le MCP publie des outils à un LLM tiers, sur le réseau : sans
             # clé, n'importe qui les appellerait. Le stdio, lui, n'a pas de
@@ -896,6 +924,29 @@ class LoomConfig(DomainModel):
                     "le faire (capabilities.tools: false)"
                 )
 
+    def _check_telemetry(self) -> None:
+        """Un contenu capturé doit avoir où aller (6.1a).
+
+        ``content`` sans collecteur ne fait rien : le journal garde déjà tout,
+        et les logs ne portent jamais de contenu. Un réglage qui ne fait rien
+        se lit pourtant comme une décision — que le contenu d'un client part
+        quelque part —, d'où le refus plutôt que le silence.
+        """
+        if self.telemetry.exporters:
+            return
+        wanting = [
+            str(tenant.id)
+            for tenant in self.tenants
+            if tenant.telemetry.capture.exports == "content"
+        ]
+        if self.telemetry.capture.exports == "content":
+            wanting.insert(0, "la racine")
+        if wanting:
+            raise ValueError(
+                f"Télémétrie : capture 'content' ({', '.join(wanting)}) sans collecteur — "
+                "déclarer 'telemetry.exporters', ou revenir à 'metadata'"
+            )
+
     @property
     def all_agents(self) -> tuple[AgentSpec, ...]:
         """Agents déclarés, plus l'agent interne de compaction s'il est configuré."""
@@ -934,6 +985,12 @@ class LoomConfig(DomainModel):
         if spec is not None and spec.retention is not None:
             return spec.retention.events_days
         return self.storage.retention.events_days
+
+    def capture_for(self, tenant_id: TenantId) -> CaptureConfig:
+        """Capture des exports pour ce client : la sienne, clé par clé, sur celle de la racine."""
+        root = self.telemetry.capture
+        spec = self.tenant_spec(tenant_id)
+        return root if spec is None else spec.telemetry.capture.over(root)
 
     def mcp_server(self, name: str) -> McpServerSpec:
         """Définition d'un serveur MCP par son nom."""
