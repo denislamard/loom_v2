@@ -1626,7 +1626,7 @@ indépendance : adapters.models ↮ adapters.stores ↮ adapters.queue …
 
 **Tests :**
 
-- CI noyau seul (`uv sync`, sans extra) et CI complète (`uv sync --all-extras`).
+- CI noyau seul (`uv sync`, sans extra) et CI complète (`uv sync --all-extras`), celle-ci avec les **services** : Postgres, RabbitMQ et Redis en conteneurs, et `--require-services` pour qu'une variable absente y soit un échec et non un saut (sans quoi un job vert ne dirait rien).
 - Tests d'adaptateur ignorés si l'extra manque (`pytest.importorskip`).
 - `apply` testé sans simulation ; `step` et `drive` avec les faux modèles et faux outils du package `testing`.
 - Tests de contrat des adaptateurs de modèles avec des réponses HTTP enregistrées (respx).

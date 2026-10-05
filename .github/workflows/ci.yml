@@ -77,9 +77,53 @@ jobs:
         run: uv run --locked pytest
 
   tests-complets:
-    name: Tests (tous les extras)
+    name: Tests (tous les extras, avec les services)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+
+    # Les essais de service tournent ici, et nulle part ailleurs : journal
+    # Postgres et politique de lignes, reprise d'un run sur un autre worker,
+    # bus et idempotence Redis. Versions épinglées sur celles qui servent à
+    # vérifier une phase avant de la rendre (Postgres 16, Redis 7,
+    # RabbitMQ 3.12) : la CI éprouve ce qui a été éprouvé à la main.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.12
+        # Un utilisateur à soi, et non `guest` : RabbitMQ ne laisse `guest`
+        # entrer que depuis la boucle locale, et un port publié n'en est pas.
+        env:
+          RABBITMQ_DEFAULT_USER: loom
+          RABBITMQ_DEFAULT_PASS: loom
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 15
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      LOOM_TEST_POSTGRES: postgresql://loom:loom@127.0.0.1:5432/loom
+      LOOM_TEST_RABBITMQ: amqp://loom:loom@127.0.0.1:5672/
+      LOOM_TEST_REDIS: redis://127.0.0.1:6379/1
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -87,11 +131,30 @@ jobs:
           enable-cache: true
           cache-suffix: ${{ github.job }}
 
+      # Le rôle du DSN n'est **pas** superutilisateur : un superutilisateur
+      # contourne la sécurité au niveau des lignes, et les essais passeraient
+      # sans rien prouver — `tests/conftest.py` échoue donc exprès dans ce cas.
+      # Il a en revanche CREATEROLE : le stockage crée son rôle applicatif
+      # (`loom_app`, NOLOGIN) à la première requête, et un essai de la barrière
+      # crée un rôle étranger pour se faire refuser.
+      - name: Rôle Postgres ordinaire, propriétaire de sa base
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE loom LOGIN PASSWORD 'loom' NOSUPERUSER CREATEROLE"
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE loom OWNER loom"
+
       - name: Installer le projet (tous les extras)
         run: uv sync --locked --all-extras
 
+      # `--require-services` : une variable absente ou un extra manquant devient
+      # un échec au lieu d'un saut. Sans lui, un conteneur tombé ou une variable
+      # mal écrite rendrait un job vert qui n'a rien éprouvé — exactement ce que
+      # cette CI faisait avant d'avoir des services.
       - name: Tests avec couverture
-        run: uv run --locked pytest --cov=loom_ia --cov-report=term-missing
+        run: uv run --locked pytest --require-services --cov=loom_ia --cov-report=term-missing
 
   build:
     name: Build

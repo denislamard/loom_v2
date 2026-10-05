@@ -23,7 +23,7 @@ import os
 from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from importlib.util import find_spec
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -33,9 +33,38 @@ POSTGRES_ENV = "LOOM_TEST_POSTGRES"
 RABBITMQ_ENV = "LOOM_TEST_RABBITMQ"
 REDIS_ENV = "LOOM_TEST_REDIS"
 
+# Drapeau des passes où les services sont **censés** tourner : la CI complète,
+# et toute vérification qui prétend les avoir éprouvés.
+REQUIRE = "--require-services"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        REQUIRE,
+        action="store_true",
+        help=(
+            "Refuse de sauter un essai de service : variable absente ou extra manquant "
+            "devient un échec. À passer là où Postgres, RabbitMQ et Redis sont censés tourner."
+        ),
+    )
+
+
+def _absent(request: pytest.FixtureRequest, why: str) -> NoReturn:
+    """Saute l'essai, ou le met en échec sous ``--require-services``.
+
+    Un essai de service sauté ne se voit pas : la suite reste verte et personne
+    n'apprend que rien n'a été éprouvé. C'est acceptable sur une machine qui n'a
+    pas de courtier ; ça ne l'est pas là où les services sont fournis, car une
+    variable mal écrite ou un conteneur tombé y rendrait exactement la même
+    couleur qu'une suite qui a tout vérifié.
+    """
+    if request.config.getoption(REQUIRE):
+        pytest.fail(f"{why} — et {REQUIRE} exige que cet essai tourne")
+    pytest.skip(why)
+
 
 @pytest.fixture
-def postgres_dsn() -> str:
+def postgres_dsn(request: pytest.FixtureRequest) -> str:
     """DSN d'un Postgres de test, tables vidées ; saute l'essai s'il n'y en a pas.
 
     Montage **synchrone**, pour être demandé par n'importe quelle fabrique,
@@ -45,9 +74,9 @@ def postgres_dsn() -> str:
     """
     dsn = os.environ.get(POSTGRES_ENV, "")
     if not dsn:
-        pytest.skip(f"{POSTGRES_ENV} absent : pas de Postgres pour cet essai")
+        _absent(request, f"{POSTGRES_ENV} absent : pas de Postgres pour cet essai")
     if _asyncpg() is None:  # pragma: no cover - dépend de l'extra installé
-        pytest.skip("extra 'postgres' absent")
+        _absent(request, "extra 'postgres' absent")
     _apart(lambda: _clean(dsn))
     return dsn
 
@@ -88,7 +117,7 @@ async def _clean(dsn: str) -> None:
 
 
 @pytest.fixture
-def rabbitmq_url() -> str:
+def rabbitmq_url(request: pytest.FixtureRequest) -> str:
     """URL d'un RabbitMQ de test, files vidées ; saute l'essai s'il n'y en a pas.
 
     Les deux files de loom sont purgées avant chaque essai : un travail resté
@@ -96,9 +125,9 @@ def rabbitmq_url() -> str:
     """
     url = os.environ.get(RABBITMQ_ENV, "")
     if not url:
-        pytest.skip(f"{RABBITMQ_ENV} absent : pas de courtier pour cet essai")
+        _absent(request, f"{RABBITMQ_ENV} absent : pas de courtier pour cet essai")
     if find_spec("aio_pika") is None:  # pragma: no cover - dépend de l'extra installé
-        pytest.skip("extra 'rabbitmq' absent")
+        _absent(request, "extra 'rabbitmq' absent")
     _apart(lambda: _empty(url))
     return url
 
@@ -120,7 +149,7 @@ async def _empty(url: str) -> None:
 
 
 @pytest.fixture
-def redis_url() -> str:
+def redis_url(request: pytest.FixtureRequest) -> str:
     """URL d'un Redis de test, base vidée ; saute l'essai s'il n'y en a pas.
 
     Vidée, parce que les clés d'un essai seraient vues du suivant — Redis n'a
@@ -128,9 +157,9 @@ def redis_url() -> str:
     """
     url = os.environ.get(REDIS_ENV, "")
     if not url:
-        pytest.skip(f"{REDIS_ENV} absent : pas de Redis pour cet essai")
+        _absent(request, f"{REDIS_ENV} absent : pas de Redis pour cet essai")
     if find_spec("redis") is None:  # pragma: no cover - dépend de l'extra installé
-        pytest.skip("extra 'redis' absent")
+        _absent(request, "extra 'redis' absent")
     _apart(lambda: _flush(url))
     return url
 

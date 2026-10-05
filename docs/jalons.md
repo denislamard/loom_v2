@@ -200,6 +200,8 @@ Les commandes ci-dessous sont indicatives.
 
 **Critère de sortie :** le scénario docker-compose passe en CI ; aucune fuite entre clients ; reprise sur un autre worker. Firestore et GCS (5.3d) n'en font pas partie : reportés, sans échéance.
 
+**Ce qui le remplit, et ce qui s'en écarte :** le job complet de la CI porte les trois **services** en conteneurs (Postgres 16, RabbitMQ 3.12, Redis 7) et lance la suite avec `--require-services`, si bien que l'isolation par politique de lignes, la reprise d'un run sur un autre worker, le worker tué, le bus et l'idempotence partagée sont éprouvés à chaque passage — et qu'une variable absente y échoue au lieu de se sauter en silence. Le rôle du DSN n'est pas superutilisateur (il contournerait la politique de lignes) mais a `CREATEROLE`, puisque le stockage pose son rôle applicatif à la première requête. **Pas de fichier docker-compose** en revanche : ce que le scénario décrit est déjà couvert par des essais, et un montage de démonstration ne prouverait rien de plus. À écrire le jour où l'on voudra montrer loom en service.
+
 ---
 
 ## J6 — Observabilité, rejeu et qualité
