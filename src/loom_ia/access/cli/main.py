@@ -60,6 +60,7 @@ from loom_ia.config.models import (
     IdempotencyStorage,
     QueueStorage,
 )
+from loom_ia.config.references import resolve
 from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -76,7 +77,15 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import Policy, SealError, SessionRecord, SourceContext, Tool
 from loom_ia.engine import ToolExecutor
-from loom_ia.replay import ReplayError, ReplayReport
+from loom_ia.replay import (
+    Comparison,
+    Double,
+    ReplayError,
+    ReplayReport,
+    RunSide,
+    ToolFate,
+    fate_label,
+)
 from loom_ia.runtime import (
     apply_logging,
     create_keyring,
@@ -184,11 +193,34 @@ def build_parser() -> argparse.ArgumentParser:
     replay = tenanted(
         commands.add_parser(
             "replay",
-            help="rejoue un run fini à l'identique, sans appel, et dit où il diverge",
+            help="rejoue un run fini, à l'identique (sans appel) ou en variante, "
+            "et dit où il s'écarte",
         )
     )
     replay.add_argument("run_id")
     replay.add_argument("--session", type=str, default=None, help="journal du run")
+    replay.add_argument(
+        "--mode",
+        choices=("exact", "variant"),
+        default="exact",
+        help="exact : tout vient du journal ; variant : ce qu'il ne connaît pas part "
+        "pour de vrai, et les deux runs sont comparés",
+    )
+    replay.add_argument(
+        "--model",
+        action="append",
+        default=[],
+        metavar="ETAPE=MODELE",
+        help="variante : autre modèle déclaré pour une étape (main, un rôle, judge:<nom>)",
+    )
+    replay.add_argument(
+        "--double",
+        action="append",
+        default=[],
+        metavar="OUTIL=REF",
+        help="variante : doublure d'un outil (nom enregistré ou module:fonction), "
+        "appelée à la place d'un appel absent du journal",
+    )
     replay.add_argument(
         "--export",
         type=Path,
@@ -700,19 +732,40 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
-    """Rejoue un run à l'identique ; rend 1 s'il diverge, 2 s'il ne peut pas être rejoué.
+    """Rejoue un run ; rend 1 s'il diverge (ou si la variante échoue), 2 s'il ne peut pas l'être.
 
     Le code de sortie fait de la commande un garde-fou : une config qui ne
-    reproduit plus un run de référence se voit en CI, sans lire la sortie.
+    reproduit plus un run de référence se voit en CI, sans lire la sortie. En
+    variante, s'écarter est le but : le code dit seulement si la variante est
+    allée au bout (0) ou a échoué (1).
     """
     config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     session = SessionId(args.session) if args.session else None
+    try:
+        models = _pairs(args.model, "--model", "ETAPE=MODELE")
+        references = _pairs(args.double, "--double", "OUTIL=REF")
+        registry = load_registry(config)
+        doubles: dict[str, Double] = {}
+        for name, reference in references.items():
+            found = resolve(reference, registry, base_dir=config.base_dir)
+            if not callable(found):
+                raise ReplayError(f"--double {name}={reference} : ce n'est pas une fonction")
+            doubles[name] = found
+    except (ReplayError, ConfigError) as error:
+        print(f"Rejeu impossible : {error}", file=sys.stderr)
+        return REFUSED
 
     async def go() -> ReplayReport:
         async with Loom(config) as loom:
             return await loom.replay(
-                RunId(args.run_id), session_id=session, tenant_id=_tenant(args), export=args.export
+                RunId(args.run_id),
+                session_id=session,
+                tenant_id=_tenant(args),
+                mode=args.mode,
+                models=models,
+                doubles=doubles,
+                export=args.export,
             )
 
     try:
@@ -722,7 +775,10 @@ def cmd_replay(args: argparse.Namespace) -> int:
         return REFUSED
     if args.json:
         print(json.dumps(report.as_json(), ensure_ascii=False, indent=2))
-        return OK if report.identical else FAILED
+        return _replay_code(report)
+    if report.comparison is not None:
+        _print_variant(report, report.comparison, args.export)
+        return _replay_code(report)
     print(f"Run        : {report.run_id} (agent {report.agent}, client {report.tenant_id})")
     print(f"Session    : {report.session_id}")
     print(f"Issue      : {report.original_end} au journal, {report.replay_end} au rejeu")
@@ -749,6 +805,93 @@ def cmd_replay(args: argparse.Namespace) -> int:
             f"{divergence.actual_hash[:12]} au rejeu"
         )
     return FAILED
+
+
+def _pairs(values: list[str], option: str, form: str) -> dict[str, str]:
+    """``nom=valeur`` répétés, en table ; un nom donné deux fois est refusé."""
+    pairs: dict[str, str] = {}
+    for value in values:
+        name, sep, target = value.partition("=")
+        if not sep or not name or not target:
+            raise ReplayError(f"{option} {value!r} : attendu {form}")
+        if name in pairs:
+            raise ReplayError(f"{option} : {name!r} donné deux fois")
+        pairs[name] = target
+    return pairs
+
+
+def _replay_code(report: ReplayReport) -> int:
+    """Identique : 0 si le run se rejoue tel quel ; variante : 0 si elle est allée au bout."""
+    if report.mode == "variant":
+        return OK if report.replay_end == "completed" else FAILED
+    return OK if report.identical else FAILED
+
+
+# Ordre dans lequel le rapport dit le sort des appels d'outil de la variante.
+_FATE_ORDER: Final[tuple[ToolFate, ...]] = ("journal", "run", "relaunched", "double", "refused")
+
+
+def _print_variant(report: ReplayReport, comparison: Comparison, export: Path | None) -> None:
+    """Le run d'origine et sa variante, côte à côte."""
+    original, variant = comparison.original, comparison.variant
+    print(f"Run        : {report.run_id} (agent {report.agent}, client {report.tenant_id})")
+    print(f"Session    : {report.session_id}")
+    swapped = ", ".join(f"{step} → {model}" for step, model in comparison.swapped.items())
+    print(f"Variante   : {swapped or 'la config, telle quelle'}")
+    divergence = report.divergence
+    if divergence is None:
+        print("Écart      : aucun — la variante n'a rien demandé que le journal ne connaisse")
+    else:
+        print(f"Écart      : {divergence.where}")
+        if divergence.detail:
+            print(f"             {divergence.detail}")
+    print(f"{'':13}{'origine':<24}variante")
+    print(f"{'Issue':<11}: {_ended(original):<24}{_ended(variant)}")
+    print(
+        f"{'Modèles':<11}: {f'{original.model_calls} appel(s)':<24}"
+        f"{variant.model_calls} appel(s) : "
+        f"{comparison.served_models} servi(s) par le journal, "
+        f"{comparison.real_models} parti(s) pour de vrai"
+    )
+    fates = ", ".join(
+        f"{comparison.tools[fate]} {fate_label(fate)}"
+        for fate in _FATE_ORDER
+        if comparison.tools.get(fate)
+    )
+    print(
+        f"{'Outils':<11}: {f'{original.tool_calls} appel(s)':<24}{variant.tool_calls} appel(s)"
+        + (f" : {fates}" if fates else "")
+    )
+    print(f"{'Tokens':<11}: {_tokens(original):<24}{_tokens(variant)} (entrée / sortie)")
+    print(
+        f"{'Coût':<11}: {f'{original.cost_usd:.6f} $':<24}{variant.cost_usd:.6f} $ "
+        f"(dépensé pour de vrai : {comparison.spent_usd:.6f} $)"
+    )
+    print(
+        f"{'Durée':<11}: {f'{original.active_ms / 1000:.1f} s':<24}{variant.active_ms / 1000:.1f} s"
+    )
+    for label, side in (("origine", original), ("variante", variant)):
+        for verdict in side.verdicts:
+            notes = ", ".join(f"{name} {score:.2f}" for name, score in verdict.scores)
+            said = "accepté" if verdict.passed else "refusé"
+            print(
+                f"Juge       : {label}, {verdict.judge} (essai {verdict.attempt}) : "
+                f"{notes} — {said}"
+            )
+    print(f"Réponse    : {'la même' if comparison.same_answer else 'différente'}")
+    if export is not None:
+        print(f"Journal    : {export} ({len(report.events)} événement(s))")
+    if not comparison.same_answer:
+        print(f"--- au journal\n{original.text or '(aucune)'}")
+        print(f"--- en variante\n{variant.text or '(aucune)'}")
+
+
+def _ended(side: RunSide) -> str:
+    return side.end if side.error_type is None else f"{side.end} ({side.error_type})"
+
+
+def _tokens(side: RunSide) -> str:
+    return f"{side.usage.prompt_tokens} / {side.usage.output_tokens}"
 
 
 def cmd_decide(args: argparse.Namespace) -> int:

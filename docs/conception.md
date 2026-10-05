@@ -455,7 +455,7 @@ Decision = Continue
 
 - Une décision non autorisée à un point est une erreur de config détectée au démarrage.
 - Les hooks s'exécutent dans l'ordre déclaré ; `Replace` transmet la valeur au suivant ; toute autre décision que `Continue` ou `Replace` arrête la chaîne.
-- Toute décision autre que `Continue` écrit `policy.decided`. En rejeu identique, ces décisions sont réutilisées ; en variante, les hooks sont réévalués.
+- Toute décision autre que `Continue` écrit `policy.decided`. Au rejeu, les hooks sont réévalués dans les deux modes (réalisé ainsi en 6.2a, et non « décisions réutilisées » en mode identique comme prévu d'abord) : à l'identique, leurs entrées étant celles du journal, ils redonnent les mêmes décisions, et une politique qui a changé se voit.
 - `Retry` est borné (`max_attempts`) ; chaque hook a un timeout ; en cas d'exception, le comportement est configurable par hook (bloquer par défaut pour le budget et l'approbation) ; les hooks sont asynchrones et déterministes pour un état donné.
 
 **Réalisation (phase 3.1)** (détails : `fonctions.md`, point 2) :
@@ -1059,15 +1059,17 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 | Mode | Modèles | Outils |
 |---|---|---|
 | Identique | Réponses lues dans le journal | Résultats lus dans le journal |
-| Variante (autre modèle, prompt ou config) | Appels réels | Lus dans le journal quand l'appel correspond ; jamais réexécutés s'ils ont des effets de bord (doublure ou erreur) |
+| Variante (autre modèle, prompt ou config) | Lus dans le journal pour une requête identique (même empreinte), avant comme après la divergence ; appels réels sinon (décision du 05/10, 6.2b) | Lus dans le journal quand l'appel correspond (nom et arguments) ; jamais réexécutés s'ils ont des effets de bord (doublure ou erreur) ; exécutés sinon |
 
 - **Détection de divergence :** `request_hash` dans `model.responded` (empreinte de la requête) et comparaison des transitions (§9.3).
-- **Décisions des politiques :** réutilisées en mode identique, réévaluées en variante.
+- **Décisions des politiques :** réévaluées dans les deux modes (6.2a) ; à l'identique, elles retombent pareil tant que la politique n'a pas changé.
 - **Échanges HTTP bruts :** opt-in, pour le débogage.
 
 **Réalisation (phase 6.1b)** (détails : `fonctions.md`, point 31) : `telemetry.capture.raw_exchanges` (racine ou client) ajoute au journal un `model.exchanged` par requête HTTP au fournisseur, à chaque tentative, avant le `model.retried` ou le `model.responded` qu'elle précède. Le moteur ouvre un registre autour de chaque tentative ; le client HTTP du SDK (`RecordingClient`, qui enrobe `send`) y dépose ce qu'il a envoyé et lu, décompressé ; le modèle simulé y dépose un échange synthétique. Avant l'écriture : en-têtes et paramètres secrets remplacés par `[retiré]`, octets de fichier par leur taille et leur empreinte, corps coupés à `raw_max_bytes` (256 Kio par défaut) en le disant. Sous le sceau et la rétention comme le reste ; jamais exportés que par leurs métadonnées. Le rejeu (6.2) les ignore.
 
 **Réalisation (phase 6.2a — le rejeu identique)** (détails : `fonctions.md`, point 31) : `Loom.replay(run_id)` et `loom replay <run_id>`. Le rejeu tourne **en mémoire**, sur une copie de la session arrêtée juste après la demande du run, et sous le **même `run_id`** (un juge tiré au sort retombe pareil). La logique de loom tourne avec la config d'aujourd'hui ; le monde est servi par le journal — réponses des modèles par empreinte, résultats d'outils et de sous-agents par `call_id`, approbations par leur décision. La **première** divergence arrête le rejeu et se rapporte : l'appel, et la partie de la requête qui a changé (`request_parts` : modèle, système, outils, messages, réglages). Rien n'est écrit dans le journal ; `--export` garde celui du rejeu. Code de sortie : 0 identique, 1 divergent, 2 impossible.
+
+**Réalisation (phase 6.2b — la variante)** (détails : `fonctions.md`, point 31) : `Loom.replay(run_id, mode="variant", models=…, doubles=…)` et `loom replay <run_id> --mode variant [--model ETAPE=MODELE] [--double OUTIL=REF]`. Même montage qu'à l'identique — en mémoire, même `run_id`, la logique de loom qui tourne —, avec la config d'aujourd'hui, ou un autre modèle par étape (`main`, un rôle, `judge:<nom>`). Le livre porte l'arbre du run (sous-agents compris). Une requête que le journal connaît (même empreinte) reçoit sa réponse, **avant comme après** la divergence ; les autres partent pour de vrai, le vrai client n'étant créé qu'au premier appel qui part. Un outil est cherché au journal par son nom et ses arguments ; sinon : sa doublure, un sous-agent relancé (en variante lui aussi), un outil à effets de bord **refusé** (jamais réexécuté, le modèle reçoit une erreur qui le dit), un outil sans effets exécuté. Une approbation reprend la décision du journal, est accordée quand rien ne part (doublure, refus), et refusée pour une exécution réelle. Le rapport compare les deux runs : issue, réponse, appels servis et partis, sort de chaque appel d'outil, tokens, coût et dépense réelle, durée de pilotage, verdicts des juges. Code de sortie : 0 si la variante est allée au bout, 1 sinon, 2 impossible. La dépense n'entre pas dans les compteurs du client. Le rejeu dit sa divergence une fois (`WARNING` à l'identique, `INFO` en variante) ; le moteur, qui la reçoit comme un arrêt voulu (`ModelError.by_client`), ne la note plus qu'en `DEBUG`.
 - **Usages :** diagnostic, évals comparatives entre modèles et configurations (O1), tests de non-régression à partir de traces (O3).
 
 ### 14.4 Logs

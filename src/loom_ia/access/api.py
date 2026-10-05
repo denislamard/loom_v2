@@ -67,6 +67,7 @@ from typing import Final, Self
 
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt
 
+from loom_ia.adapters.models import create_model_client
 from loom_ia.adapters.queue import Handler
 from loom_ia.adapters.stores import PLAIN, JournalCodec, NotifyingEventStore, SealingCodec
 from loom_ia.adapters.usage import InMemoryUsageCounter
@@ -99,6 +100,7 @@ from loom_ia.core.model import (
     JudgesMode,
     Message,
     ModelChunk,
+    ModelSpec,
     PendingApproval,
     RunId,
     RunKind,
@@ -119,6 +121,7 @@ from loom_ia.core.ports import (
     EventStore,
     Job,
     JobKind,
+    ModelClient,
     SecretProvider,
     ServedQueue,
     SessionRecord,
@@ -139,12 +142,17 @@ from loom_ia.engine import (
     run_scope,
 )
 from loom_ia.replay import (
+    Double,
     JournalTools,
     ReplayBook,
     ReplayError,
+    ReplayMode,
     ReplayModelClient,
     ReplayReport,
-    replay_exact,
+    VariantModelClient,
+    VariantTools,
+    replay_run,
+    swap_models,
 )
 from loom_ia.runtime import (
     Agent,
@@ -680,8 +688,110 @@ def _unfinished(events: Sequence[Event]) -> list[RunState]:
 
 
 def _no_subagent(agent: str) -> RunContext:
-    """Au rejeu, un sous-agent est servi par le journal : il n'est jamais monté."""
+    """Au rejeu identique, un sous-agent est servi par le journal : il n'est jamais monté."""
     raise ReplayError(f"Rejeu : le sous-agent {agent!r} ne se relance pas, il se relit")
+
+
+class _ReplayMount:
+    """Les agents montés pour un rejeu : celui du run, et en variante ses sous-agents.
+
+    Tous partagent le journal en mémoire, le livre, les outils du rejeu et des
+    disjoncteurs à part — un rejeu ne doit ni ouvrir ni fermer ceux des runs
+    vivants. Au rejeu identique, les clients de modèle répondent depuis le
+    journal ; en variante, ce que le journal connaît est servi, le reste part
+    pour de vrai, et un sous-agent qui n'est pas lu au journal est monté ici —
+    en variante lui aussi.
+    """
+
+    def __init__(
+        self,
+        build: Callable[..., Agent],
+        tenant: Tenant,
+        config: LoomConfig,
+        store: EventStore,
+        book: ReplayBook,
+        tools: JournalTools | VariantTools,
+    ) -> None:
+        # ``build_agent``, avec ce que l'instance partage (registre, MCP, fichiers).
+        self._build = build
+        self._tenant = tenant
+        self._config = config
+        self._store = store
+        self._book = book
+        self._tools = tools
+        self._breakers = CircuitBreakers()
+        self._contexts: dict[str, RunContext] = {}
+        self.mounted: list[Agent] = []
+
+    @property
+    def variant(self) -> bool:
+        return isinstance(self._tools, VariantTools)
+
+    def __call__(self, agent: str) -> RunContext:
+        """Le contexte de l'agent ``agent``, monté une fois (résolveur des sous-agents)."""
+        context = self._contexts.get(agent)
+        if context is None:
+            context = self._mount(agent)
+            self._contexts[agent] = context
+        return context
+
+    def _mount(self, agent: str) -> RunContext:
+        if agent not in AgentRegistry.from_config(self._config).names:
+            raise ReplayError(f"Rejeu : l'agent {agent!r} n'est plus dans la config")
+        book, secrets = self._book, self._tenant.secrets
+
+        def client(spec: ModelSpec) -> ModelClient:
+            if not self.variant:
+                return ReplayModelClient(book, spec)
+            return VariantModelClient(
+                book, spec, lambda: create_model_client(spec, environ=secrets)
+            )
+
+        built = self._build(
+            self._config,
+            agent,
+            self._store,
+            agents=self if self.variant else _no_subagent,
+            breakers=self._breakers,
+            tenant=self._tenant,
+            models=client,
+        )
+        self.mounted.append(built)
+        # Les outils du rejeu tranchent aussi les approbations, en ligne.
+        built.context.tools.replay = self._tools
+        return replace(built.context, worker_id=None)
+
+    def check_doubles(self, agent: str, doubles: Mapping[str, Double]) -> None:
+        """Chaque doublure vise un outil de l'agent ou de ses sous-agents — jamais un rôle."""
+        known: dict[str, str] = {}
+        prefixes: list[str] = []
+        waiting, seen = [agent], set[str]()
+        registry = AgentRegistry.from_config(self._config)
+        while waiting:
+            name = waiting.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            spec = registry.get(name)
+            prefixes += [f"{ref.prefix}__" for ref in spec.mcp_tools]
+            for tool in self(name).tools.specs:
+                known.setdefault(tool.name, tool.kind)
+            waiting += [ref.agent for ref in spec.subagents]
+        for name in sorted(doubles):
+            if known.get(name) == "role":
+                raise ReplayError(
+                    f"Variante : {name!r} est un rôle — de la logique, qui tourne ; "
+                    "il ne se double pas"
+                )
+            if name not in known and not name.startswith(tuple(prefixes)):
+                raise ReplayError(
+                    f"Variante : doublure pour un outil inconnu, {name!r} "
+                    f"(outils : {', '.join(sorted(known)) or 'aucun'})"
+                )
+
+    async def aclose(self) -> None:
+        for built in self.mounted:
+            await built.aclose()
 
 
 class Loom:
@@ -1102,50 +1212,76 @@ class Loom:
         *,
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
+        mode: ReplayMode = "exact",
+        models: Mapping[str, str] | None = None,
+        doubles: Mapping[str, Double] | None = None,
         export: Path | None = None,
     ) -> ReplayReport:
-        """Rejoue un run fini à l'identique, sans appeler personne, et dit où il diverge (K6).
+        """Rejoue un run fini, à l'identique ou en variante, et dit où il s'écarte (K6).
 
         La logique de l'agent — boucle, politiques, contrats, juges, budgets —
-        tourne avec la config **d'aujourd'hui** ; le monde — modèles, outils,
-        sous-agents, approbateurs — est servi par le journal. Un run qui se
-        rejoue à l'identique prouve que la config produit encore exactement les
-        mêmes requêtes ; le premier écart est rapporté, avec la partie de la
-        requête qui a changé. Rien n'est écrit dans le journal ; ``export`` garde
-        celui du rejeu en JSONL.
+        tourne avec la config **d'aujourd'hui**. Au rejeu identique
+        (``exact``), le monde — modèles, outils, sous-agents, approbateurs —
+        est servi par le journal, sans appeler personne : un run qui se rejoue
+        à l'identique prouve que la config produit encore exactement les mêmes
+        requêtes, et le premier écart est rapporté avec la partie de la requête
+        qui a changé.
+
+        En variante (``variant``, J6.2b), une requête identique à une requête
+        du journal reçoit sa réponse, les autres partent pour de vrai ; un
+        outil est lu au journal sous les mêmes nom et arguments, sinon doublé
+        (``doubles``, par nom d'outil), relancé pour un sous-agent, refusé s'il
+        a des effets de bord, exécuté sinon ; le rapport compare les deux runs.
+        ``models`` change le modèle d'une étape de l'agent : ``main``, un rôle,
+        ou ``judge:<nom>``. Ce qu'une variante dépense n'entre pas dans les
+        compteurs du client : seul le rapport le dit.
+
+        Rien n'est écrit dans le journal ; ``export`` garde celui du rejeu en JSONL.
         """
+        if mode == "exact" and (models or doubles):
+            raise ReplayError(
+                "Rejeu identique : 'models' et 'doubles' ne servent qu'en variante (mode='variant')"
+            )
         tenant = self._tenants.get(tenant_id)
         session = session_id or SessionId(run_id)
         events = await self._store.read(tenant.id, session)
-        mounted: list[Agent] = []
+        mounts: list[_ReplayMount] = []
 
-        def context_for(store: EventStore, book: ReplayBook, agent: str, _: TenantId) -> RunContext:
-            if agent not in self._agents.names:
-                raise ReplayError(f"Run {run_id} : l'agent {agent!r} n'est plus dans la config")
-            built = build_agent(
-                tenant.config,
-                agent,
-                store,
+        def context_for(
+            store: EventStore,
+            book: ReplayBook,
+            tools: JournalTools | VariantTools,
+            agent: str,
+            _: TenantId,
+        ) -> RunContext:
+            config = swap_models(tenant.config, agent, models or {})
+            build = partial(
+                build_agent,
                 registry=self._registry,
                 environ=self._environ,
                 mcp_pool=self._mcp,
                 artifacts=self._artifacts,
-                agents=_no_subagent,
-                # Des disjoncteurs à part : un rejeu ne doit ni ouvrir ni
-                # fermer ceux des runs vivants.
-                breakers=CircuitBreakers(),
-                tenant=tenant,
-                models=lambda spec: ReplayModelClient(book, spec),
             )
-            mounted.append(built)
-            built.context.tools.replay = JournalTools(book)
-            return replace(built.context, approver=book.approve, worker_id=None)
+            mount = _ReplayMount(build, tenant, config, store, book, tools)
+            mounts.append(mount)
+            context = mount(agent)
+            if doubles:
+                mount.check_doubles(agent, doubles)
+            return context
 
         try:
-            return await replay_exact(events, run_id, context_for, export=export)
+            return await replay_run(
+                events,
+                run_id,
+                context_for,
+                mode=mode,
+                doubles=doubles,
+                swapped=models,
+                export=export,
+            )
         finally:
-            for built in mounted:
-                await built.aclose()
+            for mount in mounts:
+                await mount.aclose()
 
     # --- Relire un run --------------------------------------------------------
 

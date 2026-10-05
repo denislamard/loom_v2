@@ -26,6 +26,7 @@ from loom_ia.core.ports.model_client import (
     ModelClient,
     ModelError,
     complete,
+    stopped_by_client,
 )
 from loom_ia.core.ports.policy import Policy
 from loom_ia.core.ports.queue import Job, JobKind, JobState, ServedQueue, TaskQueue
@@ -88,4 +89,5 @@ __all__ = [
     "idempotency_key",
     "journal_key",
     "recording",
+    "stopped_by_client",
 ]

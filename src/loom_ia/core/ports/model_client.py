@@ -34,6 +34,7 @@ class ModelError(Exception):
         *,
         http_status: int | None = None,
         retry_after: float | None = None,
+        by_client: bool = False,
     ) -> None:
         super().__init__(message)
         self.kind: ModelErrorKind = kind
@@ -41,6 +42,10 @@ class ModelError(Exception):
         self.http_status = http_status
         # Délai demandé par le fournisseur (``Retry-After``), en secondes.
         self.retry_after = retry_after
+        # L'appel a été arrêté par le client de modèle lui-même, à dessein — le
+        # rejeu qui s'arrête à sa première divergence (J6.2b) —, et non par une
+        # panne : le moteur le note sans le crier.
+        self.by_client = by_client
 
     @property
     def retryable(self) -> bool:
@@ -48,6 +53,20 @@ class ModelError(Exception):
 
     def __repr__(self) -> str:
         return f"ModelError({self.kind!r}, {self.message!r}, http_status={self.http_status})"
+
+
+def stopped_by_client(error: BaseException) -> bool:
+    """Vrai si ``error``, ou ce qui l'a causée, est un arrêt voulu par le client de modèle.
+
+    Un juge enrobe l'erreur de son modèle dans une erreur de politique : on
+    remonte donc la chaîne des causes.
+    """
+    seen: BaseException | None = error
+    while seen is not None:
+        if isinstance(seen, ModelError) and seen.by_client:
+            return True
+        seen = seen.__cause__
+    return False
 
 
 class ModelClient(Protocol):
@@ -69,7 +88,7 @@ class ModelClient(Protocol):
 
 
 class AnsweringClient(ABC):
-    """Client qui connaît déjà sa réponse entière, et la rend telle quelle (J6.2a).
+    """Client qui peut connaître d'avance sa réponse entière, et la rend telle quelle (J6.2a).
 
     C'est le client du rejeu : ses réponses viennent du journal. Passer par le
     flux de morceaux les reconstruirait, et la reconstruction perd ce que les
@@ -77,11 +96,23 @@ class AnsweringClient(ABC):
     d'outil) — la requête suivante, qui contient cette réponse, aurait alors une
     autre empreinte, et le rejeu verrait une divergence qu'il a lui-même créée.
     ``ModelCall`` le reconnaît et prend sa réponse sans flux.
+
+    En variante (J6.2b), une requête que le journal ne connaît pas part pour
+    de vrai : ``answer`` rend alors ``None``, et ``ModelCall`` lit le flux du
+    client, comme pour tout autre.
     """
 
     @abstractmethod
-    async def answer(self, request: ModelRequest) -> ModelResponse:
-        """La réponse à cette requête ; ``ModelError`` si elle n'en a pas."""
+    async def answer(self, request: ModelRequest) -> ModelResponse | None:
+        """La réponse connue à cette requête ; ``None`` : la demander au modèle (``stream``).
+
+        ``ModelError`` si le client refuse la requête (rejeu identique : elle
+        n'est pas au journal).
+        """
+
+    @abstractmethod
+    def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        """Morceaux de la réponse d'un vrai appel, quand ``answer`` n'en a pas."""
 
 
 async def complete(

@@ -174,6 +174,7 @@ from loom_ia.core.ports import (
     ModelClient,
     ModelError,
     SourceContext,
+    stopped_by_client,
 )
 from loom_ia.core.projections import apply, fold, last_summary, spent, turns
 from loom_ia.engine.circuit import CircuitBreakers
@@ -1339,7 +1340,10 @@ async def _model_step(
         # Une erreur classée du fournisseur tient en une ligne ; une autre
         # exception est inattendue, et garde sa pile d'appels.
         expected = isinstance(exc, ModelError)
-        logger.error(
+        # Un arrêt voulu par le client (le rejeu à sa divergence) n'est pas une
+        # panne : c'est le rejeu qui le dit, une fois (J6.2b).
+        logger.log(
+            logging.DEBUG if stopped_by_client(exc) else logging.ERROR,
             "Échec de l'appel au modèle %s : %s — %s",
             spec.id,
             failure,

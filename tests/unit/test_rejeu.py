@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Rejeu identique : la logique retourne, le monde vient du journal (K6, #31, J6.2a).
+"""Rejeu : la logique retourne, le monde vient du journal (K6, #31, J6.2a et J6.2b).
 
-Ce qui s'éprouve ici :
+Ce qui s'éprouve ici, à l'identique :
 
 - un run fini se rejoue **appel par appel**, sans appeler personne — outils,
   rôle, juge, sous-agent, approbation, et un second run de session dont
@@ -13,10 +13,24 @@ Ce qui s'éprouve ici :
 - rien n'est écrit dans le vrai journal, et le journal du rejeu s'exporte ;
 - ce qui ne se rejoue pas est refusé en le disant ;
 - la commande rend 0, 1 ou 2.
+
+Et en variante :
+
+- ce qui ne change rien est servi en entier ; un autre modèle part pour de
+  vrai, et une requête identique reste servie, même après la divergence ;
+- un outil à effets de bord n'est **jamais** réexécuté : lu au journal avec
+  sa décision d'approbation, remplacé par sa doublure, ou refusé ; un outil
+  sans effets de bord s'exécute ; une exécution réelle n'est jamais approuvée
+  par le rejeu ;
+- un sous-agent dont l'appel change est relancé ; sinon il est lu ;
+- la dépense est celle des vrais appels ; une variante mal dite est refusée ;
+- le rejeu dit sa divergence une fois, le moteur ne la crie pas ;
+- la commande compare, et dit si la variante est allée au bout.
 """
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -27,13 +41,22 @@ from conftest import ConfigFactory, demo_agent
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
 from loom_ia.config import load_config
-from loom_ia.core.events import Event, ModelResponded, RunStarted, ToolCalled
+from loom_ia.core.events import (
+    ApprovalGranted,
+    Event,
+    ModelResponded,
+    RunStarted,
+    ToolCalled,
+    ToolCompleted,
+)
 from loom_ia.core.model import (
     Message,
     ModelRequest,
     ModelResponse,
     ModelSpec,
     PendingApproval,
+    PendingCall,
+    Rejected,
     RunId,
     SessionId,
     TextBlock,
@@ -41,10 +64,18 @@ from loom_ia.core.model import (
     ToolDefinition,
     ToolOutput,
 )
-from loom_ia.core.ports import ModelError
+from loom_ia.core.ports import ModelClient, ModelError, stopped_by_client
+from loom_ia.engine.hooks import PolicyFailure
 from loom_ia.engine.model_call import ModelCall
-from loom_ia.replay import ReplayBook, ReplayError, ReplayModelClient
+from loom_ia.replay import (
+    ReplayBook,
+    ReplayError,
+    ReplayModelClient,
+    VariantModelClient,
+    VariantTools,
+)
 from loom_ia.testing import RunJournal, tool_call_message
+from loom_ia.tools import tool
 
 SESSION = SessionId("atelier")
 QUESTION = "Combien font 12 fois 7, plus 3 ?"
@@ -397,18 +428,19 @@ def test_a_tool_call_must_match_its_journal_entry() -> None:
     drafts = journal_.take()
     events = [d.to_event(i + 1) for i, d in enumerate(drafts)]
     book = ReplayBook.of(events)
-    output, _ = book.tool_output("c1", "calculer", {"expr": "1+2"})
+    run_id = events[0].run_id
+    output, _ = book.tool_output(run_id, "c1", "calculer", {"expr": "1+2"})
     assert output.is_error
     assert book.divergence is not None and book.divergence.kind == "tool"
     assert "autres arguments" in book.divergence.detail
     # Après la première divergence, plus rien n'est servi.
-    again, _ = book.tool_output("c1", "calculer", {"expr": "1+1"})
+    again, _ = book.tool_output(run_id, "c1", "calculer", {"expr": "1+1"})
     assert again.is_error and "arrêté" in again.as_text
 
 
 async def test_an_approval_absent_from_the_journal_diverges() -> None:
     book = ReplayBook()
-    decision = await book.approve(PendingApproval(call_id="c9", tool_name="envoyer"))
+    decision = await book.approve("r1", PendingApproval(call_id="c9", tool_name="envoyer"))
     assert type(decision).__name__ == "Rejected"
     assert book.divergence is not None and book.divergence.kind == "approval"
 
@@ -533,3 +565,435 @@ async def test_the_command_says_identical_divergent_or_impossible(
 async def _cli(argv: list[str]) -> int:
     """La commande lance sa propre boucle : on la fait tourner hors de celle de l'essai."""
     return await asyncio.to_thread(main, argv)
+
+
+# --- En variante (J6.2b) -----------------------------------------------------------
+
+ENVOIS = '''
+import os
+from pathlib import Path
+
+from loom_ia.tools import tool
+
+
+@tool
+def calculer(expr: str) -> str:
+    """Calcule une expression."""
+    return str(eval(expr))
+
+
+@tool
+async def envoyer(destinataire: str) -> str:
+    """Envoie la réponse : chaque envoi laisse une ligne dans envois.txt."""
+    # Le module est importé une fois par process : le fichier se lit à l'appel.
+    with Path(os.environ["ENVOIS_REJEU"]).open("a", encoding="utf-8") as fichier:
+        fichier.write(destinataire + "\\n")
+    return f"envoyé à {destinataire}"
+
+
+def doublure(destinataire: str) -> str:
+    """Ce que reçoit le modèle à la place d'un envoi."""
+    return f"(doublure) envoi à {destinataire} simulé"
+'''
+
+
+def script(destinataire: str, *, expr: str = "12*7+3", fin: str = "Fait.") -> list[dict[str, Any]]:
+    """Calcule, fait rédiger, envoie, conclut."""
+    return [
+        {"tool_calls": [{"name": "calculer", "arguments": {"expr": expr}}]},
+        {"tool_calls": [{"name": "rediger", "arguments": {"ton": "poli"}}]},
+        {"tool_calls": [{"name": "envoyer", "arguments": {"destinataire": destinataire}}]},
+        {"text": fin},
+    ]
+
+
+@pytest.fixture
+def variante(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Outil sans effets (calculer), rôle non terminal, envoi irréversible sous approbation.
+
+    ``MAIN`` a fait le run ; ``AUTRE`` envoie ailleurs, ``MEME`` envoie au même
+    destinataire, ``AILLEURS`` calcule autre chose, ``PANNE`` ne répond pas.
+    """
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "outils_variante.py").write_text(ENVOIS, encoding="utf-8")
+    monkeypatch.setenv("ENVOIS_REJEU", str(tmp_path / "envois.txt"))
+    prix = {"input": 1.0, "output": 2.0}
+    modeles: list[dict[str, Any]] = [
+        {"id": "MAIN", "sdk": "fake", "model": "main-1", "params": {"script": script("martin")}},
+        {
+            "id": "AUTRE",
+            "sdk": "fake",
+            "model": "main-2",
+            "pricing": prix,
+            "params": {"script": script("dupont", fin="Fait autrement.")},
+        },
+        {
+            "id": "MEME",
+            "sdk": "fake",
+            "model": "main-3",
+            "params": {"script": script("martin", fin="Fait, pareil.")},
+        },
+        {
+            "id": "AILLEURS",
+            "sdk": "fake",
+            "model": "main-4",
+            "params": {"script": script("martin", expr="12*7+4")},
+        },
+        {
+            "id": "PANNE",
+            "sdk": "fake",
+            "model": "main-5",
+            "params": {"script": [{"error": "auth"}]},
+        },
+        {
+            "id": "ROLE",
+            "sdk": "fake",
+            "model": "role-1",
+            "params": {"script": [{"text": "Bonjour, voici la relance."}]},
+        },
+    ]
+    config = {
+        "version": 1,
+        "imports": ["outils_variante"],
+        "models": modeles,
+        "storage": {"events": {"backend": "jsonl", "path": "data"}},
+        "telemetry": {"logging": {"level": "CRITICAL"}},
+    }
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    agent = {
+        "name": "demo",
+        "main": {"model": "MAIN", "system": "Tu calcules, fais rédiger, envoies."},
+        "tools": [
+            {"python": "calculer"},
+            {"python": "envoyer", "side_effects": "irreversible", "approval": "always"},
+        ],
+        "roles": [
+            {
+                "name": "rediger",
+                "description": "Rédige la relance.",
+                "model": "ROLE",
+                "system": "Tu rédiges.",
+                "input_schema": {"type": "object", "properties": {"ton": {"type": "string"}}},
+                "input_template": "Ton : {{ args.ton }}",
+            }
+        ],
+    }
+    (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
+    return tmp_path / "loom.yaml"
+
+
+async def enregistre(path: Path) -> RunId:
+    """Le run d'origine : l'envoi approuvé par denis, une ligne dans envois.txt."""
+    async with Loom.from_config(path) as loom:
+        run = await loom.run("demo", "Relance martin.", session_id=SESSION)
+        await loom.approve(
+            run.run_id,
+            call_id=run.pending_approvals[0].call_id,
+            by="denis",
+            session_id=SESSION,
+        )
+        await loom.drain()
+        final = await loom.state(run.run_id, session_id=SESSION)
+    assert final.status == "completed"
+    assert envois(path) == ["martin"]
+    return run.run_id
+
+
+def envois(path: Path) -> list[str]:
+    fichier = path.parent / "envois.txt"
+    return fichier.read_text(encoding="utf-8").splitlines() if fichier.exists() else []
+
+
+async def test_a_variant_that_changes_nothing_is_served_entirely(variante: Path) -> None:
+    run_id = await enregistre(variante)
+    async with Loom.from_config(variante) as loom:
+        report = await loom.replay(run_id, session_id=SESSION, mode="variant")
+    assert report.mode == "variant" and report.identical, report.divergence
+    comparison = report.comparison
+    assert comparison is not None
+    assert comparison.real_models == 0 and comparison.spent_usd == 0
+    assert comparison.served_models == report.model_calls[0] > 0
+    assert dict(comparison.tools) == {"journal": 2}
+    assert comparison.same_answer
+    assert envois(variante) == ["martin"]
+
+
+async def test_another_model_runs_for_real_and_never_sends_again(variante: Path) -> None:
+    """Le modèle change : ses appels partent ; le rôle, à demande identique, est servi ;
+    le calcul se lit au journal ; l'envoi ailleurs n'est jamais exécuté."""
+    run_id = await enregistre(variante)
+    async with Loom.from_config(variante) as loom:
+        report = await loom.replay(
+            run_id, session_id=SESSION, mode="variant", models={"main": "AUTRE"}
+        )
+    assert not report.identical
+    divergence = report.divergence
+    assert divergence is not None and divergence.kind == "model"
+    assert "appel de modèle n°1 (main au journal)" in divergence.where
+    assert "model" in divergence.parts
+    comparison = report.comparison
+    assert comparison is not None and comparison.swapped == {"main": "AUTRE"}
+    # Quatre appels de l'orchestrateur, partis ; celui du rôle, servi après la divergence.
+    assert (comparison.real_models, comparison.served_models) == (4, 1)
+    assert dict(comparison.tools) == {"journal": 1, "refused": 1}
+    assert comparison.calls == (("calculer", "journal"), ("envoyer", "refused"))
+    refus = [
+        e.payload.output.as_text
+        for e in report.events
+        if isinstance(e.payload, ToolCompleted) and e.payload.output.is_error
+    ]
+    assert len(refus) == 1 and "jamais réexécuté" in refus[0] and "irreversible" in refus[0]
+    accord = next(e.payload for e in report.events if isinstance(e.payload, ApprovalGranted))
+    assert accord.by == "rejeu"
+    assert envois(variante) == ["martin"]
+    # La dépense est celle des vrais appels, et d'eux seuls.
+    reels = [
+        e.payload.cost_usd
+        for e in report.events
+        if isinstance(e.payload, ModelResponded) and e.payload.model_id == "main-2"
+    ]
+    assert len(reels) == 4 and sum(reels) > 0
+    assert comparison.spent_usd == pytest.approx(sum(reels))
+    assert comparison.variant.text == "Fait autrement." != comparison.original.text
+    assert not comparison.same_answer
+
+
+async def test_a_side_effect_call_found_in_the_journal_is_read_with_its_decision(
+    variante: Path,
+) -> None:
+    run_id = await enregistre(variante)
+    async with Loom.from_config(variante) as loom:
+        report = await loom.replay(
+            run_id, session_id=SESSION, mode="variant", models={"main": "MEME"}
+        )
+    comparison = report.comparison
+    assert comparison is not None
+    assert dict(comparison.tools) == {"journal": 2}
+    accord = next(e.payload for e in report.events if isinstance(e.payload, ApprovalGranted))
+    assert accord.by == "denis"
+    assert envois(variante) == ["martin"]
+
+
+async def test_a_double_answers_in_place_of_an_unknown_side_effect_call(variante: Path) -> None:
+    run_id = await enregistre(variante)
+    vus: list[str] = []
+
+    async def doublure(destinataire: str) -> str:
+        vus.append(destinataire)
+        return f"(doublure) envoi à {destinataire}"
+
+    async with Loom.from_config(variante) as loom:
+        report = await loom.replay(
+            run_id,
+            session_id=SESSION,
+            mode="variant",
+            models={"main": "AUTRE"},
+            doubles={"envoyer": doublure},
+        )
+    comparison = report.comparison
+    assert comparison is not None and dict(comparison.tools) == {"journal": 1, "double": 1}
+    assert vus == ["dupont"]
+    sorties = [
+        e.payload.output.as_text for e in report.events if isinstance(e.payload, ToolCompleted)
+    ]
+    assert "(doublure) envoi à dupont" in sorties
+    assert envois(variante) == ["martin"]
+
+
+async def test_a_tool_without_side_effects_runs_for_real(variante: Path) -> None:
+    run_id = await enregistre(variante)
+    async with Loom.from_config(variante) as loom:
+        report = await loom.replay(
+            run_id, session_id=SESSION, mode="variant", models={"main": "AILLEURS"}
+        )
+    comparison = report.comparison
+    assert comparison is not None
+    # Le calcul (autre expression) s'exécute ; l'envoi, identique, est lu au journal.
+    assert dict(comparison.tools) == {"run": 1, "journal": 1}
+    sorties = [
+        e.payload.output.as_text for e in report.events if isinstance(e.payload, ToolCompleted)
+    ]
+    assert "88" in sorties
+    assert envois(variante) == ["martin"]
+
+
+async def test_a_real_execution_is_never_approved_by_the_replay() -> None:
+    """Un outil sans effets de bord, absent du journal, sous approbation : personne ne dit oui."""
+
+    @tool(approval="always")
+    def lire(x: int) -> str:
+        """Lit."""
+        return str(x)
+
+    tools = VariantTools(ReplayBook())
+    appel = PendingCall(call_id="v1", name="lire", arguments={"x": 1})
+    assert tools.serves(lire, appel, RunId("r1")) is False
+    assert tools.fates == {("r1", "v1"): "run"}
+    decision = await tools.approve(RunId("r1"), PendingApproval(call_id="v1", tool_name="lire"))
+    assert isinstance(decision, Rejected) and "personne" in decision.reason
+
+
+async def test_a_subagent_is_relaunched_when_its_call_changes(tree: ConfigFactory) -> None:
+    autre = [
+        {"tool_calls": [{"name": "verifier", "arguments": {"message": "Vérifie 2 + 2, vite."}}]},
+        {"text": "Vérifié autrement."},
+    ]
+    meme = [
+        {"tool_calls": [{"name": "verifier", "arguments": {"message": "Vérifie 2 + 2."}}]},
+        {"text": "Vérifié, pareil."},
+    ]
+    base = load_config(tree())
+    extra = [
+        {"id": "AUTRE", "sdk": "fake", "model": "main-2", "params": {"script": autre}},
+        {"id": "MEME", "sdk": "fake", "model": "main-3", "params": {"script": meme}},
+    ]
+    path = tree(
+        models=[*(m.model_dump(mode="json", exclude_defaults=True) for m in base.models), *extra]
+    )
+    async with Loom(load_config(path)) as loom:
+        result = await loom.run("demo", "Combien font 2 + 2 ?")
+        relance = await loom.replay(result.run_id, mode="variant", models={"main": "AUTRE"})
+        lu = await loom.replay(result.run_id, mode="variant", models={"main": "MEME"})
+    comparison = relance.comparison
+    assert comparison is not None
+    assert comparison.tools.get("relaunched") == 1
+    # L'enfant est relancé : deux runs ; son calcul, identique, est lu au journal.
+    assert len({e.run_id for e in relance.events}) == 2
+    assert comparison.tools.get("journal") == 1
+    enfant = next(
+        e.payload
+        for e in relance.events
+        if isinstance(e.payload, ToolCalled) and e.payload.tool_name == "verifier"
+    )
+    assert enfant.child_run_id is not None
+    # Même message : l'appel est lu, l'enfant ne tourne pas, et ses appels n'ont pas à l'être.
+    assert lu.comparison is not None and dict(lu.comparison.tools) == {"journal": 1}
+    assert {e.run_id for e in lu.events} == {result.run_id}
+
+
+async def test_a_variant_that_changes_nothing_reads_its_subagent(tree: ConfigFactory) -> None:
+    """Sans changement, le sous-agent est lu, et ses appels n'ont pas à être refaits."""
+    async with Loom(load_config(tree())) as loom:
+        result = await loom.run("demo", "Combien font 2 + 2 ?")
+        report = await loom.replay(result.run_id, mode="variant")
+    assert report.identical, report.divergence
+    assert {e.run_id for e in report.events} == {result.run_id}
+    assert report.comparison is not None and report.comparison.real_models == 0
+
+
+async def test_a_role_alone_can_change_model(variante: Path) -> None:
+    """L'orchestrateur est servi jusqu'au rôle ; le rôle part, avec son autre modèle."""
+    run_id = await enregistre(variante)
+    async with Loom.from_config(variante) as loom:
+        report = await loom.replay(
+            run_id, session_id=SESSION, mode="variant", models={"rediger": "AUTRE"}
+        )
+    divergence = report.divergence
+    assert divergence is not None and "(rediger au journal)" in divergence.where
+    assert "model" in divergence.parts
+    comparison = report.comparison
+    assert comparison is not None and comparison.swapped == {"rediger": "AUTRE"}
+    assert comparison.served_models >= 2 and comparison.real_models >= 1
+
+
+def test_a_stop_by_the_client_is_seen_through_its_causes() -> None:
+    arret = ModelError("invalid_request", "rejeu", by_client=True)
+    panne = ModelError("invalid_request", "refusé par le fournisseur")
+    try:
+        raise PolicyFailure("juge : model.invalid_request") from arret
+    except PolicyFailure as enrobee:
+        assert stopped_by_client(enrobee)
+    assert stopped_by_client(arret) and not stopped_by_client(panne)
+    assert not stopped_by_client(ValueError("autre chose"))
+
+
+async def test_a_variant_is_said_precisely_or_refused(variante: Path) -> None:
+    run_id = await enregistre(variante)
+    async with Loom.from_config(variante) as loom:
+        with pytest.raises(ReplayError, match=r"étape.*inconnue.*orchestre.*main, rediger"):
+            await loom.replay(
+                run_id, session_id=SESSION, mode="variant", models={"orchestre": "AUTRE"}
+            )
+        with pytest.raises(ReplayError, match=r"non déclaré.*INCONNU"):
+            await loom.replay(
+                run_id, session_id=SESSION, mode="variant", models={"main": "INCONNU"}
+            )
+        with pytest.raises(ReplayError, match="ne servent qu'en variante"):
+            await loom.replay(run_id, session_id=SESSION, models={"main": "AUTRE"})
+        with pytest.raises(ReplayError, match=r"outil inconnu.*expedier"):
+            await loom.replay(
+                run_id, session_id=SESSION, mode="variant", doubles={"expedier": print}
+            )
+        with pytest.raises(ReplayError, match=r"rediger.*rôle"):
+            await loom.replay(
+                run_id, session_id=SESSION, mode="variant", doubles={"rediger": print}
+            )
+
+
+async def test_a_model_that_cannot_be_called_fails_the_variant_clearly() -> None:
+    def sans_cle() -> ModelClient:
+        raise ValueError("clé KEY absente")
+
+    book = ReplayBook()
+    client = VariantModelClient(book, ModelSpec(id="M", sdk="fake", model="m"), sans_cle)
+    request = ModelRequest(model_id="m", messages=(Message.user("?"),))
+    assert await client.answer(request) is None
+    with pytest.raises(ModelError, match=r"ne peut pas être appelé.*KEY") as raised:
+        _ = [chunk async for chunk in client.stream(request)]
+    assert raised.value.kind == "auth"
+
+
+async def test_the_replay_says_its_divergence_once_and_the_engine_does_not_cry(
+    atelier: ConfigFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = atelier()
+    [run_id, _] = await deux_runs(path)
+    changed = atelier(rediger="Tu rédiges, en français soutenu.")
+    with caplog.at_level(logging.DEBUG, logger="loom_ia"):
+        async with Loom.from_config(changed) as loom:
+            report = await loom.replay(run_id, session_id=SESSION)
+    assert report.divergence is not None
+    au_dessus = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert [r.name for r in au_dessus] == ["loom_ia.replay.runner"], [r.message for r in au_dessus]
+    assert "divergence" in au_dessus[0].getMessage()
+    # Le moteur a bien noté l'arrêt — en DEBUG : le rôle, puis l'orchestrateur rappelé.
+    notes = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("Échec du rôle" in note for note in notes)
+    assert any("Échec de l'appel au modèle" in note for note in notes)
+
+
+async def test_a_variant_says_where_it_leaves_the_original_as_information(
+    variante: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    run_id = await enregistre(variante)
+    with caplog.at_level(logging.INFO, logger="loom_ia.replay"):
+        async with Loom.from_config(variante) as loom:
+            await loom.replay(run_id, session_id=SESSION, mode="variant", models={"main": "AUTRE"})
+    [dit] = [r for r in caplog.records if r.name == "loom_ia.replay.runner"]
+    assert dit.levelno == logging.INFO and "quitte le run d'origine" in dit.getMessage()
+
+
+async def test_the_variant_command_compares_and_says_if_it_went_through(
+    variante: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_id = await enregistre(variante)
+    base = ["--config", str(variante), "replay", run_id, "--session", SESSION, "--mode", "variant"]
+    code = await _cli(
+        [*base, "--model", "main=AUTRE", "--double", "envoyer=outils_variante:doublure"]
+    )
+    sortie = capsys.readouterr().out
+    assert code == 0, sortie
+    assert "Écart      : appel de modèle n°1" in sortie
+    assert "4 parti(s) pour de vrai" in sortie and "1 remplacé par sa doublure" in sortie
+    assert "--- en variante\nFait autrement." in sortie
+    assert await _cli([*base, "--model", "main=AUTRE", "--json"]) == 0
+    rapport = json.loads(capsys.readouterr().out)
+    assert rapport["mode"] == "variant" and rapport["comparison"]["tools"] == {
+        "journal": 1,
+        "refused": 1,
+    }
+    assert await _cli([*base, "--model", "main=PANNE"]) == 1
+    assert "failed" in capsys.readouterr().out
+    assert await _cli([*base, "--model", "main"]) == 2
+    assert "ETAPE=MODELE" in capsys.readouterr().err
+    assert envois(variante) == ["martin"]

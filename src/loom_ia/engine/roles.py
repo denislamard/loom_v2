@@ -78,7 +78,7 @@ from loom_ia.core.model import (
     ToolOutput,
     ToolSpec,
 )
-from loom_ia.core.ports import ModelClient, ModelError, ToolContext
+from loom_ia.core.ports import ModelClient, ModelError, ToolContext, stopped_by_client
 from loom_ia.core.template import Template
 from loom_ia.engine.circuit import CircuitBreakers
 from loom_ia.engine.delegated import DelegatedPayload, DelegatedTool, Exchange, RunView
@@ -345,7 +345,9 @@ class RoleTool(DelegatedTool):
                         yield outcome.model_copy(update={"call_id": context.call_id})
         except ModelError as exc:
             # Erreur classée du fournisseur : son message suffit, sans pile d'appels.
-            logger.warning(
+            # Un arrêt voulu par le client (rejeu) n'est pas une panne (J6.2b).
+            logger.log(
+                logging.DEBUG if stopped_by_client(exc) else logging.WARNING,
                 "Échec du rôle %s (modèle %s) : model.%s — %s",
                 role.name,
                 chain.link(current).spec.id,

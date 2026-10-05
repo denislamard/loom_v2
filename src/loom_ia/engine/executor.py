@@ -49,6 +49,7 @@ from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
 from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Final, Protocol
 
 from jsonschema import Draft202012Validator, SchemaError
@@ -203,6 +204,9 @@ class _Ready:
     # Un humain a approuvé cet appel : il repart, y compris sur une
     # réservation périmée (#17, #18).
     approved: bool = False
+    # Rejeu : le résultat vient du rejeu (journal, doublure ou refus), pas de
+    # l'outil — décidé une fois, à la préparation de l'appel.
+    replayed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,21 +243,31 @@ class _Unknown:
 
 
 class ToolReplay(Protocol):
-    """Résultats d'outils servis depuis un journal, au lieu d'exécuter (J6.2a).
+    """Résultats d'outils servis par un rejeu, au lieu d'exécuter (J6.2a, J6.2b).
 
-    ``serves`` dit quels outils le rejeu sert lui-même : ceux qui touchent le
-    monde (Python, MCP) et les sous-agents. Un rôle n'en fait pas partie — il
-    est de la logique de l'agent, et son appel de modèle passe par un client
-    qui rejoue. ``output`` rend le résultat enregistré et la consommation
-    qu'il portait (celle d'un sous-agent), ou une erreur si l'appel n'est pas
-    au journal.
+    ``serves`` dit, une fois par appel et avant tout lancement, si le rejeu
+    sert lui-même cet appel. Au rejeu identique, ce sont tous les outils qui
+    touchent le monde (Python, MCP) et les sous-agents ; un rôle n'en fait
+    jamais partie — il est de la logique de l'agent, et son appel de modèle
+    passe par un client qui rejoue. En variante, cela dépend aussi de l'appel :
+    retrouvé au journal, doublé, ou refusé parce qu'il a des effets de bord ;
+    sinon, l'outil s'exécute pour de vrai. ``output`` rend le résultat servi et
+    la consommation qu'il portait (celle d'un sous-agent).
     """
 
-    def serves(self, tool: AnyTool) -> bool: ...
+    def serves(self, tool: AnyTool, call: PendingCall, run_id: RunId) -> bool: ...
 
-    def output(
-        self, call_id: str, name: str, arguments: Mapping[str, JsonValue]
+    async def output(
+        self, run_id: RunId, call_id: str, name: str, arguments: Mapping[str, JsonValue]
     ) -> tuple[ToolOutput, Consumption | None]: ...
+
+    async def approve(self, run_id: RunId, pending: PendingApproval) -> ApprovalDecision:
+        """Décision en ligne d'une demande d'approbation : un rejeu ne s'arrête pas pour attendre.
+
+        L'appel est désigné par son run et son ``call_id`` — un identifiant
+        d'appel n'est unique que dans son run.
+        """
+        ...
 
 
 class ToolExecutor:
@@ -511,9 +525,12 @@ class ToolExecutor:
         Une décision ``Fail`` à ``before_tool`` arrête le lot avant tout
         lancement. ``on_chunk`` : diffusion en direct, pour un rôle terminal
         seul dans son lot. ``approver`` : approbateur en ligne (#28) — il
-        tranche ici même, et le run ne passe jamais par ``PAUSED``.
+        tranche ici même, et le run ne passe jamais par ``PAUSED``. Au rejeu,
+        c'est le rejeu qui tranche (``ToolReplay.approve``).
         """
         policies = policies or Policies()
+        if self.replay is not None:
+            approver = partial(self.replay.approve, state.run_id)
         view = self.view(
             state,
             writer=writer,
@@ -703,11 +720,19 @@ class ToolExecutor:
             problem = await tool.check(arguments, view)
             if problem is not None:
                 return problem
-            # Un sous-agent rejoué ne lance pas d'enfant : son résultat vient
-            # du journal, et un identifiant d'enfant désignerait un run absent.
-            if self.replay is None or not self.replay.serves(tool):
-                child = tool.child_run_id(call)
-        return _Ready(call=call, tool=tool, arguments=arguments, refs=refs, child_run_id=child)
+        replayed = self.replay is not None and self.replay.serves(tool, call, view.state.run_id)
+        # Un sous-agent servi par le rejeu ne lance pas d'enfant : son résultat
+        # vient du journal, et un identifiant d'enfant désignerait un run absent.
+        if isinstance(tool, DelegatedTool) and not replayed:
+            child = tool.child_run_id(call)
+        return _Ready(
+            call=call,
+            tool=tool,
+            arguments=arguments,
+            refs=refs,
+            child_run_id=child,
+            replayed=replayed,
+        )
 
     async def _before_tool(self, item: _Ready, view: RunView, policies: Policies) -> Verdict:
         """Politiques ``before_tool`` d'un appel accepté.
@@ -777,8 +802,10 @@ class ToolExecutor:
         started = time.perf_counter()
         consumption: Consumption | None = None
         exchange: Exchange | None = None
-        if self.replay is not None and self.replay.serves(tool):
-            output, consumption = self.replay.output(call.call_id, spec.name, call.arguments)
+        if item.replayed and self.replay is not None:
+            output, consumption = await self.replay.output(
+                state.run_id, call.call_id, spec.name, call.arguments
+            )
         elif isinstance(tool, DelegatedTool):
             produced = tool.run(item.arguments, context, view)
             output, consumption, exchange = await _delegated(

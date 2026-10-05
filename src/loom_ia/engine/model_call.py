@@ -219,8 +219,11 @@ class ModelCall:
     async def _attempt(self, request: ModelRequest, progress: _Progress) -> ModelResponse:
         if isinstance(self.client, AnsweringClient):
             # Rejeu (J6.2a) : la réponse est connue, entière ; sans flux, rien
-            # ne se perd en route.
-            return await self.client.answer(request)
+            # ne se perd en route. En variante (J6.2b), une requête inconnue
+            # du journal part pour de vrai, par le flux.
+            known = await self.client.answer(request)
+            if known is not None:
+                return known
         timeouts = self.spec.timeouts
         accumulator = ResponseAccumulator()
         total = asyncio.timeout(timeouts.total)

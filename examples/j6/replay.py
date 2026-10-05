@@ -1,18 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 6.2a : rejouer un run à l'identique, sans appeler personne, et voir où il diverge.
+"""Phases 6.2a et 6.2b : rejouer un run, à l'identique ou en variante, et voir où il s'écarte.
 
-    uv run python examples/j6/replay.py                       # les trois cas
+    uv run python examples/j6/replay.py                       # les quatre cas
     uv run python examples/j6/replay.py --cas identique
+    uv run python examples/j6/replay.py --cas variante
     uv run --extra sqlite python examples/j6/replay.py --cas j4    # tes runs de J4, rejoués
     uv run --env-file .env --extra anthropic --extra openai \\
         python examples/j6/replay.py --reel
 
 Config des cas ``identique`` et ``divergence`` : ``examples/j5/relance/`` (la
-relance de devis), journal dans un dossier **temporaire**. Le cas ``j4`` a la
-sienne : celle de J4, réglée comme ``examples/j4/acces.py`` la montait. Le
-rejeu ne parle à aucun fournisseur : aucun extra de modèle n'est demandé pour
-rejouer. Le cas ``j4`` demande l'extra ``sqlite`` (la config de J4 y range ses
-clés d'idempotence) et se saute sans lui.
+relance de devis), journal dans un dossier **temporaire**. Les cas
+``variante`` et ``j4`` ont la leur : celle de J4, réglée comme
+``examples/j4/acces.py`` la montait (l'outil ``envoyer_email``, irréversible et
+soumis à approbation) ; ``variante`` la déplace elle aussi dans un dossier
+temporaire. Le rejeu identique ne parle à aucun fournisseur ; la variante, si.
+Le cas ``j4`` demande l'extra ``sqlite`` (la config de J4 y range ses clés
+d'idempotence) et se saute sans lui.
 
 * **identique** : deux runs dans une session — le second a un historique à
   reconstruire —, puis chacun rejoué par une instance qui **n'a aucune clé
@@ -22,6 +25,13 @@ clés d'idempotence) et se saute sans lui.
   de l'orchestrateur, le rejeu s'arrête au premier appel et dit que c'est le
   prompt système qui a changé ; au prompt du rôle, il rejoue les appels d'avant
   et s'arrête à celui du rôle.
+* **variante** : un run de la relance de J4 enregistré — l'e-mail approuvé
+  par l'artisan, et parti —, puis rejoué avec un **autre modèle** à
+  l'orchestrateur. En simulé, deux autres orchestrateurs scriptés : l'un
+  refait le même envoi, que la variante **lit au journal** avec sa décision
+  d'approbation ; l'autre change l'objet de l'e-mail, et l'envoi est
+  **refusé**. En ``--reel``, Claude Haiku 4.5 remplace MiniMax-M3, et l'on
+  verra ce qu'il fait. Dans tous les cas, la boîte d'envoi ne bouge pas.
 * **j4** : le critère de sortie de J6 — les runs que ``examples/j4/acces.py``
   a laissés dans **ton** journal de J4 (``examples/j4/relance/data``), réels si
   tu les as lancés en ``--reel``, rejoués avec la config que cet exemple
@@ -31,6 +41,7 @@ clés d'idempotence) et se saute sans lui.
 
 import argparse
 import asyncio
+import copy
 import importlib
 import os
 import sys
@@ -44,12 +55,13 @@ from loom_ia.access import Loom
 from loom_ia.adapters.models import ModelConfigError
 from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.models import ArtifactsStorage, IdempotencyStorage
+from loom_ia.core.events import ApprovalGranted
 from loom_ia.core.model import RunId, SessionId, TenantId, new_id
-from loom_ia.replay import ReplayReport
+from loom_ia.replay import Comparison, ReplayReport, ToolFate, fate_label
 from loom_ia.runtime import apply_logging
 
 CONFIG = Path(__file__).parent.parent / "j5" / "relance" / "loom.yaml"
-CAS = ("identique", "divergence", "j4")
+CAS = ("identique", "divergence", "variante", "j4")
 DUPONT = TenantId("dupont-plomberie")
 DEMANDES = (
     "Relance le client du devis D-2026-042, sur un ton cordial.",
@@ -120,14 +132,19 @@ def enonce(quoi: str, texte: str, largeur: int = 96) -> None:
 
 
 def deplacee(
-    dossier: Path, *, prompt_main: str | None = None, prompt_role: str | None = None
+    dossier: Path,
+    *,
+    depuis: LoomConfig | None = None,
+    prompt_main: str | None = None,
+    prompt_role: str | None = None,
 ) -> LoomConfig:
-    """La config de ``relance/``, journal dans ``dossier`` ; un prompt changé si demandé.
+    """La config de ``relance/`` (ou ``depuis``), journal dans ``dossier`` ; un prompt
+    changé si demandé.
 
     Le prompt changé est celui du fichier **plus une phrase** : c'est la plus
     petite modification qui change une requête.
     """
-    config = load_config(CONFIG)
+    config = depuis if depuis is not None else load_config(CONFIG)
     events = config.storage.events.model_copy(update={"path": dossier / "events"})
     storage = config.storage.model_copy(
         update={
@@ -259,13 +276,14 @@ async def divergence(args: argparse.Namespace, controle: Controle) -> None:
         annonce(CONFIG, agent_de(args))
         titre("Deux runs enregistrés ; on rejoue le premier")
         [run_id, _] = await enregistrer(config, args, session)
-        for ou, change in (
-            ("orchestrateur", {"prompt_main": AJOUT}),
-            ("rôle rediger_relance", {"prompt_role": AJOUT}),
-        ):
+        for ou, au_role in (("orchestrateur", False), ("rôle rediger_relance", True)):
             titre(f"Une phrase de plus au prompt — {ou}")
             enonce("  ajoutée : ", AJOUT)
-            modifiee = deplacee(Path(dossier), **change)
+            modifiee = (
+                deplacee(Path(dossier), prompt_role=AJOUT)
+                if au_role
+                else deplacee(Path(dossier), prompt_main=AJOUT)
+            )
             async with Loom(modifiee, environ=sans_cles(modifiee)) as loom:
                 report = await loom.replay(RunId(run_id), session_id=session, tenant_id=DUPONT)
             montre(report)
@@ -284,7 +302,7 @@ async def divergence(args: argparse.Namespace, controle: Controle) -> None:
                     trouvee is not None and trouvee.parts == ("system",),
                 )
             )
-            if "prompt_main" in change:
+            if not au_role:
                 print(
                     "  au premier appel, rien n'est rejoué au-delà : "
                     + controle.tient(
@@ -306,10 +324,199 @@ async def divergence(args: argparse.Namespace, controle: Controle) -> None:
                 )
 
 
-# --- Cas 3 : les runs de J4 ---------------------------------------------------------
+# --- Cas 3 : variante ----------------------------------------------------------------
 
 
 J4 = Path(__file__).parent.parent / "j4"
+# Orchestrateurs simulés de la variante, ajoutés à la config de J4.
+MEME_ENVOI = "FAKE_MAIN_MEME"
+AUTRE_ENVOI = "FAKE_MAIN_AUTRE"
+OBJET_CHANGE = "Rappel : votre devis D-2026-042"
+
+
+def _acces() -> Any:
+    """L'exemple de J4 — sa config, son outil d'envoi, sa boîte —, chargé par son chemin."""
+    if str(J4) not in sys.path:
+        sys.path.insert(0, str(J4))
+    return importlib.import_module("acces")
+
+
+def _orchestrateurs(config: LoomConfig, acces: Any) -> LoomConfig:
+    """Deux orchestrateurs simulés de plus : le même envoi, puis un objet changé."""
+    base = config.model_spec("FAKE_MAIN")
+    meme = copy.deepcopy(acces.MAIN)
+    meme[-1] = {"text": "Relance partie (autre orchestrateur, même envoi)."}
+    autre = copy.deepcopy(acces.MAIN)
+    autre[2]["tool_calls"][0]["arguments"]["objet"] = OBJET_CHANGE
+    autre[-1] = {"text": "L'envoi de la relance n'a pas abouti."}
+    ajoutes = tuple(
+        base.model_copy(
+            update={"id": ident, "model": modele, "params": {**base.params, "script": script}}
+        )
+        for ident, modele, script in (
+            (MEME_ENVOI, "fake-main-meme", meme),
+            (AUTRE_ENVOI, "fake-main-autre", autre),
+        )
+    )
+    return config.model_copy(update={"models": (*config.models, *ajoutes)})
+
+
+def compare(report: ReplayReport, comparison: Comparison) -> None:
+    """Le run d'origine et sa variante, côte à côte — chaque chiffre lu dans le rapport."""
+    origine, variante_ = comparison.original, comparison.variant
+    divergence = report.divergence
+    if divergence is None:
+        print("  écart          : aucun")
+    else:
+        enonce("  écart          : ", divergence.where)
+        if divergence.detail:
+            enonce("                   ", divergence.detail)
+    print(f"  issue          : {origine.end} à l'origine, {variante_.end} en variante")
+    print(
+        f"  modèles        : {origine.model_calls} appel(s) à l'origine ; en variante "
+        f"{variante_.model_calls}, dont {comparison.served_models} servi(s) par le journal "
+        f"et {comparison.real_models} parti(s) pour de vrai"
+    )
+    for outil, sort in comparison.calls:
+        print(f"  outil          : {outil} — {fate_label(sort)}")
+    print(
+        f"  coût           : {origine.cost_usd:.6f} $ à l'origine, {variante_.cost_usd:.6f} $ "
+        f"en variante, dont {comparison.spent_usd:.6f} $ dépensés pour de vrai"
+    )
+    enonce("  réponse (orig.): ", origine.text or "(aucune)")
+    enonce("  réponse (var.) : ", variante_.text or "(aucune)")
+
+
+async def variante(args: argparse.Namespace, controle: Controle) -> None:
+    acces = _acces()
+    config, agent = acces.adjusted(load_config(acces.CONFIG), reel=args.reel)
+    print(f"  config : {shown(acces.CONFIG)}, réglée comme {shown(J4 / 'acces.py')}")
+    print(f"  agent  : {agent}")
+    with tempfile.TemporaryDirectory(prefix="loom-variante-") as dossier:
+        config = deplacee(Path(dossier), depuis=config)
+        session = SessionId(f"variante-{new_id()[-8:]}")
+        # Le titre ne dit rien d'avance : en réel, rien ne garantit que le
+        # modèle demande l'envoi. Ce qui s'est passé se lit dessous.
+        titre("Le run d'origine")
+        async with Loom(config) as loom:
+            loom.register(acces.ENVOI, acces.envoyer_email)
+            result = await loom.run(agent, acces.DEMANDE, session_id=session)
+            accordes: tuple[str, ...] = ()
+            if result.pending_approvals:
+                accordes = await loom.approve(
+                    result.run_id, by=acces.ARTISAN, reason="devis vérifié", session_id=session
+                )
+                await loom.drain()
+            fin = await loom.result(result.run_id, session_id=session)
+        print(f"  run {result.run_id} : {fin.status}")
+        print(f"  approbation : {len(accordes)} appel(s) accordé(s) par « {acces.ARTISAN} »")
+        print(f"  boîte d'envoi : {len(acces.BOITE)} e-mail(s) parti(s)")
+        if str(fin.status) not in ("completed", "failed", "cancelled"):
+            # Un rejeu compare un run fini.
+            print("  le run n'est pas fini : rien à rejouer")
+            controle.saute(f"variante (run d'origine {fin.status}, non rejouable)")
+            return
+
+        essais: list[tuple[str, str, ToolFate | None]]
+        if args.reel:
+            essais = [
+                ("Claude Haiku 4.5 à l'orchestrateur, à la place de MiniMax-M3", "HAIKU", None)
+            ]
+        else:
+            config = _orchestrateurs(config, acces)
+            essais = [
+                ("un autre orchestrateur, qui refait le même envoi", MEME_ENVOI, "journal"),
+                ("un autre orchestrateur, qui change l'objet de l'e-mail", AUTRE_ENVOI, "refused"),
+            ]
+        for quoi, modele, attendu in essais:
+            titre(f"Variante : {quoi}")
+            avant = len(acces.BOITE)
+            # En simulé, aucune clé : la variante n'appelle que des modèles scriptés.
+            environ = None if args.reel else sans_cles(config)
+            async with Loom(config, environ=environ) as loom:
+                loom.register(acces.ENVOI, acces.envoyer_email)
+                report = await loom.replay(
+                    result.run_id, session_id=session, mode="variant", models={"main": modele}
+                )
+            comparison = report.comparison
+            assert comparison is not None
+            compare(report, comparison)
+            _attendus(report, comparison, acces, avant, attendu, controle)
+
+
+def _attendus(
+    report: ReplayReport,
+    comparison: Comparison,
+    acces: Any,
+    avant: int,
+    attendu: ToolFate | None,
+    controle: Controle,
+) -> None:
+    divergence = report.divergence
+    print(
+        "  la variante quitte l'origine au premier appel, et dit que le modèle a changé : "
+        + controle.tient(
+            "variante : pas d'écart au premier appel, ou le modèle n'y est pas nommé",
+            divergence is not None
+            and divergence.kind == "model"
+            and "n°1 " in divergence.where
+            and "model" in divergence.parts,
+        )
+    )
+    print(
+        "  chaque appel de modèle de la variante est compté, servi ou parti : "
+        + controle.tient(
+            "variante : les appels servis et partis ne font pas le compte",
+            comparison.served_models + comparison.real_models == comparison.variant.model_calls
+            and comparison.real_models > 0,
+        )
+    )
+    print(
+        "  la dépense n'est que celle des appels partis : "
+        + controle.tient(
+            "variante : une dépense sans appel parti, ou l'inverse",
+            (comparison.real_models > 0) == (comparison.spent_usd > 0),
+        )
+    )
+    envois: list[ToolFate] = [sort for outil, sort in comparison.calls if outil == acces.ENVOI]
+    print(
+        f"  la boîte d'envoi n'a pas bougé ({avant} avant, {len(acces.BOITE)} après) : "
+        + controle.tient("variante : un e-mail est reparti", len(acces.BOITE) == avant)
+    )
+    if not envois:
+        # Rien à protéger : l'attendu serait vrai sans rien éprouver.
+        print(f"  l'orchestrateur n'a pas appelé {acces.ENVOI} : l'envoi n'est pas éprouvé")
+        controle.saute(f"variante ({acces.ENVOI} jamais appelé : envoi non éprouvé)")
+        return
+    print(
+        f"  {acces.ENVOI} lu au journal ou refusé, jamais exécuté "
+        f"({', '.join(fate_label(s) for s in envois)}) : "
+        + controle.tient(
+            f"variante : {acces.ENVOI} exécuté ou doublé",
+            all(sort in ("journal", "refused") for sort in envois),
+        )
+    )
+    if attendu is None:
+        return
+    print(
+        f"  ici, {fate_label(attendu)} : "
+        + controle.tient(
+            f"variante : {acces.ENVOI} n'a pas été {fate_label(attendu)}",
+            envois == [attendu],
+        )
+    )
+    if attendu == "journal":
+        accords = [e.payload.by for e in report.events if isinstance(e.payload, ApprovalGranted)]
+        print(
+            f"  avec la décision du journal (accordé par {', '.join(map(str, accords))}) : "
+            + controle.tient(
+                "variante : la décision d'approbation ne vient pas du journal",
+                accords == [acces.ARTISAN],
+            )
+        )
+
+
+# --- Cas 4 : les runs de J4 ---------------------------------------------------------
 # Sessions que ``examples/j4/acces.py`` écrit : ``<préfixe>-<cas>``.
 CAS_J4 = ("python", "rest", "mcp-elicite", "mcp-pause")
 
@@ -327,10 +534,7 @@ async def j4(args: argparse.Namespace, controle: Controle) -> None:
         print("  extra 'sqlite' absent : cas non joué")
         controle.saute("j4 (extra 'sqlite' absent : uv run --extra sqlite …)")
         return
-    # L'exemple de J4 lui-même, pour sa config et son outil d'envoi : un module
-    # voisin, chargé par son chemin.
-    sys.path.insert(0, str(J4))
-    acces: Any = importlib.import_module("acces")
+    acces = _acces()
 
     base = load_config(acces.CONFIG)
     print(f"  config : {shown(acces.CONFIG)}, réglée comme {shown(J4 / 'acces.py')}")
@@ -383,13 +587,15 @@ async def jouer(nom: str, args: argparse.Namespace, controle: Controle) -> None:
         await identique(args, controle)
     elif nom == "divergence":
         await divergence(args, controle)
+    elif nom == "variante":
+        await variante(args, controle)
     else:
         await j4(args, controle)
 
 
 async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="Rejouer un run à l'identique, et voir où il diverge"
+        description="Rejouer un run, à l'identique ou en variante, et voir où il s'écarte"
     )
     parser.add_argument("--reel", action="store_true", help="vrais modèles pour enregistrer")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")

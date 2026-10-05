@@ -79,7 +79,7 @@ from loom_ia.core.model import (
     ToolOutput,
     Usage,
 )
-from loom_ia.core.ports import Policy
+from loom_ia.core.ports import Policy, stopped_by_client
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +255,9 @@ class Policies:
                         f"dernier diagnostic : {decision.feedback}"
                     )
             except PolicyFailure as exc:
-                logger.warning(
+                # Un juge que le rejeu arrête n'est pas en panne (J6.2b).
+                logger.log(
+                    logging.DEBUG if stopped_by_client(exc) else logging.WARNING,
                     "Politique %s (%s) en erreur : %s",
                     bound.name,
                     point,
