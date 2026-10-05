@@ -47,7 +47,7 @@ et les referme avec lui.
 
 import logging
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
@@ -101,6 +101,7 @@ from loom_ia.core.model import (
     LATER_DECISIONS,
     RESERVED_PREFIX,
     Approval,
+    ModelSpec,
     StreamOutput,
     TenantId,
 )
@@ -529,8 +530,12 @@ def build_agent(
     agents: AgentResolver | None = None,
     breakers: CircuitBreakers | None = None,
     tenant: Tenant | None = None,
+    models: Callable[[ModelSpec], ModelClient] | None = None,
 ) -> Agent:
     """Assemble l'agent ``name`` de la config.
+
+    ``models`` remplace la fabrique des clients de modèle (J6.2a) : le rejeu
+    monte ainsi le même agent, avec des clients qui répondent depuis le journal.
 
     ``mcp_pool`` porte les connexions MCP partagées ; sans lui, l'agent ouvre
     le sien et le ferme avec ``aclose``. ``artifacts`` est le stockage des
@@ -563,9 +568,11 @@ def build_agent(
 
     def client(model_id: str) -> ModelClient:
         if model_id not in clients:
-            made = create_model_client(
-                config.model_spec(model_id), environ=secrets, record=raw is not None
-            )
+            spec = config.model_spec(model_id)
+            if models is not None:
+                clients[model_id] = models(spec)
+                return clients[model_id]
+            made = create_model_client(spec, environ=secrets, record=raw is not None)
             clients[model_id] = made if raw is None else Recorded(made, raw)
         return clients[model_id]
 

@@ -6,6 +6,7 @@ Un adaptateur n'implémente qu'une chose : le flux de morceaux neutres.
 traduite en ``ModelError``, dont le type décide des nouvelles tentatives.
 """
 
+from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
 from typing import Final, Protocol
@@ -65,6 +66,22 @@ class ModelClient(Protocol):
     async def aclose(self) -> None:
         """Libère les connexions."""
         ...
+
+
+class AnsweringClient(ABC):
+    """Client qui connaît déjà sa réponse entière, et la rend telle quelle (J6.2a).
+
+    C'est le client du rejeu : ses réponses viennent du journal. Passer par le
+    flux de morceaux les reconstruirait, et la reconstruction perd ce que les
+    morceaux ne portent pas (les métadonnées d'un bloc de texte ou d'un appel
+    d'outil) — la requête suivante, qui contient cette réponse, aurait alors une
+    autre empreinte, et le rejeu verrait une divergence qu'il a lui-même créée.
+    ``ModelCall`` le reconnaît et prend sa réponse sans flux.
+    """
+
+    @abstractmethod
+    async def answer(self, request: ModelRequest) -> ModelResponse:
+        """La réponse à cette requête ; ``ModelError`` si elle n'en a pas."""
 
 
 async def complete(

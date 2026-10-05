@@ -21,6 +21,7 @@ from loom_ia.engine.executor import (
     Stored,
     ToolEvent,
     ToolExecutor,
+    ToolReplay,
 )
 from loom_ia.engine.fallback import FALLBACK_ERRORS, Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import (
@@ -145,6 +146,7 @@ __all__ = [
     "SubAgentDefinition",
     "ToolEvent",
     "ToolExecutor",
+    "ToolReplay",
     "ToolResults",
     "Trace",
     "TracedEvent",

@@ -138,6 +138,14 @@ from loom_ia.engine import (
     drive,
     run_scope,
 )
+from loom_ia.replay import (
+    JournalTools,
+    ReplayBook,
+    ReplayError,
+    ReplayModelClient,
+    ReplayReport,
+    replay_exact,
+)
 from loom_ia.runtime import (
     Agent,
     announce,
@@ -671,6 +679,11 @@ def _unfinished(events: Sequence[Event]) -> list[RunState]:
     return states
 
 
+def _no_subagent(agent: str) -> RunContext:
+    """Au rejeu, un sous-agent est servi par le journal : il n'est jamais monté."""
+    raise ReplayError(f"Rejeu : le sous-agent {agent!r} ne se relance pas, il se relit")
+
+
 class Loom:
     """Une configuration chargée, prête à faire tourner ses agents."""
 
@@ -1080,6 +1093,59 @@ class Loom:
             on_chunk=on_chunk or context.on_chunk,
             approver=approver or context.approver,
         )
+
+    # --- Rejouer un run ---------------------------------------------------------
+
+    async def replay(
+        self,
+        run_id: RunId,
+        *,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+        export: Path | None = None,
+    ) -> ReplayReport:
+        """Rejoue un run fini à l'identique, sans appeler personne, et dit où il diverge (K6).
+
+        La logique de l'agent — boucle, politiques, contrats, juges, budgets —
+        tourne avec la config **d'aujourd'hui** ; le monde — modèles, outils,
+        sous-agents, approbateurs — est servi par le journal. Un run qui se
+        rejoue à l'identique prouve que la config produit encore exactement les
+        mêmes requêtes ; le premier écart est rapporté, avec la partie de la
+        requête qui a changé. Rien n'est écrit dans le journal ; ``export`` garde
+        celui du rejeu en JSONL.
+        """
+        tenant = self._tenants.get(tenant_id)
+        session = session_id or SessionId(run_id)
+        events = await self._store.read(tenant.id, session)
+        mounted: list[Agent] = []
+
+        def context_for(store: EventStore, book: ReplayBook, agent: str, _: TenantId) -> RunContext:
+            if agent not in self._agents.names:
+                raise ReplayError(f"Run {run_id} : l'agent {agent!r} n'est plus dans la config")
+            built = build_agent(
+                tenant.config,
+                agent,
+                store,
+                registry=self._registry,
+                environ=self._environ,
+                mcp_pool=self._mcp,
+                artifacts=self._artifacts,
+                agents=_no_subagent,
+                # Des disjoncteurs à part : un rejeu ne doit ni ouvrir ni
+                # fermer ceux des runs vivants.
+                breakers=CircuitBreakers(),
+                tenant=tenant,
+                models=lambda spec: ReplayModelClient(book, spec),
+            )
+            mounted.append(built)
+            built.context.tools.replay = JournalTools(book)
+            return replace(built.context, approver=book.approve, worker_id=None)
+
+        try:
+            return await replay_exact(events, run_id, context_for, export=export)
+        finally:
+            for built in mounted:
+                await built.aclose()
 
     # --- Relire un run --------------------------------------------------------
 

@@ -322,7 +322,7 @@ Event
 |---|---|
 | `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte, `judges` (`auto`, `force`, `skip`), `budget` (part reçue du parent) |
 | `message.user` | blocs de contenu ; `kind` (`request`, `repair`), politique et `tools` d'une réparation |
-| `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, call_id (rôle délégué), `judge` (appel d'un juge) |
+| `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, `request_parts` (empreintes par partie, 6.2a), call_id (rôle délégué), `judge` (appel d'un juge) |
 | `model.retried` | tentative, type d'erreur, délai, call_id (rôle délégué) |
 | `model.exchanged` | en opt-in (6.1b) : tentative, méthode, adresse, statut HTTP, durée, en-têtes et corps de la requête et de la réponse (secrets et octets de fichier retirés, corps bornés), tailles et empreintes, `synthetic` (modèle simulé), call_id, judge |
 | `model.fell_back` | emplacement (`main`, rôle, `judge:<nom>`), ancien modèle, nouveau modèle, motif (type d'erreur ou `circuit_open`), erreur, call_id, judge |
@@ -1066,6 +1066,8 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - **Échanges HTTP bruts :** opt-in, pour le débogage.
 
 **Réalisation (phase 6.1b)** (détails : `fonctions.md`, point 31) : `telemetry.capture.raw_exchanges` (racine ou client) ajoute au journal un `model.exchanged` par requête HTTP au fournisseur, à chaque tentative, avant le `model.retried` ou le `model.responded` qu'elle précède. Le moteur ouvre un registre autour de chaque tentative ; le client HTTP du SDK (`RecordingClient`, qui enrobe `send`) y dépose ce qu'il a envoyé et lu, décompressé ; le modèle simulé y dépose un échange synthétique. Avant l'écriture : en-têtes et paramètres secrets remplacés par `[retiré]`, octets de fichier par leur taille et leur empreinte, corps coupés à `raw_max_bytes` (256 Kio par défaut) en le disant. Sous le sceau et la rétention comme le reste ; jamais exportés que par leurs métadonnées. Le rejeu (6.2) les ignore.
+
+**Réalisation (phase 6.2a — le rejeu identique)** (détails : `fonctions.md`, point 31) : `Loom.replay(run_id)` et `loom replay <run_id>`. Le rejeu tourne **en mémoire**, sur une copie de la session arrêtée juste après la demande du run, et sous le **même `run_id`** (un juge tiré au sort retombe pareil). La logique de loom tourne avec la config d'aujourd'hui ; le monde est servi par le journal — réponses des modèles par empreinte, résultats d'outils et de sous-agents par `call_id`, approbations par leur décision. La **première** divergence arrête le rejeu et se rapporte : l'appel, et la partie de la requête qui a changé (`request_parts` : modèle, système, outils, messages, réglages). Rien n'est écrit dans le journal ; `--export` garde celui du rejeu. Code de sortie : 0 identique, 1 divergent, 2 impossible.
 - **Usages :** diagnostic, évals comparatives entre modèles et configurations (O1), tests de non-régression à partir de traces (O3).
 
 ### 14.4 Logs

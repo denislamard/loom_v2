@@ -307,7 +307,7 @@ L'orchestrateur (MiniMax-M3) a chaque fois vu la réponse inutilisable et refait
 
 **À trancher :** faut-il que `request_hash` désigne un client, ou l'appariement du rejeu se fait-il sur `(tenant_id, request_hash)` ? Mon avis : la seconde — l'empreinte doit rester la description de ce qui est parti au modèle.
 
-**Statut :** à trancher avant J6.2 (rejeu).
+**Statut :** tranché le 05/10 avec Denis, à l'ouverture de 6.2 : **ne rien changer.** L'empreinte reste la description de ce qui est parti au modèle. Le rejeu (6.2a) apparie les appels dans le journal d'**un seul run**, donc d'un seul client : il ne cherche jamais une empreinte seule. Un futur cache d'empreintes entre runs devra apparier sur `(tenant_id, request_hash)`. Clos.
 
 ---
 

@@ -367,6 +367,10 @@ class ModelResponded(Payload):
     attempts: PositiveInt = 1
     # Empreinte de la requête envoyée : détection de divergence au rejeu (#31).
     request_hash: str
+    # Empreinte de chacune de ses parties (modèle, système, outils, messages,
+    # réglages) : le rejeu dit ainsi ce qui a changé (J6.2a). Absente des
+    # journaux antérieurs, qui se rejouent quand même, avec un diagnostic moins fin.
+    request_parts: dict[str, str] = Field(default_factory=dict[str, str])
     # Appel d'outil servi par cette réponse (rôle délégué) ; None pour l'orchestrateur.
     call_id: str | None = None
     # Juge qui a fait cet appel (#21) : sa réponse n'entre pas dans la conversation.

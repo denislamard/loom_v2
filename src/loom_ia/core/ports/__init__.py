@@ -21,6 +21,7 @@ from loom_ia.core.ports.exchanges import ExchangeLog, RawExchange, exchange_log,
 from loom_ia.core.ports.idempotency import IdempotencyStore, KeyScope
 from loom_ia.core.ports.model_client import (
     RETRYABLE_ERRORS,
+    AnsweringClient,
     ChunkCallback,
     ModelClient,
     ModelError,
@@ -44,6 +45,7 @@ from loom_ia.core.ports.usage_counter import UsageCounter
 
 __all__ = [
     "RETRYABLE_ERRORS",
+    "AnsweringClient",
     "ArtifactNotFound",
     "ArtifactStore",
     "BusUnavailable",

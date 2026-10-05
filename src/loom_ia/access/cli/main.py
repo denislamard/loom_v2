@@ -76,6 +76,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import Policy, SealError, SessionRecord, SourceContext, Tool
 from loom_ia.engine import ToolExecutor
+from loom_ia.replay import ReplayError, ReplayReport
 from loom_ia.runtime import (
     apply_logging,
     create_keyring,
@@ -179,6 +180,24 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
     resume.add_argument("--session", type=str, default=None, help="journal du run")
     resume.set_defaults(handler=cmd_resume)
+
+    replay = tenanted(
+        commands.add_parser(
+            "replay",
+            help="rejoue un run fini à l'identique, sans appel, et dit où il diverge",
+        )
+    )
+    replay.add_argument("run_id")
+    replay.add_argument("--session", type=str, default=None, help="journal du run")
+    replay.add_argument(
+        "--export",
+        type=Path,
+        default=None,
+        metavar="FICHIER",
+        help="garde le journal du rejeu en JSONL (rien n'est écrit dans le journal)",
+    )
+    replay.add_argument("--json", action="store_true", help="affiche le rapport en JSON")
+    replay.set_defaults(handler=cmd_replay)
 
     for verbe, aide in (
         ("approve", "autorise un appel que le run attend"),
@@ -678,6 +697,58 @@ def cmd_resume(args: argparse.Namespace) -> int:
             )
 
     return _report(asyncio.run(go()), as_json=args.json)
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    """Rejoue un run à l'identique ; rend 1 s'il diverge, 2 s'il ne peut pas être rejoué.
+
+    Le code de sortie fait de la commande un garde-fou : une config qui ne
+    reproduit plus un run de référence se voit en CI, sans lire la sortie.
+    """
+    config = load_config(args.config, profile=args.profile)
+    apply_logging(config)
+    session = SessionId(args.session) if args.session else None
+
+    async def go() -> ReplayReport:
+        async with Loom(config) as loom:
+            return await loom.replay(
+                RunId(args.run_id), session_id=session, tenant_id=_tenant(args), export=args.export
+            )
+
+    try:
+        report = asyncio.run(go())
+    except ReplayError as error:
+        print(f"Rejeu impossible : {error}", file=sys.stderr)
+        return REFUSED
+    if args.json:
+        print(json.dumps(report.as_json(), ensure_ascii=False, indent=2))
+        return OK if report.identical else FAILED
+    print(f"Run        : {report.run_id} (agent {report.agent}, client {report.tenant_id})")
+    print(f"Session    : {report.session_id}")
+    print(f"Issue      : {report.original_end} au journal, {report.replay_end} au rejeu")
+    print(
+        f"Modèles    : {report.model_calls[0]} appel(s) au journal, "
+        f"{report.model_calls[1]} servi(s) au rejeu"
+    )
+    print(
+        f"Outils     : {report.tool_calls[0]} résultat(s) au journal (rôles à part), "
+        f"{report.tool_calls[1]} servi(s) au rejeu"
+    )
+    if args.export is not None:
+        print(f"Journal    : {args.export} ({len(report.events)} événement(s))")
+    divergence = report.divergence
+    if divergence is None:
+        print("Identique  : le run se rejoue tel qu'il a été, appel par appel.")
+        return OK
+    print(f"Divergence : {divergence.where}")
+    if divergence.detail:
+        print(f"             {divergence.detail}")
+    if divergence.expected_hash and divergence.actual_hash:
+        print(
+            f"             empreinte {divergence.expected_hash[:12]} au journal, "
+            f"{divergence.actual_hash[:12]} au rejeu"
+        )
+    return FAILED
 
 
 def cmd_decide(args: argparse.Namespace) -> int:

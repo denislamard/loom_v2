@@ -76,6 +76,35 @@ class ModelRequest(DomainModel):
         )
         return hashlib.sha256(canonical.encode()).hexdigest()
 
+    def request_parts(self) -> dict[str, str]:
+        """Empreinte de chaque partie de la requête : ce qui a changé, au rejeu (J6.2a).
+
+        ``request_hash`` dit qu'une requête diffère ; ces empreintes disent
+        **où** : le modèle, le prompt système, les outils, les messages ou les
+        réglages (choix d'outil, plafond de tokens, paramètres, schéma de
+        sortie). Seize caractères suffisent à comparer, pas à retrouver.
+        """
+        dumped = self.model_dump(mode="json")
+        groups: dict[str, JsonValue] = {
+            "model": dumped["model_id"],
+            "system": dumped["system"],
+            "tools": dumped["tools"],
+            "messages": dumped["messages"],
+            "settings": {
+                key: dumped[key] for key in ("tool_choice", "max_tokens", "params", "output_schema")
+            },
+        }
+        parts = {name: _short_hash(value) for name, value in groups.items()}
+        # Le nombre de messages se lit en clair : « 5 au journal, 6 maintenant »
+        # dit tout de suite qu'un historique a grandi ou rétréci.
+        parts["messages_count"] = str(len(self.messages))
+        return parts
+
+
+def _short_hash(value: JsonValue) -> str:
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
 
 # --- Morceaux de flux --------------------------------------------------------
 

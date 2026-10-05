@@ -49,7 +49,7 @@ from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
 from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Final
+from typing import Final, Protocol
 
 from jsonschema import Draft202012Validator, SchemaError
 from jsonschema.protocols import Validator
@@ -238,6 +238,24 @@ class _Unknown:
     message: str
 
 
+class ToolReplay(Protocol):
+    """Résultats d'outils servis depuis un journal, au lieu d'exécuter (J6.2a).
+
+    ``serves`` dit quels outils le rejeu sert lui-même : ceux qui touchent le
+    monde (Python, MCP) et les sous-agents. Un rôle n'en fait pas partie — il
+    est de la logique de l'agent, et son appel de modèle passe par un client
+    qui rejoue. ``output`` rend le résultat enregistré et la consommation
+    qu'il portait (celle d'un sous-agent), ou une erreur si l'appel n'est pas
+    au journal.
+    """
+
+    def serves(self, tool: AnyTool) -> bool: ...
+
+    def output(
+        self, call_id: str, name: str, arguments: Mapping[str, JsonValue]
+    ) -> tuple[ToolOutput, Consumption | None]: ...
+
+
 class ToolExecutor:
     """Outils disponibles pour un run, et exécution de leurs appels.
 
@@ -287,6 +305,8 @@ class ToolExecutor:
         self.circuits: dict[str, CircuitBreaker | None] = dict(circuits or {})
         # Sources ouvertes au début de chaque run (serveurs MCP, #19).
         self.sources: tuple[ToolSource, ...] = tuple(sources)
+        # Rejeu (J6.2a) : posé sur l'exécuteur d'un agent monté pour rejouer.
+        self.replay: ToolReplay | None = None
         self._tools: dict[str, AnyTool] = {}
         self._validators: dict[str, Validator] = {}
         for tool in tools:
@@ -396,6 +416,7 @@ class ToolExecutor:
         )
         copy._tools = dict(self._tools)
         copy._validators = dict(self._validators)
+        copy.replay = self.replay
         return copy
 
     def add(self, tool: AnyTool) -> None:
@@ -682,7 +703,10 @@ class ToolExecutor:
             problem = await tool.check(arguments, view)
             if problem is not None:
                 return problem
-            child = tool.child_run_id(call)
+            # Un sous-agent rejoué ne lance pas d'enfant : son résultat vient
+            # du journal, et un identifiant d'enfant désignerait un run absent.
+            if self.replay is None or not self.replay.serves(tool):
+                child = tool.child_run_id(call)
         return _Ready(call=call, tool=tool, arguments=arguments, refs=refs, child_run_id=child)
 
     async def _before_tool(self, item: _Ready, view: RunView, policies: Policies) -> Verdict:
@@ -753,7 +777,9 @@ class ToolExecutor:
         started = time.perf_counter()
         consumption: Consumption | None = None
         exchange: Exchange | None = None
-        if isinstance(tool, DelegatedTool):
+        if self.replay is not None and self.replay.serves(tool):
+            output, consumption = self.replay.output(call.call_id, spec.name, call.arguments)
+        elif isinstance(tool, DelegatedTool):
             produced = tool.run(item.arguments, context, view)
             output, consumption, exchange = await _delegated(
                 produced, tool, context, emit, timeout, state

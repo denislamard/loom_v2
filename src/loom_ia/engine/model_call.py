@@ -36,6 +36,7 @@ from loom_ia.core.model import (
     StreamReset,
 )
 from loom_ia.core.ports import (
+    AnsweringClient,
     ArtifactStore,
     ChunkCallback,
     ExchangeLog,
@@ -75,6 +76,7 @@ def responded(
         latency_ms=latency_ms,
         attempts=attempts,
         request_hash=request.request_hash(),
+        request_parts=request.request_parts(),
         call_id=call_id,
     )
 
@@ -215,6 +217,10 @@ class ModelCall:
         return policy.backoff(attempt, self._jitter())
 
     async def _attempt(self, request: ModelRequest, progress: _Progress) -> ModelResponse:
+        if isinstance(self.client, AnsweringClient):
+            # Rejeu (J6.2a) : la réponse est connue, entière ; sans flux, rien
+            # ne se perd en route.
+            return await self.client.answer(request)
         timeouts = self.spec.timeouts
         accumulator = ResponseAccumulator()
         total = asyncio.timeout(timeouts.total)
