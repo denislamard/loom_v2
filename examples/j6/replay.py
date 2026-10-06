@@ -1,21 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phases 6.2a et 6.2b : rejouer un run, à l'identique ou en variante, et voir où il s'écarte.
+"""Phase 6.2 : rejouer un run, à l'identique ou en variante, voir où il s'écarte, le relire.
 
-    uv run python examples/j6/replay.py                       # les quatre cas
+    uv run python examples/j6/replay.py                       # les cinq cas
     uv run python examples/j6/replay.py --cas identique
     uv run python examples/j6/replay.py --cas variante
+    uv run --extra http --extra mcp python examples/j6/replay.py --cas inspect
     uv run --extra sqlite python examples/j6/replay.py --cas j4    # tes runs de J4, rejoués
     uv run --env-file .env --extra anthropic --extra openai \\
         python examples/j6/replay.py --reel
 
-Config des cas ``identique`` et ``divergence`` : ``examples/j5/relance/`` (la
-relance de devis), journal dans un dossier **temporaire**. Les cas
+Config des cas ``identique``, ``divergence`` et ``inspect`` :
+``examples/j5/relance/`` (la relance de devis), journal dans un dossier
+**temporaire**. Les cas
 ``variante`` et ``j4`` ont la leur : celle de J4, réglée comme
 ``examples/j4/acces.py`` la montait (l'outil ``envoyer_email``, irréversible et
 soumis à approbation) ; ``variante`` la déplace elle aussi dans un dossier
 temporaire. Le rejeu identique ne parle à aucun fournisseur ; la variante, si.
 Le cas ``j4`` demande l'extra ``sqlite`` (la config de J4 y range ses clés
-d'idempotence) et se saute sans lui.
+d'idempotence) et se saute sans lui ; ``inspect`` lit la trace par REST avec
+l'extra ``http`` et par MCP avec l'extra ``mcp``, et saute chaque accès dont
+l'extra manque, en le disant.
 
 * **identique** : deux runs dans une session — le second a un historique à
   reconstruire —, puis chacun rejoué par une instance qui **n'a aucune clé
@@ -32,6 +36,11 @@ d'idempotence) et se saute sans lui.
   d'approbation ; l'autre change l'objet de l'e-mail, et l'envoi est
   **refusé**. En ``--reel``, Claude Haiku 4.5 remplace MiniMax-M3, et l'on
   verra ce qu'il fait. Dans tous les cas, la boîte d'envoi ne bouge pas.
+* **inspect** (6.2c) : un run de la relance de Dupont, puis sa **trace** —
+  ses spans, rôle et juge compris — affichée comme ``loom inspect`` l'affiche,
+  puis relue par REST avec deux clés (l'une a ``read_content``, l'autre non)
+  et par MCP (``loom://traces/…``). Chaque lecture est comparée à celle de
+  Python ; sans ``read_content``, aucun contenu, et la demande n'y paraît pas.
 * **j4** : le critère de sortie de J6 — les runs que ``examples/j4/acces.py``
   a laissés dans **ton** journal de J4 (``examples/j4/relance/data``), réels si
   tu les as lancés en ``--reel``, rejoués avec la config que cet exemple
@@ -43,6 +52,7 @@ import argparse
 import asyncio
 import copy
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -54,14 +64,16 @@ from typing import Any
 from loom_ia.access import Loom
 from loom_ia.adapters.models import ModelConfigError
 from loom_ia.config import ConfigError, LoomConfig, load_config
-from loom_ia.config.models import ArtifactsStorage, IdempotencyStorage
+from loom_ia.config.keys import fingerprint, new_api_key
+from loom_ia.config.models import ApiKey, ArtifactsStorage, IdempotencyStorage, SecurityConfig
 from loom_ia.core.events import ApprovalGranted
 from loom_ia.core.model import RunId, SessionId, TenantId, new_id
 from loom_ia.replay import Comparison, ReplayReport, ToolFate, fate_label
 from loom_ia.runtime import apply_logging
+from loom_ia.telemetry import Trace, render_trace
 
 CONFIG = Path(__file__).parent.parent / "j5" / "relance" / "loom.yaml"
-CAS = ("identique", "divergence", "variante", "j4")
+CAS = ("identique", "divergence", "variante", "inspect", "j4")
 DUPONT = TenantId("dupont-plomberie")
 DEMANDES = (
     "Relance le client du devis D-2026-042, sur un ton cordial.",
@@ -94,25 +106,30 @@ class Controle:
     def __init__(self) -> None:
         self.ecarts: list[str] = []
         self.sautes: list[str] = []
+        self.parties: list[str] = []
 
     def tient(self, quoi: str, vrai: bool) -> str:
         if not vrai:
             self.ecarts.append(quoi)
         return "oui" if vrai else "NON"
 
-    def saute(self, quoi: str) -> None:
-        """Un cas qui n'a pas pu être joué : à dire, sinon le bilan mentirait."""
-        self.sautes.append(quoi)
+    def saute(self, quoi: str, *, partie: bool = False) -> None:
+        """Un cas, ou une partie d'un cas, qui n'a pas pu être jouée : à dire,
+        sinon le bilan mentirait. Une partie sautée laisse le cas joué."""
+        (self.parties if partie else self.sautes).append(quoi)
 
     def bilan(self, joues: int) -> bool | None:
-        """Vrai si tout a tenu, faux sinon ; ``None`` si rien n'a été joué."""
+        """Vrai si tout a tenu, faux sinon ; ``None`` si aucun cas n'a été joué."""
         for saute in self.sautes:
             print(f"\nCas sauté : {saute}")
+        for partie in self.parties:
+            print(f"\nPartie sautée : {partie}")
         if joues == len(self.sautes):
             print("\nAucun cas joué : l'exemple n'a rien éprouvé.")
             return None
         if not self.ecarts:
-            dit = "Chaque essai joué a rendu" if self.sautes else "Chaque essai a rendu"
+            sautes = self.sautes or self.parties
+            dit = "Chaque essai joué a rendu" if sautes else "Chaque essai a rendu"
             print(f"\n{dit} ce que l'exemple annonçait.")
             return True
         print("\nUn essai au moins n'a pas rendu ce qui était annoncé :")
@@ -486,7 +503,7 @@ def _attendus(
     if not envois:
         # Rien à protéger : l'attendu serait vrai sans rien éprouver.
         print(f"  l'orchestrateur n'a pas appelé {acces.ENVOI} : l'envoi n'est pas éprouvé")
-        controle.saute(f"variante ({acces.ENVOI} jamais appelé : envoi non éprouvé)")
+        controle.saute(f"variante ({acces.ENVOI} jamais appelé : envoi non éprouvé)", partie=True)
         return
     print(
         f"  {acces.ENVOI} lu au journal ou refusé, jamais exécuté "
@@ -516,7 +533,172 @@ def _attendus(
         )
 
 
-# --- Cas 4 : les runs de J4 ---------------------------------------------------------
+# --- Cas 4 : inspect ----------------------------------------------------------------
+
+
+# Deux clés de Dupont : l'atelier lit tout, la supervision lit sans le contenu.
+CLE_ATELIER = new_api_key()
+CLE_SUPERVISION = new_api_key()
+
+
+def _cles(config: LoomConfig) -> LoomConfig:
+    security = SecurityConfig(
+        api_keys=(
+            ApiKey(
+                id="atelier",
+                hash=fingerprint(CLE_ATELIER),
+                tenant=DUPONT,
+                scopes=("run", "read", "read_content"),
+            ),
+            ApiKey(
+                id="supervision",
+                hash=fingerprint(CLE_SUPERVISION),
+                tenant=DUPONT,
+                scopes=("run", "read"),
+            ),
+        )
+    )
+    return config.model_copy(update={"security": security})
+
+
+def _sans_contenu(lue: dict[str, Any]) -> bool:
+    """Vrai si la trace lue ne porte aucun contenu : ni réponse, ni contenu d'événement."""
+    evenements = [event for span in lue["spans"] for event in span["events"]]
+    return (
+        lue["content"] is False
+        and lue["output"] is None
+        and bool(evenements)
+        and all(event["content"] is None for event in evenements)
+    )
+
+
+async def inspect_(args: argparse.Namespace, controle: Controle) -> None:
+    acces = _acces()
+    with tempfile.TemporaryDirectory(prefix="loom-inspect-") as dossier:
+        config = _cles(deplacee(Path(dossier)))
+        session = SessionId(f"inspect-{new_id()[-8:]}")
+        annonce(CONFIG, agent_de(args))
+        titre("Un run de Dupont")
+        async with Loom(config) as loom:
+            result = await loom.run(agent_de(args), DEMANDES[0], session_id=session, tenant=DUPONT)
+            print(f"  run {result.run_id} : {result.status}")
+            trace = await loom.trace(result.run_id, session_id=session, tenant_id=DUPONT)
+
+            titre("Sa trace, telle que loom inspect l'affiche")
+            lignes = render_trace(trace)
+            print("\n".join(f"  {ligne}" for ligne in lignes))
+            _arbre(trace, lignes, result.text, controle)
+
+            titre("Relue par REST, avec et sans read_content")
+            if find_spec("uvicorn") is None or find_spec("fastapi") is None:
+                print("  extra 'http' absent : lecture REST non jouée")
+                controle.saute(
+                    "inspect, REST (extra 'http' absent : uv run --extra http …)", partie=True
+                )
+            else:
+                async with acces.serveur(loom) as base:
+                    url = f"{base}/traces/{result.run_id}?session_id={session}"
+                    code_a, complete = await acces.appel(url, key=CLE_ATELIER)
+                    code_s, nue = await acces.appel(url, key=CLE_SUPERVISION)
+                _rest(trace, (code_a, complete), (code_s, nue), controle)
+
+            titre("Relue par MCP (loom://traces/…)")
+            if find_spec("mcp") is None:
+                print("  extra 'mcp' absent : lecture MCP non jouée")
+                controle.saute(
+                    "inspect, MCP (extra 'mcp' absent : uv run --extra mcp …)", partie=True
+                )
+            else:
+                lue = await _par_mcp(loom, result.run_id, session)
+                print(f"  {len(lue['spans'])} span(s) lus")
+                print(
+                    "  la ressource rend la trace de Python, à l'identique : "
+                    + controle.tient(
+                        "inspect : la ressource MCP ne rend pas la trace de Python",
+                        lue == trace.model_dump(mode="json"),
+                    )
+                )
+
+
+def _arbre(trace: Trace, lignes: list[str], reponse: str, controle: Controle) -> None:
+    """L'affichage montre chaque appel de la trace, et la réponse entière."""
+    tetes = [ligne.strip() for ligne in lignes]
+    chats = sum(1 for span in trace.spans if span.kind == "chat")
+    outils = sum(1 for span in trace.spans if span.kind == "tool")
+    vus_chats = sum(1 for tete in tetes if tete.startswith("modèle ") and " — " in tete)
+    # « appel … » : un appel refusé avant de partir (arguments non conformes…).
+    vus_outils = sum(
+        1
+        for tete in tetes
+        if tete.startswith(("outil ", "rôle ", "sous-agent ", "appel ")) and " — " in tete
+    )
+    print(
+        f"\n  chaque appel de la trace a sa ligne ({chats} de modèle, {outils} d'outil) : "
+        + controle.tient(
+            "inspect : l'affichage n'a pas une ligne par appel de la trace",
+            (vus_chats, vus_outils) == (chats, outils) and chats > 0 and outils > 0,
+        )
+    )
+    print(
+        "  la réponse finale est affichée entière : "
+        + controle.tient(
+            "inspect : la réponse finale n'est pas affichée entière",
+            bool(reponse) and reponse in "\n".join(ligne.strip() for ligne in lignes),
+        )
+    )
+
+
+def _rest(
+    trace: Trace,
+    atelier: tuple[int, Any],
+    supervision: tuple[int, Any],
+    controle: Controle,
+) -> None:
+    (code_a, complete), (code_s, nue) = atelier, supervision
+    print(f"  clé atelier (read_content) : HTTP {code_a}, {len(complete.get('spans', []))} span(s)")
+    print(f"  clé supervision (read)     : HTTP {code_s}, {len(nue.get('spans', []))} span(s)")
+    print(
+        "  avec read_content, la trace de Python, à l'identique : "
+        + controle.tient(
+            "inspect : la trace REST complète n'est pas celle de Python",
+            code_a == 200 and complete == trace.model_dump(mode="json"),
+        )
+    )
+    print(
+        "  sans, les mêmes spans et aucun contenu : "
+        + controle.tient(
+            "inspect : la trace REST sans read_content porte du contenu, ou d'autres spans",
+            code_s == 200 and len(nue["spans"]) == len(trace.spans) and _sans_contenu(nue),
+        )
+    )
+    demande = DEMANDES[0]
+    print(
+        "  la demande de Dupont est dans l'une, pas dans l'autre : "
+        + controle.tient(
+            "inspect : la demande paraît sans read_content, ou manque avec",
+            demande in json.dumps(complete, ensure_ascii=False)
+            and demande not in json.dumps(nue, ensure_ascii=False),
+        )
+    )
+
+
+async def _par_mcp(loom: Loom, run_id: str, session: SessionId) -> Any:
+    """La ressource ``loom://traces/…``, lue par un client MCP branché en process."""
+    from mcp.shared.memory import create_connected_server_and_client_session as connected
+    from mcp.types import TextResourceContents
+    from pydantic import AnyUrl
+
+    from loom_ia.access import TRACES
+    from loom_ia.access.mcp_server import create_server
+
+    async with connected(create_server(loom, tenant=DUPONT)) as client:
+        lue = await client.read_resource(AnyUrl(f"{TRACES}/{run_id}?session_id={session}"))
+    [contenu] = lue.contents
+    assert isinstance(contenu, TextResourceContents)
+    return json.loads(contenu.text)
+
+
+# --- Cas 5 : les runs de J4 ---------------------------------------------------------
 # Sessions que ``examples/j4/acces.py`` écrit : ``<préfixe>-<cas>``.
 CAS_J4 = ("python", "rest", "mcp-elicite", "mcp-pause")
 
@@ -589,6 +771,8 @@ async def jouer(nom: str, args: argparse.Namespace, controle: Controle) -> None:
         await divergence(args, controle)
     elif nom == "variante":
         await variante(args, controle)
+    elif nom == "inspect":
+        await inspect_(args, controle)
     else:
         await j4(args, controle)
 

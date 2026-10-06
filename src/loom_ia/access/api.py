@@ -171,7 +171,7 @@ from loom_ia.runtime import (
     storage_warnings,
 )
 from loom_ia.sessions import CompactionJob, CompactionPlan, write_snapshot
-from loom_ia.telemetry import RunExporter
+from loom_ia.telemetry import RunExporter, Trace, run_trace
 from loom_ia.tenancy import (
     EnvironmentSecrets,
     Quota,
@@ -685,6 +685,16 @@ def _unfinished(events: Sequence[Event]) -> list[RunState]:
         if state.parent_run_id is None and state.kind == "normal" and not state.finished:
             states.append(state)
     return states
+
+
+def traced_agents(trace: Trace) -> list[str]:
+    """Les agents d'une trace — celui du run, puis ceux de ses sous-runs —, chacun une fois.
+
+    Une relecture vérifie le droit sur chacun : la trace d'un run montre ce
+    qu'ont fait ses sous-agents.
+    """
+    named = (span.attributes.get("gen_ai.agent.name") for span in trace.spans)
+    return list(dict.fromkeys([trace.agent, *(str(n) for n in named if n is not None)]))
 
 
 def _no_subagent(agent: str) -> RunContext:
@@ -1311,6 +1321,27 @@ class Loom:
             for event in tree.select(await self._store.read(tenant, session))
             if event.seq > after_seq
         ]
+
+    async def trace(
+        self,
+        run_id: RunId,
+        *,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+        content: bool = True,
+    ) -> Trace:
+        """La trace d'un run et de ses sous-runs : ses spans, tirés du journal (K5, 6.2c).
+
+        Ce sont les spans de l'export OTel, avec un en-tête (statut, usage,
+        coût, durée de pilotage) ; un run inachevé a la sienne, ses spans
+        encore ouverts le disant. ``content=False`` la rend sans aucun contenu
+        — ce que voit une clé sans ``read_content``. Pas de masquage par
+        motifs : c'est la portée qui décide, les motifs sont pour les exports.
+        """
+        events = await self.events(run_id, session_id=session_id, tenant_id=tenant_id)
+        if not any(event.run_id == run_id for event in events):
+            raise UnknownRun(run_id)
+        return run_trace(events, run_id, content=content)
 
     async def follow(
         self,

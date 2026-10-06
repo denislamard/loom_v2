@@ -17,6 +17,7 @@ de pouvoir énumérer sans tout ouvrir :
 
 - ``loom://runs/{run_id}`` : le résultat d'un run, comme ``run_status`` ;
 - ``loom://runs/{run_id}/events`` : son journal, sous-runs compris ;
+- ``loom://traces/{run_id}`` : sa trace — ses spans, sous-runs compris (6.2c) ;
 - ``loom://sessions/{session_id}`` : la fiche d'une session ;
 - ``loom://sessions/{session_id}/events`` : son journal entier ;
 - ``loom://artifacts/{client}/{session}/{fichier}`` : les octets d'un fichier.
@@ -53,7 +54,7 @@ from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.shared.exceptions import McpError
 from pydantic import AnyUrl
 
-from loom_ia.access.api import Loom, UnknownRun, UnknownSession
+from loom_ia.access.api import Loom, UnknownRun, UnknownSession, traced_agents
 from loom_ia.access.caller import Caller
 from loom_ia.access.resources import (
     ARTIFACTS,
@@ -62,6 +63,7 @@ from loom_ia.access.resources import (
     RUNS,
     SESSIONS,
     TEMPLATES,
+    TRACES,
 )
 from loom_ia.core.events import Event, redacted_all
 from loom_ia.core.model import (
@@ -144,6 +146,8 @@ class ResourceReader:
             return await self._run(uri.removeprefix(f"{RUNS}/"), session)
         if uri.startswith(f"{SESSIONS}/"):
             return await self._session(uri.removeprefix(f"{SESSIONS}/"))
+        if uri.startswith(f"{TRACES}/"):
+            return await self._trace(uri.removeprefix(f"{TRACES}/"), session)
         raise _unknown(uri)
 
     async def _runs(self) -> dict[str, Any]:
@@ -179,6 +183,25 @@ class ResourceReader:
         except (UnknownRun, UnknownSession) as exc:
             raise _unknown(_said(exc)) from None
         return [_json(self._sent(found.masked() if self._caller.masks else found))]
+
+    async def _trace(self, rest: str, session_id: SessionId | None) -> list[ReadResourceContents]:
+        run_id = RunId(rest)
+        if not run_id or "/" in rest:
+            raise _unknown(f"{TRACES}/{rest}")
+        try:
+            # Sans ``read_content``, la trace est bâtie sans contenu : rien à retirer après.
+            found = await self._loom.trace(
+                run_id,
+                session_id=session_id,
+                tenant_id=self._caller.tenant,
+                content=not self._caller.masks,
+            )
+        except (UnknownRun, UnknownSession) as exc:
+            raise _unknown(_said(exc)) from None
+        # Le droit vaut pour chaque agent de l'arbre : un sous-agent compris.
+        for agent in traced_agents(found):
+            self._allowed(agent)
+        return [_json(self._sent(found))]
 
     async def _session(self, rest: str) -> list[ReadResourceContents]:
         trace = rest.endswith(EVENTS)

@@ -5,6 +5,9 @@ Chaîne d'un appel : outil connu, reprise sans risque, arguments lisibles,
 références ``$ref`` résolues, arguments conformes au schéma, refus éventuel
 d'un outil délégué, puis exécution avec timeout. Tout échec devient un
 résultat d'erreur destiné au modèle ; seule l'annulation interrompt le lot.
+Une erreur de schéma sur une valeur venue d'une référence dit laquelle, ce
+qu'elle a transmis et ce que le champ attend : le modèle ne reconnaîtrait
+pas une valeur qu'il n'a pas écrite.
 
 ``tool.called`` n'est écrit que pour un appel réellement lancé : c'est la
 marque qu'un effet de bord a peut-être eu lieu. Tous les ``tool.called`` du
@@ -50,9 +53,9 @@ from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from typing import Final, Protocol
+from typing import Final, Protocol, cast
 
-from jsonschema import Draft202012Validator, SchemaError
+from jsonschema import Draft202012Validator, SchemaError, ValidationError
 from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
 from pydantic import JsonValue
@@ -134,7 +137,7 @@ from loom_ia.engine.offload import (
     truncated,
     visible_text,
 )
-from loom_ia.engine.refs import RefError
+from loom_ia.engine.refs import RefError, RefOrigin, ResultIndex, ref_origin
 from loom_ia.engine.writer import SessionWriter
 
 logger = logging.getLogger(__name__)
@@ -712,7 +715,8 @@ class ToolExecutor:
         except RefError as exc:
             return exc.message
         if self.validate_arguments:
-            problem = self._schema_errors(call.name, arguments)
+            written = (call.arguments, view.results) if refs else None
+            problem = self._schema_errors(call.name, arguments, written=written)
             if problem is not None:
                 return problem
         child: RunId | None = None
@@ -761,7 +765,19 @@ class ToolExecutor:
             summary=view.summary,
         )
 
-    def _schema_errors(self, name: str, arguments: dict[str, JsonValue]) -> str | None:
+    def _schema_errors(
+        self,
+        name: str,
+        arguments: dict[str, JsonValue],
+        *,
+        written: tuple[dict[str, JsonValue], ResultIndex] | None = None,
+    ) -> str | None:
+        """Le refus destiné au modèle, ou ``None`` si les arguments sont conformes.
+
+        ``written`` : les arguments tels que le modèle les a écrits, et les
+        résultats du run — une erreur sur une valeur venue d'une référence le
+        dit, sans quoi le modèle lit une valeur qu'il n'a pas écrite.
+        """
         errors = sorted(
             self._validators[name].iter_errors(arguments),
             key=lambda e: [str(p) for p in e.absolute_path],
@@ -771,7 +787,13 @@ class ToolExecutor:
         lines = ["Arguments non conformes au schéma de l'outil :"]
         for error in errors:
             location = ".".join(str(p) for p in error.absolute_path) or "(racine)"
-            lines.append(f"- {location} : {error.message}")
+            said = error.message
+            if written is not None:
+                source, results = written
+                origin = ref_origin(source, list(error.absolute_path))
+                if origin is not None:
+                    said = _from_ref(error, origin, results)
+            lines.append(f"- {location} : {said}")
         return "\n".join(lines)
 
     async def _execute(
@@ -1175,6 +1197,57 @@ def _refused(tool_name: str, verdict: str, reason: str) -> str:
     """Ce que le modèle lit d'un appel qu'une approbation n'a pas autorisé."""
     head = "refusé" if verdict == "rejected" else "sans approbation dans le délai imparti"
     return f"Appel à {tool_name} {head}" + (f" : {reason}" if reason else ".")
+
+
+def _from_ref(error: ValidationError, origin: RefOrigin, results: ResultIndex) -> str:
+    """Une erreur de schéma sur une valeur venue d'une référence, dite au modèle.
+
+    Le message de ``jsonschema`` recopie la valeur fautive : le résultat
+    transmis, que le modèle n'a pas écrit et ne reconnaît pas. On lui dit
+    d'où elle vient, ce qu'elle est, et ce que le champ attend.
+    """
+    record = results.record(origin.ref)
+    source = f"{origin.ref} ({record.name})" if record is not None else origin.ref
+    said = f"la référence {source}"
+    if origin.serialized:
+        said += ", écrite en chaîne mais lue comme une référence,"
+    if error.validator == "type" and tuple(error.absolute_path) == origin.path:
+        expected = error.validator_value
+        kinds = [expected] if isinstance(expected, str) else list(cast("list[str]", expected))
+        return (
+            f"{said} transmet {_kind(error.instance)} ; ce champ attend "
+            f"{' ou '.join(_KINDS.get(kind, kind) for kind in kinds)}. Une référence passe "
+            "le résultat tel quel : si le champ attend autre chose, écris la valeur toi-même."
+        )
+    return f"{error.message} — valeur transmise par {said.rstrip(',')}"
+
+
+# Les types JSON Schema, dits au modèle.
+_KINDS: Final[Mapping[str, str]] = {
+    "string": "du texte",
+    "object": "un objet JSON",
+    "array": "une liste",
+    "integer": "un entier",
+    "number": "un nombre",
+    "boolean": "un booléen",
+    "null": "null",
+}
+
+
+def _kind(value: object) -> str:
+    match value:
+        case bool():
+            return _KINDS["boolean"]
+        case str():
+            return _KINDS["string"]
+        case dict():
+            return _KINDS["object"]
+        case list():
+            return _KINDS["array"]
+        case int() | float():
+            return _KINDS["number"]
+        case _:
+            return _KINDS["null"]
 
 
 def _offered(tool: AnyTool, run: RunView) -> bool:

@@ -25,7 +25,7 @@ from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.core.projections import fold
 from loom_ia.engine import UNKNOWN_STATE, ToolExecutor
 from loom_ia.engine.executor import ToolEvent
-from loom_ia.testing import RunJournal
+from loom_ia.testing import RunJournal, tool_call_message
 from loom_ia.tools import tool
 
 
@@ -158,6 +158,53 @@ async def test_rejected_calls_are_not_started() -> None:
         "- x : 'deux' is not of type 'integer'"
     )
     assert all(isinstance(e, ToolCompleted) and e.latency_ms == 0 for e in events)
+
+
+async def test_a_value_from_a_reference_is_refused_saying_so() -> None:
+    """Le refus dit d'où vient une valeur que le modèle n'a pas écrite : sa référence.
+
+    Ce qu'a fait MiniMax-M3 au run réel de 6.2c : la référence en chaîne pour
+    un champ texte, résolue en l'objet du devis — refusée deux fois avec, pour
+    seule explication, cet objet recopié.
+    """
+    devis: JsonValue = {"numero": "D-2026-042", "montant": 1840}
+    schema: dict[str, JsonValue] = {
+        "type": "object",
+        "properties": {
+            "consignes": {"type": "string"},
+            "devis": {"type": "object", "properties": {"montant": {"type": "string"}}},
+            "ton": {"type": "string"},
+        },
+    }
+    target = RecordingTool(
+        ToolSpec.model_validate(
+            {"name": "rediger", "description": "Rédige.", "kind": "python", "input_schema": schema}
+        )
+    )
+    arguments: dict[str, JsonValue] = {
+        "consignes": '{"$ref": "result:1"}',
+        "devis": {"$ref": "result:1"},
+        "ton": 3,
+    }
+    journal = RunJournal(agent="demo")
+    journal.start("Relance le devis.")
+    journal.model_turn(tool_call_message(("c1", "chercher", {})))
+    journal.tool_results({"c1": ToolOutput(data=devis)})
+    journal.model_turn(tool_call_message(("c2", "rediger", arguments)))
+    events = [draft.to_event(seq) for seq, draft in enumerate(journal.take(), start=1)]
+
+    outputs = completed(await collect(ToolExecutor([target]), fold(events, journal.run_id)))
+    assert target.calls == []
+    assert outputs["c2"].as_text == (
+        "Arguments non conformes au schéma de l'outil :\n"
+        "- consignes : la référence result:1 (chercher), écrite en chaîne mais lue comme une "
+        "référence, transmet un objet JSON ; ce champ attend du texte. Une référence passe le "
+        "résultat tel quel : si le champ attend autre chose, écris la valeur toi-même.\n"
+        "- devis.montant : 1840 is not of type 'string' — valeur transmise par la référence "
+        "result:1 (chercher)\n"
+        # Une valeur écrite par le modèle garde le message d'origine.
+        "- ton : 3 is not of type 'string'"
+    )
 
 
 async def test_validation_can_be_disabled() -> None:

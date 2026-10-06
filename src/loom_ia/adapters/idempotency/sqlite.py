@@ -96,12 +96,20 @@ class SqliteIdempotency:
         if self._connection is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             connection = await aiosqlite.connect(self.path, isolation_level=None)
-            await connection.execute("PRAGMA journal_mode = WAL")
-            # Une réservation vaut ce que vaut sa durabilité : un effet de
-            # bord suit, et on ne veut pas le refaire après un arrêt brutal.
-            await connection.execute("PRAGMA synchronous = FULL")
-            await connection.execute("PRAGMA busy_timeout = 5000")
-            await connection.executescript(SCHEMA)
+            try:
+                await connection.execute("PRAGMA journal_mode = WAL")
+                # Une réservation vaut ce que vaut sa durabilité : un effet de
+                # bord suit, et on ne veut pas le refaire après un arrêt brutal.
+                await connection.execute("PRAGMA synchronous = FULL")
+                await connection.execute("PRAGMA busy_timeout = 5000")
+                await connection.executescript(SCHEMA)
+            except BaseException:
+                # Base tenue par un autre process, fichier illisible… : la
+                # connexion n'est pas gardée, elle est donc fermée ici — sinon
+                # son fil survit et retient le process à la sortie. L'appel
+                # suivant réessaie.
+                await connection.close()
+                raise
             self._connection = connection
         return self._connection
 

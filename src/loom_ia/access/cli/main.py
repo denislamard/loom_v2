@@ -94,6 +94,7 @@ from loom_ia.runtime import (
     postgres_ddl,
     storage_warnings,
 )
+from loom_ia.telemetry import Trace, render_trace
 from loom_ia.tenancy import Tenant, UnknownTenant
 from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import render as render_report
@@ -230,6 +231,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay.add_argument("--json", action="store_true", help="affiche le rapport en JSON")
     replay.set_defaults(handler=cmd_replay)
+
+    inspect = tenanted(
+        commands.add_parser(
+            "inspect",
+            help="relit un run : son arbre (étapes, modèles, outils, sous-runs), "
+            "sa réponse et son bilan",
+        )
+    )
+    inspect.add_argument("run_id")
+    inspect.add_argument("--session", type=str, default=None, help="journal du run")
+    inspect.add_argument(
+        "--full", action="store_true", help="arguments et résultats en entier, sans coupe"
+    )
+    inspect.add_argument(
+        "--json", action="store_true", help="la trace en JSON, celle de GET /v1/traces/{run_id}"
+    )
+    inspect.set_defaults(handler=cmd_inspect)
 
     for verbe, aide in (
         ("approve", "autorise un appel que le run attend"),
@@ -805,6 +823,33 @@ def cmd_replay(args: argparse.Namespace) -> int:
             f"{divergence.actual_hash[:12]} au rejeu"
         )
     return FAILED
+
+
+def cmd_inspect(args: argparse.Namespace) -> int:
+    """Relit un run et ses sous-runs, lisiblement ; 2 s'il est introuvable.
+
+    En local, la commande lit le journal elle-même : elle montre le contenu.
+    ``--json`` rend la trace telle que l'API la rend à une clé ``read_content``.
+    """
+    config = load_config(args.config, profile=args.profile)
+    apply_logging(config)
+    session = SessionId(args.session) if args.session else None
+
+    async def go() -> Trace:
+        async with Loom(config) as loom:
+            return await loom.trace(RunId(args.run_id), session_id=session, tenant_id=_tenant(args))
+
+    try:
+        trace = asyncio.run(go())
+    except UnknownRun:
+        where = f" dans la session {args.session}" if args.session else ""
+        print(f"Run {args.run_id} introuvable{where}", file=sys.stderr)
+        return REFUSED
+    if args.json:
+        print(trace.model_dump_json(indent=2))
+    else:
+        print("\n".join(render_trace(trace, full=args.full)))
+    return OK
 
 
 def _pairs(values: list[str], option: str, form: str) -> dict[str, str]:

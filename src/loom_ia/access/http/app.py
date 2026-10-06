@@ -47,6 +47,11 @@ Et le journal lui-même (K5, #32) :
   à ``/sessions`` : chaque run dit de quel agent il est, si bien que la liste
   se filtre honnêtement. Aucun contenu là-dedans, seulement le type d'un
   échec ;
+- ``GET /traces/{run_id}`` : la trace d'un run (6.2c) — ses spans, tirés du
+  journal, sous-runs compris, avec un en-tête (statut, usage, coût, durée) ;
+  un run inachevé a la sienne. Sans ``read_content``, aucun contenu ; avec, le
+  contenu en clair, sans masquage par motifs (ceux-là sont pour les exports).
+  Le droit de lire vaut pour chaque agent de l'arbre ;
 - ``GET /events`` : la recherche au journal (``EventQuery``) — ``session_id``,
   ``run_id``, ``type``, ``category``, ``status``, ``agent``, ``role``,
   ``tool_name``, ``model_id``, ``since``, ``until``, et ``after`` pour
@@ -116,6 +121,7 @@ from loom_ia.access.api import (
     UnknownRun,
     UnknownSession,
     UnknownTrigger,
+    traced_agents,
 )
 from loom_ia.access.http.auth import API_KEY_HEADER, Caller, identify, require, throttle
 from loom_ia.access.http.schemas import (
@@ -150,6 +156,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import SealError, SessionRecord
 from loom_ia.runtime import announce
+from loom_ia.telemetry import Trace
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
 from loom_ia.usage import UsageReport
 
@@ -174,7 +181,9 @@ TAGS: Final[tuple[dict[str, str], ...]] = (
     },
     {
         "name": "journal",
-        "description": "Recherche au journal : les runs d'un client et leurs événements.",
+        "description": (
+            "Recherche au journal : les runs d'un client, leurs événements, leurs traces."
+        ),
     },
 )
 
@@ -499,6 +508,21 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         for named in dict.fromkeys(event.agent for event in events if event.agent):
             require(who, "read", named)
         return JSONResponse(redacted_all(events)) if who.masks else events
+
+    @router.get(
+        "/traces/{run_id}",
+        tags=["journal"],
+        summary="Trace d'un run : ses spans, sous-runs compris",
+    )
+    async def traced(who: Who, run_id: RunId, session_id: SessionId | None = None) -> Trace:
+        require(who, "read")
+        # Sans `read_content`, la trace est bâtie sans contenu : rien à retirer après.
+        found = await loom.trace(
+            run_id, session_id=session_id, tenant_id=who.tenant, content=not who.masks
+        )
+        for agent in traced_agents(found):
+            require(who, "read", agent)
+        return found
 
     @router.get("/runs/{run_id}", tags=["runs"], summary="Statut et résultat d'un run")
     async def result(who: Who, run_id: RunId, session_id: SessionId | None = None) -> RunResult:

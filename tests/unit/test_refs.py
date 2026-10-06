@@ -7,6 +7,7 @@ from pydantic import JsonValue
 from loom_ia.adapters.artifacts import InMemoryArtifactStore
 from loom_ia.core.model import JsonBlock, Message, TextBlock, ToolOutput, ToolResultBlock
 from loom_ia.engine import REFS_HINT, RefError, ResultIndex, mark_results
+from loom_ia.engine.refs import RefOrigin, ref_origin
 from loom_ia.testing import tool_call_message
 
 
@@ -84,6 +85,35 @@ async def test_serialized_references_are_resolved_too() -> None:
     assert refs == ("result:1", "result:2", "result:2")
     with pytest.raises(RefError, match="Référence inconnue : result:7"):
         await index.resolve({"x": '{"$ref": "result:7"}'})
+
+
+def test_a_resolved_value_knows_the_reference_it_came_from() -> None:
+    """D'où vient une valeur des arguments résolus : la référence, sur son chemin ou au-dessus."""
+    written: dict[str, JsonValue] = {
+        "devis": {"$ref": "result:1"},
+        "consignes": '{"$ref": "result:1"}',
+        "lignes": [{"total": {"$ref": "result:2"}}, "fixe"],
+        "ton": "cordial",
+    }
+    assert ref_origin(written, ["devis"]) == RefOrigin("result:1", ("devis",), serialized=False)
+    assert ref_origin(written, ["consignes"]) == RefOrigin(
+        "result:1", ("consignes",), serialized=True
+    )
+    # Une erreur dans un objet transmis vient de la référence qui l'a transmis.
+    assert ref_origin(written, ["devis", "montant"]) == RefOrigin(
+        "result:1", ("devis",), serialized=False
+    )
+    assert ref_origin(written, ["lignes", 0, "total"]) == RefOrigin(
+        "result:2", ("lignes", 0, "total"), serialized=False
+    )
+    for path in (["ton"], ["lignes", 1], ["lignes", 5], ["absent", "x"], []):
+        assert ref_origin(written, path) is None
+    index = ResultIndex(MESSAGES)
+    assert [index.record(ref) for ref in ("result:2", "result:9", "result:x")] == [
+        index.records[1],
+        None,
+        None,
+    ]
 
 
 @pytest.mark.parametrize(

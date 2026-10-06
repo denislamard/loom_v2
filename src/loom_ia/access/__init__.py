@@ -29,6 +29,7 @@ from loom_ia.access.resources import (
     SCHEME,
     SESSIONS,
     TEMPLATES,
+    TRACES,
 )
 from loom_ia.tenancy import (
     BudgetExhausted,
@@ -45,6 +46,7 @@ __all__ = [
     "SCHEME",
     "SESSIONS",
     "TEMPLATES",
+    "TRACES",
     "AgentNotAllowed",
     "BudgetExhausted",
     "ClaimConflict",

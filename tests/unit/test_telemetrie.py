@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Exports : les spans tirés du journal, ce qui en sort, ce qui est masqué (J6.1a).
+"""Exports et traces : les spans tirés du journal, ce qui en sort, ce qui se relit (J6.1a, J6.2c).
 
 Le journal garde tout ; ce qui se règle, c'est ce qui **sort** vers un
 collecteur. Trois choses s'éprouvent ici :
@@ -13,11 +13,17 @@ collecteur. Trois choses s'éprouvent ici :
 
 L'adaptateur OpenTelemetry est éprouvé à part, jusqu'au réseau : un petit
 collecteur OTLP/HTTP reçoit ce que loom envoie et le décode.
+
+Et la trace qui se **relit** (6.2c) : les mêmes spans, sous-runs compris, par
+Python, REST, MCP et ``loom inspect`` — sans contenu sans le droit, en clair
+avec, sans masquage par motifs ; un run inachevé dit ce qui reste ouvert ; les
+corps bruts n'y entrent jamais ; le droit vaut pour chaque agent de l'arbre.
 """
 
 import asyncio
 import json
 import logging
+import re
 import threading
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
@@ -27,23 +33,35 @@ from importlib.util import find_spec
 from typing import Any
 
 import pytest
-from conftest import QUESTION, ConfigFactory
+from conftest import QUESTION, TREE_ANSWER, TREE_QUESTION, ConfigFactory
 
-from loom_ia.access import Loom
+from loom_ia.access import Loom, UnknownRun
+from loom_ia.access.cli import main as cli_main
 from loom_ia.adapters.bus import InMemoryBus
 from loom_ia.adapters.stores import InMemoryEventStore, NotifyingEventStore
 from loom_ia.config import ConfigError, load_config
+from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.config.models import LoomConfig
 from loom_ia.core.events import Event, JudgeEvaluated, ModelResponded, contents, redacted
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     CriterionScore,
     Message,
+    RunId,
     SessionId,
     TenantId,
     ToolOutput,
+    Usage,
 )
-from loom_ia.telemetry import Redactor, RunExporter, SpanRecord, run_spans
+from loom_ia.telemetry import (
+    Redactor,
+    RunExporter,
+    SpanRecord,
+    render_trace,
+    run_spans,
+    run_trace,
+)
+from loom_ia.telemetry.inspect import WIDTH
 from loom_ia.testing import RunJournal, tool_call_message
 
 sans_otel = pytest.mark.skipif(find_spec("opentelemetry") is None, reason="extra 'otel' absent")
@@ -593,3 +611,298 @@ async def test_the_otel_translation_keeps_ids_parents_and_status() -> None:
     assert otel.end_time >= otel.start_time
     # Un identifiant qui n'est pas un UUID passe par un condensé, stable.
     assert span_id("relance-42") == span_id("relance-42") != span_id("relance-43")
+
+
+# --- Traces à relire : API, MCP, inspect (J6.2c) -----------------------------------
+
+TRACE_SESSION = SessionId("relue")
+
+
+async def test_a_trace_holds_the_spans_of_the_run_and_its_subruns(tree: ConfigFactory) -> None:
+    async with Loom(load_config(tree())) as loom:
+        result = await loom.run("demo", TREE_QUESTION)
+        trace = await loom.trace(result.run_id)
+        events = await loom.events(result.run_id)
+        state = await loom.state(result.run_id)
+
+    runs = [span for span in trace.spans if span.kind == "run"]
+    assert {span.run_id for span in runs} == {e.run_id for e in events}
+    assert len(runs) == 2
+    # Ce sont les spans de l'export, run par run.
+    for run_id in {e.run_id for e in events}:
+        mine = sorted(s.span_id for s in trace.spans if s.run_id == run_id)
+        assert mine == sorted(
+            s.span_id for s in run_spans([e for e in events if e.run_id == run_id])
+        )
+    # Le run de l'enfant pend sous l'appel qui l'a lancé.
+    enfant = next(span for span in runs if span.run_id != result.run_id)
+    appel = next(span for span in trace.spans if span.span_id == enfant.parent_span_id)
+    assert appel.kind == "tool" and appel.attributes["gen_ai.tool.name"] == "verifier"
+    # L'en-tête est celui du run.
+    assert (trace.status, trace.finished) == ("completed", True)
+    assert trace.cost_usd == state.cost_usd and trace.usage == state.usage
+    assert trace.output == TREE_ANSWER
+    assert not any(span.open for span in trace.spans)
+
+
+async def test_without_the_right_a_trace_has_no_content_at_all(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo()) as loom:
+        result = await loom.run("demo", SECRET, session_id=TRACE_SESSION)
+        complete = await loom.trace(result.run_id, session_id=TRACE_SESSION)
+        nue = await loom.trace(result.run_id, session_id=TRACE_SESSION, content=False)
+
+    evenements = [event for span in nue.spans for event in span.events]
+    assert evenements and all(event.content is None for event in evenements)
+    assert nue.output is None and nue.content is False
+    # La charge reste — sans ses champs de contenu, qu'elle nomme.
+    appel = next(e for e in evenements if e.name == "tool.called")
+    assert "arguments" not in appel.data and appel.data["redacted"] == ["arguments"]
+    assert COURRIEL not in nue.model_dump_json()
+    # Avec le droit, le contenu est là, **en clair** : pas de masquage par motifs (6.2c).
+    demande = next(e for span in complete.spans for e in span.events if e.name == "message.user")
+    assert demande.content is not None and COURRIEL in json.dumps(demande.content)
+    assert complete.output is not None
+
+
+async def test_an_unfinished_run_has_its_trace_and_says_what_is_open(
+    atelier: ConfigFactory,
+) -> None:
+    async with Loom.from_config(atelier()) as loom:
+        run = await loom.run("demo", "Relance.", session_id=TRACE_SESSION)
+        en_pause = await loom.trace(run.run_id, session_id=TRACE_SESSION)
+        await loom.approve(run.run_id, by="denis", session_id=TRACE_SESSION)
+        await loom.drain()
+        finie = await loom.trace(run.run_id, session_id=TRACE_SESSION)
+
+    assert (en_pause.status, en_pause.finished) == ("paused", False)
+    [racine] = [span for span in en_pause.spans if span.kind == "run"]
+    assert racine.open and racine.attributes["loom.run.status"] == "unfinished"
+    assert finie.finished and not any(span.open for span in finie.spans)
+
+
+async def test_exchange_bodies_never_enter_a_trace(demo: ConfigFactory) -> None:
+    path = demo(telemetry={"capture": {"raw_exchanges": True}})
+    async with Loom.from_config(path) as loom:
+        result = await loom.run("demo", QUESTION)
+        trace = await loom.trace(result.run_id)
+
+    echanges = [e for span in trace.spans for e in span.events if e.name == "model.exchanged"]
+    assert echanges
+    for echange in echanges:
+        assert echange.content == {}
+        assert "request_body" not in echange.data and "response_body" not in echange.data
+
+
+async def test_an_unknown_run_has_no_trace(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo()) as loom:
+        with pytest.raises(UnknownRun):
+            await loom.trace(RunId("absent"))
+
+
+def _trace_keys() -> tuple[dict[str, Any], dict[str, str]]:
+    """Trois clés : tout lire, lire sans contenu, lire l'agent demo seulement."""
+    jetons = {nom: new_api_key() for nom in ("complete", "supervision", "parent")}
+    security = {
+        "api_keys": [
+            {
+                "id": "complete",
+                "hash": fingerprint(jetons["complete"]),
+                "scopes": ["run", "read", "read_content"],
+            },
+            {
+                "id": "supervision",
+                "hash": fingerprint(jetons["supervision"]),
+                "scopes": ["run", "read"],
+            },
+            {
+                "id": "parent",
+                "hash": fingerprint(jetons["parent"]),
+                "scopes": ["run", "read", "read_content"],
+                "agents": ["demo"],
+            },
+        ]
+    }
+    return security, jetons
+
+
+async def test_a_trace_is_read_over_rest_by_scope(tree: ConfigFactory) -> None:
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    pytest.importorskip("httpx2", reason="client HTTP de test absent")
+    import httpx2
+
+    from loom_ia.access.http import create_app
+
+    security, jetons = _trace_keys()
+    async with Loom.from_config(tree(security=security)) as loom:
+        result = await loom.run("demo", TREE_QUESTION)
+        attendue = await loom.trace(result.run_id)
+        transport = httpx2.ASGITransport(create_app(loom))
+        async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
+
+            async def lire(qui: str, run_id: str = result.run_id) -> httpx2.Response:
+                cle = {"Authorization": f"Bearer {jetons[qui]}"}
+                return await http.get(f"/v1/traces/{run_id}", headers=cle)
+
+            complete = await lire("complete")
+            supervision = await lire("supervision")
+            parent = await lire("parent")
+            absent = await lire("complete", "absent")
+
+    assert complete.status_code == 200
+    assert complete.json() == attendue.model_dump(mode="json")
+    assert supervision.status_code == 200
+    vue = supervision.json()
+    assert vue["content"] is False and vue["output"] is None
+    assert all(e["content"] is None for span in vue["spans"] for e in span["events"])
+    assert len(vue["spans"]) == len(attendue.spans)
+    # La trace montre le travail du sous-agent : il faut le droit sur lui aussi.
+    assert parent.status_code == 403 and "verificateur" in parent.json()["detail"]
+    assert absent.status_code == 404
+
+
+async def test_a_trace_is_a_resource(tree: ConfigFactory) -> None:
+    pytest.importorskip("mcp", reason="extra 'mcp' absent")
+    from mcp.shared.exceptions import McpError
+    from mcp.shared.memory import create_connected_server_and_client_session as connected
+    from mcp.types import TextResourceContents
+    from pydantic import AnyUrl
+
+    from loom_ia.access import TEMPLATES, TRACES
+    from loom_ia.access.mcp_server import create_server
+
+    async with Loom(load_config(tree())) as loom:
+        result = await loom.run("demo", TREE_QUESTION)
+        attendue = await loom.trace(result.run_id)
+        async with connected(create_server(loom)) as client:
+            gabarits = await client.list_resource_templates()
+            lue = await client.read_resource(AnyUrl(f"{TRACES}/{result.run_id}"))
+            with pytest.raises(McpError, match="introuvable"):
+                await client.read_resource(AnyUrl(f"{TRACES}/absent"))
+
+    assert f"{TRACES}/{{run_id}}{{?session_id}}" in [
+        t.uriTemplate for t in gabarits.resourceTemplates
+    ]
+    assert len(TEMPLATES) == len(gabarits.resourceTemplates)
+    [contenu] = lue.contents
+    assert isinstance(contenu, TextResourceContents)
+    assert json.loads(contenu.text) == attendue.model_dump(mode="json")
+
+
+async def test_inspect_reads_the_tree_the_answer_and_the_tally(
+    tree: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tree()
+    async with Loom(load_config(path)) as loom:
+        result = await loom.run("demo", TREE_QUESTION)
+        trace = await loom.trace(result.run_id)
+
+    assert await _cli(["--config", str(path), "inspect", result.run_id]) == 0
+    sortie = capsys.readouterr().out
+    lignes = sortie.splitlines()
+    assert lignes[0].startswith(f"Run        : {result.run_id} (agent demo")
+    # L'arbre : le run, l'appel du sous-agent, et sous lui le run de l'enfant, plus loin.
+    racine = next(i for i, ligne in enumerate(lignes) if ligne.startswith("run demo — completed"))
+    appel = next(i for i, ligne in enumerate(lignes) if "sous-agent verifier" in ligne)
+    enfant = next(i for i, ligne in enumerate(lignes) if "run verificateur — completed" in ligne)
+    assert racine < appel < enfant
+    assert _marge(lignes[racine]) < _marge(lignes[appel]) < _marge(lignes[enfant])
+    assert f"Réponse finale :\n  {TREE_ANSWER}" in sortie
+    chats = sum(1 for s in trace.spans if s.kind == "chat")
+    outils = sum(1 for s in trace.spans if s.kind == "tool")
+    assert (
+        f"Bilan      : {chats} appel(s) de modèle, {outils} appel(s) d'outil, 1 sous-run(s)"
+        in sortie
+    )
+
+    assert await _cli(["--config", str(path), "inspect", result.run_id, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == trace.model_dump(mode="json")
+    assert await _cli(["--config", str(path), "inspect", "absent"]) == 2
+    assert "introuvable" in capsys.readouterr().err
+
+
+def test_inspect_cuts_a_long_result_and_says_so_unless_whole() -> None:
+    """Un extrait se coupe en le disant ; la réponse finale, jamais."""
+    long = "x" * 500
+    reponse = "Première ligne de la réponse, " + "très longue " * 20 + "\nSeconde ligne."
+    journal = RunJournal()
+    journal.start(QUESTION)
+    journal.model_turn(tool_call_message(("c1", "calculer", {"expr": "1+1"})))
+    journal.tool_results({"c1": ToolOutput.text(long)})
+    journal.model_turn(Message.assistant(reponse)).complete()
+    events = [d.to_event(i + 1) for i, d in enumerate(journal.take())]
+    trace = run_trace(events, events[0].run_id, content=True)
+
+    for full in (False, True):
+        lignes = render_trace(trace, full=full)
+        debut = lignes.index("Réponse finale :")
+        assert lignes[debut + 1 : debut + 3] == [f"  {ligne}" for ligne in reponse.splitlines()]
+    coupe = [ligne for ligne in render_trace(trace) if "résultat" in ligne]
+    entier = [ligne for ligne in render_trace(trace, full=True) if "résultat" in ligne]
+    assert len(coupe) == 1 and coupe[0].endswith("…") and long not in coupe[0]
+    assert len(coupe[0].lstrip(" ·")) <= WIDTH
+    assert len(entier) == 1 and entier[0].endswith(long)
+
+
+def test_inspect_counts_the_cache_in_each_call_as_in_the_header() -> None:
+    """Les tokens d'un appel comptent son entrée en cache : les lignes font l'en-tête."""
+    journal = RunJournal()
+    journal.start(QUESTION)
+    journal.model_turn(
+        tool_call_message(("c1", "calculer", {"expr": "1+1"})),
+        usage=Usage(input_tokens=100, cache_read_tokens=900, output_tokens=20),
+    )
+    journal.tool_results({"c1": ToolOutput.text("2")})
+    journal.model_turn(
+        Message.assistant("2."),
+        usage=Usage(input_tokens=50, cache_write_tokens=300, output_tokens=10),
+    )
+    journal.complete()
+    events = [d.to_event(i + 1) for i, d in enumerate(journal.take())]
+    trace = run_trace(events, events[0].run_id, content=True)
+
+    lignes = render_trace(trace)
+    appels = [ligne.strip() for ligne in lignes if ligne.strip().startswith("modèle ")]
+    assert len(appels) == 2
+    assert "1000 → 20 tokens (dont 900 lus en cache)" in appels[0]
+    assert "350 → 10 tokens (dont 300 écrits en cache)" in appels[1]
+    lus = [re.search(r"(\d+) → (\d+) tokens", appel) for appel in appels]
+    entree = sum(int(m.group(1)) for m in lus if m is not None)
+    sortie = sum(int(m.group(2)) for m in lus if m is not None)
+    assert lignes[3].startswith(f"Usage      : {entree} → {sortie} tokens")
+    assert (entree, sortie) == (trace.usage.prompt_tokens, trace.usage.output_tokens)
+
+
+async def test_inspect_says_a_call_refused_before_running(demo: ConfigFactory) -> None:
+    """Un appel refusé avant de partir le dit ; une erreur d'outil n'a pas de marque en double."""
+    script: list[dict[str, Any]] = [
+        {"tool_calls": [{"name": "calculer", "arguments": {"expression": "1+1"}}]},
+        {"tool_calls": [{"name": "calculer", "arguments": {"expr": "1/0"}}]},
+        {"text": "Raté deux fois."},
+    ]
+    path = demo(
+        models=[{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": script}}]
+    )
+    async with Loom(load_config(path)) as loom:
+        result = await loom.run("demo", QUESTION)
+        trace = await loom.trace(result.run_id)
+
+    outils = [span for span in trace.spans if span.kind == "tool"]
+    assert len(outils) == 2
+    lignes = [ligne.strip() for ligne in render_trace(trace)]
+    tetes = [ligne for ligne in lignes if "calculer —" in ligne]
+    assert tetes[0] == "appel calculer — refusé avant exécution"
+    # Ce qu'il a reçu dit pourquoi ; l'appel suivant, lui, est parti et a échoué.
+    raison = lignes[lignes.index(tetes[0]) + 1]
+    assert raison.startswith("· résultat  : (erreur) ") and "non conformes" in raison
+    assert tetes[1].startswith("outil calculer — ") and tetes[1].endswith(" (erreur)")
+    assert not any("[tool.completed]" in ligne for ligne in lignes)
+    assert lignes[-1].endswith("2 appel(s) d'outil dont 1 refusé(s) avant exécution")
+
+
+def _marge(ligne: str) -> int:
+    return len(ligne) - len(ligne.lstrip())
+
+
+async def _cli(argv: list[str]) -> int:
+    """La commande lance sa propre boucle : on la fait tourner hors de celle de l'essai."""
+    return await asyncio.to_thread(cli_main, argv)

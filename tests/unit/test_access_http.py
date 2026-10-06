@@ -489,6 +489,9 @@ async def test_the_listing_routes_are_documented(demo: ConfigFactory) -> None:
         "after",
         "limit",
     }
+    traces = paths["/v1/traces/{run_id}"]["get"]
+    assert traces["tags"] == ["journal"]
+    assert {param["name"] for param in traces["parameters"]} == {"run_id", "session_id"}
 
 
 # --- Listes et recherche (J5.4a, K5, #32) -------------------------------------

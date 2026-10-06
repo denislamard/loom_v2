@@ -13,7 +13,9 @@ encore de résultat, et le rejeu reste déterministe.
 Certains modèles écrivent la référence sérialisée, en chaîne :
 ``"{\\"$ref\\": \\"result:3\\"}"``. Une chaîne dont tout le contenu est cet
 objet est traitée comme la référence elle-même ; sinon, la valeur transmise
-serait le texte de la référence, sans aucune erreur.
+serait le texte de la référence, sans aucune erreur. Si la valeur transmise
+ne convient pas au champ, le refus le dit (``ref_origin``) : la référence,
+écrite en chaîne ou non, ce qu'elle a transmis, ce que le champ attend.
 
 Pour que le modèle connaisse ces numéros, chaque résultat qu'il reçoit
 commence par sa référence (``[result:3]``) et une consigne s'ajoute au prompt
@@ -121,6 +123,14 @@ class ResultIndex:
         record = self._by_call.get(call_id)
         return record.ref if record is not None else None
 
+    def record(self, ref: str) -> CallRecord | None:
+        """L'appel que désigne une référence ``result:N``, s'il existe."""
+        number = ref.removeprefix(REF_PREFIX)
+        if not number.isdigit():
+            return None
+        index = int(number) - 1
+        return self.records[index] if 0 <= index < len(self.records) else None
+
     def results_of(self, name: str) -> tuple[CallRecord, ...]:
         """Résultats réussis d'un outil, dans l'ordre des appels."""
         return tuple(r for r in self.records if r.name == name and r.usable)
@@ -201,6 +211,42 @@ class ResultIndex:
         if not usable:
             return "Aucun résultat à référencer dans ce run."
         return f"Références disponibles : {', '.join(usable)}."
+
+
+@dataclass(frozen=True, slots=True)
+class RefOrigin:
+    """La référence qui a fourni une valeur des arguments résolus."""
+
+    ref: str
+    # Où elle était dans les arguments écrits par le modèle.
+    path: tuple[str | int, ...]
+    # Écrite en chaîne (``"{\\"$ref\\": …}"``) plutôt qu'en objet.
+    serialized: bool
+
+
+def ref_origin(written: JsonValue, path: Sequence[str | int]) -> RefOrigin | None:
+    """La référence d'où vient la valeur à ``path`` des arguments résolus, s'il y en a une.
+
+    ``written`` sont les arguments tels que le modèle les a écrits ; ``path``
+    un chemin dans les arguments résolus — celui d'une erreur de schéma. La
+    référence peut être sur le chemin même, ou plus haut : une erreur dans un
+    objet transmis par référence vient de cette référence.
+    """
+    node = written
+    for depth in range(len(path) + 1):
+        ref = _ref_in(node)
+        if ref is not None:
+            return RefOrigin(ref, tuple(path[:depth]), serialized=isinstance(node, str))
+        if depth == len(path):
+            break
+        step = path[depth]
+        if isinstance(node, dict) and isinstance(step, str) and step in node:
+            node = node[step]
+        elif isinstance(node, list) and isinstance(step, int) and 0 <= step < len(node):
+            node = node[step]
+        else:
+            break
+    return None
 
 
 def _ref_in(value: JsonValue) -> str | None:

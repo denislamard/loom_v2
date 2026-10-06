@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
-from conftest import QUESTION, ConfigFactory, demo_agent
+from conftest import QUESTION, TREE_ANSWER, TREE_QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.config import ConfigError, load_config
@@ -35,7 +35,7 @@ from mcp.types import ReadResourceResult, TextResourceContents
 from pydantic import AnyUrl
 
 from loom_ia.access.http import create_app
-from loom_ia.access.resources import RUNS, SESSIONS
+from loom_ia.access.resources import RUNS, SESSIONS, TEMPLATES, TRACES
 
 DUPONT = TenantId("dupont-plomberie")
 MARTIN = TenantId("martin-chauffage")
@@ -331,6 +331,35 @@ async def test_reading_a_resource_needs_read_and_is_masked_without_read_content(
     assert vide == []
 
 
+async def test_a_trace_resource_follows_the_scope_and_every_agent_of_the_tree(
+    tree: ConfigFactory,
+) -> None:
+    """La trace (6.2c) : contenu selon ``read_content``, droit sur chaque agent de l'arbre."""
+    security, jetons = cles(
+        complete={"scopes": ["run", "read", "read_content"]},
+        supervision={"scopes": ["run", "read"]},
+        parent={"scopes": ["run", "read", "read_content"], "agents": ["demo"]},
+    )
+    path = tree(security=security, server=MCP_HTTP)
+    async with Loom.from_config(path) as loom:
+        result = await loom.run("demo", TREE_QUESTION)
+        uri = AnyUrl(f"{TRACES}/{result.run_id}")
+        async with parle(loom, jetons["complete"]) as session:
+            entiere = lu(await session.read_resource(uri))
+        async with parle(loom, jetons["supervision"]) as session:
+            nue = lu(await session.read_resource(uri))
+        async with parle(loom, jetons["parent"]) as session:
+            with pytest.raises(McpError, match="non autorisée sur l'agent 'verificateur'"):
+                await session.read_resource(uri)
+
+    assert entiere["content"] is True and entiere["output"] == TREE_ANSWER
+    assert nue["content"] is False and nue["output"] is None
+    assert all(e["content"] is None for span in nue["spans"] for e in span["events"])
+    assert [span["span_id"] for span in nue["spans"]] == [
+        span["span_id"] for span in entiere["spans"]
+    ]
+
+
 async def test_a_key_limited_to_agents_gets_runs_but_not_sessions(demo: ConfigFactory) -> None:
     security, jetons = cles(
         tout={"scopes": ["run", "read", "read_content"]},
@@ -405,4 +434,5 @@ def test_validate_announces_the_resources(
     out = capsys.readouterr().out
     assert "MCP HTTP   : monté sous /mcp" in out
     # Les ressources ne dépendent d'aucune config : elles sont le journal.
-    assert f"ressources en lecture seule : {RUNS}, {SESSIONS}, et 5 gabarits" in out
+    gabarits = len(TEMPLATES)
+    assert f"ressources en lecture seule : {RUNS}, {SESSIONS}, et {gabarits} gabarits" in out

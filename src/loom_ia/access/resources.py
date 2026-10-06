@@ -11,7 +11,9 @@ Deux index se listent, et le reste se construit d'un gabarit — on ne peut pas
 
 - ``loom://runs`` : ses runs, du plus récemment écrit au plus ancien ;
 - ``loom://sessions`` : ses journaux de session, le plus récent d'abord ;
-- ``loom://runs/{run_id}{?session_id}`` et ``…/events`` : un run, sa trace ;
+- ``loom://runs/{run_id}{?session_id}`` et ``…/events`` : un run, son journal ;
+- ``loom://traces/{run_id}{?session_id}`` : la trace d'un run — ses spans,
+  sous-runs compris (6.2c) ;
 - ``loom://sessions/{session_id}`` et ``…/events`` : une session, son journal ;
 - ``loom://artifacts/{client}/{session}/{fichier}`` : les octets d'un fichier.
 
@@ -27,12 +29,13 @@ from typing import Final
 SCHEME: Final = "loom://"
 RUNS: Final = "loom://runs"
 SESSIONS: Final = "loom://sessions"
+TRACES: Final = "loom://traces"
 ARTIFACTS: Final = "loom://artifacts/"
 EVENTS: Final = "/events"
 JSON_TYPE: Final = "application/json"
 
 # Ce que chaque gabarit construit, et ce qu'il rend. L'ordre est celui du
-# module : un run, sa trace, une session, son journal, un fichier.
+# module : un run, son journal, sa trace, une session, son journal, un fichier.
 TEMPLATES: Final[tuple[tuple[str, str, str], ...]] = (
     (
         f"{RUNS}/{{run_id}}{{?session_id}}",
@@ -41,8 +44,14 @@ TEMPLATES: Final[tuple[tuple[str, str, str], ...]] = (
     ),
     (
         f"{RUNS}/{{run_id}}{EVENTS}{{?session_id}}",
-        "trace du run",
+        "journal du run",
         "Journal d'un run et de ses sous-runs, dans l'ordre du journal",
+    ),
+    (
+        f"{TRACES}/{{run_id}}{{?session_id}}",
+        "trace du run",
+        "Trace d'un run et de ses sous-runs : ses spans, tirés du journal, et un en-tête "
+        "(statut, usage, coût, durée)",
     ),
     (
         f"{SESSIONS}/{{session_id}}",
@@ -51,7 +60,7 @@ TEMPLATES: Final[tuple[tuple[str, str, str], ...]] = (
     ),
     (
         f"{SESSIONS}/{{session_id}}{EVENTS}",
-        "trace de la session",
+        "journal de la session",
         "Journal entier d'une session, dans l'ordre du journal",
     ),
     (

@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import threading
 from collections.abc import AsyncIterator, Callable
 from importlib.util import find_spec
 from pathlib import Path
@@ -380,6 +381,34 @@ async def test_a_subscription_iterates_until_it_closes(store: EventStore) -> Non
     # Fermée, elle n'accepte plus rien.
     await notifying.append(drafts[3:4], expected_seq=3)
     assert subscription.pending == 0
+
+
+@pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")
+async def test_sqlite_closes_a_connection_it_could_not_set_up(tmp_path: Path) -> None:
+    """Une connexion qu'il n'a pas pu mettre en place, le journal la ferme.
+
+    Sinon son fil survit et retient le process à la sortie (voir l'essai du
+    même nom pour le magasin d'idempotence). Le fichier n'est pas une base :
+    la mise en place échoue sans attendre l'échéance d'un verrou.
+    """
+    import sqlite3
+
+    from loom_ia.adapters.stores.sqlite import SqliteEventStore
+
+    path = tmp_path / "journal.sqlite3"
+    path.write_bytes(b"pas une base SQLite. " * 64)
+    store = SqliteEventStore(path)
+    avant = set(threading.enumerate())
+    with pytest.raises(sqlite3.DatabaseError) as echec:
+        await store.last_seq(DEFAULT_TENANT, SESSION)
+    nouveaux = [fil for fil in threading.enumerate() if fil not in avant]
+    for fil in nouveaux:
+        fil.join(timeout=2)
+    assert not [fil.name for fil in nouveaux if fil.is_alive()], echec.value
+    # Le journal n'en reste pas bloqué : la base remise en état, il s'ouvre.
+    path.unlink()
+    assert await store.last_seq(DEFAULT_TENANT, SESSION) == 0
+    await store.aclose()
 
 
 async def test_closing_the_notifying_store_closes_the_one_it_wraps(store: EventStore) -> None:

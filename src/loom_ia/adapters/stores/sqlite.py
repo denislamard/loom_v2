@@ -136,10 +136,17 @@ class SqliteEventStore:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             # ``isolation_level=None`` : les transactions sont ouvertes à la main.
             connection = await aiosqlite.connect(self.path, isolation_level=None)
-            await connection.execute("PRAGMA journal_mode = WAL")
-            await connection.execute("PRAGMA synchronous = FULL")
-            await connection.execute("PRAGMA busy_timeout = 5000")
-            await connection.executescript(SCHEMA)
+            try:
+                await connection.execute("PRAGMA journal_mode = WAL")
+                await connection.execute("PRAGMA synchronous = FULL")
+                await connection.execute("PRAGMA busy_timeout = 5000")
+                await connection.executescript(SCHEMA)
+            except BaseException:
+                # Une connexion qu'on ne garde pas est fermée ici : sinon son
+                # fil survit et retient le process à la sortie. L'appel
+                # suivant réessaie.
+                await connection.close()
+                raise
             self._connection = connection
         return self._connection
 

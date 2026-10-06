@@ -15,8 +15,8 @@ Un outil fait travailler, une ressource se lit. Ce qui se lisait par REST en
 5.4a se lit donc ici par URI, avec les mêmes règles : la clé dit le client,
 ``read`` ouvre la lecture, et sans ``read_content`` le contenu est masqué.
 
-* **index** : ``loom://runs`` et ``loom://sessions`` listés, les cinq gabarits
-  annoncés, un run et sa trace lus par URI et comparés à ce que l'accès Python
+* **index** : ``loom://runs`` et ``loom://sessions`` listés, les gabarits
+  annoncés, un run et son journal lus par URI et comparés à ce que l'accès Python
   rend. Puis ce que la clé change : masquage sans ``read_content``, et une clé
   limitée à un agent qui obtient les runs mais pas la liste des sessions.
 * **fichiers** : les octets d'un fichier du run, que ni REST ni MCP ne
@@ -242,10 +242,14 @@ async def index(scene: Scene) -> None:
     loom, base, jetons, agent, prefixe, controle = scene
     session_id = SessionId(f"{prefixe}-index")
 
-    titre("Deux index listés, cinq gabarits annoncés")
     async with session_mcp(base, jetons["dupont"]) as (session, opened):
         ressources = await session.list_resources()
         gabarits = await session.list_resource_templates()
+        # Le titre compte ce que le serveur annonce : 6.2c y a ajouté la trace.
+        titre(
+            f"{len(ressources.resources)} index listés, "
+            f"{len(gabarits.resourceTemplates)} gabarits annoncés"
+        )
         for entree in ressources.resources:
             print(f"  {entree.uri!s:<22}{entree.mimeType}  {entree.description}")
         for modele in gabarits.resourceTemplates:
@@ -284,7 +288,7 @@ async def index(scene: Scene) -> None:
     print(f"  {RUNS:<22}{len(page['runs'])} run(s), {page['scanned']} journaux ouverts")
     print(f"  {SESSIONS:<22}{len(journaux)} session(s)")
     print(f"  {'un run':<22}{run['status']}, {run['iterations']} tours, {run['cost_usd']:.6f} $")
-    print(f"  {'sa trace':<22}{len(trace)} événements")
+    print(f"  {'son journal':<22}{len(trace)} événements")
     print(f"  {'la fiche':<22}{len(fiche['runs'])} run(s), last_seq {fiche['last_seq']}")
     print(f"  {'le journal':<22}{len(journal)} événements")
 
@@ -299,9 +303,9 @@ async def index(scene: Scene) -> None:
         )
     )
     print(
-        "  et la trace est celle du journal : "
+        "  et son journal est celui de l'accès Python : "
         + controle.tient(
-            "la trace de la ressource n'est pas celle du journal",
+            "le journal du run de la ressource n'est pas celui de l'accès Python",
             [e["type"] for e in trace] == [e.type for e in entiers],
         )
     )
@@ -323,7 +327,7 @@ async def index(scene: Scene) -> None:
     print(
         "  même journal, contenu en moins : "
         + controle.tient(
-            "la trace masquée n'est pas le même journal",
+            "le journal masqué n'est pas le même journal",
             [e["type"] for e in masque] == [e["type"] for e in journal]
             and DEVIS[DUPONT] not in prive,
         )

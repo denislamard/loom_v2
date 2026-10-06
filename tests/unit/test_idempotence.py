@@ -2,6 +2,7 @@
 """Idempotence (J4.4) : magasins, décorateur, clé métier, règle de reprise."""
 
 import asyncio
+import threading
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -271,6 +272,33 @@ async def test_results_out_of_retention_are_forgotten_reservations_are_not(
     assert await store.get("frais") is not None
     # La réservation périmée reste : c'est la trace d'un effet d'état inconnu.
     assert await store.get("perimee") is not None
+
+
+@pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")
+async def test_sqlite_closes_a_connection_it_could_not_set_up(tmp_path: Path) -> None:
+    """Une connexion qu'il n'a pas pu mettre en place, le magasin la ferme.
+
+    Sinon son fil survit, et retient le process à la sortie : c'est le blocage
+    vu le 22/09, quand un autre process tenait la base à l'ouverture. Ici la
+    mise en place échoue parce que le fichier n'est pas une base — même
+    chemin, sans attendre l'échéance d'un verrou.
+    """
+    import sqlite3
+
+    path = tmp_path / "idempotence.db"
+    path.write_bytes(b"pas une base SQLite. " * 64)
+    store = _sqlite(path)
+    avant = set(threading.enumerate())
+    with pytest.raises(sqlite3.DatabaseError) as echec:
+        await store.get("cle")
+    nouveaux = [fil for fil in threading.enumerate() if fil not in avant]
+    for fil in nouveaux:
+        fil.join(timeout=2)
+    assert not [fil.name for fil in nouveaux if fil.is_alive()], echec.value
+    # Le magasin n'en reste pas bloqué : la base remise en état, il s'ouvre.
+    path.unlink()
+    assert await store.get("cle") is None
+    await _referme(store)
 
 
 # --- Magasin journal ----------------------------------------------------------
