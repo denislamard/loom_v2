@@ -167,7 +167,12 @@ class VariantTools:
         return decision.fate in ("journal", "double", "refused")
 
     async def output(
-        self, run_id: RunId, call_id: str, name: str, arguments: Mapping[str, JsonValue]
+        self,
+        run_id: RunId,
+        call_id: str,
+        name: str,
+        arguments: Mapping[str, JsonValue],
+        resolved: Mapping[str, JsonValue],
     ) -> tuple[ToolOutput, Consumption | None]:
         decision = self._decisions[run_id, call_id]
         match decision.fate:
@@ -176,7 +181,9 @@ class VariantTools:
                 self.book.read_through(decision.record)
                 return self.book.recorded_output(decision.record)
             case "double":
-                return await self._doubled(name, arguments), None
+                # Une doublure reçoit ce que l'outil aurait reçu : références
+                # résolues, arguments remplacés compris.
+                return await doubled(self.doubles[name], name, resolved), None
             case _:
                 return ToolOutput.error(REFUSED.format(name=name, effects=decision.effects)), None
 
@@ -216,14 +223,16 @@ class VariantTools:
         )
         return _Decision(fate, effects=tool.spec.side_effects)
 
-    async def _doubled(self, name: str, arguments: Mapping[str, JsonValue]) -> ToolOutput:
-        try:
-            value = self.doubles[name](**arguments)
-            if inspect.isawaitable(value):
-                value = await value
-            return to_output(value)
-        except Exception as exc:
-            return ToolOutput.error(f"Doublure de {name} en erreur : {type(exc).__name__}: {exc}")
+
+async def doubled(double: Double, name: str, arguments: Mapping[str, JsonValue]) -> ToolOutput:
+    """Le résultat d'une doublure, traduit comme celui d'un outil ; son erreur, dite au modèle."""
+    try:
+        value = double(**arguments)
+        if inspect.isawaitable(value):
+            value = await value
+        return to_output(value)
+    except Exception as exc:
+        return ToolOutput.error(f"Doublure de {name} en erreur : {type(exc).__name__}: {exc}")
 
 
 def fate_label(fate: ToolFate) -> str:

@@ -37,6 +37,7 @@ from typing import Any
 import pytest
 import yaml
 from conftest import ConfigFactory, demo_agent
+from pydantic import JsonValue
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -597,7 +598,9 @@ def doublure(destinataire: str) -> str:
 '''
 
 
-def script(destinataire: str, *, expr: str = "12*7+3", fin: str = "Fait.") -> list[dict[str, Any]]:
+def script(
+    destinataire: JsonValue, *, expr: str = "12*7+3", fin: str = "Fait."
+) -> list[dict[str, Any]]:
     """Calcule, fait rédiger, envoie, conclut."""
     return [
         {"tool_calls": [{"name": "calculer", "arguments": {"expr": expr}}]},
@@ -644,6 +647,12 @@ def variante(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             "sdk": "fake",
             "model": "main-5",
             "params": {"script": [{"error": "auth"}]},
+        },
+        {
+            "id": "RENVOI",
+            "sdk": "fake",
+            "model": "main-6",
+            "params": {"script": script({"$ref": "result:1"}, fin="Envoyé au résultat.")},
         },
         {
             "id": "ROLE",
@@ -797,6 +806,29 @@ async def test_a_double_answers_in_place_of_an_unknown_side_effect_call(variante
         e.payload.output.as_text for e in report.events if isinstance(e.payload, ToolCompleted)
     ]
     assert "(doublure) envoi à dupont" in sorties
+    assert envois(variante) == ["martin"]
+
+
+async def test_a_double_receives_what_the_tool_would_have_received(variante: Path) -> None:
+    """La doublure reçoit les arguments résolus, pas la référence que le modèle a écrite."""
+    run_id = await enregistre(variante)
+    vus: list[JsonValue] = []
+
+    def doublure(destinataire: JsonValue) -> str:
+        vus.append(destinataire)
+        return "(doublure) envoyé"
+
+    async with Loom.from_config(variante) as loom:
+        report = await loom.replay(
+            run_id,
+            session_id=SESSION,
+            mode="variant",
+            models={"main": "RENVOI"},
+            doubles={"envoyer": doublure},
+        )
+    comparison = report.comparison
+    assert comparison is not None and comparison.tools.get("double") == 1
+    assert vus == ["87"]
     assert envois(variante) == ["martin"]
 
 

@@ -136,6 +136,7 @@ from loom_ia.engine import (
     RunContext,
     SessionWriter,
     SessionWriters,
+    ToolReplay,
     begin_run,
     cancellation,
     drive,
@@ -143,6 +144,8 @@ from loom_ia.engine import (
 )
 from loom_ia.replay import (
     Double,
+    EvalReport,
+    EvalSuite,
     JournalTools,
     ReplayBook,
     ReplayError,
@@ -151,6 +154,7 @@ from loom_ia.replay import (
     ReplayReport,
     VariantModelClient,
     VariantTools,
+    load_suite,
     replay_run,
     swap_models,
 )
@@ -697,6 +701,55 @@ def traced_agents(trace: Trace) -> list[str]:
     return list(dict.fromkeys([trace.agent, *(str(n) for n in named if n is not None)]))
 
 
+def tree_tools(
+    config: LoomConfig, agent: str, context_of: Callable[[str], RunContext]
+) -> tuple[dict[str, str], tuple[str, ...]]:
+    """Les outils de l'agent et de ses sous-agents (nom → genre), et leurs préfixes MCP.
+
+    ``context_of`` monte chaque agent de l'arbre. Un outil MCP est connu par
+    son préfixe (``serveur__``) : ses outils ne sont listés qu'à la connexion.
+    """
+    known: dict[str, str] = {}
+    prefixes: list[str] = []
+    waiting, seen = [agent], set[str]()
+    registry = AgentRegistry.from_config(config)
+    while waiting:
+        name = waiting.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        spec = registry.get(name)
+        prefixes += [f"{ref.prefix}__" for ref in spec.mcp_tools]
+        for tool in context_of(name).tools.specs:
+            known.setdefault(tool.name, tool.kind)
+        waiting += [ref.agent for ref in spec.subagents]
+    return known, tuple(prefixes)
+
+
+def doubles_problem(
+    config: LoomConfig,
+    agent: str,
+    doubles: Mapping[str, object],
+    context_of: Callable[[str], RunContext],
+) -> str | None:
+    """Ce qui ne va pas dans des doublures, ou ``None`` : chacune vise un outil de l'agent.
+
+    Un outil de l'agent ou de l'un de ses sous-agents (``context_of`` monte
+    chacun), ou d'un de leurs serveurs MCP (par son préfixe) ; jamais un rôle,
+    qui est de la logique et tourne. Commun au rejeu en variante et aux évals.
+    """
+    known, prefixes = tree_tools(config, agent, context_of)
+    for name in sorted(doubles):
+        if known.get(name) == "role":
+            return f"{name!r} est un rôle — de la logique, qui tourne ; il ne se double pas"
+        if name not in known and not name.startswith(prefixes):
+            return (
+                f"doublure pour un outil inconnu, {name!r} "
+                f"(outils : {', '.join(sorted(known)) or 'aucun'})"
+            )
+    return None
+
+
 def _no_subagent(agent: str) -> RunContext:
     """Au rejeu identique, un sous-agent est servi par le journal : il n'est jamais monté."""
     raise ReplayError(f"Rejeu : le sous-agent {agent!r} ne se relance pas, il se relit")
@@ -773,31 +826,9 @@ class _ReplayMount:
 
     def check_doubles(self, agent: str, doubles: Mapping[str, Double]) -> None:
         """Chaque doublure vise un outil de l'agent ou de ses sous-agents — jamais un rôle."""
-        known: dict[str, str] = {}
-        prefixes: list[str] = []
-        waiting, seen = [agent], set[str]()
-        registry = AgentRegistry.from_config(self._config)
-        while waiting:
-            name = waiting.pop()
-            if name in seen:
-                continue
-            seen.add(name)
-            spec = registry.get(name)
-            prefixes += [f"{ref.prefix}__" for ref in spec.mcp_tools]
-            for tool in self(name).tools.specs:
-                known.setdefault(tool.name, tool.kind)
-            waiting += [ref.agent for ref in spec.subagents]
-        for name in sorted(doubles):
-            if known.get(name) == "role":
-                raise ReplayError(
-                    f"Variante : {name!r} est un rôle — de la logique, qui tourne ; "
-                    "il ne se double pas"
-                )
-            if name not in known and not name.startswith(tuple(prefixes)):
-                raise ReplayError(
-                    f"Variante : doublure pour un outil inconnu, {name!r} "
-                    f"(outils : {', '.join(sorted(known)) or 'aucun'})"
-                )
+        problem = doubles_problem(self._config, agent, doubles, self)
+        if problem is not None:
+            raise ReplayError(f"Variante : {problem}")
 
     async def aclose(self) -> None:
         for built in self.mounted:
@@ -818,8 +849,13 @@ class Loom:
         breakers: CircuitBreakers | None = None,
         secrets: SecretProvider | None = None,
         counter: UsageCounter | None = None,
+        intercept: ToolReplay | None = None,
     ) -> None:
         self._config = config
+        # Outils servis à part, posés sur chaque agent monté (sous-agents
+        # compris) : c'est ainsi qu'une éval double ou refuse un outil à effets
+        # de bord (J6.3a). Sans lui, chaque outil s'exécute.
+        self._intercept = intercept
         # Identité de cette instance : c'est elle qui prend les concessions sur
         # les runs qu'elle pilote (#27), et qui signe ses nouvelles sur le bus
         # (5.3c) pour ne pas se réécouter.
@@ -1201,6 +1237,8 @@ class Loom:
                 breakers=self._breakers,
                 tenant=tenant,
             )
+            if self._intercept is not None:
+                built.context.tools.replay = self._intercept
             self._built[key] = built
         # La concession appartient à l'instance, pas à la config de l'agent.
         context = replace(
@@ -1292,6 +1330,44 @@ class Loom:
         finally:
             for mount in mounts:
                 await mount.aclose()
+
+    # --- Évaluer un agent -------------------------------------------------------
+
+    async def evaluate(
+        self,
+        suite: EvalSuite | Path | str,
+        *,
+        cases: Sequence[str] = (),
+        variants: Sequence[str] = (),
+        export: Path | None = None,
+    ) -> EvalReport:
+        """Joue une suite d'évals et dit, cas par cas et variante par variante, ce qui passe (O1).
+
+        La suite (``EvalSuite``, ou le chemin de son fichier YAML) porte des
+        cas — une demande et ses attendus — et les variantes à comparer. Sans
+        ``config`` dans la suite, c'est celle de cette instance qui sert.
+        Chaque variante est montée **à part, en mémoire** : rien n'est écrit
+        dans le journal de l'instance, rien n'entre dans les compteurs de ses
+        clients ; ``export`` garde le journal de chaque run (un JSONL par run).
+        Un outil à effets de bord n'est jamais exécuté : sa doublure répond,
+        sinon le modèle reçoit une erreur. ``cases`` et ``variants`` n'en
+        jouent qu'une partie. Ce qui est enregistré ici (``register``) — un
+        outil, une doublure — sert aux variantes qui gardent la config de la
+        suite.
+        """
+        # Import différé : le module des évals monte des instances de cette classe.
+        from loom_ia.access.evals import evaluate
+
+        loaded = suite if isinstance(suite, EvalSuite) else load_suite(suite)
+        return await evaluate(
+            loaded,
+            config=self._config,
+            environ=self._environ,
+            cases=cases,
+            variants=variants,
+            export=export,
+            registry=self._registry,
+        )
 
     # --- Relire un run --------------------------------------------------------
 

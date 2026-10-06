@@ -5,6 +5,9 @@
     loom run demo "Bonjour"        lance un run (``--stream`` pour le direct,
                                    ``--attach photo.jpg`` pour joindre une image)
     loom resume <run_id>           reprend un run interrompu
+    loom replay <run_id>           rejoue un run, à l'identique ou en variante
+    loom inspect <run_id>          relit un run : son arbre, sa réponse, son bilan
+    loom eval suite.yaml           joue une suite d'évals, variante par variante
     loom approve <run_id>          autorise ce que le run attend, et le reprend
     loom reject <run_id>           refuse ce que le run attend, et le reprend
     loom serve                     sert l'API REST
@@ -44,6 +47,7 @@ from loom_ia.access.api import (
     UnknownRun,
     UnknownSession,
 )
+from loom_ia.access.evals import evaluate
 from loom_ia.access.progress import Progress, notes
 from loom_ia.access.resources import RUNS as MCP_RUNS
 from loom_ia.access.resources import SESSIONS as MCP_SESSIONS
@@ -80,11 +84,14 @@ from loom_ia.engine import ToolExecutor
 from loom_ia.replay import (
     Comparison,
     Double,
+    EvalError,
     ReplayError,
     ReplayReport,
     RunSide,
     ToolFate,
     fate_label,
+    load_suite,
+    render_eval,
 )
 from loom_ia.runtime import (
     apply_logging,
@@ -248,6 +255,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="la trace en JSON, celle de GET /v1/traces/{run_id}"
     )
     inspect.set_defaults(handler=cmd_inspect)
+
+    evaluation = commands.add_parser(
+        "eval",
+        help="joue une suite d'évals : des cas et leurs attendus, pour chaque variante, "
+        "en mémoire (outils à effets de bord doublés ou refusés)",
+    )
+    evaluation.add_argument("suite", type=Path, help="fichier YAML de la suite")
+    evaluation.add_argument(
+        "--case", action="append", default=[], metavar="NOM", help="ne joue que ce cas (répétable)"
+    )
+    evaluation.add_argument(
+        "--variant",
+        action="append",
+        default=[],
+        metavar="NOM",
+        help="ne joue que cette variante (répétable)",
+    )
+    evaluation.add_argument(
+        "--export",
+        type=Path,
+        default=None,
+        metavar="DOSSIER",
+        help="garde le journal de chaque run, un JSONL par run (<variante>--<cas>--<n>.jsonl)",
+    )
+    evaluation.add_argument("--json", action="store_true", help="affiche le rapport en JSON")
+    evaluation.set_defaults(handler=cmd_eval)
 
     for verbe, aide in (
         ("approve", "autorise un appel que le run attend"),
@@ -850,6 +883,38 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     else:
         print("\n".join(render_trace(trace, full=args.full)))
     return OK
+
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    """Joue une suite d'évals ; 0 si tout passe, 1 si un attendu tombe, 2 si elle est injouable.
+
+    Un run non joué (plafond de dépense atteint) rend aussi 1 : ce qu'il
+    devait éprouver ne l'a pas été. Sans ``config`` dans la suite, c'est
+    ``--config`` qui sert.
+    """
+    suite = load_suite(args.suite)
+    path = suite.resolved(suite.config) or args.config
+    config = load_config(path, profile=args.profile)
+    apply_logging(config)
+    try:
+        report = asyncio.run(
+            evaluate(
+                suite.model_copy(update={"config": None}),
+                config=config,
+                profile=args.profile,
+                cases=args.case,
+                variants=args.variant,
+                export=args.export,
+            )
+        )
+    except EvalError as error:
+        print(f"Éval impossible : {error}", file=sys.stderr)
+        return REFUSED
+    if args.json:
+        print(json.dumps(report.as_json(), ensure_ascii=False, indent=2))
+    else:
+        print("\n".join(render_eval(report)))
+    return OK if report.passed else FAILED
 
 
 def _pairs(values: list[str], option: str, form: str) -> dict[str, str]:

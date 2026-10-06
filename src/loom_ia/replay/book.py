@@ -470,6 +470,12 @@ class JournalTools:
         return await self.book.approve(run_id, pending)
 
     async def output(
-        self, run_id: RunId, call_id: str, name: str, arguments: Mapping[str, JsonValue]
+        self,
+        run_id: RunId,
+        call_id: str,
+        name: str,
+        arguments: Mapping[str, JsonValue],
+        resolved: Mapping[str, JsonValue],
     ) -> tuple[ToolOutput, Consumption | None]:
+        # Comparé aux arguments écrits : c'est eux que le journal garde.
         return self.book.tool_output(run_id, call_id, name, arguments)

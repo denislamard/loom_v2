@@ -8,6 +8,10 @@ sa requête a changé.
 En variante (6.2b) : un autre modèle ou une autre config ; ce que le journal
 connaît est servi, le reste part pour de vrai — jamais un outil à effets de
 bord —, et le rapport compare les deux runs.
+
+Les évals (6.3a) vivent ici aussi : une suite de cas joués par variante, des
+contrôles et un juge, le même monde qu'en variante pour les outils à effets de
+bord — doublés ou refusés, jamais exécutés.
 """
 
 from loom_ia.replay.book import (
@@ -17,6 +21,34 @@ from loom_ia.replay.book import (
     ReplayBook,
     ReplayError,
     ReplayModelClient,
+)
+from loom_ia.replay.evals import (
+    BASE_VARIANT,
+    CheckResult,
+    EvalCase,
+    EvalCriterion,
+    EvalError,
+    EvalFate,
+    EvalJudge,
+    EvalJudgeClient,
+    EvalReport,
+    EvalRun,
+    EvalSuite,
+    EvalTools,
+    EvalVariant,
+    Expect,
+    Judgment,
+    Outcome,
+    ToolExpectation,
+    ToolUse,
+    VariantSummary,
+    check,
+    eval_fate_label,
+    isolated,
+    judged,
+    load_suite,
+    render_eval,
+    unjudged,
 )
 from loom_ia.replay.runner import (
     Comparison,
@@ -31,27 +63,55 @@ from loom_ia.replay.variant import (
     ToolFate,
     VariantModelClient,
     VariantTools,
+    doubled,
     fate_label,
     swap_models,
 )
 
 __all__ = [
+    "BASE_VARIANT",
+    "CheckResult",
     "Comparison",
     "Divergence",
     "DivergenceKind",
     "Double",
+    "EvalCase",
+    "EvalCriterion",
+    "EvalError",
+    "EvalFate",
+    "EvalJudge",
+    "EvalJudgeClient",
+    "EvalReport",
+    "EvalRun",
+    "EvalSuite",
+    "EvalTools",
+    "EvalVariant",
+    "Expect",
     "JournalTools",
+    "Judgment",
+    "Outcome",
     "ReplayBook",
     "ReplayError",
     "ReplayMode",
     "ReplayModelClient",
     "ReplayReport",
     "RunSide",
+    "ToolExpectation",
     "ToolFate",
+    "ToolUse",
     "VariantModelClient",
+    "VariantSummary",
     "VariantTools",
     "Verdict",
+    "check",
+    "doubled",
+    "eval_fate_label",
     "fate_label",
+    "isolated",
+    "judged",
+    "load_suite",
+    "render_eval",
     "replay_run",
     "swap_models",
+    "unjudged",
 ]

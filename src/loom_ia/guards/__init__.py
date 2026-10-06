@@ -27,6 +27,7 @@ from loom_ia.guards.judge import (
     JudgeGuard,
     correlated,
     judge_policy_name,
+    verdict_scores,
     verdict_tool,
 )
 
@@ -52,5 +53,6 @@ __all__ = [
     "markers",
     "missing",
     "normalize",
+    "verdict_scores",
     "verdict_tool",
 ]

@@ -246,7 +246,7 @@ class _Unknown:
 
 
 class ToolReplay(Protocol):
-    """Résultats d'outils servis par un rejeu, au lieu d'exécuter (J6.2a, J6.2b).
+    """Résultats d'outils servis à part, au lieu d'exécuter (rejeu J6.2a, J6.2b ; évals J6.3a).
 
     ``serves`` dit, une fois par appel et avant tout lancement, si le rejeu
     sert lui-même cet appel. Au rejeu identique, ce sont tous les outils qui
@@ -254,14 +254,25 @@ class ToolReplay(Protocol):
     jamais partie — il est de la logique de l'agent, et son appel de modèle
     passe par un client qui rejoue. En variante, cela dépend aussi de l'appel :
     retrouvé au journal, doublé, ou refusé parce qu'il a des effets de bord ;
-    sinon, l'outil s'exécute pour de vrai. ``output`` rend le résultat servi et
-    la consommation qu'il portait (celle d'un sous-agent).
+    sinon, l'outil s'exécute pour de vrai. Pendant une éval, un outil à effets
+    de bord est doublé ou refusé, les autres s'exécutent.
+
+    ``output`` rend le résultat servi et la consommation qu'il portait (celle
+    d'un sous-agent). Il reçoit les arguments tels que le modèle les a écrits
+    (``arguments`` : ceux que le journal garde, que le rejeu compare) et ceux
+    que l'outil aurait reçus (``resolved`` : références résolues, arguments
+    remplacés par une politique ou une approbation) — ceux d'une doublure.
     """
 
     def serves(self, tool: AnyTool, call: PendingCall, run_id: RunId) -> bool: ...
 
     async def output(
-        self, run_id: RunId, call_id: str, name: str, arguments: Mapping[str, JsonValue]
+        self,
+        run_id: RunId,
+        call_id: str,
+        name: str,
+        arguments: Mapping[str, JsonValue],
+        resolved: Mapping[str, JsonValue],
     ) -> tuple[ToolOutput, Consumption | None]: ...
 
     async def approve(self, run_id: RunId, pending: PendingApproval) -> ApprovalDecision:
@@ -826,7 +837,7 @@ class ToolExecutor:
         exchange: Exchange | None = None
         if item.replayed and self.replay is not None:
             output, consumption = await self.replay.output(
-                state.run_id, call.call_id, spec.name, call.arguments
+                state.run_id, call.call_id, spec.name, call.arguments, item.arguments
             )
         elif isinstance(tool, DelegatedTool):
             produced = tool.run(item.arguments, context, view)

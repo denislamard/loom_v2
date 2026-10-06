@@ -443,29 +443,8 @@ class JudgeGuard(TracingPolicy):
 
     def _scores(self, message: Message) -> tuple[CriterionScore, ...]:
         """Notes du verdict, contrôlées ; lève ``PolicyFailure`` si le verdict ne convient pas."""
-        name = self.definition.name
-        calls = [c for c in message.tool_calls if c.name == VERDICT_TOOL]
-        if not calls:
-            raise PolicyFailure(f"juge {name} : réponse sans verdict (outil {VERDICT_TOOL})")
-        arguments = calls[0].arguments
-        errors = sorted(self._validator.iter_errors(arguments), key=lambda e: list(e.path))
-        if errors:
-            error = errors[0]
-            location = ".".join(str(part) for part in error.absolute_path) or "(racine)"
-            raise PolicyFailure(f"juge {name} : verdict invalide — {location} : {error.message}")
-        given = cast(list[dict[str, JsonValue]], arguments["criteria"])
-        by_name = {str(item["name"]): item for item in given}
-        if len(by_name) != len(given):
-            raise PolicyFailure(f"juge {name} : verdict invalide — critère noté deux fois")
-        return tuple(
-            CriterionScore(
-                name=criterion.name,
-                score=float(cast(float, by_name[criterion.name]["score"])),
-                min_score=criterion.min_score,
-                blocking=criterion.blocking,
-                reason=str(by_name[criterion.name]["reason"]),
-            )
-            for criterion in self.definition.criteria
+        return verdict_scores(
+            message, self.definition.criteria, judge=self.definition.name, validator=self._validator
         )
 
     def _exhausted(self, judged: _Judged, feedback: str, reason: str) -> Decision:
@@ -521,6 +500,49 @@ def verdict_tool(criteria: tuple[Criterion, ...]) -> ToolDefinition:
             "required": ["criteria"],
             "additionalProperties": False,
         },
+    )
+
+
+def verdict_scores(
+    message: Message,
+    criteria: tuple[Criterion, ...],
+    *,
+    judge: str,
+    validator: Validator | None = None,
+) -> tuple[CriterionScore, ...]:
+    """Les notes que porte la réponse d'un juge, critère par critère, dans l'ordre des critères.
+
+    Le verdict est l'appel de l'outil ``verdict``, contrôlé par son schéma
+    (``validator``, sinon celui de ``verdict_tool(criteria)``). Lève
+    ``PolicyFailure`` si la réponse n'en porte pas, ou un qui ne convient pas.
+    """
+    calls = [c for c in message.tool_calls if c.name == VERDICT_TOOL]
+    if not calls:
+        raise PolicyFailure(f"juge {judge} : réponse sans verdict (outil {VERDICT_TOOL})")
+    arguments = calls[0].arguments
+    checker = (
+        validator
+        if validator is not None
+        else cast(Validator, Draft202012Validator(verdict_tool(criteria).input_schema))
+    )
+    errors = sorted(checker.iter_errors(arguments), key=lambda e: list(e.path))
+    if errors:
+        error = errors[0]
+        location = ".".join(str(part) for part in error.absolute_path) or "(racine)"
+        raise PolicyFailure(f"juge {judge} : verdict invalide — {location} : {error.message}")
+    given = cast(list[dict[str, JsonValue]], arguments["criteria"])
+    by_name = {str(item["name"]): item for item in given}
+    if len(by_name) != len(given):
+        raise PolicyFailure(f"juge {judge} : verdict invalide — critère noté deux fois")
+    return tuple(
+        CriterionScore(
+            name=criterion.name,
+            score=float(cast(float, by_name[criterion.name]["score"])),
+            min_score=criterion.min_score,
+            blocking=criterion.blocking,
+            reason=str(by_name[criterion.name]["reason"]),
+        )
+        for criterion in criteria
     )
 
 
