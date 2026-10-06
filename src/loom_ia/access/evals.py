@@ -13,9 +13,14 @@ variante :
 3. chaque cas y est joué ``repeat`` fois, chaque run dans sa propre session ;
    ses contrôles sont évalués, puis le juge d'éval note ses critères.
 
+Un cas de rejeu (J6.3b) rejoue à l'identique, sur l'instance de la variante,
+chaque run de ses journaux — lus **avant** le premier run de l'éval : ceux
+qu'elle exporte ne seront rejoués qu'à la suivante.
+
 Le plafond ``max_cost_usd`` se vérifie **avant** chaque run : un run en cours
-n'est pas coupé, les suivants ne partent pas. Rien de ce qu'une éval écrit
-ne survit à l'instance de la variante, sauf ce que garde ``export``.
+n'est pas coupé, les suivants ne partent pas ; un rejeu ne dépense rien et
+n'y est pas soumis. Rien de ce qu'une éval écrit ne survit à l'instance de la
+variante, sauf ce que garde ``export``.
 """
 
 import asyncio
@@ -32,10 +37,11 @@ from loom_ia.adapters.models import create_model_client
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.config import LoomConfig, Registry, load_config, resolve
 from loom_ia.core.events import Event, ToolCalled, ToolCompleted
-from loom_ia.core.model import DEFAULT_TENANT, TenantId
+from loom_ia.core.model import DEFAULT_TENANT, RunId, TenantId
 from loom_ia.engine import RunContext
 from loom_ia.engine.refs import output_text
 from loom_ia.replay import (
+    IDENTICAL,
     CheckResult,
     Double,
     EvalCase,
@@ -48,10 +54,13 @@ from loom_ia.replay import (
     EvalVariant,
     Outcome,
     ReplayError,
+    ReplayReport,
     ToolUse,
     check,
     isolated,
+    journal_runs,
     judged,
+    read_journal,
     swap_models,
     unjudged,
 )
@@ -87,6 +96,7 @@ async def evaluate(
     played = suite.played_variants()
     chosen_variants = _chosen("variante", [v.name for v in played], variants)
     doubles = _doubles(suite, base, registry)
+    journals = await _journals(suite, chosen_cases)
     judge = _judge(suite, base, environ)
     runs: list[EvalRun] = []
     described: dict[str, Mapping[str, JsonValue]] = {}
@@ -97,13 +107,16 @@ async def evaluate(
             for variant in (v for v in played if v.name in chosen_variants):
                 described[variant.name] = _described(suite, variant)
                 variant_config = _variant_config(suite, base, variant, profile)
-                _check_launch(variant_config, suite, variant)
+                _check_launch(variant_config, suite, variant, chosen_cases)
                 tools = EvalTools(doubles)
                 setup = isolated(variant_config, Path(scratch) / variant.name)
                 shared = registry if variant.config is None else None
                 async with Loom(setup, environ=environ, intercept=tools, registry=shared) as loom:
-                    _check_tools(loom, suite, variant, doubles)
+                    _check_tools(loom, suite, variant, doubles, chosen_cases)
                     for case in (c for c in suite.cases if c.name in chosen_cases):
+                        if case.replay is not None:
+                            runs += await _replayed(loom, suite, case, variant, journals[case.name])
+                            continue
                         for attempt in range(1, suite.repeat + 1):
                             runs.append(
                                 await _play(
@@ -122,6 +135,9 @@ async def evaluate(
         runs=tuple(runs),
         max_cost_usd=suite.max_cost_usd,
         judge_model=suite.judge.model if suite.judge is not None else None,
+        replays=tuple(
+            c.name for c in suite.cases if c.replay is not None and c.name in chosen_cases
+        ),
     )
 
 
@@ -197,15 +213,25 @@ def _variant_config(
         raise EvalError(f"Variante {variant.name} : {exc}") from exc
 
 
-def _check_launch(config: LoomConfig, suite: EvalSuite, variant: EvalVariant) -> None:
-    """L'agent existe dans la config de la variante, et le client de la suite peut le lancer."""
+def _check_launch(
+    config: LoomConfig, suite: EvalSuite, variant: EvalVariant, chosen: set[str]
+) -> None:
+    """L'agent existe dans la config de la variante, et chaque client des cas joués peut le
+    lancer."""
     names = AgentRegistry.from_config(config).names
     if suite.agent not in names:
         raise EvalError(
             f"Variante {variant.name} : l'agent {suite.agent!r} n'est pas dans la config "
             f"(agents : {', '.join(sorted(names)) or 'aucun'})"
         )
-    tenant = suite.tenant or DEFAULT_TENANT
+    played = (c for c in suite.cases if c.replay is None and c.name in chosen)
+    for tenant in dict.fromkeys(suite.tenant_of(c) or DEFAULT_TENANT for c in played):
+        _check_tenant(config, suite, variant, tenant)
+
+
+def _check_tenant(
+    config: LoomConfig, suite: EvalSuite, variant: EvalVariant, tenant: TenantId
+) -> None:
     if not config.tenants:
         if tenant != DEFAULT_TENANT:
             raise EvalError(
@@ -227,13 +253,21 @@ def _check_launch(config: LoomConfig, suite: EvalSuite, variant: EvalVariant) ->
 
 
 def _check_tools(
-    loom: Loom, suite: EvalSuite, variant: EvalVariant, doubles: Mapping[str, Double]
+    loom: Loom,
+    suite: EvalSuite,
+    variant: EvalVariant,
+    doubles: Mapping[str, Double],
+    chosen: set[str],
 ) -> None:
     """Doublures et outils que voit le juge : des outils de l'agent ou de son arbre."""
     judged = suite.judge.tool_results if suite.judge is not None else ()
-    if not doubles and not judged:
+    # Un rejeu monte l'agent avec les clients du journal : ni doublure ni juge à
+    # vérifier, et pas de clé à demander.
+    played = [c for c in suite.cases if c.replay is None and c.name in chosen]
+    if not played or (not doubles and not judged):
         return
-    tenant = suite.tenant
+    # L'arbre des outils, vu par le client du premier cas joué.
+    tenant = suite.tenant_of(played[0])
 
     def context_of(agent: str) -> RunContext:
         return loom.context(agent, tenant)
@@ -278,9 +312,9 @@ async def _play(
     cap = suite.max_cost_usd
     if cap is not None and spent >= cap:
         return replace(played, skipped=CAP_REACHED.format(spent=spent, cap=cap))
-    tenant = suite.tenant
+    tenant = suite.tenant_of(case)
     try:
-        result = await loom.run(suite.agent, case.input, tenant=tenant)
+        result = await loom.run(suite.agent, case.request, tenant=tenant)
     except Exception as exc:
         # Une éval dit ce qui a cassé et continue : le rapport le porte.
         logger.warning("Éval %s/%s : le run n'a pas pu aller au bout", variant.name, case.name)
@@ -294,7 +328,7 @@ async def _play(
     criteria = suite.criteria(case)
     if criteria and judge is not None:
         tool_results = suite.judge.tool_results if suite.judge is not None else ()
-        judgment = await judge.judge(criteria, case.input, outcome, tool_results)
+        judgment = await judge.judge(criteria, case.request, outcome, tool_results)
         judge_cost = judgment.cost_usd
         checks += (
             judged(judgment.scores)
@@ -318,6 +352,116 @@ async def _play(
         active_ms=state.active_ms,
         tools=outcome.tools,
     )
+
+
+# --- Un cas de rejeu (J6.3b) ---------------------------------------------------------
+
+type _Loaded = list[tuple[str, list[Event] | ReplayError]]
+
+
+async def _journals(suite: EvalSuite, chosen: set[str]) -> dict[str, _Loaded]:
+    """Les journaux des cas de rejeu, lus avant le premier run de l'éval.
+
+    Lus d'avance, ils sont rejoués tels qu'ils étaient : ce qu'exporte cette
+    même éval, dans le même dossier, ne le sera qu'à la suivante. Un fichier
+    illisible fait tomber son cas, pas l'éval.
+    """
+    loaded: dict[str, _Loaded] = {}
+    for case in suite.cases:
+        if case.replay is None or case.name not in chosen:
+            continue
+        entries: _Loaded = []
+        for path in await asyncio.to_thread(suite.journals, case):
+            try:
+                events: list[Event] | ReplayError = await asyncio.to_thread(read_journal, path)
+            except ReplayError as error:
+                events = error
+            entries.append((_shown(suite, path), events))
+        loaded[case.name] = entries
+    return loaded
+
+
+def _shown(suite: EvalSuite, path: Path) -> str:
+    base = suite.base_dir
+    if base is not None and path.is_relative_to(base):
+        return str(path.relative_to(base))
+    return str(path)
+
+
+async def _replayed(
+    loom: Loom, suite: EvalSuite, case: EvalCase, variant: EvalVariant, loaded: _Loaded
+) -> list[EvalRun]:
+    """Un cas de rejeu : chaque run de ses journaux, rejoué à l'identique sur cette variante."""
+    if not loaded:
+        return [
+            EvalRun(
+                case=case.name,
+                variant=variant.name,
+                attempt=1,
+                error=f"aucun journal ne correspond à {case.replay}",
+            )
+        ]
+    runs: list[EvalRun] = []
+
+    def played(shown: str, run_id: RunId | None = None, error: str | None = None) -> EvalRun:
+        return EvalRun(
+            case=case.name,
+            variant=variant.name,
+            attempt=len(runs) + 1,
+            journal=shown,
+            run_id=run_id,
+            error=error,
+        )
+
+    for shown, events in loaded:
+        if isinstance(events, ReplayError):
+            runs.append(played(shown, error=str(events)))
+            continue
+        others = sorted({run.agent for run in journal_runs(events)} - {suite.agent})
+        if others:
+            # Un journal d'un autre agent n'éprouve pas celui de la suite.
+            runs.append(
+                played(
+                    shown,
+                    error=f"journal de l'agent {others[0]!r} — la suite évalue {suite.agent!r}",
+                )
+            )
+            continue
+        try:
+            replayed = await loom.replay_journal(events)
+        except ReplayError as exc:
+            runs.append(played(shown, error=str(exc)))
+            continue
+        except Exception as exc:
+            logger.warning("Éval %s/%s : %s ne se rejoue pas", variant.name, case.name, shown)
+            runs.append(played(shown, error=f"{type(exc).__name__}: {exc}"))
+            continue
+        for report in replayed.reports:
+            runs.append(_replay_run(played(shown, run_id=report.run_id), report))
+        for run_id in replayed.unfinished:
+            runs.append(
+                played(
+                    shown,
+                    run_id=run_id,
+                    error="inachevé au journal — un rejeu compare un run fini",
+                )
+            )
+    return runs
+
+
+def _replay_run(run: EvalRun, report: ReplayReport) -> EvalRun:
+    divergence = report.divergence
+    detail = ""
+    if divergence is not None:
+        detail = divergence.where + (f" ; {divergence.detail}" if divergence.detail else "")
+    return replace(
+        run,
+        checks=(CheckResult(IDENTICAL, report.identical, detail, kind="replay"),),
+        divergence=divergence,
+    )
+
+
+# --- Ce qu'un run a rendu ----------------------------------------------------------
 
 
 def _outcome(result: RunResult, events: Sequence[Event], tools: EvalTools) -> Outcome:

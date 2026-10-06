@@ -3,6 +3,7 @@
 
     uv run python examples/j6/evals.py                     # tous les cas
     uv run python examples/j6/evals.py --cas suite
+    uv run python examples/j6/evals.py --cas regression
     uv run --env-file .env --extra anthropic --extra openai \\
         python examples/j6/evals.py --reel
 
@@ -28,6 +29,17 @@ Les fichiers de ``relance/`` ne changent pas.
   il juge les faits, pas seulement la demande. L'envoi est **doublé** : la
   doublure répond à sa place, comme l'outil le ferait, la boîte d'envoi ne
   bouge pas, et l'approbation est accordée par l'éval, puisque rien ne part.
+* **regression** (6.3b) : la non-régression depuis les traces. La même suite,
+  une seule variante et sans juge d'éval, reçoit un **cas de rejeu**
+  (``replay: journaux/*.jsonl``). On enregistre d'abord ses deux cas, chaque
+  run exporté dans ``journaux/`` — ce que fait ``loom eval suite.yaml
+  --export journaux/``. Puis le cas de rejeu est joué : avec la même config,
+  chaque run se rejoue à l'identique, servi par son journal, par une instance
+  qui n'a **aucune clé d'API** ; après une consigne ajoutée au prompt système
+  de l'agent, chaque run s'écarte dès le premier appel de modèle, et le rapport
+  dit que c'est le prompt système. ``assert_replays``, du kit de test, fait le
+  même contrôle dans un test. En ``--reel``, les journaux sont ceux de vrais
+  modèles, et leur rejeu n'en appelle aucun.
 """
 
 import argparse
@@ -50,9 +62,15 @@ from loom_ia.config.models import ArtifactsStorage, IdempotencyStorage
 from loom_ia.core.events import ApprovalGranted, Event
 from loom_ia.replay import EvalError, EvalReport, render_eval
 from loom_ia.runtime import apply_logging
+from loom_ia.testing import assert_replays
 
 J4 = Path(__file__).parent.parent / "j4"
-CAS = ("suite",)
+CAS = ("suite", "regression")
+# Le cas de rejeu de la suite de non-régression, et ses journaux.
+REJEU = "regression"
+JOURNAUX = "journaux/*.jsonl"
+# La retouche du prompt système que la non-régression doit voir.
+CONSIGNE = " Réponds en trois phrases au plus."
 DOUBLURE = "faux_envoi"
 SANS_ENVOI = "FAKE_MAIN_SANS_ENVOI"
 JUGE_EVAL = "FAKE_JUGE_EVAL"
@@ -462,12 +480,200 @@ def _journal(path: Path) -> list[Event]:
     return [Event.model_validate_json(ligne) for ligne in path.read_text().splitlines()]
 
 
+# --- Non-régression depuis les traces (6.3b) ------------------------------------------------
+
+
+def la_suite_rejouee(acces: Any, *, reel: bool) -> dict[str, Any]:
+    """La suite de la relance — une variante, sans juge d'éval — et un cas qui rejoue ses
+    journaux."""
+    decrite = {k: v for k, v in la_suite(acces, reel=reel).items() if k != "judge"}
+    return {
+        **decrite,
+        "variants": decrite["variants"][:1],
+        "cases": [*decrite["cases"], {"name": REJEU, "replay": JOURNAUX}],
+    }
+
+
+def allongee(config: LoomConfig, agent: str) -> LoomConfig:
+    """La config, le prompt système de l'agent suivi de ``CONSIGNE``."""
+    spec = next(spec for spec in config.agents if spec.name == agent)
+    main = spec.main
+    texte = main.system_file.read_text(encoding="utf-8") if main.system_file else main.system
+    main = main.model_copy(update={"system": texte + CONSIGNE, "system_file": None})
+    retouche = spec.model_copy(update={"main": main})
+    agents = tuple(retouche if autre is spec else autre for autre in config.agents)
+    return config.model_copy(update={"agents": agents})
+
+
+async def evalue(
+    config: LoomConfig,
+    acces: Any,
+    fichier: Path,
+    environ: dict[str, str] | None,
+    cas: list[str],
+    export: Path | None = None,
+) -> tuple[EvalReport, int]:
+    """La suite jouée par une instance de ``config`` ; et combien de sessions son journal a
+    reçues."""
+    async with Loom(config, environ=environ) as loom:
+        loom.register(acces.ENVOI, acces.envoyer_email)
+        loom.register(DOUBLURE, faux_envoi)
+        report = await loom.evaluate(fichier, cases=cas, export=export)
+        return report, len(await loom.sessions())
+
+
+def rejoues(report: EvalReport) -> list[Any]:
+    return [run for run in report.runs if run.case == REJEU]
+
+
+async def regression(args: argparse.Namespace, controle: Controle) -> None:
+    acces = _acces()
+    config, agent = acces.adjusted(load_config(acces.CONFIG), reel=args.reel)
+    print(f"  config : {shown(acces.CONFIG)}, réglée comme {shown(J4 / 'acces.py')}")
+    print(f"  agent  : {agent}")
+    with tempfile.TemporaryDirectory(prefix="loom-regression-") as dossier:
+        racine = Path(dossier)
+        config = deplacee(config, racine)
+        if not args.reel:
+            config = scripte(config, acces)
+        decrite = la_suite_rejouee(acces, reel=args.reel)
+        joues = [cas["name"] for cas in decrite["cases"] if "input" in cas]
+        fichier = racine / "suite.yaml"
+        fichier.write_text(yaml.safe_dump(decrite, allow_unicode=True, sort_keys=False))
+        titre(f"La suite : {len(joues)} cas à enregistrer, et {REJEU} qui rejoue leurs journaux")
+        for ligne in fichier.read_text().splitlines():
+            print(f"  {ligne}")
+        boite = len(acces.BOITE)
+
+        titre(f"Enregistrer : {', '.join(joues)}, chaque run exporté dans journaux/")
+        journaux = racine / "journaux"
+        try:
+            # En simulé, aucune clé : l'éval n'appelle que des modèles scriptés.
+            environ = None if args.reel else sans_cles(config)
+            enregistre, _ = await evalue(config, acces, fichier, environ, joues, journaux)
+        except EvalError as erreur:
+            print(f"  éval impossible : {erreur}")
+            controle.tient(f"regression : enregistrement impossible — {erreur}", False)
+            return
+        print("\n".join(f"  {ligne}" for ligne in render_eval(enregistre)))
+        fichiers = sorted(journaux.glob("*.jsonl"))
+        allees = [r for r in enregistre.runs if r.run_id is not None and r.error is None]
+        print(
+            f"\n  chaque run joué laisse son journal ({len(fichiers)} fichier(s) pour "
+            f"{len(allees)} run(s)) : "
+            + controle.tient(
+                "regression : un run joué n'a pas laissé son journal",
+                bool(fichiers) and len(fichiers) == len(allees),
+            )
+        )
+        if not fichiers:
+            controle.saute("regression (aucun journal enregistré : rien à rejouer)", partie=True)
+            return
+
+        titre(f"Rejouer {REJEU} avec la même config, par une instance sans aucune clé d'API")
+        meme, sessions = await evalue(config, acces, fichier, sans_cles(config), [REJEU])
+        print("\n".join(f"  {ligne}" for ligne in render_eval(meme)))
+        runs = rejoues(meme)
+        print(
+            f"\n  chaque journal est rejoué ({len(runs)} run(s) pour {len(fichiers)} "
+            "journal(aux)) : "
+            + controle.tient(
+                "regression : un journal n'a pas été rejoué",
+                {r.journal for r in runs} == {f"journaux/{f.name}" for f in fichiers}
+                and len(runs) == len(fichiers),
+            )
+        )
+        print(
+            "  chacun à l'identique, servi par son journal — aucun modèle appelé : "
+            + controle.tient(
+                "regression : un run ne se rejoue pas avec la même config",
+                all(r.passed for r in runs),
+            )
+        )
+        print(
+            f"  rien n'est écrit dans le journal de l'instance ({sessions} session(s)) : "
+            + controle.tient("regression : le rejeu a écrit dans le journal", sessions == 0)
+        )
+
+        titre(f"Rejouer {REJEU} après une consigne ajoutée au prompt système")
+        retouchee = allongee(config, agent)
+        print(f"  prompt système de {agent}, suivi de : « {CONSIGNE.strip()} »\n")
+        ecart, _ = await evalue(retouchee, acces, fichier, sans_cles(retouchee), [REJEU])
+        print("\n".join(f"  {ligne}" for ligne in render_eval(ecart)))
+        runs = rejoues(ecart)
+        au_prompt = [
+            r
+            for r in runs
+            if r.divergence is not None
+            and r.divergence.kind == "model"
+            and r.divergence.rank == 1
+            and r.divergence.parts == ("system",)
+        ]
+        print(
+            "\n  chaque run s'écarte dès le premier appel de modèle, et seulement par le prompt "
+            f"système ({len(au_prompt)} run(s) sur {len(runs)}) : "
+            + controle.tient(
+                "regression : la retouche du prompt n'est pas vue, ou pas là où elle est",
+                bool(runs) and len(au_prompt) == len(runs) == len(fichiers),
+            )
+        )
+
+        titre("Le même garde-fou dans un test : assert_replays")
+        outils = {acces.ENVOI: acces.envoyer_email}
+        await _assert(config, fichiers, outils, racine, controle, leve=False)
+        await _assert(retouchee, fichiers, outils, racine, controle, leve=True)
+        print(
+            f"\n  la boîte d'envoi n'a pas bougé ({boite} avant, {len(acces.BOITE)} après) : "
+            + controle.tient("regression : un e-mail est parti", len(acces.BOITE) == boite)
+        )
+
+
+async def _assert(
+    config: LoomConfig,
+    fichiers: list[Path],
+    outils: dict[str, Any],
+    racine: Path,
+    controle: Controle,
+    *,
+    leve: bool,
+) -> None:
+    """``assert_replays`` sur les journaux : il doit passer (même config) ou lever (retouchée)."""
+    quoi = "config retouchée" if leve else "même config"
+    try:
+        await assert_replays(config, *fichiers, register=outils, environ=sans_cles(config))
+    except AssertionError as erreur:
+        message = str(erreur)
+        print(f"  {quoi} : AssertionError")
+        # Le dossier temporaire, à l'affichage seulement : le contrôle lit le message entier.
+        for ligne in message.replace(f"{racine}/", "").splitlines():
+            marge = " " * (len(ligne) - len(ligne.lstrip()))
+            enonce(f"    {marge}", ligne.lstrip())
+        nommes = all(fichier.name in message for fichier in fichiers)
+        print(
+            f"  {quoi} : il lève, et nomme chaque journal ({len(fichiers)}) : "
+            + controle.tient(
+                f"regression : assert_replays, {quoi}, ne devait pas lever"
+                if not leve
+                else "regression : assert_replays ne nomme pas chaque journal",
+                leve and nommes,
+            )
+        )
+        return
+    print(
+        f"  {quoi} : {'il passe' if not leve else 'il passe, alors que le prompt a changé'} : "
+        + controle.tient(f"regression : assert_replays, {quoi}, devait lever", not leve)
+    )
+
+
 # --- Lancement --------------------------------------------------------------------------
 
 
 async def jouer(nom: str, args: argparse.Namespace, controle: Controle) -> None:
     print(f"\n{'─' * 78}\nCas {nom}\n{'─' * 78}")
-    await suite(args, controle)
+    if nom == "suite":
+        await suite(args, controle)
+    else:
+        await regression(args, controle)
 
 
 async def main(argv: list[str]) -> int:

@@ -95,6 +95,8 @@ class Divergence:
     parts: tuple[str, ...] = ()
     expected_hash: str | None = None
     actual_hash: str | None = None
+    # Rang de l'appel de modèle qui diverge, à partir de 1 (appel de modèle).
+    rank: int | None = None
 
 
 @dataclass
@@ -276,6 +278,7 @@ class ReplayBook:
                 where=f"appel de modèle n°{rank} : le run d'origine n'a pas fait cet appel",
                 detail=f"{len(self.responses)} appel(s) au journal, tous déjà rejoués",
                 actual_hash=digest,
+                rank=rank,
             )
         expected = pending[0]
         role = expected.role or "main"
@@ -310,6 +313,7 @@ class ReplayBook:
             parts=changed,
             expected_hash=expected.payload.request_hash,
             actual_hash=digest,
+            rank=rank,
         )
 
     # --- Outils -------------------------------------------------------------

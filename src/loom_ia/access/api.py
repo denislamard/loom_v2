@@ -146,6 +146,8 @@ from loom_ia.replay import (
     Double,
     EvalReport,
     EvalSuite,
+    JournalReplay,
+    JournalRun,
     JournalTools,
     ReplayBook,
     ReplayError,
@@ -154,7 +156,9 @@ from loom_ia.replay import (
     ReplayReport,
     VariantModelClient,
     VariantTools,
+    journal_runs,
     load_suite,
+    read_journal,
     replay_run,
     swap_models,
 )
@@ -750,6 +754,15 @@ def doubles_problem(
     return None
 
 
+def _check_mode(
+    mode: ReplayMode, models: Mapping[str, str] | None, doubles: Mapping[str, Double] | None
+) -> None:
+    if mode == "exact" and (models or doubles):
+        raise ReplayError(
+            "Rejeu identique : 'models' et 'doubles' ne servent qu'en variante (mode='variant')"
+        )
+
+
 def _no_subagent(agent: str) -> RunContext:
     """Au rejeu identique, un sous-agent est servi par le journal : il n'est jamais monté."""
     raise ReplayError(f"Rejeu : le sous-agent {agent!r} ne se relance pas, il se relit")
@@ -1286,13 +1299,99 @@ class Loom:
 
         Rien n'est écrit dans le journal ; ``export`` garde celui du rejeu en JSONL.
         """
-        if mode == "exact" and (models or doubles):
-            raise ReplayError(
-                "Rejeu identique : 'models' et 'doubles' ne servent qu'en variante (mode='variant')"
-            )
+        _check_mode(mode, models, doubles)
         tenant = self._tenants.get(tenant_id)
         session = session_id or SessionId(run_id)
         events = await self._store.read(tenant.id, session)
+        return await self._replay_events(
+            events, run_id, tenant, mode=mode, models=models, doubles=doubles, export=export
+        )
+
+    async def replay_journal(
+        self,
+        journal: Path | str | Sequence[Event],
+        *,
+        run_id: RunId | None = None,
+        mode: ReplayMode = "exact",
+        models: Mapping[str, str] | None = None,
+        doubles: Mapping[str, Double] | None = None,
+        export: Path | None = None,
+    ) -> JournalReplay:
+        """Rejoue les runs d'un journal JSONL, fichier ou événements déjà lus (J6.3b).
+
+        Le journal est celui qu'écrivent ``loom sessions export``, ``loom eval
+        --export`` ou ``loom replay --export`` : il n'a pas à être dans le
+        journal de l'instance. Chaque run racine fini est rejoué comme
+        ``replay`` le ferait — à l'identique par défaut —, avec la config de
+        l'instance et celle de son client, nommé par le journal ; ``run_id``
+        n'en rejoue qu'un. Un run inachevé n'est pas rejoué : le rapport le
+        nomme. ``export`` garde le journal d'un rejeu, donc d'un seul run.
+
+        ``ReplayError`` si le journal ne se lit pas, ne donne aucun run fini à
+        rejouer, ou si l'un de ses runs ne peut pas l'être (client ou agent
+        absents de la config) : le message nomme le run.
+        """
+        _check_mode(mode, models, doubles)
+        if isinstance(journal, (Path, str)):
+            path: Path | None = Path(journal)
+            events = await asyncio.to_thread(read_journal, Path(journal))
+        else:
+            path, events = None, list(journal)
+        said = f"le journal {path}" if path is not None else "le journal"
+        runs = journal_runs(events)
+        if run_id is not None:
+            found = next((e for e in events if e.run_id == run_id), None)
+            if found is None:
+                raise ReplayError(f"Run {run_id} introuvable dans {said}")
+            # ``replay_run`` dit pourquoi un sous-run, un run système ou un
+            # run inachevé ne se rejoue pas.
+            runs = [JournalRun(found.tenant_id, found.session_id, run_id, found.agent or "", True)]
+        finished = [run for run in runs if run.finished]
+        unfinished = tuple(run.run_id for run in runs if not run.finished)
+        if not finished:
+            raise ReplayError(
+                f"Rien à rejouer dans {said} : aucun run fini"
+                + (f" ({len(unfinished)} inachevé(s))" if unfinished else "")
+            )
+        if export is not None and len(finished) > 1:
+            raise ReplayError(
+                f"'export' garde le journal d'un rejeu : {said} a {len(finished)} runs à "
+                "rejouer, en nommer un (run_id)"
+            )
+        reports: list[ReplayReport] = []
+        for run in finished:
+            try:
+                tenant = self._tenants.get(run.tenant_id)
+            except UnknownTenant as exc:
+                raise ReplayError(f"Run {run.run_id} de {said} : {exc.args[0]}") from exc
+            session = [
+                e for e in events if e.tenant_id == run.tenant_id and e.session_id == run.session_id
+            ]
+            reports.append(
+                await self._replay_events(
+                    session,
+                    run.run_id,
+                    tenant,
+                    mode=mode,
+                    models=models,
+                    doubles=doubles,
+                    export=export,
+                )
+            )
+        return JournalReplay(journal=path, reports=tuple(reports), unfinished=unfinished)
+
+    async def _replay_events(
+        self,
+        events: Sequence[Event],
+        run_id: RunId,
+        tenant: Tenant,
+        *,
+        mode: ReplayMode,
+        models: Mapping[str, str] | None,
+        doubles: Mapping[str, Double] | None,
+        export: Path | None,
+    ) -> ReplayReport:
+        """Rejoue le run ``run_id`` des événements de sa session, pour ce client."""
         mounts: list[_ReplayMount] = []
 
         def context_for(

@@ -6,6 +6,7 @@
                                    ``--attach photo.jpg`` pour joindre une image)
     loom resume <run_id>           reprend un run interrompu
     loom replay <run_id>           rejoue un run, à l'identique ou en variante
+                                   (``--journal F`` : les runs d'un journal exporté)
     loom inspect <run_id>          relit un run : son arbre, sa réponse, son bilan
     loom eval suite.yaml           joue une suite d'évals, variante par variante
     loom approve <run_id>          autorise ce que le run attend, et le reprend
@@ -85,6 +86,7 @@ from loom_ia.replay import (
     Comparison,
     Double,
     EvalError,
+    JournalReplay,
     ReplayError,
     ReplayReport,
     RunSide,
@@ -205,8 +207,16 @@ def build_parser() -> argparse.ArgumentParser:
             "et dit où il s'écarte",
         )
     )
-    replay.add_argument("run_id")
+    replay.add_argument("run_id", nargs="?", default=None)
     replay.add_argument("--session", type=str, default=None, help="journal du run")
+    replay.add_argument(
+        "--journal",
+        type=Path,
+        default=None,
+        metavar="FICHIER",
+        help="rejoue depuis un journal JSONL exporté (sessions export, eval --export), "
+        "hors du journal de la config ; sans run_id, chacun de ses runs finis",
+    )
     replay.add_argument(
         "--mode",
         choices=("exact", "variant"),
@@ -788,12 +798,21 @@ def cmd_replay(args: argparse.Namespace) -> int:
     Le code de sortie fait de la commande un garde-fou : une config qui ne
     reproduit plus un run de référence se voit en CI, sans lire la sortie. En
     variante, s'écarter est le but : le code dit seulement si la variante est
-    allée au bout (0) ou a échoué (1).
+    allée au bout (0) ou a échoué (1). Avec ``--journal`` (J6.3b), chaque run
+    fini du fichier est rejoué ; un seul qui diverge, ou un run inachevé,
+    rend 1.
     """
     config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     session = SessionId(args.session) if args.session else None
     try:
+        if args.journal is None and args.run_id is None:
+            raise ReplayError("nommer le run à rejouer, ou le journal (--journal FICHIER)")
+        if args.journal is not None and (args.session or args.tenant):
+            raise ReplayError(
+                "--session et --tenant ne servent pas avec --journal : le journal porte la "
+                "session et le client de chaque run"
+            )
         models = _pairs(args.model, "--model", "ETAPE=MODELE")
         references = _pairs(args.double, "--double", "OUTIL=REF")
         registry = load_registry(config)
@@ -806,6 +825,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
     except (ReplayError, ConfigError) as error:
         print(f"Rejeu impossible : {error}", file=sys.stderr)
         return REFUSED
+    if args.journal is not None:
+        return _replay_journal(args, config, models, doubles)
 
     async def go() -> ReplayReport:
         async with Loom(config) as loom:
@@ -827,8 +848,56 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(report.as_json(), ensure_ascii=False, indent=2))
         return _replay_code(report)
+    return _print_replay(report, args.export)
+
+
+def _replay_journal(
+    args: argparse.Namespace,
+    config: LoomConfig,
+    models: dict[str, str],
+    doubles: dict[str, Double],
+) -> int:
+    """``loom replay --journal`` : les runs d'un fichier, l'un après l'autre, puis le bilan."""
+
+    async def go() -> JournalReplay:
+        async with Loom(config) as loom:
+            return await loom.replay_journal(
+                args.journal,
+                run_id=RunId(args.run_id) if args.run_id else None,
+                mode=args.mode,
+                models=models,
+                doubles=doubles,
+                export=args.export,
+            )
+
+    try:
+        replayed = asyncio.run(go())
+    except ReplayError as error:
+        print(f"Rejeu impossible : {error}", file=sys.stderr)
+        return REFUSED
+    codes = [_replay_code(report) for report in replayed.reports]
+    code = FAILED if replayed.unfinished or FAILED in codes else OK
+    if args.json:
+        print(json.dumps(replayed.as_json(), ensure_ascii=False, indent=2))
+        return code
+    print(f"Journal    : {args.journal} — {len(replayed.reports)} run(s) à rejouer")
+    for report in replayed.reports:
+        print()
+        _print_replay(report, args.export)
+    for run_id in replayed.unfinished:
+        print(f"\nNon rejoué : run {run_id}, inachevé au journal — un rejeu compare un run fini")
+    said = "identique(s)" if args.mode == "exact" else "allé(s) au bout"
+    print(
+        f"\nBilan      : {codes.count(OK)}/{len(codes)} run(s) {said}"
+        + (f", {len(replayed.unfinished)} inachevé(s) non rejoué(s)" if replayed.unfinished else "")
+    )
+    return code
+
+
+def _print_replay(report: ReplayReport, export: Path | None) -> int:
+    """Le rapport d'un rejeu, en texte ; rend son code de sortie."""
     if report.comparison is not None:
-        _print_variant(report, report.comparison, args.export)
+        _print_variant(report, report.comparison, export)
         return _replay_code(report)
     print(f"Run        : {report.run_id} (agent {report.agent}, client {report.tenant_id})")
     print(f"Session    : {report.session_id}")
@@ -841,8 +910,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
         f"Outils     : {report.tool_calls[0]} résultat(s) au journal (rôles à part), "
         f"{report.tool_calls[1]} servi(s) au rejeu"
     )
-    if args.export is not None:
-        print(f"Journal    : {args.export} ({len(report.events)} événement(s))")
+    if export is not None:
+        print(f"Journal    : {export} ({len(report.events)} événement(s))")
     divergence = report.divergence
     if divergence is None:
         print("Identique  : le run se rejoue tel qu'il a été, appel par appel.")

@@ -18,6 +18,14 @@ Deux sortes d'attendus :
   qu'il coûte est compté à part. Les juges propres à l'agent, eux, tournent
   dans le run comme configurés.
 
+Un cas peut aussi **rejouer des journaux** (``replay: journaux/*.jsonl``,
+J6.3b) : chaque run fini de chaque fichier est rejoué à l'identique avec la
+config de chaque variante, sans appeler personne, et passe s'il se rejoue tel
+quel ; sinon le rapport dit où il s'écarte. Un tel cas n'a ni attendus ni
+critères, n'est pas répété, ne dépense rien. Les journaux s'enregistrent avec
+``loom eval suite.yaml --export journaux/`` ; un motif sans fichier fait
+tomber le cas.
+
 Le monde, pendant une éval (décision du 06/10) : un outil à **effets de
 bord** n'est **jamais** exécuté — sa doublure (``doubles``) répond à sa place,
 sinon le modèle reçoit une erreur qui le dit. Les autres outils s'exécutent ;
@@ -30,6 +38,7 @@ Ce module décrit la suite, sert les outils et juge les résultats ; la façade
 quotas et des plafonds de période des clients (``isolated``) — et joue les cas.
 """
 
+import glob
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -37,7 +46,7 @@ from contextlib import aclosing
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Final, Literal, Self, cast
+from typing import Annotated, Final, Literal, Self, cast
 
 import yaml
 from pydantic import (
@@ -88,6 +97,7 @@ from loom_ia.engine import (
     tagged,
 )
 from loom_ia.guards import JUDGE_SYSTEM, verdict_scores, verdict_tool
+from loom_ia.replay.book import Divergence
 from loom_ia.replay.variant import Double, doubled
 
 # Un nom de cas ou de variante sert aussi de nom de fichier (``--export``).
@@ -101,6 +111,8 @@ REFUSED: Final = (
     "donne pas de doublure ; il n'est jamais exécuté pendant une éval."
 )
 NOBODY: Final = "éval : cet appel s'exécuterait pour de vrai, et personne n'est là pour l'approuver"
+# Le contrôle d'un run rejoué (J6.3b).
+IDENTICAL: Final = "se rejoue à l'identique"
 
 # Ce que devient un appel d'outil pendant une éval.
 type EvalFate = Literal["double", "refused", "run"]
@@ -180,12 +192,43 @@ class Expect(DomainModel):
 
 
 class EvalCase(DomainModel):
-    """Une demande, et ce qu'on attend du run qu'elle lance."""
+    """Une demande et ce qu'on attend du run qu'elle lance — ou des journaux à rejouer."""
 
     name: str = Field(pattern=NAME_PATTERN)
-    input: str = Field(min_length=1)
+    input: Annotated[str, Field(min_length=1)] | None = None
+    # Non-régression (J6.3b) : motif des journaux dont chaque run doit se
+    # rejouer à l'identique, relatif à la suite (``journaux/*.jsonl``).
+    replay: Annotated[str, Field(min_length=1)] | None = None
+    # Client au nom duquel le cas est joué ; à défaut, celui de la suite.
+    tenant: TenantId | None = None
     expect: Expect = Expect()
     criteria: tuple[EvalCriterion, ...] = ()
+
+    @model_validator(mode="after")
+    def _kind(self) -> Self:
+        if self.input is None and self.replay is None:
+            raise ValueError(
+                f"cas {self.name!r} : ni demande ('input') ni journaux à rejouer ('replay')"
+            )
+        if self.input is not None and self.replay is not None:
+            raise ValueError(
+                f"cas {self.name!r} : une demande ('input') ou des journaux à rejouer "
+                "('replay'), pas les deux"
+            )
+        if self.replay is not None and (self.expect.count or self.criteria or self.tenant):
+            raise ValueError(
+                f"cas {self.name!r} : un cas de rejeu n'a ni attendus, ni critères, ni client — "
+                "il passe si chaque run de ses journaux se rejoue à l'identique, au nom du "
+                "client que le journal porte"
+            )
+        return self
+
+    @property
+    def request(self) -> str:
+        """La demande du cas ; un cas de rejeu n'en a pas."""
+        if self.input is None:
+            raise EvalError(f"cas {self.name!r} : un cas de rejeu n'a pas de demande")
+        return self.input
 
 
 class EvalVariant(DomainModel):
@@ -243,6 +286,8 @@ class EvalSuite(DomainModel):
         common = self.judge.criteria if self.judge is not None else ()
         _unique("critère du juge", [c.name for c in common])
         for case in self.cases:
+            if case.replay is not None:
+                continue
             if case.expect.count == 0 and not case.criteria and not common:
                 raise ValueError(
                     f"cas {case.name!r} : aucun attendu — un cas sans contrôle ni critère "
@@ -261,9 +306,24 @@ class EvalSuite(DomainModel):
         return self.name or "suite"
 
     def criteria(self, case: EvalCase) -> tuple[Criterion, ...]:
-        """Critères notés pour ce cas : ceux du juge, puis les siens."""
+        """Critères notés pour ce cas : ceux du juge, puis les siens ; aucun pour un rejeu."""
+        if case.replay is not None:
+            return ()
         common = self.judge.criteria if self.judge is not None else ()
         return tuple(c.criterion for c in (*common, *case.criteria))
+
+    def tenant_of(self, case: EvalCase) -> TenantId | None:
+        return case.tenant or self.tenant
+
+    def journals(self, case: EvalCase) -> list[Path]:
+        """Les journaux d'un cas de rejeu, triés ; son motif est relatif à la suite."""
+        if case.replay is None:
+            return []
+        pattern = Path(case.replay)
+        if not pattern.is_absolute() and self.base_dir is not None:
+            pattern = self.base_dir / pattern
+        found = (Path(name) for name in glob.glob(str(pattern), recursive=True))
+        return sorted(path for path in found if path.is_file())
 
     def played_variants(self) -> tuple[EvalVariant, ...]:
         return self.variants or (EvalVariant(name=BASE_VARIANT),)
@@ -443,7 +503,7 @@ class Outcome:
     tools: tuple[ToolUse, ...] = ()
 
 
-type CheckKind = Literal["status", "text", "field", "tool", "judge"]
+type CheckKind = Literal["status", "text", "field", "tool", "judge", "replay"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -698,6 +758,10 @@ class EvalRun:
     error: str | None = None
     # Non joué (plafond de dépense atteint) : pourquoi.
     skipped: str | None = None
+    # Cas de rejeu (J6.3b) : le journal du run, rapporté à la suite, et là où
+    # le rejeu s'en écarte.
+    journal: str | None = None
+    divergence: Divergence | None = None
 
     @property
     def passed(self) -> bool:
@@ -727,6 +791,16 @@ class EvalRun:
             ],
             "error": self.error,
             "skipped": self.skipped,
+            "journal": self.journal,
+            "divergence": None
+            if self.divergence is None
+            else {
+                "kind": self.divergence.kind,
+                "where": self.divergence.where,
+                "detail": self.divergence.detail,
+                "parts": list(self.divergence.parts),
+                "rank": self.divergence.rank,
+            },
         }
 
 
@@ -759,6 +833,8 @@ class EvalReport:
     runs: tuple[EvalRun, ...]
     max_cost_usd: float | None = None
     judge_model: str | None = None
+    # Cas de rejeu (J6.3b) : leurs runs viennent de leurs journaux.
+    replays: tuple[str, ...] = ()
 
     @property
     def passed(self) -> bool:
@@ -796,6 +872,7 @@ class EvalReport:
             "spent_usd": self.spent_usd,
             "max_cost_usd": self.max_cost_usd,
             "judge_model": self.judge_model,
+            "replays": list(self.replays),
             "variants": {
                 name: {
                     **dict(described),
@@ -840,7 +917,7 @@ def render_eval(report: EvalReport) -> list[str]:
         ]
         for case in report.cases:
             runs = [r for r in report.runs if r.variant == name and r.case == case]
-            lines += _case(case, runs)
+            lines += _replayed(case, runs) if case in report.replays else _case(case, runs)
     played = [r for r in report.runs if r.skipped is None]
     lines += [
         "",
@@ -897,4 +974,33 @@ def _case(case: str, runs: Sequence[EvalRun]) -> list[str]:
             text = run.text or "(vide)"
             lines.append(f"{pad}{_INDENT}texte :")
             lines += [f"{pad}{_INDENT * 2}{line}" for line in text.splitlines() or [""]]
+    return lines
+
+
+def _replayed(case: str, runs: Sequence[EvalRun]) -> list[str]:
+    """Un cas de rejeu : combien de runs se rejouent à l'identique, et où les autres s'écartent."""
+    replayed = [r for r in runs if r.run_id is not None and r.error is None]
+    passed = sum(1 for r in replayed if r.passed)
+    mark = "ok       " if runs and all(r.passed for r in runs) else "ÉCHEC    "
+    missed = len(runs) - len(replayed)
+    lines = [
+        f"{_INDENT}{mark}{case} ({passed}/{len(replayed)} run(s) rejoué(s) à l'identique"
+        + (f", {missed} non rejoué(s)" if missed else "")
+        + ")"
+    ]
+    pad = _INDENT * 3
+    for run in runs:
+        if run.passed:
+            continue
+        named = (run.journal, None if run.run_id is None else f"run {run.run_id}")
+        where = ", ".join(part for part in named if part)
+        if run.error is not None:
+            lines.append(f"{pad}{where + ' : ' if where else ''}{run.error}")
+            continue
+        lines.append(f"{pad}{where} :")
+        lines += [
+            f"{pad}{_INDENT}✗ {c.label}" + (f" — {c.detail}" if c.detail else "")
+            for c in run.checks
+            if not c.passed
+        ]
     return lines

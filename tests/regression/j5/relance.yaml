@@ -1,0 +1,32 @@
+# Corpus de non-régression (J6.3b) : l'agent relance de examples/j5/relance, ses deux
+# clients, modèles simulés. Chaque journal de journaux/ doit se rejouer à l'identique
+# (tests/regression/test_regression.py), au nom du client qu'il porte.
+# Réenregistrer, après un changement voulu, et relire le diff :
+#   uv run loom eval tests/regression/j5/relance.yaml --export tests/regression/j5/journaux/
+config: ../../../examples/j5/relance/loom.yaml
+agent: relance
+cases:
+  - name: dupont
+    tenant: dupont-plomberie
+    input: Relance le client du devis D-2026-042, sur un ton cordial.
+    expect:
+      status: completed
+      contains: [D-2026-042, Plomberie Dupont]
+      called: [{name: chercher_devis, arguments: {numero: D-2026-042}}, rediger_relance]
+  # Le carnet de Martin n'a pas de modèle de rôle à lui : son rôle est FAKE_ROLE_BREF.
+  - name: martin
+    tenant: martin-chauffage
+    input: Relance le client du devis D-2026-117, sur un ton cordial.
+    expect:
+      status: completed
+      contains: [D-2026-117, Chauffage Martin]
+      called: [{name: chercher_devis, arguments: {numero: D-2026-117}}, rediger_relance]
+  # Le devis de Dupont, demandé au nom de Martin : l'outil ne sert que son carnet.
+  - name: martin-egare
+    tenant: martin-chauffage
+    input: Relance le client du devis D-2026-042, sur un ton cordial.
+    expect:
+      status: completed
+      contains: [ne figure pas]
+      called: [{name: chercher_devis, arguments: {numero: D-2026-042}}]
+      not_called: [rediger_relance]

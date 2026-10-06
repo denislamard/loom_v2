@@ -17,6 +17,12 @@ Ce qui s'éprouve ici :
   clients ; ``export`` garde un journal par run ; le plafond de dépense arrête
   les runs suivants ;
 - ``loom eval`` : 0, 1 ou 2, ``--json``, ``--case``.
+
+Et la non-régression (J6.3b) : un cas de rejeu rejoue à l'identique chaque run
+de ses journaux, avec la config de chaque variante — il passe s'ils se
+rejouent, il dit où ils s'écartent sinon ; ses journaux sont lus avant le
+premier run ; un fichier illisible, un run inachevé ou d'un autre agent, un
+motif sans fichier le font tomber. Un cas peut être joué au nom de son client.
 """
 
 import asyncio
@@ -33,6 +39,7 @@ import yaml
 from loom_ia.access import Loom
 from loom_ia.access.cli import main as cli_main
 from loom_ia.access.evals import evaluate
+from loom_ia.adapters.models import ModelConfigError
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import ApprovalGranted, Event, ToolCompleted
 from loom_ia.core.model import (
@@ -45,6 +52,7 @@ from loom_ia.core.model import (
     RunStatus,
 )
 from loom_ia.replay import (
+    IDENTICAL,
     EvalCriterion,
     EvalError,
     EvalJudgeClient,
@@ -314,6 +322,28 @@ def test_a_suite_is_read_relative_to_its_file(labo: Path) -> None:
         ),
         ({"cases": []}, "cases"),
         ({"cases": [{"name": "a b", "input": "?", "expect": {"status": "completed"}}]}, "name"),
+        ({"cases": [{"name": "c"}]}, "ni demande ('input') ni journaux à rejouer"),
+        (
+            {"cases": [{"name": "c", "input": "?", "replay": "j/*.jsonl"}]},
+            "pas les deux",
+        ),
+        (
+            {"cases": [{"name": "c", "replay": "j/*.jsonl", "expect": {"status": "completed"}}]},
+            "un cas de rejeu n'a ni attendus",
+        ),
+        (
+            {"cases": [{"name": "c", "replay": "j/*.jsonl", "tenant": "dupont"}]},
+            "un cas de rejeu n'a ni attendus, ni critères, ni client",
+        ),
+        (
+            {
+                "judge": {"model": "JUGE"},
+                "cases": [
+                    {"name": "c", "replay": "j/*.jsonl", "criteria": [{"name": "x", "rule": "r"}]}
+                ],
+            },
+            "un cas de rejeu n'a ni attendus, ni critères",
+        ),
     ],
 )
 def test_a_suite_refuses_what_would_prove_nothing(
@@ -323,6 +353,31 @@ def test_a_suite_refuses_what_would_prove_nothing(
     with pytest.raises(ConfigError, match=r"suite\.yaml") as refus:
         load_suite(path)
     assert message in str(refus.value)
+
+
+def test_a_replay_pattern_is_relative_to_the_suite(tmp_path: Path) -> None:
+    journaux = tmp_path / "journaux"
+    (journaux / "vieux").mkdir(parents=True)
+    for name in ("b.jsonl", "a.jsonl", "vieux/c.jsonl", "notes.txt"):
+        (journaux / name).write_text("", encoding="utf-8")
+    (journaux / "dossier.jsonl").mkdir()
+    lue = EvalSuite.model_validate(
+        {
+            "agent": "demo",
+            "base_dir": tmp_path,
+            "cases": [
+                {"name": "r", "replay": "journaux/**/*.jsonl"},
+                {"name": "s", "replay": str(journaux / "*.jsonl")},
+            ],
+        }
+    )
+    relatif, absolu = lue.cases
+    assert [p.relative_to(tmp_path).as_posix() for p in lue.journals(relatif)] == [
+        "journaux/a.jsonl",
+        "journaux/b.jsonl",
+        "journaux/vieux/c.jsonl",
+    ]
+    assert [p.name for p in lue.journals(absolu)] == ["a.jsonl", "b.jsonl"]
 
 
 def test_a_suite_file_must_be_an_object(tmp_path: Path) -> None:
@@ -772,6 +827,162 @@ async def test_an_instance_lends_what_it_registered(labo: Path) -> None:
     [run] = report.runs
     assert run.passed and [t.fate for t in run.tools] == ["run", "double"]
     assert vus == ["doublure martin"]
+
+
+# --- Rejouer des journaux (J6.3b) ---------------------------------------------------------------
+
+REJEU: dict[str, Any] = {"name": "rejeu", "replay": "journaux/*.jsonl"}
+DEUX_CAS: list[dict[str, Any]] = [
+    {"name": "relance", "input": RELANCE, "expect": {"called": ["envoyer"]}},
+    {"name": "calcul", "input": CALCUL, "expect": {"contains": ["4"]}},
+]
+
+
+async def enregistre(labo: Path, **fields: Any) -> Path:
+    """Les deux cas joués, leurs journaux exportés à côté de la suite."""
+    journaux = labo.parent / "journaux"
+    report = await jouer(suite(labo, cases=DEUX_CAS, **fields), export=journaux)
+    assert report.passed and len(list(journaux.glob("*.jsonl"))) == 2
+    return journaux
+
+
+async def test_a_replay_case_replays_each_recorded_run(labo: Path) -> None:
+    journaux = await enregistre(labo)
+    # Le juge de la suite ne note pas un rejeu : ses critères ne s'y appliquent pas.
+    juge = {"model": "JUGE", "criteria": [{"name": "fidele", "rule": "r"}]}
+    path = suite(labo, cases=[REJEU], judge=juge)
+    lue = load_suite(path)
+    assert lue.criteria(lue.cases[0]) == ()
+    report = await jouer(path)
+    assert report.passed and report.replays == ("rejeu",)
+    assert [r.journal for r in report.runs] == [
+        "journaux/base--calcul--1.jsonl",
+        "journaux/base--relance--1.jsonl",
+    ]
+    assert all([c.label for c in r.checks] == [IDENTICAL] for r in report.runs)
+    assert all(r.checks[0].kind == "replay" and r.spent_usd == 0 for r in report.runs)
+    assert "  ok       rejeu (2/2 run(s) rejoué(s) à l'identique)" in render_eval(report)
+    # Ni envoi, ni doublure : le journal sert l'appel d'envoi.
+    assert lignes(labo.parent / "boite.txt") == lignes(labo.parent / "doubles.txt") == []
+    assert {e.run_id for e in _journal(journaux / "base--calcul--1.jsonl")} >= {
+        report.runs[0].run_id
+    }
+
+
+@pytest.mark.usefixtures("logs_intacts")
+async def test_a_replay_case_says_where_todays_config_diverges(labo: Path) -> None:
+    await enregistre(labo)
+    path = suite(labo, cases=[REJEU])
+    assert await _cli(["eval", str(path)]) == 0
+    agents = labo.parent / "agents" / "demo.yaml"
+    agent = yaml.safe_load(agents.read_text(encoding="utf-8"))
+    agent["main"]["system"] = "Tu calcules, tu envoies, et tu signes."
+    agents.write_text(yaml.safe_dump(agent), encoding="utf-8")
+    # La commande en fait un garde-fou : 1 quand un run ne se rejoue plus.
+    assert await _cli(["eval", str(path)]) == 1
+    report = await jouer(path)
+    assert not report.passed and len(report.runs) == 2
+    for run in report.runs:
+        assert run.divergence is not None and run.divergence.parts == ("system",)
+        [ecart] = run.checks
+        assert not ecart.passed and "appel de modèle n°1 (main au journal)" in ecart.detail
+        assert "le prompt système" in ecart.detail
+    rendu = "\n".join(render_eval(report))
+    assert "ÉCHEC    rejeu (0/2 run(s) rejoué(s) à l'identique)" in rendu
+    assert "✗ se rejoue à l'identique — appel de modèle n°1" in rendu
+
+
+def sans_cle(config: Path) -> None:
+    """Le modèle ``MAIN`` servi par un vrai client, dont la clé manque ; ses réglages intacts."""
+    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    for model in data["models"]:
+        if model["id"] == "MAIN":
+            model.update(sdk="anthropic", api_key_env="EVAL_CLE_ABSENTE")
+    config.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+async def test_a_replay_needs_no_key(labo: Path) -> None:
+    """Rejouer ne monte aucun vrai client : un modèle sans sa clé se rejoue, il ne se joue pas."""
+    await enregistre(labo)
+    sans_cle(labo)
+    path = suite(labo, cases=[*DEUX_CAS, REJEU], doubles={"envoyer": "doublures_labo:faux_envoi"})
+    rejeu = await jouer(path, cases=["rejeu"])
+    assert rejeu.passed and len(rejeu.runs) == 2
+    # Jouer un cas, lui, monte le vrai client : sa clé manque, et c'est dit.
+    with pytest.raises(ModelConfigError, match="EVAL_CLE_ABSENTE"):
+        await jouer(path, cases=["calcul"])
+
+
+async def test_a_replay_case_is_replayed_with_each_variant_config(labo: Path) -> None:
+    await enregistre(labo)
+    variants = [{"name": "base"}, {"name": "autre", "models": {"main": "AUTRE"}}]
+    report = await jouer(suite(labo, cases=[REJEU], variants=variants))
+    assert report.summary("base").passed_cases == 1
+    assert report.summary("autre").passed_cases == 0
+    autres = [r for r in report.runs if r.variant == "autre"]
+    assert all(r.divergence is not None and "model" in r.divergence.parts for r in autres)
+
+
+async def test_journals_are_read_before_the_first_run(labo: Path) -> None:
+    """Ce qu'exporte une éval n'est rejoué qu'à la suivante, jamais par elle-même."""
+    path = suite(labo, cases=[*DEUX_CAS, REJEU])
+    journaux = labo.parent / "journaux"
+    premier = await jouer(path, export=journaux)
+    [manque] = [r for r in premier.runs if r.case == "rejeu"]
+    assert manque.error == "aucun journal ne correspond à journaux/*.jsonl"
+    assert len(list(journaux.glob("*.jsonl"))) == 2 and not premier.passed
+    rendu = "\n".join(render_eval(premier))
+    assert "ÉCHEC    rejeu (0/0 run(s) rejoué(s) à l'identique, 1 non rejoué(s))" in rendu
+    assert "      aucun journal ne correspond à journaux/*.jsonl" in rendu
+    second = await jouer(path)
+    assert second.passed and second.summary("base").cases["rejeu"] == (2, 2)
+
+
+async def test_what_a_replay_case_cannot_replay_fails_it(labo: Path) -> None:
+    journaux = await enregistre(labo)
+    (journaux / "casse.jsonl").write_text("{pas un événement\n", encoding="utf-8")
+    calcul = _journal(journaux / "base--calcul--1.jsonl")
+    relance = _journal(journaux / "base--relance--1.jsonl")
+    # Un run fini, et un autre arrêté juste après sa demande.
+    pause = [*relance, *(e for e in calcul if e.seq <= calcul[0].seq + 1)]
+    (journaux / "pause.jsonl").write_text(
+        "".join(f"{e.model_dump_json()}\n" for e in pause), encoding="utf-8"
+    )
+    ailleurs = [e.model_copy(update={"agent": "autre"}) for e in calcul]
+    (journaux / "zz-autre.jsonl").write_text(
+        "".join(f"{e.model_dump_json()}\n" for e in ailleurs), encoding="utf-8"
+    )
+    report = await jouer(suite(labo, cases=[REJEU]))
+    erreurs = {r.journal: r.error for r in report.runs if r.error is not None}
+    assert set(erreurs) == {
+        "journaux/casse.jsonl",
+        "journaux/pause.jsonl",
+        "journaux/zz-autre.jsonl",
+    }
+    assert "ligne 1 : pas un événement" in str(erreurs["journaux/casse.jsonl"])
+    assert "inachevé au journal" in str(erreurs["journaux/pause.jsonl"])
+    assert (
+        erreurs["journaux/zz-autre.jsonl"] == "journal de l'agent 'autre' — la suite évalue 'demo'"
+    )
+    # Les runs sains passent toujours, celui du journal mêlé compris.
+    assert sum(1 for r in report.runs if r.passed) == 3 and not report.passed
+    rendu = "\n".join(render_eval(report))
+    assert "ÉCHEC    rejeu (3/3 run(s) rejoué(s) à l'identique, 3 non rejoué(s))" in rendu
+    assert "journaux/casse.jsonl : Journal" in rendu
+
+
+async def test_a_case_is_played_for_its_own_tenant(labo: Path) -> None:
+    retouche(labo, labo, tenants=[{"id": "dupont"}, {"id": "martin"}])
+    cas = [{**DEUX_CAS[0], "tenant": "dupont"}, {**DEUX_CAS[1], "tenant": "martin"}]
+    journaux = labo.parent / "journaux"
+    report = await jouer(suite(labo, cases=cas, tenant="dupont"), export=journaux)
+    assert report.passed
+    clients = {f.name: {e.tenant_id for e in _journal(f)} for f in sorted(journaux.glob("*.jsonl"))}
+    assert clients == {"base--relance--1.jsonl": {"dupont"}, "base--calcul--1.jsonl": {"martin"}}
+    # Rejoués au nom du client que porte chaque journal.
+    assert (await jouer(suite(labo, cases=[REJEU]))).passed
+    with pytest.raises(EvalError, match="client 'inconnu' inconnu"):
+        await jouer(suite(labo, cases=[{**DEUX_CAS[1], "tenant": "inconnu"}]))
 
 
 # --- loom eval --------------------------------------------------------------------------------

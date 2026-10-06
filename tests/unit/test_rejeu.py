@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Rejeu : la logique retourne, le monde vient du journal (K6, #31, J6.2a et J6.2b).
+"""Rejeu : la logique retourne, le monde vient du journal (K6, #31, J6.2a, J6.2b, J6.3b).
 
 Ce qui s'éprouve ici, à l'identique :
 
@@ -26,11 +26,22 @@ Et en variante :
 - la dépense est celle des vrais appels ; une variante mal dite est refusée ;
 - le rejeu dit sa divergence une fois, le moteur ne la crie pas ;
 - la commande compare, et dit si la variante est allée au bout.
+
+Et depuis un journal exporté (J6.3b) :
+
+- chaque run fini du fichier se rejoue, hors du journal de l'instance, avec la
+  config d'aujourd'hui ; un run inachevé est nommé, pas rejoué ; un fichier
+  qui ne se lit pas, ou un run qu'il ne peut pas rejouer, est refusé en le
+  disant ;
+- ``assert_replays`` rejoue à part et lève avec chaque écart ;
+- ``loom replay --journal`` rend 0, 1 ou 2.
 """
 
 import asyncio
 import json
 import logging
+import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +52,8 @@ from pydantic import JsonValue
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
-from loom_ia.config import load_config
+from loom_ia.adapters.stores import InMemoryEventStore
+from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
     ApprovalGranted,
     Event,
@@ -74,8 +86,10 @@ from loom_ia.replay import (
     ReplayModelClient,
     VariantModelClient,
     VariantTools,
+    journal_runs,
+    read_journal,
 )
-from loom_ia.testing import RunJournal, tool_call_message
+from loom_ia.testing import RunJournal, assert_replays, tool_call_message
 from loom_ia.tools import tool
 
 SESSION = SessionId("atelier")
@@ -326,6 +340,7 @@ async def test_a_changed_config_diverges_at_the_first_call_and_names_the_part(
     assert divergence is not None and divergence.kind == "model"
     assert divergence.parts == (part,)
     assert "appel de modèle n°1 (main au journal)" in divergence.where
+    assert divergence.rank == 1
     assert divergence.expected_hash != divergence.actual_hash
     # Arrêt à la première : rien n'a été servi après.
     assert report.model_calls[1] == 0
@@ -342,6 +357,8 @@ async def test_a_changed_role_template_diverges_at_the_role(atelier: ConfigFacto
     divergence = report.divergence
     assert divergence is not None and divergence.kind == "model"
     assert "(rediger au journal)" in divergence.where
+    # Après deux appels de l'orchestrateur, servis : le rôle est le troisième.
+    assert divergence.rank == 3
     assert divergence.parts == ("messages",)
     assert "1 message(s) au journal, 1 maintenant" in divergence.detail
 
@@ -566,6 +583,233 @@ async def test_the_command_says_identical_divergent_or_impossible(
 async def _cli(argv: list[str]) -> int:
     """La commande lance sa propre boucle : on la fait tourner hors de celle de l'essai."""
     return await asyncio.to_thread(main, argv)
+
+
+# --- Depuis un journal exporté (J6.3b) --------------------------------------------
+
+
+def ecrit(path: Path, events: Sequence[Event]) -> Path:
+    """Un journal JSONL, tel que ``loom sessions export`` l'écrit."""
+    path.write_text("".join(f"{event.model_dump_json()}\n" for event in events), encoding="utf-8")
+    return path
+
+
+async def en_pause() -> list[Event]:
+    """Un run racine commencé et jamais fini, dans sa propre session."""
+    store = InMemoryEventStore()
+    started = RunJournal(agent="demo", session_id=SessionId("en-pause")).start("Envoie.")
+    return await store.append(started.take(), expected_seq=0)
+
+
+async def exporte(path: Path, tmp_path: Path) -> tuple[Path, list[RunId]]:
+    """Deux runs d'une session, exportés ; le journal de la config, effacé."""
+    run_ids = await deux_runs(path)
+    fichier = ecrit(tmp_path / "session.jsonl", await journal(path))
+    shutil.rmtree(tmp_path / "data")
+    return fichier, run_ids
+
+
+async def test_an_exported_journal_replays_each_finished_run(
+    atelier: ConfigFactory, tmp_path: Path
+) -> None:
+    path = atelier()
+    fichier, run_ids = await exporte(path, tmp_path)
+    async with Loom.from_config(path) as loom:
+        rejoue = await loom.replay_journal(fichier)
+        assert rejoue.identical and rejoue.journal == fichier and not rejoue.unfinished
+        assert [r.run_id for r in rejoue.reports] == run_ids
+        assert all(r.model_calls[0] == r.model_calls[1] > 0 for r in rejoue.reports)
+        # Ses événements déjà lus, ou un seul run, nommé.
+        lus = await loom.replay_journal(read_journal(fichier))
+        assert lus.journal is None and lus.identical and len(lus.reports) == 2
+        [seul] = (await loom.replay_journal(str(fichier), run_id=run_ids[1])).reports
+        assert seul.run_id == run_ids[1] and seul.identical
+        # En variante aussi : rien n'a changé, tout est servi, et les runs se comparent.
+        variante = await loom.replay_journal(fichier, mode="variant")
+        assert all(
+            r.comparison is not None and r.comparison.real_models == 0 for r in variante.reports
+        )
+        # Le journal de l'instance n'a rien reçu : le fichier seul a servi.
+        assert await loom.sessions() == []
+
+
+async def test_a_journal_diverges_with_todays_config(
+    atelier: ConfigFactory, tmp_path: Path
+) -> None:
+    path = atelier()
+    fichier, _ = await exporte(path, tmp_path)
+    atelier(system="Autre prompt.")
+    async with Loom.from_config(path) as loom:
+        rejoue = await loom.replay_journal(fichier)
+    assert not rejoue.identical and len(rejoue.reports) == 2
+    for report in rejoue.reports:
+        divergence = report.divergence
+        assert divergence is not None and divergence.parts == ("system",)
+        assert "appel de modèle n°1 (main au journal)" in divergence.where
+
+
+async def test_a_journal_gives_its_root_runs_only(tree: ConfigFactory, tmp_path: Path) -> None:
+    """Un sous-run se rejoue avec sa racine ; un run système n'est pas un run demandé."""
+    path = tree()
+    async with Loom(load_config(path)) as loom:
+        result = await loom.run("demo", "Combien font 2 + 2 ?")
+        events = await loom.export_session(result.session_id)
+    assert any(
+        isinstance(e.payload, RunStarted) and e.payload.parent_run_id is not None for e in events
+    )
+    resume = RunJournal(agent="demo", session_id=SessionId("resume")).start("Résume.").complete()
+    systeme = [
+        e.model_copy(update={"payload": e.payload.model_copy(update={"kind": "compaction"})})
+        if isinstance(e.payload, RunStarted)
+        else e
+        for e in await InMemoryEventStore().append(resume.take(), expected_seq=0)
+    ]
+    assert [r.run_id for r in journal_runs([*events, *systeme])] == [result.run_id]
+    fichier = ecrit(tmp_path / "arbre.jsonl", events)
+    async with Loom(load_config(path)) as loom:
+        [report] = (await loom.replay_journal(fichier)).reports
+    assert report.run_id == result.run_id and report.identical
+
+
+async def test_an_unfinished_run_is_named_not_replayed(
+    atelier: ConfigFactory, tmp_path: Path
+) -> None:
+    path = atelier()
+    run_ids = await deux_runs(path)
+    pause = await en_pause()
+    mele = ecrit(tmp_path / "mele.jsonl", [*await journal(path), *pause])
+    async with Loom.from_config(path) as loom:
+        rejoue = await loom.replay_journal(mele)
+        assert [r.run_id for r in rejoue.reports] == run_ids
+        assert all(r.identical for r in rejoue.reports)
+        # Le journal ne se rejoue pas en entier : il ne passe pas.
+        assert rejoue.unfinished == (pause[0].run_id,) and not rejoue.identical
+        with pytest.raises(ReplayError, match=r"aucun run fini \(1 inachevé\(s\)\)"):
+            await loom.replay_journal(pause)
+        with pytest.raises(ReplayError, match="inachevé"):
+            await loom.replay_journal(mele, run_id=pause[0].run_id)
+
+
+@pytest.mark.parametrize(
+    ("contenu", "message"),
+    [
+        (None, "illisible"),
+        ("", "aucun événement"),
+        ("{pas du json\n", "ligne 1 : pas un événement"),
+        ('\n{"type": "run.started"}\n', "ligne 2 : pas un événement"),
+    ],
+)
+def test_a_journal_that_does_not_read_is_refused(
+    tmp_path: Path, contenu: str | None, message: str
+) -> None:
+    fichier = tmp_path / "journal.jsonl"
+    if contenu is not None:
+        fichier.write_text(contenu, encoding="utf-8")
+    with pytest.raises(ReplayError, match=message):
+        read_journal(fichier)
+
+
+async def test_what_a_journal_cannot_replay_is_refused(
+    atelier: ConfigFactory, tmp_path: Path
+) -> None:
+    path = atelier()
+    fichier, _ = await exporte(path, tmp_path)
+    ailleurs = [
+        event.model_copy(update={"tenant_id": "inconnu"}) for event in read_journal(fichier)
+    ]
+    async with Loom.from_config(path) as loom:
+        with pytest.raises(ReplayError, match="introuvable dans le journal"):
+            await loom.replay_journal(fichier, run_id=RunId("absent"))
+        with pytest.raises(ReplayError, match="a 2 runs à rejouer, en nommer un"):
+            await loom.replay_journal(fichier, export=tmp_path / "rejeu.jsonl")
+        with pytest.raises(ReplayError, match="ne servent qu'en variante"):
+            await loom.replay_journal(fichier, models={"main": "MAIN"})
+        with pytest.raises(ReplayError, match="Client 'inconnu' non déclaré"):
+            await loom.replay_journal(ailleurs)
+
+
+def en_service(config: Path) -> None:
+    """Le journal de la config dans Postgres, par un DSN que l'environnement n'a pas."""
+    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    data["storage"]["events"] = {"backend": "postgres", "dsn_env": "LOOM_REJEU_DSN_ABSENT"}
+    data["storage"]["artifacts"] = {"backend": "memory"}
+    config.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+async def test_the_kit_asserts_that_journals_replay(atelier: ConfigFactory, tmp_path: Path) -> None:
+    path = atelier()
+    fichier, _ = await exporte(path, tmp_path)
+    en_service(path)
+    with pytest.raises(ConfigError, match="Journal 'postgres'"):
+        async with Loom.from_config(path):
+            pass
+    # Monté à part : le journal que déclare la config n'est pas ouvert — ni base,
+    # ni DSN, ni même le paquet qui la sert.
+    [rejoue] = await assert_replays(path, fichier)
+    assert rejoue.identical and len(rejoue.reports) == 2
+    mele = ecrit(tmp_path / "mele.jsonl", [*read_journal(fichier), *await en_pause()])
+    with pytest.raises(AssertionError, match=r"Rejeu : 1 écart\(s\)") as reste:
+        await assert_replays(path, mele)
+    assert "inachevé au journal" in str(reste.value)
+    atelier(system="Autre prompt.")
+    with pytest.raises(AssertionError, match=r"Rejeu : 2 écart\(s\) sur 1 journal") as ecart:
+        await assert_replays(load_config(path), fichier)
+    assert str(ecart.value).count("le prompt système") == 2
+    with pytest.raises(AssertionError, match="aucun journal"):
+        await assert_replays(path)
+    pause = ecrit(tmp_path / "pause.jsonl", await en_pause())
+    with pytest.raises(AssertionError, match="illisible") as manque:
+        await assert_replays(path, tmp_path / "absent.jsonl", pause)
+    assert "aucun run fini (1 inachevé(s))" in str(manque.value)
+
+
+async def test_the_kit_lends_registered_objects(atelier: ConfigFactory, tmp_path: Path) -> None:
+    """Un outil enregistré en Python fait partie des requêtes : sans lui, l'agent ne monte pas."""
+
+    def noter(texte: str) -> str:
+        """Note un texte."""
+        return texte
+
+    path = atelier(extra_tools=[{"python": "outil_enregistre"}])
+    async with Loom.from_config(path) as loom:
+        loom.register("outil_enregistre", tool(noter))
+        result = await loom.run("demo", QUESTION, session_id=SESSION)
+        assert result.ok
+        fichier = ecrit(tmp_path / "session.jsonl", await loom.export_session(SESSION))
+    [rejoue] = await assert_replays(path, fichier, register={"outil_enregistre": tool(noter)})
+    assert rejoue.identical
+    with pytest.raises(ConfigError, match="outil_enregistre"):
+        await assert_replays(path, fichier)
+
+
+async def test_the_command_replays_a_journal_file(
+    atelier: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = atelier()
+    fichier, run_ids = await exporte(path, tmp_path)
+    base = ["--config", str(path), "replay", "--journal", str(fichier)]
+    assert await _cli(base) == 0
+    sortie = capsys.readouterr().out
+    assert sortie.count("Identique  :") == 2
+    assert "Bilan      : 2/2 run(s) identique(s)" in sortie
+    assert await _cli([*base[:3], run_ids[0], *base[3:]]) == 0
+    assert capsys.readouterr().out.count("Identique  :") == 1
+    mele = ecrit(tmp_path / "mele.jsonl", [*read_journal(fichier), *await en_pause()])
+    assert await _cli([*base[:4], str(mele)]) == 1
+    sortie = capsys.readouterr().out
+    assert "Non rejoué : run" in sortie and "1 inachevé(s) non rejoué(s)" in sortie
+    atelier(system="Autre prompt.")
+    assert await _cli([*base, "--json"]) == 1
+    rapport = json.loads(capsys.readouterr().out)
+    assert rapport["identical"] is False
+    assert [r["divergence"]["parts"] for r in rapport["runs"]] == [["system"], ["system"]]
+    for refus, dit in (
+        (["--config", str(path), "replay"], "nommer le run"),
+        ([*base, "--session", "x"], "ne servent pas avec --journal"),
+        ([*base[:4], str(tmp_path / "absent.jsonl")], "illisible"),
+    ):
+        assert await _cli(refus) == 2
+        assert dit in capsys.readouterr().err
 
 
 # --- En variante (J6.2b) -----------------------------------------------------------

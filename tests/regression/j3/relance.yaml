@@ -1,0 +1,15 @@
+# Corpus de non-régression (J6.3b) : l'agent relance de examples/j3/relance, modèles simulés.
+# Chaque journal de journaux/ doit se rejouer à l'identique (tests/regression/test_regression.py).
+# Réenregistrer, après un changement voulu, et relire le diff :
+#   uv run loom eval tests/regression/j3/relance.yaml --export tests/regression/j3/journaux/
+config: ../../../examples/j3/relance/loom.yaml
+agent: relance
+cases:
+  - name: relance-042
+    input: Relance le client du devis D-2026-042, sur un ton cordial.
+    expect:
+      status: completed
+      contains: [D-2026-042]
+      # Le modèle écrit « 42 » (refusé), puis « d-2026-042 » (normalisé par la politique
+      # numero_devis) : l'attendu porte sur les outils appelés, pas sur leur numéro.
+      called: [chercher_devis, rediger_relance]

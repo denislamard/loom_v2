@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.core.events import (
@@ -196,6 +196,7 @@ class ReplayReport:
                 "parts": list(divergence.parts),
                 "expected_hash": divergence.expected_hash,
                 "actual_hash": divergence.actual_hash,
+                "rank": divergence.rank,
             },
             "original_end": self.original_end,
             "replay_end": self.replay_end,
@@ -205,9 +206,95 @@ class ReplayReport:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class JournalRun:
+    """Un run racine d'un journal, et où le trouver."""
+
+    tenant_id: TenantId
+    session_id: SessionId
+    run_id: RunId
+    agent: str
+    finished: bool
+
+
+@dataclass(frozen=True, slots=True)
+class JournalReplay:
+    """Les runs d'un journal, rejoués un à un (J6.3b)."""
+
+    # Le fichier rejoué ; ``None`` quand ses événements ont été donnés déjà lus.
+    journal: Path | None
+    reports: tuple[ReplayReport, ...]
+    # Runs racines inachevés : un rejeu compare un run fini, ils ne sont pas
+    # rejoués — et le journal ne se rejoue donc pas en entier.
+    unfinished: tuple[RunId, ...] = ()
+
+    @property
+    def identical(self) -> bool:
+        """Chaque run du journal se rejoue à l'identique, et aucun n'est resté de côté."""
+        return bool(self.reports) and not self.unfinished and all(r.identical for r in self.reports)
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "journal": None if self.journal is None else str(self.journal),
+            "identical": self.identical,
+            "runs": [report.as_json() for report in self.reports],
+            "unfinished": list(self.unfinished),
+        }
+
+
 type ContextFactory = Callable[
     [EventStore, ReplayBook, JournalTools | VariantTools, str, TenantId], RunContext
 ]
+
+
+def read_journal(path: Path) -> list[Event]:
+    """Les événements d'un journal JSONL ; ``ReplayError`` s'il ne se lit pas.
+
+    Le format est celui qu'écrivent ``loom sessions export``, ``loom eval
+    --export`` et ``loom replay --export`` : un événement par ligne, en clair.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ReplayError(f"Journal {path} illisible : {exc}") from exc
+    events: list[Event] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            events.append(Event.model_validate_json(line))
+        except ValidationError as exc:
+            first = exc.errors()[0]
+            where = ".".join(str(part) for part in first["loc"]) or "ligne"
+            raise ReplayError(
+                f"Journal {path}, ligne {number} : pas un événement ({where} : {first['msg']})"
+            ) from exc
+    if not events:
+        raise ReplayError(f"Journal {path} : aucun événement")
+    return events
+
+
+def journal_runs(events: Sequence[Event]) -> list[JournalRun]:
+    """Les runs qu'un journal donne à rejouer : ses runs racines, dans l'ordre du journal.
+
+    Un sous-run se rejoue avec son run racine, qui le sert depuis le journal ;
+    un run système (résumé de session) n'est pas un run demandé — ce qu'il a
+    écrit est relu par les runs qui le suivent. Ni l'un ni l'autre n'est listé.
+    """
+    ended = {e.run_id for e in events if isinstance(e.payload, _TERMINAL)}
+    return [
+        JournalRun(
+            tenant_id=event.tenant_id,
+            session_id=event.session_id,
+            run_id=event.run_id,
+            agent=event.agent or "",
+            finished=event.run_id in ended,
+        )
+        for event in events
+        if isinstance(event.payload, RunStarted)
+        and event.payload.parent_run_id is None
+        and event.payload.kind == "normal"
+    ]
 
 
 async def replay_run(

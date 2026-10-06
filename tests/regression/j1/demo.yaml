@@ -1,0 +1,19 @@
+# Corpus de non-régression (J6.3b) : l'agent demo de examples/j1/demo, modèle simulé.
+# Chaque journal de journaux/ doit se rejouer à l'identique (tests/regression/test_regression.py).
+# Réenregistrer, après un changement voulu, et relire le diff :
+#   uv run loom eval tests/regression/j1/demo.yaml --export tests/regression/j1/journaux/
+config: ../../../examples/j1/demo/loom.yaml
+agent: demo
+cases:
+  - name: calcul
+    input: Combien font 12 fois 7, plus 3 ?
+    expect:
+      status: completed
+      contains: ["87"]
+      called: [{name: calculer, arguments: {expr: "12*7+3"}}]
+  - name: calcul-outil
+    input: Combien font 12 fois 7, plus 3 ? Utilise l'outil de calcul.
+    expect:
+      status: completed
+      contains: ["87"]
+      called: [calculer]

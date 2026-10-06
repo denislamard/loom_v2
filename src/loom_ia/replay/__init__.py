@@ -12,6 +12,10 @@ bord —, et le rapport compare les deux runs.
 Les évals (6.3a) vivent ici aussi : une suite de cas joués par variante, des
 contrôles et un juge, le même monde qu'en variante pour les outils à effets de
 bord — doublés ou refusés, jamais exécutés.
+
+La non-régression (6.3b) rejoue à l'identique les runs d'un journal exporté
+(``read_journal``) — une session, ou le run d'une éval — : la config
+d'aujourd'hui doit les reproduire requête par requête.
 """
 
 from loom_ia.replay.book import (
@@ -24,6 +28,7 @@ from loom_ia.replay.book import (
 )
 from loom_ia.replay.evals import (
     BASE_VARIANT,
+    IDENTICAL,
     CheckResult,
     EvalCase,
     EvalCriterion,
@@ -52,10 +57,14 @@ from loom_ia.replay.evals import (
 )
 from loom_ia.replay.runner import (
     Comparison,
+    JournalReplay,
+    JournalRun,
     ReplayMode,
     ReplayReport,
     RunSide,
     Verdict,
+    journal_runs,
+    read_journal,
     replay_run,
 )
 from loom_ia.replay.variant import (
@@ -70,6 +79,7 @@ from loom_ia.replay.variant import (
 
 __all__ = [
     "BASE_VARIANT",
+    "IDENTICAL",
     "CheckResult",
     "Comparison",
     "Divergence",
@@ -87,6 +97,8 @@ __all__ = [
     "EvalTools",
     "EvalVariant",
     "Expect",
+    "JournalReplay",
+    "JournalRun",
     "JournalTools",
     "Judgment",
     "Outcome",
@@ -108,8 +120,10 @@ __all__ = [
     "eval_fate_label",
     "fate_label",
     "isolated",
+    "journal_runs",
     "judged",
     "load_suite",
+    "read_journal",
     "render_eval",
     "replay_run",
     "swap_models",
