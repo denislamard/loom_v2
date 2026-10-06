@@ -9,7 +9,15 @@ Deux formes, le nom d'abord :
 - un **chemin d'import** ``module:attr``, qui ne demande aucun ``imports``.
 
 Les modules voisins du fichier de config sont importables : son dossier est
-ajouté à ``sys.path`` le temps du chargement.
+ajouté à ``sys.path`` le temps du chargement. Un module voisin est importé
+sous son seul nom ; deux configs d'un même process peuvent pourtant avoir
+chacune le sien sous le même nom (``outils.py``). Un module que loom a importé
+comme voisin d'une config est donc retiré de ``sys.modules`` quand une autre
+config, qui a le sien sous ce nom, est chargée, puis réimporté depuis le
+dossier de celle-ci (#50, décision du 06/10) : les objets que la première
+config en a déjà pris restent les siens. Un module que loom n'a pas importé
+comme voisin — installé, de la bibliothèque standard, importé par
+l'application — n'est jamais touché.
 """
 
 import importlib
@@ -84,22 +92,68 @@ def resolve(reference: str, registry: Registry, *, base_dir: Path | None = None)
         ) from exc
 
 
+# Modules voisins importés par loom : nom de premier niveau → dossier de la
+# config pour laquelle ils l'ont été.
+_NEIGHBOURS: dict[str, Path] = {}
+
+
 class _importable:
-    """Rend un dossier importable le temps du bloc."""
+    """Rend un dossier importable le temps du bloc, ses modules voisins d'abord."""
 
     def __init__(self, base_dir: Path | None) -> None:
-        self._path = str(base_dir) if base_dir is not None else None
+        self._dir = base_dir.resolve() if base_dir is not None else None
         self._added = False
 
     def __enter__(self) -> None:
-        if self._path is not None and self._path not in sys.path:
-            sys.path.insert(0, self._path)
+        if self._dir is None:
+            return
+        _forget_others(self._dir)
+        path = str(self._dir)
+        if path not in sys.path:
+            sys.path.insert(0, path)
             self._added = True
 
     def __exit__(self, *exc: object) -> None:
-        if self._added and self._path is not None:
-            sys.path.remove(self._path)
+        if self._dir is None:
+            return
+        _remember(self._dir)
+        if self._added:
+            sys.path.remove(str(self._dir))
             self._added = False
+
+
+def _neighbour(base_dir: Path, name: str) -> bool:
+    """Vrai si ``name`` est un module ou un paquet voisin de ce dossier."""
+    return (base_dir / f"{name}.py").is_file() or (base_dir / name / "__init__.py").is_file()
+
+
+def _forget_others(base_dir: Path) -> None:
+    """Retire les modules voisins d'une autre config que ce dossier a aussi (#50).
+
+    Tous d'abord, avant d'importer quoi que ce soit : un module voisin qui en
+    importe un autre (``from outils import …``) doit trouver celui de ce dossier.
+    """
+    for name, origin in list(_NEIGHBOURS.items()):
+        if origin == base_dir or not _neighbour(base_dir, name):
+            continue
+        for loaded in [m for m in sys.modules if m == name or m.startswith(f"{name}.")]:
+            del sys.modules[loaded]
+        del _NEIGHBOURS[name]
+
+
+def _remember(base_dir: Path) -> None:
+    """Note les modules voisins de ce dossier que le chargement a importés."""
+    names = {path.stem for path in base_dir.glob("*.py")}
+    names |= {path.parent.name for path in base_dir.glob("*/__init__.py")}
+    for name in names - _NEIGHBOURS.keys():
+        module = sys.modules.get(name)
+        file = getattr(module, "__file__", None) if module is not None else None
+        if not isinstance(file, str):
+            continue
+        found = Path(file).resolve()
+        home = found.parent.parent if found.name == "__init__.py" else found.parent
+        if home == base_dir:
+            _NEIGHBOURS[name] = base_dir
 
 
 def _declared(module: ModuleType) -> list[tuple[str, object]]:

@@ -483,6 +483,8 @@ class ToolUse:
     """Un appel d'outil du run (de son arbre), tel qu'il est parti."""
 
     name: str
+    # Ce que l'outil a reçu : références ``$ref`` résolues, puis les arguments
+    # qu'une politique ``before_tool`` a mis à la place (décision du 06/10, 6.3c).
     arguments: Mapping[str, JsonValue]
     # Sort pendant l'éval ; ``None`` pour un rôle ou un sous-agent.
     fate: EvalFate | None = None
@@ -490,6 +492,8 @@ class ToolUse:
     # résultat) — un résultat déporté n'y a que son aperçu.
     result: str | None = None
     is_error: bool = False
+    # Les arguments tels que le modèle les a écrits, quand l'outil en a reçu d'autres.
+    written: Mapping[str, JsonValue] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -565,7 +569,7 @@ def check(expect: Expect, outcome: Outcome) -> list[CheckResult]:
         detail = ""
         if not hit:
             detail = (
-                "arguments : " + " ; ".join(_compact(dict(use.arguments)) for use in same_name)
+                "arguments reçus : " + " ; ".join(_received(use) for use in same_name)
                 if same_name
                 else _calls(outcome.tools)
             )
@@ -634,6 +638,11 @@ def _contains(actual: Mapping[str, JsonValue], wanted: Mapping[str, JsonValue]) 
         elif found != value:
             return False
     return True
+
+
+def _received(use: ToolUse) -> str:
+    said = _compact(dict(use.arguments))
+    return said if use.written is None else f"{said} (écrits : {_compact(dict(use.written))})"
 
 
 def _calls(tools: Sequence[ToolUse]) -> str:
@@ -787,7 +796,13 @@ class EvalRun:
             "judge_cost_usd": self.judge_cost_usd,
             "active_ms": self.active_ms,
             "tools": [
-                {"name": t.name, "arguments": dict(t.arguments), "fate": t.fate} for t in self.tools
+                {
+                    "name": t.name,
+                    "arguments": dict(t.arguments),
+                    "written": None if t.written is None else dict(t.written),
+                    "fate": t.fate,
+                }
+                for t in self.tools
             ],
             "error": self.error,
             "skipped": self.skipped,

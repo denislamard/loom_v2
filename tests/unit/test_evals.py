@@ -23,6 +23,14 @@ de ses journaux, avec la config de chaque variante — il passe s'ils se
 rejouent, il dit où ils s'écartent sinon ; ses journaux sont lus avant le
 premier run ; un fichier illisible, un run inachevé ou d'un autre agent, un
 motif sans fichier le font tomber. Un cas peut être joué au nom de son client.
+
+Et le kit (J6.3c) : ``called`` lit ce que l'outil a reçu — référence résolue,
+arguments d'une politique —, en le disant à côté de ce que le modèle a écrit ;
+``Loom(models=…)`` sert des clients fournis, sans les fermer ; le banc
+(``Bench``) monte un agent à part, avec des faux modèles et des faux outils,
+refuse un modèle réel non remplacé, contrôle comme un cas d'éval, garde les
+appels de ses runs, enchaîne une conversation et exporte un journal qui se
+rejoue.
 """
 
 import asyncio
@@ -35,6 +43,7 @@ from typing import Any
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main as cli_main
@@ -44,12 +53,14 @@ from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import ApprovalGranted, Event, ToolCompleted
 from loom_ia.core.model import (
     Approved,
+    Message,
     ModelSpec,
     PendingApproval,
     PendingCall,
     Rejected,
     RunId,
     RunStatus,
+    SessionId,
 )
 from loom_ia.replay import (
     IDENTICAL,
@@ -66,7 +77,13 @@ from loom_ia.replay import (
     load_suite,
     render_eval,
 )
-from loom_ia.testing import ScriptedModel, tool_call_message
+from loom_ia.testing import (
+    Bench,
+    BenchError,
+    ScriptedModel,
+    assert_replays,
+    tool_call_message,
+)
 from loom_ia.tools import tool
 
 OUTILS = '''
@@ -436,7 +453,7 @@ def test_checks_say_what_they_found() -> None:
     assert results['champ objet = "Autre"'].detail == 'vaut "Relance"'
     assert results["champ x.y = 1"].detail == "absent de la sortie structurée"
     assert results['appelle envoyer avec {"destinataire": "dupont"}'].detail == (
-        'arguments : {"destinataire": "martin", "copie": {"a": 1, "b": 2}}'
+        'arguments reçus : {"destinataire": "martin", "copie": {"a": 1, "b": 2}}'
     )
     assert results["appelle annuler"].detail == "appels : calculer, envoyer"
     assert results["n'appelle pas envoyer"].detail == "appelé 1 fois"
@@ -516,11 +533,71 @@ async def test_a_double_receives_the_resolved_arguments(labo: Path) -> None:
         )
     )
     [run] = report.runs
-    # Le modèle a écrit la référence ; la doublure reçoit le résultat du calcul.
+    # Le modèle a écrit la référence ; la doublure reçoit le résultat du calcul,
+    # et c'est ce que lit `called` (décision du 06/10, 6.3c).
     envoi = next(t for t in run.tools if t.name == "envoyer")
-    assert envoi.arguments == {"destinataire": {"$ref": "result:1"}}
+    assert envoi.arguments == {"destinataire": "87"}
+    assert envoi.written == {"destinataire": {"$ref": "result:1"}}
     assert lignes(labo.parent / "doubles.txt") == ["87"]
     assert lignes(labo.parent / "boite.txt") == []
+    [recu] = check(Expect.model_validate({"called": [_envoi("87")]}), _issue(run.tools))
+    [ecrit] = check(Expect.model_validate({"called": [_envoi("result:1")]}), _issue(run.tools))
+    assert recu.passed and not ecrit.passed
+    assert ecrit.detail == (
+        'arguments reçus : {"destinataire": "87"} (écrits : {"destinataire": {"$ref": "result:1"}})'
+    )
+
+
+POLITIQUES = '''
+from loom_ia.policies import CONTINUE, BeforeTool, Decision, Replace, policy
+
+
+@policy(points=["before_tool"], decisions=["replace"])
+def majuscules(subject: BeforeTool) -> Decision:
+    """Met le destinataire d'un envoi en majuscules."""
+    if subject.spec.name != "envoyer":
+        return CONTINUE
+    return Replace({"destinataire": str(subject.arguments["destinataire"]).upper()})
+'''
+
+
+def avec_politique(config: Path) -> None:
+    """Une politique ``before_tool`` qui remplace les arguments de l'envoi."""
+    (config.parent / "politiques_labo.py").write_text(POLITIQUES, encoding="utf-8")
+    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    data["imports"] = [*data["imports"], "politiques_labo"]
+    config.write_text(yaml.safe_dump(data), encoding="utf-8")
+    agents = config.parent / "agents" / "demo.yaml"
+    agent = yaml.safe_load(agents.read_text(encoding="utf-8"))
+    agent["policies"] = [{"hook": "majuscules"}]
+    agents.write_text(yaml.safe_dump(agent), encoding="utf-8")
+
+
+async def test_called_reads_what_a_policy_sent_in_place(labo: Path) -> None:
+    avec_politique(labo)
+    report = await jouer(
+        suite(
+            labo,
+            doubles={"envoyer": "doublures_labo:faux_envoi"},
+            cases=[
+                {
+                    "name": "relance",
+                    "input": RELANCE,
+                    "expect": {"called": [_envoi("MARTIN")], "not_called": ["autre"]},
+                }
+            ],
+        )
+    )
+    [run] = report.runs
+    assert run.passed
+    envoi = next(t for t in run.tools if t.name == "envoyer")
+    assert envoi.arguments == {"destinataire": "MARTIN"}
+    assert envoi.written == {"destinataire": "martin"}
+    # La doublure reçoit, elle aussi, ce que la politique a mis à la place.
+    assert lignes(labo.parent / "doubles.txt") == ["MARTIN"]
+    # Un outil que rien n'a changé n'a pas d'arguments écrits à part.
+    calcul = next(t for t in run.tools if t.name == "calculer")
+    assert calcul.written is None
 
 
 async def test_a_subagent_runs_and_its_tools_are_intercepted(
@@ -985,6 +1062,165 @@ async def test_a_case_is_played_for_its_own_tenant(labo: Path) -> None:
         await jouer(suite(labo, cases=[{**DEUX_CAS[1], "tenant": "inconnu"}]))
 
 
+# --- Le banc (J6.3c) --------------------------------------------------------------------------
+
+
+def relance_scriptee() -> ScriptedModel:
+    """L'orchestrateur en Python : calcule, envoie à martin, conclut."""
+    return ScriptedModel(
+        tool_call_message(("c1", "calculer", {"expr": "12*7+3"})),
+        tool_call_message(("c2", "envoyer", {"destinataire": "martin"})),
+        Message.assistant("Relance envoyée à martin."),
+    )
+
+
+class Ferme:
+    """Un client fourni qui note s'il a été fermé."""
+
+    def __init__(self, inner: ScriptedModel) -> None:
+        self.inner = inner
+        self.closed = False
+
+    @property
+    def provider(self) -> str:
+        return self.inner.provider
+
+    def stream(self, request: Any) -> Any:
+        return self.inner.stream(request)
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+async def test_a_bench_runs_an_agent_with_python_fakes(labo: Path) -> None:
+    modele = relance_scriptee()
+    vus: list[str] = []
+
+    def faux(destinataire: str) -> str:
+        vus.append(destinataire)
+        return f"envoyé à {destinataire}"
+
+    async with Bench(labo, models={"MAIN": modele}, tools={"envoyer": faux}) as banc:
+        result = await banc.run("demo", RELANCE)
+        checks = banc.expect(
+            result,
+            status="completed",
+            contains=["martin"],
+            called=[_envoi("martin"), {"name": "calculer", "arguments": {"expr": "12*7+3"}}],
+        )
+        [envoi] = banc.calls("envoyer")
+    assert len(checks) == 4 and all(c.passed for c in checks)
+    assert envoi.fate == "double" and envoi.result == "envoyé à martin" and not envoi.is_error
+    assert [t.name for t in banc.calls(result=result)] == ["calculer", "envoyer"]
+    # Le faux a répondu, l'outil n'a rien envoyé, le modèle a vu ses trois tours.
+    assert vus == ["martin"] and lignes(labo.parent / "boite.txt") == []
+    assert len(modele.requests) == 3 and modele.remaining == 0
+    # Monté à part : rien n'a été écrit là où la config range son journal.
+    assert not (labo.parent / "data").exists()
+
+
+async def test_a_side_effect_tool_without_fake_is_refused_on_the_bench(labo: Path) -> None:
+    async with Bench(labo) as banc:
+        result = await banc.run("demo", RELANCE)
+        banc.expect(result, status="completed", called=["envoyer"])
+        second = await banc.run("demo", RELANCE)
+        [envoi] = banc.calls("envoyer", result=result)
+    # Les appels du banc, run par run ou tous ensemble.
+    assert len(banc.calls("envoyer")) == 2 and len(banc.calls(result=second)) == 2
+    assert envoi.fate == "refused" and envoi.is_error
+    assert "jamais exécuté pendant une éval" in str(envoi.result)
+    assert lignes(labo.parent / "boite.txt") == []
+
+
+async def test_a_real_model_is_refused_unless_asked(labo: Path) -> None:
+    sans_cle(labo)
+    async with Bench(labo) as banc:
+        result = await banc.run("demo", CALCUL)
+    assert result.status == RunStatus.FAILED and result.error_type == "model.auth"
+    assert "MAIN" in str(result.error) and "real_models=True" in str(result.error)
+    # Demandé pour de vrai, il l'est : sa clé manque, et c'est dit.
+    async with Bench(labo, real_models=True, environ={}) as banc:
+        with pytest.raises(ModelConfigError, match="EVAL_CLE_ABSENTE"):
+            await banc.run("demo", CALCUL)
+    # Remplacé, il ne demande rien.
+    async with Bench(labo, models={"MAIN": relance_scriptee()}) as banc:
+        assert (await banc.run("demo", RELANCE)).ok
+
+
+async def test_bench_expect_says_what_fell(labo: Path) -> None:
+    async with Bench(labo, models={"MAIN": relance_scriptee()}) as banc:
+        result = await banc.run("demo", RELANCE)
+        with pytest.raises(AssertionError) as tombe:
+            banc.expect(result, contains=["dupont"], not_called=["calculer"], status="completed")
+        with pytest.raises(ValueError, match="sans attendu"):
+            banc.expect(result)
+        with pytest.raises(ValidationError):
+            banc.expect(result, appelle=["envoyer"])
+    lignes_ = str(tombe.value).splitlines()
+    assert lignes_[0] == f"Banc : 2 contrôle(s) tombé(s) sur 3, run {result.run_id} (completed)"
+    assert lignes_[1:] == [
+        "  ✗ contient « dupont »",
+        "  ✗ n'appelle pas calculer — appelé 1 fois",
+        "  texte :",
+        "    Relance envoyée à martin.",
+    ]
+
+
+async def test_a_bench_is_mounted_right_or_refused(labo: Path) -> None:
+    with pytest.raises(ConfigError, match="modèles remplacés mais non déclarés : ABSENT"):
+        Bench(labo, models={"ABSENT": relance_scriptee()})
+    banc = Bench(labo)
+    with pytest.raises(RuntimeError, match="async with"):
+        _ = banc.loom
+    async with Bench(labo, tools={"inexistant": lambda: "x"}) as banc:
+        with pytest.raises(BenchError, match="faux pour un outil inconnu, 'inexistant'"):
+            await banc.run("demo", CALCUL)
+    async with Bench(labo) as banc, Bench(labo) as autre:
+        result = await autre.run("demo", CALCUL)
+        with pytest.raises(BenchError, match="n'a pas été lancé par ce banc"):
+            banc.outcome(result)
+
+
+async def test_a_conversation_on_the_bench(labo: Path) -> None:
+    """Deux tours d'une même session : le second voit le premier."""
+    vus: list[int] = []
+
+    def repond(request: Any) -> Message:
+        vus.append(len(request.messages))
+        return Message.assistant(f"tour {len(vus)}")
+
+    async with Bench(labo, models={"MAIN": ScriptedModel(repond, repond)}) as banc:
+        session = SessionId("conversation")
+        premier = await banc.run("demo", "Bonjour.", session_id=session)
+        second = await banc.run("demo", "Et ensuite ?", session_id=session)
+    assert (premier.text, second.text) == ("tour 1", "tour 2")
+    assert vus[1] > vus[0]
+
+
+async def test_a_bench_journal_replays(labo: Path) -> None:
+    fichier = labo.parent / "banc.jsonl"
+    async with Bench(labo, models={"MAIN": relance_scriptee()}) as banc:
+        result = await banc.run("demo", RELANCE)
+        assert len(await banc.events(result)) > 0
+        await banc.export(result, fichier)
+    [rejoue] = await assert_replays(labo, fichier)
+    assert rejoue.identical and [r.run_id for r in rejoue.reports] == [result.run_id]
+
+
+async def test_an_instance_serves_provided_models_and_leaves_them_open(labo: Path) -> None:
+    calcul = ScriptedModel(
+        tool_call_message(("c1", "calculer", {"expr": "2+2"})), Message.assistant("2 + 2 = 4.")
+    )
+    fourni = Ferme(calcul)
+    with pytest.raises(ConfigError, match="non déclarés : ABSENT"):
+        Loom(load_config(labo), models={"ABSENT": fourni})
+    async with Loom(load_config(labo), models={"MAIN": fourni}) as loom:
+        result = await loom.run("demo", CALCUL)
+    assert result.text == "2 + 2 = 4." and calcul.remaining == 0
+    # Il reste à l'appelant : l'instance ne l'a pas fermé.
+    assert not fourni.closed
+
+
 # --- loom eval --------------------------------------------------------------------------------
 
 
@@ -1048,6 +1284,14 @@ def _appelle(outil: str) -> Any:
     return EvalCase.model_validate(
         {"name": "relance", "input": RELANCE, "expect": {"called": [outil]}}
     )
+
+
+def _envoi(destinataire: str) -> dict[str, Any]:
+    return {"name": "envoyer", "arguments": {"destinataire": destinataire}}
+
+
+def _issue(tools: tuple[ToolUse, ...]) -> Outcome:
+    return Outcome(status=RunStatus.COMPLETED, text="", data=None, error_type=None, tools=tools)
 
 
 def _journal(path: Path) -> list[Event]:

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Configuration : schéma, lecture YAML, contrôles au démarrage, références Python."""
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -336,6 +337,70 @@ def test_two_tools_with_the_same_name(tmp_path: Path) -> None:
     write(tmp_path, modules={"outils_un": OUTILS, "outils_deux": OUTILS})
     with pytest.raises(ConfigError, match="Deux objets portent le nom 'calculer'"):
         import_modules(["outils_un", "outils_deux"], base_dir=tmp_path)
+
+
+VOISIN = '''
+from loom_ia.tools import tool
+
+ORIGINE = "{origine}"
+
+
+@tool
+def lire() -> str:
+    """Dit de quel dossier il vient."""
+    return ORIGINE
+'''
+
+POLITIQUE_VOISINE = """
+from voisin_50 import ORIGINE
+
+VUE = ORIGINE
+"""
+
+
+def test_each_config_gets_its_own_neighbour_modules(tmp_path: Path) -> None:
+    """Deux configs d'un même process, chacune son ``voisin_50.py`` (#50)."""
+    a, b, c = tmp_path / "a", tmp_path / "b", tmp_path / "c"
+    for folder in (a, b, c):
+        folder.mkdir()
+    (a / "voisin_50.py").write_text(VOISIN.format(origine="a"), encoding="utf-8")
+    (b / "voisin_50.py").write_text(VOISIN.format(origine="b"), encoding="utf-8")
+    # Un paquet voisin, et son sous-module : remplacés ensemble.
+    for folder in (a, b):
+        (folder / "paquet_50").mkdir()
+        (folder / "paquet_50" / "__init__.py").write_text("", encoding="utf-8")
+        (folder / "paquet_50" / "sous.py").write_text(
+            f"ORIGINE = {folder.name!r}\n", encoding="utf-8"
+        )
+    import_modules(["paquet_50.sous"], base_dir=a)
+    import_modules(["paquet_50.sous"], base_dir=b)
+    assert sys.modules["paquet_50.sous"].ORIGINE == "b"
+    # Un module voisin qui en importe un autre trouve celui de son dossier, même
+    # importé le premier.
+    (b / "politique_50.py").write_text(POLITIQUE_VOISINE, encoding="utf-8")
+    premier = import_modules(["voisin_50"], base_dir=a)
+    second = import_modules(["politique_50", "voisin_50"], base_dir=b)
+    lire_a, lire_b = premier.get("lire"), second.get("lire")
+    assert lire_a is not None and lire_b is not lire_a
+    assert sys.modules["voisin_50"].ORIGINE == "b"
+    assert sys.modules["politique_50"].VUE == "b"
+    assert resolve("voisin_50:ORIGINE", Registry(), base_dir=b) == "b"
+    # La première config garde ce qu'elle a pris, et retrouve le sien.
+    assert resolve("voisin_50:ORIGINE", Registry(), base_dir=a) == "a"
+    assert premier.get("lire") is lire_a
+    # Un dossier sans module de ce nom reçoit le dernier importé, comme avant.
+    assert resolve("voisin_50:ORIGINE", Registry(), base_dir=c) == "a"
+
+
+def test_a_module_loom_did_not_import_as_a_neighbour_is_never_replaced(tmp_path: Path) -> None:
+    """Un module de la bibliothèque standard que deux dossiers de config ombreraient reste le
+    même."""
+    avant = sys.modules["json"]
+    for folder in (tmp_path / "a", tmp_path / "b"):
+        folder.mkdir()
+        (folder / "json.py").write_text("OMBRE = True\n", encoding="utf-8")
+        import_modules(["json"], base_dir=folder)
+        assert sys.modules["json"] is avant and not hasattr(avant, "OMBRE")
 
 
 def test_json_schema_describes_the_files() -> None:

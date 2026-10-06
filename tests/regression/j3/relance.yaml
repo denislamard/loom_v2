@@ -10,6 +10,6 @@ cases:
     expect:
       status: completed
       contains: [D-2026-042]
-      # Le modèle écrit « 42 » (refusé), puis « d-2026-042 » (normalisé par la politique
-      # numero_devis) : l'attendu porte sur les outils appelés, pas sur leur numéro.
-      called: [chercher_devis, rediger_relance]
+      # Le modèle écrit « 42 » (refusé), puis « d-2026-042 », que la politique
+      # numero_devis normalise : l'outil reçoit D-2026-042, et c'est ce que lit `called`.
+      called: [{name: chercher_devis, arguments: {numero: D-2026-042}}, rediger_relance]

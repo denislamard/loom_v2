@@ -863,12 +863,24 @@ class Loom:
         secrets: SecretProvider | None = None,
         counter: UsageCounter | None = None,
         intercept: ToolReplay | None = None,
+        models: Mapping[str, ModelClient] | None = None,
     ) -> None:
         self._config = config
         # Outils servis à part, posés sur chaque agent monté (sous-agents
         # compris) : c'est ainsi qu'une éval double ou refuse un outil à effets
         # de bord (J6.3a). Sans lui, chaque outil s'exécute.
         self._intercept = intercept
+        # Clients de modèle fournis, par identifiant de la config (O2, 6.3c) :
+        # ils servent à la place de ceux qu'elle déclare, pour chaque agent
+        # monté ; ils restent à l'appelant, qui les ferme.
+        declared = {spec.id for spec in config.models}
+        unknown = sorted(set(models or {}) - declared)
+        if unknown:
+            raise ConfigError(
+                f"Clients de modèle fournis pour des modèles non déclarés : {', '.join(unknown)} "
+                f"(modèles : {', '.join(sorted(declared)) or 'aucun'})"
+            )
+        self._models: dict[str, ModelClient] = dict(models or {})
         # Identité de cette instance : c'est elle qui prend les concessions sur
         # les runs qu'elle pilote (#27), et qui signe ses nouvelles sur le bus
         # (5.3c) pour ne pas se réécouter.
@@ -1249,6 +1261,7 @@ class Loom:
                 agents=partial(self.context, tenant_id=tenant.id),
                 breakers=self._breakers,
                 tenant=tenant,
+                provided=self._models,
             )
             if self._intercept is not None:
                 built.context.tools.replay = self._intercept

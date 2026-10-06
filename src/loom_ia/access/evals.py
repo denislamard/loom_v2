@@ -36,10 +36,12 @@ from loom_ia.access.api import Loom, RunResult, doubles_problem, tree_tools
 from loom_ia.adapters.models import create_model_client
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.config import LoomConfig, Registry, load_config, resolve
-from loom_ia.core.events import Event, ToolCalled, ToolCompleted
+from loom_ia.core.events import Event, PolicyDecided, ToolCalled, ToolCompleted
 from loom_ia.core.model import DEFAULT_TENANT, RunId, TenantId
+from loom_ia.core.ports import ArtifactStore
+from loom_ia.core.projections import fold
 from loom_ia.engine import RunContext
-from loom_ia.engine.refs import output_text
+from loom_ia.engine.refs import RefError, ResultIndex, output_text
 from loom_ia.replay import (
     IDENTICAL,
     CheckResult,
@@ -322,7 +324,7 @@ async def _play(
     tenant_id = tenant or DEFAULT_TENANT
     events = await loom.events(result.run_id, session_id=result.session_id, tenant_id=tenant_id)
     state = await loom.state(result.run_id, session_id=result.session_id, tenant_id=tenant_id)
-    outcome = _outcome(result, events, tools)
+    outcome = await run_outcome(result, events, tools, loom.artifacts)
     checks: list[CheckResult] = check(case.expect, outcome)
     judge_cost = 0.0
     criteria = suite.criteria(case)
@@ -464,26 +466,32 @@ def _replay_run(run: EvalRun, report: ReplayReport) -> EvalRun:
 # --- Ce qu'un run a rendu ----------------------------------------------------------
 
 
-def _outcome(result: RunResult, events: Sequence[Event], tools: EvalTools) -> Outcome:
-    """Ce que le run a rendu, et les appels d'outil de son arbre : sort et résultat."""
+async def run_outcome(
+    result: RunResult, events: Sequence[Event], tools: EvalTools, artifacts: ArtifactStore
+) -> Outcome:
+    """Ce que le run a rendu, et les appels d'outil de son arbre : reçu, sort et résultat."""
     done = {
         (event.run_id, event.payload.call_id): event.payload.output
         for event in events
         if isinstance(event.payload, ToolCompleted)
     }
+    received = await received_arguments(events, artifacts)
     uses: list[ToolUse] = []
     for event in events:
         if not isinstance(event.payload, ToolCalled):
             continue
         key = (event.run_id, event.payload.call_id)
         output = done.get(key)
+        written = dict(event.payload.arguments)
+        got = received.get(key, written)
         uses.append(
             ToolUse(
                 name=event.payload.tool_name,
-                arguments=dict(event.payload.arguments),
+                arguments=got,
                 fate=tools.fates.get(key),
                 result=None if output is None else output_text(output),
                 is_error=output is not None and output.is_error,
+                written=None if got == written else written,
             )
         )
     return Outcome(
@@ -493,6 +501,54 @@ def _outcome(result: RunResult, events: Sequence[Event], tools: EvalTools) -> Ou
         error_type=result.error_type,
         tools=tuple(uses),
     )
+
+
+async def received_arguments(
+    events: Sequence[Event], artifacts: ArtifactStore | None = None
+) -> dict[tuple[str, str], dict[str, JsonValue]]:
+    """Ce que chaque outil de l'arbre a reçu, par run et ``call_id`` (décision du 06/10).
+
+    Comme l'exécuteur : les références ``$ref`` résolues sur les résultats du
+    run (``artifacts`` relit un résultat déporté), puis les arguments qu'une
+    politique ``before_tool`` a mis à la place, la dernière l'emportant. Une
+    référence qui ne se résout plus (contenu déporté introuvable) laisse les
+    arguments tels qu'écrits.
+    """
+    replaced: dict[tuple[str, str], dict[str, JsonValue]] = {}
+    for event in events:
+        payload = event.payload
+        if (
+            isinstance(payload, PolicyDecided)
+            and payload.point == "before_tool"
+            and payload.decision == "replace"
+            and payload.call_id is not None
+            and payload.arguments is not None
+        ):
+            replaced[(event.run_id, payload.call_id)] = dict(payload.arguments)
+    indexes: dict[str, ResultIndex] = {}
+    received: dict[tuple[str, str], dict[str, JsonValue]] = {}
+    for event in events:
+        payload = event.payload
+        if not isinstance(payload, ToolCalled):
+            continue
+        key = (event.run_id, payload.call_id)
+        if key in replaced:
+            received[key] = replaced[key]
+            continue
+        written = dict(payload.arguments)
+        if not payload.refs:
+            received[key] = written
+            continue
+        index = indexes.get(event.run_id)
+        if index is None:
+            own = [e for e in events if e.run_id == event.run_id]
+            index = ResultIndex(fold(own, event.run_id).messages, artifacts)
+            indexes[event.run_id] = index
+        try:
+            received[key], _ = await index.resolve(written)
+        except RefError:
+            received[key] = written
+    return received
 
 
 def _failure(result: RunResult) -> str | None:

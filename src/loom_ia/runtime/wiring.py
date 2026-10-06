@@ -171,14 +171,15 @@ class Agent:
 
     spec: AgentSpec
     context: RunContext
-    # Clients de modèle de l'agent (``main`` et rôles), un par modèle.
+    # Clients de modèle que l'agent a créés (``main``, rôles, juges), un par
+    # modèle ; un client fourni par l'appelant (``provided``) n'en est pas.
     clients: tuple[ModelClient, ...] = ()
     # Ressources ouvertes pour cet agent seul (connexions MCP partagées sans pool fourni).
     owned: tuple[_Closable, ...] = ()
 
     async def aclose(self) -> None:
         """Ferme les clients de modèle et ce que l'agent possède ; le journal reste à l'appelant."""
-        for client in self.clients or (self.context.model,):
+        for client in self.clients:
             await client.aclose()
         for resource in self.owned:
             await resource.aclose()
@@ -531,11 +532,15 @@ def build_agent(
     breakers: CircuitBreakers | None = None,
     tenant: Tenant | None = None,
     models: Callable[[ModelSpec], ModelClient] | None = None,
+    provided: Mapping[str, ModelClient] | None = None,
 ) -> Agent:
     """Assemble l'agent ``name`` de la config.
 
     ``models`` remplace la fabrique des clients de modèle (J6.2a) : le rejeu
     monte ainsi le même agent, avec des clients qui répondent depuis le journal.
+    ``provided`` donne des clients tout faits, par identifiant de modèle (O2,
+    6.3c) : ils servent à la place de ceux que la config déclare, et restent à
+    l'appelant, qui les ferme.
 
     ``mcp_pool`` porte les connexions MCP partagées ; sans lui, l'agent ouvre
     le sien et le ferme avec ``aclose``. ``artifacts`` est le stockage des
@@ -566,7 +571,11 @@ def build_agent(
     capture = config.capture_for(tenant_id)
     raw = capture.raw_max_bytes if capture.raw_exchanges else None
 
+    given = provided or {}
+
     def client(model_id: str) -> ModelClient:
+        if model_id in given:
+            return given[model_id]
         if model_id not in clients:
             spec = config.model_spec(model_id)
             if models is not None:

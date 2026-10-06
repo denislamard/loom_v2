@@ -11,32 +11,21 @@ laquelle et ce qui a changé.
 Un changement voulu se réenregistre — la commande est en tête de chaque suite —
 et le diff des journaux se relit avant de les committer.
 
-Chaque config se rejoue dans son propre processus : les exemples ont chacun
-leur module ``outils``, et un processus qui a importé celui d'une config le
-sert aux suivantes sous le même nom (``imports``, #50).
+Les cinq configs se rejouent dans le même processus, chacune avec son module
+``outils`` : loom réimporte les modules voisins de chaque config (#50, 6.3c).
 """
 
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
+from loom_ia.config import load_config
 from loom_ia.core.model import DEFAULT_TENANT
 from loom_ia.replay import BASE_VARIANT, journal_runs, load_suite, read_journal
+from loom_ia.testing import assert_replays
 
 CORPUS = Path(__file__).parent
 SUITES = sorted(CORPUS.glob("j*/*.yaml"))
-# Le rejeu d'une suite, hors du processus des essais : ``assert_replays`` sur
-# ses journaux, qui lève avec chaque écart.
-REJEU = """
-import asyncio
-import sys
-
-from loom_ia.testing import assert_replays
-
-asyncio.run(assert_replays(sys.argv[1], *sys.argv[2:]))
-"""
 
 
 def named(path: Path) -> str:
@@ -75,17 +64,9 @@ def test_each_case_has_its_journal_and_nothing_else(path: Path) -> None:
 
 
 @pytest.mark.parametrize("path", SUITES, ids=named)
-def test_each_journal_replays_identically(path: Path) -> None:
+async def test_each_journal_replays_identically(path: Path) -> None:
     suite = load_suite(path)
     config = suite.resolved(suite.config)
     assert config is not None
-    fichiers = [str(f) for f in journaux(path)]
-    assert fichiers
-    done = subprocess.run(
-        [sys.executable, "-c", REJEU, str(config), *fichiers],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
-    assert done.returncode == 0, done.stderr[-4000:]
+    replayed = await assert_replays(load_config(config), *journaux(path))
+    assert [len(r.reports) for r in replayed] == [1] * len(journaux(path))

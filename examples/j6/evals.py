@@ -4,6 +4,7 @@
     uv run python examples/j6/evals.py                     # tous les cas
     uv run python examples/j6/evals.py --cas suite
     uv run python examples/j6/evals.py --cas regression
+    uv run python examples/j6/evals.py --cas banc
     uv run --env-file .env --extra anthropic --extra openai \\
         python examples/j6/evals.py --reel
 
@@ -40,12 +41,25 @@ Les fichiers de ``relance/`` ne changent pas.
   dit que c'est le prompt système. ``assert_replays``, du kit de test, fait le
   même contrôle dans un test. En ``--reel``, les journaux sont ceux de vrais
   modèles, et leur rejeu n'en appelle aucun.
+* **banc** (6.3c) : le kit de test, ``loom_ia.testing.Bench``. L'agent de la
+  relance est mis au banc tel que sa config le déclare, monté à part :
+  l'orchestrateur est remplacé par un ``ScriptedModel`` écrit ici, en Python —
+  dont une réponse est une fonction de la requête, qui envoie l'e-mail que le
+  rôle a rédigé —, le rôle et le juge de l'agent restent les modèles simulés
+  de la config, et l'envoi est remplacé par sa fausse version. ``expect``
+  contrôle le run comme un cas d'éval, et lève en disant ce qui tombe ;
+  ``calls`` dit ce que chaque outil a reçu. Un modèle réel non remplacé est
+  refusé, en le disant. Le journal du run, exporté, se rejoue
+  (``assert_replays``). En ``--reel``, les vrais modèles tournent
+  (``real_models=True``), seul l'envoi reste faux ; ce qu'ils font ne se sait
+  pas d'avance, et les contrôles du run sont montrés sans être exigés.
 """
 
 import argparse
 import asyncio
 import copy
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -60,12 +74,13 @@ from loom_ia.adapters.models import ModelConfigError
 from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.models import ArtifactsStorage, IdempotencyStorage
 from loom_ia.core.events import ApprovalGranted, Event
-from loom_ia.replay import EvalError, EvalReport, render_eval
+from loom_ia.core.model import Message, ModelRequest, RunStatus, TextBlock, ToolResultBlock
+from loom_ia.replay import EvalError, EvalFate, EvalReport, render_eval
 from loom_ia.runtime import apply_logging
-from loom_ia.testing import assert_replays
+from loom_ia.testing import Bench, ScriptedModel, assert_replays, tool_call_message
 
 J4 = Path(__file__).parent.parent / "j4"
-CAS = ("suite", "regression")
+CAS = ("suite", "regression", "banc")
 # Le cas de rejeu de la suite de non-régression, et ses journaux.
 REJEU = "regression"
 JOURNAUX = "journaux/*.jsonl"
@@ -665,6 +680,242 @@ async def _assert(
     )
 
 
+# --- Le kit de test : un agent au banc (6.3c) ---------------------------------------------
+
+# L'appel du rôle, dans le script de l'orchestrateur : sa réponse est lue par
+# la réponse suivante.
+APPEL_ROLE = "c2"
+ROLE_QUI_TOURNE = "rôle (de la logique, qui tourne)"
+# Le sort d'un appel d'outil au banc, dit avec ses mots.
+SORTS: dict[EvalFate, str] = {
+    "double": "remplacé par son faux",
+    "refused": "refusé : effets de bord, et pas de faux",
+    "run": "exécuté (sans effets de bord)",
+}
+
+
+def redige(request: ModelRequest) -> dict[str, Any]:
+    """L'e-mail que le rôle a rédigé, lu dans son résultat : la requête le porte."""
+    for message in reversed(request.messages):
+        for block in message.blocks:
+            if isinstance(block, ToolResultBlock) and block.call_id == APPEL_ROLE:
+                if isinstance(block.output.data, dict):
+                    return dict(block.output.data)
+                textes = [b.text for b in block.output.blocks if isinstance(b, TextBlock)]
+                return json.loads(textes[-1])
+    raise AssertionError("le résultat du rôle n'est pas dans la requête")
+
+
+def orchestrateur(acces: Any) -> ScriptedModel:
+    """L'orchestrateur de la relance, en Python : chaque réponse, dans l'ordre des appels."""
+
+    def envoie(request: ModelRequest) -> Message:
+        email = redige(request)
+        return tool_call_message(
+            (
+                "c3",
+                acces.ENVOI,
+                {"destinataire": acces.CLIENTE, "objet": email["objet"], "corps": email["corps"]},
+            ),
+            text="L'e-mail est prêt, je l'envoie.",
+        )
+
+    return ScriptedModel(
+        tool_call_message(
+            ("c1", "chercher_devis", {"numero": "D-2026-042"}), text="Je relis le devis."
+        ),
+        tool_call_message((APPEL_ROLE, "rediger_relance", {"ton": "cordial"})),
+        envoie,
+        Message.assistant("La relance du devis D-2026-042 est partie à Mme Martin."),
+    )
+
+
+def court(valeur: object, largeur: int = 60) -> str:
+    """Une valeur pour l'affichage, coupée en le disant ; les contrôles lisent l'entière."""
+    texte = valeur if isinstance(valeur, str) else json.dumps(valeur, ensure_ascii=False)
+    texte = texte.replace("\n", " ")
+    return texte if len(texte) <= largeur else f"{texte[:largeur]}… ({len(texte)} caractères)"
+
+
+async def banc(args: argparse.Namespace, controle: Controle) -> None:
+    acces = _acces()
+    config, agent = acces.adjusted(load_config(acces.CONFIG), reel=args.reel)
+    print(f"  config : {shown(acces.CONFIG)}, réglée comme {shown(J4 / 'acces.py')}")
+    print(f"  agent  : {agent}")
+    modele = None if args.reel else orchestrateur(acces)
+    modeles = {} if modele is None else {"FAKE_MAIN": modele}
+    outils = {acces.ENVOI: acces.envoyer_email}
+    boite, doubles = len(acces.BOITE), len(DOUBLES)
+    # En simulé, aucune clé : rien d'autre que des modèles simulés ne doit tourner.
+    environ = None if args.reel else sans_cles(config)
+
+    titre("Le banc : la config montée à part, l'orchestrateur et l'envoi remplacés")
+    if modele is not None:
+        print(f"  FAKE_MAIN → ScriptedModel, {modele.remaining} réponse(s) écrites dans l'exemple")
+    else:
+        print("  modèles : les vrais (real_models=True)")
+    print(f"  {acces.ENVOI} → {faux_envoi.__name__}")
+    with tempfile.TemporaryDirectory(prefix="loom-banc-") as dossier:
+        fichier = Path(dossier) / "banc.jsonl"
+        async with Bench(
+            config,
+            models=modeles,
+            tools={acces.ENVOI: faux_envoi},
+            register=outils,
+            environ=environ,
+            real_models=args.reel,
+        ) as banc_:
+            result = await banc_.run(agent, acces.DEMANDE)
+            titre(f"Un run au banc : {acces.DEMANDE}")
+            print(
+                f"  statut : {result.status.value}" + (f" ({result.error})" if result.error else "")
+            )
+            enonce("  texte  : ", result.text or "(vide)")
+            appels = banc_.calls(result=result)
+            print(f"\n  appels d'outil ({len(appels)}) :")
+            for use in appels:
+                sort = SORTS[use.fate] if use.fate is not None else ROLE_QUI_TOURNE
+                print(f"    {use.name} — {sort}")
+                for nom, valeur in use.arguments.items():
+                    print(f"      {nom} : {court(valeur)}")
+            _au_banc(banc_, result, acces, modele, args.reel, controle)
+            _tombe(banc_, result, controle)
+            await banc_.export(result, fichier)
+        envois = [u for u in appels if u.name == acces.ENVOI]
+        recus = len(DOUBLES) - doubles
+        print(
+            f"\n  chaque envoi est passé par le faux ({len(envois)} appel(s), {recus} reçu(s) par "
+            "lui) : "
+            + controle.tient(
+                "banc : un envoi n'est pas passé par le faux",
+                all(u.fate == "double" for u in envois) and recus == len(envois),
+            )
+        )
+        if not envois:
+            controle.saute(
+                "banc (aucun envoi dans le run : le faux n'est pas éprouvé)", partie=True
+            )
+        print(
+            f"  la boîte d'envoi n'a pas bougé ({boite} avant, {len(acces.BOITE)} après) : "
+            + controle.tient("banc : un e-mail est parti", len(acces.BOITE) == boite)
+        )
+        await _refuse(config, outils, controle)
+        titre("Le journal du run, exporté puis rejoué par assert_replays")
+        try:
+            [rejoue] = await assert_replays(
+                config, fichier, register=outils, environ=sans_cles(config)
+            )
+            dit = (
+                f"{len(rejoue.reports)} run(s), identique : {'oui' if rejoue.identical else 'non'}"
+            )
+            juste = rejoue.identical and len(rejoue.reports) == 1
+        except AssertionError as erreur:
+            dit, juste = str(erreur), False
+        enonce("  ", dit)
+        print(
+            "  le run du banc se rejoue à l'identique, sans aucune clé : "
+            + controle.tient("banc : le journal du banc ne se rejoue pas", juste)
+        )
+
+
+def _au_banc(
+    banc_: Bench,
+    result: Any,
+    acces: Any,
+    modele: ScriptedModel | None,
+    reel: bool,
+    controle: Controle,
+) -> None:
+    """Les contrôles du run, comme un cas d'éval ; en simulé, ce que le script a fait."""
+    attendus: dict[str, Any] = {
+        "status": "completed",
+        "contains": ["D-2026-042"],
+        "called": [
+            {"name": "chercher_devis", "arguments": {"numero": "D-2026-042"}},
+            {"name": acces.ENVOI, "arguments": {"destinataire": acces.CLIENTE}},
+        ],
+    }
+    titre("banc.expect : les contrôles d'un cas d'éval")
+    try:
+        tenus = banc_.expect(result, **attendus)
+        print(f"  {len(tenus)} contrôle(s), tous tenus :")
+        for tenu in tenus:
+            print(f"    ✓ {tenu.label}")
+        passe = True
+    except AssertionError as erreur:
+        print("  AssertionError :")
+        for ligne in str(erreur).splitlines():
+            enonce(f"    {' ' * (len(ligne) - len(ligne.lstrip()))}", ligne.lstrip())
+        passe = False
+    if reel:
+        # Ce que font les vrais modèles ne se sait pas d'avance : montré, pas exigé.
+        controle.saute("banc, contrôles du run (en réel, montrés sans être exigés)", partie=True)
+        return
+    print("  ils tiennent : " + controle.tient("banc : un contrôle du run tombe", passe))
+    assert modele is not None
+    print(
+        f"  le script de l'orchestrateur est joué en entier ({len(modele.requests)} appel(s), "
+        f"{modele.remaining} réponse(s) restante(s)) : "
+        + controle.tient(
+            "banc : le script de l'orchestrateur n'est pas joué en entier",
+            modele.remaining == 0 and len(modele.requests) > 0,
+        )
+    )
+    [role] = banc_.calls("rediger_relance", result=result) or [None]
+    [envoi] = banc_.calls(acces.ENVOI, result=result) or [None]
+    objet = json.loads(role.result)["objet"] if role is not None and role.result else None
+    recu = envoi.arguments.get("objet") if envoi is not None else None
+    print(
+        f"  l'envoi a reçu l'objet que le rôle a rédigé, lu dans la requête (« {objet} ») : "
+        + controle.tient(
+            "banc : l'objet envoyé n'est pas celui du rôle", objet is not None and recu == objet
+        )
+    )
+
+
+def _tombe(banc_: Bench, result: Any, controle: Controle) -> None:
+    """Deux contrôles qui ne peuvent pas tenir : ``expect`` lève, et les nomme."""
+    titre("banc.expect quand un contrôle tombe")
+    faux = {"contains": ["D-2026-999"], "fields": {"objet": "Votre devis D-2026-042"}}
+    print(f"  attendus : {json.dumps(faux, ensure_ascii=False)}")
+    try:
+        banc_.expect(result, **faux)
+        message = None
+    except AssertionError as erreur:
+        message = str(erreur)
+        for ligne in message.splitlines():
+            enonce(f"    {' ' * (len(ligne) - len(ligne.lstrip()))}", ligne.lstrip())
+    print(
+        "  il lève, nomme chaque contrôle tombé et montre le texte : "
+        + controle.tient(
+            "banc : expect n'a pas levé, ou ne dit pas ce qui tombe",
+            message is not None
+            and "✗ contient « D-2026-999 »" in message
+            and "✗ champ objet" in message
+            and "texte :" in message,
+        )
+    )
+
+
+async def _refuse(config: LoomConfig, outils: dict[str, Any], controle: Controle) -> None:
+    """Un banc sans ``real_models`` : le modèle réel de l'agent réel est refusé, en le disant."""
+    titre("Un modèle réel non remplacé, sur un banc qui ne l'autorise pas")
+    async with Bench(config, register=outils, environ=sans_cles(config)) as autre:
+        refuse = await autre.run("relance_reel", "Relance le client du devis D-2026-042.")
+    print(f"  relance_reel : {refuse.status.value} ({refuse.error_type})")
+    enonce("  ", refuse.error or "(aucune erreur)")
+    print(
+        "  refusé à son premier appel, sans rien dépenser, et le message dit comment l'autoriser : "
+        + controle.tient(
+            "banc : un modèle réel non remplacé n'a pas été refusé",
+            refuse.status == RunStatus.FAILED
+            and refuse.error_type == "model.auth"
+            and "real_models=True" in (refuse.error or "")
+            and refuse.cost_usd == 0,
+        )
+    )
+
+
 # --- Lancement --------------------------------------------------------------------------
 
 
@@ -672,8 +923,10 @@ async def jouer(nom: str, args: argparse.Namespace, controle: Controle) -> None:
     print(f"\n{'─' * 78}\nCas {nom}\n{'─' * 78}")
     if nom == "suite":
         await suite(args, controle)
-    else:
+    elif nom == "regression":
         await regression(args, controle)
+    else:
+        await banc(args, controle)
 
 
 async def main(argv: list[str]) -> int:
