@@ -33,6 +33,12 @@ La source fournit à chaque run :
 La VM n'est démarrée qu'à la première exécution, et la session execd du run
 ouverte à ce moment-là : ``loom validate``, le rejeu et le montage d'essai de
 ``serve --reload`` ouvrent la source sans rien exécuter.
+
+``input_schema`` et ``examples`` se donnent en objets JSON, ou en texte JSON :
+certains fournisseurs (MiniMax) déforment les objets libres d'un appel d'outil
+— une liste ``required`` devenue un objet, des ``properties`` emboîtées —,
+alors qu'une chaîne arrive intacte. Un refus qui porte sur leur forme le
+suggère, pour ceux venus en objets.
 """
 
 import ast
@@ -116,6 +122,8 @@ DEFAULT_WALL_MS: Final = 30_000
 BOOT_WAIT: Final = 60.0
 
 _ERRORS: Final = (VmError, ProtocolError, ExecdError, TimeoutError, OSError)
+# Les champs de ``forge`` admis aussi en texte JSON.
+_TEXT_FIELDS: Final = ("input_schema", "examples")
 
 
 # ---------------------------------------------------------------------- #
@@ -344,12 +352,36 @@ class Catalog:
 # ---------------------------------------------------------------------- #
 
 
+class _ShapeError(ToolError):
+    """Un refus qui porte sur la forme d'``input_schema`` ou d'``examples``."""
+
+
+def _decoded(value: JsonValue, field: str) -> JsonValue:
+    """Un champ venu en objet tel quel, ou venu en texte JSON, décodé."""
+    if not isinstance(value, str):
+        return value
+    try:
+        return cast(JsonValue, json.loads(value, parse_constant=_not_json))
+    except json.JSONDecodeError as exc:
+        raise _ShapeError(
+            f"{field} : texte JSON illisible — {exc.msg} (ligne {exc.lineno}, colonne {exc.colno})"
+        ) from None
+    except ValueError as exc:
+        raise _ShapeError(f"{field} : texte JSON illisible — {exc}") from None
+
+
+def _not_json(constant: str) -> None:
+    raise ValueError(f"{constant} n'est pas une valeur JSON")
+
+
 def check_forged(
     name: str, input_schema: dict[str, JsonValue], code: str, examples: Sequence[JsonValue]
 ) -> list[tuple[dict[str, JsonValue], JsonValue]]:
     """Ce que l'hôte peut dire d'un outil sans l'exécuter ; ``ToolError`` au premier défaut.
 
-    Rend les exemples sous forme (arguments, attendu).
+    Rend les exemples sous forme (arguments, attendu). Un défaut de forme
+    d'``input_schema`` ou d'``examples`` — accord du code avec le schéma
+    compris — est un ``_ShapeError``.
     """
     if re.fullmatch(NAME_PATTERN, name) is None:
         raise ToolError(
@@ -366,26 +398,30 @@ def check_forged(
     try:
         validator_for(input_schema, default=Draft202012Validator).check_schema(input_schema)
     except SchemaError as exc:
-        raise ToolError(f"input_schema n'est pas un schéma JSON valide : {exc.message}") from None
+        raise _ShapeError(f"input_schema n'est pas un schéma JSON valide : {exc.message}") from None
     if input_schema.get("type") != "object":
-        raise ToolError('input_schema : "type": "object" attendu (les arguments sont nommés)')
+        raise _ShapeError('input_schema : "type": "object" attendu (les arguments sont nommés)')
     properties = input_schema.get("properties", {})
     required = input_schema.get("required", [])
     if not isinstance(properties, dict) or not isinstance(required, list):
-        raise ToolError("input_schema : properties (objet) et required (liste) attendus")
+        raise _ShapeError("input_schema : properties (objet) et required (liste) attendus")
     _check_signature(name, code, set(properties), {str(r) for r in required})
 
+    if not 1 <= len(examples) <= MAX_EXAMPLES:
+        raise _ShapeError(
+            f"examples : de 1 à {MAX_EXAMPLES} exemples attendus, {len(examples)} reçu(s)"
+        )
     validator = validator_for(input_schema, default=Draft202012Validator)(input_schema)
     pairs: list[tuple[dict[str, JsonValue], JsonValue]] = []
     for index, raw in enumerate(examples, start=1):
         example = cast(dict[str, JsonValue], raw) if isinstance(raw, dict) else {}
         arguments = example.get("arguments")
         if not isinstance(arguments, dict) or "expected" not in example:
-            raise ToolError(f"exemple {index} : arguments (objet) et expected attendus")
+            raise _ShapeError(f"exemple {index} : arguments (objet) et expected attendus")
         try:
             validator.validate(arguments)
         except ValidationError as exc:
-            raise ToolError(
+            raise _ShapeError(
                 f"exemple {index} : ses arguments ne suivent pas input_schema — {exc.message}"
             ) from None
         pairs.append((arguments, example["expected"]))
@@ -420,11 +456,11 @@ def _check_signature(name: str, code: str, properties: set[str], required: set[s
         if default is not None
     }
     if args.kwarg is None and (missing := sorted(properties - params)):
-        raise ToolError(
+        raise _ShapeError(
             f"code : {name}() ne reçoit pas {', '.join(missing)}, que input_schema propose"
         )
     if unsure := sorted(params - with_default - required):
-        raise ToolError(
+        raise _ShapeError(
             f"code : {name}() exige {', '.join(unsure)}, que input_schema ne rend pas "
             "obligatoire (required) — donne-lui une valeur par défaut, ou exige-le"
         )
@@ -548,10 +584,27 @@ class _ForgeTool:
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
         name = str(arguments["name"])
-        schema = cast(dict[str, JsonValue], arguments["input_schema"])
         code = str(arguments["code"])
-        examples = cast(list[JsonValue], arguments["examples"])
-        pairs = check_forged(name, schema, code, examples)
+        try:
+            schema = _decoded(arguments["input_schema"], "input_schema")
+            examples = _decoded(arguments["examples"], "examples")
+            if not isinstance(schema, dict):
+                raise _ShapeError(
+                    "input_schema : un objet JSON est attendu (un schéma de type object)"
+                )
+            if not isinstance(examples, list):
+                raise _ShapeError("examples : une liste JSON est attendue")
+            pairs = check_forged(name, schema, code, examples)
+        except _ShapeError as exc:
+            # Venus en objets, ils ont pu être déformés en route : le texte
+            # JSON, lui, arrive tel quel.
+            objects = [f for f in _TEXT_FIELDS if not isinstance(arguments[f], str)]
+            if not objects:
+                raise
+            raise ToolError(
+                f"{exc.message} (si ton format d'appel déforme les objets imbriqués, donne "
+                f"{' et '.join(objects)} en texte JSON)"
+            ) from None
         for index, (example, expected) in enumerate(pairs, start=1):
             try:
                 execution = await self.run.execute(name, code, example)
@@ -643,17 +696,28 @@ def _forge_spec(limits: Mapping[str, int]) -> ToolSpec:
             "properties": {
                 "name": {"type": "string", "pattern": f"^{NAME_PATTERN}$"},
                 "description": {"type": "string", "minLength": 1},
-                "input_schema": {"type": "object"},
+                "input_schema": {
+                    "description": "Schéma JSON (type object) des arguments de l'outil, "
+                    "en objet ou en texte JSON.",
+                    "anyOf": [{"type": "object"}, {"type": "string"}],
+                },
                 "code": {"type": "string", "minLength": 1},
                 "examples": {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": MAX_EXAMPLES,
-                    "items": {
-                        "type": "object",
-                        "properties": {"arguments": {"type": "object"}, "expected": {}},
-                        "required": ["arguments", "expected"],
-                    },
+                    "description": f"De 1 à {MAX_EXAMPLES} exemples (arguments, expected), "
+                    "en liste ou en texte JSON.",
+                    "anyOf": [
+                        {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": MAX_EXAMPLES,
+                            "items": {
+                                "type": "object",
+                                "properties": {"arguments": {"type": "object"}, "expected": {}},
+                                "required": ["arguments", "expected"],
+                            },
+                        },
+                        {"type": "string"},
+                    ],
                 },
             },
             "required": ["name", "description", "input_schema", "code", "examples"],

@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 import yaml
+from jsonschema import Draft202012Validator, ValidationError
+from jsonschema.validators import validator_for
 
 from loom_firecracker.forge import (
     CALL,
@@ -200,6 +202,8 @@ def make_source(
         ({"code": "def carres(n, m):\n    return n\n"}, "exige m"),
         ({"examples": [{"arguments": {"n": "trois"}, "expected": 1}]}, "exemple 1 : ses arguments"),
         ({"examples": [{"arguments": {"n": 1}}]}, r"exemple 1 : arguments \(objet\) et expected"),
+        ({"examples": []}, r"de 1 à 10 exemples attendus, 0 reçu\(s\)"),
+        ({"examples": EXAMPLES * 11}, r"11 reçu\(s\)"),
     ],
 )
 def test_the_host_refuses_what_it_can_see_without_running(
@@ -386,6 +390,85 @@ async def test_a_failing_example_refuses_the_tool(
     assert out.is_error
     assert "Outil carres refusé" in out.as_text and said in out.as_text
     assert Catalog(tmp_path / "catalogue").get("default", "carres") is None
+
+
+def fits(schema: Mapping[str, Any], instance: Mapping[str, Any]) -> bool:
+    try:
+        validator_for(schema, default=Draft202012Validator)(schema).validate(instance)
+    except ValidationError:
+        return False
+    return True
+
+
+async def test_schema_and_examples_may_come_as_json_text(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    source = make_source(tmp_path, runner)
+    as_text = forging(input_schema=json.dumps(SCHEMA), examples=json.dumps(EXAMPLES))
+    async with source.open(source_context()) as tools:
+        forge = by_name(tools)[FORGE]
+        schema = forge.spec.input_schema
+        assert fits(schema, as_text) and fits(schema, forging())
+        assert not fits(schema, forging(input_schema=1))
+        out = await forge.invoke(as_text, tool_context())
+    assert not out.is_error
+    [jobs] = runner.opened
+    assert [(entry, args) for entry, args, _ in jobs.calls] == [("carres:carres", {"n": 3})]
+    # Au catalogue, des objets : le texte n'était que le transport.
+    manifest = json.loads((tmp_path / "catalogue" / "default" / "carres" / MANIFEST).read_text())
+    assert manifest["input_schema"] == SCHEMA
+    assert manifest["examples"] == EXAMPLES
+
+
+@pytest.mark.parametrize(
+    ("changed", "said"),
+    [
+        ({"input_schema": '{"type": "object"'}, "input_schema : texte JSON illisible — Expecting"),
+        ({"input_schema": "[1]"}, "input_schema : un objet JSON est attendu"),
+        ({"examples": "{}"}, "examples : une liste JSON est attendue"),
+        ({"examples": "[NaN]"}, "examples : texte JSON illisible — NaN n'est pas une valeur JSON"),
+        ({"examples": "[]"}, r"0 reçu\(s\)"),
+        ({"examples": '[{"arguments": {"n": "trois"}, "expected": 1}]'}, "exemple 1 : ses arg"),
+    ],
+)
+async def test_json_text_is_checked_like_objects(
+    tmp_path: Path, changed: dict[str, Any], said: str
+) -> None:
+    runner = FakeRunner()
+    source = make_source(tmp_path, runner)
+    async with source.open(source_context()) as tools:
+        with pytest.raises(ToolError, match=said):
+            await by_name(tools)[FORGE].invoke(forging(**changed), tool_context())
+    assert runner.opened == []
+
+
+async def test_a_refusal_of_shape_suggests_json_text_for_what_came_as_objects(
+    tmp_path: Path,
+) -> None:
+    source = make_source(tmp_path, FakeRunner())
+    broken = {"type": "object", "required": {"n": ""}}
+    hint = "(si ton format d'appel déforme les objets imbriqués, donne {} en texte JSON)"
+    said: list[str] = []
+    async with source.open(source_context()) as tools:
+        forge = by_name(tools)[FORGE]
+        for arguments in (
+            forging(input_schema=broken),
+            forging(input_schema=json.dumps(broken)),
+            forging(input_schema=json.dumps(broken), examples=json.dumps(EXAMPLES)),
+            forging(name="Carres", input_schema=broken),
+            forging(input_schema={"type": "object"}),
+        ):
+            with pytest.raises(ToolError) as refused:
+                await forge.invoke(arguments, tool_context())
+            said.append(refused.value.message)
+    assert said[0].startswith("input_schema n'est pas un schéma JSON valide")
+    assert said[0].endswith(hint.format("input_schema et examples"))
+    assert said[1].endswith(hint.format("examples"))
+    assert "texte JSON" not in said[2] and said[2].startswith("input_schema n'est pas")
+    # Un refus qui ne tient pas à la forme ne suggère rien.
+    assert "identifiant Python" in said[3] and "texte JSON" not in said[3]
+    # L'accord du code avec le schéma est une affaire de forme : required perdu en route.
+    assert said[4].startswith("code : carres() exige n, que input_schema ne rend pas")
+    assert said[4].endswith(hint.format("input_schema et examples"))
 
 
 async def test_a_refusal_of_the_host_opens_no_session(tmp_path: Path) -> None:
