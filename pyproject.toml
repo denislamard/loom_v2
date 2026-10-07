@@ -78,6 +78,7 @@ dev = [
     "ruff>=0.16.8",
     "types-jsonschema>=4.26.0.20260518",
     "types-pyyaml>=6.0.12.20260906",
+    "loom-firecracker",
 ]
 # Types des paquets d'extras, pour pyright : ils tirent le paquet lui-même
 # (asyncpg-stubs dépend d'asyncpg), donc ils restent hors de `dev` — sinon la
@@ -87,8 +88,17 @@ types = [
     "asyncpg-stubs>=0.31.3",
 ]
 
+# Paquets compagnons, développés dans le même dépôt : packages/<nom>/.
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+loom-firecracker = { workspace = true }
+
 [tool.ruff]
 line-length = 100
+# Paquets premiers pour le tri des imports : loom et ses paquets compagnons.
+src = ["src", "packages/loom-firecracker/src"]
 target-version = "py314"
 
 [tool.ruff.lint]
@@ -97,11 +107,11 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
 [tool.pyright]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
-include = ["src", "tests", "examples"]
+include = ["src", "tests", "examples", "packages"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests", "packages/loom-firecracker/tests"]
 markers = ["integration: lance de vrais sous-process ou un service externe (plus lent)"]
 
 [tool.importlinter]
