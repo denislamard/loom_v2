@@ -134,6 +134,7 @@ from loom_ia.engine import (
     CircuitBreakers,
     ClaimConflict,
     RunContext,
+    RunMoved,
     SessionWriter,
     SessionWriters,
     ToolReplay,
@@ -1913,6 +1914,8 @@ class Loom:
 
         Un run annulé est **terminal** : il ne se reprend pas. Un run seulement
         interrompu, lui, ne laisse rien au journal et repart où il en était.
+        Un run qu'un autre process finit entre la lecture et l'écriture de
+        l'arrêt est déjà fini : rien n'est écrit après sa fin.
         """
         task = self._driving.get(run_id)
         if task is not None and not task.done():
@@ -1925,7 +1928,10 @@ class Loom:
         # ``state.session_id`` vaut le run_id pour un run anonyme : l'écrivain
         # partagé de l'instance vaut donc dans les deux cas.
         writer = await self._writers.open(self._store, state.context.tenant_id, state.session_id)
-        await writer.append(cancellation(state, by=by))
+        try:
+            await writer.append(cancellation(state, by=by))
+        except RunMoved:
+            return False
         return True
 
     async def approve(
@@ -2026,7 +2032,11 @@ class Loom:
             drafts.append(
                 run_scope(owner).draft(payload(asked), span_id=span, parent_span_id=parent)
             )
-        await writer.append(drafts)
+        try:
+            await writer.append(drafts)
+        except RunMoved:
+            # Clos ailleurs entre la lecture et la décision : il n'attend plus rien.
+            return ()
         await self._queue.submit(
             Job(
                 kind="resume",

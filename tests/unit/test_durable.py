@@ -1,8 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Exécution durable (J4.2b) : concession, arrière-plan, reprise au démarrage."""
+"""Exécution durable (J4.2b) : concession, arrière-plan, reprise au démarrage.
+
+Et l'arrêt écrit par un autre process (6.4) : un run arrêté ailleurs juste
+avant sa concession, ou en plein pilotage, ne repart pas — le pilote s'arrête
+à sa prochaine écriture, sans rien écrire après la clôture ; un arrêt qui
+arrive après la fin rend « déjà fini ».
+"""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,8 +19,18 @@ import yaml
 from loom_ia.access.api import Loom
 from loom_ia.adapters.stores import JsonlEventStore
 from loom_ia.config import load_config
-from loom_ia.core.events import Event, EventDraft, RunClaimed, RunScope, SessionTrimmed
+from loom_ia.core.events import (
+    ApprovalGranted,
+    Event,
+    EventDraft,
+    ModelResponded,
+    RunCancelled,
+    RunClaimed,
+    RunScope,
+    SessionTrimmed,
+)
 from loom_ia.core.model import DEFAULT_TENANT, Message, RunId, RunStatus, SessionId
+from loom_ia.core.projections import fold
 from loom_ia.engine import ClaimConflict
 from loom_ia.testing import RunJournal
 
@@ -292,6 +308,141 @@ def test_recover_can_be_scoped_to_one_session(durable: ConfigFactory) -> None:
     repris, vise, reste = asyncio.run(go())
     assert repris == (vise,)
     assert reste is RunStatus.READY_FOR_MODEL
+
+
+# --- Arrêté ailleurs (6.4) ------------------------------------------------------
+
+
+class Glissant(JsonlEventStore):
+    """Le journal d'un process : juste avant une écriture choisie, un autre process écrit."""
+
+    def __init__(
+        self,
+        path: Path,
+        quand: type,
+        glisse: Callable[[RunId], Awaitable[object]],
+    ) -> None:
+        super().__init__(path)
+        self.quand = quand
+        self.glisse = glisse
+        self.glisse_fait = False
+
+    async def append(
+        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
+    ) -> list[Event]:
+        if not self.glisse_fait and any(isinstance(d.payload, self.quand) for d in drafts):
+            self.glisse_fait = True
+            await self.glisse(drafts[0].run_id)
+        return await super().append(drafts, expected_seq=expected_seq)
+
+
+async def _arrete_ailleurs(path: Path, quand: type) -> tuple[RunStatus, list[Event]]:
+    """Un run piloté par une instance, arrêté par une autre juste avant l'écriture ``quand``."""
+    store_path = Path(load_config(path).storage.events.path or "")
+    async with Loom.from_config(path) as ailleurs:
+
+        async def arrete(run_id: RunId) -> None:
+            assert await ailleurs.cancel(run_id, session_id=SESSION, by="ailleurs")
+
+        pilote = Loom(load_config(path), store=Glissant(store_path, quand, arrete))
+        async with pilote:
+            result = await pilote.run("demo", QUESTION, session_id=SESSION)
+        return result.status, await ailleurs.export_session(SESSION)
+
+
+def test_a_run_stopped_elsewhere_before_its_claim_does_not_start(durable: ConfigFactory) -> None:
+    """La course vue en 6.3c : l'arrêt glissé entre la lecture et la concession."""
+    status, events = asyncio.run(_arrete_ailleurs(durable(), RunClaimed))
+    types = [e.type for e in events]
+    assert status is RunStatus.CANCELLED
+    assert types[-1] == "run.cancelled" and "run.claimed" not in types
+    assert "model.responded" not in types
+    fold(events, events[0].run_id)  # le journal se relit
+
+
+def test_a_run_stopped_elsewhere_while_piloted_stops_at_its_next_write(
+    durable: ConfigFactory,
+) -> None:
+    status, events = asyncio.run(_arrete_ailleurs(durable(), ModelResponded))
+    types = [e.type for e in events]
+    assert status is RunStatus.CANCELLED
+    # Concession prise, modèle appelé — sa réponse n'est pas écrite après l'arrêt.
+    assert types.index("run.claimed") < types.index("run.cancelled") == len(types) - 1
+    assert "model.responded" not in types
+    cancelled = events[-1].payload
+    assert isinstance(cancelled, RunCancelled) and cancelled.by == "ailleurs"
+    fold(events, events[0].run_id)
+
+
+def test_a_stop_that_arrives_after_the_end_says_already_finished(
+    durable: ConfigFactory,
+) -> None:
+    path = durable()
+    store_path = Path(load_config(path).storage.events.path or "")
+
+    async def go() -> tuple[bool, list[Event]]:
+        journal, _ = await _held(store_path, worker="worker-mort", seconds=-1)
+        async with Loom.from_config(path) as pilote:
+
+            async def finit(run_id: RunId) -> None:
+                await pilote.resume(run_id, session_id=SESSION)
+
+            arreteur = Loom(load_config(path), store=Glissant(store_path, RunCancelled, finit))
+            async with arreteur:
+                arrete = await arreteur.cancel(journal.run_id, session_id=SESSION)
+            return arrete, await pilote.export_session(SESSION)
+
+    arrete, events = asyncio.run(go())
+    assert arrete is False
+    assert events[-1].type == "run.completed"
+    assert "run.cancelled" not in [e.type for e in events]
+
+
+ENVOI = '''
+from loom_ia.tools import tool
+
+
+@tool
+def envoyer(destinataire: str) -> str:
+    """Envoie."""
+    return f"envoyé à {destinataire}"
+'''
+
+
+def test_an_approval_after_a_stop_elsewhere_decides_nothing(
+    durable: ConfigFactory, tmp_path: Path
+) -> None:
+    """Le run en attente est arrêté ailleurs pendant qu'on l'approuve : rien n'est accordé."""
+    script = [{"tool_calls": [{"name": "envoyer", "arguments": {"destinataire": "martin"}}]}]
+    path = durable(imports=["outils_arret"])
+    (tmp_path / "outils_arret.py").write_text(ENVOI, encoding="utf-8")
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config["models"][0]["params"] = {"script": script}
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    agent = yaml.safe_load((tmp_path / "agents" / "demo.yaml").read_text(encoding="utf-8"))
+    agent["tools"] = [{"python": "envoyer", "approval": "always"}]
+    (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
+    store_path = Path(load_config(path).storage.events.path or "")
+
+    async def go() -> tuple[tuple[str, ...], list[Event]]:
+        async with Loom.from_config(path) as ailleurs:
+            run = await ailleurs.run("demo", "Envoie.", session_id=SESSION)
+            assert run.status is RunStatus.PAUSED
+
+            async def arrete(run_id: RunId) -> None:
+                assert await ailleurs.cancel(run_id, session_id=SESSION, by="ailleurs")
+
+            approbateur = Loom(
+                load_config(path), store=Glissant(store_path, ApprovalGranted, arrete)
+            )
+            async with approbateur:
+                accordes = await approbateur.approve(run.run_id, session_id=SESSION)
+            return accordes, await ailleurs.export_session(SESSION)
+
+    accordes, events = asyncio.run(go())
+    types = [e.type for e in events]
+    assert accordes == ()
+    assert types[-1] == "run.cancelled" and "approval.granted" not in types
 
 
 # --- Utilitaires --------------------------------------------------------------

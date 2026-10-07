@@ -184,7 +184,7 @@ from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.model_call import responded
 from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
-from loom_ia.engine.writer import SessionWriter
+from loom_ia.engine.writer import RunMoved, SessionWriter
 
 logger = logging.getLogger(__name__)
 
@@ -461,16 +461,57 @@ async def drive(
         return state
     rooted = state.parent_run_id is None and state.kind == "normal"
     earlier = [e for e in events if e.seq < own[0].seq] if rooted else []
-    session_turns = tuple(turns(earlier))
-    previous = [message for turn in session_turns for message in turn]
-    # Consommation des runs précédents de la session : budget de session (J4).
-    session_spent = spent(earlier)
     cause = next((e for e in reversed(own) if e.category in {"model", "tool"}), None)
     if writer is None:
         writer = SessionWriter(ctx.store, tenant, session, events[-1].seq)
     journal = writer
     scope = run_scope(state)
-    claimed = await _claim(state, ctx, journal, scope)
+    try:
+        claimed = await _claim(state, ctx, journal, scope)
+    except RunMoved as moved:
+        return await _closed_elsewhere(ctx, run_id, tenant, session, moved)
+    try:
+        return await _driven(ctx, state, tenant, session, journal, scope, claimed, earlier, cause)
+    except RunMoved as moved:
+        return await _closed_elsewhere(ctx, run_id, tenant, session, moved)
+
+
+async def _closed_elsewhere(
+    ctx: RunContext, run_id: RunId, tenant: TenantId, session: SessionId, moved: RunMoved
+) -> RunState:
+    """Le run a été clos par un autre process pendant qu'on le pilotait : le journal fait foi.
+
+    Un arrêt demandé ailleurs (``loom cancel``, REST, MCP sur un autre process)
+    se voit à l'écriture suivante du pilote, qui s'arrête là, sans rien
+    réécrire après la clôture.
+    """
+    logger.info(
+        "Run %s : clos ailleurs pendant son pilotage (%s) — pilotage arrêté",
+        run_id,
+        ", ".join(e.type for e in moved.events),
+        extra={"run_id": run_id, "tenant_id": tenant},
+    )
+    own = await ctx.store.read(tenant, session, run_id=run_id)
+    return fold(own, run_id)
+
+
+async def _driven(
+    ctx: RunContext,
+    state: RunState,
+    tenant: TenantId,
+    session: SessionId,
+    journal: SessionWriter,
+    scope: RunScope,
+    claimed: RunClaim | None,
+    earlier: Sequence[Event],
+    cause: Event | None,
+) -> RunState:
+    """Le pilotage proprement dit, concession prise ; ``RunMoved`` remonte à ``drive``."""
+    run_id = state.run_id
+    session_turns = tuple(turns(earlier))
+    previous = [message for turn in session_turns for message in turn]
+    # Consommation des runs précédents de la session : budget de session (J4).
+    session_spent = spent(earlier)
 
     async def write(draft: EventDraft) -> Event:
         nonlocal state, cause
@@ -649,6 +690,9 @@ async def _renewed(
             draft = scope.draft(RunClaimed(worker_id=claim.worker_id, lease_until=until))
             try:
                 await journal.append([draft])
+            except RunMoved:
+                # Clos ailleurs : le pilote le verra à sa prochaine écriture.
+                return
             except Exception:
                 logger.warning("Concession du run %s : renouvellement raté", scope.run_id)
                 return

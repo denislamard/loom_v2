@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ from conftest import ANSWER, QUESTION, ConfigFactory
 from loom_ia.access.api import Loom, UnknownSession
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
-from loom_ia.core.events import Event, SessionSnapshot
+from loom_ia.core.events import Event, RunClaimed, SessionSnapshot
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     Message,
@@ -23,7 +24,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import ArtifactNotFound, EventStore
 from loom_ia.core.projections import fold, history
-from loom_ia.engine import SessionWriter, SessionWriters
+from loom_ia.engine import RunMoved, SessionWriter, SessionWriters, cancellation
 from loom_ia.sessions import boundary, due, estimate_tokens, marked, snapshot
 from loom_ia.testing import RunJournal, tool_call_message
 
@@ -155,6 +156,63 @@ async def test_a_conflicting_write_is_retried() -> None:
 
     assert written_by_second[0].seq == first.last_seq + 1
     assert await store.last_seq(DEFAULT_TENANT, SESSION) == written_by_second[-1].seq
+
+
+async def test_a_write_about_a_run_closed_elsewhere_is_refused() -> None:
+    """Un autre process a clos le run : réécrire après sa fin le ferait repartir (6.4)."""
+    store = InMemoryEventStore()
+    started = RunJournal(session_id=SESSION).start("Calcule.")
+    await written(store, started)
+    pilote = await SessionWriter.open(store, DEFAULT_TENANT, SESSION)
+    ailleurs = await SessionWriter.open(store, DEFAULT_TENANT, SESSION)
+    state = fold(await store.read(DEFAULT_TENANT, SESSION), started.run_id)
+    arret = await ailleurs.append(cancellation(state, by="ailleurs"))
+
+    # La concession que le pilote croyait prendre sur un run encore ouvert.
+    concession = RunClaimed(worker_id="worker-pilote", lease_until=datetime.now(UTC))
+    with pytest.raises(RunMoved) as refus:
+        await pilote.append([started.scope.draft(concession)])
+    assert refus.value.run_ids == {started.run_id}
+    assert [e.type for e in refus.value.events] == ["run.cancelled"]
+    # Rien d'écrit après l'arrêt, et l'écrivain sait où en est le journal.
+    assert await store.last_seq(DEFAULT_TENANT, SESSION) == arret[-1].seq == pilote.last_seq
+    fold(await store.read(DEFAULT_TENANT, SESSION), started.run_id)
+    # Un autre run de la session s'écrit toujours.
+    autre = await pilote.append(RunJournal(session_id=SESSION).start("Autre ?").take())
+    assert autre[0].seq == arret[-1].seq + 1
+
+
+async def test_a_run_moving_on_elsewhere_does_not_refuse_its_stop() -> None:
+    """Le run avance ailleurs pendant qu'on l'arrête : l'arrêt passe quand même."""
+    store = InMemoryEventStore()
+    journal = RunJournal(session_id=SESSION)
+    journal.start("Calcule.")
+    await written(store, journal)
+    arreteur = await SessionWriter.open(store, DEFAULT_TENANT, SESSION)
+    state = fold(await store.read(DEFAULT_TENANT, SESSION), journal.run_id)
+    journal.model_turn(Message.assistant("Je calcule."))
+    await written(store, journal)
+    arret = await arreteur.append(cancellation(state, by="ailleurs"))
+    assert arret[-1].type == "run.cancelled"
+    assert fold(await store.read(DEFAULT_TENANT, SESSION), journal.run_id).finished
+
+
+async def test_a_stop_after_the_end_is_refused() -> None:
+    """Fini ailleurs entre la lecture et l'écriture de l'arrêt : rien après la fin."""
+    store = InMemoryEventStore()
+    journal = RunJournal(session_id=SESSION)
+    journal.start("Calcule.")
+    await written(store, journal)
+    arreteur = await SessionWriter.open(store, DEFAULT_TENANT, SESSION)
+    state = fold(await store.read(DEFAULT_TENANT, SESSION), journal.run_id)
+    journal.model_turn(Message.assistant("4."))
+    journal.complete()
+    await written(store, journal)
+    with pytest.raises(RunMoved, match=r"run\.completed"):
+        await arreteur.append(cancellation(state, by="ailleurs"))
+    assert fold(await store.read(DEFAULT_TENANT, SESSION), journal.run_id).status.value == (
+        "completed"
+    )
 
 
 async def test_the_registry_shares_one_writer_per_session() -> None:

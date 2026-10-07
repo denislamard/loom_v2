@@ -85,7 +85,7 @@ from loom_ia.engine.transcript import (
     rendered,
     transcript,
 )
-from loom_ia.engine.writer import SessionWriter, SessionWriters
+from loom_ia.engine.writer import RunMoved, SessionWriter, SessionWriters
 
 __all__ = [
     "AGENT_HINT",
@@ -139,6 +139,7 @@ __all__ = [
     "RoleDefinition",
     "RoleTool",
     "RunContext",
+    "RunMoved",
     "RunView",
     "SessionWriter",
     "SessionWriters",

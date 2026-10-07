@@ -11,7 +11,8 @@
     loom eval suite.yaml           joue une suite d'évals, variante par variante
     loom approve <run_id>          autorise ce que le run attend, et le reprend
     loom reject <run_id>           refuse ce que le run attend, et le reprend
-    loom serve                     sert l'API REST
+    loom serve                     sert l'API REST (``--reload`` : relancé quand
+                                   un fichier de la config change)
     loom mcp                       sert les agents en MCP, sur stdio
     loom keys create <nom>         fabrique une clé d'API
     loom worker                    consomme la file des tâches de fond
@@ -31,6 +32,7 @@ import signal
 import sys
 from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Final, cast
 
@@ -333,6 +335,14 @@ def build_parser() -> argparse.ArgumentParser:
     serve = commands.add_parser("serve", help="sert l'API REST")
     serve.add_argument("--host", default=None)
     serve.add_argument("--port", type=int, default=None)
+    serve.add_argument(
+        "--reload",
+        action="store_true",
+        help=(
+            "relance le serveur quand un fichier de la config change (dev ; refusé en prod) ; "
+            "une config cassée est refusée et l'ancien process continue de servir"
+        ),
+    )
     serve.set_defaults(handler=cmd_serve)
 
     mcp = tenanted(commands.add_parser("mcp", help="sert les agents en MCP, sur stdio"))
@@ -484,7 +494,7 @@ async def _validate(args: argparse.Namespace) -> int:
     artifacts = f"{storage.artifacts_backend} ({files})" if files else storage.artifacts_backend
     keys = ", ".join(key.id for key in config.security.api_keys)
     print(f"Config     : {args.config}")
-    print(f"Profil     : {_profile_line(config, args)}")
+    print(f"Profil     : {_profile_line(config, args.profile)}")
     print(f"Modèles    : {_listed(spec.id for spec in config.models)}")
     print(f"Agents     : {_listed(agent.name for agent in config.agents)}")
     named = [(name, registry.get(name)) for name in registry.names]
@@ -550,13 +560,13 @@ async def _validate(args: argparse.Namespace) -> int:
     return OK
 
 
-def _profile_line(config: LoomConfig, args: argparse.Namespace) -> str:
-    """Le profil actif, d'où il vient, et ce qu'il change.
+def _profile_line(config: LoomConfig, given: str | None) -> str:
+    """Le profil actif, d'où il vient, et ce qu'il change ; ``given`` est celui de l'option.
 
     Un profil qu'on ne voit pas est un profil qu'on oublie : un déploiement
     qui croit être en prod doit pouvoir le lire ici.
     """
-    active, source = chosen_profile(args.profile, config.profile)
+    active, source = chosen_profile(given, config.profile)
     declared = _listed(sorted(config.profiles)) if config.profiles else "aucune"
     if active is None:
         return f"aucun (ni --profile, ni {PROFILE_ENV}, ni 'profile:') ; surcharges : {declared}"
@@ -1340,7 +1350,43 @@ def cmd_serve(args: argparse.Namespace) -> int:
     http = config.server.http
     host = args.host or http.host
     port = args.port or http.port
-    print(f"Profil     : {_profile_line(config, args)}")
+    if args.reload:
+        return _serve_reloading(config, args, host, port)
+    serving_banner(config, args.profile, host, port)
+    serve(Loom(config), host=args.host, port=args.port)
+    return OK
+
+
+def _serve_reloading(config: LoomConfig, args: argparse.Namespace, host: str, port: int) -> int:
+    """``loom serve --reload`` : un superviseur, et un process qui sert par version de la config."""
+    if config.strict:
+        print(
+            "loom serve --reload est refusé en profil prod : un service ne se relance pas "
+            "sur une modification de fichier.",
+            file=sys.stderr,
+        )
+        return REFUSED
+    if find_spec("watchfiles") is None:
+        print(MISSING_EXTRA.format(what="'loom serve --reload'", extra="http"), file=sys.stderr)
+        return REFUSED
+    from loom_ia.access.http.serve import serve_reloading, watched
+
+    # Refusé avant d'ouvrir quoi que ce soit : des données qui contiennent
+    # le dossier surveillé relanceraient le serveur à chaque écriture.
+    watched(config)
+    return serve_reloading(
+        Path(args.config), profile=args.profile, host=host, port=port, banner=serving_banner
+    )
+
+
+def serving_banner(config: LoomConfig, given: str | None, host: str, port: int) -> None:
+    """Le bandeau de ``loom serve`` : profil, adresses, agents, portes.
+
+    ``--reload`` le fait imprimer par chaque process qui prend la main : ce
+    qu'on lit après un rechargement est ce que sert le nouveau.
+    """
+    http = config.server.http
+    print(f"Profil     : {_profile_line(config, given)}")
     print(f"API REST   : http://{host}:{port}{http.base_path}/v1")
     print(f"Agents     : {_listed(agent.name for agent in config.agents if agent.expose.rest)}")
     if config.server.mcp.http:
@@ -1356,8 +1402,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
         # L'adresse qu'on donne au planificateur de la plateforme : loom ne
         # tient pas de cron, il attend qu'on sonne à la porte.
         print(f"Porte      : POST http://{host}:{port}{http.base_path}/v1/hooks/{trigger.name}")
-    serve(Loom(config), host=args.host, port=args.port)
-    return OK
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
