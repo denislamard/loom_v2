@@ -39,6 +39,7 @@ from loom_ia.core.ports.tool import (
     ToolContext,
     ToolError,
     ToolSource,
+    ToolSourceFactory,
     UnknownEffect,
     idempotency_key,
 )
@@ -82,6 +83,7 @@ __all__ = [
     "ToolContext",
     "ToolError",
     "ToolSource",
+    "ToolSourceFactory",
     "UnknownEffect",
     "UsageCounter",
     "complete",

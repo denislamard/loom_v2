@@ -430,6 +430,40 @@ class McpTools(DomainModel):
         return tool.startswith(f"{self.prefix}{MCP_PREFIX_SEPARATOR}")
 
 
+class SourceTools(DomainModel):
+    """Source d'outils d'un paquet installé, référencée par un agent (J6.4b).
+
+    Comme un serveur MCP : les outils prennent le préfixe ``source__`` (ou
+    ``alias__``), ``include`` ou ``exclude`` choisit ceux qui sont exposés,
+    ``tools`` fixe leurs déclarations pour cet agent.
+    """
+
+    source: str = Field(pattern=MCP_NAME_PATTERN)
+    # Préfixe plus court que le nom de la source.
+    alias: str | None = Field(default=None, pattern=MCP_NAME_PATTERN, max_length=40)
+    include: tuple[str, ...] | None = None
+    exclude: tuple[str, ...] | None = None
+    # Sans cette source, le run échoue au lieu de continuer sans ses outils.
+    required: bool = False
+    tools: dict[str, ToolOverrides] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_filters(self) -> Self:
+        if self.include is not None and self.exclude is not None:
+            raise ValueError(
+                f"Source d'outils {self.source!r} : 'include' ou 'exclude', pas les deux"
+            )
+        return self
+
+    @property
+    def prefix(self) -> str:
+        return self.alias or self.source
+
+    def owns(self, tool: str) -> bool:
+        """Vrai si ``tool`` porte le préfixe de cette référence."""
+        return tool.startswith(f"{self.prefix}{MCP_PREFIX_SEPARATOR}")
+
+
 class SubAgentRef(DomainModel):
     """Sous-agent (C5) : un autre agent de la config, appelé comme un outil.
 
@@ -458,8 +492,12 @@ class SubAgentRef(DomainModel):
 def _tool_kind(value: object) -> str:
     if isinstance(value, McpTools):
         return "mcp"
+    if isinstance(value, SourceTools):
+        return "source"
     if isinstance(value, dict) and "mcp" in value:
         return "mcp"
+    if isinstance(value, dict) and "source" in value:
+        return "source"
     return "python"
 
 
@@ -494,7 +532,9 @@ class PolicyRef(DomainModel):
 
 
 type ToolRef = Annotated[
-    Annotated[PythonTool, Tag("python")] | Annotated[McpTools, Tag("mcp")],
+    Annotated[PythonTool, Tag("python")]
+    | Annotated[McpTools, Tag("mcp")]
+    | Annotated[SourceTools, Tag("source")],
     Discriminator(_tool_kind),
 ]
 
@@ -554,6 +594,13 @@ class AgentSpec(DomainModel):
                 f"Préfixe MCP déclaré deux fois : {', '.join(sorted(doubles))} "
                 "(donner un 'alias' à l'une des références)"
             )
+        prefixes += [ref.prefix for ref in self.source_tools]
+        doubles = {name for name in prefixes if prefixes.count(name) > 1}
+        if doubles:
+            raise ValueError(
+                f"Préfixe d'outils déclaré deux fois : {', '.join(sorted(doubles))} "
+                "(serveur MCP ou source d'outils ; donner un 'alias' à l'une des références)"
+            )
         roles = [role.name for role in self.roles]
         doubles = {name for name in roles if roles.count(name) > 1}
         if doubles:
@@ -595,6 +642,7 @@ class AgentSpec(DomainModel):
             or any(role.output is not None for role in self.roles)
             or any(tool.output is not None for tool in self.python_tools)
             or any(o.output is not None for ref in self.mcp_tools for o in ref.tools.values())
+            or any(o.output is not None for ref in self.source_tools for o in ref.tools.values())
         )
 
     @property
@@ -604,3 +652,7 @@ class AgentSpec(DomainModel):
     @property
     def mcp_tools(self) -> tuple[McpTools, ...]:
         return tuple(tool for tool in self.tools if isinstance(tool, McpTools))
+
+    @property
+    def source_tools(self) -> tuple[SourceTools, ...]:
+        return tuple(tool for tool in self.tools if isinstance(tool, SourceTools))

@@ -150,6 +150,7 @@ from loom_ia.guards import (
     correlated,
 )
 from loom_ia.policies import BUILTIN_POLICIES
+from loom_ia.runtime.sources import PackagedSource, described, source_factory
 from loom_ia.telemetry import RunExporter, SpanSink, configure_logging
 from loom_ia.tenancy import EnvironmentSecrets, Tenant
 from loom_ia.tools import FunctionTool, configure
@@ -628,6 +629,9 @@ def build_agent(
         ),
     )
     sources, owned = _mcp_sources(config, spec, secrets, mcp_pool, tenant_id)
+    packaged = _packaged_sources(config, spec, secrets)
+    sources = [*sources, *packaged]
+    owned = (*owned, *packaged)
     if spec.subagents and agents is None:
         nested = _SubAgents(
             config,
@@ -674,7 +678,12 @@ def build_agent(
             artifacts=artifacts,
             offload_over=execution.offload_over,
             breakers=breakers,
-            circuits={server.name: server.circuit_breaker for server in config.mcp_servers},
+            circuits={
+                **{server.name: server.circuit_breaker for server in config.mcp_servers},
+                # Pas de disjoncteur pour une source de paquet : à elle de
+                # dire qu'elle ne répond pas (``SourceUnavailable``).
+                **{declared.name: None for declared in config.tool_sources},
+            },
             approval=spec.approval,
             idempotency=idempotency,
             denied=denied,
@@ -800,9 +809,14 @@ def stream_output(spec: AgentSpec, policies: Policies) -> StreamOutput:
 
 
 def _has_contracts(config: LoomConfig, spec: AgentSpec) -> bool:
-    """Vrai si un contrat s'applique à l'agent, y compris par un serveur MCP qu'il référence."""
+    """Vrai si un contrat s'applique à l'agent, y compris par un serveur MCP ou une source."""
     servers = [config.mcp_server(ref.mcp) for ref in spec.mcp_tools]
-    return spec.contracts or any(o.output is not None for s in servers for o in s.tools.values())
+    packaged = [config.tool_source(ref.source) for ref in spec.source_tools]
+    return (
+        spec.contracts
+        or any(o.output is not None for s in servers for o in s.tools.values())
+        or any(o.output is not None for s in packaged for o in s.tools.values())
+    )
 
 
 def _policy(spec: AgentSpec, ref: PolicyRef, registry: Registry, base_dir: Path | None) -> Policy:
@@ -1226,7 +1240,9 @@ def _check_names(spec: AgentSpec, python_tools: list[str]) -> None:
         for tool in role.tool_results:
             if tool in names or any(ref.owns(tool) for ref in spec.mcp_tools):
                 continue
-            prefixes = [f"{ref.prefix}__…" for ref in spec.mcp_tools]
+            if any(ref.owns(tool) for ref in spec.source_tools):
+                continue
+            prefixes = [f"{ref.prefix}__…" for ref in (*spec.mcp_tools, *spec.source_tools)]
             known = ", ".join([*names, *prefixes]) or "aucun"
             raise ConfigError(
                 f"Agent {spec.name!r}, rôle {role.name!r} : tool_results désigne {tool!r}, "
@@ -1281,6 +1297,48 @@ def _mcp_sources(
         key = f"{server.name}#{tenant_id}" if server.scope == "tenant" else server.name
         sources.append(McpSource(server, selection, factory=factory, pool=pool, pool_key=key))
     return sources, owned
+
+
+def _packaged_sources(
+    config: LoomConfig, spec: AgentSpec, environ: Mapping[str, str] | None
+) -> list[PackagedSource]:
+    """Sources d'outils des paquets que l'agent référence (J6.4b).
+
+    Le paquet de chaque source est importé ici, et sa fabrique appelée avec
+    ce que la config déclare : des paramètres refusés refusent le montage.
+    Chaque source appartient à l'agent monté, qui la ferme avec lui.
+    """
+    secrets = os.environ if environ is None else environ
+    base_dir = config.base_dir if config.base_dir is not None else Path.cwd()
+    sources: list[PackagedSource] = []
+    for ref in spec.source_tools:
+        declared = config.tool_source(ref.source)
+        make = source_factory(declared.entry_point)
+        told = f"Agent {spec.name!r}, source {declared.name!r} ({described(declared.entry_point)})"
+        try:
+            made: object = make(
+                name=declared.name, params=declared.params, secrets=secrets, base_dir=base_dir
+            )
+        except Exception as exc:
+            raise ConfigError(f"{told} : refusée par sa fabrique — {exc}") from exc
+        if not callable(getattr(made, "open", None)):
+            raise ConfigError(
+                f"{told} : la fabrique n'a pas rendu une source d'outils ({type(made).__name__}, "
+                "sans méthode open)"
+            )
+        sources.append(
+            PackagedSource(
+                made,
+                name=declared.name,
+                prefix=ref.prefix,
+                include=ref.include,
+                exclude=ref.exclude,
+                required=ref.required,
+                declared=declared.tools,
+                chosen=ref.tools,
+            )
+        )
+    return sources
 
 
 def _missing_mcp(reason: str) -> ConfigError:

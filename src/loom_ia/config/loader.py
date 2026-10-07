@@ -18,7 +18,7 @@ from typing import Any, Final, cast
 import yaml
 from pydantic import ValidationError
 
-from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools, system_text
+from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools, SourceTools, system_text
 from loom_ia.config.errors import ConfigError, from_validation
 from loom_ia.config.models import PROFILES, LoomConfig, Profile, StorageConfig, TenantSpec
 from loom_ia.core.model import (
@@ -62,6 +62,10 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
         server.model_copy(update={"tools": _with_schemas(server.tools, base_dir, source=root)})
         for server in config.mcp_servers
     )
+    sources = tuple(
+        declared.model_copy(update={"tools": _with_schemas(declared.tools, base_dir, source=root)})
+        for declared in config.tool_sources
+    )
     loaded = config.model_copy(
         update={
             # L'option et la variable l'emportent sur le fichier : la config
@@ -74,6 +78,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
             "sessions": _absolute_sessions(config, base_dir / config.prompts_dir, source=root),
             "server": _absolute_server(config, base_dir),
             "mcp_servers": tuple(_launched_from(server, base_dir) for server in servers),
+            "tool_sources": sources,
             "tenants": tuple(_absolute_tenant(tenant, base_dir) for tenant in config.tenants),
         }
     )
@@ -155,14 +160,14 @@ def _load_agents(agents_dir: Path, prompts_dir: Path, base_dir: Path) -> list[Ag
 
 
 def _with_contracts(spec: AgentSpec, base_dir: Path, *, source: Path) -> AgentSpec:
-    """Schémas de sortie donnés par fichier, lus : agent, rôles, outils Python et MCP."""
+    """Schémas de sortie donnés par fichier, lus : agent, rôles, outils Python, MCP et de paquet."""
     roles = tuple(
         role.model_copy(update={"output": _schema(role.output, base_dir, source=source)})
         for role in spec.roles
     )
     tools = tuple(
         tool.model_copy(update={"tools": _with_schemas(tool.tools, base_dir, source=source)})
-        if isinstance(tool, McpTools)
+        if isinstance(tool, McpTools | SourceTools)
         else tool.model_copy(update={"output": _schema(tool.output, base_dir, source=source)})
         for tool in spec.tools
     )

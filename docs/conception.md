@@ -251,7 +251,7 @@ Transverse     Config/Builder · Kit de test
 | Port | Rôle | Adaptateurs prévus |
 |---|---|---|
 | `ModelClient` | Appeler un modèle en streaming | `anthropic` ; `openai` (`chat`, `responses`) |
-| `ToolSource` | Fournir des outils | Fonctions Python, client MCP, entry points externes (ex. sandbox Firecracker) |
+| `ToolSource` | Fournir des outils | Fonctions Python, client MCP, paquets installés par points d'entrée `loom_ia.tools` (6.4b ; ex. sandbox Firecracker) |
 | `EventStore` | Écrire et interroger le journal | Mémoire, JSONL, SQLite, Postgres, Firestore |
 | `ArtifactStore` | Stocker les fichiers hors journal | Fichier local, GCS |
 | `EventSink` | Exporter les événements | OpenTelemetry, logs |
@@ -1178,6 +1178,7 @@ prompts_dir: prompts/                 # base des *_file
 
 models: [...]                         # ModelSpec
 mcp_servers: [...]                    # McpServerSpec
+tool_sources: [...]                   # ToolSourceSpec : sources de paquets installés (J6.4b)
 storage: {...}
 sessions: {...}
 execution: {...}
@@ -1256,6 +1257,10 @@ tools:
       fiche_client: {output: {...}}   # l'emporte sur mcp_servers[].tools
   - mcp: agenda
     exclude: [supprimer_creneau]
+  - source: carnet                    # source d'un paquet installé (J6.4b), comme un serveur MCP
+    alias: c                          # préfixe : c__chercher_devis
+    tools:
+      chercher_devis: {timeout: 5}
 roles:
   - name: rediger_relance
     description: Rédige un e-mail de relance de devis.
@@ -1349,6 +1354,19 @@ mcp_servers:
 ```
 
 Un agent peut référencer plusieurs serveurs : voir §9.5.
+
+**Sources de paquets installés** (J6.4b) : un paquet déclare un point d'entrée du groupe `loom_ia.tools`, qui désigne sa fabrique (`ToolSourceFactory`) ; la config la déclare ici, et un agent la référence comme un serveur MCP (`source:`, `alias`, `include` ou `exclude`, `required`, `tools`).
+
+```yaml
+tool_sources:
+  - name: carnet                      # sans « __ » : il préfixe les outils (carnet__chercher_devis)
+    entry_point: carnet               # point d'entrée du groupe loom_ia.tools
+    params: {fichier: carnet.json}    # remis tels quels à la fabrique, qui les vérifie
+    tools:
+      chercher_devis: {side_effects: none}   # nom court ; l'agent l'emporte
+```
+
+Le paquet n'est importé qu'au montage d'un agent qui référence la source ; la fabrique reçoit `name`, `params`, la table des secrets du client et le dossier de la config, et rend un `ToolSource` dont loom n'utilise que `open` (et `aclose` s'il existe). Un nom de source ne peut pas être celui d'un serveur MCP. Détails : `fonctions.md`, point 41.
 
 ### 17.6 Stockages, sessions, exécution
 
@@ -1651,7 +1669,7 @@ src/loom_ia/
 | `all` | Tous les extras |
 
 - Outils de dev (pytest, respx, ruff, pyright, import-linter) dans `[dependency-groups]`.
-- Adaptateurs externes par entry points (`loom_ia.adapters`), par exemple un package `loom-ia-firecracker` pour la sandbox.
+- Adaptateurs externes par entry points (`loom_ia.adapters`), par exemple un package `loom-ia-firecracker` pour la sandbox. Réalisé en 6.4b pour les outils seulement : le groupe `loom_ia.tools` (sources d'outils, `tool_sources`) ; les autres ports n'en ont pas.
 
 **Règles `import-linter` :**
 

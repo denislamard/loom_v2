@@ -44,6 +44,7 @@ from loom_ia.config.telemetry import (
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    MCP_NAME_PATTERN,
     Approval,
     AttachmentPolicy,
     Budgets,
@@ -53,6 +54,7 @@ from loom_ia.core.model import (
     Quotas,
     RateLimit,
     TenantId,
+    ToolOverrides,
     reject_later,
 )
 from loom_ia.core.template import Template, TemplateError
@@ -694,6 +696,23 @@ type Profile = Literal["dev", "prod"]
 PROFILES: Final[tuple[Profile, ...]] = ("dev", "prod")
 
 
+class ToolSourceSpec(DomainModel):
+    """Une source d'outils fournie par un paquet installé (J6.4b, §7.3).
+
+    ``entry_point`` nomme un point d'entrée du groupe ``loom_ia.tools`` ; loom
+    n'importe son paquet que si un agent référence la source. ``params`` est
+    remis tel quel à la fabrique du paquet, qui le vérifie. La config ne porte
+    pas de secret : la fabrique reçoit la table des secrets du client.
+    """
+
+    # Nom dans la config ; il préfixe les outils (``carnet__chercher_devis``).
+    name: str = Field(pattern=MCP_NAME_PATTERN, max_length=40)
+    entry_point: str = Field(min_length=1, pattern=r"^[^\s=]+$")
+    params: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
+    # Déclarations par outil (nom court), sur celles que la source annonce.
+    tools: dict[str, ToolOverrides] = Field(default_factory=dict[str, ToolOverrides])
+
+
 class LoomConfig(DomainModel):
     version: int
     # Profil actif (M4) : `dev` assouplit, `prod` durcit, absent ne change
@@ -715,6 +734,8 @@ class LoomConfig(DomainModel):
     models: tuple[ModelSpec, ...] = ()
     # Serveurs MCP, référencés par les agents (#19).
     mcp_servers: tuple[McpServerSpec, ...] = ()
+    # Sources d'outils fournies par des paquets installés (J6.4b).
+    tool_sources: tuple[ToolSourceSpec, ...] = ()
     storage: StorageConfig = StorageConfig()
     # Snapshots d'historique et compaction ; l'agent interne ``_compaction``
     # en sort (voir ``all_agents``).
@@ -796,6 +817,23 @@ class LoomConfig(DomainModel):
                     raise ValueError(
                         f"Agent {agent.name!r} : serveur MCP {ref.mcp!r} non déclaré "
                         f"dans mcp_servers (serveurs : {declared})"
+                    )
+        sources = [source.name for source in self.tool_sources]
+        _reject_doubles("Nom de source d'outils", sources)
+        # Un même nom dirait deux choses au journal (``tool.source_unavailable``).
+        shared = sorted(set(sources) & set(servers))
+        if shared:
+            raise ValueError(
+                f"Source d'outils et serveur MCP de même nom : {', '.join(shared)} "
+                "(le journal ne saurait pas lequel est indisponible)"
+            )
+        for agent in self.agents:
+            for ref in agent.source_tools:
+                if ref.source not in sources:
+                    declared = ", ".join(sources) or "aucune"
+                    raise ValueError(
+                        f"Agent {agent.name!r} : source d'outils {ref.source!r} non déclarée "
+                        f"dans tool_sources (sources : {declared})"
                     )
         _reject_doubles("Modèle", [spec.id for spec in self.models])
         for agent in self.agents:
@@ -991,6 +1029,13 @@ class LoomConfig(DomainModel):
         root = self.telemetry.capture
         spec = self.tenant_spec(tenant_id)
         return root if spec is None else spec.telemetry.capture.over(root)
+
+    def tool_source(self, name: str) -> ToolSourceSpec:
+        """Définition d'une source d'outils par son nom."""
+        for source in self.tool_sources:
+            if source.name == name:
+                return source
+        raise KeyError(name)
 
     def mcp_server(self, name: str) -> McpServerSpec:
         """Définition d'un serveur MCP par son nom."""

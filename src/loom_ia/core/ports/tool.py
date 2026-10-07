@@ -8,12 +8,17 @@ Une source d'outils (``ToolSource``, un serveur MCP par exemple) fournit ses
 outils au début de chaque run : ils peuvent changer d'un run à l'autre, et la
 source peut être indisponible. La liste obtenue reste fixe jusqu'à la fin du
 run, pour que les requêtes au modèle restent stables.
+
+Un paquet installé fournit une source par un point d'entrée du groupe
+``loom_ia.tools`` (J6.4b) : il désigne une fabrique (``ToolSourceFactory``),
+que loom appelle avec ce que la config déclare pour elle.
 """
 
 import hashlib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from pydantic import JsonValue
@@ -140,3 +145,41 @@ class ToolSource(Protocol):
         Lève ``SourceUnavailable`` si la source ne répond pas.
         """
         ...
+
+
+@runtime_checkable
+class ToolSourceFactory(Protocol):
+    """Ce qu'un point d'entrée ``loom_ia.tools`` désigne : de quoi faire une source (J6.4b).
+
+    loom l'appelle au montage d'un agent qui référence la source, une fois par
+    agent et par client, avec :
+
+    - ``name`` : le nom de la source dans la config (``tool_sources[].name``) ;
+    - ``params`` : ses ``params``, tels que la config les donne — à la
+      fabrique de les vérifier, et de lever ``ValueError`` en disant ce qui
+      ne va pas ;
+    - ``secrets`` : la table des secrets du client pour qui l'agent est monté
+      (l'environnement, sans clients déclarés) ;
+    - ``base_dir`` : le dossier du fichier de config, auquel se rapportent
+      les chemins relatifs de ``params``.
+
+    La fabrique rend la source sans travailler : ``loom validate`` et le
+    montage d'essai de ``serve --reload`` l'appellent aussi. Le travail
+    (connexion, VM…) se fait à l'ouverture, au début de chaque run
+    (``ToolSource.open``) ; ce qui doit durer plus qu'un run se ferme dans un
+    ``aclose`` asynchrone, appelé quand l'agent est démonté, s'il existe.
+
+    Les outils rendus portent leur nom court : loom les préfixe
+    (``source__outil``), les choisit (``include``, ``exclude``) et applique
+    les déclarations de la config. Le nom et ``required`` de la source rendue
+    ne comptent pas : c'est la config qui les dit.
+    """
+
+    def __call__(
+        self,
+        *,
+        name: str,
+        params: Mapping[str, JsonValue],
+        secrets: Mapping[str, str],
+        base_dir: Path,
+    ) -> ToolSource: ...

@@ -72,6 +72,7 @@ from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     JUDGES_MODES,
+    MCP_PREFIX_SEPARATOR,
     Attachment,
     BudgetPeriod,
     Budgets,
@@ -105,6 +106,8 @@ from loom_ia.runtime import (
     postgres_ddl,
     storage_warnings,
 )
+from loom_ia.runtime.sources import GROUP as SOURCES_GROUP
+from loom_ia.runtime.sources import PackagedSource, installed
 from loom_ia.telemetry import Trace, render_trace
 from loom_ia.tenancy import Tenant, UnknownTenant
 from loom_ia.usage import UsageReport, amount
@@ -502,6 +505,8 @@ async def _validate(args: argparse.Namespace) -> int:
     policies = [name for name, obj in named if isinstance(obj, Policy)]
     if policies:
         print(f"Politiques : {_listed(policies)}")
+    for line in _source_lines(config):
+        print(line)
     print(f"Journal    : {journal}")
     print(f"Artefacts  : {artifacts}")
     print(f"Idempotence: {_storage_line(storage.idempotency)}")
@@ -558,6 +563,27 @@ async def _validate(args: argparse.Namespace) -> int:
                 await _show_agent(loom, tenant_id, spec, indent="  " if config.tenants else "")
     print(f"\n{mounted} agent(s) monté(s) sans erreur.")
     return OK
+
+
+def _source_lines(config: LoomConfig) -> list[str]:
+    """Les sources déclarées, et les points d'entrée installés — lus sans rien importer.
+
+    Rien n'est dit sans source déclarée ni paquet installé : la plupart des
+    configs n'en ont pas.
+    """
+    lines: list[str] = []
+    for declared in config.tool_sources:
+        lines.append(f"Source     : {declared.name} → point d'entrée {declared.entry_point}")
+    found = installed()
+    if found or config.tool_sources:
+        used = {declared.entry_point for declared in config.tool_sources}
+        listed = [
+            f"{point.name} ({' '.join(filter(None, (point.package, point.version)))}"
+            f"{', utilisé' if point.name in used else ''})"
+            for point in found
+        ]
+        lines.append(f"Paquets    : {_listed(listed)} (groupe {SOURCES_GROUP})")
+    return lines
 
 
 def _profile_line(config: LoomConfig, given: str | None) -> str:
@@ -1621,9 +1647,11 @@ def _budget_line(budgets: Budgets) -> str:
 
 
 async def _show_sources(agent: str, tools: ToolExecutor) -> None:
-    """Se connecte aux serveurs MCP de l'agent et liste leurs outils."""
+    """Ouvre les sources de l'agent — serveurs MCP, sources de paquet — et liste leurs outils."""
     if not tools.sources:
         return
+    packaged = {s.name: s for s in tools.sources if isinstance(s, PackagedSource)}
+    servers = [s for s in tools.sources if not isinstance(s, PackagedSource)]
     context = SourceContext(
         tenant_id=DEFAULT_TENANT,
         session_id=SessionId("validate"),
@@ -1631,11 +1659,17 @@ async def _show_sources(agent: str, tools: ToolExecutor) -> None:
         agent=agent,
     )
     async with tools.opened(context) as opened:
-        found = [spec.name for spec in opened.tools.specs if spec.kind == "mcp"]
-        print(f"    MCP : {_listed(found)}")
+        if servers:
+            found = [spec.name for spec in opened.tools.specs if spec.kind == "mcp"]
+            print(f"    MCP : {_listed(found)}")
+        for name, source in packaged.items():
+            mine = f"{source.prefix}{MCP_PREFIX_SEPARATOR}"
+            found = [spec.name for spec in opened.tools.specs if spec.name.startswith(mine)]
+            print(f"    source {name} : {_listed(found)}")
         for missing in opened.unavailable:
             required = " (requis)" if missing.required else ""
-            print(f"    MCP {missing.source} indisponible{required} : {missing.error}")
+            kind = "source" if missing.source in packaged else "MCP"
+            print(f"    {kind} {missing.source} indisponible{required} : {missing.error}")
 
 
 def _report(result: RunResult, *, as_json: bool = False, quiet: bool = False) -> int:

@@ -709,10 +709,11 @@ def traced_agents(trace: Trace) -> list[str]:
 def tree_tools(
     config: LoomConfig, agent: str, context_of: Callable[[str], RunContext]
 ) -> tuple[dict[str, str], tuple[str, ...]]:
-    """Les outils de l'agent et de ses sous-agents (nom → genre), et leurs préfixes MCP.
+    """Les outils de l'agent et de ses sous-agents (nom → genre), et les préfixes de ses sources.
 
-    ``context_of`` monte chaque agent de l'arbre. Un outil MCP est connu par
-    son préfixe (``serveur__``) : ses outils ne sont listés qu'à la connexion.
+    ``context_of`` monte chaque agent de l'arbre. Un outil MCP ou de paquet est
+    connu par son préfixe (``serveur__``, ``source__``) : ses outils ne sont
+    listés qu'à l'ouverture de la source, au début d'un run.
     """
     known: dict[str, str] = {}
     prefixes: list[str] = []
@@ -724,7 +725,7 @@ def tree_tools(
             continue
         seen.add(name)
         spec = registry.get(name)
-        prefixes += [f"{ref.prefix}__" for ref in spec.mcp_tools]
+        prefixes += [f"{ref.prefix}__" for ref in (*spec.mcp_tools, *spec.source_tools)]
         for tool in context_of(name).tools.specs:
             known.setdefault(tool.name, tool.kind)
         waiting += [ref.agent for ref in spec.subagents]
@@ -740,7 +741,8 @@ def doubles_problem(
     """Ce qui ne va pas dans des doublures, ou ``None`` : chacune vise un outil de l'agent.
 
     Un outil de l'agent ou de l'un de ses sous-agents (``context_of`` monte
-    chacun), ou d'un de leurs serveurs MCP (par son préfixe) ; jamais un rôle,
+    chacun), ou d'un de leurs serveurs MCP ou sources de paquet (par son
+    préfixe) ; jamais un rôle,
     qui est de la logique et tourne. Commun au rejeu en variante et aux évals.
     """
     known, prefixes = tree_tools(config, agent, context_of)
