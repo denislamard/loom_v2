@@ -11,6 +11,7 @@ import json
 import sys
 import textwrap
 from collections.abc import Callable, Iterator
+from importlib.metadata import EntryPoint, EntryPoints
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from loom_ia.access.cli import main
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import ToolCalled, ToolSourceUnavailable
 from loom_ia.core.model import DEFAULT_TENANT, RunStatus, TenantId
+from loom_ia.runtime import sources
 from loom_ia.runtime.sources import GROUP, installed, source_factory
 
 CARNET = {
@@ -124,6 +126,25 @@ def paquets(tmp_path: Path) -> Iterator[Paquets]:
         for name in found.modules:
             sys.modules.pop(name, None)
         importlib.invalidate_caches()
+
+
+@pytest.fixture
+def masque(paquets: Paquets, monkeypatch: pytest.MonkeyPatch) -> Paquets:
+    """Seuls les paquets de l'essai sont vus : ceux de l'environnement sont masqués.
+
+    Le dépôt en installe un pour de bon (``loom-firecracker``, 6.4c) ; un essai
+    qui lit la liste entière ne doit pas dépendre de ce qui est installé.
+    """
+    real = sources.entry_points
+
+    def of_the_test(*, group: str) -> EntryPoints:
+        def ours(point: EntryPoint) -> bool:
+            return point.dist is not None and Path(str(point.dist.locate_file(""))) == paquets.site
+
+        return EntryPoints(point for point in real(group=group) if ours(point))
+
+    monkeypatch.setattr(sources, "entry_points", of_the_test)
+    return paquets
 
 
 @pytest.fixture
@@ -481,7 +502,7 @@ async def test_a_role_can_read_the_results_of_a_package_tool(
 
 
 def test_validate_names_sources_packages_and_tools(
-    carnet: Paquets, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    carnet: Paquets, masque: Paquets, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     carnet.installe("piege", "piege_loom", PIEGE, {"piege": "piege_loom:fabrique"}, "2.0")
     assert main(["--config", str(config_file(tmp_path)), "validate"]) == 0
@@ -496,7 +517,7 @@ def test_validate_names_sources_packages_and_tools(
 
 
 def test_validate_says_nothing_of_packages_without_any(
-    demo: Callable[..., Path], capsys: pytest.CaptureFixture[str]
+    masque: Paquets, demo: Callable[..., Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert main(["--config", str(demo()), "validate"]) == 0
     out = capsys.readouterr().out

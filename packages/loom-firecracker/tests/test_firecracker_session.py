@@ -182,6 +182,25 @@ async def test_a_silent_execd_times_out_and_the_session_closes() -> None:
         assert session.closed
 
 
+async def test_a_cancelled_request_closes_the_session() -> None:
+    async def reply(header: dict[str, object]) -> dict[str, object] | None:
+        if header["method"] == "hello":
+            return {**HELLO_OK, "seq": header["seq"]}
+        return None
+
+    async with _scripted(reply) as path:
+        session = await _open(path)
+        running = asyncio.create_task(session.exec("m:f"))
+        await asyncio.sleep(0.2)
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+        # Sa réponse arriverait plus tard et passerait pour celle de la suivante.
+        assert session.closed
+        with pytest.raises(ProtocolError, match="session fermée"):
+            await session.reset()
+
+
 async def test_another_protocol_version_is_refused() -> None:
     async def reply(header: dict[str, object]) -> dict[str, object]:
         return {**HELLO_OK, "protocol": 2, "seq": header["seq"]}

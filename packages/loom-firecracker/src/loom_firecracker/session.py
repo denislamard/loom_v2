@@ -15,8 +15,9 @@ Deux sortes d'échec, à ne pas confondre :
 - ``ExecdError`` : execd a répondu non (chemin refusé, extension native,
   session de trop…). La session reste utilisable.
 - ``ProtocolError`` ou ``TimeoutError`` : trame illisible, réponse
-  désynchronisée, connexion coupée, délai dépassé. La session est fermée —
-  execd tue alors le job en cours et efface le dossier.
+  désynchronisée, connexion coupée, délai dépassé, appel annulé. La session
+  est fermée ; execd efface son dossier, mais ne le voit qu'à la fin du job
+  en cours, au plus tard à son ``wall_ms``.
 
 Un job qui échoue (exception, délai, mémoire) n'est ni l'un ni l'autre :
 ``exec`` rend une ``Execution`` dont ``ok`` est faux et ``error`` dit pourquoi,
@@ -290,13 +291,20 @@ class Session:
         await self.close()
 
     async def close(self) -> None:
-        """Ferme la connexion : execd tue le job en cours et efface le dossier de la session."""
+        """Ferme la connexion : execd efface le dossier de la session.
+
+        Un job en cours n'est pas interrompu pour autant : execd ne voit la
+        fermeture qu'à la fin du job, au plus tard à son ``wall_ms``.
+        """
         if self._closed:
             return
-        self._closed = True
-        self._writer.close()
+        self._abort()
         with contextlib.suppress(Exception):
             await self._writer.wait_closed()
+
+    def _abort(self) -> None:
+        self._closed = True
+        self._writer.close()
 
     # -- méthodes du protocole --------------------------------------------- #
 
@@ -401,6 +409,13 @@ class Session:
             except OSError as exc:
                 await self.close()
                 raise ProtocolError(f"{method} : connexion à execd perdue — {exc}") from exc
+            except BaseException:
+                # Annulée en route (délai de l'appelant, run arrêté) : la
+                # réponse arriverait plus tard et désynchroniserait la
+                # suivante. Fermée tout de suite, sans attendre : execd voit
+                # la connexion se fermer et efface la session.
+                self._abort()
+                raise
             if reply.get("seq") != seq:
                 await self.close()
                 raise ProtocolError(

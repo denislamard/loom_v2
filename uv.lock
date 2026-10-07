@@ -888,6 +888,16 @@ wheels = [
 name = "loom-firecracker"
 version = "0.1.0.dev0"
 source = { editable = "packages/loom-firecracker" }
+dependencies = [
+    { name = "jsonschema" },
+    { name = "loom-ia" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jsonschema", specifier = ">=4.26.0" },
+    { name = "loom-ia", editable = "." },
+]
 
 [[package]]
 name = "loom-ia"
