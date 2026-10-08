@@ -10,10 +10,10 @@
         python examples/j6/forge.py --vm ~/temp --reel
     uv run python examples/j6/forge.py --vm ~/temp --garder        # dossier gardé
 
-``--vm`` : le dossier d'une VM construite par ``make_vm.sh``, avec execd dans
-son image. Il faut une vraie VM dans les deux modes — c'est elle que
-l'exemple montre — ; sans elle, il dit quoi passer et sort en code 2. La
-source ``forge`` (paquet ``loom-firecracker``, point d'entrée ``forge``) la
+``--vm`` : le dossier d'une VM construite par ``firecracker/make_vm.sh``, avec
+execd dans son image. Il faut une vraie VM dans les deux modes — c'est elle
+que l'exemple montre — ; sans elle, il dit quoi passer et sort en code 2. La
+source ``forge`` (``loom_ia.adapters.firecracker``, point d'entrée ``forge``) la
 démarre au premier appel qui s'exécute dans la VM s'il le faut, et l'arrête
 quand l'instance loom se ferme, si c'est elle qui l'a démarrée : chaque cas
 vérifie qu'elle ne tourne plus une fois son instance fermée.
@@ -61,8 +61,8 @@ from typing import Any, cast
 
 import yaml
 
-from loom_firecracker import Vm, VmError
 from loom_ia.access import Loom, RunResult
+from loom_ia.adapters.firecracker import Vm, VmError
 from loom_ia.adapters.models import ModelConfigError
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import Event, ModelExchanged, ToolCalled, ToolCompleted

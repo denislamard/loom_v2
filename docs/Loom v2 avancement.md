@@ -1085,6 +1085,42 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
       - la voie du texte JSON n'est éprouvée que par les essais ;
       - `call.arguments` est lui aussi un objet sans structure imposée : **laissé tel quel (ta décision, 07/10)**. Il est arrivé intact au dernier run ; s'il était déformé un jour, l'appel serait refusé par le schéma de l'outil, sans suggestion de texte JSON ;
       - la VM restée en marche au premier run réel : cause non trouvée, non reproduite.
+  - **Étape 4 (l'intégration à loom-ia, et les docs) : prête, en attente de ton `uv sync` et de ton run sur la VM.**
+    - **Ta proposition (08/10)** : intégrer la sandbox aux sources de loom V2 plutôt que d'en faire un paquet à part. Mon avis : oui. Ses dépendances (`jsonschema`, `pydantic`) sont déjà celles du noyau, elle n'importe que `loom_ia.core`, et un seul paquet se versionne et se publie plus simplement (6.4f). Ce que ça coûte : le groupe `loom_ia.tools` n'a plus de paquet tiers dans le dépôt (l'exemple de 6.4b le montre encore) ; du code Linux seulement entre dans le paquet de base, importé à la demande.
+    - Tes décisions (08/10) :
+      - **le client et la plateforme** entrent dans le dépôt ;
+      - le module **`loom_ia.adapters.firecracker`**, **sans extra** ;
+      - **je fais tout le déplacement** ;
+      - la plateforme dans **`firecracker/`**, avec `make_vm.sh`, `jailer-run.sh` et `service/` — `vm_client.py` (remplacé par `Vm`) et `OLD/` restent dans `~/dev/firecracker` ;
+      - **ruff en 3.12 seul** sur le code invité (pas de pyright) ;
+      - les essais d'execd prennent **le service du dépôt** par défaut.
+    - **Ce qui est fait :**
+      - `packages/loom-firecracker/src/loom_firecracker/` → `src/loom_ia/adapters/firecracker/` (`vm.py`, `session.py`, `forge.py`, `__init__.py` ; `py.typed` n'a plus lieu d'être, celui de `loom_ia` couvre tout) ; ses essais → `tests/firecracker/` (`conftest.py`, `faux_firecracker.py`, les trois `test_firecracker_*.py`) ; ses scripts → `scripts/firecracker/` (`essai_vm.py`, `essai_forge.py`). Dans ces fichiers, seuls changent les imports (`loom_firecracker` → `loom_ia.adapters.firecracker`, retriés par ruff), les chemins des docstrings et la docstring du module.
+      - `examples/j6/forge.py` : l'import et deux mentions de sa docstring. `tests/unit/test_points_entree.py` : la docstring de la fixture `masque`.
+      - `pyproject.toml` : le point d'entrée `forge` déclaré par loom-ia (`[project.entry-points."loom_ia.tools"]`) ; l'espace de travail uv retiré (`[tool.uv.workspace]`, `[tool.uv.sources]`, `loom-firecracker` du groupe `dev`) ; ruff `src = ["src"]` et `per-file-target-version` à `py312` pour `firecracker/**/*.py` ; pyright couvre `scripts` au lieu de `packages` ; pytest `testpaths = ["tests"]` ; le contrat « Adaptateurs indépendants » gagne `loom_ia.adapters.firecracker`.
+      - `firecracker/` : tes fichiers recopiés tels quels, puis execd passé à ruff en 3.12 — 4 fichiers reformatés (`execd.py`, `runner.py`, `session.py`, `devclient.py`) et `asyncio.TimeoutError` devenu `TimeoutError` (le même objet depuis Python 3.11). Vérifié : l'arbre syntaxique des six fichiers est identique avant et après, sauf ce nom-là. `make_vm.sh` et `jailer-run.sh` sont inchangés, exécutables.
+      - `.gitignore` : `firecracker/cache/` et `firecracker/vms/`.
+      - `tests/firecracker/conftest.py` : execd est celui de `firecracker/service/` ; `LOOM_EXECD_SERVICE` en désigne un autre. Les 22 essais qui le lancent ne sont plus sautés sans la variable : ils tournent à chaque passe, noyau seul compris.
+      - `packages/` effacé (avec ta permission d'effacement).
+    - **Docs** :
+      - `fonctions.md` : la ligne D9 renvoie à sa réalisation ; au point 41, l'arborescence gagne `firecracker/`, la puce des adaptateurs externes dit que la sandbox a rejoint loom-ia, le reste connu de 6.4b est annoté, puis « Réalisation (phase 6.4c) » (décisions, la plateforme, le client hôte, la source `forge`, essais et scripts) et « Reste connu (6.4c) ».
+      - `conception.md` : le port `ToolSource` (§7.3), l'arborescence, la puce des adaptateurs externes, et la source `forge` dans l'exemple `tool_sources` (§17.5).
+      - `jalons.md` : la ligne 6.4 (`packages/` a disparu), une ligne « 6.4c Sandbox », `forge.py` dans la liste des exemples, les essais de la sandbox dans celle des essais.
+    - **Vérifié** : ruff, format, pyright strict, 5 contrats ; **1908 essais** avec les trois services et `loom-memory` (5 sautés) — execd sans variable, celui du dépôt ; **noyau seul 1445** (+205 sautés : les essais d'execd y tournent désormais) ; les **42 exemples**, dont `forge.py` contre le faux firecracker et l'execd du dépôt ; `essai_vm.py` et `essai_forge.py` contre le faux firecracker : **22 et 14 vérifications tenues**. `uv build` : la roue contient `loom_ia/adapters/firecracker/` et le point d'entrée `forge` ; le sdist ne porte que `src/`, sans `firecracker/`.
+    - **À faire chez toi, dans cet ordre :**
+      1. **`uv sync`**, avec tes extras habituels. Il réécrit `uv.lock` (que je ne livre pas) et retire `loom-firecracker` du venv. Sans lui, `uv run` laisse l'ancien paquet installé, et `forge` est alors déclaré par deux paquets, ce que loom refuse en les nommant. Vu chez moi : mon venv listait deux `forge` ; celui du noyau seul, resté sur l'ancienne installation, n'en avait qu'un, l'ancien, dont l'import échouait (3 essais tombés avant que je le resynchronise).
+      2. **Reconstruire `~/temp` depuis le dépôt** : `firecracker/make_vm.sh ~/temp --execd firecracker/service --cache ~/dev/firecracker/cache`.
+         - `--execd` : le `vm.env` de `~/temp` garde `~/dev/firecracker/service`, qui passe avant le `service/` voisin du script ; sans l'option, l'image garderait l'ancien execd.
+         - `--cache` : le cache est cherché à côté du script, donc désormais dans `firecracker/cache/`, vide ; sans l'option, `make_vm.sh` retéléchargerait binaires, noyau et squashfs (~150 Mo) et réextrairait `rootfs-tree`. Pour t'en passer ensuite, déplace ce cache dans `firecracker/cache/` (avec `sudo` : `rootfs-tree` appartient à root) ; git l'ignore.
+      3. `uv run python scripts/firecracker/essai_vm.py ~/temp` : 22 vérifications attendues. C'est aussi le run réel qui manquait aux deux corrections de plateforme du 08/10. Puis `uv run python examples/j6/forge.py --vm ~/temp`.
+      4. `~/dev/firecracker` n'est pas touché : à effacer toi-même une fois satisfait, après avoir déplacé son cache si tu le gardes. `vm_client.py` et `OLD/` n'existent que là.
+    - **Pas éprouvé ici** : `make_vm.sh` depuis son nouveau dossier (il faut sudo, le réseau vers S3 et KVM), et tout ce qui demande une vraie VM.
+    - **Reste connu (étape 4) :**
+      - le sdist ne contient pas `firecracker/` : qui installe loom-ia depuis PyPI a le client, pas la plateforme ; il la prend dans le dépôt ;
+      - pour 6.4f, une seule distribution à publier désormais ; un essai fait avec `loom-firecracker` à part ne vaut plus ;
+      - le sdist ne porte pas non plus `README.md` (le `pyproject.toml` n'a pas de champ `readme`) ; c'était déjà le cas, je n'y touche pas ;
+      - execd n'est pas typé strict (ruff seul, ta décision).
+    - Noms : `tests/firecracker/` et `scripts/firecracker/`, proposés et gardés ; dans les essais, la constante `SERVICE`. À changer si tu veux d'autres noms.
 
 - **6.4a, la course du guetteur (trouvée en 6.4c, étape 1) : corrigée le 08/10, validée chez toi.**
   - **Ton run (08/10)** : les 40 essais de `test_rechargement.py` et `test_rechargement_process.py` passent ; `examples/j6/rechargement.py` tient dans ses cinq cas (`prompt`, `agent`, `casse`, `donnees`, `prod`).
@@ -1130,7 +1166,7 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
   - **Pour que ça prenne effet chez toi : `~/dev/firecracker/make_vm.sh ~/temp`.** Il réécrit `run.sh`, recopie `service/` dans l'image et reconstruit `rootfs.ext4` ; `data.ext4` est gardé. Puis `uv run python packages/loom-firecracker/scripts/essai_vm.py ~/temp`.
   - Noms que j'ai pris : dans execd, `_ConnectionEnded` et `Session._watched` ; dans les essais, `RUN_SH_WIPING`, la fixture `wiping_vm_dir`, et `test_a_second_run_sh_is_refused_and_the_pid_stays`, `test_an_old_run_sh_wipes_the_pid_and_stop_still_uses_the_console`, `test_closing_during_a_job_stops_it_and_erases_the_session`, `test_a_job_left_by_a_closed_session_gives_its_place_back`, `test_a_request_sent_during_a_job_waits_its_turn`. À changer si tu veux d'autres noms.
 
-- **Phase 6.4d (mémoire long terme, F6) : étapes 1 et 2 validées chez toi ; étape 3 (docs) prête, à relire.**
+- **Phase 6.4d (mémoire long terme, F6) : terminée et commitée** (`42aa968`, `897bacb`).
   - **Étape 0 (inventaire, 08/10).** J'ai lu `~/dev/loom-memory` (accès accordé, lecture seule ; dépôt git `09aa433`, propre ; `data/` non lu, c'est ta base).
     - C'est un serveur MCP en stdio (FastMCP 4.0.3), avec un RAG hybride : BGE-M3 dense et sparse, fusion RRF, reranker `bge-reranker-v2-m3`, stockage Qdrant.
     - Il expose neuf outils : quatre en lecture, annotés `readOnlyHint`, et cinq en écriture ; `update` porte `idempotentHint`, `delete` porte `destructiveHint`.
@@ -1197,7 +1233,7 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
       - `uv run --env-file .env --extra anthropic python examples/j6/memoire.py --serveur ~/dev/loom-memory/.venv/bin/loom-memory-mcp --reel` (ajoute `--device cpu` si la carte est prise).
     - Noms que j'ai pris : la clé `description` de `ToolOverrides` ; dans l'exemple, l'agent `assistant_reel`, les variables `DUPONT_MEMOIRE` et `MARTIN_MEMOIRE`, les titres de notes (« Devis D-2026-042 », « Grossiste chauffe-eau », « Chantier de M. Bernard », « Rappels de Mme Martin », « Samedis de Mme Martin »), le projet `dupont`, l'approbateur « l'artisan », et, internes, `Atelier`, `ReleveImpossible`, `remplit`, `releve`, `decide`, `demande`, `raconte`, `sans_suite` ; les essais `test_the_config_rewrites_what_the_model_reads` et `test_a_rewritten_description_cannot_be_empty`. À changer si tu veux d'autres noms.
     - **Reste connu (étape 2) :** les descriptions réécrites ne couvrent pas celles des paramètres (aucune ne te nomme aujourd'hui) ; si `loom-memory` change ses descriptions, la config garde les siennes.
-  - **Étape 3 (les docs) : prête, à relire.**
+  - **Étape 3 (les docs) : relue et commitée (`897bacb`).**
     - Tes décisions (08/10) : la réalisation **au point 19** (Sessions MCP) de `fonctions.md` ; **6.4d seule**, les docs de 6.4c gardant leur étape ; les deux trouvailles sur `loom-memory` (chargement non protégé, `.env` lu dans le dossier courant) **restent dans l'avancement**.
     - `fonctions.md` :
       - la ligne F6 renvoie à sa réalisation ;

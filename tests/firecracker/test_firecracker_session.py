@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """``Session`` : les trames, un serveur scripté pour les pannes, puis le vrai execd.
 
-Les essais « execd » parlent au service de la plateforme lancé en socket Unix
-(``LOOM_EXECD_SERVICE``) ; ils sont sautés sans lui.
+Les essais « execd » parlent au service de la plateforme, ``firecracker/service/``,
+lancé en socket Unix.
 """
 
 import asyncio
@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from loom_firecracker import ExecdError, ProtocolError, Session
-from loom_firecracker.session import MAX_BODY, MAX_HEADER, encode_frame, read_frame
+from loom_ia.adapters.firecracker import ExecdError, ProtocolError, Session
+from loom_ia.adapters.firecracker.session import MAX_BODY, MAX_HEADER, encode_frame, read_frame
 
 type MakeExecd = Callable[..., Path]
 type Reply = Callable[[dict[str, object]], Awaitable[dict[str, object] | None]]

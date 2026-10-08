@@ -219,3 +219,8 @@ __marimo__/
 data/
 
 htmlcov/
+
+# Plateforme Firecracker : binaires, noyau et images téléchargés par make_vm.sh,
+# et les VM qu'il construit quand on ne lui donne pas de dossier.
+firecracker/cache/
+firecracker/vms/

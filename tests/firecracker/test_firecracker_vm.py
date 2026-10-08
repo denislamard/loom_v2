@@ -2,7 +2,7 @@
 """``Vm`` contre un faux firecracker : vm.env, verrou de run.sh, démarrage, arrêt, vsock.
 
 Le boot n'est pas éprouvé ici (pas de KVM) : c'est ce que fait
-``scripts/essai_vm.py`` sur une vraie VM.
+``scripts/firecracker/essai_vm.py`` sur une vraie VM.
 """
 
 import asyncio
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from loom_firecracker import Session, Vm, VmError, VsockRefused
+from loom_ia.adapters.firecracker import Session, Vm, VmError, VsockRefused
 
 type MakeVm = Callable[..., Path]
 

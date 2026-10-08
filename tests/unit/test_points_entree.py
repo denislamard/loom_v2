@@ -132,8 +132,8 @@ def paquets(tmp_path: Path) -> Iterator[Paquets]:
 def masque(paquets: Paquets, monkeypatch: pytest.MonkeyPatch) -> Paquets:
     """Seuls les paquets de l'essai sont vus : ceux de l'environnement sont masqués.
 
-    Le dépôt en installe un pour de bon (``loom-firecracker``, 6.4c) ; un essai
-    qui lit la liste entière ne doit pas dépendre de ce qui est installé.
+    loom-ia en déclare un lui-même (``forge``, 6.4c) ; un essai qui lit la
+    liste entière ne doit pas dépendre de ce qui est installé.
     """
     real = sources.entry_points
 

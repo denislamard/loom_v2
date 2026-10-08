@@ -1,16 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Montages des essais de loom-firecracker : dossiers de VM factices et execd réel.
+"""Montages des essais de la sandbox Firecracker : dossiers de VM factices et execd réel.
 
 Un dossier de VM de test a la forme de ceux de ``make_vm.sh`` (``vm.env``,
 ``vm-config.json``, ``run.sh`` avec son verrou ``flock``), mais son ``run.sh``
 lance ``faux_firecracker.py`` : tout ce qui se joue côté hôte est éprouvé,
 pas le boot.
 
-execd, lui, est le vrai : celui du dossier ``service/`` de la plateforme,
-désigné par ``LOOM_EXECD_SERVICE`` et lancé en socket Unix (``EXECD_UDS``),
-sans VM. Sans la variable, les essais qui en ont besoin sont sautés — même
-sous ``--require-services`` : ce service n'est pas dans le dépôt, la CI ne
-l'a pas.
+execd, lui, est le vrai : celui de la plateforme, ``firecracker/service/``
+dans le dépôt, lancé en socket Unix (``EXECD_UDS``), sans VM, sous le Python
+des essais. ``LOOM_EXECD_SERVICE`` en désigne un autre (celui d'une VM
+construite ailleurs, par exemple).
 
 Les dossiers sont pris sous ``/tmp`` avec des noms courts : un chemin de
 socket Unix ne dépasse pas 107 octets.
@@ -30,6 +29,8 @@ from pathlib import Path
 import pytest
 
 SERVICE_ENV = "LOOM_EXECD_SERVICE"
+# Le service de la plateforme, dans le dépôt.
+SERVICE = Path(__file__).parents[2] / "firecracker" / "service"
 FAUX = Path(__file__).with_name("faux_firecracker.py")
 
 # Le run.sh de make_vm.sh : il ouvre le verrou sans le tronquer (``9<>``),
@@ -179,13 +180,12 @@ def stop_execd(execd: Execd) -> None:
 
 @pytest.fixture
 def execd_service() -> Path:
-    """Le dossier ``service/`` de la plateforme ; saute l'essai s'il n'est pas désigné."""
+    """Le dossier ``service/`` de la plateforme : celui du dépôt, ou ``LOOM_EXECD_SERVICE``."""
     found = os.environ.get(SERVICE_ENV, "")
-    if not found:
-        pytest.skip(f"{SERVICE_ENV} absent : pas d'execd réel pour cet essai")
-    service = Path(found).expanduser()
+    service = Path(found).expanduser() if found else SERVICE
     if not (service / "execd.py").is_file():
-        pytest.fail(f"{SERVICE_ENV}={found} : execd.py introuvable")
+        said = f"{SERVICE_ENV}={found}" if found else str(service)
+        pytest.fail(f"{said} : execd.py introuvable")
     return service
 
 

@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Une microVM Firecracker construite par ``make_vm.sh``, vue de l'hôte.
 
-Portage de ``vm_client.py`` de la plateforme, dans sa version qui laisse le
-verrou d'instance à ``run.sh`` (``OLD/source_python``) : c'est la seule qui
+Portage de l'ancien client de la plateforme (``vm_client.py``, resté hors du
+dépôt), dans sa version qui laisse le verrou d'instance à ``run.sh``
+(``OLD/source_python``) : c'est la seule qui
 s'accorde avec le ``run.sh`` actuel, qui prend lui-même ``flock -n`` sur
 ``runtime/vm.lock`` — un verrou déjà pris côté Python le lui ferait refuser.
 

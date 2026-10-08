@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Essai de la source ``forge`` sur une vraie VM : sans agent ni modèle.
 
-    uv run python packages/loom-firecracker/scripts/essai_forge.py <dossier-vm>
-    uv run python packages/loom-firecracker/scripts/essai_forge.py <dossier-vm> --garder
+    uv run python scripts/firecracker/essai_forge.py <dossier-vm>
+    uv run python scripts/firecracker/essai_forge.py <dossier-vm> --garder
 
 La source est fabriquée par sa fabrique, comme loom le fait au montage, avec
 un catalogue dans un dossier temporaire effacé à la fin. L'essai joue deux
@@ -28,8 +28,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from loom_firecracker import Vm, VmError
-from loom_firecracker.forge import CALL, FORGE, MANIFEST, forge_source
+from loom_ia.adapters.firecracker import Vm, VmError
+from loom_ia.adapters.firecracker.forge import CALL, FORGE, MANIFEST, forge_source
 from loom_ia.core.model import RunId, SessionId, TenantId, ToolOutput
 from loom_ia.core.ports import SourceContext, Tool, ToolContext, ToolError
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Une session execd : une connexion au service d'exécution de l'invité.
 
-Le protocole est celui de ``service/`` sur la plateforme (version 1) :
+Le protocole est celui d'execd, ``firecracker/service/`` dans le dépôt (version 1) :
 
     trame = u32 BE longueur d'en-tête | en-tête JSON | u32 BE longueur du corps | corps
 

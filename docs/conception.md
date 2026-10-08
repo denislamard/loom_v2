@@ -251,7 +251,7 @@ Transverse     Config/Builder · Kit de test
 | Port | Rôle | Adaptateurs prévus |
 |---|---|---|
 | `ModelClient` | Appeler un modèle en streaming | `anthropic` ; `openai` (`chat`, `responses`) |
-| `ToolSource` | Fournir des outils | Fonctions Python, client MCP, paquets installés par points d'entrée `loom_ia.tools` (6.4b ; ex. sandbox Firecracker) |
+| `ToolSource` | Fournir des outils | Fonctions Python, client MCP, paquets installés par points d'entrée `loom_ia.tools` (6.4b), dont la sandbox Firecracker que loom-ia déclare lui-même (`forge`, 6.4c) |
 | `EventStore` | Écrire et interroger le journal | Mémoire, JSONL, SQLite, Postgres, Firestore |
 | `ArtifactStore` | Stocker les fichiers hors journal | Fichier local, GCS |
 | `EventSink` | Exporter les événements | OpenTelemetry, logs |
@@ -1367,6 +1367,12 @@ tool_sources:
     params: {fichier: carnet.json}    # remis tels quels à la fabrique, qui les vérifie
     tools:
       chercher_devis: {side_effects: none}   # nom court ; l'agent l'emporte
+  - name: forge                       # la sandbox Firecracker (J6.4c), déclarée par loom-ia
+    entry_point: forge
+    params:
+      vm_dir: ~/temp                  # dossier de VM construit par firecracker/make_vm.sh
+      catalog_dir: outils             # catalogue des outils forgés, relatif à loom.yaml
+      limits: {wall_ms: 10000}        # plafonds d'un job, clés d'execd
 ```
 
 Le paquet n'est importé qu'au montage d'un agent qui référence la source ; la fabrique reçoit `name`, `params`, la table des secrets du client et le dossier de la config, et rend un `ToolSource` dont loom n'utilise que `open` (et `aclose` s'il existe). Un nom de source ne peut pas être celui d'un serveur MCP. Détails : `fonctions.md`, point 41.
@@ -1650,6 +1656,7 @@ src/loom_ia/
     queue/       asyncio  rabbitmq
     mcp/         client
     telemetry/   otel
+    firecracker/ vm  session  forge (sandbox, J6.4c)
   access/        api (façade Python)  http/  mcp_server/  cli/
   testing/       faux modèles, faux outils
 ```
@@ -1672,7 +1679,7 @@ src/loom_ia/
 | `all` | Tous les extras |
 
 - Outils de dev (pytest, respx, ruff, pyright, import-linter) dans `[dependency-groups]`.
-- Adaptateurs externes par entry points (`loom_ia.adapters`), par exemple un package `loom-ia-firecracker` pour la sandbox. Réalisé en 6.4b pour les outils seulement : le groupe `loom_ia.tools` (sources d'outils, `tool_sources`) ; les autres ports n'en ont pas.
+- Adaptateurs externes par entry points (`loom_ia.adapters`), par exemple un package `loom-ia-firecracker` pour la sandbox. Réalisé en 6.4b pour les outils seulement : le groupe `loom_ia.tools` (sources d'outils, `tool_sources`) ; les autres ports n'en ont pas. La sandbox a finalement rejoint loom-ia (J6.4c, `loom_ia.adapters.firecracker`, sans extra) : loom-ia déclare sa source `forge` dans ce groupe, et la plateforme qu'elle pilote vit dans le dossier `firecracker/` du dépôt, hors du paquet.
 
 **Règles `import-linter` :**
 

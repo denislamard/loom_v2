@@ -3,7 +3,7 @@
 
 Trois étages. Sans execd : un double de session (``FakeJobs``) rend des
 comptes rendus écrits d'avance — rien n'est exécuté. Avec execd en socket
-Unix (``LOOM_EXECD_SERVICE``) : le code forgé s'exécute pour de bon. Avec
+Unix (``firecracker/service/``) : le code forgé s'exécute pour de bon. Avec
 execd et le faux firecracker : loom monte la source par son point d'entrée,
 démarre la « VM » au premier appel et l'arrête avec l'instance.
 """
@@ -23,7 +23,8 @@ import yaml
 from jsonschema import Draft202012Validator, ValidationError
 from jsonschema.validators import validator_for
 
-from loom_firecracker.forge import (
+from loom_ia.access import Loom
+from loom_ia.adapters.firecracker.forge import (
     CALL,
     FORGE,
     MANIFEST,
@@ -36,9 +37,8 @@ from loom_firecracker.forge import (
     check_forged,
     forge_source,
 )
-from loom_firecracker.session import ExecdError, Execution, Hello, Output, Session
-from loom_firecracker.vm import VmError
-from loom_ia.access import Loom
+from loom_ia.adapters.firecracker.session import ExecdError, Execution, Hello, Output, Session
+from loom_ia.adapters.firecracker.vm import VmError
 from loom_ia.config import load_config
 from loom_ia.core.events import ToolCompleted
 from loom_ia.core.model import RunId, RunStatus, SessionId, TenantId
@@ -704,7 +704,7 @@ async def test_loom_mounts_the_source_and_the_vm_lives_with_it(
 ) -> None:
     monkeypatch.setenv("FAUX_EXECD", str(execd))
     vm_dir = make_vm()
-    from loom_firecracker import Vm
+    from loom_ia.adapters.firecracker import Vm
 
     vm = Vm.load(vm_dir)
     path = config_file(tmp_path / "config", vm_dir)
@@ -728,7 +728,7 @@ async def test_a_vm_already_running_is_left_running(
 ) -> None:
     monkeypatch.setenv("FAUX_EXECD", str(execd))
     vm_dir = make_vm()
-    from loom_firecracker import Vm
+    from loom_ia.adapters.firecracker import Vm
 
     vm = Vm.load(vm_dir)
     await vm.start(wait=10)
@@ -747,7 +747,7 @@ async def test_validate_and_replay_start_no_vm(
 ) -> None:
     monkeypatch.setenv("FAUX_EXECD", str(execd))
     vm_dir = make_vm()
-    from loom_firecracker import Vm
+    from loom_ia.adapters.firecracker import Vm
 
     vm = Vm.load(vm_dir)
     path = config_file(tmp_path / "config", vm_dir)

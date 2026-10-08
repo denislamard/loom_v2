@@ -64,7 +64,7 @@ from jsonschema import Draft202012Validator, SchemaError, ValidationError
 from jsonschema.validators import validator_for
 from pydantic import JsonValue
 
-from loom_firecracker.session import (
+from loom_ia.adapters.firecracker.session import (
     EXEC_MARGIN,
     ExecdError,
     Execution,
@@ -72,7 +72,7 @@ from loom_firecracker.session import (
     ProtocolError,
     Session,
 )
-from loom_firecracker.vm import Vm, VmError
+from loom_ia.adapters.firecracker.vm import Vm, VmError
 from loom_ia.core.model import TextBlock, ToolOutput, ToolSpec
 from loom_ia.core.ports import SourceContext, SourceUnavailable, Tool, ToolContext, ToolError
 

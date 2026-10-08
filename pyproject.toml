@@ -63,6 +63,11 @@ all = [
 [project.scripts]
 loom = "loom_ia.access.cli:main"
 
+# La source d'outils « forge » (J6.4c) : la sandbox Firecracker, déclarée dans
+# tool_sources ; son module n'est importé que si un agent la référence.
+[project.entry-points."loom_ia.tools"]
+forge = "loom_ia.adapters.firecracker.forge:forge_source"
+
 [build-system]
 requires = ["uv_build>=0.11.14,<0.12.0"]
 build-backend = "uv_build"
@@ -78,7 +83,6 @@ dev = [
     "ruff>=0.16.8",
     "types-jsonschema>=4.26.0.20260518",
     "types-pyyaml>=6.0.12.20260906",
-    "loom-firecracker",
 ]
 # Types des paquets d'extras, pour pyright : ils tirent le paquet lui-même
 # (asyncpg-stubs dépend d'asyncpg), donc ils restent hors de `dev` — sinon la
@@ -88,18 +92,12 @@ types = [
     "asyncpg-stubs>=0.31.3",
 ]
 
-# Paquets compagnons, développés dans le même dépôt : packages/<nom>/.
-[tool.uv.workspace]
-members = ["packages/*"]
-
-[tool.uv.sources]
-loom-firecracker = { workspace = true }
-
 [tool.ruff]
 line-length = 100
-# Paquets premiers pour le tri des imports : loom et ses paquets compagnons.
-src = ["src", "packages/loom-firecracker/src"]
+src = ["src"]
 target-version = "py314"
+# execd tourne dans la VM, sous le Python de son image (3.12, Ubuntu 24.04).
+per-file-target-version = { "firecracker/**/*.py" = "py312" }
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
@@ -107,11 +105,11 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
 [tool.pyright]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
-include = ["src", "tests", "examples", "packages"]
+include = ["src", "tests", "examples", "scripts"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests", "packages/loom-firecracker/tests"]
+testpaths = ["tests"]
 markers = ["integration: lance de vrais sous-process ou un service externe (plus lent)"]
 
 [tool.importlinter]
@@ -189,4 +187,5 @@ modules = [
     "loom_ia.adapters.telemetry",
     "loom_ia.adapters.idempotency",
     "loom_ia.adapters.usage",
+    "loom_ia.adapters.firecracker",
 ]
