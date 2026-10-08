@@ -1129,6 +1129,35 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
   - **Pour que ça prenne effet chez toi : `~/dev/firecracker/make_vm.sh ~/temp`.** Il réécrit `run.sh`, recopie `service/` dans l'image et reconstruit `rootfs.ext4` ; `data.ext4` est gardé. Puis `uv run python packages/loom-firecracker/scripts/essai_vm.py ~/temp`.
   - Noms que j'ai pris : dans execd, `_ConnectionEnded` et `Session._watched` ; dans les essais, `RUN_SH_WIPING`, la fixture `wiping_vm_dir`, et `test_a_second_run_sh_is_refused_and_the_pid_stays`, `test_an_old_run_sh_wipes_the_pid_and_stop_still_uses_the_console`, `test_closing_during_a_job_stops_it_and_erases_the_session`, `test_a_job_left_by_a_closed_session_gives_its_place_back`, `test_a_request_sent_during_a_job_waits_its_turn`. À changer si tu veux d'autres noms.
 
+- **Phase 6.4d (mémoire long terme, F6) : en cours — étape 1 prête, en attente de ton run.**
+  - **Étape 0 (inventaire, 08/10).** J'ai lu `~/dev/loom-memory` (accès accordé, lecture seule ; dépôt git `09aa433`, propre ; `data/` non lu, c'est ta base).
+    - C'est un serveur MCP en stdio (FastMCP 4.0.3), avec un RAG hybride : BGE-M3 dense et sparse, fusion RRF, reranker `bge-reranker-v2-m3`, stockage Qdrant.
+    - Il expose neuf outils : quatre en lecture, annotés `readOnlyHint`, et cinq en écriture ; `update` porte `idempotentHint`, `delete` porte `destructiveHint`.
+    - La règle « écriture sur demande explicite » n'est qu'une consigne au modèle. Le serveur a un mode à modèles factices et Qdrant embarqué.
+    - Loom avait déjà tout pour le monter : stdio, `env` et `env_from`, annotations lues, réglages par outil, portées `shared`, `run` et `tenant`, rejeu servi par le journal. **La phase est donc un branchement éprouvé.**
+  - Tes décisions (08/10) :
+    - les écritures passent par une **approbation humaine** (`approval: always` sur les cinq) ;
+    - **un serveur par client** (`scope: tenant`), chacun sa base, lue dans ses secrets ;
+    - l'exemple **`examples/j6/memoire.py`**, cas `chercher`, `memoriser`, `rejeu`, `clients`, option `--serveur <chemin>` ;
+    - en `--reel`, MiniMax-M3 et **les vrais modèles de loom-memory sur une base temporaire**.
+  - **Étape 1 (le branchement et ses essais) : prête.**
+    - **Aucun changement dans loom** : `loom-memory` se monte tel quel.
+    - `tests/integration/test_memoire.py`, 5 essais contre le vrai serveur. Il est désigné par `LOOM_MEMORY_SERVER` (le binaire `loom-memory-mcp`) ; sans la variable, les essais sont sautés, même sous `--require-services`, comme pour execd. Le serveur tourne en modèles factices sur un Qdrant embarqué dans `tmp_path` ; le process MCP n'hérite que de l'environnement sûr (`HOME`, `PATH`…) plus ce que la config lui donne, donc ni ton `.env` ni un `LOOM_MEMORY_QDRANT_URL` de ton shell ne passent.
+    - Ce que les essais vérifient :
+      - la lecture se fait sans approbation, et une écriture met le run en pause : rien n'est écrit avant l'accord, puis `list_docs` et `search` voient le document ;
+      - une écriture refusée n'est jamais faite ;
+      - un run qui avait écrit, rejoué après l'effacement du document, ne le recrée pas : rejeu identique, un appel servi par le journal ;
+      - en variante, sous un autre orchestrateur, `search` part pour de vrai et `add_text` est refusé (les annotations du serveur) ;
+      - deux clients en `scope: tenant`, chacun avec son dossier lu dans ses secrets, ne voient pas leurs documents mutuels, et chacun a sa base sur le disque.
+    - **Configs qui défont chaque protection** : chacune fait tomber l'essai qui la garde. Sans approbation, 3 essais tombent ; en portée partagée entre clients, l'essai des clients ; avec `add_text` déclaré sans effets, l'essai de la variante.
+    - Vérifié : ruff, format, pyright strict, 5 contrats ; **1906 essais** avec les trois services, execd et `loom-memory` (5 sautés) ; noyau seul 1423 (+227 sautés). `loom validate` sur cette config liste les neuf outils `memoire__…`. Chez moi, `loom-memory` est installé sans le groupe `models`, et ses 44 essais passent.
+    - **Trouvé en branchant, rien de changé :**
+      - loom n'envoie pas au modèle les `instructions` d'un serveur MCP : celles de `loom-memory` (« appelle `search` avant de répondre… ») ne lui parviennent pas, et c'est le prompt de l'agent qui doit le dire ;
+      - les descriptions des outils nomment Denis (« la mémoire de Denis », « si Denis le demande »), ce qu'un agent d'artisan verra tel quel ;
+      - FastMCP rend une liste sous `{"result": […]}`, qui devient le `data` du résultat ;
+      - en `scope: tenant`, chaque client actif a son process, avec les modèles en mémoire (environ 5 Go en vrai).
+    - Noms que j'ai pris : `tests/integration/test_memoire.py`, `LOOM_MEMORY_SERVER`, le serveur `memoire` (préfixe `memoire__`), l'agent `assistant`, le secret `MEMOIRE_DOSSIER`. À changer si tu veux d'autres noms.
+
 ## Points à revoir ensemble (demandé par Denis, 19/09)
 
 - **Relire un run lisiblement** : `loom inspect <run_id>` est prévu en J6 (6.2) ; possibilité d'en faire une version minimale plus tôt (étapes, appels de modèle par rôle, outils avec durée et résultat, sous-runs, fichiers, réponse finale, bilan). Denis : « pas encore ». **Fait en 6.2c (05/10) : `loom inspect`.**
