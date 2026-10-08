@@ -27,6 +27,13 @@ Ce qui est surveillé : tout le dossier de la config (et ``agents_dir``,
 journal, fichiers, bases SQLite, ceux de chaque client — et le bruit d'usage
 (``__pycache__``, ``.git``, ``.venv``, fichiers temporaires d'éditeur).
 
+Rien ne passe entre deux guetteurs. « Rechargement : surveille … » n'est dit
+qu'une fois le guetteur armé ; et ce qui a changé avant — pendant que le
+premier process démarrait, ou que les dossiers surveillés changeaient — se
+voit en comparant l'état des fichiers (date, taille, inode) que le process a
+relevé avant de lire sa config à celui du disque, guetteur armé. Un écart
+recharge, comme un changement vu par le guetteur.
+
 Le montage d'essai remplace les clients de modèle par des clients jamais
 appelés : une clé d'API absente ne se voit qu'au premier run, comme sans
 ``--reload``. Refusé en profil ``prod``.
@@ -41,7 +48,7 @@ import socket
 import sys
 import threading
 import traceback
-from collections.abc import AsyncGenerator, Callable, Iterable
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
@@ -112,6 +119,16 @@ DEAF: Final = "sourd"
 DEAFNESS: Final = 5.0
 # Tous les combien un process qui sert vérifie que son superviseur est là (secondes).
 ORPHANED_EVERY: Final = 0.5
+# Tous les combien le guetteur rend la main sans changement (millisecondes) :
+# sa première main dit qu'il est armé.
+WAKE_MS: Final = 200
+
+# Lectures de la config au plus, au démarrage d'un process, pour qu'elle et
+# son relevé portent sur les mêmes dossiers.
+READS: Final = 3
+
+# L'état d'un fichier surveillé : date de modification (ns), taille, inode.
+type FileState = tuple[int, int, int]
 
 
 def serve(loom: Loom, *, host: str | None = None, port: int | None = None) -> None:
@@ -163,7 +180,11 @@ class Watched:
 
     def present(self) -> frozenset[Path]:
         """Les fichiers qui comptent, tels qu'ils sont sur le disque maintenant."""
-        found: set[Path] = set()
+        return frozenset(self.state())
+
+    def state(self) -> dict[Path, FileState]:
+        """Les fichiers qui comptent, et l'état de chacun (date, taille, inode)."""
+        found: dict[Path, FileState] = {}
         for root in self.roots:
             for folder, subdirs, names in os.walk(root):
                 here = Path(folder)
@@ -173,8 +194,17 @@ class Watched:
                     if name not in NOISE_DIRS
                     and not any((here / name).is_relative_to(d) for d in self.dirs)
                 ]
-                found.update(here / name for name in names if self.counts(here / name))
-        return frozenset(found)
+                for name in names:
+                    path = here / name
+                    if not self.counts(path):
+                        continue
+                    try:
+                        stat = path.stat()
+                    except FileNotFoundError:
+                        # Parti entre la liste du dossier et son état.
+                        continue
+                    found[path] = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+        return found
 
     def describe(self) -> str:
         """Une ligne : les dossiers surveillés, puis ce qui en est écarté."""
@@ -248,8 +278,8 @@ def _under(path: Path, roots: Iterable[Path]) -> bool:
 
 def changed(
     changes: Iterable[tuple[Change, str]],
-    before: frozenset[Path],
-    after: frozenset[Path],
+    before: Mapping[Path, FileState],
+    after: Mapping[Path, FileState],
     base: Path,
 ) -> str:
     """Les fichiers changés, en clair (``prompts/relance.md modifié, …``) ; vide si aucun.
@@ -258,6 +288,11 @@ def changed(
     éditeur qui enregistre par renommage remplace le fichier (« modifié », pas
     « ajouté »), et un fichier temporaire apparu puis disparu dans le même lot
     n'a rien changé — un lot qui n'a que ceux-là ne recharge pas.
+
+    L'état ajoute ce qu'aucun événement n'a dit : un changement fait avant
+    que le guetteur soit armé. Il n'en retire rien — une modification de
+    même taille dans le même tic d'horloge du disque ne change pas l'état,
+    l'événement la dit.
     """
     told: dict[Path, str] = {}
     for _, raw in changes:
@@ -266,6 +301,15 @@ def changed(
             told[path] = "modifié" if path in before else "ajouté"
         elif path in before:
             told[path] = "supprimé"
+    for path in before.keys() | after.keys():
+        if path in told:
+            continue
+        if path not in after:
+            told[path] = "supprimé"
+        elif path not in before:
+            told[path] = "ajouté"
+        elif before[path] != after[path]:
+            told[path] = "modifié"
     items = [
         f"{path.relative_to(base) if path.is_relative_to(base) else path} {verb}"
         for path, verb in sorted(told.items())
@@ -318,22 +362,32 @@ def serve_reloading(
                 print("Le serveur n'a pas démarré.", file=sys.stderr)
                 return REFUSED
             return 0
-        current, spec = started
-        _say(f"Rechargement : surveille {spec.describe()}")
-        known = spec.present()
+        # ``known`` : l'état des fichiers que le process qui sert reflète —
+        # relevé par lui avant de lire sa config, puis à chaque lot.
+        current, spec, known = started
         while not stopping.is_set():
             # Un nouveau dossier surveillé (agents_dir déplacé) demande un
-            # nouveau guetteur ; le reste du temps, le même sert.
+            # nouveau guetteur ; le reste du temps, le même sert. Il ne
+            # surveille qu'une fois créé, à sa première main : jusque-là,
+            # seul l'état des fichiers dit ce qui a changé.
             guard = watch(
                 *spec.roots,
                 watch_filter=spec.filter,
                 stop_event=stopping,
                 raise_interrupt=False,
+                rust_timeout=WAKE_MS,
+                yield_on_timeout=True,
             )
+            armed = False
             try:
                 for changes in guard:
+                    if not armed:
+                        armed = True
+                        _say(f"Rechargement : surveille {spec.describe()}")
+                    elif not changes:
+                        continue
                     leaving = _reaped(leaving)
-                    now = spec.present()
+                    now = spec.state()
                     told = changed(changes, known, now, spec.roots[0])
                     known = now
                     if not told:
@@ -349,12 +403,10 @@ def serve_reloading(
                     # prend encore des requêtes sur la socket commune.
                     current.leave()
                     leaving.append(current)
-                    current, renewed = started
+                    current, renewed, known = started
                     _say("Rechargé : le nouveau process sert ; l'ancien finit ce qu'il a en cours.")
                     if renewed != spec:
                         spec = renewed
-                        known = spec.present()
-                        _say(f"Rechargement : surveille {spec.describe()}")
                         break
             finally:
                 guard.close()
@@ -415,7 +467,7 @@ class _Launcher:
         self.args = (path, profile, host, port, sock, banner)
         self.stopping = stopping
 
-    def __call__(self) -> tuple[_Serving, Watched] | None:
+    def __call__(self) -> tuple[_Serving, Watched, dict[Path, FileState]] | None:
         reader, writer = self.context.Pipe(duplex=False)
         process = self.context.Process(
             target=_serving, args=(*self.args, writer), name="loom-serve"
@@ -430,12 +482,14 @@ class _Launcher:
                 reader.close()
                 return None
         try:
-            spec: Watched = reader.recv()
+            spec: Watched
+            seen: dict[Path, FileState]
+            spec, seen = reader.recv()
         except EOFError:
             process.join()
             reader.close()
             return None
-        return _Serving(process, reader), spec
+        return _Serving(process, reader), spec, seen
 
 
 def _bound(host: str, port: int) -> socket.socket:
@@ -525,14 +579,13 @@ async def _served(
     ready: Connection,
     supervisor: int,
 ) -> bool:
-    config = load_config(path, profile=profile)
+    config, spec, seen = _read(path, profile)
     apply_logging(config)
     if config.strict:
         raise ConfigError(
             "--reload est refusé en profil prod : un service ne se relance pas sur une "
             "modification de fichier"
         )
-    spec = watched(config)
     loom = Loom(config)
     try:
         await _mounted(loom)
@@ -544,7 +597,7 @@ async def _served(
     def taken() -> None:
         banner(config, profile, host, port)
         sys.stdout.flush()
-        ready.send(spec)
+        ready.send((spec, seen))
 
     def deaf() -> None:
         # Le superviseur peut être parti (Ctrl+C) : il n'y a plus personne à prévenir.
@@ -559,6 +612,27 @@ async def _served(
     finally:
         ready.close()
     return server.started
+
+
+def _read(path: Path, profile: str | None) -> tuple[LoomConfig, Watched, dict[Path, FileState]]:
+    """La config qui sert, ce qu'elle fait surveiller, et l'état des fichiers relevé avant elle.
+
+    Une première lecture dit quoi relever ; la config qui sert est lue après
+    le relevé. Un fichier changé entre les deux est lu dans sa nouvelle
+    version ; changé après, le superviseur le voit en comparant l'état — il
+    n'échappe jamais aux deux. Si la relecture fait surveiller d'autres
+    dossiers, le relevé est refait sur eux.
+    """
+    spec = watched(load_config(path, profile=profile))
+    reads = 1
+    while True:
+        seen = spec.state()
+        config = load_config(path, profile=profile)
+        read = watched(config)
+        reads += 1
+        if read == spec or reads >= READS:
+            return config, read, seen
+        spec = read
 
 
 class _Taking(uvicorn.Server):

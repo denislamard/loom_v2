@@ -9,14 +9,17 @@ sous-process dans ``tests/integration/test_rechargement_process.py``.
 import importlib
 import multiprocessing
 import os
+import signal
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterator
 from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+import yaml
 from conftest import ConfigFactory, demo_agent
 
 pytest.importorskip("fastapi", reason="extra 'http' absent")
@@ -175,8 +178,8 @@ def test_the_watched_line_names_what_is_left_out(demo: ConfigFactory) -> None:
 
 def test_changes_are_read_on_the_disk(tmp_path: Path) -> None:
     a, b, c, tmp = (tmp_path / n for n in ("loom.yaml", "agents/b.yaml", "outils.py", "sedX1"))
-    before = frozenset({a, c})
-    after = frozenset({a, b})
+    before = {a: (1, 10, 1), c: (1, 10, 3)}
+    after = {a: (2, 12, 4), b: (2, 10, 5)}
     told = changed(
         {
             # Un éditeur qui enregistre par renommage : « ajouté », mais il était là.
@@ -191,16 +194,143 @@ def test_changes_are_read_on_the_disk(tmp_path: Path) -> None:
         tmp_path,
     )
     assert told == "agents/b.yaml ajouté, loom.yaml modifié, outils.py supprimé"
-    assert changed({(Change.added, str(tmp))}, before, after, tmp_path) == ""
+    assert changed({(Change.added, str(tmp))}, after, after, tmp_path) == ""
 
 
 def test_a_long_list_of_changes_is_counted(tmp_path: Path) -> None:
     paths = [tmp_path / f"prompts/p{i}.md" for i in range(8)]
-    told = changed(
-        {(Change.modified, str(p)) for p in paths}, frozenset(paths), frozenset(paths), tmp_path
-    )
+    same = dict.fromkeys(paths, (1, 10, 1))
+    told = changed({(Change.modified, str(p)) for p in paths}, same, same, tmp_path)
     assert told.endswith("prompts/p4.md modifié, et 3 autre(s)")
     assert told.count("modifié") == 5
+
+
+def test_the_state_says_what_no_event_said(tmp_path: Path) -> None:
+    """Un changement fait avant que le guetteur soit armé : seul l'état le montre."""
+    a, b, c, d = (tmp_path / n for n in ("loom.yaml", "agents/b.yaml", "outils.py", "notes.md"))
+    before = {a: (1, 10, 1), c: (1, 10, 3), d: (1, 10, 4)}
+    after = {a: (2, 10, 1), b: (2, 10, 5), d: (1, 10, 4)}
+    assert changed(set(), before, after, tmp_path) == (
+        "agents/b.yaml ajouté, loom.yaml modifié, outils.py supprimé"
+    )
+    # L'événement l'emporte : un état inchangé (même taille, même tic) n'efface rien.
+    assert changed({(Change.modified, str(d))}, before, after, tmp_path).endswith(
+        "notes.md modifié, outils.py supprimé"
+    )
+    assert changed(set(), after, after, tmp_path) == ""
+
+
+def test_the_state_is_that_of_each_file_on_the_disk(demo: ConfigFactory) -> None:
+    spec = watched(load_config(demo()))
+    base = spec.roots[0]
+    first = spec.state()
+    assert set(first) == spec.present()
+    prompt = base / "prompts" / "demo.md"
+    prompt.write_text("Tu calcules, et tu le dis.", encoding="utf-8")
+    second = spec.state()
+    assert second[prompt] != first[prompt]
+    assert {p: v for p, v in second.items() if p != prompt} == {
+        p: v for p, v in first.items() if p != prompt
+    }
+
+
+# --- Ce que lit le process qui démarre ----------------------------------------------
+
+
+class _Reading:
+    """``load_config`` qui touche le disque à la lecture voulue : avant elle ou juste après."""
+
+    def __init__(self, at: dict[int, Callable[[], object]], *, after: bool) -> None:
+        self.at = at
+        self.after = after
+        self.reads = 0
+
+    def __call__(self, path: Path, *, profile: str | None = None) -> Any:
+        self.reads += 1
+        touch = self.at.get(self.reads)
+        if touch is not None and not self.after:
+            touch()
+        config = load_config(path, profile=profile)
+        if touch is not None and self.after:
+            touch()
+        return config
+
+
+def _description(path: Path, text: str) -> Callable[[], object]:
+    def touch() -> None:
+        agent = path.parent / "agents" / "demo.yaml"
+        data = yaml.safe_load(agent.read_text(encoding="utf-8"))
+        agent.write_text(yaml.safe_dump({**data, "description": text}), encoding="utf-8")
+
+    return touch
+
+
+def test_the_config_that_serves_is_read_after_the_state(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Changée après la première lecture, avant le relevé : c'est la nouvelle qui sert."""
+    path = demo()
+    reading = _Reading({1: _description(path, "Calcule, version 2.")}, after=True)
+    monkeypatch.setattr(http_serve, "load_config", reading)
+    config, spec, seen = http_serve._read(path, None)
+    assert reading.reads == 2
+    assert [a.description for a in config.agents] == ["Calcule, version 2."]
+    # Le relevé est celui de ce qu'elle a lu : rien à rattraper.
+    assert changed(set(), seen, spec.state(), spec.roots[0]) == ""
+
+
+def test_a_change_after_the_state_is_left_to_the_supervisor(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Changée après le relevé : elle sert peut-être déjà, le superviseur la voit quand même."""
+    path = demo()
+    reading = _Reading({2: _description(path, "Calcule, version 3.")}, after=False)
+    monkeypatch.setattr(http_serve, "load_config", reading)
+    config, spec, seen = http_serve._read(path, None)
+    assert [a.description for a in config.agents] == ["Calcule, version 3."]
+    assert changed(set(), seen, spec.state(), spec.roots[0]) == "agents/demo.yaml modifié"
+
+
+def test_the_state_covers_the_folders_of_the_config_that_serves(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Relue, la config fait surveiller d'autres dossiers : le relevé est refait sur eux."""
+    path = demo()
+    shared = tmp_path.parent / f"{tmp_path.name}-prompts"
+    shared.mkdir()
+    (shared / "demo.md").write_text("Tu calcules, ailleurs.", encoding="utf-8")
+
+    def moved() -> None:
+        root = path.read_text(encoding="utf-8")
+        path.write_text(f"prompts_dir: {shared}\n{root}", encoding="utf-8")
+
+    reading = _Reading({1: moved}, after=True)
+    monkeypatch.setattr(http_serve, "load_config", reading)
+    _, spec, seen = http_serve._read(path, None)
+    assert reading.reads == 3
+    assert spec.roots == (tmp_path, shared)
+    assert shared / "demo.md" in seen
+    assert changed(set(), seen, spec.state(), tmp_path) == ""
+
+
+def test_the_config_is_read_three_times_at_most(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = demo()
+    root = path.read_text(encoding="utf-8")
+    elsewhere = [tmp_path.parent / f"{tmp_path.name}-p{i}" for i in range(4)]
+    for folder in elsewhere:
+        folder.mkdir()
+        (folder / "demo.md").write_text("Tu calcules.", encoding="utf-8")
+
+    def move(i: int) -> Callable[[], object]:
+        return lambda: path.write_text(f"prompts_dir: {elsewhere[i]}\n{root}", encoding="utf-8")
+
+    reading = _Reading({i + 1: move(i) for i in range(4)}, after=True)
+    monkeypatch.setattr(http_serve, "load_config", reading)
+    config, spec, _ = http_serve._read(path, None)
+    assert reading.reads == http_serve.READS == 3
+    assert spec == watched(config)
 
 
 def test_an_error_in_the_user_code_shows_its_own_lines(tmp_path: Path) -> None:
@@ -286,6 +416,213 @@ async def test_the_trial_mount_covers_each_client(demo: ConfigFactory) -> None:
     async with Loom(config) as loom:
         with pytest.raises(ConfigError, match="inexistant"):
             await _mounted(loom)
+
+
+# --- Le superviseur et son guetteur -------------------------------------------------
+#
+# Le superviseur tourne ici, dans le process de l'essai : le lanceur est faux
+# (aucun process ne sert), le guetteur est le vrai ``watchfiles``. Les
+# changements sont faits avant que chaque guetteur soit créé — le moment où un
+# guetteur ne voit rien —, sans course à gagner.
+
+
+class _Gone:
+    """Le process d'un faux lancement : déjà sorti, il dit « sourd » quand on le lui demande."""
+
+    def is_alive(self) -> bool:
+        return False
+
+    def terminate(self) -> None:
+        pass
+
+    def join(self) -> None:
+        pass
+
+
+class _Told:
+    def poll(self, timeout: float) -> bool:
+        return True
+
+    def recv(self) -> str:
+        return DEAF
+
+    def close(self) -> None:
+        pass
+
+
+def _no_banner(*args: object) -> None:
+    pass
+
+
+class _Supervised:
+    """Le superviseur lancé sur une config, avec ce qu'il a dit, et quand.
+
+    ``launches`` : ce que rend chaque lancement — un ``Watched``, ou ``None``
+    pour arrêter là (le superviseur s'arrête alors, comme sur un Ctrl+C).
+    ``before_watch`` : ce qui est fait avant chaque guetteur, dans l'ordre.
+    ``during`` : ce qui est fait pendant le lancement n, après le relevé de
+    son process — pendant qu'il monte ses agents.
+    """
+
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        path: Path,
+        launches: list[Watched | None],
+        before_watch: list[Callable[[], object]],
+        during: dict[int, Callable[[], object]] | None = None,
+    ) -> None:
+        import watchfiles
+
+        self.path = path
+        self.said: list[tuple[str, bool]] = []
+        self.launched = 0
+        self.armed = False
+        stopping: list[threading.Event] = []
+        real = watchfiles.watch
+
+        def launcher(*args: Any) -> Callable[[], Any]:
+            stopping.append(args[-1])
+
+            def launch() -> Any:
+                self.launched += 1
+                spec = launches.pop(0)
+                if spec is None:
+                    stopping[0].set()
+                    return None
+                seen = spec.state()
+                (during or {}).get(self.launched, lambda: None)()
+                return _Serving(cast(Any, _Gone()), cast(Any, _Told())), spec, seen
+
+            return launch
+
+        def watch(*paths: Path, **options: Any) -> Iterator[set[Any]]:
+            self.armed = False
+            if before_watch:
+                before_watch.pop(0)()
+            guard = real(*paths, **options)
+            try:
+                for changes in guard:
+                    self.armed = True
+                    yield changes
+            finally:
+                guard.close()
+
+        monkeypatch.setattr(http_serve, "_Launcher", launcher)
+        monkeypatch.setattr(watchfiles, "watch", watch)
+
+        def say(line: str) -> None:
+            self.said.append((line, self.armed))
+
+        monkeypatch.setattr(http_serve, "_say", say)
+
+    def run(self, *, within: float = 5.0) -> int:
+        # Si rien ne l'arrête, un Ctrl+C au bout de ``within`` : l'essai tombe, il ne pend pas.
+        alarm = threading.Timer(within, lambda: os.kill(os.getpid(), signal.SIGINT))
+        alarm.start()
+        try:
+            return http_serve.serve_reloading(
+                self.path, profile=None, host="127.0.0.1", port=0, banner=_no_banner
+            )
+        finally:
+            alarm.cancel()
+
+    @property
+    def lines(self) -> list[str]:
+        return [line for line, _ in self.said]
+
+
+def test_watching_is_said_once_the_watch_is_armed(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = demo()
+    spec = watched(load_config(path))
+    supervised = _Supervised(monkeypatch, path, [spec, None], [])
+    stop = threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGINT))
+    stop.start()
+    assert supervised.run() == 0
+    stop.cancel()
+    assert supervised.said[0] == (f"Rechargement : surveille {spec.describe()}", True)
+
+
+def _edited(base: Path) -> None:
+    (base / "prompts" / "demo.md").write_text("Tu calcules bien.", encoding="utf-8")
+
+
+def _added(base: Path) -> None:
+    (base / "notes.md").write_text("à lire", encoding="utf-8")
+
+
+def _removed(base: Path) -> None:
+    (base / "outils_acces.py").unlink()
+
+
+@pytest.mark.parametrize(
+    ("touch", "told"),
+    [
+        (_edited, "prompts/demo.md modifié"),
+        (_added, "notes.md ajouté"),
+        (_removed, "outils_acces.py supprimé"),
+    ],
+)
+def test_a_change_made_before_the_watch_is_armed_reloads(
+    demo: ConfigFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    touch: Callable[[Path], None],
+    told: str,
+) -> None:
+    """Fait après le relevé du process qui sert, avant le guetteur : aucun événement ne le dit."""
+    path = demo()
+    spec = watched(load_config(path))
+    supervised = _Supervised(monkeypatch, path, [spec, None], [lambda: touch(path.parent)])
+    assert supervised.run() == 0
+    assert supervised.lines == [
+        f"Rechargement : surveille {spec.describe()}",
+        f"Rechargement : {told}",
+    ]
+    assert supervised.launched == 2
+
+
+def test_a_folder_newly_watched_is_caught_up_when_its_watch_is_armed(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Entre l'ancien guetteur fermé et le nouveau armé, rien ne passe."""
+    path = demo()
+    shared = tmp_path.parent / f"{tmp_path.name}-prompts"
+    shared.mkdir()
+    (shared / "demo.md").write_text("Tu calcules, ailleurs.", encoding="utf-8")
+    first = watched(load_config(path))
+    second = Watched(roots=(tmp_path, shared), dirs=first.dirs, files=first.files)
+    supervised = _Supervised(
+        monkeypatch,
+        path,
+        [first, second, None],
+        [
+            # Avant le premier guetteur : rien. Un changement vu par lui relance…
+            lambda: None,
+            # … et le process neuf fait surveiller ``shared`` ; avant son guetteur :
+            lambda: (shared / "autre.md").write_text("Tu notes."),
+        ],
+        # Pendant que le process neuf monte ses agents, après son relevé.
+        during={2: lambda: (shared / "demo.md").write_text("Tu calcules, ailleurs, autrement.")},
+    )
+
+    def said(line: str) -> None:
+        supervised.said.append((line, supervised.armed))
+        if line.startswith("Rechargement : surveille") and supervised.launched == 1:
+            (tmp_path / "prompts" / "demo.md").write_text("Tu calcules vite.", encoding="utf-8")
+
+    monkeypatch.setattr(http_serve, "_say", said)
+    assert supervised.run() == 0
+    assert supervised.lines == [
+        f"Rechargement : surveille {first.describe()}",
+        "Rechargement : prompts/demo.md modifié",
+        "Rechargé : le nouveau process sert ; l'ancien finit ce qu'il a en cours.",
+        f"Rechargement : surveille {second.describe()}",
+        f"Rechargement : {shared / 'autre.md'} ajouté, {shared / 'demo.md'} modifié",
+    ]
+    assert all(armed for line, armed in supervised.said if "surveille" in line)
+    assert supervised.launched == 3
 
 
 # --- La relève ---------------------------------------------------------------------
