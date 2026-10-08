@@ -375,24 +375,73 @@ async def _erased(jobs: Path, wait: float) -> None:
         await asyncio.sleep(0.05)
 
 
-# execd ne lit pas la connexion pendant un job : il ne voit la fermeture
-# qu'à la fin du job, au plus tard à son wall_ms. Le dossier est effacé à ce
-# moment-là, pas à la fermeture.
+# execd lit la connexion pendant un job : une session fermée arrête son job
+# tout de suite — sa place d'exécution est rendue, son dossier effacé —, au
+# lieu de le laisser courir jusqu'à son wall_ms.
 
 
-async def test_closing_during_a_job_erases_the_session_by_the_wall_limit(execd: Path) -> None:
+async def test_closing_during_a_job_stops_it_and_erases_the_session(execd: Path) -> None:
     jobs = execd.with_name("jobs")
     session = await _open(execd)
     await session.put_code("essai.py", SCRIPT)
     running = asyncio.create_task(
-        session.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 2000})
+        session.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000})
     )
     await asyncio.sleep(0.5)
     assert _sessions(jobs) == [session.hello.session_id]
     await session.close()
     with pytest.raises(ProtocolError):
         await running
-    await _erased(jobs, wait=8)
+    await _erased(jobs, wait=1.5)
+
+
+async def test_a_job_left_by_a_closed_session_gives_its_place_back(execd: Path) -> None:
+    """Un job à la fois (``EXECD_MAX_CONCURRENT_EXEC``, 1 par défaut) : le suivant n'attend pas."""
+    left = await _open(execd)
+    await left.put_code("essai.py", SCRIPT)
+    running = asyncio.create_task(
+        left.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000})
+    )
+    await asyncio.sleep(0.5)
+    await left.close()
+    with pytest.raises(ProtocolError):
+        await running
+    other = await _open(execd)
+    try:
+        await other.put_code("essai.py", SCRIPT)
+        begun = time.monotonic()
+        done = await other.exec("essai:principal", args={"n": 3}, wait=5)
+        assert done.ok and time.monotonic() - begun < 3
+    finally:
+        await other.close()
+
+
+async def test_a_request_sent_during_a_job_waits_its_turn(execd: Path) -> None:
+    """Le protocole est séquentiel : une requête envoyée en avance est servie après le job."""
+    reader, writer = await asyncio.open_unix_connection(execd)
+    try:
+        writer.write(
+            encode_frame({"method": "code.put", "seq": 1, "path": "essai.py", "eof": True}, SCRIPT)
+        )
+        writer.write(
+            encode_frame(
+                {
+                    "method": "tool.exec",
+                    "seq": 2,
+                    "entrypoint": "essai:dort",
+                    "args": {"secondes": 0.5},
+                    "limits": {"wall_ms": 5000},
+                }
+            )
+        )
+        writer.write(encode_frame({"method": "hello", "seq": 3, "protocol": 1}))
+        await writer.drain()
+        replies = [(await asyncio.wait_for(read_frame(reader), 10))[0] for _ in range(3)]
+    finally:
+        writer.close()
+    assert [reply.get("seq") for reply in replies] == [1, 2, 3]
+    assert replies[1]["ok"] is True and replies[1]["result"] is None
+    assert replies[2]["protocol"] == 1
 
 
 async def test_a_host_wait_shorter_than_the_job_closes_the_session(execd: Path) -> None:
@@ -400,6 +449,8 @@ async def test_a_host_wait_shorter_than_the_job_closes_the_session(execd: Path) 
     session = await _open(execd)
     await session.put_code("essai.py", SCRIPT)
     with pytest.raises(TimeoutError):
-        await session.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 2000}, wait=0.5)
+        await session.exec(
+            "essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000}, wait=0.5
+        )
     assert session.closed
-    await _erased(jobs, wait=8)
+    await _erased(jobs, wait=1.5)

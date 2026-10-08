@@ -115,11 +115,31 @@ async def test_two_launchers_get_one_vm(vm_dir: Path) -> None:
     assert await first.stop(grace=5, wait=5) == "console"
 
 
-async def test_a_second_run_sh_wipes_the_pid_and_stop_still_uses_the_console(
-    vm_dir: Path,
+async def test_a_second_run_sh_is_refused_and_the_pid_stays(vm_dir: Path) -> None:
+    vm = Vm.load(vm_dir)
+    await vm.start(wait=10)
+    pid = vm.pid
+    assert pid is not None
+    refused = await asyncio.create_subprocess_exec(
+        vm_dir / "run.sh", stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+    )
+    _, said = await refused.communicate()
+    assert refused.returncode == 1
+    assert f"déjà lancée (pid {pid})" in said.decode()
+    assert vm.is_running()
+    assert vm.pid == pid
+    assert await vm.stop(grace=5, wait=5) == "console"
+
+
+# Les VM construites avant le 08/10 ont un run.sh qui rouvre le verrou avec
+# « > » avant flock : un second lancement, refusé, efface le PID que le
+# premier y avait inscrit. Le client s'en passe : il garde ses lancements.
+
+
+async def test_an_old_run_sh_wipes_the_pid_and_stop_still_uses_the_console(
+    wiping_vm_dir: Path,
 ) -> None:
-    # run.sh rouvre le verrou avec « > » avant flock : un second lancement,
-    # refusé, efface le PID que le premier y avait inscrit.
+    vm_dir = wiping_vm_dir
     vm = Vm.load(vm_dir)
     await vm.start(wait=10)
     refused = await asyncio.create_subprocess_exec(
@@ -134,9 +154,10 @@ async def test_a_second_run_sh_wipes_the_pid_and_stop_still_uses_the_console(
 
 
 async def test_a_wiped_pid_still_lets_the_signals_through(
-    vm_dir: Path, monkeypatch: pytest.MonkeyPatch
+    wiping_vm_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FAUX_IGNORE", "console,acpi")
+    vm_dir = wiping_vm_dir
     vm = Vm.load(vm_dir)
     await vm.start(wait=10)
     refused = await asyncio.create_subprocess_exec(

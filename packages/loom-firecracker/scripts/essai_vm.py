@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Essai d'une vraie VM : boot, execd, des jobs, l'arrêt — hors de loom.
+"""Essai d'une vraie VM : boot, le verrou de run.sh, execd, des jobs, l'arrêt — hors de loom.
 
     uv run python packages/loom-firecracker/scripts/essai_vm.py <dossier-vm>
     uv run python packages/loom-firecracker/scripts/essai_vm.py <dossier-vm> --garder
@@ -20,6 +20,7 @@ import asyncio
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -122,6 +123,21 @@ async def ouvre(vm: Vm, port: int, attente: float) -> Session:
 async def essai(
     vm: Vm, port: int, attente: float, controle: Controle, lancement: float | None
 ) -> None:
+    print("\n--- un second run.sh pendant que la VM tourne ---")
+    pid = vm.pid
+    refuse = await asyncio.create_subprocess_exec(
+        str(vm.directory / "run.sh"),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    _, dit = await refuse.communicate()
+    print(f"  code {refuse.returncode} : {dit.decode(errors='replace').strip()}")
+    controle.tient("refusé, code 1", refuse.returncode == 1)
+    controle.tient(f"vm.lock garde le pid ({pid})", pid is not None and vm.pid == pid)
+    controle.tient("le refus nomme ce pid", f"(pid {pid})" in dit.decode(errors="replace"))
+    controle.tient("la VM tourne toujours", vm.is_running())
+
     print("\n--- hello ---")
     debut = time.monotonic()
     session = await ouvre(vm, port, attente)
@@ -194,11 +210,11 @@ async def essai(
             else:
                 controle.tient("essai:chemins réussit", False)
 
-    print("\n--- fermer une session pendant son job ---")
+    print("\n--- fermer une session pendant son job (30 s, wall_ms 20000) ---")
     abandon = await ouvre(vm, port, attente)
     await abandon.put_code("essai.py", ESSAI)
     tache = asyncio.create_task(
-        abandon.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 4000})
+        abandon.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 20_000})
     )
     await asyncio.sleep(0.5)
     await abandon.close()
@@ -212,9 +228,10 @@ async def essai(
         fait = await suivante.exec("essai:principal", args={"n": 1})
         attendu = time.monotonic() - debut
     controle.tient("le job suivant passe", fait.ok)
-    controle.constate(
-        f"après fermeture d'une session en plein job (wall_ms 4000), le job suivant "
-        f"a mis {attendu:.2f} s"
+    # execd n'exécute qu'un job à la fois : sans l'arrêt du job abandonné, le
+    # suivant attendrait son wall_ms (20 s).
+    controle.tient(
+        f"il n'attend pas le job abandonné (rendu en {attendu:.2f} s)", fait.ok and attendu < 3
     )
 
 

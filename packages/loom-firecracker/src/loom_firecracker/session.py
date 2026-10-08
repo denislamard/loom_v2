@@ -16,8 +16,9 @@ Deux sortes d'échec, à ne pas confondre :
   session de trop…). La session reste utilisable.
 - ``ProtocolError`` ou ``TimeoutError`` : trame illisible, réponse
   désynchronisée, connexion coupée, délai dépassé, appel annulé. La session
-  est fermée ; execd efface son dossier, mais ne le voit qu'à la fin du job
-  en cours, au plus tard à son ``wall_ms``.
+  est fermée ; execd arrête le job en cours et efface son dossier. (Un execd
+  d'avant le 08/10 ne voit la fermeture qu'à la fin du job, au plus tard à
+  son ``wall_ms``.)
 
 Un job qui échoue (exception, délai, mémoire) n'est ni l'un ni l'autre :
 ``exec`` rend une ``Execution`` dont ``ok`` est faux et ``error`` dit pourquoi,
@@ -291,10 +292,11 @@ class Session:
         await self.close()
 
     async def close(self) -> None:
-        """Ferme la connexion : execd efface le dossier de la session.
+        """Ferme la connexion : execd arrête le job en cours et efface le dossier de la session.
 
-        Un job en cours n'est pas interrompu pour autant : execd ne voit la
-        fermeture qu'à la fin du job, au plus tard à son ``wall_ms``.
+        Le job est tué aussitôt, et sa place d'exécution rendue aux autres
+        sessions. Un execd d'avant le 08/10 ne voyait la fermeture qu'à la fin
+        du job, au plus tard à son ``wall_ms``.
         """
         if self._closed:
             return

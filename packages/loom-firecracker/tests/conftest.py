@@ -32,23 +32,33 @@ import pytest
 SERVICE_ENV = "LOOM_EXECD_SERVICE"
 FAUX = Path(__file__).with_name("faux_firecracker.py")
 
+# Le run.sh de make_vm.sh : il ouvre le verrou sans le tronquer (``9<>``),
+# et n'y écrit son PID qu'une fois le verrou pris.
 RUN_SH = """#!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p runtime
-exec 9>runtime/vm.lock
-flock -n 9 || {{ echo "VM déjà lancée" >&2; exit 1; }}
-printf '%s\\n' $$ >&9
+exec 9<>runtime/vm.lock
+flock -n 9 || {{ echo "VM déjà lancée (pid $(cat runtime/vm.lock 2>/dev/null))" >&2; exit 1; }}
+printf '%s\\n' $$ > runtime/vm.lock
 rm -f runtime/v.sock runtime/v.sock_* runtime/fc.sock
 exec "{python}" "{faux}" --api-sock runtime/fc.sock --config-file vm-config.json
 """
+# Celui d'avant le 08/10, qu'ont encore les VM construites avant : il ouvre le
+# verrou avec ``>``, qui le vide avant même de tenter ``flock`` — un lancement
+# refusé efface le PID de celui qui tourne.
+RUN_SH_WIPING = RUN_SH.replace("exec 9<>runtime/vm.lock", "exec 9>runtime/vm.lock").replace(
+    "printf '%s\\n' $$ > runtime/vm.lock", "printf '%s\\n' $$ >&9"
+)
 
 
 def _short_dir(prefix: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix, dir="/tmp"))
 
 
-def write_vm(directory: Path, *, name: str = "essai", execd_port: int | None = 5100) -> Path:
+def write_vm(
+    directory: Path, *, name: str = "essai", execd_port: int | None = 5100, run_sh: str = RUN_SH
+) -> Path:
     """Un dossier de VM à la manière de make_vm.sh, dont le VMM est le faux."""
     directory.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -65,7 +75,7 @@ def write_vm(directory: Path, *, name: str = "essai", execd_port: int | None = 5
         '{"vsock": {"guest_cid": 3, "uds_path": "runtime/v.sock"}}'
     )
     run = directory / "run.sh"
-    run.write_text(RUN_SH.format(python=sys.executable, faux=FAUX))
+    run.write_text(run_sh.format(python=sys.executable, faux=FAUX))
     run.chmod(0o755)
     return directory
 
@@ -91,10 +101,10 @@ def make_vm() -> Iterator[MakeVm]:
     """Fabrique de dossiers de VM factices (``write_vm``) ; leurs faux VMM sont tués à la fin."""
     made: list[Path] = []
 
-    def make(*, name: str = "essai", execd_port: int | None = 5100) -> Path:
+    def make(*, name: str = "essai", execd_port: int | None = 5100, run_sh: str = RUN_SH) -> Path:
         root = _short_dir("fcvm-")
         made.append(root)
-        return write_vm(root / "vm", name=name, execd_port=execd_port)
+        return write_vm(root / "vm", name=name, execd_port=execd_port, run_sh=run_sh)
 
     try:
         yield make
@@ -108,6 +118,12 @@ def make_vm() -> Iterator[MakeVm]:
 def vm_dir(make_vm: MakeVm) -> Path:
     """Un dossier de VM factice, sous un chemin court."""
     return make_vm()
+
+
+@pytest.fixture
+def wiping_vm_dir(make_vm: MakeVm) -> Path:
+    """Un dossier de VM factice au run.sh d'avant le 08/10, qui vide le PID sur un refus."""
+    return make_vm(run_sh=RUN_SH_WIPING)
 
 
 @dataclass(frozen=True, slots=True)
