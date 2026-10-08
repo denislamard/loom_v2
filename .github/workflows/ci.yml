@@ -30,8 +30,10 @@ jobs:
           cache-suffix: ${{ github.job }}
 
       # --locked échoue si uv.lock n'est pas à jour avec pyproject.toml.
-      - name: Installer le projet (tous les extras)
-        run: uv sync --locked --all-extras
+      # --group types : les stubs des extras (asyncpg-stubs), sans lesquels pyright
+      # ne connaît pas les types d'asyncpg.
+      - name: Installer le projet (tous les extras, et leurs types)
+        run: uv sync --locked --all-extras --group types
 
       - name: Ruff (lint)
         run: uv run --locked ruff check .
