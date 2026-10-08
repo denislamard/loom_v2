@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """La mémoire long terme (F6, J6.4d) : ``loom-notes`` branché en serveur MCP.
 
-Le serveur est le vrai, celui de Denis, désigné par ``LOOM_NOTES_SERVER``
-(le binaire ``loom-notes-mcp`` de son venv) ; sans la variable, ces essais
-sont sautés — même sous ``--require-services`` : il n'est pas dans le dépôt.
+Le serveur est le vrai : ``loom-notes`` publié sur PyPI, à la version
+``LOOM_NOTES``, lancé par ``uvx`` — rien à installer. ``LOOM_NOTES_SERVER``
+le remplace par un binaire ``loom-notes-mcp`` local (celui d'un venv de
+``loom-notes``), pour éprouver un changement pas encore publié. Sans ``uvx``,
+ces essais sont sautés, et en échec sous ``--require-services``.
 Il tourne en modèles factices (``LOOM_NOTES_FAKE_MODELS``) sur un Qdrant
 embarqué dans un dossier temporaire : pas de GPU, pas de Docker, et aucune
 base existante n'est touchée.
@@ -19,8 +21,11 @@ Ce que loom ajoute à la mémoire :
 """
 
 import os
+import shutil
+import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import pytest
 import yaml
@@ -33,6 +38,12 @@ from loom_ia.core.model import RunStatus, SessionId, TenantId
 pytestmark = pytest.mark.integration
 
 SERVER_ENV = "LOOM_NOTES_SERVER"
+# La version publiée de loom-notes que ces essais éprouvent.
+LOOM_NOTES = "1.1.0"
+# Ce dont uvx a besoin pour retrouver l'environnement préparé : le process MCP
+# n'hérite que d'un environnement réduit.
+UV_ENV = ("UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR")
+PREPARE_TIMEOUT = 300.0
 WRITES = ("add_text", "add_url", "add_file", "update", "delete")
 READS = ("search", "get", "list_docs", "projects")
 NOTE = (
@@ -41,16 +52,51 @@ NOTE = (
 )
 
 
-@pytest.fixture
-def memory_server() -> str:
-    """Le binaire ``loom-notes-mcp`` ; saute l'essai s'il n'est pas désigné."""
+@dataclass(frozen=True)
+class Server:
+    """Comment loom lance ``loom-notes-mcp`` : programme, arguments, variables en plus."""
+
+    command: str
+    args: tuple[str, ...] = ()
+    env: dict[str, str] = field(default_factory=dict[str, str])
+
+
+def _missing(request: pytest.FixtureRequest, why: str) -> NoReturn:
+    """Saute l'essai, ou le met en échec sous ``--require-services``."""
+    if request.config.getoption("--require-services"):
+        pytest.fail(f"{why} — et --require-services exige que cet essai tourne")
+    pytest.skip(why)
+
+
+@pytest.fixture(scope="session")
+def memory_server(request: pytest.FixtureRequest) -> Server:
+    """``loom-notes`` de PyPI par ``uvx``, ou le binaire que désigne ``LOOM_NOTES_SERVER``."""
     found = os.environ.get(SERVER_ENV, "")
-    if not found:
-        pytest.skip(f"{SERVER_ENV} absent : pas de serveur loom-notes pour cet essai")
-    server = Path(found).expanduser()
-    if not server.is_file():
-        pytest.skip(f"{SERVER_ENV} : {server} introuvable")
-    return str(server)
+    if found:
+        binary = Path(found).expanduser()
+        if not binary.is_file():
+            _missing(request, f"{SERVER_ENV} : {binary} introuvable")
+        return Server(str(binary))
+    uvx = shutil.which("uvx")
+    if uvx is None:
+        _missing(request, "uvx introuvable : pas de serveur loom-notes pour cet essai")
+    package = f"loom-notes=={LOOM_NOTES}"
+    # Le premier lancement résout et télécharge le paquet : il est fait ici, hors du
+    # délai de connexion de loom (``connect_timeout``) ; les suivants partent du cache.
+    try:
+        subprocess.run(
+            [uvx, "--from", package, "loom-notes", "--help"],
+            check=True,
+            capture_output=True,
+            timeout=PREPARE_TIMEOUT,
+        )
+    except subprocess.CalledProcessError as error:
+        detail = error.stderr.decode(errors="replace").strip().splitlines()[-1:]
+        _missing(request, f"uvx n'a pas pu préparer {package} : {' '.join(detail)}")
+    except subprocess.TimeoutExpired:
+        _missing(request, f"uvx n'a pas préparé {package} en {PREPARE_TIMEOUT:g} s")
+    env = {name: os.environ[name] for name in UV_ENV if name in os.environ}
+    return Server(uvx, ("--from", package, "loom-notes-mcp"), env)
 
 
 def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -59,7 +105,7 @@ def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
 def write_config(
     base: Path,
-    server: str,
+    server: Server,
     script: list[dict[str, Any]],
     *,
     tenants: list[dict[str, Any]] | None = None,
@@ -70,12 +116,14 @@ def write_config(
     memoire: dict[str, Any] = {
         "name": "memoire",
         "transport": "stdio",
-        "command": server,
+        "command": server.command,
+        "args": list(server.args),
         "env": {
             "LOOM_NOTES_FAKE_MODELS": "true",
             "FASTMCP_SHOW_SERVER_BANNER": "false",
             "FASTMCP_CHECK_FOR_UPDATES": "off",
             "FASTMCP_LOG_LEVEL": "WARNING",
+            **server.env,
         },
         # Les modèles se chargent au démarrage du serveur : on ne le ferme pas.
         "idle_timeout": None,
@@ -168,7 +216,7 @@ async def listed(
 
 
 async def test_reading_needs_no_approval_and_writing_waits_for_a_human(
-    tmp_path: Path, memory_server: str
+    tmp_path: Path, memory_server: Server
 ) -> None:
     session = SessionId("atelier")
     async with Loom(load_config(write_config(tmp_path, memory_server, SCRIPT))) as loom:
@@ -194,7 +242,7 @@ async def test_reading_needs_no_approval_and_writing_waits_for_a_human(
         assert [h["title"] for h in rendered(hit)] == ["Devis Martin"]
 
 
-async def test_a_refused_write_is_never_made(tmp_path: Path, memory_server: str) -> None:
+async def test_a_refused_write_is_never_made(tmp_path: Path, memory_server: Server) -> None:
     session = SessionId("atelier")
     async with Loom(load_config(write_config(tmp_path, memory_server, SCRIPT))) as loom:
         asked = await loom.run("assistant", "Mémorise ce devis.", session_id=session)
@@ -211,7 +259,7 @@ async def test_a_refused_write_is_never_made(tmp_path: Path, memory_server: str)
 
 
 async def test_replaying_a_run_that_wrote_writes_nothing(
-    tmp_path: Path, memory_server: str
+    tmp_path: Path, memory_server: Server
 ) -> None:
     """Le document écrit puis effacé ne revient pas : le rejeu lit le journal."""
     session = SessionId("atelier")
@@ -240,7 +288,7 @@ async def test_replaying_a_run_that_wrote_writes_nothing(
 
 
 async def test_a_variant_reads_for_real_but_never_writes(
-    tmp_path: Path, memory_server: str
+    tmp_path: Path, memory_server: Server
 ) -> None:
     """Rejoué par un autre orchestrateur : ``search`` part, ``add_text`` est refusé.
 
@@ -275,7 +323,7 @@ async def test_a_variant_reads_for_real_but_never_writes(
 
 
 async def test_each_client_has_its_own_memory(
-    tmp_path: Path, memory_server: str, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, memory_server: Server, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``scope: tenant`` : un serveur par client, son dossier lu dans ses secrets."""
     for client in ("dupont", "martin"):

@@ -1,18 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 """Phase 6.4d : la mémoire long terme — ``loom-notes`` branché en serveur MCP.
 
+    uv run python examples/j6/memoire.py
+    uv run python examples/j6/memoire.py --cas chercher
+    uv run python examples/j6/memoire.py --cas memoriser
+    uv run python examples/j6/memoire.py --cas rejeu
+    uv run python examples/j6/memoire.py --cas clients
     uv run python examples/j6/memoire.py --serveur ~/dev/loom-notes/.venv/bin/loom-notes-mcp
-    uv run python examples/j6/memoire.py --serveur <binaire> --cas chercher
-    uv run python examples/j6/memoire.py --serveur <binaire> --cas memoriser
-    uv run python examples/j6/memoire.py --serveur <binaire> --cas rejeu
-    uv run python examples/j6/memoire.py --serveur <binaire> --cas clients
     uv run --env-file .env --extra anthropic \\
-        python examples/j6/memoire.py --serveur <binaire> --reel
+        python examples/j6/memoire.py --reel
     uv run --env-file .env --extra anthropic \\
-        python examples/j6/memoire.py --serveur <binaire> --reel --device cpu
+        python examples/j6/memoire.py --reel --device cpu
 
-``--serveur`` : le binaire ``loom-notes-mcp`` d'un venv de ``loom-notes`` ;
-sans lui, l'exemple dit quoi passer et sort en code 2. loom le lance en
+Le serveur est ``loom-notes`` publié sur PyPI, à la version ``LOOM_NOTES``,
+lancé par ``uvx`` : rien à installer. L'exemple le prépare avant de démarrer
+(``uvx --from loom-notes==… loom-notes --help``) ; la première fois, uvx
+télécharge le paquet, et en ``--reel`` son extra ``models`` (torch compris,
+plusieurs Go). ``--serveur`` le remplace par un binaire ``loom-notes-mcp``
+local, pour essayer un changement pas encore publié. loom le lance en
 serveur MCP stdio, ``memoire``, sur une base vide d'un dossier temporaire
 (``LOOM_NOTES_DATA_DIR``), effacé à la fin : aucune base existante n'est
 ouverte. Le serveur tourne dans ce dossier, pour qu'aucun ``.env`` du dossier
@@ -68,6 +73,8 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -107,6 +114,11 @@ PROJET = "dupont"
 CLIENTS = ("dupont", "martin")
 # Les caches de modèles que le serveur doit retrouver, s'ils sont déplacés.
 CACHES = ("HF_HOME", "HF_HUB_CACHE")
+# La version publiée de loom-notes, lancée par uvx quand --serveur n'est pas donné.
+LOOM_NOTES = "1.1.0"
+# Ce dont uvx a besoin pour retrouver l'environnement préparé : le serveur n'hérite
+# que d'un environnement réduit.
+UV_ENV = ("UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR")
 
 NOTES = (
     (
@@ -304,7 +316,7 @@ def enonce(quoi: str, texte: str, largeur: int = 96) -> None:
 
 
 def serveur_memoire(base: Path, args: argparse.Namespace, *, clients: bool) -> dict[str, Any]:
-    """Le serveur ``memoire`` : le binaire, sa base, et ce que la config dit de ses outils."""
+    """Le serveur ``memoire`` : son lancement, sa base, et ce que la config dit de ses outils."""
     env: dict[str, str] = {
         "FASTMCP_SHOW_SERVER_BANNER": "false",
         "FASTMCP_CHECK_FOR_UPDATES": "off",
@@ -317,6 +329,8 @@ def serveur_memoire(base: Path, args: argparse.Namespace, *, clients: bool) -> d
         env |= {nom: os.environ[nom] for nom in CACHES if nom in os.environ}
     else:
         env["LOOM_NOTES_FAKE_MODELS"] = "true"
+    if args.serveur is None:
+        env |= {nom: os.environ[nom] for nom in UV_ENV if nom in os.environ}
     if not clients:
         env["LOOM_NOTES_DATA_DIR"] = str(base / "memoire")
     outils: dict[str, dict[str, Any]] = {nom: {"description": d} for nom, d in DESCRIPTIONS.items()}
@@ -328,7 +342,8 @@ def serveur_memoire(base: Path, args: argparse.Namespace, *, clients: bool) -> d
     memoire: dict[str, Any] = {
         "name": SERVEUR,
         "transport": "stdio",
-        "command": str(args.serveur),
+        "command": args.commande,
+        "args": list(args.arguments),
         "cwd": str(base),
         "env": env,
         # Gardé ouvert le temps de l'instance : en réel, avec ses modèles chargés.
@@ -885,26 +900,53 @@ async def jouer(nom: str, atelier: Atelier, controle: Controle) -> None:
         await cas_clients(atelier, controle)
 
 
+def prepare_uvx(reel: bool) -> tuple[str, tuple[str, ...]] | None:
+    """Prépare loom-notes de PyPI par uvx ; rend la commande du serveur, ou None.
+
+    Le premier lancement résout et télécharge le paquet : il est fait ici, hors du
+    délai de connexion de loom (``connect_timeout``), et uvx montre sa progression.
+    """
+    uvx = shutil.which("uvx")
+    if uvx is None:
+        print(
+            "uvx introuvable : installe uv, ou passe --serveur <binaire loom-notes-mcp>.",
+            file=sys.stderr,
+        )
+        return None
+    paquet = f"loom-notes[models]=={LOOM_NOTES}" if reel else f"loom-notes=={LOOM_NOTES}"
+    print(f"Préparation de {paquet} par uvx…")
+    try:
+        subprocess.run(
+            [uvx, "--from", paquet, "loom-notes", "--help"], check=True, stdout=subprocess.DEVNULL
+        )
+    except subprocess.CalledProcessError:
+        print(f"uvx n'a pas pu préparer {paquet} (voir ci-dessus).", file=sys.stderr)
+        return None
+    return uvx, ("--from", paquet, "loom-notes-mcp")
+
+
 async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="La mémoire long terme : loom-notes en MCP")
-    parser.add_argument("--serveur", type=Path, help="binaire loom-notes-mcp")
+    parser.add_argument(
+        "--serveur", type=Path, help="binaire loom-notes-mcp local, à la place du paquet PyPI"
+    )
     parser.add_argument("--reel", action="store_true", help="vrais modèles (assistant_reel)")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     parser.add_argument(
         "--device", default="cuda", help="périphérique des modèles de loom-notes en --reel"
     )
     args = parser.parse_args(argv)
-    if args.serveur is None:
-        print(
-            "Il faut le serveur : --serveur <binaire loom-notes-mcp>, celui du venv de "
-            "loom-notes (par exemple ~/dev/loom-notes/.venv/bin/loom-notes-mcp).",
-            file=sys.stderr,
-        )
+    if args.serveur is not None:
+        args.serveur = args.serveur.expanduser().resolve()
+        if not args.serveur.is_file():
+            print(f"Serveur : {args.serveur} introuvable", file=sys.stderr)
+            return 2
+        args.commande, args.arguments, args.decrit = str(args.serveur), (), str(args.serveur)
+    elif (lancement := prepare_uvx(args.reel)) is None:
         return 2
-    args.serveur = args.serveur.expanduser().resolve()
-    if not args.serveur.is_file():
-        print(f"Serveur : {args.serveur} introuvable", file=sys.stderr)
-        return 2
+    else:
+        args.commande, args.arguments = lancement
+        args.decrit = f"loom-notes {LOOM_NOTES} (PyPI, par uvx)"
     cas = tuple(args.cas) if args.cas else CAS
     if "rejeu" in cas and "memoriser" not in cas:
         print("Le cas `rejeu` rejoue l'écriture de `memoriser` : `memoriser` est joué d'abord.")
@@ -915,7 +957,7 @@ async def main(argv: list[str]) -> int:
         try:
             atelier = Atelier(args, Path(dossier))
             modeles = f"vrais, sur {args.device}" if args.reel else "factices"
-            print(f"Agent : {atelier.agent} ; serveur : {args.serveur} ; modèles {modeles}")
+            print(f"Agent : {atelier.agent} ; serveur : {args.decrit} ; modèles {modeles}")
             for nom in cas:
                 print(f"\n{'─' * 78}\nCas {nom}\n{'─' * 78}")
                 try:
