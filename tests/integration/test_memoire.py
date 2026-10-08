@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""La mémoire long terme (F6, J6.4d) : ``loom-memory`` branché en serveur MCP.
+"""La mémoire long terme (F6, J6.4d) : ``loom-notes`` branché en serveur MCP.
 
-Le serveur est le vrai, celui de Denis, désigné par ``LOOM_MEMORY_SERVER``
-(le binaire ``loom-memory-mcp`` de son venv) ; sans la variable, ces essais
+Le serveur est le vrai, celui de Denis, désigné par ``LOOM_NOTES_SERVER``
+(le binaire ``loom-notes-mcp`` de son venv) ; sans la variable, ces essais
 sont sautés — même sous ``--require-services`` : il n'est pas dans le dépôt.
-Il tourne en modèles factices (``LOOM_MEMORY_FAKE_MODELS``) sur un Qdrant
+Il tourne en modèles factices (``LOOM_NOTES_FAKE_MODELS``) sur un Qdrant
 embarqué dans un dossier temporaire : pas de GPU, pas de Docker, et aucune
 base existante n'est touchée.
 
@@ -32,7 +32,7 @@ from loom_ia.core.model import RunStatus, SessionId, TenantId
 
 pytestmark = pytest.mark.integration
 
-SERVER_ENV = "LOOM_MEMORY_SERVER"
+SERVER_ENV = "LOOM_NOTES_SERVER"
 WRITES = ("add_text", "add_url", "add_file", "update", "delete")
 READS = ("search", "get", "list_docs", "projects")
 NOTE = (
@@ -43,10 +43,10 @@ NOTE = (
 
 @pytest.fixture
 def memory_server() -> str:
-    """Le binaire ``loom-memory-mcp`` ; saute l'essai s'il n'est pas désigné."""
+    """Le binaire ``loom-notes-mcp`` ; saute l'essai s'il n'est pas désigné."""
     found = os.environ.get(SERVER_ENV, "")
     if not found:
-        pytest.skip(f"{SERVER_ENV} absent : pas de serveur loom-memory pour cet essai")
+        pytest.skip(f"{SERVER_ENV} absent : pas de serveur loom-notes pour cet essai")
     server = Path(found).expanduser()
     if not server.is_file():
         pytest.skip(f"{SERVER_ENV} : {server} introuvable")
@@ -72,7 +72,7 @@ def write_config(
         "transport": "stdio",
         "command": server,
         "env": {
-            "LOOM_MEMORY_FAKE_MODELS": "true",
+            "LOOM_NOTES_FAKE_MODELS": "true",
             "FASTMCP_SHOW_SERVER_BANNER": "false",
             "FASTMCP_CHECK_FOR_UPDATES": "off",
             "FASTMCP_LOG_LEVEL": "WARNING",
@@ -82,10 +82,10 @@ def write_config(
         "tools": {name: {"approval": "always"} for name in WRITES},
     }
     if tenants is None:
-        memoire["env"]["LOOM_MEMORY_DATA_DIR"] = str(base / "memoire")
+        memoire["env"]["LOOM_NOTES_DATA_DIR"] = str(base / "memoire")
     else:
         memoire["scope"] = "tenant"
-        memoire["env_from"] = {"LOOM_MEMORY_DATA_DIR": "MEMOIRE_DOSSIER"}
+        memoire["env_from"] = {"LOOM_NOTES_DATA_DIR": "MEMOIRE_DOSSIER"}
     config: dict[str, Any] = {
         "version": 1,
         "models": [

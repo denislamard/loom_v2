@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 6.4d : la mémoire long terme — ``loom-memory`` branché en serveur MCP.
+"""Phase 6.4d : la mémoire long terme — ``loom-notes`` branché en serveur MCP.
 
-    uv run python examples/j6/memoire.py --serveur ~/dev/loom-memory/.venv/bin/loom-memory-mcp
+    uv run python examples/j6/memoire.py --serveur ~/dev/loom-notes/.venv/bin/loom-notes-mcp
     uv run python examples/j6/memoire.py --serveur <binaire> --cas chercher
     uv run python examples/j6/memoire.py --serveur <binaire> --cas memoriser
     uv run python examples/j6/memoire.py --serveur <binaire> --cas rejeu
@@ -11,10 +11,10 @@
     uv run --env-file .env --extra anthropic \\
         python examples/j6/memoire.py --serveur <binaire> --reel --device cpu
 
-``--serveur`` : le binaire ``loom-memory-mcp`` d'un venv de ``loom-memory`` ;
+``--serveur`` : le binaire ``loom-notes-mcp`` d'un venv de ``loom-notes`` ;
 sans lui, l'exemple dit quoi passer et sort en code 2. loom le lance en
 serveur MCP stdio, ``memoire``, sur une base vide d'un dossier temporaire
-(``LOOM_MEMORY_DATA_DIR``), effacé à la fin : aucune base existante n'est
+(``LOOM_NOTES_DATA_DIR``), effacé à la fin : aucune base existante n'est
 ouverte. Le serveur tourne dans ce dossier, pour qu'aucun ``.env`` du dossier
 de lancement ne règle sa base à la place de la config. En simulé, il tourne
 en modèles factices ; en ``--reel``, avec ses vrais modèles (BGE-M3 et le
@@ -28,7 +28,7 @@ Ce que la config dit du serveur, outil par outil (``mcp_servers[].tools``) :
 - les cinq écritures (``add_text``, ``add_url``, ``add_file``, ``update``,
   ``delete``) en ``approval: always`` : le run s'arrête avant chacune, et
   l'exemple joue l'artisan qui accepte ou refuse ;
-- les descriptions qui nomment l'utilisateur de ``loom-memory`` sont
+- les descriptions qui nomment l'utilisateur de ``loom-notes`` sont
   réécrites (``description``) pour celui de l'agent, l'artisan : c'est ce que
   le modèle lit. loom ne transmet pas les ``instructions`` du serveur ; le
   prompt de l'agent dit lui-même quand chercher et quand écrire.
@@ -44,7 +44,7 @@ fait pas sur commande.
   approuvées par l'artisan ; puis l'agent répond sur le devis D-2026-042 en
   appelant ``search``, sans approbation. Les outils que voit le modèle se
   lisent dans les échanges bruts : aucun ne nomme plus l'utilisateur de
-  ``loom-memory``.
+  ``loom-notes``.
 * **memoriser** : « Mémorise que… » arrête le run sur l'écriture ; tant que
   l'artisan n'a pas répondu, la mémoire n'a pas changé ; il accepte, la note
   y est. Puis une écriture que personne n'a demandée est refusée, et rien
@@ -100,7 +100,7 @@ ECRITURES = ("add_text", "add_url", "add_file", "update", "delete")
 # Les outils qui passent par les modèles : leur premier appel les charge.
 CHARGENT = ("search", "add_text", "add_url", "add_file", "update")
 DELAI_REEL = 300.0
-# L'utilisateur que les descriptions de loom-memory nomment.
+# L'utilisateur que les descriptions de loom-notes nomment.
 NOMME = "Denis"
 ARTISAN = "l'artisan"
 PROJET = "dupont"
@@ -146,7 +146,7 @@ DEMANDE_LISTE = "Liste les documents de la mémoire."
 DEMANDE_EFFACE = "Efface la note sur les rappels de Mme Martin."
 
 GARDE = " Uniquement si l'artisan le demande dans son message ; chaque écriture attend son accord."
-# Ce que le modèle lit des outils qui nomment l'utilisateur de loom-memory ;
+# Ce que le modèle lit des outils qui nomment l'utilisateur de loom-notes ;
 # get, list_docs et projects gardent la leur.
 DESCRIPTIONS = {
     "search": (
@@ -193,7 +193,7 @@ def script(efface: str | None = None) -> list[dict[str, Any]]:
     la note écrite, il demande de réécrire la config.
     """
     # Les trois notes l'une après l'autre : en réel, le premier appel charge le
-    # modèle, et loom-memory ne protège pas ce chargement d'appels simultanés.
+    # modèle, et loom-notes ne protège pas ce chargement d'appels simultanés.
     pas: list[dict[str, Any]] = [
         {
             "with_text": "trois notes",
@@ -313,12 +313,12 @@ def serveur_memoire(base: Path, args: argparse.Namespace, *, clients: bool) -> d
     if args.reel:
         # Les modèles se chargent au premier appel qui en a besoin, pas en tâche de fond :
         # un chargement à la fois.
-        env |= {"LOOM_MEMORY_DEVICE": args.device, "LOOM_MEMORY_WARMUP_ON_START": "false"}
+        env |= {"LOOM_NOTES_DEVICE": args.device, "LOOM_NOTES_WARMUP_ON_START": "false"}
         env |= {nom: os.environ[nom] for nom in CACHES if nom in os.environ}
     else:
-        env["LOOM_MEMORY_FAKE_MODELS"] = "true"
+        env["LOOM_NOTES_FAKE_MODELS"] = "true"
     if not clients:
-        env["LOOM_MEMORY_DATA_DIR"] = str(base / "memoire")
+        env["LOOM_NOTES_DATA_DIR"] = str(base / "memoire")
     outils: dict[str, dict[str, Any]] = {nom: {"description": d} for nom, d in DESCRIPTIONS.items()}
     for nom in ECRITURES:
         outils[nom]["approval"] = "always"
@@ -337,7 +337,7 @@ def serveur_memoire(base: Path, args: argparse.Namespace, *, clients: bool) -> d
     }
     if clients:
         # Un serveur par client, sa base dans le dossier que nomment ses secrets.
-        memoire |= {"scope": "tenant", "env_from": {"LOOM_MEMORY_DATA_DIR": "MEMOIRE_DOSSIER"}}
+        memoire |= {"scope": "tenant", "env_from": {"LOOM_NOTES_DATA_DIR": "MEMOIRE_DOSSIER"}}
     return memoire
 
 
@@ -886,18 +886,18 @@ async def jouer(nom: str, atelier: Atelier, controle: Controle) -> None:
 
 
 async def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="La mémoire long terme : loom-memory en MCP")
-    parser.add_argument("--serveur", type=Path, help="binaire loom-memory-mcp")
+    parser = argparse.ArgumentParser(description="La mémoire long terme : loom-notes en MCP")
+    parser.add_argument("--serveur", type=Path, help="binaire loom-notes-mcp")
     parser.add_argument("--reel", action="store_true", help="vrais modèles (assistant_reel)")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     parser.add_argument(
-        "--device", default="cuda", help="périphérique des modèles de loom-memory en --reel"
+        "--device", default="cuda", help="périphérique des modèles de loom-notes en --reel"
     )
     args = parser.parse_args(argv)
     if args.serveur is None:
         print(
-            "Il faut le serveur : --serveur <binaire loom-memory-mcp>, celui du venv de "
-            "loom-memory (par exemple ~/dev/loom-memory/.venv/bin/loom-memory-mcp).",
+            "Il faut le serveur : --serveur <binaire loom-notes-mcp>, celui du venv de "
+            "loom-notes (par exemple ~/dev/loom-notes/.venv/bin/loom-notes-mcp).",
             file=sys.stderr,
         )
         return 2

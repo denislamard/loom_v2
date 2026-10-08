@@ -1243,6 +1243,45 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
     - `jalons.md` : la ligne « 6.4d Mémoire », `memoire.py` dans la liste des exemples, les essais de la mémoire dans celle des essais.
     - Aucun code touché à cette étape.
 
+- **loom-notes (ex-`loom-memory`) : le serveur de mémoire, après 6.4d (08/10).**
+  - **Fusion dans loom-ia : non (ta décision, 08/10).** Elle est impossible en l'état : loom-memory tient à `fastmcp` 4, qui exige `mcp` 2, quand loom-ia borne `mcp` à `<2`. Ni un venv ni un espace de travail uv ne portent les deux. Il faudrait d'abord migrer loom vers `mcp` 2 :
+    - le serveur bas niveau passe des décorateurs aux gestionnaires `on_*` ;
+    - `McpError` devient `MCPError`, et `RequestContext`, `RequestResponder` et `create_connected_server_and_client_session` disparaissent ;
+    - `FastMCP` devient `MCPServer`.
+    Ce chantier vaudrait pour lui-même, dans une phase à part. **Rien n'est touché.**
+  - **Publication sur PyPI** : la liste du travail t'a été donnée à part, dans `loom-memory-pypi.md` (dans la conversation, pas sur ton disque) ; rien n'est engagé. Le nom `loom-memory` y est pris (un autre projet) ; tu as choisi **`loom-notes`**, libre sur PyPI, et renommé le dépôt (`~/dev/loom-notes`, `origin` `denislamard/loom-notes`, commit `1d59ed9` « change name », qui renomme la distribution).
+  - **Le renommage partout : prêt, à commiter dans les deux dépôts.**
+    - Tes décisions (08/10) :
+      - le module **`loom_notes`** et les commandes **`loom-notes`** et **`loom-notes-mcp`** ;
+      - le préfixe **`LOOM_NOTES_`** ;
+      - **loom_v2 dans la même livraison** ;
+      - **je fais tout le déplacement**.
+    - **Dans `~/dev/loom-notes`** :
+      - `src/loom_memory/` → `src/loom_notes/`, et ses imports ;
+      - `pyproject.toml` : les commandes et `packages` ;
+      - le nom du serveur MCP (`FastMCP("loom-notes")`), le logger, les messages, l'aide de la CLI, les docstrings ;
+      - le README (33 mentions ; le tableau des commandes reste aligné) et un commentaire de `.gitignore` ;
+      - un défaut que ton commit avait ouvert, corrigé : `__version__` lisait `version("loom-memory")`, introuvable une fois la distribution renommée, et valait donc `0.0.0` ; il lit désormais `loom-notes` ;
+      - le `user_agent` suit la version : `loom-notes/1.1.0 (+https://github.com/denislamard/loom-notes)`, au lieu de `loom-memory/0.1` figé.
+      - **Rien d'autre ne change**, en particulier les collections Qdrant (`memory`, `documents`), `meta.json` et le dossier de données. Les autres points de la liste PyPI (ton nom dans les textes, le dossier de données par défaut, l'extra des modèles…) restent à faire.
+    - **Dans loom_v2** :
+      - `LOOM_MEMORY_SERVER` devient `LOOM_NOTES_SERVER` ;
+      - `tests/integration/test_memoire.py` et `examples/j6/memoire.py` passent au serveur ses variables sous `LOOM_NOTES_` (`FAKE_MODELS`, `DATA_DIR`, `DEVICE`, `WARMUP_ON_START`, et l'`env_from` des clients) et citent le nouveau binaire ;
+      - `fonctions.md` (F6, la réalisation de 6.4d, qui garde « anciennement `loom-memory` ») et `jalons.md` sont mis à jour. L'historique de cet avancement reste tel quel.
+    - **Pourquoi les deux dépôts ensemble** : le serveur renommé ignore `LOOM_MEMORY_DATA_DIR` et `LOOM_MEMORY_FAKE_MODELS`. Je l'ai éprouvé avec une copie de l'essai restée sur l'ancien préfixe : le serveur a ouvert sa base par défaut, `data/` du dépôt, et y a écrit `meta.json` et `qdrant/` ; l'essai est tombé. L'ancien loom_v2 ne doit donc jamais tourner contre le nouveau serveur.
+    - **Vérifié** :
+      - loom-notes : ses 44 essais en modèles factices, ruff et format ; pyright strict sans erreur avec l'interpréteur du projet ; `uv build` (roue `loom_notes`, commandes `loom-notes` et `loom-notes-mcp`) ; `__version__` à 1.1.0 ;
+      - loom_v2 : `test_memoire.py` contre le serveur renommé, 5 essais ; `memoire.py` en simulé, 15 vérifications ; aucun dossier `data/` créé dans loom-notes ; ruff, format et pyright sur les deux fichiers.
+    - **À faire chez toi** :
+      1. Dans `~/dev/loom-notes` : `uv sync`. Il crée le venv, avec le groupe `models` par défaut, et réécrit `uv.lock`, que je ne livre pas.
+      2. **Claude Desktop**, quand tu bascules : commande `~/dev/loom-notes/.venv/bin/loom-notes-mcp`, et chaque variable `LOOM_MEMORY_*` renommée en `LOOM_NOTES_*` (`QDRANT_URL`, `ALLOWED_ROOTS`, `DEVICE`…).
+         - Ta base vit encore sous `~/dev/loom-memory/data`, avec `meta.json` et, le cas échéant, le volume du conteneur Qdrant. Le plus simple : `LOOM_NOTES_DATA_DIR=/home/denis/dev/loom-memory/data`.
+         - Si tu laisses le dossier par défaut (`~/dev/loom-notes/data`), copie d'abord `meta.json`. Sans lui, le serveur le réécrit sans rien perdre, mais il ne vérifie plus que le modèle de la base est le bon.
+         - Avec Qdrant embarqué (sans `QDRANT_URL`), la base elle-même est dans `data/qdrant` : il faut alors pointer vers l'ancien dossier, ou le déplacer.
+         - Garde `~/dev/loom-memory` tant que sa base sert ; avant de l'effacer, déplace les données et recrée le conteneur Qdrant sur le nouveau chemin.
+      3. loom_v2 : `LOOM_NOTES_SERVER=~/dev/loom-notes/.venv/bin/loom-notes-mcp uv run pytest tests/integration/test_memoire.py`, puis `uv run python examples/j6/memoire.py --serveur ~/dev/loom-notes/.venv/bin/loom-notes-mcp`.
+      4. Un commit dans chaque dépôt.
+
 ## Points à revoir ensemble (demandé par Denis, 19/09)
 
 - **Relire un run lisiblement** : `loom inspect <run_id>` est prévu en J6 (6.2) ; possibilité d'en faire une version minimale plus tôt (étapes, appels de modèle par rôle, outils avec durée et résultat, sous-runs, fichiers, réponse finale, bilan). Denis : « pas encore ». **Fait en 6.2c (05/10) : `loom inspect`.**
