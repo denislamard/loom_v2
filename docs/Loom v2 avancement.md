@@ -950,6 +950,7 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
   - la sandbox sur **ta plateforme existante** (protocole vsock, `exec_client`, snapshots) : il faudra me connecter son dossier, et les runs réels se font chez toi — pas de `/dev/kvm` dans ma VM ;
   - la mémoire long terme : **ton serveur `loom-memory`**, branché en source MCP, s'il fait déjà mémoire et recherche — il faudra me connecter son dossier pour le lire.
   - `loom-ia` est libre sur PyPI (vérifié le 06/10) ; la publication elle-même sera la tienne.
+  - **6.4e (démo voix) : abandonnée (ta décision, 08/10).**
   - **6.4f (PyPI) : la tienne (08/10).** Tu fais les essais avec la nouvelle version ; je n'y touche pas tant que tu ne me le demandes pas.
 
 - **Phase 6.4, préalable (l'arrêt écrit par un autre process) : prête, essais et exemples passés ; en attente du commit.**
@@ -1006,7 +1007,7 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
   - Noms que j'ai pris : `ToolSourceSpec`, `SourceTools`, `PackagedSource`, `Installed`, `installed`, `source_factory`, `described`, le module `runtime/sources.py` ; dans le paquet de l'exemple, `fabrique`, `Carnet`, `JOURNAL`. À changer si tu veux d'autres noms.
   - **Reste connu :** deux agents qui référencent la même source en ont chacun une ; pas de disjoncteur pour une source de paquet ; le rejeu et `loom validate` ouvrent la source ; seul le groupe `loom_ia.tools` existe ; aucun paquet réel encore (le premier sera la sandbox, 6.4c).
 
-- **Phase 6.4c (sandbox Firecracker, D9) : ouverte le 07/10, menée par étapes, chacune validée par un run réel chez toi** (pas de `/dev/kvm` dans ma VM). Étapes : 0. état des lieux de ta plateforme, en lecture seule ; 1. le client hôte seul, hors de loom ; 2. la source d'outils ; 3. branchée à un agent (l'exemple) ; 4. paquet et docs.
+- **Phase 6.4c (sandbox Firecracker, D9) : ses quatre étapes validées sur ta VM et commitées (08/10).** Le refus d'un `expected` mal typé, vu au run réel de MiniMax (étape 4, tes runs), est corrigé le 08/10 et attend ton run (plus bas). Ouverte le 07/10, menée par étapes, chacune validée par un run réel chez toi (pas de `/dev/kvm` dans ma VM). Étapes : 0. état des lieux de ta plateforme, en lecture seule ; 1. le client hôte seul, hors de loom ; 2. la source d'outils ; 3. branchée à un agent (l'exemple) ; 4. paquet et docs.
   - **Étape 0 (07/10) : lecture de `~/dev/firecracker`.** Font foi : `service/` (execd, le service invité : une connexion = une session et son dossier `code/ in/ out/ work/`, effacé à la fermeture ; `hello`, `code.put`, `file.put`, `tool.exec`, `file.get`, `reset` ; jobs sous l'uid `sandbox` 1500 avec rlimits, un seul à la fois, 4 sessions au plus), `make_vm.sh` (dossier de VM autonome, `vm.env`, `run.sh` avec verrou `flock`) et **`OLD/source_python/vm_client.py`** — pas celui de la racine, qui prend lui-même le verrou que `run.sh` reprend par `flock -n` : `run.sh` sort alors en « VM déjà lancée » (reproduit). `OLD/` est sinon remplacé (`vmtools` n'a que `ping`). Ce qui pèse : **pas de snapshot** (chaque démarrage est un boot systemd) ; **une VM par dossier** ; dans l'invité **ni réseau ni dépendances** (`/opt/pydeps` vide : stdlib de Python 3.12) ; execd tourne **sans KVM** en socket Unix (`EXECD_UDS`) ; le jailer exige root : loom passe par `run.sh`, firecracker sous ton uid ; `rootfs.ext4` persiste d'un boot à l'autre, seul `/data/jobs` est remis à zéro.
   - Tes décisions (07/10) : **VM partagée, une session execd par run** (démarrée au premier run si elle ne tourne pas, arrêtée à la fermeture de loom si c'est lui qui l'a lancée) ; le LLM envoie **un script** ; le client hôte **réécrit dans le paquet** ; essais sur **un faux et le vrai execd en socket Unix**. Noms : le paquet `loom-firecracker` (`loom_firecracker`), les classes `Vm` et `Session`, le script `packages/loom-firecracker/scripts/essai_vm.py`, la variable `LOOM_EXECD_SERVICE`.
   - **Étape 1 (client hôte) : run réel passé (07/10) ; commitée** (`d4e558f`).
@@ -1085,7 +1086,7 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
       - la voie du texte JSON n'est éprouvée que par les essais ;
       - `call.arguments` est lui aussi un objet sans structure imposée : **laissé tel quel (ta décision, 07/10)**. Il est arrivé intact au dernier run ; s'il était déformé un jour, l'appel serait refusé par le schéma de l'outil, sans suggestion de texte JSON ;
       - la VM restée en marche au premier run réel : cause non trouvée, non reproduite.
-  - **Étape 4 (l'intégration à loom-ia, et les docs) : prête, en attente de ton `uv sync` et de ton run sur la VM.**
+  - **Étape 4 (l'intégration à loom-ia, et les docs) : validée sur ta VM et commitée (`cf196a9`, 08/10).** Ce qui suit est l'état livré, puis tes runs.
     - **Ta proposition (08/10)** : intégrer la sandbox aux sources de loom V2 plutôt que d'en faire un paquet à part. Mon avis : oui. Ses dépendances (`jsonschema`, `pydantic`) sont déjà celles du noyau, elle n'importe que `loom_ia.core`, et un seul paquet se versionne et se publie plus simplement (6.4f). Ce que ça coûte : le groupe `loom_ia.tools` n'a plus de paquet tiers dans le dépôt (l'exemple de 6.4b le montre encore) ; du code Linux seulement entre dans le paquet de base, importé à la demande.
     - Tes décisions (08/10) :
       - **le client et la plateforme** entrent dans le dépôt ;
@@ -1121,6 +1122,15 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
       - le sdist ne porte pas non plus `README.md` (le `pyproject.toml` n'a pas de champ `readme`) ; c'était déjà le cas, je n'y touche pas ;
       - execd n'est pas typé strict (ruff seul, ta décision).
     - Noms : `tests/firecracker/` et `scripts/firecracker/`, proposés et gardés ; dans les essais, la constante `SERVICE`. À changer si tu veux d'autres noms.
+    - **Tes runs (08/10).**
+      - `uv sync` : mon « avec tes extras habituels » était flou. Un `uv sync` nu a retiré les extras, et `test_memoire.py` est tombé faute de `mcp`. Réglé par `uv sync --all-extras`.
+      - La VM `~/temp` reconstruite depuis le dépôt (`--execd firecracker/service --cache ~/dev/firecracker/cache`) ; `essai_vm.py ~/temp` : **22 vérifications tenues**, dont les deux corrections de plateforme du 08/10 (plus bas).
+      - `forge.py --vm ~/temp`, en simulé : **les quatre cas tiennent.**
+      - `forge.py --vm ~/temp --reel` (MiniMax-M3) : **tout ce qui est exigé tient** ; deux parties sautées, dites au bilan.
+        - `forger` : **`total_ttc` jamais forgé.** 8 forges, toutes refusées sur l'exemple 1. MiniMax donne `expected` en texte JSON, une chaîne, quand sa fonction rend un objet. La comparaison oppose donc une chaîne à un objet, et le refus montre les deux sans dire que c'est le type qui diffère. Il alterne ensuite : sa fonction rend tantôt un objet, tantôt une chaîne, et son attendu, toujours une chaîne, est une fois sur deux encodé deux fois (`"\"{…}\""`) ; aucun essai ne fait correspondre les deux. Au bout, il calcule le devis à la main (1 410 € HT, 145 €, 1 555 € TTC) et dit que « le testeur compare les types ». La VM, démarrée par les exemples, tournait après le run 1 ; elle est arrêtée avec l'instance.
+        - `corriger` : cette fois, le premier jet est forgé tel quel et refusé en disant l'écart (attendu `{"10": 10.0, …}`, obtenu `{"10": 5.0, …}`). Puis la déformation revient : `required: {"item": "lignes"}` et des nombres en texte, refusés par l'hôte avec l'indice du texte JSON. Le troisième jet est accepté. `call.arguments` arrive deux fois déformé (`{"lignes": {"item": […]}}`, nombres en texte), refusé par le schéma de l'outil, puis juste : `{"10": 137.0, "20": 8.0}`.
+        - `rejeu` : identique, ses 8 appels servis par le journal, sans démarrer la VM. `bornes` est sauté.
+      - **À décider, après le run sur Haiku 5.5 (ta décision, 08/10)** : dire le type dans le refus (« attendu une chaîne, obtenu un objet »), préciser la spec (`expected` est la valeur elle-même, pas son texte JSON), les deux, ou rien. **Décidé le 08/10 : l'indice dans le refus seul** (plus bas, après le run sur Haiku).
 
 - **6.4a, la course du guetteur (trouvée en 6.4c, étape 1) : corrigée le 08/10, validée chez toi.**
   - **Ton run (08/10)** : les 40 essais de `test_rechargement.py` et `test_rechargement_process.py` passent ; `examples/j6/rechargement.py` tient dans ses cinq cas (`prompt`, `agent`, `casse`, `donnees`, `prod`).
@@ -1145,7 +1155,8 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
   - Noms que j'ai pris, tous internes : `Watched.state`, `FileState`, `WAKE_MS`, `READS`, `_read` ; dans les essais, `_Supervised`, `_Reading`, `_Gone`, `_Told`, `_no_banner`, `_edited`, `_added`, `_removed`, `_description`. À changer si tu veux d'autres noms.
   - **Reste connu :** un changement fait pendant le démarrage est rattrapé une fois le guetteur armé, pas avant : le process qui prend la main sert d'abord ce qu'il a lu, puis il est relayé par un process neuf. Une modification de même taille, dans le même tic d'horloge du disque que le relevé et avant l'armement, ne se verrait pas ; une fois le guetteur armé, si.
 
-- **Plateforme Firecracker : les deux défauts trouvés en 6.4c (étape 1) — corrigés le 08/10, à valider sur ta VM.**
+- **Plateforme Firecracker : les deux défauts trouvés en 6.4c (étape 1) — corrigés le 08/10, validés sur ta VM le même jour.**
+  - **Validé (08/10)** : `essai_vm.py ~/temp` sur la VM reconstruite depuis le dépôt (6.4c, étape 4), 22 vérifications tenues. Un second `run.sh` est refusé et le PID reste ; le job qui suit une session fermée en plein job est rendu en 0,11 s.
   - Tes décisions (08/10) : **je modifie `~/dev/firecracker` directement** (le dossier n'est pas sous git : l'état d'avant est gardé chez moi, le diff complet t'est donné) ; la validation réelle par **deux vérifications de plus dans `essai_vm.py`**.
   - **(1) `run.sh` vidait le PID sur un lancement refusé** (`make_vm.sh`, le heredoc de `run.sh`). Le verrou est désormais ouvert avec `exec 9<>runtime/vm.lock`, en lecture-écriture et sans troncature ; une fois le verrou pris, `printf '%s\n' $$ > runtime/vm.lock` réécrit le fichier par une ouverture à part, le verrou restant sur le descripteur 9. Un second `./run.sh` est refusé sans rien toucher, et son message nomme le PID de celui qui tourne. Éprouvé sur les deux `run.sh` sortis du heredoc, avec un faux firecracker : l'ancien vide le PID (« VM déjà lancée (pid ) »), le nouveau le garde.
   - **(2) execd laissait courir le job d'une session fermée** (`service/session.py`).
@@ -1250,7 +1261,7 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
     - `FastMCP` devient `MCPServer`.
     Ce chantier vaudrait pour lui-même, dans une phase à part. **Rien n'est touché.**
   - **Publication sur PyPI** : la liste du travail t'a été donnée à part, dans `loom-memory-pypi.md` (dans la conversation, pas sur ton disque) ; rien n'est engagé. Le nom `loom-memory` y est pris (un autre projet) ; tu as choisi **`loom-notes`**, libre sur PyPI, et renommé le dépôt (`~/dev/loom-notes`, `origin` `denislamard/loom-notes`, commit `1d59ed9` « change name », qui renomme la distribution).
-  - **Le renommage partout : prêt, à commiter dans les deux dépôts.**
+  - **Le renommage partout : validé chez toi et commité (08/10 ; loom_v2 `12fcba8`).**
     - Tes décisions (08/10) :
       - le module **`loom_notes`** et les commandes **`loom-notes`** et **`loom-notes-mcp`** ;
       - le préfixe **`LOOM_NOTES_`** ;
@@ -1281,8 +1292,61 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
          - Garde `~/dev/loom-memory` tant que sa base sert ; avant de l'effacer, déplace les données et recrée le conteneur Qdrant sur le nouveau chemin.
       3. loom_v2 : `LOOM_NOTES_SERVER=~/dev/loom-notes/.venv/bin/loom-notes-mcp uv run pytest tests/integration/test_memoire.py`, puis `uv run python examples/j6/memoire.py --serveur ~/dev/loom-notes/.venv/bin/loom-notes-mcp`.
       4. Un commit dans chaque dépôt.
+    - **Tes runs (08/10)** : `test_memoire.py` contre `loom-notes-mcp`, **5 essais passés** en 16,45 s ; ils sont sautés tant que `LOOM_NOTES_SERVER` manque. `memoire.py` en simulé : **15 vérifications tenues.** Le tout premier essai était tombé faute de `mcp`, à cause du `uv sync` sans extras (6.4c, étape 4).
 
-## Points à revoir ensemble (demandé par Denis, 19/09)
+- **`forge.py` sur Claude Haiku 5.5 (après 6.4c) : ton run passé (08/10) — tout ce qui est exigé tient.**
+  - Ta demande : essayer la forge avec `claude-haiku-5-5`, sorti le 07/10/2026 (vérifié dans la doc d'Anthropic), en ajoutant un modèle à la config que l'exemple écrit.
+  - Tes décisions (08/10) :
+    - **une option `--modele`**, qui va avec `--reel` ;
+    - les noms **`HAIKU_55`** (l'id du modèle), **`haiku`**, et **`minimax_m3`** pour MiniMax, qui reste le défaut ;
+    - **`max_tokens` à 16000** ;
+    - la correction du refus et de la spec **après** le run sur Haiku, pour comparer les deux modèles sur le même exemple.
+  - **Ce qui est fait** (`examples/j6/forge.py` seulement) :
+    - `HAIKU_55` : `sdk: anthropic`, `model: claude-haiku-5-5`, la clé dans `ANTHROPIC_API_KEY` (celle du juge de J4), `max_tokens` 16000, sans `params` (effort `medium`, le défaut). Tarifs en $ par million de tokens : 0,10 en entrée, 0,50 en sortie, 0,01 en lecture du cache, 0,125 en écriture (5 min) ; au-delà de 100 000 tokens d'entrée, 0,50 / 2,50 / 0,05 / 0,625 ;
+    - `--modele {minimax_m3,haiku}` choisit le modèle d'`atelier_reel` ; sans `--reel`, l'exemple sort en code 2 ;
+    - `ecrit_config` prend `modele` et rend aussi le nom du modèle, affiché en première ligne (`Agent : atelier_reel, modèle claude-haiku-5-5 ; …`) ;
+    - la docstring, et deux mentions de MiniMax devenues « le modèle ».
+  - **Ce que dit la doc de Haiku 5.5, et ce qu'en fait loom** (lu dans le code, pas éprouvé) :
+    - `temperature`, `top_p` ou `top_k` à une autre valeur que celle par défaut → 400. loom n'en envoie pas : les `params` vont tels quels dans le corps de la requête, et `HAIKU_55` n'en a pas ;
+    - la réflexion, adaptative, est active sans rien demander, et `thinking: {type: enabled, budget_tokens}` → 400. loom n'envoie pas `thinking`. La réflexion compte dans `max_tokens`, d'où 16000 ;
+    - les blocs de réflexion arrivent avec une signature et, par défaut, sans texte. L'adaptateur les garde et les renvoie tels quels avec les résultats d'outils, comme pour MiniMax ;
+    - un bloc de réflexion renvoyé après un changement du system, des outils ou des messages précédents → 400 (pour les comptes créés après le 31/08/2026 ; avant, seulement sur option). Dans un run de forge, les outils sont fixés à l'ouverture et la réponse forcée ajoute un message à la fin : rien ne change en route ;
+    - le prefill → 400 ; les requêtes de loom finissent sur un message utilisateur ;
+    - un `tool_choice` imposé est accepté, sans réflexion ; l'agent de la forge n'en impose pas.
+  - **Vérifié ici** :
+    - ruff, format et pyright strict sur l'exemple ;
+    - les configs écrites pour les trois choix se chargent (`FAKE_MAIN`, `M3_MAIN`, `HAIKU_55`), et le coût de `HAIKU_55` suit son palier : 10 000 tokens d'entrée et 2 000 de sortie → 0,002 $ ; 120 000 et 2 000 → 0,065 $ ;
+    - contre le faux firecracker et l'execd du dépôt : le simulé tient ses quatre cas ; `--modele haiku` sans `--reel` sort en code 2 ; `--reel --modele haiku --cas forger` avec une fausse clé envoie la requête chez Anthropic, qui répond 401 ; le run échoue, et la partie sautée est dite.
+  - **Pas vérifié** : un vrai appel à Haiku 5.5. Le 401 vient avant tout contrôle du corps de la requête.
+  - **À faire chez toi** : `uv run --env-file .env --extra anthropic python examples/j6/forge.py --vm ~/temp --reel --modele haiku`, avec `--garder` pour lire les échanges bruts. `ANTHROPIC_API_KEY` doit être dans `.env`, comme pour le juge de J4.
+  - Noms que j'ai pris : la constante `MODELES`, l'attribut `Atelier.modele`, la variable `choisi` d'`ecrit_config`. À changer si tu veux d'autres noms.
+  - **Ton run (08/10, `--reel --modele haiku`) : tout ce qui est exigé tient** ; trois parties sautées, celles qui sont prévues.
+    - `forger` : **`total_ttc` forgé du premier coup**, ses deux exemples passés dans la VM, dont 0,05 € à 50 % (0,025, arrondi à 0,03). Haiku donne `input_schema` et `examples` **en texte JSON** : c'est la première fois qu'un vrai modèle prend cette voie. Son code arrondit ligne par ligne, au demi supérieur. Appelé par `forge__call` sur D-2026-042 : 1 410 € HT, 145 €, 1 555 € TTC. Au run 2, `forge__total_ttc` est appelé directement sur D-2026-043 : 269,35 €, 27,64 €, 296,99 € TTC.
+    - `corriger` : le premier jet est forgé **tel quel**, comme demandé, et refusé sur l'écart. Le jet corrigé ajoute un second exemple dont l'attendu est faux (135 € au lieu de 137 €) ; la VM le refuse. Le troisième jet passe, et l'appel rend `{"10": 137.0, "20": 8.0}`.
+    - `rejeu` : identique, 2 appels servis par le journal, sans démarrer la VM. La VM est arrêtée après chaque instance.
+    - Ce que ça dit de loom : **aucune 400**. La boucle d'outils passe sans que loom envoie `thinking` ni `temperature`. Je ne sais pas si Haiku a réfléchi : la réflexion n'est pas affichée, et le journal est parti avec le dossier temporaire (`--garder` le garderait).
+    - Face à MiniMax sur le même exemple, Haiku a lu la spec sans s'y tromper. D'où ta décision : corriger le refus, pas la spec (ci-dessous).
+
+- **Le refus d'un `expected` mal typé (après le run sur Haiku 5.5) : prêt, en attente de ton run (08/10).**
+  - Ta décision (08/10) : **un indice dans le refus**, la spec de `forge` inchangée. La spec, tous les modèles la voient ; le refus ne parle qu'au moment de l'erreur.
+  - **Ce qui est fait** (`loom_ia/adapters/firecracker/forge.py`) : quand un exemple ne rend pas son attendu, le refus ajoute, après « attendu …, obtenu … » :
+    - « (`expected` est le texte JSON de la valeur rendue : donne la valeur elle-même) » si `expected` est une chaîne dont le texte JSON décodé égale ce que rend la fonction. Ce cas couvre les deux erreurs de MiniMax : l'objet donné en texte, et la chaîne encodée deux fois ;
+    - sinon, si les types JSON diffèrent : « (attendu une chaîne, obtenu un objet) » — chaîne, nombre, booléen, objet, liste ou null ;
+    - sinon, rien.
+  - `fonctions.md` (réalisation de 6.4c) : une phrase pour l'indice. Dans son « Reste connu », j'ai aussi retiré ce qui ne tient plus depuis tes runs : les deux corrections de plateforme qui attendaient leur VM, et la voie du texte JSON « éprouvée par les essais seulement » (Haiku l'a prise ; `call.arguments` ne l'a toujours pas).
+  - Essais : 12 de plus dans `test_firecracker_forge.py`, avec le faux runner. Huit écarts de type, chacun avec son indice : l'objet en texte JSON, la chaîne encodée deux fois (les deux cas de MiniMax), `"14"` pour 14, une chaîne pour un objet, un objet pour une liste, un nombre pour un booléen, une chaîne pour `null`, `"14"` pour 15. Quatre écarts de valeur seule (nombre, chaîne, objet, liste), dont le refus finit sur l'obtenu, sans rien ajouter.
+  - **Vérifié** : ruff, format, pyright strict, 5 contrats ; **1920 essais** avec les trois services, execd et `loom-notes-mcp` (5 sautés) ; noyau seul 1457 (+205 sautés). `forge.py` en simulé, contre le faux firecracker et l'execd du dépôt : les quatre cas tiennent ; le refus du premier jet de `corriger` (des nombres des deux côtés) n'a pas d'indice. **Mutations : 4 sur 4 tombent** (pas d'indice, pas de décodage, le type toujours dit, un booléen compté comme un nombre).
+  - **Pas vérifié** : l'effet sur MiniMax. Seul un run réel dira s'il lit l'indice.
+  - **À faire chez toi** : `uv run --env-file .env --extra anthropic python examples/j6/forge.py --vm ~/temp --reel` (MiniMax). L'indice n'apparaît que si MiniMax refait la même erreur.
+  - **Ton run (08/10, `--reel`, MiniMax-M3) : tout ce qui est exigé tient ; l'indice n'a pas servi**, MiniMax ayant donné `expected` en objet. Son effet en réel reste donc non vérifié.
+    - `forger` : refus de l'hôte au 1er jet (la fonction exige `reference`, que le schéma ne rend pas obligatoire) ; le 2e passe ses deux exemples. **`call.arguments` arrive 3 fois déformé** (`{"lignes": {"item": […]}}`, nombres en texte), refusé par le schéma de l'outil, puis juste : 1 410 € HT, 145 €, 1 555 € TTC. Au run 2, `forge__total_ttc` est appelé directement, ses arguments intacts : 269,35 €, 27,64 €, 296,99 € TTC.
+    - `corriger` : MiniMax forge d'emblée le jet corrigé, accepté, sans suivre « tel quel d'abord ». Puis `call.arguments` est déformé **4 fois**, et un forge de plus revient déformé (`minimum: "0"`, `required: {"item": "lignes"}`), refusé avec l'indice du texte JSON. Au plafond de 8 itérations, il calcule à la main (137 € et 8 €) : la TVA par taux n'a jamais été rendue par l'outil.
+    - `rejeu` : identique, 6 appels servis par le journal, sans démarrer la VM.
+    - **Le motif, sur trois runs** : MiniMax déforme les **objets libres** (`input_schema`, `examples`, `call.arguments`) ; les **paramètres structurés** arrivent intacts (`forge__total_ttc`). Il n'a **jamais** pris la voie du texte JSON, suggérée deux fois à ce run et une fois au précédent. Haiku 5.5 : aucune déformation. Très probablement un défaut de MiniMax, pas de l'adaptateur ; pas vérifié (les corps bruts du journal, avec `--garder`, le trancheraient).
+    - **Ta décision (08/10) : rien, reste connu.** Avec MiniMax, `corriger` peut finir à la main au plafond d'itérations, comme ici. `fonctions.md` (Reste connu, 6.4c) le dit.
+    - **L'outil de MiniMax est faux hors de ses exemples** : son `total_ttc` arrondit toujours au centime supérieur (`math.ceil`), pas au demi supérieur — 10,01 € à 5,5 % donne 0,56 € de TVA au lieu de 0,55 € (vérifié chez moi sur sa fonction d'arrondi). Ses exemples tombent tous juste au demi et ne le voient pas ; les deux devis aussi. Un argument pour la revue humaine du code forgé, toujours à décider plus tard. `fonctions.md` (Reste connu, 6.4c) le dit aussi.
+  - Noms que j'ai pris : `_json_kind`, `_mismatch_hint` (privés) ; dans les essais, `TEXT_HINT`, `test_a_mismatch_of_type_says_so`, `test_a_mismatch_of_value_alone_adds_nothing`. À changer si tu veux d'autres noms.
+
 
 - **Relire un run lisiblement** : `loom inspect <run_id>` est prévu en J6 (6.2) ; possibilité d'en faire une version minimale plus tôt (étapes, appels de modèle par rôle, outils avec durée et résultat, sous-runs, fichiers, réponse finale, bilan). Denis : « pas encore ». **Fait en 6.2c (05/10) : `loom inspect`.**
 - **Logs** (#45, §14.4) : en `INFO`, seules les transitions et la vie des connexions MCP sont loguées. Proposition : une ligne INFO par appel de modèle (rôle, modèle, durée, tokens, coût) et par appel d'outil (nom, durée, erreur). **Fait en 6.1b (05/10), à la décision de Denis.**

@@ -8,6 +8,8 @@
     uv run python examples/j6/forge.py --vm ~/temp --cas bornes
     uv run --env-file .env --extra anthropic \\
         python examples/j6/forge.py --vm ~/temp --reel
+    uv run --env-file .env --extra anthropic \\
+        python examples/j6/forge.py --vm ~/temp --reel --modele haiku
     uv run python examples/j6/forge.py --vm ~/temp --garder        # dossier gardé
 
 ``--vm`` : le dossier d'une VM construite par ``firecracker/make_vm.sh``, avec
@@ -22,9 +24,12 @@ La config, le catalogue des outils forgés et le journal sont écrits dans un
 dossier temporaire, effacé à la fin ; ``--garder`` le laisse en place et dit
 où il est (les échanges bruts du modèle sont dans le journal, aux événements
 ``model.exchanged``). L'agent : ``atelier``, un orchestrateur
-simulé, ou en ``--reel`` ``atelier_reel``, MiniMax-M3 comme dans la config de
-J4 (clé dans ``M3_API_KEY``). Il voit ``forge__forge``, ``forge__call``, et
-les outils déjà forgés (``forge__total_ttc``…).
+simulé, ou en ``--reel`` ``atelier_reel``, sur le modèle que choisit
+``--modele`` : ``minimax_m3`` (par défaut), MiniMax-M3 comme dans la config de
+J4 (clé dans ``M3_API_KEY``), ou ``haiku``, Claude Haiku 5.5 (``HAIKU_55``, clé
+dans ``ANTHROPIC_API_KEY``). ``--modele`` sans ``--reel`` : code 2. L'agent voit
+``forge__forge``, ``forge__call``, et les outils déjà forgés
+(``forge__total_ttc``…).
 
 * **forger** : le run 1 forge ``total_ttc`` — le total HT, la TVA et le TTC
   d'un devis, arrondis au centime — et l'appelle par ``forge__call`` sur le
@@ -42,7 +47,7 @@ les outils déjà forgés (``forge__total_ttc``…).
   erreur ``timeout`` et le run continue. En ``--reel``, sauté : il éprouve la
   source, pas le modèle.
 
-En ``--reel``, MiniMax écrit lui-même ses outils (code, schéma, exemples) :
+En ``--reel``, le modèle écrit lui-même ses outils (code, schéma, exemples) :
 ce qu'il rend est montré, pas exigé — les refus de ``corriger`` aussi, avec
 leur raison. Ce qui dépend d'un outil forgé n'est exigé que s'il l'a forgé ;
 sinon la partie est sautée, et le bilan le dit. Ce qui tient à la source et
@@ -70,6 +75,35 @@ from loom_ia.core.model import RunStatus
 
 J4 = Path(__file__).parent.parent / "j4" / "relance"
 CAS = ("forger", "corriger", "rejeu", "bornes")
+# Les modèles de --reel (--modele), le premier par défaut.
+MODELES = ("minimax_m3", "haiku")
+# Claude Haiku 5.5. La réflexion, adaptative, est active par défaut (effort
+# medium) et compte dans max_tokens : 16000, pour qu'un tour ne s'arrête pas
+# après la réflexion, avant l'appel d'outil. Ni temperature, ni top_p, ni
+# top_k, ni thinking : loom n'en envoie pas, et Haiku 5.5 en refuse (400).
+# Tarifs : au-delà de 100 000 tokens d'entrée, tout l'appel au palier.
+HAIKU_55: dict[str, Any] = {
+    "id": "HAIKU_55",
+    "sdk": "anthropic",
+    "model": "claude-haiku-5-5",
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "max_tokens": 16000,
+    "pricing": {
+        "input": 0.10,
+        "output": 0.50,
+        "cache_read": 0.01,
+        "cache_write": 0.125,
+        "tiers": [
+            {
+                "above": 100000,
+                "input": 0.50,
+                "output": 2.50,
+                "cache_read": 0.05,
+                "cache_write": 0.625,
+            }
+        ],
+    },
+}
 # Ce que l'outil d'un job peut tenir dans la VM (ms) : de quoi voir un timeout vite.
 WALL_MS = 5000
 
@@ -375,20 +409,30 @@ def enonce(quoi: str, texte: str, largeur: int = 96) -> None:
 # --- La config, et ce que le journal dit d'un run ---------------------------------------
 
 
-def ecrit_config(dossier: Path, vm: Path, *, reel: bool) -> Path:
-    """La config : la source forge, et l'agent du mode (un seul : il monte sans clé)."""
+def ecrit_config(dossier: Path, vm: Path, *, reel: bool, modele: str) -> tuple[Path, str]:
+    """La config : la source forge, et l'agent du mode (un seul : il monte sans clé).
+
+    ``modele`` : celui de ``--reel``, parmi ``MODELES``. Rend le fichier, et le
+    modèle de l'agent tel que son fournisseur le nomme.
+    """
     base = dossier / "atelier"
     (base / "agents").mkdir(parents=True)
-    m3 = load_config(J4 / "loom.yaml").model_spec("M3_MAIN")
     simule: dict[str, Any] = {
         "id": "FAKE_MAIN",
         "sdk": "fake",
         "model": "fake-main",
         "params": {"script": SCRIPT},
     }
+    if not reel:
+        choisi = simule
+    elif modele == "haiku":
+        choisi = HAIKU_55
+    else:
+        m3 = load_config(J4 / "loom.yaml").model_spec("M3_MAIN")
+        choisi = m3.model_dump(mode="json", exclude_defaults=True)
     config: dict[str, Any] = {
         "version": 1,
-        "models": [m3.model_dump(mode="json", exclude_defaults=True) if reel else simule],
+        "models": [choisi],
         "tool_sources": [
             {
                 "name": "forge",
@@ -406,18 +450,18 @@ def ecrit_config(dossier: Path, vm: Path, *, reel: bool) -> Path:
     (base / "loom.yaml").write_text(
         yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
-    nom, modele = ("atelier_reel", m3.id) if reel else ("atelier", "FAKE_MAIN")
+    nom = "atelier_reel" if reel else "atelier"
     agent = {
         "name": nom,
         "description": "Forge ses outils de chiffrage et les exécute dans une VM.",
-        "main": {"model": modele, "system": SYSTEME},
+        "main": {"model": choisi["id"], "system": SYSTEME},
         "max_iterations": 8,
         "tools": [{"source": "forge"}],
     }
     (base / "agents" / f"{nom}.yaml").write_text(
         yaml.safe_dump(agent, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
-    return base / "loom.yaml"
+    return base / "loom.yaml", choisi["model"]
 
 
 def proposes(events: list[Event]) -> list[str]:
@@ -477,7 +521,9 @@ class Atelier:
     def __init__(self, args: argparse.Namespace, dossier: Path, vm: Vm) -> None:
         self.args = args
         self.reel: bool = args.reel
-        self.fichier = ecrit_config(dossier, vm.directory, reel=self.reel)
+        self.fichier, self.modele = ecrit_config(
+            dossier, vm.directory, reel=self.reel, modele=args.modele
+        )
         self.catalogue = self.fichier.parent / "catalogue" / "default"
         self.vm = vm
         self.agent = "atelier_reel" if self.reel else "atelier"
@@ -641,7 +687,7 @@ async def cas_corriger(atelier: Atelier, controle: Controle) -> None:
         )
     else:
         # Chaque refus est au récit du run, avec sa raison : qu'elle vienne de
-        # l'hôte (schéma, signature) ou d'un exemple joué dans la VM, MiniMax
+        # l'hôte (schéma, signature) ou d'un exemple joué dans la VM, le modèle
         # la lit. Rien n'en est exigé.
         print(f"  forges : {len(refuses)} refusé(s), {len(acceptes)} accepté(s)")
         controle.saute(
@@ -736,11 +782,20 @@ async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Un agent qui forge ses outils dans une VM")
     parser.add_argument("--vm", type=Path, help="dossier de la VM (vm.env, run.sh)")
     parser.add_argument("--reel", action="store_true", help="vrai modèle (atelier_reel)")
+    parser.add_argument(
+        "--modele",
+        choices=MODELES,
+        help=f"modèle de --reel ({MODELES[0]} par défaut ; haiku : Claude Haiku 5.5)",
+    )
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     parser.add_argument(
         "--garder", action="store_true", help="garder le dossier (config, catalogue, journal)"
     )
     args = parser.parse_args(argv)
+    if args.modele is not None and not args.reel:
+        print("--modele choisit le modèle de --reel : ajouter --reel.", file=sys.stderr)
+        return 2
+    args.modele = args.modele or MODELES[0]
     if args.vm is None:
         print(
             "Il faut une VM : --vm <dossier>, celui que make_vm.sh a construit (vm.env, run.sh), "
@@ -767,7 +822,10 @@ async def main(argv: list[str]) -> int:
     with gardien as dossier:
         try:
             atelier = Atelier(args, Path(dossier), vm)
-            print(f"Agent : {atelier.agent} ; VM : {vm.directory} ; wall_ms {WALL_MS}")
+            print(
+                f"Agent : {atelier.agent}, modèle {atelier.modele} ; VM : {vm.directory} ; "
+                f"wall_ms {WALL_MS}"
+            )
             for nom in cas:
                 print(f"\n{'─' * 78}\nCas {nom}\n{'─' * 78}")
                 if nom == "forger":

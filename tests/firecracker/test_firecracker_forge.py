@@ -392,6 +392,50 @@ async def test_a_failing_example_refuses_the_tool(
     assert Catalog(tmp_path / "catalogue").get("default", "carres") is None
 
 
+TEXT_HINT = "(`expected` est le texte JSON de la valeur rendue : donne la valeur elle-même)"
+
+
+@pytest.mark.parametrize(
+    ("result", "expected", "said"),
+    [
+        # Vu au run réel de MiniMax (08/10) : l'objet attendu donné en texte JSON…
+        ({"total": 14.0}, '{"total": 14}', TEXT_HINT),
+        # … puis encodé deux fois quand la fonction rend une chaîne.
+        ('{"total": 14}', '"{\\"total\\": 14}"', TEXT_HINT),
+        (14, "14", TEXT_HINT),
+        ({"total": 14}, "quatorze", "(attendu une chaîne, obtenu un objet)"),
+        ([14], {"total": 14}, "(attendu un objet, obtenu une liste)"),
+        (True, 1, "(attendu un nombre, obtenu un booléen)"),
+        (None, "14", "(attendu une chaîne, obtenu null)"),
+        (15, "14", "(attendu une chaîne, obtenu un nombre)"),
+    ],
+)
+async def test_a_mismatch_of_type_says_so(
+    tmp_path: Path, result: Any, expected: Any, said: str
+) -> None:
+    source = make_source(tmp_path, FakeRunner(lambda _e, _a: Execution(ok=True, result=result)))
+    example = {"arguments": {"n": 3}, "expected": expected}
+    async with source.open(source_context()) as tools:
+        out = await by_name(tools)[FORGE].invoke(forging(examples=[example]), tool_context())
+    assert out.is_error
+    assert f"obtenu {json.dumps(result, ensure_ascii=False)} {said}" in out.as_text
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [(15, 14), ("quinze", "quatorze"), ({"total": 15}, {"total": 14}), ([15], [14])],
+)
+async def test_a_mismatch_of_value_alone_adds_nothing(
+    tmp_path: Path, result: Any, expected: Any
+) -> None:
+    source = make_source(tmp_path, FakeRunner(lambda _e, _a: Execution(ok=True, result=result)))
+    example = {"arguments": {"n": 3}, "expected": expected}
+    async with source.open(source_context()) as tools:
+        out = await by_name(tools)[FORGE].invoke(forging(examples=[example]), tool_context())
+    assert out.is_error
+    assert out.as_text.endswith(f"obtenu {json.dumps(result, ensure_ascii=False)}")
+
+
 def fits(schema: Mapping[str, Any], instance: Mapping[str, Any]) -> bool:
     try:
         validator_for(schema, default=Draft202012Validator)(schema).validate(instance)

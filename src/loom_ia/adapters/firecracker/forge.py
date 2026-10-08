@@ -484,6 +484,45 @@ def _same(left: object, right: object) -> bool:
     return left is None and right is None
 
 
+def _json_kind(value: object) -> str:
+    """Le type JSON d'une valeur, tel que le refus le nomme."""
+    match value:
+        case bool():
+            return "un booléen"
+        case int() | float():
+            return "un nombre"
+        case str():
+            return "une chaîne"
+        case dict():
+            return "un objet"
+        case list():
+            return "une liste"
+        case _:
+            return "null"
+
+
+def _mismatch_hint(expected: object, result: object) -> str:
+    """Ce qu'un écart doit au type de ``expected`` ; vide s'il n'y a rien à en dire.
+
+    Vu au run réel de MiniMax (08/10) : ``expected`` donné en texte JSON, une
+    chaîne, quand la fonction rend un objet — puis encodé deux fois quand elle
+    rend une chaîne. Le refus ne montrait que les deux valeurs.
+    """
+    if isinstance(expected, str):
+        try:
+            decoded = json.loads(expected)
+        except ValueError, RecursionError:
+            pass
+        else:
+            if _same(decoded, result):
+                return (
+                    " (`expected` est le texte JSON de la valeur rendue : "
+                    "donne la valeur elle-même)"
+                )
+    wanted, got = _json_kind(expected), _json_kind(result)
+    return f" (attendu {wanted}, obtenu {got})" if wanted != got else ""
+
+
 # ---------------------------------------------------------------------- #
 # Ce que le modèle voit d'une exécution
 # ---------------------------------------------------------------------- #
@@ -621,7 +660,8 @@ class _ForgeTool:
                 streams = _streams(execution)
                 return ToolOutput.error(
                     f"Outil {name} refusé — exemple {index} {json.dumps(example)} : "
-                    f"attendu {wanted}, obtenu {got}" + (f"\n{streams}" if streams else "")
+                    f"attendu {wanted}, obtenu {got}{_mismatch_hint(expected, execution.result)}"
+                    + (f"\n{streams}" if streams else "")
                 )
         forged = Forged(
             name=name,
