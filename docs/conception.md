@@ -1343,6 +1343,7 @@ mcp_servers:
     circuit_breaker: {failures: 5, cooldown: 60}   # défaut ; null le retire
     tools:
       envoyer_email: {side_effects: irreversible, approval: always}
+      rechercher: {description: "Cherche un client du CRM par nom ou numéro."}   # ce que lit le modèle (J6.4d)
   - name: math
     transport: stdio
     command: python
@@ -1354,6 +1355,8 @@ mcp_servers:
 ```
 
 Un agent peut référencer plusieurs serveurs : voir §9.5.
+
+Réglages par outil (`tools`) : `side_effects`, `approval`, `idempotent`, `timeout`, `offload_over`, `output`, et depuis J6.4d `description`, qui remplace ce que le modèle lit de l'outil. Ils valent aussi pour une source de paquet (`tool_sources[].tools`) et pour la référence d'un agent, qui l'emporte ; pas pour un outil Python, dont la description est sa docstring.
 
 **Sources de paquets installés** (J6.4b) : un paquet déclare un point d'entrée du groupe `loom_ia.tools`, qui désigne sa fabrique (`ToolSourceFactory`) ; la config la déclare ici, et un agent la référence comme un serveur MCP (`source:`, `alias`, `include` ou `exclude`, `required`, `tools`).
 

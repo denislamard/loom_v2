@@ -950,6 +950,7 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
   - la sandbox sur **ta plateforme existante** (protocole vsock, `exec_client`, snapshots) : il faudra me connecter son dossier, et les runs réels se font chez toi — pas de `/dev/kvm` dans ma VM ;
   - la mémoire long terme : **ton serveur `loom-memory`**, branché en source MCP, s'il fait déjà mémoire et recherche — il faudra me connecter son dossier pour le lire.
   - `loom-ia` est libre sur PyPI (vérifié le 06/10) ; la publication elle-même sera la tienne.
+  - **6.4f (PyPI) : la tienne (08/10).** Tu fais les essais avec la nouvelle version ; je n'y touche pas tant que tu ne me le demandes pas.
 
 - **Phase 6.4, préalable (l'arrêt écrit par un autre process) : prête, essais et exemples passés ; en attente du commit.**
   - **La cause, plus large que la prise de concession** : `SessionWriter.append` reprenait toute écriture refusée (`SequenceConflict`) en réécrivant tel quel, sur la foi de « nos brouillons parlent de notre run, pas du sien ». Faux quand un autre process a écrit **sur notre run** — un `run.cancelled` de `loom cancel`, REST ou MCP. Et le pilote ne relit jamais le journal en cours de route. Reproduit par les essais, **sans** la correction :
@@ -1129,7 +1130,7 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
   - **Pour que ça prenne effet chez toi : `~/dev/firecracker/make_vm.sh ~/temp`.** Il réécrit `run.sh`, recopie `service/` dans l'image et reconstruit `rootfs.ext4` ; `data.ext4` est gardé. Puis `uv run python packages/loom-firecracker/scripts/essai_vm.py ~/temp`.
   - Noms que j'ai pris : dans execd, `_ConnectionEnded` et `Session._watched` ; dans les essais, `RUN_SH_WIPING`, la fixture `wiping_vm_dir`, et `test_a_second_run_sh_is_refused_and_the_pid_stays`, `test_an_old_run_sh_wipes_the_pid_and_stop_still_uses_the_console`, `test_closing_during_a_job_stops_it_and_erases_the_session`, `test_a_job_left_by_a_closed_session_gives_its_place_back`, `test_a_request_sent_during_a_job_waits_its_turn`. À changer si tu veux d'autres noms.
 
-- **Phase 6.4d (mémoire long terme, F6) : en cours — étape 1 prête, en attente de ton run.**
+- **Phase 6.4d (mémoire long terme, F6) : étapes 1 et 2 validées chez toi ; étape 3 (docs) prête, à relire.**
   - **Étape 0 (inventaire, 08/10).** J'ai lu `~/dev/loom-memory` (accès accordé, lecture seule ; dépôt git `09aa433`, propre ; `data/` non lu, c'est ta base).
     - C'est un serveur MCP en stdio (FastMCP 4.0.3), avec un RAG hybride : BGE-M3 dense et sparse, fusion RRF, reranker `bge-reranker-v2-m3`, stockage Qdrant.
     - Il expose neuf outils : quatre en lecture, annotés `readOnlyHint`, et cinq en écriture ; `update` porte `idempotentHint`, `delete` porte `destructiveHint`.
@@ -1140,7 +1141,7 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
     - **un serveur par client** (`scope: tenant`), chacun sa base, lue dans ses secrets ;
     - l'exemple **`examples/j6/memoire.py`**, cas `chercher`, `memoriser`, `rejeu`, `clients`, option `--serveur <chemin>` ;
     - en `--reel`, MiniMax-M3 et **les vrais modèles de loom-memory sur une base temporaire**.
-  - **Étape 1 (le branchement et ses essais) : prête.**
+  - **Étape 1 (le branchement et ses essais) : validée chez toi (08/10)** — `test_memoire.py` contre ton `loom-memory-mcp` : 5 essais passés en 17,8 s.
     - **Aucun changement dans loom** : `loom-memory` se monte tel quel.
     - `tests/integration/test_memoire.py`, 5 essais contre le vrai serveur. Il est désigné par `LOOM_MEMORY_SERVER` (le binaire `loom-memory-mcp`) ; sans la variable, les essais sont sautés, même sous `--require-services`, comme pour execd. Le serveur tourne en modèles factices sur un Qdrant embarqué dans `tmp_path` ; le process MCP n'hérite que de l'environnement sûr (`HOME`, `PATH`…) plus ce que la config lui donne, donc ni ton `.env` ni un `LOOM_MEMORY_QDRANT_URL` de ton shell ne passent.
     - Ce que les essais vérifient :
@@ -1157,6 +1158,54 @@ Dépôt : `denislamard/loom_v2` (local : `~/dev/loom_v2`), package `loom-ia`, im
       - FastMCP rend une liste sous `{"result": […]}`, qui devient le `data` du résultat ;
       - en `scope: tenant`, chaque client actif a son process, avec les modèles en mémoire (environ 5 Go en vrai).
     - Noms que j'ai pris : `tests/integration/test_memoire.py`, `LOOM_MEMORY_SERVER`, le serveur `memoire` (préfixe `memoire__`), l'agent `assistant`, le secret `MEMOIRE_DOSSIER`. À changer si tu veux d'autres noms.
+  - **Étape 2 (l'exemple, et la réécriture des descriptions) : validée chez toi (08/10).**
+    - **Tes deux runs (08/10)** :
+      - simulé : les quatre cas tiennent, 15 vérifications sur 15 ;
+      - `--reel --device cpu` : tout ce qui est exigé tient ; `clients` est sauté comme prévu, et les parties « montré, pas exigé » de `chercher` et `memoriser` sont dites au bilan.
+    - **Ce que montre le réel** :
+      - `chercher` : MiniMax appelle `search` de lui-même, sans approbation. Avec les vrais modèles, la recherche ne rend que la note du devis (1,00) : le reranker écarte la note du grossiste, que les modèles factices gardaient (0,40). La réponse reprend le montant, la date et l'attente.
+      - `memoriser` : MiniMax écrit avec ses propres choix — titre « Préférence de contact - Mme Martin », projet `clients`, tags `contact` et `preference`. Le run s'arrête ; la mémoire relevée pendant l'attente n'a pas changé ; accordée, la note y est, et elle seule. Puis la recherche de l'orchestrateur simulé la trouve (0,92) avant son écriture imprévue, refusée.
+      - `rejeu` : le run de MiniMax, rejoué à l'identique après l'effacement de sa note, a son écriture servie par le journal ; la note ne revient pas.
+    - **Pas éprouvé** : `--device cuda` (ton run réel était sur CPU), et la durée du chargement des modèles, que l'exemple n'affiche pas.
+    - **Vu, rien de changé** :
+      - MiniMax range sa note dans le projet `clients`, quand les notes du carnet sont dans `dupont` : le prompt ne nomme pas de projet. Sans gêne ici, puisque `search` sans `project` cherche partout. Si tu veux des projets tenus, c'est au prompt de les nommer.
+      - Les logs du serveur (`INFO loom_memory: modèles chargés`, `INFO FlagEmbedding… loading existing colbert_linear and sparse_linear`) passent par sa sortie d'erreur, au milieu du récit de l'exemple.
+    - Tes décisions (08/10) :
+      - les descriptions qui te nomment se réécrivent par **une clé de loom**, `description`, dans les réglages par outil ;
+      - le cas `clients` est **sauté en `--reel`** ;
+      - le périphérique des modèles se choisit par **`--device`**, `cuda` par défaut.
+    - **Dans loom : `ToolOverrides.description`** (`core/model/tooling.py`). Elle remplace ce que le modèle lit de l'outil, le reste de ses déclarations ne bouge pas ; vide, elle est refusée au chargement. Comme les autres réglages par outil, elle vaut partout où `ToolOverrides` sert : `mcp_servers[].tools.<outil>`, `tool_sources[].tools.<outil>`, et les `tools` d'une référence dans l'agent, qui l'emportent. Pas sur un outil Python (`tools[].python`), dont la description est sa docstring. Rien d'autre n'a changé : `overridden()` applique déjà chaque champ renseigné.
+    - Essais : 2 de plus dans `test_mcp_client.py` (la description du serveur réécrite, celle de l'agent qui l'emporte, schéma et effets intacts ; une description vide refusée) ; dans `test_points_entree.py`, l'essai des déclarations d'une source de paquet vérifie aussi la description.
+    - **`examples/j6/memoire.py`**, options `--serveur` (sans lui, code 2), `--cas`, `--reel`, `--device`. La config, le journal et chaque base sont dans un dossier temporaire, effacé à la fin.
+      - Le serveur tourne dans ce dossier (`cwd`) : `loom-memory` lit un `.env` dans son dossier courant, et celui du dossier de lancement ne doit pas régler sa base. `LOOM_MEMORY_DATA_DIR` est toujours donné.
+      - En simulé, modèles factices. En `--reel` : `LOOM_MEMORY_DEVICE` vaut `--device` ; `LOOM_MEMORY_WARMUP_ON_START=false`, donc les modèles se chargent au premier appel qui en a besoin ; le délai de `search`, `add_text`, `add_url`, `add_file` et `update` passe à 300 s ; `HF_HOME` et `HF_HUB_CACHE` sont transmis s'ils sont posés chez toi.
+      - La référence de l'agent est `required: true` : sans serveur, le run échoue au lieu de continuer sans mémoire.
+      - L'agent : `assistant` (simulé) ou `assistant_reel` (MiniMax-M3). `assistant` reste dans la config en `--reel` : il remplit la mémoire, relève son contenu par `list_docs`, efface la note du rejeu, et joue l'écriture que personne n'a demandée.
+      - Les six descriptions qui te nommaient (`search` et les cinq écritures) sont réécrites pour « l'artisan » ; `get`, `list_docs` et `projects` gardent la leur. Le prompt dit quand chercher et que l'écriture se fait sur demande, avec accord.
+    - Les quatre cas :
+      - **chercher** : trois notes du carnet (devis D-2026-042 de Mme Martin, grossiste, chantier de M. Bernard), écrites une à une, chacune arrêtée puis accordée ; l'agent répond sur le devis en appelant `search`, sans approbation. Dans l'échange brut, le modèle voit les neuf outils, aucun ne te nomme, et les descriptions sont celles de la config.
+      - **memoriser** : « Mémorise que Mme Martin préfère être rappelée après 17 h. » arrête le run ; la mémoire relevée pendant l'attente n'a pas changé ; accordée, la note est en mémoire, et elle seule. Puis l'orchestrateur simulé, à « Quand puis-je rappeler Mme Martin ? », écrit une note que personne n'a demandée : le run s'arrête, l'artisan refuse, le motif revient au modèle, rien n'est écrit.
+      - **rejeu** : la note de `memoriser` effacée (écriture accordée ; la config est réécrite pour que le script connaisse le document), son run est rejoué à l'identique dans une instance neuve, avec la config d'origine : un appel servi par le journal, la note ne revient pas. `memoriser` est joué d'abord s'il n'est pas demandé.
+      - **clients** : `dupont` et `martin` en `scope: tenant`, chacun sa base (`memoire-dupont/`, `memoire-martin/`) nommée par `DUPONT_MEMOIRE` et `MARTIN_MEMOIRE`. La note de Dupont est dans sa mémoire et sa recherche la trouve ; celle de Martin est vide et sa recherche ne trouve rien. Sauté en `--reel`.
+    - En `--reel`, ce que fait MiniMax est montré, pas exigé. Restent exigés : les descriptions vues par le modèle, la lecture sans approbation, et, si MiniMax écrit, l'arrêt avant l'écriture, la mémoire inchangée pendant l'attente, la note accordée en mémoire, puis le rejeu. S'il n'écrit pas, la partie est sautée et le bilan le dit.
+    - Vérifié : ruff, format, pyright strict, 5 contrats ; **1908 essais** avec les trois services, execd et `loom-memory` (5 sautés) ; noyau seul 1423 (+227 sautés) ; les **42 exemples**, dont `memoire.py` en simulé contre ma copie de `loom-memory` (identique à la tienne pour `server.py`, `settings.py`, `service.py`, `bge_m3.py`) : **15 vérifications tenues**, 18 s.
+      - **Configs et exemple qui défont chaque protection** : chacun fait tomber ce qui la garde. Sans approbation, 4 vérifications tombent ; sans descriptions, celle des outils vus ; sans la config d'origine au rejeu, le rejeu (« la requête a changé ») ; en portée partagée, ou avec un seul dossier pour les deux clients, le cas `clients`.
+      - `--reel` avec une fausse clé, chez moi : MiniMax injoignable, et pas de modèles (`loom-memory` y est sans le groupe `models`). Le déroulé va au bout, les parties sautées sont dites, et les descriptions sont lues dans la requête même quand elle échoue. **Les vrais modèles et MiniMax ne sont éprouvés que chez toi.**
+    - **Trouvé en écrivant l'exemple, rien de changé (c'est ton code) :** dans `loom-memory`, `BgeM3Embedder._load` et le chargement du reranker ne sont pas protégés. Le préchargement au démarrage et un premier appel, ou deux appels simultanés, peuvent donc charger le modèle deux fois. Je l'ai lu dans le code, pas vu tourner. L'exemple l'évite : pas de préchargement, notes écrites une à une.
+    - Lancement chez toi :
+      - `uv run python examples/j6/memoire.py --serveur ~/dev/loom-memory/.venv/bin/loom-memory-mcp`
+      - `uv run --env-file .env --extra anthropic python examples/j6/memoire.py --serveur ~/dev/loom-memory/.venv/bin/loom-memory-mcp --reel` (ajoute `--device cpu` si la carte est prise).
+    - Noms que j'ai pris : la clé `description` de `ToolOverrides` ; dans l'exemple, l'agent `assistant_reel`, les variables `DUPONT_MEMOIRE` et `MARTIN_MEMOIRE`, les titres de notes (« Devis D-2026-042 », « Grossiste chauffe-eau », « Chantier de M. Bernard », « Rappels de Mme Martin », « Samedis de Mme Martin »), le projet `dupont`, l'approbateur « l'artisan », et, internes, `Atelier`, `ReleveImpossible`, `remplit`, `releve`, `decide`, `demande`, `raconte`, `sans_suite` ; les essais `test_the_config_rewrites_what_the_model_reads` et `test_a_rewritten_description_cannot_be_empty`. À changer si tu veux d'autres noms.
+    - **Reste connu (étape 2) :** les descriptions réécrites ne couvrent pas celles des paramètres (aucune ne te nomme aujourd'hui) ; si `loom-memory` change ses descriptions, la config garde les siennes.
+  - **Étape 3 (les docs) : prête, à relire.**
+    - Tes décisions (08/10) : la réalisation **au point 19** (Sessions MCP) de `fonctions.md` ; **6.4d seule**, les docs de 6.4c gardant leur étape ; les deux trouvailles sur `loom-memory` (chargement non protégé, `.env` lu dans le dossier courant) **restent dans l'avancement**.
+    - `fonctions.md` :
+      - la ligne F6 renvoie à sa réalisation ;
+      - au point 19, la puce « Déclarations » de la réalisation 2.2 cite `description` ;
+      - un paragraphe « Réalisation (phase 6.4d) » (décisions, ce que loom apportait déjà, l'ajout de `description` et où elle vaut, essais et exemple), suivi d'un « Reste connu (6.4d) » : `instructions` non transmises, paramètres non réécrits, description figée dans la config, un process par client avec ses modèles.
+    - `conception.md`, §17.5 : une ligne `description` dans l'exemple YAML, et une phrase sur les réglages par outil et où ils valent.
+    - `jalons.md` : la ligne « 6.4d Mémoire », `memoire.py` dans la liste des exemples, les essais de la mémoire dans celle des essais.
+    - Aucun code touché à cette étape.
 
 ## Points à revoir ensemble (demandé par Denis, 19/09)
 

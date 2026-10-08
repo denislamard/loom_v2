@@ -65,7 +65,7 @@
 - **F3** Compaction automatique : seuil, modèle dédié, N derniers tours conservés.
 - **F4** Nettoyage : thinking retiré, médias remplacés par des références.
 - **F5** Backends : mémoire vive, fichier, `[V2]` Firestore ou SQL.
-- **F6** `[V2]` Mémoire long terme / RAG, exposée comme un outil.
+- **F6** `[V2]` Mémoire long terme / RAG, exposée comme un outil. Réalisée en 6.4d : un serveur MCP, `loom-memory`, branché en source d'outils (point 19).
 - **F7** `[V2]` Gestion des sessions : lister, supprimer, exporter (RGPD).
 
 ## G. Pièces jointes et artefacts
@@ -703,7 +703,7 @@ ToolOutput
 - **Serveur indisponible au démarrage :** ses outils sont retirés pour le run, et l'événement durable `tool.source_unavailable` (serveur, erreur, `required`) est écrit avant la première étape. Avec `required: true`, le run passe en `FAILED`.
 - **Connexion perdue pendant un appel :** l'appel est rejoué une fois après reconnexion s'il est sans risque (`side_effects: none` ou idempotent) ; sinon, le modèle reçoit l'erreur « état inconnu » (#18).
 - **Noms :** `serveur__outil`, ou `alias__outil`. Les noms de serveurs et les alias n'ont pas de `__`. Un outil dont le nom préfixé sort du format des API (lettres, chiffres, `_`, `-`, 64 caractères) est écarté, avec un avertissement.
-- **Déclarations :** annotations MCP, puis `mcp_servers[].tools`, puis la référence de l'agent. `readOnlyHint` donne `side_effects: none` et `idempotent: true` ; `destructiveHint: false` donne `reversible` ; `idempotentHint` donne `idempotent`. Sans annotation, l'outil est traité comme irréversible (valeurs par défaut de la spec MCP).
+- **Déclarations :** annotations MCP, puis `mcp_servers[].tools`, puis la référence de l'agent. `readOnlyHint` donne `side_effects: none` et `idempotent: true` ; `destructiveHint: false` donne `reversible` ; `idempotentHint` donne `idempotent`. Sans annotation, l'outil est traité comme irréversible (valeurs par défaut de la spec MCP). Depuis 6.4d, `description` remplace aussi ce que le modèle lit de l'outil (voir la réalisation de 6.4d ci-dessous).
 - **Schéma d'entrée :** transmis tel quel, sauf son `title` racine (retiré, comme pour les outils Python).
 - **Résultats :** `text` → bloc texte, `structuredContent` → `data`, `isError` → `is_error` ; images, audio et ressources binaires rangés comme artefacts (depuis 2.3), liens de ressources en mention.
 - **Clé d'idempotence :** transmise dans `_meta`, sous `loom-ia/idempotency_key`.
@@ -731,6 +731,16 @@ tools:
 - Un même agent peut mélanger les portées (`shared`, `tenant`, `run`) ; chaque connexion suit la sienne.
 - Démarrage indépendant : un serveur indisponible voit ses outils retirés pour le run (avec un avertissement), les autres restent utilisables ; `required: true` rend son absence bloquante.
 - Contrôles au démarrage : serveur référencé mais non déclaré ; outil de `include` ou `exclude` inconnu une fois le serveur connecté (avertissement) ; deux références qui produisent le même préfixe.
+
+**Réalisation (phase 6.4d — la mémoire long terme, F6) :** la mémoire long terme est un **serveur MCP**, `loom-memory` (RAG hybride : BGE-M3 dense et sparse, reranker, Qdrant), branché comme n'importe quel serveur : ses outils deviennent `memoire__search`, `memoire__add_text`…, et loom n'a rien de propre à la mémoire. Décisions du 08/10 :
+
+- les écritures (`add_text`, `add_url`, `add_file`, `update`, `delete`) en `approval: always` : la règle du serveur, « n'écrire que sur demande explicite », devient un contrôle — le run s'arrête avant chaque écriture, un refus n'écrit rien et son motif revient au modèle ;
+- un serveur par client (`scope: tenant`), son dossier de données lu dans ses secrets (`env_from: {LOOM_MEMORY_DATA_DIR: MEMOIRE_DOSSIER}`) : ce qu'un client mémorise, un autre ne le trouve pas ;
+- une clé `description` dans les réglages par outil, pour réécrire ce que le modèle lit : celles de `loom-memory` nomment son utilisateur.
+
+Ce que loom apportait déjà : les lectures, annotées `readOnlyHint`, passent sans approbation ; un run qui a écrit se rejoue sans réécrire, le journal servant l'appel ; en variante, `add_text`, sans annotation, compte comme irréversible et n'est jamais exécuté. Le seul ajout au code est `ToolOverrides.description`. Elle vaut pour `mcp_servers[].tools`, pour `tool_sources[].tools` et pour les `tools` d'une référence dans l'agent, qui l'emportent ; pas pour un outil Python, dont la description est sa docstring ; vide, elle est refusée au chargement. Essais : `tests/integration/test_memoire.py`, contre le vrai serveur désigné par `LOOM_MEMORY_SERVER`, en modèles factices ; exemple `examples/j6/memoire.py`, cas `chercher`, `memoriser`, `rejeu`, `clients`.
+
+**Reste connu (6.4d) :** loom ne transmet pas au modèle les `instructions` d'un serveur MCP — ce que le serveur dit de son usage (quand chercher, quand écrire) doit être repris dans le prompt de l'agent ; `description` réécrit celle de l'outil, pas celles de ses paramètres ; une description réécrite reste celle de la config si le serveur change la sienne ; en `scope: tenant`, chaque client actif a son process, avec ses modèles en mémoire.
 
 ### 20. Réparation de la réponse finale
 

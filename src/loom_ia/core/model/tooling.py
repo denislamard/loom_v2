@@ -125,6 +125,10 @@ class ToolDefinition(DomainModel):
 class ToolOverrides(DomainModel):
     """Déclarations d'un outil fixées par la config ; ``None`` garde celle de l'outil."""
 
+    # Ce que le modèle lit de l'outil, à la place de ce que l'outil en dit :
+    # une description écrite pour un autre usage (un autre utilisateur, un
+    # autre client) se réécrit sans toucher à l'outil.
+    description: str | None = Field(default=None, min_length=1)
     side_effects: SideEffects | None = None
     approval: Approval | None = None
     idempotent: bool | None = None

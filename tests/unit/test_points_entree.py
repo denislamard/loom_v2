@@ -354,7 +354,13 @@ async def test_choices_and_declarations_of_the_config_apply(
             "name": "carnet",
             "entry_point": "carnet",
             "params": {"fichier": "devis.json"},
-            "tools": {"chercher_devis": {"side_effects": "reversible", "timeout": 3}},
+            "tools": {
+                "chercher_devis": {
+                    "side_effects": "reversible",
+                    "timeout": 3,
+                    "description": "Le devis d'un client, par son numéro.",
+                }
+            },
         }
     ]
     tools = [
@@ -380,6 +386,7 @@ async def test_choices_and_declarations_of_the_config_apply(
     found = specs["c__chercher_devis"]
     # Le nom préfixé, le genre d'un outil Python, la source puis l'agent par-dessus.
     assert (found.kind, found.side_effects, found.timeout) == ("python", "reversible", 7)
+    assert found.description == "Le devis d'un client, par son numéro."
 
 
 @pytest.mark.parametrize(

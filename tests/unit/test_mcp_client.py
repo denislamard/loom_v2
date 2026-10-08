@@ -24,6 +24,7 @@ from mcp.client.session import MessageHandlerFnT
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.lowlevel import Server
 from mcp.shared.memory import create_connected_server_and_client_session as connected
+from pydantic import ValidationError
 
 from loom_ia.adapters.mcp import (
     IDEMPOTENCY_META,
@@ -253,6 +254,33 @@ async def test_alias_filters_and_declarations(caplog: pytest.LogCaptureFixture) 
     excluded = source(math_server(), McpSelection(prefix="math", exclude=("noter",)))
     async with excluded.open(RUN) as tools:
         assert [tool.spec.name for tool in tools] == ["math__additionner"]
+
+
+async def test_the_config_rewrites_what_the_model_reads() -> None:
+    """``description`` remplace celle du serveur ; celle de l'agent l'emporte."""
+    selection = McpSelection(
+        prefix="math", tools={"noter": ToolOverrides(description="Note pour l'atelier.")}
+    )
+    chosen = source(
+        math_server(),
+        selection,
+        tools={
+            "additionner": {"description": "Additionne deux montants."},
+            "noter": {"description": "Note pour le serveur."},
+        },
+    )
+    async with chosen.open(RUN) as tools:
+        specs = {tool.spec.name: tool.spec for tool in tools}
+    add, noter = specs["math__additionner"], specs["math__noter"]
+    assert add.definition().description == "Additionne deux montants."
+    assert noter.definition().description == "Note pour l'atelier."
+    # Le reste de ce que l'outil déclare ne bouge pas.
+    assert (add.input_schema["required"], add.side_effects) == (["a", "b"], "none")
+
+
+def test_a_rewritten_description_cannot_be_empty() -> None:
+    with pytest.raises(ValidationError, match="description"):
+        ToolOverrides.model_validate({"description": ""})
 
 
 # --- Appels ------------------------------------------------------------------
