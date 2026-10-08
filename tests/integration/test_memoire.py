@@ -5,7 +5,8 @@ Le serveur est le vrai : ``loom-notes`` publié sur PyPI, à la version
 ``LOOM_NOTES``, lancé par ``uvx`` — rien à installer. ``LOOM_NOTES_SERVER``
 le remplace par un binaire ``loom-notes-mcp`` local (celui d'un venv de
 ``loom-notes``), pour éprouver un changement pas encore publié. Sans ``uvx``,
-ces essais sont sautés, et en échec sous ``--require-services``.
+ou sans l'extra ``mcp`` de loom-ia, ces essais sont sautés, et en échec sous
+``--require-services``.
 Il tourne en modèles factices (``LOOM_NOTES_FAKE_MODELS``) sur un Qdrant
 embarqué dans un dossier temporaire : pas de GPU, pas de Docker, et aucune
 base existante n'est touchée.
@@ -24,6 +25,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, NoReturn, cast
 
@@ -71,6 +73,8 @@ def _missing(request: pytest.FixtureRequest, why: str) -> NoReturn:
 @pytest.fixture(scope="session")
 def memory_server(request: pytest.FixtureRequest) -> Server:
     """``loom-notes`` de PyPI par ``uvx``, ou le binaire que désigne ``LOOM_NOTES_SERVER``."""
+    if find_spec("mcp") is None:
+        _missing(request, "extra 'mcp' absent")
     found = os.environ.get(SERVER_ENV, "")
     if found:
         binary = Path(found).expanduser()
