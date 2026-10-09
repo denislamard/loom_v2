@@ -20,6 +20,12 @@ autre run de la session, ou notre run qui avance ailleurs pendant qu'on
 l'arrête —, le conflit n'invalide rien : l'écrivain relit la position et
 réécrit, un nombre borné de fois.
 
+Ouvrir un run sous un identifiant choisi (``opens``) ne tolère pas la
+concurrence : deux ``run.started`` rendraient le journal illisible. L'écrivain
+vérifie sous son verrou que le run n'a aucun événement — un écrivain partagé
+suit le journal, il ne verrait aucun conflit —, puis à chaque reprise : le lot
+qui perd la course lève ``RunExists`` au lieu de se rejouer derrière le gagnant.
+
 La compaction écrit sans ce contrôle (``checked=False``, #23) : son événement
 ne couvre que des événements anciens, et son worker ne partage aucun écrivain
 avec les runs en cours.
@@ -58,6 +64,17 @@ class RunMoved(RuntimeError):
         self.events = tuple(events)
 
 
+class RunExists(ValueError):
+    """Le run à ouvrir a déjà des événements dans le journal : rien n'a été écrit.
+
+    C'est une ``ValueError``, comme l'a toujours été « le run existe déjà ».
+    """
+
+    def __init__(self, run_id: RunId) -> None:
+        super().__init__(f"Le run {run_id} existe déjà")
+        self.run_id = run_id
+
+
 class SessionWriter:
     """Écritures ordonnées dans le journal d'une session."""
 
@@ -75,15 +92,25 @@ class SessionWriter:
         """Écrivain qui part du dernier événement de la session."""
         return cls(store, tenant_id, session_id, await store.last_seq(tenant_id, session_id))
 
-    async def append(self, drafts: Sequence[EventDraft], *, checked: bool = True) -> list[Event]:
+    async def append(
+        self, drafts: Sequence[EventDraft], *, checked: bool = True, opens: RunId | None = None
+    ) -> list[Event]:
         """Écrit les brouillons à la suite, dans l'ordre, et les renvoie numérotés.
 
         Un conflit de séquence est repris : la position est relue chez le
         store, puis l'écriture rejouée telle quelle — sauf si un run dont on
         écrit a été clos entre-temps, ce que ``RunMoved`` dit.
+
+        ``opens`` désigne le run que le lot ouvre : s'il a déjà des événements,
+        avant l'écriture ou entre deux reprises, ``RunExists`` est levée et
+        rien n'est écrit.
         """
         batch = list(drafts)
         async with self._lock:
+            if opens is not None and await self.store.read(
+                self.tenant_id, self.session_id, run_id=opens
+            ):
+                raise RunExists(opens)
             attempt = 0
             while True:
                 attempt += 1
@@ -94,7 +121,7 @@ class SessionWriter:
                 except SequenceConflict as conflict:
                     if attempt >= MAX_ATTEMPTS:
                         raise
-                    await self._still_open(batch, conflict.actual)
+                    await self._still_open(batch, conflict.actual, opens)
                     logger.debug(
                         "Journal %s : écriture reprise (seq %d → %d, tentative %d)",
                         self.session_id,
@@ -108,10 +135,15 @@ class SessionWriter:
                         self.last_seq = events[-1].seq
                     return events
 
-    async def _still_open(self, batch: Sequence[EventDraft], actual: int) -> None:
-        """Lève ``RunMoved`` si ce qui a été écrit ailleurs clôt un run du lot."""
+    async def _still_open(
+        self, batch: Sequence[EventDraft], actual: int, opens: RunId | None
+    ) -> None:
+        """Lève ``RunExists`` si le run à ouvrir l'est déjà, ``RunMoved`` si un run est clos."""
         ours = frozenset(draft.run_id for draft in batch)
         landed = await self.store.read(self.tenant_id, self.session_id, after_seq=self.last_seq)
+        if opens is not None and any(e.run_id == opens for e in landed):
+            self.last_seq = max([actual, *(e.seq for e in landed)])
+            raise RunExists(opens)
         closed = [e for e in landed if e.run_id in ours and isinstance(e.payload, _CLOSING)]
         if closed:
             self.last_seq = max([actual, *(e.seq for e in landed)])

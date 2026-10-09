@@ -22,7 +22,9 @@ Traduction des messages :
 - le schéma de sortie (``output_schema``) devient ``output_config.format``
   pour un modèle déclaré ``native_json: true``, après adaptation par le SDK
   (``transform_schema`` : mots-clés non pris en charge reportés dans les
-  descriptions ; le contrat de sortie vérifie le schéma d'origine) (B9).
+  descriptions ; le contrat de sortie vérifie le schéma d'origine) (B9) ;
+- fin du flux : ``message_stop`` la dit. Sans lui, le flux a été coupé : l'appel
+  échoue en ``transient``, au lieu de rendre un début de réponse sans consommation.
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 """
@@ -196,6 +198,11 @@ class AnthropicModel:
                     async for event in events:
                         for chunk in parser.feed(event):
                             yield chunk
+                if not parser.stopped:
+                    # ``message_stop`` clôt un flux complet ; sans lui, c'est un début de réponse.
+                    raise ModelError(
+                        "transient", "Flux interrompu : message_stop non reçu du fournisseur"
+                    )
                 return
         except anthropic.APIError as exc:
             raise to_model_error(exc) from exc
@@ -407,6 +414,8 @@ class StreamParser:
         self._usage: dict[str, int] = {}
         self._stop: StopReason | None = None
         self._model: str | None = None
+        # ``message_stop`` reçu : le flux est allé jusqu'à sa fin.
+        self.stopped = False
 
     def feed(self, event: sdk.RawMessageStreamEvent) -> list[ModelChunk]:
         match event:
@@ -428,6 +437,7 @@ class StreamParser:
                 self.record_usage(usage)
                 return []
             case sdk.RawMessageStopEvent():
+                self.stopped = True
                 return [
                     UsageDelta(usage=self.usage()),
                     Stopped(reason=self._stop or "end", model_id=self._model),

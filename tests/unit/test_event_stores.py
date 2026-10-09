@@ -186,6 +186,22 @@ async def test_concurrent_appends_get_distinct_seqs(store: EventStore) -> None:
     assert seqs == list(range(1, len(drafts) + 1))
 
 
+async def test_concurrent_checked_appends_let_only_one_through(store: EventStore) -> None:
+    """Deux écritures qui annoncent le même dernier ``seq`` : une passe, l'autre n'écrit rien.
+
+    Ouvrir un run sous un identifiant choisi (``SessionWriter.append(opens=…)``)
+    repose sur ce contrat : c'est lui qui départage deux ouvertures simultanées.
+    """
+    _, drafts = run_drafts()
+    outcomes = await asyncio.gather(
+        *(store.append([draft], expected_seq=0) for draft in drafts[:2]), return_exceptions=True
+    )
+    written = [outcome for outcome in outcomes if isinstance(outcome, list)]
+    refused = [outcome for outcome in outcomes if isinstance(outcome, SequenceConflict)]
+    assert len(written) == 1 and len(refused) == 1
+    assert await store.last_seq(DEFAULT_TENANT, SESSION) == 1
+
+
 async def test_journal_survives_reopening(make_store: StoreFactory) -> None:
     journal, drafts = run_drafts()
     first = make_store()

@@ -803,7 +803,7 @@ models:
 
 **Port minimal** (#11) : `ModelClient.stream(request) -> AsyncIterator[ModelChunk]`. `complete()` est un utilitaire qui rassemble le flux.
 
-**Morceaux neutres :** `TextDelta`, `ReasoningDelta`, `ToolCallStarted`, `ToolArgsDelta`, `ToolCallEnded`, `UsageDelta`, `Stopped(reason)`. Le `provider_meta` peut arriver en cours de flux.
+**Morceaux neutres :** `TextDelta`, `ReasoningDelta`, `ToolCallStarted`, `ToolArgsDelta`, `ToolCallEnded`, `UsageDelta`, `Stopped(reason)`. Le `provider_meta` peut arriver en cours de flux. Un flux sans `Stopped` (coupé, vide) est une erreur `transient`, jamais une réponse ; un flux arrêté par `max_tokens` échoue en `model.truncated`.
 
 **Accumulation :** les deltas partent sur le bus (`model.delta`) ; la réponse complète est écrite (`model.responded`). Les arguments d'outils partiels ne sont jamais transmis aux hooks.
 
@@ -830,6 +830,7 @@ models:
 | `auth` (401, 403) | Non | Non : erreur de config |
 | `invalid_request` (400) | Non | Non : bug |
 | `content_filtered` | Non | Non, par défaut |
+| `truncated` (sortie coupée par `max_tokens`) | Non | Non : le run échoue |
 
 - Chaîne de secours déclarée par rôle : `model: M3_MAIN, fallbacks: [SONNET]`, avec vérification des capacités au démarrage.
 - Adhérence : un run qui a basculé reste sur le secours jusqu'à la fin.

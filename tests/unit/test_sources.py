@@ -28,8 +28,9 @@ from loom_ia.core.model import (
     ToolSpec,
 )
 from loom_ia.core.ports import SourceContext, SourceUnavailable, Tool, ToolContext
+from loom_ia.core.projections import fold
 from loom_ia.engine import RunContext, ToolExecutor, begin_run, drive
-from loom_ia.testing import ScriptedModel, tool_call_message
+from loom_ia.testing import RunJournal, ScriptedModel, tool_call_message
 from loom_ia.tools import tool
 
 SPEC = ModelSpec(id="FAKE", sdk="fake", model="fake-1")
@@ -179,6 +180,29 @@ async def test_required_source_unavailable_fails_the_run() -> None:
     )
     assert isinstance(events[4].payload, RunFailed)
     assert events[2].status == "error"
+
+
+async def test_a_run_left_between_its_final_transition_and_its_end_opens_no_source() -> None:
+    """Reprise d'une clôture à finir : la source requise, tombée entre-temps, n'y change rien.
+
+    Ouverte, elle écrirait ``tool.source_unavailable`` après l'état final et,
+    requise, ferait échouer un run qui a déjà réussi.
+    """
+    crm = FakeSource("crm", required=True)
+    ctx = context(ScriptedModel(), crm)
+    journal = RunJournal(agent="demo")
+    journal.start("Bonjour").model_turn(Message.assistant("Salut"))
+    journal.transition(RunStatus.COMPLETED, cause="model.responded")
+    await ctx.store.append(journal.take(), expected_seq=0)
+    crm.failure = SourceUnavailable("crm", "refusé")
+
+    state = await drive(ctx, journal.run_id)
+
+    assert state.status is RunStatus.COMPLETED and state.finished
+    assert crm.opened == []
+    events = await events_of(ctx, journal.run_id)
+    assert [e.type for e in events][-2:] == ["run.transitioned", "run.completed"]
+    fold(events, journal.run_id)
 
 
 async def test_each_drive_opens_its_own_tools() -> None:

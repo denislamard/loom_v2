@@ -7,6 +7,7 @@ l'API Chat Completions, avec les champs ajoutés par les fournisseurs compatible
 
 import base64
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -172,6 +173,65 @@ async def test_stream_is_read_in_order() -> None:
     assert sent.headers["authorization"] == "Bearer sk-test"
     assert repr(model) == "OpenAIChatModel('OSS', model='oss-120b')"
     await model.aclose()
+
+
+def cut(*parts: str) -> httpx2.Response:
+    """Flux qui s'arrête là : ni ``finish_reason`` ni ligne ``[DONE]`` ne viennent."""
+    return httpx2.Response(200, text="".join(parts), headers={"content-type": "text/event-stream"})
+
+
+class ByReads(httpx2.AsyncByteStream):
+    """Corps lu morceau par morceau, aux coupures choisies (un vrai transport lit ainsi)."""
+
+    def __init__(self, *reads: bytes) -> None:
+        self.reads = reads
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for read in self.reads:
+            yield read
+
+
+async def test_a_stream_cut_without_finish_reason_or_done_is_an_interrupted_call() -> None:
+    """Un début de réponse n'est pas une réponse : coupure en route et flux vide échouent."""
+    started = chunk({"role": "assistant", "content": "Le devis s'élève à 1 2"})
+    for body in (cut(started), cut(), cut(started, usage_chunk(10, 5))):
+        with pytest.raises(ModelError, match=r"ni finish_reason ni \[DONE\]") as caught:
+            await complete(Server(body).model(), request())
+        assert caught.value.kind == "transient" and caught.value.retryable
+
+
+async def test_done_without_finish_reason_is_a_clean_end_for_compatible_servers() -> None:
+    """Certains serveurs omettent ``finish_reason`` : leur ligne ``[DONE]`` vaut fin de flux."""
+    body = streamed(chunk({"role": "assistant", "content": "Le total TTC est de 15 €."}))
+    response = await complete(Server(body).model(), request())
+    assert response.message.text == "Le total TTC est de 15 €."
+    assert response.stop_reason == "end"
+
+
+async def test_done_alone_is_an_empty_answer_when_nothing_else_says_it_ended() -> None:
+    with pytest.raises(ModelError, match="Réponse vide") as caught:
+        await complete(Server(streamed()).model(), request())
+    assert caught.value.kind == "transient"
+    # Avec son ``finish_reason``, une réponse sans contenu reste une réponse (inchangé).
+    empty = streamed(chunk({}, finish="stop"))
+    assert (await complete(Server(empty).model(), request())).message == Message.assistant("")
+
+
+async def test_the_done_line_is_found_across_reads_and_not_in_the_text() -> None:
+    """La ligne est reconnue même coupée en deux lectures ; un texte qui la cite ne compte pas."""
+    reads = (
+        chunk({"content": "Total : 15 €"}).encode(),
+        b"da",
+        b"ta: [DO",
+        b"NE]\n\n",
+    )
+    body = httpx2.Response(200, stream=ByReads(*reads))
+    response = await complete(Server(body).model(), request())
+    assert response.message.text == "Total : 15 €"
+
+    quoted = chunk({"content": "\ndata: [DONE]"})
+    with pytest.raises(ModelError, match=r"ni finish_reason ni \[DONE\]"):
+        await complete(Server(cut(quoted)).model(), request())
 
 
 async def test_request_translation() -> None:

@@ -21,7 +21,9 @@ Sans état chez le fournisseur : ``store: false``, toute la conversation part
 - la limite de sortie passe par ``max_output_tokens`` ; ``tool_choice`` tel
   quel ; un outil est ``strict`` si son schéma en suit les règles ;
 - le schéma de sortie (``output_schema``) devient ``text.format``
-  (``json_schema``) pour un modèle déclaré ``native_json: true`` (B9).
+  (``json_schema``) pour un modèle déclaré ``native_json: true`` (B9) ;
+- fin du flux : ``response.completed`` ou ``response.incomplete`` la dit. Sans
+  l'un ni l'autre, le flux a été coupé : l'appel échoue en ``transient``.
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 Adaptateur testé sur des réponses HTTP enregistrées.
@@ -363,6 +365,8 @@ class StreamParser:
         self._model: str | None = None
         self._incomplete: str | None = None
         self._refused = False
+        # ``response.completed`` ou ``response.incomplete`` reçu : le flux est allé à sa fin.
+        self._finished = False
 
     def feed(self, event: ResponseStreamEvent) -> list[ModelChunk]:
         match event:
@@ -404,6 +408,12 @@ class StreamParser:
         return []
 
     def finish(self) -> list[ModelChunk]:
+        """Morceaux de fin ; ``ModelError`` si le flux s'est arrêté avant l'événement final."""
+        if not self._finished:
+            raise ModelError(
+                "transient",
+                "Flux interrompu : ni response.completed ni response.incomplete reçu",
+            )
         chunks: list[ModelChunk] = []
         if self._usage is not None:
             chunks.append(UsageDelta(usage=self._usage))
@@ -440,6 +450,7 @@ class StreamParser:
 
     def finished(self, response: Response) -> None:
         """Fin de la réponse : modèle, consommation, motif d'une réponse incomplète."""
+        self._finished = True
         self._model = response.model
         if response.usage is not None:
             self._usage = to_usage(response.usage)

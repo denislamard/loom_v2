@@ -22,8 +22,10 @@ from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
     ApprovalGranted,
     ApprovalRequested,
+    DurablePayload,
     IdempotencyRecorded,
     IdempotencyReused,
+    RunScope,
     ToolCalled,
     ToolCompleted,
 )
@@ -34,15 +36,20 @@ from loom_ia.core.model import (
     ApprovalSettings,
     Approved,
     CallerContext,
+    Message,
+    ModelSpec,
     PendingApproval,
     PendingCall,
+    Pricing,
     Rejected,
     ResultTooLarge,
+    RetryPolicy,
     RunState,
     RunStatus,
     SessionId,
     TenantId,
     ToolOutput,
+    ToolResultBlock,
     ToolSpec,
     UnknownState,
     new_span_id,
@@ -56,11 +63,19 @@ from loom_ia.core.ports import (
     UnknownEffect,
     idempotency_key,
 )
-from loom_ia.core.projections import fold
-from loom_ia.engine import UNKNOWN_STATE, JournalIdempotency, SessionWriter, ToolExecutor
+from loom_ia.core.projections import apply, fold
+from loom_ia.engine import (
+    UNKNOWN_STATE,
+    JournalIdempotency,
+    RunContext,
+    SessionWriter,
+    ToolExecutor,
+    begin_run,
+    drive,
+)
 from loom_ia.engine.executor import ToolEvent
 from loom_ia.runtime import build_agent
-from loom_ia.testing import RunJournal
+from loom_ia.testing import RunJournal, ScriptedModel, tool_call_message
 from loom_ia.tools import idempotent, tool
 from loom_ia.tools.idempotent import BUSY, DEFAULT_RESERVATION, UNKNOWN_EFFECT, IdempotentTool
 
@@ -100,6 +115,20 @@ def _granted(state: RunState, call_id: str, tool_name: str, by: str = "l'artisan
         outcome=ApprovalOutcome(verdict="granted", by=by),
     )
     return state.model_copy(update={"approvals": (asked,)})
+
+
+def _after(state: RunState, *payloads: DurablePayload) -> RunState:
+    """L'état après ces événements de l'appel, appliqués dans l'ordre du journal."""
+    scope = RunScope(
+        tenant_id=state.context.tenant_id,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        root_run_id=state.root_run_id,
+        agent=state.agent,
+    )
+    for seq, payload in enumerate(payloads, start=state.last_seq + 1):
+        state = apply(state, scope.draft(payload).to_event(seq))
+    return state
 
 
 def context(*, run_id: str = "run-1", call_id: str = "c1", store: object = None) -> ToolContext:
@@ -473,6 +502,118 @@ async def test_a_tool_that_fails_gives_its_key_back() -> None:
     assert (await fragile.invoke({}, ctx)).as_text == "fait"
 
 
+@pytest.mark.parametrize("error", [RuntimeError("panne"), TimeoutError("connexion")])
+async def test_an_error_raised_by_the_tool_gives_its_key_back(
+    magasin: Magasin, error: Exception
+) -> None:
+    """Une exception levée par l'outil rend la clé, un ``TimeoutError`` comme une autre."""
+
+    @idempotent
+    @tool(side_effects="irreversible")
+    async def fragile() -> str:
+        """Échoue avant tout effet."""
+        raise error
+
+    store = magasin()
+    ctx = context(store=store)
+    with pytest.raises(type(error)):
+        await fragile.invoke({}, ctx)
+    assert await store.get(ctx.idempotency_key) is None
+
+
+@pytest.mark.parametrize(
+    ("reservation", "reply"),
+    [(60, "déjà en cours"), (-1, "État inconnu")],
+    ids=["tenue", "perimee"],
+)
+async def test_a_deadline_from_outside_keeps_the_key_and_the_effect_is_not_redone(
+    magasin: Magasin, reservation: float, reply: str
+) -> None:
+    """Délai venu de l'extérieur : on ignore où l'effet en était, il n'est pas refait."""
+    effets: list[str] = []
+    entre = asyncio.Event()
+
+    @idempotent(reservation=reservation)
+    @tool(side_effects="irreversible")
+    async def relancer() -> str:
+        """Envoie la relance ; l'API distante ne répond jamais."""
+        effets.append("envoi")
+        entre.set()
+        await asyncio.Event().wait()
+        return "envoyée"
+
+    store = magasin()
+    ctx = context(store=store)
+
+    async def expire_apres_l_effet(scope: asyncio.Timeout) -> None:
+        await entre.wait()
+        scope.reschedule(asyncio.get_running_loop().time())
+
+    # Le délai de l'exécuteur est un ``asyncio.timeout`` : l'outil reçoit une annulation.
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(None) as scope:
+            guet = asyncio.create_task(expire_apres_l_effet(scope))
+            try:
+                await relancer.invoke({}, ctx)
+            finally:
+                guet.cancel()
+    record = await store.get(ctx.idempotency_key)
+    assert record is not None and record.status == "in_progress"
+
+    with pytest.raises(ToolError, match=reply):
+        await relancer.invoke({}, ctx)
+    assert effets == ["envoi"]
+
+
+async def test_the_executor_deadline_keeps_the_key_too() -> None:
+    """Le cas rapporté : « Délai dépassé » au modèle, puis la relance rend l'état inconnu."""
+    effets: list[str] = []
+
+    @idempotent(key=lambda a: f"relance:{a['devis']}")
+    @tool(side_effects="irreversible", timeout=0.05)
+    async def relancer(devis: str) -> str:
+        """Envoie la relance ; l'API distante ne répond jamais."""
+        effets.append(devis)
+        await asyncio.Event().wait()
+        return "envoyée"
+
+    executor = ToolExecutor([relancer], idempotency=InMemoryIdempotency())  # pyright: ignore[reportArgumentType]
+    first = await _run(executor, awaiting(call("c1", "relancer", devis="D-1")))
+    assert "Délai dépassé" in completed(first)["c1"].as_text
+    again = await _run(executor, awaiting(call("c2", "relancer", devis="D-1")))
+    # La réservation suit le délai de l'outil : elle est périmée quand le modèle relance.
+    assert "État inconnu" in completed(again)["c2"].as_text
+    assert effets == ["D-1"]
+
+
+async def test_a_cancelled_call_keeps_its_key(magasin: Magasin) -> None:
+    """Annulation (arrêt du run, du process) : même règle que le délai, la clé reste prise."""
+    effets: list[str] = []
+    entre = asyncio.Event()
+
+    @idempotent(reservation=60)
+    @tool(side_effects="irreversible")
+    async def envoyer() -> str:
+        """Envoie, puis attend une réponse qui n'arrive pas."""
+        effets.append("envoi")
+        entre.set()
+        await asyncio.Event().wait()
+        return "envoyée"
+
+    store = magasin()
+    ctx = context(store=store)
+    task = asyncio.create_task(envoyer.invoke({}, ctx))
+    await entre.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    record = await store.get(ctx.idempotency_key)
+    assert record is not None and record.status == "in_progress"
+    with pytest.raises(ToolError, match="déjà en cours"):
+        await envoyer.invoke({}, ctx)
+    assert effets == ["envoi"]
+
+
 async def test_the_memorised_result_keeps_its_data() -> None:
     @idempotent
     @tool
@@ -670,6 +811,67 @@ async def test_a_tool_without_effects_is_replayed_without_asking() -> None:
     assert not [e for e in events if isinstance(e, ApprovalRequested)]
     assert completed(events)["c1"].as_text == "lu"
     assert lectures == ["lecture"]
+
+
+class Mort(BaseException):
+    """Le process meurt pendant l'outil : rien de ce qui suit ne s'exécute."""
+
+
+async def test_a_transfer_approved_then_killed_is_not_made_twice() -> None:
+    """De bout en bout : accord en ligne, effet produit, process tué, reprise (P0-5)."""
+    virements: list[int] = []
+    vivant = {"oui": True}
+
+    @tool(side_effects="irreversible", approval="always")
+    async def virer(montant: int) -> str:
+        """Effectue un virement irréversible."""
+        virements.append(montant)
+        if vivant["oui"]:
+            vivant["oui"] = False
+            raise Mort
+        return "virement effectué"
+
+    async def accorde(asked: PendingApproval) -> Approved:
+        return Approved(by="l'artisan")
+
+    store = InMemoryEventStore()
+    modele = ScriptedModel(
+        tool_call_message(("c1", "virer", {"montant": 500})), Message.assistant("Vérifié.")
+    )
+    spec_modele = ModelSpec(
+        id="FAKE",
+        sdk="fake",
+        model="fake-1",
+        pricing=Pricing(input=1.0, output=5.0),
+        retry=RetryPolicy(initial_delay=0),
+    )
+    ctx = RunContext(
+        agent="banque",
+        store=store,
+        model=modele,
+        model_spec=spec_modele,
+        tools=ToolExecutor([virer]),
+        system="Tu vires.",
+        approver=accorde,
+    )
+    run = await begin_run(ctx, "Vire 500 euros.")
+    with pytest.raises(Mort):
+        await drive(ctx, run.run_id)
+
+    final = await drive(ctx, run.run_id)
+
+    assert final.status is RunStatus.COMPLETED
+    assert virements == [500]
+    journal = await store.read(DEFAULT_TENANT, final.session_id)
+    assert [e.type for e in journal if e.type.startswith(("tool.", "approval."))] == [
+        "approval.requested",
+        "approval.granted",
+        "tool.called",
+        "tool.completed",
+    ]
+    # Le modèle est prévenu que l'effet est d'état inconnu, il ne croit pas à un succès.
+    [resultat] = [b for m in final.messages for b in m.blocks if isinstance(b, ToolResultBlock)]
+    assert resultat.output == ToolOutput.error(UNKNOWN_STATE)
 
 
 # --- Deux appels en parallèle -------------------------------------------------
@@ -880,6 +1082,82 @@ async def test_a_granted_approval_takes_the_stale_reservation_back(
     executor = ToolExecutor([outil], idempotency=store)  # pyright: ignore[reportArgumentType]
     state = awaiting(call("c1", "envoyer", started=True, devis="D-1"))
     state = _granted(state, "c1", "envoyer")
+    events = await _run(executor, state)
+    assert completed(events)["c1"].as_text == "relance 1"
+    assert envois == ["D-1"]
+
+
+def _virement() -> tuple[list[str], Relanceur]:
+    """Outil idempotent à approbation obligatoire, dont la clé est métier."""
+    envois: list[str] = []
+
+    @idempotent(key=lambda a: f"relance:{a['devis']}")
+    @tool(side_effects="irreversible", approval="always")
+    async def envoyer(devis: str) -> str:
+        """Envoie la relance du devis."""
+        envois.append(devis)
+        return f"relance {len(envois)}"
+
+    return envois, envoyer
+
+
+def _accorde(state: RunState, *, lance: bool) -> RunState:
+    """Accord donné avant le lancement, suivi ou non de ce lancement (le plantage)."""
+    suite: list[DurablePayload] = [
+        ApprovalRequested(call_id="c1", tool_name="envoyer", arguments={"devis": "D-1"}),
+        ApprovalGranted(call_id="c1", tool_name="envoyer", by="l'artisan"),
+    ]
+    if lance:
+        suite.append(
+            ToolCalled(call_id="c1", tool_name="envoyer", tool_kind="python", arguments={})
+        )
+    return _after(state, *suite)
+
+
+async def test_an_approved_launch_that_died_after_its_effect_is_not_redone(
+    magasin: Magasin,
+) -> None:
+    """Accord, lancement, effet, plantage avant l'enregistrement : la reprise ne refait rien."""
+    envois, outil = _virement()
+    store = magasin()
+    await _perimee(store, outil)
+    executor = ToolExecutor([outil], idempotency=store)  # pyright: ignore[reportArgumentType]
+    state = awaiting(call("c1", "envoyer", started=True, devis="D-1"))
+    events = await _run(executor, _accorde(state, lance=True))
+    sortie = completed(events)["c1"]
+    assert sortie.is_error and "État inconnu" in sortie.as_text
+    assert envois == []
+
+
+async def test_an_approval_before_the_launch_does_not_lift_a_stale_reservation(
+    magasin: Magasin,
+) -> None:
+    """Réservation périmée d'un autre run : l'accord, donné sans le savoir, ne l'efface pas."""
+    envois, outil = _virement()
+    store = magasin()
+    await _perimee(store, outil)
+    executor = ToolExecutor([outil], idempotency=store)  # pyright: ignore[reportArgumentType]
+    state = awaiting(call("c1", "envoyer", devis="D-1"))
+    events = await _run(executor, _accorde(state, lance=False))
+    sortie = completed(events)["c1"]
+    assert sortie.is_error and "État inconnu" in sortie.as_text
+    assert envois == []
+
+
+async def test_an_approval_asked_after_the_launch_takes_the_stale_reservation_back(
+    magasin: Magasin,
+) -> None:
+    """L'état inconnu est découvert après le lancement ; l'accord qui suit y répond."""
+    envois, outil = _virement()
+    store = magasin()
+    await _perimee(store, outil)
+    state = awaiting(call("c1", "envoyer", started=True, devis="D-1"))
+    state = _after(
+        state,
+        ApprovalRequested(call_id="c1", tool_name="envoyer", reason=UNKNOWN_EFFECT),
+        ApprovalGranted(call_id="c1", tool_name="envoyer", by="l'artisan"),
+    )
+    executor = ToolExecutor([outil], idempotency=store)  # pyright: ignore[reportArgumentType]
     events = await _run(executor, state)
     assert completed(events)["c1"].as_text == "relance 1"
     assert envois == ["D-1"]

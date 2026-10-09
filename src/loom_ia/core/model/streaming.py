@@ -37,6 +37,8 @@ type ModelErrorKind = Literal[
     "auth",
     "invalid_request",
     "content_filtered",
+    # Sortie coupée par la limite de tokens (``max_tokens``) : jamais une réponse.
+    "truncated",
     # Tous les modèles de la chaîne sont écartés par leur disjoncteur (#10).
     "unavailable",
 ]
@@ -227,6 +229,11 @@ class ResponseAccumulator:
         self.usage = Usage()
         self.stop_reason: StopReason | None = None
         self.model_id: str | None = None
+
+    @property
+    def stopped(self) -> bool:
+        """Vrai si le flux a livré son ``Stopped`` ; sans lui, il s'est interrompu en route."""
+        return self.stop_reason is not None
 
     def add(self, chunk: ModelChunk) -> None:
         match chunk:

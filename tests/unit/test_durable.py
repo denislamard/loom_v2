@@ -9,12 +9,14 @@ arrive après la fin rend « déjà fini ».
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import pytest
 import yaml
+from conftest import demo_agent
 
 from loom_ia.access.api import Loom
 from loom_ia.adapters.stores import JsonlEventStore
@@ -29,10 +31,20 @@ from loom_ia.core.events import (
     RunScope,
     SessionTrimmed,
 )
-from loom_ia.core.model import DEFAULT_TENANT, Message, RunId, RunStatus, SessionId
+from loom_ia.core.model import (
+    DEFAULT_TENANT,
+    Message,
+    RunId,
+    RunState,
+    RunStatus,
+    SessionId,
+    TenantId,
+    new_run_id,
+)
 from loom_ia.core.projections import fold
 from loom_ia.engine import ClaimConflict
 from loom_ia.testing import RunJournal
+from loom_ia.tools import tool
 
 type ConfigFactory = Callable[..., Path]
 
@@ -310,6 +322,245 @@ def test_recover_can_be_scoped_to_one_session(durable: ConfigFactory) -> None:
     assert reste is RunStatus.READY_FOR_MODEL
 
 
+def test_a_run_left_between_its_final_transition_and_its_end_is_finished_cleanly(
+    durable: ConfigFactory,
+) -> None:
+    """Le worker est mort après ``run.transitioned → completed``, avant ``run.completed``.
+
+    La reprise n'écrit que la clôture : pas de nouvelle concession après l'état
+    final, qui rendrait le journal illisible pour toujours.
+    """
+    path = durable()
+    store_path = Path(load_config(path).storage.events.path or "")
+
+    async def go() -> tuple[RunStatus, list[Event]]:
+        journal = await _half_closed(store_path, worker="worker-mort", seconds=-1)
+        async with Loom.from_config(path) as loom:
+            status = (await loom.resume(journal.run_id, session_id=SESSION)).status
+            return status, await loom.export_session(SESSION)
+
+    status, events = asyncio.run(go())
+
+    assert status is RunStatus.COMPLETED
+    assert events[-1].type == "run.completed"
+    # La seule concession du journal est celle du worker mort.
+    assert [e.type for e in events].count("run.claimed") == 1
+    fold(events, events[0].run_id)
+
+
+def test_a_half_closed_run_still_waits_for_a_live_lease(durable: ConfigFactory) -> None:
+    """Rien à concéder pour une clôture, mais la concession d'un autre pilote vivant tient."""
+    path = durable()
+    store_path = Path(load_config(path).storage.events.path or "")
+
+    async def go() -> None:
+        journal = await _half_closed(store_path, worker="worker-ailleurs", seconds=600)
+        async with Loom.from_config(path) as loom:
+            with pytest.raises(ClaimConflict):
+                await loom.resume(journal.run_id, session_id=SESSION)
+
+    asyncio.run(go())
+
+
+# --- Un seul pilote par run, dans une instance ----------------------------------
+
+
+class Porte:
+    """Tient l'outil en plein effet jusqu'à ce qu'on l'ouvre, et compte ses départs.
+
+    Elle s'ouvre toujours en sortant du bloc : un test qui échoue ne laisse pas
+    la fermeture de l'instance attendre un outil que personne ne libérera.
+    """
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Queue[None]()
+        self.open = asyncio.Event()
+        self.runs = 0
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        self.open.set()
+
+
+def _bloque(porte: Porte) -> object:
+    @tool
+    async def calculer(expr: str) -> str:
+        """Calcule une expression arithmétique, une fois la porte ouverte."""
+        porte.runs += 1
+        porte.entered.put_nowait(None)
+        await porte.open.wait()
+        return str(eval(expr))
+
+    return calculer
+
+
+def _bloquant(demo: ConfigFactory, **root: Any) -> Path:
+    """Agent ``demo`` dont l'outil ``calculer`` est celui que le test enregistre."""
+    return demo(imports=[], agents=[demo_agent(tools=[{"python": "calculer"}])], **root)
+
+
+async def _calme() -> None:
+    """Laisse la boucle aller au bout de ce qui peut avancer sans événement.
+
+    Les journaux de ces essais sont en mémoire : rien n'y attend le disque, donc
+    un pilote qui pouvait repartir l'a fait bien avant la dernière de ces passes.
+    """
+    for _ in range(200):
+        await asyncio.sleep(0)
+
+
+async def test_resume_waits_for_the_pilot_instead_of_running_the_tool_again(
+    demo: ConfigFactory,
+) -> None:
+    """``submit`` puis ``resume`` : le second attend, au lieu de refaire l'effet."""
+    async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
+        loom.register("calculer", _bloque(porte))
+        run_id = await loom.submit("demo", QUESTION)
+        await porte.entered.get()
+        second = asyncio.create_task(loom.resume(run_id))
+        await _calme()
+        assert porte.runs == 1
+        porte.open.set()
+        result = await second
+        await loom.drain()
+        state = await loom.state(run_id)
+
+    assert result.status is RunStatus.COMPLETED
+    assert state.status is RunStatus.COMPLETED
+    assert porte.runs == 1
+
+
+async def test_recover_leaves_a_run_this_instance_is_piloting(demo: ConfigFactory) -> None:
+    """Sans erreur, et sans le compter : la concession est celle de l'instance elle-même."""
+    async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
+        loom.register("calculer", _bloque(porte))
+        direct = asyncio.create_task(loom.run("demo", QUESTION))
+        await porte.entered.get()
+        repris = await loom.recover()
+        await _calme()
+        assert porte.runs == 1
+        porte.open.set()
+        result = await direct
+        state = await loom.state(result.run_id)
+
+    assert repris == ()
+    assert state.status is RunStatus.COMPLETED
+    assert porte.runs == 1
+
+
+async def test_a_waiting_pilot_takes_over_when_the_first_one_is_interrupted(
+    demo: ConfigFactory,
+) -> None:
+    """Le premier lâche sans finir le run : celui qui attendait le reprend où le journal en est."""
+    run_id = new_run_id()
+    async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
+        loom.register("calculer", _bloque(porte))
+        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id))
+        await porte.entered.get()
+        second = asyncio.create_task(loom.resume(run_id))
+        await _calme()
+        assert porte.runs == 1
+        first.cancel()
+        with suppress(asyncio.CancelledError):
+            await first
+        porte.open.set()
+        async with asyncio.timeout(5):
+            result = await second
+        state = await loom.state(run_id)
+
+    assert result.status is RunStatus.COMPLETED
+    assert state.status is RunStatus.COMPLETED
+
+
+async def test_cancel_stops_the_pilot_and_the_one_waiting_behind_it(demo: ConfigFactory) -> None:
+    run_id = new_run_id()
+    async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
+        loom.register("calculer", _bloque(porte))
+        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id))
+        await porte.entered.get()
+        second = asyncio.create_task(loom.resume(run_id))
+        await _calme()
+        assert porte.runs == 1
+        assert await loom.cancel(run_id, by="denis")
+        with suppress(asyncio.CancelledError):
+            await first
+        result = await second
+        events = await loom.events(run_id)
+        state = await loom.state(run_id)
+
+    assert result.status is RunStatus.CANCELLED
+    assert state.status is RunStatus.CANCELLED
+    assert [e.type for e in events].count("run.cancelled") == 1
+    assert events[-1].type == "run.cancelled"
+    assert porte.runs == 1
+
+
+async def test_cancel_keeps_the_run_until_it_is_closed(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le pilote interrompu, l'arrêt pas encore écrit : celui qui attend ne repart pas."""
+    run_id = new_run_id()
+    async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
+        loom.register("calculer", _bloque(porte))
+        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id))
+        await porte.entered.get()
+        second = asyncio.create_task(loom.resume(run_id))
+        await _calme()
+        reading, go = asyncio.Event(), asyncio.Event()
+        read = loom.state
+
+        async def slow_state(
+            run_id: RunId, *, session_id: SessionId | None = None, tenant_id: TenantId | None = None
+        ) -> RunState:
+            reading.set()
+            await go.wait()
+            return await read(run_id, session_id=session_id, tenant_id=tenant_id)
+
+        monkeypatch.setattr(loom, "state", slow_state)
+        cancelling = asyncio.create_task(loom.cancel(run_id))
+        await reading.wait()
+        await _calme()
+        assert porte.runs == 1
+        go.set()
+        assert await cancelling
+        with suppress(asyncio.CancelledError):
+            await first
+        result = await second
+
+    assert result.status is RunStatus.CANCELLED
+    assert porte.runs == 1
+
+
+async def test_two_clients_with_the_same_run_id_are_piloted_apart(demo: ConfigFactory) -> None:
+    """Un même ``run_id`` chez deux clients : aucun n'attend l'autre, et l'arrêt vise le bon."""
+    run_id = new_run_id()
+    acme, beta = TenantId("acme"), TenantId("beta")
+    path = _bloquant(demo, tenants=[{"id": acme}, {"id": beta}])
+    async with Loom.from_config(path) as loom, Porte() as porte:
+        loom.register("calculer", _bloque(porte))
+        runs = {
+            tenant: asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id, tenant=tenant))
+            for tenant in (acme, beta)
+        }
+        async with asyncio.timeout(5):
+            # Chacun a son outil en cours : aucun n'attend l'autre.
+            await porte.entered.get()
+            await porte.entered.get()
+        assert await loom.cancel(run_id, tenant_id=acme)
+        porte.open.set()
+        with suppress(asyncio.CancelledError):
+            await runs[acme]
+        result = await runs[beta]
+        stopped = await loom.state(run_id, tenant_id=acme)
+        done = await loom.state(run_id, tenant_id=beta)
+
+    assert result.status is RunStatus.COMPLETED
+    assert stopped.status is RunStatus.CANCELLED
+    assert done.status is RunStatus.COMPLETED
+
+
 # --- Arrêté ailleurs (6.4) ------------------------------------------------------
 
 
@@ -461,6 +712,24 @@ async def _held(store_path: Path, *, worker: str, seconds: float) -> tuple[RunJo
     await store.append(drafts, expected_seq=0)
     await store.aclose()
     return journal, until
+
+
+async def _half_closed(store_path: Path, *, worker: str, seconds: float) -> RunJournal:
+    """Journal d'un run dont le pilote est mort entre sa transition finale et sa clôture."""
+    journal = RunJournal(agent="demo", session_id=SESSION)
+    journal.start(QUESTION)
+    until = datetime.now(UTC) + timedelta(seconds=seconds)
+    drafts: list[EventDraft] = [
+        *journal.take(),
+        journal.scope.draft(RunClaimed(worker_id=worker, lease_until=until)),
+    ]
+    journal.model_turn(Message.assistant(ANSWER)).transition(
+        RunStatus.COMPLETED, cause="model.responded"
+    )
+    store = JsonlEventStore(store_path)
+    await store.append([*drafts, *journal.take()], expected_seq=0)
+    await store.aclose()
+    return journal
 
 
 def _trimmed(session_id: SessionId) -> EventDraft:

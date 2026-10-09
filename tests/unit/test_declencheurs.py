@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Déclencheurs : une porte déclarée, sa charge, sa clé, ses doublons (H6, J5.4c)."""
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -13,6 +14,7 @@ from conftest import ConfigFactory, demo_agent
 from loom_ia.access import DeliveryRefused, Loom, Triggered, UnknownTrigger
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
+from loom_ia.core.events import Event
 from loom_ia.core.model import RunId, SessionId, TenantId
 
 if TYPE_CHECKING:
@@ -129,6 +131,49 @@ async def test_the_same_delivery_twice_opens_one_run(demo: ConfigFactory) -> Non
     assert autre.run_id == "evt-2" and autre.repeated is False
     # Deux livraisons, deux journaux : la troisième n'a rien rouvert.
     assert sorted(record.session_id for record in journaux) == ["evt-1", "evt-2"]
+
+
+@pytest.mark.parametrize("session", [None, "devis-{{ payload.devis.numero }}"])
+async def test_two_simultaneous_deliveries_open_one_run(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, session: str | None
+) -> None:
+    """Deux livraisons simultanées du même identifiant : un seul run, l'autre est « repeated »."""
+    declared = RELANCE if session is None else {**RELANCE, "session": session}
+    async with Loom.from_config(demo(storage=JOURNAL, triggers=[declared])) as loom:
+        reading = loom.store.read
+        meeting = asyncio.Barrier(2)
+        checks = 0
+
+        async def read(
+            tenant_id: TenantId,
+            session_id: SessionId,
+            *,
+            after_seq: int = 0,
+            run_id: RunId | None = None,
+        ) -> list[Event]:
+            nonlocal checks
+            found = await reading(tenant_id, session_id, after_seq=after_seq, run_id=run_id)
+            if run_id is not None and checks < 4:
+                checks += 1
+                # Chaque livraison a relu le journal — déjà reçue ? run déjà là ? —
+                # sans rien y trouver, avant que l'autre n'écrive.
+                async with asyncio.timeout(10):
+                    await meeting.wait()
+            return found
+
+        monkeypatch.setattr(loom.store, "read", read)
+        first, second = await asyncio.gather(
+            loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1"),
+            loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1"),
+        )
+        await loom.drain()
+        events = await loom.events(first.run_id, session_id=first.session_id)
+        result = await loom.result(first.run_id, session_id=first.session_id)
+
+    assert sorted([first.repeated, second.repeated]) == [False, True]
+    assert first.run_id == second.run_id == "evt-1"
+    assert [event.type for event in events].count("run.started") == 1
+    assert result.status == "completed"
 
 
 async def test_a_delivery_id_that_is_not_usable_is_refused(demo: ConfigFactory) -> None:

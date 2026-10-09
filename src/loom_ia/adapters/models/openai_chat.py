@@ -21,12 +21,17 @@ Vise les fournisseurs compatibles (Together, vLLM, Ollama…) ; sans
 - un identifiant d'appel d'outil manquant est généré ;
 - le schéma de sortie (``output_schema``) devient ``response_format``
   (``json_schema``) pour un modèle déclaré ``native_json: true`` ; ``strict``
-  seulement si le schéma en suit les règles (B9).
+  seulement si le schéma en suit les règles (B9) ;
+- fin du flux : un flux est complet quand un choix porte son ``finish_reason``,
+  ou, à défaut (certains serveurs compatibles l'omettent), quand la ligne
+  ``data: [DONE]`` est reçue. Ni l'un ni l'autre : le flux a été coupé, et
+  l'appel échoue en ``transient`` plutôt que de rendre un début de réponse.
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 """
 
 import logging
+import re
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import Final, cast
 
@@ -98,6 +103,12 @@ REASONING_FIELDS: Final = ("reasoning_content", "reasoning")
 # Champ de renvoi d'un raisonnement dont l'origine est inconnue (convention d'OpenAI pour gpt-oss).
 DEFAULT_REASONING_FIELD: Final = "reasoning"
 
+# Ligne qui clôt un flux SSE de ce type d'API. Un saut de ligne la précède toujours :
+# le JSON d'un morceau n'en porte pas de brut (il est échappé).
+_DONE: Final = re.compile(rb"\ndata: ?\[DONE\]")
+# Octets gardés d'une lecture à l'autre, de quoi reconnaître cette ligne coupée en deux.
+_DONE_TAIL: Final = 16
+
 _FINISH_REASONS: Final[dict[str, StopReason]] = {
     "stop": "end",
     "length": "max_tokens",
@@ -127,6 +138,30 @@ def own_headers(api_key: str) -> Mapping[str, str]:
         headers["Authorization"] = f"Bearer {api_key}"
     # ``Omit`` est compris des en-têtes du SDK, que son annotation ne dit pas.
     return cast(Mapping[str, str], headers)
+
+
+class _Sentinel:
+    """Note si le flux a reçu ``data: [DONE]``, que le SDK consomme sans le dire.
+
+    Le SDK s'arrête sur cette ligne comme à la fin du flux : rien, dans les
+    événements qu'il rend, ne dit laquelle des deux est arrivée. On la lit donc
+    au passage des octets, en enrobant ``Response.aiter_bytes`` — ce qu'il lit,
+    déjà décompressé.
+    """
+
+    def __init__(self, response: httpx2.Response) -> None:
+        self.seen = False
+        # Le début du flux est un début de ligne.
+        self._tail = b"\n"
+        self._inner = response.aiter_bytes
+        response.aiter_bytes = self._bytes
+
+    async def _bytes(self, chunk_size: int | None = None) -> AsyncGenerator[bytes]:
+        async for chunk in self._inner(chunk_size):
+            window = self._tail + chunk
+            self.seen = self.seen or _DONE.search(window) is not None
+            self._tail = window[-_DONE_TAIL:]
+            yield chunk
 
 
 class OpenAIChatModel:
@@ -200,9 +235,11 @@ class OpenAIChatModel:
                     stream_options={"include_usage": True},
                 )
                 async with events:
+                    sentinel = _Sentinel(events.response)
                     async for event in events:
                         for chunk in parser.feed(event):
                             yield chunk
+                parser.check_end(done=sentinel.seen)
                 for chunk in parser.finish():
                     yield chunk
                 return
@@ -354,6 +391,8 @@ class StreamParser:
         self._model: str | None = None
         self._reasoning = False
         self._refused = False
+        # Texte, raisonnement ou appel d'outil reçu.
+        self._content = False
 
     def feed(self, event: ChatCompletionChunk) -> list[ModelChunk]:
         self._model = event.model or self._model
@@ -394,6 +433,7 @@ class StreamParser:
             if choice.finish_reason is not None:
                 self._finish = choice.finish_reason
             self._refused = self._refused or bool(delta.refusal)
+        self._content = self._content or bool(chunks)
         return chunks
 
     def feed_completion(self, completion: ChatCompletion) -> list[ModelChunk]:
@@ -423,6 +463,24 @@ class StreamParser:
         self._finish = choice.finish_reason
         self._refused = bool(message.refusal)
         return chunks
+
+    def check_end(self, *, done: bool) -> None:
+        """Lève ``ModelError("transient")`` si le flux n'est pas allé à sa fin.
+
+        Un ``finish_reason`` le dit. À défaut (certains serveurs compatibles
+        l'omettent), la ligne ``[DONE]`` (``done``) le dit aussi, pourvu que le
+        flux ait apporté quelque chose. Sinon il a été coupé, ou il est vide.
+        """
+        if self._finish is not None:
+            return
+        if not done:
+            raise ModelError(
+                "transient", "Flux interrompu : ni finish_reason ni [DONE] reçus du fournisseur"
+            )
+        if not self._content:
+            raise ModelError(
+                "transient", "Réponse vide : [DONE] reçu sans finish_reason ni contenu"
+            )
 
     def finish(self) -> list[ModelChunk]:
         """Morceaux de fin : l'API ne signale ni la fin des appels ni l'arrêt séparément."""

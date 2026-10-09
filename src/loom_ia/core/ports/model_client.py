@@ -115,6 +115,21 @@ class AnsweringClient(ABC):
         """Morceaux de la réponse d'un vrai appel, quand ``answer`` n'en a pas."""
 
 
+def require_end(accumulator: ResponseAccumulator) -> None:
+    """Lève ``ModelError("transient")`` si le flux s'est arrêté sans ``Stopped``.
+
+    Connexion coupée, flux vide : ce que le flux a livré est un début de
+    réponse, pas une réponse, et ne doit jamais finir en run réussi. L'erreur
+    est rejouable, donc soumise aux nouvelles tentatives, au secours et au
+    disjoncteur. Une réponse proprement terminée, même sans contenu, n'est pas
+    concernée.
+    """
+    if not accumulator.stopped:
+        raise ModelError(
+            "transient", "Flux interrompu : le fournisseur a fermé le flux sans signal de fin"
+        )
+
+
 async def complete(
     client: ModelClient,
     request: ModelRequest,
@@ -124,6 +139,7 @@ async def complete(
     """Consomme le flux et renvoie la réponse complète.
 
     ``on_chunk`` reçoit chaque morceau au passage (diffusion en direct).
+    ``ModelError`` si le flux n'a pas de fin propre (``require_end``).
     """
     accumulator = ResponseAccumulator()
     async with aclosing(client.stream(request)) as chunks:
@@ -131,4 +147,5 @@ async def complete(
             accumulator.add(chunk)
             if on_chunk is not None:
                 await on_chunk(chunk)
+    require_end(accumulator)
     return accumulator.result(model_id=request.model_id, provider=client.provider)

@@ -27,13 +27,14 @@ from loom_ia.core.model import (
     RunId,
     RunStatus,
     SessionId,
+    TenantId,
     ToolOutput,
     artifact_uri,
     new_run_id,
 )
 from loom_ia.core.ports import ArtifactNotFound, EventStore
 from loom_ia.core.projections import fold, fold_all, history
-from loom_ia.engine import RunMoved, SessionWriter, SessionWriters, cancellation
+from loom_ia.engine import RunExists, RunMoved, SessionWriter, SessionWriters, cancellation
 from loom_ia.sessions import boundary, cut, due, estimate_tokens, marked, snapshot
 from loom_ia.sessions.snapshot import Cuts
 from loom_ia.testing import RunJournal, tool_call_message
@@ -314,6 +315,57 @@ async def test_a_write_about_a_run_closed_elsewhere_is_refused() -> None:
     # Un autre run de la session s'écrit toujours.
     autre = await pilote.append(RunJournal(session_id=SESSION).start("Autre ?").take())
     assert autre[0].seq == arret[-1].seq + 1
+
+
+async def test_a_run_is_not_opened_twice_through_one_writer() -> None:
+    """L'écrivain partagé suit le journal : sans conflit à voir, seule sa vérification refuse."""
+    store = InMemoryEventStore()
+    writer = await SessionWriter.open(store, DEFAULT_TENANT, SESSION)
+    run = RunId("r-1")
+    first = RunJournal(session_id=SESSION, run_id=run).start("Premier ?").take()
+    second = RunJournal(session_id=SESSION, run_id=run).start("Second ?").take()
+
+    await writer.append(first, opens=run)
+    with pytest.raises(RunExists, match="r-1 existe déjà"):
+        await writer.append(second, opens=run)
+
+    events = await store.read(DEFAULT_TENANT, SESSION)
+    assert [e.type for e in events] == ["run.started", "message.user"]
+    assert writer.last_seq == events[-1].seq
+
+
+async def test_a_write_opening_a_run_lost_to_another_is_refused_not_replayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L'autre ouverture passe entre la vérification et l'écriture : le lot n'est pas rejoué."""
+    store = InMemoryEventStore()
+    run = RunId("r-1")
+    ours = await SessionWriter.open(store, DEFAULT_TENANT, SESSION)
+    rival = await SessionWriter.open(store, DEFAULT_TENANT, SESSION)
+    rival_drafts = [RunJournal(session_id=SESSION, run_id=run).start("Rivale ?").take()]
+    reading = store.read
+
+    async def read(
+        tenant_id: TenantId,
+        session_id: SessionId,
+        *,
+        after_seq: int = 0,
+        run_id: RunId | None = None,
+    ) -> list[Event]:
+        found = await reading(tenant_id, session_id, after_seq=after_seq, run_id=run_id)
+        if run_id is not None and rival_drafts:
+            # La vérification vient de ne rien voir ; l'autre écrit avant nous.
+            await rival.append(rival_drafts.pop(), opens=run)
+        return found
+
+    monkeypatch.setattr(store, "read", read)
+    mine = RunJournal(session_id=SESSION, run_id=run).start("Nôtre ?").take()
+    with pytest.raises(RunExists):
+        await ours.append(mine, opens=run)
+
+    events = await store.read(DEFAULT_TENANT, SESSION)
+    assert [e.type for e in events] == ["run.started", "message.user"]
+    assert ours.last_seq == events[-1].seq
 
 
 async def test_a_run_moving_on_elsewhere_does_not_refuse_its_stop() -> None:

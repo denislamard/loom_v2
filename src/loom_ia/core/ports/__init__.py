@@ -26,6 +26,7 @@ from loom_ia.core.ports.model_client import (
     ModelClient,
     ModelError,
     complete,
+    require_end,
     stopped_by_client,
 )
 from loom_ia.core.ports.policy import Policy
@@ -91,5 +92,6 @@ __all__ = [
     "idempotency_key",
     "journal_key",
     "recording",
+    "require_end",
     "stopped_by_client",
 ]

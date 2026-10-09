@@ -37,7 +37,10 @@ trace et l'appel rejoué refait l'effet.
 
 Si l'outil lève, la réservation est rendue : un outil qui échoue est réputé
 n'avoir rien produit. C'est le contrat demandé à son auteur — produire
-l'effet puis lever ferait mentir la promesse.
+l'effet puis lever ferait mentir la promesse. Un délai (celui de l'outil) ou
+une annulation (arrêt du run, du process) n'est pas un échec de l'outil : on
+ignore où il en était, la réservation n'est **pas** rendue et expire d'elle-même,
+après quoi l'effet est d'état inconnu.
 """
 
 import logging
@@ -163,7 +166,13 @@ class IdempotentTool[**P, R]:
             raise ToolError(BUSY)
         try:
             output = await self._tool.invoke(arguments, context)
-        except BaseException:
+        except Exception:
+            # Seule une exception levée **par l'outil** rend la clé : il est
+            # réputé n'avoir rien produit. Un délai ou une annulation venus de
+            # l'extérieur (``CancelledError`` n'est pas une ``Exception``) ne
+            # disent rien de l'effet, qui a pu avoir lieu : la clé reste prise
+            # jusqu'à son expiration, et l'appel suivant tombe sur l'état
+            # inconnu (#18) au lieu de refaire l'effet.
             await store.release(key)
             raise
         await store.complete(key, output.model_dump(mode="json"), self.ttl)

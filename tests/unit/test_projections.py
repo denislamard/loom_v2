@@ -1,9 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """Projections : état d'un run et historique d'une session."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
-from loom_ia.core.events import Event, RunTransitioned, ToolCalled
+from loom_ia.core.events import (
+    ApprovalGranted,
+    ApprovalRejected,
+    ApprovalRequested,
+    DurablePayload,
+    Event,
+    RunClaimed,
+    RunTransitioned,
+    ToolCalled,
+    ToolSourceUnavailable,
+)
 from loom_ia.core.model import (
     Message,
     ReasoningBlock,
@@ -80,6 +92,69 @@ def test_pending_calls_follow_the_tool_lifecycle() -> None:
     assert [(c.call_id, c.started) for c in state.pending_calls] == [("c1", True), ("c2", False)]
 
 
+def _after_request(*payloads: DurablePayload) -> list[Event]:
+    """Journal d'un run dont le modèle demande l'appel c1, suivi de ces événements."""
+    journal = RunJournal()
+    journal.start("x").model_turn(tool_call_message(("c1", "virer", {})))
+    drafts = [*journal.take(), *(journal.scope.draft(p) for p in payloads)]
+    return [draft.to_event(seq) for seq, draft in enumerate(drafts, start=1)]
+
+
+def _ask(reason: str = "") -> DurablePayload:
+    return ApprovalRequested(call_id="c1", tool_name="virer", reason=reason)
+
+
+def _grant() -> DurablePayload:
+    return ApprovalGranted(call_id="c1", tool_name="virer", by="denis")
+
+
+def _launch() -> DurablePayload:
+    return ToolCalled(call_id="c1", tool_name="virer", tool_kind="python")
+
+
+def test_a_grant_is_spent_by_the_launch_that_follows_it() -> None:
+    """L'ordre du journal dit si l'accord a déjà servi : avant l'appel, après, ou les deux."""
+
+    def launched(*payloads: DurablePayload) -> list[bool]:
+        events = _after_request(*payloads)
+        return [a.launched for a in fold(events, events[0].run_id).approvals]
+
+    assert launched(_ask(), _grant()) == [False]
+    assert launched(_ask(), _grant(), _launch()) == [True]
+    # Demandé après coup (effet d'état inconnu) : pas encore servi, tant qu'il n'a pas relancé.
+    assert launched(_launch(), _ask("inconnu"), _grant()) == [False]
+    assert launched(_launch(), _ask("inconnu"), _grant(), _launch()) == [True]
+    # Une demande sans réponse ne se consomme pas : seule une décision accordée sert.
+    assert launched(_ask(), _launch()) == [False]
+    refusee = ApprovalRejected(call_id="c1", tool_name="virer", by="denis")
+    assert launched(_ask(), refusee) == [False]
+
+
+def test_a_call_can_ask_for_a_second_approval() -> None:
+    """Le premier accord a servi ; une seconde demande suit si l'effet devient inconnu."""
+    events = _after_request(_ask(), _grant(), _launch(), _ask("inconnu"), _grant())
+    asked = fold(events[:-1], events[0].run_id)
+    assert [a.reason for a in asked.approvals] == ["", "inconnu"]
+    assert asked.awaiting == (asked.approvals[1],)
+    assert asked.approval("c1") is asked.approvals[1]
+
+    state = fold(events, events[0].run_id)
+    assert state.awaiting == ()
+    # La décision ne ferme que la dernière demande ; la première garde la sienne.
+    assert [(a.outcome and a.outcome.verdict, a.launched) for a in state.approvals] == [
+        ("granted", True),
+        ("granted", False),
+    ]
+
+
+def test_a_decision_settles_a_request_only_once() -> None:
+    events = _after_request(_ask(), _grant())
+    state = fold(events, events[0].run_id)
+    again = RunJournal(run_id=state.run_id).scope.draft(_grant())
+    with pytest.raises(ProjectionError, match="déjà tranché"):
+        apply(state, again.to_event(len(events) + 1))
+
+
 def test_tool_result_is_added_to_messages() -> None:
     journal = calculation_run()
     state = fold(numbered(journal), journal.run_id)
@@ -154,6 +229,34 @@ def test_only_the_closing_event_follows_a_terminal_transition() -> None:
     user = journal.scope.draft(events[1].payload)
     with pytest.raises(ProjectionError, match="après l'état completed"):
         apply(state, user.to_event(len(events) + 1))
+
+
+def test_a_lease_written_after_the_final_state_is_absorbed() -> None:
+    """Concession de reprise ou de renouvellement, écrite pendant la clôture.
+
+    Elle parle du pilote, pas du run : le journal reste lisible, que la clôture
+    la précède ou la suive. Les autres événements restent refusés après un état
+    final — l'exception ne vaut que pour elle.
+    """
+    journal = RunJournal()
+    journal.start("x").model_turn(Message.assistant("ok")).complete()
+    *opening, closing = journal.take()  # ... transition vers completed, puis run.completed
+    lease = journal.scope.draft(
+        RunClaimed(worker_id="worker-2", lease_until=datetime.now(UTC) + timedelta(seconds=60))
+    )
+
+    for order in ([lease, closing], [closing, lease]):
+        events = [d.to_event(seq) for seq, d in enumerate([*opening, *order], start=1)]
+        state = fold(events, journal.run_id)
+
+        assert state.finished and state.status is RunStatus.COMPLETED
+        assert state.last_seq == len(events)
+        assert state.claim is not None and state.claim.worker_id == "worker-2"
+
+    stray = journal.scope.draft(ToolSourceUnavailable(source="erp", error="injoignable"))
+    events = [d.to_event(seq) for seq, d in enumerate([*opening, closing, stray], start=1)]
+    with pytest.raises(ProjectionError, match="après l'état completed"):
+        fold(events, journal.run_id)
 
 
 def test_event_of_another_run_is_rejected() -> None:

@@ -471,6 +471,7 @@ Le LLM `main` n'est pas forcément Anthropic.
 | `auth` (401, 403) | | ✗ erreur de config, run en échec |
 | `invalid_request` (400) | | ✗ bug, run en échec |
 | `content_filtered` | | ✗ par défaut |
+| `truncated` (sortie coupée par `max_tokens`) | | ✗ le run échoue : une sortie coupée n'est pas une réponse |
 
 **Règles :**
 
@@ -497,6 +498,8 @@ Le LLM `main` n'est pas forcément Anthropic.
 **Port minimal :** `ModelClient.stream(request) -> AsyncIterator[ModelChunk]`. `complete()` est un utilitaire générique qui rassemble le flux : un seul chemin de code.
 
 **Morceaux neutres :** `TextDelta`, `ReasoningDelta`, `ToolCallStarted`, `ToolArgsDelta`, `ToolCallEnded`, `UsageDelta`, `Stopped(reason)`. Le `provider_meta` peut arriver en cours de flux (par exemple la signature du thinking Anthropic, en fin de bloc).
+
+**Fin du flux :** une réponse n'existe que si son flux se termine proprement. Un flux sans `Stopped` (connexion fermée en route, flux vide) est une erreur `transient` : nouvelles tentatives, secours et disjoncteur s'appliquent. La fin propre est `message_stop` (Anthropic), `response.completed` ou `response.incomplete` (Responses), un `finish_reason` ou, à défaut — des serveurs compatibles l'omettent —, la ligne `data: [DONE]` après du contenu (Chat Completions). Un flux arrêté par `max_tokens` n'est jamais une réponse : l'appel échoue en `model.truncated`, avec ou sans appel d'outil (aucun outil n'est lancé), sans nouvelle tentative ; seul un vrai appel est contrôlé, la réponse d'un journal se rejoue telle quelle.
 
 **Accumulation :** les deltas partent sur le bus comme `model.delta` (éphémères) ; la réponse complète est écrite dans le journal comme `model.responded`. Les arguments d'outils partiels ne sont jamais transmis aux hooks.
 

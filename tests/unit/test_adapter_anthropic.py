@@ -305,6 +305,20 @@ async def test_defaults_without_tools_and_forced_answer() -> None:
     assert forced.stop_reason == "max_tokens"
 
 
+async def test_a_stream_without_message_stop_is_an_interrupted_call() -> None:
+    """Un flux qui s'arrête en route n'est pas une réponse : il ne rend rien, ni usage nul."""
+    text = [
+        start(input_tokens=1200),
+        block_start(0, {"type": "text", "text": ""}),
+        delta(0, {"type": "text_delta", "text": "Le devis s'élève à 1 2"}),
+    ]
+    cut_before_the_end = [*text, stop(0), end("end_turn")[0]]
+    for body in (streamed(*text), streamed(*cut_before_the_end), streamed()):
+        with pytest.raises(ModelError, match="message_stop non reçu") as caught:
+            await complete(Server(body).model(), request())
+        assert caught.value.kind == "transient" and caught.value.retryable
+
+
 async def test_required_tool_choice_becomes_any() -> None:
     server = Server(streamed(start(), *end("tool_use")))
     await complete(server.model(), request(tools=(TOOL,), tool_choice="required"))

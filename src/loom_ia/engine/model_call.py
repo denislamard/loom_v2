@@ -11,6 +11,14 @@ Avant la première tentative, les références de fichiers de la requête sont
 résolues selon les capacités du modèle (``MediaResolver``) ; la fenêtre de
 contexte est estimée sur la requête non résolue, plus une part fixe par image.
 
+Fin de l'appel : une tentative ne rend une réponse que si son flux a une fin
+propre (``Stopped``) et n'a pas été arrêté par la limite de tokens. Un flux
+coupé ou vide est une erreur ``transient`` (nouvelles tentatives, secours,
+disjoncteur) ; une sortie arrêtée par ``max_tokens`` est une erreur
+``truncated``, définitive : refaire le même appel couperait au même endroit.
+La réponse d'un journal (``AnsweringClient``) n'est pas contrôlée : elle a été
+acceptée quand le journal a été écrit, et le rejeu la ressert telle quelle.
+
 Échanges bruts (J6.1b) : avec ``raw_max_bytes``, chaque tentative ouvre un
 registre (``recording``) où le client HTTP de l'adaptateur dépose ce qu'il a
 envoyé et reçu ; à la fin de la tentative, réussie ou non, chaque échange sort
@@ -43,6 +51,7 @@ from loom_ia.core.ports import (
     ModelClient,
     ModelError,
     recording,
+    require_end,
 )
 from loom_ia.engine.exchange import Recorded, exchanged
 from loom_ia.engine.media import IMAGE_TOKENS, MediaResolver
@@ -255,4 +264,15 @@ class ModelCall:
                     "transient", f"Délai total dépassé : {timeouts.total:g} s"
                 ) from exc
             raise
+        # Seul le vrai appel est contrôlé : la réponse d'un journal (``answer``) revient plus haut.
+        if accumulator.stop_reason == "max_tokens":
+            produced = accumulator.usage.output_tokens
+            after = f" après {produced} tokens" if produced else ""
+            raise ModelError(
+                "truncated",
+                f"Réponse tronquée : le modèle {self.spec.id} s'est arrêté sur sa limite de "
+                f"tokens (max_tokens ou fenêtre de contexte){after} ; une sortie coupée n'est "
+                "pas une réponse. Augmenter max_tokens ou raccourcir la demande.",
+            )
+        require_end(accumulator)
         return accumulator.result(model_id=request.model_id, provider=self.client.provider)

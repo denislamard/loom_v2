@@ -114,6 +114,9 @@ class PendingApproval(DomainModel):
     scope: str = "approve"
     expire_at: datetime | None = None
     outcome: ApprovalOutcome | None = None
+    # Un ``tool.called`` a été écrit depuis l'accord : il a servi à un lancement,
+    # et ne couvre pas le suivant (#17, #18). Déduit de l'ordre du journal.
+    launched: bool = False
 
     def stale(self, now: datetime) -> bool:
         """Demande sans réponse dont la date est passée.
@@ -251,8 +254,12 @@ class RunState(DomainModel):
         return tuple(a for a in self.approvals if a.outcome is None)
 
     def approval(self, call_id: str) -> PendingApproval | None:
-        """Demande d'approbation de cet appel, tranchée ou non."""
-        return next((a for a in self.approvals if a.call_id == call_id), None)
+        """Dernière demande d'approbation de cet appel, tranchée ou non.
+
+        Un appel peut en porter plusieurs : la première couvre son lancement ;
+        une autre vient si l'effet de ce lancement devient d'état inconnu.
+        """
+        return next((a for a in reversed(self.approvals) if a.call_id == call_id), None)
 
     @property
     def attachments(self) -> tuple[ArtifactRecord, ...]:

@@ -10,7 +10,13 @@ import pytest
 from jsonschema.exceptions import SchemaError
 from pydantic import JsonValue
 
-from loom_ia.core.events import ToolCalled, ToolCompleted
+from loom_ia.core.events import (
+    ApprovalGranted,
+    ApprovalRequested,
+    DurablePayload,
+    ToolCalled,
+    ToolCompleted,
+)
 from loom_ia.core.model import (
     INVALID_JSON_KEY,
     CallerContext,
@@ -76,6 +82,35 @@ def awaiting(*calls: PendingCall, tenant: str = "default") -> RunState:
 
 def call(call_id: str, name: str, *, started: bool = False, **arguments: JsonValue) -> PendingCall:
     return PendingCall(call_id=call_id, name=name, arguments=arguments, started=started)
+
+
+def journaled(call_id: str, name: str, *payloads: DurablePayload, x: int = 3) -> RunState:
+    """État d'un run relu au journal : le modèle a demandé l'appel, puis ces événements ont suivi.
+
+    Contrairement à ``awaiting``, l'état est **plié** depuis les événements : c'est
+    ainsi que la reprise le lit, avec l'ordre entre l'accord et le lancement.
+    """
+    journal = RunJournal(agent="demo")
+    journal.start("?").model_turn(tool_call_message((call_id, name, {"x": x})))
+    drafts = [*journal.take(), *(journal.scope.draft(p) for p in payloads)]
+    events = [draft.to_event(seq) for seq, draft in enumerate(drafts, start=1)]
+    return fold(events, journal.run_id)
+
+
+def asked(
+    call_id: str, name: str, reason: str = "outil à approbation obligatoire"
+) -> DurablePayload:
+    return ApprovalRequested(call_id=call_id, tool_name=name, arguments={"x": 3}, reason=reason)
+
+
+def granted(call_id: str, name: str) -> DurablePayload:
+    return ApprovalGranted(call_id=call_id, tool_name=name, by="denis")
+
+
+def launched(call_id: str, name: str, *, resumed: bool = False) -> DurablePayload:
+    return ToolCalled(
+        call_id=call_id, tool_name=name, tool_kind="python", arguments={"x": 3}, resumed=resumed
+    )
 
 
 async def collect(executor: ToolExecutor, state: RunState) -> list[ToolEvent]:
@@ -276,6 +311,93 @@ async def test_interrupted_calls_follow_the_resume_rule() -> None:
     assert completed(events)["c3"] == ToolOutput.error(UNKNOWN_STATE)
     assert [c[1].call_id for c in sender.calls] == ["c4"]
     assert len(reader.calls) == len(idempotent.calls) == 1
+
+
+async def test_an_approval_given_before_the_first_launch_lets_the_tool_run_once() -> None:
+    """Cas normal : l'accord précède le lancement, l'outil part une fois, sans rien d'inconnu."""
+    virer = RecordingTool(spec("virer", side_effects="irreversible", approval="always"))
+    state = journaled("c1", "virer", asked("c1", "virer"), granted("c1", "virer"))
+    events = await collect(ToolExecutor([virer]), state)
+    assert [e.resumed for e in events if isinstance(e, ToolCalled)] == [False]
+    assert not completed(events)["c1"].is_error
+    assert len(virer.calls) == 1
+    # L'humain n'a pas vu d'effet d'état inconnu : son accord ne l'efface pas.
+    assert virer.calls[0][1].replay_unknown is False
+
+
+async def test_an_approved_call_that_was_launched_is_not_relaunched() -> None:
+    """Accord, lancement, plantage : l'accord a servi, l'effet est d'état inconnu (#18)."""
+    virer = RecordingTool(spec("virer", side_effects="irreversible", approval="always"))
+    state = journaled(
+        "c1", "virer", asked("c1", "virer"), granted("c1", "virer"), launched("c1", "virer")
+    )
+    events = await collect(ToolExecutor([virer]), state)
+    assert completed(events)["c1"] == ToolOutput.error(UNKNOWN_STATE)
+    assert not [e for e in events if isinstance(e, ToolCalled)]
+    assert virer.calls == []
+
+
+async def test_an_approved_call_that_was_launched_can_ask_a_human_again() -> None:
+    """``on_unknown: pause`` : le premier accord ne répond pas à l'état inconnu, on redemande."""
+    virer = RecordingTool(
+        spec("virer", side_effects="irreversible", approval="always", on_unknown="pause")
+    )
+    state = journaled(
+        "c1", "virer", asked("c1", "virer"), granted("c1", "virer"), launched("c1", "virer")
+    )
+    events = await collect(ToolExecutor([virer]), state)
+    [demande] = [e for e in events if isinstance(e, ApprovalRequested)]
+    assert demande.reason == UNKNOWN_STATE
+    assert not completed(events)
+    assert virer.calls == []
+
+    # Le second accord, lui, est une réponse à l'état inconnu : l'appel repart une fois.
+    second = journaled(
+        "c1",
+        "virer",
+        asked("c1", "virer"),
+        granted("c1", "virer"),
+        launched("c1", "virer"),
+        asked("c1", "virer", UNKNOWN_STATE),
+        granted("c1", "virer"),
+    )
+    events = await collect(ToolExecutor([virer]), second)
+    assert [e.resumed for e in events if isinstance(e, ToolCalled)] == [True]
+    assert len(virer.calls) == 1
+    assert virer.calls[0][1].replay_unknown is True
+
+
+async def test_an_approval_asked_after_the_launch_is_spent_by_the_next_one() -> None:
+    """Plantage après le lancement accordé en état inconnu : ce second accord a servi aussi."""
+    virer = RecordingTool(
+        spec("virer", side_effects="irreversible", on_unknown="pause", approval="never")
+    )
+    state = journaled(
+        "c1",
+        "virer",
+        launched("c1", "virer"),
+        asked("c1", "virer", UNKNOWN_STATE),
+        granted("c1", "virer"),
+        launched("c1", "virer", resumed=True),
+    )
+    events = await collect(ToolExecutor([virer]), state)
+    assert [e.reason for e in events if isinstance(e, ApprovalRequested)] == [UNKNOWN_STATE]
+    assert virer.calls == []
+
+
+@pytest.mark.parametrize("options", [{}, {"idempotent": True, "side_effects": "irreversible"}])
+async def test_a_call_safe_to_retry_resumes_after_its_approval(options: dict[str, object]) -> None:
+    """Lecture ou outil idempotent : l'accord déjà donné vaut encore, sans nouvelle demande."""
+    lire = RecordingTool(spec("lire", approval="always", on_unknown="pause", **options))
+    state = journaled(
+        "c1", "lire", asked("c1", "lire"), granted("c1", "lire"), launched("c1", "lire")
+    )
+    events = await collect(ToolExecutor([lire]), state)
+    assert not [e for e in events if isinstance(e, ApprovalRequested)]
+    assert not completed(events)["c1"].is_error
+    assert [e.resumed for e in events if isinstance(e, ToolCalled)] == [True]
+    # Pas un état inconnu qu'un humain aurait levé : la réservation périmée reste signalée.
+    assert lire.calls[0][1].replay_unknown is False
 
 
 async def test_tool_context() -> None:

@@ -7,13 +7,19 @@ lancé en socket Unix.
 
 import asyncio
 import hashlib
+import importlib
 import json
+import os
 import shutil
+import stat
+import sys
 import tempfile
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -454,3 +460,219 @@ async def test_a_host_wait_shorter_than_the_job_closes_the_session(execd: Path) 
         )
     assert session.closed
     await _erased(jobs, wait=1.5)
+
+
+# ---------------------------------------------------------------------- #
+# Les liens symboliques que le job pose dans ce qui lui appartient
+# ---------------------------------------------------------------------- #
+#
+# execd tourne en root dans la VM, le job sous l'uid 1500. Un lien posé par le job ne doit
+# jamais faire changer le propriétaire, le mode ni le contenu de sa cible. Ces essais se
+# passent de root : ``os.geteuid`` rend 0, et ``chown`` et ``fchown`` sont des espions qui
+# notent l'objet que le noyau aurait atteint, sans rien changer.
+
+type FileId = tuple[int, int]
+
+
+def _file_id(path: Path, *, follow: bool = True) -> FileId:
+    found = path.stat() if follow else path.lstat()
+    return found.st_dev, found.st_ino
+
+
+class _Chowns:
+    """Espion de ``chown`` et ``fchown`` : retient les objets que le noyau aurait atteints."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.reached: set[FileId] = set()
+        monkeypatch.setattr(os, "geteuid", lambda: 0)
+        monkeypatch.setattr(os, "chown", self._chown)
+        monkeypatch.setattr(os, "fchown", self._fchown)
+
+    def _chown(
+        self,
+        path: str | os.PathLike[str],
+        uid: int,
+        gid: int,
+        *,
+        dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> None:
+        found = os.stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+        self.reached.add((found.st_dev, found.st_ino))
+
+    def _fchown(self, fd: int, uid: int, gid: int) -> None:
+        found = os.fstat(fd)
+        self.reached.add((found.st_dev, found.st_ino))
+
+
+@pytest.fixture
+def service(execd_service: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
+    """Le module ``session`` du service, importé comme la VM le fait (voisins à plat)."""
+    names = ("session", "protocol", "limits")
+    for name in names:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.setattr(sys, "path", [str(execd_service), *sys.path])
+    importlib.invalidate_caches()
+    try:
+        yield importlib.import_module("session")
+    finally:
+        for name in names:
+            sys.modules.pop(name, None)
+
+
+def _guest_session(service: ModuleType, jobs: Path) -> Any:
+    cfg = SimpleNamespace(jobs_dir=str(jobs), uid=1500, gid=1500, version="essai")
+    return service.Session(conn=None, cfg=cfg, exec_sem=None)
+
+
+def test_the_session_root_stays_root_s_and_the_sandbox_gets_its_folders(
+    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La racine reste à root (0711) ; le sandbox reçoit ses dossiers (0700), pas la racine."""
+    chowns = _Chowns(monkeypatch)
+    session = _guest_session(service, tmp_path / "jobs")
+    session.setup()
+    root: Path = session.root
+    assert stat.S_IMODE(root.stat().st_mode) == 0o711
+    assert sorted(entry.name for entry in root.iterdir()) == ["code", "in", "out", "run", "work"]
+    for entry in root.iterdir():
+        assert stat.S_IMODE(entry.stat().st_mode) == 0o700
+        assert _file_id(entry) in chowns.reached
+    assert _file_id(root) not in chowns.reached
+
+
+def test_owning_a_tree_never_follows_a_link_planted_in_it(
+    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le sandbox reçoit l'arbre et ses liens, jamais les fichiers de root où ils mènent."""
+    victim = tmp_path / "victime"
+    victim.write_text("a root")
+    folder = tmp_path / "dossier"
+    folder.mkdir()
+    (folder / "contenu").write_text("a root")
+    tree = tmp_path / "arbre"
+    tree.mkdir()
+    (tree / "a.txt").write_text("a")
+    (tree / "d").mkdir()
+    (tree / "d" / "b.txt").write_text("b")
+    (tree / "d" / "vers_fichier").symlink_to(victim)
+    (tree / "vers_dossier").symlink_to(folder)
+    (tree / "pendu").symlink_to(tmp_path / "absent")
+    head = tmp_path / "tete"
+    head.symlink_to(folder)  # le dossier lui-même remplacé par un lien
+
+    chowns = _Chowns(monkeypatch)
+    session = _guest_session(service, tmp_path / "jobs")
+    session._own(tree)
+    session._own(head)
+
+    for protected in (victim, folder, folder / "contenu"):
+        assert _file_id(protected) not in chowns.reached
+    ours = [tree, tree / "a.txt", tree / "d", tree / "d" / "b.txt"]
+    assert {_file_id(path) for path in ours} <= chowns.reached
+    assert _file_id(tree / "d" / "vers_fichier", follow=False) in chowns.reached
+
+
+async def test_reset_does_not_follow_a_link_left_in_the_session_root(
+    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un lien posé à côté des dossiers ne mène pas le reset à donner sa cible au sandbox."""
+    victim = tmp_path / "victime"
+    victim.write_text("a root")
+    session = _guest_session(service, tmp_path / "jobs")
+    session.setup()
+    (session.root / "piege").symlink_to(victim)
+
+    chowns = _Chowns(monkeypatch)
+    await session.m_reset({}, b"")
+    assert _file_id(victim) not in chowns.reached
+    assert _file_id(session.root) not in chowns.reached
+    assert _file_id(session.root / "work") in chowns.reached
+
+
+def test_job_json_is_recreated_without_writing_through_a_link(
+    service: ModuleType, tmp_path: Path
+) -> None:
+    """job.json est recréé : un lien à sa place n'est pas traversé, et le mode reste 0644."""
+    victim = tmp_path / "victime.conf"
+    victim.write_text("CONFIG\n")
+    victim.chmod(0o600)
+    root = tmp_path / "racine"
+    root.mkdir()
+    job_path, result_path = root / "job.json", root / "result.json"
+    job_path.symlink_to(victim)
+    result_path.write_text("ancien")
+
+    previous = os.umask(0o077)
+    try:
+        service._write_job(job_path, {"entrypoint": "x:y"}, result_path)
+        service._write_job(job_path, {"entrypoint": "z:w"}, result_path)  # job.json existe déjà
+    finally:
+        os.umask(previous)
+
+    assert victim.read_text() == "CONFIG\n"
+    assert stat.S_IMODE(victim.stat().st_mode) == 0o600
+    assert not job_path.is_symlink()
+    assert json.loads(job_path.read_text()) == {"entrypoint": "z:w"}
+    assert stat.S_IMODE(job_path.stat().st_mode) == 0o644
+    assert not result_path.exists()
+
+
+async def test_the_end_of_a_put_sets_the_file_it_wrote_not_the_name(
+    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un lien posé à la place du fichier au moment du mode et du propriétaire n'est pas suivi."""
+    victim = tmp_path / "victime"
+    victim.write_text("a root")
+    victim.chmod(0o600)
+    session = _guest_session(service, tmp_path / "jobs")
+    session.setup()
+    target: Path = session.root / "in" / "f.txt"
+
+    chowns = _Chowns(monkeypatch)
+    written: list[FileId] = []
+
+    def swap() -> None:
+        # Le nom devient un lien à l'instant où execd pose le mode du fichier.
+        if not written:
+            written.append(_file_id(target))
+            target.unlink()
+            target.symlink_to(victim)
+
+    real_chmod, real_fchmod = os.chmod, os.fchmod
+
+    def chmod(path: str | os.PathLike[str], mode: int) -> None:
+        swap()
+        real_chmod(path, mode)
+
+    def fchmod(fd: int, mode: int) -> None:
+        swap()
+        real_fchmod(fd, mode)
+
+    monkeypatch.setattr(os, "chmod", chmod)
+    monkeypatch.setattr(os, "fchmod", fchmod)
+
+    reply, _ = await session.m_file_put({"path": "f.txt", "eof": True}, b"contenu")
+    assert reply["ok"] is True
+    assert stat.S_IMODE(victim.stat().st_mode) == 0o600
+    assert _file_id(victim) not in chowns.reached
+    assert written
+    assert written[0] in chowns.reached
+
+
+async def test_a_put_refuses_a_folder_replaced_by_a_link(
+    service: ModuleType, tmp_path: Path
+) -> None:
+    """Un dossier de la session devenu lien : rien n'est écrit au-delà, tout chemin y passait."""
+    outside = tmp_path / "dehors"
+    outside.mkdir()
+    session = _guest_session(service, tmp_path / "jobs")
+    session.setup()
+    shutil.rmtree(session.root / "in")
+    (session.root / "in").symlink_to(outside)
+
+    with pytest.raises(service.ExecdError) as caught:
+        await session.m_file_put({"path": "f.txt", "eof": True}, b"contenu")
+    assert caught.value.kind == "bad_path"
+    assert caught.value.detail["reason"] == "symlink"
+    assert list(outside.iterdir()) == []

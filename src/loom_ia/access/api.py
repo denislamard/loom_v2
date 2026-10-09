@@ -58,7 +58,7 @@ import asyncio
 import logging
 import re
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import ExitStack, suppress
+from contextlib import ExitStack, asynccontextmanager, suppress
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -135,6 +135,7 @@ from loom_ia.engine import (
     CircuitBreakers,
     ClaimConflict,
     RunContext,
+    RunExists,
     RunMoved,
     SessionWriter,
     SessionWriters,
@@ -200,6 +201,10 @@ logger = logging.getLogger(__name__)
 
 # Ce qu'un run donne à voir pendant qu'il se déroule.
 type StreamItem = Event | ModelChunk
+
+# Un run dans son journal : le même ``run_id`` peut exister chez deux clients,
+# ou dans deux sessions d'un même client.
+type RunKey = tuple[TenantId, SessionId, RunId]
 
 # File servie par un courtier (5.3b) : combien de fois un travail attend la fin
 # d'un bail avant d'être abandonné au journal, et de combien on dépasse ce bail.
@@ -999,7 +1004,11 @@ class Loom:
         # le même, et ne se refusent pas l'un l'autre (#22).
         self._writers = SessionWriters()
         # Runs pilotés ici, pour que ``cancel`` puisse les atteindre (A5).
-        self._driving: dict[RunId, asyncio.Task[RunState]] = {}
+        self._driving: dict[RunKey, asyncio.Task[RunState]] = {}
+        # Runs tenus ici par un pilote, ou par un arrêt en cours : un seul à la
+        # fois, car la concession ne départage pas deux pilotes d'un même
+        # worker. L'événement se lève quand le run est lâché.
+        self._held: dict[RunKey, asyncio.Event] = {}
         # Compaction : agent interne et file de tâches, seulement si la config
         # la déclare (#23).
         compaction = config.sessions.compaction
@@ -1214,7 +1223,9 @@ class Loom:
 
         Le run est lancé en tâche de fond ; abandonner l'itération l'annule.
         Son résultat se relit ensuite avec ``result(run_id)``. Avec
-        ``subruns``, les événements des sous-runs sont mêlés au flux.
+        ``subruns``, les événements des sous-runs sont mêlés au flux. Le flux
+        ne montre que le journal de ce run — son client, sa session : un autre
+        run qui aurait choisi le même ``run_id`` n'y paraît pas.
         ``judges`` et ``approver`` : comme pour ``run``.
         """
         run_id = run_id or new_run_id()
@@ -1226,8 +1237,16 @@ class Loom:
         caller, who = await self._admitted(agent, context, tenant)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
         tree = RunTree(run_id, subruns=subruns)
+        session = session_id or SessionId(run_id)
+
+        def accept(event: Event) -> bool:
+            # Comme ``follow`` : le journal du run d'abord. L'arbre ne doit rien
+            # apprendre d'un autre client ni d'une autre session qui auraient
+            # choisi le même ``run_id``, ni de leurs sous-runs.
+            return event.tenant_id == who.id and event.session_id == session and tree.admit(event)
+
         # Écoute posée avant le démarrage : l'arbre se reconnaît dans l'ordre d'écriture.
-        with self._store.listen(items.put_nowait, accept=tree.admit):
+        with self._store.listen(items.put_nowait, accept=accept):
             task = asyncio.create_task(
                 self._start(ctx, message, attachments, session_id, caller, run_id, judges)
             )
@@ -1904,25 +1923,55 @@ class Loom:
 
         Si l'appelant est annulé, la tâche l'est aussi : elle n'écrit rien de
         plus et le run reste reprenable. Seul ``cancel`` écrit ``run.cancelled``.
+
+        Un run n'a qu'un pilote à la fois dans l'instance : deux tâches sur le
+        même run répètent l'outil, puis le journal ne se relit plus. Un second
+        pilotage attend donc la fin du premier, puis relit le journal avant de
+        rien faire : un run fini est rendu tel quel, un run laissé en pause et
+        réveillé entre-temps — une approbation — repart. Le second pilotage ne
+        sert donc ses ``on_chunk`` que si le run reste à faire.
         """
-        task = asyncio.create_task(
-            drive(
-                ctx,
-                state.run_id,
-                session_id=state.session_id,
-                tenant_id=state.context.tenant_id,
-                writer=writer,
+        key = (state.context.tenant_id, state.session_id, state.run_id)
+        async with self._holding(key):
+            task = asyncio.create_task(
+                drive(
+                    ctx,
+                    state.run_id,
+                    session_id=state.session_id,
+                    tenant_id=state.context.tenant_id,
+                    writer=writer,
+                )
             )
-        )
-        self._driving[state.run_id] = task
+            self._driving[key] = task
+            try:
+                return await task
+            finally:
+                if self._driving.get(key) is task:
+                    del self._driving[key]
+                if not task.done():
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+
+    @asynccontextmanager
+    async def _holding(self, key: RunKey, *, takeover: bool = False) -> AsyncGenerator[None]:
+        """Tient un run le temps du bloc : un seul pilotage, ou un seul arrêt, à la fois.
+
+        Qui arrive pendant qu'un autre tient le run attend qu'il le lâche.
+        ``takeover`` (``cancel``) ne fait pas la queue : il prend la place de
+        celui qu'il interrompt, pour que les pilotes en attente ne repartent
+        pas avant que ``run.cancelled`` soit écrit.
+        """
+        if not takeover:
+            while (held := self._held.get(key)) is not None:
+                await held.wait()
+        mine = self._held[key] = asyncio.Event()
         try:
-            return await task
+            yield
         finally:
-            self._driving.pop(state.run_id, None)
-            if not task.done():
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+            if self._held.get(key) is mine:
+                del self._held[key]
+            mine.set()
 
     async def cancel(
         self,
@@ -1943,22 +1992,26 @@ class Loom:
         Un run qu'un autre process finit entre la lecture et l'écriture de
         l'arrêt est déjà fini : rien n'est écrit après sa fin.
         """
-        task = self._driving.get(run_id)
-        if task is not None and not task.done():
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
-        state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
-        if state.finished:
-            return False
-        # ``state.session_id`` vaut le run_id pour un run anonyme : l'écrivain
-        # partagé de l'instance vaut donc dans les deux cas.
-        writer = await self._writers.open(self._store, state.context.tenant_id, state.session_id)
-        try:
-            await writer.append(cancellation(state, by=by))
-        except RunMoved:
-            return False
-        return True
+        key = (tenant_id or DEFAULT_TENANT, session_id or SessionId(run_id), run_id)
+        async with self._holding(key, takeover=True):
+            task = self._driving.get(key)
+            if task is not None and not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+            state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
+            if state.finished:
+                return False
+            # ``state.session_id`` vaut le run_id pour un run anonyme : l'écrivain
+            # partagé de l'instance vaut donc dans les deux cas.
+            writer = await self._writers.open(
+                self._store, state.context.tenant_id, state.session_id
+            )
+            try:
+                await writer.append(cancellation(state, by=by))
+            except RunMoved:
+                return False
+            return True
 
     async def approve(
         self,
@@ -2176,15 +2229,24 @@ class Loom:
             if seen is not None:
                 return seen
         message = Template.parse(spec.message).render(values)
-        opened = await self.submit(
-            spec.agent,
-            message,
-            session_id=session_id,
-            context=CallerContext(tenant_id=tenant, metadata={"trigger": name}),
-            run_id=run_id,
-            tenant=tenant,
-            trigger=name,
-        )
+        try:
+            opened = await self.submit(
+                spec.agent,
+                message,
+                session_id=session_id,
+                context=CallerContext(tenant_id=tenant, metadata={"trigger": name}),
+                run_id=run_id,
+                tenant=tenant,
+                trigger=name,
+            )
+        except RunExists:
+            # Une livraison simultanée du même identifiant a ouvert le run
+            # entre le test ci-dessus et l'écriture : la nôtre n'a rien écrit,
+            # elle se comporte comme une livraison rejouée.
+            seen = None if run_id is None else await self._already(name, run_id, session_id, tenant)
+            if seen is None:
+                raise
+            return seen
         state = await self.state(opened, session_id=session_id, tenant_id=tenant)
         return Triggered(
             trigger=name, run_id=opened, session_id=state.session_id, status=state.status
@@ -2212,10 +2274,11 @@ class Loom:
         """Remet en file les runs racine laissés en plan, et rend leurs identifiants (H3).
 
         À appeler soi-même : une instance ne redémarre pas les runs d'un autre
-        process à l'insu de son appelant. Un run déjà piloté par un worker
-        vivant sera refusé par sa concession, donc le remettre en file est sans
-        risque. Un run dont l'agent n'est plus déclaré est ignoré, avec un
-        avertissement.
+        process à l'insu de son appelant. Un run déjà piloté par cette instance
+        est sauté, sans erreur et sans figurer dans le résultat. Celui qu'un
+        worker vivant d'un autre process pilote sera refusé par sa concession,
+        donc le remettre en file est sans risque. Un run dont l'agent n'est
+        plus déclaré est ignoré, avec un avertissement.
 
         Sans ``session_id``, toutes les sessions du locataire sont balayées —
         c'est la reprise au démarrage d'un process. Avec, une seule l'est.
@@ -2231,6 +2294,9 @@ class Loom:
         for session in sessions:
             events = await self._store.read(tenant, session)
             for state in _unfinished(events):
+                if (tenant, state.session_id, state.run_id) in self._held:
+                    logger.info("Reprise : run %s déjà piloté ici, ignoré", state.run_id)
+                    continue
                 if state.agent not in known:
                     logger.warning(
                         "Reprise : run %s ignoré, agent %r absent de la configuration",

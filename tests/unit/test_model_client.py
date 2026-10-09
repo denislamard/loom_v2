@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Port des modèles : requête, accumulation du flux, tarifs, faux modèle."""
 
+from collections.abc import AsyncGenerator
+
 import pytest
 from pydantic import ValidationError
 
@@ -28,7 +30,7 @@ from loom_ia.core.model import (
     Usage,
     UsageDelta,
 )
-from loom_ia.core.ports import complete
+from loom_ia.core.ports import ModelError, complete
 from loom_ia.testing import ScriptedModel, ScriptExhausted, message_to_chunks, tool_call_message
 
 
@@ -183,6 +185,34 @@ async def test_complete_rebuilds_the_scripted_message() -> None:
     assert seen == message_to_chunks(message, usage=model.usage, fragment_size=3)
     assert model.requests == [request]
     assert model.remaining == 0
+
+
+async def test_complete_refuses_a_stream_that_stopped_without_stopped() -> None:
+    """Un flux coupé ou vide n'est pas une réponse : ``complete`` lève, il ne rend pas un début."""
+
+    class Cut:
+        provider = "cut"
+
+        def __init__(self, *chunks: ModelChunk) -> None:
+            self.chunks = chunks
+
+        async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+            for chunk in self.chunks:
+                yield chunk
+
+        async def aclose(self) -> None:
+            pass
+
+    request = ModelRequest(model_id="m", messages=(Message.user("?"),))
+    for chunks in ([TextDelta(text="Le total TTC est de 1 5")], []):
+        with pytest.raises(ModelError, match="sans signal de fin") as caught:
+            await complete(Cut(*chunks), request)
+        assert caught.value.kind == "transient" and caught.value.retryable
+    clean = await complete(Cut(TextDelta(text="Oui"), Stopped(reason="end")), request)
+    assert clean.message.text == "Oui"
+    # L'accumulateur, lui, ne juge pas : il dit seulement si le flux a son ``Stopped``.
+    assert not accumulate(TextDelta(text="x")).stopped
+    assert accumulate(Stopped(reason="max_tokens")).stopped
 
 
 async def test_scripted_model_errors_and_callables() -> None:

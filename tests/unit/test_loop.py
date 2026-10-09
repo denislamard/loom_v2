@@ -2,8 +2,10 @@
 """Boucle d'exécution : déroulé d'un run, plafond, échec, reprise, session."""
 
 import asyncio
+import inspect
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from contextlib import asynccontextmanager, suppress
 from dataclasses import replace
 from pathlib import Path
 
@@ -39,16 +41,19 @@ from loom_ia.core.model import (
     SessionId,
     TenantId,
     TextBlock,
+    TextDelta,
     ToolCallBlock,
     ToolOutput,
     ToolResultBlock,
     Usage,
 )
-from loom_ia.core.ports import EventStore, ModelError
+from loom_ia.core.ports import EventStore, ModelError, SourceContext, SourceUnavailable, Tool
 from loom_ia.core.projections import ProjectionError, fold
 from loom_ia.engine import (
     UNKNOWN_STATE,
     RunContext,
+    RunExists,
+    SessionWriter,
     ToolExecutor,
     begin_run,
     drive,
@@ -56,7 +61,7 @@ from loom_ia.engine import (
     step,
 )
 from loom_ia.testing import RunJournal, ScriptedModel, tool_call_message
-from loom_ia.tools import tool
+from loom_ia.tools import ConfiguredTool, tool
 
 USAGE = Usage(input_tokens=1_000, output_tokens=100)
 SPEC = ModelSpec(
@@ -537,6 +542,276 @@ async def test_finished_run_is_left_untouched(store: EventStore) -> None:
     assert await journal(store, state) == before
 
 
+# --- Clôture à moitié écrite : plantage, échéance --------------------------------
+
+
+class Crash(Exception):
+    """Plantage simulé du process."""
+
+
+class FlakyStore(InMemoryEventStore):
+    """Journal en mémoire qui plante avant sa k-ième écriture (``crash_at``)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.crash_at: int | None = None
+        self.writes = 0
+
+    async def append(
+        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
+    ) -> list[Event]:
+        self.writes += 1
+        if self.writes == self.crash_at:
+            raise Crash(f"plantage à l'écriture {self.writes}")
+        return await super().append(drafts, expected_seq=expected_seq)
+
+
+class Erp:
+    """Source d'outils requise, que l'on peut faire tomber."""
+
+    name = "erp"
+    required = True
+
+    def __init__(self, *, up: bool) -> None:
+        self.up = up
+
+    @asynccontextmanager
+    async def open(self, context: SourceContext) -> AsyncGenerator[Sequence[Tool]]:
+        if not self.up:
+            raise SourceUnavailable(self.name, "serveur injoignable")
+        yield []
+
+
+@tool
+def rediger(sujet: str) -> str:
+    """Rédige un texte."""
+    return f"Texte sur {sujet}"
+
+
+REDIGER = ConfiguredTool(tool=rediger, spec=rediger.spec.model_copy(update={"terminal": True}))
+
+
+def crash_plan(scenario: str) -> tuple[list[Message], ToolExecutor, Erp | None]:
+    """Réponses du modèle, outils et source de chaque scénario du balayage."""
+    match scenario:
+        case "tool":
+            script = [
+                tool_call_message(("c1", "calculer", {"expr": "1+1"})),
+                Message.assistant("2"),
+            ]
+            return script, ToolExecutor([calculer]), None
+        case "terminal_tool":
+            script = [tool_call_message(("c1", "rediger", {"sujet": "la pluie"}))]
+            return script, ToolExecutor([REDIGER]), None
+        case "required_source_down":
+            erp = Erp(up=False)
+            return [Message.assistant("Bonjour")], ToolExecutor(sources=[erp]), erp
+        case "source_lost_on_resume":
+            erp = Erp(up=True)
+            return [Message.assistant("Bonjour")], ToolExecutor(sources=[erp]), erp
+        case _:
+            return [Message.assistant("Bonjour")], ToolExecutor(), None
+
+
+@pytest.mark.parametrize("worker", [None, "worker-1"])
+@pytest.mark.parametrize(
+    "scenario",
+    ["answer", "tool", "terminal_tool", "required_source_down", "source_lost_on_resume"],
+)
+async def test_a_crash_at_any_write_leaves_a_journal_that_resumes_cleanly(
+    scenario: str, worker: str | None
+) -> None:
+    """Balayage de plantage : le process meurt à la k-ième écriture, un autre reprend.
+
+    Quel que soit le point — dont celui qui sépare la transition finale de sa
+    clôture —, la reprise ne lève pas, le journal se relit (``fold``) et le run
+    est clos. ``source_lost_on_resume`` : la source requise tombe entre-temps ;
+    elle ne compte que si le run n'est pas déjà dans son état final.
+    """
+    crashes = 0
+    for k in range(1, 60):
+        store = FlakyStore()
+        script, tools, erp = crash_plan(scenario)
+        first = context(store, scripted(*script), tools=tools, worker_id=worker)
+        run = await begin_run(first, "Salut")
+        store.writes, store.crash_at = 0, k
+        try:
+            await drive(first, run.run_id)
+        except Crash:
+            crashes += 1
+        else:
+            break
+        # Reprise : un nouveau pilote, dont le modèle reprend le script où il en était.
+        store.crash_at = None
+        if scenario == "source_lost_on_resume" and erp is not None:
+            erp.up = False
+        done = sum(1 for e in await journal(store, run) if isinstance(e.payload, ModelResponded))
+        second = context(store, scripted(*script[done:]), tools=tools, worker_id=worker)
+        state = await drive(second, run.run_id)
+
+        events = await journal(store, run)
+        assert fold(events, run.run_id).finished, f"écriture {k} : {kinds(events)[-3:]}"
+        assert state.finished, f"écriture {k} : {state.status}"
+        if scenario == "required_source_down":
+            assert state.status is RunStatus.FAILED
+        elif scenario != "source_lost_on_resume":
+            assert state.status is RunStatus.COMPLETED
+    # Le balayage a bien traversé la clôture : au moins sa transition et sa fin.
+    assert crashes >= 3
+
+
+async def test_a_half_closed_run_out_of_time_is_closed_not_expired(store: EventStore) -> None:
+    """Le délai borne le travail à faire : une clôture à finir n'en a plus."""
+    journal_ = RunJournal(agent="demo", step_ms=2_000.0)
+    journal_.start("?").model_turn(Message.assistant("Réponse"))
+    journal_.transition(RunStatus.COMPLETED, cause="model.responded")
+    await append_all(store, journal_.take())
+
+    state = await drive(context(store, scripted(), timeout=1.0), journal_.run_id)
+
+    assert state.status is RunStatus.COMPLETED and state.finished
+    events = await journal(store, state)
+    assert kinds(events)[-2:] == ["→completed", "run.completed"]
+    fold(events, state.run_id)
+
+
+class Deadlines:
+    """Délais que la boucle ouvre pour ses étapes : de quoi en faire tomber un à l'instant voulu."""
+
+    def __init__(self) -> None:
+        self.opened: list[asyncio.Timeout] = []
+
+    def expire(self) -> None:
+        """Fait tomber maintenant le dernier délai ouvert, s'il court encore."""
+        if self.opened:
+            with suppress(RuntimeError):
+                self.opened[-1].reschedule(asyncio.get_running_loop().time())
+
+
+@pytest.fixture
+def deadlines(monkeypatch: pytest.MonkeyPatch) -> Deadlines:
+    seen = Deadlines()
+    real = asyncio.timeout
+
+    def spy(delay: float | None) -> asyncio.Timeout:
+        timeout = real(delay)
+        # Les autres délais (appel du modèle, outils) ne sont pas celui du run.
+        frame = inspect.currentframe()
+        if frame is not None and frame.f_back is not None:
+            if frame.f_back.f_globals["__name__"] == "loom_ia.engine.loop":
+                seen.opened.append(timeout)
+        return timeout
+
+    monkeypatch.setattr(asyncio, "timeout", spy)
+    return seen
+
+
+async def test_the_deadline_cannot_fall_while_the_final_answer_is_released(
+    deadlines: Deadlines,
+) -> None:
+    """``after_guards`` : la réponse part une fois le run clos, hors du délai."""
+    delivered: list[str] = []
+
+    async def slow(chunk: ModelChunk) -> None:
+        deadlines.expire()
+        await asyncio.sleep(0)  # un point où l'échéance couperait, si elle courait encore
+        if isinstance(chunk, TextDelta):
+            delivered.append(chunk.text)
+
+    ctx = context(
+        InMemoryEventStore(),
+        scripted(Message.assistant("Bonjour")),
+        timeout=30.0,
+        stream_output="after_guards",
+        on_chunk=slow,
+    )
+    run = await begin_run(ctx, "?")
+
+    state = await drive(ctx, run.run_id)
+
+    assert state.status is RunStatus.COMPLETED and state.finished
+    assert delivered == ["Bonjour"]
+    fold(await journal(ctx.store, run), run.run_id)
+
+
+async def test_a_timeout_error_that_is_not_the_deadline_is_not_a_timeout_of_the_run() -> None:
+    """Un consommateur de flux qui lève ``TimeoutError`` n'est pas l'échéance du run."""
+
+    async def full(chunk: ModelChunk) -> None:
+        raise TimeoutError("file de diffusion pleine")
+
+    ctx = context(
+        InMemoryEventStore(),
+        scripted(Message.assistant("Bonjour")),
+        stream_output="after_guards",
+        on_chunk=full,
+    )
+    run = await begin_run(ctx, "?")
+
+    with pytest.raises(TimeoutError, match="file de diffusion pleine"):
+        await drive(ctx, run.run_id)
+
+    events = await journal(ctx.store, run)
+    # La clôture est intacte : le run est terminé, et rien n'a été écrit après.
+    assert kinds(events)[-2:] == ["→completed", "run.completed"]
+    assert fold(events, run.run_id).status is RunStatus.COMPLETED
+
+
+class AckLost(InMemoryEventStore):
+    """Persiste une transition, puis laisse tomber le délai avant d'en rendre l'accusé."""
+
+    def __init__(self, deadlines: Deadlines, to_state: RunStatus) -> None:
+        super().__init__()
+        self.deadlines = deadlines
+        self.to_state = to_state
+        self.armed = True
+
+    async def append(
+        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
+    ) -> list[Event]:
+        events = await super().append(drafts, expected_seq=expected_seq)
+        if self.armed and any(
+            isinstance(d.payload, RunTransitioned) and d.payload.to_state is self.to_state
+            for d in drafts
+        ):
+            self.armed = False
+            self.deadlines.expire()
+            await asyncio.sleep(0)  # l'échéance coupe ici : l'écriture est déjà au journal
+        return events
+
+
+@pytest.mark.parametrize(
+    ("to_state", "replies", "expected"),
+    [
+        # Le délai tombe sur la transition finale : le run est mené à son terme.
+        (RunStatus.COMPLETED, [Message.assistant("Bonjour")], RunStatus.COMPLETED),
+        # Il tombe sur un état en cours : l'échec part de l'état réel, pas de l'ancien.
+        (
+            RunStatus.AWAITING_TOOLS,
+            [tool_call_message(("c1", "calculer", {"expr": "1+1"})), Message.assistant("2")],
+            RunStatus.FAILED,
+        ),
+    ],
+)
+async def test_a_deadline_falling_on_a_persisted_write_reads_the_journal_again(
+    deadlines: Deadlines, to_state: RunStatus, replies: list[Message], expected: RunStatus
+) -> None:
+    store = AckLost(deadlines, to_state)
+    ctx = context(store, scripted(*replies), timeout=30.0)
+    run = await begin_run(ctx, "?")
+
+    state = await drive(ctx, run.run_id)
+
+    assert state.status is expected and state.finished
+    events = await journal(store, run)
+    assert fold(events, run.run_id).status is expected
+    closing = events[-1].payload
+    if expected is RunStatus.FAILED:
+        assert isinstance(closing, RunFailed) and closing.error_type == "timeout"
+    else:
+        assert isinstance(closing, RunCompleted)
+
+
 async def test_drive_checks_the_agent(store: EventStore) -> None:
     ctx = context(store, scripted())
     run = await begin_run(ctx, "?")
@@ -591,6 +866,54 @@ async def test_run_identifiers(store: EventStore) -> None:
     assert len(await journal(store, run)) == 2
     with pytest.raises(ProjectionError, match="Aucun événement"):
         await drive(ctx, RunId("inconnu"))
+
+
+@pytest.mark.parametrize("shared", [False, True], ids=["own_writer", "shared_writer"])
+async def test_two_simultaneous_openings_of_a_run_write_it_once(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch, shared: bool
+) -> None:
+    """Deux ``begin_run`` du même ``run_id`` : le perdant n'écrit rien, le journal reste lisible."""
+    reading = store.read
+    meeting = asyncio.Barrier(2)
+    checks = 0
+
+    async def read(
+        tenant_id: TenantId,
+        session_id: SessionId,
+        *,
+        after_seq: int = 0,
+        run_id: RunId | None = None,
+    ) -> list[Event]:
+        nonlocal checks
+        found = await reading(tenant_id, session_id, after_seq=after_seq, run_id=run_id)
+        if run_id is not None and checks < 2:
+            checks += 1
+            # Les deux ouvertures ont vu « personne » avant que l'une n'écrive.
+            async with asyncio.timeout(10):
+                await meeting.wait()
+        return found
+
+    monkeypatch.setattr(store, "read", read)
+    ctx = context(store, scripted(Message.assistant("ok")))
+    session = SessionId("s-1") if shared else None
+    writer = await SessionWriter.open(store, DEFAULT_TENANT, session) if session else None
+
+    outcomes = await asyncio.gather(
+        *(
+            begin_run(ctx, "?", session_id=session, run_id=RunId("r-1"), writer=writer)
+            for _ in range(2)
+        ),
+        return_exceptions=True,
+    )
+
+    refused = [o for o in outcomes if isinstance(o, RunExists)]
+    opened = [o for o in outcomes if isinstance(o, RunState)]
+    assert len(opened) == 1 and len(refused) == 1
+    assert isinstance(refused[0], ValueError) and "r-1 existe déjà" in str(refused[0])
+    events = await store.read(DEFAULT_TENANT, session or SessionId("r-1"))
+    assert [e.type for e in events] == ["run.started", "message.user"]
+    final = await drive(ctx, RunId("r-1"), session_id=session)
+    assert final.status is RunStatus.COMPLETED
 
 
 async def test_transitions_are_logged(store: EventStore, caplog: pytest.LogCaptureFixture) -> None:

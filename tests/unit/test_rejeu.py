@@ -41,7 +41,7 @@ import asyncio
 import json
 import logging
 import shutil
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +56,7 @@ from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
     ApprovalGranted,
+    ApprovalRejected,
     Event,
     ModelResponded,
     RunStarted,
@@ -63,7 +64,9 @@ from loom_ia.core.events import (
     ToolCompleted,
 )
 from loom_ia.core.model import (
+    Approved,
     Message,
+    ModelChunk,
     ModelRequest,
     ModelResponse,
     ModelSpec,
@@ -71,13 +74,16 @@ from loom_ia.core.model import (
     PendingCall,
     Rejected,
     RunId,
+    RunStatus,
     SessionId,
     TextBlock,
     ToolCallBlock,
     ToolDefinition,
     ToolOutput,
+    Usage,
 )
-from loom_ia.core.ports import ModelClient, ModelError, stopped_by_client
+from loom_ia.core.ports import AnsweringClient, ModelClient, ModelError, stopped_by_client
+from loom_ia.engine import RunContext, begin_run, drive
 from loom_ia.engine.hooks import PolicyFailure
 from loom_ia.engine.model_call import ModelCall
 from loom_ia.replay import (
@@ -89,7 +95,7 @@ from loom_ia.replay import (
     journal_runs,
     read_journal,
 )
-from loom_ia.testing import RunJournal, assert_replays, tool_call_message
+from loom_ia.testing import RunJournal, assert_replays, message_to_chunks, tool_call_message
 from loom_ia.tools import tool
 
 SESSION = SessionId("atelier")
@@ -463,6 +469,24 @@ async def test_an_approval_absent_from_the_journal_diverges() -> None:
     assert book.divergence is not None and book.divergence.kind == "approval"
 
 
+async def test_a_call_approved_twice_replays_with_its_first_decision() -> None:
+    """Un plantage après l'accord redemande une décision ; le rejeu ne lance l'appel qu'une fois."""
+    journal_ = RunJournal()
+    journal_.start(QUESTION)
+    journal_.model_turn(tool_call_message(("c1", "envoyer", {})))
+    drafts = [
+        *journal_.take(),
+        journal_.scope.draft(ApprovalGranted(call_id="c1", tool_name="envoyer", by="denis")),
+        journal_.scope.draft(ApprovalRejected(call_id="c1", tool_name="envoyer", by="marie")),
+    ]
+    book = ReplayBook.of([d.to_event(i + 1) for i, d in enumerate(drafts)])
+    decision = await book.approve(
+        drafts[0].run_id, PendingApproval(call_id="c1", tool_name="envoyer")
+    )
+    assert decision == Approved(by="denis")
+    assert book.divergence is None
+
+
 async def test_the_replayed_answer_keeps_what_chunks_would_lose() -> None:
     """La réponse est rendue entière : des métadonnées qu'aucun morceau ne porte restent."""
     meta = {"openai": {"item_id": "msg_1"}}
@@ -492,6 +516,79 @@ async def test_the_replayed_answer_keeps_what_chunks_would_lose() -> None:
     [response] = [item async for item in call.run(request)]
     assert isinstance(response, ModelResponse)
     assert response.message == message
+
+
+TRUNCATED = ModelResponse(
+    model_id="m",
+    provider="fake",
+    message=Message.assistant("Le total TTC est de 1 5"),
+    usage=Usage(input_tokens=9, output_tokens=8),
+    stop_reason="max_tokens",
+)
+
+
+class Written(AnsweringClient):
+    """Le monde d'avant le contrôle de ``max_tokens`` : la réponse coupée, rendue entière."""
+
+    provider = "fake"
+
+    async def answer(self, request: ModelRequest) -> ModelResponse:
+        return TRUNCATED
+
+    async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        raise AssertionError("la réponse est connue")
+        yield  # pragma: no cover
+
+    async def aclose(self) -> None:
+        pass
+
+
+class Live:
+    """Le même flux, lu pour de vrai."""
+
+    provider = "fake"
+
+    async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        for chunk in message_to_chunks(
+            TRUNCATED.message, usage=TRUNCATED.usage, stop_reason=TRUNCATED.stop_reason
+        ):
+            yield chunk
+
+    async def aclose(self) -> None:
+        pass
+
+
+async def test_a_truncated_answer_in_an_older_journal_still_replays_identically() -> None:
+    """Le contrôle de ``max_tokens`` est celui du vrai appel, pas de la réponse d'un journal.
+
+    Un journal écrit avant lui, où la réponse coupée a fini en run ``completed``, se
+    rejoue à l'identique ; le même flux, lu pour de vrai, échoue.
+    """
+    model = ModelSpec(id="M", sdk="fake", model="m")
+    store = InMemoryEventStore()
+    old = RunContext(agent="demo", store=store, model=Written(), model_spec=model)
+    original = await drive(old, (await begin_run(old, QUESTION)).run_id)
+    assert original.status is RunStatus.COMPLETED
+    events = await store.read(original.context.tenant_id, original.session_id)
+    [recorded] = [e.payload for e in events if isinstance(e.payload, ModelResponded)]
+    assert recorded.stop_reason == "max_tokens"
+
+    book = ReplayBook.of(events)
+    replay = RunContext(
+        agent="demo",
+        store=InMemoryEventStore(),
+        model=ReplayModelClient(book, model),
+        model_spec=model,
+    )
+    replayed = await drive(replay, (await begin_run(replay, QUESTION)).run_id)
+    assert replayed.status is RunStatus.COMPLETED
+    assert replayed.output is not None and original.output is not None
+    assert replayed.output.text == original.output.text == "Le total TTC est de 1 5"
+    assert book.divergence is None and book.served_responses == 1
+
+    live = RunContext(agent="demo", store=InMemoryEventStore(), model=Live(), model_spec=model)
+    failed = await drive(live, (await begin_run(live, QUESTION)).run_id)
+    assert (failed.status, failed.error_type) == (RunStatus.FAILED, "model.truncated")
 
 
 def test_request_parts_change_one_by_one() -> None:

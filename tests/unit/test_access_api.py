@@ -2,6 +2,7 @@
 """Accès Python : ``Loom.run``, ``stream``, ``follow`` et ``resume``."""
 
 from contextlib import aclosing
+from typing import Any
 
 import pytest
 from conftest import ANSWER, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
@@ -22,6 +23,9 @@ from loom_ia.core.model import (
 )
 from loom_ia.testing import RunJournal, tool_call_message
 from loom_ia.tools import tool
+
+ACME = TenantId("acme")
+BETA = TenantId("beta")
 
 
 def kinds(items: list[Event]) -> list[str]:
@@ -86,6 +90,49 @@ async def test_stream_cancels_the_run_when_the_caller_leaves(demo: ConfigFactory
 
     assert not state.finished
     assert state.status is not RunStatus.COMPLETED
+
+
+async def _two_streams(
+    loom: Loom, run_id: RunId, first: dict[str, Any], second: dict[str, Any]
+) -> tuple[list[Event], list[Event]]:
+    """Deux flux sous un même ``run_id`` ; le premier reste ouvert pendant que le second tourne."""
+    async with aclosing(loom.stream("demo", QUESTION, run_id=run_id, **first)) as one:
+        opening = await anext(one)
+        other = [item async for item in loom.stream("demo", QUESTION, run_id=run_id, **second)]
+        rest = [item async for item in one]
+    return (
+        [item for item in [opening, *rest] if isinstance(item, Event)],
+        [item for item in other if isinstance(item, Event)],
+    )
+
+
+async def test_stream_does_not_mix_two_clients_choosing_the_same_run_id(
+    demo: ConfigFactory,
+) -> None:
+    """Chacun ne voit que son journal : ni les événements ni le contenu de l'autre."""
+    run_id = new_run_id()
+    async with Loom.from_config(demo(tenants=[{"id": ACME}, {"id": BETA}])) as loom:
+        acme, beta = await _two_streams(loom, run_id, {"tenant": ACME}, {"tenant": BETA})
+        assert acme == await loom.events(run_id, tenant_id=ACME)
+        assert beta == await loom.events(run_id, tenant_id=BETA)
+
+    assert kinds(acme)[-1] == kinds(beta)[-1] == "run.completed"
+    assert {event.tenant_id for event in acme} == {ACME}
+    assert {event.tenant_id for event in beta} == {BETA}
+
+
+async def test_stream_does_not_mix_two_sessions_choosing_the_same_run_id(
+    demo: ConfigFactory,
+) -> None:
+    run_id = new_run_id()
+    first, second = SessionId("s-1"), SessionId("s-2")
+    async with Loom.from_config(demo()) as loom:
+        one, two = await _two_streams(loom, run_id, {"session_id": first}, {"session_id": second})
+        assert one == await loom.events(run_id, session_id=first)
+        assert two == await loom.events(run_id, session_id=second)
+
+    assert {event.session_id for event in one} == {first}
+    assert {event.session_id for event in two} == {second}
 
 
 async def test_resume_finishes_without_rerunning_the_tool(demo: ConfigFactory) -> None:

@@ -8,7 +8,7 @@ serveur MCP, direct de la CLI.
 
 import asyncio
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -27,7 +27,7 @@ from loom_ia.core.events import (
     RunStarted,
     UserMessage,
 )
-from loom_ia.core.model import DEFAULT_TENANT, Message, RunId, SessionId, new_run_id
+from loom_ia.core.model import DEFAULT_TENANT, Message, RunId, SessionId, TenantId, new_run_id
 from loom_ia.core.projections import RunTree
 
 # Suite des événements de l'arbre : la racine, puis l'enfant au milieu de l'appel.
@@ -179,6 +179,28 @@ async def test_stream_shows_the_subruns(tree: ConfigFactory) -> None:
     assert len({e.run_id for e in items}) == 2 and {e.root_run_id for e in items} == {root}
     assert {e.run_id for e in alone} == {alone[0].run_id}
     assert [e.type for e in alone][-1] == "run.completed"
+
+
+async def test_stream_keeps_the_whole_tree_of_each_client_sharing_a_run_id(
+    tree: ConfigFactory,
+) -> None:
+    """Deux clients, un même ``run_id`` : chacun garde ses sous-runs, et rien de ceux de l'autre."""
+    run_id = new_run_id()
+    acme, beta = TenantId("acme"), TenantId("beta")
+    async with Loom.from_config(tree(tenants=[{"id": acme}, {"id": beta}])) as loom:
+        async with aclosing(loom.stream("demo", TREE_QUESTION, run_id=run_id, tenant=acme)) as one:
+            opening = await anext(one)
+            other = [
+                item
+                async for item in loom.stream("demo", TREE_QUESTION, run_id=run_id, tenant=beta)
+            ]
+            rest = [item async for item in one]
+
+    for tenant, items in ((acme, [opening, *rest]), (beta, other)):
+        events = [item for item in items if isinstance(item, Event)]
+        assert [e.type for e in events] == TREE_TYPES
+        assert {e.tenant_id for e in events} == {tenant}
+        assert len({e.run_id for e in events}) == 2
 
 
 async def test_follow_and_events_give_the_tree(tree: ConfigFactory) -> None:

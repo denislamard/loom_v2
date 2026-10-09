@@ -87,6 +87,14 @@ def safe_join(root: Path, rel: str) -> Path:
         if len(part) > MAX_COMPONENT_LEN:
             raise ExecdError("bad_path", "composant trop long", path=rel, reason="composant")
 
+    # Le dossier de base lui-meme ne doit pas etre un lien : realpath le suivrait, et le
+    # prefixe de comparaison serait la cible du lien, pas le dossier de la session —
+    # tout chemin sous cette cible passerait pour « dedans ».
+    if os.path.islink(root):
+        raise ExecdError(
+            "bad_path", "le dossier de base est un lien symbolique", path=rel, reason="symlink"
+        )
+
     target = root.joinpath(*parts)
 
     # strict=False : la cible n'existe pas encore lors d'un put. Ce sont les
@@ -152,10 +160,18 @@ def _read_at(path: Path, offset: int, want: int) -> tuple[int, bytes]:
 
 
 def _write_job(job_path: Path, job: dict, result_path: Path) -> None:
-    job_path.write_text(json.dumps(job), encoding="utf-8")
-    # 0644 : runner tourne sous le compte sandbox et doit LIRE ce fichier,
-    # jamais l'ecrire — il ne doit pas pouvoir relever ses propres limites.
-    os.chmod(job_path, 0o644)
+    # job.json est RECREE, jamais reecrit en place : supprimer un lien pose a sa place
+    # ne touche pas sa cible, et O_EXCL|O_NOFOLLOW refuse de passer par un lien qui
+    # reapparaitrait entre le unlink et l'open. Ecrire « a travers » donnerait a un
+    # lien pose par le job le contenu, puis le mode, d'un fichier de root.
+    job_path.unlink(missing_ok=True)
+    fd = os.open(job_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(job))
+        # 0644 : runner tourne sous le compte sandbox et doit LIRE ce fichier,
+        # jamais l'ecrire — il ne doit pas pouvoir relever ses propres limites.
+        # Pose sur le descripteur, donc independante de l'umask et du chemin.
+        os.fchmod(handle.fileno(), 0o644)
     result_path.unlink(missing_ok=True)
 
 
@@ -181,10 +197,20 @@ class Session:
 
     # -- cycle de vie ------------------------------------------------------ #
     def setup(self) -> None:
-        for sub in ("code", "in", "out", "work"):
-            (self.root / sub).mkdir(parents=True, exist_ok=True)
-        self._own(self.root)
-        os.chmod(self.root, 0o700)
+        # La racine de session RESTE a root (0711) : le compte sandbox la traverse, mais
+        # n'y peut ni creer, ni renommer, ni supprimer. Il ne peut donc ni remplacer
+        # code/, in/, out/, work/ par un lien, ni poser un piege a cote de job.json — ce
+        # que le chown de _own ou une ecriture de root suivraient. Seuls ces dossiers
+        # lui appartiennent ; run/ porte result.json, que runner doit pouvoir ecrire.
+        self.root.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.root, 0o711)
+        for sub in ("code", "in", "out", "work", "run"):
+            (self.root / sub).mkdir(mode=0o700, exist_ok=True)
+            self._own(self.root / sub)
+
+    @property
+    def _result_path(self) -> Path:
+        return self.root / "run" / "result.json"
 
     def _own(self, path: Path) -> None:
         """Donne l'arborescence au compte non privilegie qui executera le code.
@@ -192,14 +218,20 @@ class Session:
         Sans droit root (execution de developpement sur l'hote), on ne fait
         rien : le processus tourne alors sous l'utilisateur courant, qui est
         deja proprietaire.
+
+        Aucun lien symbolique n'est suivi : le job en pose dans ce qu'il possede,
+        et ce parcours tourne en root. fwalk descend par descripteur de dossier (un
+        dossier remplace par un lien en cours de route n'est pas parcouru, pas plus
+        qu'un `path` qui serait lui-meme un lien) et chown agit sur l'entree, jamais
+        sur sa cible.
         """
         if self.cfg.uid is None or os.geteuid() != 0:
             return
-        for root, dirs, files in os.walk(path):
-            os.chown(root, self.cfg.uid, self.cfg.gid)
+        for _, dirs, files, dirfd in os.fwalk(path, follow_symlinks=False):
+            os.fchown(dirfd, self.cfg.uid, self.cfg.gid)
             for name in dirs + files:
                 with contextlib.suppress(OSError):
-                    os.chown(os.path.join(root, name), self.cfg.uid, self.cfg.gid)
+                    os.chown(name, self.cfg.uid, self.cfg.gid, dir_fd=dirfd, follow_symlinks=False)
 
     async def cleanup(self) -> None:
         """Tue le job en cours puis efface le workdir. Toujours appele."""
@@ -411,15 +443,20 @@ class Session:
         await asyncio.to_thread(handle.write, body)
 
         if header.get("eof"):
-            handle.close()
             del self._open_files[key]
             mode = header.get("mode")
-            # Le bit executable est toujours retire : rien de ce qui traverse
-            # ce canal n'a vocation a etre lance directement.
-            os.chmod(target, (int(mode) & 0o644) if isinstance(mode, int) else 0o644)
-            if self.cfg.uid is not None and os.geteuid() == 0:
-                with contextlib.suppress(OSError):
-                    os.chown(target, self.cfg.uid, self.cfg.gid)
+            # Mode et proprietaire se posent sur le DESCRIPTEUR, ouvert en O_NOFOLLOW,
+            # et non sur `target` : un lien pose a sa place entre la fermeture et un
+            # chmod/chown par chemin aurait fait changer, en root, le fichier qu'il vise.
+            try:
+                # Le bit executable est toujours retire : rien de ce qui traverse
+                # ce canal n'a vocation a etre lance directement.
+                os.fchmod(handle.fileno(), (int(mode) & 0o644) if isinstance(mode, int) else 0o644)
+                if self.cfg.uid is not None and os.geteuid() == 0:
+                    with contextlib.suppress(OSError):
+                        os.fchown(handle.fileno(), self.cfg.uid, self.cfg.gid)
+            finally:
+                handle.close()
 
         total = self._code_bytes if is_code else self._uploaded
         return {"ok": True, "path": rel, "written": len(body), "total": total}, b""
@@ -459,7 +496,7 @@ class Session:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self._proc.wait(), timeout=5)
         self._proc = None
-        for sub in ("code", "in", "out", "work"):
+        for sub in ("code", "in", "out", "work", "run"):
             shutil.rmtree(self.root / sub, ignore_errors=True)
         self._uploaded = 0
         self._code_bytes = 0
@@ -492,7 +529,7 @@ class Session:
         # production de CE job, jamais un cumul de plusieurs executions.
         out_dir = self.root / "out"
         shutil.rmtree(out_dir, ignore_errors=True)
-        out_dir.mkdir(parents=True, exist_ok=True)
+        out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._own(out_dir)
 
         async with self.exec_sem:
@@ -531,7 +568,7 @@ class Session:
             "args": args,
             "limits": lim,
             "dirs": {s: str(self.root / s) for s in ("code", "in", "out", "work")},
-            "result_path": str(self.root / "result.json"),
+            "result_path": str(self._result_path),
         }
         job_path = self.root / "job.json"
         await asyncio.to_thread(_write_job, job_path, job, Path(job["result_path"]))
@@ -682,7 +719,7 @@ class Session:
         if rc != 0:
             return None
         try:
-            payload = json.loads((self.root / "result.json").read_text(encoding="utf-8"))
+            payload = json.loads(self._result_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
         return payload if isinstance(payload, dict) and "ok" in payload else None

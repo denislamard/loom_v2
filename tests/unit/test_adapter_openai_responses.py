@@ -330,6 +330,22 @@ async def test_incomplete_answers(status: str, reason: str, stop: str) -> None:
     assert (answer.message.text, answer.stop_reason) == ("Début", stop)
 
 
+async def test_a_stream_without_its_final_event_is_an_interrupted_call() -> None:
+    """Sans ``response.completed`` ni ``response.incomplete``, c'est un début de réponse."""
+    delta = event(
+        "response.output_text.delta",
+        item_id="msg_1",
+        output_index=0,
+        content_index=0,
+        delta="Le devis s'élève à 1 2",
+        logprobs=[],
+    )
+    for body in (streamed(delta), streamed()):
+        with pytest.raises(ModelError, match=r"response\.completed") as caught:
+            await complete(Server(body).model(), request())
+        assert caught.value.kind == "transient" and caught.value.retryable
+
+
 async def test_environment_headers_do_not_reach_the_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

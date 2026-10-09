@@ -204,8 +204,9 @@ class _Ready:
     refs: tuple[str, ...]
     # Run enfant d'un sous-agent.
     child_run_id: RunId | None = None
-    # Un humain a approuvé cet appel : il repart, y compris sur une
-    # réservation périmée (#17, #18).
+    # Un humain a approuvé cet appel **après** un lancement d'effet inconnu :
+    # il repart, y compris sur une réservation périmée (#17, #18). Un accord
+    # donné avant le premier lancement ne vaut pas cela.
     approved: bool = False
     # Rejeu : le résultat vient du rejeu (journal, doublure ou refus), pas de
     # l'outil — décidé une fois, à la préparation de l'appel.
@@ -581,8 +582,14 @@ class ToolExecutor:
                     continue
                 if outcome.arguments is not None:
                     prepared = replace(prepared, arguments=outcome.arguments)
-                ready.append(replace(prepared, approved=True))
-                continue
+                # Un accord vaut pour un seul lancement. S'il a déjà servi, et
+                # que l'outil n'est pas sûr à relancer, l'effet est d'état
+                # inconnu : la règle de reprise s'applique, comme sans accord
+                # (#18). Un accord encore intact, lui, répond à un état inconnu
+                # si l'appel est déjà parti (il a été demandé après coup).
+                if not settled.launched or prepared.tool.spec.safe_to_retry:
+                    ready.append(replace(prepared, approved=call.started and not settled.launched))
+                    continue
             # Reprise d'un appel dont l'effet est peut-être produit (#18) :
             # il n'est pas relancé de lui-même. L'outil dit ce qu'il advient
             # — le modèle est prévenu, ou un humain tranche.

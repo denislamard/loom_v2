@@ -18,7 +18,10 @@ de ``kind: repair``) entre dans la conversation du run, et sa position est
 retenue pour l'exclure de l'historique de session.
 
 Les événements de catégorie ``session`` (J4.1) sont ignorés : ils décrivent
-la session, pas le run, et s'écrivent après sa clôture.
+la session, pas le run, et s'écrivent après sa clôture. Une concession
+(``run.claimed``) écrite après l'état final est absorbée de même : elle
+décrit le pilote, pas le run, et rend sa lecture possible aux journaux de la
+2.0.0 qui en portent une.
 """
 
 from collections.abc import Iterable
@@ -111,6 +114,13 @@ def apply(state: RunState | None, event: Event) -> RunState:
         # Marqueur de session : il parle de la session, pas du run qui l'écrit,
         # et arrive après sa clôture. Seule la position lue avance.
         return state.model_copy(update={"last_seq": event.seq})
+    if isinstance(payload, RunClaimed) and (state.finished or state.status.is_terminal):
+        # Concession écrite pendant la clôture : le minuteur de renouvellement
+        # court tant que le pilote n'est pas sorti, et un journal de la 2.0.0
+        # peut porter celle d'une reprise. Elle parle du pilote, pas du run :
+        # elle ne rouvre rien et ne rend pas le journal illisible.
+        claim = RunClaim(worker_id=payload.worker_id, lease_until=payload.lease_until)
+        return state.model_copy(update={"last_seq": event.seq, "claim": claim})
     if state.finished or (state.status.is_terminal and not _closes(state.status, event)):
         raise ProjectionError(
             f"Run {state.run_id} : {event.type} (seq {event.seq}) après l'état {state.status}"
@@ -154,6 +164,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 c.model_copy(update=started) if c.call_id == call_id else c
                 for c in _require_pending(state, call_id, event)
             )
+            update["approvals"] = _launched(state, call_id)
         case ToolCompleted(call_id=call_id, output=output, usage=usage, cost_usd=cost):
             remaining = tuple(
                 c for c in _require_pending(state, call_id, event) if c.call_id != call_id
@@ -334,9 +345,27 @@ def _settled(
             f"déjà tranché ({asked.outcome.verdict}) (seq {event.seq})"
         )
     return tuple(
-        a.model_copy(update={"outcome": outcome}) if a.call_id == call_id else a
+        a.model_copy(update={"outcome": outcome}) if a is asked else a for a in state.approvals
+    )
+
+
+def _launched(state: RunState, call_id: str) -> tuple[PendingApproval, ...]:
+    """Accords de cet appel marqués comme ayant servi : l'appel part sur eux.
+
+    Un accord vaut pour **un** lancement. Si le run plante ensuite, l'effet de
+    ce lancement est d'état inconnu, et l'accord ne couvre pas un second : la
+    reprise le lit à ce marquage, sans que le journal ait rien de plus à dire.
+    """
+    return tuple(
+        a.model_copy(update={"launched": True})
+        if a.call_id == call_id and not a.launched and _granted(a)
+        else a
         for a in state.approvals
     )
+
+
+def _granted(approval: PendingApproval) -> bool:
+    return approval.outcome is not None and approval.outcome.verdict == "granted"
 
 
 def _decided(state: RunState, decided: PolicyDecided, event: Event) -> dict[str, object]:

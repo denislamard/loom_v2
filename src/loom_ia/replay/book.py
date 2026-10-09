@@ -168,7 +168,10 @@ class ReplayBook:
                 ) in book.tools:
                     book.tools[event.run_id, completed.call_id].completed = completed
                 case ApprovalGranted() | ApprovalRejected() | ApprovalExpired() as decided:
-                    book.approvals[event.run_id, decided.call_id] = decided
+                    # La première décision : le rejeu ne plante pas, il ne lance
+                    # l'appel qu'une fois. Une seconde (effet devenu inconnu après
+                    # un plantage) porte sur un lancement que le rejeu n'a pas.
+                    book.approvals.setdefault((event.run_id, decided.call_id), decided)
                 case ModelFellBack() as fell:
                     book.fallbacks.append(fell)
                 case RunStarted(parent_run_id=parent) if parent is not None:

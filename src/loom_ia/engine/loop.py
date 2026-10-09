@@ -84,7 +84,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import aclosing, asynccontextmanager, suppress
+from contextlib import aclosing, asynccontextmanager, nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Final
@@ -179,12 +179,12 @@ from loom_ia.core.ports import (
 from loom_ia.core.projections import apply, fold, last_summary, spent, turns
 from loom_ia.engine.circuit import CircuitBreakers
 from loom_ia.engine.delegated import Waiting
-from loom_ia.engine.executor import Decided, Delegated, Stored, ToolExecutor
+from loom_ia.engine.executor import Decided, Delegated, OpenedTools, Stored, ToolExecutor
 from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.model_call import responded
 from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
-from loom_ia.engine.writer import RunMoved, SessionWriter
+from loom_ia.engine.writer import RunExists, RunMoved, SessionWriter
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +337,9 @@ async def begin_run(
 ) -> RunState:
     """Écrit le démarrage d'un run et la demande de l'utilisateur.
 
-    Un ``run_id`` fourni par l'appelant ne doit pas déjà exister dans le journal.
+    Un ``run_id`` fourni par l'appelant ne doit pas déjà exister dans le journal :
+    sinon ``RunExists`` (une ``ValueError``), même si l'autre ouverture est
+    simultanée — la perdante n'écrit rien.
     Une pièce jointe refusée lève ``AttachmentError`` avant tout écrit.
 
     Un sous-run (``parent``) s'écrit dans le journal de son parent, avec
@@ -391,7 +393,7 @@ async def begin_run(
             trigger=trigger,
         )
     if chosen and await ctx.store.read(scope.tenant_id, scope.session_id, run_id=run_id):
-        raise ValueError(f"Le run {run_id} existe déjà")
+        raise RunExists(run_id)
     stored: list[ArtifactStored] = []
     if store is not None:
         stored = [await _store_attachment(store, scope, *item) for item in checked]
@@ -408,7 +410,8 @@ async def begin_run(
             scope.draft(started),
             *(scope.draft(payload) for payload in stored),
             scope.draft(UserMessage(message=message)),
-        ]
+        ],
+        opens=run_id if chosen else None,
     )
     return fold(events, run_id)
 
@@ -531,7 +534,15 @@ async def _driven(
         run_id=run_id,
         agent=state.agent,
     )
-    async with ctx.tools.opened(sources) as opened, _renewed(claimed, journal, scope):
+    # Un run dont l'état est déjà final n'a plus qu'à écrire sa clôture : ses
+    # sources n'ont rien à y faire, et leurs événements (``tool.source_unavailable``,
+    # ``circuit.opened``) viendraient après l'état final.
+    opening = (
+        nullcontext(OpenedTools(tools=ctx.tools))
+        if state.status.is_terminal
+        else ctx.tools.opened(sources)
+    )
+    async with opening as opened, _renewed(claimed, journal, scope):
         blocking: tuple[Event, ToolSourceUnavailable] | None = None
         for payload in opened.events:
             event = await write(scope.draft(payload))
@@ -553,25 +564,47 @@ async def _driven(
         )
         while not state.finished and await _advances(state, ctx, tenant, session):
             emitted = 0
-            left = _remaining(state, run_ctx)
+            released = False
+            # Une fois l'état final atteint, il ne reste qu'à écrire la clôture :
+            # le délai ne la coupe pas, il ne borne que le travail à faire.
+            left = None if state.status.is_terminal else _remaining(state, run_ctx)
             if left is not None and left <= 0:
                 await _expired(write, state, scope, run_ctx, cut=False)
                 return state
+            limit = asyncio.timeout(left)
             try:
-                async with asyncio.timeout(left):
+                async with limit:
                     async with aclosing(
                         step(state, run_ctx, previous, cause=cause, session=session_spent)
                     ) as drafts:
                         async for draft in drafts:
                             await write(draft)
                             emitted += 1
-                            if isinstance(draft.payload, RunCompleted):
-                                await _release(ctx, state)
+                            released = released or isinstance(draft.payload, RunCompleted)
             except TimeoutError:
+                if not limit.expired():
+                    # Un ``TimeoutError`` venu d'un outil ou d'un consommateur de
+                    # flux n'est pas le délai du run : il remonte, comme toute erreur.
+                    raise
+                # L'échéance a pu tomber pendant une écriture déjà persistée : l'état
+                # du pilote est alors en retard sur le journal, qui seul fait foi.
+                own = await ctx.store.read(tenant, session, run_id=run_id)
+                state = fold(own, run_id)
+                if state.status.is_terminal:
+                    # La clôture était commencée, voire finie : l'échéance ne la défait
+                    # pas (un état final ne se quitte pas), le tour suivant l'achève.
+                    cause = next(
+                        (e for e in reversed(own) if e.category in {"model", "tool"}), None
+                    )
+                    continue
                 # L'étape a été interrompue en plein effet : ce qu'elle avait
                 # déjà écrit reste au journal, et le run se clôt sur l'échec.
                 await _expired(write, state, scope, run_ctx, cut=True)
                 return state
+            if released:
+                # Hors du délai : la réponse est déjà au journal, le flux la livre
+                # sans que l'échéance puisse l'interrompre ni défaire la clôture.
+                await _release(ctx, state)
             if emitted == 0:
                 raise RuntimeError(
                     f"Run {run_id} : aucune progression depuis l'état {state.status}"
@@ -661,6 +694,10 @@ async def _claim(
     now = datetime.now(UTC)
     if held is not None and held.worker_id != ctx.worker_id and held.alive(now):
         raise ClaimConflict(state.run_id, held.worker_id, held.lease_until)
+    if state.status.is_terminal:
+        # Plantage entre la transition finale et la clôture : il ne reste qu'à
+        # écrire la clôture, et une concession ne protège que du travail à faire.
+        return None
     mine = RunClaim(worker_id=ctx.worker_id, lease_until=now + timedelta(seconds=ctx.lease))
     await journal.append(
         [scope.draft(RunClaimed(worker_id=mine.worker_id, lease_until=mine.lease_until))]

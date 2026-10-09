@@ -27,8 +27,13 @@ from loom_ia.core.model import (
     PromptCache,
     RetryPolicy,
     RunStatus,
+    Stopped,
     StreamReset,
     TextDelta,
+    ToolArgsDelta,
+    ToolCallStarted,
+    Usage,
+    UsageDelta,
     message_to_chunks,
 )
 from loom_ia.core.ports import ModelError
@@ -69,6 +74,25 @@ class FlakyModel:
                     raise AssertionError(step)
 
 
+class ChunkedModel:
+    """Chaque appel rend les morceaux de son plan, tels quels : sans ``Stopped`` s'il n'en a pas."""
+
+    provider = "chunked"
+
+    def __init__(self, *plans: list[ModelChunk]) -> None:
+        self.plans = list(plans)
+        self.calls = 0
+
+    async def aclose(self) -> None:
+        pass
+
+    async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        plan = self.plans[self.calls]
+        self.calls += 1
+        for chunk in plan:
+            yield chunk
+
+
 def spec(**options: object) -> ModelSpec:
     return ModelSpec.model_validate({"id": "M", "sdk": "fake", "model": "m-1", **options})
 
@@ -86,7 +110,7 @@ class Recorder:
 
 
 def call(
-    model: FlakyModel,
+    model: FlakyModel | ChunkedModel,
     recorder: Recorder,
     jitter: Callable[[], float] = lambda: 1.0,
     **options: object,
@@ -195,6 +219,96 @@ async def test_retry_after_is_respected() -> None:
     with pytest.raises(ModelError):
         await outcomes(call(too_long, Recorder(), retry={"max_delay": 10}))
     assert too_long.calls == 1
+
+
+CUT: list[ModelChunk] = [TextDelta(text="Le total TTC est de 1 5")]
+AT_THE_LIMIT: list[ModelChunk] = [
+    *CUT,
+    UsageDelta(usage=Usage(input_tokens=9, output_tokens=8)),
+    Stopped(reason="max_tokens"),
+]
+CALL_AT_THE_LIMIT: list[ModelChunk] = [
+    ToolCallStarted(index=0, call_id="c1", name="calculer"),
+    ToolArgsDelta(index=0, json_fragment='{"expr": "12*'),
+    Stopped(reason="max_tokens"),
+]
+
+
+async def test_a_cut_stream_is_a_transient_error_and_is_retried() -> None:
+    """Un flux sans ``Stopped`` n'est pas une réponse : il se rejoue comme toute panne."""
+    recorder = Recorder()
+    model = ChunkedModel(CUT, message_to_chunks(ANSWER))
+    retried, response = await outcomes(call(model, recorder, jitter=lambda: 0.0))
+
+    assert isinstance(retried, ModelRetried)
+    assert (retried.attempt, retried.error_kind) == (1, "transient")
+    assert "interrompu" in retried.error
+    assert isinstance(response, ModelResponse) and response.message == ANSWER
+    # Le début déjà diffusé est effacé avant la reprise.
+    assert StreamReset(attempt=2) in recorder.chunks
+
+
+@pytest.mark.parametrize("plan", [CUT, []], ids=["coupé", "vide"])
+async def test_a_stream_that_never_ends_fails_once_the_attempts_are_spent(
+    plan: list[ModelChunk],
+) -> None:
+    model = ChunkedModel(plan, plan, plan)
+    run = call(model, Recorder(), retry={"max_attempts": 3, "initial_delay": 0})
+    with pytest.raises(ModelError, match="sans signal de fin") as caught:
+        await outcomes(run)
+    assert caught.value.kind == "transient"
+    assert model.calls == 3
+
+
+@pytest.mark.parametrize("plan", [AT_THE_LIMIT, CALL_AT_THE_LIMIT], ids=["texte", "appel d'outil"])
+async def test_an_answer_stopped_by_max_tokens_is_a_truncated_error_not_retried(
+    plan: list[ModelChunk],
+) -> None:
+    model = ChunkedModel(plan, plan)
+    with pytest.raises(ModelError, match="max_tokens") as caught:
+        await outcomes(call(model, Recorder()))
+    assert caught.value.kind == "truncated" and not caught.value.retryable
+    assert model.calls == 1
+
+
+async def test_a_clean_end_without_content_is_still_an_answer() -> None:
+    """Seule la fin manquante échoue : un modèle qui n'a rien à dire reste une réponse."""
+    [response] = await outcomes(call(ChunkedModel([Stopped(reason="end")]), Recorder()))
+    assert isinstance(response, ModelResponse) and response.message.text == ""
+
+
+@pytest.mark.parametrize(
+    ("plan", "error_type"),
+    [
+        (AT_THE_LIMIT, "model.truncated"),
+        (CALL_AT_THE_LIMIT, "model.truncated"),
+        (CUT, "model.transient"),
+        ([], "model.transient"),
+    ],
+    ids=["tronquée", "appel tronqué", "coupé", "vide"],
+)
+async def test_the_run_fails_instead_of_completing_on_a_cut_answer(
+    plan: list[ModelChunk], error_type: str
+) -> None:
+    store = InMemoryEventStore()
+    model = ChunkedModel(plan, plan)
+    ctx = RunContext(
+        agent="demo",
+        store=store,
+        model=model,
+        model_spec=spec(retry=RetryPolicy(max_attempts=2, initial_delay=0)),
+    )
+    state = await drive(ctx, (await begin_run(ctx, "Quel est le total ?")).run_id)
+
+    assert state.status is RunStatus.FAILED
+    assert state.error_type == error_type
+    assert state.output is None
+    events = await store.read(state.context.tenant_id, state.session_id)
+    # Ni réponse journalisée, ni outil lancé avec des arguments coupés.
+    assert not {"model.responded", "tool.called"} & {e.type for e in events}
+    assert events[-1].type == "run.failed"
+    # Une sortie coupée n'est pas rejouée (elle recouperait au même endroit) ; un flux coupé, si.
+    assert model.calls == (1 if error_type == "model.truncated" else 2)
 
 
 @pytest.mark.parametrize(
