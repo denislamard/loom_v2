@@ -131,6 +131,24 @@ END $$;"""
 # invisible la ligne qu'il faut relire. Le cadrage vient de la clé — préfixée
 # par client pour une clé métier (#49) — et des colonnes, qui portent le
 # client et la session pour l'oubli RGPD.
+#
+# ``holder`` est le jeton du détenteur de la clé : ``complete`` et ``release``
+# qui en présentent un ne touchent que la ligne encore à lui. La colonne est
+# nullable et, pour une table créée avant elle, ajoutée par ``IDEMPOTENCY_UPGRADE``
+# — que l'ouverture du stockage rejoue même quand la table existe déjà. Le
+# test de présence évite de prendre le verrou exclusif de ``ALTER TABLE`` à
+# chaque ouverture, quand la colonne est là.
+IDEMPOTENCY_UPGRADE: Final = f"""\
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = to_regclass('{IDEMPOTENCY_TABLE}')
+          AND attname = 'holder' AND NOT attisdropped
+    ) THEN
+        ALTER TABLE {IDEMPOTENCY_TABLE} ADD COLUMN holder text;
+    END IF;
+END $$;"""
+
 IDEMPOTENCY_DDL: Final = f"""\
 CREATE TABLE IF NOT EXISTS {IDEMPOTENCY_TABLE} (
     key        text        NOT NULL PRIMARY KEY,
@@ -138,8 +156,10 @@ CREATE TABLE IF NOT EXISTS {IDEMPOTENCY_TABLE} (
     session_id text        NOT NULL,
     status     text        NOT NULL,
     result     text,
-    expires_at timestamptz NOT NULL
+    expires_at timestamptz NOT NULL,
+    holder     text
 );
+{IDEMPOTENCY_UPGRADE}
 CREATE INDEX IF NOT EXISTS {IDEMPOTENCY_TABLE}_owner
     ON {IDEMPOTENCY_TABLE} (tenant_id, session_id);
 CREATE INDEX IF NOT EXISTS {IDEMPOTENCY_TABLE}_expiry

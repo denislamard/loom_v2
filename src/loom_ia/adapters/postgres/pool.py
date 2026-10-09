@@ -91,15 +91,25 @@ class PostgresPool:
     """Pool de connexions vers la base d'un stockage, ouvert à la première requête.
 
     ``ddl`` est appliqué si ``table`` n'existe pas encore ; ``role``, s'il est
-    donné, est pris par chaque connexion du pool.
+    donné, est pris par chaque connexion du pool. ``upgrade``, s'il est donné,
+    est appliqué quand la table existe déjà : la mise à niveau d'un schéma plus
+    ancien, qui doit pouvoir se rejouer sans effet.
     """
 
     def __init__(
-        self, dsn: str, *, table: str, ddl: str, role: str | None, label: str = "Postgres"
+        self,
+        dsn: str,
+        *,
+        table: str,
+        ddl: str,
+        role: str | None,
+        label: str = "Postgres",
+        upgrade: str | None = None,
     ) -> None:
         self._dsn = dsn
         self._table = table
         self._ddl = ddl
+        self._upgrade = upgrade
         self._role = None if role is None else check_name(role)
         self._label = label
         self._pool: asyncpg.Pool[asyncpg.Record] | None = None
@@ -141,10 +151,12 @@ class PostgresPool:
             # premier, et Postgres les interbloque. Le verrou est de session :
             # la fermeture de la connexion le rend.
             await connection.execute(_SCHEMA_LOCK, _SCHEMA_KEY)
-            if await connection.fetchval(_PRESENT, self._table) is not None:
+            present = await connection.fetchval(_PRESENT, self._table) is not None
+            statement = self._upgrade if present else self._ddl
+            if statement is None:
                 return
             try:
-                await connection.execute(self._ddl)
+                await connection.execute(statement)
             except asyncpg.InsufficientPrivilegeError as exc:
                 current = await connection.fetchval("SELECT current_user")
                 raise PostgresNotPrepared(self._table, str(current), str(exc)) from exc

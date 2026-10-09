@@ -4,7 +4,8 @@
 Chaîne d'un appel : outil connu, reprise sans risque, arguments lisibles,
 références ``$ref`` résolues, arguments conformes au schéma, refus éventuel
 d'un outil délégué, puis exécution avec timeout. Tout échec devient un
-résultat d'erreur destiné au modèle ; seule l'annulation interrompt le lot.
+résultat d'erreur destiné au modèle ; seule une annulation demandée de l'extérieur
+interrompt le lot : un outil qui s'annule lui-même a échoué, il n'arrête rien.
 Une erreur de schéma sur une valeur venue d'une référence dit laquelle, ce
 qu'elle a transmis et ce que le champ attend : le modèle ne reconnaîtrait
 pas une valeur qu'il n'a pas écrite.
@@ -540,7 +541,8 @@ class ToolExecutor:
         Une décision ``Fail`` à ``before_tool`` arrête le lot avant tout
         lancement. ``on_chunk`` : diffusion en direct, pour un rôle terminal
         seul dans son lot. ``approver`` : approbateur en ligne (#28) — il
-        tranche ici même, et le run ne passe jamais par ``PAUSED``. Au rejeu,
+        tranche ici même, et le run ne passe jamais par ``PAUSED`` ; les
+        arguments qu'il corrige sont validés comme ceux du modèle. Au rejeu,
         c'est le rejeu qui tranche (``ToolReplay.approve``).
         """
         policies = policies or Policies()
@@ -563,11 +565,16 @@ class ToolExecutor:
         held: list[tuple[_Ready, ApprovalRequested]] = []
         for call in state.pending_calls:
             tool = self._tools.get(call.name)
-            prepared = (
-                self._unknown_tool(call.name, view)
-                if tool is None or not _offered(tool, view)
-                else await self._prepare(call, tool, view)
-            )
+            try:
+                prepared = (
+                    self._unknown_tool(call.name, view)
+                    if tool is None or not _offered(tool, view)
+                    else await self._prepare(call, tool, view)
+                )
+            except Exception as exc:
+                # Une exception imprévue n'avorte pas le lot : la reprise
+                # rejouerait le même appel, donc la même exception, sans fin.
+                prepared = _unprepared(call.name, exc, state)
             if not isinstance(prepared, _Ready):
                 yield _completed(call, ToolOutput.error(prepared), started=None)
                 continue
@@ -581,6 +588,10 @@ class ToolExecutor:
                     yield _completed(call, ToolOutput.error(text), started=None)
                     continue
                 if outcome.arguments is not None:
+                    problem = self._corrected(call.name, outcome.arguments)
+                    if problem is not None:
+                        yield _completed(call, ToolOutput.error(problem), started=None)
+                        continue
                     prepared = replace(prepared, arguments=outcome.arguments)
                 # Un accord vaut pour un seul lancement. S'il a déjà servi, et
                 # que l'outil n'est pas sûr à relancer, l'effet est d'état
@@ -636,6 +647,10 @@ class ToolExecutor:
                 yield _completed(call, ToolOutput.error(text), started=None)
                 continue
             if decided.arguments is not None:
+                problem = self._corrected(call.name, decided.arguments)
+                if problem is not None:
+                    yield _completed(call, ToolOutput.error(problem), started=None)
+                    continue
                 prepared = replace(prepared, arguments=decided.arguments)
             ready.append(prepared)
 
@@ -661,10 +676,24 @@ class ToolExecutor:
             if not task.cancelled() and (error := task.exception()) is not None:
                 queue.put_nowait(_Crashed(error))
 
-        tasks = [
-            asyncio.create_task(self._execute(item, view, queue.put_nowait, policies))
-            for item in ready
-        ]
+        # Posé avant que le lot annule ses tâches : toute autre annulation vient de l'outil.
+        stopping = False
+
+        async def execute(item: _Ready) -> None:
+            began = time.perf_counter()
+            try:
+                await self._execute(item, view, queue.put_nowait, policies)
+            except asyncio.CancelledError as exc:
+                if stopping:
+                    raise
+                # L'outil (ou une tâche qu'il attend) s'est annulé sans que le lot
+                # l'ait demandé : c'est son échec, pas un arrêt du run. Sans résultat,
+                # le lot attendrait cet appel indéfiniment.
+                queue.put_nowait(
+                    _completed(item.call, _cancelled(item.call.name, exc, state), started=began)
+                )
+
+        tasks = [asyncio.create_task(execute(item)) for item in ready]
         for task in tasks:
             task.add_done_callback(crashed)
         try:
@@ -683,6 +712,7 @@ class ToolExecutor:
                     continue
                 yield event
         finally:
+            stopping = True
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -781,6 +811,22 @@ class ToolExecutor:
             check_arguments=lambda arguments: self._schema_errors(call.name, arguments),
             turns=view.turns,
             summary=view.summary,
+        )
+
+    def _corrected(self, name: str, arguments: dict[str, JsonValue]) -> str | None:
+        """Le refus destiné au modèle si les arguments corrigés par l'approbateur sont refusés.
+
+        Comme ceux du modèle, ils doivent respecter le schéma de l'outil avant
+        de partir (sauf ``validate_arguments=False``). L'accord est déjà au
+        journal : l'appel se conclut en erreur, qui dit ce que l'approbateur a
+        écrit et ce que le schéma refuse.
+        """
+        problem = self._schema_errors(name, arguments) if self.validate_arguments else None
+        if problem is None:
+            return None
+        return (
+            f"Appel à {name} non exécuté : les arguments corrigés par l'approbateur "
+            f"sont refusés par le schéma de l'outil. {problem}"
         )
 
     def _schema_errors(
@@ -1276,6 +1322,25 @@ def _offered(tool: AnyTool, run: RunView) -> bool:
 def _unexpected(name: str, exc: Exception, state: RunState) -> ToolOutput:
     logger.warning("Échec de l'outil %s", name, exc_info=exc, extra={"run_id": state.run_id})
     return ToolOutput.error(f"Erreur de l'outil {name} : {type(exc).__name__}: {exc}")
+
+
+def _cancelled(name: str, exc: asyncio.CancelledError, state: RunState) -> ToolOutput:
+    """Résultat d'un outil annulé de l'intérieur, sans que le lot ait été arrêté."""
+    logger.warning(
+        "Outil %s annulé de l'intérieur", name, exc_info=exc, extra={"run_id": state.run_id}
+    )
+    return ToolOutput.error(
+        f"Erreur de l'outil {name} : l'outil s'est annulé de lui-même (CancelledError), "
+        "sans que le run ait été arrêté."
+    )
+
+
+def _unprepared(name: str, exc: Exception, state: RunState) -> str:
+    """Refus destiné au modèle d'un appel dont la préparation a levé une exception imprévue."""
+    logger.error(
+        "Préparation de l'appel à %s impossible", name, exc_info=exc, extra={"run_id": state.run_id}
+    )
+    return f"Appel à {name} impossible à préparer : {type(exc).__name__}: {exc!s:.500}"
 
 
 def _completed(

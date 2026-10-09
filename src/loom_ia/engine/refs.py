@@ -29,6 +29,7 @@ peut ainsi passer un gros résultat à un rôle sans l'avoir lu.
 """
 
 import json
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
@@ -125,10 +126,10 @@ class ResultIndex:
 
     def record(self, ref: str) -> CallRecord | None:
         """L'appel que désigne une référence ``result:N``, s'il existe."""
-        number = ref.removeprefix(REF_PREFIX)
-        if not number.isdigit():
+        number = _number(ref.removeprefix(REF_PREFIX))
+        if number is None:
             return None
-        index = int(number) - 1
+        index = number - 1
         return self.records[index] if 0 <= index < len(self.records) else None
 
     def results_of(self, name: str) -> tuple[CallRecord, ...]:
@@ -184,12 +185,12 @@ class ResultIndex:
         return value
 
     async def _value(self, ref: str, found: list[str]) -> JsonValue:
-        number = ref.removeprefix(REF_PREFIX)
-        if not number.isdigit():
+        number = _number(ref.removeprefix(REF_PREFIX))
+        if number is None:
             raise RefError(
                 f"Référence invalide : {ref!r}, attendu result:<numéro>. {self._known()}"
             )
-        index = int(number) - 1
+        index = number - 1
         if not 0 <= index < len(self.records):
             raise RefError(f"Référence inconnue : {ref}. {self._known()}")
         record = self.records[index]
@@ -247,6 +248,21 @@ def ref_origin(written: JsonValue, path: Sequence[str | int]) -> RefOrigin | Non
         else:
             break
     return None
+
+
+def _number(text: str) -> int | None:
+    """Le numéro écrit en chiffres décimaux ASCII, ou ``None`` si ce n'en est pas un.
+
+    ``str.isdigit`` accepte ``²`` ou ``٣``, que ``int`` refuse ; ``int`` refuse
+    aussi, par défaut, plus de 4 300 chiffres. Aucun de ces textes ne désigne un
+    appel : ce sont des références invalides, à dire au modèle.
+    """
+    if re.fullmatch(r"[0-9]+", text) is None:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
 
 
 def _ref_in(value: JsonValue) -> str | None:

@@ -23,10 +23,11 @@ from loom_ia.core.ports import KeyScope
 
 @dataclass(frozen=True, slots=True)
 class _Held:
-    """Un enregistrement et de qui il est."""
+    """Un enregistrement, de qui il est, et le détenteur qui l'a pris."""
 
     record: IdempotencyRecord
     scope: KeyScope
+    holder: str | None = None
 
 
 class InMemoryIdempotency:
@@ -58,7 +59,9 @@ class InMemoryIdempotency:
             return None
         return record
 
-    async def reserve(self, key: str, ttl: float, scope: KeyScope) -> bool:
+    async def reserve(
+        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
+    ) -> bool:
         now = datetime.now(UTC)
         held = self._held.get(key)
         # C'est la date qui protège : une réservation tenue ou un résultat
@@ -70,15 +73,21 @@ class InMemoryIdempotency:
                 key=key, status="in_progress", expires_at=now + timedelta(seconds=ttl)
             ),
             scope=scope,
+            holder=holder,
         )
         return True
 
-    async def complete(self, key: str, result: object, ttl: float | None = None) -> None:
+    async def complete(
+        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
+    ) -> None:
         now = datetime.now(UTC)
         self._forget(now)
         held = self._held.get(key)
         if held is None:
             raise KeyError(f"Clé {key!r} non réservée : rien à enregistrer")
+        if holder is not None and held.holder != holder:
+            # Réservation reprise par un autre : ce résultat n'est pas le sien à poser.
+            return
         self._held[key] = _Held(
             record=IdempotencyRecord(
                 key=key,
@@ -87,11 +96,16 @@ class InMemoryIdempotency:
                 expires_at=now + timedelta(seconds=self.retention if ttl is None else ttl),
             ),
             scope=held.scope,
+            holder=held.holder,
         )
 
-    async def release(self, key: str) -> None:
+    async def release(self, key: str, *, holder: str | None = None) -> None:
         held = self._held.get(key)
-        if held is not None and held.record.status == "in_progress":
+        if (
+            held is not None
+            and held.record.status == "in_progress"
+            and (holder is None or held.holder == holder)
+        ):
             del self._held[key]
 
     async def forget(self, tenant_id: TenantId, session_id: SessionId | None = None) -> int:

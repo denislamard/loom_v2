@@ -10,6 +10,7 @@ import pytest
 from jsonschema.exceptions import SchemaError
 from pydantic import JsonValue
 
+from loom_ia.adapters.artifacts import InMemoryArtifactStore
 from loom_ia.core.events import (
     ApprovalGranted,
     ApprovalRequested,
@@ -19,11 +20,15 @@ from loom_ia.core.events import (
 )
 from loom_ia.core.model import (
     INVALID_JSON_KEY,
+    Approved,
+    Approver,
     CallerContext,
+    PendingApproval,
     PendingCall,
     RunState,
     RunStatus,
     TenantId,
+    TextBlock,
     ToolOutput,
     ToolSpec,
 )
@@ -251,6 +256,74 @@ async def test_validation_can_be_disabled() -> None:
     assert not completed(events)["c1"].is_error
 
 
+BAD_ARGUMENTS: dict[str, JsonValue] = {"x": "pas un entier", "intrus": True}
+CORRECTION_REFUSED = (
+    "Appel à virement non exécuté : les arguments corrigés par l'approbateur sont refusés "
+    "par le schéma de l'outil. Arguments non conformes au schéma de l'outil :\n"
+    "- (racine) : Additional properties are not allowed ('intrus' was unexpected)\n"
+    "- x : 'pas un entier' is not of type 'integer'"
+)
+
+
+def approved_with(arguments: dict[str, JsonValue]) -> Approver:
+    async def approver(pending: PendingApproval) -> Approved:
+        return Approved(by="humain", arguments=arguments)
+
+    return approver
+
+
+async def test_arguments_corrected_by_an_online_approver_are_validated() -> None:
+    """Comme ceux du modèle : refusés par le schéma, l'appel ne part pas et le modèle le lit."""
+    virement = RecordingTool(spec("virement", approval="always", side_effects="irreversible"))
+    executor = ToolExecutor([virement])
+    batch = awaiting(call("c1", "virement", x=3))
+    events = [e async for e in executor.run_batch(batch, approver=approved_with(BAD_ARGUMENTS))]
+    # La décision est au journal : on y lit ce que l'approbateur a voulu.
+    assert [type(e).__name__ for e in events] == [
+        "ApprovalRequested",
+        "ApprovalGranted",
+        "ToolCompleted",
+    ]
+    assert completed(events)["c1"] == ToolOutput.error(CORRECTION_REFUSED)
+    assert virement.calls == []
+
+    # Conformes, ils partent tels quels.
+    events = [e async for e in executor.run_batch(batch, approver=approved_with({"x": 7}))]
+    assert not completed(events)["c1"].is_error
+    assert [arguments for arguments, _ in virement.calls] == [{"x": 7}]
+
+
+async def test_arguments_corrected_by_a_human_are_validated_on_resume() -> None:
+    """Reprise d'un run en pause : l'accord et ses arguments sont au journal, non contrôlés."""
+    virement = RecordingTool(spec("virement", approval="always", side_effects="irreversible"))
+    executor = ToolExecutor([virement])
+
+    def corrected(arguments: dict[str, JsonValue]) -> RunState:
+        accord = ApprovalGranted(
+            call_id="c1", tool_name="virement", by="denis", arguments=arguments
+        )
+        return journaled("c1", "virement", asked("c1", "virement"), accord)
+
+    events = await collect(executor, corrected(BAD_ARGUMENTS))
+    assert completed(events)["c1"] == ToolOutput.error(CORRECTION_REFUSED)
+    assert not [e for e in events if isinstance(e, ToolCalled)]
+    assert virement.calls == []
+
+    events = await collect(executor, corrected({"x": 7}))
+    assert not completed(events)["c1"].is_error
+    assert [arguments for arguments, _ in virement.calls] == [{"x": 7}]
+
+
+async def test_corrected_arguments_follow_the_validation_setting() -> None:
+    """``validate_arguments=False`` vaut aussi pour ce que corrige l'approbateur."""
+    virement = RecordingTool(spec("virement", approval="always", side_effects="irreversible"))
+    executor = ToolExecutor([virement], validate_arguments=False)
+    batch = awaiting(call("c1", "virement", x=3))
+    events = [e async for e in executor.run_batch(batch, approver=approved_with(BAD_ARGUMENTS))]
+    assert not completed(events)["c1"].is_error
+    assert [arguments for arguments, _ in virement.calls] == [BAD_ARGUMENTS]
+
+
 async def test_unknown_tool_without_any_tool() -> None:
     outputs = completed(await collect(ToolExecutor(), awaiting(call("c1", "t"))))
     assert outputs["c1"].as_text.endswith("Outils disponibles : aucun.")
@@ -273,6 +346,80 @@ async def test_failures_become_error_results(
     assert outputs["c1"] == ToolOutput.error(expected)
     logged = [r for r in caplog.records if r.message == "Échec de l'outil cible"]
     assert len(logged) == (0 if isinstance(error, ToolError) else 1)
+
+
+async def test_a_reference_with_a_non_ascii_digit_is_refused_to_the_model() -> None:
+    """``result:²`` : ``isdigit`` l'accepte, ``int`` lève, et la reprise rejouait l'appel."""
+    cible = RecordingTool(spec("cible"))
+    events = await collect(
+        ToolExecutor([cible]),
+        awaiting(call("c1", "cible", x={"$ref": "result:²"}), call("c2", "cible", x=1)),
+    )
+    outputs = completed(events)
+    assert outputs["c1"].is_error
+    assert outputs["c1"].as_text.startswith("Référence invalide : 'result:²'")
+    assert not outputs["c2"].is_error
+    assert [arguments for arguments, _ in cible.calls] == [{"x": 1}]
+
+
+async def test_a_schema_that_cannot_be_resolved_fails_its_own_calls_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Schéma MCP à ``$ref`` pendant : ``check_schema`` l'accepte, la validation lève."""
+    schema: dict[str, JsonValue] = {
+        "type": "object",
+        "properties": {"x": {"$ref": "#/$defs/absent"}},
+    }
+    casse = RecordingTool(
+        ToolSpec(name="mcp_casse", description="d", kind="mcp", input_schema=schema)
+    )
+    sain = RecordingTool(spec("sain"))
+    with caplog.at_level(logging.ERROR, logger="loom_ia.engine.executor"):
+        events = await collect(
+            ToolExecutor([casse, sain]),
+            awaiting(call("c1", "mcp_casse", x=1), call("c2", "sain", x=1)),
+        )
+    outputs = completed(events)
+    assert outputs["c1"].is_error
+    assert outputs["c1"].as_text.startswith("Appel à mcp_casse impossible à préparer : ")
+    assert not outputs["c2"].is_error
+    assert casse.calls == []
+    # L'erreur de programmation n'est pas muette : elle est journalisée, avec sa trace.
+    [logged] = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert logged.getMessage() == "Préparation de l'appel à mcp_casse impossible"
+    assert logged.exc_info is not None
+
+
+async def test_a_failing_artifact_store_fails_the_call_that_reads_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Contenu déporté illisible pour une autre raison qu'« introuvable » : erreur d'appel."""
+
+    class Broken(InMemoryArtifactStore):
+        async def get(self, uri: str) -> bytes:
+            raise PermissionError("disque illisible")
+
+    cible = RecordingTool(spec("cible"))
+    journal = RunJournal(agent="demo")
+    journal.start("?").model_turn(tool_call_message(("c1", "gros", {})))
+    journal.tool_results(
+        {"c1": ToolOutput(blocks=(TextBlock(text="aperçu"),), offloaded="artifact://t/s/a.txt")}
+    )
+    journal.model_turn(
+        tool_call_message(("c2", "cible", {"x": {"$ref": "result:1"}}), ("c3", "cible", {"x": 2}))
+    )
+    drafts = journal.take()
+    state = fold([d.to_event(seq) for seq, d in enumerate(drafts, start=1)], journal.run_id)
+
+    with caplog.at_level(logging.ERROR, logger="loom_ia.engine.executor"):
+        events = await collect(ToolExecutor([cible], artifacts=Broken()), state)
+    outputs = completed(events)
+    assert outputs["c2"] == ToolOutput.error(
+        "Appel à cible impossible à préparer : PermissionError: disque illisible"
+    )
+    assert not outputs["c3"].is_error
+    assert [arguments for arguments, _ in cible.calls] == [{"x": 2}]
+    assert len([r for r in caplog.records if r.levelno == logging.ERROR]) == 1
 
 
 async def test_timeouts() -> None:
@@ -428,6 +575,78 @@ async def test_closing_the_batch_cancels_running_tools() -> None:
                 break
     assert [type(e).__name__ for e in seen] == ["ToolCalled", "ToolCalled", "ToolCompleted"]
     assert slow.cancelled
+
+
+@dataclass
+class SelfCancellingTool:
+    """Outil qui se termine annulé sans que le lot l'ait demandé."""
+
+    spec: ToolSpec
+    how: str
+
+    async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
+        if self.how == "raises":
+            raise asyncio.CancelledError
+        if self.how == "inner_task":
+            # Une tâche que l'outil attend est annulée par ailleurs (client, pool…).
+            inner = asyncio.ensure_future(asyncio.sleep(10))
+            asyncio.get_running_loop().call_soon(inner.cancel)
+            await inner
+        else:
+            task = asyncio.current_task()
+            assert task is not None
+            task.cancel()
+            await asyncio.sleep(10)
+        return ToolOutput.text("jamais")
+
+
+@pytest.mark.parametrize("how", ["raises", "inner_task", "own_task"])
+async def test_a_tool_cancelled_from_inside_fails_without_blocking_the_batch(
+    how: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Annulé de l'intérieur, un outil n'arrête pas le run : c'est son échec, dit au modèle.
+
+    Sans résultat pour cet appel, le lot l'attendait indéfiniment.
+    """
+    annule, sain = SelfCancellingTool(spec("annule"), how), RecordingTool(spec("sain"))
+    with caplog.at_level(logging.WARNING, logger="loom_ia.engine.executor"):
+        async with asyncio.timeout(2):
+            events = await collect(
+                ToolExecutor([annule, sain]), awaiting(call("c1", "annule"), call("c2", "sain"))
+            )
+    outputs = completed(events)
+    assert outputs["c1"] == ToolOutput.error(
+        "Erreur de l'outil annule : l'outil s'est annulé de lui-même (CancelledError), "
+        "sans que le run ait été arrêté."
+    )
+    assert outputs["c2"] == ToolOutput.text("ok")
+    logged = [r.getMessage() for r in caplog.records if r.name == "loom_ia.engine.executor"]
+    assert logged == ["Outil annule annulé de l'intérieur"]
+
+
+async def test_an_outside_cancellation_still_stops_the_batch() -> None:
+    """L'arrêt du run se propage au lot, qui annule ses outils : aucun résultat n'est inventé."""
+    started, interrupted = asyncio.Event(), asyncio.Event()
+
+    @tool
+    async def lent(x: int) -> str:
+        """Lent."""
+        started.set()
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            interrupted.set()
+            raise
+        return "lent"
+
+    running = asyncio.create_task(collect(ToolExecutor([lent]), awaiting(call("c1", "lent", x=1))))
+    async with asyncio.timeout(2):
+        await started.wait()
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+        await interrupted.wait()
+    assert running.cancelled()
 
 
 def test_registration() -> None:

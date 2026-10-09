@@ -2,7 +2,7 @@
 """Cycle de vie d'un run (J4.2a) : délai maximal, annulation, reprise."""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -11,11 +11,12 @@ import pytest
 import yaml
 
 from loom_ia.access.api import Loom
-from loom_ia.adapters.stores import JsonlEventStore
+from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
-from loom_ia.core.events import Event, EventDraft, RunCancelled, RunFailed
+from loom_ia.core.events import Event, EventDraft, RunCancelled, RunFailed, ToolCalled
 from loom_ia.core.model import Message, RunStatus, SessionId, new_run_id
 from loom_ia.core.projections import fold, history
+from loom_ia.sessions import boundary
 from loom_ia.testing import RunJournal
 
 type ConfigFactory = Callable[..., Path]
@@ -82,6 +83,66 @@ def patient(tmp_path: Path) -> ConfigFactory:
         return tmp_path / "loom.yaml"
 
     return build
+
+
+@pytest.fixture
+def delegating(tmp_path: Path) -> Path:
+    """Agent qui délègue à un sous-agent dont le seul outil dort."""
+    (tmp_path / "agents").mkdir(exist_ok=True)
+    (tmp_path / "outils_lents.py").write_text(LENT, encoding="utf-8")
+    config: dict[str, Any] = {
+        "version": 1,
+        "imports": ["outils_lents"],
+        "models": [
+            {
+                "id": "MAIN",
+                "sdk": "fake",
+                "model": "main-1",
+                "params": {
+                    "script": [
+                        {
+                            "tool_calls": [
+                                {"name": "verifier", "arguments": {"message": "Vérifie."}}
+                            ]
+                        },
+                        {"text": "Vérifié."},
+                    ]
+                },
+            },
+            {
+                "id": "CHILD",
+                "sdk": "fake",
+                "model": "child-1",
+                "params": {
+                    "script": [
+                        {"tool_calls": [{"name": "attendre", "arguments": {"secondes": 30.0}}]},
+                        {"text": "Fait."},
+                    ]
+                },
+            },
+        ],
+        "storage": {"events": {"backend": "jsonl", "path": "data"}},
+        "telemetry": {"logging": {"level": "CRITICAL"}},
+    }
+    agents: list[dict[str, Any]] = [
+        {
+            "name": "demo",
+            "main": {"model": "MAIN", "system": "Tu orchestres."},
+            "subagents": [{"agent": "verificateur", "name": "verifier"}],
+        },
+        {
+            "name": "verificateur",
+            "description": "Vérifie en prenant son temps.",
+            "expose": {"rest": False, "mcp": False},
+            "main": {"model": "CHILD", "system": "Tu vérifies."},
+            "tools": [{"python": "attendre"}],
+        },
+    ]
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    for agent in agents:
+        path = tmp_path / "agents" / f"{agent['name']}.yaml"
+        path.write_text(yaml.safe_dump(agent), encoding="utf-8")
+    return tmp_path / "loom.yaml"
 
 
 # --- Temps de pilotage cumulé -------------------------------------------------
@@ -256,6 +317,54 @@ def test_a_run_left_in_the_air_is_cancelled_from_its_journal(patient: ConfigFact
 
     events = asyncio.run(go())
     assert [e.type for e in events[-2:]] == ["run.transitioned", "run.cancelled"]
+
+
+class Watching(InMemoryEventStore):
+    """Journal qui le dit quand un outil lent vient de partir."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+
+    async def append(
+        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
+    ) -> list[Event]:
+        events = await super().append(drafts, expected_seq=expected_seq)
+        if any(
+            isinstance(e.payload, ToolCalled) and e.payload.tool_name == "attendre" for e in events
+        ):
+            self.started.set()
+        return events
+
+
+def test_cancelling_a_parent_cancels_the_subruns_it_left_open(delegating: Path) -> None:
+    """Le sous-run n'est ni repris ni laissé ouvert : il part avec son parent, dans la foulée."""
+
+    async def go() -> list[Event]:
+        run_id = new_run_id()
+        store = Watching()
+        async with Loom(load_config(delegating), store=store) as loom:
+            run = asyncio.create_task(loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id))
+            async with asyncio.timeout(10):
+                # Le sous-agent est dans son outil : il ne rendra rien avant l'arrêt.
+                await store.started.wait()
+            assert await loom.cancel(run_id, session_id=SESSION, by="denis")
+            run.cancel()
+            with suppress(asyncio.CancelledError):
+                await run
+            return await loom.export_session(SESSION)
+
+    events = asyncio.run(go())
+
+    [parent] = {e.root_run_id for e in events}
+    [child] = {e.run_id for e in events} - {parent}
+    assert fold(events, parent).status is RunStatus.CANCELLED
+    closed = fold(events, child)
+    assert closed.status is RunStatus.CANCELLED and closed.cancelled == "parent"
+    [closing] = [e.payload for e in events if e.run_id == child and e.type == "run.cancelled"]
+    assert isinstance(closing, RunCancelled) and closing.by == parent
+    # Un sous-run resté ouvert figerait la frontière du snapshot avant le run.
+    assert boundary(events) == events[-1].seq
 
 
 def test_a_cancelled_run_is_not_a_turn_of_the_session(patient: ConfigFactory) -> None:

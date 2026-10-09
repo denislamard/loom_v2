@@ -18,11 +18,17 @@ second worker passerait. Le nombre de lignes touchées (0 ou 1) fait foi.
 Une réservation périmée n'est jamais effacée d'elle-même : c'est la trace
 d'un effet d'état inconnu, et l'effacer la ferait passer pour un appel jamais
 lancé. Seuls les résultats hors rétention s'oublient, au fil des écritures.
+
+La colonne ``holder`` porte le jeton du détenteur de la clé : ``complete`` et
+``release`` qui en présentent un ne touchent que la ligne qui est encore à lui.
+Elle est **nullable** et ajoutée à l'ouverture d'une base créée avant elle ;
+une ligne sans jeton (écrite avant, ou sans) ne répond à aucun jeton.
 """
 
 import asyncio
 import json
 import os
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
@@ -47,7 +53,8 @@ CREATE TABLE IF NOT EXISTS idempotency (
     session_id TEXT NOT NULL,
     status     TEXT NOT NULL,
     result     TEXT,
-    expires_at TEXT NOT NULL
+    expires_at TEXT NOT NULL,
+    holder     TEXT
 );
 CREATE INDEX IF NOT EXISTS idempotency_owner ON idempotency (tenant_id, session_id);
 CREATE INDEX IF NOT EXISTS idempotency_expiry ON idempotency (status, expires_at);
@@ -58,20 +65,26 @@ CREATE INDEX IF NOT EXISTS idempotency_expiry ON idempotency (status, expires_at
 # Passée leur échéance, la clé est libre — une réservation périmée parce que
 # son effet est d'état inconnu, un résultat parce qu'il n'a plus cours.
 _RESERVE: Final = """
-INSERT INTO idempotency (key, tenant_id, session_id, status, result, expires_at)
-VALUES (?, ?, ?, 'in_progress', NULL, ?)
+INSERT INTO idempotency (key, tenant_id, session_id, status, result, expires_at, holder)
+VALUES (?, ?, ?, 'in_progress', NULL, ?, ?)
 ON CONFLICT(key) DO UPDATE SET
     tenant_id  = excluded.tenant_id,
     session_id = excluded.session_id,
     status     = 'in_progress',
     result     = NULL,
-    expires_at = excluded.expires_at
+    expires_at = excluded.expires_at,
+    holder     = excluded.holder
 WHERE idempotency.expires_at < ?
 """
 
 _COMPLETE: Final = (
     "UPDATE idempotency SET status = 'completed', result = ?, expires_at = ? WHERE key = ?"
 )
+# Avec un jeton de détenteur : la même instruction, bornée à la ligne encore à lui.
+_COMPLETE_HELD: Final = _COMPLETE + " AND holder = ?"
+
+_RELEASE: Final = "DELETE FROM idempotency WHERE key = ? AND status = 'in_progress'"
+_RELEASE_HELD: Final = _RELEASE + " AND holder = ?"
 
 
 class SqliteIdempotency:
@@ -104,6 +117,7 @@ class SqliteIdempotency:
                 await connection.execute("PRAGMA synchronous = FULL")
                 await connection.execute("PRAGMA busy_timeout = 5000")
                 await connection.executescript(SCHEMA)
+                await _add_holder(connection)
             except BaseException:
                 # Base tenue par un autre process, fichier illisible… : la
                 # connexion n'est pas gardée, elle est donc fermée ici — sinon
@@ -134,13 +148,16 @@ class SqliteIdempotency:
             expires_at=datetime.fromisoformat(expires_at),
         )
 
-    async def reserve(self, key: str, ttl: float, scope: KeyScope) -> bool:
+    async def reserve(
+        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
+    ) -> bool:
         now = datetime.now(UTC)
         values: tuple[Any, ...] = (
             key,
             scope.tenant_id,
             scope.session_id,
             (now + timedelta(seconds=ttl)).isoformat(),
+            holder,
             now.isoformat(),
         )
         async with self._lock:
@@ -148,7 +165,9 @@ class SqliteIdempotency:
             async with connection.execute(_RESERVE, values) as cursor:
                 return cursor.rowcount == 1
 
-    async def complete(self, key: str, result: object, ttl: float | None = None) -> None:
+    async def complete(
+        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
+    ) -> None:
         now = datetime.now(UTC)
         expires = now + timedelta(seconds=self.retention if ttl is None else ttl)
         payload = json.dumps(recordable(result), ensure_ascii=False)
@@ -160,17 +179,26 @@ class SqliteIdempotency:
                 "DELETE FROM idempotency WHERE status = 'completed' AND expires_at < ?",
                 (now.isoformat(),),
             )
-            async with connection.execute(_COMPLETE, (payload, expires.isoformat(), key)) as cursor:
+            values: tuple[str, ...] = (payload, expires.isoformat(), key)
+            if holder is None:
+                sql = _COMPLETE
+            else:
+                sql, values = _COMPLETE_HELD, (*values, holder)
+            async with connection.execute(sql, values) as cursor:
                 touched = cursor.rowcount
-        if touched == 0:
+            # Un jeton qui ne répond pas laisse la ligne telle quelle : elle est à
+            # un autre. Seule une clé absente est une erreur.
+            absent = touched == 0 and (holder is None or not await _exists(connection, key))
+        if absent:
             raise KeyError(f"Clé {key!r} non réservée : rien à enregistrer")
 
-    async def release(self, key: str) -> None:
+    async def release(self, key: str, *, holder: str | None = None) -> None:
         async with self._lock:
             connection = await self._connect()
-            await connection.execute(
-                "DELETE FROM idempotency WHERE key = ? AND status = 'in_progress'", (key,)
-            )
+            if holder is None:
+                await connection.execute(_RELEASE, (key,))
+            else:
+                await connection.execute(_RELEASE_HELD, (key, holder))
 
     async def forget(self, tenant_id: TenantId, session_id: SessionId | None = None) -> int:
         """Oublie les clés d'un client, ou de l'une de ses sessions (RGPD)."""
@@ -189,6 +217,28 @@ class SqliteIdempotency:
             if self._connection is not None:
                 await self._connection.close()
                 self._connection = None
+
+
+async def _add_holder(connection: aiosqlite.Connection) -> None:
+    """Ajoute ``holder`` à une table créée avant lui ; sans effet s'il est déjà là."""
+    if await _has_holder(connection):
+        return
+    try:
+        await connection.execute("ALTER TABLE idempotency ADD COLUMN holder TEXT")
+    except sqlite3.OperationalError:
+        # Un autre process l'a ajoutée entre-temps : c'est tout ce qu'on voulait.
+        if not await _has_holder(connection):
+            raise
+
+
+async def _has_holder(connection: aiosqlite.Connection) -> bool:
+    async with connection.execute("PRAGMA table_info(idempotency)") as cursor:
+        return any(column[1] == "holder" for column in await cursor.fetchall())
+
+
+async def _exists(connection: aiosqlite.Connection, key: str) -> bool:
+    async with connection.execute("SELECT 1 FROM idempotency WHERE key = ?", (key,)) as cursor:
+        return await cursor.fetchone() is not None
 
 
 def _status(value: object) -> IdempotencyStatus:

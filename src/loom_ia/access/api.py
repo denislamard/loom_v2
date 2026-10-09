@@ -144,6 +144,7 @@ from loom_ia.engine import (
     cancellation,
     drive,
     run_scope,
+    subruns_cancellation,
 )
 from loom_ia.replay import (
     Double,
@@ -1985,7 +1986,8 @@ class Loom:
 
         Le run piloté ici est d'abord interrompu, puis clos au journal. Un run
         que cette instance ne pilote pas — repris ailleurs, ou laissé en plan
-        par un plantage — est clos directement.
+        par un plantage — est clos directement. Ses sous-runs encore ouverts
+        sont annulés avec lui (``reason: parent``), dans la même écriture.
 
         Un run annulé est **terminal** : il ne se reprend pas. Un run seulement
         interrompu, lui, ne laisse rien au journal et repart où il en était.
@@ -2007,8 +2009,13 @@ class Loom:
             writer = await self._writers.open(
                 self._store, state.context.tenant_id, state.session_id
             )
+            # Les sous-runs encore ouverts partent avec lui, dans la même écriture :
+            # plus rien ne les reprendrait, et ils figeraient le snapshot de la session.
+            tree = await self.events(run_id, session_id=session_id, tenant_id=tenant_id)
             try:
-                await writer.append(cancellation(state, by=by))
+                await writer.append(
+                    [*subruns_cancellation(tree, state), *cancellation(state, by=by)]
+                )
             except RunMoved:
                 return False
             return True

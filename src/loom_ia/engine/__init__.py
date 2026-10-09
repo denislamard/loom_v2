@@ -50,6 +50,7 @@ from loom_ia.engine.loop import (
     judge_role,
     run_scope,
     step,
+    subruns_cancellation,
 )
 from loom_ia.engine.media import IMAGE_TOKENS, MediaResolver
 from loom_ia.engine.offload import ARTIFACT_READ, DEFAULT_OFFLOAD_OVER, ArtifactReadTool
@@ -166,6 +167,7 @@ __all__ = [
     "rendered",
     "run_scope",
     "step",
+    "subruns_cancellation",
     "tagged",
     "transcript",
     "user_input",

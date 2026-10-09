@@ -11,6 +11,15 @@ retrouver au lieu de refaire.
 check-then-act : entre les deux, un autre pilote peut passer. Ce n'est donc pas
 ``get`` qui protège, c'est l'**atomicité** de ``reserve`` — il rend faux si la
 clé est déjà tenue, et c'est ce faux qui fait foi.
+
+**Jeton de détenteur.** Une réservation périmée est reprise par un autre, et
+son premier détenteur, resté en vie, finit un jour par appeler ``complete`` ou
+``release`` : sans rien pour les distinguer, il écraserait la réservation ou le
+résultat de son successeur. ``reserve`` reçoit donc un jeton opaque (``holder``)
+que le magasin retient avec la clé ; ``complete`` et ``release`` ne s'appliquent
+que si on leur présente ce jeton. Il est **optionnel** : sans lui, rien n'est
+contrôlé, comme avant — un appelant ou un magasin qui n'en connaît pas reste
+valable.
 """
 
 from dataclasses import dataclass
@@ -48,7 +57,9 @@ class IdempotencyStore(Protocol):
         """
         ...
 
-    async def reserve(self, key: str, ttl: float, scope: KeyScope) -> bool:
+    async def reserve(
+        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
+    ) -> bool:
         """Prend la clé pour ``ttl`` secondes ; faux si quelqu'un la tient déjà.
 
         Atomique : de deux appelants simultanés, un seul obtient vrai. Une
@@ -57,22 +68,35 @@ class IdempotencyStore(Protocol):
 
         ``scope`` dit de qui est la clé : le magasin le retient pour pouvoir
         l'oublier avec sa session ou avec son client.
+
+        ``holder`` : jeton opaque, propre à cette prise de clé ; le magasin le
+        retient, et la reprise d'une réservation périmée le remplace.
         """
         ...
 
-    async def complete(self, key: str, result: object, ttl: float | None = None) -> None:
+    async def complete(
+        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
+    ) -> None:
         """Enregistre ce que l'effet a rendu : la clé cesse d'être une réservation.
 
         ``ttl`` : durée pendant laquelle le résultat reste consultable ;
         ``None`` laisse le magasin décider.
+
+        ``holder`` : avec un jeton, l'enregistrement n'a lieu que s'il est celui
+        de la clé ; celui d'un détenteur périmé, dont la clé a été reprise,
+        n'a **aucun effet** (et ne lève pas). Une clé que le magasin ne connaît
+        plus lève ``KeyError``, avec ou sans jeton.
         """
         ...
 
-    async def release(self, key: str) -> None:
+    async def release(self, key: str, *, holder: str | None = None) -> None:
         """Rend une clé réservée dont l'effet ne s'est **pas** produit.
 
         À n'appeler que si l'on en est sûr : un échec avant tout effet de
         bord. Dans le doute, on laisse la réservation expirer.
+
+        ``holder`` : avec un jeton, la clé n'est rendue que si elle est encore
+        à ce détenteur ; sinon elle est à quelqu'un d'autre, et n'est pas touchée.
         """
         ...
 

@@ -16,6 +16,12 @@ Pas de politique de lignes sur cette table, contrairement au journal :
 invisible la ligne qu'il faut justement relire. Ce qui cadre une clé, c'est
 son préfixe par client (#49) ; ce que portent les colonnes ``tenant_id`` et
 ``session_id``, c'est de quoi l'oublier avec sa session (RGPD).
+
+La colonne ``holder`` porte le jeton du détenteur de la clé : ``complete`` et
+``release`` qui en présentent un ne touchent que la ligne encore à lui. Elle
+est nullable, et ajoutée par l'ouverture à une table créée avant elle (il y
+faut le droit de ``ALTER TABLE`` ; sinon ``loom storage sql`` donne ce qu'un
+exploitant applique). Une ligne sans jeton ne répond à aucun jeton.
 """
 
 import json
@@ -23,7 +29,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
 from loom_ia.adapters.postgres.pool import PostgresPool, rows_touched
-from loom_ia.adapters.postgres.sql import DEFAULT_ROLE, IDEMPOTENCY_TABLE, ddl
+from loom_ia.adapters.postgres.sql import (
+    DEFAULT_ROLE,
+    IDEMPOTENCY_TABLE,
+    IDEMPOTENCY_UPGRADE,
+    ddl,
+)
 from loom_ia.core.model import (
     DEFAULT_RETENTION,
     IdempotencyRecord,
@@ -37,14 +48,15 @@ from loom_ia.core.ports import KeyScope
 # Ce qui protège, c'est la date : une réservation encore tenue ou un résultat
 # encore mémorisé ne bougent pas. Passée leur échéance, la clé est libre.
 _RESERVE: Final = f"""
-INSERT INTO {IDEMPOTENCY_TABLE} (key, tenant_id, session_id, status, result, expires_at)
-VALUES ($1, $2, $3, 'in_progress', NULL, $4)
+INSERT INTO {IDEMPOTENCY_TABLE} (key, tenant_id, session_id, status, result, expires_at, holder)
+VALUES ($1, $2, $3, 'in_progress', NULL, $4, $6)
 ON CONFLICT (key) DO UPDATE SET
     tenant_id  = excluded.tenant_id,
     session_id = excluded.session_id,
     status     = 'in_progress',
     result     = NULL,
-    expires_at = excluded.expires_at
+    expires_at = excluded.expires_at,
+    holder     = excluded.holder
 WHERE {IDEMPOTENCY_TABLE}.expires_at < $5
 """
 
@@ -52,6 +64,14 @@ _COMPLETE: Final = (
     f"UPDATE {IDEMPOTENCY_TABLE} SET status = 'completed', result = $1, expires_at = $2"
     " WHERE key = $3"
 )
+
+# Avec un jeton de détenteur : la même instruction, bornée à la ligne encore à lui.
+_COMPLETE_HELD: Final = _COMPLETE + " AND holder = $4"
+
+_RELEASE: Final = f"DELETE FROM {IDEMPOTENCY_TABLE} WHERE key = $1 AND status = 'in_progress'"
+_RELEASE_HELD: Final = _RELEASE + " AND holder = $2"
+
+_EXISTS: Final = f"SELECT 1 FROM {IDEMPOTENCY_TABLE} WHERE key = $1"
 
 _GET: Final = (
     f"SELECT status, result, expires_at FROM {IDEMPOTENCY_TABLE}"
@@ -77,6 +97,7 @@ class PostgresIdempotency:
             table=IDEMPOTENCY_TABLE,
             ddl=ddl(role=role, events=False),
             role=role,
+            upgrade=IDEMPOTENCY_UPGRADE,
         )
 
     def __repr__(self) -> str:
@@ -96,7 +117,9 @@ class PostgresIdempotency:
             expires_at=row["expires_at"],
         )
 
-    async def reserve(self, key: str, ttl: float, scope: KeyScope) -> bool:
+    async def reserve(
+        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
+    ) -> bool:
         now = datetime.now(UTC)
         async with self._pg.transaction() as connection:
             status = await connection.execute(
@@ -106,10 +129,13 @@ class PostgresIdempotency:
                 scope.session_id,
                 now + timedelta(seconds=ttl),
                 now,
+                holder,
             )
         return rows_touched(status) == 1
 
-    async def complete(self, key: str, result: object, ttl: float | None = None) -> None:
+    async def complete(
+        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
+    ) -> None:
         now = datetime.now(UTC)
         expires = now + timedelta(seconds=self.retention if ttl is None else ttl)
         payload = json.dumps(recordable(result), ensure_ascii=False)
@@ -120,15 +146,24 @@ class PostgresIdempotency:
                 f"DELETE FROM {IDEMPOTENCY_TABLE} WHERE status = 'completed' AND expires_at < $1",
                 now,
             )
-            status = await connection.execute(_COMPLETE, payload, expires, key)
-        if rows_touched(status) == 0:
+            if holder is None:
+                status = await connection.execute(_COMPLETE, payload, expires, key)
+            else:
+                status = await connection.execute(_COMPLETE_HELD, payload, expires, key, holder)
+            # Un jeton qui ne répond pas laisse la ligne telle quelle : elle est à
+            # un autre. Seule une clé absente est une erreur.
+            absent = rows_touched(status) == 0 and (
+                holder is None or await connection.fetchval(_EXISTS, key) is None
+            )
+        if absent:
             raise KeyError(f"Clé {key!r} non réservée : rien à enregistrer")
 
-    async def release(self, key: str) -> None:
+    async def release(self, key: str, *, holder: str | None = None) -> None:
         async with self._pg.transaction() as connection:
-            await connection.execute(
-                f"DELETE FROM {IDEMPOTENCY_TABLE} WHERE key = $1 AND status = 'in_progress'", key
-            )
+            if holder is None:
+                await connection.execute(_RELEASE, key)
+            else:
+                await connection.execute(_RELEASE_HELD, key, holder)
 
     async def forget(self, tenant_id: TenantId, session_id: SessionId | None = None) -> int:
         """Oublie les clés d'un client, ou de l'une de ses sessions (RGPD)."""

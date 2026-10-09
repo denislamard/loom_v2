@@ -11,6 +11,7 @@ from loom_ia.core.events import (
     Event,
     EventDraft,
     EventQuery,
+    ModelResponded,
     PolicyDecided,
     RunCompleted,
     RunFailed,
@@ -28,12 +29,15 @@ from loom_ia.core.model import (
     BeforeModel,
     BeforeTool,
     Decision,
+    DecisionKind,
     Deny,
     Fail,
+    HookPoint,
     Message,
     ModelSpec,
     OnOutput,
     PolicyContext,
+    PolicySubject,
     Pricing,
     Replace,
     Retry,
@@ -49,7 +53,16 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import EventStore
 from loom_ia.core.projections import history
-from loom_ia.engine import BoundPolicy, Policies, RunContext, ToolExecutor, begin_run, drive
+from loom_ia.engine import (
+    BoundPolicy,
+    Policies,
+    RunContext,
+    ToolExecutor,
+    Trace,
+    TracingPolicy,
+    begin_run,
+    drive,
+)
 from loom_ia.policies import FunctionPolicy, policy, require_tool
 from loom_ia.testing import ScriptedModel, tool_call_message
 from loom_ia.tools import ConfiguredTool, tool
@@ -628,6 +641,73 @@ async def test_a_decided_repair_survives_a_crash(store: EventStore) -> None:
     assert calls == [0, 1]
     events = await journal(store, state)
     assert kinds(events).count("repair") == 1
+
+
+class Juge(TracingPolicy):
+    """Juge fictif : un appel de modèle écrit à son nom, puis son feu vert."""
+
+    name = "juge"
+    points: frozenset[HookPoint] = frozenset({"on_output"})
+    decisions: frozenset[DecisionKind] = frozenset()
+
+    async def decide_traced(
+        self, subject: PolicySubject, context: PolicyContext, trace: Trace
+    ) -> Decision:
+        trace(
+            ModelResponded(
+                model_id="juge-1",
+                provider="fake",
+                message=Message.assistant("ok"),
+                request_hash="h",
+                judge=self.name,
+            )
+        )
+        return CONTINUE
+
+
+@pytest.mark.parametrize(
+    ("crash", "judged"),
+    [
+        # Plantage après l'appel du juge : la décision n'est pas écrite, le juge est refait.
+        ("judge_answer", 2),
+        # Plantage entre la transition finale et la clôture : il ne reste qu'à conclure.
+        ("transition", 1),
+    ],
+)
+async def test_a_terminal_output_judged_on_output_resumes_after_a_crash(
+    store: EventStore, crash: str, judged: int
+) -> None:
+    """Le juge écrit après ``tool.completed`` : la reprise retrouve pourtant l'outil terminal."""
+
+    def after(event: Event) -> bool:
+        payload = event.payload
+        if crash == "judge_answer":
+            return isinstance(payload, ModelResponded) and payload.judge is not None
+        return isinstance(payload, RunTransitioned) and payload.to_state is RunStatus.COMPLETED
+
+    judges = Policies(
+        [BoundPolicy(policy=Juge(), name="juge", points=Juge.points, max_attempts=None)]
+    )
+    model = scripted(tool_call_message(("c1", "rediger", {"sujet": "la pluie"})))
+    crashing = CrashingStore(store, after)
+    ctx = context(crashing, model, judges)  # pyright: ignore[reportArgumentType]
+    started = await begin_run(ctx, "Écris.")
+    with pytest.raises(Crash):
+        await drive(ctx, started.run_id)
+
+    state = await drive(context(store, model, judges), started.run_id)
+
+    assert state.status is RunStatus.COMPLETED and state.finished
+    assert state.terminal_call_id == "c1"
+    assert state.output == Message.assistant("Texte sur la pluie")
+    events = await journal(store, state)
+    # L'outil n'est pas rejoué, et la clôture désigne bien son ``tool.completed``.
+    assert [e.type for e in events].count("tool.called") == 1
+    [tool_done] = [e for e in events if isinstance(e.payload, ToolCompleted)]
+    closing = events[-1].payload
+    assert isinstance(closing, RunCompleted) and closing.output_event_id == tool_done.event_id
+    called = [e for e in events if isinstance(e.payload, ModelResponded) and e.payload.judge]
+    assert len(called) == judged
 
 
 async def test_replaced_arguments_are_reused_on_resume(store: EventStore) -> None:

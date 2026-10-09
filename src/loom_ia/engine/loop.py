@@ -84,7 +84,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import aclosing, asynccontextmanager, nullcontext, suppress
+from contextlib import aclosing, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Final
@@ -176,7 +176,7 @@ from loom_ia.core.ports import (
     SourceContext,
     stopped_by_client,
 )
-from loom_ia.core.projections import apply, fold, last_summary, spent, turns
+from loom_ia.core.projections import RunTree, apply, fold, last_summary, spent, turns
 from loom_ia.engine.circuit import CircuitBreakers
 from loom_ia.engine.delegated import Waiting
 from loom_ia.engine.executor import Decided, Delegated, OpenedTools, Stored, ToolExecutor
@@ -464,7 +464,7 @@ async def drive(
         return state
     rooted = state.parent_run_id is None and state.kind == "normal"
     earlier = [e for e in events if e.seq < own[0].seq] if rooted else []
-    cause = next((e for e in reversed(own) if e.category in {"model", "tool"}), None)
+    cause = next((e for e in reversed(own) if _effect(e)), None)
     if writer is None:
         writer = SessionWriter(ctx.store, tenant, session, events[-1].seq)
     journal = writer
@@ -477,6 +477,18 @@ async def drive(
         return await _driven(ctx, state, tenant, session, journal, scope, claimed, earlier, cause)
     except RunMoved as moved:
         return await _closed_elsewhere(ctx, run_id, tenant, session, moved)
+
+
+def _effect(event: Event) -> bool:
+    """L'événement est un effet du run, appel de modèle ou d'outil, et non l'appel d'un juge.
+
+    Un juge évalue une réponse ou un résultat sans en être la cause : ses
+    événements viennent après l'effet qu'il juge, et une reprise qui les
+    prendrait pour lui ne retrouverait plus le ``tool.completed`` d'un outil
+    terminal dont le juge a écrit avant la clôture.
+    """
+    judged = isinstance(event.payload, _CALL_EVENTS) and event.payload.judge is not None
+    return event.category in {"model", "tool"} and not judged
 
 
 async def _closed_elsewhere(
@@ -519,7 +531,7 @@ async def _driven(
     async def write(draft: EventDraft) -> Event:
         nonlocal state, cause
         [event] = await journal.append([draft])
-        if event.category in {"model", "tool"}:
+        if _effect(event):
             cause = event
         if isinstance(event.payload, RunTransitioned):
             _log_transition(event, event.payload)
@@ -542,7 +554,7 @@ async def _driven(
         if state.status.is_terminal
         else ctx.tools.opened(sources)
     )
-    async with opening as opened, _renewed(claimed, journal, scope):
+    async with opening as opened, _renewed(claimed, journal, scope) as stop_renewing:
         blocking: tuple[Event, ToolSourceUnavailable] | None = None
         for payload in opened.events:
             event = await write(scope.draft(payload))
@@ -562,14 +574,23 @@ async def _driven(
             turns=session_turns,
             summary=last_summary(earlier),
         )
+        # Les décisions (``after_model``, ``on_output``, juges) n'ont pas d'étape : leur
+        # durée n'entre pas dans ``active_ms``. Le pilote la cumule ici, pour que le
+        # délai les borne comme il borne une étape ; une reprise la perd, comme celle
+        # d'une étape coupée.
+        decided = 0.0
         while not state.finished and await _advances(state, ctx, tenant, session):
             emitted = 0
             released = False
+            stepped = False
+            from_step = state.step
+            began = time.perf_counter()
             # Une fois l'état final atteint, il ne reste qu'à écrire la clôture :
             # le délai ne la coupe pas, il ne borne que le travail à faire.
-            left = None if state.status.is_terminal else _remaining(state, run_ctx)
+            left = None if state.status.is_terminal else _remaining(state, run_ctx, decided)
             if left is not None and left <= 0:
-                await _expired(write, state, scope, run_ctx, cut=False)
+                await _close_subruns(journal, state)
+                await _expired(write, state, scope, run_ctx, cut=False, decided=decided)
                 return state
             limit = asyncio.timeout(left)
             try:
@@ -580,6 +601,7 @@ async def _driven(
                         async for draft in drafts:
                             await write(draft)
                             emitted += 1
+                            stepped = stepped or isinstance(draft.payload, StepStarted)
                             released = released or isinstance(draft.payload, RunCompleted)
             except TimeoutError:
                 if not limit.expired():
@@ -593,14 +615,24 @@ async def _driven(
                 if state.status.is_terminal:
                     # La clôture était commencée, voire finie : l'échéance ne la défait
                     # pas (un état final ne se quitte pas), le tour suivant l'achève.
-                    cause = next(
-                        (e for e in reversed(own) if e.category in {"model", "tool"}), None
-                    )
+                    cause = next((e for e in reversed(own) if _effect(e)), None)
                     continue
                 # L'étape a été interrompue en plein effet : ce qu'elle avait
-                # déjà écrit reste au journal, et le run se clôt sur l'échec.
-                await _expired(write, state, scope, run_ctx, cut=True)
+                # déjà écrit reste au journal, et le run se clôt sur l'échec. Si aucune
+                # étape n'a commencé, c'est une décision qui a été coupée.
+                await _close_subruns(journal, state)
+                await _expired(
+                    write,
+                    state,
+                    scope,
+                    run_ctx,
+                    cut=True,
+                    decided=decided,
+                    deciding=state.step == from_step,
+                )
                 return state
+            if not stepped:
+                decided += time.perf_counter() - began
             if released:
                 # Hors du délai : la réponse est déjà au journal, le flux la livre
                 # sans que l'échéance puisse l'interrompre ni défaire la clôture.
@@ -612,6 +644,9 @@ async def _driven(
         # Le run s'arrête sans être fini — en pause, le temps qu'on l'approuve.
         # Sa concession n'a plus de porteur : la garder vivante ferait refuser
         # la reprise pendant tout ce qu'il reste du bail (jusqu'à 60 s).
+        # Le minuteur s'arrête d'abord : une reconduction en cours tient le verrou
+        # de l'écrivain, et ne doit ni retarder la restitution ni s'écrire après.
+        await stop_renewing()
         await _handed_back(write, state, scope, claimed)
     return state
 
@@ -700,23 +735,60 @@ async def _claim(
         return None
     mine = RunClaim(worker_id=ctx.worker_id, lease_until=now + timedelta(seconds=ctx.lease))
     await journal.append(
-        [scope.draft(RunClaimed(worker_id=mine.worker_id, lease_until=mine.lease_until))]
+        [scope.draft(RunClaimed(worker_id=mine.worker_id, lease_until=mine.lease_until))],
+        guard=_not_taken(mine.worker_id, state.run_id),
     )
     return mine
+
+
+def _not_taken(worker_id: str, run_id: RunId) -> Callable[[Sequence[Event]], None]:
+    """Garde d'une écriture de concession : un autre pilote l'a-t-il prise entre-temps ?
+
+    Le journal a avancé depuis la lecture de l'état, et l'écrivain s'apprête à
+    rejouer la concession derrière ce qui s'y est écrit. Si la dernière
+    concession posée sur ce run est celle d'un autre worker, et vivante, la
+    rejouer ferait deux pilotes : ``ClaimConflict``, comme à la lecture. Sinon
+    — événements d'un autre run, concession expirée ou rendue —, le conflit
+    n'invalide rien.
+    """
+
+    def guard(landed: Sequence[Event]) -> None:
+        for event in reversed(landed):
+            payload = event.payload
+            if event.run_id != run_id or not isinstance(payload, RunClaimed):
+                continue
+            held = RunClaim(worker_id=payload.worker_id, lease_until=payload.lease_until)
+            if held.worker_id != worker_id and held.alive(datetime.now(UTC)):
+                raise ClaimConflict(run_id, held.worker_id, held.lease_until)
+            return
+
+    return guard
 
 
 @asynccontextmanager
 async def _renewed(
     claim: RunClaim | None, journal: SessionWriter, scope: RunScope
-) -> AsyncGenerator[None]:
+) -> AsyncGenerator[Callable[[], Awaitable[None]]]:
     """Renouvelle la concession au tiers du bail, tant que le run est piloté.
 
     Un minuteur, et pas un renouvellement entre deux étapes : un run bloqué
     dans une étape plus longue que son bail est bien vivant, et perdrait sa
     concession au profit d'un second pilote.
+
+    Un renouvellement raté — panne du store, journal écrit sans répit — est
+    journalisé et retenté au tour suivant : le bail couvre trois tours. Le
+    minuteur ne s'arrête que si le run est clos ailleurs, ou si un autre
+    worker a pris la concession.
+
+    Il rend de quoi l'arrêter avant la fin du bloc : le pilote le fait avant de
+    restituer la concession, ou de sortir.
     """
     if claim is None:
-        yield
+
+        async def nothing() -> None:
+            return
+
+        yield nothing
         return
     period = max((claim.lease_until - datetime.now(UTC)).total_seconds() / 3, 1.0)
 
@@ -726,21 +798,32 @@ async def _renewed(
             until = datetime.now(UTC) + timedelta(seconds=period * 3)
             draft = scope.draft(RunClaimed(worker_id=claim.worker_id, lease_until=until))
             try:
-                await journal.append([draft])
+                await journal.append([draft], guard=_not_taken(claim.worker_id, scope.run_id))
             except RunMoved:
                 # Clos ailleurs : le pilote le verra à sa prochaine écriture.
                 return
-            except Exception:
-                logger.warning("Concession du run %s : renouvellement raté", scope.run_id)
+            except ClaimConflict as taken:
+                logger.warning(
+                    "Concession du run %s : renouvellement arrêté — %s", scope.run_id, taken
+                )
                 return
+            except Exception:
+                logger.warning(
+                    "Concession du run %s : renouvellement raté, nouvel essai au prochain tour",
+                    scope.run_id,
+                    exc_info=True,
+                )
 
     task = asyncio.create_task(renew())
-    try:
-        yield
-    finally:
+
+    async def stop() -> None:
         task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        await asyncio.wait({task})
+
+    try:
+        yield stop
+    finally:
+        await stop()
 
 
 def cancellation(
@@ -767,11 +850,41 @@ def cancellation(
     ]
 
 
-def _remaining(state: RunState, ctx: RunContext) -> float | None:
-    """Secondes de pilotage qui restent au run, ou ``None`` s'il n'a pas de délai."""
+def subruns_cancellation(events: Sequence[Event], state: RunState) -> list[EventDraft]:
+    """Annulation des sous-runs encore ouverts d'un run que l'on clôt (C5, A5).
+
+    Un sous-run ne repart que par l'appel de son parent, qui le reprend en le
+    rejouant : le parent clos — délai dépassé, arrêt demandé —, plus rien ne le
+    reprendra. Resté ouvert, il figerait la frontière du snapshot de la session.
+    Chaque descendant ouvert est donc annulé avec son parent (``reason: parent``,
+    ``by`` : son run parent), le plus récent d'abord, donc un enfant avant son
+    propre parent. ``events`` : le journal de la session, ou l'arbre du run.
+    """
+    tree = RunTree(state.run_id).select(events)
+    runs = dict.fromkeys(e.run_id for e in tree if e.run_id != state.run_id)
+    drafts: list[EventDraft] = []
+    for run_id in reversed(runs):
+        child = fold(tree, run_id)
+        if not child.finished:
+            drafts += cancellation(child, reason="parent", by=child.parent_run_id)
+    return drafts
+
+
+async def _close_subruns(journal: SessionWriter, state: RunState) -> None:
+    """Annule avec lui les sous-runs encore ouverts d'un run que le délai va clore."""
+    events = await journal.store.read(journal.tenant_id, journal.session_id)
+    if drafts := subruns_cancellation(events, state):
+        await journal.append(drafts)
+
+
+def _remaining(state: RunState, ctx: RunContext, decided: float = 0.0) -> float | None:
+    """Secondes de pilotage qui restent au run, ou ``None`` s'il n'a pas de délai.
+
+    ``decided`` : temps des décisions déjà passées par ce pilote, hors étapes.
+    """
     if ctx.timeout is None:
         return None
-    return ctx.timeout - state.active_ms / 1000
+    return ctx.timeout - state.active_ms / 1000 - decided
 
 
 async def _expired(
@@ -781,6 +894,8 @@ async def _expired(
     ctx: RunContext,
     *,
     cut: bool,
+    decided: float = 0.0,
+    deciding: bool = False,
 ) -> None:
     """Clôture d'un run qui a dépassé son délai maximal (A6).
 
@@ -791,18 +906,27 @@ async def _expired(
     effet, ou un budget déjà épuisé avant même de commencer la suivante. Le
     temps de l'étape coupée n'est nulle part — elle n'a pas de
     ``step.completed`` —, donc le message ne le confond pas avec le cumul.
+    ``deciding`` : ce qui a été coupé n'est pas une étape mais une décision
+    (politiques, juges), qui n'en a pas ; ``decided`` : le temps des décisions
+    déjà passées, qui n'est pas dans ``active_ms``.
     """
     await write(_transition(state, scope, RunStatus.FAILED, "timeout"))
     done = state.active_ms / 1000
     limit = ctx.timeout or 0.0
-    if cut:
+    if cut and deciding:
+        reason = (
+            f"délai maximal de {limit:.1f} s dépassé : une décision (politiques, juges) "
+            f"prise après l'étape {state.step} a été interrompue en cours "
+            f"({done + decided:.1f} s de pilotage déjà écoulées avant elle)"
+        )
+    elif cut:
         reason = (
             f"délai maximal de {limit:.1f} s dépassé : l'étape {state.step} a été "
             f"interrompue en cours ({done:.1f} s d'étapes déjà terminées)"
         )
     else:
         reason = (
-            f"délai maximal de {limit:.1f} s dépassé : {done:.1f} s de pilotage "
+            f"délai maximal de {limit:.1f} s dépassé : {done + decided:.1f} s de pilotage "
             "déjà écoulées avant l'étape suivante"
         )
     await write(scope.draft(_failed(state, "timeout", reason)))

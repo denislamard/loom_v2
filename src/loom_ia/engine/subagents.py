@@ -26,6 +26,9 @@ chaîne d'agents qui s'appellent en boucle reste donc bornée.
 
 Annulation : l'enfant tourne dans la tâche de l'appel ; annuler le parent
 l'annule aussi. Rien n'est écrit : parent et enfant restent reprenables.
+Clore le parent — délai dépassé, ``cancel`` — est autre chose : plus rien ne
+reprendra l'enfant, qui est alors annulé avec lui (``run.cancelled``,
+``reason: parent``), avant le parent, au lieu de rester ouvert au journal.
 """
 
 from collections.abc import AsyncGenerator, Callable

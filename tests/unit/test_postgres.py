@@ -10,6 +10,9 @@ politique de lignes, les droits du rôle — est dans
 """
 
 import asyncio
+import re
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
@@ -23,6 +26,7 @@ from loom_ia.adapters.postgres.sql import (
     DEFAULT_ROLE,
     EVENTS_TABLE,
     IDEMPOTENCY_TABLE,
+    IDEMPOTENCY_UPGRADE,
     check_name,
     ddl,
 )
@@ -36,6 +40,8 @@ from loom_ia.config.models import (
     IdempotencyStorage,
     StorageConfig,
 )
+from loom_ia.core.model import DEFAULT_TENANT, SessionId
+from loom_ia.core.ports import KeyScope
 from loom_ia.runtime import create_event_store, create_idempotency_store, postgres_ddl
 
 # Ce qui demande le pilote : le SQL, la config et la CLI s'en passent.
@@ -69,6 +75,16 @@ def test_the_ddl_can_be_applied_twice() -> None:
     assert sql.count("IF NOT EXISTS") >= 8
     # Politique et rôle n'ont pas d'``IF NOT EXISTS`` : le bloc avale l'erreur.
     assert sql.count("EXCEPTION WHEN duplicate_object THEN NULL;") == 2
+
+
+def test_the_idempotency_table_gets_its_holder_column_whether_new_or_old() -> None:
+    """Colonne nullable : à la création, et pour une table d'avant, sans toucher à ses lignes."""
+    sql = ddl()
+    assert "holder     text\n" in sql
+    assert f"ALTER TABLE {IDEMPOTENCY_TABLE} ADD COLUMN holder text;" in sql
+    assert "NOT NULL" not in IDEMPOTENCY_UPGRADE
+    # Le test de présence évite le verrou exclusif de ``ALTER TABLE`` à chaque ouverture.
+    assert IDEMPOTENCY_UPGRADE.index("NOT EXISTS") < IDEMPOTENCY_UPGRADE.index("ALTER TABLE")
 
 
 def test_the_app_role_cannot_change_a_written_event() -> None:
@@ -377,3 +393,125 @@ async def test_simultaneous_first_requests_pose_the_schema_once(
     assert server.ddl_runs == 1
     assert len(opened) == 2
     assert len({id(pool) for pool in pools}) == 2
+
+
+class _Sent:
+    """Connexion qui note ce qu'on lui envoie ; ``touched`` est ce que dit Postgres."""
+
+    def __init__(self, touched: str = "UPDATE 1", exists: object = 1, present: bool = True) -> None:
+        self.touched = touched
+        self.exists = exists
+        self.present = present
+        self.sent: list[tuple[str, tuple[object, ...]]] = []
+
+    async def execute(self, sql: str, *args: object) -> str:
+        self.sent.append((sql, args))
+        return self.touched
+
+    async def fetchval(self, sql: str, *args: object) -> object:
+        self.sent.append((sql, args))
+        if "to_regclass" in sql:
+            return IDEMPOTENCY_TABLE if self.present else None
+        return self.exists
+
+    async def close(self) -> None:
+        return None
+
+
+@sans_extra
+@pytest.mark.parametrize("present", [True, False], ids=["table-d-avant", "table-neuve"])
+async def test_opening_an_old_table_adds_the_holder_column_not_the_whole_ddl(
+    monkeypatch: pytest.MonkeyPatch, present: bool
+) -> None:
+    """Le schéma n'est posé qu'une fois : une table d'avant ne recevrait jamais la colonne."""
+    import asyncpg
+
+    from loom_ia.adapters.postgres.pool import PostgresPool
+
+    connection = _Sent(present=present)
+
+    async def connect(dsn: str) -> _Sent:
+        return connection
+
+    async def create_pool(dsn: str, **options: object) -> object:
+        return object()
+
+    monkeypatch.setattr(asyncpg, "connect", connect)
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    pool = PostgresPool(
+        DSN,
+        table=IDEMPOTENCY_TABLE,
+        ddl=ddl(role=None, events=False),
+        role=None,
+        upgrade=IDEMPOTENCY_UPGRADE,
+    )
+    await pool.pool()
+    applied = [sql for sql, _ in connection.sent if "pg_advisory_lock" not in sql]
+    applied = [sql for sql in applied if "to_regclass($1)" not in sql]
+    assert applied == [IDEMPOTENCY_UPGRADE if present else ddl(role=None, events=False)]
+
+
+async def _idempotency(
+    monkeypatch: pytest.MonkeyPatch, connection: _Sent
+) -> Any:  # PostgresIdempotency, importé au besoin
+    from loom_ia.adapters.idempotency.postgres import PostgresIdempotency
+    from loom_ia.adapters.postgres.pool import PostgresPool
+
+    @asynccontextmanager
+    async def transaction(self: PostgresPool, tenant_id: str | None = None) -> AsyncGenerator[Any]:
+        yield connection
+
+    monkeypatch.setattr(PostgresPool, "transaction", transaction)
+    return PostgresIdempotency(DSN)
+
+
+def _placeholders_match(sent: list[tuple[str, tuple[object, ...]]]) -> None:
+    """Chaque instruction reçoit exactement les paramètres qu'elle numérote."""
+    for sql, args in sent:
+        numbered = {int(n) for n in re.findall(r"\$(\d+)", sql)}
+        assert numbered == set(range(1, len(args) + 1)), (sql, args)
+
+
+@sans_extra
+async def test_the_postgres_store_hands_the_holder_to_its_statements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ce que ces essais ne peuvent pas montrer sans base : le SQL lui-même, non exécuté ici."""
+    scope = KeyScope(tenant_id=DEFAULT_TENANT, session_id=SessionId("atelier"))
+    connection = _Sent()
+    store = await _idempotency(monkeypatch, connection)
+
+    await store.reserve("k", 60, scope, holder="moi")
+    await store.reserve("k", 60, scope)
+    await store.complete("k", "fait", holder="moi")
+    await store.complete("k", "fait")
+    await store.release("k", holder="moi")
+    await store.release("k")
+    _placeholders_match(connection.sent)
+
+    reserved = [args for sql, args in connection.sent if sql.lstrip().startswith("INSERT")]
+    assert [args[-1] for args in reserved] == ["moi", None]
+    completed = [args for sql, args in connection.sent if sql.startswith("UPDATE")]
+    assert [len(args) for args in completed] == [4, 3] and completed[0][-1] == "moi"
+    released = [args for sql, args in connection.sent if sql.startswith("DELETE") and "$2" in sql]
+    assert released == [("k", "moi")]
+    # Le jeton borne l'UPDATE et le DELETE ; sans jeton, rien n'est ajouté.
+    assert len([sql for sql, _ in connection.sent if re.search(r"AND holder = \$\d$", sql)]) == 2
+
+
+@sans_extra
+async def test_a_postgres_token_that_does_not_answer_is_silent_a_missing_key_is_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Aucune ligne touchée, mais la clé existe : elle est à un autre détenteur.
+    connection = _Sent(touched="UPDATE 0", exists=1)
+    store = await _idempotency(monkeypatch, connection)
+    await store.complete("k", "fait", holder="périmé")
+    _placeholders_match(connection.sent)
+
+    # Aucune ligne touchée et la clé n'existe pas : c'est une erreur, avec ou sans jeton.
+    connection.exists = None
+    with pytest.raises(KeyError, match="non réservée"):
+        await store.complete("k", "fait", holder="périmé")
+    with pytest.raises(KeyError, match="non réservée"):
+        await store.complete("k", "fait")

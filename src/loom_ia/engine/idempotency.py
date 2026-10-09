@@ -24,6 +24,12 @@ magasin ne la porterait que dans un run, là où elle doit valoir pour tous.
 par la file du lot : c'est justement entre l'effet et le ``tool.completed``
 que se situe l'accident qu'on veut couvrir. Un enregistrement mis en file
 serait écrit en même temps que le résultat, et ne couvrirait rien.
+
+Le jeton de détenteur du port (``holder``) n'a ici qu'un rôle de contrat : une
+instance sert **un** appel, et la concession du run n'a qu'un pilote. Elle
+retient le jeton de son ``reserve``, et un ``complete`` qui en présente un
+autre n'écrit rien. Rien n'est ajouté au journal pour cela : le jeton ne
+s'écrit pas, il n'a de sens que le temps de l'appel.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -59,6 +65,7 @@ class JournalIdempotency:
         # il tombe sur le span racine du run.
         self._span_id = span_id
         self._parent_span_id = parent_span_id
+        self._holder: str | None = None
 
     def __repr__(self) -> str:
         return f"JournalIdempotency(run {self._run_id}, appel {self._call_id})"
@@ -92,12 +99,19 @@ class JournalIdempotency:
             expires_at=datetime.now(UTC) + _FOREVER,
         )
 
-    async def reserve(self, key: str, ttl: float, scope: KeyScope) -> bool:
+    async def reserve(
+        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
+    ) -> bool:
         """Toujours vrai : le ``tool.called`` de l'appel tient lieu de réservation."""
+        self._holder = holder
         return True
 
-    async def complete(self, key: str, result: object, ttl: float | None = None) -> None:
+    async def complete(
+        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
+    ) -> None:
         """Écrit l'effet au journal du run, sous sa clé."""
+        if holder is not None and self._holder is not None and holder != self._holder:
+            return
         await self._writer.append(
             [
                 self._scope.draft(
@@ -113,7 +127,7 @@ class JournalIdempotency:
             ]
         )
 
-    async def release(self, key: str) -> None:
+    async def release(self, key: str, *, holder: str | None = None) -> None:
         """Sans objet : rien n'a été écrit à la réservation."""
         return None
 

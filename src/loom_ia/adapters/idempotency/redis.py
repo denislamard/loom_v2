@@ -19,6 +19,12 @@ Ce qu'une clé appartient (client, session) est tenu à part, dans un ensemble :
 Redis ne sait pas chercher, et l'oubli RGPD doit pouvoir nommer les clés d'une
 session sans balayer la base.
 
+Le jeton du détenteur (``holder``) est écrit dans l'enregistrement, et
+``complete`` comme ``release`` le contrôlent **dans** leur script : lire la
+clé puis la modifier hors de Redis laisserait passer un autre détenteur entre
+les deux, ce qu'on veut justement exclure. Un enregistrement sans jeton (écrit
+avant lui, ou sans) ne répond à aucun jeton.
+
 Le SDK ``redis`` laisse des ``Unknown`` dans ses signatures asynchrones (des
 ``**kwargs`` non typés) : les trois règles pyright concernées sont levées pour
 ce module, comme pour le bus Redis.
@@ -65,11 +71,35 @@ return 1
 """
 
 # Enregistrer ce que l'effet a rendu : seulement si la clé est bien tenue.
+# Rend 1 si c'est fait, 0 si la clé n'existe plus, 2 si elle est à un autre
+# détenteur que celui dont le jeton est donné (ARGV[3], absent sans jeton).
 _COMPLETE: Final = """
-if not redis.call('GET', KEYS[1]) then
+local raw = redis.call('GET', KEYS[1])
+if not raw then
   return 0
 end
+if ARGV[3] and cjson.decode(raw).holder ~= ARGV[3] then
+  return 2
+end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', tonumber(ARGV[2]))
+return 1
+"""
+
+# Rendre une réservation dont l'effet ne s'est pas produit : jamais un résultat,
+# et, avec un jeton (ARGV[1], absent sans jeton), seulement si elle est encore à lui.
+_RELEASE: Final = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return 0
+end
+local held = cjson.decode(raw)
+if held.status ~= 'in_progress' then
+  return 0
+end
+if ARGV[1] and held.holder ~= ARGV[1] then
+  return 0
+end
+redis.call('DEL', KEYS[1])
 return 1
 """
 
@@ -118,13 +148,16 @@ class RedisIdempotency:
             key=key, status=status, result=held.get("result"), expires_at=expires
         )
 
-    async def reserve(self, key: str, ttl: float, scope: KeyScope) -> bool:
+    async def reserve(
+        self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
+    ) -> bool:
         now = datetime.now(UTC)
         record = json.dumps(
             {
                 "status": "in_progress",
                 "result": None,
                 "expires_at": _seconds(now + timedelta(seconds=ttl)),
+                "holder": holder,
             }
         )
         taken = await self._redis().eval(
@@ -140,7 +173,9 @@ class RedisIdempotency:
         )
         return int(taken) == 1
 
-    async def complete(self, key: str, result: object, ttl: float | None = None) -> None:
+    async def complete(
+        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
+    ) -> None:
         now = datetime.now(UTC)
         expires = now + timedelta(seconds=self.retention if ttl is None else ttl)
         record = json.dumps(
@@ -148,20 +183,25 @@ class RedisIdempotency:
                 "status": "completed",
                 "result": recordable(result),
                 "expires_at": _seconds(expires),
+                # Le jeton reste à l'enregistrement : ce qu'on écrit ici
+                # n'est valable que si le script a reconnu le détenteur.
+                "holder": holder,
             },
             ensure_ascii=False,
         )
+        # Le jeton n'est passé au script que s'il y en a un à contrôler.
+        proofs = [] if holder is None else [holder]
         done = await self._redis().eval(
-            _COMPLETE, 1, RECORD + key, record, _ms((expires - now).total_seconds())
+            _COMPLETE, 1, RECORD + key, record, _ms((expires - now).total_seconds()), *proofs
         )
+        # 0 : la clé n'existe plus. 2 : elle est à un autre détenteur, sans effet.
         if int(done) == 0:
             raise KeyError(f"Clé {key!r} non réservée : rien à enregistrer")
 
-    async def release(self, key: str) -> None:
+    async def release(self, key: str, *, holder: str | None = None) -> None:
         """Rend une clé réservée dont l'effet ne s'est pas produit."""
-        found = await self.get(key)
-        if found is not None and found.status == "in_progress":
-            _ = await self._redis().delete(RECORD + key)
+        proofs = [] if holder is None else [holder]
+        _ = await self._redis().eval(_RELEASE, 1, RECORD + key, *proofs)
 
     async def forget(self, tenant_id: TenantId, session_id: SessionId | None = None) -> int:
         """Oublie les clés d'un client, ou de l'une de ses sessions (RGPD).

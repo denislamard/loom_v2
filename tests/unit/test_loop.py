@@ -4,10 +4,12 @@
 import asyncio
 import inspect
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -17,6 +19,8 @@ from loom_ia.core.events import (
     EventDraft,
     EventQuery,
     ModelResponded,
+    RunCancelled,
+    RunClaimed,
     RunCompleted,
     RunFailed,
     RunTransitioned,
@@ -26,14 +30,18 @@ from loom_ia.core.events import (
     ToolCompleted,
 )
 from loom_ia.core.model import (
+    CONTINUE,
     DEFAULT_TENANT,
+    AfterModel,
     ApprovalOutcome,
     CallerContext,
+    Decision,
     Message,
     ModelChunk,
     ModelSpec,
     PendingApproval,
     Pricing,
+    Retry,
     RetryPolicy,
     RunId,
     RunState,
@@ -51,15 +59,24 @@ from loom_ia.core.ports import EventStore, ModelError, SourceContext, SourceUnav
 from loom_ia.core.projections import ProjectionError, fold
 from loom_ia.engine import (
     UNKNOWN_STATE,
+    AgentTool,
+    BoundPolicy,
+    ClaimConflict,
+    Policies,
     RunContext,
     RunExists,
     SessionWriter,
+    SubAgentDefinition,
     ToolExecutor,
     begin_run,
     drive,
     in_call_order,
+    run_scope,
     step,
 )
+from loom_ia.engine import loop as loop_module
+from loom_ia.policies import FunctionPolicy, policy
+from loom_ia.sessions import boundary
 from loom_ia.testing import RunJournal, ScriptedModel, tool_call_message
 from loom_ia.tools import ConfiguredTool, tool
 
@@ -812,6 +829,145 @@ async def test_a_deadline_falling_on_a_persisted_write_reads_the_journal_again(
         assert isinstance(closing, RunCompleted)
 
 
+class Clock:
+    """Horloge de pilotage factice : la boucle la lit à la place de ``time``."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def perf_counter(self) -> float:
+        return self.now
+
+
+def unbounded(*policies: FunctionPolicy) -> Policies:
+    """Politiques dont les réparations ne sont pas plafonnées."""
+    return Policies(
+        BoundPolicy(policy=p, name=p.name, points=p.points, max_attempts=None) for p in policies
+    )
+
+
+async def test_the_deadline_counts_the_time_of_the_decisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``after_model`` n'a pas d'étape : sa durée compte pourtant dans le délai du run."""
+    clock = Clock()
+    monkeypatch.setattr("loom_ia.engine.loop.time", clock)
+    asked: list[str] = []
+
+    @policy(points=["after_model"], decisions=["retry"])
+    def lente(subject: AfterModel) -> Decision:
+        asked.append(subject.response.text)
+        clock.now += 0.4  # une politique, ou un juge, qui prend 0,4 s à chaque réponse
+        return Retry("Encore.") if len(asked) < 4 else CONTINUE
+
+    store = InMemoryEventStore()
+    replies = [Message.assistant(f"r{i}") for i in range(5)]
+    ctx = context(store, scripted(*replies), timeout=1.0, policies=unbounded(lente))
+    run = await begin_run(ctx, "?")
+
+    state = await drive(ctx, run.run_id)
+
+    # Trois décisions de 0,4 s : le délai de 1 s est passé avant la quatrième réponse.
+    assert state.status is RunStatus.FAILED and state.error_type == "timeout"
+    assert state.error is not None and "1.2 s de pilotage déjà écoulées" in state.error
+    assert asked == ["r0", "r1", "r2"]
+    fold(await journal(store, run), run.run_id)
+
+
+async def test_a_deadline_falling_during_a_decision_closes_the_run_on_a_timeout(
+    deadlines: Deadlines,
+) -> None:
+    """Coupée en plein juge, la décision n'écrit rien : le run échoue sur son délai."""
+
+    @policy(points=["after_model"], decisions=["retry"])
+    async def interrompue(subject: AfterModel) -> Decision:
+        deadlines.expire()
+        await asyncio.sleep(0)  # un point où l'échéance coupe
+        return Retry("Jamais écrit.")
+
+    store = InMemoryEventStore()
+    ctx = context(
+        store, scripted(Message.assistant("r0")), timeout=30.0, policies=unbounded(interrompue)
+    )
+    run = await begin_run(ctx, "?")
+
+    state = await drive(ctx, run.run_id)
+
+    assert state.status is RunStatus.FAILED and state.error_type == "timeout"
+    # Aucune étape n'était ouverte : c'est la décision, et non l'étape 1, qui a été coupée.
+    assert state.error is not None and "une décision (politiques, juges)" in state.error
+    events = await journal(store, run)
+    assert kinds(events)[-2:] == ["→failed", "run.failed"]
+    assert not any(e.type == "policy.decided" for e in events)
+    fold(events, run.run_id)
+
+
+def assert_subrun_closed_with_its_parent(events: list[Event], run: RunState) -> None:
+    """L'enfant est annulé « avec son parent », avant lui, et rien ne reste ouvert."""
+    [child_id] = {e.run_id for e in events} - {run.run_id}
+    child = fold(events, child_id)
+    assert child.status is RunStatus.CANCELLED and child.cancelled == "parent"
+    [closing] = [e for e in events if e.run_id == child_id and isinstance(e.payload, RunCancelled)]
+    assert isinstance(closing.payload, RunCancelled) and closing.payload.by == run.run_id
+    assert isinstance(events[-1].payload, RunFailed) and events[-1].run_id == run.run_id
+    assert closing.seq < events[-1].seq
+    # Plus de run en cours : la frontière du snapshot de la session n'est pas figée.
+    assert boundary(events) == events[-1].seq
+
+
+async def test_a_deadline_closes_the_open_subruns_with_their_parent(deadlines: Deadlines) -> None:
+    """Un sous-run ne repart que par son parent : le parent clos, il ne reste pas orphelin."""
+    entered = asyncio.Event()
+
+    @tool
+    async def attendre() -> str:
+        """Attend sans fin."""
+        entered.set()
+        await asyncio.Event().wait()
+        return "jamais"
+
+    store = InMemoryEventStore()
+    child_model = scripted(tool_call_message(("k1", "attendre", {})), Message.assistant("Fini."))
+    agents = {
+        "verificateur": context(store, child_model, tools=ToolExecutor([attendre])),
+    }
+    sub = AgentTool(
+        SubAgentDefinition(name="verifier", agent="verificateur", description="Vérifie."),
+        agents.__getitem__,
+    )
+    main_model = scripted(tool_call_message(("c1", "verifier", {"message": "Vérifie."})))
+    ctx = context(store, main_model, tools=ToolExecutor([sub]), timeout=30.0)
+    run = await begin_run(ctx, "?")
+
+    pilot = asyncio.create_task(drive(ctx, run.run_id))
+    async with asyncio.timeout(5):
+        await entered.wait()
+    # Le délai du parent est le dernier ouvert qui ait une échéance : celui de l'enfant n'en a pas.
+    [*_, parent] = [t for t in deadlines.opened if t.when() is not None]
+    parent.reschedule(asyncio.get_running_loop().time())
+    state = await pilot
+
+    assert state.status is RunStatus.FAILED and state.error_type == "timeout"
+    assert_subrun_closed_with_its_parent(await journal(store, run), run)
+
+
+async def test_a_run_out_of_time_closes_its_open_subruns_before_its_next_step(
+    store: EventStore,
+) -> None:
+    parent = RunJournal(agent="demo", step_ms=2_000.0)
+    parent.start("?").model_turn(tool_call_message(("c1", "verifier", {"message": "Vérifie."})))
+    child = RunJournal(
+        agent="verificateur", session_id=parent.scope.session_id, root_run_id=parent.run_id
+    )
+    child.start("Vérifie.", parent_run_id=parent.run_id, parent_call_id="c1", depth=1)
+    await append_all(store, [*parent.take(), *child.take()])
+
+    state = await drive(context(store, scripted(), timeout=1.0), parent.run_id)
+
+    assert state.status is RunStatus.FAILED and state.error_type == "timeout"
+    assert_subrun_closed_with_its_parent(await journal(store, state), state)
+
+
 async def test_drive_checks_the_agent(store: EventStore) -> None:
     ctx = context(store, scripted())
     run = await begin_run(ctx, "?")
@@ -914,6 +1070,284 @@ async def test_two_simultaneous_openings_of_a_run_write_it_once(
     assert [e.type for e in events] == ["run.started", "message.user"]
     final = await drive(ctx, RunId("r-1"), session_id=session)
     assert final.status is RunStatus.COMPLETED
+
+
+# --- Concession : un seul pilote par run, une reconduction qui tient -------------------
+
+
+async def test_two_workers_starting_together_do_not_both_drive_the_run(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deux workers lisent le même état, puis posent leur concession : un seul pilote.
+
+    Le perdant est refusé comme s'il était arrivé après. Sans cela, il rejouait sa
+    concession derrière celle du gagnant, et le modèle était appelé deux fois.
+    """
+    reading, appending = store.read, store.append
+    meeting = asyncio.Barrier(2)
+    reads = 0
+
+    async def read(
+        tenant_id: TenantId,
+        session_id: SessionId,
+        *,
+        after_seq: int = 0,
+        run_id: RunId | None = None,
+    ) -> list[Event]:
+        nonlocal reads
+        found = await reading(tenant_id, session_id, after_seq=after_seq, run_id=run_id)
+        if reads < 2:
+            reads += 1
+            # Les deux pilotes ont lu le journal avant que l'un n'y écrive.
+            async with asyncio.timeout(10):
+                await meeting.wait()
+        return found
+
+    async def append(drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
+        events = await appending(drafts, expected_seq=expected_seq)
+        # Comme un store distant, l'écriture rend la main : les deux pilotes s'entrecroisent.
+        await asyncio.sleep(0)
+        return events
+
+    models = [scripted(Message.assistant(name)) for name in "AB"]
+    contexts = [
+        context(store, model, worker_id=f"worker-{name}")
+        for model, name in zip(models, "AB", strict=True)
+    ]
+    run = await begin_run(contexts[0], "?")
+    monkeypatch.setattr(store, "read", read)
+    monkeypatch.setattr(store, "append", append)
+
+    outcomes = await asyncio.gather(
+        *(drive(c, run.run_id) for c in contexts), return_exceptions=True
+    )
+
+    refused = [o for o in outcomes if isinstance(o, ClaimConflict)]
+    driven = [o for o in outcomes if isinstance(o, RunState)]
+    assert len(refused) == 1 and len(driven) == 1
+    assert driven[0].status is RunStatus.COMPLETED
+    assert sum(len(model.requests) for model in models) == 1
+    events = await journal(store, run)
+    assert kinds(events).count("run.claimed") == 1
+    assert fold(events, run.run_id).status is RunStatus.COMPLETED
+
+
+async def _claimed_meanwhile(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch, model: ScriptedModel, *, lease: float
+) -> tuple[RunContext, RunState]:
+    """Un run dont un autre worker pose sa concession entre notre lecture et la nôtre."""
+    appending = store.append
+    slipped = False
+    ctx = context(store, model, worker_id="worker-1")
+    run = await begin_run(ctx, "?")
+    until = datetime.now(UTC) + timedelta(seconds=lease)
+    other = run_scope(run).draft(RunClaimed(worker_id="worker-ailleurs", lease_until=until))
+
+    async def append(drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
+        nonlocal slipped
+        if not slipped and any(isinstance(d.payload, RunClaimed) for d in drafts):
+            slipped = True
+            await appending([other], expected_seq=expected_seq)
+        return await appending(drafts, expected_seq=expected_seq)
+
+    monkeypatch.setattr(store, "append", append)
+    return ctx, run
+
+
+async def test_a_live_claim_written_during_ours_is_respected(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le journal a avancé sur la concession d'un autre worker, vivante : on ne pilote pas."""
+    model = scripted(Message.assistant("Bonjour"))
+    ctx, run = await _claimed_meanwhile(store, monkeypatch, model, lease=600)
+
+    with pytest.raises(ClaimConflict) as refused:
+        await drive(ctx, run.run_id)
+
+    assert refused.value.worker_id == "worker-ailleurs"
+    assert model.requests == []
+    assert kinds(await journal(store, run)) == ["run.started", "message.user", "run.claimed"]
+
+
+async def test_an_expired_claim_written_during_ours_is_no_obstacle(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le conflit n'invalide rien : la concession est rejouée derrière celle d'un worker mort."""
+    ctx, run = await _claimed_meanwhile(
+        store, monkeypatch, scripted(Message.assistant("Bonjour")), lease=-1
+    )
+
+    state = await drive(ctx, run.run_id)
+
+    assert state.status is RunStatus.COMPLETED
+    events = await journal(store, run)
+    assert kinds(events).count("run.claimed") == 2
+    assert fold(events, run.run_id).claim is not None
+
+
+class Ticks:
+    """Les tours du minuteur de renouvellement : le test les déclenche, aucune horloge ne court."""
+
+    def __init__(self) -> None:
+        self.due = asyncio.Queue[None]()
+
+    def fire(self) -> None:
+        self.due.put_nowait(None)
+
+    async def turn(self) -> None:
+        await self.due.get()
+
+
+@pytest.fixture
+def ticks(monkeypatch: pytest.MonkeyPatch) -> Ticks:
+    seen = Ticks()
+    real = asyncio.sleep
+
+    def spy(delay: float) -> Awaitable[None]:
+        # Seul le minuteur de la boucle est remplacé ; les autres attentes gardent leur horloge.
+        frame = inspect.currentframe()
+        if frame is not None and frame.f_back is not None:
+            if frame.f_back.f_globals["__name__"] == "loom_ia.engine.loop":
+                return seen.turn()
+        return real(delay)
+
+    monkeypatch.setattr(asyncio, "sleep", spy)
+    return seen
+
+
+async def drive_held(store: EventStore, during: Callable[[RunState], Awaitable[None]]) -> RunState:
+    """Pilote un run dont l'outil attend le temps que ``during`` s'y passe, puis le laisse finir."""
+    started, gate = asyncio.Event(), asyncio.Event()
+
+    @tool
+    async def attendre() -> str:
+        """Attend le feu vert."""
+        started.set()
+        await gate.wait()
+        return "ok"
+
+    model = scripted(tool_call_message(("c1", "attendre", {})), Message.assistant("Fini."))
+    ctx = context(store, model, tools=ToolExecutor([attendre]), worker_id="worker-1")
+    run = await begin_run(ctx, "?")
+    pilot = asyncio.create_task(drive(ctx, run.run_id))
+    try:
+        async with asyncio.timeout(5):
+            await started.wait()
+            await during(run)
+    finally:
+        gate.set()
+        state = await pilot
+    return state
+
+
+async def test_a_failed_renewal_is_logged_and_tried_again(
+    store: EventStore,
+    monkeypatch: pytest.MonkeyPatch,
+    ticks: Ticks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Un renouvellement raté ne met pas fin aux suivants : le bail ne meurt pas en plein run."""
+    appending = store.append
+    claims = 0
+    attempts = asyncio.Queue[None]()
+
+    async def append(drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
+        nonlocal claims
+        if not any(isinstance(d.payload, RunClaimed) for d in drafts):
+            return await appending(drafts, expected_seq=expected_seq)
+        claims += 1
+        if claims == 1:
+            return await appending(drafts, expected_seq=expected_seq)
+        try:
+            if claims == 2:  # le premier renouvellement (la première concession est la prise)
+                raise ConnectionError("store injoignable")
+            return await appending(drafts, expected_seq=expected_seq)
+        finally:
+            attempts.put_nowait(None)
+
+    async def renewals(run: RunState) -> None:
+        for _ in range(2):
+            ticks.fire()
+            await attempts.get()
+
+    monkeypatch.setattr(store, "append", append)
+    with caplog.at_level(logging.WARNING, logger="loom_ia.engine.loop"):
+        state = await drive_held(store, renewals)
+
+    assert state.status is RunStatus.COMPLETED
+    # La prise, puis le renouvellement qui est passé au second tour.
+    assert kinds(await journal(store, state)).count("run.claimed") == 2
+    [failure] = [r for r in caplog.records if "renouvellement raté" in r.getMessage()]
+    assert failure.exc_info is not None and failure.exc_info[0] is ConnectionError
+
+
+async def test_a_renewal_does_not_take_the_claim_back_from_another_worker(
+    store: EventStore,
+    monkeypatch: pytest.MonkeyPatch,
+    ticks: Ticks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Un autre worker a pris le run pendant que le bail était en souffrance : on s'arrête là."""
+    appending = store.append
+    claims = 0
+    attempts = asyncio.Queue[None]()
+    other: EventDraft | None = None
+
+    async def append(drafts: Sequence[EventDraft], *, expected_seq: int | None) -> list[Event]:
+        nonlocal claims
+        if not any(isinstance(d.payload, RunClaimed) for d in drafts):
+            return await appending(drafts, expected_seq=expected_seq)
+        claims += 1
+        if claims == 1:
+            return await appending(drafts, expected_seq=expected_seq)
+        try:
+            if claims == 2 and other is not None:
+                await appending([other], expected_seq=expected_seq)
+            return await appending(drafts, expected_seq=expected_seq)
+        finally:
+            attempts.put_nowait(None)
+
+    async def renewal(run: RunState) -> None:
+        nonlocal other
+        until = datetime.now(UTC) + timedelta(seconds=600)
+        other = run_scope(run).draft(RunClaimed(worker_id="worker-ailleurs", lease_until=until))
+        ticks.fire()
+        await attempts.get()
+
+    monkeypatch.setattr(store, "append", append)
+    with caplog.at_level(logging.WARNING, logger="loom_ia.engine.loop"):
+        state = await drive_held(store, renewal)
+
+    assert state.status is RunStatus.COMPLETED
+    held = [
+        e.payload.worker_id
+        for e in await journal(store, state)
+        if isinstance(e.payload, RunClaimed)
+    ]
+    # La concession de l'autre est la dernière : notre reconduction ne s'est pas écrite derrière.
+    assert held == ["worker-1", "worker-ailleurs"]
+    assert [r for r in caplog.records if "renouvellement arrêté" in r.getMessage()]
+
+
+async def test_the_renewal_timer_is_stopped_before_the_lease_is_handed_back(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch, ticks: Ticks
+) -> None:
+    """Un tour qui tombe quand le pilote rend la concession n'écrit plus rien."""
+    real = loop_module._handed_back  # pyright: ignore[reportPrivateUsage]
+
+    async def handed_back(*args: Any) -> None:
+        ticks.fire()
+        for _ in range(3):
+            await asyncio.sleep(0)  # un minuteur encore en vie prendrait ce tour
+        assert ticks.due.qsize() == 1, "le minuteur court encore à la restitution"
+        await real(*args)
+
+    monkeypatch.setattr("loom_ia.engine.loop._handed_back", handed_back)
+    ctx = context(store, scripted(Message.assistant("Bonjour")), worker_id="worker-1")
+    state = await drive(ctx, (await begin_run(ctx, "?")).run_id)
+
+    assert state.status is RunStatus.COMPLETED
+    assert kinds(await journal(store, state)).count("run.claimed") == 1
 
 
 async def test_transitions_are_logged(store: EventStore, caplog: pytest.LogCaptureFixture) -> None:

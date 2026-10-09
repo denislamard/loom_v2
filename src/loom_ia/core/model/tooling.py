@@ -43,9 +43,10 @@ type IdempotencyStatus = Literal["in_progress", "completed"]
 # Ce qu'il advient d'un appel interrompu dont l'effet est peut-être produit (#18).
 type UnknownState = Literal["error", "pause"]
 
-# Au-delà, un résultat n'est pas mémorisé : l'enregistrement échoue avec un
-# message à l'auteur de l'outil. Le décorateur agit avant le déport de
-# l'exécuteur, donc rien ne réduira ce résultat pour nous.
+# Au-delà, le magasin refuse le résultat (``ResultTooLarge``, avec un message
+# à l'auteur de l'outil). Le décorateur agit avant le déport de l'exécuteur,
+# donc rien ne le réduira pour nous : ``@idempotent`` en mémorise une forme
+# réduite, plutôt que de faire échouer un appel dont l'effet a eu lieu.
 MAX_RECORDED: Final = 50_000
 
 # Durée pendant laquelle un résultat mémorisé reste consultable, quand ni

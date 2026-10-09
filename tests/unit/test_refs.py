@@ -125,6 +125,12 @@ def test_a_resolved_value_knows_the_reference_it_came_from() -> None:
             "result:1 (chercher), result:2 (calculer).",
         ),
         ("result:c1", "Référence invalide : 'result:c1'"),
+        # ``isdigit`` les accepte, ``int`` les refuse : ce ne sont pas des numéros.
+        ("result:²", "Référence invalide : 'result:²'"),
+        ("result:٣", "Référence invalide : 'result:٣'"),
+        pytest.param(
+            "result:" + "9" * 5000, "Référence invalide : 'result:99", id="plus-de-4300-chiffres"
+        ),
         ("result:3", "result:3 (lent) n'a pas encore de résultat"),
         ("result:4", "result:4 (casse) est une erreur"),
     ],
@@ -133,6 +139,14 @@ async def test_unresolvable_references(ref: str, message: str) -> None:
     with pytest.raises(RefError) as caught:
         await ResultIndex(MESSAGES).resolve({"x": {"$ref": ref}})
     assert caught.value.message.startswith(message)
+
+
+def test_a_reference_number_is_read_in_ascii_digits_only() -> None:
+    """``record`` ne lève pas pour ``²``, ``٣`` ni pour un numéro de plus de 4 300 chiffres."""
+    index = ResultIndex(MESSAGES)
+    for ref in ("result:²", "result:٣", "result:" + "9" * 5000, "result:"):
+        assert index.record(ref) is None
+    assert index.record("result:01") == index.records[0]
 
 
 async def test_empty_result_and_empty_run() -> None:

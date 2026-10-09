@@ -1,6 +1,6 @@
 [project]
 name = "loom-ia"
-version = "2.0.0"
+version = "2.0.1"
 description = "Moteur d'agents IA en Python asynchrone : rôles délégués à des modèles, outils Python et MCP, runs journalisés, rejouables et reprenables, en librairie Python, API REST ou serveur MCP."
 readme = "README.md"
 authors = [

@@ -303,6 +303,88 @@ async def test_results_out_of_retention_are_forgotten_reservations_are_not(
     assert await store.get("perimee") is not None
 
 
+# --- Jeton de détenteur ---------------------------------------------------------
+#
+# Une réservation périmée est reprise par un autre ; son premier détenteur, resté
+# en vie, rend ou complète ensuite sa clé — et ne doit rien défaire de l'autre.
+
+
+async def test_a_stale_holder_cannot_release_the_key_of_its_successor(magasin: Magasin) -> None:
+    store = magasin()
+    await store.reserve("k", -1, SCOPE, holder="premier")
+    assert await store.reserve("k", 60, SCOPE, holder="second") is True
+    await store.release("k", holder="premier")
+    # La réservation du second est intacte : personne d'autre ne la prend.
+    record = await store.get("k")
+    assert record is not None and record.status == "in_progress"
+    assert await store.reserve("k", 60, SCOPE, holder="troisieme") is False
+
+
+async def test_a_stale_holder_cannot_complete_over_its_successor(magasin: Magasin) -> None:
+    store = magasin()
+    await store.reserve("k", -1, SCOPE, holder="premier")
+    await store.reserve("k", 60, SCOPE, holder="second")
+    # Sans effet, et sans erreur : la clé existe, elle est à un autre.
+    await store.complete("k", "résultat du premier", holder="premier")
+    record = await store.get("k")
+    assert record is not None and (record.status, record.result) == ("in_progress", None)
+
+    await store.complete("k", "résultat du second", holder="second")
+    # Le résultat posé n'est pas écrasé non plus.
+    await store.complete("k", "résultat du premier", holder="premier")
+    record = await store.get("k")
+    assert record is not None
+    assert (record.status, record.result) == ("completed", "résultat du second")
+
+
+async def test_the_holder_completes_and_releases_its_own_key(magasin: Magasin) -> None:
+    store = magasin()
+    await store.reserve("a", 60, SCOPE, holder="moi")
+    await store.complete("a", "fait", holder="moi")
+    record = await store.get("a")
+    assert record is not None and (record.status, record.result) == ("completed", "fait")
+
+    await store.reserve("b", 60, SCOPE, holder="moi")
+    await store.release("b", holder="moi")
+    assert await store.get("b") is None
+
+
+async def test_a_stale_holder_that_nobody_replaced_still_completes(magasin: Magasin) -> None:
+    """Le jeton compte, pas la date : le résultat de l'effet est mieux gardé que perdu."""
+    store = magasin()
+    await store.reserve("k", -1, SCOPE, holder="premier")
+    await store.complete("k", "fait", holder="premier")
+    record = await store.get("k")
+    assert record is not None and (record.status, record.result) == ("completed", "fait")
+
+
+async def test_without_a_token_nothing_is_checked(magasin: Magasin) -> None:
+    """Comportement d'avant le jeton : un appelant qui n'en présente pas n'est pas borné."""
+    store = magasin()
+    await store.reserve("a", 60, SCOPE, holder="quelqu-un")
+    await store.complete("a", "fait")
+    record = await store.get("a")
+    assert record is not None and record.status == "completed"
+
+    await store.reserve("b", 60, SCOPE, holder="quelqu-un")
+    await store.release("b")
+    assert await store.get("b") is None
+
+    # Et une clé prise sans jeton ne répond à aucun jeton.
+    await store.reserve("c", 60, SCOPE)
+    await store.complete("c", "autre", holder="un-jeton")
+    record = await store.get("c")
+    assert record is not None and record.status == "in_progress"
+    await store.release("c", holder="un-jeton")
+    assert await store.get("c") is not None
+
+
+async def test_a_key_that_is_gone_still_raises_with_a_token(magasin: Magasin) -> None:
+    store = magasin()
+    with pytest.raises(KeyError, match="non réservée"):
+        await store.complete("absente", "fait", holder="moi")
+
+
 @pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")
 async def test_sqlite_closes_a_connection_it_could_not_set_up(tmp_path: Path) -> None:
     """Une connexion qu'il n'a pas pu mettre en place, le magasin la ferme.
@@ -327,6 +409,136 @@ async def test_sqlite_closes_a_connection_it_could_not_set_up(tmp_path: Path) ->
     # Le magasin n'en reste pas bloqué : la base remise en état, il s'ouvre.
     path.unlink()
     assert await store.get("cle") is None
+    await _referme(store)
+
+
+# Le schéma que créait la 2.0.0, avant la colonne ``holder``.
+SCHEMA_2_0_0 = """
+CREATE TABLE idempotency (
+    key        TEXT NOT NULL PRIMARY KEY,
+    tenant_id  TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    result     TEXT,
+    expires_at TEXT NOT NULL
+);
+CREATE INDEX idempotency_owner ON idempotency (tenant_id, session_id);
+CREATE INDEX idempotency_expiry ON idempotency (status, expires_at);
+"""
+
+
+@pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")
+async def test_sqlite_opens_a_database_made_before_the_holder_column(tmp_path: Path) -> None:
+    """Une base de la 2.0.0 s'ouvre, garde ses lignes, et gagne la colonne sans les perdre."""
+    import sqlite3
+
+    path = tmp_path / "idempotence.db"
+    ancienne = sqlite3.connect(path)
+    ancienne.executescript(SCHEMA_2_0_0)
+    demain, hier = "2999-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00"
+    ancienne.executemany(
+        "INSERT INTO idempotency VALUES (?, 'default', ?, ?, ?, ?)",
+        [
+            ("fait", SESSION, "completed", '"relance"', demain),
+            ("tenue", SESSION, "in_progress", None, demain),
+            ("perimee", SESSION, "in_progress", None, hier),
+        ],
+    )
+    ancienne.commit()
+    ancienne.close()
+
+    # Deux ouvertures simultanées : l'une ajoute la colonne, l'autre la trouve ou s'y heurte.
+    store, voisin = _sqlite(path), _sqlite(path)
+    lus = await asyncio.gather(store.get("fait"), voisin.get("fait"))
+    assert [(r.status, r.result) for r in lus if r is not None] == [("completed", "relance")] * 2
+    held = await store.get("tenue")
+    assert held is not None and held.status == "in_progress"
+
+    # Une ligne d'avant n'a pas de jeton : aucun jeton ne la touche, l'absence de jeton si.
+    await store.complete("tenue", "pas à moi", holder="un-jeton")
+    await store.release("tenue", holder="un-jeton")
+    held = await store.get("tenue")
+    assert held is not None and held.status == "in_progress"
+    await store.complete("tenue", "fini")
+    held = await store.get("tenue")
+    assert held is not None and (held.status, held.result) == ("completed", "fini")
+
+    # Reprendre une réservation périmée d'avant avec un jeton marche, jusqu'au résultat.
+    assert await store.reserve("perimee", 60, SCOPE, holder="moi") is True
+    await store.complete("perimee", "refait", holder="moi")
+    held = await store.get("perimee")
+    assert held is not None and (held.status, held.result) == ("completed", "refait")
+    await _referme(store)
+    await _referme(voisin)
+
+    # Rouverte, la base est telle qu'on l'a laissée.
+    relu = _sqlite(path)
+    held = await relu.get("perimee")
+    assert held is not None and held.result == "refait"
+    await _referme(relu)
+
+
+class _FauxRedis:
+    """Client qui note les scripts qu'on lui envoie ; ``reponse`` est ce que dirait Redis."""
+
+    def __init__(self) -> None:
+        self.reponse = 1
+        self.evals: list[tuple[str, tuple[Any, ...]]] = []
+
+    async def eval(self, script: str, numkeys: int, *args: Any) -> int:
+        self.evals.append((script, (numkeys, *args)))
+        return self.reponse
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.skipif(find_spec("redis") is None, reason="extra 'redis' absent")
+async def test_the_redis_store_hands_the_holder_to_its_scripts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ce que cet essai ne peut pas montrer sans service : le Lua lui-même, qui n'est pas exécuté.
+
+    Il vérifie le côté Python : le jeton est écrit dans l'enregistrement, et
+    n'est passé aux scripts de ``complete`` et ``release`` que s'il y en a un.
+    """
+    import json
+
+    import redis.asyncio as redis_asyncio
+
+    faux = _FauxRedis()
+
+    def from_url(url: str) -> _FauxRedis:
+        return faux
+
+    monkeypatch.setattr(redis_asyncio, "from_url", from_url)
+    store = _redis("redis://essai")
+
+    await store.reserve("k", 60, SCOPE, holder="moi")
+    script, args = faux.evals[-1]
+    assert json.loads(args[3])["holder"] == "moi"
+
+    await store.complete("k", "fait", holder="moi")
+    script, args = faux.evals[-1]
+    assert "cjson.decode(raw).holder ~= ARGV[3]" in script
+    assert (args[0], args[1], args[4]) == (1, "loom:idem:k:k", "moi") and len(args) == 5
+    assert json.loads(args[2])["holder"] == "moi"
+    await store.complete("k", "fait")
+    assert len(faux.evals[-1][1]) == 4
+
+    await store.release("k", holder="moi")
+    script, args = faux.evals[-1]
+    assert "held.holder ~= ARGV[1]" in script
+    assert args == (1, "loom:idem:k:k", "moi")
+    await store.release("k")
+    assert faux.evals[-1][1] == (1, "loom:idem:k:k")
+
+    # 2 : la clé est à un autre détenteur, sans effet ; 0 : elle n'existe plus.
+    faux.reponse = 2
+    await store.complete("k", "fait", holder="périmé")
+    faux.reponse = 0
+    with pytest.raises(KeyError, match="non réservée"):
+        await store.complete("k", "fait", holder="périmé")
     await _referme(store)
 
 
@@ -370,6 +582,18 @@ async def test_the_journal_store_ignores_another_key() -> None:
     store, _ = await _journal()
     await store.complete("k", "fait")
     assert await store.get("autre") is None
+
+
+async def test_the_journal_store_ignores_a_completion_from_another_holder() -> None:
+    store, writer = await _journal()
+    await store.reserve("k", 60, SCOPE, holder="moi")
+    await store.complete("k", "du voisin", holder="un-autre")
+    assert await store.get("k") is None
+    await store.complete("k", "fait", holder="moi")
+    record = await store.get("k")
+    assert record is not None and record.result == "fait"
+    events = await writer.store.read(DEFAULT_TENANT, SESSION)
+    assert len([e for e in events if isinstance(e.payload, IdempotencyRecorded)]) == 1
 
 
 # --- Décorateur ---------------------------------------------------------------
@@ -627,6 +851,190 @@ async def test_the_memorised_result_keeps_its_data() -> None:
     second = await chiffres.invoke({}, ctx)
     assert second == first
     assert second.data == {"devis": 3}
+
+
+# --- Un effet produit est rapporté comme produit ---------------------------------
+
+
+class _Panne(InMemoryIdempotency):
+    """Magasin qui accepte les clés, puis tombe en panne au moment d'enregistrer l'effet."""
+
+    async def complete(
+        self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
+    ) -> None:
+        raise ConnectionError("magasin injoignable")
+
+
+async def test_a_store_failure_after_the_effect_does_not_turn_it_into_a_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """L'effet a eu lieu : l'appel rend son résultat, et le dit au journal applicatif."""
+    envois, outil = _compteur()
+    store = _Panne()
+    ctx = context(store=store)
+    with caplog.at_level("ERROR", logger="loom_ia.tools.idempotent"):
+        output = await outil.invoke({}, ctx)
+    assert (output.as_text, output.is_error) == ("relance 1", False)
+    assert "non mémorisé" in caplog.text
+    # La clé reste prise, sans résultat : le prochain appel sera d'état inconnu.
+    record = await store.get(ctx.idempotency_key)
+    assert record is not None and record.status == "in_progress"
+    assert envois == ["envoi"]
+
+
+async def test_the_model_is_not_told_of_a_failure_when_only_the_recording_failed() -> None:
+    """Sinon il relance, sous un autre appel donc une autre clé, et l'effet est refait."""
+    envois, outil = _compteur()
+    executor = ToolExecutor([outil], idempotency=_Panne())  # pyright: ignore[reportArgumentType]
+    events = await _run(executor, awaiting(call("c1", "envoyer")))
+    assert completed(events)["c1"].is_error is False
+    assert completed(events)["c1"].as_text == "relance 1"
+    assert envois == ["envoi"]
+
+
+async def test_an_oversized_result_is_given_back_and_recorded_in_a_reduced_form(
+    magasin: Magasin, caplog: pytest.LogCaptureFixture
+) -> None:
+    envois: list[str] = []
+
+    @idempotent
+    @tool(side_effects="irreversible")
+    async def exporter() -> ToolOutput:
+        """Exporte tout."""
+        envois.append("export")
+        return ToolOutput.text("x" * (MAX_RECORDED + 1)).model_copy(
+            update={"artifacts": ("loom://rapport",)}
+        )
+
+    store = magasin()
+    ctx = context(store=store)
+    with caplog.at_level("WARNING", logger="loom_ia.tools.idempotent"):
+        first = await exporter.invoke({}, ctx)
+    # L'appel rend le vrai résultat, en entier.
+    assert (len(first.as_text), first.is_error) == (MAX_RECORDED + 1, False)
+    assert "trop gros" in caplog.text
+
+    record = await store.get(ctx.idempotency_key)
+    assert record is not None and record.status == "completed"
+    assert len(str(record.result)) < MAX_RECORDED
+    # Un rejeu dit que l'effet a eu lieu, sans le refaire ni crier à la panne.
+    again = await exporter.invoke({}, ctx)
+    assert again.as_text.startswith("Cet appel a déjà produit son effet")
+    assert "n'est pas relancé" in again.as_text
+    assert (again.is_error, again.artifacts) == (False, ("loom://rapport",))
+    assert envois == ["export"]
+
+
+async def test_the_journal_store_records_a_reduced_form_of_an_oversized_result() -> None:
+    store, writer = await _journal()
+    envois: list[str] = []
+
+    @idempotent
+    @tool(side_effects="irreversible")
+    async def exporter() -> str:
+        """Exporte tout."""
+        envois.append("export")
+        return "x" * (MAX_RECORDED + 1)
+
+    ctx = context(store=store)
+    first = await exporter.invoke({}, ctx)
+    assert len(first.as_text) == MAX_RECORDED + 1
+    again = await exporter.invoke({}, ctx)
+    assert again.as_text.startswith("Cet appel a déjà produit son effet")
+    assert envois == ["export"]
+    events = await writer.store.read(DEFAULT_TENANT, SESSION)
+    assert len([e for e in events if isinstance(e.payload, IdempotencyRecorded)]) == 1
+
+
+# --- Jeton de détenteur, côté outil -------------------------------------------
+
+
+@pytest.mark.parametrize("premier", ["echoue", "reussit"])
+async def test_a_stale_holder_leaves_the_key_of_its_successor_alone(
+    magasin: Magasin, premier: str
+) -> None:
+    """Réservation expirée puis reprise : le premier appel, resté en vie, ne la défait pas."""
+    arrivee = [asyncio.Event(), asyncio.Event()]
+    depart = [asyncio.Event(), asyncio.Event()]
+    appels: list[int] = []
+
+    @idempotent(reservation=-1, retry_unknown=True)
+    @tool(side_effects="irreversible")
+    async def envoyer() -> str:
+        """Envoie."""
+        moi = len(appels)
+        appels.append(moi)
+        arrivee[moi].set()
+        await depart[moi].wait()
+        if moi == 0 and premier == "echoue":
+            raise ToolError("tombé")
+        return f"envoi {moi + 1}"
+
+    store = magasin()
+    ctx = context(store=store)
+    un = asyncio.create_task(envoyer.invoke({}, ctx))
+    await arrivee[0].wait()
+    # Sa réservation est périmée : le second la reprend, et refait l'effet (retry_unknown).
+    deux = asyncio.create_task(envoyer.invoke({}, ctx))
+    await arrivee[1].wait()
+
+    depart[0].set()
+    if premier == "echoue":
+        with pytest.raises(ToolError, match="tombé"):
+            await un
+    else:
+        assert (await un).as_text == "envoi 1"
+    # La clé est toujours au second : ni rendue, ni passée au résultat du premier.
+    record = await store.get(ctx.idempotency_key)
+    assert record is not None and (record.status, record.result) == ("in_progress", None)
+
+    depart[1].set()
+    assert (await deux).as_text == "envoi 2"
+    record = await store.get(ctx.idempotency_key)
+    assert record is not None and record.status == "completed"
+    assert ToolOutput.model_validate(record.result).as_text == "envoi 2"
+
+
+class _Ancien:
+    """Magasin écrit avant le jeton : ses méthodes n'ont pas de paramètre ``holder``."""
+
+    def __init__(self) -> None:
+        self._dedans = InMemoryIdempotency()
+
+    async def get(self, key: str) -> Any:
+        return await self._dedans.get(key)
+
+    async def reserve(self, key: str, ttl: float, scope: KeyScope) -> bool:
+        return await self._dedans.reserve(key, ttl, scope)
+
+    async def complete(self, key: str, result: object, ttl: float | None = None) -> None:
+        await self._dedans.complete(key, result, ttl)
+
+    async def release(self, key: str) -> None:
+        await self._dedans.release(key)
+
+    async def forget(self, tenant_id: TenantId, session_id: SessionId | None = None) -> int:
+        return await self._dedans.forget(tenant_id, session_id)
+
+
+async def test_a_store_written_before_the_token_is_called_as_before() -> None:
+    envois, outil = _compteur()
+    store = _Ancien()
+    ctx = context(store=store)
+    assert (await outil.invoke({}, ctx)).as_text == "relance 1"
+    assert (await outil.invoke({}, ctx)).as_text == "relance 1"
+    assert envois == ["envoi"]
+
+    @idempotent
+    @tool(side_effects="irreversible")
+    async def fragile() -> str:
+        """Échoue avant tout effet."""
+        raise ToolError("pas aujourd'hui")
+
+    autre = context(call_id="c2", store=store)
+    with pytest.raises(ToolError, match="pas aujourd'hui"):
+        await fragile.invoke({}, autre)
+    assert await store.get(autre.idempotency_key) is None
 
 
 # --- Dans le moteur -----------------------------------------------------------
@@ -921,12 +1329,12 @@ def _relance() -> tuple[list[str], Relanceur]:
     return envois, envoyer
 
 
-def test_a_business_key_is_prefixed_by_the_client() -> None:
+def test_a_business_key_is_prefixed_by_the_client_and_the_tool() -> None:
     _, outil = _relance()
     assert outil.spec.business_key is True
-    assert outil.key_for({"devis": "D-42"}, context()) == "default:relance:D-42"
+    assert outil.key_for({"devis": "D-42"}, context()) == "default:envoyer:relance:D-42"
     autre = replace(context(), tenant_id=TenantId("acme"))
-    assert outil.key_for({"devis": "D-42"}, autre) == "acme:relance:D-42"
+    assert outil.key_for({"devis": "D-42"}, autre) == "acme:envoyer:relance:D-42"
 
 
 def test_the_technical_key_declares_nothing(magasin: Magasin) -> None:
@@ -990,6 +1398,106 @@ async def test_a_tool_can_fix_how_long_its_result_is_kept(magasin: Magasin) -> N
     # Le résultat est déjà hors de sa durée de vie : plus rien ne le protège.
     await envoyer.invoke(arguments, context(call_id="c2", store=store))
     assert envois == ["D-1", "D-1"]
+
+
+async def test_two_tools_that_compute_the_same_business_key_do_not_block_each_other(
+    magasin: Magasin,
+) -> None:
+    """Un courriel et un SMS de relance du même devis : deux effets, chacun avec son résultat."""
+    envois: list[str] = []
+
+    @idempotent(key=lambda a: f"relance:{a['devis']}")
+    @tool(side_effects="irreversible")
+    async def courriel(devis: str) -> str:
+        """Envoie le courriel de relance."""
+        envois.append("courriel")
+        return "courriel envoyé"
+
+    @idempotent(key=lambda a: f"relance:{a['devis']}")
+    @tool(side_effects="irreversible")
+    async def sms(devis: str) -> str:
+        """Envoie le SMS de relance."""
+        envois.append("sms")
+        return "sms envoyé"
+
+    store = magasin()
+    arguments: dict[str, JsonValue] = {"devis": "D-1"}
+    mail = await courriel.invoke(arguments, context(call_id="c1", store=store))
+    texto = await sms.invoke(arguments, context(call_id="c2", store=store))
+    assert (mail.as_text, texto.as_text) == ("courriel envoyé", "sms envoyé")
+    # Et chacun reste dédoublonné pour lui-même.
+    await courriel.invoke(arguments, context(call_id="c3", store=store))
+    await sms.invoke(arguments, context(call_id="c4", store=store))
+    assert envois == ["courriel", "sms"]
+
+
+# Avant le préfixe par l'outil, la clé métier était « client:clé ». Les traces
+# qui datent d'avant le déploiement doivent encore protéger leur effet.
+
+
+async def test_a_trace_under_the_old_business_key_still_protects_its_effect(
+    magasin: Magasin,
+) -> None:
+    envois, outil = _relance()
+    store = magasin()
+    await store.reserve("default:relance:D-1", 60, SCOPE)
+    ancien = ToolOutput.text("relance d'avant").model_dump(mode="json")
+    await store.complete("default:relance:D-1", ancien)
+    vus: list[str] = []
+    ctx = replace(context(store=store), on_reuse=vus.append)
+
+    output = await outil.invoke({"devis": "D-1"}, ctx)
+    assert output.as_text == "relance d'avant"
+    assert envois == []
+    # Le journal dit sous quelle clé l'effet a été retrouvé.
+    assert vus == ["default:relance:D-1"]
+
+
+async def test_a_reservation_under_the_old_business_key_is_respected(magasin: Magasin) -> None:
+    envois, outil = _relance()
+    store = magasin()
+    await store.reserve("default:relance:D-1", 60, SCOPE)
+    with pytest.raises(ToolError, match="déjà en cours"):
+        await outil.invoke({"devis": "D-1"}, context(store=store))
+    await store.reserve("default:relance:D-2", -1, SCOPE)
+    with pytest.raises(ToolError, match="État inconnu"):
+        await outil.invoke({"devis": "D-2"}, context(store=store))
+    assert envois == []
+
+
+async def test_a_stale_reservation_under_the_old_key_is_taken_back_under_it(
+    magasin: Magasin,
+) -> None:
+    """Sinon la trace d'avant resterait, intacte, et bloquerait la clé pour toujours."""
+    envois: list[str] = []
+
+    @idempotent(key=lambda a: f"relance:{a['devis']}", retry_unknown=True)
+    @tool(side_effects="irreversible")
+    async def envoyer(devis: str) -> str:
+        """Envoie la relance du devis."""
+        envois.append(devis)
+        return "relance"
+
+    store = magasin()
+    await store.reserve("default:relance:D-1", -1, SCOPE)
+    await envoyer.invoke({"devis": "D-1"}, context(store=store))
+    assert envois == ["D-1"]
+    ancienne = await store.get("default:relance:D-1")
+    assert ancienne is not None and ancienne.status == "completed"
+    assert await store.get("default:envoyer:relance:D-1") is None
+    # Rejoué : c'est la trace d'avant qui répond, l'effet n'est pas refait.
+    await envoyer.invoke({"devis": "D-1"}, context(call_id="c2", store=store))
+    assert envois == ["D-1"]
+
+
+async def test_without_an_old_trace_the_new_key_is_used(magasin: Magasin) -> None:
+    envois, outil = _relance()
+    store = magasin()
+    await outil.invoke({"devis": "D-1"}, context(store=store))
+    assert envois == ["D-1"]
+    assert await store.get("default:relance:D-1") is None
+    nouvelle = await store.get("default:envoyer:relance:D-1")
+    assert nouvelle is not None and nouvelle.status == "completed"
 
 
 # --- Oubli des clés (RGPD) ----------------------------------------------------
@@ -1243,7 +1751,7 @@ async def test_a_reused_effect_says_so_in_the_journal(magasin: Magasin) -> None:
     # Un autre appel, la même clé : l'effet ne se refait pas, et il le dit.
     second = await _run(executor, awaiting(call("c2", "envoyer", devis="D-1")))
     [dit] = _reused(second)
-    assert (dit.call_id, dit.tool_name, dit.key) == ("c2", "envoyer", "default:relance:D-1")
+    assert (dit.call_id, dit.tool_name, dit.key) == ("c2", "envoyer", "default:envoyer:relance:D-1")
     assert envois == ["D-1"]
     assert completed(second)["c2"].as_text == "relance 1"
 
@@ -1399,7 +1907,7 @@ async def test_the_trace_reaches_the_journal_under_its_call(
     assert len(dits) == len(appels) == 1
     payload = dits[0].payload
     assert isinstance(payload, IdempotencyReused)
-    assert payload.key == "default:relance:D-2026-042"
+    assert payload.key == "default:envoyer_relance:relance:D-2026-042"
     # Il se lit avec son appel : même span, et l'appel est juste avant.
     assert dits[0].span_id == appels[0].span_id
     assert dits[0].seq == appels[0].seq + 1

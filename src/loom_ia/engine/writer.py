@@ -26,6 +26,11 @@ vérifie sous son verrou que le run n'a aucun événement — un écrivain parta
 suit le journal, il ne verrait aucun conflit —, puis à chaque reprise : le lot
 qui perd la course lève ``RunExists`` au lieu de se rejouer derrière le gagnant.
 
+Une écriture peut aussi se donner une garde (``guard``) : à chaque reprise,
+elle examine ce qui s'est écrit depuis notre position et peut renoncer en
+levant. C'est ce que fait la concession d'un run : si un autre worker l'a prise
+entre-temps, la rejouer derrière lui ferait deux pilotes pour un run.
+
 La compaction écrit sans ce contrôle (``checked=False``, #23) : son événement
 ne couvre que des événements anciens, et son worker ne partage aucun écrivain
 avec les runs en cours.
@@ -33,7 +38,7 @@ avec les runs en cours.
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Final, Self
 
 from loom_ia.core.events import Event, EventDraft, RunCancelled, RunCompleted, RunFailed
@@ -93,7 +98,12 @@ class SessionWriter:
         return cls(store, tenant_id, session_id, await store.last_seq(tenant_id, session_id))
 
     async def append(
-        self, drafts: Sequence[EventDraft], *, checked: bool = True, opens: RunId | None = None
+        self,
+        drafts: Sequence[EventDraft],
+        *,
+        checked: bool = True,
+        opens: RunId | None = None,
+        guard: Callable[[Sequence[Event]], None] | None = None,
     ) -> list[Event]:
         """Écrit les brouillons à la suite, dans l'ordre, et les renvoie numérotés.
 
@@ -104,6 +114,10 @@ class SessionWriter:
         ``opens`` désigne le run que le lot ouvre : s'il a déjà des événements,
         avant l'écriture ou entre deux reprises, ``RunExists`` est levée et
         rien n'est écrit.
+
+        ``guard`` reçoit, avant chaque reprise, les événements écrits depuis
+        la position de l'écrivain ; ce qu'elle lève sort tel quel, et rien
+        n'est écrit.
         """
         batch = list(drafts)
         async with self._lock:
@@ -121,7 +135,7 @@ class SessionWriter:
                 except SequenceConflict as conflict:
                     if attempt >= MAX_ATTEMPTS:
                         raise
-                    await self._still_open(batch, conflict.actual, opens)
+                    await self._still_open(batch, conflict.actual, opens, guard)
                     logger.debug(
                         "Journal %s : écriture reprise (seq %d → %d, tentative %d)",
                         self.session_id,
@@ -136,9 +150,16 @@ class SessionWriter:
                     return events
 
     async def _still_open(
-        self, batch: Sequence[EventDraft], actual: int, opens: RunId | None
+        self,
+        batch: Sequence[EventDraft],
+        actual: int,
+        opens: RunId | None,
+        guard: Callable[[Sequence[Event]], None] | None,
     ) -> None:
-        """Lève ``RunExists`` si le run à ouvrir l'est déjà, ``RunMoved`` si un run est clos."""
+        """Lève ``RunExists`` si le run à ouvrir l'est déjà, ``RunMoved`` si un run est clos.
+
+        Sinon ``guard``, s'il y en a une, examine ce qui s'est écrit depuis.
+        """
         ours = frozenset(draft.run_id for draft in batch)
         landed = await self.store.read(self.tenant_id, self.session_id, after_seq=self.last_seq)
         if opens is not None and any(e.run_id == opens for e in landed):
@@ -148,6 +169,12 @@ class SessionWriter:
         if closed:
             self.last_seq = max([actual, *(e.seq for e in landed)])
             raise RunMoved(ours, closed)
+        if guard is not None:
+            try:
+                guard(landed)
+            except Exception:
+                self.last_seq = max([actual, *(e.seq for e in landed)])
+                raise
 
     def __repr__(self) -> str:
         return f"SessionWriter({self.tenant_id}/{self.session_id}, seq {self.last_seq})"
