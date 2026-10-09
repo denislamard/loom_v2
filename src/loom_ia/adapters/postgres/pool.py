@@ -15,7 +15,9 @@ clé d'API : un mot de passe n'a pas à se trouver dans un fichier versionné
 **Le schéma est créé à la première ouverture**, si le rôle connecté le peut.
 Sinon l'erreur renvoie vers ``loom storage sql``, dont la sortie s'applique
 avec le rôle qui en a le droit. Le DDL est rejouable, donc les deux chemins
-cohabitent.
+cohabitent. Un seul process le pose à la fois, sous verrou consultatif, et
+un pool ne s'ouvre qu'une fois même si ses premières requêtes arrivent
+ensemble.
 
 **Chaque connexion prend le rôle applicatif.** La sécurité au niveau des
 lignes ne s'applique pas au propriétaire d'une table, sauf ``FORCE`` — que le
@@ -30,6 +32,7 @@ transaction, le réglage ne vaudrait que pour l'instruction suivante et la
 politique ne verrait rien.
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Final
@@ -50,6 +53,10 @@ MIN_SIZE: Final = 1
 MAX_SIZE: Final = 10
 
 _PRESENT: Final = "SELECT to_regclass($1)"
+# Verrou consultatif de session, pris le temps de poser le schéma : tous les
+# process qui ouvrent un stockage Postgres sur la même base le partagent.
+_SCHEMA_LOCK: Final = "SELECT pg_advisory_lock(hashtext($1)::bigint)"
+_SCHEMA_KEY: Final = "loom_ia/schema"
 _SET_TENANT: Final = f"SELECT set_config('{TENANT_SETTING}', $1, true)"
 
 
@@ -96,6 +103,7 @@ class PostgresPool:
         self._role = None if role is None else check_name(role)
         self._label = label
         self._pool: asyncpg.Pool[asyncpg.Record] | None = None
+        self._opening = asyncio.Lock()
 
     def __repr__(self) -> str:
         return f"PostgresPool({self._table!r}, role={self._role!r})"
@@ -103,12 +111,18 @@ class PostgresPool:
     # --- Ouverture --------------------------------------------------------
 
     async def pool(self) -> asyncpg.Pool[asyncpg.Record]:
-        """Le pool, créé et vérifié à la première demande."""
+        """Le pool, créé et vérifié à la première demande.
+
+        Les premières demandes simultanées attendent la même ouverture : un
+        seul ``_prepare`` et un seul pool, jamais un pool ouvert puis perdu.
+        """
         if self._pool is None:
-            await self._prepare()
-            self._pool = await asyncpg.create_pool(
-                self._dsn, min_size=MIN_SIZE, max_size=MAX_SIZE, init=self._take_role
-            )
+            async with self._opening:
+                if self._pool is None:
+                    await self._prepare()
+                    self._pool = await asyncpg.create_pool(
+                        self._dsn, min_size=MIN_SIZE, max_size=MAX_SIZE, init=self._take_role
+                    )
         return self._pool
 
     async def _prepare(self) -> None:
@@ -120,6 +134,13 @@ class PostgresPool:
         """
         connection = await asyncpg.connect(self._dsn)
         try:
+            # Un seul process pose le schéma à la fois. Sans ce verrou, deux
+            # ouvertures simultanées voient la table absente et jouent chacune
+            # le DDL ; le second ``ALTER TABLE`` demande un verrou exclusif
+            # pendant que des écrivains travaillent déjà sur la table du
+            # premier, et Postgres les interbloque. Le verrou est de session :
+            # la fermeture de la connexion le rend.
+            await connection.execute(_SCHEMA_LOCK, _SCHEMA_KEY)
             if await connection.fetchval(_PRESENT, self._table) is not None:
                 return
             try:

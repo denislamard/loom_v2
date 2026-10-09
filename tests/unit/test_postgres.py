@@ -9,6 +9,7 @@ politique de lignes, les droits du rôle — est dans
 ``tests/integration/test_postgres.py``.
 """
 
+import asyncio
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
@@ -304,3 +305,75 @@ def test_a_backend_still_to_come_is_refused() -> None:
         EventsStorage(backend="firestore")
     with pytest.raises(ValueError, match="seuls journal, memory, sqlite, postgres, redis"):
         IdempotencyStorage(backend="firestore")
+
+
+# --- L'ouverture du pool -----------------------------------------------------
+
+
+class _FakeServer:
+    """Ce que Postgres partage entre process : la table, et le verrou consultatif."""
+
+    def __init__(self) -> None:
+        self.present = False
+        self.ddl_runs = 0
+        self.lock = asyncio.Lock()
+
+
+class _FakeConnection:
+    def __init__(self, server: _FakeServer) -> None:
+        self._server = server
+        self._locked = False
+
+    async def execute(self, sql: str, *args: object) -> str:
+        if "pg_advisory_lock" in sql:
+            await self._server.lock.acquire()
+            self._locked = True
+        else:
+            # Le DDL : la table n'est visible qu'une fois la transaction validée.
+            self._server.ddl_runs += 1
+            await asyncio.sleep(0)
+            self._server.present = True
+        return "OK"
+
+    async def fetchval(self, sql: str, *args: object) -> object:
+        await asyncio.sleep(0)
+        return EVENTS_TABLE if self._server.present else None
+
+    async def close(self) -> None:
+        if self._locked:
+            self._server.lock.release()
+            self._locked = False
+
+
+@sans_extra
+async def test_simultaneous_first_requests_pose_the_schema_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deux stockages (deux process), cinq premières requêtes chacun : un DDL, un pool chacun.
+
+    Rejoué pendant que les premiers écrivains inséraient déjà, le DDL
+    s'interbloquait avec eux (``DeadlockDetectedError`` en CI) ; et chaque
+    requête simultanée ouvrait son propre pool, dont un seul restait gardé.
+    """
+    import asyncpg
+
+    from loom_ia.adapters.postgres.pool import PostgresPool
+
+    server = _FakeServer()
+    opened: list[object] = []
+
+    async def connect(dsn: str) -> _FakeConnection:
+        return _FakeConnection(server)
+
+    async def create_pool(dsn: str, **options: object) -> object:
+        await asyncio.sleep(0)
+        opened.append(made := object())
+        return made
+
+    monkeypatch.setattr(asyncpg, "connect", connect)
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    stores = [PostgresPool(DSN, table=EVENTS_TABLE, ddl=ddl(), role=None) for _ in range(2)]
+    pools = await asyncio.gather(*(store.pool() for store in stores for _ in range(5)))
+    assert server.ddl_runs == 1
+    assert len(opened) == 2
+    assert len({id(pool) for pool in pools}) == 2
