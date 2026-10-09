@@ -27,7 +27,7 @@ Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 """
 
 import logging
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import Final, cast
 
 import httpx2
@@ -50,6 +50,7 @@ from loom_ia.adapters.models._common import (
     ERROR_PREFIX,
     OUTPUT_SCHEMA_NAME,
     classify_error,
+    custom_header_names,
     image_data,
     is_strict,
     json_text,
@@ -90,6 +91,8 @@ logger = logging.getLogger(__name__)
 PROVIDER: Final = "openai"
 # Adresse sans ``base_url`` : passée au SDK pour qu'il ne lise pas OPENAI_BASE_URL.
 DEFAULT_BASE_URL: Final = "https://api.openai.com/v1"
+# Variable que le SDK lit pour ajouter des en-têtes à chaque requête.
+CUSTOM_HEADERS_ENV: Final = "OPENAI_CUSTOM_HEADERS"
 # Champs de raisonnement ajoutés par les fournisseurs compatibles.
 REASONING_FIELDS: Final = ("reasoning_content", "reasoning")
 # Champ de renvoi d'un raisonnement dont l'origine est inconnue (convention d'OpenAI pour gpt-oss).
@@ -102,6 +105,28 @@ _FINISH_REASONS: Final[dict[str, StopReason]] = {
     "function_call": "tool_use",
     "content_filter": "refusal",
 }
+
+
+def own_headers(api_key: str) -> Mapping[str, str]:
+    """En-têtes par défaut qui rendent le SDK sourd à l'environnement du process.
+
+    Comme ``base_url``, ce que le client envoie vient de la config seule : le SDK
+    lirait sinon ``OPENAI_ORG_ID`` et ``OPENAI_PROJECT_ID`` (l'organisation et le
+    projet facturés seraient ceux du process pour tous les clients) et
+    ``OPENAI_CUSTOM_HEADERS``, dont ``Authorization`` remplacerait la clé du
+    client. L'organisation et le projet sont omis, la clé est reposée telle
+    quelle, et tout autre en-tête de la variable est omis.
+    """
+    headers: dict[str, object] = {
+        "OpenAI-Organization": openai.Omit(),
+        "OpenAI-Project": openai.Omit(),
+    }
+    for name in custom_header_names(CUSTOM_HEADERS_ENV):
+        headers[name] = openai.Omit()
+    if "authorization" in {name.lower() for name in headers}:
+        headers["Authorization"] = f"Bearer {api_key}"
+    # ``Omit`` est compris des en-têtes du SDK, que son annotation ne dit pas.
+    return cast(Mapping[str, str], headers)
 
 
 class OpenAIChatModel:
@@ -118,6 +143,7 @@ class OpenAIChatModel:
         self._client = openai.AsyncOpenAI(
             api_key=api_key,
             base_url=spec.base_url or DEFAULT_BASE_URL,
+            default_headers=own_headers(api_key),
             max_retries=0,
             timeout=spec.timeouts.total,
             http_client=http_client,

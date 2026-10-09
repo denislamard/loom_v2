@@ -209,3 +209,26 @@ def test_message_to_chunks_rejects_foreign_blocks() -> None:
         message_to_chunks(message)
     chunks = message_to_chunks(Message.assistant(""), stop_reason="refusal")
     assert chunks == [TextDelta(text=""), Stopped(reason="refusal")]
+
+
+def _calls(*ids: str) -> ResponseAccumulator:
+    chunks: list[ModelChunk] = []
+    for index, call_id in enumerate(ids):
+        chunks += [
+            ToolCallStarted(index=index, call_id=call_id, name="calculer"),
+            ToolArgsDelta(index=index, json_fragment="{}"),
+            ToolCallEnded(index=index),
+        ]
+    return accumulate(*chunks)
+
+
+def test_distinct_call_ids_are_left_as_they_are() -> None:
+    message = _calls("a", "b", "c").result(model_id="m", provider="p").message
+    assert [c.call_id for c in message.tool_calls] == ["a", "b", "c"]
+
+
+def test_a_repeated_call_id_is_renamed_without_meeting_another_id() -> None:
+    message = _calls("c1", "c1", "c1_2", "c1").result(model_id="m", provider="p").message
+    ids = [c.call_id for c in message.tool_calls]
+    assert ids == ["c1", "c1_3", "c1_2", "c1_4"]
+    assert len(set(ids)) == len(ids)

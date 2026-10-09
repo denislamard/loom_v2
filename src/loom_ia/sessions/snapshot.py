@@ -23,9 +23,16 @@ pour réduire le contexte.
 from collections.abc import Sequence
 from typing import Final
 
-from loom_ia.core.events import Event, RunScope, SessionSnapshot
+from loom_ia.core.events import (
+    Event,
+    RunCancelled,
+    RunCompleted,
+    RunFailed,
+    RunScope,
+    SessionSnapshot,
+)
 from loom_ia.core.model import Message, RunId, RunState
-from loom_ia.core.projections import fold_all, history, last_marker
+from loom_ia.core.projections import history, last_marker
 from loom_ia.engine import SessionWriter
 
 # Estimation sans tokenizer : la sérialisation JSON d'un message, divisée par
@@ -58,18 +65,60 @@ def marked(events: Sequence[Event]) -> int:
 
 
 def boundary(events: Sequence[Event]) -> int:
-    """Dernière position où tous les runs commencés sont terminés.
+    """Dernière position où l'on peut couper le journal sans couper un run."""
+    return Cuts(events).at_most()
+
+
+class Cuts:
+    """Positions où couper le journal d'une session : jamais au milieu d'un run.
+
+    Une coupe tombe avant tout run encore en cours, et jamais à l'intérieur
+    d'un run clos : un run qui a des événements des deux côtés serait lu sans
+    son ``run.started`` à la reprise, donc perdu de l'historique. Deux runs de
+    la session qui se chevauchent (le premier fini, le second encore en cours)
+    reculent donc la coupe avant le premier.
 
     Les marqueurs de session n'y comptent pas : sans cela, écrire un snapshot
-    repousserait la position et en appellerait aussitôt un autre.
+    repousserait la position et en appellerait aussitôt un autre. Un marqueur
+    écrit hors de tout run (coupe de sécurité) porte le run_id de la session :
+    ce n'est pas un run, il n'est jamais « en cours ».
+
+    Un seul parcours du journal, sans projeter les runs : seule compte la
+    clôture (``run.completed``, ``run.failed`` ou ``run.cancelled``), que
+    ``fold_all`` ne faisait que retrouver au prix d'une copie d'état par
+    événement.
     """
-    first: dict[RunId, int] = {}
-    for event in events:
-        first.setdefault(event.run_id, event.seq)
-    running = [first[run_id] for run_id, state in fold_all(events).items() if not state.finished]
-    if running:
-        return min(running) - 1
-    return max((event.seq for event in events if event.category != "session"), default=0)
+
+    def __init__(self, events: Sequence[Event]) -> None:
+        first: dict[RunId, int] = {}
+        last: dict[RunId, int] = {}
+        closed: set[RunId] = set()
+        self._newest = 0
+        for event in events:
+            if event.category == "session":
+                continue
+            first.setdefault(event.run_id, event.seq)
+            last[event.run_id] = event.seq
+            self._newest = max(self._newest, event.seq)
+            if isinstance(event.payload, RunCompleted | RunFailed | RunCancelled):
+                closed.add(event.run_id)
+        # Du dernier run commencé au premier ; sans fin tant que le run tourne.
+        self._runs = [
+            (first[run_id], last[run_id] if run_id in closed else None)
+            for run_id in sorted(first, key=first.__getitem__, reverse=True)
+        ]
+
+    def at_most(self, position: int | None = None) -> int:
+        """Plus grande coupe qui ne dépasse pas ``position`` (le journal entier par défaut).
+
+        Elle ne fait que reculer, et un run ne la recoupe plus une fois qu'elle
+        est passée avant lui : un seul passage, du dernier run au premier.
+        """
+        limit = self._newest if position is None else min(position, self._newest)
+        for start, end in self._runs:
+            if start <= limit and (end is None or limit < end):
+                limit = start - 1
+        return limit
 
 
 async def write_snapshot(

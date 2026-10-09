@@ -29,6 +29,7 @@ from typing import Any, Final
 
 import aiosqlite
 
+from loom_ia.adapters._sqlite import enable_wal
 from loom_ia.core.model import (
     DEFAULT_RETENTION,
     IdempotencyRecord,
@@ -97,7 +98,7 @@ class SqliteIdempotency:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             connection = await aiosqlite.connect(self.path, isolation_level=None)
             try:
-                await connection.execute("PRAGMA journal_mode = WAL")
+                await enable_wal(connection)
                 # Une réservation vaut ce que vaut sa durabilité : un effet de
                 # bord suit, et on ne veut pas le refaire après un arrêt brutal.
                 await connection.execute("PRAGMA synchronous = FULL")

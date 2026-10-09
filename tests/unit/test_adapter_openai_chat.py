@@ -400,6 +400,21 @@ async def test_official_address_without_base_url(monkeypatch: pytest.MonkeyPatch
     assert str(server.requests[0].url) == "https://api.openai.com/v1/chat/completions"
 
 
+async def test_environment_headers_do_not_reach_the_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # La config décide seule de ce qui part : ni organisation, ni projet, ni
+    # en-tête de l'environnement du process, ni sa clé à la place de celle du client.
+    monkeypatch.setenv("OPENAI_ORG_ID", "org-du-process")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "proj-du-process")
+    monkeypatch.setenv("OPENAI_CUSTOM_HEADERS", "authorization: Bearer cle-du-process\nX-Env: oui")
+    server = Server(streamed(chunk({"content": "ok"}, finish="stop")))
+    await complete(server.model(), request())
+    sent = server.requests[0].headers
+    assert sent.get_list("authorization") == ["Bearer sk-test"]
+    assert not {"openai-organization", "openai-project", "x-env"} & set(sent)
+
+
 async def test_images_go_in_user_content_parts() -> None:
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
     image = InlineDataBlock(media_type="image/png", data=png)

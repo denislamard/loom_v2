@@ -233,6 +233,20 @@ class ResourceReader:
         # on n'apprend pas qu'il existe.
         if location.tenant != self._caller.tenant:
             raise _unknown(uri)
+        # Les octets d'un fichier sont du contenu : sans ``read_content``, comme
+        # une relecture masquée, ils ne se lisent pas (l'URI, elle, reste visible).
+        if self._caller.masks:
+            raise _refused("Clé sans la portée 'read_content' : le contenu d'un fichier est masqué")
+        if not self._whole():
+            # Un fichier se lit comme la session qui le porte : chacun de ses agents.
+            try:
+                info = await self._loom.session(
+                    SessionId(location.session), tenant_id=self._caller.tenant
+                )
+            except UnknownSession:
+                raise _unknown(uri) from None
+            for agent in dict.fromkeys(run.agent for run in info.runs):
+                self._allowed(agent)
         try:
             data = await self._loom.artifact(uri)
         except ArtifactNotFound:

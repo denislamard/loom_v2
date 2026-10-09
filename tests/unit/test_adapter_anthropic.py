@@ -439,6 +439,21 @@ async def test_official_address_without_base_url(monkeypatch: pytest.MonkeyPatch
     assert str(server.requests[0].url) == "https://api.anthropic.com/v1/messages"
 
 
+async def test_environment_headers_do_not_reach_the_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # La config décide seule de ce qui part : ni en-tête de l'environnement du
+    # process, ni sa clé à la place de celle du client.
+    monkeypatch.setenv(
+        "ANTHROPIC_CUSTOM_HEADERS", "X-API-KEY: cle-du-process\nX-Env: oui\nsans deux-points"
+    )
+    server = Server(streamed(start(), *end("end_turn")))
+    await complete(server.model(), request())
+    sent = server.requests[0].headers
+    assert sent.get_list("x-api-key") == ["sk-test"]
+    assert "x-env" not in sent
+
+
 async def test_images_are_sent_in_base64() -> None:
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
     encoded = base64.b64encode(png).decode()

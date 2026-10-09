@@ -127,6 +127,65 @@ async def test_an_oversized_upload_is_refused_on_its_header(demo: ConfigFactory)
     assert plain.status_code == 415 and "text/plain" in plain.json()["detail"]
 
 
+async def test_a_chunked_upload_is_refused_as_soon_as_it_outgrows_the_limits(
+    demo: ConfigFactory,
+) -> None:
+    """Sans ``Content-Length``, l'envoi est compté à mesure qu'il arrive (413)."""
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    client = pytest.importorskip("httpx2", reason="client HTTP de test absent")
+    from loom_ia.access.http import create_app
+
+    limits = {"attachments": {"max_bytes": 1000, "max_files": 1}}
+    boundary = "loom-limite"
+    head = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="message"\r\n\r\n{QUESTION}\r\n'
+        f'--{boundary}\r\nContent-Disposition: form-data; name="attachments"; '
+        'filename="gros.png"\r\nContent-Type: image/png\r\n\r\n'
+    ).encode()
+    tail = f"\r\n--{boundary}--\r\n".encode()
+    sent = 0
+
+    async def body() -> AsyncGenerator[bytes]:
+        nonlocal sent
+        for chunk in (head, *([PNG + b"\x00" * 65_000] * 80), tail):  # ~5 Mo
+            sent += len(chunk)
+            yield chunk
+
+    read = 0
+
+    class Counting:
+        """Octets du corps que l'application a réellement demandés."""
+
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            async def counted() -> Any:
+                nonlocal read
+                message = await receive()
+                read += len(message.get("body", b""))
+                return message
+
+            await self.app(scope, counted, send)
+
+    headers = {"content-type": f"multipart/form-data; boundary={boundary}"}
+    async with Loom.from_config(demo(execution=limits)) as loom:
+        transport = client.ASGITransport(Counting(create_app(loom)))
+        async with client.AsyncClient(transport=transport, base_url="http://loom.test") as http:
+            response = await http.post("/v1/agents/demo/runs", content=body(), headers=headers)
+            same = await http.post(
+                "/v1/agents/demo/runs",
+                data={"message": QUESTION},
+                files=[("attachments", ("a.png", PNG, "image/png"))],
+            )
+
+    assert "content-length" not in response.request.headers
+    assert response.status_code == 413 and "au-delà de la limite" in response.json()["detail"]
+    # Refusé au plafond (1000 octets + 256 Kio), bien avant la fin des 5 Mo annoncés.
+    assert read < 400_000 and sent < 1_000_000
+    assert same.status_code == 201
+
+
 async def test_openapi_describes_both_bodies(demo: ConfigFactory) -> None:
     async with rest(demo()) as (_, http):
         schema = (await http.get("/openapi.json")).json()

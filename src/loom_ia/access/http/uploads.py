@@ -18,6 +18,7 @@ Le contrôle du contenu (signature, type accepté) reste celui du moteur.
 """
 
 import json
+from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any, Final, NoReturn
 
 from fastapi import HTTPException, Request, status
@@ -87,8 +88,11 @@ async def run_request(
             f"Type de corps non pris en charge : {kind} (acceptés : {JSON}, {MULTIPART})",
         )
     _check_length(request, policy)
+    # Le même plafond vaut pour un corps sans ``Content-Length`` (chunked) : il
+    # est compté à mesure qu'il arrive, avant que Starlette ne l'écrive sur disque.
+    bounded = Request(request.scope, _Bounded(request.receive, _ceiling(policy)))
     # Le nombre de fichiers est contrôlé après lecture, avec le message du moteur.
-    async with request.form(max_fields=MAX_FIELDS) as form:
+    async with bounded.form(max_fields=MAX_FIELDS) as form:
         fields: dict[str, object] = {}
         files: list[UploadFile] = []
         for name, value in form.multi_items():
@@ -129,15 +133,47 @@ def _refuse(field: str, reason: str) -> NoReturn:
     )
 
 
+def _ceiling(policy: AttachmentPolicy) -> int:
+    """Octets au-delà desquels un envoi ne peut pas tenir dans les limites."""
+    return policy.max_files * policy.max_bytes + FORM_OVERHEAD
+
+
 def _check_length(request: Request, policy: AttachmentPolicy) -> None:
     """Refuse sur son en-tête un envoi qui ne peut pas tenir dans les limites."""
     declared = request.headers.get("content-length", "")
-    limit = policy.max_files * policy.max_bytes + FORM_OVERHEAD
+    limit = _ceiling(policy)
     if declared.isdigit() and int(declared) > limit:
         raise HTTPException(
             status.HTTP_413_CONTENT_TOO_LARGE,
             f"Envoi de {declared} octets, au-delà de la limite de {limit}",
         )
+
+
+type _Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
+
+
+class _Bounded:
+    """``receive`` d'une requête qui refuse (413) un corps plus long que ``limit`` octets.
+
+    ``Content-Length`` est contrôlé avant la lecture ; un envoi en morceaux n'en
+    a pas, et ne se mesure qu'en arrivant.
+    """
+
+    def __init__(self, receive: _Receive, limit: int) -> None:
+        self._receive = receive
+        self._limit = limit
+        self._seen = 0
+
+    async def __call__(self) -> MutableMapping[str, Any]:
+        message = await self._receive()
+        if message["type"] == "http.request":
+            self._seen += len(message.get("body", b""))
+            if self._seen > self._limit:
+                raise HTTPException(
+                    status.HTTP_413_CONTENT_TOO_LARGE,
+                    f"Envoi de plus de {self._limit} octets, au-delà de la limite",
+                )
+        return message
 
 
 async def _attachment(upload: UploadFile, policy: AttachmentPolicy) -> Attachment:

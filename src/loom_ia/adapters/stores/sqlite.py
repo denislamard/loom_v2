@@ -26,6 +26,7 @@ from typing import Any, Final
 
 import aiosqlite
 
+from loom_ia.adapters._sqlite import enable_wal
 from loom_ia.adapters.stores.codec import PLAIN, JournalCodec
 from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId
@@ -137,7 +138,7 @@ class SqliteEventStore:
             # ``isolation_level=None`` : les transactions sont ouvertes à la main.
             connection = await aiosqlite.connect(self.path, isolation_level=None)
             try:
-                await connection.execute("PRAGMA journal_mode = WAL")
+                await enable_wal(connection)
                 await connection.execute("PRAGMA synchronous = FULL")
                 await connection.execute("PRAGMA busy_timeout = 5000")
                 await connection.executescript(SCHEMA)

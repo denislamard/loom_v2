@@ -55,9 +55,11 @@ from loom_ia.access.progress import Progress, notes
 from loom_ia.access.resources import RUNS as MCP_RUNS
 from loom_ia.access.resources import SESSIONS as MCP_SESSIONS
 from loom_ia.access.resources import TEMPLATES as MCP_TEMPLATES
+from loom_ia.adapters.models.fake import FakeModel
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, LoomConfig, config_json_schema, load_config
+from loom_ia.config.compaction import compaction_agent
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.config.loader import PROFILE_ENV, chosen_profile
 from loom_ia.config.models import (
@@ -174,6 +176,12 @@ def build_parser() -> argparse.ArgumentParser:
         return command
 
     validate = commands.add_parser("validate", help="vérifie la config et monte les agents")
+    validate.add_argument(
+        "--sans-cles",
+        action="store_true",
+        help="monte les agents sans créer leurs clients de modèle : "
+        "une clé d'API (ou un SDK) absente ne fait pas échouer",
+    )
     validate.set_defaults(handler=cmd_validate)
 
     run = tenanted(commands.add_parser("run", help="lance un run et attend sa fin"))
@@ -499,6 +507,10 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Config     : {args.config}")
     print(f"Profil     : {_profile_line(config, args.profile)}")
     print(f"Modèles    : {_listed(spec.id for spec in config.models)}")
+    if args.sans_cles:
+        # Les clients de modèle ne sont pas créés : ce que le montage aurait
+        # vérifié d'eux — clé d'API présente, SDK installé — ne l'est pas.
+        print("    clients de modèle non créés (--sans-cles) : clés d'API et SDK non vérifiés")
     print(f"Agents     : {_listed(agent.name for agent in config.agents)}")
     named = [(name, registry.get(name)) for name in registry.names]
     print(f"Outils     : {_listed(name for name, obj in named if isinstance(obj, Tool))}")
@@ -549,7 +561,8 @@ async def _validate(args: argparse.Namespace) -> int:
         print(f"Clients    : {_listed(tenant.id for tenant in config.tenants)}")
 
     mounted = 0
-    async with Loom(config, registry=registry) as loom:
+    clients = {spec.id: FakeModel(spec) for spec in config.models} if args.sans_cles else None
+    async with Loom(config, registry=registry, models=clients) as loom:
         for tenant_id in config.tenant_ids:
             tenant = loom.tenant(tenant_id)
             if config.tenants:
@@ -561,6 +574,13 @@ async def _validate(args: argparse.Namespace) -> int:
                     continue
                 mounted += 1
                 await _show_agent(loom, tenant_id, spec, indent="  " if config.tenants else "")
+            if config.sessions.compaction is not None:
+                # L'agent interne n'est pas déclaré, mais il est monté au premier
+                # résumé : une clé absente pour son modèle se dit ici, pas dans une
+                # tâche de fond qui n'échoue pas le run. Il ne compte pas dans les
+                # agents montés : ce sont ceux que la config déclare.
+                internal = compaction_agent(config.sessions.compaction)
+                await _show_agent(loom, tenant_id, internal, indent="  " if config.tenants else "")
     print(f"\n{mounted} agent(s) monté(s) sans erreur.")
     return OK
 

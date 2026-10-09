@@ -38,6 +38,7 @@ from pydantic import JsonValue
 
 from loom_ia.adapters.models._common import (
     classify_error,
+    custom_header_names,
     image_data,
     json_text,
     retry_after,
@@ -78,6 +79,8 @@ logger = logging.getLogger(__name__)
 PROVIDER: Final = "anthropic"
 # Adresse sans ``base_url`` : passée au SDK pour qu'il ne lise pas ANTHROPIC_BASE_URL.
 DEFAULT_BASE_URL: Final = "https://api.anthropic.com"
+# Variable que le SDK lit pour ajouter des en-têtes à chaque requête.
+CUSTOM_HEADERS_ENV: Final = "ANTHROPIC_CUSTOM_HEADERS"
 # L'API exige max_tokens.
 DEFAULT_MAX_TOKENS: Final = 4096
 # Points de cache permis par requête.
@@ -99,6 +102,23 @@ type _Role = Literal["user", "assistant"]
 type _ImageType = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
+def _own_headers(api_key: str) -> dict[str, str]:
+    """En-têtes par défaut qui rendent le SDK sourd à ``ANTHROPIC_CUSTOM_HEADERS``.
+
+    Comme ``base_url``, ce que le client envoie vient de la config seule : un
+    en-tête de l'environnement du process passerait sinon pour tous les clients,
+    et ``x-api-key`` y remplacerait la clé du client. La clé est donc reposée
+    telle quelle, et tout autre en-tête de la variable est omis.
+    """
+    headers: dict[str, object] = {}
+    for name in custom_header_names(CUSTOM_HEADERS_ENV):
+        headers[name] = anthropic.Omit()
+    if "x-api-key" in {name.lower() for name in headers}:
+        headers["X-Api-Key"] = api_key
+    # ``Omit`` est compris des en-têtes du SDK, que son annotation ne dit pas.
+    return cast(dict[str, str], headers)
+
+
 class AnthropicModel:
     """Client ``ModelClient`` pour l'API Messages."""
 
@@ -113,6 +133,7 @@ class AnthropicModel:
         self._client = anthropic.AsyncAnthropic(
             api_key=api_key,
             base_url=spec.base_url or DEFAULT_BASE_URL,
+            default_headers=_own_headers(api_key),
             max_retries=0,
             timeout=spec.timeouts.total,
             http_client=http_client,

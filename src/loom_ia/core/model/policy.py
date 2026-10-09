@@ -19,8 +19,8 @@ on_output     oui       réponse    oui                       oui
 ============  ========  =========  =====  ====  =====  ====  ====
 
 Une politique déclare les décisions qu'elle peut rendre : une décision non
-permise à l'un de ses points est refusée au démarrage. ``Pause`` arrive avec
-les approbations (J4.3).
+permise à l'un de ses points est refusée au démarrage. ``Pause`` (un humain
+tranche, J4.3) n'est permise qu'à ``before_tool``.
 """
 
 from collections.abc import Mapping
@@ -136,7 +136,7 @@ class Deny:
 
 @dataclass(frozen=True, slots=True)
 class Pause:
-    """Run mis en pause en attendant une décision humaine (J4.3)."""
+    """Appel mis en pause : le run attend une décision humaine (approbations, J4.3)."""
 
     kind: ClassVar[DecisionKind] = "pause"
     reason: str

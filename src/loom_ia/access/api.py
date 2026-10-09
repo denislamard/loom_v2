@@ -81,6 +81,7 @@ from loom_ia.core.events import (
     ApprovalGranted,
     ApprovalRejected,
     ApprovalRequested,
+    ArtifactStored,
     Event,
     EventDraft,
     EventQuery,
@@ -563,7 +564,7 @@ class RunResult(DomainModel):
             iterations=state.iterations,
             usage=state.usage,
             cost_usd=state.cost_usd,
-            artifacts=state.artifacts,
+            artifacts=(*state.artifacts, *_produced_below(state, tree)),
             data=state.output_data,
             unverified=state.unverified,
             report=usage_report(tree, state.session_id, state.run_id) if tree else None,
@@ -583,6 +584,29 @@ class RunResult(DomainModel):
     def produced(self) -> tuple[ArtifactRecord, ...]:
         """Fichiers produits par les outils du run."""
         return tuple(a for a in self.artifacts if a.origin == "tool_output")
+
+
+def _produced_below(state: RunState, tree: Sequence[Event]) -> tuple[ArtifactRecord, ...]:
+    """Fichiers produits par les outils des sous-agents du run, qu'il n'a pas rangés lui-même.
+
+    Un enfant range ses fichiers dans son propre run : le parent ne reçoit que
+    leurs URI, dans le ``ToolOutput.artifacts`` de l'appel. Le résultat de la
+    racine les liste aussi — ses déports et ses pièces jointes, eux, restent à
+    chaque run. Aucun état n'est touché : c'est une lecture du journal.
+    """
+    known = {a.uri for a in state.artifacts}
+    below: list[ArtifactRecord] = []
+    for event in tree:
+        payload = event.payload
+        if (
+            event.run_id != state.run_id
+            and isinstance(payload, ArtifactStored)
+            and payload.origin == "tool_output"
+            and payload.uri not in known
+        ):
+            known.add(payload.uri)
+            below.append(payload.record)
+    return tuple(below)
 
 
 def _awaited(state: RunState, tree: Sequence[Event]) -> tuple[PendingApproval, ...]:

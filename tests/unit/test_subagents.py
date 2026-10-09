@@ -10,8 +10,9 @@ from typing import Any
 import pytest
 import yaml
 
-from loom_ia.access.api import Loom
+from loom_ia.access.api import Loom, RunResult
 from loom_ia.access.cli import main
+from loom_ia.adapters.artifacts import InMemoryArtifactStore
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
@@ -53,7 +54,7 @@ from loom_ia.engine import (
 )
 from loom_ia.runtime import build_agent
 from loom_ia.testing import ScriptedModel, tool_call_message
-from loom_ia.tools import tool
+from loom_ia.tools import Image, tool
 
 MAIN_USAGE = Usage(input_tokens=1_000, output_tokens=100)
 CHILD_USAGE = Usage(input_tokens=200, output_tokens=50)
@@ -200,6 +201,40 @@ async def test_subagent_round_trip(store: EventStore) -> None:
     assert main_model.requests[0].system == f"Tu orchestres.\n\n{REFS_HINT}"
     # L'historique de la session ignore le run enfant.
     assert [m.role for m in history(events)] == ["user", "assistant", "tool", "assistant"]
+
+
+async def test_files_produced_by_a_child_are_in_the_root_result(store: EventStore) -> None:
+    """Le résultat de la racine liste les fichiers de l'enfant ; son état, lui, reste le sien."""
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+
+    @tool
+    def photographier() -> Image:
+        """Photographie le chantier."""
+        return Image(png, name="chantier.png")
+
+    main_model = ScriptedModel(
+        tool_call_message(("c1", "verifier", {"message": "Photographie le chantier."})),
+        Message.assistant("Photo prise."),
+    )
+    child_model = ScriptedModel(
+        tool_call_message(("k1", "photographier", {})),
+        Message.assistant("Voilà."),
+    )
+    child = replace(
+        child_context(store, child_model, photographier),
+        tools=ToolExecutor([calculer, photographier], artifacts=InMemoryArtifactStore()),
+    )
+    ctx = parent_context(store, main_model, verifier({"verificateur": child}))
+    state = await drive(ctx, (await begin_run(ctx, "Fais photographier.")).run_id)
+
+    assert state.status is RunStatus.COMPLETED
+    assert state.artifacts == ()  # la projection du run n'a pas bougé
+    events = await session(store, state)
+    result = RunResult.of(state, events)
+    assert [(a.name, a.origin) for a in result.produced] == [("chantier.png", "tool_output")]
+    # Ce qu'elle liste est ce que l'appel a rendu au parent.
+    [completed] = payloads(events, ToolCompleted, state.run_id)
+    assert tuple(a.uri for a in result.artifacts) == completed.output.artifacts
 
 
 async def test_failed_child_becomes_an_error_result(store: EventStore) -> None:

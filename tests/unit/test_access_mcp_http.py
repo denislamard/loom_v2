@@ -10,13 +10,14 @@ client est branché sur l'application ASGI, et le cycle de vie de celle-ci est
 déroulé à la main — le gestionnaire de session du SDK en dépend.
 """
 
+import base64
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
-from conftest import QUESTION, TREE_ANSWER, TREE_QUESTION, ConfigFactory, demo_agent
+from conftest import PNG, QUESTION, TREE_ANSWER, TREE_QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.config import ConfigError, load_config
@@ -31,7 +32,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
-from mcp.types import ReadResourceResult, TextResourceContents
+from mcp.types import BlobResourceContents, ReadResourceResult, TextResourceContents
 from pydantic import AnyUrl
 
 from loom_ia.access.http import create_app
@@ -230,6 +231,69 @@ async def test_a_key_publishes_only_the_agents_it_may_launch(demo: ConfigFactory
     # Et `approve` n'est jamais un outil MCP (#39).
     assert "approve" not in publies
     assert refus.isError and "non autorisée sur l'agent 'demo'" in texte(refus)
+
+
+async def test_a_report_is_refused_for_an_agent_the_key_may_not_read(
+    demo: ConfigFactory,
+) -> None:
+    """``run_report`` suit la règle de REST : le droit vaut pour chaque agent rapporté."""
+    security, jetons = cles(
+        tout={"scopes": ["run", "read"]},
+        bureau={"scopes": ["read"], "agents": ["autre"]},
+    )
+    agents = [demo_agent(), demo_agent(name="autre")]
+    path = demo(agents=agents, storage=JOURNAL, security=security, server=MCP_HTTP)
+    async with Loom.from_config(path) as loom:
+        async with parle(loom, jetons["tout"]) as session:
+            lance = await session.call_tool("demo", {"message": QUESTION, "session_id": "s1"})
+            run_id = (lance.structuredContent or {})["run_id"]
+            complet = await session.call_tool("run_report", {"session_id": "s1"})
+        async with parle(loom, jetons["bureau"]) as session:
+            par_run = await session.call_tool("run_report", {"run_id": run_id, "session_id": "s1"})
+            par_session = await session.call_tool("run_report", {"session_id": "s1"})
+            statut = await session.call_tool("run_status", {"run_id": run_id, "session_id": "s1"})
+    assert not complet.isError and (complet.structuredContent or {})["runs"]
+    for refus in (par_run, par_session, statut):
+        assert refus.isError and "non autorisée sur l'agent 'demo'" in texte(refus)
+
+
+async def test_a_file_is_read_with_read_content_and_the_agents_of_its_session(
+    demo: ConfigFactory,
+) -> None:
+    """Les octets d'un fichier suivent le masquage et le droit sur les agents, comme le journal."""
+    security, jetons = cles(
+        complete={"scopes": ["run", "read", "read_content"]},
+        lecture={"scopes": ["read"]},
+        bureau={"scopes": ["read", "read_content"], "agents": ["autre"]},
+        atelier={"scopes": ["read", "read_content"], "agents": ["demo"]},
+    )
+    agents = [demo_agent(), demo_agent(name="autre")]
+    path = demo(agents=agents, storage=JOURNAL, security=security, server=MCP_HTTP)
+    image = [{"type": "image", "data": base64.b64encode(PNG).decode(), "mimeType": "image/png"}]
+    async with Loom.from_config(path) as loom:
+        async with parle(loom, jetons["complete"]) as session:
+            lance = await session.call_tool(
+                "demo", {"message": QUESTION, "session_id": "s1", "attachments": image}
+            )
+            uri = ((lance.structuredContent or {})["artifacts"])[0]["uri"]
+            entier = await session.read_resource(AnyUrl(uri))
+        async with parle(loom, jetons["atelier"]) as session:
+            sien = await session.read_resource(AnyUrl(uri))
+        async with parle(loom, jetons["lecture"]) as session:
+            # L'URI reste lisible dans une relecture masquée ; les octets, non.
+            relu = await session.call_tool(
+                "run_status",
+                {"run_id": (lance.structuredContent or {})["run_id"], "session_id": "s1"},
+            )
+            with pytest.raises(McpError, match="read_content"):
+                await session.read_resource(AnyUrl(uri))
+        async with parle(loom, jetons["bureau"]) as session:
+            with pytest.raises(McpError, match="non autorisée sur l'agent 'demo'"):
+                await session.read_resource(AnyUrl(uri))
+    [bloc] = entier.contents
+    assert isinstance(bloc, BlobResourceContents) and base64.b64decode(bloc.blob) == PNG
+    assert [c.model_dump() for c in sien.contents] == [c.model_dump() for c in entier.contents]
+    assert (relu.structuredContent or {})["artifacts"][0]["uri"] == uri
 
 
 async def test_launching_needs_run_and_reading_needs_read(demo: ConfigFactory) -> None:

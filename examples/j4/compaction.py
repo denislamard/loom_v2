@@ -47,6 +47,8 @@ from loom_ia.sessions import estimate_tokens
 from loom_ia.usage import render
 
 CONFIG = Path(__file__).parent / "relance" / "loom.yaml"
+# Tours simulés à partir desquels l'historique franchit ``over_tokens`` (config de l'exemple).
+SEUIL_TOURS = 3
 TOURS = [
     "Relance le client du devis D-2026-042, sur un ton cordial.",
     "Rends-la plus brève.",
@@ -139,6 +141,69 @@ def checks(events: list[Event]) -> list[GuardChecked]:
     ]
 
 
+class Controle:
+    """Ce que l'exemple annonce, vérifié : la commande rend 1 si un attendu tombe.
+
+    Les attendus sont structurels (« au moins une compaction », « plus court
+    après qu'avant »), jamais numériques : en ``--reel`` le tour où l'historique
+    franchit le seuil dépend de ce que les modèles écrivent. Un attendu sauté
+    est dit au bilan, pour qu'un exemple qui n'a rien éprouvé ne se lise pas vert.
+    """
+
+    def __init__(self) -> None:
+        self.ecarts: list[str] = []
+        self.sautes: list[str] = []
+
+    def tient(self, quoi: str, vrai: bool) -> None:
+        print(f"  {'oui' if vrai else 'NON'} — {quoi}")
+        if not vrai:
+            self.ecarts.append(quoi)
+
+    def saute(self, quoi: str, pourquoi: str) -> None:
+        print(f"  sauté — {quoi} ({pourquoi})")
+        self.sautes.append(quoi)
+
+    def bilan(self) -> bool:
+        if self.sautes:
+            print(f"\n{len(self.sautes)} attendu(s) sauté(s), non éprouvé(s).")
+        if not self.ecarts:
+            print("\nChaque attendu tient.")
+            return True
+        print("\nUn attendu au moins ne tient pas :")
+        for ecart in self.ecarts:
+            print(f"  {ecart}")
+        return False
+
+
+def expected(
+    controle: Controle, events: list[Event], tours: list[bool], args: argparse.Namespace
+) -> None:
+    """Ce que l'exemple annonçait, comparé à ce que le journal a gardé."""
+    compacted = [e.payload for e in events if isinstance(e.payload, SessionCompacted)]
+    trimmed = [e.payload for e in events if isinstance(e.payload, SessionTrimmed)]
+    controle.tient("chaque tour a rendu un run terminé", bool(tours) and all(tours))
+    if args.filet:
+        controle.tient("le résumé en panne : l'historique est coupé", len(trimmed) >= 1)
+        controle.tient("le résumé en panne : aucune compaction n'est écrite", not compacted)
+        return
+    controle.tient("aucune coupe de sécurité quand le résumé fonctionne", not trimmed)
+    if args.reel:
+        # Le tour où le seuil est franchi dépend de ce que les vrais modèles écrivent.
+        controle.saute("au moins une compaction", "dépend des modèles réels")
+        return
+    if args.tours < SEUIL_TOURS:
+        controle.saute(
+            "au moins une compaction", f"moins de {SEUIL_TOURS} tours : seuil non atteint"
+        )
+        return
+    controle.tient("au moins une compaction est écrite", len(compacted) >= 1)
+    # Une liste vide ne réduit rien : sans compaction, « chacune réduit » ne vaut rien.
+    controle.tient(
+        "chaque compaction réduit l'historique",
+        bool(compacted) and all(c.tokens_after < c.tokens_before for c in compacted),
+    )
+
+
 async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Compaction d'une session trop longue")
     parser.add_argument("--reel", action="store_true", help="vrais modèles")
@@ -163,6 +228,7 @@ async def main(argv: list[str]) -> int:
     compaction = config.sessions.compaction
     assert compaction is not None
 
+    tours: list[bool] = []
     async with Loom(config) as loom:
         print(f"Session    : {session}")
         print(
@@ -175,6 +241,7 @@ async def main(argv: list[str]) -> int:
                 await loom.drain()
                 events = await loom.export_session(session)
                 taille = estimate_tokens(history(events))
+                tours.append(result.ok)
                 statut = "ok" if result.ok else f"échec ({result.error_type})"
                 print(f"  tour {number} : {question}")
                 print(f"           historique ~{taille} tokens · {statut}")
@@ -217,7 +284,10 @@ async def main(argv: list[str]) -> int:
     print()
     print("\n".join(render(report)))
     print(f"\nExport     : uv run loom --config {shown(CONFIG)} sessions export {session}")
-    return 0
+    print("\nAttendus :")
+    controle = Controle()
+    expected(controle, events, tours, args)
+    return 0 if controle.bilan() else 1
 
 
 if __name__ == "__main__":

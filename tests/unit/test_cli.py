@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import ANSWER, QUESTION, ConfigFactory
+from conftest import ANSWER, MODEL, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import JsonlEventStore
@@ -28,6 +28,57 @@ def test_validate_shows_what_the_config_declares(
     assert "Agents     : demo" in out
     assert "Outils     : calculer" in out
     assert "Clés d'API : aucune" in out
+    assert "1 agent(s) monté(s) sans erreur." in out
+
+
+def test_validate_mounts_the_internal_compaction_agent(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    models = [MODEL, {**MODEL, "id": "RESUME", "model": "fake-resume"}]
+    path = demo(models=models, sessions={"compaction": {"model": "RESUME"}})
+    assert main(["--config", str(path), "validate"]) == 0
+    out = capsys.readouterr().out
+    # L'agent interne est monté, mais ce n'est pas un agent que la config déclare.
+    assert "_compaction : modèle RESUME" in out
+    assert "1 agent(s) monté(s) sans erreur." in out
+
+
+def test_validate_refuses_a_compaction_model_without_its_key(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("anthropic")
+    monkeypatch.delenv("CLE_DU_RESUME", raising=False)
+    resume = {
+        "id": "RESUME",
+        "sdk": "anthropic",
+        "model": "claude-haiku-4-5-20251001",
+        "api_key_env": "CLE_DU_RESUME",
+    }
+    path = demo(models=[MODEL, resume], sessions={"compaction": {"model": "RESUME"}})
+    # Sans cela, la clé manquante ne se verrait qu'au premier résumé, dans une
+    # tâche de fond qui n'échoue pas le run.
+    assert main(["--config", str(path), "validate"]) == 2
+    assert "CLE_DU_RESUME" in capsys.readouterr().err
+
+
+ABSENTE = "LOOM_VALIDATE_CLE_ABSENTE"
+REEL: dict[str, Any] = {"id": "REEL", "sdk": "openai", "model": "gpt-x", "api_key_env": ABSENTE}
+
+
+def test_validate_without_keys_mounts_the_agents_a_missing_key_would_refuse(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(ABSENTE, raising=False)
+    path = demo(
+        models=[REEL], agents=[demo_agent(main={"model": "REEL", "system_file": "demo.md"})]
+    )
+
+    assert main(["--config", str(path), "validate"]) == 2
+    assert ABSENTE in capsys.readouterr().err
+
+    assert main(["--config", str(path), "validate", "--sans-cles"]) == 0
+    out = capsys.readouterr().out
+    assert "clients de modèle non créés (--sans-cles)" in out
     assert "1 agent(s) monté(s) sans erreur." in out
 
 

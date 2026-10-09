@@ -26,7 +26,7 @@ monté pour ``default``, qui ne surcharge rien (#33).
 Politiques (#2) : chaque référence est résolue (politique fournie ``loom.…``,
 nom enregistré ou ``module:attr``), puis contrôlée avant le premier run : ses
 points parmi ceux qu'elle déclare, ses décisions permises à chacun de ses
-points (``Pause`` arrive en J4.3), un nom unique dans l'agent.
+points (``Pause`` : ``before_tool`` seulement, J4.3), un nom unique dans l'agent.
 
 Contrats de sortie (#20) : si l'agent en déclare un (réponse finale, rôle,
 outil Python ou MCP), le guard ``loom.contract`` est placé en tête de ses
@@ -1072,8 +1072,8 @@ def encryption_warnings(config: LoomConfig, keyring: Keyring | None) -> list[str
 def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
     """Budget en dollars sur un agent dont un modèle n'a pas de tarif (backlog #010).
 
-    Ses appels comptent 0 $ : le plafond ne les voit pas. Une erreur en profil
-    prod arrivera avec les profils (J5) ; un budget en tokens reste efficace.
+    Ses appels comptent 0 $ : le plafond ne les voit pas. En profil prod,
+    ``announce`` en fait une erreur (5.5a) ; un budget en tokens reste efficace.
     """
     if not config.budget_of(spec.name).in_dollars:
         return []
@@ -1089,7 +1089,7 @@ def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
 
 
 def judge_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
-    """Avertissements sur les juges de l'agent (E6, #21) ; des erreurs en profil prod (J5)."""
+    """Avertissements sur les juges de l'agent (E6, #21) ; des erreurs en profil prod (5.5a)."""
     warnings: list[str] = []
     for name, role, judge in spec.judges:
         label = f"Agent {spec.name!r}, juge {name!r}"

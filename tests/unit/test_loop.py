@@ -39,12 +39,13 @@ from loom_ia.core.model import (
     SessionId,
     TenantId,
     TextBlock,
+    ToolCallBlock,
     ToolOutput,
     ToolResultBlock,
     Usage,
 )
 from loom_ia.core.ports import EventStore, ModelError
-from loom_ia.core.projections import ProjectionError
+from loom_ia.core.projections import ProjectionError, fold
 from loom_ia.engine import (
     UNKNOWN_STATE,
     RunContext,
@@ -265,6 +266,35 @@ async def test_tool_round_trip(store: EventStore) -> None:
     closing = events[-1].payload
     assert isinstance(closing, RunCompleted)
     assert (closing.iterations, closing.usage) == (2, USAGE + USAGE)
+
+
+async def test_two_tool_calls_with_the_same_call_id_stay_distinct(store: EventStore) -> None:
+    """Un fournisseur qui répète un identifiant ne casse pas la projection du run.
+
+    Sans cela, le second ``tool.completed`` visait un appel déjà réglé : le run
+    levait ``ProjectionError`` et la session devenait illisible.
+    """
+    model = scripted(
+        tool_call_message(("c1", "calculer", {"expr": "1+1"}), ("c1", "calculer", {"expr": "2+2"})),
+        Message.assistant("2 et 4"),
+    )
+    ctx = context(store, model)
+    state = await drive(ctx, (await begin_run(ctx, "Calcule.")).run_id)
+
+    assert state.status is RunStatus.COMPLETED
+    events = await journal(store, state)
+    called = [e.payload for e in events if isinstance(e.payload, ToolCalled)]
+    done = [e.payload for e in events if isinstance(e.payload, ToolCompleted)]
+    assert [c.call_id for c in called] == ["c1", "c1_2"]
+    assert {d.call_id: d.output for d in done} == {
+        "c1": ToolOutput.text("2"),
+        "c1_2": ToolOutput.text("4"),
+    }
+    # Le journal se relit, et le modèle voit un résultat sous l'identifiant de chaque appel.
+    assert fold(events, state.run_id).status is RunStatus.COMPLETED
+    seen = [b for m in model.requests[1].messages for b in m.blocks]
+    assert [b.call_id for b in seen if isinstance(b, ToolCallBlock)] == ["c1", "c1_2"]
+    assert [b.call_id for b in seen if isinstance(b, ToolResultBlock)] == ["c1", "c1_2"]
 
 
 async def test_iteration_limit_forces_an_answer_without_tools(store: EventStore) -> None:

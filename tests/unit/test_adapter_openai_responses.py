@@ -330,6 +330,19 @@ async def test_incomplete_answers(status: str, reason: str, stop: str) -> None:
     assert (answer.message.text, answer.stop_reason) == ("Début", stop)
 
 
+async def test_environment_headers_do_not_reach_the_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_ORG_ID", "org-du-process")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "proj-du-process")
+    monkeypatch.setenv("OPENAI_CUSTOM_HEADERS", "Authorization: Bearer cle-du-process\nX-Env: oui")
+    server = Server(streamed(event("response.completed", response=response(usage=usage(1, 1)))))
+    await complete(server.model(), request())
+    sent = server.requests[0].headers
+    assert sent.get_list("authorization") == ["Bearer sk-test"]
+    assert not {"openai-organization", "openai-project", "x-env"} & set(sent)
+
+
 async def test_refusal() -> None:
     server = Server(
         streamed(

@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,20 +13,29 @@ from conftest import ANSWER, QUESTION, ConfigFactory
 from loom_ia.access.api import Loom, UnknownSession
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
-from loom_ia.core.events import Event, RunClaimed, SessionSnapshot
+from loom_ia.core.events import (
+    Event,
+    RunCancelled,
+    RunClaimed,
+    RunScope,
+    SessionSnapshot,
+    SessionTrimmed,
+)
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     Message,
     RunId,
+    RunStatus,
     SessionId,
     ToolOutput,
     artifact_uri,
     new_run_id,
 )
 from loom_ia.core.ports import ArtifactNotFound, EventStore
-from loom_ia.core.projections import fold, history
+from loom_ia.core.projections import fold, fold_all, history
 from loom_ia.engine import RunMoved, SessionWriter, SessionWriters, cancellation
-from loom_ia.sessions import boundary, due, estimate_tokens, marked, snapshot
+from loom_ia.sessions import boundary, cut, due, estimate_tokens, marked, snapshot
+from loom_ia.sessions.snapshot import Cuts
 from loom_ia.testing import RunJournal, tool_call_message
 
 SESSION = SessionId("atelier")
@@ -95,6 +105,130 @@ async def test_a_snapshot_stops_before_a_run_still_going() -> None:
 
 def test_the_boundary_of_an_empty_journal_is_zero() -> None:
     assert boundary([]) == 0
+
+
+def folded_boundary(events: Sequence[Event]) -> int:
+    """Définition d'origine de ``boundary`` : projeter chaque run (sans chevauchement)."""
+    first: dict[RunId, int] = {}
+    for event in events:
+        first.setdefault(event.run_id, event.seq)
+    running = [first[run_id] for run_id, state in fold_all(events).items() if not state.finished]
+    if running:
+        return min(running) - 1
+    return max((event.seq for event in events if event.category != "session"), default=0)
+
+
+async def test_the_boundary_matches_a_full_fold_when_runs_do_not_overlap() -> None:
+    store = InMemoryEventStore()
+    done = conversation(SESSION, "Un ?", "Un.")
+    events = await written(store, done)
+    # Marqueurs : un snapshot au nom du run, une coupe de sécurité hors de tout run.
+    synthetic = RunId(SESSION)
+    outside = RunScope(
+        tenant_id=DEFAULT_TENANT,
+        session_id=SESSION,
+        run_id=synthetic,
+        root_run_id=synthetic,
+        agent="",
+    )
+    await store.append(
+        [done.scope.draft(snapshot(events)), outside.draft(SessionTrimmed(up_to_seq=1))],
+        expected_seq=events[-1].seq,
+    )
+    failed = RunJournal(session_id=SESSION)
+    failed.start("Deux ?").fail("boom", "panne")
+    await written(store, failed)
+    stopped = RunJournal(session_id=SESSION)
+    stopped.start("Trois ?").transition(RunStatus.CANCELLED, cause="cancel")
+    await store.append(
+        [*stopped.take(), stopped.scope.draft(RunCancelled())],
+        expected_seq=await store.last_seq(DEFAULT_TENANT, SESSION),
+    )
+    # Un run qui délègue : l'enfant naît et finit alors que le parent tourne.
+    parent = RunJournal(session_id=SESSION)
+    parent.start("Quatre ?").model_turn(tool_call_message(("c1", "deleguer", {})))
+    await written(store, parent)
+    child = RunJournal(session_id=SESSION, root_run_id=parent.run_id, agent="enfant")
+    child.start("Sous-tâche ?", parent_run_id=parent.run_id, parent_call_id="c1", depth=1)
+    child.model_turn(Message.assistant("Fait.")).complete()
+    await written(store, child)
+    parent.tool_results({"c1": ToolOutput.text("Fait.")})
+    parent.model_turn(Message.assistant("Quatre.")).complete()
+    await written(store, parent)
+
+    journal = await store.read(DEFAULT_TENANT, SESSION)
+
+    # Chaque préfixe est un journal valide : un run y est tantôt en cours, tantôt clos.
+    seen = {boundary(journal[:size]) for size in range(len(journal) + 1)}
+    for size in range(len(journal) + 1):
+        assert boundary(journal[:size]) == folded_boundary(journal[:size]), size
+    assert len(seen) > 5
+    # Le marqueur hors run ne laisse pas un run « en cours » derrière lui.
+    outside_at = next(e.seq for e in journal if e.run_id == synthetic)
+    assert boundary(journal[:outside_at]) == boundary(journal[: outside_at - 1])
+    assert boundary(journal) == max(e.seq for e in journal if e.category != "session")
+
+
+async def overlapping_runs(store: InMemoryEventStore) -> list[Event]:
+    """Un tour fini, puis deux runs qui se chevauchent : le premier finit avant le second."""
+    await written(store, conversation(SESSION, "Premier ?", "Un."))
+    early = RunJournal(session_id=SESSION)
+    early.start("Deuxième ?").model_turn(tool_call_message(("c1", "calculer", {})))
+    await written(store, early)
+    late = RunJournal(session_id=SESSION)
+    late.start("Troisième ?").model_turn(tool_call_message(("c2", "calculer", {})))
+    await written(store, late)
+    early.tool_results({"c1": ToolOutput.text("4")})
+    early.model_turn(Message.assistant("Deux.")).complete()
+    await written(store, early)
+    late.tool_results({"c2": ToolOutput.text("4")})
+    late.model_turn(Message.assistant("Trois.")).complete()
+    await written(store, late)
+    return await store.read(DEFAULT_TENANT, SESSION)
+
+
+async def test_the_boundary_does_not_cut_through_a_run_that_overlaps_a_running_one() -> None:
+    events = await overlapping_runs(InMemoryEventStore())
+    started = [e.seq for e in events if e.type == "run.started"]
+    completed = [e.seq for e in events if e.type == "run.completed"]
+
+    # Le deuxième run a fini, le troisième tourne : couper juste avant ce
+    # dernier laisserait la fin du deuxième sans son début. On coupe avant lui.
+    meanwhile = [e for e in events if e.seq <= completed[1]]
+    assert started[1] < started[2] < completed[1]
+    assert boundary(meanwhile) == completed[0]
+    # Tous ont fini : tout le journal peut être couvert.
+    assert boundary(events) == events[-1].seq
+
+
+async def test_a_cut_between_overlapping_runs_falls_before_both() -> None:
+    events = await overlapping_runs(InMemoryEventStore())
+    started = [e.seq for e in events if e.type == "run.started"]
+    completed = [e.seq for e in events if e.type == "run.completed"]
+    cuts = Cuts(events)
+
+    # Avant le deuxième run : une coupe nette, il n'y a rien à reculer.
+    assert cuts.at_most(started[1] - 1) == started[1] - 1
+    # Avant le troisième : il commence au milieu du deuxième, la coupe recule.
+    assert cuts.at_most(started[2] - 1) == completed[0]
+    # Garder « le dernier tour » ne peut pas séparer les deux : on garde les deux.
+    assert cut(events, keep_last=1) == completed[0]
+    assert cut(events, keep_last=2) == completed[0]
+    assert cut(events, keep_last=3) == 0
+
+
+async def test_a_snapshot_taken_at_any_point_matches_a_full_replay() -> None:
+    events = await overlapping_runs(InMemoryEventStore())
+    scope = conversation(SESSION, "", "").scope
+    scratch = InMemoryEventStore()
+    for size in range(1, len(events) + 1):
+        [marker] = await scratch.append(
+            [scope.draft(snapshot(events[:size]))],
+            expected_seq=await scratch.last_seq(DEFAULT_TENANT, SESSION),
+        )
+        # Le marqueur, écrit après tout le reste, ne doit faire perdre aucun tour.
+        written_last = marker.model_copy(update={"seq": events[-1].seq + 1})
+        assert history([*events, written_last]) == history(events), size
 
 
 async def test_a_snapshot_is_written_only_when_it_pays() -> None:

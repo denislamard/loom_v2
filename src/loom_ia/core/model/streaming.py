@@ -264,9 +264,11 @@ class ResponseAccumulator:
     def result(self, *, model_id: str, provider: str) -> ModelResponse:
         self._flush_text()
         self._flush_reasoning()
-        blocks = tuple(
-            p.block() if isinstance(p, _PendingCall) else self._stamped(p, model_id)
-            for p in self._parts
+        blocks = _distinct_call_ids(
+            tuple(
+                p.block() if isinstance(p, _PendingCall) else self._stamped(p, model_id)
+                for p in self._parts
+            )
         )
         if not blocks:
             blocks = (TextBlock(text=""),)
@@ -299,6 +301,31 @@ class ResponseAccumulator:
         if isinstance(block, ReasoningBlock) and block.model_id is None:
             return block.model_copy(update={"model_id": model_id})
         return block
+
+
+def _distinct_call_ids(blocks: tuple[ContentBlock, ...]) -> tuple[ContentBlock, ...]:
+    """Deux appels d'une même réponse ne portent jamais le même ``call_id``.
+
+    Un fournisseur qui répète un identifiant (vu chez des serveurs compatibles
+    qui numérotent leurs appels) ferait écrire deux ``tool.completed`` pour un
+    seul appel en attente : la projection lèverait ``ProjectionError`` et la
+    session deviendrait illisible. Le second reçoit donc un suffixe (``_2``,
+    ``_3``…) qui ne heurte aucun autre identifiant de la réponse. Une réponse
+    dont les identifiants sont distincts passe telle quelle, octet pour octet.
+    """
+    taken = {b.call_id for b in blocks if isinstance(b, ToolCallBlock)}
+    seen: set[str] = set()
+    distinct: list[ContentBlock] = []
+    for block in blocks:
+        if isinstance(block, ToolCallBlock):
+            if block.call_id in seen:
+                n = 2
+                while f"{block.call_id}_{n}" in taken | seen:
+                    n += 1
+                block = block.model_copy(update={"call_id": f"{block.call_id}_{n}"})
+            seen.add(block.call_id)
+        distinct.append(block)
+    return tuple(distinct)
 
 
 def message_to_chunks(

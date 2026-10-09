@@ -55,7 +55,7 @@ from loom_ia.engine import (
     drive,
     rendered,
 )
-from loom_ia.sessions.snapshot import boundary, estimate_tokens
+from loom_ia.sessions.snapshot import Cuts, boundary, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -104,13 +104,13 @@ def summarised(events: Sequence[Event]) -> int:
 
 def cut(events: Sequence[Event], keep_last: int) -> int:
     """Position jusqu'à laquelle résumer, en gardant les derniers tours intacts."""
-    limit = boundary(events)
+    cuts = Cuts(events)
     if keep_last <= 0:
-        return limit
+        return cuts.at_most()
     starts = run_starts(events)
     if len(starts) <= keep_last:
         return 0
-    return min(limit, starts[-keep_last] - 1)
+    return cuts.at_most(starts[-keep_last] - 1)
 
 
 def oversized(events: Sequence[Event], limit: int) -> bool:
@@ -220,10 +220,16 @@ class CompactionJob:
         alors qu'un historique amputé l'est.
         """
         before = len(history(events))
-        limit = boundary(events)
         covered = summarised(events)
-        cuts = [min(start - 1, limit) for start in run_starts(events)]
-        usable = [up_to_seq for up_to_seq in cuts if up_to_seq > covered]
+        possible = Cuts(events)
+        # Deux runs qui se chevauchent n'ont qu'une coupe entre eux : la même.
+        usable = sorted(
+            {
+                up_to_seq
+                for start in run_starts(events)
+                if (up_to_seq := possible.at_most(start - 1)) > covered
+            }
+        )
         if not usable:
             logger.warning("Session %s : rien à retirer de plus", session_id)
             return

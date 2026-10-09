@@ -11,6 +11,7 @@ erreur de montage.
 
 import base64
 import json
+import os
 import re
 import time
 from collections.abc import Mapping, Sequence
@@ -31,6 +32,24 @@ from loom_ia.core.model import (
     is_image,
 )
 from loom_ia.core.ports import ModelError
+
+
+def custom_header_names(variable: str) -> tuple[str, ...]:
+    """Noms des en-têtes que ``variable`` ferait ajouter par un SDK à chaque requête.
+
+    Les SDK lisent ``ANTHROPIC_CUSTOM_HEADERS`` et ``OPENAI_CUSTOM_HEADERS`` dans
+    l'environnement **du process** à la construction du client : une ligne
+    ``Nom: valeur`` par en-tête, que rien ne distingue de la config de loom, et
+    qui l'emporte sur la clé d'API du client (``x-api-key``, ``Authorization``).
+    Ce qui est lu ici l'est comme eux ; un adaptateur s'en sert pour les écarter.
+    """
+    names: list[str] = []
+    for line in os.environ.get(variable, "").split("\n"):
+        colon = line.find(":")
+        if colon >= 0 and (name := line[:colon].strip()):
+            names.append(name)
+    return tuple(names)
+
 
 # Préfixe d'un résultat d'outil en erreur, pour les API sans indicateur dédié.
 ERROR_PREFIX: Final = "[erreur] "

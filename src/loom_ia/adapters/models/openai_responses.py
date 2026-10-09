@@ -72,7 +72,7 @@ from loom_ia.adapters.models._common import (
     reasoning_loop,
     unresolved,
 )
-from loom_ia.adapters.models.openai_chat import DEFAULT_BASE_URL, to_model_error
+from loom_ia.adapters.models.openai_chat import DEFAULT_BASE_URL, own_headers, to_model_error
 from loom_ia.core.model import (
     ArtifactRefBlock,
     ContentBlock,
@@ -123,6 +123,7 @@ class OpenAIResponsesModel:
         self._client = openai.AsyncOpenAI(
             api_key=api_key,
             base_url=spec.base_url or DEFAULT_BASE_URL,
+            default_headers=own_headers(api_key),
             max_retries=0,
             timeout=spec.timeouts.total,
             http_client=http_client,

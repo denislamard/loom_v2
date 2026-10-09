@@ -359,7 +359,7 @@ def create_server(
             if tool == CANCEL_TOOL:
                 return await _cancel(loom, RunId(str(run)), session_id, arguments, caller)
             if tool == REPORT_TOOL:
-                return await _report(loom, run_id, session_id, caller.tenant)
+                return await _report(loom, run_id, session_id, caller)
             if tool == STATUS_TOOL:
                 found = await loom.result(
                     RunId(str(run)), session_id=session_id, tenant_id=caller.tenant
@@ -547,14 +547,21 @@ async def _report(
     loom: Loom,
     run_id: RunId | None,
     session_id: SessionId | None,
-    tenant: TenantId = DEFAULT_TENANT,
+    caller: Caller,
 ) -> types.CallToolResult:
-    """Consommation d'un run ou d'une session : le rapport en texte et en structuré."""
+    """Consommation d'un run ou d'une session : le rapport en texte et en structuré.
+
+    Comme en REST, le droit vaut pour chaque agent dont un run figure au rapport :
+    une clé limitée à certains agents ne lit pas la consommation des autres.
+    """
     if run_id is None and session_id is None:
         return _refused("Donner un run_id ou un session_id")
-    report = await loom.report(run_id, session_id=session_id, tenant_id=tenant)
+    report = await loom.report(run_id, session_id=session_id, tenant_id=caller.tenant)
     if not report.runs:
         return _refused(f"Session {session_id} inconnue")
+    for agent in dict.fromkeys(run.agent for run in report.runs):
+        if not caller.allows(agent):
+            return _refused(f"Clé non autorisée sur l'agent {agent!r}")
     return types.CallToolResult(
         content=[types.TextContent(type="text", text="\n".join(render(report)))],
         structuredContent=report.model_dump(mode="json"),
