@@ -1,33 +1,51 @@
 [project]
 name = "loom-ia"
-version = "2.0.0.dev0"
-description = "Async AI agent engine: delegated LLM roles, Python and MCP tools, event-sourced runs with replay and resume, exposed as a Python library, REST API or MCP server."
+version = "2.0.0"
+description = "Moteur d'agents IA en Python asynchrone : rôles délégués à des modèles, outils Python et MCP, runs journalisés, rejouables et reprenables, en librairie Python, API REST ou serveur MCP."
+readme = "README.md"
 authors = [
     { name = "Denis Lamard", email = "lamard.denis@gmail.com" }
 ]
 requires-python = ">=3.14"
+keywords = ["agents", "llm", "ia", "mcp", "orchestration", "event-sourcing", "anthropic", "openai"]
+classifiers = [
+    "Framework :: AsyncIO",
+    "Framework :: Pydantic :: 2",
+    "Intended Audience :: Developers",
+    "Natural Language :: French",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Typing :: Typed",
+]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+# Bornes hautes sur les dépendances dont une version majeure peut casser l'API
+# (noyau et SDK des extras). cryptography reste sans borne : ses correctifs de
+# sécurité arrivent dans de nouvelles majeures.
 dependencies = [
-    "jsonschema>=4.26.0",
+    "jsonschema>=4.26.0,<5",
     "pydantic>=2,<3",
-    "pyyaml>=6.0.3",
+    "pyyaml>=6.0.3,<7",
 ]
 
 [project.optional-dependencies]
 anthropic = [
-    "anthropic>=1.6.0",
+    "anthropic>=1.6.0,<2",
 ]
 openai = [
-    "openai>=3.14.1",
+    "openai>=3.14.1,<4",
 ]
 mcp = [
     "mcp<2",
 ]
 http = [
-    "fastapi>=0.141.1",
+    "fastapi>=0.141.1,<1",
     "python-multipart>=0.0.32",
-    "sse-starlette>=3.4.11",
+    "sse-starlette>=3.4.11,<4",
     "uvicorn>=0.53.0",
     "watchfiles>=1.3.0",
 ]
@@ -41,24 +59,28 @@ postgres = [
     "asyncpg>=0.31.0",
 ]
 firestore = [
-    "google-cloud-firestore>=2.30.0",
+    "google-cloud-firestore>=2.30.0,<3",
 ]
 gcs = [
-    "google-cloud-storage>=3.14.1",
+    "google-cloud-storage>=3.14.1,<4",
 ]
 rabbitmq = [
-    "aio-pika>=10.0.1",
+    "aio-pika>=10.0.1,<11",
 ]
 redis = [
-    "redis>=8.1.0",
+    "redis>=8.1.0,<9",
 ]
 otel = [
-    "opentelemetry-exporter-otlp>=1.44.0",
-    "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-exporter-otlp>=1.44.0,<2",
+    "opentelemetry-sdk>=1.44.0,<2",
 ]
 all = [
     "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,firestore,gcs,rabbitmq,redis,otel,crypto]",
 ]
+
+[project.urls]
+Repository = "https://github.com/denislamard/loom_v2"
+Issues = "https://github.com/denislamard/loom_v2/issues"
 
 [project.scripts]
 loom = "loom_ia.access.cli:main"
@@ -98,6 +120,10 @@ src = ["src"]
 target-version = "py314"
 # execd tourne dans la VM, sous le Python de son image (3.12, Ubuntu 24.04).
 per-file-target-version = { "firecracker/**/*.py" = "py312" }
+
+[tool.ruff.format]
+# Les blocs de code des fichiers Markdown (README) restent tels qu'écrits.
+exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]

@@ -880,7 +880,7 @@ wheels = [
 
 [[package]]
 name = "loom-ia"
-version = "2.0.0.dev0"
+version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "jsonschema" },
@@ -968,25 +968,25 @@ types = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aio-pika", marker = "extra == 'rabbitmq'", specifier = ">=10.0.1" },
+    { name = "aio-pika", marker = "extra == 'rabbitmq'", specifier = ">=10.0.1,<11" },
     { name = "aiosqlite", marker = "extra == 'sqlite'", specifier = ">=0.22.1" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.6.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.6.0,<2" },
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.31.0" },
     { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=50.0.1" },
-    { name = "fastapi", marker = "extra == 'http'", specifier = ">=0.141.1" },
-    { name = "google-cloud-firestore", marker = "extra == 'firestore'", specifier = ">=2.30.0" },
-    { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=3.14.1" },
-    { name = "jsonschema", specifier = ">=4.26.0" },
+    { name = "fastapi", marker = "extra == 'http'", specifier = ">=0.141.1,<1" },
+    { name = "google-cloud-firestore", marker = "extra == 'firestore'", specifier = ">=2.30.0,<3" },
+    { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=3.14.1,<4" },
+    { name = "jsonschema", specifier = ">=4.26.0,<5" },
     { name = "loom-ia", extras = ["anthropic", "openai", "mcp", "http", "sqlite", "postgres", "firestore", "gcs", "rabbitmq", "redis", "otel", "crypto"], marker = "extra == 'all'" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = "<2" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.14.1" },
-    { name = "opentelemetry-exporter-otlp", marker = "extra == 'otel'", specifier = ">=1.44.0" },
-    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.44.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.14.1,<4" },
+    { name = "opentelemetry-exporter-otlp", marker = "extra == 'otel'", specifier = ">=1.44.0,<2" },
+    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.44.0,<2" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "python-multipart", marker = "extra == 'http'", specifier = ">=0.0.32" },
-    { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "redis", marker = "extra == 'redis'", specifier = ">=8.1.0" },
-    { name = "sse-starlette", marker = "extra == 'http'", specifier = ">=3.4.11" },
+    { name = "pyyaml", specifier = ">=6.0.3,<7" },
+    { name = "redis", marker = "extra == 'redis'", specifier = ">=8.1.0,<9" },
+    { name = "sse-starlette", marker = "extra == 'http'", specifier = ">=3.4.11,<4" },
     { name = "uvicorn", marker = "extra == 'http'", specifier = ">=0.53.0" },
     { name = "watchfiles", marker = "extra == 'http'", specifier = ">=1.3.0" },
 ]
