@@ -27,7 +27,12 @@ license-files = ["LICENSE"]
 # (noyau et SDK des extras). cryptography reste sans borne : ses correctifs de
 # sécurité arrivent dans de nouvelles majeures.
 dependencies = [
-    "jsonschema>=4.26.0,<5",
+    # core/bounded_regex.py copie des fonctions privées de jsonschema (modules _keywords,
+    # _legacy_keywords, _utils) : une version mineure peut les renommer, ou en ajouter une
+    # qui cherche un motif sans délai. Relever la borne, c'est relire ce module avec
+    # test_jsonschema_has_no_other_function_that_searches_a_pattern (le workflow
+    # hebdomadaire n'installe pas ce que la borne exclut).
+    "jsonschema>=4.26.0,<4.27",
     "pydantic>=2.12.0,<3",
     "pyyaml>=6.0.3,<7",
     "regex>=2025.7.29",

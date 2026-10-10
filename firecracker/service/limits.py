@@ -57,6 +57,10 @@ CAPTURE_LIMIT = 256 * 1024
 # cette taille, car fsize_bytes permet un resultat de 256 Mio, et le lire en
 # entier (octets, texte, objets) gonflerait la memoire du service de plus de
 # 600 Mo, partagee par toutes les sessions de la VM.
+#
+# Ce partage suppose un octet de flux par octet de JSON. Ce n'est pas le cas d'un
+# flux plein de caracteres de controle (six octets chacun) : Session._send raccourcit
+# alors les flux plutot que de couper la connexion.
 RESULT_LIMIT = 512 * 1024
 
 

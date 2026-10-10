@@ -29,13 +29,14 @@ import json
 import os
 import shutil
 import signal
+import stat
 import sys
 import uuid
 from pathlib import Path
 from typing import Any, BinaryIO
 
 import limits as limits_mod
-from protocol import Conn, ConnectionClosed, ExecdError
+from protocol import MAX_HEADER, Conn, ConnectionClosed, ExecdError, ProtocolError
 
 PROTOCOL_VERSION = 1
 # runner vit a cote de ce module — c'est vrai en production (/opt/execd)
@@ -184,11 +185,91 @@ async def drain_bounded(
 # --------------------------------------------------------------------------- #
 # Operations bloquantes, appelees via asyncio.to_thread
 # --------------------------------------------------------------------------- #
+def _open_regular(path: Path) -> BinaryIO:
+    """Ouvre en lecture un fichier ORDINAIRE, sans attendre ni suivre de lien.
+
+    out/ et run/ sont ecrits par le job, qui peut y poser un tube nomme (FIFO) a la
+    place d'un fichier : son ouverture en lecture attend un ecrivain qui ne viendra
+    jamais, le thread qui l'ouvre ne revient pas, et avec lui la requete — et, pour
+    result.json, la place d'execution de toute la VM. O_NONBLOCK rend l'ouverture
+    immediate ; fstat, sur le descripteur deja ouvert, dit ce qu'on a ouvert (il n'y
+    a pas d'intervalle entre le controle et la lecture) ; O_NOFOLLOW refuse un lien
+    pose a la place du fichier.
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "pas un fichier ordinaire")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def _read_at(path: Path, offset: int, want: int) -> tuple[int, bytes]:
-    size = path.stat().st_size
-    with open(path, "rb") as handle:
+    with _open_regular(path) as handle:
+        size = os.fstat(handle.fileno()).st_size
         handle.seek(offset)
         return size, handle.read(want)
+
+
+# --------------------------------------------------------------------------- #
+# Une reponse doit tenir dans un en-tete de trame
+# --------------------------------------------------------------------------- #
+def _header_size(reply: dict) -> int:
+    return len(json.dumps(reply, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _shortened(text: str, budget: int) -> tuple[str, bool]:
+    """`text` ramene a `budget` caracteres, tete et queue gardees, et s'il l'a ete."""
+    if len(text) <= budget:
+        return text, False
+    half = budget // 2
+    omitted = len(text) - 2 * half
+    return f"{text[:half]}\n... [{omitted} caracteres omis] ...\n{text[len(text) - half :]}", True
+
+
+def _fitted(reply: dict) -> dict:
+    """La reponse ramenee a la taille d'un en-tete de trame, ou remplacee par une erreur.
+
+    stdout et stderr sont limites en OCTETS (CAPTURE_LIMIT), mais voyagent en JSON :
+    un octet de controle y coute six octets (\\u00XX), un guillemet deux. Deux flux
+    pleins peuvent donc depasser seuls MAX_HEADER. Ils sont alors raccourcis, par
+    moities successives et en le disant (`stdout_truncated`, `stderr_truncated`),
+    jusqu'a ce que la reponse tienne. Si le reste — resultat, manifeste de out/ — ne
+    tient pas non plus, ou si un texte n'est pas de l'UTF-8 (result.json peut porter
+    un « \\ud800 » : du JSON valide, mais pas du texte), le client recoit une erreur
+    qui le dit, et non une connexion coupee sans un mot.
+    """
+    fitted = dict(reply)
+    try:
+        budget = limits_mod.CAPTURE_LIMIT
+        size = _header_size(fitted)
+        while size > MAX_HEADER and budget > 1024:
+            budget //= 2
+            for stream in ("stdout", "stderr"):
+                text = reply.get(stream)
+                if isinstance(text, str):
+                    fitted[stream], cut = _shortened(text, budget)
+                    if cut:
+                        fitted[f"{stream}_truncated"] = True
+            size = _header_size(fitted)
+    except UnicodeEncodeError:
+        error = ExecdError("bad_result", "la reponse contient un texte qui n'est pas de l'UTF-8")
+    else:
+        if size <= MAX_HEADER:
+            return fitted
+        error = ExecdError(
+            "limit_exceeded",
+            f"reponse trop grosse pour une trame : {size} octets (plafond {MAX_HEADER})",
+            limit="response_bytes",
+            value=size,
+            ceiling=MAX_HEADER,
+        )
+    refusal = error.as_payload()
+    if "seq" in reply:
+        refusal["seq"] = reply["seq"]
+    return refusal
 
 
 def _write_job(job_path: Path, job: dict, result_path: Path) -> None:
@@ -350,10 +431,22 @@ class Session:
 
                 if seq is not None:
                     reply["seq"] = seq
-                await self.conn.write_frame(reply, out_body)
+                await self._send(reply, out_body)
         finally:
             if reading is not None and not reading.done():
                 reading.cancel()
+
+    async def _send(self, reply: dict, body: bytes) -> None:
+        """Ecrit la reponse ; si elle ne tient pas dans une trame, en ecrit une qui tient.
+
+        Une trame refusee n'est jamais envoyee a moitie. Laisser l'exception remonter de
+        `serve` fermait la connexion : le client attendait une reponse qui n'etait pas
+        perdue, mais jamais ecrite.
+        """
+        try:
+            await self.conn.write_frame(reply, body)
+        except (ProtocolError, UnicodeEncodeError):
+            await self.conn.write_frame(_fitted(reply), body)
 
     @staticmethod
     async def _watched(work: Any, reading: asyncio.Future | None) -> tuple[dict, bytes]:
@@ -780,7 +873,7 @@ class Session:
         # Lecture BORNEE : le fichier est ecrit par le job, et sa taille n'a que
         # fsize_bytes pour limite.
         try:
-            with open(self._result_path, "rb") as handle:
+            with _open_regular(self._result_path) as handle:
                 raw = handle.read(limits_mod.RESULT_LIMIT + 1)
                 size = os.fstat(handle.fileno()).st_size
         except OSError:
@@ -817,8 +910,15 @@ class Session:
             dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
             for name in sorted(files):
                 full = Path(root) / name
-                rel = str(full.relative_to(out_dir))
-                if full.is_symlink() or not full.is_file():
+                raw = os.fsencode(full.relative_to(out_dir))
+                rel = raw.decode("utf-8", "replace")
+                if (
+                    full.is_symlink()
+                    or not full.is_file()
+                    # Un nom qui n'est pas de l'UTF-8 ne tient pas dans la reponse (JSON) et
+                    # l'hote ne pourrait pas le demander : il est signale, pas rapatrie.
+                    or rel.encode("utf-8") != raw
+                ):
                     skipped.append(rel)
                     continue
                 if len(entries) >= max_files:
@@ -829,11 +929,16 @@ class Session:
                         value=len(entries) + 1,
                         ceiling=max_files,
                     )
+                try:
+                    handle = _open_regular(full)
+                except OSError:
+                    # Remplace par un lien ou un tube depuis le controle, ou disparu.
+                    skipped.append(rel)
+                    continue
                 digest = hashlib.sha256()
-                with open(full, "rb") as handle:
-                    for block in iter(lambda: handle.read(1 << 20), b""):
+                with handle:
+                    size = os.fstat(handle.fileno()).st_size
+                    while block := handle.read(1 << 20):
                         digest.update(block)
-                entries.append(
-                    {"path": rel, "size": full.stat().st_size, "sha256": digest.hexdigest()}
-                )
+                entries.append({"path": rel, "size": size, "sha256": digest.hexdigest()})
         return entries, skipped

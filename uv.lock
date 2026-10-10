@@ -846,7 +846,7 @@ requires-dist = [
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.31.0" },
     { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=50.0.1" },
     { name = "fastapi", marker = "extra == 'http'", specifier = ">=0.141.1,<1" },
-    { name = "jsonschema", specifier = ">=4.26.0,<5" },
+    { name = "jsonschema", specifier = ">=4.26.0,<4.27" },
     { name = "loom-ia", extras = ["anthropic", "openai", "mcp", "http", "sqlite", "postgres", "rabbitmq", "redis", "otel", "crypto"], marker = "extra == 'all'" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.30.0,<2" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=3.14.1,<4" },

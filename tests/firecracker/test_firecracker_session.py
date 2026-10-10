@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import signal
+import socket
 import stat
 import sys
 import tempfile
@@ -92,6 +93,35 @@ def leaves(pidfile, apart=False):
 
 def big(n):
     return "x" * n
+"""
+
+
+# Ce qu'un job malveillant ou bavard fait de ses sorties : un tube nommé posé dans out/, un
+# tube posé à la place de result.json une fois le résultat écrit, deux flux d'octets de
+# contrôle (six octets de JSON chacun).
+PIEGES = b"""import atexit, os, sys
+
+
+def tube_en_sortie():
+    os.mkfifo(os.path.join(os.environ["OUT_DIR"], "tuyau"))
+    return "pose"
+
+
+def tube_en_resultat():
+    path = os.path.join(os.path.dirname(os.environ["WORK_DIR"]), "run", "result.json")
+
+    def remplace():
+        os.unlink(path)
+        os.mkfifo(path)
+
+    atexit.register(remplace)
+    return "ecrit"
+
+
+def bruyant(n):
+    sys.stdout.write("\\x01" * n)
+    sys.stderr.write("\\x01" * n)
+    return "fini"
 """
 
 
@@ -811,6 +841,149 @@ def test_a_result_json_that_is_not_text_is_an_unusable_result(
     session.setup()
     session._result_path.write_bytes(b'{"ok": true, "result": "\xff"}')
     assert session._read_result(0) is None
+
+
+# ---------------------------------------------------------------------- #
+# Ce que le job pose à la place d'un fichier ; une réponse trop grosse pour une trame
+# ---------------------------------------------------------------------- #
+
+
+async def test_a_pipe_left_in_out_is_not_opened_and_execd_serves_on(execd: Path) -> None:
+    """Ouvrir un tube sans écrivain attend sans fin : il est signalé, jamais lu, et execd répond."""
+    async with await _open(execd) as session:
+        await session.put_code("pieges.py", PIEGES)
+        await session.put_code("essai.py", SCRIPT)
+        done = await session.exec("pieges:tube_en_sortie", wait=10)
+        assert done.ok, done.error
+        assert done.outputs == ()
+        assert done.outputs_skipped == ("tuyau",)
+        with pytest.raises(ExecdError) as caught:
+            await asyncio.wait_for(session.get_file("tuyau"), 5)
+        assert caught.value.kind == "not_found"
+        assert (await session.exec("essai:principal", args={"n": 2}, wait=5)).ok
+
+
+async def test_a_pipe_in_place_of_result_json_is_no_result_and_gives_the_place_back(
+    execd: Path,
+) -> None:
+    """Un tube posé à sa place après son écriture : pas de résultat, et le job suivant s'exécute."""
+    async with await _open(execd) as session, await _open(execd) as other:
+        await session.put_code("pieges.py", PIEGES)
+        await other.put_code("essai.py", SCRIPT)
+        done = await session.exec("pieges:tube_en_resultat", wait=10)
+        assert not done.ok
+        assert done.error is not None
+        assert done.error.kind == "runner_failure"
+        assert (await other.exec("essai:principal", args={"n": 2}, wait=5)).ok
+
+
+async def test_flows_too_big_for_a_frame_come_back_shortened(execd: Path) -> None:
+    """Deux flux d'octets de contrôle pèsent plus de 1 Mio en JSON : raccourcis, pas perdus."""
+    async with await _open(execd) as session:
+        await session.put_code("pieges.py", PIEGES)
+        done = await session.exec("pieges:bruyant", args={"n": 200_000}, wait=20)
+        assert done.ok, done.error
+        assert done.result == "fini"
+        assert done.stdout_truncated and done.stderr_truncated
+        for flow in (done.stdout, done.stderr):
+            assert flow.startswith("\x01") and flow.endswith("\x01")
+            assert "caracteres omis" in flow
+            assert 0 < len(flow) < 200_000
+        assert (await session.exec("pieges:bruyant", args={"n": 10}, wait=5)).stdout == "\x01" * 10
+
+
+def test_only_an_ordinary_file_is_opened(service: ModuleType, tmp_path: Path) -> None:
+    """Un tube, un dossier, un lien : refusés sans attendre ; un fichier ordinaire s'ouvre."""
+    (tmp_path / "plein").write_bytes(b"abc")
+    os.mkfifo(tmp_path / "tube")
+    (tmp_path / "dossier").mkdir()
+    (tmp_path / "lien").symlink_to(tmp_path / "plein")
+
+    with service._open_regular(tmp_path / "plein") as handle:
+        assert handle.read() == b"abc"
+    for refused in ("tube", "dossier", "lien", "absent"):
+        with pytest.raises(OSError):
+            service._open_regular(tmp_path / refused)
+
+
+def test_out_lists_what_it_cannot_carry_instead_of_reading_it(
+    service: ModuleType, tmp_path: Path
+) -> None:
+    """Tube, lien et nom qui n'est pas de l'UTF-8 sont signalés ; le reste est empreint."""
+    session = _guest_session(service, tmp_path / "jobs")
+    session.setup()
+    out = session.root / "out"
+    (out / "a.txt").write_bytes(b"abc")
+    (out / "sous").mkdir()
+    (out / "sous" / "b.txt").write_bytes(b"")
+    os.mkfifo(out / "tuyau")
+    (out / "lien").symlink_to(out / "a.txt")
+    (out / os.fsdecode(b"\xff.bin")).write_bytes(b"x")
+
+    entries, skipped = session._scan_outputs(10)
+    assert {entry["path"]: entry["size"] for entry in entries} == {"a.txt": 3, "sous/b.txt": 0}
+    assert entries[0]["sha256"] == hashlib.sha256(b"abc").hexdigest()
+    assert sorted(skipped) == ["lien", "tuyau", "\ufffd.bin"]
+    json.dumps(skipped, ensure_ascii=False).encode("utf-8")  # tient dans une trame
+
+
+async def _sent(service: ModuleType, tmp_path: Path, reply: dict[str, Any]) -> dict[str, Any]:
+    """Ce que le client lit quand le service envoie `reply` par `Session._send`."""
+    ours, theirs = socket.socketpair()
+    session = _guest_session(service, tmp_path / "jobs")
+    client: Any = service.Conn(theirs)
+    session.conn = service.Conn(ours)
+    sending: asyncio.Future[None] = asyncio.ensure_future(session._send(reply, b""))
+    try:
+        received: tuple[dict[str, Any], bytes] = await asyncio.wait_for(client.read_frame(), 10)
+        await asyncio.wait_for(sending, 10)
+    finally:
+        ours.close()
+        theirs.close()
+    header, body = received
+    assert body == b""
+    return header
+
+
+async def test_a_reply_that_fits_is_sent_as_it_is(service: ModuleType, tmp_path: Path) -> None:
+    reply = {"ok": True, "result": 1, "stdout": "a\nb", "seq": 4}
+    assert await _sent(service, tmp_path, reply) == reply
+
+
+async def test_a_reply_over_a_frame_is_shortened_and_keeps_its_place_in_the_sequence(
+    service: ModuleType, tmp_path: Path
+) -> None:
+    reply = {"ok": True, "result": "r", "stdout": "\x01" * 200_000, "stderr": "ok", "seq": 7}
+    sent = await _sent(service, tmp_path, reply)
+    assert sent["seq"] == 7 and sent["ok"] is True and sent["result"] == "r"
+    assert sent["stdout_truncated"] is True
+    assert sent["stdout"].startswith("\x01") and "caracteres omis" in sent["stdout"]
+    assert sent["stderr"] == "ok" and "stderr_truncated" not in sent
+
+
+@pytest.mark.parametrize(
+    ("reply", "kind", "detail"),
+    [
+        # Le reste de la réponse ne se raccourcit pas : un résultat de plus de 1 Mio.
+        (
+            {"ok": True, "result": "x" * (MAX_HEADER + 10), "seq": 3},
+            "limit_exceeded",
+            "response_bytes",
+        ),
+        # Du JSON valide, mais pas du texte : un « \ud800 » seul.
+        ({"ok": True, "result": "\ud800", "seq": 3}, "bad_result", None),
+    ],
+)
+async def test_a_reply_that_cannot_be_shortened_becomes_an_error_that_says_so(
+    service: ModuleType, tmp_path: Path, reply: dict[str, Any], kind: str, detail: str | None
+) -> None:
+    sent = await _sent(service, tmp_path, reply)
+    assert sent["seq"] == 3
+    assert sent["ok"] is False and sent["error"]["kind"] == kind
+    if detail is not None:
+        assert sent["error"]["detail"]["limit"] == detail
+        assert sent["error"]["detail"]["ceiling"] == MAX_HEADER
+        assert sent["error"]["detail"]["value"] > MAX_HEADER
 
 
 class _Stuck:
