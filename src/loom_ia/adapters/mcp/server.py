@@ -10,7 +10,10 @@ ouverts et refermés dans la même tâche, quelle que soit celle qui l'utilise.
 - **Reconnexion avec backoff** : après un échec, la tentative suivante attend
   1, 2, 5, 10 puis 30 s ; entre-temps, le serveur est déclaré indisponible.
 - **Appel interrompu par une perte de connexion** : rejoué une fois, après
-  reconnexion, seulement si l'outil peut l'être sans risque (#18).
+  reconnexion, seulement si l'outil peut l'être sans risque (#18). Une session
+  HTTP que le serveur ne reconnaît plus (réponse 404) est une connexion perdue.
+- **Une seule connexion fermée par échec** : celle qui a échoué, et seulement
+  si elle est encore la courante — une autre, ouverte entre-temps, reste.
 - **Cache des outils**, vidé sur ``notifications/tools/list_changed`` et à
   chaque nouvelle connexion.
 - **Fermeture après inactivité** (``idle_timeout``), pour la portée ``shared``.
@@ -38,6 +41,11 @@ logger = logging.getLogger(__name__)
 BACKOFF: Final = (1.0, 2.0, 5.0, 10.0, 30.0)
 # Délai laissé à une session pour se fermer proprement.
 CLOSE_TIMEOUT: Final = 5.0
+# Message que le SDK met dans l'erreur d'une requête à laquelle un serveur HTTP
+# répond 404 : la session est inconnue ou expirée (spécification MCP). Le code
+# qu'il y joint est 32600, et non -32600 (``INVALID_REQUEST``) : seul le message
+# est fiable.
+SESSION_TERMINATED: Final = "Session terminated"
 
 type Clock = Callable[[], float]
 
@@ -47,9 +55,14 @@ class ConnectionLost(Exception):
 
 
 def is_connection_lost(error: BaseException) -> bool:
-    """Vrai si l'erreur vient du transport, et non de l'outil ou du protocole."""
+    """Vrai si l'erreur vient du transport, et non de l'outil ou du protocole.
+
+    Une session HTTP expirée en fait partie : le serveur répond 404 et il faut
+    rouvrir une session.
+    """
     if isinstance(error, McpError):
-        return error.error.code == types.CONNECTION_CLOSED
+        data = error.error
+        return data.code == types.CONNECTION_CLOSED or data.message == SESSION_TERMINATED
     return isinstance(
         error,
         anyio.ClosedResourceError
@@ -79,7 +92,9 @@ class _Held:
         try:
             async with asyncio.timeout(delay):
                 await self._ready.wait()
-        except TimeoutError:
+        except BaseException:
+            # Délai dépassé, mais aussi appelant annulé : la tâche garderait sinon la session
+            # (et, en stdio, le processus) ouverte pour personne.
             await self.close(force=True)
             raise
         if self.session is None:
@@ -170,7 +185,7 @@ class McpServer:
                     if not is_connection_lost(exc):
                         raise
                     lost = exc
-            await self._drop()
+            await self._drop(session)
             logger.warning(
                 "Connexion au serveur MCP %s perdue pendant l'appel de %s (tentative %d/%d)",
                 self.name,
@@ -279,12 +294,19 @@ class McpServer:
                     return tuple(tools)
         except Exception as exc:
             if is_connection_lost(exc):
-                await self._drop()
+                await self._drop(session)
             raise SourceUnavailable(self.name, f"liste des outils : {_describe(exc)}") from exc
 
-    async def _drop(self) -> None:
+    async def _drop(self, failed: ClientSession | None = None) -> None:
+        """Ferme la connexion courante ; avec ``failed``, seulement si c'est celle de cette session.
+
+        Un appel qui échoue sur une connexion déjà remplacée (elle a été fermée avec le
+        remplacement) ne doit pas fermer la neuve, saine, sur laquelle d'autres appels sont en vol.
+        """
         async with self._lock:
-            await self._drop_locked()
+            held = self._held
+            if failed is None or (held is not None and held.session is failed):
+                await self._drop_locked()
 
     async def _drop_locked(self) -> None:
         held, self._held = self._held, None

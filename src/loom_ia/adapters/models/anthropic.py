@@ -24,7 +24,10 @@ Traduction des messages :
   (``transform_schema`` : mots-clés non pris en charge reportés dans les
   descriptions ; le contrat de sortie vérifie le schéma d'origine) (B9) ;
 - fin du flux : ``message_stop`` la dit. Sans lui, le flux a été coupé : l'appel
-  échoue en ``transient``, au lieu de rendre un début de réponse sans consommation.
+  échoue en ``transient``, au lieu de rendre un début de réponse sans consommation ;
+- coupure, délai ou erreur de protocole du client HTTP (``httpx2``) pendant la lecture du flux :
+  le SDK ne les enrobe pas ; elles deviennent des ``ModelError`` ``transient`` (retry, secours,
+  disjoncteur). L'annulation (``CancelledError``) n'est jamais convertie.
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 """
@@ -204,7 +207,7 @@ class AnthropicModel:
                         "transient", "Flux interrompu : message_stop non reçu du fournisseur"
                     )
                 return
-        except anthropic.APIError as exc:
+        except (anthropic.APIError, httpx2.HTTPError) as exc:
             raise to_model_error(exc) from exc
         for chunk in chunks:
             yield chunk
@@ -526,7 +529,12 @@ def response_to_chunks(message: sdk.Message) -> list[ModelChunk]:
 # --- Erreurs -------------------------------------------------------------------
 
 
-def to_model_error(exc: anthropic.APIError) -> ModelError:
+def to_model_error(exc: anthropic.APIError | httpx2.HTTPError) -> ModelError:
+    if isinstance(exc, httpx2.HTTPError):
+        # Coupure, délai ou protocole en cours de flux : le SDK n'enrobe que l'envoi de la
+        # requête, pas la lecture du corps. Sans code HTTP ni indice : transitoire.
+        detail = f" ({exc})" if str(exc) else ""
+        return classify_error(f"Flux interrompu : {type(exc).__name__}{detail}", http_status=None)
     if isinstance(exc, anthropic.APIStatusError):
         status = exc.status_code
         return classify_error(

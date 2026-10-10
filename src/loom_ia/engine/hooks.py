@@ -276,12 +276,13 @@ class Policies:
                 continue
             event = _event(bound, point, decision, call_id, context, subject=current)
             decided.append(event)
+            # Sans la raison : elle peut citer un texte du modèle ou d'un outil, et les
+            # logs INFO n'ont aucun contenu (la raison reste dans ``policy.decided``).
             logger.info(
-                "Politique %s (%s) : %s%s",
+                "Politique %s (%s) : %s",
                 bound.name,
                 point,
                 decision.kind,
-                f" — {event.reason}" if event.reason else "",
                 extra={"run_id": state.run_id},
             )
             if isinstance(decision, Replace):

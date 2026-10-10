@@ -13,19 +13,27 @@ Deux masquages coexistent, et ne se confondent pas :
 Un motif est une heuristique : il masque ce qui lui ressemble, il ne garantit
 pas que rien d'autre ne passe. C'est la capture ``metadata`` qui garantit
 qu'aucun contenu ne sort.
+
+Les motifs s'exécutent avec un délai (``core.bounded_regex``). Un motif qui ne
+finit pas dans le délai n'a pas dit ce qu'il fallait masquer : le masquage
+échoue **en fermé**, et le texte entier est remplacé par une marque.
 """
 
-import re
 from collections.abc import Iterable, Mapping
 from typing import Final, cast
 
 from pydantic import JsonValue
 
+from loom_ia.core.bounded_regex import RegexTimeout, compile_pattern, substitute
+
 # Motifs fournis, dans l'ordre où ils s'appliquent par défaut.
 BUILTIN_PATTERNS: Final = ("email", "phone", "iban")
 
 _BUILTIN: Final[Mapping[str, str]] = {
-    "email": r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+",
+    # Une adresse ne commence qu'au début d'un mot (le lookbehind), ou là où la
+    # précédente s'arrête (\G : « a@b.fr+c@d.fr ») : sans cela, chaque lettre d'un
+    # long mot sans « @ » relançait la lecture jusqu'à sa fin (quadratique).
+    "email": r"(?:(?<![\w.+-])|\G)[\w.+-]+@[\w-]+(?:\.[\w-]+)+",
     # Numéros français (0X ou +33 X, puis quatre paires) et internationaux
     # (+indicatif puis groupes) : un montant ou une référence de devis n'en a
     # ni le préfixe ni la forme.
@@ -43,7 +51,7 @@ class Redactor:
     """Remplace ce que ses motifs reconnaissent par ``[nom]``."""
 
     def __init__(self, patterns: Iterable[tuple[str, str]]) -> None:
-        self._patterns = tuple((name, re.compile(regex)) for name, regex in patterns)
+        self._patterns = tuple((name, compile_pattern(regex)) for name, regex in patterns)
 
     @classmethod
     def of(cls, declared: Iterable[str | tuple[str, str]]) -> Redactor:
@@ -62,7 +70,11 @@ class Redactor:
 
     def text(self, value: str) -> str:
         for name, pattern in self._patterns:
-            value = pattern.sub(f"[{name}]", value)
+            try:
+                value = substitute(pattern, f"[{name}]", value)
+            except RegexTimeout:
+                # En fermé : rien du texte ne sort.
+                return f"[{name} : délai dépassé, texte masqué]"
         return value
 
     def json(self, value: JsonValue) -> JsonValue:

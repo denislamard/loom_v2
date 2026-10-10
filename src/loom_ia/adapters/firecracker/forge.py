@@ -39,6 +39,12 @@ certains fournisseurs (MiniMax) déforment les objets libres d'un appel d'outil
 — une liste ``required`` devenue un objet, des ``properties`` emboîtées —,
 alors qu'une chaîne arrive intacte. Un refus qui porte sur leur forme le
 suggère, pour ceux venus en objets.
+
+Le schéma est écrit par le modèle, et l'hôte le valide dans sa boucle
+d'événements, pour les exemples comme pour chaque appel : ses motifs
+(``pattern``, ``patternProperties``…) s'exécutent avec un délai
+(``core.bounded_regex``). Un motif trop coûteux refuse l'outil ou l'appel ; il
+ne gèle pas l'hôte.
 """
 
 import ast
@@ -60,8 +66,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Protocol, cast
 
-from jsonschema import Draft202012Validator, SchemaError, ValidationError
-from jsonschema.validators import validator_for
+from jsonschema import SchemaError, ValidationError
 from pydantic import JsonValue
 
 from loom_ia.adapters.firecracker.session import (
@@ -73,6 +78,7 @@ from loom_ia.adapters.firecracker.session import (
     Session,
 )
 from loom_ia.adapters.firecracker.vm import Vm, VmError
+from loom_ia.core.bounded_regex import RegexTimeout, bounded_validator, check_schema
 from loom_ia.core.model import TextBlock, ToolOutput, ToolSpec
 from loom_ia.core.ports import SourceContext, SourceUnavailable, Tool, ToolContext, ToolError
 
@@ -396,7 +402,7 @@ def check_forged(
             "module de l'outil masquerait ; choisis un autre nom"
         )
     try:
-        validator_for(input_schema, default=Draft202012Validator).check_schema(input_schema)
+        check_schema(input_schema)
     except SchemaError as exc:
         raise _ShapeError(f"input_schema n'est pas un schéma JSON valide : {exc.message}") from None
     if input_schema.get("type") != "object":
@@ -411,7 +417,7 @@ def check_forged(
         raise _ShapeError(
             f"examples : de 1 à {MAX_EXAMPLES} exemples attendus, {len(examples)} reçu(s)"
         )
-    validator = validator_for(input_schema, default=Draft202012Validator)(input_schema)
+    validator = bounded_validator(input_schema)
     pairs: list[tuple[dict[str, JsonValue], JsonValue]] = []
     for index, raw in enumerate(examples, start=1):
         example = cast(dict[str, JsonValue], raw) if isinstance(raw, dict) else {}
@@ -423,6 +429,10 @@ def check_forged(
         except ValidationError as exc:
             raise _ShapeError(
                 f"exemple {index} : ses arguments ne suivent pas input_schema — {exc.message}"
+            ) from None
+        except RegexTimeout as exc:
+            raise ToolError(
+                f"exemple {index} : input_schema ne peut pas être appliqué — {exc}"
             ) from None
         pairs.append((arguments, example["expected"]))
     return pairs
@@ -703,11 +713,12 @@ class _CallTool:
         if forged is None:
             known = ", ".join(f.name for f in self.catalog.list(str(context.tenant_id)))
             raise ToolError(f"Outil forgé {name!r} inconnu ; au catalogue : {known or 'aucun'}")
-        validator = validator_for(forged.input_schema, default=Draft202012Validator)
         try:
-            validator(forged.input_schema).validate(given)
+            bounded_validator(forged.input_schema).validate(given)
         except ValidationError as exc:
             raise ToolError(f"arguments refusés par le schéma de {name} : {exc.message}") from None
+        except RegexTimeout as exc:
+            raise ToolError(f"arguments refusés par le schéma de {name} : {exc}") from None
         try:
             return _output(await self.run.execute(name, forged.code, given))
         except _ERRORS as exc:

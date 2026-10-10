@@ -9,8 +9,8 @@ import socket
 import sys
 import threading
 import time
-from collections.abc import AsyncGenerator, Iterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Callable, Iterator
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -19,15 +19,19 @@ import pytest
 pytest.importorskip("mcp", reason="extra 'mcp' absent")
 
 import uvicorn
-from mcp import ClientSession, types
+from mcp import ClientSession, McpError, types
 from mcp.client.session import MessageHandlerFnT
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.lowlevel import Server
 from mcp.shared.memory import create_connected_server_and_client_session as connected
 from pydantic import ValidationError
+from starlette.datastructures import Headers
+from starlette.responses import Response
+from starlette.types import Receive, Scope, Send
 
 from loom_ia.adapters.mcp import (
     IDEMPOTENCY_META,
+    ConnectionLost,
     McpConfigError,
     McpPool,
     McpSelection,
@@ -182,11 +186,14 @@ def test_results_are_translated() -> None:
 
 
 def test_connection_errors_are_told_apart() -> None:
-    from mcp import McpError
-
     lost = McpError(types.ErrorData(code=types.CONNECTION_CLOSED, message="Connection closed"))
     invalid = McpError(types.ErrorData(code=types.INVALID_PARAMS, message="bad"))
+    # Le SDK rend ainsi la réponse 404 d'un serveur HTTP qui ne connaît plus la session.
+    expired = McpError(types.ErrorData(code=32600, message="Session terminated"))
+    refused = McpError(types.ErrorData(code=32600, message="Invalid request"))
     assert is_connection_lost(lost)
+    assert is_connection_lost(expired)
+    assert not is_connection_lost(refused)
     assert is_connection_lost(ConnectionResetError())
     assert not is_connection_lost(invalid)
     assert not is_connection_lost(ValueError())
@@ -469,6 +476,173 @@ async def test_idle_connection_is_closed_then_reopened() -> None:
     await server.aclose()
 
 
+async def reached(event: asyncio.Event) -> None:
+    """Attend un point de passage du test ; échoue au lieu de bloquer s'il n'arrive pas."""
+    async with asyncio.timeout(10):
+        await event.wait()
+
+
+async def test_cancelling_while_connecting_leaves_nothing_open() -> None:
+    """Un appelant annulé pendant l'ouverture ne laisse pas la session tenue pour personne."""
+    opening = asyncio.Event()
+    cleaned: list[str] = []
+    attempts: list[int] = []
+    fixed = memory(math_server())
+
+    @asynccontextmanager
+    async def stuck(handler: MessageHandlerFnT) -> AsyncGenerator[ClientSession]:
+        opening.set()
+        try:
+            await asyncio.Event().wait()
+            yield  # pyright: ignore[reportReturnType]
+        finally:
+            cleaned.append("fermé")
+
+    def factory(handler: MessageHandlerFnT) -> Any:
+        attempts.append(1)
+        return stuck(handler) if len(attempts) == 1 else fixed(handler)
+
+    server = McpServer(spec(), factory)
+    caller = asyncio.create_task(server.tools())
+    await reached(opening)
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    # La tâche qui tient la session est partie avec l'appelant, et a tout refermé.
+    assert [t for t in asyncio.all_tasks() if t.get_name().startswith("mcp:")] == []
+    assert cleaned == ["fermé"]
+    assert not server.connected
+    # Le serveur n'a gardé aucune trace de l'échec : la tentative suivante réussit.
+    assert len(await server.tools()) == 4
+    await server.aclose()
+
+
+class Dies:
+    """Session factice dont la connexion numéro 1 est perdue ; les suivantes répondent."""
+
+    def __init__(self, number: int, log: list[str], error: McpError) -> None:
+        self.number = number
+        self.log = log
+        self.error = error
+        self.closed = False
+
+    async def send_ping(self) -> None:
+        return None
+
+    async def list_tools(self, params: Any = None) -> types.ListToolsResult:
+        return types.ListToolsResult(tools=[])
+
+    async def call_tool(self, name: str, arguments: Any, meta: Any = None) -> types.CallToolResult:
+        self.log.append(f"{name} sur {self.number}")
+        if self.number == 1:
+            raise self.error
+        text = f"{name} sur {self.number}"
+        return types.CallToolResult(content=[types.TextContent(type="text", text=text)])
+
+
+def dying_factory(log: list[str], error: McpError) -> tuple[SessionFactory, list[Dies]]:
+    sessions: list[Dies] = []
+
+    @asynccontextmanager
+    async def open_session(handler: MessageHandlerFnT) -> AsyncGenerator[ClientSession]:
+        session = Dies(len(sessions) + 1, log, error)
+        sessions.append(session)
+        try:
+            yield session  # pyright: ignore[reportReturnType]
+        finally:
+            session.closed = True
+
+    return open_session, sessions
+
+
+async def test_a_late_failure_does_not_close_the_connection_that_replaced_it() -> None:
+    """Deux appels perdent la même connexion : le second à échouer ne ferme pas la neuve."""
+    slow_in_flight = asyncio.Event()
+    slow_fails = asyncio.Event()
+    fast_replayed = asyncio.Event()
+    slow_replayed = asyncio.Event()
+    answer = asyncio.Event()
+    lost = McpError(types.ErrorData(code=types.CONNECTION_CLOSED, message="Connection closed"))
+    sessions: list[Any] = []
+
+    class Connection:
+        def __init__(self) -> None:
+            self.number = len(sessions) + 1
+            self.closed = False
+
+        async def send_ping(self) -> None:
+            return None
+
+        async def list_tools(self, params: Any = None) -> types.ListToolsResult:
+            return types.ListToolsResult(tools=[])
+
+        async def call_tool(
+            self, name: str, arguments: Any, meta: Any = None
+        ) -> types.CallToolResult:
+            if self.number == 1:
+                # La connexion 1 est tombée : « rapide » le voit aussitôt, « lent » plus tard.
+                if name == "lent":
+                    slow_in_flight.set()
+                    await slow_fails.wait()
+                raise lost
+            (slow_replayed if name == "lent" else fast_replayed).set()
+            await answer.wait()
+            if self.closed:
+                raise lost
+            text = f"{name} sur {self.number}"
+            return types.CallToolResult(content=[types.TextContent(type="text", text=text)])
+
+    @asynccontextmanager
+    async def open_session(handler: MessageHandlerFnT) -> AsyncGenerator[ClientSession]:
+        connection = Connection()
+        sessions.append(connection)
+        try:
+            yield connection  # pyright: ignore[reportReturnType]
+        finally:
+            connection.closed = True
+
+    server = McpServer(spec(), open_session)
+    await server.tools()
+    slow = asyncio.create_task(server.call("lent", {}, meta={}, retry=True))
+    await reached(slow_in_flight)
+    fast = asyncio.create_task(server.call("rapide", {}, meta={}, retry=True))
+    # « rapide » a perdu la connexion 1, en a ouvert une 2 et s'y rejoue.
+    await reached(fast_replayed)
+    slow_fails.set()
+    # « lent » perd à son tour la connexion 1 (déjà remplacée) et se rejoue.
+    await reached(slow_replayed)
+    answer.set()
+    assert to_output(await fast).as_text == "rapide sur 2"
+    assert to_output(await slow).as_text == "lent sur 2"
+    assert len(sessions) == 2
+    await server.aclose()
+
+
+@pytest.mark.parametrize("retry", [True, False])
+async def test_an_expired_session_is_a_lost_connection(retry: bool) -> None:
+    """« Session terminated » (404 du serveur HTTP) : reconnexion ; rejeu des seuls outils sûrs."""
+    expired = McpError(types.ErrorData(code=32600, message="Session terminated"))
+    log: list[str] = []
+    factory, sessions = dying_factory(log, expired)
+    server = McpServer(spec(), factory)
+    await server.tools()
+    if retry:
+        assert to_output(await server.call("lire", {}, meta={}, retry=True)).as_text == "lire sur 2"
+        assert log == ["lire sur 1", "lire sur 2"]
+    else:
+        with pytest.raises(ConnectionLost, match="Session terminated"):
+            await server.call("ecrire", {}, meta={}, retry=False)
+        # Pas de rejeu : rien ne prouve que le serveur n'a rien exécuté. Connexion refermée...
+        assert log == ["ecrire sur 1"]
+        assert sessions[0].closed and not server.connected
+        # ... et l'appel suivant repart sur une session neuve.
+        assert to_output(await server.call("ecrire", {}, meta={}, retry=False)).as_text == (
+            "ecrire sur 2"
+        )
+    assert len(sessions) == 2
+    await server.aclose()
+
+
 # --- Transports réels ----------------------------------------------------------
 
 STDIO_SERVER = '''
@@ -507,6 +681,15 @@ mcp.run()
 '''
 
 
+STDIO_SLOW = """
+import os, sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(str(os.getpid()))
+sys.stdin.read()  # ne parle jamais MCP : l'initialisation ne finit pas
+"""
+
+
 @pytest.fixture
 def stdio_spec(tmp_path: Path) -> McpServerSpec:
     (tmp_path / "serveur.py").write_text(STDIO_SERVER, encoding="utf-8")
@@ -535,6 +718,39 @@ async def test_stdio_crashes_are_handled(stdio_spec: McpServerSpec) -> None:
             await by_name["proc__risque"].invoke({}, CALL)
         # Le serveur repart pour l'appel suivant.
         assert int((await by_name["proc__pid"].invoke({}, CALL)).as_text) > 0
+
+
+async def test_cancelling_while_a_stdio_server_starts_stops_the_process(tmp_path: Path) -> None:
+    """Annulé pendant l'initialisation, l'appelant ne laisse pas le processus du serveur."""
+    (tmp_path / "lent.py").write_text(STDIO_SLOW, encoding="utf-8")
+    mark = tmp_path / "pid"
+    slow = McpServerSpec(
+        name="lent",
+        transport="stdio",
+        command=sys.executable,
+        args=("lent.py", str(mark)),
+        cwd=tmp_path,
+        connect_timeout=30,
+    )
+    server = McpServer(slow, session_factory(slow, environ={}))
+    caller = asyncio.create_task(server.tools())
+    pid = 0
+    try:
+        for _ in range(2000):
+            if mark.exists() and mark.read_text():
+                break
+            await asyncio.sleep(0.01)
+        pid = int(mark.read_text())
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        if pid:
+            with suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+        await server.aclose()
 
 
 async def test_health_check_reopens_a_dead_shared_connection(stdio_spec: McpServerSpec) -> None:
@@ -604,3 +820,62 @@ async def test_http_transport_sends_the_headers(http_url: str) -> None:
     async with chosen.open(RUN) as tools:
         [header] = tools
         assert (await header.invoke({}, CALL)).as_text == "Bearer abc"
+
+
+@pytest.fixture
+def forgetful_http() -> Iterator[tuple[str, Callable[[], None]]]:
+    """Un serveur MCP HTTP (outil ``pong``) et de quoi lui faire oublier les sessions ouvertes."""
+    server = FastMCP("web", log_level="WARNING")
+
+    @server.tool(annotations=READ_ONLY)
+    def pong() -> str:
+        """Répond."""
+        return "pong"
+
+    app = server.streamable_http_app()
+    seen: set[str] = set()
+    forgotten: set[str] = set()
+
+    async def forgetful(scope: Scope, receive: Receive, send: Send) -> None:
+        session = Headers(scope=scope).get("mcp-session-id") if scope["type"] == "http" else None
+        if session in forgotten:
+            await Response(status_code=404)(scope, receive, send)
+            return
+        if session is not None:
+            seen.add(session)
+        await app(scope, receive, send)
+
+    port = free_port()
+    web = uvicorn.Server(uvicorn.Config(forgetful, port=port, log_level="warning"))
+    thread = threading.Thread(target=web.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not web.started and time.monotonic() < deadline:
+        time.sleep(0.05)
+    yield f"http://127.0.0.1:{port}/mcp", lambda: forgotten.update(seen)
+    web.should_exit = True
+    thread.join(timeout=5)
+
+
+async def test_an_http_session_the_server_forgot_is_a_lost_connection(
+    forgetful_http: tuple[str, Callable[[], None]],
+) -> None:
+    """Le serveur répond 404 à la session (redémarrage) : appel perdu, puis connexion rouverte."""
+    url, forget = forgetful_http
+    remote = McpServerSpec(name="web", transport="http", url=url, scope="run")
+    server = McpServer(remote, session_factory(remote, environ={}))
+    try:
+        await server.tools()
+        assert to_output(await server.call("pong", {}, meta={}, retry=False)).as_text == "pong"
+        forget()
+        # Outil à effet de bord supposé : pas rejoué, et la connexion est refermée.
+        with pytest.raises(ConnectionLost):
+            await server.call("pong", {}, meta={}, retry=False)
+        assert not server.connected
+        # L'appel suivant rouvre une session ; un outil sûr est rejoué dans la foulée.
+        assert to_output(await server.call("pong", {}, meta={}, retry=False)).as_text == "pong"
+        forget()
+        assert to_output(await server.call("pong", {}, meta={}, retry=True)).as_text == "pong"
+        assert server.connected
+    finally:
+        await server.aclose()

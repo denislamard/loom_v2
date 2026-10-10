@@ -43,7 +43,9 @@ MIN_DIGITS: Final = 3
 SHOWN: Final = 12
 
 _REFERENCE: Final = re.compile(r"\b[A-Za-z]{1,6}[-_]\d{2,}(?:[-_]\d+)*\b")
-_EMAIL: Final = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+# Le lookbehind ne laisse commencer une adresse qu'au début d'un mot : sans lui,
+# chaque lettre d'un long mot sans « @ » relançait la lecture jusqu'à sa fin.
+_EMAIL: Final = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+\.[\w.-]+")
 # Chiffres, avec leurs séparateurs de milliers (espace fine, insécable) et
 # leur partie décimale éventuelle.
 _NUMBER: Final = re.compile("\\d[\\d\\u00a0\\u202f ]*(?:[.,]\\d+)?")

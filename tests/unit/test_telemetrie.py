@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import threading
+import time
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from datetime import timedelta
@@ -42,6 +43,7 @@ from loom_ia.adapters.stores import InMemoryEventStore, NotifyingEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.config.models import LoomConfig
+from loom_ia.core import bounded_regex
 from loom_ia.core.events import Event, JudgeEvaluated, ModelResponded, contents, redacted
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -233,6 +235,40 @@ def test_business_numbers_are_left_alone() -> None:
 def test_masking_walks_json_keys_and_values() -> None:
     masque = Redactor.of(["email", ("devis", r"D-\d{4}-\d{3}")])
     assert masque.json({COURRIEL: ["D-2026-042", 3, None]}) == {"[email]": ["[devis]", 3, None]}
+
+
+def test_an_address_after_a_long_word_is_masked_without_waiting() -> None:
+    """Un long mot sans « @ » ne relance plus la lecture à chacune de ses lettres."""
+    masque = Redactor.of(["email"])
+    mot = "a" * 40_000
+    start = time.perf_counter()
+    assert masque.text(f"{mot} écrire à jeanne@exemple.fr") == f"{mot} écrire à [email]"
+    assert time.perf_counter() - start < 3
+
+
+def test_addresses_stuck_together_are_each_masked() -> None:
+    assert Redactor.of(["email"]).text("a@b.fr+c@d.fr..e@f.fr") == "[email][email][email]"
+
+
+@pytest.fixture
+def short_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bounded_regex, "REGEX_TIMEOUT", 0.2)
+
+
+@pytest.mark.usefixtures("short_timeout")
+def test_a_pattern_that_does_not_finish_masks_the_whole_text() -> None:
+    """Un motif sans réponse n'a pas dit ce qu'il fallait masquer : rien ne sort."""
+    masque = Redactor.of(["email", ("lent", "^(a|aa)+$")])
+    lent = "a" * 34 + "!"  # ``regex`` y met plus de 2 s, ``re`` plus d'une
+    assert masque.text(lent) == "[lent : délai dépassé, texte masqué]"
+    assert masque.json({lent: [lent, f"{COURRIEL}"]}) == {
+        "[lent : délai dépassé, texte masqué]": ["[lent : délai dépassé, texte masqué]", "[email]"]
+    }
+
+
+def test_a_pattern_of_the_regex_engine_is_accepted_by_the_config() -> None:
+    config = config_of(redaction={"patterns": [{"name": "nom", "regex": r"\p{Lu}{3,}"}]})
+    assert config.telemetry.redaction.redactor().text("le sieur DUPONT") == "le sieur [nom]"
 
 
 # --- Le contenu d'un événement ------------------------------------------------

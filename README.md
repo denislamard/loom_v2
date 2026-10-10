@@ -163,7 +163,7 @@ uv add "loom-ia[anthropic,http,mcp]"
 
 Le paquet s'appelle `loom-ia`, s'importe sous le nom `loom_ia` et installe la commande `loom`.
 
-Le noyau ne dépend que de pydantic, pyyaml et jsonschema. Tout le reste arrive par des extras, à choisir selon ce que vous utilisez :
+Le noyau ne dépend que de pydantic, pyyaml, jsonschema et regex. Tout le reste arrive par des extras, à choisir selon ce que vous utilisez :
 
 | Extra | À installer si vous utilisez |
 |---|---|
@@ -1348,12 +1348,15 @@ uv run pytest --require-services
 
 Avec `--require-services`, un service absent fait échouer le test au lieu de le sauter, pour qu'une suite verte prouve vraiment quelque chose. Le rôle Postgres ne doit pas être superutilisateur, puisqu'un superutilisateur contourne la sécurité au niveau des lignes. Il lui faut en revanche le droit `CREATEROLE`, car le stockage crée son rôle applicatif à la première requête.
 
-La CI, sur GitHub Actions, compte quatre jobs :
+La CI, sur GitHub Actions, compte cinq jobs :
 
 1. la qualité : ruff, pyright et les contrats d'import ;
 2. les tests du noyau seul, sans aucun extra, pour vérifier que le noyau s'importe sans SDK ;
 3. les tests avec tous les extras, Postgres 16, RabbitMQ 3.12 et Redis 7 en conteneurs, et la couverture ;
-4. la construction du paquet.
+4. les mêmes tests avec chaque dépendance directe à la plus basse version que `pyproject.toml` autorise, pour que les bornes déclarées soient vraies ;
+5. la construction du paquet.
+
+Un workflow à part rejoue chaque semaine les tests avec les versions les plus récentes permises. La publication (étiquette `v*`) attend la CI complète.
 
 Les exemples de `examples/` servent aussi de recette : la plupart tournent en simulé, et presque tous acceptent `--reel` pour un passage avec de vrais modèles.
 

@@ -17,7 +17,10 @@ coupé ou vide est une erreur ``transient`` (nouvelles tentatives, secours,
 disjoncteur) ; une sortie arrêtée par ``max_tokens`` est une erreur
 ``truncated``, définitive : refaire le même appel couperait au même endroit.
 La réponse d'un journal (``AnsweringClient``) n'est pas contrôlée : elle a été
-acceptée quand le journal a été écrit, et le rejeu la ressert telle quelle.
+acceptée quand le journal a été écrit, et le rejeu la ressert telle quelle. Le
+journal est interrogé avec la requête **d'origine**, références de fichiers
+comprises (c'est elle qu'a hachée ``request_hash``) ; seul le flux d'un vrai
+appel reçoit la requête résolue.
 
 Échanges bruts (J6.1b) : avec ``raw_max_bytes``, chaque tentative ouvre un
 registre (``recording``) où le client HTTP de l'adaptateur dépose ce qu'il a
@@ -151,7 +154,7 @@ class ModelCall:
                 # Le registre n'est ouvert que le temps de la tentative, sans
                 # rien céder entre-temps : il reste dans le contexte de la tâche.
                 with recording(log) if log is not None else nullcontext():
-                    response = await self._attempt(sent, progress)
+                    response = await self._attempt(request, sent, progress)
             except ModelError as error:
                 failure = error
             for payload in self._exchanged(log, sent, attempt):
@@ -225,11 +228,16 @@ class ModelCall:
             return error.retry_after if error.retry_after <= policy.max_delay else None
         return policy.backoff(attempt, self._jitter())
 
-    async def _attempt(self, request: ModelRequest, progress: _Progress) -> ModelResponse:
+    async def _attempt(
+        self, request: ModelRequest, sent: ModelRequest, progress: _Progress
+    ) -> ModelResponse:
+        """Une tentative : ``request`` est la requête d'origine, ``sent`` celle qui part."""
         if isinstance(self.client, AnsweringClient):
             # Rejeu (J6.2a) : la réponse est connue, entière ; sans flux, rien
             # ne se perd en route. En variante (J6.2b), une requête inconnue
-            # du journal part pour de vrai, par le flux.
+            # du journal part pour de vrai, par le flux. Le journal connaît la
+            # requête d'origine (son empreinte porte sur les références de
+            # fichiers) ; seul le vrai appel reçoit la requête résolue.
             known = await self.client.answer(request)
             if known is not None:
                 return known
@@ -238,7 +246,7 @@ class ModelCall:
         total = asyncio.timeout(timeouts.total)
         waiting = "premier morceau"
         try:
-            async with total, aclosing(self.client.stream(request)) as chunks:
+            async with total, aclosing(self.client.stream(sent)) as chunks:
                 limit = timeouts.first_token
                 while True:
                     gap = asyncio.timeout(limit)

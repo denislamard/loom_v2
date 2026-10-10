@@ -61,6 +61,7 @@ from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
 from pydantic import JsonValue
 
+from loom_ia.core.bounded_regex import RegexTimeout, bounded_validator
 from loom_ia.core.events import (
     ApprovalGranted,
     ApprovalRejected,
@@ -459,7 +460,8 @@ class ToolExecutor:
         cls = validator_for(spec.input_schema, default=Draft202012Validator)
         cls.check_schema(spec.input_schema)
         self._tools[spec.name] = tool
-        self._validators[spec.name] = cls(spec.input_schema)
+        # Les motifs du schéma ont un délai : celui d'un outil forgé est écrit par le modèle.
+        self._validators[spec.name] = bounded_validator(spec.input_schema)
 
     def get(self, name: str) -> AnyTool | None:
         return self._tools.get(name)
@@ -842,10 +844,15 @@ class ToolExecutor:
         résultats du run — une erreur sur une valeur venue d'une référence le
         dit, sans quoi le modèle lit une valeur qu'il n'a pas écrite.
         """
-        errors = sorted(
-            self._validators[name].iter_errors(arguments),
-            key=lambda e: [str(p) for p in e.absolute_path],
-        )
+        try:
+            errors = sorted(
+                self._validators[name].iter_errors(arguments),
+                key=lambda e: [str(p) for p in e.absolute_path],
+            )
+        except RegexTimeout as exc:
+            # Le motif du schéma ne finit pas : on ne sait pas si les arguments sont
+            # conformes, donc on ne lance pas l'outil.
+            return f"Arguments non conformes au schéma de l'outil :\n- (racine) : {exc}"
         if not errors:
             return None
         lines = ["Arguments non conformes au schéma de l'outil :"]

@@ -4,6 +4,8 @@ name: Publication
 # À la main (Actions > Publication > Run workflow) : TestPyPI.
 # Sur une étiquette v<version> : PyPI, après accord si l'environnement `pypi` l'exige.
 # Les deux passent par la publication de confiance (OIDC) : aucun jeton dans le dépôt.
+# Les deux attendent la CI complète (ci.yml, appelée ci-dessous) : une étiquette n'a pas d'autre
+# CI, et une CI rouge, annulée ou ignorée saute la construction, donc les deux publications.
 on:
   push:
     tags: ["v*"]
@@ -26,8 +28,13 @@ defaults:
     shell: bash
 
 jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Construire
+    needs: ci
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

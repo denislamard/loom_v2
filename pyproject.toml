@@ -28,8 +28,9 @@ license-files = ["LICENSE"]
 # sécurité arrivent dans de nouvelles majeures.
 dependencies = [
     "jsonschema>=4.26.0,<5",
-    "pydantic>=2,<3",
+    "pydantic>=2.12.0,<3",
     "pyyaml>=6.0.3,<7",
+    "regex>=2025.7.29",
 ]
 
 [project.optional-dependencies]
@@ -40,7 +41,7 @@ openai = [
     "openai>=3.14.1,<4",
 ]
 mcp = [
-    "mcp<2",
+    "mcp>=1.30.0,<2",
 ]
 http = [
     "fastapi>=0.141.1,<1",
@@ -58,12 +59,6 @@ crypto = [
 postgres = [
     "asyncpg>=0.31.0",
 ]
-firestore = [
-    "google-cloud-firestore>=2.30.0,<3",
-]
-gcs = [
-    "google-cloud-storage>=3.14.1,<4",
-]
 rabbitmq = [
     "aio-pika>=10.0.1,<11",
 ]
@@ -75,7 +70,7 @@ otel = [
     "opentelemetry-sdk>=1.44.0,<2",
 ]
 all = [
-    "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,firestore,gcs,rabbitmq,redis,otel,crypto]",
+    "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,rabbitmq,redis,otel,crypto]",
 ]
 
 [project.urls]
@@ -105,6 +100,7 @@ dev = [
     "ruff>=0.16.8",
     "types-jsonschema>=4.26.0.20260518",
     "types-pyyaml>=6.0.12.20260906",
+    "types-regex>=2025.7.34.20250809",
 ]
 # Types des paquets d'extras, pour pyright : ils tirent le paquet lui-même
 # (asyncpg-stubs dépend d'asyncpg), donc ils restent hors de `dev` — sinon la

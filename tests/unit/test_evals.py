@@ -37,6 +37,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
@@ -465,6 +466,47 @@ def test_checks_say_what_they_found() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("status", "error_type", "found"),
+    [
+        (RunStatus.FAILED, "model.invalid_request", "failed (model.invalid_request)"),
+        (RunStatus.CANCELLED, None, "cancelled"),
+        (RunStatus.PAUSED, None, "paused"),
+    ],
+)
+def test_a_run_that_did_not_complete_fails_the_case_without_a_status(
+    status: RunStatus, error_type: str | None, found: str
+) -> None:
+    """Sans ``status``, un run échoué, annulé ou en pause ne passe pas, même si le reste tient."""
+    expect = Expect(not_contains=("boum",), not_called=("envoyer",))
+    outcome = Outcome(status=status, text="", data=None, error_type=error_type)
+
+    results = check(expect, outcome)
+
+    assert len(results) == expect.count + 1
+    assert [(r.label, r.passed, r.detail, r.kind) for r in results if not r.passed] == [
+        ("statut completed (par défaut)", False, found, "status")
+    ]
+    # Un run qui a abouti n'a pas ce contrôle de plus.
+    done = check(expect, replace(outcome, status=RunStatus.COMPLETED, error_type=None))
+    assert len(done) == expect.count and all(r.passed for r in done)
+
+
+def test_an_explicit_status_alone_decides_the_status() -> None:
+    """Avec ``status``, ce contrôle seul décide : un cas qui attend l'échec passe sur un échec."""
+    outcome = Outcome(status=RunStatus.FAILED, text="", data=None, error_type="model.x")
+    attendu = check(Expect(status=RunStatus.FAILED, not_contains=("boum",)), outcome)
+    autre = check(Expect(status=RunStatus.COMPLETED, not_contains=("boum",)), outcome)
+
+    assert [(r.label, r.passed) for r in attendu] == [
+        ("statut failed", True),
+        ("ne contient pas « boum »", True),
+    ]
+    assert [(r.label, r.passed, r.detail) for r in autre if not r.passed] == [
+        ("statut completed", False, "failed (model.x)")
+    ]
+
+
 # --- Le monde pendant une éval ---------------------------------------------------------------
 
 
@@ -673,6 +715,42 @@ async def test_variants_compare_models_and_configs(labo: Path) -> None:
     assert "Variante autre-modele (main=AUTRE) — 1/2 cas réussi(s)" in texte
     assert "ÉCHEC    relance (0/2)" in texte and "  texte :" in texte
     assert "Relance faite." in texte
+
+
+def avec_panne(config: Path) -> None:
+    """La config, plus un modèle ``PANNE`` dont le fournisseur refuse la première requête."""
+    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    panne = {
+        "id": "PANNE",
+        "sdk": "fake",
+        "model": "panne-1",
+        "params": {"script": [{"error": "invalid_request"}]},
+    }
+    retouche(config, config, models=[*data["models"], panne])
+
+
+async def test_a_provider_outage_does_not_turn_an_eval_green(labo: Path) -> None:
+    """Une panne du fournisseur fait tomber le cas, sauf si le cas attend ``failed`` (revue)."""
+    avec_panne(labo)
+    path = suite(
+        labo,
+        variants=[{"name": "base"}, {"name": "panne", "models": {"main": "PANNE"}}],
+        cases=[
+            {"name": "muet", "input": RELANCE, "expect": {"not_contains": ["boum"]}},
+            {"name": "attendue", "input": RELANCE, "expect": {"status": "failed"}},
+        ],
+    )
+    report = await jouer(path)
+    runs = {(run.variant, run.case): run for run in report.runs}
+
+    assert runs["base", "muet"].passed and not runs["base", "attendue"].passed
+    assert runs["panne", "attendue"].passed and not runs["panne", "muet"].passed
+    [tombe] = [c for c in runs["panne", "muet"].checks if not c.passed]
+    assert tombe.label == "statut completed (par défaut)"
+    assert tombe.detail == "failed (model.invalid_request)"
+    assert runs["panne", "muet"].failure is not None and not report.passed
+    texte = "\n".join(render_eval(report))
+    assert "✗ statut completed (par défaut) — failed (model.invalid_request)" in texte
 
 
 async def test_the_eval_judge_notes_outside_the_run(labo: Path) -> None:
@@ -1241,6 +1319,20 @@ async def test_bench_expect_says_what_fell(labo: Path) -> None:
         "  texte :",
         "    Relance envoyée à martin.",
     ]
+
+
+async def test_bench_expect_fails_a_run_that_did_not_complete_unless_status_says_so(
+    labo: Path,
+) -> None:
+    """Comme un cas d'éval : sans ``status``, un run échoué fait tomber ``expect``."""
+    sans_cle(labo)
+    async with Bench(labo) as banc:
+        result = await banc.run("demo", CALCUL)
+        assert result.status == RunStatus.FAILED
+        with pytest.raises(AssertionError, match=r"✗ statut completed \(par défaut\) — failed"):
+            banc.expect(result, not_called=["envoyer"])
+        tenus = banc.expect(result, status="failed", not_called=["envoyer"])
+    assert [c.label for c in tenus] == ["statut failed", "n'appelle pas envoyer"]
 
 
 async def test_a_bench_is_mounted_right_or_refused(labo: Path) -> None:

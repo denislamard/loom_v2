@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Contrats de sortie : définition, normalisation, contrôle, décisions du guard (J3.2)."""
 
+import json
+import time
 from typing import Any
 
 import pytest
 from pydantic import JsonValue, ValidationError
 
+from loom_ia.core import bounded_regex
 from loom_ia.core.model import (
     CONTINUE,
     AfterTool,
@@ -33,6 +36,12 @@ SCHEMA: dict[str, JsonValue] = {
     "additionalProperties": False,
 }
 EMAIL = '{"objet": "Votre devis", "corps": "Bonjour"}'
+# Un secret qu'un contrat interdit, et le motif qui le reconnaît.
+SECRET = "sk-ABCDEF1234567890XYZ"
+KEY_PATTERN = r"sk-[A-Za-z0-9]{10,}"
+# Un motif qui ne finit pas sur ce texte (``regex`` y met plus de 2 s, ``re`` plus d'une).
+SLOW = "^(a|aa)+$"
+SLOW_TEXT = "a" * 34 + "!"
 STATE = RunState(
     run_id=RunId("r1"),
     session_id=SessionId("r1"),
@@ -117,7 +126,11 @@ def test_a_conforming_output_passes_and_gives_its_data() -> None:
             ["(racine) : Additional properties", "(racine) : 'corps' is a required", "objet : 3"],
         ),
         ({"must_match": r"D-\d{4}-\d{3}"}, "Votre devis", ["motif attendu absent"]),
-        ({"must_not_match": "```"}, "a ``` b", ["motif interdit présent : '```'"]),
+        (
+            {"must_not_match": "```"},
+            "a ``` b",
+            ["motif interdit présent : ``` (position 2, longueur 3)"],
+        ),
         ({"max_chars": 5}, "Bonjour", ["7 caractères, au-delà de 5"]),
         ({"normalize": False, "schema": SCHEMA}, "```json\n" + EMAIL + "\n```", ["JSON"]),
     ],
@@ -128,6 +141,59 @@ def test_problems_are_listed(fields: dict[str, Any], text: str, problems: list[s
     assert len(checked.problems) == len(problems)
     for expected in problems:
         assert any(expected in found for found in checked.problems), checked.problems
+
+
+def test_a_forbidden_text_is_not_copied_into_its_problem() -> None:
+    forbidden = contract(must_not_match=KEY_PATTERN)
+    text = f"Voici la clé : {SECRET}"
+    checked = check(forbidden, text)
+
+    assert checked.problems == (
+        f"motif interdit présent : {KEY_PATTERN} "
+        f"(position {text.index(SECRET)}, longueur {len(SECRET)})",
+    )
+    assert SECRET not in diagnostic(forbidden, checked.problems)
+
+
+@pytest.fixture
+def short_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bounded_regex, "REGEX_TIMEOUT", 0.2)
+
+
+@pytest.mark.usefixtures("short_timeout")
+@pytest.mark.parametrize(
+    ("fields", "text", "problem"),
+    [
+        ({"must_match": SLOW}, SLOW_TEXT, "must_match : motif trop coûteux"),
+        ({"must_not_match": SLOW}, SLOW_TEXT, "must_not_match : motif trop coûteux"),
+        (
+            {"schema": {"type": "string", "pattern": SLOW}},
+            json.dumps(SLOW_TEXT),
+            "schéma : motif trop coûteux",
+        ),
+    ],
+)
+def test_a_pattern_that_does_not_finish_fails_the_check(
+    fields: dict[str, Any], text: str, problem: str
+) -> None:
+    """Faute de temps, on ne conclut ni « absent » ni « conforme » : le contrôle échoue."""
+    checked = check(contract(**fields), text)
+
+    assert not checked.ok and checked.data is None
+    [found] = checked.problems
+    assert found.startswith(problem) and SLOW in found
+
+
+def test_a_pattern_of_the_regex_engine_is_accepted() -> None:
+    assert check(contract(must_match=r"^\p{Lu}"), "École").ok
+    assert not check(contract(must_match=r"^\p{Lu}"), "école").ok
+
+
+def test_normalize_is_linear_on_a_long_run_of_spaces() -> None:
+    text = "```\n" + " " * 40_000 + "x"
+    start = time.perf_counter()
+    assert normalize(text) == normalize(text, json_expected=True) == text
+    assert time.perf_counter() - start < 3
 
 
 def test_tool_data_is_checked_directly() -> None:
@@ -187,6 +253,21 @@ async def test_final_answer_is_repaired_then_follows_on_failure() -> None:
     assert isinstance(fail, tuple) and isinstance(fail[0], Fail) and fail[1] == "fail"
     assert unverified == (CONTINUE, "unverified")
     assert fallback == (Replace("Relance à reprendre.", reason="message de repli"), "fallback")
+
+
+async def test_a_forbidden_text_stays_out_of_the_decisions() -> None:
+    forbidden = contract(must_not_match=KEY_PATTERN, repair={"max_attempts": 1})
+    text = f"Voici la clé : {SECRET}"
+
+    first = PolicyContext(name=CONTRACT_POLICY)
+    retry = await ContractGuard(forbidden).decide(final(text), first)
+    assert isinstance(retry, Retry) and SECRET not in retry.feedback
+    assert first.checks[0].reason and SECRET not in first.checks[0].reason
+
+    tired = PolicyContext(name=CONTRACT_POLICY, attempt=1)
+    failure = await ContractGuard(forbidden).decide(final(text), tired)
+    assert isinstance(failure, Fail) and SECRET not in failure.error
+    assert tired.checks[0].reason and SECRET not in tired.checks[0].reason
 
 
 async def test_repair_may_keep_the_tools() -> None:

@@ -1,16 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 name: CI
 
+# workflow_call : publish.yml appelle cette CI avant de construire quoi que ce soit, car une
+# étiquette n'en a pas d'autre (ni push de main, ni pull request).
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
 
+# Appelée, cette CI garde le `github.ref` et le `github.workflow` de l'appelant : sans le nom
+# du workflow, un lancement manuel de la publication depuis main partagerait le groupe du
+# push et s'annulerait avec lui.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -165,6 +171,84 @@ jobs:
       # cette CI faisait avant d'avoir des services.
       - name: Tests avec couverture
         run: uv run --locked pytest --require-services --cov=loom_ia --cov-report=term-missing
+
+  bornes-basses:
+    name: Tests (bornes basses des dépendances, avec les services)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    # Même ossature que tests-complets (à garder alignée), mais chaque dépendance directe
+    # — noyau, extras, groupes dev et types — est installée à la plus basse version que
+    # pyproject.toml autorise : une borne basse qui ne tient pas fait échouer ce job.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.12
+        # Un utilisateur à soi, et non `guest` : RabbitMQ ne laisse `guest`
+        # entrer que depuis la boucle locale, et un port publié n'en est pas.
+        env:
+          RABBITMQ_DEFAULT_USER: loom
+          RABBITMQ_DEFAULT_PASS: loom
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 15
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      LOOM_TEST_POSTGRES: postgresql://loom:loom@127.0.0.1:5432/loom
+      LOOM_TEST_RABBITMQ: amqp://loom:loom@127.0.0.1:5672/
+      LOOM_TEST_REDIS: redis://127.0.0.1:6379/1
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-suffix: ${{ github.job }}
+
+      - name: Rôle Postgres ordinaire, propriétaire de sa base
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE loom LOGIN PASSWORD 'loom' NOSUPERUSER CREATEROLE"
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE loom OWNER loom"
+
+      # `uv pip` et non `uv sync` : `uv sync --resolution lowest-direct` réécrit uv.lock
+      # (uv 0.11 n'a pas d'option pour s'en passer), alors que `uv pip` ne le lit ni ne
+      # l'écrit. Les dépendances indirectes restent à leur version la plus récente.
+      - name: Installer le projet (tous les extras, dépendances directes à leur plus basse version)
+        run: |
+          uv venv --python 3.14
+          uv pip install --resolution lowest-direct -r pyproject.toml --all-extras --group dev --group types
+          uv pip install --no-deps -e .
+
+      - name: Versions installées
+        run: uv pip list
+
+      - name: Tests
+        run: .venv/bin/python -m pytest --require-services
 
   build:
     name: Build

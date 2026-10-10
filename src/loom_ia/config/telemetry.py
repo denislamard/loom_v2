@@ -20,11 +20,11 @@ Ces réglages disent ce qui **sort** du journal vers un collecteur.
   métadonnées.
 """
 
-import re
 from typing import Annotated, Final, Literal, Self
 
 from pydantic import Discriminator, Field, PositiveFloat, PositiveInt, Tag, model_validator
 
+from loom_ia.core.bounded_regex import PatternError, compile_pattern
 from loom_ia.core.model import DomainModel
 from loom_ia.telemetry.redaction import BUILTIN_PATTERNS, Redactor
 
@@ -96,8 +96,8 @@ class RedactionPattern(DomainModel):
                 "donner un autre nom à celui-ci"
             )
         try:
-            compiled = re.compile(self.regex)
-        except re.error as error:
+            compiled = compile_pattern(self.regex)
+        except PatternError as error:
             raise ValueError(f"Masquage {self.name!r} : expression invalide ({error})") from error
         if compiled.search(""):
             # Un motif qui accepte le vide masquerait entre chaque caractère.

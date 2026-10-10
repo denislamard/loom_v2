@@ -18,14 +18,13 @@ réparations sont épuisées, ``on_failure`` décide :
 - ``fallback`` : ``fallback_message`` remplace la sortie.
 """
 
-import re
 from pathlib import Path
 from typing import Literal, Self
 
-from jsonschema import Draft202012Validator, SchemaError
-from jsonschema.validators import validator_for
+from jsonschema import SchemaError
 from pydantic import ConfigDict, Field, JsonValue, NonNegativeInt, PositiveInt, model_validator
 
+from loom_ia.core.bounded_regex import PatternError, check_schema, compile_pattern
 from loom_ia.core.model.base import DomainModel
 
 type OnFailure = Literal["fail", "unverified", "fallback"]
@@ -58,7 +57,7 @@ class OutputContract(DomainModel):
     json_schema: dict[str, JsonValue] | None = Field(default=None, alias="schema")
     # Fichier du schéma, relatif au dossier de la config ; lu au chargement.
     schema_file: Path | None = None
-    # Motif qui doit se trouver dans la sortie (``re.search``).
+    # Motif qui doit se trouver dans la sortie (module ``regex``, avec un délai).
     must_match: str | None = None
     # Motif interdit dans la sortie.
     must_not_match: str | None = None
@@ -77,17 +76,15 @@ class OutputContract(DomainModel):
             raise ValueError("'schema' et 'schema_file' ne peuvent pas être donnés ensemble")
         if self.json_schema is not None:
             try:
-                validator_for(self.json_schema, default=Draft202012Validator).check_schema(
-                    self.json_schema
-                )
+                check_schema(self.json_schema)
             except SchemaError as exc:
                 raise ValueError(f"schema invalide : {exc.message}") from exc
         for name in ("must_match", "must_not_match"):
             pattern: str | None = getattr(self, name)
             if pattern is not None:
                 try:
-                    re.compile(pattern)
-                except re.error as exc:
+                    compile_pattern(pattern)
+                except PatternError as exc:
                     raise ValueError(f"{name} : expression régulière invalide ({exc})") from exc
         if self.on_failure == "fallback" and not self.fallback_message:
             raise ValueError("on_failure: fallback demande un 'fallback_message'")

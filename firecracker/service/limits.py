@@ -50,6 +50,15 @@ MEM_FLOOR = 128 * 1024 * 1024
 # aux deux extremites, jamais au milieu.
 CAPTURE_LIMIT = 256 * 1024
 
+# Taille maximale de result.json. La reponse d'un job (resultat, stdout, stderr,
+# manifeste des sorties) voyage dans UN en-tete de trame, borne a 1 MiB
+# (protocol.MAX_HEADER) : la moitie au resultat, l'autre aux deux flux
+# (CAPTURE_LIMIT chacun). Le fichier est ecrit par le job : execd n'en lit que
+# cette taille, car fsize_bytes permet un resultat de 256 Mio, et le lire en
+# entier (octets, texte, objets) gonflerait la memoire du service de plus de
+# 600 Mo, partagee par toutes les sessions de la VM.
+RESULT_LIMIT = 512 * 1024
+
 
 class LimitError(Exception):
     """Demande de limite irrecevable (et non simplement trop haute)."""

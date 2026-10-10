@@ -47,11 +47,12 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import ConfigFactory, demo_agent
+from conftest import MODEL, PNG, ConfigFactory, demo_agent
 from pydantic import JsonValue
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
+from loom_ia.adapters.artifacts import InMemoryArtifactStore
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
@@ -65,7 +66,11 @@ from loom_ia.core.events import (
 )
 from loom_ia.core.model import (
     Approved,
+    ArtifactRefBlock,
+    Attachment,
+    InlineDataBlock,
     Message,
+    ModelCapabilities,
     ModelChunk,
     ModelRequest,
     ModelResponse,
@@ -81,6 +86,7 @@ from loom_ia.core.model import (
     ToolDefinition,
     ToolOutput,
     Usage,
+    artifact_uri,
 )
 from loom_ia.core.ports import AnsweringClient, ModelClient, ModelError, stopped_by_client
 from loom_ia.engine import RunContext, begin_run, drive
@@ -95,7 +101,13 @@ from loom_ia.replay import (
     journal_runs,
     read_journal,
 )
-from loom_ia.testing import RunJournal, assert_replays, message_to_chunks, tool_call_message
+from loom_ia.testing import (
+    RunJournal,
+    ScriptedModel,
+    assert_replays,
+    message_to_chunks,
+    tool_call_message,
+)
 from loom_ia.tools import tool
 
 SESSION = SessionId("atelier")
@@ -320,6 +332,26 @@ async def test_a_subagent_is_read_not_relaunched(tree: ConfigFactory) -> None:
     assert {e.run_id for e in report.events} == {result.run_id}
     [appel] = [e.payload for e in report.events if isinstance(e.payload, ToolCalled)]
     assert appel.tool_name == "verifier" and appel.child_run_id is None
+
+
+@pytest.mark.parametrize("vision", [False, True], ids=["mention", "octets"])
+async def test_a_run_with_an_attachment_replays_identically(
+    demo: ConfigFactory, vision: bool
+) -> None:
+    """Le journal porte la requête avec ses références de fichiers, pas leurs octets : le rejeu,
+    à l'identique comme en variante, retrouve la réponse sous cette empreinte (modèle aveugle ou
+    non : mention textuelle ou image)."""
+    model = {**MODEL, "capabilities": {"vision": vision}}
+    photo = Attachment(data=PNG, name="photo.png")
+    async with Loom(load_config(demo(models=[model]))) as loom:
+        result = await loom.run("demo", QUESTION, attachments=[photo])
+        exact = await loom.replay(result.run_id)
+        variant = await loom.replay(result.run_id, mode="variant")
+    assert exact.identical, exact.divergence
+    assert exact.model_calls[0] == exact.model_calls[1] > 0
+    assert variant.identical, variant.divergence
+    assert variant.comparison is not None
+    assert (variant.comparison.real_models, variant.comparison.served_models) == (0, 2)
 
 
 # --- Les divergences ---------------------------------------------------------------
@@ -1106,6 +1138,31 @@ async def test_another_model_runs_for_real_and_never_sends_again(variante: Path)
     assert comparison.spent_usd == pytest.approx(sum(reels))
     assert comparison.variant.text == "Fait autrement." != comparison.original.text
     assert not comparison.same_answer
+
+
+async def test_the_journal_is_asked_with_the_written_request_and_the_model_gets_the_files() -> None:
+    """Une requête que le journal ne connaît pas part pour de vrai avec ses fichiers résolus,
+    mais c'est la requête écrite (références) que le livre compare à ses empreintes."""
+    files = InMemoryArtifactStore()
+    uri = artifact_uri("default", "s1", PNG, "image/png")
+    await files.put(uri, PNG)
+    photo = ArtifactRefBlock(uri=uri, media_type="image/png", size=len(PNG), name="photo.png")
+    request = ModelRequest(
+        model_id="m",
+        messages=(Message(role="user", blocks=(TextBlock(text="Regarde"), photo)),),
+    )
+    spec = ModelSpec(id="M", sdk="fake", model="m", capabilities=ModelCapabilities(vision=True))
+    real = ScriptedModel(Message.assistant("Vu."))
+    book = ReplayBook()
+    call = ModelCall(VariantModelClient(book, spec, lambda: real), spec, artifacts=files)
+
+    [response] = [item async for item in call.run(request)]
+
+    assert isinstance(response, ModelResponse) and response.message.text == "Vu."
+    [sent] = real.requests
+    assert [type(b) for b in sent.messages[0].blocks] == [TextBlock, InlineDataBlock]
+    assert book.divergence is not None
+    assert book.divergence.actual_hash == request.request_hash() != sent.request_hash()
 
 
 async def test_a_side_effect_call_found_in_the_journal_is_read_with_its_decision(

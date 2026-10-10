@@ -5,9 +5,10 @@ Les réponses HTTP sont simulées par ``httpx2.MockTransport``, au format SSE
 documenté de l'API Messages.
 """
 
+import asyncio
 import base64
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import pytest
@@ -18,14 +19,17 @@ import httpx2
 
 from loom_ia.adapters.models import create_model_client
 from loom_ia.adapters.models.anthropic import AnthropicModel
+from loom_ia.core.events import CircuitOpened, ModelFellBack, ModelRetried
 from loom_ia.core.model import (
     AnthropicMeta,
     ArtifactRefBlock,
+    CircuitBreaker,
     InlineDataBlock,
     JsonBlock,
     Message,
     ModelChunk,
     ModelRequest,
+    ModelResponse,
     ModelSpec,
     OpenAIMeta,
     PromptCache,
@@ -39,6 +43,9 @@ from loom_ia.core.model import (
     Usage,
 )
 from loom_ia.core.ports import ModelError, complete
+from loom_ia.engine import Answered, CircuitBreakers, ModelChain, ModelLink
+from loom_ia.engine.model_call import ModelCall
+from loom_ia.testing import ScriptedModel
 
 type Handler = Callable[[httpx2.Request], httpx2.Response]
 
@@ -434,6 +441,136 @@ async def test_network_errors_are_transient() -> None:
     with pytest.raises(ModelError) as caught:
         await complete(Server(fail).model(), request())
     assert (caught.value.kind, caught.value.http_status) == ("transient", None)
+
+
+class CutBody(httpx2.AsyncByteStream):
+    """Corps de réponse qui livre ses événements, puis lâche (erreur) ou se tait (annulation)."""
+
+    def __init__(
+        self,
+        *events: dict[str, Any],
+        error: Exception | None = None,
+        reached: asyncio.Event | None = None,
+    ) -> None:
+        self.body = sse(*events).encode()
+        self.error = error
+        self.reached = reached
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self.body
+        if self.error is not None:
+            raise self.error
+        if self.reached is not None:
+            self.reached.set()
+            await asyncio.Event().wait()
+
+
+def cut(error: Exception) -> httpx2.Response:
+    """Réponse 200 dont le flux est coupé par ``error`` après un début de texte."""
+    body = CutBody(
+        start(input_tokens=12),
+        block_start(0, {"type": "text", "text": ""}),
+        delta(0, {"type": "text_delta", "text": "Le devis"}),
+        error=error,
+    )
+    return httpx2.Response(200, headers={"content-type": "text/event-stream"}, stream=body)
+
+
+def completed(text: str = "Voilà") -> httpx2.Response:
+    return streamed(
+        start(),
+        block_start(0, {"type": "text", "text": ""}),
+        delta(0, {"type": "text_delta", "text": text}),
+        stop(0),
+        *end("end_turn"),
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx2.ReadError("connexion réinitialisée"),
+        httpx2.RemoteProtocolError("peer closed connection without sending complete message"),
+        httpx2.ReadTimeout("délai de lecture"),
+        httpx2.DecodingError("flux gzip corrompu"),
+        httpx2.ReadError(""),
+    ],
+    ids=["ReadError", "RemoteProtocolError", "ReadTimeout", "DecodingError", "message-vide"],
+)
+async def test_httpx_errors_while_reading_the_stream_are_transient_model_errors(
+    error: Exception,
+) -> None:
+    """Le SDK n'enrobe pas les erreurs de lecture du corps : l'adaptateur les classe lui-même."""
+    with pytest.raises(ModelError) as caught:
+        await complete(Server(cut(error)).model(), request())
+    failure = caught.value
+    assert (failure.kind, failure.http_status, failure.retryable) == ("transient", None, True)
+    assert (
+        failure.message.startswith("Flux interrompu : ") and type(error).__name__ in failure.message
+    )
+    assert failure.__cause__ is error
+
+
+async def test_a_cancellation_during_the_stream_is_not_converted() -> None:
+    """``CancelledError`` traverse l'adaptateur telle quelle : l'annulation reste une annulation."""
+    reached = asyncio.Event()
+    silent = CutBody(start(), reached=reached)
+    response = httpx2.Response(200, headers={"content-type": "text/event-stream"}, stream=silent)
+    task = asyncio.create_task(complete(Server(response).model(), request()))
+    await asyncio.wait_for(reached.wait(), timeout=10)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_a_cut_stream_goes_through_the_retry_policy() -> None:
+    """Coupure en cours de flux : ``ModelCall`` relance l'appel en entier (erreur transitoire)."""
+    server = Server(cut(httpx2.ReadError("réseau")), completed())
+    waits: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        waits.append(delay)
+
+    model_call = ModelCall(server.model(), SPEC, sleep=sleep, jitter=lambda: 0.0)
+    retried, response = [item async for item in model_call.run(request())]
+
+    assert isinstance(retried, ModelRetried)
+    assert (retried.error_kind, retried.http_status, retried.attempt) == ("transient", None, 1)
+    assert "ReadError" in retried.error
+    assert isinstance(response, ModelResponse) and response.message == Message.assistant("Voilà")
+    assert len(server.requests) == 2 and len(waits) == 1
+
+
+async def test_a_cut_stream_trips_the_breaker_and_falls_back() -> None:
+    """Sans nouvelle tentative, la coupure ouvre le disjoncteur et fait passer au secours."""
+    server = Server(cut(httpx2.RemoteProtocolError("peer closed connection")))
+    main = SPEC.model_copy(
+        update={
+            "retry": SPEC.retry.model_copy(update={"max_attempts": 1}),
+            "circuit_breaker": CircuitBreaker(failures=1, cooldown=30),
+        }
+    )
+    backup_spec = ModelSpec(id="SECOURS", sdk="fake", model="secours")
+
+    async def no_sleep(delay: float) -> None:
+        pass
+
+    model_chain = ModelChain(
+        links=[
+            ModelLink(main, server.model(main)),
+            ModelLink(backup_spec, ScriptedModel(Message.assistant("Secours"))),
+        ],
+        slot="main",
+        breakers=CircuitBreakers(),
+        sleep=no_sleep,
+    )
+    items = [item async for item in model_chain.run(request())]
+
+    opened, fell, answered = items
+    assert isinstance(opened, CircuitOpened) and opened.target == "CLAUDE"
+    assert isinstance(fell, ModelFellBack)
+    assert (fell.from_model, fell.to_model, fell.reason) == ("CLAUDE", "SECOURS", "transient")
+    assert isinstance(answered, Answered) and answered.spec is backup_spec
 
 
 async def test_attachments_are_refused_before_calling() -> None:

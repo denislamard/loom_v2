@@ -3,9 +3,10 @@
 
 Compacter ne réécrit rien. On ajoute un ``session.compacted`` qui porte le
 résumé et la position qu'il couvre ; l'historique repart de ce résumé, et les
-``keep_last`` derniers tours restent intacts. Un tour est un run : la coupe
-tombe donc toujours sur une frontière de run, et la séquence envoyée au
-modèle reste valide.
+``keep_last`` derniers tours restent intacts. Un tour est un run terminé avec
+succès, le seul que l'historique garde : un run échoué, annulé ou en cours n'en
+est pas un. La coupe tombe toujours sur une frontière de run, et la séquence
+envoyée au modèle reste valide.
 
 Le résumé est produit par un agent ordinaire, ``_compaction``, monté comme
 les autres : il hérite du retry, du modèle de secours, du suivi des coûts et
@@ -30,6 +31,9 @@ from typing import Final
 
 from loom_ia.core.events import (
     Event,
+    RunCancelled,
+    RunCompleted,
+    RunFailed,
     RunScope,
     RunStarted,
     SessionCompacted,
@@ -82,14 +86,25 @@ class CompactionPlan:
 
 
 def run_starts(events: Sequence[Event]) -> list[int]:
-    """Position du ``run.started`` de chaque run ordinaire de la session."""
-    return [
-        event.seq
-        for event in events
-        if isinstance(payload := event.payload, RunStarted)
-        and payload.parent_run_id is None
-        and payload.kind == "normal"
-    ]
+    """Position du ``run.started`` de chaque tour de la session.
+
+    Un tour est un run ordinaire terminé avec succès : c'est le seul que
+    l'historique garde (``turns``). Un run échoué, annulé ou en cours n'est pas
+    compté, sinon ``keep_last`` en garderait de vides et résumerait les vrais
+    derniers tours.
+    """
+    starts: dict[RunId, int] = {}
+    completed: set[RunId] = set()
+    for event in events:
+        payload = event.payload
+        if isinstance(payload, RunStarted):
+            if payload.parent_run_id is None and payload.kind == "normal":
+                starts[event.run_id] = event.seq
+        elif isinstance(payload, RunCompleted):
+            completed.add(event.run_id)
+        elif isinstance(payload, RunFailed | RunCancelled):
+            completed.discard(event.run_id)
+    return [seq for run_id, seq in starts.items() if run_id in completed]
 
 
 def summarised(events: Sequence[Event]) -> int:
@@ -203,11 +218,22 @@ class CompactionJob:
         events = await self._store.read(tenant_id, session_id)
         if not oversized(events, self.plan.hard_tokens):
             return
-        compacted = await self.compact(tenant_id, session_id, limit=self.plan.hard_tokens)
-        if compacted is not None:
-            events = await self._store.read(tenant_id, session_id)
-            if not oversized(events, self.plan.hard_tokens):
-                return
+        try:
+            await self.compact(tenant_id, session_id, limit=self.plan.hard_tokens)
+        except Exception:
+            # Le filet ne tombe pas avec ce qu'il protège : clé du modèle de résumé
+            # absente, panne, modèle inconnu… le run démarre, les vieux tours partent.
+            # Aucun contenu de session dans la ligne, son identifiant seul ; la trace
+            # dit ce qui a cassé.
+            logger.warning(
+                "Session %s : résumé de sécurité impossible, repli sur la coupe",
+                session_id,
+                exc_info=True,
+            )
+        # Le marqueur a pu être écrit avant l'erreur : on repart du journal tel qu'il est.
+        events = await self._store.read(tenant_id, session_id)
+        if not oversized(events, self.plan.hard_tokens):
+            return
         await self._trim(tenant_id, session_id, events)
 
     async def _trim(

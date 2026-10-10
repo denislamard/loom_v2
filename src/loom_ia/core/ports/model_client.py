@@ -106,6 +106,9 @@ class AnsweringClient(ABC):
     async def answer(self, request: ModelRequest) -> ModelResponse | None:
         """La réponse connue à cette requête ; ``None`` : la demander au modèle (``stream``).
 
+        ``request`` est la requête d'origine, références de fichiers non résolues : celle dont
+        l'empreinte est au journal. ``stream`` reçoit la même, fichiers résolus.
+
         ``ModelError`` si le client refuse la requête (rejeu identique : elle
         n'est pas au journal).
         """

@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ import pytest
 import yaml
 
 from loom_ia.access.api import Loom
+from loom_ia.adapters.models import ModelConfigError
 from loom_ia.adapters.queue import AsyncioTaskQueue
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
@@ -18,6 +20,7 @@ from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.core.events import (
     Event,
     ModelResponded,
+    RunCancelled,
     SessionCompacted,
     SessionTrimmed,
     ToolCompleted,
@@ -27,14 +30,23 @@ from loom_ia.core.model import (
     Message,
     RunStatus,
     SessionId,
+    TenantId,
     ToolOutput,
     ToolResultBlock,
 )
 from loom_ia.core.ports import Job
 from loom_ia.core.projections import SUMMARY_MARKER, history
-from loom_ia.engine import rendered
+from loom_ia.engine import RunContext, SessionWriters, rendered
 from loom_ia.guards.fidelity import markers, missing
-from loom_ia.sessions import cut, oversized, run_starts, summarised
+from loom_ia.sessions import (
+    CompactionJob,
+    CompactionPlan,
+    SummaryResolver,
+    cut,
+    oversized,
+    run_starts,
+    summarised,
+)
 from loom_ia.testing import RunJournal, tool_call_message
 
 SESSION = SessionId("atelier")
@@ -112,6 +124,23 @@ async def filled(store: InMemoryEventStore, turns: int) -> list[Event]:
     return await store.read(DEFAULT_TENANT, SESSION)
 
 
+async def appended(store: InMemoryEventStore, journal: RunJournal) -> None:
+    last = await store.last_seq(DEFAULT_TENANT, SESSION)
+    await store.append(journal.take(), expected_seq=last)
+
+
+async def failed_runs(store: InMemoryEventStore) -> None:
+    """Après les tours finis : un run échoué, un run annulé, puis un run encore en cours."""
+    await appended(store, RunJournal(session_id=SESSION).start("Panne ?").fail("model.x", "panne"))
+    stopped = RunJournal(session_id=SESSION).start("Annulé ?")
+    drafts = stopped.take()
+    await store.append(
+        [*drafts, stopped.scope.draft(RunCancelled())],
+        expected_seq=await store.last_seq(DEFAULT_TENANT, SESSION),
+    )
+    await appended(store, RunJournal(session_id=SESSION).start("En cours ?"))
+
+
 # --- Repères et fidélité ------------------------------------------------------
 
 
@@ -143,6 +172,15 @@ def test_an_email_must_survive() -> None:
     ]
 
 
+def test_an_email_after_a_long_word_is_found_without_waiting() -> None:
+    """Un long mot sans « @ » ne relance plus la lecture à chacune de ses lettres."""
+    start = time.perf_counter()
+    found = markers("a" * 40_000 + " écrire à a.martin@exemple.fr")
+
+    assert found == {"a.martin@exemple.fr"}
+    assert time.perf_counter() - start < 3
+
+
 # --- Segment et coupe ---------------------------------------------------------
 
 
@@ -157,6 +195,35 @@ async def test_the_cut_falls_on_a_run_boundary() -> None:
     assert cut(events, keep_last=0) == events[-1].seq
     # Moins de tours que demandé : rien à résumer.
     assert cut(events, keep_last=5) == 0
+
+
+async def test_only_completed_runs_are_turns_for_keep_last() -> None:
+    """Un run échoué, annulé ou en cours n'est pas un tour : ``keep_last`` garde les vrais derniers.
+
+    L'historique n'a que les runs ``completed`` ; en compter d'autres résumait
+    les derniers tours utiles, gardés par des runs vides.
+    """
+    store = InMemoryEventStore()
+    await filled(store, 3)
+    await failed_runs(store)
+    events = await store.read(DEFAULT_TENANT, SESSION)
+    started = [e.seq for e in events if e.type == "run.started"]
+
+    assert len(started) == 6
+    assert run_starts(events) == started[:3]
+    # Deux tours gardés : les deux derniers qui ont fini, pas les runs qui les suivent.
+    up_to = cut(events, keep_last=2)
+    assert up_to == started[1] - 1
+    assert [m.text for m in history([e for e in events if e.seq <= up_to]) if m.role == "user"] == [
+        f"{DEVIS} (0)"
+    ]
+    # Trois tours finis seulement : rien à résumer avec trois à garder.
+    assert cut(events, keep_last=3) == 0
+    scope = talked(SESSION, "x", "y").scope
+    marker = scope.draft(SessionCompacted(up_to_seq=up_to, summary="RESUME"))
+    await store.append([marker], expected_seq=events[-1].seq)
+    kept = history(await store.read(DEFAULT_TENANT, SESSION))
+    assert [m.text for m in kept if m.role == "user"][1:] == [f"{DEVIS} (1)", f"{DEVIS} (2)"]
 
 
 async def test_nothing_is_summarised_twice() -> None:
@@ -549,6 +616,103 @@ def test_a_session_that_cannot_be_summarised_is_trimmed(
     assert isinstance(payload, SessionTrimmed)
     assert payload.dropped > 0
     assert trimmed[0].status == "warning"
+
+
+def safety_net(
+    store: InMemoryEventStore, resolve: SummaryResolver, *, keep_last: int = 1
+) -> CompactionJob:
+    plan = CompactionPlan(
+        agent=COMPACTION_AGENT, over_tokens=40, hard_tokens=60, keep_last=keep_last
+    )
+    return CompactionJob(resolve, store, SessionWriters(), plan)
+
+
+def broken(failure: BaseException) -> SummaryResolver:
+    """Un agent de résumé qui ne se monte pas : clé absente, config, panne."""
+
+    def resolve(agent: str, tenant_id: TenantId) -> RunContext:
+        raise failure
+
+    return resolve
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("panne"), ConfigError("clé absente")])
+async def test_ensure_fits_trims_whatever_makes_the_summary_fail(
+    failure: Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Le résumé lève : le filet journalise (sans contenu) et retire les vieux tours (revue)."""
+    store = InMemoryEventStore()
+    await filled(store, 3)
+
+    with caplog.at_level(logging.WARNING, logger="loom_ia.sessions.compaction"):
+        await safety_net(store, broken(failure)).ensure_fits(DEFAULT_TENANT, SESSION)
+
+    events = await store.read(DEFAULT_TENANT, SESSION)
+    assert [e.type for e in events].count("session.trimmed") == 1
+    [record] = [r for r in caplog.records if "résumé de sécurité impossible" in r.getMessage()]
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is not None and record.exc_info[1] is failure
+    assert str(SESSION) in record.getMessage() and "D-2026-042" not in record.getMessage()
+    assert len([m for m in history(events) if m.role == "user"]) < 3
+
+
+async def test_ensure_fits_lets_a_cancellation_through() -> None:
+    """Une annulation n'est pas une panne du résumé : elle remonte, rien n'est coupé."""
+    store = InMemoryEventStore()
+    await filled(store, 3)
+
+    with pytest.raises(asyncio.CancelledError):
+        await safety_net(store, broken(asyncio.CancelledError())).ensure_fits(
+            DEFAULT_TENANT, SESSION
+        )
+
+    events = await store.read(DEFAULT_TENANT, SESSION)
+    assert "session.trimmed" not in [e.type for e in events]
+
+
+async def test_the_trim_keeps_the_last_turn_that_completed() -> None:
+    """Rien ne tient : le dernier tour seul reste, et c'est un tour fini, pas un run échoué."""
+    store = InMemoryEventStore()
+    await filled(store, 2)
+    await appended(store, RunJournal(session_id=SESSION).start("Panne ?").fail("model.x", "panne"))
+    # Plus de tours que de quoi résumer (keep_last) : le résumé n'est pas tenté.
+    job = safety_net(store, broken(RuntimeError("jamais appelé")), keep_last=5)
+
+    await job.ensure_fits(DEFAULT_TENANT, SESSION)
+
+    kept = history(await store.read(DEFAULT_TENANT, SESSION))
+    assert [m.text for m in kept if m.role == "user"] == [f"{DEVIS} (1)"]
+
+
+def test_a_missing_summary_key_does_not_fail_the_run(
+    conversation: ConfigFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """La clé du modèle de résumé manque : le run de l'utilisateur démarre quand même (revue)."""
+    monkeypatch.delenv("CLE_RESUME_ABSENTE", raising=False)
+    path = conversation(compaction={"over_tokens": 40, "hard_tokens": 60, "keep_last": 1})
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for model in config["models"]:
+        if model["id"] == "RESUME":
+            model.update(sdk="anthropic", api_key_env="CLE_RESUME_ABSENTE")
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    async def go() -> tuple[RunStatus, list[Event]]:
+        await written(tmp_path, 2)
+        async with Loom.from_config(path) as loom:
+            with caplog.at_level(logging.WARNING, logger="loom_ia.sessions.compaction"):
+                result = await loom.run("demo", DEVIS, session_id=SESSION)
+            return result.status, await loom.export_session(SESSION)
+
+    status, events = asyncio.run(go())
+    [record] = [r for r in caplog.records if "résumé de sécurité impossible" in r.getMessage()]
+
+    assert status == RunStatus.COMPLETED
+    assert [e.type for e in events].count("session.trimmed") == 1
+    assert record.exc_info is not None and isinstance(record.exc_info[1], ModelConfigError)
+    assert "D-2026-042" not in record.getMessage()
 
 
 # --- Configuration ------------------------------------------------------------

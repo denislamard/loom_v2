@@ -11,6 +11,7 @@ import importlib
 import json
 import os
 import shutil
+import signal
 import stat
 import sys
 import tempfile
@@ -72,6 +73,25 @@ def recopie(nom):
     with open(os.path.join(os.environ["CODE_DIR"], nom), "rb") as source:
         with open(os.path.join(os.environ["OUT_DIR"], nom), "wb") as copie:
             copie.write(source.read())
+"""
+
+# Un job qui laisse derrière lui un descendant gardant stdout et stderr (dans le groupe du
+# job, ou, avec ``apart``, dans le sien : il a quitté le groupe), et un résultat de taille
+# choisie.
+DESCENDANTS = b"""import subprocess, sys
+
+
+def leaves(pidfile, apart=False):
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(600)"], start_new_session=apart
+    )
+    with open(pidfile, "w") as f:
+        f.write(str(child.pid))
+    return child.pid
+
+
+def big(n):
+    return "x" * n
 """
 
 
@@ -676,3 +696,144 @@ async def test_a_put_refuses_a_folder_replaced_by_a_link(
     assert caught.value.kind == "bad_path"
     assert caught.value.detail["reason"] == "symlink"
     assert list(outside.iterdir()) == []
+
+
+# ---------------------------------------------------------------------- #
+# La fin d'un job : ses descendants, ses tuyaux, son result.json
+# ---------------------------------------------------------------------- #
+
+
+def _alive(pid: int) -> bool:
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[0]
+    except OSError:
+        return False
+    return state != "Z"
+
+
+async def _gone(pid: int, wait: float) -> None:
+    deadline = time.monotonic() + wait
+    while _alive(pid):
+        assert time.monotonic() < deadline, f"le processus {pid} vit encore"
+        await asyncio.sleep(0.02)
+
+
+def _kill(pidfile: Path) -> None:
+    """Ne laisse aucun descendant en vie, même si l'essai a échoué."""
+    if pidfile.exists() and _alive(pid := int(pidfile.read_text())):
+        os.kill(pid, signal.SIGKILL)
+
+
+async def test_the_group_of_a_job_ends_with_it_and_holds_nothing_back(
+    execd: Path, tmp_path: Path
+) -> None:
+    """Un descendant du job qui garde ses tuyaux est tué à sa fin : la réponse ne l'attend pas."""
+    pidfile = tmp_path / "pid"
+    try:
+        async with await _open(execd) as session:
+            await session.put_code("desc.py", DESCENDANTS)
+            done = await session.exec("desc:leaves", args={"pidfile": str(pidfile)}, wait=10)
+            assert done.ok, done.error
+            await _gone(int(pidfile.read_text()), wait=2)
+    finally:
+        _kill(pidfile)
+
+
+async def test_a_descendant_out_of_the_group_cannot_hold_the_reply_or_the_place(
+    execd: Path, tmp_path: Path
+) -> None:
+    """Sorti du groupe, il garde les tuyaux : la lecture s'arrête après un court délai, et la
+    place d'exécution est rendue au job suivant."""
+    pidfile = tmp_path / "pid"
+    try:
+        async with await _open(execd) as session, await _open(execd) as other:
+            await session.put_code("desc.py", DESCENDANTS)
+            await other.put_code("essai.py", SCRIPT)
+            done = await session.exec(
+                "desc:leaves", args={"pidfile": str(pidfile), "apart": True}, wait=10
+            )
+            assert done.ok, done.error
+            assert done.stdout_truncated and done.stderr_truncated
+            assert (await other.exec("essai:principal", args={"n": 2}, wait=5)).ok
+    finally:
+        _kill(pidfile)
+
+
+async def test_a_result_over_its_bound_is_refused_and_the_session_serves_on(execd: Path) -> None:
+    """Un result.json trop gros n'est pas lu en entier : ``limit_exceeded``, session intacte."""
+    async with await _open(execd) as session:
+        await session.put_code("desc.py", DESCENDANTS)
+        done = await session.exec("desc:big", args={"n": 700_000})
+        assert not done.ok
+        assert done.error is not None
+        assert done.error.kind == "limit_exceeded"
+        detail = done.error.detail
+        assert detail["limit"] == "result_bytes"
+        value, ceiling = detail["value"], detail["ceiling"]
+        assert isinstance(value, int) and isinstance(ceiling, int)
+        assert ceiling < 700_000 < value
+        assert ceiling < MAX_HEADER  # la réponse tient dans une trame
+        assert (await session.exec("desc:big", args={"n": 1_000})).ok
+
+
+def test_result_json_is_read_up_to_its_bound_and_not_beyond(
+    service: ModuleType, tmp_path: Path
+) -> None:
+    """Au plafond il passe ; au-delà, même énorme et creux, il est refusé sans être lu en entier."""
+    session = _guest_session(service, tmp_path / "jobs")
+    session.setup()
+    path: Path = session._result_path
+    limit: int = service.limits_mod.RESULT_LIMIT
+
+    head = b'{"ok": true, "result": "'
+    path.write_bytes(head + b"x" * (limit - len(head) - 2) + b'"}')
+    assert path.stat().st_size == limit
+    assert session._read_result(0)["ok"] is True
+
+    path.write_bytes(head + b"x" * (limit - len(head) - 1) + b'"}')
+    with pytest.raises(service.ExecdError) as caught:
+        session._read_result(0)
+    assert caught.value.kind == "limit_exceeded"
+    assert caught.value.detail == {"limit": "result_bytes", "value": limit + 1, "ceiling": limit}
+
+    with path.open("wb") as handle:
+        handle.truncate(1 << 30)  # 1 Gio, creux : lu en entier, il n'aurait rien d'un JSON
+    with pytest.raises(service.ExecdError) as caught:
+        session._read_result(0)
+    assert caught.value.detail["value"] == 1 << 30
+
+
+def test_a_result_json_that_is_not_text_is_an_unusable_result(
+    service: ModuleType, tmp_path: Path
+) -> None:
+    """Des octets qui ne sont pas de l'UTF-8 donnent « pas de résultat », pas une erreur interne."""
+    session = _guest_session(service, tmp_path / "jobs")
+    session.setup()
+    session._result_path.write_bytes(b'{"ok": true, "result": "\xff"}')
+    assert session._read_result(0) is None
+
+
+class _Stuck:
+    """Un flux dont le tuyau reste ouvert : rend ses blocs, puis ne rend plus rien."""
+
+    def __init__(self, *blocks: bytes) -> None:
+        self._blocks = list(blocks)
+        self.waiting = asyncio.Event()
+
+    async def read(self, n: int) -> bytes:
+        if self._blocks:
+            return self._blocks.pop(0)
+        self.waiting.set()
+        await asyncio.Event().wait()
+        return b""
+
+
+async def test_a_drain_can_be_abandoned_and_keeps_what_it_read(service: ModuleType) -> None:
+    """Abandonnée, la lecture rend ce qu'elle a lu, dit tronqué, au lieu d'attendre un EOF."""
+    stream = _Stuck(b"debut ", b"suite")
+    abandon = asyncio.Event()
+    draining = asyncio.ensure_future(service.drain_bounded(stream, 1024, abandon))
+    await stream.waiting.wait()
+    assert not draining.done()
+    abandon.set()
+    assert await asyncio.wait_for(draining, 5) == ("debut suite", True)

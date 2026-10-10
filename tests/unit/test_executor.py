@@ -11,6 +11,7 @@ from jsonschema.exceptions import SchemaError
 from pydantic import JsonValue
 
 from loom_ia.adapters.artifacts import InMemoryArtifactStore
+from loom_ia.core import bounded_regex
 from loom_ia.core.events import (
     ApprovalGranted,
     ApprovalRequested,
@@ -198,6 +199,36 @@ async def test_rejected_calls_are_not_started() -> None:
         "- x : 'deux' is not of type 'integer'"
     )
     assert all(isinstance(e, ToolCompleted) and e.latency_ms == 0 for e in events)
+
+
+async def test_a_schema_pattern_that_does_not_finish_refuses_the_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Le motif d'un schéma ne gèle pas l'hôte : l'appel est refusé, l'outil n'est pas lancé.
+
+    Le schéma d'un outil forgé est écrit par le modèle, et ses arguments aussi.
+    """
+    monkeypatch.setattr(bounded_regex, "REGEX_TIMEOUT", 0.2)
+    schema: dict[str, JsonValue] = {
+        "type": "object",
+        "properties": {"s": {"type": "string", "pattern": "^(a|aa)+$"}},
+        "required": ["s"],
+    }
+    lent = ToolSpec.model_validate(
+        {"name": "lent", "description": "lent", "kind": "python", "input_schema": schema}
+    )
+    target = RecordingTool(lent)
+    executor = ToolExecutor([target])
+    events = await collect(
+        executor, awaiting(call("c1", "lent", s="a" * 64 + "!"), call("c2", "lent", s="aaa"))
+    )
+    outputs = completed(events)
+    assert outputs["c1"].is_error
+    assert outputs["c1"].as_text.startswith("Arguments non conformes au schéma de l'outil :")
+    assert "motif trop coûteux" in outputs["c1"].as_text
+    # Un texte que le motif finit par accepter passe, et l'outil est lancé pour lui seul.
+    assert not outputs["c2"].is_error
+    assert [arguments for arguments, _ in target.calls] == [{"s": "aaa"}]
 
 
 async def test_a_value_from_a_reference_is_refused_saying_so() -> None:

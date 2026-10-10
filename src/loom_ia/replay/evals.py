@@ -156,7 +156,14 @@ class ToolExpectation(DomainModel):
 
 
 class Expect(DomainModel):
-    """Les contrôles déterministes d'un cas."""
+    """Les contrôles déterministes d'un cas.
+
+    Sans ``status``, le run doit finir ``completed`` : un run échoué, annulé ou
+    en pause fait tomber le cas, même si ses autres contrôles tiennent (un
+    ``not_contains`` ou un ``not_called`` tiennent d'un run mort). Avec
+    ``status``, ce contrôle seul décide du statut : ``status: failed`` attend
+    l'échec.
+    """
 
     status: RunStatus | None = None
     contains: tuple[str, ...] = ()
@@ -538,6 +545,10 @@ def check(expect: Expect, outcome: Outcome) -> list[CheckResult]:
         same = outcome.status == expect.status
         results.append(
             CheckResult(f"statut {expect.status.value}", same, "" if same else _status(outcome))
+        )
+    elif outcome.status != RunStatus.COMPLETED:
+        results.append(
+            CheckResult(f"statut {RunStatus.COMPLETED.value} (par défaut)", False, _status(outcome))
         )
     text = outcome.text
     for wanted in expect.contains:

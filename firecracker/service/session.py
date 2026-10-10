@@ -58,6 +58,12 @@ MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 MAX_PATH_LEN = 1024
 MAX_COMPONENT_LEN = 255
 
+# Fin d'un job (secondes). Une fois le groupe tue, les tuyaux stdout/stderr se
+# ferment tout de suite : PIPE_GRACE ne sert qu'a un descendant sorti du groupe
+# (setsid) qui les tient encore. EXIT_POLL : voir _exited.
+PIPE_GRACE = 2.0
+EXIT_POLL = 0.02
+
 
 # --------------------------------------------------------------------------- #
 # Validation des chemins
@@ -110,7 +116,25 @@ def safe_join(root: Path, rel: str) -> Path:
 # --------------------------------------------------------------------------- #
 # Capture bornee
 # --------------------------------------------------------------------------- #
-async def drain_bounded(stream: asyncio.StreamReader, cap: int) -> tuple[str, bool]:
+async def _read_block(stream: asyncio.StreamReader, abandon: asyncio.Event | None) -> bytes | None:
+    """Le bloc suivant du flux ; None si `abandon` est pose avant qu'il n'arrive."""
+    if abandon is None:
+        return await stream.read(65536)
+    if abandon.is_set():
+        return None
+    reading = asyncio.ensure_future(stream.read(65536))
+    leaving = asyncio.ensure_future(abandon.wait())
+    try:
+        await asyncio.wait({reading, leaving}, return_when=asyncio.FIRST_COMPLETED)
+        return reading.result() if reading.done() else None
+    finally:
+        reading.cancel()
+        leaving.cancel()
+
+
+async def drain_bounded(
+    stream: asyncio.StreamReader, cap: int, abandon: asyncio.Event | None = None
+) -> tuple[str, bool]:
     """Lit un flux jusqu'a EOF en ne conservant que `cap` octets.
 
     Il faut CONTINUER a lire meme au-dela du plafond : arreter remplirait le
@@ -120,14 +144,22 @@ async def drain_bounded(stream: asyncio.StreamReader, cap: int) -> tuple[str, bo
     On garde la TETE et la QUEUE. Sur une sortie tronquee, l'information de
     diagnostic est aux deux extremites : le debut dit ce qui a demarre, la fin
     dit ce qui a casse. Le milieu est du bruit.
+
+    `abandon`, une fois pose, arrete la lecture la ou elle en est et le flux est
+    dit tronque : un descendant sorti du groupe du job peut tenir le tuyau
+    ouvert bien apres lui, et l'EOF n'arriverait jamais.
     """
     head = bytearray()
     tail = bytearray()
     total = 0
     half = cap // 2
+    cut = False
 
     while True:
-        chunk = await stream.read(65536)
+        chunk = await _read_block(stream, abandon)
+        if chunk is None:
+            cut = True
+            break
         if not chunk:
             break
         total += len(chunk)
@@ -142,7 +174,7 @@ async def drain_bounded(stream: asyncio.StreamReader, cap: int) -> tuple[str, bo
 
     if total <= cap:
         data = bytes(head) + bytes(tail)
-        return data.decode("utf-8", "replace"), False
+        return data.decode("utf-8", "replace"), cut
 
     omitted = total - len(head) - len(tail)
     marker = f"\n... [{omitted} octets omis] ...\n".encode()
@@ -173,6 +205,20 @@ def _write_job(job_path: Path, job: dict, result_path: Path) -> None:
         # Pose sur le descripteur, donc independante de l'umask et du chemin.
         os.fchmod(handle.fileno(), 0o644)
     result_path.unlink(missing_ok=True)
+
+
+async def _exited(proc: asyncio.subprocess.Process) -> None:
+    """Rend la main quand le runner est sorti, tuyaux ouverts ou non.
+
+    `proc.wait()` ne convient pas : sous Python 3.12 (celui de la VM), il n'est
+    reveille qu'une fois les tuyaux fermes, donc jamais tant qu'un descendant du
+    job les tient. `returncode`, lui, est pose des la sortie du process, mais
+    asyncio n'offre aucun evenement pour l'attendre : d'ou le sondage.
+    """
+    while True:
+        if proc.returncode is not None:
+            return
+        await asyncio.sleep(EXIT_POLL)
 
 
 # --------------------------------------------------------------------------- #
@@ -254,8 +300,12 @@ class Session:
         runner est lance avec start_new_session, donc son pid est le pgid. Un
         tool qui a forke laisserait sinon un orphelin vivant, qui pourrirait
         une VM reutilisee — et consommerait du CPU sans que rien ne l'explique.
+
+        Le groupe survit au runner : ses descendants restent, et gardent les
+        tuyaux et work/. Le numero de groupe ne peut etre reattribue tant que
+        l'un d'eux vit ; une fois le groupe vide, killpg echoue (ESRCH).
         """
-        if self._proc is None or self._proc.returncode is not None:
+        if self._proc is None:
             return
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             os.killpg(self._proc.pid, signal.SIGKILL)
@@ -612,31 +662,35 @@ class Session:
 
         assert proc.stdout is not None and proc.stderr is not None
         cap = limits_mod.CAPTURE_LIMIT
+        abandon = asyncio.Event()
         pump = asyncio.gather(
-            drain_bounded(proc.stdout, cap),
-            drain_bounded(proc.stderr, cap),
+            drain_bounded(proc.stdout, cap, abandon),
+            drain_bounded(proc.stderr, cap, abandon),
         )
 
         timed_out = False
         try:
-            # wall_ms couvre ce que RLIMIT_CPU ne voit pas : un sleep, une
-            # attente d'I/O, un deadlock. Les deux limites sont necessaires.
-            await asyncio.wait_for(proc.wait(), timeout=lim["wall_ms"] / 1000)
-        except TimeoutError:
-            timed_out = True
+            try:
+                # wall_ms couvre ce que RLIMIT_CPU ne voit pas : un sleep, une
+                # attente d'I/O, un deadlock. Les deux limites sont necessaires.
+                # Il court depuis le lancement ; ce qui suit la sortie du runner
+                # (mort du groupe, tuyaux) a ses propres delais, courts.
+                left = started + lim["wall_ms"] / 1000 - loop.time()
+                await asyncio.wait_for(_exited(proc), timeout=max(left, 0))
+            except TimeoutError:
+                timed_out = True
+        finally:
+            # Quelle que soit la fin — sortie, delai, annulation (plus personne pour
+            # lire la reponse : la connexion a pris fin) —, le GROUPE entier
+            # s'arrete, avant toute lecture des tuyaux et AVANT que la place
+            # d'execution soit rendue : un job tue ne court jamais en meme temps
+            # que le suivant. Un descendant qui a survecu au runner tiendrait
+            # sinon les tuyaux, et la lecture ne finirait jamais.
             self._kill_group()
             with contextlib.suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=5)
-        except asyncio.CancelledError:
-            # Plus personne pour lire la reponse (la connexion a pris fin) :
-            # le job s'arrete ici, AVANT que sa place d'execution soit rendue
-            # — un job tue ne court jamais en meme temps que le suivant.
-            self._kill_group()
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(pump, timeout=5)
-            raise
+                await asyncio.wait_for(_exited(proc), timeout=5)
+            await asyncio.wait([pump], timeout=PIPE_GRACE)
+            abandon.set()
 
         (stdout, out_trunc), (stderr, err_trunc) = await pump
         duration_ms = int((loop.time() - started) * 1000)
@@ -651,7 +705,12 @@ class Session:
                 elapsed_ms=duration_ms,
             ).as_payload() | {"stdout": stdout, "stderr": stderr}
 
-        payload = await asyncio.to_thread(self._read_result, rc)
+        try:
+            payload = await asyncio.to_thread(self._read_result, rc)
+        except ExecdError as exc:
+            merged = exc.as_payload()
+            merged.update(stdout=stdout, stderr=stderr, duration_ms=duration_ms)
+            return merged
         if payload is None:
             # Mort par signal AVANT d'avoir pu ecrire result.json. Le signal
             # designe la limite franchie ; sans cette traduction, toute limite
@@ -718,9 +777,26 @@ class Session:
     def _read_result(self, rc: int | None) -> dict | None:
         if rc != 0:
             return None
+        # Lecture BORNEE : le fichier est ecrit par le job, et sa taille n'a que
+        # fsize_bytes pour limite.
         try:
-            payload = json.loads(self._result_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            with open(self._result_path, "rb") as handle:
+                raw = handle.read(limits_mod.RESULT_LIMIT + 1)
+                size = os.fstat(handle.fileno()).st_size
+        except OSError:
+            return None
+        if len(raw) > limits_mod.RESULT_LIMIT:
+            raise ExecdError(
+                "limit_exceeded",
+                f"resultat trop gros : result.json fait {size} octets"
+                f" (plafond {limits_mod.RESULT_LIMIT})",
+                limit="result_bytes",
+                value=size,
+                ceiling=limits_mod.RESULT_LIMIT,
+            )
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
             return None
         return payload if isinstance(payload, dict) and "ok" in payload else None
 

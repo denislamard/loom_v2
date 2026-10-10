@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -260,6 +261,37 @@ async def test_exhausted_repairs_follow_on_failure(
         assert closing.payload.unverified is unverified
         assert closing.status == ("warning" if unverified else "ok")
         assert ("unverified" in closing.facets) is unverified
+
+
+async def test_a_forbidden_text_stays_out_of_the_diagnostics_and_the_logs(
+    store: EventStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Le texte du modèle est au journal, comme message : rien ne le redouble, ni dans les
+    raisons, ni dans le retour au modèle, ni dans l'erreur de fin de run, ni dans les logs INFO."""
+    secret = "sk-ABCDEF1234567890XYZ"
+    output = OutputContract.model_validate(
+        {"must_not_match": r"sk-[A-Za-z0-9]{10,}", "repair": {"max_attempts": 1}}
+    )
+    model = scripted(Message.assistant(f"La clé : {secret}"), Message.assistant(f"Encore {secret}"))
+    with caplog.at_level(logging.INFO):
+        state = await run(context(store, model, output=output))
+
+    assert state.status is RunStatus.FAILED
+    repair = model.requests[1].messages[-1].text
+    assert "motif interdit présent" in repair and secret not in repair
+    events = await journal(store, state)
+    said = [e for e in events if isinstance(e.payload, GuardChecked | PolicyDecided | RunFailed)]
+    assert [type(e.payload).__name__ for e in said].count("RunFailed") == 1
+    assert len(said) == 5
+    for event in said:
+        assert secret not in event.model_dump_json()
+    failure = events[-1].payload
+    assert isinstance(failure, RunFailed) and "motif interdit présent" in failure.error
+    lines = [r.getMessage() for r in caplog.records if r.name == "loom_ia.engine.hooks"]
+    assert lines == [
+        "Politique loom.contract (on_output) : retry",
+        "Politique loom.contract (on_output) : fail",
+    ]
 
 
 # --- Rôles et outils ----------------------------------------------------------------------

@@ -40,6 +40,7 @@ from loom_ia.adapters.firecracker.forge import (
 from loom_ia.adapters.firecracker.session import ExecdError, Execution, Hello, Output, Session
 from loom_ia.adapters.firecracker.vm import VmError
 from loom_ia.config import load_config
+from loom_ia.core import bounded_regex
 from loom_ia.core.events import ToolCompleted
 from loom_ia.core.model import RunId, RunStatus, SessionId, TenantId
 from loom_ia.core.ports import SourceContext, Tool, ToolContext, ToolError
@@ -229,6 +230,51 @@ def test_the_host_refuses_what_it_can_see_without_running(
 def test_signatures_that_fit_the_schema_pass(code: str) -> None:
     pairs = check_forged("carres", SCHEMA, code, EXAMPLES)
     assert pairs == [({"n": 3}, 14)]
+
+
+# Un motif qui ne finit pas sur ce texte (``regex`` y met plus de 2 s, ``re`` plus d'une).
+SLOW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"s": {"type": "string", "pattern": "^(a|aa)+$"}},
+    "required": ["s"],
+}
+SLOW_CODE = "def lent(s):\n    return len(s)\n"
+SLOW_TEXT = "a" * 34 + "!"
+
+
+@pytest.fixture
+def short_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bounded_regex, "REGEX_TIMEOUT", 0.2)
+
+
+@pytest.mark.usefixtures("short_timeout")
+def test_a_pattern_that_does_not_finish_refuses_the_example() -> None:
+    """Le schéma est celui du modèle : son motif ne gèle pas l'hôte, il refuse l'outil."""
+    examples: list[Any] = [{"arguments": {"s": SLOW_TEXT}, "expected": 35}]
+    with pytest.raises(
+        ToolError, match=r"exemple 1 : input_schema ne peut pas être appliqué — motif"
+    ):
+        check_forged("lent", SLOW_SCHEMA, SLOW_CODE, examples)
+
+
+def test_a_schema_that_redeclares_its_dialect_is_refused() -> None:
+    """``jsonschema`` y reprendrait sa classe d'origine, sans délai sur les motifs."""
+    inner = {"$schema": "https://json-schema.org/draft/2020-12/schema", "pattern": "^(a|aa)+$"}
+    schema: dict[str, Any] = {"type": "object", "properties": {"s": inner}, "required": ["s"]}
+    examples: list[Any] = [{"arguments": {"s": "a"}, "expected": 1}]
+    with pytest.raises(ToolError, match=r"pas un schéma JSON valide.*qu'à la racine"):
+        check_forged("lent", schema, SLOW_CODE, examples)
+
+
+def test_a_pattern_of_the_regex_engine_is_accepted() -> None:
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"s": {"pattern": r"^\p{Lu}+$"}},
+        "required": ["s"],
+    }
+    examples: list[Any] = [{"arguments": {"s": "ÉCOLE"}, "expected": 5}]
+    pairs = check_forged("lent", schema, SLOW_CODE, examples)
+    assert pairs == [({"s": "ÉCOLE"}, 5)]
 
 
 def test_json_values_compare_as_json() -> None:
@@ -538,6 +584,27 @@ async def test_call_reads_the_catalog_at_call_time(tmp_path: Path) -> None:
     assert not out.is_error
     assert out.data == {"n": 4}
     assert out.as_text == '{"n": 4}'
+
+
+@pytest.mark.usefixtures("short_timeout")
+async def test_call_refuses_arguments_whose_pattern_does_not_finish(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    source = make_source(tmp_path, runner)
+    slow = Forged(
+        name="lent",
+        description="Longueur d'un mot.",
+        input_schema=SLOW_SCHEMA,
+        code=SLOW_CODE,
+        examples=({"arguments": {"s": "a"}, "expected": 1},),
+        forged_by="r1",
+        forged_at="2026-10-07T12:00:00+00:00",
+    )
+    Catalog(tmp_path / "catalogue").save("default", slow)
+    async with source.open(source_context()) as tools:
+        call = by_name(tools)[CALL]
+        with pytest.raises(ToolError, match="arguments refusés par le schéma de lent : motif trop"):
+            await call.invoke({"name": "lent", "arguments": {"s": SLOW_TEXT}}, tool_context())
+    assert runner.opened == []
 
 
 async def test_one_session_per_run_and_the_code_sent_once(tmp_path: Path) -> None:

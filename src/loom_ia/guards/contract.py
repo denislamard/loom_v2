@@ -24,6 +24,13 @@ La normalisation est déterministe et ne coûte aucun appel : retrait d'un
 bloc de code qui entoure la sortie, extraction du JSON quand un schéma est
 attendu (bloc de code, puis première accolade ou crochet jusqu'au dernier),
 espaces de début et de fin retirés.
+
+Les motifs (``must_match``, ``must_not_match``, ``pattern`` d'un schéma) ont un
+délai : un motif qui ne finit pas (``core.bounded_regex``) est un problème du
+contrôle, jamais un « absent » ni un « conforme ». Le problème d'un motif
+interdit dit le motif, la position et la longueur de ce qui a été trouvé, pas
+le texte lui-même : le diagnostic part au journal, dans l'erreur de fin de run
+et au modèle, et un texte interdit (une clé, un secret) n'a pas à y être recopié.
 """
 
 import json
@@ -31,10 +38,9 @@ import re
 from dataclasses import dataclass
 from typing import Final, cast
 
-from jsonschema import Draft202012Validator
-from jsonschema.validators import validator_for
 from pydantic import JsonValue
 
+from loom_ia.core.bounded_regex import RegexTimeout, bounded_validator, search
 from loom_ia.core.model import (
     CONTINUE,
     AfterTool,
@@ -59,7 +65,9 @@ from loom_ia.core.model import (
 CONTRACT_POLICY: Final = "loom.contract"
 GUARD: Final = "contract"
 
-_WHOLE_FENCE: Final = re.compile(r"```[\w-]*[ \t]*\n(.*?)\n?[ \t]*```", re.DOTALL)
+# Les espaces et le saut de ligne avant la fermeture restent dans le groupe, que
+# les appelants strip() : les écarter dans le motif le rendait quadratique.
+_WHOLE_FENCE: Final = re.compile(r"```[\w-]*[ \t]*\n(.*?)```", re.DOTALL)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,17 +107,32 @@ def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checke
                     f"colonne {exc.colno})"
                 )
         if parsed is not None or (data is None and not problems):
-            validator = validator_for(schema, default=Draft202012Validator)(schema)
-            errors = sorted(validator.iter_errors(parsed), key=lambda e: list(e.absolute_path))
+            try:
+                validator = bounded_validator(schema)
+                errors = sorted(validator.iter_errors(parsed), key=lambda e: list(e.absolute_path))
+            except RegexTimeout as exc:
+                errors = []
+                problems.append(f"schéma : {exc}")
             for error in errors:
                 location = ".".join(str(part) for part in error.absolute_path) or "(racine)"
                 problems.append(f"{location} : {error.message}")
-    if contract.must_match is not None and not re.search(contract.must_match, kept):
-        problems.append(f"motif attendu absent : {contract.must_match}")
+    if contract.must_match is not None:
+        try:
+            if search(contract.must_match, kept) is None:
+                problems.append(f"motif attendu absent : {contract.must_match}")
+        except RegexTimeout as exc:
+            problems.append(f"must_match : {exc}")
     if contract.must_not_match is not None:
-        found = re.search(contract.must_not_match, kept)
-        if found is not None:
-            problems.append(f"motif interdit présent : {found.group(0)!r}")
+        try:
+            found = search(contract.must_not_match, kept)
+        except RegexTimeout as exc:
+            problems.append(f"must_not_match : {exc}")
+        else:
+            if found is not None:
+                problems.append(
+                    f"motif interdit présent : {contract.must_not_match} "
+                    f"(position {found.start()}, longueur {len(found.group())})"
+                )
     if contract.max_chars is not None and len(kept) > contract.max_chars:
         problems.append(f"{len(kept)} caractères, au-delà de {contract.max_chars}")
     return Checked(

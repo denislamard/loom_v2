@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Dépendances récentes
+
+# Chaque semaine, la suite complète avec les versions les plus récentes que pyproject.toml
+# permet, et non celles de uv.lock : elle prévient quand une dépendance publiée depuis le
+# dernier verrou casse quelque chose, avant que le prochain `uv lock --upgrade` ne le fasse.
+# Un fichier à part, pour que ce `schedule` ne relance pas les jobs de ci.yml chaque semaine
+# et que la publication (publish.yml appelle ci.yml) n'attende jamais ce job.
+# Lancement manuel possible (Actions > Dépendances récentes > Run workflow).
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.11.14"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tests-recents:
+    name: Tests (dépendances les plus récentes, avec les services)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    # Même ossature que tests-complets de ci.yml (à garder alignée).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.12
+        # Un utilisateur à soi, et non `guest` : RabbitMQ ne laisse `guest`
+        # entrer que depuis la boucle locale, et un port publié n'en est pas.
+        env:
+          RABBITMQ_DEFAULT_USER: loom
+          RABBITMQ_DEFAULT_PASS: loom
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 15
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      LOOM_TEST_POSTGRES: postgresql://loom:loom@127.0.0.1:5432/loom
+      LOOM_TEST_RABBITMQ: amqp://loom:loom@127.0.0.1:5672/
+      LOOM_TEST_REDIS: redis://127.0.0.1:6379/1
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+
+      - name: Rôle Postgres ordinaire, propriétaire de sa base
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE loom LOGIN PASSWORD 'loom' NOSUPERUSER CREATEROLE"
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE loom OWNER loom"
+
+      # `uv pip` et non `uv sync --upgrade`, qui réécrirait uv.lock : ici, aucun verrou n'est
+      # lu ni écrit, la résolution part de pyproject.toml seul.
+      - name: Installer le projet (tous les extras, versions les plus récentes permises)
+        run: |
+          uv venv --python 3.14
+          uv pip install --upgrade -r pyproject.toml --all-extras --group dev --group types
+          uv pip install --no-deps -e .
+
+      - name: Versions installées
+        run: uv pip list
+
+      - name: Tests
+        run: .venv/bin/python -m pytest --require-services

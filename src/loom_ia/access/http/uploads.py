@@ -129,7 +129,8 @@ async def _form(request: Request, policy: AttachmentPolicy) -> AsyncGenerator[Fo
     Starlette arrête la lecture au fichier de trop, dès l'en-tête de sa partie et
     avant d'en écrire un octet ; c'est alors le refus du moteur (422, son message)
     qui part. Un formulaire que l'analyseur ne sait pas lire est une demande mal
-    formée (400), non un conflit.
+    formée (400), non un conflit, que l'analyseur lève son erreur ou que Starlette
+    (1.7 et après) la convertisse lui-même en 400.
     """
     try:
         async with request.form(max_files=policy.max_files, max_fields=MAX_FIELDS) as form:
@@ -137,10 +138,16 @@ async def _form(request: Request, policy: AttachmentPolicy) -> AsyncGenerator[Fo
     except FormParserError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Formulaire illisible : {exc}") from exc
     except StarletteHTTPException as exc:
-        if exc.status_code == status.HTTP_400_BAD_REQUEST and str(exc.detail).startswith(
-            "Too many files"
-        ):
+        detail = str(exc.detail)
+        if exc.status_code == status.HTTP_400_BAD_REQUEST and detail.startswith("Too many files"):
             policy.check_count(policy.max_files + 1)
+        if exc.status_code == status.HTTP_400_BAD_REQUEST and detail.startswith(
+            "Invalid multipart"
+        ):
+            # Starlette 1.7 convertit lui-même l'erreur de l'analyseur : même refus qu'avant.
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"Formulaire illisible : {detail}"
+            ) from exc
         raise
 
 

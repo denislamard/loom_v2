@@ -245,6 +245,7 @@ class Bench:
         ``called`` (avec une partie des arguments que l'outil a reçus),
         ``not_called``. Le message dit chaque contrôle tombé et ce qu'il a
         trouvé à la place, et le texte du run quand un contrôle de texte tombe.
+        Sans ``status``, le run doit finir ``completed``, comme pour un cas.
         """
         wanted = Expect.model_validate(expect)
         if wanted.count == 0:
