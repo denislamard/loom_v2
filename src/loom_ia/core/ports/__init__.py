@@ -15,6 +15,7 @@ from loom_ia.core.ports.event_store import (
     JournalCorrupted,
     SequenceConflict,
     SessionRecord,
+    UnusableId,
     journal_key,
 )
 from loom_ia.core.ports.exchanges import ExchangeLog, RawExchange, exchange_log, recording
@@ -86,6 +87,7 @@ __all__ = [
     "ToolSource",
     "ToolSourceFactory",
     "UnknownEffect",
+    "UnusableId",
     "UsageCounter",
     "complete",
     "exchange_log",

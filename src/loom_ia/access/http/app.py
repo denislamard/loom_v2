@@ -13,7 +13,10 @@ Sous ``/v1``, les agents et leurs runs :
 - ``GET  /runs/{run_id}/events`` : le journal du run en SSE — ce qui est déjà
   écrit, puis la suite en direct s'il tourne encore. Les événements de ses
   sous-runs y sont mêlés, sauf avec ``?subruns=false`` ; le flux se ferme
-  sur la clôture du run demandé ;
+  sur la clôture du run demandé (fin, échec ou annulation). Comme pour la
+  trace, le droit de lire vaut pour chaque agent de l'arbre : une clé qui n'a
+  pas l'un d'eux reçoit 403 à l'ouverture, ou, si le sous-agent paraît en
+  cours de route, un dernier message ``error`` puis la fermeture du flux ;
 - ``POST /runs/{run_id}/approve`` et ``/reject`` : trancher une approbation
   (#17), portée ``approve`` ; sans ``call_id``, toutes les demandes en
   attente le sont. L'approbateur écrit au journal est l'identifiant de la
@@ -82,8 +85,9 @@ depuis sa propre page, sans lire ce fichier.
 import json
 import logging
 import math
+import re
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Annotated, Final, cast
 
@@ -133,9 +137,10 @@ from loom_ia.access.http.schemas import (
     Decision,
     RunAccepted,
 )
-from loom_ia.access.http.uploads import RUN_BODY, run_request
+from loom_ia.access.http.uploads import RUN_BODY, BodyLimit, run_request
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.config import LoomConfig
+from loom_ia.config.models import TriggerSpec
 from loom_ia.core.events import (
     EVENTS_LIMIT,
     EVENTS_MAX,
@@ -153,8 +158,9 @@ from loom_ia.core.model import (
     RunId,
     RunStatus,
     SessionId,
+    TenantId,
 )
-from loom_ia.core.ports import SealError, SessionRecord
+from loom_ia.core.ports import SealError, SessionRecord, UnusableId
 from loom_ia.runtime import announce
 from loom_ia.telemetry import Trace
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
@@ -196,8 +202,13 @@ HEADER_SCHEME: Final = APIKeyHeader(
 )
 
 
-def _open_warnings(config: LoomConfig) -> list[str]:
-    """Ce qu'une API sans clé déclarée laisse passer (#39)."""
+def _open_warnings(config: LoomConfig, host: str | None = None) -> list[str]:
+    """Ce qu'une API sans clé déclarée laisse passer (#39).
+
+    ``host`` est l'adresse où l'application est servie quand ce n'est pas celle
+    de la config (``loom serve --host``) : c'est elle qui ouvre l'API, donc
+    elle qui est jugée.
+    """
     if config.security.api_keys:
         return []
     warnings: list[str] = []
@@ -208,9 +219,10 @@ def _open_warnings(config: LoomConfig) -> list[str]:
             f"tout passera par {DEFAULT_TENANT!r}, puisque c'est la clé qui dit au nom de "
             "qui elle agit"
         )
-    if config.server.http.host not in LOCAL_HOSTS:
+    listening = host or config.server.http.host
+    if listening not in LOCAL_HOSTS:
         warnings.append(
-            f"API REST ouverte sur {config.server.http.host} sans clé déclarée : ajouter "
+            f"API REST ouverte sur {listening} sans clé déclarée : ajouter "
             "'security.api_keys' (loom keys create) pour en exiger une"
         )
     return warnings
@@ -231,6 +243,10 @@ async def _payload(request: Request) -> JsonValue:
     except ValueError as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, f"Charge illisible : {exc}"
+        ) from exc
+    except RecursionError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Charge illisible : JSON trop imbriqué"
         ) from exc
 
 
@@ -265,15 +281,19 @@ async def caller(
 type Who = Annotated[Caller, Depends(caller)]
 
 
-def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
+def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> FastAPI:
     """Application ASGI servant les agents d'une instance.
 
     ``own`` confie l'instance à l'application : elle la ferme à l'arrêt du
     serveur. Sans lui, la fermeture reste à l'appelant.
+
+    ``host`` dit où l'application sera servie quand ce n'est pas l'adresse de
+    la config : ``loom serve --host`` la remplace, et c'est celle-là qu'une API
+    sans clé doit justifier. Omis, c'est ``server.http.host``.
     """
     http = loom.config.server.http
     # Profil prod : une API sans clé y est une erreur, pas un avertissement (M4).
-    announce(loom.config, _open_warnings(loom.config))
+    announce(loom.config, _open_warnings(loom.config, host))
 
     # Serveur MCP monté dans la même application (J5.2b) : un seul port, une
     # seule authentification, et la clé donne le client à chaque requête.
@@ -299,6 +319,8 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.loom = loom
+    # Aucun corps n'est lu sans borne : JSON, déclencheurs, MCP, comme les envois de fichiers.
+    app.add_middleware(BodyLimit, limit=http.max_body_bytes)
     # Débit des clés d'API (#39) : une fenêtre glissante par application servie.
     app.state.rates = RateWindow()
     router = APIRouter(prefix=f"{http.base_path}/v1")
@@ -342,6 +364,14 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         # c'est une demande que cette clé n'a pas le droit de faire.
         return JSONResponse({"detail": _message(exc)}, status_code=status.HTTP_403_FORBIDDEN)
 
+    @app.exception_handler(UnusableId)
+    async def _unusable(request: Request, exc: Exception) -> JSONResponse:
+        # Un identifiant que le journal ne peut pas nommer ne désigne aucun journal
+        # et n'en désignera jamais : une demande mal formée, pas une panne.
+        return JSONResponse(
+            {"detail": _message(exc)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+
     @router.get("/agents", tags=["agents"], summary="Agents publiés par l'API")
     async def agents(who: Who) -> list[AgentInfo]:
         require(who, "read")
@@ -365,7 +395,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         name: str, request: Request, response: Response, who: Who
     ) -> RunResult | RunAccepted:
         require(who, "run", name)
-        _published(loom, name)
+        _published(loom, name, who.tenant)
         try:
             body, attachments = await run_request(request, loom.config.execution.attachments)
             if body.judges == "skip":
@@ -397,6 +427,10 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
             )
         except AttachmentError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+        except UnusableId:
+            # Le ``session_id`` ou le ``run_id`` du corps est refusé tel quel (422), non pris
+            # pour un conflit.
+            raise
         except ValueError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
@@ -413,7 +447,8 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         },
     )
     async def hook(name: str, request: Request, response: Response, who: Who) -> Triggered:
-        spec = loom.trigger_spec(name)
+        require(who, "run")
+        spec = _trigger(loom, name, who.tenant)
         # Le déclencheur nomme son agent : c'est sur lui que porte le droit,
         # et la liste `agents` d'une clé borne donc ce qu'elle peut déclencher.
         require(who, "run", spec.agent)
@@ -530,8 +565,11 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         found = await loom.result(run_id, session_id=session_id, tenant_id=who.tenant)
         require(who, "read", found.agent)
         # Relire un run, c'est lire le journal : sans `read_content`, le
-        # statut et les coûts passent, la correspondance non.
-        return found.masked() if who.masks else found
+        # statut et les coûts passent, la correspondance non. Et le rapport ne
+        # nomme que les agents que la clé a le droit de lire : le reste de
+        # l'arbre n'y figure pas, comme il n'est pas dans le flux.
+        shown = found.restricted(who.allows)
+        return shown.masked() if who.masks else shown
 
     @router.get("/runs/{run_id}/events", tags=["runs"], summary="Journal du run en SSE")
     async def events(
@@ -545,8 +583,16 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
         require(who, "read")
         state = await loom.state(run_id, session_id=session_id, tenant_id=who.tenant)
         require(who, "read", state.agent)
-        resumed = request.headers.get("last-event-id")
-        after = int(resumed) if resumed and resumed.isdigit() else after_seq
+        if subruns and who.key is not None and who.key.agents:
+            # Le droit vaut pour chaque agent de l'arbre, comme pour la trace : refuser
+            # le flux entier, et non en cacher une partie — la réponse d'un sous-agent
+            # figure déjà dans l'appel d'outil de son parent. L'arbre se lit en entier,
+            # quel que soit `after_seq` : la décision ne dépend pas d'où l'on reprend.
+            tree = await loom.events(run_id, session_id=session_id, tenant_id=who.tenant)
+            for agent in dict.fromkeys(event.agent for event in tree if event.agent):
+                require(who, "read", agent)
+        resumed = request.headers.get("last-event-id", "")
+        after = int(resumed) if re.fullmatch(r"[0-9]{1,18}", resumed) else after_seq
         followed = loom.follow(
             run_id,
             session_id=session_id,
@@ -554,7 +600,7 @@ def create_app(loom: Loom, *, own: bool = False) -> FastAPI:
             subruns=subruns,
             tenant_id=who.tenant,
         )
-        return EventSourceResponse(_messages(followed, masked=who.masks))
+        return EventSourceResponse(_messages(followed, who))
 
     @router.post(
         "/runs/{run_id}/approve", tags=["runs"], summary="Autorise un appel que le run attend"
@@ -694,11 +740,20 @@ def sse(item: StreamItem, *, masked: bool = False) -> dict[str, str]:
     return {"event": f"chunk.{item.type}", "data": item.model_dump_json()}
 
 
-async def _messages(
-    events: AsyncGenerator[Event], *, masked: bool = False
-) -> AsyncGenerator[dict[str, str]]:
-    async for event in events:
-        yield sse(event, masked=masked)
+async def _messages(events: AsyncGenerator[Event], who: Caller) -> AsyncGenerator[dict[str, str]]:
+    async with aclosing(events):
+        async for event in events:
+            try:
+                if event.agent:
+                    require(who, "read", event.agent)
+            except HTTPException as refused:
+                # Un sous-agent interdit paraît après l'ouverture du flux : le statut
+                # est parti, le refus se dit donc dans le flux, qui s'arrête là. Une
+                # reconnexion recevra le 403, l'arbre étant relu en entier.
+                detail = json.dumps({"detail": refused.detail}, ensure_ascii=False)
+                yield {"event": "error", "data": detail}
+                return
+            yield sse(event, masked=who.masks)
 
 
 def _signature(who: Caller) -> str | None:
@@ -710,15 +765,34 @@ def _signature(who: Caller) -> str | None:
     return who.key.id if who.key is not None else None
 
 
-def _published(loom: Loom, name: str) -> None:
-    """Refuse un agent inconnu ou non publié en REST.
+def _published(loom: Loom, name: str, tenant: TenantId) -> None:
+    """Refuse un agent inconnu, non publié en REST ou fermé au client de la clé.
 
-    Qu'il soit ouvert au client de la clé est une autre question, et elle a
-    une autre réponse : 403, comme pour une clé limitée à certains agents.
+    Les trois ont la même réponse, 404, et la liste des agents ne nomme que
+    ceux de ce client : on n'apprend ni l'existence ni le nom de l'agent d'un
+    autre. Une clé limitée à certains agents, elle, reçoit 403 avant d'arriver
+    ici (``require``), que l'agent existe ou non.
     """
-    published = [spec.name for spec in loom.exposed("rest")]
+    published = [spec.name for spec in loom.exposed("rest", tenant)]
     if name not in published:
         raise UnknownAgent(name, published)
+
+
+def _trigger(loom: Loom, name: str, tenant: TenantId) -> TriggerSpec:
+    """Le déclencheur de ce nom, s'il est ouvert au client ; sinon 404, comme s'il n'existait pas.
+
+    Un déclencheur dont l'agent est fermé au client ne se distingue pas d'un
+    déclencheur inconnu, et la liste ne nomme que ceux de ce client : on
+    n'apprend ni le nom ni l'agent des portes d'un autre. Comme pour
+    ``_published``, une clé limitée à certains agents reçoit 403 ensuite
+    (``require``), puisqu'elle sait déjà que ce déclencheur existe pour son client.
+    """
+    allowed = loom.tenant(tenant)
+    opened = [spec for spec in loom.triggers if allowed.allows(spec.agent)]
+    for spec in opened:
+        if spec.name == name:
+            return spec
+    raise UnknownTrigger(name, [spec.name for spec in opened])
 
 
 def _message(exc: Exception) -> str:

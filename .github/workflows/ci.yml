@@ -14,7 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Même version d'uv qu'en local : uv.lock est vérifié tel quel (--locked).
+  # Version d'uv épinglée, la même que dans publish.yml. L'uv local peut être plus
+  # récent : uv.lock est vérifié tel quel (--locked), il doit rester lisible par celle-ci.
   UV_VERSION: "0.11.14"
 
 defaults:

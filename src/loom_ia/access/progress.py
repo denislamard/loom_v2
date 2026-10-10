@@ -80,6 +80,8 @@ class Progress:
 
     def __init__(self) -> None:
         self._depths: dict[RunId, int] = {}
+        # Appels lancés : un résultat d'erreur sans ``tool.called`` est un appel refusé.
+        self._called: set[tuple[RunId, str]] = set()
 
     def depth(self, event: Event) -> int:
         """Profondeur du run de l'événement (0 pour un run inconnu)."""
@@ -90,6 +92,19 @@ class Progress:
         if isinstance(event.payload, RunStarted):
             self._depths[event.run_id] = event.payload.depth
         depth = self.depth(event)
+        match event.payload:
+            case ToolCalled(call_id=call_id):
+                self._called.add((event.run_id, call_id))
+            case ToolCompleted(call_id=call_id, output=output) if (
+                output.is_error and (event.run_id, call_id) not in self._called
+            ):
+                # Refusé avant de partir (outil inconnu, arguments ou référence
+                # refusés, politique, approbation) : rien n'a été appelé, et le
+                # modèle a reçu ce motif — la ligne le dit aussi.
+                reason = _short(output.as_text) or "erreur"
+                return f"{INDENT * depth}· {event.payload.tool_name} : refusé — {reason}"
+            case _:
+                pass
         text = describe(event, subrun=depth > 0)
         return None if text is None else f"{INDENT * depth}· {text}"
 

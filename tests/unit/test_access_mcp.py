@@ -12,6 +12,7 @@ import pytest
 from conftest import ANSWER, PNG, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
+from loom_ia.config import ConfigError
 from loom_ia.core.events import Event, RunCancelled
 from loom_ia.core.model import Attachment, SessionId
 
@@ -76,6 +77,27 @@ async def test_each_published_agent_is_a_tool(demo: ConfigFactory) -> None:
     assert tools["demo"].description == "Répond aux questions de calcul."
     assert tools["demo"].inputSchema["required"] == ["message"]
     assert "run_id" in (tools["demo"].outputSchema or {})["properties"]
+
+
+@pytest.mark.parametrize("name", [STATUS_TOOL, REPORT_TOOL, CANCEL_TOOL])
+async def test_an_agent_named_like_a_control_tool_is_refused_at_mount(
+    demo: ConfigFactory, name: str
+) -> None:
+    """L'outil intégré masquerait l'agent : le montage le refuse en le nommant."""
+    path = demo(agents=[demo_agent(), demo_agent(name=name)])
+    async with Loom.from_config(path) as loom:
+        with pytest.raises(ConfigError, match=f"Agent '{name}' publié en MCP"):
+            create_server(loom)
+
+
+async def test_such_an_agent_can_stay_off_mcp(demo: ConfigFactory) -> None:
+    path = demo(agents=[demo_agent(), demo_agent(name=CANCEL_TOOL, expose={"mcp": False})])
+    async with serving(path) as (loom, client):
+        listed = await client.list_tools()
+        result = await loom.run(CANCEL_TOOL, QUESTION)
+
+    assert {tool.name for tool in listed.tools} == {"demo", STATUS_TOOL, REPORT_TOOL, CANCEL_TOOL}
+    assert result.text == ANSWER
 
 
 async def test_calling_an_agent_runs_it(demo: ConfigFactory) -> None:

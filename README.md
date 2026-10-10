@@ -1128,6 +1128,8 @@ security:
       expires: 2027-01-08T00:00:00Z
 ```
 
+Le `sha256:…` du modèle est à remplacer par l'empreinte que la commande imprime : `sha256:` suivi de 64 chiffres hexadécimaux minuscules. Toute autre forme, le modèle recopié tel quel compris, est refusée au chargement.
+
 Une requête présente sa clé dans `Authorization: Bearer lk_…` ou dans `X-API-Key`. La clé détermine le client, et rien dans le corps de la requête ne peut le changer.
 
 | Portée | Autorise |

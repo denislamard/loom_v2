@@ -237,6 +237,44 @@ async def test_a_hook_answers_202_then_200_on_a_repeat(demo: ConfigFactory) -> N
     assert started.facets["trigger"] == "relance-quotidienne"
 
 
+async def test_a_payload_nested_too_deep_is_a_422_not_a_500(demo: ConfigFactory) -> None:
+    """``json.loads`` lève ``RecursionError`` (pas une ``ValueError``) sur un JSON trop imbriqué."""
+    modeste = (
+        b'{"devis": {"numero": "D-1"}, "client": ' + b'{"a": ' * 100 + b"1" + b"}" * 100 + b"}"
+    )
+    async with servie(demo(storage=JOURNAL, triggers=[RELANCE])) as (loom, http):
+        profonde = await http.post("/v1/hooks/relance-quotidienne", content=b"[" * 1_000_000)
+        ouverte = await http.post("/v1/hooks/relance-quotidienne", content=modeste)
+        await loom.drain()
+
+    assert profonde.status_code == 422 and "trop imbriqué" in profonde.json()["detail"]
+    assert ouverte.status_code == 202
+
+
+async def test_a_hook_body_over_the_limit_is_refused_before_it_is_read(
+    demo: ConfigFactory,
+) -> None:
+    limite = 20_000
+    envoye = 0
+
+    async def flot() -> AsyncGenerator[bytes]:
+        nonlocal envoye
+        for _ in range(500):  # 5 Mo annoncés, sans Content-Length
+            envoye += 10_000
+            yield b"A" * 10_000
+
+    path = demo(storage=JOURNAL, triggers=[RELANCE], server={"http": {"max_body_bytes": limite}})
+    async with servie(path) as (loom, http):
+        annonce = await http.post("/v1/hooks/relance-quotidienne", content=b"A" * 5_000_000)
+        morceaux = await http.post("/v1/hooks/relance-quotidienne", content=flot())
+        petit = await http.post("/v1/hooks/relance-quotidienne", json=CHARGE)
+        await loom.drain()
+
+    assert annonce.status_code == 413 and "max_body_bytes" in annonce.json()["detail"]
+    assert morceaux.status_code == 413 and envoye < 100_000
+    assert petit.status_code == 202
+
+
 async def test_a_hook_needs_run_on_the_agent_of_its_trigger(demo: ConfigFactory) -> None:
     security, jetons = cles(
         lecture={"scopes": ["read"]},
@@ -258,6 +296,63 @@ async def test_a_hook_needs_run_on_the_agent_of_its_trigger(demo: ConfigFactory)
 
     # Le déclencheur nomme son agent : c'est sur lui que porte le droit.
     assert codes == {"lecture": 403, "bureau": 403, "tout": 202}
+
+
+async def test_a_trigger_closed_to_the_client_is_unknown_and_the_list_is_the_clients(
+    demo: ConfigFactory,
+) -> None:
+    """Fermé ou inconnu, un déclencheur répond pareil : ni son nom ni son agent ne sortent."""
+    security, jetons = cles(
+        dupont={"scopes": ["run", "read"], "tenant": "dupont"},
+        martin={"scopes": ["run", "read"], "tenant": "martin"},
+    )
+    cloture = {**RELANCE, "name": "cloture-du-mois", "agent": "comptabilite"}
+    path = demo(
+        agents=[demo_agent(), demo_agent(name="comptabilite")],
+        storage=JOURNAL,
+        tenants=[{"id": "dupont", "agents": ["demo"]}, {"id": "martin"}],
+        security=security,
+        triggers=[RELANCE, cloture],
+    )
+    async with servie(path) as (loom, http):
+        sent: dict[tuple[str, str], httpx2.Response] = {}
+        for who, name in (
+            ("dupont", "cloture-du-mois"),
+            ("dupont", "ailleurs"),
+            ("martin", "cloture-du-mois"),
+        ):
+            sent[who, name] = await http.post(
+                f"/v1/hooks/{name}",
+                json=CHARGE,
+                headers={"Authorization": f"Bearer {jetons[who]}"},
+            )
+        await loom.drain()
+
+    closed, unknown = sent["dupont", "cloture-du-mois"], sent["dupont", "ailleurs"]
+    assert closed.status_code == unknown.status_code == 404
+    # Même réponse : un déclencheur fermé ne se distingue d'un inconnu que par le nom demandé.
+    assert closed.json()["detail"] == (
+        "Déclencheur 'cloture-du-mois' non déclaré (déclencheurs : relance-quotidienne)"
+    )
+    assert unknown.json()["detail"] == (
+        "Déclencheur 'ailleurs' non déclaré (déclencheurs : relance-quotidienne)"
+    )
+    assert "comptabilite" not in closed.text + unknown.text
+    # Un autre client, à qui l'agent est ouvert, passe.
+    assert sent["martin", "cloture-du-mois"].status_code == 202
+
+
+async def test_a_key_without_run_learns_nothing_about_the_triggers(demo: ConfigFactory) -> None:
+    security, jetons = cles(lecture={"scopes": ["read"]})
+    path = demo(storage=JOURNAL, security=security, triggers=[RELANCE])
+    async with servie(path) as (_, http):
+        headers = {"Authorization": f"Bearer {jetons['lecture']}"}
+        known = await http.post("/v1/hooks/relance-quotidienne", json=CHARGE, headers=headers)
+        unknown = await http.post("/v1/hooks/ailleurs", json=CHARGE, headers=headers)
+
+    # Sans la portée, l'existence d'un déclencheur ne se devine pas à la réponse.
+    assert known.status_code == unknown.status_code == 403
+    assert known.json() == unknown.json()
 
 
 async def test_a_delivery_stays_with_the_tenant_of_its_key(demo: ConfigFactory) -> None:

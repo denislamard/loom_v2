@@ -132,10 +132,14 @@ type FileState = tuple[int, int, int]
 
 
 def serve(loom: Loom, *, host: str | None = None, port: int | None = None) -> None:
-    """Sert l'instance jusqu'à l'arrêt du process, puis la ferme."""
+    """Sert l'instance jusqu'à l'arrêt du process, puis la ferme.
+
+    ``host`` remplace celui de la config, et c'est lui que juge l'avertissement d'une API
+    sans clé déclarée (une erreur en profil prod).
+    """
     http = loom.config.server.http
     uvicorn.run(
-        create_app(loom, own=True),
+        create_app(loom, own=True, host=host),
         host=host or http.host,
         port=port or http.port,
         log_config=None,
@@ -589,7 +593,7 @@ async def _served(
     loom = Loom(config)
     try:
         await _mounted(loom)
-        app = create_app(loom, own=True)
+        app = create_app(loom, own=True, host=host)
     except BaseException:
         await loom.aclose()
         raise

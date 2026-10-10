@@ -1468,14 +1468,14 @@ security:
   api_keys:
     - id: dupont-app
       tenant: dupont-plomberie
-      hash: "sha256:…"
+      hash: "sha256:…"                  # de `loom keys create` : sha256: + 64 chiffres hexa minuscules
       scopes: [run, read, approve]
       agents: [relance_devis]
       rate_limit: {per_minute: 60}      # débit de la clé (5.1b)
       expires: 2027-01-01T00:00:00Z     # fin de validité (5.2a) ; date avec fuseau
 
 server:
-  http: {host: 127.0.0.1, port: 8000, base_path: /loom}
+  http: {host: 127.0.0.1, port: 8000, base_path: /loom, max_body_bytes: 134217728}  # plafond d'un corps (413)
   mcp:
     http: true                      # monte le MCP sous <base_path>/mcp (exige des clés)
     allowed_origins: []             # Origin acceptés ; absent = client natif, il passe
@@ -1595,7 +1595,7 @@ app.mount("/loom", loom.asgi_app(rest=True, mcp=True))
 
 OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
-- **Pièces jointes :** le lancement d'un run accepte le JSON ou `multipart/form-data` (fichiers sous `attachments`). Limites de `execution.attachments` ; envoi trop gros refusé sur son en-tête (413), pièce refusée en 422.
+- **Pièces jointes :** le lancement d'un run accepte le JSON ou `multipart/form-data` (fichiers sous `attachments`). Limites de `execution.attachments` ; envoi trop gros refusé sur son en-tête ou, sans `Content-Length`, à mesure qu'il arrive (413), pièce refusée en 422. Tout corps — JSON, déclencheurs, MCP — est de plus plafonné par `server.http.max_body_bytes` (413).
 - **Sous-runs :** le flux SSE d'un run contient les événements de ses sous-runs (`?subruns=false` pour le run seul) ; il se ferme sur la clôture du run demandé.
 - **Résultat (3.6) :** celui de l'API Python (`RunResult`, voir 18.1), en JSON. Un run échoué garde le code 201 (`status: failed`, `error_type`, `error`). Le champ `judges` du corps règle les juges du run ; `skip` demande la portée `admin`.
 - **Rapport de session (3.6) :** `GET /v1/sessions/{id}/report`, la consommation de toute la session (portée `read`, droit sur chaque agent de la session).
@@ -1607,7 +1607,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - **Sessions (4.5) :** la liste est refusée à une clé limitée à certains agents — elle ne dit pas de quels agents sont les runs d'une session, et la filtrer honnêtement demanderait de lire chaque journal. La fiche et l'export vérifient le droit sur chaque agent rencontré ; l'effacement, irréversible et commun à tous les agents de la session, demande `admin`.
 - **Résumés de runs (5.4a, #32) :** `GET /v1/runs` rend les runs du client, du plus récemment écrit au plus ancien, filtrables par `agent`, `status` (répétable), `since` et `until`. Ils sont **lus au journal** — session par session, repliés à la lecture — et non tenus dans une projection : aucun second état à garder juste, et les chiffres sont ceux de la fiche d'une session. Le prix est une lecture par journal ouvert, borné par `limit` (runs rendus) et `sessions` (journaux ouverts) ; la page dit ce qu'elle a coûté (`scanned`) et si une borne l'a arrêtée (`truncated`). Un filtre ne baisse pas ce prix, il s'applique après le repli. Aucun contenu dans une liste — seulement le **type** d'un échec —, donc rien à masquer, et une clé limitée à certains agents y a droit : chaque run dit de quel agent il est, si bien que la liste se filtre honnêtement, là où `/sessions` doit refuser.
 - **Recherche au journal (5.4a, #22, #32) :** `GET /v1/events` expose `EventQuery` en paramètres — `session_id`, `run_id`, `type`, `category`, `status`, `agent`, `role`, `tool_name`, `model_id`, `since`, `until`, `after`, `limit`. Le client vient de la clé : rien dans l'URL ne le nomme, donc on ne cherche que chez soi. L'ordre est celui des identifiants d'événement (UUIDv7, donc du temps) et `after` reprend la pagination après le dernier rendu. Sans `read_content`, les mêmes événements arrivent privés de leur contenu. Les facettes libres ne sont pas interrogeables par l'URL ; les deux que `EventQuery` nomme le sont.
-- **Déclencheurs (5.4c, H6) :** `POST /v1/hooks/{nom}` sonne une porte déclarée (`triggers:`). Le corps est la charge de l'appelant — du JSON, ou rien : un planificateur n'a que l'heure à dire. Le message part du gabarit de la porte, le run est lancé en **arrière-plan** (202, `Triggered`), et la portée `run` est exigée sur **l'agent que la porte nomme**. L'en-tête déclaré (`delivery_header`) devient le `run_id` : une relivraison rend 200 avec `repeated`, sans rien relancer. Une charge illisible ou un identifiant de livraison inutilisable donnent 422 ; une porte inconnue, 404 en nommant celles qui existent.
+- **Déclencheurs (5.4c, H6) :** `POST /v1/hooks/{nom}` sonne une porte déclarée (`triggers:`). Le corps est la charge de l'appelant — du JSON, ou rien : un planificateur n'a que l'heure à dire. Le message part du gabarit de la porte, le run est lancé en **arrière-plan** (202, `Triggered`), et la portée `run` est exigée sur **l'agent que la porte nomme**. L'en-tête déclaré (`delivery_header`) devient le `run_id` : une relivraison rend 200 avec `repeated`, sans rien relancer. Une charge illisible ou un identifiant de livraison inutilisable donnent 422 ; une porte inconnue, ou dont l'agent est fermé au client de la clé, 404 — le même, en ne nommant que les portes de ce client.
 - **Document OpenAPI (5.4a) :** chaque route porte un résumé et une famille (`agents`, `runs`, `sessions`, `journal`), chaque famille est décrite, et les deux façons de présenter une clé (`Authorization: Bearer`, `X-API-Key`) sont déclarées — de quoi essayer l'API depuis sa propre page. Un test vérifie que le document reste complet quand une route s'ajoute.
 
 ### 18.3 Serveur MCP

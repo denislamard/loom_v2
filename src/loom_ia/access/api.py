@@ -87,6 +87,7 @@ from loom_ia.core.events import (
     EventDraft,
     EventQuery,
     JudgeEvaluated,
+    RunCancelled,
     RunCompleted,
     RunFailed,
     SessionCompacted,
@@ -234,8 +235,8 @@ SESSIONS_MAX: Final = 200
 
 
 def is_final(event: Event) -> bool:
-    """Vrai sur l'événement qui clôt un run."""
-    return isinstance(event.payload, RunCompleted | RunFailed)
+    """Vrai sur l'événement qui clôt un run : fin, échec ou annulation."""
+    return isinstance(event.payload, RunCompleted | RunFailed | RunCancelled)
 
 
 class AgentNotAllowed(PermissionError):
@@ -555,6 +556,44 @@ class RunResult(DomainModel):
                 "artifacts": tuple(a.model_copy(update={"name": None}) for a in self.artifacts),
                 "verdicts": tuple(v.masked() for v in self.verdicts),
                 "pending_approvals": _masked_approvals(self.pending_approvals),
+            }
+        )
+
+    def restricted(self, allows: Callable[[str], bool]) -> Self:
+        """Résultat sans les agents que le lecteur n'a pas le droit de voir.
+
+        Relire un run, c'est relire tout son arbre, et une clé limitée à
+        certains agents n'a pas forcément le droit sur chacun de ceux qui y ont
+        travaillé : ``masked`` retire le contenu, celui-ci retire **les agents
+        refusés** — leurs lignes du rapport (par run et par rôle) et leurs
+        verdicts —, pour que ni leur nom ni ce qu'ils ont consommé ne se lisent
+        à part. Il ne refuse rien : le run de l'agent permis reste lisible.
+
+        Le total, l'usage et le coût restent ceux du run : ce qu'il a coûté ne
+        dépend pas de qui le lit. Restent aussi, parce qu'ils ne portent aucun
+        agent ou qu'il faut pouvoir les trancher pour que le run reparte, les
+        fichiers et les approbations en attente.
+        """
+        runs = self.report.runs if self.report is not None else ()
+        named = {run.agent for run in runs} | {verdict.agent for verdict in self.verdicts}
+        hidden = {agent for agent in named if agent and not allows(agent)}
+        if not hidden:
+            return self
+        report = self.report
+        if report is not None:
+            prefixes = tuple(f"{agent} · " for agent in hidden)
+            report = report.model_copy(
+                update={
+                    "runs": tuple(run for run in report.runs if run.agent not in hidden),
+                    "roles": tuple(
+                        line for line in report.roles if not line.name.startswith(prefixes)
+                    ),
+                }
+            )
+        return self.model_copy(
+            update={
+                "report": report,
+                "verdicts": tuple(v for v in self.verdicts if v.agent not in hidden),
             }
         )
 

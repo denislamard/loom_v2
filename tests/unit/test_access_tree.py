@@ -10,14 +10,16 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import TREE_ANSWER, TREE_QUESTION, ConfigFactory
 
-from loom_ia.access import Loom
+from loom_ia.access import JudgeVerdict, Loom
 from loom_ia.access.cli import main
 from loom_ia.access.progress import Progress
 from loom_ia.adapters.stores import InMemoryEventStore, NotifyingEventStore
+from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.core.events import (
     DurablePayload,
     Event,
@@ -25,9 +27,19 @@ from loom_ia.core.events import (
     RunFailed,
     RunScope,
     RunStarted,
+    ToolCalled,
+    ToolCompleted,
     UserMessage,
 )
-from loom_ia.core.model import DEFAULT_TENANT, Message, RunId, SessionId, TenantId, new_run_id
+from loom_ia.core.model import (
+    DEFAULT_TENANT,
+    Message,
+    RunId,
+    SessionId,
+    TenantId,
+    ToolOutput,
+    new_run_id,
+)
 from loom_ia.core.projections import RunTree
 
 # Suite des événements de l'arbre : la racine, puis l'enfant au milieu de l'appel.
@@ -145,6 +157,32 @@ def test_progress_lines_of_a_failed_subrun() -> None:
     ]
 
 
+def test_progress_lines_of_a_call_refused_before_it_left() -> None:
+    """Sans ``tool.called``, « fait (erreur) » ne dit pas que rien n'a été appelé."""
+    progress = Progress()
+    called = ToolCalled(call_id="c1", tool_name="calculer", tool_kind="python")
+    ended = ToolCompleted(call_id="c1", tool_name="calculer", output=ToolOutput.error("division"))
+    refused = ToolCompleted(
+        call_id="c2",
+        tool_name="inconnu",
+        output=ToolOutput.error("Outil inconnu : 'inconnu'. Outils disponibles : calculer."),
+    )
+    events = journal(
+        ("r0", RunStarted()),
+        ("r0", called),
+        ("r0", ended),
+        ("r0", refused),
+        ("r0", ToolCompleted(call_id="c3", tool_name="rien", output=ToolOutput.text("ok"))),
+    )
+    assert [progress.line(e) for e in events] == [
+        None,
+        "· calculer()",
+        "· calculer : fait (erreur)",
+        "· inconnu : refusé — Outil inconnu : 'inconnu'. Outils disponibles : calculer.",
+        "· rien : fait",
+    ]
+
+
 def test_progress_lines_of_policy_decisions() -> None:
     progress = Progress()
     events = journal(
@@ -259,6 +297,168 @@ async def test_sse_shows_the_subruns(tree: ConfigFactory) -> None:
     assert started.status_code == 201 and started.json()["text"] == TREE_ANSWER
     assert names[""] == TREE_TYPES
     assert names["?subruns=false"].count("run.started") == 1
+
+
+def bearer(key: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {key}"}
+
+
+def limited_to_the_parent() -> tuple[dict[str, Any], str, str]:
+    """Le bloc `security` de deux clés — sans limite, ou limitée à `demo` — et leurs jetons."""
+    complete, parent = new_api_key(), new_api_key()
+    scopes = ["run", "read", "read_content"]
+    security = {
+        "api_keys": [
+            {"id": "complete", "hash": fingerprint(complete), "scopes": scopes},
+            {"id": "parent", "hash": fingerprint(parent), "scopes": scopes, "agents": ["demo"]},
+        ]
+    }
+    return security, complete, parent
+
+
+async def test_sse_refuses_the_whole_tree_to_a_key_without_every_agent(tree: ConfigFactory) -> None:
+    """Comme la trace : le droit vaut pour chaque agent de l'arbre, sinon 403 et rien du flux."""
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    httpx2 = pytest.importorskip("httpx2", reason="client HTTP de test absent")
+    from loom_ia.access.http import create_app
+
+    security, complete, parent = limited_to_the_parent()
+    async with Loom.from_config(tree(security=security)) as loom:
+        run_id = (await loom.run("demo", TREE_QUESTION)).run_id
+        transport = httpx2.ASGITransport(create_app(loom))
+        async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
+            url = f"/v1/runs/{run_id}/events"
+            whole = await http.get(url, headers=bearer(complete))
+            refused = await http.get(url, headers=bearer(parent))
+            # Reprendre plus loin ne change pas la décision : l'arbre se lit en entier.
+            resumed = await http.get(url, headers={**bearer(parent), "Last-Event-ID": "9999"})
+            alone = await http.get(f"{url}?subruns=false", headers=bearer(parent))
+
+    assert whole.status_code == 200 and "verificateur" in whole.text
+    assert refused.status_code == 403 and resumed.status_code == 403
+    assert "non autorisée sur l'agent 'verificateur'" in refused.json()["detail"]
+    assert "event:" not in refused.text
+    # Sans les sous-runs, le flux ne montre que le run de `demo` : il reste permis.
+    assert alone.status_code == 200 and "verificateur" not in alone.text
+    assert "event: run.completed" in alone.text
+
+
+async def test_sse_stops_when_a_forbidden_subagent_joins_a_stream_in_flight(
+    tree: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le statut est parti : le refus est un dernier message `error`, puis le flux se ferme."""
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    httpx2 = pytest.importorskip("httpx2", reason="client HTTP de test absent")
+    from loom_ia.access.http import create_app
+
+    security, _, parent = limited_to_the_parent()
+    root = scope("r0")
+    child = RunScope(
+        tenant_id=DEFAULT_TENANT,
+        session_id=SessionId("s1"),
+        run_id=RunId("r1"),
+        root_run_id=RunId("r0"),
+        agent="verificateur",
+    )
+    async with Loom.from_config(tree(security=security)) as loom:
+        opening = [root.draft(RunStarted()), root.draft(UserMessage(message=Message.user("?")))]
+        await loom.store.append(opening, expected_seq=0)
+
+        # Le premier événement rendu l'est après l'abonnement au journal : le flux est ouvert,
+        # et ce qui s'écrit désormais lui arrive en direct.
+        opened = asyncio.Event()
+        follow = loom.follow
+
+        async def watched(run_id: RunId, **options: Any) -> AsyncGenerator[Event]:
+            async for event in follow(run_id, **options):
+                yield event
+                opened.set()
+
+        monkeypatch.setattr(loom, "follow", watched)
+        transport = httpx2.ASGITransport(create_app(loom))
+        async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
+            following = asyncio.create_task(
+                http.get("/v1/runs/r0/events?session_id=s1", headers=bearer(parent))
+            )
+            async with asyncio.timeout(5):
+                await opened.wait()
+                started = RunStarted(parent_run_id=RunId("r0"), depth=1)
+                await loom.store.append([child.draft(started)], expected_seq=2)
+                response = await following
+
+    lines = response.text.splitlines()
+    names = [line[6:].strip() for line in lines if line.startswith("event:")]
+    assert response.status_code == 200
+    assert names == ["run.started", "message.user", "error"]
+    assert "non autorisée sur l'agent 'verificateur'" in lines[lines.index("event: error") + 1]
+
+
+async def test_a_reread_names_only_the_agents_the_key_may_read(tree: ConfigFactory) -> None:
+    """`GET /runs/{id}` : le run de `demo` se relit, sans le nom ni la part de ses sous-agents."""
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    httpx2 = pytest.importorskip("httpx2", reason="client HTTP de test absent")
+    from loom_ia.access.http import create_app
+
+    security, complete, parent = limited_to_the_parent()
+    async with Loom.from_config(tree(security=security)) as loom:
+        run_id = (await loom.run("demo", TREE_QUESTION)).run_id
+        transport = httpx2.ASGITransport(create_app(loom))
+        async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
+            whole = await http.get(f"/v1/runs/{run_id}", headers=bearer(complete))
+            limited = await http.get(f"/v1/runs/{run_id}", headers=bearer(parent))
+
+    assert whole.status_code == 200 and limited.status_code == 200
+    complete_report, limited_report = whole.json()["report"], limited.json()["report"]
+    assert {run["agent"] for run in complete_report["runs"]} == {"demo", "verificateur"}
+    assert [line["name"] for line in complete_report["roles"]] == [
+        "demo · main",
+        "verificateur · main",
+    ]
+    # Plus aucune trace du sous-agent refusé : ni sa ligne par run, ni son rôle.
+    assert "verificateur" not in limited.text
+    assert [run["agent"] for run in limited_report["runs"]] == ["demo"]
+    assert [line["name"] for line in limited_report["roles"]] == ["demo · main"]
+    # Ce que le run a coûté ne change pas avec celui qui le lit, et sa réponse reste lisible.
+    assert limited_report["total"] == complete_report["total"]
+    assert limited.json()["cost_usd"] == whole.json()["cost_usd"]
+    assert limited.json()["text"] == TREE_ANSWER
+
+
+async def test_restricting_a_result_drops_the_runs_roles_and_verdicts_of_refused_agents(
+    tree: ConfigFactory,
+) -> None:
+    async with Loom.from_config(tree()) as loom:
+        result = await loom.run("demo", TREE_QUESTION)
+    verdicts = tuple(
+        JudgeVerdict(
+            run_id=result.run_id,
+            agent=agent,
+            judge="relecteur",
+            target="output",
+            model_id="m",
+            passed=True,
+            blocked=False,
+        )
+        for agent in ("demo", "verificateur")
+    )
+    judged = result.model_copy(update={"verdicts": verdicts})
+
+    kept = judged.restricted(lambda agent: agent == "demo")
+
+    assert [verdict.agent for verdict in kept.verdicts] == ["demo"]
+    assert kept.report is not None and judged.report is not None
+    assert [run.agent for run in kept.report.runs] == ["demo"]
+    assert [line.name for line in kept.report.roles] == ["demo · main"]
+    assert kept.report.total == judged.report.total
+    assert [line.name for line in kept.report.models] == [
+        line.name for line in judged.report.models
+    ]
+    assert (kept.usage, kept.cost_usd, kept.text) == (judged.usage, judged.cost_usd, judged.text)
+    # Rien à retirer : le même objet, sans copie.
+    assert judged.restricted(lambda agent: True) is judged
+    # Sans rapport, les verdicts se filtrent tout de même.
+    bare = judged.model_copy(update={"report": None}).restricted(lambda agent: agent == "demo")
+    assert bare.report is None and [verdict.agent for verdict in bare.verdicts] == ["demo"]
 
 
 # --- Serveur MCP -------------------------------------------------------------------------

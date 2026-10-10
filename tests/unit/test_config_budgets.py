@@ -61,6 +61,31 @@ def test_a_dollar_budget_without_pricing_warns(
     assert not caplog.records
 
 
+def test_a_tenant_dollar_budget_without_pricing_warns_like_a_run_budget(
+    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Un plafond de client en dollars (J5.1b) ne se déclenche pas plus sans tarif (#010)."""
+    path = demo(models=[MODEL], budgets={"tenant": {"max_cost_per_day": 5.0}})
+    with caplog.at_level(logging.WARNING, logger="loom_ia.runtime.wiring"):
+        Loom.from_config(path).context("demo")
+    assert [r.getMessage() for r in caplog.records] == [
+        "Agent 'demo' : budget en dollars, mais sans tarif pour FAKE : leurs appels comptent 0 $"
+    ]
+    # Un plafond en tokens, lui, n'a pas besoin de tarif.
+    caplog.clear()
+    path = demo(models=[MODEL], budgets={"tenant": {"max_tokens_per_day": 50_000}})
+    with caplog.at_level(logging.WARNING, logger="loom_ia.runtime.wiring"):
+        Loom.from_config(path).context("demo")
+    assert not caplog.records
+
+
+def test_the_unpriced_dollar_budget_is_an_error_in_prod(demo: ConfigFactory) -> None:
+    """L'erreur en profil prod promise pour J5 existe : ``announce`` refuse."""
+    path = budgeted(demo, model=MODEL)
+    with pytest.raises(ConfigError, match=r"Profil prod .*budget en dollars, mais sans tarif"):
+        Loom.from_config(path, profile="prod").context("demo")
+
+
 def test_the_cli_shows_budgets_and_reports(
     demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
 ) -> None:

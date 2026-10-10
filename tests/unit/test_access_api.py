@@ -171,6 +171,24 @@ async def test_follow_replays_a_finished_run(demo: ConfigFactory) -> None:
     assert kinds(tail) == ["run.completed"]
 
 
+async def test_follow_ends_when_the_run_is_cancelled(atelier: ConfigFactory) -> None:
+    """``follow`` s'arrête sur ``run.cancelled`` comme sur la fin ou l'échec du run."""
+    async with Loom.from_config(atelier()) as loom:
+        run_id = await loom.submit("demo", "Relance.")
+
+        async def following() -> list[Event]:
+            return [event async for event in loom.follow(run_id)]
+
+        # Quel que soit l'instant de l'arrêt, avant ou après que le flux ait rejoint
+        # le direct, il doit se clore sur lui : le délai fait échouer l'essai sinon.
+        task = asyncio.create_task(following())
+        assert await loom.cancel(run_id)
+        async with asyncio.timeout(5):
+            seen = await task
+
+    assert kinds(seen)[-1] == "run.cancelled"
+
+
 async def test_follow_and_state_refuse_an_unknown_run(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo()) as loom:
         with pytest.raises(UnknownRun):

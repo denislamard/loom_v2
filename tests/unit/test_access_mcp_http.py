@@ -30,9 +30,17 @@ pytest.importorskip("mcp", reason="extra 'mcp' absent")
 
 import httpx
 from mcp import ClientSession
+from mcp.client.session import ElicitationFnT
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
-from mcp.types import BlobResourceContents, ReadResourceResult, TextResourceContents
+from mcp.types import (
+    BlobResourceContents,
+    ElicitRequestParams,
+    ElicitResult,
+    ReadResourceResult,
+    TextResourceContents,
+)
 from pydantic import AnyUrl
 
 from loom_ia.access.http import create_app
@@ -63,7 +71,12 @@ def branche(app: Any, headers: dict[str, str], host: str) -> httpx.AsyncClient:
 
 @asynccontextmanager
 async def parle(
-    loom: Loom, jeton: str | None = None, *, origin: str | None = None, host: str = "127.0.0.1"
+    loom: Loom,
+    jeton: str | None = None,
+    *,
+    origin: str | None = None,
+    host: str = "127.0.0.1",
+    elicitation: ElicitationFnT | None = None,
 ) -> AsyncGenerator[ClientSession]:
     """Une session MCP ouverte sur l'application de l'instance."""
     app = create_app(loom)
@@ -79,7 +92,7 @@ async def parle(
                 write,
                 _,
             ):
-                async with ClientSession(read, write) as session:
+                async with ClientSession(read, write, elicitation_callback=elicitation) as session:
                     await session.initialize()
                     yield session
 
@@ -123,6 +136,15 @@ def texte(result: Any) -> str:
 # --- Le montage, et ce qu'il exige -------------------------------------------
 
 
+async def test_an_agent_named_like_a_control_tool_stops_the_mount(demo: ConfigFactory) -> None:
+    """L'outil intégré `cancel` masquerait l'agent : le montage le refuse, il ne le tait pas."""
+    security, _ = cles(app={"scopes": ["run", "read"]})
+    path = demo(agents=[demo_agent(name="cancel")], security=security, server=MCP_HTTP)
+    async with Loom.from_config(path) as loom:
+        with pytest.raises(ConfigError, match="Agent 'cancel' publié en MCP"):
+            create_app(loom)
+
+
 def test_mcp_in_http_demands_keys(demo: ConfigFactory) -> None:
     # Le MCP publie des outils à un LLM tiers : l'ouvrir sans clé serait une
     # faute de configuration, pas un mode d'usage.
@@ -157,6 +179,52 @@ async def test_an_expired_key_is_refused_with_its_date(demo: ConfigFactory) -> N
 
 
 # --- Protection du transport (spec MCP) --------------------------------------
+
+
+async def test_a_body_over_the_limit_is_refused_before_the_protocol_reads_it(
+    demo: ConfigFactory,
+) -> None:
+    """Par MCP aussi : la longueur annoncée, ou l'envoi compté à mesure, donne 413."""
+    security, jetons = cles(app={"scopes": ["run", "read"]})
+    path = demo(security=security, server={**MCP_HTTP, "http": {"max_body_bytes": 20_000}})
+    entete = {
+        "authorization": f"Bearer {jetons['app']}",
+        "content-type": "application/json",
+        "accept": "application/json, text/event-stream",
+    }
+    params: dict[str, object] = {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "essai", "version": "1"},
+    }
+    initialize: dict[str, object] = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": params,
+    }
+    sent = 0
+
+    async def flot() -> AsyncGenerator[bytes]:
+        nonlocal sent
+        yield b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"junk":"'
+        for _ in range(500):  # 5 Mo annoncés, sans Content-Length
+            sent += 10_000
+            yield b"A" * 10_000
+
+    async with Loom.from_config(path) as loom:
+        app = create_app(loom)
+        async with app.router.lifespan_context(app):
+            async with branche(app, entete, "127.0.0.1") as http:
+                small = await http.post("/mcp/", json=initialize)
+                big = {**initialize, "params": {**params, "junk": "A" * 5_000_000}}
+                declared = await http.post("/mcp/", json=big)
+                chunked = await http.post("/mcp/", content=flot())
+
+    assert small.status_code == 200
+    assert declared.status_code == 413 and "max_body_bytes" in declared.json()["detail"]
+    assert "content-length" not in chunked.request.headers
+    assert chunked.status_code == 413 and sent < 100_000
 
 
 async def test_an_undeclared_host_is_refused(demo: ConfigFactory) -> None:
@@ -424,6 +492,54 @@ async def test_a_trace_resource_follows_the_scope_and_every_agent_of_the_tree(
     ]
 
 
+async def test_the_events_resource_follows_every_agent_of_the_tree(tree: ConfigFactory) -> None:
+    """Le journal d'un run, sous-runs compris : même droit que la trace, sur chaque agent."""
+    security, jetons = cles(
+        complete={"scopes": ["run", "read", "read_content"]},
+        parent={"scopes": ["run", "read", "read_content"], "agents": ["demo"]},
+    )
+    path = tree(security=security, server=MCP_HTTP)
+    async with Loom.from_config(path) as loom:
+        result = await loom.run("demo", TREE_QUESTION)
+        uri = AnyUrl(f"{RUNS}/{result.run_id}/events")
+        async with parle(loom, jetons["complete"]) as session:
+            entier = lu(await session.read_resource(uri))
+        async with parle(loom, jetons["parent"]) as session:
+            with pytest.raises(McpError, match="non autorisée sur l'agent 'verificateur'"):
+                await session.read_resource(uri)
+
+    assert {event["agent"] for event in entier} == {"demo", "verificateur"}
+
+
+async def test_a_reread_names_only_the_agents_the_key_may_read(tree: ConfigFactory) -> None:
+    """`run_status` et `loom://runs/{id}` rendent le rapport de REST : sans les agents refusés."""
+    security, jetons = cles(
+        complete={"scopes": ["run", "read", "read_content"]},
+        parent={"scopes": ["run", "read", "read_content"], "agents": ["demo"]},
+    )
+    path = tree(security=security, server=MCP_HTTP)
+    seen: dict[str, tuple[Any, str, Any]] = {}
+    async with Loom.from_config(path) as loom:
+        result = await loom.run("demo", TREE_QUESTION)
+        for nom in ("complete", "parent"):
+            async with parle(loom, jetons[nom]) as session:
+                statut = await session.call_tool("run_status", {"run_id": result.run_id})
+                ressource = await session.read_resource(AnyUrl(f"{RUNS}/{result.run_id}"))
+                seen[nom] = (statut.structuredContent, texte(statut), lu(ressource))
+
+    whole, _, whole_resource = seen["complete"]
+    for rapport in (whole["report"], whole_resource["report"]):
+        assert {run["agent"] for run in rapport["runs"]} == {"demo", "verificateur"}
+    structured, said, resource = seen["parent"]
+    for rapport in (structured["report"], resource["report"]):
+        assert [run["agent"] for run in rapport["runs"]] == ["demo"]
+        assert [line["name"] for line in rapport["roles"]] == ["demo · main"]
+        assert rapport["total"] == whole["report"]["total"]
+    assert "verificateur" not in said
+    assert "verificateur" not in json.dumps(structured) + json.dumps(resource)
+    assert resource["text"] == TREE_ANSWER
+
+
 async def test_a_key_limited_to_agents_gets_runs_but_not_sessions(demo: ConfigFactory) -> None:
     security, jetons = cles(
         tout={"scopes": ["run", "read", "read_content"]},
@@ -446,6 +562,25 @@ async def test_a_key_limited_to_agents_gets_runs_but_not_sessions(demo: ConfigFa
     assert listees == [RUNS]
     # Celui des runs l'est, et il se filtre honnêtement : chaque run dit son agent.
     assert {run["agent"] for run in page["runs"]} == {"autre"}
+
+
+async def test_elicitation_is_never_asked_over_http(atelier: ConfigFactory) -> None:
+    """Serveur sans état : même déclarée, l'elicitation n'a pas lieu et le run se met en pause."""
+    security, jetons = cles(atelier={"scopes": ["run", "read"]})
+    asked: list[str] = []
+
+    async def elicit(
+        context: RequestContext[ClientSession, Any], params: ElicitRequestParams
+    ) -> ElicitResult:
+        asked.append(params.message)
+        return ElicitResult(action="accept", content={"decision": "accorder"})
+
+    async with Loom.from_config(atelier(security=security, server=MCP_HTTP)) as loom:
+        async with parle(loom, jetons["atelier"], elicitation=elicit) as session:
+            paused = await session.call_tool("demo", {"message": "Relance."})
+
+    assert asked == []
+    assert not paused.isError and (paused.structuredContent or {})["status"] == "paused"
 
 
 async def test_cancel_by_mcp_signs_with_the_key(demo: ConfigFactory) -> None:

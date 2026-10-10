@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Corps des requêtes et des réponses de l'API REST (N2)."""
 
-from typing import Self
+from typing import Annotated, Final, Self
 
-from pydantic import Field, JsonValue
+from pydantic import AfterValidator, Field, JsonValue
 
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.core.model import (
@@ -15,6 +15,37 @@ from loom_ia.core.model import (
     TenantId,
 )
 from loom_ia.core.model.base import DomainModel
+
+# Profondeur permise à un JSON que l'appelant glisse dans le journal (``metadata``,
+# ``arguments``). Le journal se relit avec la limite de récursion du JSON de
+# pydantic, enveloppe de l'événement comprise (200 niveaux en tout) : plus profond,
+# l'événement s'écrit mais ne se relit plus, et sa session est perdue.
+MAX_JSON_DEPTH: Final = 64
+
+
+def shallow(value: JsonValue) -> JsonValue:
+    """``value`` si ses objets et listes ne s'emboîtent pas sur plus de ``MAX_JSON_DEPTH``.
+
+    Sinon ``ValueError``. Le parcours est itératif : le JSON qu'on vérifie peut être
+    plus profond que la pile de l'interpréteur.
+    """
+    pending: list[tuple[JsonValue, int]] = [(value, 1)]
+    while pending:
+        item, depth = pending.pop()
+        if isinstance(item, dict):
+            children = list(item.values())
+        elif isinstance(item, list):
+            children = item
+        else:
+            continue
+        if depth > MAX_JSON_DEPTH:
+            raise ValueError(f"JSON imbriqué sur plus de {MAX_JSON_DEPTH} niveaux")
+        pending.extend((child, depth + 1) for child in children)
+    return value
+
+
+# Pas de ``type`` ici : pydantic en ferait une définition nommée du document OpenAPI.
+Shallow = Annotated[dict[str, JsonValue], AfterValidator(shallow)]
 
 
 class AgentInfo(DomainModel):
@@ -37,7 +68,7 @@ class RunRequest(DomainModel):
     # Identifiant choisi par l'appelant, pour suivre le run dès son départ.
     run_id: RunId | None = None
     user_id: str | None = None
-    metadata: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
+    metadata: Shallow = Field(default_factory=dict[str, JsonValue])
     # Juges (#21) : ``auto`` selon leur ``when`` ; ``force``, tous (audit) ;
     # ``skip``, aucun — réservé aux clés de portée ``admin``.
     judges: JudgesMode = "auto"
@@ -75,7 +106,7 @@ class Approval(Decision):
 
     # Ne vaut que pour un ``call_id`` désigné : corriger à l'aveugle les
     # arguments de plusieurs appels n'aurait pas de sens.
-    arguments: dict[str, JsonValue] | None = None
+    arguments: Shallow | None = None
 
 
 class Decided(DomainModel):

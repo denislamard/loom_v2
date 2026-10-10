@@ -27,7 +27,7 @@ from pydantic import (
 
 from loom_ia.agents.spec import AGENT_NAME_PATTERN, AgentSpec
 from loom_ia.config.compaction import COMPACTION_AGENT, CompactionConfig, compaction_agent
-from loom_ia.config.keys import ALGORITHM, matches
+from loom_ia.config.keys import ALGORITHM, FINGERPRINT, matches
 from loom_ia.config.later import (
     LATER_API_KEY,
     LATER_MCP_ACCESS,
@@ -569,7 +569,8 @@ class ApiKey(DomainModel):
     """Clé déclarée dans la config, par son empreinte seulement (#39)."""
 
     id: str = Field(min_length=1)
-    # Empreinte ``sha256:…`` donnée par ``loom keys create``.
+    # Empreinte donnée par ``loom keys create`` : ``sha256:`` et 64 chiffres hexadécimaux
+    # minuscules, vérifiés au chargement.
     hash: str
     # Client au nom duquel cette clé agit (L1) ; ``default`` en mono-client.
     tenant: TenantId = DEFAULT_TENANT
@@ -592,8 +593,13 @@ class ApiKey(DomainModel):
 
     @model_validator(mode="after")
     def _check_hash(self) -> Self:
-        if not self.hash.startswith(f"{ALGORITHM}:"):
-            raise ValueError(f"Empreinte de clé attendue sous la forme '{ALGORITHM}:…'")
+        # Un modèle recopié tel quel (``sha256:…``) se refuse ici, au chargement,
+        # plutôt qu'à chaque requête.
+        if not FINGERPRINT.fullmatch(self.hash):
+            raise ValueError(
+                f"Empreinte de clé attendue sous la forme '{ALGORITHM}:' suivie de 64 chiffres "
+                "hexadécimaux minuscules, telle que 'loom keys create' la donne"
+            )
         return self
 
     def accepts(self, key: str) -> bool:
@@ -618,6 +624,11 @@ class HttpServer(DomainModel):
     port: int = Field(default=8000, ge=1, le=65535)
     # Préfixe commun des routes, par exemple ``/loom``.
     base_path: str = ""
+    # Plafond du corps d'une requête (JSON, déclencheurs, MCP, envois de fichiers) :
+    # au-delà, 413 sans lire la suite. Par MCP les fichiers voyagent en base64 dans
+    # le JSON (4 octets pour 3) : à relever si ``execution.attachments`` en autorise
+    # plus que ce plafond n'en laisse passer (défaut : 10 fichiers de 5 Mio, 67 Mio).
+    max_body_bytes: PositiveInt = 128 * 1024 * 1024
 
     @model_validator(mode="after")
     def _check_base_path(self) -> Self:

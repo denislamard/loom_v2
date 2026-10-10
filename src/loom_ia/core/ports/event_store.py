@@ -42,6 +42,14 @@ class JournalCorrupted(Exception):
     """Une ligne complète du journal est illisible."""
 
 
+class UnusableId(ValueError):
+    """Un identifiant (client, session) que ce journal ne peut pas nommer.
+
+    Reste une ``ValueError``, comme avant : celui qui l'interceptait ainsi la
+    reçoit toujours. Les accès, eux, la distinguent d'une panne.
+    """
+
+
 def journal_key(drafts: Sequence[EventDraft]) -> tuple[TenantId, SessionId]:
     """Client et session communs à un lot d'écriture.
 

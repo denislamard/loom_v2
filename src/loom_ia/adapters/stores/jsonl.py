@@ -33,7 +33,13 @@ from pydantic import ValidationError
 from loom_ia.adapters.stores.codec import PLAIN, EventMark, JournalCodec
 from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId
-from loom_ia.core.ports import JournalCorrupted, SequenceConflict, SessionRecord, journal_key
+from loom_ia.core.ports import (
+    JournalCorrupted,
+    SequenceConflict,
+    SessionRecord,
+    UnusableId,
+    journal_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +54,7 @@ TAIL_BYTES: Final = 64 * 1024
 
 def _component(value: str, kind: str) -> str:
     if not _SAFE_COMPONENT.fullmatch(value):
-        raise ValueError(f"{kind} inutilisable comme nom de fichier : {value!r}")
+        raise UnusableId(f"{kind} inutilisable comme nom de fichier : {value!r}")
     return value
 
 

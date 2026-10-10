@@ -159,7 +159,10 @@ class AttachmentReader:
             raise AttachmentError(
                 f"{uri} : liens file:// refusés, aucun dossier autorisé (server.mcp.file_roots)"
             )
-        parts = urlsplit(uri)
+        try:
+            parts = urlsplit(uri)
+        except ValueError:
+            raise AttachmentError(f"{uri} : lien file:// mal formé") from None
         if parts.netloc not in ("", "localhost"):
             raise AttachmentError(f"{uri} : hôte {parts.netloc!r} non pris en charge")
         path = Path(url2pathname(parts.path))
@@ -170,7 +173,8 @@ class AttachmentReader:
             raise outside
         try:
             real = path.resolve(strict=True)
-        except OSError:
+        except OSError, ValueError:
+            # ``ValueError`` : un octet nul (``%00``) dans le chemin.
             raise AttachmentError(f"{uri} : fichier introuvable") from None
         # Un lien symbolique ne sort pas des dossiers.
         if not _inside(real, roots):

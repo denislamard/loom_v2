@@ -34,6 +34,18 @@ selon ce que le client sait faire :
   structuré porte ``run_id`` et ``pending_approvals``. Un humain tranche
   ailleurs (API REST ou ``loom approve``), et ``run_status`` relit le run.
 
+L'elicitation n'existe qu'en **stdio**. Le serveur HTTP est sans état
+(``stateless=True``, ``http.py``) : chaque requête a sa propre session, qui ne
+connaît pas les capacités que le client a déclarées à son initialisation, et la
+réponse à un formulaire arriverait par une autre requête que celle qui l'attend.
+En HTTP, un run qui demande une approbation se met donc toujours en pause, que
+le client déclare l'elicitation ou non, et il se tranche par REST ou
+``loom approve``.
+
+Noms réservés : ``run_status``, ``run_report`` et ``cancel`` sont des outils du
+serveur. Un agent publié en MCP sous l'un de ces noms serait masqué par l'outil
+intégré, donc injoignable : le montage du serveur le refuse en le nommant.
+
 Le transport du jalon J1 est stdio : le client lance le process et parle sur
 son entrée et sa sortie standard. Les logs de loom vont sur la sortie
 d'erreur, jamais sur stdout — le protocole y passe.
@@ -63,6 +75,7 @@ from loom_ia.access.mcp_server.attachments import ATTACHMENTS_INPUT, AttachmentR
 from loom_ia.access.mcp_server.resources import ResourceReader
 from loom_ia.access.progress import Progress
 from loom_ia.agents.registry import UnknownAgent
+from loom_ia.config import ConfigError
 from loom_ia.config.models import Scope
 from loom_ia.core.events import Event
 from loom_ia.core.model import (
@@ -268,7 +281,18 @@ def create_server(
     En **HTTP** (J5.2b), ``callers`` rend l'appelant de la requête en cours,
     tiré de sa clé : un même serveur sert alors tous les clients, publie à
     chacun ses agents, et refuse ce que sa clé ne permet pas.
+
+    Lève ``ConfigError`` si un agent publié en MCP porte le nom d'un des outils
+    du serveur (``run_status``, ``run_report``, ``cancel``) : l'outil intégré
+    le masquerait.
     """
+    for spec in loom.exposed("mcp"):
+        if spec.name in (STATUS_TOOL, REPORT_TOOL, CANCEL_TOOL):
+            raise ConfigError(
+                f"Agent {spec.name!r} publié en MCP : son nom est celui d'un outil du serveur "
+                f"({STATUS_TOOL}, {REPORT_TOOL}, {CANCEL_TOOL}), qui le masquerait. "
+                "Renommer l'agent, ou le retirer du MCP (expose.mcp: false)."
+            )
     fixed = Caller(without_key=tenant)
 
     def who() -> Caller:
@@ -367,8 +391,10 @@ def create_server(
                 if not caller.allows(found.agent):
                     return _refused(f"Clé non autorisée sur l'agent {found.agent!r}")
                 # Relire, c'est lire le journal : sans `read_content`, le
-                # statut et les coûts passent, la correspondance non (J5.2a).
-                return answer(found.masked() if caller.masks else found, ran=False)
+                # statut et les coûts passent, la correspondance non (J5.2a) ;
+                # et le rapport ne nomme que les agents que la clé peut lire.
+                shown = found.restricted(caller.allows)
+                return answer(shown.masked() if caller.masks else shown, ran=False)
             if not caller.allows(tool):
                 return _refused(f"Clé non autorisée sur l'agent {tool!r}")
             _published(loom, tool, caller.tenant)

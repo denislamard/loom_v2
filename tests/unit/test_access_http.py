@@ -5,14 +5,19 @@ Le client parle à l'application ASGI en direct : pas de serveur, pas de port.
 """
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
+from typing import Any
+from urllib.parse import quote
 
 import pytest
 from conftest import ANSWER, QUESTION, ConfigFactory, demo_agent
+from pydantic import ValidationError
 
 from loom_ia.access import Loom
+from loom_ia.config import ConfigError, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.core.events import Event
 from loom_ia.core.model import SessionId, new_run_id
@@ -23,6 +28,7 @@ pytest.importorskip("httpx2", reason="client HTTP de test absent")
 import httpx2
 
 from loom_ia.access.http import create_app
+from loom_ia.access.http.schemas import Approval
 
 CLE = new_api_key()
 SECURITY = {
@@ -147,6 +153,14 @@ async def test_a_key_is_required_when_one_is_declared(demo: ConfigFactory) -> No
     assert without.status_code == 401 and "Clé d'API absente" in without.json()["detail"]
     assert wrong.status_code == 401
     assert bearer.status_code == 200 and header.status_code == 200
+
+
+async def test_a_key_with_non_ascii_characters_is_refused_with_401(demo: ConfigFactory) -> None:
+    async with serving(demo(security=SECURITY)) as (_, http):
+        latin = await http.get("/v1/agents", headers={b"x-api-key": "clé".encode("latin-1")})
+        utf8 = await http.get("/v1/agents", headers={b"authorization": "Bearer clé".encode()})
+
+    assert latin.status_code == 401 and utf8.status_code == 401
 
 
 async def test_scopes_and_agents_limit_a_key(demo: ConfigFactory) -> None:
@@ -349,6 +363,24 @@ async def test_a_paused_run_can_be_cancelled_over_rest(
     # Un run annulé est terminal : la seconde demande ne trouve plus rien à arrêter.
     assert again.json()["cancelled"] is False
     assert finished.json()["status"] == "cancelled"
+
+
+async def test_the_sse_of_a_cancelled_run_ends_with_its_cancellation(
+    atelier: ConfigFactory,
+) -> None:
+    """Le flux d'un run annulé se rejoue jusqu'à `run.cancelled`, puis se ferme."""
+    async with serving(atelier(security=CLES)) as (_, http):
+        entete = {"Authorization": f"Bearer {CLE}"}
+        started = await http.post(
+            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
+        )
+        run_id = started.json()["run_id"]
+        await http.post(f"/v1/runs/{run_id}/cancel", json={}, headers=entete)
+        # Sans cette clôture le flux resterait ouvert : le délai fait échouer l'essai.
+        async with asyncio.timeout(5):
+            events = await _sse(http, f"/v1/runs/{run_id}/events", headers=entete)
+
+    assert events[-1][0] == "run.cancelled"
 
 
 async def test_sessions_are_listed_read_and_exported(demo: ConfigFactory) -> None:
@@ -626,6 +658,175 @@ def _by(events: list[Event], type_: str) -> list[str | None]:
     """Auteurs inscrits au journal pour un type d'événement."""
     found = [event.facets.get("by") for event in events if event.type == type_]
     return [value if value is None or isinstance(value, str) else str(value) for value in found]
+
+
+JOURNAL: dict[str, Any] = {"events": {"backend": "jsonl", "path": "data"}}
+JSON_BODY = {"content-type": "application/json"}
+
+
+class Reading:
+    """Enveloppe ASGI qui compte les octets du corps que l'application a demandés."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+        self.read = 0
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        async def counted() -> Any:
+            message = await receive()
+            self.read += len(message.get("body", b""))
+            return message
+
+        await self.app(scope, counted, send)
+
+
+def nested(depth: int) -> str:
+    """Un JSON de ``depth`` objets emboîtés."""
+    return '{"a":' * depth + "1" + "}" * depth
+
+
+async def test_an_identifier_the_journal_cannot_name_is_a_422_not_a_500(
+    demo: ConfigFactory,
+) -> None:
+    """Le journal JSONL nomme un fichier d'après l'identifiant : lever donnait 500 (409 en POST)."""
+    refused: dict[str, int] = {}
+    async with serving(demo(storage=JOURNAL)) as (_, http):
+        for bad in ("a b", "é", "x" * 200, ".cache", "a\x00b"):
+            name = quote(bad, safe="")
+            requests = {
+                "GET run": http.get(f"/v1/runs/{name}"),
+                "GET events": http.get(f"/v1/runs/{name}/events"),
+                "GET session": http.get(f"/v1/sessions/{name}"),
+                "GET export": http.get(f"/v1/sessions/{name}/events"),
+                "GET report": http.get(f"/v1/sessions/{name}/report"),
+                "GET trace": http.get(f"/v1/traces/{name}"),
+                "GET run?session": http.get("/v1/runs/x", params={"session_id": bad}),
+                "GET events?session": http.get("/v1/events", params={"session_id": bad}),
+                "DELETE session": http.delete(f"/v1/sessions/{name}"),
+                "POST cancel": http.post(f"/v1/runs/{name}/cancel", json={}),
+                "POST session_id": http.post(
+                    "/v1/agents/demo/runs", json={"message": QUESTION, "session_id": bad}
+                ),
+                "POST run_id": http.post(
+                    "/v1/agents/demo/runs",
+                    json={"message": QUESTION, "run_id": bad, "background": True},
+                ),
+            }
+            for label, request in requests.items():
+                response = await request
+                refused[f"{label} {bad[:6]!r}"] = response.status_code
+                assert "inutilisable" in response.json()["detail"], (label, bad)
+
+    assert set(refused.values()) == {422}
+
+
+async def test_a_last_event_id_that_is_not_a_plain_number_is_ignored(
+    demo: ConfigFactory,
+) -> None:
+    """``"²".isdigit()`` est vrai, ``int("²")`` lève : c'était un 500."""
+    async with serving(demo()) as (_, http):
+        started = await http.post("/v1/agents/demo/runs", json={"message": QUESTION})
+        url = f"/v1/runs/{started.json()['run_id']}/events"
+        whole = (await http.get(url)).text
+        # En-têtes latin-1 : 0xB2 est « ² », 0xB3 « ³ ».
+        ignored = [
+            (await http.get(url, headers=[(b"last-event-id", resumed)])).text
+            for resumed in (b"\xb2", b"\xb3", b"9" * 5000, b"-1", b"abc")
+        ]
+
+    assert "run.completed" in whole and all(text == whole for text in ignored)
+
+
+async def test_a_json_body_that_is_not_utf8_is_a_422(demo: ConfigFactory) -> None:
+    """Les octets du corps, gardés dans l'erreur, ne savaient pas s'écrire en JSON : 500."""
+    async with serving(demo()) as (_, http):
+        broken = await http.post(
+            "/v1/agents/demo/runs", content=b'{"message":"\xff\xfe"}', headers=JSON_BODY
+        )
+
+    assert broken.status_code == 422
+    assert broken.json()["detail"][0]["type"] == "json_invalid"
+
+
+async def test_a_json_body_over_the_limit_is_refused_before_it_is_read(
+    demo: ConfigFactory,
+) -> None:
+    limit = 20_000
+    sent = 0
+
+    async def streamed(head: bytes) -> AsyncGenerator[bytes]:
+        nonlocal sent
+        yield head
+        for _ in range(500):  # 5 Mo annoncés, sans Content-Length
+            sent += 10_000
+            yield b"A" * 10_000
+
+    async with Loom.from_config(demo(server={"http": {"max_body_bytes": limit}})) as loom:
+        reading = Reading(create_app(loom))
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(reading), base_url="http://loom.test"
+        ) as http:
+            declared = await http.post(
+                "/v1/agents/demo/runs",
+                content=json.dumps({"message": "A" * 5_000_000}),
+                headers=JSON_BODY,
+            )
+            read_declared = reading.read
+            chunked = await http.post(
+                "/v1/agents/demo/runs", content=streamed(b'{"message":"'), headers=JSON_BODY
+            )
+            read_chunked = reading.read - read_declared
+            # Une route dont FastAPI lit le corps lui-même : même plafond.
+            decided = await http.post(
+                "/v1/runs/x/approve", content=streamed(b'{"reason":"'), headers=JSON_BODY
+            )
+            fits = await http.post(
+                "/v1/agents/demo/runs", content=json.dumps({"message": QUESTION}), headers=JSON_BODY
+            )
+
+    # La longueur annoncée suffit : rien n'est lu. Sinon l'envoi est compté, et s'arrête.
+    assert declared.status_code == 413 and read_declared == 0
+    assert "server.http.max_body_bytes" in declared.json()["detail"]
+    assert "content-length" not in chunked.request.headers
+    assert chunked.status_code == 413 and limit < read_chunked <= limit + 10_000 + 12
+    assert decided.status_code == 413 and sent < 200_000
+    assert fits.status_code == 201
+
+
+def test_the_body_limit_is_an_optional_key_with_a_generous_default(demo: ConfigFactory) -> None:
+    assert load_config(demo()).server.http.max_body_bytes == 128 * 1024 * 1024
+    assert (
+        load_config(demo(server={"http": {"max_body_bytes": 1000}})).server.http.max_body_bytes
+        == 1000
+    )
+    with pytest.raises(ConfigError, match="max_body_bytes"):
+        load_config(demo(server={"http": {"max_body_bytes": 0}}))
+
+
+async def test_json_nested_too_deep_is_refused_before_the_journal_cannot_read_it(
+    demo: ConfigFactory,
+) -> None:
+    """À 198 niveaux, ``metadata`` s'écrivait mais le journal ne se relisait plus (500)."""
+
+    def run(run_id: str, metadata: str) -> bytes:
+        return f'{{"message":"{QUESTION}","run_id":"{run_id}","metadata":{metadata}}}'.encode()
+
+    async with serving(demo(storage=JOURNAL)) as (_, http):
+        deep = await http.post(
+            "/v1/agents/demo/runs", content=run("profond", nested(198)), headers=JSON_BODY
+        )
+        gone = await http.get("/v1/runs/profond")
+        fine = await http.post(
+            "/v1/agents/demo/runs", content=run("ok", nested(60)), headers=JSON_BODY
+        )
+        reread = await http.get("/v1/runs/ok")
+
+    assert deep.status_code == 422 and "64 niveaux" in json.dumps(deep.json(), ensure_ascii=False)
+    assert gone.status_code == 404
+    assert fine.status_code == 201 and reread.status_code == 200
+    # Les arguments corrigés d'une approbation entrent aussi dans le journal.
+    with pytest.raises(ValidationError, match="64 niveaux"):
+        Approval(call_id="c1", arguments=json.loads(nested(70)))
 
 
 async def _sse(

@@ -178,11 +178,15 @@ class ResourceReader:
             self._allowed(state.agent)
             if trace:
                 events = await self._loom.events(run_id, session_id=session_id, tenant_id=tenant)
+                # Le droit vaut pour chaque agent de l'arbre, comme pour la trace.
+                for agent in dict.fromkeys(event.agent for event in events if event.agent):
+                    self._allowed(agent)
                 return [_json(self._shown(events))]
             found = await self._loom.result(run_id, session_id=session_id, tenant_id=tenant)
         except (UnknownRun, UnknownSession) as exc:
             raise _unknown(_said(exc)) from None
-        return [_json(self._sent(found.masked() if self._caller.masks else found))]
+        shown = found.restricted(self._caller.allows)
+        return [_json(self._sent(shown.masked() if self._caller.masks else shown))]
 
     async def _trace(self, rest: str, session_id: SessionId | None) -> list[ReadResourceContents]:
         run_id = RunId(rest)

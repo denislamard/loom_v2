@@ -186,6 +186,122 @@ async def test_a_chunked_upload_is_refused_as_soon_as_it_outgrows_the_limits(
     assert same.status_code == 201
 
 
+async def test_files_beyond_the_count_are_refused_as_they_arrive(demo: ConfigFactory) -> None:
+    """Le fichier de trop est refusé dès son en-tête de partie, non après les 500."""
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    client = pytest.importorskip("httpx2", reason="client HTTP de test absent")
+    from loom_ia.access.http import create_app
+
+    boundary = "loom-nombre"
+    sent = 0
+
+    async def parts() -> AsyncGenerator[bytes]:
+        nonlocal sent
+        for n in range(500):
+            sent += 1
+            yield (
+                (
+                    f'--{boundary}\r\nContent-Disposition: form-data; name="attachments"; '
+                    f'filename="f{n}.png"\r\nContent-Type: image/png\r\n\r\n'
+                ).encode()
+                + PNG
+                + b"\r\n"
+            )
+        yield (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="message"\r\n\r\n'
+            f"{QUESTION}\r\n--{boundary}--\r\n"
+        ).encode()
+
+    read = 0
+
+    class Counting:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            async def counted() -> Any:
+                nonlocal read
+                message = await receive()
+                read += len(message.get("body", b""))
+                return message
+
+            await self.app(scope, counted, send)
+
+    headers = {"content-type": f"multipart/form-data; boundary={boundary}"}
+    async with Loom.from_config(demo(execution=LIMITS)) as loom:
+        transport = client.ASGITransport(Counting(create_app(loom)))
+        async with client.AsyncClient(transport=transport, base_url="http://loom.test") as http:
+            response = await http.post("/v1/agents/demo/runs", content=parts(), headers=headers)
+
+    assert response.status_code == 422
+    assert "3 pièces jointes, au-delà de la limite de 2" in response.json()["detail"]
+    # Refusé au 3e fichier : le 4e et les suivants n'ont pas été demandés au client.
+    assert sent <= 4 and read < 1_000
+
+
+async def test_a_form_the_parser_cannot_read_is_a_400_not_a_conflict(demo: ConfigFactory) -> None:
+    """Le ``ValueError`` de l'analyseur était pris pour un conflit (409)."""
+    boundary = {"content-type": "multipart/form-data; boundary=B"}
+    name = b'Content-Disposition: form-data; name="message"'
+    async with rest(demo()) as (_, http):
+        url = "/v1/agents/demo/runs"
+        cases = {
+            "garbage": await http.post(url, content=b"garbage", headers=boundary),
+            "header": await http.post(
+                url, content=b"--B\r\nnot a header\r\n\r\nx\r\n--B--\r\n", headers=boundary
+            ),
+            "huge": await http.post(
+                url,
+                content=b"--B\r\n" + name + b"; x=" + b"a" * 20_000 + b"\r\n\r\nhi\r\n--B--\r\n",
+                headers=boundary,
+            ),
+        }
+
+    assert {label: r.status_code for label, r in cases.items()} == dict.fromkeys(cases, 400)
+    assert all("Formulaire illisible" in r.json()["detail"] for r in cases.values())
+
+
+async def test_a_content_length_that_is_not_a_number_is_ignored(demo: ConfigFactory) -> None:
+    """``"²".isdigit()`` est vrai, ``int("²")`` lève ; 5 000 chiffres, la limite d'``int``."""
+    body = b'--B\r\nContent-Disposition: form-data; name="message"\r\n\r\nhi\r\n--B--\r\n'
+    async with rest(demo()) as (_, http):
+        answers = [
+            await http.post(
+                "/v1/agents/demo/runs",
+                content=body,
+                headers=[
+                    (b"content-type", b"multipart/form-data; boundary=B"),
+                    (b"content-length", declared),
+                ],
+            )
+            for declared in (b"\xb2", b"9" * 5000, b"abc", b"-1")
+        ]
+
+    assert [r.status_code for r in answers] == [201] * 4
+
+
+async def test_multipart_metadata_nested_too_deep_is_a_422(demo: ConfigFactory) -> None:
+    """Au-delà de 64 niveaux : refusé ; à 500 000, ``json.loads`` lui-même levait (500)."""
+    objects = {depth: '{"a":' * depth + "1" + "}" * depth for depth in (20, 100, 5000)}
+    lists = "[" * 500_000 + "]" * 500_000
+    async with rest(demo()) as (_, http):
+        answers = {
+            depth: await http.post(
+                "/v1/agents/demo/runs",
+                data={"message": QUESTION},
+                files=[("metadata", (None, text))],
+            )
+            for depth, text in {**objects, 500_000: lists}.items()
+        }
+
+    assert {depth: r.status_code for depth, r in answers.items()} == {
+        20: 201,
+        100: 422,
+        5000: 422,
+        500_000: 422,
+    }
+
+
 async def test_openapi_describes_both_bodies(demo: ConfigFactory) -> None:
     async with rest(demo()) as (_, http):
         schema = (await http.get("/openapi.json")).json()
@@ -290,6 +406,10 @@ async def test_mcp_file_links_are_read_under_the_roots(demo: ConfigFactory, tmp_
             "big": await ask(client, link((photos / "gros.png").as_uri())),
             "host": await ask(client, link("file://serveur/photos/a.png")),
             "relative": await ask(client, link("file:photos/a.png")),
+            # Un octet nul dans le chemin (``%00``) : ``resolve`` levait ``ValueError``.
+            "nul": await ask(client, link(f"{(photos / 'ma photo.png').as_uri()}%00.txt")),
+            "nul_name": await ask(client, link(f"{photos.as_uri()}/%00")),
+            "brackets": await ask(client, link("file://[::1/photos/a.png")),
         }
 
     assert not read.isError
@@ -305,6 +425,10 @@ async def test_mcp_file_links_are_read_under_the_roots(demo: ConfigFactory, tmp_
     assert "gros.png : 3200 octets, au-delà de la limite de 1000" in messages["big"]
     assert "hôte 'serveur' non pris en charge" in messages["host"]
     assert "lien 'file' non pris en charge" in messages["relative"]
+    assert (
+        "fichier introuvable" in messages["nul"] and "fichier introuvable" in messages["nul_name"]
+    )
+    assert "lien file:// mal formé" in messages["brackets"]
 
 
 async def test_mcp_refusals(demo: ConfigFactory, tmp_path: Path) -> None:

@@ -21,7 +21,7 @@ from conftest import ANSWER, QUESTION, ConfigFactory
 from loom_ia.access import JudgeVerdict, Loom, RunResult
 from loom_ia.access.cli import main
 from loom_ia.config import ConfigError, load_config
-from loom_ia.config.keys import fingerprint, new_api_key
+from loom_ia.config.keys import fingerprint, matches, new_api_key
 from loom_ia.config.models import ApiKey
 from loom_ia.core.events import (
     DURABLE_PAYLOADS,
@@ -210,6 +210,45 @@ def test_an_expiry_without_a_timezone_is_refused(demo: ConfigFactory) -> None:
     }
     with pytest.raises(ConfigError):
         load_config(demo(security=security))
+
+
+# --- Une empreinte se vérifie au chargement -----------------------------------
+
+
+@pytest.mark.parametrize(
+    "fausse",
+    [
+        "sha256:…",  # le modèle du README, recopié tel quel
+        "sha256:abc",
+        "sha256:" + "0" * 63,
+        "sha256:" + "0" * 65,
+        "sha256:" + "A" * 64,
+        "sha256:" + "0" * 64 + "\n",
+        "md5:" + "0" * 32,
+        "0" * 64,
+    ],
+    ids=[
+        "modele-du-readme",
+        "trop-court",
+        "63-chiffres",
+        "65-chiffres",
+        "majuscules",
+        "retour-a-la-ligne",
+        "autre-algorithme",
+        "sans-prefixe",
+    ],
+)
+def test_a_malformed_fingerprint_is_refused_at_load(demo: ConfigFactory, fausse: str) -> None:
+    """Sans cela, toute clé inconnue ferait un 500 au lieu d'un 401."""
+    security = {"api_keys": [{"id": "app", "hash": fausse}]}
+    with pytest.raises(ConfigError, match=r"security\.api_keys\.0.*64 chiffres hexadécimaux"):
+        load_config(demo(security=security))
+
+
+def test_a_fingerprint_that_is_not_ascii_matches_nothing() -> None:
+    """La comparaison porte sur des octets : un refus, jamais un ``TypeError``."""
+    assert not matches(new_api_key(), "sha256:…")
+    assert not matches("lk_clé", "sha256:é")
 
 
 # --- REST : ce que chaque clé obtient -----------------------------------------

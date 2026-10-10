@@ -33,6 +33,7 @@ from loom_ia.access.http.serve import (
     DEAF,
     Watched,
     _mounted,
+    _served,
     _Serving,
     _Taking,
     _trace,
@@ -692,6 +693,35 @@ async def test_the_server_stops_listening_then_says_so_then_ends(
     server.servers = [cast(Any, Listening())]
     await server.shutdown()
     assert said == ["ferme", "sourd", "finit"]
+
+
+async def test_the_process_that_serves_judges_the_host_it_listens_on(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Sous ``--reload --host``, l'API sans clé avertit de l'adresse servie, pas de la config."""
+
+    class Listening:
+        started = True
+
+        def __init__(self, *args: Any) -> None:
+            pass
+
+        async def serve(self, sockets: Any = None) -> None:
+            pass
+
+    class Ready:
+        def close(self) -> None:
+            pass
+
+    def banner(config: Any, given: str | None, host: str, port: int) -> None:
+        pass
+
+    monkeypatch.setattr(http_serve, "_Taking", Listening)
+    started = await _served(
+        demo(), None, "0.0.0.0", 8000, cast(Any, None), banner, cast(Any, Ready()), 0
+    )
+    assert started
+    assert "API REST ouverte sur 0.0.0.0 sans clé déclarée" in capsys.readouterr().err
 
 
 # --- La ligne de commande -----------------------------------------------------------

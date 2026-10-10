@@ -22,6 +22,12 @@ contre le rebinding DNS. Une requête **sans** ``Origin`` passe — un client
 natif n'en envoie pas ; avec un ``Origin``, il doit être déclaré. Le ``Host``,
 lui, doit toujours figurer dans la liste : loom y met son adresse d'écoute,
 et ``server.mcp.allowed_hosts`` l'étend.
+
+Le serveur est **sans état** (``stateless=True``) : chaque requête a sa propre
+session. Conséquence : l'elicitation n'y marche jamais — la session ne connaît
+pas les capacités du client, et la réponse à un formulaire n'arriverait pas par
+la requête qui l'attend. Un run qui demande une approbation se met en pause,
+et se tranche par REST ou ``loom approve`` (voir ``server.py``).
 """
 
 import logging

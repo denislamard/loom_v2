@@ -154,7 +154,16 @@ class Budgets(DomainModel):
 
     @property
     def in_dollars(self) -> bool:
-        return self.run.max_cost is not None or self.session.max_cost is not None
+        """Vrai si une limite est en dollars : run, session, ou plafond de client par période."""
+        return any(
+            limit is not None
+            for limit in (
+                self.run.max_cost,
+                self.session.max_cost,
+                self.tenant.max_cost_per_day,
+                self.tenant.max_cost_per_month,
+            )
+        )
 
     def merged(self, override: Budgets | None) -> Self:
         """Ce budget, surchargé clé par clé par les champs donnés dans ``override``."""

@@ -6,6 +6,7 @@ avertissements et les erreurs des erreurs. ``prod`` durcit les premiers,
 ``dev`` assouplit les secondes.
 """
 
+import importlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ import pytest
 from conftest import MODEL, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
+from loom_ia.access.cli import main
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.loader import PROFILE_ENV, chosen_profile
 from loom_ia.core.model import JudgeWhen
@@ -172,6 +174,58 @@ def test_an_open_api_without_keys_refuses_to_serve_in_prod(demo: ConfigFactory) 
     assert create_app(Loom(load_config(path))) is not None
     with pytest.raises(ConfigError, match=r"Profil prod .*sans clé déclarée"):
         create_app(Loom(load_config(path, profile="prod")))
+
+
+def test_serve_judges_the_host_it_listens_on_not_the_configured_one(
+    demo: ConfigFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``loom serve --host`` remplace ``server.http.host`` : c'est lui qui ouvre l'API."""
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    from loom_ia.access.http import serve
+
+    http_serve = importlib.import_module("loom_ia.access.http.serve")
+
+    listened: list[str] = []
+
+    def listen(app: Any, *, host: str, **options: Any) -> None:
+        listened.append(host)
+
+    monkeypatch.setattr(http_serve.uvicorn, "run", listen)
+    path = demo()
+    # Sans profil : un avertissement qui nomme l'adresse servie, et le serveur part.
+    with caplog.at_level("WARNING"):
+        serve(Loom(load_config(path)), host="0.0.0.0")
+    assert listened == ["0.0.0.0"]
+    assert "API REST ouverte sur 0.0.0.0 sans clé déclarée" in caplog.text
+    # En prod : refusé avant d'écouter.
+    listened.clear()
+    assert main(["--config", str(path), "--profile", "prod", "serve", "--host", "0.0.0.0"]) == 2
+    assert listened == []
+    assert "Profil prod : API REST ouverte sur 0.0.0.0" in capsys.readouterr().err
+
+
+def test_serve_does_not_judge_a_configured_host_it_does_not_listen_on(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Config ouverte, mais ``--host 127.0.0.1`` : l'API n'écoute que sur la machine."""
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    http_serve = importlib.import_module("loom_ia.access.http.serve")
+
+    listened: list[str] = []
+
+    def listen(app: Any, *, host: str, **options: Any) -> None:
+        listened.append(host)
+
+    monkeypatch.setattr(http_serve.uvicorn, "run", listen)
+    ouverte = str(demo(server={"http": {"host": "0.0.0.0"}}))
+    args = ["--config", ouverte, "--profile", "prod", "serve"]
+    assert main([*args, "--host", "127.0.0.1"]) == 0
+    assert listened == ["127.0.0.1"]
+    # Sans l'option, c'est la config qui parle, comme avant.
+    assert main(args) == 2
 
 
 # --- Ce que dev assouplit -----------------------------------------------------

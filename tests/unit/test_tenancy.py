@@ -514,12 +514,17 @@ async def test_an_agent_closed_to_a_tenant_is_refused_over_rest(demo: ConfigFact
         transport = httpx2.ASGITransport(create_app(loom))
         async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
             headers = {"Authorization": f"Bearer {cle}"}
-            # L'agent existe et il est publié : ce n'est pas un 404, c'est un refus.
+            # L'agent existe et il est publié, mais pas pour ce client : le 404 est celui
+            # d'un agent inconnu, et sa liste ne nomme que les agents de ce client.
             refus = await http.post(
                 "/v1/agents/demo/runs", json={"message": QUESTION}, headers=headers
             )
-            assert refus.status_code == 403
-            assert "non ouvert au client" in refus.json()["detail"]
+            absent = await http.post(
+                "/v1/agents/absent/runs", json={"message": QUESTION}, headers=headers
+            )
+            assert refus.status_code == absent.status_code == 404
+            assert refus.json()["detail"] == "Agent 'demo' inconnu (agents : autre)"
+            assert absent.json()["detail"] == "Agent 'absent' inconnu (agents : autre)"
             listed = await http.get("/v1/agents", headers=headers)
             assert [a["name"] for a in listed.json()] == ["autre"]
 
