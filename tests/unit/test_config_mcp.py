@@ -189,6 +189,50 @@ async def test_mounting_builds_one_source_per_reference(tmp_path: Path) -> None:
     await built.aclose()
 
 
+@pytest.mark.parametrize(
+    ("changes", "tools", "name"),
+    [
+        # Déclaré sur le serveur : tous les agents qui le prennent la subissent.
+        (
+            {"time": {"tools": {"maintenant": {"approval": "always"}}}},
+            [{"mcp": "time"}],
+            "time__maintenant",
+        ),
+        # Déclaré par l'agent, sous le préfixe de son alias.
+        (
+            {},
+            [{"mcp": "math", "alias": "m", "tools": {"calculer": {"approval": "always"}}}],
+            "m__calculer",
+        ),
+    ],
+)
+async def test_an_mcp_tool_declared_always_needs_a_durable_journal(
+    tmp_path: Path, changes: dict[str, Any], tools: list[dict[str, Any]], name: str
+) -> None:
+    """Les outils d'un serveur ne sont connus qu'à la connexion : la garde lit la config (#28)."""
+    from loom_ia.config.models import EventsStorage, StorageConfig
+
+    config = load_config(write(tmp_path, agent(tools=tools), mcp_servers=servers(**changes)))
+    with pytest.raises(ConfigError, match=rf"{name}.*journal durable"):
+        build_agent(config, "assistant", InMemoryEventStore())
+    # Un journal durable tient la pause : le même agent se monte.
+    events = EventsStorage(backend="jsonl", path=tmp_path / "data")
+    durable = config.model_copy(update={"storage": StorageConfig(events=events)})
+    await build_agent(durable, "assistant", InMemoryEventStore()).aclose()
+
+
+async def test_an_mcp_approval_the_agent_lifts_or_hides_asks_nothing(tmp_path: Path) -> None:
+    declared = servers(time={"tools": {"maintenant": {"approval": "always"}}})
+    for tools in (
+        # L'agent la lève, et sa déclaration l'emporte sur celle du serveur.
+        [{"mcp": "time", "tools": {"maintenant": {"approval": "never"}}}],
+        # L'agent n'expose pas l'outil.
+        [{"mcp": "time", "exclude": ["maintenant"]}],
+    ):
+        config = load_config(write(tmp_path, agent(tools=tools), mcp_servers=declared))
+        await build_agent(config, "assistant", InMemoryEventStore()).aclose()
+
+
 def test_missing_secret_stops_the_mounting(tmp_path: Path) -> None:
     secret = servers(time={"env_from": {"JETON": "LOOM_ABSENT"}})
     config = load_config(write(tmp_path, agent(), mcp_servers=secret))

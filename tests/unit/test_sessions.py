@@ -12,9 +12,11 @@ from conftest import ANSWER, QUESTION, ConfigFactory
 
 from loom_ia.access.api import Loom, UnknownSession
 from loom_ia.access.cli import main
-from loom_ia.adapters.stores import InMemoryEventStore
+from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
+from loom_ia.config import load_config
 from loom_ia.core.events import (
     Event,
+    ModelResponded,
     RunCancelled,
     RunClaimed,
     RunScope,
@@ -216,6 +218,81 @@ async def test_a_cut_between_overlapping_runs_falls_before_both() -> None:
     assert cut(events, keep_last=1) == completed[0]
     assert cut(events, keep_last=2) == completed[0]
     assert cut(events, keep_last=3) == 0
+
+
+async def legacy_orphans(store: EventStore, *, late: bool = False) -> list[Event]:
+    """Un tour fini, puis un run échoué dont les sous-runs sont restés ouverts (journal 2.0.0).
+
+    ``late`` : le petit-enfant écrit encore (une approbation) après la clôture du parent.
+    """
+    await written(store, conversation(SESSION, "Premier ?", "Un."))
+    parent = RunJournal(session_id=SESSION)
+    parent.start("Deuxième ?").model_turn(tool_call_message(("c1", "deleguer", {})))
+    await written(store, parent)
+    child = RunJournal(session_id=SESSION, root_run_id=parent.run_id, agent="enfant")
+    child.start("Sous-tâche ?", parent_run_id=parent.run_id, parent_call_id="c1", depth=1)
+    child.model_turn(tool_call_message(("k1", "deleguer", {})))
+    await written(store, child)
+    grandchild = RunJournal(session_id=SESSION, root_run_id=parent.run_id, agent="petit-enfant")
+    grandchild.start("Détail ?", parent_run_id=child.run_id, parent_call_id="k1", depth=2)
+    await written(store, grandchild)
+    parent.fail("timeout", "délai dépassé")
+    await written(store, parent)
+    if late:
+        grandchild.model_turn(Message.assistant("Tard."))
+        await written(store, grandchild)
+    return await store.read(DEFAULT_TENANT, SESSION)
+
+
+@pytest.mark.parametrize("late", [False, True], ids=["silent", "writes_after_its_parent"])
+async def test_the_boundary_passes_the_subruns_a_closed_parent_left_open(late: bool) -> None:
+    """Sans événement final, ils ne repartiront pas : ils ne figent plus la frontière (2.0.0)."""
+    events = await legacy_orphans(InMemoryEventStore(), late=late)
+
+    parent_id = next(e.run_id for e in events if e.type == "run.failed")
+    orphans = {e.run_id for e in events} - {parent_id} - {events[0].run_id}
+    assert len(orphans) == 2 and not any(fold(events, run).finished for run in orphans)
+    assert boundary(events) == events[-1].seq
+    assert snapshot(events).up_to_seq == events[-1].seq
+    # Tant que le parent tourne, ils tiennent la frontière avec lui, comme avant.
+    failure = next(e.seq for e in events if e.type == "run.failed")
+    started = next(e.seq for e in events if e.run_id == parent_id)
+    assert boundary([e for e in events if e.seq < failure - 1]) == started - 1
+
+
+def test_a_snapshot_over_orphan_subruns_leaves_the_next_request_unchanged(
+    demo: ConfigFactory,
+) -> None:
+    """Journal 2.0.0 : le snapshot que les orphelins empêchaient est une vue, la requête reste."""
+
+    async def second_run(path: Path) -> tuple[list[str], list[SessionSnapshot], list[Event]]:
+        store = JsonlEventStore(Path(load_config(path).storage.events.path or ""))
+        await legacy_orphans(store)
+        await store.aclose()
+        async with Loom.from_config(path) as loom:
+            result = await loom.run("demo", QUESTION, session_id=SESSION)
+            events = await loom.export_session(SESSION)
+        hashes = [
+            e.payload.request_hash
+            for e in events
+            if e.run_id == result.run_id and isinstance(e.payload, ModelResponded)
+        ]
+        snapshots = [e.payload for e in events if isinstance(e.payload, SessionSnapshot)]
+        return hashes, snapshots, events
+
+    def config(name: str, every: int) -> Path:
+        return demo(
+            storage={"events": {"backend": "jsonl", "path": name}},
+            sessions={"snapshot_every": every},
+        )
+
+    eager, [marker], events = asyncio.run(second_run(config("avec", 1)))
+    lazy, none, _ = asyncio.run(second_run(config("sans", 10_000)))
+
+    assert eager and eager == lazy and not none
+    # Le snapshot couvre tout ce qui est clos, orphelins compris, et rejoue la même histoire.
+    assert marker.up_to_seq == max(e.seq for e in events if e.category != "session")
+    assert list(marker.messages) == history(events)
 
 
 async def test_a_snapshot_taken_at_any_point_matches_a_full_replay() -> None:

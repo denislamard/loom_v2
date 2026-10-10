@@ -33,12 +33,16 @@ from loom_ia.core.model import (
     CONTINUE,
     DEFAULT_TENANT,
     AfterModel,
+    AfterTool,
     ApprovalOutcome,
+    BeforeTool,
     CallerContext,
     Decision,
+    Fail,
     Message,
     ModelChunk,
     ModelSpec,
+    Pause,
     PendingApproval,
     Pricing,
     Retry,
@@ -69,6 +73,7 @@ from loom_ia.engine import (
     SubAgentDefinition,
     ToolExecutor,
     begin_run,
+    cancellation,
     drive,
     in_call_order,
     run_scope,
@@ -966,6 +971,203 @@ async def test_a_run_out_of_time_closes_its_open_subruns_before_its_next_step(
 
     assert state.status is RunStatus.FAILED and state.error_type == "timeout"
     assert_subrun_closed_with_its_parent(await journal(store, state), state)
+
+
+@policy(points=["before_tool"], decisions=["pause"])
+def attente_humaine(subject: BeforeTool) -> Decision:
+    """Met chaque appel d'outil en attente d'une validation."""
+    return Pause("à valider")
+
+
+@policy(points=["after_tool"], decisions=["fail"])
+def coupe_au_resultat(subject: AfterTool) -> Decision:
+    """Fait échouer le run dès que ``calculer`` rend son résultat."""
+    return Fail("résultat inacceptable") if subject.call.name == "calculer" else CONTINUE
+
+
+def delegating(
+    name: str, agent: str, agents: dict[str, RunContext], *, max_depth: int = 1
+) -> AgentTool:
+    definition = SubAgentDefinition(
+        name=name, agent=agent, description="Délègue.", max_depth=max_depth
+    )
+    return AgentTool(definition, agents.__getitem__)
+
+
+async def test_a_policy_failure_closes_the_subrun_waiting_for_an_approval(
+    store: EventStore,
+) -> None:
+    """Le délai et ``cancel`` ne sont pas les seules clôtures : toutes ferment les sous-runs."""
+    child_model = scripted(tool_call_message(("k1", "calculer", {"expr": "2*2"})))
+    agents = {"verificateur": context(store, child_model, policies=unbounded(attente_humaine))}
+    sub = delegating("verifier", "verificateur", agents)
+    # Dans le même lot, un outil dont le résultat fait échouer le run, et un enfant qui s'arrête
+    # sur une approbation : le lot va à son terme, le parent échoue, l'enfant attend toujours.
+    model = scripted(
+        tool_call_message(("c1", "calculer", {"expr": "1+1"}), ("c2", "verifier", {"message": "?"}))
+    )
+    ctx = context(
+        store, model, tools=ToolExecutor([calculer, sub]), policies=unbounded(coupe_au_resultat)
+    )
+
+    state = await drive(ctx, (await begin_run(ctx, "?")).run_id)
+
+    assert state.status is RunStatus.FAILED and state.error_type == "policy.coupe_au_resultat"
+    events = await journal(store, state)
+    [child_id] = {e.run_id for e in events} - {state.run_id}
+    assert any(e.run_id == child_id and e.type == "approval.requested" for e in events)
+    assert_subrun_closed_with_its_parent(events, state)
+
+
+async def test_a_failing_subrun_closes_its_own_open_subruns(store: EventStore) -> None:
+    """Chaque niveau ferme les siens, même quand la racine, elle, va au bout."""
+    grandchild_model = scripted(tool_call_message(("g1", "calculer", {"expr": "2*2"})))
+    child_model = scripted(
+        tool_call_message(
+            ("k1", "calculer", {"expr": "1+1"}), ("k2", "controler", {"message": "?"})
+        )
+    )
+    agents = {
+        "controleur": context(store, grandchild_model, policies=unbounded(attente_humaine)),
+    }
+    controler = delegating("controler", "controleur", agents, max_depth=2)
+    agents["verificateur"] = context(
+        store,
+        child_model,
+        tools=ToolExecutor([calculer, controler]),
+        policies=unbounded(coupe_au_resultat),
+    )
+    verifier = delegating("verifier", "verificateur", agents, max_depth=2)
+    model = scripted(
+        tool_call_message(("c1", "verifier", {"message": "?"})), Message.assistant("Tant pis.")
+    )
+    ctx = context(store, model, tools=ToolExecutor([verifier]))
+
+    state = await drive(ctx, (await begin_run(ctx, "?")).run_id)
+
+    assert state.status is RunStatus.COMPLETED
+    events = await journal(store, state)
+    [child_id, grandchild_id] = list(dict.fromkeys(e.run_id for e in events))[1:]
+    child, grandchild = fold(events, child_id), fold(events, grandchild_id)
+    assert child.status is RunStatus.FAILED and child.error_type == "policy.coupe_au_resultat"
+    assert grandchild.status is RunStatus.CANCELLED and grandchild.cancelled == "parent"
+    [closing] = [
+        e.payload for e in events if e.run_id == grandchild_id and e.type == "run.cancelled"
+    ]
+    assert isinstance(closing, RunCancelled) and closing.by == child_id
+    assert boundary(events) == events[-1].seq
+
+
+class Batches(InMemoryEventStore):
+    """Journal qui garde chaque écriture telle qu'elle est arrivée : un lot est atomique."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.written: list[list[Event]] = []
+
+    async def append(
+        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
+    ) -> list[Event]:
+        events = await super().append(drafts, expected_seq=expected_seq)
+        self.written.append(events)
+        return events
+
+
+async def open_child_of(store: EventStore, parent: RunJournal) -> RunJournal:
+    """Écrit un parent qui a épuisé son délai (2 000 ms d'étape pour 1 s), et son enfant ouvert."""
+    parent.start("?").model_turn(tool_call_message(("c1", "verifier", {"message": "Vérifie."})))
+    child = RunJournal(
+        agent="verificateur", session_id=parent.scope.session_id, root_run_id=parent.run_id
+    )
+    child.start("Vérifie.", parent_run_id=parent.run_id, parent_call_id="c1", depth=1)
+    await append_all(store, [*parent.take(), *child.take()])
+    return child
+
+
+async def test_a_run_closes_its_subruns_in_the_same_write_as_itself() -> None:
+    """Un plantage ne peut pas laisser un parent ouvert dont l'enfant est déjà annulé."""
+    store, parent = Batches(), RunJournal(agent="demo", step_ms=2_000.0)
+    child = await open_child_of(store, parent)
+    store.written.clear()
+
+    state = await drive(context(store, scripted(), timeout=1.0), parent.run_id)
+
+    assert state.status is RunStatus.FAILED and state.error_type == "timeout"
+    [closing] = [batch for batch in store.written if any(e.run_id == child.run_id for e in batch)]
+    assert [(e.run_id, e.type) for e in closing] == [
+        (child.run_id, "run.transitioned"),
+        (child.run_id, "run.cancelled"),
+        (parent.run_id, "run.failed"),
+    ]
+
+
+class Crashing(InMemoryEventStore):
+    """Journal qui plante une fois, au moment d'écrire la clôture d'un run : rien n'est écrit."""
+
+    def __init__(self, run_id: RunId) -> None:
+        super().__init__()
+        self.run_id = run_id
+        self.armed = True
+
+    async def append(
+        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
+    ) -> list[Event]:
+        if self.armed and any(
+            d.run_id == self.run_id and isinstance(d.payload, RunFailed) for d in drafts
+        ):
+            self.armed = False
+            raise ConnectionError("plantage de la machine")
+        return await super().append(drafts, expected_seq=expected_seq)
+
+
+async def test_a_crash_before_the_closing_is_closed_with_the_subruns_on_resume() -> None:
+    """Le parent en échec sans clôture, l'enfant ouvert : la reprise écrit les deux ensemble."""
+    parent = RunJournal(agent="demo", step_ms=2_000.0)
+    store = Crashing(parent.run_id)
+    child = await open_child_of(store, parent)
+    ctx = context(store, scripted(), timeout=1.0)
+
+    with pytest.raises(ConnectionError):
+        await drive(ctx, parent.run_id)
+
+    # Rien n'a été à moitié écrit : le parent est en échec sans clôture, l'enfant est ouvert.
+    events = await store.read(DEFAULT_TENANT, parent.scope.session_id)
+    assert fold(events, parent.run_id).status is RunStatus.FAILED
+    assert not fold(events, parent.run_id).finished and not fold(events, child.run_id).finished
+    state = await drive(ctx, parent.run_id)
+
+    assert state.finished and state.status is RunStatus.FAILED
+    assert_subrun_closed_with_its_parent(await journal(store, state), state)
+
+
+async def test_a_parent_resumed_after_its_child_was_cancelled_replays_the_call(
+    store: EventStore,
+) -> None:
+    """Journal d'avant la clôture en un seul lot : l'enfant est annulé, le parent encore ouvert."""
+    child_model = scripted(tool_call_message(("k1", "calculer", {"expr": "2*2"})))
+    agents = {"verificateur": context(store, child_model, policies=unbounded(attente_humaine))}
+    sub = delegating("verifier", "verificateur", agents)
+    model = scripted(
+        tool_call_message(("c1", "verifier", {"message": "?"})), Message.assistant("Tant pis.")
+    )
+    ctx = context(store, model, tools=ToolExecutor([sub]))
+    waiting = await drive(ctx, (await begin_run(ctx, "?")).run_id)
+    assert waiting.status is RunStatus.WAITING_CHILD
+    events = await journal(store, waiting)
+    [child_id] = {e.run_id for e in events} - {waiting.run_id}
+    writer = await SessionWriter.open(store, DEFAULT_TENANT, waiting.session_id)
+    # L'annulation de l'enfant est écrite ; le plantage a eu lieu avant la clôture du parent.
+    await writer.append(cancellation(fold(events, child_id), reason="parent", by=waiting.run_id))
+
+    state = await drive(ctx, waiting.run_id)
+
+    assert state.status is RunStatus.COMPLETED
+    events = await journal(store, state)
+    # L'enfant n'est pas relancé : l'appel est rejoué, et rend l'arrêt de l'enfant au modèle.
+    assert [e.run_id for e in events if e.type == "run.started"] == [state.run_id, child_id]
+    [result] = [e.payload for e in events if isinstance(e.payload, ToolCompleted)]
+    assert result.output.is_error and "dans l'état cancelled" in result.output.as_text
+    assert boundary(events) == events[-1].seq
 
 
 async def test_drive_checks_the_agent(store: EventStore) -> None:

@@ -509,7 +509,9 @@ class TenantSpec(DomainModel):
     # Débit accordé à ce client, quel que soit l'accès emprunté (L3).
     quotas: Quotas = Quotas()
     # Stockage propre à ce client (isolation physique, ``TenantRouter``) ;
-    # sans lui, celui de la racine, où seul le ``tenant_id`` le distingue.
+    # sans lui, celui de la racine, où seul le ``tenant_id`` le distingue. Le
+    # bloc déclare ``events`` : le défaut d'un journal est la mémoire, et un
+    # client qui n'aurait que ``artifacts`` perdrait le sien à chaque arrêt.
     storage: StorageConfig | None = None
     # Rétention propre à ce client, à côté de ``storage`` et non dedans : le
     # bloc ``storage`` dit **où** ses données vivent, et le déclarer lui
@@ -555,6 +557,20 @@ class TenantSpec(DomainModel):
                 f"Client {self.id!r} : 'storage.idempotency' propre à un client est prévu "
                 "pour le jalon J5.3 (magasins de service) ; les clés sont déjà préfixées "
                 "par le client dans le magasin commun"
+            )
+        if self.storage is not None and "events" not in self.storage.model_fields_set:
+            # Déclarer ``storage`` donne au client son propre journal (le routeur
+            # le crée) ; sans ``events``, ce serait le défaut, en mémoire : perdu
+            # à l'arrêt, et hors de la garde de durabilité. Hériter du journal de
+            # la racine serait l'autre lecture, mais c'est déjà ce que fait un
+            # client sans bloc ``storage`` : un bloc muet sur ``events`` ne dit
+            # pas lequel des deux est voulu, et le refus le fait choisir.
+            raise ValueError(
+                f"Client {self.id!r} : 'storage' ne déclare pas 'events' — son journal serait "
+                "en mémoire, perdu à chaque arrêt, sans que rien ne le dise. Déclarer "
+                "'storage.events' (par exemple {backend: jsonl, path: …}, ou {backend: memory} "
+                "si c'est voulu), ou retirer le bloc 'storage' pour partager le journal de "
+                "la racine"
             )
         return self
 

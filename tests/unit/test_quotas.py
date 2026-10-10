@@ -12,6 +12,7 @@ commencé avant le réchauffage et fini après serait compté deux fois — et u
 artisan se verrait refuser sa journée au milieu de l'après-midi.
 """
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
@@ -95,6 +96,32 @@ class CountingStore(InMemoryEventStore):
 
     async def query(self, query: EventQuery) -> list[Event]:
         self.queries += 1
+        return await super().query(query)
+
+
+class GatedStore(InMemoryEventStore):
+    """Journal dont la relecture attend un feu vert : un réchauffage qu'on tient ouvert.
+
+    ``held`` nomme le client dont la lecture attend (tous si ``None``) ; les
+    ``failures`` premières lectures libérées échouent.
+    """
+
+    def __init__(self, *, held: TenantId | None = None, failures: int = 0) -> None:
+        super().__init__()
+        self.queries = 0
+        self.held = held
+        self.failures = failures
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def query(self, query: EventQuery) -> list[Event]:
+        self.queries += 1
+        if self.held is None or query.tenant_id == self.held:
+            self.started.set()
+            await self.release.wait()
+            if self.failures:
+                self.failures -= 1
+                raise ConnectionError("journal indisponible")
         return await super().query(query)
 
 
@@ -276,6 +303,92 @@ async def test_a_shared_counter_has_nothing_to_warm_up(demo: ConfigFactory) -> N
     tenant = registry(demo, budgets=AFTER_ONE).get(DUPONT)
     await TenantUsage(InMemoryUsageCounter(), store, warm=False).check(tenant)
     assert store.queries == 0
+
+
+async def test_concurrent_checks_wait_for_the_warm_up_instead_of_reading_an_empty_counter(
+    demo: ConfigFactory,
+) -> None:
+    """Juste après un redémarrage, le second ``check()`` ne passe pas devant la lecture."""
+    store = GatedStore()
+    await written(store, spending(DUPONT, 3))
+    tenant = registry(demo, budgets=AFTER_ONE).get(DUPONT)
+    usage = TenantUsage(InMemoryUsageCounter(), store)
+    first = asyncio.create_task(usage.check(tenant))
+    await store.started.wait()
+    second = asyncio.create_task(usage.check(tenant))
+    await asyncio.sleep(0)
+    assert not second.done()
+    store.release.set()
+    results = await asyncio.gather(first, second, return_exceptions=True)
+    assert [type(result) for result in results] == [BudgetExhausted, BudgetExhausted]
+    assert store.queries == 1
+
+
+async def test_a_failed_warm_up_refuses_the_run_and_the_next_check_reads_again(
+    demo: ConfigFactory,
+) -> None:
+    store = GatedStore(failures=1)
+    store.release.set()
+    await written(store, spending(DUPONT, 3))
+    tenant = registry(demo, budgets=AFTER_ONE).get(DUPONT)
+    usage = TenantUsage(InMemoryUsageCounter(), store)
+    with pytest.raises(ConnectionError):
+        await usage.check(tenant)
+    # Le couple n'est pas resté « chaud » avec un compteur vide : la dépense est relue.
+    with pytest.raises(BudgetExhausted):
+        await usage.check(tenant)
+    assert store.queries == 2
+
+
+async def test_a_check_waiting_on_a_failed_warm_up_reads_again_instead_of_passing(
+    demo: ConfigFactory,
+) -> None:
+    store = GatedStore(failures=1)
+    await written(store, spending(DUPONT, 3))
+    tenant = registry(demo, budgets=AFTER_ONE).get(DUPONT)
+    usage = TenantUsage(InMemoryUsageCounter(), store)
+    first = asyncio.create_task(usage.check(tenant))
+    await store.started.wait()
+    second = asyncio.create_task(usage.check(tenant))
+    await asyncio.sleep(0)
+    store.release.set()
+    results = await asyncio.gather(first, second, return_exceptions=True)
+    assert [type(result) for result in results] == [ConnectionError, BudgetExhausted]
+    assert store.queries == 2
+
+
+async def test_a_slow_warm_up_does_not_hold_back_the_other_tenants(demo: ConfigFactory) -> None:
+    """Un verrou par client et par période, pas un verrou pour toute l'instance."""
+    store = GatedStore(held=DUPONT)
+    await written(store, spending(MARTIN, 3))
+    both = [{"id": DUPONT, "budgets": AFTER_ONE}, {"id": MARTIN, "budgets": AFTER_ONE}]
+    tenants = Tenants(load_config(demo(tenants=both)))
+    usage = TenantUsage(InMemoryUsageCounter(), store)
+    slow = asyncio.create_task(usage.check(tenants.get(DUPONT)))
+    await store.started.wait()
+    with pytest.raises(BudgetExhausted):
+        await usage.check(tenants.get(MARTIN))
+    assert not slow.done()
+    store.release.set()
+    await slow
+
+
+async def test_a_run_recorded_while_the_warm_up_reads_is_not_counted_twice(
+    demo: ConfigFactory,
+) -> None:
+    store = GatedStore()
+    journal = spending(DUPONT, 2)
+    await written(store, journal)
+    tenant = registry(demo, budgets={"tenant": {"max_tokens_per_day": 10_000}}).get(DUPONT)
+    counter = InMemoryUsageCounter()
+    usage = TenantUsage(counter, store)
+    warming = asyncio.create_task(usage.check(tenant))
+    await store.started.wait()
+    # Le run se termine pendant la lecture : sa valeur est posée avant celle du journal.
+    await usage.record(tenant, journal.run_id, Spent(Usage(input_tokens=200)))
+    store.release.set()
+    await warming
+    assert (await counter.consumed(DUPONT, Period.of("day").key)).tokens == 200
 
 
 # --- Ce que le refus dit, et sur quelle fenêtre -------------------------------

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from conftest import ANSWER, QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, MODEL, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import AgentNotAllowed, Loom, UnknownTenant
 from loom_ia.adapters.stores import JsonlEventStore
@@ -205,6 +205,89 @@ def test_a_missing_secret_does_not_fall_back_on_the_common_one(demo: ConfigFacto
     secrets = EnvironmentSecrets(config, {"CRM_TOKEN": "commun"})
     # Sans sa variable à lui, le client n'a rien — surtout pas le secret des autres.
     assert secrets.secrets(DUPONT)["CRM_TOKEN"] == ""
+
+
+def named_by_the_config(demo: ConfigFactory, tenants: list[dict[str, Any]]) -> Path:
+    """Une config qui nomme des variables : un modèle, deux serveurs MCP, la clé du sceau."""
+    return demo(
+        models=[{**MODEL, "api_key_env": "ANTHROPIC_API_KEY"}],
+        mcp_servers=[
+            {"name": "crm", "transport": "stdio", "command": "crm", "env_from": {"T": "CRM_TOKEN"}},
+            {
+                "name": "agenda",
+                "transport": "http",
+                "url": "https://agenda.example/mcp",
+                "headers_env": {"Authorization": "AGENDA_AUTH"},
+            },
+        ],
+        storage={
+            "events": {"backend": "jsonl", "path": "data"},
+            "encryption": {"keys": ["LOOM_JOURNAL_KEY"]},
+        },
+        tenants=tenants,
+    )
+
+
+ENVIRON = {
+    "ANTHROPIC_API_KEY": "commun",
+    "AGENDA_AUTH": "Bearer commun",
+    "LOOM_JOURNAL_KEY": "clé-commune",
+    "CRM_TOKEN": "crm-commun",
+    "DUPONT_CRM_TOKEN": "à-dupont",
+    "MARTIN_CRM_TOKEN": "à-martin",
+    "AWS_SECRET_ACCESS_KEY": "pas-pour-les-clients",
+}
+
+
+def test_a_tenant_table_holds_only_what_the_config_names(demo: ConfigFactory) -> None:
+    """Pas l'environnement entier : dupont ne voit ni ``MARTIN_CRM_TOKEN`` ni le reste."""
+    tenants = [
+        {"id": DUPONT, "secrets": {"CRM_TOKEN": "DUPONT_CRM_TOKEN"}},
+        {"id": MARTIN, "secrets": {"CRM_TOKEN": "MARTIN_CRM_TOKEN"}},
+        {"id": "sans-redirection"},
+    ]
+    secrets = EnvironmentSecrets(load_config(named_by_the_config(demo, tenants)), ENVIRON)
+    common = {
+        "ANTHROPIC_API_KEY": "commun",
+        "AGENDA_AUTH": "Bearer commun",
+        "LOOM_JOURNAL_KEY": "clé-commune",
+    }
+    # Ce que le client ne redirige pas reste lu dans l'environnement commun.
+    assert dict(secrets.secrets(DUPONT)) == {**common, "CRM_TOKEN": "à-dupont"}
+    assert dict(secrets.secrets(MARTIN)) == {**common, "CRM_TOKEN": "à-martin"}
+    assert dict(secrets.secrets(TenantId("sans-redirection"))) == {
+        **common,
+        "CRM_TOKEN": "crm-commun",
+    }
+
+
+def test_a_redirection_to_an_absent_variable_is_empty_not_the_original(demo: ConfigFactory) -> None:
+    tenants = [{"id": DUPONT, "secrets": {"CRM_TOKEN": "DUPONT_ABSENT"}}, {"id": MARTIN}]
+    secrets = EnvironmentSecrets(load_config(named_by_the_config(demo, tenants)), ENVIRON)
+    assert secrets.secrets(DUPONT)["CRM_TOKEN"] == ""
+    assert secrets.secrets(MARTIN)["CRM_TOKEN"] == "crm-commun"
+
+
+def test_a_tenant_table_is_frozen_and_read_only(demo: ConfigFactory) -> None:
+    environ = dict(ENVIRON)
+    secrets = EnvironmentSecrets(load_config(named_by_the_config(demo, two())), environ)
+    table = secrets.secrets(DUPONT)
+    with pytest.raises(TypeError):
+        cast(Any, table)["PIRATE"] = "x"
+    environ["ANTHROPIC_API_KEY"] = "changée après coup"
+    # Une copie : l'environnement qui bouge ensuite n'est pas dans la table du client.
+    assert table["ANTHROPIC_API_KEY"] == "commun"
+    assert "PIRATE" not in environ and "PIRATE" not in table
+
+
+def test_without_tenants_the_table_is_the_environment_read_only(demo: ConfigFactory) -> None:
+    """Hors multi-clients, personne à isoler : ce que lisait un plugin se lit encore."""
+    environ = {"CARNET_JETON": "j-1"}
+    table = EnvironmentSecrets(load_config(demo()), environ).secrets(DEFAULT_TENANT)
+    assert table["CARNET_JETON"] == "j-1"
+    with pytest.raises(TypeError):
+        cast(Any, table)["PIRATE"] = "x"
+    assert environ == {"CARNET_JETON": "j-1"}
 
 
 def test_the_agent_of_a_tenant_is_mounted_with_its_secrets(demo: ConfigFactory) -> None:
@@ -424,6 +507,88 @@ async def test_without_its_own_storage_a_tenant_shares_the_common_journal(
         await loom.run("demo", QUESTION, tenant=MARTIN)
     # Un dossier par client sous le même journal : l'isolation reste logique.
     assert {p.name for p in (path.parent / "commun").iterdir()} == {DUPONT, MARTIN}
+
+
+# --- Le journal d'un client : déclaré en entier, et jugé pour lui --------------
+
+
+@pytest.mark.parametrize(
+    "storage",
+    [{"artifacts": {"backend": "local", "path": "fichiers"}}, {}],
+    ids=["artifacts-only", "empty-block"],
+)
+def test_a_tenant_storage_without_events_is_refused(
+    demo: ConfigFactory, storage: dict[str, Any]
+) -> None:
+    """Sans ``events``, le journal du client serait en mémoire sans que rien le dise."""
+    with pytest.raises(ConfigError) as refused:
+        load_config(demo(tenants=[{"id": DUPONT, "storage": storage}]))
+    said = str(refused.value)
+    assert f"Client '{DUPONT}'" in said and "'storage' ne déclare pas 'events'" in said
+    # Les deux issues sont dites : un journal explicite, ou celui de la racine.
+    assert "storage.events" in said and "retirer le bloc 'storage'" in said
+
+
+def test_a_tenant_may_choose_a_memory_journal_by_saying_so(demo: ConfigFactory) -> None:
+    from loom_ia.config import TenantSpec
+    from loom_ia.config.models import ArtifactsStorage, StorageConfig
+
+    memory = {"id": DUPONT, "storage": {"events": {"backend": "memory"}}}
+    [dupont] = load_config(demo(tenants=[memory])).tenants
+    assert dupont.storage is not None and dupont.storage.events.backend == "memory"
+    # Construit en Python, le bloc obéit à la même règle.
+    partial = StorageConfig(artifacts=ArtifactsStorage(backend="memory"))
+    with pytest.raises(ValueError, match="ne déclare pas 'events'"):
+        TenantSpec(id=DUPONT, storage=partial)
+
+
+async def test_a_tenant_journal_in_memory_cannot_host_a_pause(atelier: Any) -> None:
+    """La garde juge le journal du client, pas seulement celui de la racine (#28)."""
+    config = atelier(
+        tenants=[{"id": DUPONT, "storage": {"events": {"backend": "memory"}}}, {"id": MARTIN}]
+    )
+    async with Loom.from_config(config) as loom:
+        with pytest.raises(ConfigError, match=r"journal durable.*'memory', celui du client"):
+            loom.context("demo", DUPONT)
+        # Martin partage le journal de la racine, qui est durable.
+        assert loom.context("demo", MARTIN) is not None
+
+
+async def test_a_durable_tenant_journal_may_host_a_pause_under_a_volatile_root(
+    atelier: Any,
+) -> None:
+    own = {"events": {"backend": "jsonl", "path": "chez-dupont"}}
+    config = atelier(
+        storage={"events": {"backend": "memory"}},
+        tenants=[{"id": DUPONT, "storage": own}, {"id": MARTIN}],
+    )
+    async with Loom.from_config(config) as loom:
+        assert loom.context("demo", DUPONT) is not None
+        with pytest.raises(ConfigError, match="journal durable"):
+            loom.context("demo", MARTIN)
+
+
+def test_an_approval_imposed_on_an_mcp_tool_needs_a_durable_journal(demo: ConfigFactory) -> None:
+    pytest.importorskip("mcp", reason="extra 'mcp' absent")
+    from loom_ia.adapters.stores import InMemoryEventStore
+
+    server = {"name": "crm", "transport": "stdio", "command": "true"}
+    agent = demo_agent(tools=[{"python": "calculer"}, {"mcp": "crm"}])
+    imposed = {"id": DUPONT, "approvals": {"crm__envoyer": "always"}}
+    config = load_config(
+        demo(agents=[agent], mcp_servers=[server], tenants=[imposed, {"id": MARTIN}])
+    )
+    registry, tenants = load_registry(config), Tenants(config)
+
+    def mount(tenant_id: TenantId) -> None:
+        build_agent(
+            config, "demo", InMemoryEventStore(), registry=registry, tenant=tenants.get(tenant_id)
+        )
+
+    # Le serveur ne dit pas si `envoyer` existe : le client l'a voulue, la garde le prend au mot.
+    with pytest.raises(ConfigError, match=r"crm__envoyer.*journal durable"):
+        mount(DUPONT)
+    mount(MARTIN)
 
 
 # --- Isolation vue de l'API REST : la clé dit le client (#34, N2) -------------

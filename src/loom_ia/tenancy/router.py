@@ -5,7 +5,8 @@ L'isolation logique tient au ``tenant_id`` que porte chaque événement et au
 préfixe de chaque URI d'artefact : elle suffit tant que tout le monde
 partage la même base. Un client peut vouloir plus — son dossier, son
 fichier, et plus tard son schéma Postgres, sa collection Firestore ou son
-bucket (J5.3). Il lui suffit de déclarer son propre ``storage``.
+bucket (J5.3). Il lui suffit de déclarer son propre ``storage``, ``events`` compris :
+la config refuse un bloc qui l'omet, son journal serait en mémoire.
 
 Le routeur ne s'insère nulle part dans le moteur : il **est** un journal et
 un stockage d'artefacts, qui choisissent le leur au vu du client. Toutes les

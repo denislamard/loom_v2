@@ -11,6 +11,7 @@ from loom_ia.core.events import (
     ApprovalRequested,
     DurablePayload,
     Event,
+    EventDraft,
     RunClaimed,
     RunTransitioned,
     ToolCalled,
@@ -19,6 +20,7 @@ from loom_ia.core.events import (
 from loom_ia.core.model import (
     Message,
     ReasoningBlock,
+    RunState,
     RunStatus,
     SessionId,
     TextBlock,
@@ -257,6 +259,42 @@ def test_a_lease_written_after_the_final_state_is_absorbed() -> None:
     events = [d.to_event(seq) for seq, d in enumerate([*opening, closing, stray], start=1)]
     with pytest.raises(ProjectionError, match="après l'état completed"):
         fold(events, journal.run_id)
+
+
+def test_a_decision_written_after_the_closing_is_absorbed() -> None:
+    """Run clos pendant que l'approbateur décidait : la décision arrive après la clôture.
+
+    Elle ne rouvre rien et ne rend pas le run illisible. La demande reste sans
+    réponse, pour l'historique, et le run n'attend plus rien. Les autres
+    événements restent refusés après un état final.
+    """
+    journal = RunJournal()
+    journal.start("x").model_turn(tool_call_message(("c1", "virer", {})))
+    opening = [*journal.take(), journal.scope.draft(_ask())]
+    *_, transition, closing = journal.fail("Timeout", "approbation non reçue à l'échéance").take()
+
+    def read(*drafts: EventDraft) -> RunState:
+        events = [d.to_event(seq) for seq, d in enumerate([*opening, *drafts], start=1)]
+        state = fold(events, journal.run_id)
+        assert state.last_seq == len(events)
+        return state
+
+    refused = ApprovalRejected(call_id="c1", tool_name="virer", by="denis")
+    for decision in (_grant(), refused):
+        late = journal.scope.draft(decision)
+        # Après la clôture, ou entre la transition finale et la clôture (plantage entre les deux).
+        for order in ([transition, closing, late], [transition, late, closing]):
+            state = read(*order)
+            assert state.finished and state.status is RunStatus.FAILED
+            assert [a.outcome for a in state.approvals] == [None]
+            assert state.awaiting == ()
+        # Le run déjà en état final, sa clôture pas encore écrite, n'attend rien non plus.
+        between = read(transition, late)
+        assert not between.finished and between.awaiting == ()
+
+    stray = journal.scope.draft(ToolSourceUnavailable(source="erp", error="injoignable"))
+    with pytest.raises(ProjectionError, match="après l'état failed"):
+        read(transition, closing, stray)
 
 
 def test_event_of_another_run_is_rejected() -> None:

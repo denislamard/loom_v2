@@ -15,12 +15,20 @@ courante l'entretient — un run enregistre ce qu'il a coûté en se terminant.
 Comme ``record`` pose une valeur par run racine au lieu de l'ajouter, les deux
 sources peuvent se chevaucher sans jamais compter deux fois.
 
+Le réchauffage est **atomique** : un seul à la fois par client et par période
+(un verrou par couple, un client lent n'attend pas les autres), et le couple
+n'est tenu pour chaud qu'**une fois la lecture réussie**. Les ``check()``
+concurrents attendent donc un compteur rempli, pas un compteur vide ; une
+lecture qui échoue se propage à l'appelant — le run est refusé, rien n'est
+écrit — au lieu de laisser le plafond ouvert, et le contrôle suivant retente.
+
 Le rapport (``consumption``), lui, ne passe pas par le compteur : il relit le
 journal à chaque appel. C'est une question qu'un humain pose, pas une
 vérification par run, et elle doit valoir même pour un client sans budget —
 dont le compteur, justement, ne retient rien.
 """
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -111,9 +119,16 @@ class TenantUsage:
         # valeur est déjà celle de tout le monde.
         self._warms = warm
         self._warmed: set[tuple[TenantId, str]] = set()
+        # Un verrou par (client, période) tant que son réchauffage n'a pas
+        # abouti : il est retiré dès que le couple est chaud.
+        self._warming: dict[tuple[TenantId, str], asyncio.Lock] = {}
 
     async def check(self, tenant: Tenant, now: datetime | None = None) -> None:
-        """Lève ``BudgetExhausted`` si le client n'a plus de quoi lancer un run."""
+        """Lève ``BudgetExhausted`` si le client n'a plus de quoi lancer un run.
+
+        Si le journal ne peut pas être relu pour réchauffer le compteur, l'erreur
+        de lecture se propage telle quelle : le run n'est pas lancé.
+        """
         budget = tenant.budget
         if not budget.limited:
             return
@@ -162,10 +177,16 @@ class TenantUsage:
         )
 
     async def _consumed(self, tenant_id: TenantId, period: Period) -> Spent:
-        if self._warms and (tenant_id, period.key) not in self._warmed:
-            self._warmed.add((tenant_id, period.key))
-            for run_id, spent in (await self._from_journal(tenant_id, period)).items():
-                await self._counter.record(tenant_id, period.key, run_id, spent)
+        warm = (tenant_id, period.key)
+        if self._warms and warm not in self._warmed:
+            # Les appels concurrents attendent le premier ; si sa lecture échoue
+            # ou est annulée, le couple reste froid et le suivant la refait.
+            async with self._warming.setdefault(warm, asyncio.Lock()):
+                if warm not in self._warmed:
+                    for run_id, spent in (await self._from_journal(tenant_id, period)).items():
+                        await self._counter.record(tenant_id, period.key, run_id, spent)
+                    self._warmed.add(warm)
+            self._warming.pop(warm, None)
         return await self._counter.consumed(tenant_id, period.key)
 
     async def _from_journal(self, tenant_id: TenantId, period: Period) -> dict[RunId, Spent]:

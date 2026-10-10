@@ -1105,7 +1105,7 @@ tenants:
       events: {backend: jsonl, path: data/martin}  # son propre journal
 ```
 
-Un client ne surcharge qu'une liste fermée de réglages : les agents autorisés et les outils retirés, la correspondance des modèles, les budgets et les quotas, les approbations, les secrets, les variables des prompts et le stockage. Les prompts eux-mêmes ne se surchargent pas ; seules les variables qu'ils contiennent changent d'un client à l'autre. Un serveur MCP en `scope: tenant` ouvre une connexion par client, avec ses identifiants.
+Un client ne surcharge qu'une liste fermée de réglages : les agents autorisés et les outils retirés, la correspondance des modèles, les budgets et les quotas, les approbations, les secrets, les variables des prompts et le stockage. Les prompts eux-mêmes ne se surchargent pas ; seules les variables qu'ils contiennent changent d'un client à l'autre. Un client qui déclare `storage` y déclare aussi `events`, sans quoi son journal serait en mémoire et la config est refusée ; sans bloc `storage`, il partage le journal de la racine. Un serveur MCP en `scope: tenant` ouvre une connexion par client, avec ses identifiants.
 
 **Clés d'API.** Une clé se fabrique en ligne de commande :
 
@@ -1315,7 +1315,7 @@ Quelques repères pour choisir :
 
 - **En local**, un journal JSONL suffit. Les fichiers sont alors rangés à côté du journal, dans `.artifacts`.
 - **En service**, Postgres tient le journal et l'idempotence, Redis ou Postgres le bus, RabbitMQ la file.
-- **Avec un journal en mémoire**, rien ne survit au process. Les agents qui peuvent se mettre en pause sont refusés, sauf en profil `dev`.
+- **Avec un journal en mémoire**, rien ne survit au process. Les agents qui peuvent se mettre en pause sont refusés, sauf en profil `dev` : outils MCP et de paquets compris, d'après ce que la config en déclare, et sur le journal du client pour qui l'agent est monté.
 
 ---
 

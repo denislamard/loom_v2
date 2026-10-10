@@ -250,7 +250,15 @@ class RunState(DomainModel):
 
     @property
     def awaiting(self) -> tuple[PendingApproval, ...]:
-        """Demandes d'approbation sans réponse : le run les attend (#17)."""
+        """Demandes d'approbation sans réponse : le run les attend (#17).
+
+        Un run fini, ou déjà passé à son état final, n'attend plus rien : une
+        demande restée sans réponse (run annulé en pause, échec à l'échéance)
+        reste dans ``approvals``, pour l'historique, mais personne ne peut plus
+        la trancher.
+        """
+        if self.finished or self.status.is_terminal:
+            return ()
         return tuple(a for a in self.approvals if a.outcome is None)
 
     def approval(self, call_id: str) -> PendingApproval | None:

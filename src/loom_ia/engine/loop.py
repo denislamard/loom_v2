@@ -530,7 +530,17 @@ async def _driven(
 
     async def write(draft: EventDraft) -> Event:
         nonlocal state, cause
-        [event] = await journal.append([draft])
+        drafts = [draft]
+        if isinstance(draft.payload, RunCompleted | RunFailed | RunCancelled):
+            # Point unique des clôtures du pilote (délai, politique, modèle, outil,
+            # approbation périmée…) : les sous-runs encore ouverts partent dans la même
+            # écriture, avant lui, car plus rien ne les reprendrait. Un lot est atomique
+            # (transaction SQLite et Postgres ; JSONL : un seul write sous verrou, dont
+            # seule une panne de la machine peut ne laisser qu'un préfixe). La transition
+            # finale est déjà écrite : un plantage laisse un run à clore, que la reprise
+            # clôt avec ses sous-runs — jamais un parent ouvert dont l'enfant est annulé.
+            drafts = [*await _open_subruns(journal, state), draft]
+        *_, event = await journal.append(drafts)
         if _effect(event):
             cause = event
         if isinstance(event.payload, RunTransitioned):
@@ -589,7 +599,6 @@ async def _driven(
             # le délai ne la coupe pas, il ne borne que le travail à faire.
             left = None if state.status.is_terminal else _remaining(state, run_ctx, decided)
             if left is not None and left <= 0:
-                await _close_subruns(journal, state)
                 await _expired(write, state, scope, run_ctx, cut=False, decided=decided)
                 return state
             limit = asyncio.timeout(left)
@@ -620,7 +629,6 @@ async def _driven(
                 # L'étape a été interrompue en plein effet : ce qu'elle avait
                 # déjà écrit reste au journal, et le run se clôt sur l'échec. Si aucune
                 # étape n'a commencé, c'est une décision qui a été coupée.
-                await _close_subruns(journal, state)
                 await _expired(
                     write,
                     state,
@@ -854,7 +862,7 @@ def subruns_cancellation(events: Sequence[Event], state: RunState) -> list[Event
     """Annulation des sous-runs encore ouverts d'un run que l'on clôt (C5, A5).
 
     Un sous-run ne repart que par l'appel de son parent, qui le reprend en le
-    rejouant : le parent clos — délai dépassé, arrêt demandé —, plus rien ne le
+    rejouant : le parent clos — délai dépassé, arrêt demandé, échec —, plus rien ne le
     reprendra. Resté ouvert, il figerait la frontière du snapshot de la session.
     Chaque descendant ouvert est donc annulé avec son parent (``reason: parent``,
     ``by`` : son run parent), le plus récent d'abord, donc un enfant avant son
@@ -870,11 +878,16 @@ def subruns_cancellation(events: Sequence[Event], state: RunState) -> list[Event
     return drafts
 
 
-async def _close_subruns(journal: SessionWriter, state: RunState) -> None:
-    """Annule avec lui les sous-runs encore ouverts d'un run que le délai va clore."""
+async def _open_subruns(journal: SessionWriter, state: RunState) -> list[EventDraft]:
+    """Annulations des sous-runs encore ouverts d'un run qui va être clos, à écrire avec sa clôture.
+
+    Un sous-run n'existe que par un appel de son parent : sans appel en suspens, il n'y a
+    rien à fermer, et le journal n'est pas relu.
+    """
+    if not state.pending_calls:
+        return []
     events = await journal.store.read(journal.tenant_id, journal.session_id)
-    if drafts := subruns_cancellation(events, state):
-        await journal.append(drafts)
+    return subruns_cancellation(events, state)
 
 
 def _remaining(state: RunState, ctx: RunContext, decided: float = 0.0) -> float | None:

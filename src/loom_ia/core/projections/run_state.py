@@ -121,6 +121,14 @@ def apply(state: RunState | None, event: Event) -> RunState:
         # elle ne rouvre rien et ne rend pas le journal illisible.
         claim = RunClaim(worker_id=payload.worker_id, lease_until=payload.lease_until)
         return state.model_copy(update={"last_seq": event.seq, "claim": claim})
+    if isinstance(payload, ApprovalGranted | ApprovalRejected) and (
+        state.finished or state.status.is_terminal
+    ):
+        # Décision écrite après l'état final : le run était déjà fini (annulé pendant que
+        # l'approbateur décidait, ou journal d'avant ce contrôle), ou sa clôture reste à
+        # écrire (plantage entre les deux écritures). Elle ne rouvre rien et ne rend pas
+        # le run illisible ; seule la position lue avance.
+        return state.model_copy(update={"last_seq": event.seq})
     if state.finished or (state.status.is_terminal and not _closes(state.status, event)):
         raise ProjectionError(
             f"Run {state.run_id} : {event.type} (seq {event.seq}) après l'état {state.status}"

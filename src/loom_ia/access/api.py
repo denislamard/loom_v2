@@ -666,7 +666,11 @@ def _awaited(state: RunState, tree: Sequence[Event]) -> tuple[PendingApproval, .
 
     Un sous-agent qui se met en pause arrête son parent : ce qu'il faut
     trancher pour que le run avance n'est pas forcément dans le run lui-même.
+    Un run fini n'avance plus : ses sous-runs restés en pause (journaux d'avant
+    leur fermeture avec le parent) n'attendent plus personne.
     """
+    if state.finished:
+        return state.awaiting
     runs = dict.fromkeys(event.run_id for event in tree if event.run_id != state.run_id)
     inner = [
         approval
@@ -2198,7 +2202,8 @@ class Loom:
         l'appel, et ne vaut que pour un ``call_id`` désigné. ``by`` est
         l'identité de l'approbateur : c'est tout l'audit qu'il y aura.
 
-        Rend les appels accordés ; vide si le run n'attendait rien.
+        Rend les appels accordés ; vide si le run n'attendait rien — un run fini
+        n'attend plus rien, même annulé en pause.
 
         Une fois la décision écrite au journal, une file qui refuse la reprise
         ne fait pas échouer l'appel — la décision, elle, a eu lieu : la panne

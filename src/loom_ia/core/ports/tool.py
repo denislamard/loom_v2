@@ -158,8 +158,12 @@ class ToolSourceFactory(Protocol):
     - ``params`` : ses ``params``, tels que la config les donne — à la
       fabrique de les vérifier, et de lever ``ValueError`` en disant ce qui
       ne va pas ;
-    - ``secrets`` : la table des secrets du client pour qui l'agent est monté
-      (l'environnement, sans clients déclarés) ;
+    - ``secrets`` : la table des secrets du client pour qui l'agent est monté,
+      en lecture seule. Sans clients déclarés, c'est l'environnement ; avec
+      des clients, seulement les variables que la config nomme (``api_key_env``,
+      ``env_from``, ``headers_env``) et celles que le client redirige — une
+      variable que la config ne nomme pas s'y nomme par une redirection
+      (``secrets: {CARNET_JETON: CARNET_JETON}``) ;
     - ``base_dir`` : le dossier du fichier de config, auquel se rapportent
       les chemins relatifs de ``params``.
 

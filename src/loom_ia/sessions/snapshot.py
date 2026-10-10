@@ -29,6 +29,7 @@ from loom_ia.core.events import (
     RunCompleted,
     RunFailed,
     RunScope,
+    RunStarted,
     SessionSnapshot,
 )
 from loom_ia.core.model import Message, RunId, RunState
@@ -87,11 +88,18 @@ class Cuts:
     clôture (``run.completed``, ``run.failed`` ou ``run.cancelled``), que
     ``fold_all`` ne faisait que retrouver au prix d'une copie d'état par
     événement.
+
+    Un sous-run ne repart que par l'appel de son parent : le parent clos, il
+    ne repartira plus, et il est clos de fait, à son dernier événement. C'est
+    ce que sont les orphelins des journaux d'avant la fermeture des sous-runs
+    avec leur parent (2.0.0) : sans cela, leur parent clos, ils figeraient la
+    frontière pour toujours. Rien n'est écrit : le journal reste tel quel.
     """
 
     def __init__(self, events: Sequence[Event]) -> None:
         first: dict[RunId, int] = {}
         last: dict[RunId, int] = {}
+        parents: dict[RunId, RunId] = {}
         closed: set[RunId] = set()
         self._newest = 0
         for event in events:
@@ -100,8 +108,15 @@ class Cuts:
             first.setdefault(event.run_id, event.seq)
             last[event.run_id] = event.seq
             self._newest = max(self._newest, event.seq)
-            if isinstance(event.payload, RunCompleted | RunFailed | RunCancelled):
+            payload = event.payload
+            if isinstance(payload, RunStarted) and payload.parent_run_id is not None:
+                parents[event.run_id] = payload.parent_run_id
+            elif isinstance(payload, RunCompleted | RunFailed | RunCancelled):
                 closed.add(event.run_id)
+        # Du plus ancien au plus récent : un parent est vu avant ses enfants.
+        for run_id in sorted(first, key=first.__getitem__):
+            if parents.get(run_id) in closed:
+                closed.add(run_id)
         # Du dernier run commencé au premier ; sans fin tant que le run tourne.
         self._runs = [
             (first[run_id], last[run_id] if run_id in closed else None)

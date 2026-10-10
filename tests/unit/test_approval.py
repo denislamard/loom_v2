@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from loom_ia.access.api import Loom, RunResult, UnknownApproval
-from loom_ia.adapters.stores import InMemoryEventStore
+from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
     ApprovalGranted,
@@ -33,6 +33,8 @@ from loom_ia.core.model import (
     SessionId,
     ToolCallBlock,
 )
+from loom_ia.core.projections import fold
+from loom_ia.engine import cancellation
 from loom_ia.runtime import build_agent
 
 type ConfigFactory = Callable[..., Path]
@@ -372,6 +374,32 @@ def test_deciding_a_finished_run_changes_nothing(atelier: ConfigFactory) -> None
     encore, accords = asyncio.run(go())
     assert encore == ()
     assert accords == 1
+
+
+def test_a_cancelled_paused_run_awaits_nothing(atelier: ConfigFactory) -> None:
+    """Annulé en pause : la demande reste au journal, mais personne ne peut plus la trancher."""
+
+    async def go() -> list[str]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            [asked] = run.pending_approvals
+            assert await loom.cancel(run.run_id, session_id=SESSION, by="denis")
+
+            result = await loom.result(run.run_id, session_id=SESSION)
+            assert result.status is RunStatus.CANCELLED
+            assert result.pending_approvals == ()
+            assert (await loom.session(SESSION)).pending_approvals == ()
+            for decide in (loom.approve, loom.reject):
+                assert await decide(run.run_id, by="denis", session_id=SESSION) == ()
+                assert await decide(run.run_id, call_id=asked.call_id, session_id=SESSION) == ()
+            await loom.drain()
+            # Le run se relit encore : rien n'a été écrit après son annulation.
+            await loom.result(run.run_id, session_id=SESSION)
+            return [e.type for e in await loom.export_session(SESSION)]
+
+    types = asyncio.run(go())
+    assert types[-1] == "run.cancelled"
+    assert "approval.granted" not in types and "approval.rejected" not in types
 
 
 # --- Une file en panne, le journal écrit ----------------------------------------
@@ -753,6 +781,38 @@ def test_approving_on_the_root_resumes_the_whole_tree(delegue: ConfigFactory) ->
     # L'enfant est repris, pas relancé : deux runs en tout, et l'appel délégant rejoué.
     assert runs == 2
     assert appels == [("secretaire", False), ("secretaire", True), ("envoyer_email", False)]
+
+
+def test_a_closed_root_awaits_nothing_from_the_subrun_it_left_paused(
+    delegue: ConfigFactory,
+) -> None:
+    """Journal 2.0.0 : le parent annulé, son enfant resté en pause — rien à trancher."""
+    path = delegue()
+    store_path = Path(load_config(path).storage.events.path or "")
+
+    async def go() -> tuple[tuple[str, ...], tuple[str, ...], list[str]]:
+        async with Loom.from_config(path) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            assert [a.tool_name for a in run.pending_approvals] == ["envoyer_email"]
+            events = await loom.export_session(SESSION)
+        # La clôture d'avant la fermeture des sous-runs : le parent seul, l'enfant reste en pause.
+        store = JsonlEventStore(store_path)
+        state = fold(events, run.run_id)
+        await store.append(cancellation(state, by="denis"), expected_seq=events[-1].seq)
+        await store.aclose()
+        async with Loom.from_config(path) as loom:
+            result = await loom.result(run.run_id, session_id=SESSION)
+            granted = await loom.approve(run.run_id, session_id=SESSION)
+            after = await loom.export_session(SESSION)
+        return (
+            tuple(a.tool_name for a in result.pending_approvals),
+            granted,
+            [e.type for e in after],
+        )
+
+    pending, granted, types = asyncio.run(go())
+    assert pending == () and granted == ()
+    assert "approval.granted" not in types and types[-1] == "run.cancelled"
 
 
 def test_a_refused_child_call_lets_the_tree_finish(delegue: ConfigFactory) -> None:

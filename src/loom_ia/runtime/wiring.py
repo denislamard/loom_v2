@@ -50,6 +50,7 @@ import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, cast
 
 from pydantic import JsonValue
@@ -75,9 +76,11 @@ from loom_ia.agents.spec import (
     BaseRole,
     JudgeSpec,
     LastTurnsContext,
+    McpTools,
     PolicyRef,
     PythonTool,
     RoleSpec,
+    SourceTools,
     SubAgentRef,
     ToolResultsContext,
     system_text,
@@ -100,11 +103,13 @@ from loom_ia.core.model import (
     ALLOWED_DECISIONS,
     DEFAULT_TENANT,
     LATER_DECISIONS,
+    MCP_PREFIX_SEPARATOR,
     RESERVED_PREFIX,
     Approval,
     ModelSpec,
     StreamOutput,
     TenantId,
+    ToolOverrides,
 )
 from loom_ia.core.ports import (
     ArtifactStore,
@@ -637,10 +642,7 @@ def build_agent(
             else None
         ),
     )
-    sources, owned = _mcp_sources(config, spec, secrets, mcp_pool, tenant_id)
-    packaged = _packaged_sources(config, spec, secrets)
-    sources = [*sources, *packaged]
-    owned = (*owned, *packaged)
+    owned: tuple[_Closable, ...] = ()
     if spec.subagents and agents is None:
         nested = _SubAgents(
             config,
@@ -670,8 +672,13 @@ def build_agent(
         delegated += [
             AgentTool(_subagent_definition(config, spec, ref), agents) for ref in spec.subagents
         ]
-    _check_durable_journal(config, spec, [*tools, *delegated], policies, imposed)
+    _check_durable_journal(config, spec, [*tools, *delegated], policies, imposed, tenant)
     _check_shared_idempotency(config, spec, [*tools, *delegated])
+    # Les sources et le pool MCP se créent après les contrôles : un montage refusé n'en laisse pas.
+    sources, opened = _mcp_sources(config, spec, secrets, mcp_pool, tenant_id)
+    packaged = _packaged_sources(config, spec, secrets)
+    sources = [*sources, *packaged]
+    owned = (*opened, *packaged, *owned)
     execution = config.execution.tools
     llm = spec.main.llm
     context = RunContext(
@@ -934,6 +941,7 @@ def _check_durable_journal(
     tools: Sequence[AnyTool],
     policies: Policies,
     imposed: Mapping[str, Approval] | None = None,
+    tenant: Tenant | None = None,
 ) -> None:
     """Un agent qui peut se mettre en pause exige un journal durable (#28).
 
@@ -943,11 +951,27 @@ def _check_durable_journal(
     l'approbation n'aurait rien à reprendre. Une erreur, donc, et non un
     avertissement — sauf en profil ``dev`` (5.5a), où perdre un run en pause à
     la fermeture est le prix d'un essai.
+
+    Le journal jugé est celui du client pour qui l'agent est monté : son
+    ``storage`` s'il en déclare un, sinon celui de la racine. Les outils des
+    serveurs MCP et des paquets ne sont connus qu'à la connexion ; la garde juge
+    donc ce que la **configuration** en dit (``tools`` du serveur ou de la
+    source, de la référence de l'agent, approbations imposées par le client).
+    Elle ne voit pas l'``approval: always`` qu'un outil de paquet porterait en
+    lui-même.
     """
-    if config.storage.events.backend not in DURABLE_BACKENDS:
+    own = tenant.storage if tenant is not None else None
+    storage = own if own is not None else config.storage
+    backend = storage.events.backend
+    if backend not in DURABLE_BACKENDS:
         forced = imposed or {}
         obligatoires = [
             t.spec.name for t in tools if forced.get(t.spec.name, t.spec.approval) == "always"
+        ]
+        obligatoires += [
+            name
+            for name in _sources_asking_approval(config, spec, forced)
+            if name not in obligatoires
         ]
         pausing = sorted({b.name for b in policies.bound if "pause" in b.policy.decisions})
         causes = [
@@ -957,15 +981,69 @@ def _check_durable_journal(
         if causes:
             # Assoupli en dev seulement : sur une machine, perdre un run en
             # pause à la fermeture est le prix d'un essai (M4).
+            whose = (
+                f", celui du client {tenant.id!r}" if tenant is not None and own is not None else ""
+            )
             announce(
                 config,
                 [
                     f"Agent {spec.name!r} : {', '.join(causes)} — une approbation exige un "
                     f"journal durable ({' ou '.join(DURABLE_BACKENDS)}), "
-                    f"pas {config.storage.events.backend!r} (#28)"
+                    f"pas {backend!r}{whose} (#28)"
                 ],
                 refuse=not config.lax,
             )
+
+
+def _sources_asking_approval(
+    config: LoomConfig, spec: AgentSpec, imposed: Mapping[str, Approval]
+) -> list[str]:
+    """Outils MCP ou de paquet que la configuration met en ``approval: always``.
+
+    Sans connexion : la liste des outils d'un serveur ou d'une source n'est
+    connue qu'à l'ouverture. On lit ce que la config en déclare — ``tools`` du
+    serveur ou de la source, puis ceux de la référence de l'agent, qui l'emportent
+    —, puis l'approbation que le client impose, qui l'emporte sur tout. Une
+    approbation imposée à un nom que la config ne cite pas compte aussi, dès
+    qu'il porte le préfixe d'une source de l'agent et passe son ``include`` ou
+    son ``exclude`` : le client l'a voulue, et on ne sait pas si l'outil existe.
+    """
+    refs: list[tuple[McpTools | SourceTools, Mapping[str, ToolOverrides]]] = [
+        *((ref, config.mcp_server(ref.mcp).tools) for ref in spec.mcp_tools),
+        *((ref, config.tool_source(ref.source).tools) for ref in spec.source_tools),
+    ]
+    asking: list[str] = []
+    for ref, declared in refs:
+        prefix = f"{ref.prefix}{MCP_PREFIX_SEPARATOR}"
+        named = [*declared, *(short for short in ref.tools if short not in declared)]
+        for short in named:
+            approval = next(
+                (
+                    found.approval
+                    for found in (ref.tools.get(short), declared.get(short))
+                    if found is not None and found.approval is not None
+                ),
+                None,
+            )
+            name = f"{prefix}{short}"
+            if _selects(ref, short) and imposed.get(name, approval) == "always":
+                asking.append(name)
+        asking += [
+            name
+            for name, approval in imposed.items()
+            if approval == "always"
+            and name.startswith(prefix)
+            and name[len(prefix) :] not in named
+            and _selects(ref, name[len(prefix) :])
+        ]
+    return asking
+
+
+def _selects(ref: McpTools | SourceTools, short: str) -> bool:
+    """Vrai si la référence expose l'outil ``short`` (``include`` ou ``exclude``)."""
+    return (ref.include is None or short in ref.include) and (
+        ref.exclude is None or short not in ref.exclude
+    )
 
 
 def _check_shared_idempotency(
@@ -1318,9 +1396,11 @@ def _packaged_sources(
 
     Le paquet de chaque source est importé ici, et sa fabrique appelée avec
     ce que la config déclare : des paramètres refusés refusent le montage.
-    Chaque source appartient à l'agent monté, qui la ferme avec lui.
+    Chaque source appartient à l'agent monté, qui la ferme avec lui. La table
+    des secrets part en lecture seule : une fabrique tierce ne modifie ni
+    l'environnement du process ni la table du client.
     """
-    secrets = os.environ if environ is None else environ
+    secrets = MappingProxyType(os.environ if environ is None else environ)
     base_dir = config.base_dir if config.base_dir is not None else Path.cwd()
     sources: list[PackagedSource] = []
     for ref in spec.source_tools:
