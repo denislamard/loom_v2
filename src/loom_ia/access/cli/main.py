@@ -53,6 +53,7 @@ from loom_ia.access.api import (
     UnknownApproval,
     UnknownRun,
     UnknownSession,
+    check_deletable_id,
 )
 from loom_ia.access.evals import evaluate
 from loom_ia.access.progress import Progress, notes
@@ -1355,6 +1356,8 @@ def cmd_sessions_delete(args: argparse.Namespace) -> int:
     config = load_config(args.config, profile=args.profile)
     apply_logging(config)
     session = SessionId(args.session_id)
+    # Refusé avant la question : « Supprimer la session  ? » n'a pas de sens.
+    check_deletable_id("Session", session)
     if not args.yes:
         asked = input(
             f"Supprimer définitivement la session {session} "

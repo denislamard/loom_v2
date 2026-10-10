@@ -236,6 +236,37 @@ def test_a_closed_input_refuses_the_confirmation_and_deletes_nothing(
     assert "atelier" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("flags", [["--yes"], []])
+@pytest.mark.parametrize("unusable", [""])
+def test_deleting_a_session_with_an_unusable_id_is_refused_in_one_line(
+    demo: ConfigFactory,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    unusable: str,
+    flags: list[str],
+) -> None:
+    """``loom sessions delete ""`` effaçait tout le client : code 2, une ligne, sans question."""
+    path = demo(storage=JOURNAL)
+    assert main(["--config", str(path), "run", "demo", QUESTION, "--session", "atelier"]) == 0
+    capsys.readouterr()
+    # Les fichiers d'une autre session du même client : ils ne doivent pas partir.
+    kept = path.parent / "journaux" / ".artifacts" / "default" / "autre" / "garde.png"
+    kept.parent.mkdir(parents=True)
+    kept.write_bytes(b"a garder")
+
+    def no_question(prompt: str = "") -> NoReturn:
+        raise AssertionError(f"question posée : {prompt}")
+
+    monkeypatch.setattr("builtins.input", no_question)
+    assert main(["--config", str(path), "sessions", "delete", unusable, *flags]) == 2
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "inutilisable" in err
+
+    assert main(["--config", str(path), "sessions", "list"]) == 0
+    assert "atelier" in capsys.readouterr().out
+    assert kept.read_bytes() == b"a garder"
+
+
 def test_keys_create_gives_a_key_and_its_fingerprint(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["keys", "create", "atelier", "--scope", "run", "--agent", "demo"]) == 0
     out = capsys.readouterr().out

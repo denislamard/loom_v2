@@ -7,7 +7,7 @@ qui parle à un vrai RabbitMQ quand ``LOOM_TEST_RABBITMQ`` en désigne un.
 
 import asyncio
 from importlib.util import find_spec
-from typing import Any
+from typing import Any, Self
 
 import pytest
 from conftest import ConfigFactory
@@ -145,6 +145,14 @@ def test_a_job_that_names_no_run_travels_too() -> None:
         (b"pas du json", "Message illisible"),
         (b'"une chaine"', "qui n'est pas un objet"),
         (b'{"kind": "menage"}', "type inconnu"),
+        (b'{"kind": "run", "session_id": "s"}', "'tenant_id' absent"),
+        (b'{"kind": "run", "tenant_id": "t"}', "'session_id' absent"),
+        (b'{"kind": "run", "tenant_id": "", "session_id": "s"}', "'tenant_id' absent, vide"),
+        (b'{"kind": "run", "tenant_id": 7, "session_id": "s"}', "'tenant_id' absent"),
+        (b'{"kind": "run", "tenant_id": "t", "session_id": "s", "run_id": 3}', "'run_id'"),
+        (b'{"kind": "run", "tenant_id": "t", "session_id": "s", "params": [1]}', "'params'"),
+        (b'{"kind": "run", "tenant_id": "t", "session_id": "\xff"}', "Message illisible"),
+        pytest.param(b"[" * 100_000, "Message illisible", id="trop-imbrique"),
     ],
 )
 def test_a_message_that_is_not_a_job_says_why(body: bytes, message: str) -> None:
@@ -265,3 +273,172 @@ def test_validate_says_when_the_variable_is_missing(
     # La file n'est ouverte qu'à la première mise en file : `validate` va au bout.
     assert main(["--config", str(demo(storage=RABBITMQ)), "validate"]) == 2
     assert f"URL dans {VARIABLE} : ABSENTE" in capsys.readouterr().out
+
+
+# --- Un message qui ne passe pas, un acquittement qui échoue -------------------
+
+GOOD = b'{"kind": "run", "tenant_id": "t", "session_id": "s"}'
+NO_TENANT = b'{"kind": "run", "session_id": "s"}'
+
+
+class _Message:
+    """Message d'un courtier de pacotille : retient ses réponses, peut refuser d'en donner."""
+
+    def __init__(self, body: bytes, *, refuses: bool = False) -> None:
+        self.body = body
+        self.refuses = refuses
+        self.answers: list[str] = []
+
+    async def ack(self) -> None:
+        self.answers.append("ack")
+        if self.refuses:
+            raise ConnectionError("canal fermé")
+
+    async def nack(self, requeue: bool = True) -> None:
+        self.answers.append(f"nack(requeue={requeue})")
+        if self.refuses:
+            raise ConnectionError("canal fermé")
+
+
+class _Courtier:
+    """Connexion, canal, échange et file à la fois : ce que ``connect_robust`` rend.
+
+    ``messages`` : ce que la file livre à ``serve``. Avec ``gate``, le premier
+    est livré tout de suite et les suivants attendent qu'on la lève.
+    """
+
+    def __init__(
+        self, messages: list[_Message] | None = None, gate: asyncio.Event | None = None
+    ) -> None:
+        self.messages = list(messages or [])
+        self.gate = gate
+        self.qos: list[int] = []
+        self.published = 0
+        self.delivered = 0
+        self.default_exchange = self
+
+    async def connect(self, url: str) -> Self:
+        return self
+
+    async def channel(self) -> Self:
+        return self
+
+    async def set_qos(self, prefetch_count: int) -> None:
+        self.qos.append(prefetch_count)
+
+    async def declare_queue(self, name: str, **options: Any) -> Self:
+        return self
+
+    async def publish(self, message: Any, routing_key: str) -> None:
+        self.published += 1
+
+    async def close(self) -> None:
+        return None
+
+    def iterator(self) -> Self:
+        return self
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> _Message:
+        if not self.messages:
+            raise StopAsyncIteration
+        if self.gate is not None and self.delivered:
+            await self.gate.wait()
+        self.delivered += 1
+        return self.messages.pop(0)
+
+
+def _worker(monkeypatch: pytest.MonkeyPatch, courtier: _Courtier, handler: Any) -> Any:
+    """Une file RabbitMQ qui parle à ce courtier de pacotille."""
+    import aio_pika
+
+    from loom_ia.adapters.queue.rabbitmq import RabbitMqTaskQueue
+
+    monkeypatch.setattr(aio_pika, "connect_robust", courtier.connect)
+    return RabbitMqTaskQueue(URL, {"run": handler})
+
+
+@sans_extra
+async def test_a_message_without_a_client_is_dropped_and_the_worker_goes_on(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Un ``KeyError`` hors du ``try`` abattait le worker, et le message bouclait."""
+    seen: list[Job] = []
+
+    async def handler(job: Job) -> None:
+        seen.append(job)
+
+    broken, fine = _Message(NO_TENANT), _Message(GOOD)
+    queue = _worker(monkeypatch, _Courtier([broken, fine]), handler)
+
+    await asyncio.wait_for(queue.serve(jobs=1), 5)
+
+    assert (broken.answers, fine.answers) == (["ack"], ["ack"])
+    assert [job.session_id for job in seen] == ["s"]
+    assert "Champ 'tenant_id' absent" in caplog.text
+
+
+@sans_extra
+async def test_a_refused_acknowledgement_does_not_stop_the_worker(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Un canal fermé fait échouer ``ack`` : le courtier redélivrera, le worker continue."""
+    seen: list[Job] = []
+
+    async def handler(job: Job) -> None:
+        seen.append(job)
+
+    refused, fine = _Message(GOOD, refuses=True), _Message(GOOD)
+    queue = _worker(monkeypatch, _Courtier([refused, fine]), handler)
+
+    # Une seule place : le suivant n'est pris que si la première a été rendue malgré le refus.
+    await asyncio.wait_for(queue.serve(jobs=1), 5)
+
+    assert (refused.answers, fine.answers) == (["ack"], ["ack"])
+    assert len(seen) == 2
+    assert "Réponse au courtier impossible" in caplog.text
+
+
+@sans_extra
+async def test_a_refused_requeue_at_stop_does_not_stop_the_worker(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """À l'arrêt, le travail déjà livré retourne en file ; si le courtier refuse, on s'arrête."""
+    stopped = asyncio.Event()
+    late = _Message(GOOD, refuses=True)
+    queue: Any = None
+
+    async def handler(job: Job) -> None:
+        await queue.stop()
+        stopped.set()
+
+    queue = _worker(monkeypatch, _Courtier([_Message(GOOD), late], gate=stopped), handler)
+
+    await asyncio.wait_for(queue.serve(jobs=2), 5)
+
+    assert late.answers == ["nack(requeue=True)"]
+    assert "Réponse au courtier impossible" in caplog.text
+
+
+@sans_extra
+async def test_the_prefetch_is_set_each_time_the_worker_serves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un process qui a publié avant de consommer (``recover()``) gardait un prefetch illimité."""
+    courtier = _Courtier()
+    queue = _worker(monkeypatch, courtier, None)
+
+    await queue.submit(Job(kind="run", tenant_id=TenantId("t"), session_id=SessionId("s")))
+    assert courtier.qos == []
+
+    await asyncio.wait_for(queue.serve(jobs=3), 5)
+    assert courtier.qos == [3]
+    await queue.aclose()

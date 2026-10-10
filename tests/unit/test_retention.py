@@ -12,6 +12,7 @@ ne supprime qu'avec `--yes`.
 """
 
 import json
+import logging
 from base64 import b64encode
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -22,9 +23,17 @@ from conftest import QUESTION, ConfigFactory
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
-from loom_ia.adapters.stores import JsonlEventStore
+from loom_ia.adapters.artifacts import LocalArtifactStore
+from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
-from loom_ia.core.model import DEFAULT_TENANT, Message, SessionId, TenantId, ToolOutput
+from loom_ia.core.model import (
+    DEFAULT_TENANT,
+    Message,
+    SessionId,
+    TenantId,
+    ToolOutput,
+    artifact_uri,
+)
 from loom_ia.core.ports import MissingKey
 from loom_ia.testing import RunJournal, tool_call_message
 
@@ -161,6 +170,30 @@ async def test_a_swept_session_takes_its_files_with_it(demo: ConfigFactory, tmp_
         report = await loom.apply_retention(now=dans(2), dry_run=False)
     assert [session.artifacts for session in report.swept] == [len(fichiers)]
     assert not [path for path in (tmp_path / "files").rglob("*") if path.is_file()]
+
+
+async def test_a_session_with_an_empty_id_never_takes_the_client_folder_with_it(
+    demo: ConfigFactory, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Un journal mémoire ou SQL peut lister une session au nom vide : pas « tout le client »."""
+    config = load_config(demo(storage={**journal(tmp_path), "retention": {"events_days": 1}}))
+    store = InMemoryEventStore()
+    files = LocalArtifactStore(tmp_path / "files")
+    uri = artifact_uri(DEFAULT_TENANT, RECENTE, b"des octets", "image/png")
+    await files.put(uri, b"des octets")
+    scribe = RunJournal()
+    scribe.start("Bonjour")
+    # ``RunJournal`` remplace un identifiant vide : on le pose sur les brouillons.
+    vides = [draft.model_copy(update={"session_id": SessionId("")}) for draft in scribe.take()]
+    await store.append(vides, expected_seq=0)
+    async with Loom(config, store=store, artifacts=files) as loom:
+        # Elle reste en place, un avertissement la nomme, et le balayage ne s'arrête pas.
+        with caplog.at_level(logging.WARNING, logger="loom_ia.access.api"):
+            report = await loom.apply_retention(now=dans(2), dry_run=False)
+    assert report.swept == ()
+    assert "identifiant vide" in caplog.text
+    assert await files.get(uri) == b"des octets"
+    assert len(await store.read(DEFAULT_TENANT, SessionId(""))) == len(vides)
 
 
 async def test_an_unfinished_session_goes_like_the_others(

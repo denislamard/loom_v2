@@ -10,27 +10,38 @@ se filtrent par ``json_extract``.
 Le contrôle de séquence et l'écriture tiennent dans une transaction
 ``BEGIN IMMEDIATE`` : deux process qui écrivent dans la même base ne peuvent
 pas se croiser. Le journal SQLite est en WAL et les commits sont synchrones,
-car chaque événement sert de point de reprise.
+car chaque événement sert de point de reprise. Un ``append`` qui échoue ou qui
+est annulé défait sa transaction, et ne laisse jamais la connexion « en
+transaction » : le suivant repart d'une connexion libre.
+
+Les ``ts`` sont rangés en UTC, en texte : les bornes ``since`` / ``until`` d'une
+requête sont ramenées en UTC avant d'être comparées (un client en ``+02:00``
+compare comme un client en ``Z``). La base supprime en les écrasant
+(``secure_delete``) et ``delete`` vide ensuite le WAL (RGPD).
 
 Une requête est d'abord réduite en SQL sur les colonnes indexées et les
 facettes, puis repassée par ``EventQuery.select`` : c'est lui qui fait foi.
 """
 
 import asyncio
+import contextlib
 import json
+import logging
 import os
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
 import aiosqlite
 
-from loom_ia.adapters._sqlite import enable_wal
+from loom_ia.adapters._sqlite import enable_secure_delete, enable_wal, purge_wal
 from loom_ia.adapters.stores.codec import PLAIN, JournalCodec
 from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId
 from loom_ia.core.ports import SequenceConflict, SessionRecord, journal_key
+
+logger = logging.getLogger(__name__)
 
 SCHEMA: Final = """
 CREATE TABLE IF NOT EXISTS events (
@@ -68,7 +79,7 @@ def _row(event: Event, codec: JournalCodec) -> tuple[Any, ...]:
         event.session_id,
         event.seq,
         event.event_id,
-        event.ts.isoformat(),
+        event.ts.astimezone(UTC).isoformat(),
         event.run_id,
         event.root_run_id,
         event.type,
@@ -113,10 +124,10 @@ def _conditions(query: EventQuery) -> tuple[str, list[Any]]:
         values.extend([f"$.{name}", value])
     if query.since is not None:
         clauses.append("ts >= ?")
-        values.append(query.since.isoformat())
+        values.append(query.since.astimezone(UTC).isoformat())
     if query.until is not None:
         clauses.append("ts < ?")
-        values.append(query.until.isoformat())
+        values.append(query.until.astimezone(UTC).isoformat())
     if query.after is not None:
         clauses.append("event_id > ?")
         values.append(query.after)
@@ -141,6 +152,7 @@ class SqliteEventStore:
                 await enable_wal(connection)
                 await connection.execute("PRAGMA synchronous = FULL")
                 await connection.execute("PRAGMA busy_timeout = 5000")
+                await enable_secure_delete(connection)
                 await connection.executescript(SCHEMA)
             except BaseException:
                 # Une connexion qu'on ne garde pas est fermée ici : sinon son
@@ -161,8 +173,11 @@ class SqliteEventStore:
         tenant_id, session_id = journal_key(drafts)
         async with self._lock:
             connection = await self._connect()
-            await connection.execute("BEGIN IMMEDIATE")
             try:
+                # Une transaction restée ouverte (appel annulé pendant le BEGIN, ROLLBACK
+                # qui a échoué…) se défait d'abord ; sans effet sur une connexion libre.
+                await connection.rollback()
+                await connection.execute("BEGIN IMMEDIATE")
                 last = await self._last_seq(connection, tenant_id, session_id)
                 if expected_seq is not None and expected_seq != last:
                     raise SequenceConflict(session_id, expected_seq, last)
@@ -170,11 +185,27 @@ class SqliteEventStore:
                 await connection.executemany(
                     _INSERT, [_row(event, self._codec) for event in events]
                 )
+                await connection.execute("COMMIT")
             except BaseException:
-                await connection.execute("ROLLBACK")
+                await self._abort(connection)
                 raise
-            await connection.execute("COMMIT")
             return events
+
+    async def _abort(self, connection: aiosqlite.Connection) -> None:
+        """Défait la transaction en cours ; si le ``ROLLBACK`` échoue, jette la connexion.
+
+        L'erreur qui remonte à l'appelant reste celle qui a fait échouer l'``append``
+        (ou l'annulation), jamais celle du nettoyage. Une connexion dont on ignore si
+        elle est encore en transaction n'est pas gardée : fermée, elle défait ce qui
+        reste, et l'appel suivant en ouvre une neuve.
+        """
+        try:
+            await connection.rollback()
+        except Exception:
+            logger.exception("%s : ROLLBACK impossible, connexion abandonnée", self.path)
+            self._connection = None
+            with contextlib.suppress(Exception):
+                await connection.close()
 
     # --- Lecture ----------------------------------------------------------
 
@@ -260,6 +291,7 @@ class SqliteEventStore:
             )
             removed = cursor.rowcount
             await cursor.close()
+            await purge_wal(connection, self.path)
         return max(removed, 0)
 
     async def aclose(self) -> None:

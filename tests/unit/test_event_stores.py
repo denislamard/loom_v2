@@ -2,11 +2,15 @@
 """Suite de contrat du port EventStore, exécutée sur chaque adaptateur."""
 
 import asyncio
+import errno
 import logging
+import os
 import threading
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from importlib.util import find_spec
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -26,6 +30,9 @@ from loom_ia.core.model import (
 from loom_ia.core.ports import EventStore, JournalCorrupted, SequenceConflict
 from loom_ia.core.projections import fold
 from loom_ia.testing import RunJournal, tool_call_message
+
+if TYPE_CHECKING:
+    from loom_ia.adapters.stores.sqlite import SqliteEventStore
 
 SESSION = SessionId("c-42")
 
@@ -179,6 +186,53 @@ async def test_query_filters_and_paginates(store: EventStore) -> None:
     assert [e.event_id for e in page + rest] == sorted(e.event_id for e in page + rest)
 
 
+@pytest.mark.parametrize(
+    "zone", [UTC, timezone(timedelta(hours=2)), timezone(timedelta(hours=-5))], ids=str
+)
+async def test_query_bounds_are_instants_whatever_their_offset(
+    store: EventStore, zone: tzinfo
+) -> None:
+    """``since`` / ``until`` se comparent comme des instants, dans le décalage qu'on veut.
+
+    Un client REST français envoie ``+02:00``. Le SQLite d'avant comparait en texte
+    la borne (en ``+02:00``) aux ``ts`` rangés (en UTC) : 0 événement au lieu de 8.
+    Les événements sont ici datés avec des décalages et des microsecondes
+    différents ; chaque magasin rend ce que ``EventQuery.select`` rend.
+    """
+    paris = timezone(timedelta(hours=2))
+    base = datetime(2026, 3, 1, 10, 0, tzinfo=UTC)
+    moments = [
+        base,
+        base + timedelta(microseconds=1),
+        (base + timedelta(minutes=30)).astimezone(paris),
+        base + timedelta(hours=14),
+    ]
+    _, drafts = run_drafts()
+    stamped = [
+        draft.model_copy(update={"ts": at}) for draft, at in zip(drafts, moments, strict=False)
+    ]
+    await store.append(stamped, expected_seq=0)
+    stored = await store.read(DEFAULT_TENANT, SESSION)
+    assert len(stored) == len(moments)
+
+    for at in moments:
+        for query in (
+            EventQuery(tenant_id=DEFAULT_TENANT, since=at.astimezone(zone)),
+            EventQuery(tenant_id=DEFAULT_TENANT, until=at.astimezone(zone)),
+        ):
+            found = [e.event_id for e in await store.query(query)]
+            assert found == [e.event_id for e in query.select(stored)], (query, zone)
+
+    after_first = EventQuery(
+        tenant_id=DEFAULT_TENANT, since=(base + timedelta(microseconds=1)).astimezone(zone)
+    )
+    assert sorted(e.seq for e in await store.query(after_first)) == [2, 3, 4]
+    before_last = EventQuery(
+        tenant_id=DEFAULT_TENANT, until=(base + timedelta(hours=14)).astimezone(zone)
+    )
+    assert sorted(e.seq for e in await store.query(before_last)) == [1, 2, 3]
+
+
 async def test_concurrent_appends_get_distinct_seqs(store: EventStore) -> None:
     _, drafts = run_drafts()
     results = await asyncio.gather(*(store.append([draft], expected_seq=None) for draft in drafts))
@@ -309,6 +363,82 @@ async def test_jsonl_partial_last_line_is_ignored_then_quarantined(
     assert [e.seq for e in await reopened.read(DEFAULT_TENANT, SESSION)] == [1, 2, 3]
 
 
+async def test_jsonl_last_line_without_newline_is_one_rule_everywhere(
+    jsonl: JsonlEventStore,
+) -> None:
+    """Une dernière ligne en JSON entier mais sans saut de ligne est incomplète, partout.
+
+    Avant : ``last_seq`` et ``sessions`` la comptaient (lecture par la marque), ``read``
+    l'ignorait et l'``append`` suivant la déplaçait dans ``.corrupt`` : ``append``
+    avec le ``expected_seq`` que ``last_seq`` venait d'annoncer levait ``SequenceConflict``.
+    """
+    _, drafts = run_drafts()
+    await jsonl.append(drafts[:3], expected_seq=0)
+    path = jsonl.path(DEFAULT_TENANT, SESSION)
+    whole = path.read_bytes()
+    path.write_bytes(whole.removesuffix(b"\n"))
+
+    reopened = JsonlEventStore(path.parents[1])  # un autre process : pas de cache
+    assert await reopened.last_seq(DEFAULT_TENANT, SESSION) == 2
+    assert [(r.session_id, r.last_seq) for r in await reopened.sessions(DEFAULT_TENANT)] == [
+        (SESSION, 2)
+    ]
+    assert [e.seq for e in await reopened.read(DEFAULT_TENANT, SESSION)] == [1, 2]
+    query = EventQuery(tenant_id=DEFAULT_TENANT, session_id=SESSION)
+    assert [e.seq for e in await reopened.query(query)] == [1, 2]
+
+    written = await reopened.append(drafts[3:4], expected_seq=2)
+    assert [e.seq for e in written] == [3]
+    corrupt = path.with_name(path.name + ".corrupt")
+    assert corrupt.read_bytes() == whole.splitlines(keepends=True)[-1]
+    assert await reopened.last_seq(DEFAULT_TENANT, SESSION) == 3
+    assert [e.seq for e in await reopened.read(DEFAULT_TENANT, SESSION)] == [1, 2, 3]
+
+
+@pytest.mark.parametrize("failing", ["write", "fsync"])
+async def test_jsonl_a_failed_write_leaves_no_part_of_the_batch(
+    jsonl: JsonlEventStore, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    """Un lot dont l'écriture échoue (disque plein, erreur d'E/S) n'en laisse aucune ligne.
+
+    Avant : ses premières lignes restaient dans le journal alors que l'appelant
+    avait reçu l'erreur, et le lot qu'il rejouait faisait des doublons.
+    """
+    _, drafts = run_drafts()
+    await jsonl.append(drafts[:2], expected_seq=0)
+    path = jsonl.path(DEFAULT_TENANT, SESSION)
+    before = path.read_bytes()
+    journal_inode = path.stat().st_ino
+    real_write, real_fsync = os.write, os.fsync
+    writes: list[int] = []
+
+    def write(fd: int, data: Any) -> int:
+        if failing != "write" or os.fstat(fd).st_ino != journal_inode:
+            return real_write(fd, data)
+        writes.append(fd)
+        if len(writes) > 1:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        # Le disque se remplit à la moitié du lot : la moitié part, puis plus rien.
+        return real_write(fd, bytes(data)[: len(data) // 2])
+
+    def fsync(fd: int) -> None:
+        if failing == "fsync" and os.fstat(fd).st_ino == journal_inode:
+            raise OSError(errno.EIO, "Input/output error")
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "write", write)
+    monkeypatch.setattr(os, "fsync", fsync)
+    with pytest.raises(OSError):
+        await jsonl.append(drafts[2:6], expected_seq=2)
+    monkeypatch.undo()
+
+    assert path.read_bytes() == before
+    assert not path.with_name(path.name + ".corrupt").exists()
+    assert [e.seq for e in await jsonl.read(DEFAULT_TENANT, SESSION)] == [1, 2]
+    again = await jsonl.append(drafts[2:6], expected_seq=2)
+    assert [e.seq for e in again] == [3, 4, 5, 6]
+
+
 async def test_jsonl_corrupted_complete_line_raises(jsonl: JsonlEventStore) -> None:
     _, drafts = run_drafts()
     await jsonl.append(drafts[:2], expected_seq=0)
@@ -425,6 +555,310 @@ async def test_sqlite_closes_a_connection_it_could_not_set_up(tmp_path: Path) ->
     path.unlink()
     assert await store.last_seq(DEFAULT_TENANT, SESSION) == 0
     await store.aclose()
+
+
+# --- Spécifique à SQLite ----------------------------------------------------
+
+_NEEDS_SQLITE = pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")
+
+
+@pytest.fixture
+async def sqlite_store(tmp_path: Path) -> AsyncIterator[SqliteEventStore]:
+    from loom_ia.adapters.stores.sqlite import SqliteEventStore
+
+    instance = SqliteEventStore(tmp_path / "journal.sqlite3")
+    yield instance
+    await instance.aclose()
+
+
+async def _in_flight(sent: asyncio.Event, call: Awaitable[Any]) -> Any:
+    """Lance ``call`` dans le fil de la connexion, prévient, puis l'attend.
+
+    L'annulation qu'un essai envoie après ``sent`` tombe pendant que
+    l'instruction tourne, ce qui est le cas réel : le fil la termine même si
+    l'appelant n'est plus là.
+    """
+    pending = asyncio.ensure_future(call)
+    await asyncio.sleep(0)
+    sent.set()
+    return await pending
+
+
+@_NEEDS_SQLITE
+async def test_sqlite_append_cancelled_while_waiting_for_the_write_lock(
+    sqlite_store: SqliteEventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un ``append`` annulé pendant le ``BEGIN IMMEDIATE`` ne garde pas le verrou d'écriture.
+
+    Un autre process tient l'écriture : le ``BEGIN`` du magasin attend dans le fil
+    de sa connexion. L'appel est annulé, l'autre relâche, le ``BEGIN`` aboutit quand
+    même — et plus personne ne le conclut. Avant : la connexion restait « en
+    transaction », le verrou d'écriture gardé, et tous les ``append`` suivants
+    échouaient (« cannot start a transaction within a transaction »).
+    """
+    import sqlite3
+
+    _, drafts = run_drafts()
+    await sqlite_store.append(drafts[:1], expected_seq=0)
+    connection = await sqlite_store._connect()  # pyright: ignore[reportPrivateUsage]
+    real = connection.execute
+    sent = asyncio.Event()
+
+    async def execute(sql: str, *args: Any) -> Any:
+        call = real(sql, *args)
+        return await (_in_flight(sent, call) if sql == "BEGIN IMMEDIATE" else call)
+
+    monkeypatch.setattr(connection, "execute", execute)
+    other = sqlite3.connect(sqlite_store.path, isolation_level=None, check_same_thread=False)
+    try:
+        other.execute("PRAGMA busy_timeout = 200")
+        other.execute("BEGIN IMMEDIATE")
+        task = asyncio.create_task(sqlite_store.append(drafts[1:2], expected_seq=1))
+        await sent.wait()
+        task.cancel()
+        other.execute("COMMIT")
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert not connection.in_transaction
+        other.execute("BEGIN IMMEDIATE")  # le magasin ne garde plus le verrou d'écriture
+        other.execute("COMMIT")
+        assert [e.seq for e in await sqlite_store.append(drafts[1:2], expected_seq=1)] == [2]
+    finally:
+        other.close()
+
+
+@_NEEDS_SQLITE
+@pytest.mark.parametrize(("step", "last"), [("insert", 1), ("commit", 2)])
+async def test_sqlite_append_cancelled_midway_leaves_the_connection_usable(
+    sqlite_store: SqliteEventStore, monkeypatch: pytest.MonkeyPatch, step: str, last: int
+) -> None:
+    """Annulé pendant l'insertion, le lot n'est pas écrit ; la connexion reste libre.
+
+    Annulé pendant le ``COMMIT`` : celui-ci est déjà parti dans le fil de la
+    connexion et s'achève, le lot est écrit et l'appelant reçoit l'annulation (comme
+    pour tout commit interrompu) ; la connexion, elle, est libre dans les deux cas.
+    """
+    _, drafts = run_drafts()
+    await sqlite_store.append(drafts[:1], expected_seq=0)
+    connection = await sqlite_store._connect()  # pyright: ignore[reportPrivateUsage]
+    real_execute, real_many = connection.execute, connection.executemany
+    sent = asyncio.Event()
+
+    async def execute(sql: str, *args: Any) -> Any:
+        call = real_execute(sql, *args)
+        return await (_in_flight(sent, call) if step == "commit" and sql == "COMMIT" else call)
+
+    async def executemany(sql: str, rows: Any) -> Any:
+        call = real_many(sql, rows)
+        return await (_in_flight(sent, call) if step == "insert" else call)
+
+    monkeypatch.setattr(connection, "execute", execute)
+    monkeypatch.setattr(connection, "executemany", executemany)
+    task = asyncio.create_task(sqlite_store.append(drafts[1:2], expected_seq=1))
+    await sent.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not connection.in_transaction
+    assert await sqlite_store.last_seq(DEFAULT_TENANT, SESSION) == last
+    again = await sqlite_store.append(drafts[2:3], expected_seq=last)
+    assert [e.seq for e in again] == [last + 1]
+
+
+@_NEEDS_SQLITE
+@pytest.mark.parametrize("step", ["insert", "commit"])
+async def test_sqlite_append_failing_midway_leaves_no_transaction_open(
+    sqlite_store: SqliteEventStore, monkeypatch: pytest.MonkeyPatch, step: str
+) -> None:
+    """Une erreur pendant l'insertion ou au ``COMMIT`` défait la transaction.
+
+    Le ``append`` suivant réussit, et rien du lot en échec n'est écrit.
+    """
+    import sqlite3
+
+    _, drafts = run_drafts()
+    connection = await sqlite_store._connect()  # pyright: ignore[reportPrivateUsage]
+    real_execute, real_many = connection.execute, connection.executemany
+    failures = ["disk I/O error"]
+
+    async def execute(sql: str, *args: Any) -> Any:
+        if step == "commit" and sql == "COMMIT" and failures:
+            raise sqlite3.OperationalError(failures.pop())
+        return await real_execute(sql, *args)
+
+    async def executemany(sql: str, rows: Any) -> Any:
+        if step == "insert" and failures:
+            await real_many(sql, rows)  # une partie du lot est déjà dans la transaction
+            raise sqlite3.OperationalError(failures.pop())
+        return await real_many(sql, rows)
+
+    monkeypatch.setattr(connection, "execute", execute)
+    monkeypatch.setattr(connection, "executemany", executemany)
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O"):
+        await sqlite_store.append(drafts[:2], expected_seq=0)
+
+    assert not connection.in_transaction
+    assert await sqlite_store.last_seq(DEFAULT_TENANT, SESSION) == 0
+    assert [e.seq for e in await sqlite_store.append(drafts[:2], expected_seq=0)] == [1, 2]
+
+
+@_NEEDS_SQLITE
+async def test_sqlite_failing_rollback_neither_hides_the_error_nor_wedges_the_store(
+    sqlite_store: SqliteEventStore,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Un ``ROLLBACK`` qui échoue ne masque pas l'erreur d'origine, et la connexion est jetée.
+
+    Avant : l'erreur du ``ROLLBACK`` remplaçait ``SequenceConflict`` et la
+    transaction restait ouverte. Maintenant : la connexion dont on ignore l'état
+    est fermée (ce qui défait la transaction) et la suivante en ouvre une neuve.
+    """
+    import sqlite3
+
+    _, drafts = run_drafts()
+    await sqlite_store.append(drafts[:1], expected_seq=0)
+    connection = await sqlite_store._connect()  # pyright: ignore[reportPrivateUsage]
+    real_execute, real_rollback = connection.execute, connection.rollback
+
+    async def rollback() -> None:
+        if connection.in_transaction:  # pas celui d'avant le BEGIN : celui qui suit l'échec
+            raise sqlite3.OperationalError("disk I/O error")
+        await real_rollback()
+
+    async def execute(sql: str, *args: Any) -> Any:
+        if sql == "ROLLBACK":  # la forme que l'ancien code employait
+            await rollback()
+        return await real_execute(sql, *args)
+
+    monkeypatch.setattr(connection, "rollback", rollback)
+    monkeypatch.setattr(connection, "execute", execute)
+    with caplog.at_level(logging.ERROR), pytest.raises(SequenceConflict):
+        await sqlite_store.append(drafts[1:2], expected_seq=0)  # le journal est déjà à 1
+    assert "connexion abandonnée" in caplog.text
+
+    assert await sqlite_store.last_seq(DEFAULT_TENANT, SESSION) == 1
+    assert [e.seq for e in await sqlite_store.append(drafts[1:2], expected_seq=1)] == [2]
+
+
+@_NEEDS_SQLITE
+async def test_sqlite_append_cleans_a_transaction_left_open(sqlite_store: SqliteEventStore) -> None:
+    """Un état « en transaction » hérité est défait avant le ``BEGIN IMMEDIATE`` suivant."""
+    _, drafts = run_drafts()
+    connection = await sqlite_store._connect()  # pyright: ignore[reportPrivateUsage]
+    await connection.execute("BEGIN IMMEDIATE")
+    assert connection.in_transaction
+
+    assert [e.seq for e in await sqlite_store.append(drafts[:2], expected_seq=0)] == [1, 2]
+
+    assert not connection.in_transaction
+    assert [e.seq for e in await sqlite_store.read(DEFAULT_TENANT, SESSION)] == [1, 2]
+
+
+@_NEEDS_SQLITE
+async def test_sqlite_stores_ts_in_utc(sqlite_store: SqliteEventStore) -> None:
+    """La colonne ``ts`` est rangée en UTC, quel que soit le décalage de l'événement.
+
+    C'est ce qui permet de comparer en texte une borne ramenée en UTC. Les
+    lignes écrites avant cette correction avec un ``ts`` d'un autre décalage (un
+    appelant qui datait ses événements en ``+02:00``) ne sont pas réécrites.
+    """
+    import sqlite3
+
+    paris = datetime(2026, 3, 1, 12, 30, tzinfo=timezone(timedelta(hours=2)))
+    _, drafts = run_drafts()
+    await sqlite_store.append([drafts[0].model_copy(update={"ts": paris})], expected_seq=0)
+
+    check = sqlite3.connect(sqlite_store.path)
+    try:
+        assert check.execute("SELECT ts FROM events").fetchall() == [("2026-03-01T10:30:00+00:00",)]
+    finally:
+        check.close()
+
+
+SECRET = "JEAN-DUPONT-0612345678"
+
+
+def bytes_of(path: Path) -> bytes:
+    """Octets d'un fichier, vides s'il n'existe pas (le ``-wal`` d'une base fermée)."""
+    return path.read_bytes() if path.exists() else b""
+
+
+def secret_drafts() -> list[EventDraft]:
+    journal = RunJournal(session_id=SESSION, tenant_id=DEFAULT_TENANT)
+    journal.start(f"Mon numéro est {SECRET}")
+    journal.model_turn(Message.assistant("Noté."))
+    journal.complete()
+    return journal.take()
+
+
+@_NEEDS_SQLITE
+@pytest.mark.parametrize("where", ["base", "wal"])
+async def test_sqlite_delete_purges_the_database_and_the_wal(tmp_path: Path, where: str) -> None:
+    """Après ``delete``, la chaîne supprimée n'est plus dans la base ni dans le ``-wal`` (RGPD).
+
+    ``base`` : les événements ont été reportés dans le fichier de la base (la
+    fermeture d'un journal fait ce point de reprise). ``wal`` : ils sont encore
+    dans le ``-wal``, qui garde aussi l'ancienne version des pages après la
+    suppression. Avant : la chaîne restait dans l'un ou l'autre.
+    """
+    from loom_ia.adapters.stores.sqlite import SqliteEventStore
+
+    path = tmp_path / "journal.sqlite3"
+    wal = Path(f"{path}-wal")
+    store = SqliteEventStore(path)
+    drafts = secret_drafts()
+    try:
+        await store.append(drafts, expected_seq=0)
+        if where == "base":
+            await store.aclose()
+            store = SqliteEventStore(path)
+        assert SECRET.encode() in bytes_of(path if where == "base" else wal)
+
+        assert await store.delete(DEFAULT_TENANT, SESSION) == len(drafts)
+
+        assert SECRET.encode() not in bytes_of(path)
+        assert SECRET.encode() not in bytes_of(wal)
+        assert await store.read(DEFAULT_TENANT, SESSION) == []
+        # ``secure_delete`` se pose par connexion : celle-ci doit l'avoir.
+        connection = await store._connect()  # pyright: ignore[reportPrivateUsage]
+        async with connection.execute("PRAGMA secure_delete") as cursor:
+            assert await cursor.fetchone() == (1,)
+    finally:
+        await store.aclose()
+
+
+@_NEEDS_SQLITE
+async def test_sqlite_delete_still_succeeds_when_a_reader_keeps_the_wal(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Un lecteur ouvert dans un autre process empêche le point de reprise d'aboutir.
+
+    SQLite répond par un drapeau « occupé », pas par une erreur : la suppression
+    réussit et le dit par un avertissement, puisque le WAL n'est pas purgé.
+    """
+    import sqlite3
+
+    from loom_ia.adapters.stores.sqlite import SqliteEventStore
+
+    store = SqliteEventStore(tmp_path / "journal.sqlite3")
+    drafts = secret_drafts()
+    await store.append(drafts, expected_seq=0)
+    connection = await store._connect()  # pyright: ignore[reportPrivateUsage]
+    await connection.execute("PRAGMA busy_timeout = 50")  # l'essai n'attend pas les 5 s d'usage
+    reader = sqlite3.connect(store.path, isolation_level=None)
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM events").fetchone()  # un instantané reste ouvert
+        with caplog.at_level(logging.WARNING):
+            assert await store.delete(DEFAULT_TENANT, SESSION) == len(drafts)
+        assert await store.read(DEFAULT_TENANT, SESSION) == []
+    finally:
+        reader.close()
+        await store.aclose()
+    assert "le WAL n'est pas purgé" in caplog.text
 
 
 async def test_closing_the_notifying_store_closes_the_one_it_wraps(store: EventStore) -> None:

@@ -74,6 +74,8 @@ class Keyring(Protocol):
         Lève ``MissingKey`` quand ce client n'en a aucune : un trousseau
         existe parce que la config a demandé le sceau, et écrire en clair
         sous prétexte qu'une clé manque serait exactement la fuite que le
-        sceau est là pour empêcher.
+        sceau est là pour empêcher. Elle la lève aussi quand celle de tête
+        manque alors qu'une clé de queue est là : sceller avec cette dernière,
+        sans rien dire, ferait d'un renouvellement qui n'a pas lieu un succès.
         """
         ...

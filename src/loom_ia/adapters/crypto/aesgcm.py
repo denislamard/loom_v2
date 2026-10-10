@@ -18,6 +18,11 @@ Plusieurs noms sont possibles, dans l'ordre : le premier ferme, tous ouvrent.
 C'est le renouvellement — on met la nouvelle clé devant, l'ancienne reste
 derrière le temps que les anciens journaux servent encore.
 
+Le premier nom doit avoir sa clé : absent ou vide, le client est refusé comme
+s'il n'en avait aucune (``MissingKey``, qui nomme ce secret), et jamais scellé
+avec une clé de queue à sa place. Un secret de queue absent est toléré : il ne
+sert qu'à ouvrir, et un client arrivé après le renouvellement ne l'a jamais eu.
+
 L'empreinte (``key_id``) est un condensé de la clé, pas la clé : elle tient
 dans une ligne de log ou un message d'erreur, et elle suffit à dire laquelle
 a fermé un sceau — donc laquelle manque.
@@ -147,6 +152,14 @@ class SecretKeyring:
                 "ou vide. Son journal reste illisible et ses runs sont refusés : c'est l'effet "
                 "voulu après un effacement de clé, et si la clé n'était pas censée disparaître, "
                 "c'est elle qu'il faut remettre"
+            )
+        head = self._names[0]
+        if found[0][0] != head:
+            raise MissingKey(
+                f"Client {tenant_id!r} : le secret de tête {head!r}, celui qui scelle, est absent "
+                "ou vide — jamais une clé de queue ne scelle à sa place. Son journal reste "
+                f"illisible et ses runs sont refusés : remettre la variable de {head!r}, ou, si "
+                f"cette clé n'est plus voulue, retirer {head!r} de 'storage.encryption.keys'"
             )
         return tuple(
             AesGcmCipher(decode_key(value, what=f"Client {tenant_id!r}, secret {name!r}"))

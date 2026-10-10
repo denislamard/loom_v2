@@ -24,7 +24,7 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from typing import Self
+from typing import Final, Self
 
 from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId, new_id
@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 type EventSink = Callable[[Event], None]
 type EventFilter = Callable[[Event], bool]
+
+# Attentes successives, en secondes, avant de se réabonner à un bus tombé : la
+# dernière vaut ensuite pour toutes les tentatives suivantes.
+FOLLOW_BACKOFF: Final = (1.0, 2.0, 5.0, 10.0, 30.0)
 
 
 class Subscription:
@@ -149,14 +153,26 @@ class NotifyingEventStore:
         return events
 
     def _offer(self, event: Event, *, own: bool) -> None:
-        """Remet un événement aux abonnés que son run et leur filtre acceptent."""
+        """Remet un événement aux abonnés que son run et leur filtre acceptent.
+
+        Un abonné ou un filtre qui lève est journalisé, et les suivants sont
+        servis quand même : l'écriture a eu lieu, elle ne peut plus échouer
+        pour ça, et la nouvelle au bus (``_announce``) doit partir.
+        """
         for sink, run_id, accept, only_own in tuple(self._sinks):
             if only_own and not own:
                 continue
             if run_id is not None and event.run_id != run_id:
                 continue
-            if accept is None or accept(event):
-                sink(event)
+            try:
+                if accept is None or accept(event):
+                    sink(event)
+            except Exception:
+                logger.exception(
+                    "Journal : un abonné a échoué sur l'événement %s (seq %d)",
+                    event.event_id,
+                    event.seq,
+                )
 
     # --- Bus (5.3c) -------------------------------------------------------
 
@@ -193,16 +209,34 @@ class NotifyingEventStore:
             logger.warning("Bus : nouvelle non publiée (%s)", error)
 
     async def follow(self) -> None:
-        """Suit le bus jusqu'à sa fermeture, et remet ce que les autres écrivent."""
+        """Suit le bus jusqu'à sa fermeture, et remet ce que les autres écrivent.
+
+        Une panne du bus n'arrête pas le suivi : elle est journalisée, puis
+        l'abonnement est repris après une attente croissante
+        (``FOLLOW_BACKOFF``). Ce que les autres ont écrit pendant la coupure
+        se rattrape à la nouvelle suivante, depuis la position gardée. Le suivi
+        s'arrête quand le bus rend la main (il est fermé), ou à l'annulation,
+        qui coupe aussi l'attente avant de se réabonner.
+        """
         if self._bus is None:
             return
-        async for notice in self._bus.notices():
-            if notice.source == self._source:
-                continue
+        failures = 0
+        while True:
             try:
-                await self._catch_up(notice)
+                async for notice in self._bus.notices():
+                    failures = 0
+                    if notice.source == self._source:
+                        continue
+                    try:
+                        await self._catch_up(notice)
+                    except Exception:
+                        logger.exception("Bus : nouvelle de %s non suivie", notice.session_id)
+                return
             except Exception:
-                logger.exception("Bus : nouvelle de %s non suivie", notice.session_id)
+                delay = FOLLOW_BACKOFF[min(failures, len(FOLLOW_BACKOFF) - 1)]
+                failures += 1
+                logger.exception("Bus : suivi interrompu, nouvelle tentative dans %g s", delay)
+            await asyncio.sleep(delay)
 
     async def _catch_up(self, notice: Notice) -> None:
         """Relit ce qui manque pour ce journal et le remet aux abonnés.
@@ -222,7 +256,10 @@ class NotifyingEventStore:
         events = await self._inner.read(notice.tenant_id, notice.session_id, after_seq=after)
         for event in events:
             self._offer(event, own=False)
-        self._cursors[key] = max(notice.last_seq, events[-1].seq if events else 0)
+        # La position ne recule jamais : une écriture d'ici a pu l'avancer pendant la lecture.
+        self._cursors[key] = max(
+            self._cursors.get(key, 0), notice.last_seq, events[-1].seq if events else 0
+        )
 
     async def read(
         self,
@@ -244,7 +281,12 @@ class NotifyingEventStore:
         return await self._inner.sessions(tenant_id)
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
-        return await self._inner.delete(tenant_id, session_id)
+        removed = await self._inner.delete(tenant_id, session_id)
+        # Recréé sous le même identifiant, ce journal repart de 1 : une position
+        # restée haute en ferait ignorer les nouvelles. Les **autres** process
+        # gardent la leur — le bus n'annonce pas les suppressions.
+        self._cursors.pop((tenant_id, session_id), None)
+        return removed
 
     async def aclose(self) -> None:
         self._sinks.clear()

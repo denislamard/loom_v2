@@ -131,6 +131,7 @@ from loom_ia.core.ports import (
     ServedQueue,
     SessionRecord,
     TaskQueue,
+    UnusableId,
     UsageCounter,
 )
 from loom_ia.core.projections import ProjectionError, RunTree, fold
@@ -237,6 +238,19 @@ SESSIONS_MAX: Final = 200
 def is_final(event: Event) -> bool:
     """Vrai sur l'événement qui clôt un run : fin, échec ou annulation."""
     return isinstance(event.payload, RunCompleted | RunFailed | RunCancelled)
+
+
+def check_deletable_id(kind: str, value: str) -> None:
+    """Refuse, avant toute suppression, un identifiant vide.
+
+    Il ne désigne aucune session ni aucun client précis, et un magasin ne doit
+    jamais le lire comme « tout le client » (``UnusableId``).
+    """
+    if not value:
+        raise UnusableId(
+            f"{kind} {value!r} inutilisable : un identifiant vide ne désigne rien de précis "
+            "à supprimer"
+        )
 
 
 class AgentNotAllowed(PermissionError):
@@ -1898,8 +1912,15 @@ class Loom:
         à retirer. Les clés d'idempotence partent avec lui — une clé métier
         peut porter une référence client (« relance:D-2026-042 »), et l'effet
         qu'elle protégeait n'a plus de trace de toute façon.
+
+        Un identifiant de session ou de client vide est refusé (``UnusableId``)
+        **avant** de toucher à quoi que ce soit : il ne doit jamais se lire comme
+        « tout le client ». Un ``tenant_id`` vide n'est pas non plus pris pour le
+        client par défaut — seul ``None`` l'est.
         """
-        tenant = tenant_id or DEFAULT_TENANT
+        tenant = tenant_id if tenant_id is not None else DEFAULT_TENANT
+        check_deletable_id("Client", tenant)
+        check_deletable_id("Session", session_id)
         keys = 0
         if self._idempotency is not None:
             keys = await self._idempotency.forget(tenant, session_id)
@@ -1930,6 +1951,10 @@ class Loom:
         blanc ; le nombre d'événements, lui, est la longueur du journal, que la
         marque de la session donne sans rien ouvrir.
 
+        Une session que le journal liste sous un identifiant vide n'est jamais
+        prise pour tout le client : elle reste en place, un avertissement la
+        nomme, et le balayage des autres continue (voir ``delete_session``).
+
         Rien ne se déclenche tout seul : c'est `loom retention` qui appelle, et
         la plateforme qui le met à l'heure (5.4c).
         """
@@ -1948,7 +1973,14 @@ class Loom:
                 if record.updated_at >= limit:
                     kept += 1
                     continue
-                swept.append(await self._sweep(tenant, record, dry_run=dry_run))
+                try:
+                    swept.append(await self._sweep(tenant, record, dry_run=dry_run))
+                except UnusableId:
+                    logger.warning(
+                        "Rétention : session %r du client %r laissée en place, identifiant vide",
+                        record.session_id,
+                        tenant,
+                    )
         return RetentionReport(
             dry_run=dry_run, days=days, scanned=scanned, kept=kept, swept=tuple(swept)
         )
@@ -2031,8 +2063,12 @@ class Loom:
                 await self._bus.aclose()
         following, self._following = self._following, None
         if following is not None:
+            # Un suivi qui attend de se réabonner (bus en panne) ne verrait pas
+            # le bus fermé : l'annulation coupe l'attente. ``wait`` ne relève
+            # pas cette annulation, qui n'est pas celle de l'appelant.
+            following.cancel()
             with closing:
-                await following
+                await asyncio.wait({following})
         closer = getattr(self._idempotency, "aclose", None)
         if closer is not None:
             with closing:

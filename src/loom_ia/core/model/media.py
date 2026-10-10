@@ -111,7 +111,17 @@ class ArtifactLocation:
         return cls(tenant=unquote(tenant), session=unquote(session), name=name)
 
     def relative_path(self) -> Path:
-        """Chemin relatif sûr (segments encodés), sous la racine d'un stockage."""
+        """Chemin relatif sûr (segments encodés), sous la racine d'un stockage.
+
+        Lève ``ValueError`` si le client ou la session est vide : un segment vide
+        s'effacerait du chemin, et le dossier d'une session deviendrait celui de
+        son client, voire la racine.
+        """
+        for kind, value in (("client", self.tenant), ("session", self.session)):
+            if not value:
+                raise ValueError(
+                    f"Identifiant de {kind} inutilisable dans un chemin d'artefact : {value!r}"
+                )
         return Path(_component(self.tenant)) / _component(self.session) / self.name
 
 

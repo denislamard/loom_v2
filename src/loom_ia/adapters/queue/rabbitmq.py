@@ -16,7 +16,10 @@ l'exécution : un worker tué sans préavis ne l'envoie pas, et le courtier
 redélivre. Deux pilotes pour un même run, c'est la concession qui les sépare
 (#27) ; une tâche rejouée retrouve un état qu'elle reconnaît, puisque le
 journal fait foi. Une tâche qui **échoue** est acquittée quand même, et
-journalisée : la rejouer sans fin serait pire que de la perdre.
+journalisée : la rejouer sans fin serait pire que de la perdre. Un message
+mal formé (champ absent, type faux) est traité de même : acquitté, journalisé.
+Un acquittement que le courtier refuse (canal fermé) est journalisé et
+n'abat pas le worker : le courtier redélivre, c'est le contrat.
 
 **Le délai n'existe pas chez RabbitMQ.** Un travail différé va dans une file
 sans consommateur, avec une durée de vie par message ; à l'échéance, le
@@ -77,7 +80,7 @@ def decoded(body: bytes) -> tuple[str, Job]:
     """Rend l'identifiant et le travail ; ``ValueError`` si le message n'en est pas un."""
     try:
         found: Any = json.loads(body)
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:
         raise ValueError(f"Message illisible : {exc}") from exc
     if not isinstance(found, dict):
         raise ValueError("Message qui n'est pas un objet JSON")
@@ -85,6 +88,13 @@ def decoded(body: bytes) -> tuple[str, Job]:
     kind: object = data.get("kind")
     if kind not in ("compaction", "run", "resume", "expire_approval"):
         raise ValueError(f"Travail de type inconnu : {kind!r}")
+    for name in ("tenant_id", "session_id"):
+        if not isinstance(data.get(name), str) or not data[name]:
+            raise ValueError(f"Champ {name!r} absent, vide ou qui n'est pas du texte")
+    if data.get("run_id") is not None and not isinstance(data["run_id"], str):
+        raise ValueError("Champ 'run_id' qui n'est pas du texte")
+    if not isinstance(data.get("params") or {}, dict):
+        raise ValueError("Champ 'params' qui n'est pas un objet")
     return str(data.get("id") or new_id()), Job(
         kind=kind,
         tenant_id=data["tenant_id"],
@@ -92,6 +102,22 @@ def decoded(body: bytes) -> tuple[str, Job]:
         run_id=data.get("run_id"),
         params=data.get("params") or {},
     )
+
+
+async def _settle(message: AbstractIncomingMessage, *, requeue: bool | None = None) -> None:
+    """Acquitte le message (ou, avec ``requeue``, le remet en file) sans jamais lever.
+
+    Un canal fermé fait échouer la réponse : le courtier redélivre alors le
+    message, ce que le contrat « au moins une fois » prévoit. L'échec n'a pas à
+    abattre le worker, ni les travaux qui tournent à côté.
+    """
+    try:
+        if requeue is None:
+            await message.ack()
+        else:
+            await message.nack(requeue=requeue)
+    except Exception:
+        logger.exception("Réponse au courtier impossible, il redélivrera le message")
 
 
 class RabbitMqTaskQueue:
@@ -115,7 +141,7 @@ class RabbitMqTaskQueue:
 
     # --- Raccordement -----------------------------------------------------
 
-    async def _work_queue(self, *, prefetch: int = 0) -> AbstractQueue:
+    async def _work_queue(self) -> AbstractQueue:
         """Le canal et les deux files, déclarés une fois, à la première demande.
 
         Les files sont déclarées **aussi par celui qui publie** : un message
@@ -125,8 +151,6 @@ class RabbitMqTaskQueue:
         if self._channel is None:
             self._connection = await aio_pika.connect_robust(self._url)
             self._channel = await self._connection.channel()
-            if prefetch:
-                await self._channel.set_qos(prefetch_count=prefetch)
             await self._channel.declare_queue(DELAY_QUEUE, durable=True, arguments=DELAY_ARGUMENTS)
             self._declared = await self._channel.declare_queue(WORK_QUEUE, durable=True)
         assert self._declared is not None
@@ -178,7 +202,11 @@ class RabbitMqTaskQueue:
         ``jobs`` est le nombre de travaux menés en même temps, et c'est aussi
         ce que le courtier accepte de confier d'avance à ce worker.
         """
-        queue = await self._work_queue(prefetch=jobs)
+        queue = await self._work_queue()
+        assert self._channel is not None
+        # Posé ici, à chaque appel : le canal a pu naître d'une publication
+        # (`recover()` fait `submit`), sans limite, avant qu'on ne consomme.
+        await self._channel.set_qos(prefetch_count=jobs)
         places = asyncio.Semaphore(jobs)
         self._stopping = False
         async with asyncio.TaskGroup() as group:
@@ -187,7 +215,7 @@ class RabbitMqTaskQueue:
                 async for message in arrivals:
                     if self._stopping:
                         # Le travail retourne en file : un autre le prendra.
-                        await message.nack(requeue=True)
+                        await _settle(message, requeue=True)
                         break
                     await places.acquire()
                     _ = group.create_task(self._handle(message, places))
@@ -208,12 +236,12 @@ class RabbitMqTaskQueue:
                 # Un message que loom ne comprend pas ne sera jamais compris :
                 # l'acquitter est la seule sortie qui ne boucle pas.
                 logger.error("Travail illisible, abandonné : %s", error)
-                await message.ack()
+                await _settle(message)
                 return
             handler = self._handlers.get(job.kind)
             if handler is None:
                 logger.error("Travail %r sans traitement dans ce worker, abandonné", job.kind)
-                await message.ack()
+                await _settle(message)
                 return
             try:
                 await handler(job)
@@ -221,7 +249,7 @@ class RabbitMqTaskQueue:
                 # Journalisé, acquitté : rejouer sans fin serait pire. Ce que
                 # le run en retient, il l'a écrit lui-même au journal.
                 logger.exception("Travail %s (%s) en échec", job_id, job.kind)
-            await message.ack()
+            await _settle(message)
         finally:
             places.release()
 

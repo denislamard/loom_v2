@@ -23,6 +23,9 @@ La colonne ``holder`` porte le jeton du détenteur de la clé : ``complete`` et
 ``release`` qui en présentent un ne touchent que la ligne qui est encore à lui.
 Elle est **nullable** et ajoutée à l'ouverture d'une base créée avant elle ;
 une ligne sans jeton (écrite avant, ou sans) ne répond à aucun jeton.
+
+La base supprime en écrasant (``secure_delete``) et ``forget`` vide ensuite le
+WAL, pour qu'un client oublié ne laisse pas de trace dans les fichiers (RGPD).
 """
 
 import asyncio
@@ -35,7 +38,7 @@ from typing import Any, Final
 
 import aiosqlite
 
-from loom_ia.adapters._sqlite import enable_wal
+from loom_ia.adapters._sqlite import enable_secure_delete, enable_wal, purge_wal
 from loom_ia.core.model import (
     DEFAULT_RETENTION,
     IdempotencyRecord,
@@ -116,6 +119,7 @@ class SqliteIdempotency:
                 # bord suit, et on ne veut pas le refaire après un arrêt brutal.
                 await connection.execute("PRAGMA synchronous = FULL")
                 await connection.execute("PRAGMA busy_timeout = 5000")
+                await enable_secure_delete(connection)
                 await connection.executescript(SCHEMA)
                 await _add_holder(connection)
             except BaseException:
@@ -210,7 +214,9 @@ class SqliteIdempotency:
         async with self._lock:
             connection = await self._connect()
             async with connection.execute(sql, values) as cursor:
-                return cursor.rowcount
+                removed = cursor.rowcount
+            await purge_wal(connection, self.path)
+        return removed
 
     async def aclose(self) -> None:
         async with self._lock:

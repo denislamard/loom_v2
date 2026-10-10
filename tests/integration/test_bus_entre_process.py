@@ -13,6 +13,7 @@ flux sans jamais voir `run.completed`.
 
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -27,10 +28,11 @@ import pytest
 import yaml
 
 from loom_ia.access.api import Loom
-from loom_ia.adapters.stores import InMemoryEventStore, NotifyingEventStore
+from loom_ia.adapters.stores import InMemoryEventStore, NotifyingEventStore, notifying
 from loom_ia.config import load_config
 from loom_ia.core.events import Event, EventDraft
 from loom_ia.core.model import DEFAULT_TENANT, Message, SessionId, ToolOutput
+from loom_ia.core.ports import BusUnavailable, Notice
 from loom_ia.runtime import create_bus
 from loom_ia.testing import RunJournal, tool_call_message
 
@@ -159,6 +161,143 @@ async def test_a_subscriber_sees_what_another_instance_writes(
         await ailleurs_bus.aclose()
 
 
+# --- La connexion d'écoute tombe ----------------------------------------------
+
+
+async def test_a_bus_whose_listening_connection_is_cut_does_not_wait_forever(
+    bus_storage: dict[str, Any], tmp_path: Path
+) -> None:
+    """Une écoute coupée par le serveur lève une erreur, au lieu de rester suspendue."""
+    config = load_config(write_config(tmp_path, bus_storage, tool=False))
+    bus = create_bus(config)
+    assert bus is not None
+
+    async def listen() -> None:
+        async for _ in bus.notices():
+            pass
+
+    task = asyncio.create_task(listen())
+    try:
+        await asyncio.sleep(ABONNEMENT)
+        await _cut(bus_storage)
+        await asyncio.wait({task}, timeout=15.0)
+        assert task.done(), "l'écoute coupée est restée suspendue"
+        error = task.exception()
+        assert error is not None
+        if bus_storage["backend"] == "postgres":
+            assert isinstance(error, BusUnavailable)
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await task
+        await bus.aclose()
+
+
+async def test_the_follow_resumes_after_the_listening_connection_is_cut(
+    bus_storage: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Le suivi se réabonne après une coupure, et ce qui s'est écrit entre-temps arrive."""
+    monkeypatch.setattr(notifying, "FOLLOW_BACKOFF", (0.05,))
+    config = load_config(write_config(tmp_path, bus_storage, tool=False))
+    ici_bus, ailleurs_bus = create_bus(config), create_bus(config)
+    assert ici_bus is not None and ailleurs_bus is not None
+    inner = InMemoryEventStore()
+    ici = NotifyingEventStore(inner, bus=ici_bus, source="ici")
+    ailleurs = NotifyingEventStore(inner, bus=ailleurs_bus, source="ailleurs")
+    journal = RunJournal(session_id=SESSION)
+    journal.start(QUESTION)
+    vus: list[int] = []
+    try:
+        with ici.listen(lambda event: vus.append(event.seq)), caplog.at_level(logging.ERROR):
+            async with _following(ici):
+                written = await ailleurs.append(journal.take(), expected_seq=0)
+                assert await _until(lambda: len(vus) >= len(written), limit=15.0)
+                await _cut(bus_storage)
+                assert await _until(
+                    lambda: any("suivi interrompu" in r.getMessage() for r in caplog.records),
+                    limit=15.0,
+                ), "le suivi n'a pas vu la coupure"
+                # Un lot à la fois, jusqu'à ce qu'ici ait tout vu : ceux qui partent pendant
+                # le réabonnement sont perdus pour le bus, et rattrapés par la nouvelle d'après.
+                for _ in range(150):
+                    journal.model_turn(Message.assistant("encore"))
+                    written += await ailleurs.append(journal.take(), expected_seq=None)
+                    await asyncio.sleep(0.1)
+                    if len(vus) == len(written):
+                        break
+        assert vus == [e.seq for e in written]
+    finally:
+        await ici_bus.aclose()
+        await ailleurs_bus.aclose()
+
+
+async def test_a_postgres_bus_publishes_again_after_its_publishing_connection_died(
+    postgres_dsn: str,
+) -> None:
+    """La connexion d'émission morte est jetée : la publication reprend, sans redémarrer."""
+    from loom_ia.adapters.bus.postgres import PostgresBus
+
+    ear, mouth = PostgresBus(postgres_dsn), PostgresBus(postgres_dsn)
+    heard: list[int] = []
+
+    async def listen() -> None:
+        async for notice in ear.notices():
+            heard.append(notice.last_seq)
+
+    task = asyncio.create_task(listen())
+    try:
+        await asyncio.sleep(ABONNEMENT)
+        await mouth.publish(_notice(1))
+        assert await _until(lambda: heard == [1], limit=15.0)
+        await _terminate(postgres_dsn, "%pg_notify%")
+        # Morte avant qu'on le sache, la connexion fait échouer une publication au plus.
+        errors: list[Exception] = []
+        for _ in range(2):
+            try:
+                await mouth.publish(_notice(2))
+                break
+            except Exception as error:
+                errors.append(error)
+        else:
+            pytest.fail(f"la publication n'a pas repris : {errors}")
+        assert len(errors) <= 1
+        assert await _until(lambda: 2 in heard, limit=15.0)
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        await ear.aclose()
+        await mouth.aclose()
+
+
+async def test_concurrent_postgres_publications_all_go_out(postgres_dsn: str) -> None:
+    """Une connexion ne fait qu'une chose à la fois : des publications simultanées se suivent."""
+    from loom_ia.adapters.bus.postgres import PostgresBus
+
+    ear, mouth = PostgresBus(postgres_dsn), PostgresBus(postgres_dsn)
+    heard: list[int] = []
+
+    async def listen() -> None:
+        async for notice in ear.notices():
+            heard.append(notice.last_seq)
+
+    task = asyncio.create_task(listen())
+    try:
+        await asyncio.sleep(ABONNEMENT)
+        await mouth.publish(_notice(0))
+        await asyncio.gather(*(mouth.publish(_notice(n)) for n in range(1, 9)))
+        assert await _until(lambda: sorted(heard) == list(range(9)), limit=15.0)
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        await ear.aclose()
+        await mouth.aclose()
+
+
 # --- Le SSE suit un run d'ailleurs --------------------------------------------
 
 
@@ -206,6 +345,44 @@ async def _following(store: NotifyingEventStore) -> AsyncGenerator[None]:
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+
+
+def _notice(seq: int) -> Notice:
+    return Notice(
+        tenant_id=DEFAULT_TENANT, session_id=SESSION, first_seq=seq, last_seq=seq, source="x"
+    )
+
+
+async def _terminate(dsn: str, pattern: str) -> None:
+    """Coupe côté serveur les connexions Postgres dont la dernière requête suit ``pattern``."""
+    import asyncpg
+
+    admin = await asyncpg.connect(dsn)
+    try:
+        cut = await admin.fetch(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE pid <> pg_backend_pid() AND query ILIKE $1",
+            pattern,
+        )
+    finally:
+        await admin.close()
+    assert cut, f"aucune connexion à couper pour {pattern!r}"
+
+
+async def _cut(bus: dict[str, Any]) -> None:
+    """Coupe, côté serveur, la connexion qui écoute le canal : panne réseau, redémarrage."""
+    target = os.environ[VARIABLE]
+    if bus["backend"] == "postgres":
+        await _terminate(target, "LISTEN%")
+        return
+    import redis.asyncio as redis
+
+    client = redis.from_url(target)
+    try:
+        killed = await client.execute_command("CLIENT", "KILL", "TYPE", "pubsub")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    finally:
+        await client.aclose()
+    assert killed, "aucune connexion d'écoute à couper"
 
 
 async def _streamed(config: Path, run_id: str, after: int) -> list[str]:

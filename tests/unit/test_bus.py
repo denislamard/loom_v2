@@ -8,7 +8,8 @@ qu'ont deux process, sans les process. Les vrais bus sont dans
 """
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+import logging
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from importlib.util import find_spec
 from typing import Any
@@ -19,12 +20,12 @@ from conftest import ConfigFactory
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
 from loom_ia.adapters.bus import InMemoryBus
-from loom_ia.adapters.stores import InMemoryEventStore, NotifyingEventStore
+from loom_ia.adapters.stores import InMemoryEventStore, NotifyingEventStore, notifying
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.models import BUS_BACKENDS, SHARED_BUSES, BusStorage
 from loom_ia.core.events import Event, EventDraft
-from loom_ia.core.model import DEFAULT_TENANT, Message, SessionId, ToolOutput
-from loom_ia.core.ports import Notice
+from loom_ia.core.model import DEFAULT_TENANT, Message, RunId, SessionId, TenantId, ToolOutput
+from loom_ia.core.ports import BusUnavailable, Notice
 from loom_ia.runtime import create_bus, storage_warnings
 from loom_ia.testing import RunJournal, tool_call_message
 
@@ -276,6 +277,303 @@ async def test_a_bus_that_fails_does_not_fail_the_write() -> None:
     asked = drafts()
     written = await store.append(asked, expected_seq=0)
     assert len(written) == len(asked)
+
+
+# --- Ce qui tombe en route ---------------------------------------------------
+
+
+class LectureBloquee(InMemoryEventStore):
+    """Journal dont la lecture ne rend ce qu'elle a lu qu'une fois relâchée."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lu = asyncio.Event()
+        self.relache = asyncio.Event()
+
+    async def read(
+        self,
+        tenant_id: TenantId,
+        session_id: SessionId,
+        *,
+        after_seq: int = 0,
+        run_id: RunId | None = None,
+    ) -> list[Event]:
+        events = await super().read(tenant_id, session_id, after_seq=after_seq, run_id=run_id)
+        self.lu.set()
+        await self.relache.wait()
+        return events
+
+
+type Etape = Exception | Callable[[], Awaitable[Notice | None]]
+
+
+class BusScenarise:
+    """Bus qui joue un scénario par abonnement : une panne, ou une action et sa nouvelle."""
+
+    def __init__(self, *scenarios: Sequence[Etape]) -> None:
+        self._scenarios = list(scenarios)
+        self.subscriptions = 0
+
+    async def publish(self, notice: Notice) -> None:
+        return None
+
+    async def notices(self) -> AsyncIterator[Notice]:
+        self.subscriptions += 1
+        for step in self._scenarios.pop(0):
+            if isinstance(step, Exception):
+                raise step
+            notice = await step()
+            if notice is not None:
+                yield notice
+
+    async def aclose(self) -> None:
+        return None
+
+
+class BusEnPanne:
+    """Bus dont chaque abonnement échoue aussitôt."""
+
+    def __init__(self) -> None:
+        self.failed = asyncio.Event()
+
+    async def publish(self, notice: Notice) -> None:
+        return None
+
+    async def notices(self) -> AsyncIterator[Notice]:
+        self.failed.set()
+        raise RuntimeError("bus en panne")
+        yield  # pragma: no cover - fait de cette méthode un générateur
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def test_a_failing_subscriber_neither_fails_the_write_nor_silences_the_others(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """L'écriture a eu lieu : un abonné ou un filtre qui lève est journalisé, rien de plus."""
+    inner = InMemoryEventStore()
+    bus = InMemoryBus()
+    ici = NotifyingEventStore(inner, bus=bus, source="ici")
+    ailleurs = NotifyingEventStore(inner, bus=bus, source="ailleurs")
+
+    def en_panne(_: Event) -> None:
+        raise RuntimeError("abonné en panne")
+
+    def refuse(_: Event) -> bool:
+        raise RuntimeError("filtre en panne")
+
+    vus_ici: list[int] = []
+    vus_ailleurs: list[int] = []
+    with (
+        ici.listen(en_panne),
+        ici.listen(lambda e: vus_ici.append(e.seq), accept=refuse),
+        ici.listen(lambda e: vus_ici.append(e.seq)),
+        ailleurs.listen(lambda e: vus_ailleurs.append(e.seq)),
+    ):
+        async with _following(ailleurs, bus):
+            with caplog.at_level(logging.ERROR):
+                written = await ici.append(drafts(), expected_seq=0)
+            await _settled()
+
+    seqs = [e.seq for e in written]
+    # Le troisième abonné a tout reçu ; l'autre process a eu sa nouvelle.
+    assert vus_ici == seqs
+    assert vus_ailleurs == seqs
+    # Deux échecs par événement, journalisés avec leur trace, pas avalés.
+    echecs = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(echecs) == 2 * len(written)
+    assert all(r.exc_info is not None for r in echecs)
+    assert "seq 1" in echecs[0].getMessage()
+    await bus.aclose()
+
+
+async def test_the_position_never_goes_back_when_a_local_write_overtakes_a_catch_up() -> None:
+    """Un ``append`` d'ici avance la position pendant la lecture : le rattrapage ne l'écrase pas."""
+    inner = LectureBloquee()
+    bus = InMemoryBus()
+    ici = NotifyingEventStore(inner, bus=bus, source="ici")
+    tout = drafts()
+    distant = await inner.append(tout[:3], expected_seq=0)
+    vus: list[int] = []
+    with ici.listen(lambda e: vus.append(e.seq)):
+        rattrapage = asyncio.create_task(
+            ici._catch_up(notice_of(distant, "ailleurs"))  # pyright: ignore[reportPrivateUsage]
+        )
+        await inner.lu.wait()
+        # Pendant que la lecture attend, ce process écrit le seq 4 et le remet aussitôt.
+        await ici.append(tout[3:4], expected_seq=None)
+        inner.relache.set()
+        await rattrapage
+        suite = await inner.append(tout[4:], expected_seq=4)
+        await ici._catch_up(notice_of(suite, "ailleurs"))  # pyright: ignore[reportPrivateUsage]
+    # Chaque événement une fois : le seq 4 n'est pas relu à la nouvelle suivante.
+    assert sorted(vus) == list(range(1, len(tout) + 1))
+    await bus.aclose()
+
+
+async def test_deleting_a_session_forgets_its_position() -> None:
+    """Recréée sous le même identifiant, la session repart de 1 : sa position aussi."""
+    inner = InMemoryEventStore()
+    bus = InMemoryBus()
+    ici = NotifyingEventStore(inner, bus=bus, source="ici")
+    await ici.append(drafts(), expected_seq=0)
+    assert await ici.delete(DEFAULT_TENANT, SESSION) > 0
+
+    tout = drafts()
+    await ici.append(tout[:2], expected_seq=0)
+    distant = await inner.append(tout[2:4], expected_seq=2)
+    vus: list[int] = []
+    with ici.listen(lambda e: vus.append(e.seq)):
+        await ici._catch_up(notice_of(distant, "ailleurs"))  # pyright: ignore[reportPrivateUsage]
+    # Avec la position de l'ancien journal, ces deux événements auraient été ignorés.
+    assert vus == [3, 4]
+    await bus.aclose()
+
+
+async def test_follow_resubscribes_after_a_bus_failure_and_catches_up(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Une panne du bus ne tue pas le suivi ; ce qu'elle a fait manquer se rattrape ensuite."""
+    monkeypatch.setattr(notifying, "FOLLOW_BACKOFF", (0.01,))
+    inner = InMemoryEventStore()
+    tout = drafts()
+    ecrits: list[Event] = []
+
+    async def ecrire(lot: Sequence[EventDraft], *, annoncer: bool) -> Notice | None:
+        ecrits.extend(await inner.append(lot, expected_seq=len(ecrits)))
+        return notice_of(ecrits[-len(lot) :], "ailleurs") if annoncer else None
+
+    bus = BusScenarise(
+        # Un lot annoncé, puis la connexion tombe.
+        [lambda: ecrire(tout[:3], annoncer=True), BusUnavailable("coupure")],
+        # Pendant la coupure, un lot est écrit sans que personne l'annonce à ici ; le suivant l'est.
+        [lambda: ecrire(tout[3:5], annoncer=False), lambda: ecrire(tout[5:], annoncer=True)],
+    )
+    ici = NotifyingEventStore(inner, bus=bus, source="ici")
+    vus: list[int] = []
+    with ici.listen(lambda e: vus.append(e.seq)), caplog.at_level(logging.ERROR):
+        await asyncio.wait_for(ici.follow(), 10)
+
+    # Tout est arrivé, une fois, dans l'ordre du journal.
+    assert vus == [e.seq for e in ecrits]
+    assert len(ecrits) == len(tout)
+    assert bus.subscriptions == 2
+    (echec,) = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert echec.exc_info is not None
+    assert isinstance(echec.exc_info[1], BusUnavailable)
+
+
+async def test_the_wait_before_resubscribing_is_cut_by_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Une attente d'une heure ne retient pas l'annulation."""
+    monkeypatch.setattr(notifying, "FOLLOW_BACKOFF", (3600.0,))
+    bus = BusEnPanne()
+    store = NotifyingEventStore(InMemoryEventStore(), bus=bus, source="ici")
+    task = asyncio.create_task(store.follow())
+    await bus.failed.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 5)
+
+
+# Un serveur où personne n'écoute : chaque abonnement échoue aussitôt.
+INJOIGNABLES = [
+    pytest.param(POSTGRES, "postgresql://loom@127.0.0.1:1/loom", marks=sans_pg),
+    pytest.param(REDIS, "redis://127.0.0.1:1/0", marks=sans_redis),
+]
+
+
+async def _failed_once(caplog: pytest.LogCaptureFixture) -> None:
+    """Attend que le suivi du bus ait signalé une panne."""
+    for _ in range(500):
+        if any("suivi interrompu" in r.getMessage() for r in caplog.records):
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail("le suivi n'a pas signalé la panne")
+
+
+@pytest.mark.parametrize(("storage", "url"), INJOIGNABLES)
+async def test_closing_the_instance_does_not_wait_for_a_bus_that_is_down(
+    demo: ConfigFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    storage: dict[str, Any],
+    url: str,
+) -> None:
+    """Le suivi attend une heure avant de se réabonner : la fermeture ne l'attend pas."""
+    monkeypatch.setattr(notifying, "FOLLOW_BACKOFF", (3600.0,))
+    monkeypatch.setenv(VARIABLE, url)
+    with caplog.at_level(logging.ERROR):
+        loom = await Loom(load_config(demo(storage=storage))).__aenter__()
+        await _failed_once(caplog)
+        await asyncio.wait_for(loom.aclose(), 10)
+
+
+@pytest.mark.parametrize(("storage", "url"), INJOIGNABLES)
+async def test_follow_ends_when_the_bus_is_closed_while_its_server_is_down(
+    demo: ConfigFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    storage: dict[str, Any],
+    url: str,
+) -> None:
+    """Un serveur injoignable : le suivi réessaie, et la fermeture du bus y met fin."""
+    monkeypatch.setattr(notifying, "FOLLOW_BACKOFF", (0.01,))
+    monkeypatch.setenv(VARIABLE, url)
+    bus = create_bus(load_config(demo(storage=storage)))
+    assert bus is not None
+    store = NotifyingEventStore(InMemoryEventStore(), bus=bus, source="ici")
+    with caplog.at_level(logging.ERROR):
+        task = asyncio.create_task(store.follow())
+        await _failed_once(caplog)
+        await bus.aclose()
+        await asyncio.wait_for(task, 10)
+
+
+@sans_pg
+async def test_a_postgres_publication_that_fails_drops_its_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Une connexion d'émission qui échoue est jetée ; la publication suivante en rouvre une."""
+    from loom_ia.adapters.bus import postgres
+
+    opened: list[Any] = []
+
+    class Connexion:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+            self.terminated = False
+            opened.append(self)
+
+        def is_closed(self) -> bool:
+            return self.terminated
+
+        async def execute(self, query: str, channel: str, payload: str) -> None:
+            if self is opened[0]:
+                raise ConnectionResetError("coupée")
+            self.sent.append(payload)
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+    async def connect(dsn: str) -> Connexion:
+        return Connexion()
+
+    monkeypatch.setattr(postgres.asyncpg, "connect", connect)
+    bus = postgres.PostgresBus("postgresql://loom@127.0.0.1:1/loom")
+    notice = Notice(
+        tenant_id=DEFAULT_TENANT, session_id=SESSION, first_seq=1, last_seq=2, source="ici"
+    )
+    with pytest.raises(ConnectionResetError):
+        await bus.publish(notice)
+    assert opened[0].terminated
+    # La suivante repart d'une connexion neuve, que les suivantes gardent.
+    await bus.publish(notice)
+    await bus.publish(notice)
+    assert len(opened) == 2
+    assert opened[1].sent == [notice.model_dump_json()] * 2
 
 
 # --- L'instance --------------------------------------------------------------

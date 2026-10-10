@@ -17,7 +17,11 @@ c'est l'atomicité, pas le ``get`` qui précède.
 
 Ce qu'une clé appartient (client, session) est tenu à part, dans un ensemble :
 Redis ne sait pas chercher, et l'oubli RGPD doit pouvoir nommer les clés d'une
-session sans balayer la base.
+session sans balayer la base. L'ensemble vit **au moins aussi longtemps que la
+plus longue de ses clés** : ``reserve`` et ``complete`` ne font que le
+rallonger, jamais le raccourcir, faute de quoi ``forget`` ne retrouverait plus
+un enregistrement qui lui survit. L'enregistrement porte donc le nom de son
+ensemble (``owner``), que ``complete`` y relit : il n'a pas la session.
 
 Le jeton du détenteur (``holder``) est écrit dans l'enregistrement, et
 ``complete`` comme ``release`` le contrôlent **dans** leur script : lire la
@@ -54,8 +58,9 @@ RECORD: Final = "loom:idem:k:"
 OWNER: Final = "loom:idem:o:"
 
 # Prendre la clé, ou la reprendre si sa date est passée. Rend 1 si elle est à
-# nous, 0 si quelqu'un la tient encore. L'ensemble d'appartenance suit la
-# clé : il porte la même durée de vie, pour disparaître avec elle.
+# nous, 0 si quelqu'un la tient encore. L'ensemble d'appartenance survit à la
+# clé : sa durée de vie ne fait que croître (PTTL, pas `PEXPIRE … GT`, qui
+# exige Redis 7), pour qu'une clé plus courte ne raccourcisse pas la sienne.
 _RESERVE: Final = """
 local raw = redis.call('GET', KEYS[1])
 if raw then
@@ -66,22 +71,38 @@ if raw then
 end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', tonumber(ARGV[3]))
 redis.call('SADD', KEYS[2], KEYS[1])
-redis.call('PEXPIRE', KEYS[2], tonumber(ARGV[3]))
+if redis.call('PTTL', KEYS[2]) < tonumber(ARGV[3]) then
+  redis.call('PEXPIRE', KEYS[2], tonumber(ARGV[3]))
+end
 return 1
 """
 
 # Enregistrer ce que l'effet a rendu : seulement si la clé est bien tenue.
 # Rend 1 si c'est fait, 0 si la clé n'existe plus, 2 si elle est à un autre
 # détenteur que celui dont le jeton est donné (ARGV[3], absent sans jeton).
+# L'ensemble d'appartenance que la réservation a nommé (`owner`) est rallongé
+# si le résultat vit plus longtemps que lui ; l'enregistrement garde ce nom,
+# collé au JSON tel quel (le recoder abîmerait le résultat : `[]` deviendrait
+# `{}`). Une réservation d'avant `owner` n'a rien à rallonger, comme avant.
 _COMPLETE: Final = """
 local raw = redis.call('GET', KEYS[1])
 if not raw then
   return 0
 end
-if ARGV[3] and cjson.decode(raw).holder ~= ARGV[3] then
+local held = cjson.decode(raw)
+if ARGV[3] and held.holder ~= ARGV[3] then
   return 2
 end
-redis.call('SET', KEYS[1], ARGV[1], 'PX', tonumber(ARGV[2]))
+local record = ARGV[1]
+local owner = held.owner
+if type(owner) == 'string' then
+  record = string.sub(record, 1, -2) .. ',"owner":' .. cjson.encode(owner) .. '}'
+end
+redis.call('SET', KEYS[1], record, 'PX', tonumber(ARGV[2]))
+-- Après l'écriture : l'ensemble ne peut pas expirer avant la clé, pas même d'une milliseconde.
+if type(owner) == 'string' and redis.call('PTTL', owner) < tonumber(ARGV[2]) then
+  redis.call('PEXPIRE', owner, tonumber(ARGV[2]))
+end
 return 1
 """
 
@@ -152,19 +173,21 @@ class RedisIdempotency:
         self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
     ) -> bool:
         now = datetime.now(UTC)
+        owner = f"{OWNER}{scope.tenant_id}:{scope.session_id}"
         record = json.dumps(
             {
                 "status": "in_progress",
                 "result": None,
                 "expires_at": _seconds(now + timedelta(seconds=ttl)),
                 "holder": holder,
+                "owner": owner,
             }
         )
         taken = await self._redis().eval(
             _RESERVE,
             2,
             RECORD + key,
-            f"{OWNER}{scope.tenant_id}:{scope.session_id}",
+            owner,
             record,
             str(_seconds(now)),
             # La clé vit au moins le temps de la réservation : une rétention

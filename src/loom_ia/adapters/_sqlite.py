@@ -2,11 +2,15 @@
 """Mise en place commune des connexions SQLite des adaptateurs (journal, idempotence)."""
 
 import asyncio
+import logging
 import random
 import sqlite3
+from pathlib import Path
 from typing import Final
 
 import aiosqlite
+
+logger = logging.getLogger(__name__)
 
 # Patience laissée à la bascule en WAL : celle du ``busy_timeout`` des adaptateurs.
 WAL_PATIENCE: Final = 5.0
@@ -39,6 +43,41 @@ async def enable_wal(connection: aiosqlite.Connection) -> None:
                 raise
         await asyncio.sleep(pause + random.uniform(0, pause))
         pause = min(pause * 2, 0.1)
+
+
+async def enable_secure_delete(connection: aiosqlite.Connection) -> None:
+    """Fait écraser par des zéros ce que la base supprime (RGPD).
+
+    ``PRAGMA secure_delete`` est propre à la connexion : à poser à chaque ouverture.
+    """
+    await connection.execute("PRAGMA secure_delete = ON")
+
+
+async def purge_wal(connection: aiosqlite.Connection, path: Path) -> None:
+    """Reporte le WAL dans la base puis le vide, pour qu'une suppression n'y survive pas.
+
+    Sans cela, les pages d'avant la suppression restent dans le ``-wal`` jusqu'au
+    prochain point de reprise. Un lecteur ouvert dans un autre process peut
+    empêcher le point de reprise d'aboutir : SQLite répond alors par un drapeau
+    « occupé », pas par une erreur. La suppression a eu lieu et reste valable ;
+    on le dit par un avertissement, car le WAL n'est pas purgé. L'attente est
+    celle du ``busy_timeout`` de la connexion.
+    """
+    try:
+        cursor = await connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        try:
+            row = await cursor.fetchone()
+        finally:
+            await cursor.close()
+    except sqlite3.OperationalError:
+        logger.warning("%s : le WAL n'est pas purgé (point de reprise refusé)", path, exc_info=True)
+        return
+    if row is None or row[0]:
+        logger.warning(
+            "%s : le WAL n'est pas purgé (un lecteur tient la base) ; les octets supprimés"
+            " y restent jusqu'au prochain point de reprise",
+            path,
+        )
 
 
 async def _journal_mode(connection: aiosqlite.Connection) -> str:

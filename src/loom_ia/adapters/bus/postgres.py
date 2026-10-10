@@ -24,7 +24,7 @@ from typing import Final
 
 import asyncpg
 
-from loom_ia.core.ports.bus import Notice
+from loom_ia.core.ports.bus import BusUnavailable, Notice
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,11 @@ class PostgresBus:
         self._dsn = dsn
         self._speaking: asyncpg.Connection[asyncpg.Record] | None = None
         self._hearing: asyncpg.Connection[asyncpg.Record] | None = None
-        self._queue: asyncio.Queue[Notice | None] = asyncio.Queue()
+        # Les nouvelles, puis ``None`` à la fermeture du bus, ou ``BusUnavailable``
+        # quand la connexion d'écoute meurt.
+        self._queue: asyncio.Queue[Notice | BusUnavailable | None] = asyncio.Queue()
+        # Une connexion ne fait qu'une chose à la fois : les publications se suivent.
+        self._publishing = asyncio.Lock()
         self._closed = False
 
     def __repr__(self) -> str:
@@ -51,26 +55,51 @@ class PostgresBus:
     async def publish(self, notice: Notice) -> None:
         if self._closed:
             return
-        if self._speaking is None:
-            self._speaking = await asyncpg.connect(self._dsn)
-        # ``pg_notify`` plutôt que ``NOTIFY`` : ce dernier n'accepte pas de
-        # paramètre, et la charge utile serait à échapper à la main.
-        await self._speaking.execute(_NOTIFY, CHANNEL, notice.model_dump_json())
+        async with self._publishing:
+            speaking = self._speaking
+            if speaking is None or speaking.is_closed():
+                # Jamais ouverte, ou morte depuis la dernière nouvelle.
+                speaking = self._speaking = await asyncpg.connect(self._dsn)
+            try:
+                # ``pg_notify`` plutôt que ``NOTIFY`` : ce dernier n'accepte pas de
+                # paramètre, et la charge utile serait à échapper à la main.
+                await speaking.execute(_NOTIFY, CHANNEL, notice.model_dump_json())
+            except Exception:
+                # Connexion morte ou douteuse : on la jette, la prochaine
+                # publication en ouvrira une autre.
+                self._speaking = None
+                speaking.terminate()
+                raise
 
     async def notices(self) -> AsyncIterator[Notice]:
-        """Écoute le canal jusqu'à la fermeture du bus."""
-        self._hearing = await asyncpg.connect(self._dsn)
-        await self._hearing.add_listener(CHANNEL, self._heard)
+        """Écoute le canal jusqu'à la fermeture du bus.
+
+        Si la connexion d'écoute meurt, lève ``BusUnavailable`` au lieu
+        d'attendre une nouvelle qui ne viendra plus : c'est à l'appelant de
+        s'abonner de nouveau, par un autre appel.
+        """
+        if self._closed:
+            return
+        connection = await asyncpg.connect(self._dsn)
+        self._hearing = connection
         try:
+            connection.add_termination_listener(self._lost)
+            await connection.add_listener(CHANNEL, self._heard)
             while True:
-                notice = await self._queue.get()
-                if notice is None:
+                item = await self._queue.get()
+                if item is None:
                     return
-                yield notice
+                if isinstance(item, BusUnavailable):
+                    raise item
+                yield item
         finally:
-            listening = self._hearing
             self._hearing = None
-            await listening.close()
+            await connection.close()
+
+    def _lost(self, connection: object) -> None:
+        """Appelé par asyncpg à la mort d'une connexion ; ne doit rien attendre."""
+        if connection is self._hearing:
+            self._queue.put_nowait(BusUnavailable("la connexion d'écoute de Postgres est fermée"))
 
     def _heard(self, _connection: object, _pid: int, _channel: str, payload: object) -> None:
         """Appelé par asyncpg à chaque ``NOTIFY`` ; ne doit rien attendre."""

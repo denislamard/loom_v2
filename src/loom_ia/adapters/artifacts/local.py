@@ -46,7 +46,7 @@ class LocalArtifactStore:
         return (self.root / location.relative_path()).parent
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
-        return await asyncio.to_thread(_remove, self.session_path(tenant_id, session_id))
+        return await asyncio.to_thread(_remove, self.root, self.session_path(tenant_id, session_id))
 
     async def aclose(self) -> None:
         pass
@@ -55,8 +55,24 @@ class LocalArtifactStore:
         return f"LocalArtifactStore({str(self.root)!r})"
 
 
-def _remove(directory: Path) -> int:
-    """Supprime le dossier d'une session et rend le nombre de fichiers retirés."""
+def _remove(root: Path, directory: Path) -> int:
+    """Supprime le dossier d'une session et rend le nombre de fichiers retirés.
+
+    Défense en profondeur : après résolution, ce dossier doit être **exactement**
+    ``<racine>/<client>/<session>``, sinon ``ValueError`` et rien n'est effacé.
+    Un client ou une session vide, un lien symbolique qui sort de la racine ou
+    un chemin qui remonte ne doivent jamais faire effacer le dossier d'un
+    client, ni la racine.
+    """
+    try:
+        depth = len(directory.resolve().relative_to(root.resolve()).parts)
+    except ValueError:
+        depth = 0
+    if depth != 2:
+        raise ValueError(
+            f"Suppression refusée : {str(directory)!r} n'est pas un dossier "
+            f"<client>/<session> sous la racine {str(root)!r}"
+        )
     if not directory.is_dir():
         return 0
     count = sum(1 for entry in directory.iterdir() if entry.is_file())

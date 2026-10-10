@@ -15,7 +15,17 @@ laisse encore voir et supprimer.
 Plantage en cours d'écriture : la dernière ligne peut rester incomplète.
 Elle est ignorée à la lecture ; à l'écriture suivante, elle est déplacée
 dans ``<session>.jsonl.corrupt`` puis retirée du journal. Une ligne
-complète illisible lève ``JournalCorrupted``.
+complète illisible lève ``JournalCorrupted``. Une ligne est complète
+quand elle se termine par un saut de ligne, même si ce qui précède est un
+JSON entier : la règle est la même pour ``read``, ``query``, ``last_seq``,
+``sessions`` et ``append``.
+
+Un lot s'écrit d'un seul bloc, sous verrou. Si l'écriture échoue (disque plein,
+erreur d'entrée-sortie), le fichier retrouve sa taille d'avant le lot : tout ou
+rien. Si c'est la machine qui tombe en plein milieu, le disque peut garder un
+préfixe du lot : ses premières lignes, complètes et valides, puis une ligne
+incomplète traitée comme ci-dessus. Un lot tout ou rien après une panne de
+machine demande SQLite ou Postgres.
 """
 
 import asyncio
@@ -97,17 +107,41 @@ def _tail(path: Path, size: int) -> bytes:
 def _last_mark(content: bytes, codec: JournalCodec) -> EventMark | None:
     """Repères de la dernière ligne lisible, sans l'ouvrir.
 
-    La ligne finale peut être incomplète, la première tronquée par une
+    La ligne finale sans saut de ligne est incomplète, même si c'est un JSON
+    entier (comme pour ``_parse``) ; la première peut être tronquée par une
     lecture partielle : celles-là sont passées. Lire une **marque** et non un
     événement, c'est ce qui laisse un journal scellé se lister et se
     supprimer sans sa clé.
     """
-    for line in reversed([line for line in content.split(b"\n") if line]):
+    complete = content[: content.rfind(b"\n") + 1]
+    for line in reversed([line for line in complete.split(b"\n") if line]):
         try:
             return codec.mark(line)
         except ValidationError, JournalCorrupted:
             continue
     return None
+
+
+def _write_batch(fh: BinaryIO, data: bytes) -> None:
+    """Écrit le lot d'un bloc puis ``fsync`` ; en cas d'échec, remet le fichier comme il était.
+
+    Les octets passent par ``os.write``, sans le tampon de ``fh`` : un tampon
+    resté plein après l'échec serait écrit à la fermeture, après le retour en
+    arrière. Une panne de la machine n'est pas couverte (voir l'en-tête).
+    """
+    fd = fh.fileno()
+    before = os.fstat(fd).st_size
+    try:
+        pending = memoryview(data)
+        while pending:
+            pending = pending[os.write(fd, pending) :]
+        os.fsync(fd)
+    except BaseException:
+        try:
+            os.ftruncate(fd, before)
+        except OSError:
+            logger.exception("%s : lot partiel impossible à retirer", fh.name)
+        raise
 
 
 def _locked_read(path: Path) -> bytes:
@@ -163,9 +197,7 @@ class JsonlEventStore:
                 if expected_seq is not None and expected_seq != last:
                     raise SequenceConflict(session_id, expected_seq, last)
                 events = [draft.to_event(last + i) for i, draft in enumerate(drafts, start=1)]
-                fh.write(b"".join(self._codec.dumps(e).encode() + b"\n" for e in events))
-                fh.flush()
-                os.fsync(fh.fileno())
+                _write_batch(fh, b"".join(self._codec.dumps(e).encode() + b"\n" for e in events))
                 self._remember(path, os.fstat(fh.fileno()).st_size, events[-1].seq)
                 return events
             finally:

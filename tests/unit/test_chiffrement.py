@@ -217,6 +217,22 @@ async def test_a_new_key_seals_while_the_old_one_still_opens(tmp_path: Path) -> 
     await store.aclose()
 
 
+async def test_a_journal_without_its_head_key_is_neither_written_nor_read(tmp_path: Path) -> None:
+    """``keys: [NEUVE, ANCIENNE]`` sans NEUVE : refus net, jamais un sceau de l'ancienne."""
+    drafts = await _write_sealed(tmp_path)
+    store = JsonlEventStore(tmp_path / "journal", codec=SealingCodec(renewal(ANCIENNE=KEY_A)))
+    with pytest.raises(MissingKey, match="'NEUVE'"):
+        await store.append(run_drafts()[:1], expected_seq=len(drafts))
+    # L'ancienne clé, présente, n'ouvre pas non plus : le client est refusé en entier.
+    with pytest.raises(MissingKey, match="'NEUVE'"):
+        await store.read(DEFAULT_TENANT, SESSION)
+    # Rien n'a été écrit, et le journal se liste et s'efface toujours (marque en clair).
+    assert len(lines(tmp_path)) == len(drafts)
+    assert [record.last_seq for record in await store.sessions(DEFAULT_TENANT)] == [len(drafts)]
+    assert await store.delete(DEFAULT_TENANT, SESSION) == len(drafts)
+    await store.aclose()
+
+
 async def _write_sealed(tmp_path: Path, tenant: TenantId = DEFAULT_TENANT) -> list[EventDraft]:
     drafts = run_drafts(tenant=tenant)
     store = sealed_store(tmp_path, keyring())
@@ -305,6 +321,28 @@ def test_a_redirection_to_a_missing_variable_is_not_the_common_key() -> None:
     assert ring.ciphers(DEFAULT_TENANT)[0].key_id == fingerprint(b"A" * 32)
     with pytest.raises(MissingKey, match="aucune clé de sceau"):
         ring.ciphers(MARTIN)
+
+
+def renewal(**table: str) -> SecretKeyring:
+    """Trousseau de renouvellement : NEUVE ferme, ANCIENNE n'ouvre plus que."""
+    return SecretKeyring(FakeSecrets({}, table), ["NEUVE", "ANCIENNE"])
+
+
+@pytest.mark.parametrize("head", [None, "", "   "])
+def test_a_missing_head_key_is_named_and_never_replaced_by_the_old_one(head: str | None) -> None:
+    table = {"ANCIENNE": KEY_A} if head is None else {"NEUVE": head, "ANCIENNE": KEY_A}
+    with pytest.raises(MissingKey, match="'NEUVE'") as error:
+        renewal(**table).ciphers(MARTIN)
+    # Le message dit qui (le client), quoi (le secret de tête) et que faire.
+    assert "'martin'" in str(error.value)
+    assert "remettre" in str(error.value) and "retirer 'NEUVE'" in str(error.value)
+
+
+@pytest.mark.parametrize("tail", [None, "", "   "])
+def test_a_missing_tail_key_is_tolerated_because_it_only_opens(tail: str | None) -> None:
+    table = {"NEUVE": KEY_B} if tail is None else {"NEUVE": KEY_B, "ANCIENNE": tail}
+    ring = renewal(**table).ciphers(MARTIN)
+    assert [cipher.key_id for cipher in ring] == [fingerprint(b"B" * 32)]
 
 
 def test_a_key_that_is_not_thirty_two_bytes_is_refused() -> None:
@@ -538,6 +576,23 @@ def test_a_client_without_a_key_is_said_at_load(demo: ConfigFactory, tmp_path: P
     warnings = encryption_warnings(config, keyring(common=KEY_A, martin=""))
     assert len(warnings) == 1
     assert "martin" in warnings[0]
+
+
+def test_a_client_without_its_head_key_is_said_at_load(demo: ConfigFactory, tmp_path: Path) -> None:
+    config = load_config(
+        demo(
+            storage={
+                "events": {"backend": "jsonl", "path": str(tmp_path / "events")},
+                "encryption": {"keys": ["NEUVE", "ANCIENNE"]},
+            },
+            tenants=[{"id": "martin"}, {"id": "dupont"}],
+        )
+    )
+    common = {"NEUVE": KEY_B, "ANCIENNE": KEY_A}
+    ring = SecretKeyring(FakeSecrets({MARTIN: {"NEUVE": ""}}, common), ["NEUVE", "ANCIENNE"])
+    warnings = encryption_warnings(config, ring)
+    assert len(warnings) == 1
+    assert "martin" in warnings[0] and "'NEUVE'" in warnings[0]
 
 
 def test_two_clients_sharing_a_key_are_said_at_load(demo: ConfigFactory, tmp_path: Path) -> None:

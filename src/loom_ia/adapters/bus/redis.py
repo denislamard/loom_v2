@@ -56,12 +56,18 @@ class RedisBus:
         _ = await self._speaking.publish(CHANNEL, notice.model_dump_json())
 
     async def notices(self) -> AsyncIterator[Notice]:
-        """Écoute le canal jusqu'à la fermeture du bus."""
+        """Écoute le canal jusqu'à la fermeture du bus.
+
+        Si la connexion d'écoute tombe, l'erreur du SDK (``ConnectionError``)
+        sort telle quelle : c'est à l'appelant de s'abonner de nouveau.
+        """
+        if self._closed:
+            return
         self._hearing = redis.from_url(self._url)
         pubsub = self._hearing.pubsub()
         self._pubsub = pubsub
-        await pubsub.subscribe(CHANNEL)
         try:
+            await pubsub.subscribe(CHANNEL)
             # ``listen`` s'arrête de lui-même quand il ne reste plus d'abonnement :
             # c'est ce que fait ``aclose``, et c'est ce qui rend la main ici.
             async for message in pubsub.listen():

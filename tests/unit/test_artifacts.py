@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Fichiers : pièces jointes, URI d'artefacts, stockages, événement, config (G1, G2, J2.3)."""
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from loom_ia.core.model import (
     ModelCapabilities,
     RunId,
     SessionId,
+    TenantId,
     TextBlock,
     ToolOutput,
     ToolResultBlock,
@@ -133,6 +135,18 @@ def test_invalid_uris(uri: str) -> None:
         ArtifactLocation.parse(uri)
 
 
+def test_a_location_refuses_an_empty_segment() -> None:
+    """Un segment vide s'effacerait du chemin : la session deviendrait le client, ou la racine."""
+    for tenant, session in (("", "s1"), ("default", ""), ("", "")):
+        location = ArtifactLocation(tenant=tenant, session=session, name="-")
+        with pytest.raises(ValueError, match="inutilisable"):
+            location.relative_path()
+    # Blanc, « . » et « .. » ne sont pas vides : ils s'encodent et restent sous la racine.
+    for odd in (" ", "..", "."):
+        location = ArtifactLocation(tenant="default", session=odd, name="-")
+        assert len(location.relative_path().parts) == 3
+
+
 # --- Stockages -----------------------------------------------------------------
 
 
@@ -167,6 +181,82 @@ async def test_local_store_layout(tmp_path: Path) -> None:
     memory = InMemoryArtifactStore()
     await memory.put(uri, JPEG)
     assert (len(memory), repr(memory)) == (1, "InMemoryArtifactStore(1 fichier(s))")
+
+
+@pytest.mark.parametrize(
+    ("tenant", "session"),
+    [("default", ""), ("", ""), ("", "s1")],
+)
+def test_session_path_refuses_an_unusable_id(tmp_path: Path, tenant: str, session: str) -> None:
+    store = LocalArtifactStore(tmp_path)
+    with pytest.raises(ValueError, match="inutilisable"):
+        store.session_path(TenantId(tenant), SessionId(session))
+
+
+async def test_deleting_with_an_empty_id_removes_nothing(tmp_path: Path) -> None:
+    """``delete("default", "")`` effaçait le dossier du client, ``delete("", "")`` la racine."""
+    store = LocalArtifactStore(tmp_path / "artefacts")
+    kept: dict[str, bytes] = {}
+    for tenant, session in (("default", "s1"), ("default", "s2"), ("autre", "s1")):
+        data = PNG + f"{tenant}/{session}".encode()
+        uri = artifact_uri(tenant, session, data, "image/png")
+        await store.put(uri, data)
+        kept[uri] = data
+    for tenant, session in (("default", ""), ("", ""), ("", "s1")):
+        with pytest.raises(ValueError, match="inutilisable"):
+            await store.delete(TenantId(tenant), SessionId(session))
+    for uri, data in kept.items():
+        assert await store.get(uri) == data
+    assert await store.delete(TenantId("default"), SessionId("s1")) == 1
+    assert await store.delete(TenantId("default"), SessionId("s1")) == 0
+    assert len(list((tmp_path / "artefacts").rglob("*.png"))) == 2
+
+
+def pointing_at(directory: Path) -> Callable[[TenantId, SessionId], Path]:
+    def session_path(tenant_id: TenantId, session_id: SessionId) -> Path:
+        return directory
+
+    return session_path
+
+
+async def test_local_store_only_removes_a_directory_two_levels_under_its_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Défense en profondeur : même si ``session_path`` se trompait, rien d'autre ne part."""
+    root = tmp_path / "artefacts"
+    store = LocalArtifactStore(root)
+    uri = artifact_uri("default", "s1", PNG, "image/png")
+    await store.put(uri, PNG)
+    elsewhere = tmp_path / "ailleurs"
+    elsewhere.mkdir()
+    (elsewhere / "garde.txt").write_text("à garder", encoding="utf-8")
+
+    for directory in (
+        root,
+        root / "default",
+        root / "default" / "..",
+        root / "default" / "s1" / "plus-bas",
+        elsewhere,
+    ):
+        monkeypatch.setattr(store, "session_path", pointing_at(directory))
+        with pytest.raises(ValueError, match="Suppression refusée"):
+            await store.delete(TenantId("default"), SessionId("s1"))
+    assert await store.get(uri) == PNG
+    assert (elsewhere / "garde.txt").is_file()
+
+
+async def test_local_store_checks_the_directory_after_resolving_links(tmp_path: Path) -> None:
+    """Un dossier de client qui est un lien vers l'extérieur n'est pas vidé."""
+    root = tmp_path / "artefacts"
+    root.mkdir()
+    outside = tmp_path / "ailleurs" / "s1"
+    outside.mkdir(parents=True)
+    (outside / "garde.bin").write_bytes(b"a garder")
+    (root / "default").symlink_to(outside.parent, target_is_directory=True)
+    store = LocalArtifactStore(root)
+    with pytest.raises(ValueError, match="Suppression refusée"):
+        await store.delete(TenantId("default"), SessionId("s1"))
+    assert (outside / "garde.bin").read_bytes() == b"a garder"
 
 
 # --- Journal -------------------------------------------------------------------

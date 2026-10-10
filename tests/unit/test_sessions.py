@@ -12,6 +12,7 @@ from conftest import ANSWER, QUESTION, ConfigFactory
 
 from loom_ia.access.api import Loom, UnknownSession
 from loom_ia.access.cli import main
+from loom_ia.adapters.idempotency import InMemoryIdempotency
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import load_config
 from loom_ia.core.events import (
@@ -34,7 +35,7 @@ from loom_ia.core.model import (
     artifact_uri,
     new_run_id,
 )
-from loom_ia.core.ports import ArtifactNotFound, EventStore
+from loom_ia.core.ports import ArtifactNotFound, EventStore, UnusableId
 from loom_ia.core.projections import fold, fold_all, history
 from loom_ia.engine import RunExists, RunMoved, SessionWriter, SessionWriters, cancellation
 from loom_ia.sessions import boundary, cut, due, estimate_tokens, marked, snapshot
@@ -643,6 +644,47 @@ def test_deleting_an_unknown_session_removes_nothing(demo: ConfigFactory) -> Non
             return removed.events, removed.artifacts
 
     assert asyncio.run(go()) == (0, 0)
+
+
+@pytest.mark.parametrize(
+    ("tenant", "session"),
+    [(None, ""), (TenantId(""), "atelier")],
+)
+def test_deleting_with_an_unusable_id_is_refused_before_touching_anything(
+    demo: ConfigFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    tenant: TenantId | None,
+    session: str,
+) -> None:
+    """Une session vide était « tout le client » pour les fichiers, un client vide « default »."""
+    path = demo(
+        storage={
+            "events": {"backend": "jsonl", "path": "data"},
+            "idempotency": {"backend": "memory"},
+        }
+    )
+    uri = artifact_uri(DEFAULT_TENANT, SESSION, b"des octets", "image/png")
+    forgotten: list[tuple[str, str | None]] = []
+
+    async def spy(self: InMemoryIdempotency, tenant_id: TenantId, session_id: str | None) -> int:
+        forgotten.append((tenant_id, session_id))
+        return 0
+
+    monkeypatch.setattr(InMemoryIdempotency, "forget", spy)
+
+    async def go() -> tuple[int, bytes]:
+        async with Loom.from_config(path) as loom:
+            await loom.run("demo", QUESTION, session_id=SESSION)
+            await loom.artifacts.put(uri, b"des octets")
+            with pytest.raises(UnusableId, match="inutilisable"):
+                await loom.delete_session(SessionId(session), tenant_id=tenant)
+            return len(await loom.export_session(SESSION)), await loom.artifact(uri)
+
+    events, data = asyncio.run(go())
+    # Ni les clés d'idempotence, ni les fichiers, ni le journal n'ont été touchés.
+    assert forgotten == []
+    assert events > 0
+    assert data == b"des octets"
 
 
 # --- CLI ---------------------------------------------------------------------------

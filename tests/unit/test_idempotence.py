@@ -412,6 +412,68 @@ async def test_sqlite_closes_a_connection_it_could_not_set_up(tmp_path: Path) ->
     await _referme(store)
 
 
+def _octets(path: Path) -> bytes:
+    """Octets d'un fichier, vides s'il n'existe pas (le ``-wal`` d'une base fermée)."""
+    return path.read_bytes() if path.exists() else b""
+
+
+@pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")
+@pytest.mark.parametrize("where", ["base", "wal"])
+async def test_sqlite_forget_purges_the_database_and_the_wal(tmp_path: Path, where: str) -> None:
+    """Après ``forget``, la chaîne oubliée n'est plus dans la base ni dans le ``-wal`` (RGPD).
+
+    ``base`` : le résultat a été reporté dans le fichier de la base (la fermeture
+    fait ce point de reprise). ``wal`` : il est encore dans le ``-wal``, qui garde
+    aussi l'ancienne version des pages. Avant : la chaîne restait dans l'un ou l'autre.
+    """
+    secret = "JEAN-DUPONT-0612345678"
+    path = tmp_path / "idempotence.db"
+    wal = Path(f"{path}-wal")
+    store = _sqlite(path)
+    try:
+        assert await store.reserve("cle", 60, SCOPE, holder="moi") is True
+        await store.complete("cle", {"mail": secret}, holder="moi")
+        if where == "base":
+            await _referme(store)
+            store = _sqlite(path)
+        assert secret.encode() in _octets(path if where == "base" else wal)
+
+        assert await store.forget(DEFAULT_TENANT, SESSION) == 1
+
+        assert secret.encode() not in _octets(path)
+        assert secret.encode() not in _octets(wal)
+        assert await store.get("cle") is None
+    finally:
+        await _referme(store)
+
+
+@pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")
+async def test_sqlite_forget_still_succeeds_when_a_reader_keeps_the_wal(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Un lecteur d'un autre process bloque le point de reprise : ``forget`` réussit et prévient."""
+    import logging
+    import sqlite3
+
+    from loom_ia.adapters.idempotency.sqlite import SqliteIdempotency
+
+    store = SqliteIdempotency(tmp_path / "idempotence.db")
+    await store.reserve("cle", 60, SCOPE)
+    reader = sqlite3.connect(tmp_path / "idempotence.db", isolation_level=None)
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM idempotency").fetchone()  # un instantané reste ouvert
+        connection = await store._connect()  # pyright: ignore[reportPrivateUsage]
+        await connection.execute("PRAGMA busy_timeout = 50")  # l'essai n'attend pas les 5 s d'usage
+        with caplog.at_level(logging.WARNING):
+            assert await store.forget(DEFAULT_TENANT, SESSION) == 1
+        assert await store.get("cle") is None
+    finally:
+        reader.close()
+        await _referme(store)
+    assert "le WAL n'est pas purgé" in caplog.text
+
+
 # Le schéma que créait la 2.0.0, avant la colonne ``holder``.
 SCHEMA_2_0_0 = """
 CREATE TABLE idempotency (
@@ -517,10 +579,12 @@ async def test_the_redis_store_hands_the_holder_to_its_scripts(
     await store.reserve("k", 60, SCOPE, holder="moi")
     script, args = faux.evals[-1]
     assert json.loads(args[3])["holder"] == "moi"
+    # La session de la clé voyage avec elle : ``complete`` ne la connaît pas.
+    assert json.loads(args[3])["owner"] == args[2]
 
     await store.complete("k", "fait", holder="moi")
     script, args = faux.evals[-1]
-    assert "cjson.decode(raw).holder ~= ARGV[3]" in script
+    assert "held.holder ~= ARGV[3]" in script
     assert (args[0], args[1], args[4]) == (1, "loom:idem:k:k", "moi") and len(args) == 5
     assert json.loads(args[2])["holder"] == "moi"
     await store.complete("k", "fait")
@@ -539,6 +603,105 @@ async def test_the_redis_store_hands_the_holder_to_its_scripts(
     faux.reponse = 0
     with pytest.raises(KeyError, match="non réservée"):
         await store.complete("k", "fait", holder="périmé")
+    await _referme(store)
+
+
+# --- Redis : l'ensemble d'appartenance vit autant que sa plus longue clé -------
+
+
+@pytest.fixture
+async def redis_client(redis_url: str) -> AsyncGenerator[Any]:
+    """Un client brut sur le même Redis, pour lire ce que le magasin y laisse."""
+    import redis.asyncio as redis_asyncio
+
+    client = redis_asyncio.from_url(redis_url)
+    yield client
+    await client.aclose()
+
+
+async def _until_gone(client: Any, *keys: str) -> None:
+    """Attend que Redis ait lui-même retiré ces clés : son horloge, pas un sommeil deviné."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5
+    while loop.time() < deadline:
+        if not await client.exists(*keys):
+            return
+        await asyncio.sleep(0.02)
+    pytest.fail(f"Redis n'a pas retiré {keys} en cinq secondes")
+
+
+@pytest.mark.integration
+async def test_a_shorter_redis_key_does_not_shorten_the_set_of_a_longer_one(
+    redis_url: str, redis_client: Any
+) -> None:
+    """Réserver une clé courte après une longue laissait l'ensemble expirer avec la courte."""
+    store = _redis(redis_url, retention=0.2)
+    await store.reserve("longue", 60, SCOPE)
+    await store.reserve("courte", 0.1, SCOPE)
+    await _until_gone(redis_client, "loom:idem:k:courte")
+
+    assert await store.forget(DEFAULT_TENANT, SESSION) == 1
+    assert await store.get("longue") is None
+    await _referme(store)
+
+
+@pytest.mark.integration
+async def test_a_redis_result_that_outlives_the_set_extends_it(
+    redis_url: str, redis_client: Any
+) -> None:
+    """``complete`` rallongeait l'enregistrement sans rallonger l'ensemble qui le nomme."""
+    store = _redis(redis_url, retention=0.2)
+    await store.reserve("k", 0.1, SCOPE)
+    await store.complete("k", "fait", 60)
+    # Dans cet ordre : lu avant, l'ensemble ne peut pas sembler vivre moins que la clé lue après.
+    owner_ttl = await redis_client.pttl(f"loom:idem:o:{DEFAULT_TENANT}:{SESSION}")
+    assert owner_ttl >= await redis_client.pttl("loom:idem:k:k") > 50_000
+
+    # Le temps qu'avait l'ensemble avant le correctif s'écoule, sur l'horloge de Redis.
+    await redis_client.set("sonde", 1, px=250)
+    await _until_gone(redis_client, "sonde")
+    assert await store.forget(DEFAULT_TENANT, SESSION) == 1
+    assert await store.get("k") is None
+    await _referme(store)
+
+
+@pytest.mark.integration
+async def test_a_completed_redis_record_keeps_its_result_and_its_owner(
+    redis_url: str, redis_client: Any
+) -> None:
+    """Le script colle le nom de l'ensemble au JSON sans le recoder : ``[]`` reste ``[]``."""
+    import json
+
+    store = _redis(redis_url)
+    result: dict[str, JsonValue] = {"liste": [], "objet": {}, "texte": 'é"/', "nombre": 0.1}
+    await store.reserve("k", 60, SCOPE)
+    await store.complete("k", result)
+    record = await store.get("k")
+    assert record is not None and record.result == result
+    held = json.loads(await redis_client.get("loom:idem:k:k"))
+    assert held["owner"] == f"loom:idem:o:{DEFAULT_TENANT}:{SESSION}"
+
+    # Enregistrer une seconde fois, plus longtemps, rallonge encore l'ensemble.
+    await store.complete("k", result, 3 * 86_400)
+    owner_ttl = await redis_client.pttl(held["owner"])
+    assert owner_ttl >= await redis_client.pttl("loom:idem:k:k") > 2 * 86_400_000
+    await _referme(store)
+
+
+@pytest.mark.integration
+async def test_a_redis_reservation_from_before_the_owner_still_completes(
+    redis_url: str, redis_client: Any
+) -> None:
+    """Un enregistrement écrit avant ``owner`` n'a pas d'ensemble à rallonger, et se complète."""
+    import json
+
+    legacy = {"status": "in_progress", "result": None, "expires_at": 4e9, "holder": None}
+    await redis_client.set("loom:idem:k:vieux", json.dumps(legacy), px=60_000)
+    store = _redis(redis_url)
+    await store.complete("vieux", "fait")
+    record = await store.get("vieux")
+    assert record is not None and (record.status, record.result) == ("completed", "fait")
+    assert "owner" not in json.loads(await redis_client.get("loom:idem:k:vieux"))
     await _referme(store)
 
 
