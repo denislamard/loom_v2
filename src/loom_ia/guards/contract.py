@@ -62,12 +62,17 @@ from loom_ia.core.model import (
     ToolOutput,
 )
 
+_TOO_NESTED: Final = "le JSON est trop imbriqué pour être contrôlé"
+
 CONTRACT_POLICY: Final = "loom.contract"
 GUARD: Final = "contract"
 
 # Les espaces et le saut de ligne avant la fermeture restent dans le groupe, que
 # les appelants strip() : les écarter dans le motif le rendait quadratique.
 _WHOLE_FENCE: Final = re.compile(r"```[\w-]*[ \t]*\n(.*?)```", re.DOTALL)
+# Une ouverture de bloc au milieu d'un corps : le texte compte plusieurs blocs.
+_FENCE_LINE: Final = re.compile(r"^ {0,3}```", re.MULTILINE)
+_OPENING: Final = re.compile(r"```[\w-]*[ \t]*\n")
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +101,8 @@ def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checke
         problems.append("la sortie est vide")
     parsed: JsonValue = None
     if schema is not None:
-        if data is not None and not normalized:
+        if data is not None:
+            # Les données structurées de l'outil font foi, quel que soit son texte.
             parsed = data
         else:
             try:
@@ -106,6 +112,8 @@ def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checke
                     f"ce n'est pas un JSON valide ({exc.msg}, ligne {exc.lineno}, "
                     f"colonne {exc.colno})"
                 )
+            except RecursionError:
+                problems.append(_TOO_NESTED)
         if parsed is not None or (data is None and not problems):
             try:
                 validator = bounded_validator(schema)
@@ -113,6 +121,10 @@ def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checke
             except RegexTimeout as exc:
                 errors = []
                 problems.append(f"schéma : {exc}")
+            except RecursionError:
+                errors = []
+                if _TOO_NESTED not in problems:
+                    problems.append(_TOO_NESTED)
             for error in errors:
                 location = ".".join(str(part) for part in error.absolute_path) or "(racine)"
                 problems.append(f"{location} : {error.message}")
@@ -146,9 +158,7 @@ def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checke
 def normalize(text: str, *, json_expected: bool = False) -> str:
     """Sortie corrigée sans appel au modèle : bloc de code retiré, JSON extrait, espaces."""
     kept = text.strip()
-    whole = _WHOLE_FENCE.fullmatch(kept)
-    if whole is not None:
-        kept = whole.group(1).strip()
+    kept = _unfenced(kept)
     if not json_expected or _parses(kept):
         return kept
     candidates = [m.group(1).strip() for m in _WHOLE_FENCE.finditer(text)]
@@ -309,10 +319,21 @@ def _failed(target: str, checked: Checked, reason: str, resolution: CheckResolut
     )
 
 
+def _unfenced(text: str) -> str:
+    """Texte sans son bloc de code, si un seul bloc l'occupe en entier."""
+    opening = _OPENING.match(text)
+    if opening is None or not text.endswith("```") or len(text) < opening.end() + 3:
+        return text
+    body = text[opening.end() : -3]
+    if _FENCE_LINE.search(body) is not None:
+        return text
+    return body.strip()
+
+
 def _parses(text: str) -> bool:
     try:
         json.loads(text)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError, RecursionError:
         return False
     return True
 

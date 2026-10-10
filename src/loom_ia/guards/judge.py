@@ -602,5 +602,6 @@ def _json(text: str) -> JsonValue:
         return None
     try:
         return cast(JsonValue, json.loads(stripped))
-    except json.JSONDecodeError:
+    except json.JSONDecodeError, RecursionError:
+        # Trop imbriqué pour être décodé : la sortie est jugée comme du texte.
         return None

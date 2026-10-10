@@ -210,6 +210,45 @@ async def test_the_counter_keeps_only_its_most_recent_periods() -> None:
     assert (await counter.consumed(DUPONT, days[-1].key)).tokens == 10
 
 
+async def test_the_current_day_survives_months_of_a_long_lived_process() -> None:
+    """Le jour et le mois se rangent à part : le mois n'évince pas le jour courant (MOD-5).
+
+    Les clés ``day:…`` se trient avant ``month:…`` : avec une seule limite pour les deux,
+    la neuvième clé faisait partir celle du jour qu'on venait d'écrire.
+    """
+    counter = InMemoryUsageCounter()
+    written: dict[str, int] = {}
+    for month in range(1, 13):
+        for day in (1, 15):
+            moment = datetime(2026, month, day, 12, tzinfo=UTC)
+            for kind in PERIODS:
+                key = Period.of(kind, moment).key
+                await counter.record(DUPONT, key, new_run_id(), Spent(Usage(input_tokens=10)))
+                written[key] = written.get(key, 0) + 10
+                # La valeur qu'on vient d'écrire se relit : elle n'est jamais évincée.
+                assert (await counter.consumed(DUPONT, key)).tokens == written[key], key
+    # Chaque genre garde ses MAX_PERIODS plus récentes et rien d'autre.
+    kept: dict[str, list[str]] = {kind: [] for kind in PERIODS}
+    for kind in PERIODS:
+        for month in range(1, 13):
+            for day in (1, 15):
+                key = Period.of(kind, datetime(2026, month, day, tzinfo=UTC)).key
+                if (await counter.consumed(DUPONT, key)).tokens and key not in kept[kind]:
+                    kept[kind].append(key)
+    assert len(kept["day"]) == len(kept["month"]) == MAX_PERIODS
+    assert kept["day"][-1] == "day:2026-12-15"
+    assert kept["month"][-1] == "month:2026-12"
+
+
+def test_a_period_refuses_a_naive_datetime() -> None:
+    """Un instant sans fuseau serait lu à l'heure locale de la machine, pas en UTC (MOD-5)."""
+    naive = datetime(2026, 7, 14, 1, 30)
+    with pytest.raises(ValueError, match="fuseau"):
+        Period.of("day", naive)
+    with pytest.raises(ValueError, match="fuseau"):
+        Period.of("day", datetime(2026, 7, 14, tzinfo=UTC)).resets_in(naive)
+
+
 async def test_closing_the_counter_forgets_everything() -> None:
     counter = InMemoryUsageCounter()
     key = Period.of("day").key

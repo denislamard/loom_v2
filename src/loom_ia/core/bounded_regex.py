@@ -44,6 +44,16 @@ from jsonschema import (
 )
 from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
+from jsonschema_specifications import (  # pyright: ignore[reportMissingTypeStubs]
+    REGISTRY as _SPECIFICATIONS,
+)
+from referencing import Registry, Resource
+from referencing.exceptions import Unresolvable
+from referencing.jsonschema import DRAFT202012
+
+# Les méta-schémas que ``jsonschema`` sait résoudre (le registre qu'il utilise lui-même).
+# ``jsonschema_specifications`` est une dépendance de ``jsonschema`` et ne livre pas de types.
+SPECIFICATIONS: Final = cast("Registry[Any]", _SPECIFICATIONS)
 
 # Durée maximale d'une recherche ou d'une substitution, en secondes. Un motif
 # sain finit en millisecondes ; la marge couvre une machine chargée et un
@@ -183,7 +193,8 @@ def check_schema(schema: Mapping[str, Any]) -> None:
     compile avec ``regex`` : un motif accepté ici s'exécute à la validation.
     Un ``$schema`` ailleurs qu'à la racine est refusé : ``jsonschema`` change de
     classe de validation à chaque sous-schéma qui en porte un, et reprendrait la
-    classe d'origine, sans délai.
+    classe d'origine, sans délai. Une ``$ref`` qui ne se résout pas est refusée
+    aussi (``unresolved_references``).
     """
     if _nested_dialect(schema):
         raise SchemaError("« $schema » ne se déclare qu'à la racine du schéma")
@@ -193,6 +204,43 @@ def check_schema(schema: Mapping[str, Any]) -> None:
     formats.checkers = {**meta.FORMAT_CHECKER.checkers, "regex": (_is_regex, PatternError)}
     for error in meta(base.META_SCHEMA, format_checker=formats).iter_errors(schema):
         raise SchemaError.create_from(error)
+    missing = unresolved_references(schema)
+    if missing:
+        raise SchemaError(f"« $ref » introuvable dans le schéma : {', '.join(map(repr, missing))}")
+
+
+def unresolved_references(schema: Mapping[str, Any]) -> list[str]:
+    """Les ``$ref`` du schéma qui ne se résolvent pas, dans l'ordre où ils apparaissent.
+
+    Une référence se résout dans le schéma lui-même (pointeur, ancre, ``$id``
+    d'un sous-schéma) ou dans les méta-schémas de ``jsonschema``. Rien ne va
+    chercher un fichier ni une adresse : la validation d'une sortie ne doit pas
+    sortir du process, et un ``$ref: autre.json`` ne se résoudrait pas non plus
+    à l'exécution — il ferait échouer le contrôle de la réponse finale, une
+    fois le modèle payé.
+    """
+    root = Resource.from_contents(schema, default_specification=DRAFT202012)
+    missing: list[str] = []
+
+    def walk(resolver: Any, node: Resource[Any]) -> None:
+        resolver = resolver.in_subresource(node)
+        contents = node.contents
+        reference = (
+            cast(Mapping[str, object], contents).get("$ref")
+            if isinstance(contents, Mapping)
+            else None
+        )
+        if isinstance(reference, str):
+            try:
+                resolver.lookup(reference)
+            except Unresolvable:
+                if reference not in missing:
+                    missing.append(reference)
+        for child in node.subresources():
+            walk(resolver, child)
+
+    walk(SPECIFICATIONS.resolver_with_root(root), root)
+    return missing
 
 
 def _is_regex(instance: object) -> bool:

@@ -838,6 +838,26 @@ def test_a_journal_that_does_not_read_is_refused(
         read_journal(fichier)
 
 
+@pytest.mark.parametrize("caractere", ["\u2028", "\u2029", "\u0085", "\x0b", "\x0c", "\x1c"])
+async def test_a_journal_line_is_cut_on_newlines_only(tmp_path: Path, caractere: str) -> None:
+    """Un message qui porte U+2028, U+2029 ou U+0085 ne coupe pas sa ligne d'export (REJ-1).
+
+    ``model_dump_json`` écrit ces trois caractères tels quels, alors que
+    ``str.splitlines`` y voit une fin de ligne : le journal exporté devenait illisible.
+    """
+    store = InMemoryEventStore()
+    started = RunJournal(agent="demo", session_id=SessionId("separateurs")).start(
+        f"Avant{caractere}après"
+    )
+    events = await store.append(started.take(), expected_seq=0)
+    fichier = ecrit(tmp_path / "separateurs.jsonl", events)
+    assert read_journal(fichier) == events
+    # Un journal écrit sous Windows (fins de ligne CRLF) se lit de la même façon.
+    crlf = tmp_path / "crlf.jsonl"
+    crlf.write_bytes(fichier.read_bytes().replace(b"\n", b"\r\n"))
+    assert read_journal(crlf) == events
+
+
 async def test_what_a_journal_cannot_replay_is_refused(
     atelier: ConfigFactory, tmp_path: Path
 ) -> None:

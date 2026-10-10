@@ -467,7 +467,15 @@ class StreamParser:
 
 
 def response_to_chunks(response: Response) -> list[ModelChunk]:
-    """Réponse non streamée → flux simulé, élément par élément."""
+    """Réponse non streamée → flux simulé, élément par élément.
+
+    Une réponse ``failed`` ou ``cancelled`` est une erreur du fournisseur, comme
+    l'événement ``response.failed`` du flux : ce n'est pas une réponse vide.
+    """
+    if response.status == "failed":
+        raise _failed(response.error)
+    if response.status == "cancelled":
+        raise ModelError("transient", "Réponse annulée côté fournisseur")
     parser = StreamParser()
     chunks: list[ModelChunk] = []
     for index, item in enumerate(response.output):

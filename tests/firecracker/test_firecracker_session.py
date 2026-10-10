@@ -6,6 +6,8 @@ lancé en socket Unix.
 """
 
 import asyncio
+import contextlib
+import errno
 import hashlib
 import importlib
 import json
@@ -1010,3 +1012,121 @@ async def test_a_drain_can_be_abandoned_and_keeps_what_it_read(service: ModuleTy
     assert not draining.done()
     abandon.set()
     assert await asyncio.wait_for(draining, 5) == ("debut suite", True)
+
+
+# ---------------------------------------------------------------------- #
+# La boucle d'accept d'execd : une erreur d'accept ne la tue pas (SBX-2)
+# ---------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def execd_main(execd_service: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
+    """Le module ``execd`` du service, importé comme la VM le fait (voisins à plat)."""
+    names = ("execd", "session", "protocol", "limits")
+    for name in names:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.setattr(sys, "path", [str(execd_service), *sys.path])
+    importlib.invalidate_caches()
+    try:
+        yield importlib.import_module("execd")
+    finally:
+        for name in names:
+            sys.modules.pop(name, None)
+
+
+@pytest.fixture
+def execd_root() -> Iterator[Path]:
+    root = Path(tempfile.mkdtemp(prefix="fcx-", dir="/tmp"))
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _execd_config(execd_main: ModuleType, root: Path) -> Any:
+    return execd_main.Config(
+        port=0,
+        uds=str(root / "execd.sock"),
+        jobs_dir=str(root / "jobs"),
+        pydeps=str(root / "pydeps"),
+        uid=None,
+        gid=None,
+        max_sessions=2,
+        max_concurrent_exec=1,
+    )
+
+
+async def _listening(socket_path: Path, server: asyncio.Future[None]) -> None:
+    deadline = time.monotonic() + 5
+    while not await asyncio.to_thread(socket_path.exists):
+        assert not server.done(), "execd s'est arrêté avant d'écouter"
+        assert time.monotonic() < deadline, "execd n'écoute pas"
+        await asyncio.sleep(0.02)
+
+
+async def test_an_accept_error_does_not_stop_the_listening(
+    execd_main: ModuleType, execd_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EMFILE, ENFILE… : l'accept échoue une fois, puis l'écoute reprend (SBX-2).
+
+    Avant, la tâche d'accept mourait sur la première ``OSError`` : le processus restait
+    vivant, le listener ouvert, et plus aucune connexion n'était servie ni systemd alerté.
+    """
+    cfg = _execd_config(execd_main, execd_root)
+    execd_main.prepare_jobs_dir(cfg)
+    loop = asyncio.get_running_loop()
+    real_accept = loop.sock_accept
+    refusals = [errno.EMFILE, errno.ENFILE]
+
+    async def flaky(listener: socket.socket) -> Any:
+        if refusals:
+            raise OSError(refusals.pop(0), "Too many open files")
+        return await real_accept(listener)
+
+    monkeypatch.setattr(loop, "sock_accept", flaky)
+    server = asyncio.ensure_future(execd_main.serve(cfg))
+    try:
+        await _listening(Path(cfg.uds), server)
+        async with await asyncio.wait_for(_open(Path(cfg.uds)), 10) as session:
+            assert session.hello.protocol == 1
+        assert not refusals and not server.done()
+    finally:
+        server.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await server
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            loop.remove_signal_handler(signum)
+
+
+async def test_a_dead_accept_loop_stops_execd_with_an_error(
+    execd_main: ModuleType, execd_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Si la boucle d'accept s'arrête quand même, execd sort en erreur : systemd le relance."""
+    cfg = _execd_config(execd_main, execd_root)
+    execd_main.prepare_jobs_dir(cfg)
+    loop = asyncio.get_running_loop()
+
+    async def broken(listener: socket.socket) -> Any:
+        raise RuntimeError("accept cassé")
+
+    monkeypatch.setattr(loop, "sock_accept", broken)
+    try:
+        with pytest.raises(RuntimeError, match="accept") as stopped:
+            await asyncio.wait_for(execd_main.serve(cfg), 5)
+    finally:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            loop.remove_signal_handler(signum)
+    assert isinstance(stopped.value.__cause__, RuntimeError)
+    assert "cassé" in str(stopped.value.__cause__)
+
+
+def test_main_exits_in_error_when_serving_stops_on_one(
+    execd_main: ModuleType, execd_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def dead(cfg: object) -> None:
+        raise RuntimeError("boucle d'accept arrêtée")
+
+    monkeypatch.setenv("EXECD_UDS", str(execd_root / "execd.sock"))
+    monkeypatch.setenv("EXECD_JOBS_DIR", str(execd_root / "jobs"))
+    monkeypatch.setattr(execd_main, "serve", dead)
+    assert execd_main.main() == 1

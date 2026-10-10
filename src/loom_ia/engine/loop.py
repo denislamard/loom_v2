@@ -89,7 +89,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from loom_ia.core.events import (
     ApprovalExpired,
@@ -176,7 +176,15 @@ from loom_ia.core.ports import (
     SourceContext,
     stopped_by_client,
 )
-from loom_ia.core.projections import RunTree, apply, fold, last_summary, spent, turns
+from loom_ia.core.projections import (
+    ProjectionError,
+    RunTree,
+    apply,
+    fold,
+    last_summary,
+    spent,
+    turns,
+)
 from loom_ia.engine.circuit import CircuitBreakers
 from loom_ia.engine.delegated import Waiting
 from loom_ia.engine.executor import Decided, Delegated, OpenedTools, Stored, ToolExecutor
@@ -188,6 +196,8 @@ from loom_ia.engine.writer import RunExists, RunMoved, SessionWriter
 
 logger = logging.getLogger(__name__)
 
+# ``error_type`` du run qui s'ouvre sur une session dont l'historique est illisible.
+HISTORY_UNREADABLE: Final = "session.unreadable"
 DEFAULT_MAX_ITERATIONS: Final = 10
 # Règle du moteur journalisée comme une décision de politique (#13, backlog #008).
 TERMINAL_RULE: Final = "loom.terminal"
@@ -510,6 +520,30 @@ async def _closed_elsewhere(
     return fold(own, run_id)
 
 
+async def _history_unreadable(
+    state: RunState, journal: SessionWriter, scope: RunScope, error: Exception
+) -> RunState:
+    """Le run s'ouvre sur un historique de session illisible : il échoue, il ne reste pas ouvert.
+
+    Un run précédent illisible (événements que la projection refuse) empêche de
+    savoir ce que le modèle doit voir et ce que la session a déjà dépensé. Le
+    nouveau run, déjà inscrit au journal, est clos par un échec qui le dit ;
+    le run illisible, lui, n'est pas touché : c'est à réparer à part.
+    """
+    logger.error(
+        "Run %s : historique de la session %s illisible — %s",
+        state.run_id,
+        state.session_id,
+        error,
+        extra={"run_id": state.run_id, "tenant_id": state.context.tenant_id},
+    )
+    reason = f"historique de la session {state.session_id} illisible : {error}"
+    for draft in _fail(state, scope, HISTORY_UNREADABLE, reason, None):
+        event = await journal.append([draft])
+        state = apply(state, event[-1])
+    return state
+
+
 async def _driven(
     ctx: RunContext,
     state: RunState,
@@ -523,10 +557,13 @@ async def _driven(
 ) -> RunState:
     """Le pilotage proprement dit, concession prise ; ``RunMoved`` remonte à ``drive``."""
     run_id = state.run_id
-    session_turns = tuple(turns(earlier))
-    previous = [message for turn in session_turns for message in turn]
-    # Consommation des runs précédents de la session : budget de session (J4).
-    session_spent = spent(earlier)
+    try:
+        session_turns = tuple(turns(earlier))
+        previous = [message for turn in session_turns for message in turn]
+        # Consommation des runs précédents de la session : budget de session (J4).
+        session_spent = spent(earlier)
+    except (ProjectionError, ValidationError) as error:
+        return await _history_unreadable(state, journal, scope, error)
 
     async def write(draft: EventDraft) -> Event:
         nonlocal state, cause

@@ -272,10 +272,16 @@ def create_event_store(
     chosen = codec if codec is not None else _own_codec(config)
     if events.backend == "postgres":
         try:
+            from loom_ia.adapters.postgres.pool import PoolLimits
             from loom_ia.adapters.stores.postgres import PostgresEventStore
         except ImportError as exc:
             raise _missing_asyncpg("Journal") from exc
-        return PostgresEventStore(_dsn(events, "Journal"), role=events.role, codec=chosen)
+        return PostgresEventStore(
+            _dsn(events, "Journal"),
+            role=events.role,
+            codec=chosen,
+            limits=PoolLimits(**events.pool.model_dump()),
+        )
     if events.path is not None:
         if events.backend == "jsonl":
             return JsonlEventStore(events.path, codec=chosen)
@@ -494,9 +500,14 @@ def create_idempotency_store(config: LoomConfig) -> IdempotencyStore | None:
     if declared.backend == "postgres":
         try:
             from loom_ia.adapters.idempotency.postgres import PostgresIdempotency
+            from loom_ia.adapters.postgres.pool import PoolLimits
         except ImportError as exc:
             raise _missing_asyncpg("Magasin d'idempotence") from exc
-        return PostgresIdempotency(_dsn(declared, "Magasin d'idempotence"), role=declared.role)
+        return PostgresIdempotency(
+            _dsn(declared, "Magasin d'idempotence"),
+            role=declared.role,
+            limits=PoolLimits(**declared.pool.model_dump()),
+        )
     if declared.backend == "redis":
         try:
             from loom_ia.adapters.idempotency.redis import RedisIdempotency

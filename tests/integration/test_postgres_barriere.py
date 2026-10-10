@@ -22,8 +22,13 @@ pytest.importorskip("asyncpg", reason="extra 'postgres' absent")
 
 import asyncpg
 
-from loom_ia.adapters.postgres.pool import PostgresNotPrepared, RoleUnavailable
-from loom_ia.adapters.postgres.sql import DEFAULT_ROLE, EVENTS_TABLE
+from loom_ia.adapters.postgres.pool import (
+    PoolLimits,
+    PostgresNotPrepared,
+    PostgresPool,
+    RoleUnavailable,
+)
+from loom_ia.adapters.postgres.sql import DEFAULT_ROLE, EVENTS_TABLE, ddl
 from loom_ia.adapters.stores.postgres import PostgresEventStore
 from loom_ia.core.events import EventDraft
 from loom_ia.core.model import SessionId, TenantId
@@ -206,3 +211,106 @@ async def test_ten_writers_on_one_journal_do_not_interleave(postgres_dsn: str) -
     finally:
         for store in stores:
             await store.aclose()
+
+
+# --- Délais, horloge et pool (DON-2) ----------------------------------------
+
+
+async def test_a_client_clock_ahead_cannot_steal_a_live_reservation(
+    postgres_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La date qui décide de la reprise d'une clé est celle de la base, pas celle du client."""
+    from datetime import UTC, datetime, timedelta
+
+    from loom_ia.adapters.idempotency import postgres as idempotency_module
+    from loom_ia.adapters.idempotency.postgres import PostgresIdempotency
+    from loom_ia.core.ports import KeyScope
+
+    scope = KeyScope(tenant_id=UN, session_id=SessionId("s-un"))
+    honest = PostgresIdempotency(postgres_dsn)
+    skewed = PostgresIdempotency(postgres_dsn)
+
+    class Ahead(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> Ahead:  # type: ignore[override]
+            return cls.fromtimestamp((datetime.now(UTC) + timedelta(hours=1)).timestamp(), UTC)
+
+    try:
+        assert await honest.reserve("cle-vivante", 60, scope, holder="a") is True
+        # Une machine dont l'horloge avance d'une heure : sa « maintenant » dépasse l'échéance.
+        monkeypatch.setattr(idempotency_module, "datetime", Ahead, raising=False)
+        assert await skewed.reserve("cle-vivante", 60, scope, holder="b") is False
+    finally:
+        await honest.aclose()
+        await skewed.aclose()
+
+
+async def test_a_writer_waiting_for_a_stuck_journal_lock_gives_up(postgres_dsn: str) -> None:
+    store = PostgresEventStore(postgres_dsn, limits=PoolLimits(lock_timeout=0.5))
+    session = SessionId("s-bloque")
+    await store.append(drafts(UN, session), expected_seq=0)
+    holder = await asyncpg.connect(postgres_dsn)
+    try:
+        # Le verrou d'un autre process, jamais rendu : celui que prend ``append``.
+        await holder.execute("SELECT pg_advisory_lock(hashtext($1)::bigint)", f"{UN}/{session}")
+        with pytest.raises(asyncpg.LockNotAvailableError):
+            await asyncio.wait_for(store.append(drafts(UN, session), expected_seq=None), timeout=20)
+        # Le verrou rendu, la même session se réécrit : l'abandon n'a rien abîmé.
+        await holder.execute("SELECT pg_advisory_unlock_all()")
+        await store.append(drafts(UN, session), expected_seq=None)
+    finally:
+        await holder.close()
+        await store.aclose()
+
+
+def _pool(dsn: str, limits: PoolLimits) -> PostgresPool:
+    return PostgresPool(dsn, table=EVENTS_TABLE, ddl=ddl(role=None), role=None, limits=limits)
+
+
+async def test_the_pool_has_the_size_it_is_given(postgres_dsn: str) -> None:
+    pool = _pool(postgres_dsn, PoolLimits(min_size=2, max_size=3))
+    try:
+        opened = await pool.pool()
+        assert (opened.get_min_size(), opened.get_max_size()) == (2, 3)
+    finally:
+        await pool.aclose()
+
+
+async def test_waiting_for_a_free_connection_has_an_end(postgres_dsn: str) -> None:
+    pool = _pool(postgres_dsn, PoolLimits(min_size=1, max_size=1, acquire_timeout=0.3))
+    try:
+        async with pool.transaction():
+            with pytest.raises(TimeoutError):
+                async with pool.transaction():
+                    pass
+    finally:
+        await pool.aclose()
+
+
+async def test_a_command_that_lasts_too_long_is_cut(postgres_dsn: str) -> None:
+    pool = _pool(postgres_dsn, PoolLimits(command_timeout=0.3))
+    try:
+        with pytest.raises(TimeoutError):
+            async with pool.transaction() as connection:
+                await connection.execute("SELECT pg_sleep(5)")
+    finally:
+        await pool.aclose()
+
+
+async def test_the_server_waits_no_longer_than_the_lock_timeout(postgres_dsn: str) -> None:
+    pool = _pool(postgres_dsn, PoolLimits(lock_timeout=2.5))
+    try:
+        async with pool.transaction() as connection:
+            assert await connection.fetchval("SHOW lock_timeout") == "2500ms"
+    finally:
+        await pool.aclose()
+
+
+def test_a_pool_refuses_sizes_and_delays_that_make_no_sense() -> None:
+    with pytest.raises(ValueError, match="min_size"):
+        PoolLimits(min_size=5, max_size=2)
+    with pytest.raises(ValueError, match="min_size"):
+        PoolLimits(min_size=0)
+    for field in ("command_timeout", "lock_timeout", "acquire_timeout"):
+        with pytest.raises(ValueError, match=field):
+            PoolLimits(**{field: 0})

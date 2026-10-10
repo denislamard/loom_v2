@@ -176,6 +176,24 @@ async def test_two_simultaneous_deliveries_open_one_run(
     assert result.status == "completed"
 
 
+async def test_a_delivery_id_taken_by_another_door_is_refused(demo: ConfigFactory) -> None:
+    # Le run d'une livraison s'appelle comme elle : la même clé sur une autre
+    # porte ne désigne pas la même livraison, et ne doit pas en rendre le run.
+    facturation = {**RELANCE, "name": "facturation", "agent": "autre"}
+    agents = [demo_agent(), demo_agent(name="autre")]
+    path = demo(storage=JOURNAL, agents=agents, triggers=[RELANCE, facturation])
+    async with Loom.from_config(path) as loom:
+        first = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1")
+        with pytest.raises(DeliveryRefused, match=r"evt-1.*relance-quotidienne"):
+            await loom.trigger("facturation", CHARGE, delivery_id="evt-1")
+        again = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1")
+        await loom.drain()
+        journaux = await loom.sessions()
+
+    assert first.repeated is False and again.repeated is True
+    assert [record.session_id for record in journaux] == ["evt-1"]
+
+
 async def test_a_delivery_id_that_is_not_usable_is_refused(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo(storage=JOURNAL, triggers=[RELANCE])) as loom:
         with pytest.raises(DeliveryRefused, match="Identifiant de livraison"):
@@ -235,6 +253,25 @@ async def test_a_hook_answers_202_then_200_on_a_repeat(demo: ConfigFactory) -> N
     assert casse.status_code == 422 and "Charge illisible" in casse.json()["detail"]
     [started] = [event for event in events if event.type == "run.started"]
     assert started.facets["trigger"] == "relance-quotidienne"
+
+
+async def test_a_delivery_id_taken_by_another_door_is_a_422(demo: ConfigFactory) -> None:
+    facturation = {**RELANCE, "name": "facturation", "agent": "autre"}
+    relance = {**RELANCE, "delivery_header": "X-Delivery-Id"}
+    facturation["delivery_header"] = "X-Delivery-Id"
+    path = demo(
+        storage=JOURNAL,
+        agents=[demo_agent(), demo_agent(name="autre")],
+        triggers=[relance, facturation],
+    )
+    entete = {"X-Delivery-Id": "evt-9"}
+    async with servie(path) as (loom, http):
+        first = await http.post("/v1/hooks/relance-quotidienne", json=CHARGE, headers=entete)
+        other = await http.post("/v1/hooks/facturation", json=CHARGE, headers=entete)
+        await loom.drain()
+
+    assert first.status_code == 202
+    assert other.status_code == 422 and "relance-quotidienne" in other.json()["detail"]
 
 
 async def test_a_payload_nested_too_deep_is_a_422_not_a_500(demo: ConfigFactory) -> None:

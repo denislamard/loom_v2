@@ -30,7 +30,13 @@ from typing import Any, Final
 
 import asyncpg
 
-from loom_ia.adapters.postgres.pool import Held, PostgresPool, rows_touched
+from loom_ia.adapters.postgres.pool import (
+    DEFAULT_LIMITS,
+    Held,
+    PoolLimits,
+    PostgresPool,
+    rows_touched,
+)
 from loom_ia.adapters.postgres.sql import DEFAULT_ROLE, EVENTS_TABLE, ddl
 from loom_ia.adapters.stores.codec import PLAIN, JournalCodec
 from loom_ia.core.events import Event, EventDraft, EventQuery
@@ -133,6 +139,7 @@ class PostgresEventStore:
         *,
         role: str | None = DEFAULT_ROLE,
         codec: JournalCodec = PLAIN,
+        limits: PoolLimits = DEFAULT_LIMITS,
     ) -> None:
         self._codec = codec
         self._pg = PostgresPool(
@@ -140,6 +147,7 @@ class PostgresEventStore:
             table=EVENTS_TABLE,
             ddl=ddl(role=role, idempotency=False),
             role=role,
+            limits=limits,
         )
 
     def __repr__(self) -> str:

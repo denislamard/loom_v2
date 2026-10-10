@@ -30,6 +30,7 @@ from loom_ia.core.model import (
     new_run_id,
 )
 from loom_ia.core.ports import MissingKey
+from loom_ia.core.projections import ProjectionError
 from loom_ia.testing import RunJournal, tool_call_message
 from loom_ia.tools import tool
 
@@ -293,6 +294,66 @@ async def test_runs_says_when_a_bound_stopped_the_search(demo: ConfigFactory) ->
     assert len(bounded.runs) == 2 and bounded.truncated is True
     assert len(shallow.runs) == 1 and shallow.scanned == 1 and shallow.truncated is True
     assert len(whole.runs) == 3 and whole.scanned == 3 and whole.truncated is False
+
+
+async def test_a_page_of_recent_runs_keeps_the_most_recent_ones(demo: ConfigFactory) -> None:
+    # S1 {r1, r2} et S2 {r3}, écrits r1, r3, r2 : la session la plus récemment
+    # écrite (S1) ne contient pas que les runs les plus récents.
+    async with Loom.from_config(demo()) as loom:
+        r1 = await loom.run("demo", QUESTION, session_id=SessionId("s-1"))
+        r3 = await loom.run("demo", QUESTION, session_id=SessionId("s-2"))
+        r2 = await loom.run("demo", QUESTION, session_id=SessionId("s-1"))
+        page = await loom.runs(limit=2)
+        whole = await loom.runs()
+
+    assert [run.run_id for run in page.runs] == [r2.run_id, r3.run_id]
+    assert page.truncated is True
+    assert [run.run_id for run in whole.runs] == [r2.run_id, r3.run_id, r1.run_id]
+
+
+async def test_runs_stops_reading_once_older_sessions_cannot_matter(
+    demo: ConfigFactory,
+) -> None:
+    async with Loom.from_config(demo()) as loom:
+        for number in range(4):
+            await loom.run("demo", QUESTION, session_id=SessionId(f"c-{number}"))
+        page = await loom.runs(limit=1)
+
+    # Une session par run : la deuxième, plus ancienne que le run trouvé, n'est pas ouverte.
+    assert len(page.runs) == 1 and page.scanned == 1 and page.truncated is True
+
+
+async def _unreadable_session(store: InMemoryEventStore, session: SessionId) -> RunId:
+    """Une session dont un run reprend après sa clôture : la projection la refuse."""
+    journal = RunJournal(agent="demo", session_id=session)
+    journal.start(QUESTION).model_turn(Message.assistant(ANSWER)).complete()
+    journal.transition(RunStatus.READY_FOR_MODEL)
+    await store.append(journal.take(), expected_seq=0)
+    return journal.run_id
+
+
+async def test_a_new_run_in_a_session_with_an_unreadable_run_fails_cleanly(
+    demo: ConfigFactory,
+) -> None:
+    store = InMemoryEventStore()
+    session = SessionId("casse")
+    broken = await _unreadable_session(store, session)
+    async with Loom(load_config(demo()), store=store) as loom:
+        result = await loom.run("demo", QUESTION, session_id=session)
+        state = await loom.state(result.run_id, session_id=session)
+        events = await loom.events(result.run_id, session_id=session)
+        with pytest.raises(ProjectionError):
+            await loom.state(broken, session_id=session)
+
+    # Le nouveau run est clos par un échec qui dit pourquoi, et non laissé ouvert.
+    assert result.status is RunStatus.FAILED and state.finished
+    assert state.error_type == "session.unreadable"
+    assert state.error is not None and "illisible" in state.error
+    assert kinds(events)[-1] == "run.failed"
+    # Et une autre session du même client n'est pas touchée.
+    async with Loom(load_config(demo()), store=store) as loom:
+        other = await loom.run("demo", QUESTION, session_id=SessionId("saine"))
+    assert other.status is RunStatus.COMPLETED
 
 
 async def test_runs_lists_a_subrun_naming_its_delegate(tree: ConfigFactory) -> None:

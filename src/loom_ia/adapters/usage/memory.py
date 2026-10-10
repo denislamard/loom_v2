@@ -6,17 +6,18 @@ rend ``record`` idempotent et permet au réchauffage depuis le journal de
 chevaucher la vie courante sans compter deux fois (voir le port).
 
 Ce que ça coûte : une entrée par run de la période, en mémoire, dans ce
-process. Le nombre de périodes retenues par client est borné — les clés étant
-triables dans le temps, ce sont les plus anciennes qui partent. Un compteur
-partagé entre workers et durable attend J5.3 (Postgres, Redis).
+process. Le nombre de périodes retenues par client est borné **pour chaque genre
+de période** (jours d'un côté, mois de l'autre) — les clés étant triables dans le
+temps, ce sont les plus anciennes du genre qui partent. Un compteur partagé entre
+workers et durable attend J5.3 (Postgres, Redis).
 """
 
 from typing import Final
 
 from loom_ia.core.model import RunId, Spent, TenantId
 
-# Périodes gardées par client : le jour et le mois courants, plus de quoi
-# traverser un changement de fenêtre sans perdre la précédente.
+# Périodes gardées par client et par genre de période (jour, mois) : la courante,
+# plus de quoi traverser un changement de fenêtre sans perdre la précédente.
 MAX_PERIODS: Final = 8
 
 
@@ -35,8 +36,12 @@ class InMemoryUsageCounter:
     async def record(self, tenant_id: TenantId, period: str, run_id: RunId, spent: Spent) -> None:
         periods = self._runs.setdefault(tenant_id, {})
         periods.setdefault(period, {})[run_id] = spent
-        while len(periods) > MAX_PERIODS:
-            del periods[min(periods)]
+        # Par genre, et non toutes ensemble : les clés ``day:…`` se trient avant les clés
+        # ``month:…``, et avec une seule limite la neuvième faisait partir le jour courant.
+        kind = period.partition(":")[0]
+        same = sorted(key for key in periods if key.partition(":")[0] == kind)
+        for key in same[:-MAX_PERIODS]:
+            del periods[key]
 
     async def aclose(self) -> None:
         self._runs.clear()

@@ -545,6 +545,17 @@ async def test_on_error_allow_lets_the_output_pass(store: EventStore) -> None:
     assert state.cost_usd == pytest.approx(JUDGE_COST)
 
 
+async def test_a_deeply_nested_answer_is_still_judged(store: EventStore) -> None:
+    # Sans cela, un RecursionError du décodage JSON supprimait le juge sous on_error: allow.
+    depth = 200_000
+    main = scripted(Message.assistant("[" * depth + "]" * depth))
+    guard = judge(scripted(verdict(exact=1.0)), on_error="allow")
+    state = await run(context(store, main, guard))
+    assert state.status is RunStatus.COMPLETED
+    assert checks(await journal(store, state))[0].outcome == "passed"
+    assert state.cost_usd == pytest.approx(JUDGE_COST)
+
+
 # --- Rôles --------------------------------------------------------------------------
 
 

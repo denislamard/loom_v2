@@ -278,6 +278,27 @@ def test_an_approver_can_correct_the_arguments(atelier: ConfigFactory) -> None:
     assert "compta@example.com" in resultat
 
 
+def test_corrected_arguments_need_a_designated_call(atelier: ConfigFactory) -> None:
+    """Sans ``call_id``, la correction serait perdue sans un mot : mieux vaut la refuser."""
+
+    async def go() -> tuple[int, tuple[str, ...]]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            with pytest.raises(ValueError, match="call_id"):
+                await loom.approve(
+                    run.run_id,
+                    arguments={"destinataire": "compta@example.com"},
+                    session_id=SESSION,
+                )
+            # Rien n'a été décidé : l'appel attend toujours.
+            granted = await loom.approve(run.run_id, by="denis", session_id=SESSION)
+            await loom.drain()
+            return len(run.pending_approvals), granted
+
+    waiting, granted = asyncio.run(go())
+    assert waiting == 1 and len(granted) == 1
+
+
 def test_the_model_reads_the_call_that_actually_went_out(atelier: ConfigFactory) -> None:
     """Sinon le résultat de l'outil contredit son propre appel.
 

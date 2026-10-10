@@ -436,6 +436,28 @@ async def test_non_streaming_models() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("status", "error", "said"),
+    [
+        ("failed", {"code": "server_error", "message": "panne"}, "panne"),
+        ("failed", None, "sans détail"),
+        ("cancelled", None, "annulée"),
+    ],
+)
+async def test_a_failed_or_cancelled_answer_without_streaming_is_a_transient_error(
+    status: str, error: dict[str, Any] | None, said: str
+) -> None:
+    """Hors streaming, un ``status`` d'échec n'est pas une réponse vide « réussie » (MOD-1)."""
+    server = Server(httpx2.Response(200, json=response(status, error=error)))
+    spec = SPEC.model_copy(
+        update={"capabilities": SPEC.capabilities.model_copy(update={"streaming": False})}
+    )
+    with pytest.raises(ModelError) as caught:
+        await complete(server.model(spec), request())
+    assert caught.value.kind == "transient"
+    assert said in str(caught.value)
+
+
 # --- Requête -------------------------------------------------------------------------------
 
 

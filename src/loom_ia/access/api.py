@@ -90,6 +90,7 @@ from loom_ia.core.events import (
     RunCancelled,
     RunCompleted,
     RunFailed,
+    RunStarted,
     SessionCompacted,
 )
 from loom_ia.core.model import (
@@ -1818,7 +1819,10 @@ class Loom:
         """Runs du client, du plus récent au plus ancien (K5, #32).
 
         Lus **au journal**, session par session, de la plus récemment écrite à
-        la plus ancienne : les chiffres sont exactement ceux de la fiche d'une
+        la plus ancienne, jusqu'à ce que la page soit pleine et qu'aucune
+        session restante ne puisse porter un run plus récent que son dernier
+        (un run n'est jamais plus récent que la dernière écriture de sa
+        session) : les chiffres sont exactement ceux de la fiche d'une
         session, et il n'y a aucune projection à tenir à jour, à reconstruire
         ou à resynchroniser. Le prix est une lecture par session ouverte, et
         deux bornes le tiennent : ``limit`` runs rendus au plus, ``sessions``
@@ -1840,7 +1844,12 @@ class Loom:
         scanned = 0
         truncated = False
         for record in known:
-            if scanned >= sessions or len(found) >= limit:
+            if scanned >= sessions or (
+                len(found) >= limit and record.updated_at < found[-1].updated_at
+            ):
+                # Un run n'est jamais plus récent que la dernière écriture de sa
+                # session : plus aucune de celles qui restent n'en a de plus
+                # récent que le dernier de la page.
                 truncated = True
                 break
             scanned += 1
@@ -1855,9 +1864,10 @@ class Loom:
             for listed in listing:
                 if _keeps(listed, agent=agent, status=status, since=since, until=until):
                     found.append(listed)
-        found.sort(key=lambda run: run.updated_at, reverse=True)
-        if len(found) > limit:
-            found, truncated = found[:limit], True
+            # La page en cours : au plus ``limit`` runs, les plus récents trouvés.
+            found.sort(key=lambda run: run.updated_at, reverse=True)
+            if len(found) > limit:
+                found, truncated = found[:limit], True
         return RunPage(runs=tuple(found), scanned=scanned, truncated=truncated)
 
     async def query(self, query: EventQuery) -> list[Event]:
@@ -2235,7 +2245,8 @@ class Loom:
 
         Sans ``call_id``, toutes les demandes en attente sont accordées —
         le cas courant, un seul appel à valider. ``arguments`` corrige ceux de
-        l'appel, et ne vaut que pour un ``call_id`` désigné. ``by`` est
+        l'appel, et ne vaut que pour un ``call_id`` désigné : sans lui, la demande
+        est refusée (``ValueError``) plutôt que la correction perdue. ``by`` est
         l'identité de l'approbateur : c'est tout l'audit qu'il y aura.
 
         Rend les appels accordés ; vide si le run n'attendait rien — un run fini
@@ -2246,6 +2257,8 @@ class Loom:
         est journalisée (ERROR), le run reste en attente de reprise, et
         ``recover()`` ou ``resume()`` le reprend.
         """
+        if arguments is not None and call_id is None:
+            raise ValueError("arguments corrige un appel désigné : indiquer call_id.")
         return await self._decided(
             run_id,
             call_id,
@@ -2256,7 +2269,7 @@ class Loom:
                 tool_name=asked.tool_name,
                 by=by,
                 reason=reason,
-                arguments=arguments if call_id is not None else None,
+                arguments=arguments,
             ),
         )
 
@@ -2482,10 +2495,22 @@ class Loom:
         self, name: str, run_id: RunId, session_id: SessionId | None, tenant: TenantId
     ) -> Triggered | None:
         """Le run de cette livraison s'il existe déjà, sinon rien."""
-        try:
-            state = await self.state(run_id, session_id=session_id, tenant_id=tenant)
-        except UnknownRun:
+        events = await self.events(run_id, session_id=session_id, tenant_id=tenant, subruns=False)
+        if not events:
             return None
+        state = fold(events, run_id)
+        started = next(
+            (e.payload for e in events if e.run_id == run_id and isinstance(e.payload, RunStarted)),
+            None,
+        )
+        opened_by = None if started is None else started.trigger
+        if opened_by != name:
+            # Le run d'une livraison porte son identifiant : celui-ci appartient
+            # à un autre run (autre porte, ou run ordinaire), pas à cette livraison.
+            raise DeliveryRefused(
+                f"Identifiant de livraison {run_id!r} déjà pris par un run "
+                + (f"du déclencheur {opened_by!r}" if opened_by else "qui n'en vient pas")
+            )
         return Triggered(
             trigger=name,
             run_id=run_id,

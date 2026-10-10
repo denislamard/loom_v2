@@ -25,10 +25,9 @@ exploitant applique). Une ligne sans jeton ne répond à aucun jeton.
 """
 
 import json
-from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
-from loom_ia.adapters.postgres.pool import PostgresPool, rows_touched
+from loom_ia.adapters.postgres.pool import DEFAULT_LIMITS, PoolLimits, PostgresPool, rows_touched
 from loom_ia.adapters.postgres.sql import (
     DEFAULT_ROLE,
     IDEMPOTENCY_TABLE,
@@ -47,9 +46,12 @@ from loom_ia.core.ports import KeyScope
 
 # Ce qui protège, c'est la date : une réservation encore tenue ou un résultat
 # encore mémorisé ne bougent pas. Passée leur échéance, la clé est libre.
+# La date est celle de **la base** (``now()``) : les process qui se disputent une
+# clé n'ont pas la même horloge, et c'est la seule qu'ils partagent. Les durées
+# arrivent en secondes et sont ajoutées côté base.
 _RESERVE: Final = f"""
 INSERT INTO {IDEMPOTENCY_TABLE} (key, tenant_id, session_id, status, result, expires_at, holder)
-VALUES ($1, $2, $3, 'in_progress', NULL, $4, $6)
+VALUES ($1, $2, $3, 'in_progress', NULL, now() + make_interval(secs => $4::float8), $5)
 ON CONFLICT (key) DO UPDATE SET
     tenant_id  = excluded.tenant_id,
     session_id = excluded.session_id,
@@ -57,11 +59,12 @@ ON CONFLICT (key) DO UPDATE SET
     result     = NULL,
     expires_at = excluded.expires_at,
     holder     = excluded.holder
-WHERE {IDEMPOTENCY_TABLE}.expires_at < $5
+WHERE {IDEMPOTENCY_TABLE}.expires_at < now()
 """
 
 _COMPLETE: Final = (
-    f"UPDATE {IDEMPOTENCY_TABLE} SET status = 'completed', result = $1, expires_at = $2"
+    f"UPDATE {IDEMPOTENCY_TABLE} SET status = 'completed', result = $1,"
+    " expires_at = now() + make_interval(secs => $2::float8)"
     " WHERE key = $3"
 )
 
@@ -75,8 +78,10 @@ _EXISTS: Final = f"SELECT 1 FROM {IDEMPOTENCY_TABLE} WHERE key = $1"
 
 _GET: Final = (
     f"SELECT status, result, expires_at FROM {IDEMPOTENCY_TABLE}"
-    " WHERE key = $1 AND (status = 'in_progress' OR expires_at > $2)"
+    " WHERE key = $1 AND (status = 'in_progress' OR expires_at > now())"
 )
+
+_SWEEP: Final = f"DELETE FROM {IDEMPOTENCY_TABLE} WHERE status = 'completed' AND expires_at < now()"
 
 
 class PostgresIdempotency:
@@ -89,7 +94,12 @@ class PostgresIdempotency:
     """
 
     def __init__(
-        self, dsn: str, *, role: str | None = DEFAULT_ROLE, retention: float = DEFAULT_RETENTION
+        self,
+        dsn: str,
+        *,
+        role: str | None = DEFAULT_ROLE,
+        retention: float = DEFAULT_RETENTION,
+        limits: PoolLimits = DEFAULT_LIMITS,
     ) -> None:
         self.retention = retention
         self._pg = PostgresPool(
@@ -98,6 +108,7 @@ class PostgresIdempotency:
             ddl=ddl(role=role, events=False),
             role=role,
             upgrade=IDEMPOTENCY_UPGRADE,
+            limits=limits,
         )
 
     def __repr__(self) -> str:
@@ -106,7 +117,7 @@ class PostgresIdempotency:
     async def get(self, key: str) -> IdempotencyRecord | None:
         """Un résultat hors de sa rétention n'est pas rendu ; une réservation périmée, si."""
         async with self._pg.transaction() as connection:
-            row = await connection.fetchrow(_GET, key, datetime.now(UTC))
+            row = await connection.fetchrow(_GET, key)
         if row is None:
             return None
         result = row["result"]
@@ -120,36 +131,25 @@ class PostgresIdempotency:
     async def reserve(
         self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
     ) -> bool:
-        now = datetime.now(UTC)
         async with self._pg.transaction() as connection:
             status = await connection.execute(
-                _RESERVE,
-                key,
-                scope.tenant_id,
-                scope.session_id,
-                now + timedelta(seconds=ttl),
-                now,
-                holder,
+                _RESERVE, key, scope.tenant_id, scope.session_id, float(ttl), holder
             )
         return rows_touched(status) == 1
 
     async def complete(
         self, key: str, result: object, ttl: float | None = None, *, holder: str | None = None
     ) -> None:
-        now = datetime.now(UTC)
-        expires = now + timedelta(seconds=self.retention if ttl is None else ttl)
+        seconds = float(self.retention if ttl is None else ttl)
         payload = json.dumps(recordable(result), ensure_ascii=False)
         async with self._pg.transaction() as connection:
             # Le ménage passe **avant** l'écriture : après, il emporterait le
             # résultat qu'on vient de poser si sa rétention était déjà nulle.
-            await connection.execute(
-                f"DELETE FROM {IDEMPOTENCY_TABLE} WHERE status = 'completed' AND expires_at < $1",
-                now,
-            )
+            await connection.execute(_SWEEP)
             if holder is None:
-                status = await connection.execute(_COMPLETE, payload, expires, key)
+                status = await connection.execute(_COMPLETE, payload, seconds, key)
             else:
-                status = await connection.execute(_COMPLETE_HELD, payload, expires, key, holder)
+                status = await connection.execute(_COMPLETE_HELD, payload, seconds, key, holder)
             # Un jeton qui ne répond pas laisse la ligne telle quelle : elle est à
             # un autre. Seule une clé absente est une erreur.
             absent = rows_touched(status) == 0 and (

@@ -203,6 +203,36 @@ def test_tool_data_is_checked_directly() -> None:
     assert missing.problems == ("(racine) : 'numero' is a required property",)
 
 
+def test_tool_data_wins_over_a_text_that_normalization_changes() -> None:
+    # Le retour à la ligne final du texte ne doit pas faire écarter les données de l'outil.
+    schema: dict[str, JsonValue] = {"type": "object", "required": ["a"]}
+    for text in ("Fait", "Fait\n", "  Fait  ", "```\nFait\n```"):
+        checked = check(contract(schema=schema), text, {"a": 1})
+        assert checked.ok, text
+        assert checked.data == {"a": 1}
+    # Les données restent contrôlées par le schéma, quel que soit le texte.
+    assert not check(contract(schema=schema), '{"a": 1}\n', {"b": 1}).ok
+
+
+def test_two_consecutive_code_blocks_are_not_one_block() -> None:
+    two = "```json\n{\"a\": 1}\n```\n```python\nprint('x')\n```"
+    assert normalize(two) == two
+    assert normalize(two, json_expected=True) == '{"a": 1}'
+    assert check(contract(schema={"type": "object"}), two).data == {"a": 1}
+    # Un seul bloc, avec ou sans langage, est toujours retiré.
+    assert normalize("```json\n[1]\n```") == "[1]"
+    assert normalize("```\nligne 1\nligne 2\n```") == "ligne 1\nligne 2"
+
+
+def test_a_deeply_nested_output_is_a_problem_not_an_exception() -> None:
+    depth = 200_000
+    nested = "[" * depth + "]" * depth
+    assert normalize(nested, json_expected=True) == nested
+    checked = check(contract(schema={"type": "array"}), nested)
+    assert not checked.ok
+    assert "imbriqué" in checked.problems[0]
+
+
 def test_diagnostic_gives_the_problems_and_the_schema() -> None:
     text = diagnostic(contract(schema=SCHEMA), ("objet : manquant",))
     assert text.startswith("La sortie ne respecte pas son contrat :\n- objet : manquant\n")

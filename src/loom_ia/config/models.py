@@ -87,6 +87,32 @@ DEFAULT_DB_ROLE: Final = "loom_app"
 ARTIFACTS_SUBDIR: Final = ".artifacts"
 
 
+class PostgresPoolSettings(DomainModel):
+    """Taille et délais du pool de connexions d'un stockage Postgres.
+
+    Un client qui déclare son propre stockage a son propre pool : ces valeurs
+    s'appliquent à chacun. Les délais sont en secondes ; ils ne valaient pas
+    avant (une attente pouvait durer sans fin).
+    """
+
+    min_size: int = Field(default=1, ge=1)
+    max_size: int = Field(default=10, ge=1)
+    # Une instruction qui dure plus longtemps est interrompue.
+    command_timeout: float = Field(default=60.0, gt=0)
+    # Attente d'un verrou (journal d'une session, schéma) avant d'y renoncer.
+    lock_timeout: float = Field(default=10.0, gt=0)
+    # Attente d'une connexion libre quand les ``max_size`` sont prises.
+    acquire_timeout: float = Field(default=30.0, gt=0)
+
+    @model_validator(mode="after")
+    def _check_sizes(self) -> Self:
+        if self.min_size > self.max_size:
+            raise ValueError(
+                f"Pool Postgres : min_size ({self.min_size}) dépasse max_size ({self.max_size})"
+            )
+        return self
+
+
 class EventsStorage(DomainModel):
     backend: str = "memory"
     # ``jsonl`` : dossier des journaux. ``sqlite`` : fichier de la base.
@@ -100,9 +126,13 @@ class EventsStorage(DomainModel):
     # écrit. ``null`` s'en passe — la politique tient encore, par ``FORCE``,
     # mais le journal redevient modifiable.
     role: str | None = DEFAULT_DB_ROLE
+    # ``postgres`` : taille et délais du pool.
+    pool: PostgresPoolSettings = PostgresPoolSettings()
 
     @model_validator(mode="after")
     def _check_backend(self) -> Self:
+        if "pool" in self.model_fields_set and self.backend not in DSN_BACKENDS:
+            raise ValueError(f"Journal {self.backend!r} : 'pool' n'a pas de sens")
         if self.backend not in EVENT_BACKENDS:
             raise ValueError(
                 f"Journal {self.backend!r} : seuls {', '.join(EVENT_BACKENDS)} "
@@ -163,9 +193,13 @@ class IdempotencyStorage(DomainModel):
     # ``redis`` : nom de la variable qui porte l'URL du serveur.
     url_env: str | None = None
     role: str | None = DEFAULT_DB_ROLE
+    # ``postgres`` : taille et délais du pool.
+    pool: PostgresPoolSettings = PostgresPoolSettings()
 
     @model_validator(mode="after")
     def _check_backend(self) -> Self:
+        if "pool" in self.model_fields_set and self.backend != "postgres":
+            raise ValueError(f"Magasin d'idempotence {self.backend!r} : 'pool' n'a pas de sens")
         if self.backend not in IDEMPOTENCY_BACKENDS:
             raise ValueError(
                 f"Magasin d'idempotence {self.backend!r} : seuls "

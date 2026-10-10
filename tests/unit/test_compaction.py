@@ -166,6 +166,57 @@ def test_a_lost_marker_is_named() -> None:
     assert absent == ["D-2026-042", "2026", "042", "1840"]
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("1.234.567 €", {"1234567"}),
+        ("1,234,567 €", {"1234567"}),
+        # Une espace simple peut séparer deux nombres : les deux lectures sont des repères.
+        ("1 234 567 €", {"1234567", "234", "567"}),
+        ("1 234,56 €", {"1234,56"}),
+        ("1.234,56 €", {"1234,56"}),
+        ("1,234.56 €", {"1234,56"}),
+        ("12,50 €", {"12,5"}),
+        ("0,125 g", {"0,125"}),
+        ("1 840,00 €", {"1840"}),
+        ("le 10.10.2026", {"2026"}),
+        ("3,5 h", set[str]()),
+    ],
+)
+def test_numbers_are_read_with_their_separators_and_decimals(text: str, expected: set[str]) -> None:
+    assert markers(text) == expected
+
+
+def test_a_changed_cent_is_a_lost_marker() -> None:
+    assert missing("Total : 1 234,56 €", "Total : 1 234,99 €") == ["1234,56"]
+    assert missing("Total : 1 234,56 €", "Total : 1 234,56 € TTC") == []
+    assert missing("Total : 12,50 €", "Total : 12,90 €") == ["12,5"]
+
+
+def test_a_grouped_number_is_not_cut_into_its_last_group() -> None:
+    assert missing("Facture de 1.234.567 €", "Facture de 1 234 567 €") == []
+    assert missing("Facture de 1.234.567 €", "Facture de 567 €") == ["1234567"]
+
+
+def test_digits_apart_by_a_plain_space_may_be_two_numbers() -> None:
+    # « 120 150 » : 120 150 en groupes de milliers, ou 120 puis 150 — les deux lectures valent.
+    assert missing("Lot 120 150", "Lot 120150") == []
+    assert missing("Lot 120 150", "Lot 120 et 150") == []
+    assert missing("Lot 120 150", "Lot 120") == ["120150"]
+    # Une espace insécable, elle, groupe toujours.
+    assert missing("Lot 120\u00a0150", "Lot 120 et 150") == ["120150"]
+
+
+def test_a_date_written_with_dots_is_not_a_decimal() -> None:
+    assert missing("Livré le 10.10.2026", "Livré le 10 octobre 2026") == []
+
+
+def test_an_email_at_the_end_of_a_sentence_loses_its_period() -> None:
+    assert markers("Écrire à jean@exemple.fr.") == {"jean@exemple.fr"}
+    assert missing("Écrire à jean@exemple.fr.", "Écrire à jean@exemple.fr") == []
+    assert missing("Écrire à jean@exemple.fr", "Écrire à jean@exemple.fr.") == []
+
+
 def test_an_email_must_survive() -> None:
     assert missing("Écrire à a.martin@exemple.fr", "Écrire à la cliente.") == [
         "a.martin@exemple.fr"

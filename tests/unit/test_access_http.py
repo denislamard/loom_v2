@@ -17,10 +17,12 @@ from conftest import ANSWER, QUESTION, ConfigFactory, demo_agent
 from pydantic import ValidationError
 
 from loom_ia.access import Loom
+from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.core.events import Event
-from loom_ia.core.model import SessionId, new_run_id
+from loom_ia.core.model import Message, RunStatus, SessionId, new_run_id
+from loom_ia.testing import RunJournal
 
 pytest.importorskip("fastapi", reason="extra 'http' absent")
 pytest.importorskip("httpx2", reason="client HTTP de test absent")
@@ -45,6 +47,39 @@ async def serving(path: FilePath) -> AsyncGenerator[tuple[Loom, httpx2.AsyncClie
         transport = httpx2.ASGITransport(create_app(loom))
         async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
             yield loom, http
+
+
+@asynccontextmanager
+async def serving_store(
+    path: FilePath, store: InMemoryEventStore
+) -> AsyncGenerator[tuple[Loom, httpx2.AsyncClient]]:
+    """Comme ``serving``, sur un journal que le test a préparé."""
+    async with Loom(load_config(path), store=store) as loom:
+        transport = httpx2.ASGITransport(create_app(loom))
+        async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
+            yield loom, http
+
+
+async def test_an_unreadable_session_is_a_clean_error_not_a_crash(demo: ConfigFactory) -> None:
+    store = InMemoryEventStore()
+    session = SessionId("casse")
+    journal = RunJournal(agent="demo", session_id=session)
+    journal.start(QUESTION).model_turn(Message.assistant(ANSWER)).complete()
+    journal.transition(RunStatus.READY_FOR_MODEL)
+    await store.append(journal.take(), expected_seq=0)
+    async with serving_store(demo(), store) as (_, http):
+        read = await http.get(f"/v1/runs/{journal.run_id}", params={"session_id": session})
+        detail = await http.get(f"/v1/sessions/{session}")
+        opened = await http.post(
+            "/v1/agents/demo/runs", json={"message": QUESTION, "session_id": session}
+        )
+
+    for refused in (read, detail):
+        assert refused.status_code == 500
+        assert "illisible" in refused.json()["detail"]
+    # Un nouveau run sur la session réussit à s'ouvrir et dit pourquoi il échoue.
+    assert opened.status_code == 201 and opened.json()["status"] == "failed"
+    assert "illisible" in opened.json()["error"]
 
 
 async def test_agents_are_listed(demo: ConfigFactory) -> None:
@@ -284,6 +319,25 @@ async def test_an_approval_is_granted_over_rest(atelier: ConfigFactory) -> None:
     assert finished.json()["status"] == "completed"
     # Sans ``by`` dans le corps, c'est la clé d'API qui signe l'accord.
     assert _by(events, "approval.granted") == ["mme-durand"]
+
+
+async def test_corrected_arguments_without_a_call_are_a_422(atelier: ConfigFactory) -> None:
+    async with serving(atelier(security=CLES)) as (loom, http):
+        entete = {"Authorization": f"Bearer {APPROBATEUR}"}
+        started = await http.post(
+            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
+        )
+        run = started.json()
+        refused = await http.post(
+            f"/v1/runs/{run['run_id']}/approve",
+            json={"arguments": {"destinataire": "compta@example.com"}},
+            headers=entete,
+        )
+        state = await http.get(f"/v1/runs/{run['run_id']}", headers=entete)
+        await loom.drain()
+
+    assert refused.status_code == 422 and "call_id" in str(refused.json()["detail"])
+    assert state.json()["status"] == "paused"
 
 
 async def test_the_body_names_the_human_behind_the_key(

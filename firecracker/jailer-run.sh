@@ -108,7 +108,13 @@ MEM_MAX="${MEM_MAX:-1610612736}"        # 1,5 GiB : RAM invitée + surcoût VMM
 CHROOT_DIR="${CHROOT_BASE}/firecracker/${VM_ID}/root"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# VM_ID nomme un dossier que ce script efface en root (rm -rf) : ni « .. », ni « / »,
+# ni rien d'autre que ce que le jailer accepte pour un id. À contrôler avant tout le reste.
+[[ $VM_ID =~ ^[A-Za-z0-9-]{1,64}$ ]] \
+    || die "VM_ID invalide : ${VM_ID} (alphanumérique et tirets, 64 caractères au plus)"
 
 # ----------------------------------------------------------------------------
 # Contrôles
@@ -116,8 +122,24 @@ die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "à lancer en root : sudo -E $0"
 
-for f in firecracker jailer vm-config.json rootfs.ext4; do
+for f in firecracker jailer vm-config.json; do
     [ -e "${SRC_DIR}/${f}" ] || die "${f} introuvable dans ${SRC_DIR}"
+done
+
+# Les disques que vm-config.json déclare (rootfs.ext4, data.ext4...) : chacun est posé dans
+# la jail, et chaque drive y pointe vers son propre fichier.
+mapfile -t DRIVE_FILES < <(python3 - "${SRC_DIR}/vm-config.json" <<'PY'
+import json, os, sys
+
+names = [os.path.basename(d["path_on_host"]) for d in json.load(open(sys.argv[1])).get("drives", [])]
+if len(set(names)) != len(names):
+    sys.exit("deux drives portent le même nom de fichier : " + ", ".join(names))
+print(*names, sep="\n")
+PY
+)
+[ "${#DRIVE_FILES[@]}" -gt 0 ] || die "vm-config.json ne déclare aucun drive"
+for f in "${DRIVE_FILES[@]}"; do
+    [ -e "${SRC_DIR}/${f}" ] || die "${f} introuvable dans ${SRC_DIR} (drive de vm-config.json)"
 done
 
 KERNEL_FILE="$(find "$SRC_DIR" -maxdepth 1 -name 'vmlinux-*' -type f -printf '%f\n' \
@@ -164,16 +186,21 @@ place() {
     if [ "${LINK:-1}" = "1" ] && ln "$src" "$dst" 2>/dev/null; then
         return
     fi
+    if [ "${LINK:-1}" = "1" ]; then
+        warn "$(basename "$src") copié faute de lien physique : l'état écrit dans la jail ne survit pas à son nettoyage"
+    fi
     cp --reflink=auto "$src" "$dst"
 }
 
 place "${SRC_DIR}/${KERNEL_FILE}" "${CHROOT_DIR}/${KERNEL_FILE}"
-place "${SRC_DIR}/rootfs.ext4"    "${CHROOT_DIR}/rootfs.ext4"
+for f in "${DRIVE_FILES[@]}"; do
+    place "${SRC_DIR}/${f}" "${CHROOT_DIR}/${f}"
+done
 
 # La configuration est réécrite plutôt que copiée : les chemins doivent être
 # relatifs à la racine de la jail, et le nom du kernel varie.
 python3 - "$SRC_DIR/vm-config.json" "$CHROOT_DIR/vm-config.json" "$KERNEL_FILE" <<'PY'
-import json, sys
+import json, os, sys
 
 src, dst, kernel = sys.argv[1:4]
 cfg = json.load(open(src))
@@ -181,7 +208,7 @@ cfg = json.load(open(src))
 # Chemins vus depuis l'intérieur de la jail.
 cfg["boot-source"]["kernel_image_path"] = kernel
 for d in cfg.get("drives", []):
-    d["path_on_host"] = "rootfs.ext4"
+    d["path_on_host"] = os.path.basename(d["path_on_host"])
 if "vsock" in cfg:
     cfg["vsock"]["uds_path"] = "v.sock"
 
@@ -192,7 +219,9 @@ PY
 # déposé. Sans ce chown, firecracker (déprivilégié) ne peut pas ouvrir son
 # rootfs et échoue sur une erreur de backing file.
 chown -R "${JAIL_UID}:${JAIL_GID}" "${CHROOT_DIR}"
-chmod 600 "${CHROOT_DIR}/rootfs.ext4"
+for f in "${DRIVE_FILES[@]}"; do
+    chmod 600 "${CHROOT_DIR}/${f}"
+done
 
 log "Contenu de la jail :"
 ls -l "$CHROOT_DIR" | sed 's/^/    /'

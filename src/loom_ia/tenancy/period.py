@@ -24,6 +24,21 @@ from loom_ia.core.model import BudgetPeriod
 PERIODS: tuple[BudgetPeriod, ...] = ("day", "month")
 
 
+def _utc(now: datetime | None) -> datetime:
+    """L'instant en UTC ; ``ValueError`` s'il n'a pas de fuseau.
+
+    Un instant naïf serait lu à l'heure locale de la machine, et la fenêtre
+    dépendrait de l'endroit où tourne le process.
+    """
+    if now is None:
+        return datetime.now(UTC)
+    if now.tzinfo is None:
+        raise ValueError(
+            f"Instant sans fuseau horaire : {now.isoformat()} (donner un datetime UTC)"
+        )
+    return now.astimezone(UTC)
+
+
 @dataclass(frozen=True, slots=True)
 class Period:
     """Une fenêtre, par son genre et son début."""
@@ -34,7 +49,7 @@ class Period:
     @classmethod
     def of(cls, kind: BudgetPeriod, now: datetime | None = None) -> Self:
         """La fenêtre qui contient ``now`` (l'instant présent par défaut)."""
-        moment = (now or datetime.now(UTC)).astimezone(UTC)
+        moment = _utc(now)
         midnight = moment.replace(hour=0, minute=0, second=0, microsecond=0)
         return cls(kind=kind, start=midnight if kind == "day" else midnight.replace(day=1))
 
@@ -55,8 +70,7 @@ class Period:
 
     def resets_in(self, now: datetime | None = None) -> float:
         """Secondes avant la remise à zéro ; jamais négatif."""
-        moment = (now or datetime.now(UTC)).astimezone(UTC)
-        return max(0.0, (self.end - moment).total_seconds())
+        return max(0.0, (self.end - _utc(now)).total_seconds())
 
     def __str__(self) -> str:
         return "la journée" if self.kind == "day" else "le mois"

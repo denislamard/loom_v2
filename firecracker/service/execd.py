@@ -42,6 +42,9 @@ VERSION = "0.1.0"
 
 log = logging.getLogger("execd")
 
+# Pause apres un accept en erreur (descripteurs epuises...), avant de reessayer.
+ACCEPT_RETRY = 0.1
+
 
 @dataclass(frozen=True)
 class Config:
@@ -199,7 +202,17 @@ async def serve(cfg: Config) -> None:
     async def accept_loop() -> None:
         nonlocal active
         while True:
-            sock, _ = await loop.sock_accept(listener)
+            try:
+                sock, _ = await loop.sock_accept(listener)
+            except ConnectionError:
+                # Un client a renonce avant l'accept : la connexion suivante n'y est pour rien.
+                continue
+            except OSError as exc:
+                # EMFILE, ENFILE, ENOBUFS, ENOMEM… : une rafale de connexions ne doit pas
+                # arreter l'ecoute. On attend un peu que des descripteurs se liberent.
+                log.error("accept impossible (%s) : nouvel essai dans %.1f s", exc, ACCEPT_RETRY)
+                await asyncio.sleep(ACCEPT_RETRY)
+                continue
             admitted = active < cfg.max_sessions
             if admitted:
                 active += 1
@@ -215,14 +228,24 @@ async def serve(cfg: Config) -> None:
 
             task.add_done_callback(done)
 
+    def accept_ended(task: asyncio.Task) -> None:
+        # Sans ceci, une boucle d'accept morte laissait le processus en vie, le listener
+        # ouvert et plus personne de servi : systemd ne voyait aucun echec a relancer.
+        if not task.cancelled() and task.exception() is not None:
+            log.error("boucle d'accept arretee", exc_info=task.exception())
+            stopping.set()
+
     accepter = loop.create_task(accept_loop())
+    accepter.add_done_callback(accept_ended)
     log.info("execd %s pret (jobs=%s, uid=%s)", VERSION, cfg.jobs_dir, cfg.uid)
 
     await stopping.wait()
     log.info("arret demande")
+    crash = None if accepter.cancelled() or not accepter.done() else accepter.exception()
 
     accepter.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
+    # Une boucle morte d'une erreur la relance a l'``await`` : elle est deja gardee dans ``crash``.
+    with contextlib.suppress(asyncio.CancelledError, Exception):
         await accepter
     listener.close()
     if cfg.uds:
@@ -235,6 +258,9 @@ async def serve(cfg: Config) -> None:
         task.cancel()
     if live:
         await asyncio.gather(*live, return_exceptions=True)
+    if crash is not None:
+        # Le processus sort en erreur : c'est ce qui fait relancer l'unite (Restart=always).
+        raise RuntimeError("boucle d'accept arretee") from crash
 
 
 def main() -> int:
@@ -259,6 +285,9 @@ def main() -> int:
         asyncio.run(serve(cfg))
     except KeyboardInterrupt:
         pass
+    except Exception:
+        log.exception("execd arrete sur une erreur")
+        return 1
     return 0
 
 

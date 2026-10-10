@@ -213,6 +213,57 @@ def test_the_idempotency_store_too(demo: ConfigFactory, monkeypatch: pytest.Monk
     assert repr(store) == f"PostgresIdempotency({IDEMPOTENCY_TABLE!r})"
 
 
+@sans_extra
+def test_the_pool_settings_reach_the_stores(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from loom_ia.adapters.postgres.pool import PoolLimits
+
+    monkeypatch.setenv(VARIABLE, DSN)
+    pool = {"min_size": 2, "max_size": 4, "lock_timeout": 3, "acquire_timeout": 5}
+    config = load_config(
+        demo(
+            storage={
+                "events": {"backend": "postgres", "dsn_env": VARIABLE, "pool": pool},
+                "artifacts": {"backend": "memory"},
+                "idempotency": {"backend": "postgres", "dsn_env": VARIABLE, "pool": pool},
+            }
+        )
+    )
+    wanted = PoolLimits(min_size=2, max_size=4, lock_timeout=3, acquire_timeout=5)
+    journal = create_event_store(config)
+    keys = create_idempotency_store(config)
+    assert journal._pg._limits == wanted  # type: ignore[attr-defined]
+    assert keys._pg._limits == wanted  # type: ignore[attr-defined]
+
+
+def test_the_pool_defaults_bound_every_wait() -> None:
+    pool = StorageConfig.model_validate(PG_STORAGE).events.pool
+    assert (pool.min_size, pool.max_size) == (1, 10)
+    assert pool.command_timeout > 0 and pool.lock_timeout > 0 and pool.acquire_timeout > 0
+
+
+@pytest.mark.parametrize(
+    ("pool", "message"),
+    [
+        ({"min_size": 6, "max_size": 2}, "min_size"),
+        ({"min_size": 0}, "greater than or equal to 1"),
+        ({"lock_timeout": 0}, "greater than 0"),
+        ({"vitesse": 3}, "Extra inputs"),
+    ],
+)
+def test_a_pool_that_makes_no_sense_is_refused_at_load(pool: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        StorageConfig.model_validate({**PG_STORAGE, "events": {**PG_EVENTS, "pool": pool}})
+
+
+def test_a_pool_means_nothing_without_postgres() -> None:
+    with pytest.raises(ValueError, match="'pool' n'a pas de sens"):
+        StorageConfig.model_validate({"events": {"backend": "memory", "pool": {"max_size": 3}}})
+    with pytest.raises(ValueError, match="'pool' n'a pas de sens"):
+        StorageConfig.model_validate({"idempotency": {"backend": "memory", "pool": {}}})
+
+
 @avec_extra
 def test_without_the_extra_the_refusal_names_it(
     demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
@@ -341,6 +392,8 @@ class _FakeConnection:
         self._locked = False
 
     async def execute(self, sql: str, *args: object) -> str:
+        if "lock_timeout" in sql:
+            return "SET"
         if "pg_advisory_lock" in sql:
             await self._server.lock.acquire()
             self._locked = True
@@ -448,6 +501,9 @@ async def test_opening_an_old_table_adds_the_holder_column_not_the_whole_ddl(
     await pool.pool()
     applied = [sql for sql, _ in connection.sent if "pg_advisory_lock" not in sql]
     applied = [sql for sql in applied if "to_regclass($1)" not in sql]
+    # Le délai de verrou est posé avant le verrou du schéma : la file ne bloque pas sans fin.
+    assert connection.sent[0][0].startswith("SET lock_timeout")
+    applied = [sql for sql in applied if not sql.startswith("SET lock_timeout")]
     assert applied == [IDEMPOTENCY_UPGRADE if present else ddl(role=None, events=False)]
 
 

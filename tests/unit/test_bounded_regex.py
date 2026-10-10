@@ -229,6 +229,20 @@ def test_jsonschema_has_no_other_function_that_searches_a_pattern() -> None:
         {"type": "object", "patternProperties": {r"^\p{Lu}": {}}},
         # Un nom de propriété n'est pas un dialecte.
         {"$schema": D2020, "type": "object", "properties": {"$schema": {"type": "string"}}},
+        # Des références qui se résolvent : pointeur local, racine, ancre, ``$id`` d'un
+        # sous-schéma, méta-schéma. Un nom de propriété « $ref » n'est pas une référence.
+        {"$defs": {"n": {"type": "integer"}}, "properties": {"a": {"$ref": "#/$defs/n"}}},
+        {"type": "object", "properties": {"suite": {"$ref": "#"}}},
+        {"$defs": {"n": {"$anchor": "nombre", "type": "integer"}}, "$ref": "#nombre"},
+        {
+            "$id": "https://loom.test/racine",
+            "properties": {
+                "a": {"$id": "https://loom.test/autre", "$defs": {"x": {}}, "$ref": "#/$defs/x"},
+                "b": {"$ref": "https://loom.test/autre#/$defs/x"},
+            },
+        },
+        {"$ref": "https://json-schema.org/draft/2020-12/schema"},
+        {"type": "object", "properties": {"$ref": {"type": "string"}}},
     ],
 )
 def test_check_schema_accepts_what_the_engine_runs(schema: dict[str, Any]) -> None:
@@ -247,6 +261,21 @@ def test_check_schema_accepts_what_the_engine_runs(schema: dict[str, Any]) -> No
             "ne se déclare qu'à la racine",
         ),
         ({"allOf": [{"$schema": D7}]}, "ne se déclare qu'à la racine"),
+        # Une référence qui ne se résout pas casserait à la validation, une fois le modèle payé
+        # (GAR-6) ; rien ne va chercher un fichier ni une adresse.
+        ({"$ref": "#/$defs/absent"}, "'#/$defs/absent'"),
+        ({"$ref": "autre.json"}, "'autre.json'"),
+        ({"$ref": "https://loom.test/schema.json"}, "'https://loom.test/schema.json'"),
+        ({"properties": {"a": {"items": {"$ref": "#/$defs/absent"}}}}, "'#/$defs/absent'"),
+        (
+            {"$defs": {"n": {}}, "properties": {"a": {"$ref": "#/$defs/n/$defs/m"}}},
+            "'#/$defs/n/$defs",
+        ),
+        ({"$ref": "#manquante"}, "'#manquante'"),
+        (
+            {"allOf": [{"$ref": "#/$defs/a"}, {"$ref": "#/$defs/b"}], "$defs": {"a": {}}},
+            "'#/$defs/b'",
+        ),
     ],
 )
 def test_check_schema_refuses_what_it_could_not_bound(schema: dict[str, Any], said: str) -> None:

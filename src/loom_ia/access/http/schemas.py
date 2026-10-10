@@ -3,7 +3,7 @@
 
 from typing import Annotated, Final, Self
 
-from pydantic import AfterValidator, Field, JsonValue
+from pydantic import AfterValidator, Field, JsonValue, model_validator
 
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.core.model import (
@@ -107,6 +107,12 @@ class Approval(Decision):
     # Ne vaut que pour un ``call_id`` désigné : corriger à l'aveugle les
     # arguments de plusieurs appels n'aurait pas de sens.
     arguments: Shallow | None = None
+
+    @model_validator(mode="after")
+    def _arguments_need_a_call(self) -> Self:
+        if self.arguments is not None and self.call_id is None:
+            raise ValueError("arguments corrige un appel désigné : indiquer call_id")
+        return self
 
 
 class Decided(DomainModel):

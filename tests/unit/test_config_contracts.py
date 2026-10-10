@@ -146,6 +146,16 @@ def test_schema_files_are_read_at_load(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="schema invalide"):
         load_config(tmp_path / "loom.yaml")
 
+    # Une référence qui ne se résout pas échoue au chargement, pas à la première réponse (GAR-6).
+    (tmp_path / "schemas" / "pendant.json").write_text(
+        json.dumps({"type": "object", "properties": {"a": {"$ref": "#/$defs/absent"}}}),
+        encoding="utf-8",
+    )
+    agent["output"] = {"schema_file": "schemas/pendant.json"}
+    (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"schema invalide.*#/\$defs/absent"):
+        load_config(tmp_path / "loom.yaml")
+
 
 def test_contracts_reach_the_tools_and_the_stream_mode() -> None:
     contract = OutputContract(must_match="D-")

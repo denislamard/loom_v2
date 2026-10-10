@@ -258,7 +258,9 @@ def read_journal(path: Path) -> list[Event]:
     except (OSError, UnicodeDecodeError) as exc:
         raise ReplayError(f"Journal {path} illisible : {exc}") from exc
     events: list[Event] = []
-    for number, line in enumerate(text.splitlines(), start=1):
+    # Coupé sur « \n » seulement : ``splitlines`` verrait aussi une fin de ligne dans U+2028,
+    # U+2029 ou U+0085, que ``model_dump_json`` écrit tels quels dans un texte.
+    for number, line in enumerate(text.split("\n"), start=1):
         if not line.strip():
             continue
         try:
