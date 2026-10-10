@@ -2,6 +2,7 @@
 """Compaction d'une session (J4.1b) : segment, résumé, fidélité, filet de sécurité."""
 
 import asyncio
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from loom_ia.core.events import (
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     Message,
+    RunStatus,
     SessionId,
     ToolOutput,
     ToolResultBlock,
@@ -271,6 +273,53 @@ async def test_a_failing_job_is_logged_not_raised() -> None:
     await queue.aclose()
 
 
+async def test_abandoning_the_queue_cancels_a_job_that_has_not_started() -> None:
+    ran: list[str] = []
+
+    async def handler(job: Job) -> None:
+        ran.append(job.session_id)
+
+    queue = AsyncioTaskQueue({"compaction": handler}, shutdown_timeout=60)
+    job_id = await queue.submit(
+        Job(kind="compaction", tenant_id=DEFAULT_TENANT, session_id=SESSION)
+    )
+
+    await queue.abandon()
+
+    # La tâche n'a pas eu un seul pas : elle ne commence jamais, et la file le dit.
+    assert ran == []
+    assert await queue.state(job_id) == "cancelled"
+    assert queue.open == 0
+    # Plus rien à attendre : la fermeture rend la main aussitôt.
+    async with asyncio.timeout(5):
+        await queue.aclose()
+
+
+async def test_abandoning_the_queue_stops_a_running_job_and_waits_for_it() -> None:
+    started, stopped = asyncio.Event(), asyncio.Event()
+
+    async def handler(job: Job) -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    queue = AsyncioTaskQueue({"compaction": handler}, shutdown_timeout=60)
+    job_id = await queue.submit(
+        Job(kind="compaction", tenant_id=DEFAULT_TENANT, session_id=SESSION)
+    )
+    await started.wait()
+
+    await queue.abandon()
+
+    assert stopped.is_set()
+    assert await queue.state(job_id) == "cancelled"
+    with pytest.raises(RuntimeError, match="File fermée"):
+        await queue.submit(Job(kind="compaction", tenant_id=DEFAULT_TENANT, session_id=SESSION))
+    await queue.aclose()
+
+
 # --- De bout en bout ----------------------------------------------------------
 
 
@@ -298,6 +347,30 @@ def test_compacting_replaces_the_old_turns(conversation: ConfigFactory) -> None:
     assert messages[0].text.startswith(SUMMARY_MARKER)
     assert FIDELE in messages[0].text
     assert messages[-1].text == REPONSE
+
+
+def test_a_queue_failure_after_the_run_does_not_fail_it(
+    conversation: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Le résumé ne part pas : le run est écrit, il rend son résultat, la panne est en ERROR."""
+    path = conversation(compaction={"over_tokens": 50, "keep_last": 1})
+
+    async def broker_down(*args: object, **kwargs: object) -> str:
+        raise ConnectionError("broker down")
+
+    async def go() -> tuple[list[RunStatus], list[Event]]:
+        async with Loom.from_config(path) as loom:
+            monkeypatch.setattr(loom._queue, "submit", broker_down)  # pyright: ignore[reportPrivateUsage]
+            with caplog.at_level(logging.ERROR, logger="loom_ia.access.api"):
+                runs = [await loom.run("demo", DEVIS, session_id=SESSION) for _ in range(2)]
+            return [run.status for run in runs], await loom.export_session(SESSION)
+
+    statuses, events = asyncio.run(go())
+    assert statuses == [RunStatus.COMPLETED, RunStatus.COMPLETED]
+    assert "session.compacted" not in [e.type for e in events]
+    [record] = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert "compact()" in record.getMessage()
+    assert record.exc_info is not None and isinstance(record.exc_info[1], ConnectionError)
 
 
 def test_the_compaction_run_stays_out_of_the_history(conversation: ConfigFactory) -> None:

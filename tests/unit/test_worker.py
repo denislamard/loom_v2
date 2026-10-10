@@ -5,6 +5,7 @@ Le courtier lui-même est éprouvé dans ``tests/integration/test_worker_rabbitm
 qui parle à un vrai RabbitMQ quand ``LOOM_TEST_RABBITMQ`` en désigne un.
 """
 
+import asyncio
 from importlib.util import find_spec
 from typing import Any
 
@@ -14,11 +15,13 @@ from conftest import ConfigFactory
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
 from loom_ia.adapters.queue import AsyncioTaskQueue
+from loom_ia.adapters.stores import JsonlEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.models import BROKERED_QUEUES, QUEUE_BACKENDS, QueueStorage
-from loom_ia.core.model import RunId, SessionId, TenantId
+from loom_ia.core.model import DEFAULT_TENANT, RunId, SessionId, TenantId
 from loom_ia.core.ports import Job, ServedQueue, TaskQueue
 from loom_ia.runtime import create_task_queue
+from loom_ia.testing import RunJournal
 
 URL = "amqp://loom:secret@127.0.0.1:5672/"
 VARIABLE = "LOOM_RABBITMQ_URL_ESSAI"
@@ -170,6 +173,69 @@ def test_the_worker_refuses_a_queue_that_is_not_served(
     captured = capsys.readouterr()
     assert "File     : asyncio" in captured.out
     assert "storage.queue.backend: rabbitmq" in captured.err
+
+
+def test_the_worker_refuses_a_queue_that_is_not_served_before_touching_the_journal(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un run en plan au journal n'est pas repris : le refus vient avant toute reprise."""
+    path = demo(storage={"events": {"backend": "jsonl", "path": "journaux"}})
+    journal = RunJournal(agent="demo")
+    journal.start("Combien font 12 fois 7, plus 3 ?")
+    directory = path.parent / "journaux"
+
+    async def append() -> None:
+        store = JsonlEventStore(directory)
+        await store.append(journal.take(), expected_seq=0)
+        await store.aclose()
+
+    async def read() -> list[str]:
+        store = JsonlEventStore(directory)
+        [record] = await store.sessions(DEFAULT_TENANT)
+        events = await store.read(DEFAULT_TENANT, record.session_id)
+        await store.aclose()
+        return [event.type for event in events]
+
+    async def recover(self: Loom, **kwargs: object) -> tuple[RunId, ...]:
+        raise AssertionError("recover() ne doit pas être appelé avant le refus")
+
+    asyncio.run(append())
+    before = asyncio.run(read())
+    monkeypatch.setattr(Loom, "recover", recover)
+
+    assert main(["--config", str(path), "worker"]) == 2
+
+    captured = capsys.readouterr()
+    assert "storage.queue.backend: rabbitmq" in captured.err
+    assert "Reprise" not in captured.out and "En écoute" not in captured.out
+    assert asyncio.run(read()) == before == ["run.started", "message.user"]
+
+
+@sans_extra
+def test_the_worker_recovers_then_listens_when_the_queue_is_served(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Avec une file servie, l'ordre ne change pas : reprise pour chaque client, puis écoute."""
+    monkeypatch.setenv(VARIABLE, URL)
+    calls: list[tuple[str, object]] = []
+
+    async def recover(
+        self: Loom, *, session_id: SessionId | None = None, tenant_id: TenantId | None = None
+    ) -> tuple[RunId, ...]:
+        calls.append(("recover", tenant_id))
+        return ()
+
+    async def work(self: Loom, *, jobs: int = 1) -> None:
+        calls.append(("work", jobs))
+
+    monkeypatch.setattr(Loom, "recover", recover)
+    monkeypatch.setattr(Loom, "work", work)
+
+    assert main(["--config", str(demo(storage=RABBITMQ)), "worker", "--jobs", "2"]) == 0
+    out = capsys.readouterr().out
+    assert calls == [("recover", DEFAULT_TENANT), ("work", 2)]
+    assert "Reprise  : 0 run(s) remis en file" in out
+    assert "Worker arrêté" in out
 
 
 def test_the_worker_refuses_less_than_one_job(

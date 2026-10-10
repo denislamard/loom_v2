@@ -17,6 +17,7 @@ qu'un stockage de plus et ne sait pas qu'il y en a plusieurs.
 from collections.abc import Callable, Sequence
 
 from loom_ia.config.models import StorageConfig
+from loom_ia.core.closing import Closing
 from loom_ia.core.events.envelope import Event, EventDraft
 from loom_ia.core.events.query import EventQuery
 from loom_ia.core.model import ArtifactLocation, RunId, SessionId, TenantId
@@ -73,13 +74,21 @@ class TenantRouter:
         return self._artifacts.get(tenant_id, self._shared_artifacts)
 
     async def aclose(self) -> None:
-        """Ferme les stockages créés pour des clients ; pas ceux de la racine."""
+        """Ferme les stockages créés pour des clients ; pas ceux de la racine.
+
+        Un stockage qui échoue à se fermer n'épargne pas les autres : l'échec
+        est levé une fois tout fermé.
+        """
+        closing = Closing()
         for store in self._events.values():
-            await store.aclose()
+            with closing:
+                await store.aclose()
         for artifacts in self._artifacts.values():
-            await artifacts.aclose()
+            with closing:
+                await artifacts.aclose()
         self._events.clear()
         self._artifacts.clear()
+        closing.raise_if_failed()
 
 
 class RoutedEventStore:

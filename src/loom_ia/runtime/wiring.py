@@ -95,6 +95,7 @@ from loom_ia.config.models import (
     StorageConfig,
 )
 from loom_ia.config.references import Registry, import_modules, resolve
+from loom_ia.core.closing import Closing
 from loom_ia.core.model import (
     ALLOWED_DECISIONS,
     DEFAULT_TENANT,
@@ -179,11 +180,19 @@ class Agent:
     owned: tuple[_Closable, ...] = ()
 
     async def aclose(self) -> None:
-        """Ferme les clients de modèle et ce que l'agent possède ; le journal reste à l'appelant."""
+        """Ferme les clients de modèle et ce que l'agent possède ; le journal reste à l'appelant.
+
+        Chaque fermeture est tentée, même si une précédente a levé ; l'échec
+        est levé une fois tout fermé (``Closing``).
+        """
+        closing = Closing()
         for client in self.clients:
-            await client.aclose()
+            with closing:
+                await client.aclose()
         for resource in self.owned:
-            await resource.aclose()
+            with closing:
+                await resource.aclose()
+        closing.raise_if_failed()
 
 
 def create_mcp_pool(config: LoomConfig, environ: Mapping[str, str] | None = None) -> McpPool | None:
@@ -1214,9 +1223,12 @@ class _SubAgents:
         return built.context
 
     async def aclose(self) -> None:
+        closing = Closing()
         for built in self._built.values():
-            await built.aclose()
+            with closing:
+                await built.aclose()
         self._built.clear()
+        closing.raise_if_failed()
 
 
 def _check_names(spec: AgentSpec, python_tools: list[str]) -> None:

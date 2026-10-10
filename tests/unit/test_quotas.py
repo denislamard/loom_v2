@@ -28,7 +28,16 @@ from loom_ia.core.events import Event
 from loom_ia.core.events.query import EventQuery
 from loom_ia.core.model import WINDOW, Message, RunId, Spent, TenantId, Usage, new_run_id
 from loom_ia.core.ports import EventStore
-from loom_ia.tenancy import PERIODS, Period, Quota, RateWindow, Tenants, TenantUsage
+from loom_ia.tenancy import (
+    PERIODS,
+    Exceeded,
+    Period,
+    Quota,
+    RateWindow,
+    Tenant,
+    Tenants,
+    TenantUsage,
+)
 from loom_ia.tenancy import usage as usage_module
 from loom_ia.testing import RunJournal
 
@@ -612,6 +621,76 @@ def test_validate_shows_the_budget_and_the_quota_of_a_tenant(
     assert "    budget : max_cost par jour" in out
     assert "max_tokens par mois" in out
     assert "    quota : 3 run(s) par minute" in out
+
+
+def test_the_cli_refuses_an_exhausted_budget_and_writes_nothing(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from loom_ia.access.cli import main
+
+    config = str(demo(storage=JOURNAL, tenants=clients(budgets=AFTER_ONE)))
+    run = ["--config", config, "run", "demo", QUESTION, "--tenant", DUPONT]
+    assert main([*run, "--run-id", "premier"]) == 0
+    capsys.readouterr()
+
+    for flags in ([], ["--stream"], ["--json"]):
+        assert main([*run, "--run-id", "second", *flags]) == 2
+        captured = capsys.readouterr()
+        assert "budget du client atteint pour la journée" in captured.err
+        assert "réessayer dans" in captured.err
+        assert captured.out == ""
+
+    # Un run refusé n'a pas existé.
+    assert main(["--config", config, "sessions", "list", "--tenant", DUPONT]) == 0
+    listed = capsys.readouterr().out
+    assert "premier" in listed and "second" not in listed
+
+
+@pytest.mark.parametrize(
+    ("seconds", "said"),
+    [
+        (0.2, "1 s"),
+        (59.2, "60 s"),
+        (121, "3 min"),
+        (7_140, "119 min"),
+        (20_100, "5 h 35 min"),
+        (20_101, "5 h 36 min"),
+    ],
+)
+def test_the_cli_says_when_the_budget_comes_back(
+    demo: ConfigFactory,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    seconds: float,
+    said: str,
+) -> None:
+    from loom_ia.access.cli import main
+
+    reached = Exceeded(period=Period.of("day"), limit="max_tokens", value=400.0, spent=500.0)
+
+    async def refuse(self: TenantUsage, tenant: Tenant) -> None:
+        raise BudgetExhausted(DUPONT, reached, seconds)
+
+    monkeypatch.setattr(TenantUsage, "check", refuse)
+    config = demo(tenants=clients(budgets=AFTER_ONE))
+    assert main(["--config", str(config), "run", "demo", QUESTION, "--tenant", DUPONT]) == 2
+    assert capsys.readouterr().err.strip().endswith(f"— réessayer dans {said}")
+
+
+def test_the_cli_refuses_a_quota_with_the_wait_it_carries(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un process de la CLI ne lance qu'un run : le contrôle est forcé pour l'atteindre."""
+    from loom_ia.access.cli import main
+
+    def refuse(self: Quota, tenant_id: TenantId, limit: int | None) -> None:
+        raise QuotaExceeded(f"Client {tenant_id!r}", 1, 42.0)
+
+    monkeypatch.setattr(Quota, "check", refuse)
+    config = demo(tenants=clients(quotas={"runs_per_minute": 1}))
+    assert main(["--config", str(config), "run", "demo", QUESTION, "--tenant", DUPONT]) == 2
+    err = capsys.readouterr().err
+    assert err == f"Client {DUPONT!r} : 1 par minute dépassé, réessayer dans 42.0 s\n"
 
 
 def test_sessions_list_can_name_the_tenant_it_asks_for(

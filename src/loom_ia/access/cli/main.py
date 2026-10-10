@@ -21,12 +21,16 @@
 
 ``--config`` désigne le fichier de configuration (``./loom.yaml`` par
 défaut). Les codes de sortie : 0 tout va bien, 1 le run a échoué, 2 la
-configuration ou la demande est en cause.
+configuration ou la demande est en cause. Un refus d'exploitation sort lui aussi
+en 2, sur une ligne de ``stderr`` et sans trace : budget ou quota atteint, run
+mené par un autre worker, fichier ou réseau inaccessible, entrée standard fermée
+quand une réponse était attendue.
 """
 
 import argparse
 import asyncio
 import json
+import math
 import os
 import signal
 import sys
@@ -86,7 +90,7 @@ from loom_ia.core.model import (
     new_run_id,
 )
 from loom_ia.core.ports import Policy, SealError, SessionRecord, SourceContext, Tool
-from loom_ia.engine import ToolExecutor
+from loom_ia.engine import ClaimConflict, ToolExecutor
 from loom_ia.replay import (
     Comparison,
     Double,
@@ -111,7 +115,7 @@ from loom_ia.runtime import (
 from loom_ia.runtime.sources import GROUP as SOURCES_GROUP
 from loom_ia.runtime.sources import PackagedSource, installed
 from loom_ia.telemetry import Trace, render_trace
-from loom_ia.tenancy import Tenant, UnknownTenant
+from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, Tenant, UnknownTenant
 from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import render as render_report
 
@@ -143,6 +147,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         return REFUSED
     except ValueError as error:
         print(f"Demande refusée : {error}", file=sys.stderr)
+        return REFUSED
+    except BudgetExhausted as error:
+        # Rien n'a été lancé ni écrit : la même demande passera quand la période repart.
+        print(f"{_message(error)} — réessayer dans {_delay(error.retry_after)}", file=sys.stderr)
+        return REFUSED
+    except QuotaExceeded as error:
+        # Son message dit déjà dans combien de temps réessayer.
+        print(_message(error), file=sys.stderr)
+        return REFUSED
+    except ClaimConflict as error:
+        print(
+            f"{_message(error)} — ce run est mené ailleurs : réessayer après l'échéance",
+            file=sys.stderr,
+        )
+        return REFUSED
+    except EOFError:
+        print(
+            "Entrée standard fermée : une réponse était attendue "
+            "(sans terminal, --yes la donne d'avance).",
+            file=sys.stderr,
+        )
+        return REFUSED
+    except OSError as error:
+        # Après AgentNotAllowed, qui est une PermissionError.
+        print(f"Erreur d'entrée-sortie : {error}", file=sys.stderr)
         return REFUSED
     except KeyboardInterrupt:
         print("Interrompu.", file=sys.stderr)
@@ -1134,8 +1163,10 @@ def cmd_decide(args: argparse.Namespace) -> int:
 
     La décision met un travail ``resume`` en file **dans cette instance** :
     sans ``--no-wait``, c'est donc ce terminal qui mène le run à son terme et
-    en affiche la réponse. Avec, la reprise revient à qui écoute ailleurs —
-    ``loom resume``, ou un serveur qui tourne.
+    en affiche la réponse. Avec, la décision est écrite au journal et la
+    commande sort sans rien reprendre ni attendre : la reprise revient à qui
+    écoute ailleurs — un worker (la file d'un courtier a reçu le travail),
+    ``loom resume``, ou la reprise au démarrage d'un worker.
     """
     config = load_config(args.config, profile=args.profile)
     apply_logging(config)
@@ -1151,7 +1182,8 @@ def cmd_decide(args: argparse.Namespace) -> int:
         return REFUSED
 
     async def go() -> tuple[tuple[str, ...], RunResult | None]:
-        async with Loom(config) as loom:
+        loom = Loom(config)
+        try:
             if args.verdict == "approve":
                 calls = await loom.approve(
                     run_id,
@@ -1176,6 +1208,10 @@ def cmd_decide(args: argparse.Namespace) -> int:
             # Le travail de reprise est en file ici : on l'attend.
             await loom.drain()
             return calls, await loom.result(run_id, session_id=session, tenant_id=tenant)
+        finally:
+            # Avec ``--no-wait``, la reprise mise en file ici ne doit ni se faire ni
+            # s'attendre : la décision est au journal, le run reste à reprendre.
+            await loom.aclose(wait=not args.no_wait)
 
     calls, result = asyncio.run(go())
     if not calls:
@@ -1536,6 +1572,14 @@ async def _worker(args: argparse.Namespace) -> int:
     queue = config.storage.queue
     print(f"Config   : {args.config}")
     print(f"File     : {_queue_line(queue)}")
+    if not queue.brokered:
+        # Refusé avant d'ouvrir quoi que ce soit : ni journal lu, ni run repris.
+        # Même texte que ``Loom.work``, qui garde le refus pour la librairie.
+        raise ConfigError(
+            "Un worker demande une file servie par un courtier "
+            f"('storage.queue.backend: rabbitmq'), pas {queue.backend!r} "
+            "— qui exécute déjà ses tâches dans le process qui les met en file"
+        )
     print(f"Agents   : {_listed(agent.name for agent in config.agents)}")
     print(f"Clients  : {_listed(config.tenant_ids)}")
     async with Loom(config) as loom:
@@ -1754,3 +1798,15 @@ def _listed(names: Iterable[str]) -> str:
 
 def _message(error: Exception) -> str:
     return str(error.args[0]) if error.args else str(error)
+
+
+def _delay(seconds: float) -> str:
+    """Un délai à attendre, arrondi par excès : ``45 s``, ``12 min``, ``7 h 12 min``."""
+    whole = max(1, math.ceil(seconds))
+    if whole < 120:
+        return f"{whole} s"
+    minutes = math.ceil(whole / 60)
+    if minutes < 120:
+        return f"{minutes} min"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes:02d} min"

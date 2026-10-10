@@ -36,14 +36,14 @@ rejoue.
 import asyncio
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main as cli_main
@@ -61,6 +61,7 @@ from loom_ia.core.model import (
     RunId,
     RunStatus,
     SessionId,
+    TenantId,
 )
 from loom_ia.replay import (
     IDENTICAL,
@@ -906,6 +907,82 @@ async def test_an_instance_lends_what_it_registered(labo: Path) -> None:
     assert vus == ["doublure martin"]
 
 
+class Coffre:
+    """Fournisseur de secrets de l'appelant : la clé n'est pas dans l'environnement."""
+
+    def secrets(self, tenant_id: TenantId) -> Mapping[str, str]:
+        return {"CLE_COFFRE": "sk-test-pas-une-vraie"}
+
+
+def avec_cle_du_coffre(labo: Path) -> None:
+    """L'agent ``demo`` parle à un modèle qui exige sa clé, sur un port fermé : pas de réseau."""
+    config = yaml.safe_load(labo.read_text(encoding="utf-8"))
+    config["models"].append(
+        {
+            "id": "CLE",
+            "sdk": "anthropic",
+            "model": "claude-x",
+            "base_url": "http://127.0.0.1:9",
+            "api_key_env": "CLE_COFFRE",
+            "retry": {"max_attempts": 1},
+        }
+    )
+    labo.write_text(yaml.safe_dump(config), encoding="utf-8")
+    agent_file = labo.parent / "agents" / "demo.yaml"
+    agent = yaml.safe_load(agent_file.read_text(encoding="utf-8"))
+    agent["main"]["model"] = "CLE"
+    agent_file.write_text(yaml.safe_dump(agent), encoding="utf-8")
+
+
+def modeles_qui_repondent(labo: Path, texte: str) -> list[dict[str, Any]]:
+    """Les modèles de la config, ``MAIN`` répondant ``texte`` d'emblée."""
+    models: list[dict[str, Any]] = yaml.safe_load(labo.read_text(encoding="utf-8"))["models"]
+    for model in models:
+        if model["id"] == "MAIN":
+            model["params"] = {"script": [{"text": texte}]}
+    return models
+
+
+async def test_an_instance_evaluates_with_its_own_secrets(labo: Path) -> None:
+    """Le fournisseur de secrets de l'instance sert à l'éval, variantes et juge, comme à ``run``."""
+    pytest.importorskip("anthropic")
+    avec_cle_du_coffre(labo)
+    lue = EvalSuite.model_validate(
+        {
+            "agent": "demo",
+            "judge": {"model": "CLE", "criteria": [{"name": "fidele", "rule": "r"}]},
+            "cases": [{"name": "calcul", "input": CALCUL}],
+        }
+    )
+    async with Loom(load_config(labo), environ={}) as sans_secrets:
+        with pytest.raises(EvalError, match="Juge d'éval : le modèle CLE ne peut pas être appelé"):
+            await sans_secrets.evaluate(lue)
+    async with Loom(load_config(labo), environ={}, secrets=Coffre()) as loom:
+        report = await loom.evaluate(lue)
+    [run] = report.runs
+    # La clé a été lue : le run est allé jusqu'à l'appel du modèle, qui n'a pas répondu.
+    assert run.error is None and (run.failure or "").startswith("model.transient")
+
+
+async def test_an_instance_evaluates_in_its_own_profile(labo: Path) -> None:
+    """La config qu'une suite désigne se charge sous le profil de l'instance, comme la sienne."""
+    models = modeles_qui_repondent(labo, "Réponse de dev.")
+    autre = retouche(labo, labo.parent / "autre.yaml", profiles={"dev": {"models": models}})
+    lue = load_suite(
+        suite(
+            labo,
+            config=autre.name,
+            cases=[{"name": "calcul", "input": CALCUL, "expect": {"contains": ["de dev"]}}],
+        )
+    )
+    async with Loom.from_config(labo, profile="dev") as dev:
+        report = await dev.evaluate(lue)
+    async with Loom.from_config(labo) as sans_profil:
+        ailleurs = await sans_profil.evaluate(lue)
+    assert report.passed
+    assert not ailleurs.passed
+
+
 # --- Rejouer des journaux (J6.3b) ---------------------------------------------------------------
 
 REJEU: dict[str, Any] = {"name": "rejeu", "replay": "journaux/*.jsonl"}
@@ -1219,6 +1296,51 @@ async def test_an_instance_serves_provided_models_and_leaves_them_open(labo: Pat
     assert result.text == "2 + 2 = 4." and calcul.remaining == 0
     # Il reste à l'appelant : l'instance ne l'a pas fermé.
     assert not fourni.closed
+
+
+async def test_an_instance_evaluates_with_its_provided_models(labo: Path) -> None:
+    """Les clients fournis servent à l'éval — l'agent et le juge — et restent à l'appelant."""
+    calcul = Ferme(
+        ScriptedModel(
+            tool_call_message(("c1", "calculer", {"expr": "2+2"})), Message.assistant("Quatre.")
+        )
+    )
+    notes: dict[str, JsonValue] = {
+        "criteria": [{"name": "fidele", "score": 1.0, "reason": "Vu par le client fourni."}]
+    }
+    juge = Ferme(ScriptedModel(tool_call_message(("v1", "verdict", notes))))
+    lue = EvalSuite.model_validate(
+        {
+            "agent": "demo",
+            "judge": {"model": "JUGE", "criteria": [{"name": "fidele", "rule": "r"}]},
+            "cases": [{"name": "calcul", "input": CALCUL, "expect": {"contains": ["Quatre"]}}],
+        }
+    )
+    async with Loom(load_config(labo), models={"MAIN": calcul, "JUGE": juge}) as loom:
+        report = await loom.evaluate(lue)
+    [run] = report.runs
+    assert run.passed, [c for c in run.checks if not c.passed]
+    assert [c.detail for c in run.checks if c.label.startswith("juge")] == [
+        "note 1.00 — Vu par le client fourni."
+    ]
+    assert not calcul.closed and not juge.closed
+
+
+async def test_provided_models_do_not_serve_a_config_the_suite_designates(labo: Path) -> None:
+    """Ces clients portent des identifiants de la config de l'instance, pas d'une autre."""
+    models = modeles_qui_repondent(labo, "Réponse de l'autre config.")
+    autre = retouche(labo, labo.parent / "autre.yaml", models=models)
+    lue = load_suite(
+        suite(
+            labo,
+            config=autre.name,
+            cases=[{"name": "calcul", "input": CALCUL, "expect": {"contains": ["autre config"]}}],
+        )
+    )
+    fourni = Ferme(ScriptedModel(Message.assistant("Quatre.")))
+    async with Loom(load_config(labo), models={"MAIN": fourni}) as loom:
+        report = await loom.evaluate(lue)
+    assert report.passed and fourni.inner.remaining == 1
 
 
 # --- loom eval --------------------------------------------------------------------------------

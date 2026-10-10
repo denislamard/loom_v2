@@ -15,6 +15,7 @@ import pytest
 from conftest import ANSWER, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import AgentNotAllowed, Loom, UnknownTenant
+from loom_ia.adapters.stores import JsonlEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.model import DEFAULT_TENANT, SessionId, TenantId
 from loom_ia.runtime import build_agent, load_registry
@@ -350,6 +351,33 @@ def test_the_pool_keeps_one_server_per_key() -> None:
     assert pool.server(spec, f"crm#{DUPONT}", _unused) is dupont
 
 
+async def test_closing_the_pool_reaches_every_server_even_when_one_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("mcp", reason="extra 'mcp' absent")
+    from loom_ia.adapters.mcp import McpPool
+    from loom_ia.adapters.mcp.server import McpServer
+    from loom_ia.core.model import McpServerSpec
+
+    closed: list[str] = []
+
+    async def aclose(self: McpServer) -> None:
+        closed.append(self.name)
+        if len(closed) == 1:
+            raise RuntimeError("la première connexion ne ferme pas")
+
+    monkeypatch.setattr(McpServer, "aclose", aclose)
+    spec = McpServerSpec(name="crm", transport="stdio", command="true", scope="tenant")
+    pool = McpPool(lambda _: _unused)
+    pool.server(spec, f"crm#{DUPONT}", _unused)
+    pool.server(spec, f"crm#{MARTIN}", _unused)
+
+    with pytest.raises(RuntimeError, match="la première connexion"):
+        await pool.aclose()
+
+    assert closed == ["crm", "crm"]
+
+
 def _unused(*args: Any, **kwargs: Any) -> Any:
     raise AssertionError("aucune connexion n'est ouverte par ces essais")
 
@@ -547,3 +575,31 @@ def test_run_without_tenant_is_refused_when_the_list_is_closed(
 
     assert main(["--config", str(demo(tenants=two())), "run", "demo", QUESTION]) == 2
     assert "Client 'default' non déclaré" in capsys.readouterr().err
+
+
+async def test_closing_the_router_reaches_every_tenant_store_even_when_one_fails(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un journal de client qui échoue à se fermer n'épargne ni les autres ni celui de la racine."""
+    path = demo(
+        storage={"events": {"backend": "jsonl", "path": "commun"}},
+        tenants=[
+            {"id": DUPONT, "storage": {"events": {"backend": "jsonl", "path": "chez-dupont"}}},
+            {"id": MARTIN, "storage": {"events": {"backend": "jsonl", "path": "chez-martin"}}},
+        ],
+    )
+    closed: list[str] = []
+
+    async def aclose(self: JsonlEventStore) -> None:
+        # Le dossier du journal dit de quel stockage il s'agit.
+        closed.append(self.path(DUPONT, SessionId("s")).parent.parent.name)
+        if len(closed) == 1:
+            raise OSError("le journal ne se ferme pas")
+
+    monkeypatch.setattr(JsonlEventStore, "aclose", aclose)
+    loom = Loom.from_config(path)
+
+    with pytest.raises(OSError, match="ne se ferme pas"):
+        await loom.aclose()
+
+    assert sorted(closed) == ["chez-dupont", "chez-martin", "commun"]

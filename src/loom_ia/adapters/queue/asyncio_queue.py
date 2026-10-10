@@ -118,6 +118,27 @@ class AsyncioTaskQueue:
                 if entry.open and entry.task is not None:
                     entry.task.cancel()
 
+    async def abandon(self) -> None:
+        """Annule les tâches en cours au lieu de les attendre, et attend qu'elles s'arrêtent.
+
+        Une tâche qui n'a pas commencé ne commence pas : ce qu'elle devait faire
+        se retrouve au journal, comme après un arrêt brutal. Une tâche en route
+        s'arrête là où elle en est, sans rien écrire de plus ; le temps laissé
+        aux tâches pour s'arrêter est borné par ``shutdown_timeout``.
+        """
+        self._closed = True
+        tasks = [e.task for e in self._entries.values() if e.open and e.task is not None]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            _, late = await asyncio.wait(tasks, timeout=self._shutdown_timeout)
+            if late:
+                logger.warning("File de tâches : %s tâche(s) ne s'arrêtent pas", len(late))
+        for entry in self._entries.values():
+            # Annulée avant son premier pas, la tâche n'a rien pu dire de son état.
+            if entry.open and entry.task is not None and entry.task.done():
+                entry.state = "cancelled"
+
     @property
     def open(self) -> int:
         """Tâches en attente ou en cours."""

@@ -1,17 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
 """Accès Python : ``Loom.run``, ``stream``, ``follow`` et ``resume``."""
 
+import asyncio
+import logging
 from contextlib import aclosing
+from pathlib import Path
 from typing import Any
 
 import pytest
 from conftest import ANSWER, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom, UnknownRun
+from loom_ia.adapters.models.fake import FakeModel
+from loom_ia.adapters.stores import InMemoryEventStore
+from loom_ia.adapters.usage import InMemoryUsageCounter
 from loom_ia.agents import UnknownAgent
+from loom_ia.config import load_config
 from loom_ia.core.events import Event, EventQuery, ToolCalled
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    Message,
     ModelChunk,
     RunId,
     RunStatus,
@@ -21,6 +29,7 @@ from loom_ia.core.model import (
     ToolOutput,
     new_run_id,
 )
+from loom_ia.core.ports import MissingKey
 from loom_ia.testing import RunJournal, tool_call_message
 from loom_ia.tools import tool
 
@@ -288,6 +297,80 @@ async def test_runs_of_another_tenant_are_not_listed(demo: ConfigFactory) -> Non
     assert len(mine.runs) == 1 and theirs.runs == ()
 
 
+async def _spoil(loom: Loom, session: SessionId, *, jsonl: Path | None) -> None:
+    """Écrit une session que la lecture refuse, dans le journal de ``loom``.
+
+    En mémoire, des événements que la projection rejette (le journal ne commence
+    pas par ``run.started``) ; en JSONL (``jsonl`` : son dossier), une ligne du
+    milieu qui n'est pas du JSON, la dernière restant lisible pour que la session
+    se liste.
+    """
+    journal = RunJournal(agent="demo", session_id=session)
+    journal.start(QUESTION).model_turn(Message.assistant(ANSWER)).complete()
+    drafts = journal.take()
+    if jsonl is None:
+        await loom.store.append(drafts[1:], expected_seq=0)
+        return
+    await loom.store.append(drafts, expected_seq=0)
+    file = jsonl / DEFAULT_TENANT / f"{session}.jsonl"
+    lines = file.read_text(encoding="utf-8").splitlines()
+    lines[1] = "{pas du json"
+    file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("backend", ["memory", "jsonl"])
+async def test_runs_skips_a_session_whose_journal_is_unreadable(
+    demo: ConfigFactory, tmp_path: Path, caplog: pytest.LogCaptureFixture, backend: str
+) -> None:
+    """Un journal illisible ne prive pas des autres : sauté, avec un avertissement qui le nomme."""
+    jsonl = tmp_path / "data" if backend == "jsonl" else None
+    path = demo(storage={"events": {"backend": "jsonl", "path": "data"}}) if jsonl else demo()
+    async with Loom.from_config(path) as loom:
+        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
+        await _spoil(loom, SessionId("c-2"), jsonl=jsonl)
+        last = await loom.run("demo", QUESTION, session_id=SessionId("c-3"))
+        with caplog.at_level(logging.WARNING, logger="loom_ia.access.api"):
+            page = await loom.runs()
+
+    assert [run.run_id for run in page.runs] == [last.run_id, first.run_id]
+    # Le journal illisible a été ouvert : il compte, et la page ne dit rien de plus.
+    assert page.scanned == 3 and page.truncated is False
+    [warning] = [r.getMessage() for r in caplog.records if "illisible" in r.getMessage()]
+    assert "c-2" in warning and DEFAULT_TENANT in warning
+
+
+class KeyLost(InMemoryEventStore):
+    """Journal dont une session est scellée par une clé qu'on a effacée."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lost: SessionId | None = None
+
+    async def read(
+        self,
+        tenant_id: TenantId,
+        session_id: SessionId,
+        *,
+        after_seq: int = 0,
+        run_id: RunId | None = None,
+    ) -> list[Event]:
+        if session_id == self.lost:
+            raise MissingKey("Aucune clé pour ce client")
+        return await super().read(tenant_id, session_id, after_seq=after_seq, run_id=run_id)
+
+
+async def test_runs_skips_a_session_whose_key_was_erased(demo: ConfigFactory) -> None:
+    """Le crypto-shredding est un état voulu : la session effacée ne fait pas échouer la liste."""
+    store = KeyLost()
+    async with Loom(load_config(demo()), store=store) as loom:
+        await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
+        kept = await loom.run("demo", QUESTION, session_id=SessionId("c-2"))
+        store.lost = SessionId("c-1")
+        page = await loom.runs()
+
+    assert [run.run_id for run in page.runs] == [kept.run_id]
+
+
 async def test_query_searches_the_journal_and_paginates(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo()) as loom:
         await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
@@ -303,3 +386,73 @@ async def test_query_searches_the_journal_and_paginates(demo: ConfigFactory) -> 
     assert first[0].type == "run.started" and after[0].event_id > first[0].event_id
     assert {event.type for event in named} == {"tool.called", "tool.completed"}
     assert elsewhere == []
+
+
+# --- Fermeture : tout est tenté, même si une étape échoue ----------------------
+
+
+def _watching(
+    monkeypatch: pytest.MonkeyPatch, closed: list[str], cls: Any, label: str, error: Any = None
+) -> None:
+    """Note la fermeture de ``cls`` dans ``closed`` ; lève ``error``, si on en donne un."""
+    original = cls.aclose
+
+    async def aclose(self: Any) -> None:
+        closed.append(label)
+        if error is not None:
+            raise error
+        await original(self)
+
+    monkeypatch.setattr(cls, "aclose", aclose)
+
+
+async def test_aclose_goes_on_after_a_failing_step(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un client de modèle qui plante à la fermeture ne laisse rien d'autre ouvert."""
+    closed: list[str] = []
+    _watching(monkeypatch, closed, FakeModel, "modèle", RuntimeError("le modèle ne ferme pas"))
+    _watching(monkeypatch, closed, InMemoryEventStore, "journal")
+    _watching(monkeypatch, closed, InMemoryUsageCounter, "compteur")
+    loom = Loom.from_config(demo())
+    await loom.run("demo", QUESTION)
+
+    with pytest.raises(RuntimeError, match="le modèle ne ferme pas"):
+        await loom.aclose()
+
+    assert closed == ["modèle", "journal", "compteur"]
+
+
+async def test_aclose_raises_the_first_failure_and_logs_the_others(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    closed: list[str] = []
+    _watching(monkeypatch, closed, FakeModel, "modèle", RuntimeError("premier"))
+    _watching(monkeypatch, closed, InMemoryEventStore, "journal", OSError("second"))
+    _watching(monkeypatch, closed, InMemoryUsageCounter, "compteur")
+    loom = Loom.from_config(demo())
+    await loom.run("demo", QUESTION)
+
+    with caplog.at_level(logging.WARNING), pytest.raises(RuntimeError, match="premier"):
+        await loom.aclose()
+
+    assert closed == ["modèle", "journal", "compteur"]
+    [logged] = [r for r in caplog.records if r.name == "loom_ia.core.closing"]
+    assert logged.exc_info is not None and str(logged.exc_info[1]) == "second"
+
+
+async def test_aclose_goes_on_after_a_cancellation(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Annulé en pleine fermeture, l'appelant reste annulé, et le reste est fermé."""
+    closed: list[str] = []
+    _watching(monkeypatch, closed, FakeModel, "modèle", asyncio.CancelledError())
+    _watching(monkeypatch, closed, InMemoryEventStore, "journal", RuntimeError("ordinaire"))
+    _watching(monkeypatch, closed, InMemoryUsageCounter, "compteur")
+    loom = Loom.from_config(demo())
+    await loom.run("demo", QUESTION)
+
+    with pytest.raises(asyncio.CancelledError):
+        await loom.aclose()
+
+    assert closed == ["modèle", "journal", "compteur"]

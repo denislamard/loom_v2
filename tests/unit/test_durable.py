@@ -8,6 +8,7 @@ arrive après la fin rend « déjà fini ».
 """
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -18,8 +19,8 @@ import pytest
 import yaml
 from conftest import demo_agent
 
-from loom_ia.access.api import Loom
-from loom_ia.adapters.stores import JsonlEventStore
+from loom_ia.access.api import Loom, StreamItem
+from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import load_config
 from loom_ia.core.events import (
     ApprovalGranted,
@@ -41,7 +42,8 @@ from loom_ia.core.model import (
     TenantId,
     new_run_id,
 )
-from loom_ia.core.projections import fold
+from loom_ia.core.ports import JournalCorrupted
+from loom_ia.core.projections import ProjectionError, fold
 from loom_ia.engine import ClaimConflict
 from loom_ia.testing import RunJournal
 from loom_ia.tools import tool
@@ -322,6 +324,50 @@ def test_recover_can_be_scoped_to_one_session(durable: ConfigFactory) -> None:
     assert reste is RunStatus.READY_FOR_MODEL
 
 
+@pytest.mark.parametrize("backend", ["memory", "jsonl"])
+async def test_recover_skips_a_session_whose_journal_is_unreadable(
+    durable: ConfigFactory, caplog: pytest.LogCaptureFixture, backend: str
+) -> None:
+    """Un journal illisible ne prive pas les autres sessions de leur reprise : sauté, et nommé."""
+    config = load_config(durable())
+    sessions = {name: SessionId(name) for name in ("avant", "casse", "apres")}
+    store = (
+        InMemoryEventStore()
+        if backend == "memory"
+        else JsonlEventStore(Path(config.storage.events.path or ""))
+    )
+    left: dict[str, RunId] = {}
+    for name, session in sessions.items():
+        journal = RunJournal(agent="demo", session_id=session)
+        journal.start(QUESTION).model_turn(Message.assistant(ANSWER))
+        drafts = journal.take()
+        if name == "casse" and backend == "memory":
+            # Des événements que la projection refuse : pas de ``run.started``.
+            drafts = drafts[1:]
+        await store.append(drafts, expected_seq=0)
+        left[name] = journal.run_id
+    if backend == "jsonl":
+        # Une ligne du milieu qui n'est pas du JSON ; la dernière reste lisible.
+        file = Path(config.storage.events.path or "") / DEFAULT_TENANT / "casse.jsonl"
+        lines = file.read_text(encoding="utf-8").splitlines()
+        lines[1] = "{pas du json"
+        file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    async with Loom(config, store=store) as loom:
+        with caplog.at_level(logging.WARNING, logger="loom_ia.access.api"):
+            repris = await loom.recover()
+        await loom.drain()
+        done = [await loom.state(left[n], session_id=sessions[n]) for n in ("avant", "apres")]
+        # Visée par son nom, la session illisible dit pourquoi : c'est la réponse à la question.
+        with pytest.raises((JournalCorrupted, ProjectionError)):
+            await loom.recover(session_id=sessions["casse"])
+
+    assert set(repris) == {left["avant"], left["apres"]}
+    assert [state.status for state in done] == [RunStatus.COMPLETED, RunStatus.COMPLETED]
+    [warning] = [r.getMessage() for r in caplog.records if "illisible" in r.getMessage()]
+    assert "casse" in warning and DEFAULT_TENANT in warning
+
+
 def test_a_run_left_between_its_final_transition_and_its_end_is_finished_cleanly(
     durable: ConfigFactory,
 ) -> None:
@@ -495,6 +541,153 @@ async def test_cancel_stops_the_pilot_and_the_one_waiting_behind_it(demo: Config
     assert [e.type for e in events].count("run.cancelled") == 1
     assert events[-1].type == "run.cancelled"
     assert porte.runs == 1
+
+
+async def test_cancel_gives_the_pilots_caller_the_cancelled_run(demo: ConfigFactory) -> None:
+    """Comme le pilote en attente : l'appelant de ``run`` reçoit le run, non ``CancelledError``."""
+    run_id = new_run_id()
+    async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
+        loom.register("calculer", _bloque(porte))
+        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id))
+        await porte.entered.get()
+        assert await loom.cancel(run_id, by="denis")
+        await asyncio.wait({first}, timeout=5)
+        # Ni annulé ni en échec : l'appelant n'a pas été arrêté, c'est son run.
+        assert first.done() and not first.cancelled() and first.exception() is None
+        result = first.result()
+        events = await loom.events(run_id)
+
+    assert result.run_id == run_id and result.status is RunStatus.CANCELLED
+    assert [e.type for e in events].count("run.cancelled") == 1
+    assert events[-1].type == "run.cancelled"
+    assert porte.runs == 1
+
+
+async def test_cancel_gives_the_resuming_caller_the_cancelled_run(demo: ConfigFactory) -> None:
+    async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
+        loom.register("calculer", _bloque(porte))
+        journal = RunJournal(agent="demo")
+        journal.start(QUESTION)
+        await loom.store.append(journal.take(), expected_seq=0)
+        resuming = asyncio.create_task(loom.resume(journal.run_id))
+        await porte.entered.get()
+        assert await loom.cancel(journal.run_id)
+        await asyncio.wait({resuming}, timeout=5)
+        assert resuming.done() and not resuming.cancelled() and resuming.exception() is None
+        result = resuming.result()
+
+    assert result.status is RunStatus.CANCELLED
+
+
+async def test_cancel_ends_the_stream_of_the_pilots_caller_on_run_cancelled(
+    demo: ConfigFactory,
+) -> None:
+    """Le flux se termine après ``run.cancelled``, sans lever ``CancelledError``."""
+    run_id = new_run_id()
+    seen: list[StreamItem] = []
+    async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
+        loom.register("calculer", _bloque(porte))
+
+        async def follow() -> None:
+            async for item in loom.stream("demo", QUESTION, run_id=run_id):
+                seen.append(item)
+
+        streaming = asyncio.create_task(follow())
+        await porte.entered.get()
+        assert await loom.cancel(run_id, by="denis")
+        await asyncio.wait({streaming}, timeout=5)
+        assert streaming.done() and not streaming.cancelled() and streaming.exception() is None
+        state = await loom.state(run_id)
+
+    events = [item for item in seen if isinstance(item, Event)]
+    assert events[-1].type == "run.cancelled" and state.status is RunStatus.CANCELLED
+    assert [e.type for e in events].count("run.cancelled") == 1
+
+
+async def test_cancelling_the_calling_task_still_raises_cancelled_error(
+    demo: ConfigFactory,
+) -> None:
+    """Une annulation venue d'asyncio se propage, et le run reste reprenable.
+
+    La tâche appelante annulée, un délai externe dépassé, le consommateur d'un
+    flux arrêté : ``CancelledError`` (ou ``TimeoutError``) comme toujours, et
+    rien n'est écrit au journal — seul ``cancel`` écrit ``run.cancelled``.
+    """
+    called, timed, streamed = new_run_id(), new_run_id(), new_run_id()
+    async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
+        loom.register("calculer", _bloque(porte))
+        calling = asyncio.create_task(loom.run("demo", QUESTION, run_id=called))
+        await porte.entered.get()
+        calling.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await calling
+
+        limit = asyncio.timeout(None)
+
+        async def bounded() -> None:
+            async with limit:
+                await loom.run("demo", QUESTION, run_id=timed)
+
+        waiting = asyncio.create_task(bounded())
+        await porte.entered.get()
+        # Le délai est dépassé, l'outil en plein effet.
+        limit.reschedule(asyncio.get_running_loop().time())
+        with pytest.raises(TimeoutError):
+            await waiting
+
+        async def follow() -> None:
+            async for _ in loom.stream("demo", QUESTION, run_id=streamed):
+                pass
+
+        streaming = asyncio.create_task(follow())
+        await porte.entered.get()
+        streaming.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await streaming
+
+        for run_id in (called, timed, streamed):
+            state = await loom.state(run_id)
+            types = [e.type for e in await loom.events(run_id)]
+            assert not state.finished and "run.cancelled" not in types
+
+
+async def test_an_interrupted_pilot_keeps_the_interruption_when_cancel_could_not_close_the_run(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Si l'arrêt n'a pas pu s'écrire, rien n'est clos : l'appelant l'apprend comme avant.
+
+    Le run reste reprenable ; le pilote ne repart pas de lui-même, car on lui a
+    demandé de s'arrêter.
+    """
+    run_id = new_run_id()
+    async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
+        loom.register("calculer", _bloque(porte))
+        write = loom.store.append
+
+        async def refusing(
+            drafts: Sequence[EventDraft], *, expected_seq: int | None
+        ) -> list[Event]:
+            if any(isinstance(d.payload, RunCancelled) for d in drafts):
+                raise OSError("disque plein")
+            return await write(drafts, expected_seq=expected_seq)
+
+        monkeypatch.setattr(loom.store, "append", refusing)
+        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id))
+        await porte.entered.get()
+        with pytest.raises(OSError, match="disque plein"):
+            await loom.cancel(run_id)
+        await asyncio.wait({first}, timeout=5)
+        assert first.cancelled()
+        state = await loom.state(run_id)
+        types = [e.type for e in await loom.events(run_id)]
+        # Il reste à reprendre : personne ne le pilote plus, et rien ne l'a clos.
+        monkeypatch.setattr(loom.store, "append", write)
+        porte.open.set()
+        resumed = await loom.resume(run_id)
+
+    assert not state.finished and "run.cancelled" not in types
+    assert porte.runs == 2
+    assert resumed.status is RunStatus.COMPLETED
 
 
 async def test_cancel_keeps_the_run_until_it_is_closed(

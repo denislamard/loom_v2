@@ -65,7 +65,7 @@ from functools import partial
 from pathlib import Path
 from typing import Final, Self
 
-from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt
+from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
 
 from loom_ia.adapters.models import create_model_client
 from loom_ia.adapters.queue import Handler
@@ -77,6 +77,7 @@ from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.models import TriggerSpec
 from loom_ia.config.references import Registry
+from loom_ia.core.closing import Closing
 from loom_ia.core.events import (
     ApprovalGranted,
     ApprovalRejected,
@@ -122,14 +123,16 @@ from loom_ia.core.ports import (
     EventStore,
     Job,
     JobKind,
+    JournalCorrupted,
     ModelClient,
+    SealError,
     SecretProvider,
     ServedQueue,
     SessionRecord,
     TaskQueue,
     UsageCounter,
 )
-from loom_ia.core.projections import RunTree, fold
+from loom_ia.core.projections import ProjectionError, RunTree, fold
 from loom_ia.core.template import Template
 from loom_ia.engine import (
     CircuitBreakers,
@@ -216,6 +219,10 @@ CLAIM_MARGIN: Final = 0.5
 # trouver. La seconde est celle qui tient le coût d'une lecture sans projection.
 RUNS_LIMIT: Final = 50
 SESSIONS_READ: Final = 50
+# Ce que lève la lecture d'un journal de session illisible : une ligne qu'on ne
+# décode pas, un sceau qui ne s'ouvre pas (clé effacée), des événements que la
+# projection refuse. Un balayage de sessions (``runs``, ``recover``) saute celle-là.
+_UNREADABLE: Final = (JournalCorrupted, SealError, ValidationError, ProjectionError)
 # Un identifiant de livraison, et la session qu'un déclencheur en tire : ce que
 # le journal JSONL accepte comme nom de fichier (adapters/stores/jsonl.py).
 _SAFE_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -707,6 +714,18 @@ def _where(
     return None, None
 
 
+def _unreadable(what: str, tenant: TenantId, session: SessionId, error: Exception) -> None:
+    """Avertit qu'un balayage a sauté une session dont le journal ne se lit pas."""
+    logger.warning(
+        "%s : journal de la session %s (client %s) illisible, session ignorée — %s : %s",
+        what,
+        session,
+        tenant,
+        type(error).__name__,
+        error,
+    )
+
+
 def _unfinished(events: Sequence[Event]) -> list[RunState]:
     """Runs racine d'un journal qui peuvent encore avancer (#27, H3).
 
@@ -877,8 +896,11 @@ class _ReplayMount:
             raise ReplayError(f"Variante : {problem}")
 
     async def aclose(self) -> None:
+        closing = Closing()
         for built in self.mounted:
-            await built.aclose()
+            with closing:
+                await built.aclose()
+        closing.raise_if_failed()
 
 
 class Loom:
@@ -914,6 +936,9 @@ class Loom:
                 f"(modèles : {', '.join(sorted(declared)) or 'aucun'})"
             )
         self._models: dict[str, ModelClient] = dict(models or {})
+        # Fournisseur de secrets de l'appelant, s'il en a donné un : une éval le
+        # transmet aux instances qu'elle monte (celui de la config, lui, se refait).
+        self._secrets = secrets
         # Identité de cette instance : c'est elle qui prend les concessions sur
         # les runs qu'elle pilote (#27), et qui signe ses nouvelles sur le bus
         # (5.3c) pour ne pas se réécouter.
@@ -1200,6 +1225,16 @@ class Loom:
         jamais en pause — c'est le mode des scripts, de la CLI et des tests.
         Sans lui, l'approbation est asynchrone : le run s'arrête en ``PAUSED``
         et ``approve()`` le reprend.
+
+        Un run arrêté par ``cancel()`` rend son résultat, au statut
+        ``CANCELLED`` : l'appelant n'est pas annulé, et ne reçoit pas
+        ``CancelledError``. Si c'est la tâche appelante qui est annulée
+        (``task.cancel()``, délai), ``CancelledError`` se propage, sans
+        ``run.cancelled`` : le run reste reprenable.
+
+        Une file qui refuse un travail de suite (résumé, échéance d'une
+        approbation) alors que le run est écrit ne fait pas échouer l'appel : la
+        panne est journalisée (ERROR) et le résultat est celui du run.
         """
         caller, who = await self._admitted(agent, context, tenant)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
@@ -1228,6 +1263,9 @@ class Loom:
         ne montre que le journal de ce run — son client, sa session : un autre
         run qui aurait choisi le même ``run_id`` n'y paraît pas.
         ``judges`` et ``approver`` : comme pour ``run``.
+
+        Un run arrêté par ``cancel()`` termine le flux proprement, après
+        ``run.cancelled`` ; l'arrêt de la tâche qui itère, lui, se propage.
         """
         run_id = run_id or new_run_id()
         items: asyncio.Queue[StreamItem | None] = asyncio.Queue()
@@ -1487,8 +1525,11 @@ class Loom:
                 export=export,
             )
         finally:
+            closing = Closing()
             for mount in mounts:
-                await mount.aclose()
+                with closing:
+                    await mount.aclose()
+            closing.raise_if_failed()
 
     # --- Évaluer un agent -------------------------------------------------------
 
@@ -1513,6 +1554,13 @@ class Loom:
         jouent qu'une partie. Ce qui est enregistré ici (``register``) — un
         outil, une doublure — sert aux variantes qui gardent la config de la
         suite.
+
+        Les secrets de l'instance (``secrets``) et son profil servent comme
+        pour ``run`` : aux instances que l'éval monte, et à son juge. Les
+        clients de modèle fournis (``models``) servent à la place de ceux de la
+        config, juge compris, mais seulement tant que l'éval joue la config de
+        l'instance — ils portent des identifiants de **cette** config, pas de
+        celle qu'une suite ou une variante désigne. L'éval ne les ferme pas.
         """
         # Import différé : le module des évals monte des instances de cette classe.
         from loom_ia.access.evals import evaluate
@@ -1522,10 +1570,13 @@ class Loom:
             loaded,
             config=self._config,
             environ=self._environ,
+            profile=self._config.profile,
             cases=cases,
             variants=variants,
             export=export,
             registry=self._registry,
+            secrets=self._secrets,
+            models=self._models,
         )
 
     # --- Relire un run --------------------------------------------------------
@@ -1719,6 +1770,12 @@ class Loom:
 
         ``since`` et ``until`` se comparent à la **dernière** écriture du run.
         Un sous-run est listé comme les autres, en nommant son délégant.
+
+        Un journal de session illisible n'empêche pas de lire les autres : il
+        est sauté, avec un avertissement qui nomme le client et la session, et
+        ses runs ne sont pas listés. Il compte parmi les journaux ouverts
+        (``scanned``) et la page ne le signale pas : le journal fait foi, et
+        c'est lui qu'il faut réparer.
         """
         tenant = tenant_id or DEFAULT_TENANT
         known = await self._store.sessions(tenant)
@@ -1730,9 +1787,15 @@ class Loom:
                 truncated = True
                 break
             scanned += 1
-            events = await self._store.read(tenant, record.session_id)
-            for own in _by_run(events).values():
-                listed = RunListed.of(fold(own, own[0].run_id), own)
+            try:
+                events = await self._store.read(tenant, record.session_id)
+                listing = [
+                    RunListed.of(fold(own, own[0].run_id), own) for own in _by_run(events).values()
+                ]
+            except _UNREADABLE as error:
+                _unreadable("Runs", tenant, record.session_id, error)
+                continue
+            for listed in listing:
                 if _keeps(listed, agent=agent, status=status, since=since, until=until):
                     found.append(listed)
         found.sort(key=lambda run: run.updated_at, reverse=True)
@@ -1869,39 +1932,72 @@ class Loom:
 
     # --- Cycle de vie ---------------------------------------------------------
 
-    async def aclose(self) -> None:
-        """Ferme les clients de modèle, les connexions MCP, et les stockages venus de la config."""
+    async def aclose(self, *, wait: bool = True) -> None:
+        """Ferme les clients de modèle, les connexions MCP, et les stockages venus de la config.
+
+        Chaque étape est tentée, même si une précédente a levé : une connexion
+        MCP qui plante à la fermeture ne laisse pas le journal ouvert derrière
+        elle. L'échec est levé une fois tout fermé — le premier, ou
+        l'annulation si l'appelant a été annulé —, les autres sont journalisés
+        (``Closing``).
+
+        ``wait=False`` n'attend pas les tâches de fond de l'instance (runs
+        soumis, reprises mises en file, résumés) : elles sont annulées. Rien
+        n'est perdu pour autant, le journal fait foi et le run reste à
+        reprendre (``resume``, ``recover``, un worker) ; c'est ce que fait
+        ``loom approve --no-wait``. Une tâche déjà en route garde sa concession
+        jusqu'au terme du bail. Sans effet avec une file qui ne fait que
+        publier : ce qu'elle a publié tourne ailleurs.
+        """
+        closing = Closing()
+        abandon = None if wait else getattr(self._queue, "abandon", None)
+        if abandon is not None:
+            with closing:
+                await abandon()
         # Les tâches de fond se servent des agents : on les attend d'abord.
-        await self._queue.aclose()
+        with closing:
+            await self._queue.aclose()
         # Les runs sont finis : ce qui reste à exporter se relit au journal,
         # donc avant de le fermer.
-        self._exporting.close()
+        with closing:
+            self._exporting.close()
         if self._exporter is not None:
-            await self._exporter.aclose(self._config.execution.shutdown_timeout)
+            with closing:
+                await self._exporter.aclose(self._config.execution.shutdown_timeout)
         for built in self._built.values():
-            await built.aclose()
+            with closing:
+                await built.aclose()
         if self._mcp is not None:
-            await self._mcp.aclose()
+            with closing:
+                await self._mcp.aclose()
         self._built.clear()
         self._writers.clear()
         # Les stockages créés pour un client appartiennent au routeur, quoi
         # qu'il advienne de celui de la racine.
-        await self._router.aclose()
+        with closing:
+            await self._router.aclose()
         if self._owns_store:
-            await self._shared_store.aclose()
+            with closing:
+                await self._shared_store.aclose()
         if self._owns_artifacts:
-            await self._shared_artifacts.aclose()
+            with closing:
+                await self._shared_artifacts.aclose()
         # Le bus d'abord : sa fermeture met fin au suivi, qu'on attend ensuite.
         if self._bus is not None:
-            await self._bus.aclose()
+            with closing:
+                await self._bus.aclose()
         following, self._following = self._following, None
         if following is not None:
-            await following
-        closing = getattr(self._idempotency, "aclose", None)
-        if closing is not None:
-            await closing()
+            with closing:
+                await following
+        closer = getattr(self._idempotency, "aclose", None)
+        if closer is not None:
+            with closing:
+                await closer()
         if self._owns_counter:
-            await self._counter.aclose()
+            with closing:
+                await self._counter.aclose()
+        closing.raise_if_failed()
 
     async def __aenter__(self) -> Self:
         """Ouvre l'instance, et met une oreille sur le bus s'il y en a un.
@@ -1922,8 +2018,17 @@ class Loom:
     ) -> RunState:
         """Pilote un run dans une tâche suivie, que ``cancel`` sait retrouver.
 
-        Si l'appelant est annulé, la tâche l'est aussi : elle n'écrit rien de
-        plus et le run reste reprenable. Seul ``cancel`` écrit ``run.cancelled``.
+        Si l'appelant est annulé (``task.cancel()``, délai), la tâche l'est
+        aussi : elle n'écrit rien de plus, le run reste reprenable, et
+        l'annulation se propage (``CancelledError``). Seul ``cancel`` écrit
+        ``run.cancelled``.
+
+        Quand c'est ``cancel`` qui interrompt le pilote, l'appelant n'est pas
+        annulé : il n'a pas à recevoir ``CancelledError``, qui lui ferait croire
+        qu'on l'arrête, lui. Il attend la fin de l'arrêt, comme un pilote en
+        attente, et reçoit le run tel que le journal le dit — ``CANCELLED``.
+        Si l'arrêt n'a pas clos le run (il a échoué), le run reste reprenable et
+        l'interruption se propage comme avant.
 
         Un run n'a qu'un pilote à la fois dans l'instance : deux tâches sur le
         même run répètent l'outil, puis le journal ne se relit plus. Un second
@@ -1946,6 +2051,10 @@ class Loom:
             self._driving[key] = task
             try:
                 return await task
+            except asyncio.CancelledError as interruption:
+                if _caller_cancelled():
+                    raise
+                interrupted = interruption
             finally:
                 if self._driving.get(key) is task:
                     del self._driving[key]
@@ -1953,6 +2062,15 @@ class Loom:
                     task.cancel()
                     with suppress(asyncio.CancelledError):
                         await task
+        # ``cancel`` tient le run jusqu'à la clôture : on la laisse s'écrire, puis
+        # le journal dit ce qu'il en est.
+        async with self._holding(key):
+            final = await self.state(
+                state.run_id, session_id=state.session_id, tenant_id=state.context.tenant_id
+            )
+        if final.finished:
+            return final
+        raise interrupted
 
     @asynccontextmanager
     async def _holding(self, key: RunKey, *, takeover: bool = False) -> AsyncGenerator[None]:
@@ -1991,6 +2109,9 @@ class Loom:
 
         Un run annulé est **terminal** : il ne se reprend pas. Un run seulement
         interrompu, lui, ne laisse rien au journal et repart où il en était.
+        Qui pilotait le run ici (``run``, ``stream``, ``resume``) n'est pas
+        annulé pour autant : il reçoit le run ``CANCELLED`` (ou voit son flux
+        finir), et non ``CancelledError``.
         Un run qu'un autre process finit entre la lecture et l'écriture de
         l'arrêt est déjà fini : rien n'est écrit après sa fin.
         """
@@ -2039,6 +2160,11 @@ class Loom:
         l'identité de l'approbateur : c'est tout l'audit qu'il y aura.
 
         Rend les appels accordés ; vide si le run n'attendait rien.
+
+        Une fois la décision écrite au journal, une file qui refuse la reprise
+        ne fait pas échouer l'appel — la décision, elle, a eu lieu : la panne
+        est journalisée (ERROR), le run reste en attente de reprise, et
+        ``recover()`` ou ``resume()`` le reprend.
         """
         return await self._decided(
             run_id,
@@ -2067,7 +2193,8 @@ class Loom:
         """Refuse un appel que le run attend (#17) : le motif revient au modèle.
 
         Le run n'échoue pas : l'appel rend une erreur, et l'orchestrateur fait
-        ce qu'il peut de ce refus.
+        ce qu'il peut de ce refus. Comme pour ``approve``, une panne de la file
+        après l'écriture du refus est journalisée et ne fait pas échouer l'appel.
         """
         return await self._decided(
             run_id,
@@ -2123,15 +2250,27 @@ class Loom:
         except RunMoved:
             # Clos ailleurs entre la lecture et la décision : il n'attend plus rien.
             return ()
-        await self._queue.submit(
-            Job(
-                kind="resume",
-                tenant_id=tenant,
-                session_id=root.session_id,
-                run_id=root.root_run_id,
-            ),
-            key=f"run:{root.root_run_id}",
-        )
+        try:
+            await self._queue.submit(
+                Job(
+                    kind="resume",
+                    tenant_id=tenant,
+                    session_id=root.session_id,
+                    run_id=root.root_run_id,
+                ),
+                key=f"run:{root.root_run_id}",
+            )
+        except Exception:
+            # La décision est au journal : la refaire ne l'écrirait pas (le run
+            # n'attend plus rien) et ne remettrait rien en file. L'appelant
+            # doit donc savoir qu'elle a eu lieu ; l'opérateur, que la reprise
+            # reste à faire.
+            logger.error(
+                "Run %s : décision écrite au journal, mais sa reprise n'a pas pu être "
+                "mise en file — recover() ou resume() le reprend",
+                root.root_run_id,
+                exc_info=True,
+            )
         return tuple(asked.call_id for _, asked in decided)
 
     async def submit(
@@ -2289,6 +2428,12 @@ class Loom:
 
         Sans ``session_id``, toutes les sessions du locataire sont balayées —
         c'est la reprise au démarrage d'un process. Avec, une seule l'est.
+
+        Au balayage, une session dont le journal est illisible est sautée, avec
+        un avertissement qui nomme le client et la session : les runs des
+        autres sont remis en file, et le résultat ne dit rien de celle-là. Le
+        journal n'est pas réparé. Une session désignée par ``session_id`` qui
+        ne se lit pas, elle, lève l'erreur : c'est la réponse à la question.
         """
         tenant = tenant_id or DEFAULT_TENANT
         known = set(self.names)
@@ -2299,8 +2444,15 @@ class Loom:
             else [record.session_id for record in await self.store.sessions(tenant)]
         )
         for session in sessions:
-            events = await self._store.read(tenant, session)
-            for state in _unfinished(events):
+            try:
+                events = await self._store.read(tenant, session)
+                unfinished = _unfinished(events)
+            except _UNREADABLE as error:
+                if session_id is not None:
+                    raise
+                _unreadable("Reprise", tenant, session, error)
+                continue
+            for state in unfinished:
                 if (tenant, state.session_id, state.run_id) in self._held:
                     logger.info("Reprise : run %s déjà piloté ici, ignoré", state.run_id)
                     continue
@@ -2479,15 +2631,25 @@ class Loom:
         up_to_seq = self._compaction.pending(events)
         if up_to_seq is None:
             return
-        await self._queue.submit(
-            Job(
-                kind="compaction",
-                tenant_id=state.context.tenant_id,
-                session_id=state.session_id,
-                run_id=state.run_id,
-            ),
-            key=self._compaction.key(state.session_id, up_to_seq),
-        )
+        try:
+            await self._queue.submit(
+                Job(
+                    kind="compaction",
+                    tenant_id=state.context.tenant_id,
+                    session_id=state.session_id,
+                    run_id=state.run_id,
+                ),
+                key=self._compaction.key(state.session_id, up_to_seq),
+            )
+        except Exception:
+            # Le run est écrit : un résumé qui ne part pas n'a pas à le faire échouer.
+            logger.error(
+                "Session %s : résumé non mis en file après le run %s — il sera "
+                "retenté à la fin d'un prochain run, ou par compact()",
+                state.session_id,
+                state.run_id,
+                exc_info=True,
+            )
 
     async def _expiring(self, state: RunState, events: Sequence[Event]) -> None:
         """Ramène un run en attente à l'échéance de sa première demande (#17).
@@ -2506,16 +2668,25 @@ class Loom:
         deadlines = [a.expire_at for a in _awaited(state, tree) if a.expire_at is not None]
         if not deadlines:
             return
-        await self._queue.submit(
-            Job(
-                kind="expire_approval",
-                tenant_id=state.context.tenant_id,
-                session_id=state.session_id,
-                run_id=state.run_id,
-            ),
-            key=f"expire:{state.run_id}",
-            delay=max((min(deadlines) - datetime.now(UTC)).total_seconds(), 0.0),
-        )
+        try:
+            await self._queue.submit(
+                Job(
+                    kind="expire_approval",
+                    tenant_id=state.context.tenant_id,
+                    session_id=state.session_id,
+                    run_id=state.run_id,
+                ),
+                key=f"expire:{state.run_id}",
+                delay=max((min(deadlines) - datetime.now(UTC)).total_seconds(), 0.0),
+            )
+        except Exception:
+            # Le run est écrit, ``expire_at`` aussi : seul le réveil manque.
+            logger.error(
+                "Run %s : réveil d'échéance non mis en file — la demande expirera "
+                "à la prochaine reprise (recover(), resume())",
+                state.run_id,
+                exc_info=True,
+            )
 
     async def _snapshot(self, state: RunState, events: Sequence[Event]) -> None:
         """Matérialise l'historique de la session, si le gain le justifie (§11.2).
@@ -2573,6 +2744,12 @@ class Loom:
             writer=writer,
         )
         return await self._piloted(ctx, state, writer)
+
+
+def _caller_cancelled() -> bool:
+    """Vrai si asyncio a demandé l'arrêt de la tâche en cours (``task.cancel()``, délai)."""
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
 
 
 def _closes(event: Event, run_id: RunId) -> bool:

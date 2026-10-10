@@ -13,6 +13,7 @@ import yaml
 from loom_ia.access.api import Loom, RunResult
 from loom_ia.access.cli import main
 from loom_ia.adapters.artifacts import InMemoryArtifactStore
+from loom_ia.adapters.models.fake import FakeModel
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
@@ -528,3 +529,44 @@ def test_subagent_needs_a_description(tmp_path: Path) -> None:
     child.write_text(yaml.safe_dump(data), encoding="utf-8")
     with pytest.raises(ConfigError, match="sous-agent 'verifier' : description manquante"):
         load_config(path)
+
+
+async def test_closing_standalone_subagents_closes_every_one_even_if_a_client_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le premier sous-agent qui échoue à se fermer n'épargne pas le second."""
+    refs = [
+        {"agent": "verificateur", "name": "verifier"},
+        {"agent": "auditeur", "name": "auditer"},
+    ]
+    path = write(tmp_path, subagents=refs)
+    auditeur: dict[str, Any] = {
+        "name": "auditeur",
+        "description": "Audite un calcul.",
+        "expose": {"rest": False, "mcp": False},
+        "main": {"model": "CHILD", "system": "Tu audites."},
+    }
+    (tmp_path / "agents" / "auditeur.yaml").write_text(yaml.safe_dump(auditeur), encoding="utf-8")
+    agent = build_agent(load_config(path), "demo", InMemoryEventStore())
+    nested = agent.owned[-1]
+    # Les sous-agents se montent au premier appel.
+    assert callable(nested)
+    nested("verificateur")
+    nested("auditeur")
+
+    closed: list[str] = []
+    original = FakeModel.aclose
+
+    async def aclose(self: FakeModel) -> None:
+        closed.append(self.spec.model)
+        # Le modèle du patron se ferme d'abord, puis celui du premier sous-agent.
+        if len(closed) == 2:
+            raise RuntimeError("le premier sous-agent ne ferme pas")
+        await original(self)
+
+    monkeypatch.setattr(FakeModel, "aclose", aclose)
+
+    with pytest.raises(RuntimeError, match="le premier sous-agent ne ferme pas"):
+        await agent.aclose()
+
+    assert closed == ["main-1", "child-1", "child-1"]

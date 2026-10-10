@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Assemblage : de la config aux objets qui tournent, et run de bout en bout."""
 
+import asyncio
 import logging
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -12,6 +14,7 @@ from loom_ia.adapters.artifacts import InMemoryArtifactStore
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.agents import UnknownAgent
 from loom_ia.config import ConfigError, load_config
+from loom_ia.core.closing import Closing
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     ModelChunk,
@@ -249,3 +252,83 @@ def test_logging_follows_the_config(tmp_path: Path) -> None:
     finally:
         logging.getLogger("loom_ia").removeHandler(handler)
         logging.getLogger("loom_ia").setLevel(logging.NOTSET)
+
+
+# --- Fermeture : tout est tenté, même si une étape échoue ----------------------
+
+
+class Resource:
+    """Ressource qui note sa fermeture, et lève ``error`` si on le lui demande."""
+
+    def __init__(self, closed: list[str], label: str, error: BaseException | None = None) -> None:
+        self.closed, self.label, self.error = closed, label, error
+
+    async def aclose(self) -> None:
+        self.closed.append(self.label)
+        if self.error is not None:
+            raise self.error
+
+
+async def test_closing_tries_every_step_then_raises_the_first_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Le premier échec est levé, une fois tout fermé ; les autres sont journalisés."""
+    closed: list[str] = []
+    resources = [
+        Resource(closed, "a"),
+        Resource(closed, "b", RuntimeError("b ne ferme pas")),
+        Resource(closed, "c", ValueError("c non plus")),
+        Resource(closed, "d"),
+    ]
+    closing = Closing()
+    for resource in resources:
+        with closing:
+            await resource.aclose()
+    with caplog.at_level(logging.WARNING), pytest.raises(RuntimeError, match="b ne ferme pas"):
+        closing.raise_if_failed()
+
+    assert closed == ["a", "b", "c", "d"]
+    [warning] = [r for r in caplog.records if r.name == "loom_ia.core.closing"]
+    assert warning.exc_info is not None and warning.exc_info[1] is resources[2].error
+
+
+async def test_closing_without_failure_raises_nothing() -> None:
+    closing = Closing()
+    with closing:
+        await Resource([], "a").aclose()
+    closing.raise_if_failed()
+
+
+async def test_a_cancellation_is_not_swallowed_by_a_later_error() -> None:
+    """Annulé en pleine fermeture, l'appelant le reste : une erreur ordinaire ne le masque pas."""
+    closed: list[str] = []
+    closing = Closing()
+    for resource in (
+        Resource(closed, "a", RuntimeError("ordinaire")),
+        Resource(closed, "b", asyncio.CancelledError()),
+        Resource(closed, "c", ValueError("ordinaire aussi")),
+    ):
+        with closing:
+            await resource.aclose()
+
+    with pytest.raises(asyncio.CancelledError):
+        closing.raise_if_failed()
+    assert closed == ["a", "b", "c"]
+
+
+async def test_closing_an_agent_closes_every_resource_even_if_one_fails(tmp_path: Path) -> None:
+    config = load_config(write(tmp_path, root={}, agent=demo_agent()))
+    built = build_agent(config, "demo", InMemoryEventStore())
+    closed: list[str] = []
+    agent = replace(
+        built,
+        clients=cast(
+            Any, (Resource(closed, "modèle 1", RuntimeError("1")), Resource(closed, "m 2"))
+        ),
+        owned=(Resource(closed, "pool"),),
+    )
+
+    with pytest.raises(RuntimeError, match=r"^1$"):
+        await agent.aclose()
+
+    assert closed == ["modèle 1", "m 2", "pool"]

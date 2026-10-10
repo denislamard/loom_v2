@@ -38,7 +38,7 @@ from loom_ia.agents.registry import AgentRegistry
 from loom_ia.config import LoomConfig, Registry, load_config, resolve
 from loom_ia.core.events import Event, PolicyDecided, ToolCalled, ToolCompleted
 from loom_ia.core.model import DEFAULT_TENANT, RunId, TenantId
-from loom_ia.core.ports import ArtifactStore
+from loom_ia.core.ports import ArtifactStore, ModelClient, SecretProvider
 from loom_ia.core.projections import fold
 from loom_ia.engine import RunContext
 from loom_ia.engine.refs import RefError, ResultIndex, output_text
@@ -83,6 +83,8 @@ async def evaluate(
     variants: Sequence[str] = (),
     export: Path | None = None,
     registry: Registry | None = None,
+    secrets: SecretProvider | None = None,
+    models: Mapping[str, ModelClient] | None = None,
 ) -> EvalReport:
     """Joue la suite et rend son rapport ; ``EvalError`` ou ``ConfigError`` si elle est injouable.
 
@@ -92,6 +94,13 @@ async def evaluate(
     les objets enregistrés d'une instance (``Loom.register``) — outils et
     doublures que la config ne déclare pas ; il sert aux variantes qui
     gardent la config de la suite, une variante qui a la sienne a le sien.
+
+    ``secrets`` : le fournisseur de secrets d'une instance, pour les instances
+    montées ici et pour le juge ; sans lui, ``environ``. ``models`` : ses
+    clients de modèle fournis, par identifiant de la config — ils servent à la
+    place de ceux que la config déclare, au juge comme aux variantes, et ne
+    sont pas fermés ici. Ils n'ont de sens que pour ``config`` : une suite ou
+    une variante qui désigne sa propre config ne les reçoit pas.
     """
     base = _base(suite, config, profile)
     chosen_cases = _chosen("cas", [c.name for c in suite.cases], cases)
@@ -99,7 +108,9 @@ async def evaluate(
     chosen_variants = _chosen("variante", [v.name for v in played], variants)
     doubles = _doubles(suite, base, registry)
     journals = await _journals(suite, chosen_cases)
-    judge = _judge(suite, base, environ)
+    # Des identifiants de la config passée : la config d'une suite n'y a pas droit.
+    provided = models if suite.resolved(suite.config) is None else None
+    judge = _judge(suite, base, environ, secrets, provided)
     runs: list[EvalRun] = []
     described: dict[str, Mapping[str, JsonValue]] = {}
     if export is not None:
@@ -113,7 +124,15 @@ async def evaluate(
                 tools = EvalTools(doubles)
                 setup = isolated(variant_config, Path(scratch) / variant.name)
                 shared = registry if variant.config is None else None
-                async with Loom(setup, environ=environ, intercept=tools, registry=shared) as loom:
+                served = provided if variant.config is None else None
+                async with Loom(
+                    setup,
+                    environ=environ,
+                    secrets=secrets,
+                    intercept=tools,
+                    registry=shared,
+                    models=served,
+                ) as loom:
                     _check_tools(loom, suite, variant, doubles, chosen_cases)
                     for case in (c for c in suite.cases if c.name in chosen_cases):
                         if case.replay is not None:
@@ -183,9 +202,18 @@ def _doubles(suite: EvalSuite, base: LoomConfig, registry: Registry | None) -> d
 
 
 def _judge(
-    suite: EvalSuite, base: LoomConfig, environ: Mapping[str, str] | None
+    suite: EvalSuite,
+    base: LoomConfig,
+    environ: Mapping[str, str] | None,
+    secrets: SecretProvider | None,
+    provided: Mapping[str, ModelClient] | None,
 ) -> EvalJudgeClient | None:
-    """Le juge d'éval, un modèle de la config de la suite : le même pour toutes les variantes."""
+    """Le juge d'éval, un modèle de la config de la suite : le même pour toutes les variantes.
+
+    Un client fourni pour ce modèle sert tel quel, et reste à qui l'a fourni. Sinon
+    le juge lit sa clé dans les secrets de l'instance, ceux de la racine, ou dans
+    ``environ`` à défaut.
+    """
     if suite.judge is None:
         return None
     declared = {spec.id: spec for spec in base.models}
@@ -195,8 +223,12 @@ def _judge(
             f"Juge d'éval : modèle {suite.judge.model!r} non déclaré dans la config "
             f"(modèles : {', '.join(declared) or 'aucun'})"
         )
+    if provided is not None and spec.id in provided:
+        return EvalJudgeClient(spec, provided[spec.id], owned=False)
     try:
-        client = create_model_client(spec, environ=environ)
+        client = create_model_client(
+            spec, environ=environ if secrets is None else secrets.secrets(DEFAULT_TENANT)
+        )
     except ValueError as exc:
         raise EvalError(
             f"Juge d'éval : le modèle {spec.id} ne peut pas être appelé — {exc}"

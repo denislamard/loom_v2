@@ -2,18 +2,21 @@
 """Ligne de commande : ``validate``, ``run``, ``resume``, ``approve``, ``keys``, ``schema``."""
 
 import asyncio
+import io
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 from conftest import ANSWER, MODEL, QUESTION, ConfigFactory, demo_agent
 
+from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import JsonlEventStore
 from loom_ia.config.keys import matches
-from loom_ia.core.events import Event
-from loom_ia.core.model import DEFAULT_TENANT, ToolOutput
+from loom_ia.core.events import Event, EventDraft, RunClaimed
+from loom_ia.core.model import DEFAULT_TENANT, SessionId, ToolOutput
 from loom_ia.testing import RunJournal, tool_call_message
 
 JOURNAL: dict[str, Any] = {"events": {"backend": "jsonl", "path": "journaux"}}
@@ -144,6 +147,95 @@ def test_a_missing_config_is_refused(tmp_path: Path, capsys: pytest.CaptureFixtu
     assert "Configuration :" in capsys.readouterr().err
 
 
+def test_a_file_that_cannot_be_written_is_refused_not_raised(
+    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Un ``OSError`` d'exploitation sort en message et en code 2, sans trace."""
+    path = demo(storage=JOURNAL)
+    assert main(["--config", str(path), "run", "demo", QUESTION, "--session", "atelier"]) == 0
+    capsys.readouterr()
+    absent = tmp_path / "rien" / "atelier.jsonl"
+
+    code = main(["--config", str(path), "sessions", "export", "atelier", "--out", str(absent)])
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert err.startswith("Erreur d'entrée-sortie : ")
+    assert str(absent) in err
+
+
+def test_an_agent_closed_to_a_tenant_keeps_its_own_refusal(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``AgentNotAllowed`` est une ``PermissionError`` : l'``OSError`` ne doit pas la prendre."""
+    tenants = [{"id": "dupont", "agents": ["autre"]}]
+    agents = [demo_agent(), demo_agent(name="autre")]
+    path = demo(agents=agents, tenants=tenants)
+
+    assert main(["--config", str(path), "run", "demo", QUESTION, "--tenant", "dupont"]) == 2
+    err = capsys.readouterr().err
+    assert "non ouvert au client" in err
+    assert "Erreur d'entrée-sortie" not in err
+
+
+def test_resuming_a_run_held_elsewhere_is_refused_not_raised(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Un autre worker mène le run (concession vivante) : refus lisible, code 2, sans trace."""
+    path = demo(storage=JOURNAL)
+    journal = RunJournal(agent="demo", session_id=SessionId("atelier"))
+    journal.start(QUESTION)
+    until = datetime.now(UTC) + timedelta(seconds=600)
+    drafts: list[EventDraft] = [
+        *journal.take(),
+        journal.scope.draft(RunClaimed(worker_id="worker-ailleurs", lease_until=until)),
+    ]
+    store = JsonlEventStore(path.parent / "journaux")
+
+    async def held() -> None:
+        await store.append(drafts, expected_seq=0)
+        await store.aclose()
+
+    asyncio.run(held())
+
+    assert main(["--config", str(path), "resume", journal.run_id, "--session", "atelier"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"Run {journal.run_id} : piloté par worker-ailleurs" in captured.err
+    assert "réessayer après l'échéance" in captured.err
+
+
+def test_a_programming_error_keeps_its_traceback(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seules les erreurs d'exploitation sont converties : un bogue doit se voir."""
+
+    async def broken(self: Loom, *args: object, **kwargs: object) -> NoReturn:
+        raise RuntimeError("bogue")
+
+    monkeypatch.setattr(Loom, "run", broken)
+    with pytest.raises(RuntimeError, match="bogue"):
+        main(["--config", str(demo()), "run", "demo", QUESTION])
+
+
+def test_a_closed_input_refuses_the_confirmation_and_deletes_nothing(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sans terminal (cron, ``< /dev/null``), ``input()`` lève ``EOFError``."""
+    path = demo(storage=JOURNAL)
+    assert main(["--config", str(path), "run", "demo", QUESTION, "--session", "atelier"]) == 0
+    capsys.readouterr()
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    assert main(["--config", str(path), "sessions", "delete", "atelier"]) == 2
+    err = capsys.readouterr().err
+    assert "Entrée standard fermée" in err
+    assert "--yes" in err
+
+    assert main(["--config", str(path), "sessions", "list"]) == 0
+    assert "atelier" in capsys.readouterr().out
+
+
 def test_keys_create_gives_a_key_and_its_fingerprint(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["keys", "create", "atelier", "--scope", "run", "--agent", "demo"]) == 0
     out = capsys.readouterr().out
@@ -240,17 +332,37 @@ def test_reject_hands_the_reason_back_to_the_model(
     assert _decisions(path, "approval.rejected") == [None]
 
 
+@pytest.mark.parametrize(
+    ("verb", "decision"), [("approve", "approval.granted"), ("reject", "approval.rejected")]
+)
 def test_no_wait_writes_the_decision_and_leaves_the_run(
+    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str], verb: str, decision: str
+) -> None:
+    path = atelier()
+    run_id = _paused(path, capsys)
+
+    assert main(["--config", str(path), verb, run_id, "--no-wait"]) == 0
+    capsys.readouterr()
+    # La décision est au journal, et rien ne la suit : ni reprise ni concession.
+    types = [event.type for event in _events(path)]
+    assert types[-1] == decision
+    assert "run.completed" not in types
+    # Personne n'a piloté la reprise : le run attend toujours d'être repris.
+    assert main(["--config", str(path), "resume", run_id]) == 0
+    assert capsys.readouterr().out.strip() == "Relance envoyée."
+    assert [event.type for event in _events(path)][-1] == "run.completed"
+
+
+def test_without_no_wait_the_decision_is_followed_by_the_resumption(
     atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = atelier()
     run_id = _paused(path, capsys)
 
-    assert main(["--config", str(path), "approve", run_id, "--no-wait"]) == 0
-    capsys.readouterr()
-    # Personne n'a piloté la reprise : le run attend toujours d'être repris.
-    assert main(["--config", str(path), "resume", run_id]) == 0
+    assert main(["--config", str(path), "approve", run_id]) == 0
     assert capsys.readouterr().out.strip() == "Relance envoyée."
+    types = [event.type for event in _events(path)]
+    assert types.index("approval.granted") < types.index("run.completed") == len(types) - 1
 
 
 def test_approving_a_run_that_awaits_nothing_is_refused(

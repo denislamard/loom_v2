@@ -675,9 +675,11 @@ class Judgment:
 class EvalJudgeClient:
     """Le juge d'éval : un modèle de la config, appelé hors du run, après lui."""
 
-    def __init__(self, spec: ModelSpec, client: ModelClient) -> None:
+    def __init__(self, spec: ModelSpec, client: ModelClient, *, owned: bool = True) -> None:
         self.spec = spec
         self.client = client
+        # Un client fourni par l'appelant reste à lui : le juge ne le ferme pas.
+        self.owned = owned
 
     async def judge(
         self,
@@ -736,7 +738,8 @@ class EvalJudgeClient:
         return Judgment(scores=scores, usage=usage, cost_usd=cost)
 
     async def aclose(self) -> None:
-        await self.client.aclose()
+        if self.owned:
+            await self.client.aclose()
 
 
 # --- Le rapport --------------------------------------------------------------------------

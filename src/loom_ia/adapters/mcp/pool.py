@@ -11,6 +11,7 @@ from collections.abc import Callable
 
 from loom_ia.adapters.mcp.server import McpServer
 from loom_ia.adapters.mcp.transports import SessionFactory
+from loom_ia.core.closing import Closing
 from loom_ia.core.model import McpServerSpec
 
 
@@ -38,6 +39,9 @@ class McpPool:
         return server
 
     async def aclose(self) -> None:
+        closing = Closing()
         for server in self._servers.values():
-            await server.aclose()
+            with closing:
+                await server.aclose()
         self._servers.clear()
+        closing.raise_if_failed()

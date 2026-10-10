@@ -2,7 +2,8 @@
 """Approbations (J4.3a) : pause, accord, refus, expiration, approbateur en ligne."""
 
 import asyncio
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -10,12 +11,13 @@ from typing import Any
 import pytest
 import yaml
 
-from loom_ia.access.api import Loom, UnknownApproval
+from loom_ia.access.api import Loom, RunResult, UnknownApproval
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
     ApprovalGranted,
     Event,
+    EventDraft,
     FacetValue,
     RunClaimed,
     RunTransitioned,
@@ -370,6 +372,129 @@ def test_deciding_a_finished_run_changes_nothing(atelier: ConfigFactory) -> None
     encore, accords = asyncio.run(go())
     assert encore == ()
     assert accords == 1
+
+
+# --- Une file en panne, le journal écrit ----------------------------------------
+
+
+async def broker_down(*args: object, **kwargs: object) -> str:
+    raise ConnectionError("broker down")
+
+
+def test_a_queue_failure_after_the_pause_leaves_the_run_and_its_result(
+    atelier: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Le réveil d'échéance ne part pas : le run est écrit, ``run`` en rend l'état et le dit."""
+
+    async def go() -> tuple[RunResult, RunStatus]:
+        async with Loom.from_config(atelier()) as loom:
+            monkeypatch.setattr(loom._queue, "submit", broker_down)  # pyright: ignore[reportPrivateUsage]
+            with caplog.at_level(logging.ERROR, logger="loom_ia.access.api"):
+                run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            return run, (await loom.state(run.run_id, session_id=SESSION)).status
+
+    run, status = asyncio.run(go())
+    assert run.status is status is RunStatus.PAUSED
+    assert [a.tool_name for a in run.pending_approvals] == ["envoyer_email"]
+    [record] = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert run.run_id in record.getMessage()
+    assert record.exc_info is not None and isinstance(record.exc_info[1], ConnectionError)
+
+
+def test_a_queue_failure_after_a_decision_keeps_the_decision(
+    atelier: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """La décision est au journal : le même appel ne la réécrirait pas, il ne doit pas échouer.
+
+    ``approve`` rend ce qu'il a accordé, dit en ERROR que la reprise n'est pas
+    partie, et ``recover`` la fait quand la file revient.
+    """
+
+    async def go() -> tuple[tuple[str, ...], list[str], bool, tuple[str, ...], RunStatus]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            real = loom._queue.submit  # pyright: ignore[reportPrivateUsage]
+            monkeypatch.setattr(loom._queue, "submit", broker_down)  # pyright: ignore[reportPrivateUsage]
+            with caplog.at_level(logging.ERROR, logger="loom_ia.access.api"):
+                granted = await loom.approve(run.run_id, by="denis", session_id=SESSION)
+            types = [e.type for e in await loom.export_session(SESSION)]
+            finished = (await loom.state(run.run_id, session_id=SESSION)).finished
+            monkeypatch.setattr(loom._queue, "submit", real)  # pyright: ignore[reportPrivateUsage]
+            repris = await loom.recover()
+            await loom.drain()
+            end = await loom.state(run.run_id, session_id=SESSION)
+            return granted, types, finished, repris, end.status
+
+    granted, types, finished, repris, status = asyncio.run(go())
+    assert len(granted) == 1 and "approval.granted" in types and not finished
+    [record] = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert "recover()" in record.getMessage() and record.exc_info is not None
+    assert len(repris) == 1 and status is RunStatus.COMPLETED
+
+
+def test_a_failure_before_the_decision_is_written_still_raises(
+    atelier: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rien n'est absorbé avant l'écriture : un journal en panne fait échouer ``approve``."""
+
+    async def go() -> list[str]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            write = loom.store.append
+
+            async def refusing(
+                drafts: Sequence[EventDraft], *, expected_seq: int | None
+            ) -> list[Event]:
+                raise OSError("journal en panne")
+
+            monkeypatch.setattr(loom.store, "append", refusing)
+            with pytest.raises(OSError, match="journal en panne"):
+                await loom.approve(run.run_id, session_id=SESSION)
+            monkeypatch.setattr(loom.store, "append", write)
+            return [
+                a.tool_name for a in (await loom.state(run.run_id, session_id=SESSION)).awaiting
+            ]
+
+    assert asyncio.run(go()) == ["envoyer_email"]
+
+
+def test_closing_without_waiting_leaves_the_resumption_to_the_journal(
+    atelier: ConfigFactory,
+) -> None:
+    """``aclose(wait=False)`` : la décision est écrite, la reprise mise en file n'a pas lieu."""
+
+    async def go() -> tuple[list[str], list[str], RunStatus]:
+        path = atelier()
+        loom = Loom.from_config(path)
+        run = await loom.run("demo", DEMANDE, session_id=SESSION)
+        assert await loom.approve(run.run_id, by="denis", session_id=SESSION)
+        await loom.aclose(wait=False)
+
+        # Une autre instance relit le journal : rien n'a suivi la décision.
+        async with Loom.from_config(path) as again:
+            before = [e.type for e in await again.export_session(SESSION)]
+            resumed = await again.resume(run.run_id, session_id=SESSION)
+            after = [e.type for e in await again.export_session(SESSION)]
+        return before, after, resumed.status
+
+    before, after, status = asyncio.run(go())
+    assert before[-1] == "approval.granted" and before.count("tool.called") == 1
+    # Le run reste reprenable : la reprise l'achève, l'envoi part une seule fois.
+    assert status is RunStatus.COMPLETED
+    assert after[-1] == "run.completed" and after.count("tool.called") == 2
+
+
+def test_closing_waits_for_the_resumption_by_default(atelier: ConfigFactory) -> None:
+    async def go() -> list[str]:
+        path = atelier()
+        loom = Loom.from_config(path)
+        run = await loom.run("demo", DEMANDE, session_id=SESSION)
+        assert await loom.approve(run.run_id, by="denis", session_id=SESSION)
+        await loom.aclose()
+        async with Loom.from_config(path) as again:
+            return [e.type for e in await again.export_session(SESSION)]
+
+    assert asyncio.run(go())[-1] == "run.completed"
 
 
 # --- Expiration ---------------------------------------------------------------
