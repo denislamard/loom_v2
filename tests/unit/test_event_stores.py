@@ -449,6 +449,29 @@ async def test_jsonl_corrupted_complete_line_raises(jsonl: JsonlEventStore) -> N
         await jsonl.read(DEFAULT_TENANT, SESSION)
 
 
+@pytest.mark.parametrize("junk", [b"pas du json\n", b"x" * 70_000 + b"\n"], ids=["short", "huge"])
+async def test_jsonl_last_seq_refuses_an_unreadable_last_line_like_append(
+    jsonl: JsonlEventStore, junk: bytes
+) -> None:
+    """``last_seq`` rendait l'ancien numéro alors qu'``append`` lève sur cette ligne (RES-1 c)."""
+    _, drafts = run_drafts()
+    await jsonl.append(drafts[:2], expected_seq=0)
+    path = jsonl.path(DEFAULT_TENANT, SESSION)
+    lines = path.read_bytes().splitlines(keepends=True)
+    path.write_bytes(lines[0] + junk)
+
+    reopened = JsonlEventStore(path.parents[1])  # un autre process : pas de cache
+    with pytest.raises(JournalCorrupted, match="dernière ligne illisible"):
+        await reopened.last_seq(DEFAULT_TENANT, SESSION)
+    with pytest.raises(JournalCorrupted):
+        await reopened.append(drafts[2:3], expected_seq=None)
+    # Lister reste permis : un journal abîmé se voit et se supprime.
+    assert [(r.session_id, r.last_seq) for r in await reopened.sessions(DEFAULT_TENANT)] == [
+        (SESSION, 1)
+    ]
+    assert await reopened.delete(DEFAULT_TENANT, SESSION) >= 1
+
+
 async def test_jsonl_two_instances_share_the_sequence(tmp_path: Path) -> None:
     root = tmp_path / "journal"
     first, second = JsonlEventStore(root), JsonlEventStore(root)

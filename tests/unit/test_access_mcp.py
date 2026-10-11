@@ -12,9 +12,11 @@ import pytest
 from conftest import ANSWER, PNG, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
-from loom_ia.config import ConfigError
+from loom_ia.adapters.stores import InMemoryEventStore
+from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import Event, RunCancelled
-from loom_ia.core.model import Attachment, SessionId
+from loom_ia.core.model import DEFAULT_TENANT, Attachment, Message, RunStatus, SessionId
+from loom_ia.testing import RunJournal
 
 pytest.importorskip("mcp", reason="extra 'mcp' absent")
 
@@ -145,6 +147,27 @@ async def test_unknown_agent_and_unknown_run_are_errors(demo: ConfigFactory) -> 
 
     assert absent.isError and hidden.isError and unknown.isError
     assert missing.isError and "message" in _text(missing.content)
+
+
+async def test_a_call_on_an_unreadable_session_is_an_error_result_and_writes_nothing(
+    demo: ConfigFactory,
+) -> None:
+    store = InMemoryEventStore()
+    session = SessionId("casse")
+    # Un run qui reprend après sa clôture : la projection de la session le refuse.
+    journal = RunJournal(agent="demo", session_id=session)
+    journal.start(QUESTION).model_turn(Message.assistant(ANSWER)).complete()
+    journal.transition(RunStatus.READY_FOR_MODEL)
+    await store.append(journal.take(), expected_seq=0)
+    before = await store.last_seq(DEFAULT_TENANT, session)
+
+    async with Loom(load_config(demo()), store=store) as loom:
+        async with connected(create_server(loom), client_info=CLIENT) as client:
+            result = await client.call_tool("demo", {"message": QUESTION, "session_id": session})
+
+    assert result.isError
+    assert "illisible" in _text(result.content)
+    assert await store.last_seq(DEFAULT_TENANT, session) == before
 
 
 async def test_the_journal_is_the_same_as_by_the_python_access(demo: ConfigFactory) -> None:

@@ -90,8 +90,16 @@ from loom_ia.core.model import (
     TextDelta,
     new_run_id,
 )
-from loom_ia.core.ports import Policy, SealError, SessionRecord, SourceContext, Tool
-from loom_ia.engine import ClaimConflict, ToolExecutor
+from loom_ia.core.ports import (
+    JournalBusy,
+    JournalCorrupted,
+    Policy,
+    SealError,
+    SessionRecord,
+    SourceContext,
+    Tool,
+)
+from loom_ia.engine import ClaimConflict, SessionUnreadable, ToolExecutor
 from loom_ia.replay import (
     Comparison,
     Double,
@@ -163,6 +171,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return REFUSED
+    except SessionUnreadable as error:
+        # Refusé avant d'écrire : le run illisible est à réparer à part.
+        print(_message(error), file=sys.stderr)
+        return REFUSED
+    except JournalBusy as error:
+        # Rien n'a été écrit : la même commande passera quand le verrou sera rendu.
+        print(_message(error), file=sys.stderr)
+        return REFUSED
+    except JournalCorrupted as error:
+        print(f"Journal illisible : {_message(error)}", file=sys.stderr)
+        return FAILED
     except EOFError:
         print(
             "Entrée standard fermée : une réponse était attendue "

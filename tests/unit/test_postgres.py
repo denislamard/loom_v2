@@ -85,17 +85,22 @@ def test_the_journal_schema_is_versioned_and_the_event_id_index_unique() -> None
     assert "< 2 THEN" in sql and "VALUES ('events', 2)" in sql
     # Le rôle applicatif lit la version, sans pouvoir l'écrire.
     assert "GRANT SELECT ON loom_schema TO loom_app;" in sql
-    assert "loom_schema" not in ddl(events=False)
+    # Sans le journal, rien ne parle de la version du journal.
+    assert "'events'" not in ddl(events=False)
 
 
 def test_the_idempotency_table_gets_its_holder_column_whether_new_or_old() -> None:
     """Colonne nullable : à la création, et pour une table d'avant, sans toucher à ses lignes."""
     sql = ddl()
     assert "holder     text\n" in sql
-    assert f"ALTER TABLE {IDEMPOTENCY_TABLE} ADD COLUMN holder text;" in sql
-    assert "NOT NULL" not in IDEMPOTENCY_UPGRADE
-    # Le test de présence évite le verrou exclusif de ``ALTER TABLE`` à chaque ouverture.
-    assert IDEMPOTENCY_UPGRADE.index("NOT EXISTS") < IDEMPOTENCY_UPGRADE.index("ALTER TABLE")
+    assert f"ALTER TABLE {IDEMPOTENCY_TABLE} ADD COLUMN IF NOT EXISTS holder text;" in sql
+    # Nullable : une ligne d'avant n'a pas de jeton, et n'en reçoit pas.
+    assert "holder text NOT NULL" not in IDEMPOTENCY_UPGRADE
+    # La version inscrite évite le verrou exclusif de ``ALTER TABLE`` à chaque ouverture.
+    assert "< 2 THEN" in IDEMPOTENCY_UPGRADE
+    assert "VALUES ('idempotency', 2)" in IDEMPOTENCY_UPGRADE
+    # Le rôle applicatif lit la version, même sans le journal.
+    assert "GRANT SELECT ON loom_schema TO loom_app;" in ddl(events=False)
 
 
 def test_the_app_role_cannot_change_a_written_event() -> None:

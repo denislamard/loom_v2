@@ -16,7 +16,8 @@ from loom_ia.access.cli import main
 from loom_ia.adapters.stores import JsonlEventStore
 from loom_ia.config.keys import matches
 from loom_ia.core.events import Event, EventDraft, RunClaimed
-from loom_ia.core.model import DEFAULT_TENANT, SessionId, ToolOutput
+from loom_ia.core.model import DEFAULT_TENANT, Message, RunStatus, SessionId, ToolOutput
+from loom_ia.core.ports import JournalBusy, JournalCorrupted
 from loom_ia.testing import RunJournal, tool_call_message
 
 JOURNAL: dict[str, Any] = {"events": {"backend": "jsonl", "path": "journaux"}}
@@ -203,6 +204,49 @@ def test_resuming_a_run_held_elsewhere_is_refused_not_raised(
     assert captured.out == ""
     assert f"Run {journal.run_id} : piloté par worker-ailleurs" in captured.err
     assert "réessayer après l'échéance" in captured.err
+
+
+def test_a_session_with_an_unreadable_run_is_refused_in_one_line(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = demo(storage=JOURNAL)
+    journal = RunJournal(agent="demo", session_id=SessionId("casse"))
+    journal.start(QUESTION).model_turn(Message.assistant(ANSWER)).complete()
+    journal.transition(RunStatus.READY_FOR_MODEL)
+    _write(path.parent / "journaux", journal)
+
+    assert main(["--config", str(path), "run", "demo", QUESTION, "--session", "casse"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    # Le journal de l'engine garde sa ligne d'erreur ; la commande en ajoute une, sans trace.
+    last = captured.err.strip().splitlines()[-1]
+    assert last.startswith("Historique de la session casse illisible")
+    assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "words"),
+    [
+        (JournalBusy("loom_events : un verrou n'a pas pu être pris"), 2, "verrou"),
+        (JournalCorrupted("/x/s.jsonl : dernière ligne illisible"), 1, "Journal illisible"),
+    ],
+)
+def test_a_busy_or_corrupted_journal_is_one_line_not_a_traceback(
+    demo: ConfigFactory,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    code: int,
+    words: str,
+) -> None:
+    async def failing(self: Loom, *args: object, **kwargs: object) -> NoReturn:
+        raise error
+
+    monkeypatch.setattr(Loom, "run", failing)
+    assert main(["--config", str(demo()), "run", "demo", QUESTION]) == code
+    captured = capsys.readouterr()
+    assert words in captured.err and "Traceback" not in captured.err
+    assert captured.err.count("\n") == 1
 
 
 def test_a_programming_error_keeps_its_traceback(

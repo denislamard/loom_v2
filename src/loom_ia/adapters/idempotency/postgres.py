@@ -19,9 +19,10 @@ son préfixe par client (#49) ; ce que portent les colonnes ``tenant_id`` et
 
 La colonne ``holder`` porte le jeton du détenteur de la clé : ``complete`` et
 ``release`` qui en présentent un ne touchent que la ligne encore à lui. Elle
-est nullable, et ajoutée par l'ouverture à une table créée avant elle (il y
-faut le droit de ``ALTER TABLE`` ; sinon ``loom storage sql`` donne ce qu'un
-exploitant applique). Une ligne sans jeton ne répond à aucun jeton.
+est nullable, et ajoutée par l'ouverture à une table créée avant elle, une
+seule fois : la version du schéma, inscrite dans ``loom_schema``, dit si c'est
+fait (il y faut le droit de ``ALTER TABLE`` ; sinon ``loom storage sql`` donne
+ce qu'un exploitant applique). Une ligne sans jeton ne répond à aucun jeton.
 """
 
 import json
@@ -30,6 +31,7 @@ from typing import Any, Final
 from loom_ia.adapters.postgres.pool import DEFAULT_LIMITS, PoolLimits, PostgresPool, rows_touched
 from loom_ia.adapters.postgres.sql import (
     DEFAULT_ROLE,
+    IDEMPOTENCY_SCHEMA_VERSION,
     IDEMPOTENCY_TABLE,
     IDEMPOTENCY_UPGRADE,
     ddl,
@@ -108,6 +110,7 @@ class PostgresIdempotency:
             ddl=ddl(role=role, events=False),
             role=role,
             upgrade=IDEMPOTENCY_UPGRADE,
+            schema=("idempotency", IDEMPOTENCY_SCHEMA_VERSION),
             limits=limits,
         )
 

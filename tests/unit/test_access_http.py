@@ -22,6 +22,7 @@ from loom_ia.config import ConfigError, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.core.events import Event
 from loom_ia.core.model import DEFAULT_TENANT, Message, RunStatus, SessionId, new_run_id
+from loom_ia.core.ports import JournalBusy
 from loom_ia.testing import RunJournal
 
 pytest.importorskip("fastapi", reason="extra 'http' absent")
@@ -81,6 +82,21 @@ async def test_an_unreadable_session_is_a_clean_error_not_a_crash(demo: ConfigFa
     # Ouvrir un run dessus est refusé de même, et n'écrit rien.
     assert opened.status_code == 500 and "illisible" in opened.json()["detail"]
     assert await store.last_seq(DEFAULT_TENANT, session) == before
+
+
+class _BusyStore(InMemoryEventStore):
+    """Un journal dont l'écrivain concurrent ne rend pas le verrou."""
+
+    async def append(self, drafts: Any, *, expected_seq: int | None) -> list[Event]:
+        raise JournalBusy("loom_events : un verrou n'a pas pu être pris en 10 s ; réessayer")
+
+
+async def test_a_busy_journal_is_a_503_that_says_so(demo: ConfigFactory) -> None:
+    async with serving_store(demo(), _BusyStore()) as (_, http):
+        opened = await http.post("/v1/agents/demo/runs", json={"message": QUESTION})
+
+    assert opened.status_code == 503
+    assert "verrou" in opened.json()["detail"]
 
 
 async def test_agents_are_listed(demo: ConfigFactory) -> None:

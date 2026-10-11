@@ -43,6 +43,7 @@ import asyncpg
 from asyncpg.pool import PoolConnectionProxy
 
 from loom_ia.adapters.postgres.sql import SCHEMA_TABLE, TENANT_SETTING, check_name
+from loom_ia.core.ports import JournalBusy
 
 # Connexion tenue le temps d'une transaction : ce que rend le pool, et non un
 # ``asyncpg.Connection``, qu'il enrobe.
@@ -301,7 +302,16 @@ class PostgresPool:
                 await connection.execute(_SET_TENANT, tenant_id, lock)
             else:
                 await connection.execute(_SET_LOCK, lock)
-            yield connection
+            try:
+                yield connection
+            except asyncpg.LockNotAvailableError as exc:
+                # Le verrou n'a pas été pris dans le délai : rien n'est écrit, la
+                # transaction est annulée. Une erreur que l'appelant sait nommer.
+                raise JournalBusy(
+                    f"{self._table} : un verrou n'a pas pu être pris en "
+                    f"{self._limits.lock_timeout:g} s (journal tenu par un autre écrivain) ; "
+                    "réessayer"
+                ) from exc
 
     async def aclose(self) -> None:
         if self._pool is not None:

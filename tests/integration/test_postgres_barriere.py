@@ -33,6 +33,7 @@ from loom_ia.adapters.postgres.sql import (
     DEFAULT_ROLE,
     EVENTS_DDL,
     EVENTS_TABLE,
+    IDEMPOTENCY_TABLE,
     ddl,
     grants_ddl,
     membership_ddl,
@@ -41,6 +42,7 @@ from loom_ia.adapters.postgres.sql import (
 from loom_ia.adapters.stores.postgres import PostgresEventStore
 from loom_ia.core.events import EventDraft
 from loom_ia.core.model import SessionId, TenantId
+from loom_ia.core.ports import JournalBusy
 from loom_ia.testing import RunJournal
 
 pytestmark = pytest.mark.integration
@@ -262,8 +264,9 @@ async def test_a_writer_waiting_for_a_stuck_journal_lock_gives_up(postgres_dsn: 
     try:
         # Le verrou d'un autre process, jamais rendu : celui que prend ``append``.
         await holder.execute("SELECT pg_advisory_lock(hashtext($1)::bigint)", f"{UN}/{session}")
-        with pytest.raises(asyncpg.LockNotAvailableError):
+        with pytest.raises(JournalBusy, match="verrou") as busy:
             await asyncio.wait_for(store.append(drafts(UN, session), expected_seq=None), timeout=20)
+        assert isinstance(busy.value.__cause__, asyncpg.LockNotAvailableError)
         # Le verrou rendu, la même session se réécrit : l'abandon n'a rien abîmé.
         await holder.execute("SELECT pg_advisory_unlock_all()")
         await store.append(drafts(UN, session), expected_seq=None)
@@ -432,3 +435,92 @@ async def test_an_event_id_already_written_is_not_mistaken_for_a_sequence_confli
             await store.append(clash, expected_seq=0)
     finally:
         await store.aclose()
+
+
+# --- Migrations de l'idempotence (DON-2) ------------------------------------
+
+_OLD_IDEMPOTENCY = f"""\
+CREATE TABLE {IDEMPOTENCY_TABLE} (
+    key        text        NOT NULL PRIMARY KEY,
+    tenant_id  text        NOT NULL,
+    session_id text        NOT NULL,
+    status     text        NOT NULL,
+    result     text,
+    expires_at timestamptz NOT NULL
+)"""
+
+
+async def _idempotency_state(dsn: str) -> tuple[int | None, bool, object]:
+    """(version, la colonne ``holder`` existe-t-elle ?, date d'inscription de la version)"""
+    connection = await asyncpg.connect(dsn)
+    try:
+        present = await connection.fetchval("SELECT to_regclass('loom_schema')")
+        row = (
+            await connection.fetchrow(
+                "SELECT version, applied_at FROM loom_schema WHERE component = 'idempotency'"
+            )
+            if present
+            else None
+        )
+        holder = await connection.fetchval(
+            "SELECT count(*) FROM pg_attribute WHERE attrelid = to_regclass($1)"
+            " AND attname = 'holder' AND NOT attisdropped",
+            IDEMPOTENCY_TABLE,
+        )
+        return (
+            (None if row is None else int(row["version"])),
+            holder == 1,
+            (None if row is None else row["applied_at"]),
+        )
+    finally:
+        await connection.close()
+
+
+async def test_an_old_idempotency_table_is_migrated_once_and_keeps_its_rows(
+    postgres_dsn: str,
+) -> None:
+    from loom_ia.adapters.idempotency.postgres import PostgresIdempotency
+    from loom_ia.core.ports import KeyScope
+
+    connection = await asyncpg.connect(postgres_dsn)
+    try:
+        await connection.execute("DROP TABLE IF EXISTS loom_schema")
+        await connection.execute(role_ddl(DEFAULT_ROLE))
+        await connection.execute(membership_ddl(DEFAULT_ROLE))
+        await connection.execute(_OLD_IDEMPOTENCY)
+        await connection.execute(grants_ddl(DEFAULT_ROLE, table=IDEMPOTENCY_TABLE, update=True))
+        await connection.execute(
+            f"INSERT INTO {IDEMPOTENCY_TABLE} VALUES"
+            " ('ancienne', 't', 's', 'completed', '\"ok\"', now() + interval '1 hour')"
+        )
+    finally:
+        await connection.close()
+    assert (await _idempotency_state(postgres_dsn))[:2] == (None, False)
+
+    scope = KeyScope(tenant_id=UN, session_id=SessionId("s-un"))
+    applied: list[tuple[int | None, bool, object]] = []
+    for _ in range(2):  # la seconde ouverture ne refait rien
+        store = PostgresIdempotency(postgres_dsn)
+        try:
+            assert await store.reserve("neuve", 60, scope, holder="a") is True
+            await store.release("neuve", holder="a")
+            old = await store.get("ancienne")
+        finally:
+            await store.aclose()
+        applied.append(await _idempotency_state(postgres_dsn))
+        assert old is not None and old.result == "ok"
+    assert applied[0][:2] == (2, True)
+    assert applied[0] == applied[1]  # même version, même date : la migration n'a pas rejoué
+
+
+async def test_a_new_idempotency_database_is_created_at_the_current_version(
+    postgres_dsn: str,
+) -> None:
+    from loom_ia.adapters.idempotency.postgres import PostgresIdempotency
+
+    store = PostgresIdempotency(postgres_dsn)
+    try:
+        assert await store.get("rien") is None
+    finally:
+        await store.aclose()
+    assert (await _idempotency_state(postgres_dsn))[:2] == (2, True)

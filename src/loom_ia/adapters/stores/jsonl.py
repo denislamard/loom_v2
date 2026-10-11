@@ -15,17 +15,25 @@ laisse encore voir et supprimer.
 Plantage en cours d'écriture : la dernière ligne peut rester incomplète.
 Elle est ignorée à la lecture ; à l'écriture suivante, elle est déplacée
 dans ``<session>.jsonl.corrupt`` puis retirée du journal. Une ligne
-complète illisible lève ``JournalCorrupted``. Une ligne est complète
-quand elle se termine par un saut de ligne, même si ce qui précède est un
-JSON entier : la règle est la même pour ``read``, ``query``, ``last_seq``,
-``sessions`` et ``append``.
+complète illisible lève ``JournalCorrupted`` — pour ``read``, ``query``,
+``last_seq`` (si c'est la dernière) et ``append`` ; ``sessions`` la saute,
+pour qu'un journal abîmé reste listable et supprimable. Une ligne est
+complète quand elle se termine par un saut de ligne, même si ce qui
+précède est un JSON entier : la règle est la même pour ``read``, ``query``,
+``last_seq``, ``sessions`` et ``append``. Écarter ainsi un JSON entier sans
+son saut de ligne ne perd rien de promis : ``append`` ne rend la main
+qu'une fois tout le lot écrit et ``fsync``, donc une ligne sans saut de
+ligne appartient à un lot que l'appelant n'a pas vu confirmé.
 
 Un lot s'écrit d'un seul bloc, sous verrou. Si l'écriture échoue (disque plein,
 erreur d'entrée-sortie), le fichier retrouve sa taille d'avant le lot : tout ou
 rien. Si c'est la machine qui tombe en plein milieu, le disque peut garder un
 préfixe du lot : ses premières lignes, complètes et valides, puis une ligne
-incomplète traitée comme ci-dessus. Un lot tout ou rien après une panne de
-machine demande SQLite ou Postgres.
+incomplète traitée comme ci-dessus. Ce choix est voulu : le mode JSONL est
+le mode local, et un lot tout ou rien après une panne de machine demande
+SQLite ou Postgres (ils le sont). Un fichier d'intention rejoué au démarrage
+l'obtiendrait ici, au prix de trois ``fsync`` par ajout au lieu d'un et d'un
+nouveau type de fichier à lister, supprimer et exporter : non retenu.
 """
 
 import asyncio
@@ -120,6 +128,32 @@ def _last_mark(content: bytes, codec: JournalCodec) -> EventMark | None:
         except ValidationError, JournalCorrupted:
             continue
     return None
+
+
+class _FullReadNeeded(Exception):
+    """La fin du fichier ne suffit pas à lire la dernière ligne : relire tout le fichier."""
+
+
+def _strict_mark(
+    path: Path, content: bytes, codec: JournalCodec, *, partial_start: bool
+) -> EventMark | None:
+    """Repères de la dernière ligne complète ; lève si elle est illisible.
+
+    ``partial_start`` : ``content`` est la fin d'un fichier, sa première ligne peut être
+    coupée ; si c'est la seule et qu'elle ne se lit pas, ``_FullReadNeeded``.
+    """
+    complete = content[: content.rfind(b"\n") + 1]
+    lines = [line for line in complete.split(b"\n") if line]
+    if not lines:
+        if partial_start and content:
+            raise _FullReadNeeded
+        return None
+    try:
+        return codec.mark(lines[-1])
+    except (ValidationError, JournalCorrupted) as exc:
+        if partial_start and len(lines) == 1:
+            raise _FullReadNeeded from exc
+        raise JournalCorrupted(f"{path} : dernière ligne illisible : {exc}") from exc
 
 
 def _write_batch(fh: BinaryIO, data: bytes) -> None:
@@ -264,7 +298,7 @@ class JsonlEventStore:
 
     async def last_seq(self, tenant_id: TenantId, session_id: SessionId) -> int:
         path = self.path(tenant_id, session_id)
-        last = await asyncio.to_thread(self._last_mark_of, path)
+        last = await asyncio.to_thread(self._last_mark_strict, path)
         return last.seq if last is not None else 0
 
     # --- Sessions (F7) ----------------------------------------------------
@@ -294,6 +328,18 @@ class JsonlEventStore:
             # Un événement plus gros que la fenêtre : on relit tout le journal.
             found = _last_mark(_locked_read(path), self._codec)
         return found
+
+    def _last_mark_strict(self, path: Path) -> EventMark | None:
+        """Repères du dernier événement ; ``JournalCorrupted`` si sa ligne est illisible.
+
+        Comme ``append``, qui lève sur cette ligne : annoncer un numéro plus ancien
+        ferait ouvrir une écriture qui échouera.
+        """
+        tail = _tail(path, TAIL_BYTES)
+        try:
+            return _strict_mark(path, tail, self._codec, partial_start=len(tail) >= TAIL_BYTES)
+        except _FullReadNeeded:
+            return _strict_mark(path, _locked_read(path), self._codec, partial_start=False)
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> int:
         path = self.path(tenant_id, session_id)

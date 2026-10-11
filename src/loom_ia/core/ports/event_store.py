@@ -42,6 +42,13 @@ class JournalCorrupted(Exception):
     """Une ligne complète du journal est illisible."""
 
 
+class JournalBusy(Exception):
+    """Le journal est tenu par un autre écrivain au-delà du délai de verrou.
+
+    Rien n'a été écrit : la même demande peut être refaite plus tard.
+    """
+
+
 class UnusableId(ValueError):
     """Un identifiant (client, session) que ce journal ne peut pas nommer.
 

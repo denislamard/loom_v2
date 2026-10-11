@@ -130,46 +130,6 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;"""
 
-# Pas de politique ici, et ce n'est pas un oubli : ``IdempotencyStore.get``
-# ne nomme pas de client (``get(key)``), et une politique par client rendrait
-# invisible la ligne qu'il faut relire. Le cadrage vient de la clé — préfixée
-# par client pour une clé métier (#49) — et des colonnes, qui portent le
-# client et la session pour l'oubli RGPD.
-#
-# ``holder`` est le jeton du détenteur de la clé : ``complete`` et ``release``
-# qui en présentent un ne touchent que la ligne encore à lui. La colonne est
-# nullable et, pour une table créée avant elle, ajoutée par ``IDEMPOTENCY_UPGRADE``
-# — que l'ouverture du stockage rejoue même quand la table existe déjà. Le
-# test de présence évite de prendre le verrou exclusif de ``ALTER TABLE`` à
-# chaque ouverture, quand la colonne est là.
-IDEMPOTENCY_UPGRADE: Final = f"""\
-DO $$ BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_attribute
-        WHERE attrelid = to_regclass('{IDEMPOTENCY_TABLE}')
-          AND attname = 'holder' AND NOT attisdropped
-    ) THEN
-        ALTER TABLE {IDEMPOTENCY_TABLE} ADD COLUMN holder text;
-    END IF;
-END $$;"""
-
-IDEMPOTENCY_DDL: Final = f"""\
-CREATE TABLE IF NOT EXISTS {IDEMPOTENCY_TABLE} (
-    key        text        NOT NULL PRIMARY KEY,
-    tenant_id  text        NOT NULL,
-    session_id text        NOT NULL,
-    status     text        NOT NULL,
-    result     text,
-    expires_at timestamptz NOT NULL,
-    holder     text
-);
-{IDEMPOTENCY_UPGRADE}
-CREATE INDEX IF NOT EXISTS {IDEMPOTENCY_TABLE}_owner
-    ON {IDEMPOTENCY_TABLE} (tenant_id, session_id);
-CREATE INDEX IF NOT EXISTS {IDEMPOTENCY_TABLE}_expiry
-    ON {IDEMPOTENCY_TABLE} (status, expires_at);"""
-
-
 SCHEMA_DDL: Final = f"""\
 CREATE TABLE IF NOT EXISTS {SCHEMA_TABLE} (
     component  text        NOT NULL PRIMARY KEY,
@@ -195,6 +155,49 @@ DO $mig$ BEGIN
     END IF;
 END $mig$;"""
 
+
+# Version du schéma de l'idempotence que ce loom attend : en deçà, l'ouverture migre.
+IDEMPOTENCY_SCHEMA_VERSION: Final = 2
+
+# ``holder`` est le jeton du détenteur de la clé : ``complete`` et ``release``
+# qui en présentent un ne touchent que la ligne encore à lui. La colonne est
+# nullable. Version 1 : la table de la 2.0, sans elle. Version 2 : la colonne,
+# ajoutée une seule fois — la version inscrite évite le verrou exclusif de
+# ``ALTER TABLE`` à chaque ouverture.
+IDEMPOTENCY_V2: Final = f"""\
+        ALTER TABLE {IDEMPOTENCY_TABLE} ADD COLUMN IF NOT EXISTS holder text;"""
+
+# Rejouable : c'est ce que loom applique à l'ouverture d'une table qui existe
+# déjà. Une table sans ligne de version est au moins en version 1.
+IDEMPOTENCY_UPGRADE: Final = "\n".join(
+    [
+        SCHEMA_DDL,
+        f"INSERT INTO {SCHEMA_TABLE} (component, version) VALUES ('idempotency', 1)"
+        " ON CONFLICT (component) DO NOTHING;",
+        _migration("idempotency", IDEMPOTENCY_SCHEMA_VERSION, IDEMPOTENCY_V2),
+    ]
+)
+
+# Pas de politique ici, et ce n'est pas un oubli : ``IdempotencyStore.get``
+# ne nomme pas de client (``get(key)``), et une politique par client rendrait
+# invisible la ligne qu'il faut relire. Le cadrage vient de la clé — préfixée
+# par client pour une clé métier (#49) — et des colonnes, qui portent le
+# client et la session pour l'oubli RGPD.
+IDEMPOTENCY_DDL: Final = f"""\
+CREATE TABLE IF NOT EXISTS {IDEMPOTENCY_TABLE} (
+    key        text        NOT NULL PRIMARY KEY,
+    tenant_id  text        NOT NULL,
+    session_id text        NOT NULL,
+    status     text        NOT NULL,
+    result     text,
+    expires_at timestamptz NOT NULL,
+    holder     text
+);
+{IDEMPOTENCY_UPGRADE}
+CREATE INDEX IF NOT EXISTS {IDEMPOTENCY_TABLE}_owner
+    ON {IDEMPOTENCY_TABLE} (tenant_id, session_id);
+CREATE INDEX IF NOT EXISTS {IDEMPOTENCY_TABLE}_expiry
+    ON {IDEMPOTENCY_TABLE} (status, expires_at);"""
 
 # Version du schéma du journal que ce loom attend : en deçà, l'ouverture migre.
 EVENTS_SCHEMA_VERSION: Final = 2
@@ -265,10 +268,11 @@ def ddl(*, role: str | None = DEFAULT_ROLE, events: bool = True, idempotency: bo
         blocks.extend([EVENTS_DDL, EVENTS_UPGRADE])
         if role is not None:
             blocks.append(grants_ddl(role, table=EVENTS_TABLE, update=False))
-            # Lecture seule : de quoi vérifier la version sans pouvoir migrer.
-            blocks.append(f"GRANT SELECT ON {SCHEMA_TABLE} TO {role};")
     if idempotency:
         blocks.append(IDEMPOTENCY_DDL)
         if role is not None:
             blocks.append(grants_ddl(role, table=IDEMPOTENCY_TABLE, update=True))
+    if role is not None and (events or idempotency):
+        # Lecture seule : de quoi vérifier la version sans pouvoir migrer.
+        blocks.append(f"GRANT SELECT ON {SCHEMA_TABLE} TO {role};")
     return "\n".join(blocks) + "\n"

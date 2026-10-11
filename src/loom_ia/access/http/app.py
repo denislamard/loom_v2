@@ -160,7 +160,7 @@ from loom_ia.core.model import (
     SessionId,
     TenantId,
 )
-from loom_ia.core.ports import JournalCorrupted, SealError, SessionRecord, UnusableId
+from loom_ia.core.ports import JournalBusy, JournalCorrupted, SealError, SessionRecord, UnusableId
 from loom_ia.core.projections import ProjectionError
 from loom_ia.engine import SessionUnreadable
 from loom_ia.runtime import announce
@@ -376,6 +376,15 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
                 )
             },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    @app.exception_handler(JournalBusy)
+    async def _busy(request: Request, exc: Exception) -> JSONResponse:
+        # Le journal est tenu par un autre écrivain : rien n'a été écrit et la même
+        # demande passera sans doute dans un instant. 503, pas 500.
+        logger.warning("Journal occupé sur %s : %s", request.url.path, exc)
+        return JSONResponse(
+            {"detail": _message(exc)}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE
         )
 
     @app.exception_handler(AgentNotAllowed)

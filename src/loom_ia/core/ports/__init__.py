@@ -12,6 +12,7 @@ from loom_ia.core.ports.cipher import (
 )
 from loom_ia.core.ports.event_store import (
     EventStore,
+    JournalBusy,
     JournalCorrupted,
     SequenceConflict,
     SessionRecord,
@@ -62,6 +63,7 @@ __all__ = [
     "Job",
     "JobKind",
     "JobState",
+    "JournalBusy",
     "JournalCorrupted",
     "KeyScope",
     "Keyring",
