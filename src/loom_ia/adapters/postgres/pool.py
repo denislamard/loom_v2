@@ -70,7 +70,7 @@ class PoolLimits:
     verrou (le verrou consultatif du journal, celui du schéma, un verrou de
     ligne), ``acquire_timeout`` l'attente d'une connexion libre du pool. Un
     dépassement lève : ``TimeoutError`` pour la première et la dernière,
-    ``asyncpg.LockNotAvailableError`` pour la seconde.
+    ``JournalBusy`` pour la seconde (``asyncpg.LockNotAvailableError`` en cause).
     """
 
     min_size: int = MIN_SIZE
@@ -246,6 +246,13 @@ class PostgresPool:
                 raise PostgresNotPrepared(self._table, str(current), str(exc)) from exc
             except asyncpg.UniqueViolationError as exc:
                 raise PostgresMigrationFailed(self._table, str(exc)) from exc
+        except asyncpg.LockNotAvailableError as exc:
+            # Un autre process pose ou migre le schéma et ne rend pas son verrou à temps.
+            # Rien n'est ouvert ni modifié : la même demande repasse quand il a fini.
+            raise JournalBusy(
+                f"{self._table} : le schéma est préparé par un autre process "
+                f"(verrou non pris en {self._limits.lock_timeout:g} s) ; réessayer"
+            ) from exc
         finally:
             await connection.close()
 

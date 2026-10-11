@@ -275,6 +275,25 @@ async def test_a_writer_waiting_for_a_stuck_journal_lock_gives_up(postgres_dsn: 
         await store.aclose()
 
 
+async def test_opening_while_another_process_holds_the_schema_lock_gives_up_cleanly(
+    postgres_dsn: str,
+) -> None:
+    store = PostgresEventStore(postgres_dsn, limits=PoolLimits(lock_timeout=0.5))
+    holder = await asyncpg.connect(postgres_dsn)
+    try:
+        # Le verrou que prend ``_prepare`` : un autre process est en train de préparer le schéma.
+        await holder.execute("SELECT pg_advisory_lock(hashtext($1)::bigint)", "loom_ia/schema")
+        with pytest.raises(JournalBusy, match="schéma") as busy:
+            await asyncio.wait_for(store.append(drafts(UN, SessionId("s-1")), expected_seq=0), 20)
+        assert isinstance(busy.value.__cause__, asyncpg.LockNotAvailableError)
+        # Le verrou rendu, la même demande passe : l'abandon n'a rien laissé à moitié ouvert.
+        await holder.execute("SELECT pg_advisory_unlock_all()")
+        await store.append(drafts(UN, SessionId("s-1")), expected_seq=0)
+    finally:
+        await holder.close()
+        await store.aclose()
+
+
 def _pool(dsn: str, limits: PoolLimits) -> PostgresPool:
     return PostgresPool(dsn, table=EVENTS_TABLE, ddl=ddl(role=None), role=None, limits=limits)
 
