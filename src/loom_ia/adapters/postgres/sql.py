@@ -42,6 +42,10 @@ from typing import Final
 # ``search_path`` (§7.3).
 EVENTS_TABLE: Final = "loom_events"
 IDEMPOTENCY_TABLE: Final = "loom_idempotency"
+# Version du schéma de chaque composant (``events``), pour que le DDL sache ce
+# qui est déjà appliqué. Elle appartient au propriétaire ; le rôle applicatif
+# peut la lire, pas l'écrire.
+SCHEMA_TABLE: Final = "loom_schema"
 
 # Réglage de transaction qui porte le client courant. Le point est
 # obligatoire : Postgres n'accepte un réglage inconnu de lui que préfixé.
@@ -166,6 +170,55 @@ CREATE INDEX IF NOT EXISTS {IDEMPOTENCY_TABLE}_expiry
     ON {IDEMPOTENCY_TABLE} (status, expires_at);"""
 
 
+SCHEMA_DDL: Final = f"""\
+CREATE TABLE IF NOT EXISTS {SCHEMA_TABLE} (
+    component  text        NOT NULL PRIMARY KEY,
+    version    integer     NOT NULL,
+    applied_at timestamptz NOT NULL DEFAULT now()
+);"""
+
+
+def _migration(component: str, version: int, body: str) -> str:
+    """Une migration, jouée une seule fois : sa version est inscrite avec elle.
+
+    Le test de version et l'inscription sont dans le même bloc, donc dans la
+    même transaction que ``body`` : une migration qui échoue ne laisse ni
+    changement ni version. ``$mig$`` : ``body`` peut contenir des ``$$``.
+    """
+    return f"""\
+DO $mig$ BEGIN
+    IF coalesce((SELECT version FROM {SCHEMA_TABLE} WHERE component = '{component}'), 0)
+       < {version} THEN
+{body}
+        INSERT INTO {SCHEMA_TABLE} (component, version) VALUES ('{component}', {version})
+        ON CONFLICT (component) DO UPDATE SET version = {version}, applied_at = now();
+    END IF;
+END $mig$;"""
+
+
+# Version du schéma du journal que ce loom attend : en deçà, l'ouverture migre.
+EVENTS_SCHEMA_VERSION: Final = 2
+
+# Version 1 : le schéma de la 2.0 (``EVENTS_DDL``). Version 2 : l'identifiant
+# d'un événement est unique par client — l'index de la 2.0 ne l'était pas. La
+# création échoue s'il existe des doublons, et la migration entière s'annule.
+EVENTS_V2: Final = f"""\
+        DROP INDEX IF EXISTS {EVENTS_TABLE}_event_id;
+        CREATE UNIQUE INDEX {EVENTS_TABLE}_event_id ON {EVENTS_TABLE} (tenant_id, event_id);"""
+
+# Rejouable : c'est ce que loom applique à l'ouverture d'une table qui existe
+# déjà. Une table de la 2.0 n'a pas de ligne de version : elle est au moins en
+# version 1.
+EVENTS_UPGRADE: Final = "\n".join(
+    [
+        SCHEMA_DDL,
+        f"INSERT INTO {SCHEMA_TABLE} (component, version) VALUES ('events', 1)"
+        " ON CONFLICT (component) DO NOTHING;",
+        _migration("events", EVENTS_SCHEMA_VERSION, EVENTS_V2),
+    ]
+)
+
+
 def role_ddl(role: str) -> str:
     """Création du rôle applicatif, sans erreur s'il est déjà là."""
     check_name(role)
@@ -209,9 +262,11 @@ def ddl(*, role: str | None = DEFAULT_ROLE, events: bool = True, idempotency: bo
     if role is not None:
         blocks.extend([role_ddl(role), membership_ddl(role)])
     if events:
-        blocks.append(EVENTS_DDL)
+        blocks.extend([EVENTS_DDL, EVENTS_UPGRADE])
         if role is not None:
             blocks.append(grants_ddl(role, table=EVENTS_TABLE, update=False))
+            # Lecture seule : de quoi vérifier la version sans pouvoir migrer.
+            blocks.append(f"GRANT SELECT ON {SCHEMA_TABLE} TO {role};")
     if idempotency:
         blocks.append(IDEMPOTENCY_DDL)
         if role is not None:

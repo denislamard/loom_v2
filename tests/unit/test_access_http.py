@@ -21,7 +21,7 @@ from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.core.events import Event
-from loom_ia.core.model import Message, RunStatus, SessionId, new_run_id
+from loom_ia.core.model import DEFAULT_TENANT, Message, RunStatus, SessionId, new_run_id
 from loom_ia.testing import RunJournal
 
 pytest.importorskip("fastapi", reason="extra 'http' absent")
@@ -67,6 +67,7 @@ async def test_an_unreadable_session_is_a_clean_error_not_a_crash(demo: ConfigFa
     journal.start(QUESTION).model_turn(Message.assistant(ANSWER)).complete()
     journal.transition(RunStatus.READY_FOR_MODEL)
     await store.append(journal.take(), expected_seq=0)
+    before = await store.last_seq(DEFAULT_TENANT, session)
     async with serving_store(demo(), store) as (_, http):
         read = await http.get(f"/v1/runs/{journal.run_id}", params={"session_id": session})
         detail = await http.get(f"/v1/sessions/{session}")
@@ -77,9 +78,9 @@ async def test_an_unreadable_session_is_a_clean_error_not_a_crash(demo: ConfigFa
     for refused in (read, detail):
         assert refused.status_code == 500
         assert "illisible" in refused.json()["detail"]
-    # Un nouveau run sur la session réussit à s'ouvrir et dit pourquoi il échoue.
-    assert opened.status_code == 201 and opened.json()["status"] == "failed"
-    assert "illisible" in opened.json()["error"]
+    # Ouvrir un run dessus est refusé de même, et n'écrit rien.
+    assert opened.status_code == 500 and "illisible" in opened.json()["detail"]
+    assert await store.last_seq(DEFAULT_TENANT, session) == before
 
 
 async def test_agents_are_listed(demo: ConfigFactory) -> None:

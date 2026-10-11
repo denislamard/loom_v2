@@ -24,11 +24,20 @@ import asyncpg
 
 from loom_ia.adapters.postgres.pool import (
     PoolLimits,
+    PostgresMigrationFailed,
     PostgresNotPrepared,
     PostgresPool,
     RoleUnavailable,
 )
-from loom_ia.adapters.postgres.sql import DEFAULT_ROLE, EVENTS_TABLE, ddl
+from loom_ia.adapters.postgres.sql import (
+    DEFAULT_ROLE,
+    EVENTS_DDL,
+    EVENTS_TABLE,
+    ddl,
+    grants_ddl,
+    membership_ddl,
+    role_ddl,
+)
 from loom_ia.adapters.stores.postgres import PostgresEventStore
 from loom_ia.core.events import EventDraft
 from loom_ia.core.model import SessionId, TenantId
@@ -314,3 +323,112 @@ def test_a_pool_refuses_sizes_and_delays_that_make_no_sense() -> None:
     for field in ("command_timeout", "lock_timeout", "acquire_timeout"):
         with pytest.raises(ValueError, match=field):
             PoolLimits(**{field: 0})
+
+
+# --- Migrations du journal (DON-2) ------------------------------------------
+
+
+async def _old_table(dsn: str, *, duplicate: bool = False) -> None:
+    """Une base de la 2.0 : la table, son index non unique et ses droits, sans table de versions."""
+    connection = await asyncpg.connect(dsn)
+    try:
+        await connection.execute("DROP TABLE IF EXISTS loom_schema")
+        await connection.execute(role_ddl(DEFAULT_ROLE))
+        await connection.execute(membership_ddl(DEFAULT_ROLE))
+        await connection.execute(EVENTS_DDL)
+        await connection.execute(grants_ddl(DEFAULT_ROLE, table=EVENTS_TABLE, update=False))
+        rows = [("s-1", 1, "e-1"), ("s-2", 1, "e-1" if duplicate else "e-2")]
+        async with connection.transaction():
+            await connection.execute("SELECT set_config('loom.tenant_id', $1, true)", UN)
+            for session, seq, event_id in rows:
+                await connection.execute(
+                    f"INSERT INTO {EVENTS_TABLE} (tenant_id, session_id, seq, event_id, ts,"
+                    " run_id, root_run_id, type, category, status, facets, event)"
+                    " VALUES ($1, $2, $3, $4, now(), 'r', 'r', 't', 'c', 's', '{}'::jsonb, '{}')",
+                    UN,
+                    session,
+                    seq,
+                    event_id,
+                )
+    finally:
+        await connection.close()
+
+
+async def _state(dsn: str) -> tuple[int | None, bool]:
+    """(version du journal, l'index de ``event_id`` est-il unique ?)"""
+    connection = await asyncpg.connect(dsn)
+    try:
+        present = await connection.fetchval("SELECT to_regclass('loom_schema')")
+        version = (
+            await connection.fetchval("SELECT version FROM loom_schema WHERE component = 'events'")
+            if present
+            else None
+        )
+        definition = await connection.fetchval(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = $1", f"{EVENTS_TABLE}_event_id"
+        )
+        return version, "UNIQUE" in str(definition)
+    finally:
+        await connection.close()
+
+
+async def test_a_new_database_is_created_at_the_current_version(postgres_dsn: str) -> None:
+    store = PostgresEventStore(postgres_dsn)
+    try:
+        await store.append(drafts(UN, SessionId("s-neuf")), expected_seq=0)
+    finally:
+        await store.aclose()
+    assert await _state(postgres_dsn) == (2, True)
+
+
+async def test_a_2_0_database_is_migrated_and_keeps_its_events(postgres_dsn: str) -> None:
+    await _old_table(postgres_dsn)
+    assert await _state(postgres_dsn) == (None, False)
+    for number in range(2):  # la seconde ouverture ne refait rien
+        store = PostgresEventStore(postgres_dsn)
+        try:
+            await store.append(drafts(UN, SessionId(f"s-n{number}")), expected_seq=0)
+        finally:
+            await store.aclose()
+        assert await _state(postgres_dsn) == (2, True)
+    connection = await asyncpg.connect(postgres_dsn)
+    try:
+        async with connection.transaction():
+            await connection.execute("SELECT set_config('loom.tenant_id', $1, true)", UN)
+            kept = await connection.fetchval(f"SELECT count(*) FROM {EVENTS_TABLE} WHERE seq = 1")
+    finally:
+        await connection.close()
+    assert kept == 4  # les 2 événements de la 2.0 et ceux des 2 sessions écrites ensuite
+
+
+async def test_a_duplicate_event_id_stops_the_migration_and_changes_nothing(
+    postgres_dsn: str,
+) -> None:
+    await _old_table(postgres_dsn, duplicate=True)
+    store = PostgresEventStore(postgres_dsn)
+    try:
+        with pytest.raises(PostgresMigrationFailed, match="BYPASSRLS"):
+            await store.append(drafts(UN, SessionId("s-3")), expected_seq=0)
+    finally:
+        await store.aclose()
+    # Annulée en entier : ni version, ni index changé.
+    assert await _state(postgres_dsn) == (None, False)
+
+
+async def test_an_event_id_already_written_is_not_mistaken_for_a_sequence_conflict(
+    postgres_dsn: str,
+) -> None:
+    store = PostgresEventStore(postgres_dsn)
+    try:
+        first = drafts(UN, SessionId("s-a"))
+        await store.append(first, expected_seq=0)
+        # Les mêmes événements, sous un autre client : l'unicité est par client.
+        await store.append(
+            [d.model_copy(update={"tenant_id": AUTRE}) for d in first], expected_seq=0
+        )
+        # Le même identifiant dans une autre session du même client : refusé tel quel.
+        clash = [d.model_copy(update={"session_id": SessionId("s-b")}) for d in first]
+        with pytest.raises(asyncpg.UniqueViolationError):
+            await store.append(clash, expected_seq=0)
+    finally:
+        await store.aclose()

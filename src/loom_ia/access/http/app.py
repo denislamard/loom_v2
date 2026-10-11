@@ -162,6 +162,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import JournalCorrupted, SealError, SessionRecord, UnusableId
 from loom_ia.core.projections import ProjectionError
+from loom_ia.engine import SessionUnreadable
 from loom_ia.runtime import announce
 from loom_ia.telemetry import Trace
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
@@ -360,13 +361,20 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
 
     @app.exception_handler(JournalCorrupted)
     @app.exception_handler(ProjectionError)
+    @app.exception_handler(SessionUnreadable)
     async def _unreadable(request: Request, exc: Exception) -> JSONResponse:
         # Un journal que la projection ou le décodage refusent est une panne de
         # données, pas une demande mal formée : 500, mais qui le dit — le
         # message nomme le run et l'événement fautifs — au lieu d'un 500 muet.
         logger.error("Journal illisible sur %s : %s", request.url.path, exc)
         return JSONResponse(
-            {"detail": f"Journal de la session illisible : {_message(exc)}"},
+            {
+                "detail": (
+                    _message(exc)
+                    if isinstance(exc, SessionUnreadable)
+                    else f"Journal de la session illisible : {_message(exc)}"
+                )
+            },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 

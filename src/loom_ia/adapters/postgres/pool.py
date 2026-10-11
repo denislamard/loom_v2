@@ -33,6 +33,7 @@ politique ne verrait rien.
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -41,7 +42,7 @@ from typing import Final
 import asyncpg
 from asyncpg.pool import PoolConnectionProxy
 
-from loom_ia.adapters.postgres.sql import TENANT_SETTING, check_name
+from loom_ia.adapters.postgres.sql import SCHEMA_TABLE, TENANT_SETTING, check_name
 
 # Connexion tenue le temps d'une transaction : ce que rend le pool, et non un
 # ``asyncpg.Connection``, qu'il enrobe.
@@ -93,7 +94,10 @@ class PoolLimits:
         return str(max(1, round(self.lock_timeout * 1000)))
 
 
+logger = logging.getLogger(__name__)
+
 _PRESENT: Final = "SELECT to_regclass($1)"
+_VERSION: Final = f"SELECT version FROM {SCHEMA_TABLE} WHERE component = $1"
 # Verrou consultatif de session, pris le temps de poser le schéma : tous les
 # process qui ouvrent un stockage Postgres sur la même base le partagent.
 _SCHEMA_LOCK: Final = "SELECT pg_advisory_lock(hashtext($1)::bigint)"
@@ -126,6 +130,19 @@ class PostgresNotPrepared(RuntimeError):
         )
 
 
+class PostgresMigrationFailed(RuntimeError):
+    """Une migration du schéma a échoué ; elle est annulée en entier, la base n'a pas bougé."""
+
+    def __init__(self, table: str, said: str) -> None:
+        super().__init__(
+            f"Migration du schéma de {table!r} refusée par Postgres : « {said} ». "
+            "Rien n'a été modifié. Pour un doublon d'identifiant d'événement, le chercher avec "
+            "un rôle qui contourne la politique de lignes (BYPASSRLS) : "
+            f"SELECT tenant_id, event_id, count(*) FROM {table} "
+            "GROUP BY 1, 2 HAVING count(*) > 1 ; puis relancer."
+        )
+
+
 class RoleUnavailable(RuntimeError):
     """Le rôle connecté ne peut pas endosser le rôle applicatif."""
 
@@ -144,7 +161,9 @@ class PostgresPool:
     donné, est pris par chaque connexion du pool ; ``limits`` fixe sa taille et
     ses délais. ``upgrade``, s'il est donné,
     est appliqué quand la table existe déjà : la mise à niveau d'un schéma plus
-    ancien, qui doit pouvoir se rejouer sans effet.
+    ancien, qui doit pouvoir se rejouer sans effet. ``schema`` — (composant,
+    version attendue) — évite de le rejouer quand la table de versions dit que
+    le composant est à jour ; un rôle qui ne peut pas la lire ne migre pas.
     """
 
     def __init__(
@@ -156,9 +175,11 @@ class PostgresPool:
         role: str | None,
         label: str = "Postgres",
         upgrade: str | None = None,
+        schema: tuple[str, int] | None = None,
         limits: PoolLimits = DEFAULT_LIMITS,
     ) -> None:
         self._dsn = dsn
+        self._schema = schema
         self._limits = limits
         self._table = table
         self._ddl = ddl
@@ -212,6 +233,8 @@ class PostgresPool:
             # la fermeture de la connexion le rend.
             await connection.execute(_SCHEMA_LOCK, _SCHEMA_KEY)
             present = await connection.fetchval(_PRESENT, self._table) is not None
+            if present and self._schema is not None and await self._up_to_date(connection):
+                return
             statement = self._upgrade if present else self._ddl
             if statement is None:
                 return
@@ -220,8 +243,32 @@ class PostgresPool:
             except asyncpg.InsufficientPrivilegeError as exc:
                 current = await connection.fetchval("SELECT current_user")
                 raise PostgresNotPrepared(self._table, str(current), str(exc)) from exc
+            except asyncpg.UniqueViolationError as exc:
+                raise PostgresMigrationFailed(self._table, str(exc)) from exc
         finally:
             await connection.close()
+
+    async def _up_to_date(self, connection: asyncpg.Connection[asyncpg.Record]) -> bool:
+        """La table de versions dit-elle le composant à jour ? Faux si elle manque.
+
+        Un rôle qui n'a pas le droit de la lire n'est pas celui qui migre : on
+        le laisse ouvrir, avec un avertissement, plutôt que de lui refuser une
+        base que le propriétaire a préparée.
+        """
+        assert self._schema is not None
+        component, wanted = self._schema
+        try:
+            version = await connection.fetchval(_VERSION, component)
+        except asyncpg.UndefinedTableError:
+            return False
+        except asyncpg.InsufficientPrivilegeError:
+            logger.warning(
+                "%s : la version du schéma n'est pas lisible par ce rôle ; migration non "
+                "vérifiée (appliquer 'loom storage sql' avec le rôle propriétaire)",
+                self._table,
+            )
+            return True
+        return version is not None and int(version) >= wanted
 
     async def _take_role(self, connection: asyncpg.Connection[asyncpg.Record]) -> None:
         """Prend le rôle applicatif sur une connexion neuve du pool."""

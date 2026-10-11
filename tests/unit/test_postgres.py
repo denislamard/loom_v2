@@ -77,6 +77,17 @@ def test_the_ddl_can_be_applied_twice() -> None:
     assert sql.count("EXCEPTION WHEN duplicate_object THEN NULL;") == 2
 
 
+def test_the_journal_schema_is_versioned_and_the_event_id_index_unique() -> None:
+    sql = ddl()
+    assert "CREATE TABLE IF NOT EXISTS loom_schema" in sql
+    assert "CREATE UNIQUE INDEX loom_events_event_id ON loom_events (tenant_id, event_id)" in sql
+    # La migration n'est jouée que si sa version n'est pas déjà inscrite.
+    assert "< 2 THEN" in sql and "VALUES ('events', 2)" in sql
+    # Le rôle applicatif lit la version, sans pouvoir l'écrire.
+    assert "GRANT SELECT ON loom_schema TO loom_app;" in sql
+    assert "loom_schema" not in ddl(events=False)
+
+
 def test_the_idempotency_table_gets_its_holder_column_whether_new_or_old() -> None:
     """Colonne nullable : à la création, et pour une table d'avant, sans toucher à ses lignes."""
     sql = ddl()

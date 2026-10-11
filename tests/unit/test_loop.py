@@ -69,6 +69,7 @@ from loom_ia.engine import (
     Policies,
     RunContext,
     RunExists,
+    SessionUnreadable,
     SessionWriter,
     SubAgentDefinition,
     ToolExecutor,
@@ -1176,6 +1177,42 @@ async def test_drive_checks_the_agent(store: EventStore) -> None:
     other = RunContext(agent="autre", store=store, model=scripted(), model_spec=SPEC)
     with pytest.raises(ValueError, match="appartient à l'agent 'demo'"):
         await drive(other, run.run_id)
+
+
+async def _break(store: EventStore, session: SessionId) -> None:
+    """Ajoute à la session un run qui reprend après sa clôture : la projection le refuse."""
+    journal = RunJournal(agent="demo", session_id=session)
+    journal.start("Cassé").model_turn(Message.assistant("Fini.")).complete()
+    journal.transition(RunStatus.READY_FOR_MODEL)
+    await store.append(journal.take(), expected_seq=await store.last_seq(DEFAULT_TENANT, session))
+
+
+async def test_begin_run_refuses_a_session_whose_history_is_unreadable(
+    store: EventStore,
+) -> None:
+    session = SessionId("casse")
+    await _break(store, session)
+    before = await store.last_seq(DEFAULT_TENANT, session)
+    with pytest.raises(SessionUnreadable, match="casse"):
+        await begin_run(context(store, scripted()), "?", session_id=session)
+    assert await store.last_seq(DEFAULT_TENANT, session) == before
+
+
+async def test_a_run_caught_by_an_unreadable_history_fails_instead_of_staying_open(
+    store: EventStore,
+) -> None:
+    """Le filet de ``drive`` : un run ouvert avant ce refus, sur une session déjà abîmée."""
+    session = SessionId("casse-apres")
+    await _break(store, session)
+    opened = RunJournal(agent="demo", session_id=session)
+    opened.start("Ouvert avant le refus")
+    await store.append(opened.take(), expected_seq=await store.last_seq(DEFAULT_TENANT, session))
+    ctx = context(store, scripted(Message.assistant("Jamais dit.")))
+
+    state = await drive(ctx, opened.run_id, session_id=session)
+
+    assert state.status is RunStatus.FAILED and state.finished
+    assert state.error_type == "session.unreadable" and "illisible" in (state.error or "")
 
 
 async def test_session_history_precedes_the_run(store: EventStore) -> None:

@@ -37,7 +37,13 @@ from loom_ia.adapters.postgres.pool import (
     PostgresPool,
     rows_touched,
 )
-from loom_ia.adapters.postgres.sql import DEFAULT_ROLE, EVENTS_TABLE, ddl
+from loom_ia.adapters.postgres.sql import (
+    DEFAULT_ROLE,
+    EVENTS_SCHEMA_VERSION,
+    EVENTS_TABLE,
+    EVENTS_UPGRADE,
+    ddl,
+)
 from loom_ia.adapters.stores.codec import PLAIN, JournalCodec
 from loom_ia.core.events import Event, EventDraft, EventQuery
 from loom_ia.core.model import RunId, SessionId, TenantId
@@ -147,6 +153,8 @@ class PostgresEventStore:
             table=EVENTS_TABLE,
             ddl=ddl(role=role, idempotency=False),
             role=role,
+            upgrade=EVENTS_UPGRADE,
+            schema=("events", EVENTS_SCHEMA_VERSION),
             limits=limits,
         )
 
@@ -172,6 +180,10 @@ class PostgresEventStore:
                     _INSERT, [_row(event, self._codec) for event in events]
                 )
             except asyncpg.UniqueViolationError as exc:
+                if exc.constraint_name not in (None, f"{EVENTS_TABLE}_pkey"):
+                    # Un identifiant d'événement déjà écrit : rejouer le même lot
+                    # échouerait de même, ce n'est pas un conflit de séquence.
+                    raise
                 # Deux écrivains ont franchi le verrou : la clé primaire a
                 # tranché. L'appelant relit et rejoue, comme sur conflit.
                 raise SequenceConflict(session_id, last, last + len(events)) from exc

@@ -31,6 +31,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import MissingKey
 from loom_ia.core.projections import ProjectionError
+from loom_ia.engine import SessionUnreadable
 from loom_ia.testing import RunJournal, tool_call_message
 from loom_ia.tools import tool
 
@@ -332,27 +333,24 @@ async def _unreadable_session(store: InMemoryEventStore, session: SessionId) -> 
     return journal.run_id
 
 
-async def test_a_new_run_in_a_session_with_an_unreadable_run_fails_cleanly(
+async def test_no_run_is_opened_in_a_session_with_an_unreadable_run(
     demo: ConfigFactory,
 ) -> None:
     store = InMemoryEventStore()
     session = SessionId("casse")
     broken = await _unreadable_session(store, session)
+    before = await store.last_seq(DEFAULT_TENANT, session)
     async with Loom(load_config(demo()), store=store) as loom:
-        result = await loom.run("demo", QUESTION, session_id=session)
-        state = await loom.state(result.run_id, session_id=session)
-        events = await loom.events(result.run_id, session_id=session)
+        for _ in range(2):
+            with pytest.raises(SessionUnreadable, match="casse"):
+                await loom.run("demo", QUESTION, session_id=session)
         with pytest.raises(ProjectionError):
             await loom.state(broken, session_id=session)
-
-    # Le nouveau run est clos par un échec qui dit pourquoi, et non laissé ouvert.
-    assert result.status is RunStatus.FAILED and state.finished
-    assert state.error_type == "session.unreadable"
-    assert state.error is not None and "illisible" in state.error
-    assert kinds(events)[-1] == "run.failed"
-    # Et une autre session du même client n'est pas touchée.
-    async with Loom(load_config(demo()), store=store) as loom:
         other = await loom.run("demo", QUESTION, session_id=SessionId("saine"))
+
+    # Refusé avant d'écrire : aucune tentative ne laisse un run échoué de plus.
+    assert await store.last_seq(DEFAULT_TENANT, session) == before
+    # Et une autre session du même client n'est pas touchée.
     assert other.status is RunStatus.COMPLETED
 
 

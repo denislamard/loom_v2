@@ -404,6 +404,8 @@ async def begin_run(
         )
     if chosen and await ctx.store.read(scope.tenant_id, scope.session_id, run_id=run_id):
         raise RunExists(run_id)
+    if parent is None and kind == "normal" and session_id is not None:
+        await _check_history(ctx, scope)
     stored: list[ArtifactStored] = []
     if store is not None:
         stored = [await _store_attachment(store, scope, *item) for item in checked]
@@ -424,6 +426,37 @@ async def begin_run(
         opens=run_id if chosen else None,
     )
     return fold(events, run_id)
+
+
+class SessionUnreadable(Exception):
+    """L'historique de la session ne se relit pas : aucun run n'y est ouvert.
+
+    Un run précédent dont les événements sont refusés par la projection empêche
+    de savoir ce que le modèle doit voir et ce que la session a déjà dépensé.
+    Le sauter en silence ferait répondre l'agent avec une mémoire amputée ;
+    l'ouvrir pour le faire échouer laisserait un run échoué de plus à chaque
+    tentative. Rien n'est écrit : le run illisible est à réparer à part.
+    """
+
+    def __init__(self, session_id: SessionId, error: Exception) -> None:
+        super().__init__(f"Historique de la session {session_id} illisible : {error}")
+        self.session_id = session_id
+
+
+async def _check_history(ctx: RunContext, scope: RunScope) -> None:
+    """Relit l'historique de la session avant d'y ouvrir un run racine."""
+    events = await ctx.store.read(scope.tenant_id, scope.session_id)
+    try:
+        turns(events)
+        spent(events)
+    except (ProjectionError, ValidationError) as error:
+        logger.error(
+            "Session %s illisible : aucun run n'y est ouvert — %s",
+            scope.session_id,
+            error,
+            extra={"tenant_id": scope.tenant_id},
+        )
+        raise SessionUnreadable(scope.session_id, error) from error
 
 
 async def _store_attachment(
@@ -523,12 +556,12 @@ async def _closed_elsewhere(
 async def _history_unreadable(
     state: RunState, journal: SessionWriter, scope: RunScope, error: Exception
 ) -> RunState:
-    """Le run s'ouvre sur un historique de session illisible : il échoue, il ne reste pas ouvert.
+    """Filet de ``begin_run`` : l'historique est devenu illisible depuis l'ouverture du run.
 
-    Un run précédent illisible (événements que la projection refuse) empêche de
-    savoir ce que le modèle doit voir et ce que la session a déjà dépensé. Le
-    nouveau run, déjà inscrit au journal, est clos par un échec qui le dit ;
-    le run illisible, lui, n'est pas touché : c'est à réparer à part.
+    ``begin_run`` refuse d'ouvrir un run sur une session illisible
+    (``SessionUnreadable``). Reste le run déjà ouvert que la session a rattrapé
+    — une reprise après réparation ratée, un journal abîmé entre-temps — : il
+    est clos par un échec qui le dit, au lieu de rester ouvert.
     """
     logger.error(
         "Run %s : historique de la session %s illisible — %s",
