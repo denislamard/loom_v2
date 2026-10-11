@@ -293,7 +293,7 @@ async def test_arguments_not_in_the_schema_are_refused(store: EventStore) -> Non
     assert strict.requests == []
     outputs = {p.call_id: p.output for p in payloads(await journal(store, state), ToolCompleted)}
     assert outputs["c1"].is_error
-    assert "Additional properties are not allowed ('devis' was unexpected)" in outputs["c1"].as_text
+    assert "propriété non prévue par le schéma : devis" in outputs["c1"].as_text
     assert outputs["c2"] == ToolOutput.text("Accepté.")
     rediger = next(d for d in main.requests[0].tools if d.name == "rediger")
     assert rediger.input_schema["additionalProperties"] is False

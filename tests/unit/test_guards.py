@@ -123,7 +123,11 @@ def test_a_conforming_output_passes_and_gives_its_data() -> None:
         (
             {"schema": SCHEMA},
             '{"objet": 3, "autre": 1}',
-            ["(racine) : Additional properties", "(racine) : 'corps' is a required", "objet : 3"],
+            [
+                "(racine) : propriété non prévue par le schéma : autre",
+                "(racine) : propriété requise absente : corps",
+                "objet : doit être du texte (reçu : un nombre)",
+            ],
         ),
         ({"must_match": r"D-\d{4}-\d{3}"}, "Votre devis", ["motif attendu absent"]),
         (
@@ -200,7 +204,14 @@ def test_tool_data_is_checked_directly() -> None:
     schema: dict[str, JsonValue] = {"type": "object", "required": ["numero"]}
     assert check(contract(schema=schema), "", {"numero": "D-1"}).ok
     missing = check(contract(schema=schema), "", {"autre": 1})
-    assert missing.problems == ("(racine) : 'numero' is a required property",)
+    assert missing.problems == ("(racine) : propriété requise absente : numero",)
+
+
+def test_the_faulty_value_is_not_written_in_the_problems() -> None:
+    schema: dict[str, JsonValue] = {"type": "object", "properties": {"n": {"type": "integer"}}}
+    checked = check(contract(schema=schema), '{"n": "sk-SECRET-123"}')
+    assert checked.problems == ("n : doit être un entier (reçu : du texte)",)
+    assert all("SECRET" not in problem for problem in checked.problems)
 
 
 def test_tool_data_wins_over_a_text_that_normalization_changes() -> None:
@@ -323,7 +334,7 @@ async def test_role_output_is_structured_repaired_or_refused() -> None:
     assert isinstance(refused, Replace) and isinstance(refused.value, ToolOutput)
     assert refused.value.is_error
     assert "Sortie non conforme" in refused.value.as_text
-    assert "Sortie reçue :\nBonjour" in refused.value.as_text
+    assert "Sortie reçue" not in refused.value.as_text
 
     backup = contract(schema=SCHEMA, on_failure="fallback", fallback_message="À reprendre.")
     replaced = await guard.decide(
@@ -337,6 +348,14 @@ async def test_role_output_is_structured_repaired_or_refused() -> None:
     )
     assert isinstance(marked, Replace) and isinstance(marked.value, ToolOutput)
     assert marked.value.unverified and marked.value.as_text == "Bonjour"
+
+
+async def test_a_refused_output_is_not_copied_into_the_refusal() -> None:
+    bad = result(ToolOutput.text("sk-SECRET-123"), contract_=contract(schema=SCHEMA))
+    refused = await ContractGuard().decide(bad, PolicyContext(name=CONTRACT_POLICY, attempt=1))
+    assert isinstance(refused, Replace) and isinstance(refused.value, ToolOutput)
+    assert refused.value.is_error and "Sortie non conforme" in refused.value.as_text
+    assert "SECRET" not in refused.value.as_text
 
 
 async def test_tools_are_never_repaired_and_errors_are_not_checked() -> None:

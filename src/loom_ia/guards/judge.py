@@ -77,6 +77,7 @@ from loom_ia.core.model import (
     sampled,
 )
 from loom_ia.core.ports import ArtifactStore, ModelClient, ModelError
+from loom_ia.core.schema_errors import schema_problem
 from loom_ia.engine import (
     Answered,
     CircuitBreakers,
@@ -464,10 +465,7 @@ class JudgeGuard(TracingPolicy):
             case "fail", None:
                 return Fail(f"réponse finale refusée par le juge {definition.name} : {reason}")
             case "fail", ToolOutput():
-                refused = (
-                    f"Sortie refusée par le juge {definition.name}.\n{feedback}\n\n"
-                    f"Sortie reçue :\n{judged.text}"
-                )
+                refused = f"Sortie refusée par le juge {definition.name}.\n{feedback}"
                 return Replace(ToolOutput.error(refused), reason="refusée par le juge")
 
 
@@ -529,7 +527,9 @@ def verdict_scores(
     if errors:
         error = errors[0]
         location = ".".join(str(part) for part in error.absolute_path) or "(racine)"
-        raise PolicyFailure(f"juge {judge} : verdict invalide — {location} : {error.message}")
+        raise PolicyFailure(
+            f"juge {judge} : verdict invalide — {location} : {schema_problem(error)}"
+        )
     given = cast(list[dict[str, JsonValue]], arguments["criteria"])
     by_name = {str(item["name"]): item for item in given}
     if len(by_name) != len(given):

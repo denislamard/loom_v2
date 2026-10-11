@@ -770,7 +770,7 @@ run atelier — completed, 74 ms, 0.000000 $
       · appelle   : montant_echeance({"montant": "1840 euros", "nb_echeances": 4})
   étape 8
     appel montant_echeance — refusé avant exécution
-      · résultat  : (erreur) Arguments non conformes au schéma de l'outil : - montant : '1840 euros' is not of type '…
+      · résultat  : (erreur) Arguments non conformes au schéma de l'outil : - montant : doit être un nombre (reçu : du texte)
   étape 9
     modèle fake-1 (main) — 1 ms, 958 → 47 tokens, 0.000000 $
       · appelle   : montant_echeance({"montant": 1840, "nb_echeances": 4})
@@ -1258,7 +1258,7 @@ uv run loom inspect 01a12671-20bb-7565-af16-aafae7c81422 --full | grep -A3 "refu
 ```text
     appel montant_echeance — refusé avant exécution
       · résultat  : (erreur) Arguments non conformes au schéma de l'outil :
-                    - montant : '1840 euros' is not of type 'number'
+                    - montant : doit être un nombre (reçu : du texte)
   étape 9
 ```
 

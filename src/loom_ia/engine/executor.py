@@ -119,6 +119,7 @@ from loom_ia.core.ports import (
     ToolSource,
     UnknownEffect,
 )
+from loom_ia.core.schema_errors import schema_problem
 from loom_ia.engine.circuit import CircuitBreakers, mcp_key
 from loom_ia.engine.delegated import (
     Consumption,
@@ -858,7 +859,7 @@ class ToolExecutor:
         lines = ["Arguments non conformes au schéma de l'outil :"]
         for error in errors:
             location = ".".join(str(p) for p in error.absolute_path) or "(racine)"
-            said = error.message
+            said = schema_problem(error)
             if written is not None:
                 source, results = written
                 origin = ref_origin(source, list(error.absolute_path))
@@ -1290,7 +1291,7 @@ def _from_ref(error: ValidationError, origin: RefOrigin, results: ResultIndex) -
             f"{' ou '.join(_KINDS.get(kind, kind) for kind in kinds)}. Une référence passe "
             "le résultat tel quel : si le champ attend autre chose, écris la valeur toi-même."
         )
-    return f"{error.message} — valeur transmise par {said.rstrip(',')}"
+    return f"{schema_problem(error)} — valeur transmise par {said.rstrip(',')}"
 
 
 # Les types JSON Schema, dits au modèle.

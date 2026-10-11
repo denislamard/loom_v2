@@ -533,6 +533,18 @@ async def test_judge_errors_block_by_default(store: EventStore, reply: Any, mess
     assert state.error_type == "policy.loom.judge.output"
 
 
+async def test_an_invalid_verdict_does_not_quote_its_value(store: EventStore) -> None:
+    secret = "sk-SECRET-123"
+    reply = tool_call_message(
+        ("v1", VERDICT_TOOL, {"criteria": [{"name": "exact", "score": secret, "reason": "x"}]})
+    )
+    main = scripted(Message.assistant("Bonjour."))
+    state = await run(context(store, main, judge(scripted(reply))))
+    assert state.status is RunStatus.FAILED
+    assert state.error is not None and "verdict invalide" in state.error
+    assert secret not in state.error
+
+
 async def test_on_error_allow_lets_the_output_pass(store: EventStore) -> None:
     main = scripted(Message.assistant("Bonjour."))
     guard = judge(scripted(Message.assistant("Pas d'outil.")), on_error="allow")
@@ -633,7 +645,7 @@ async def test_an_exhausted_role_returns_the_verdict_to_the_orchestrator(
     assert completed.output.is_error
     text = completed.output.as_text
     assert text.startswith("Sortie refusée par le juge rediger.\nLe juge rediger refuse")
-    assert text.endswith("Sortie reçue :\nBonjour, remise.")
+    assert "Sortie reçue" not in text and "Bonjour, remise." not in text
     result = main.requests[1].messages[-1].blocks[0]
     assert isinstance(result, ToolResultBlock) and result.output.is_error
 

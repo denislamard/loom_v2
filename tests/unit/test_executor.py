@@ -195,8 +195,8 @@ async def test_rejected_calls_are_not_started() -> None:
     assert outputs["c2"].as_text.startswith("Arguments illisibles")
     assert outputs["c3"].as_text == (
         "Arguments non conformes au schéma de l'outil :\n"
-        "- (racine) : Additional properties are not allowed ('y' was unexpected)\n"
-        "- x : 'deux' is not of type 'integer'"
+        "- (racine) : propriété non prévue par le schéma : y\n"
+        "- x : doit être un entier (reçu : du texte)"
     )
     assert all(isinstance(e, ToolCompleted) and e.latency_ms == 0 for e in events)
 
@@ -271,11 +271,19 @@ async def test_a_value_from_a_reference_is_refused_saying_so() -> None:
         "- consignes : la référence result:1 (chercher), écrite en chaîne mais lue comme une "
         "référence, transmet un objet JSON ; ce champ attend du texte. Une référence passe le "
         "résultat tel quel : si le champ attend autre chose, écris la valeur toi-même.\n"
-        "- devis.montant : 1840 is not of type 'string' — valeur transmise par la référence "
-        "result:1 (chercher)\n"
-        # Une valeur écrite par le modèle garde le message d'origine.
-        "- ton : 3 is not of type 'string'"
+        "- devis.montant : doit être du texte (reçu : un nombre) — valeur transmise par la "
+        "référence result:1 (chercher)\n"
+        # Une valeur écrite par le modèle est dite de même : son genre, pas son contenu.
+        "- ton : doit être du texte (reçu : un nombre)"
     )
+
+
+async def test_a_refused_argument_does_not_quote_its_value() -> None:
+    target = RecordingTool(spec("cible"))
+    events = await collect(ToolExecutor([target]), awaiting(call("c1", "cible", x="sk-SECRET-123")))
+    refusal = completed(events)["c1"].as_text
+    assert "x : doit être un entier (reçu : du texte)" in refusal
+    assert "SECRET" not in refusal
 
 
 async def test_validation_can_be_disabled() -> None:
@@ -291,8 +299,8 @@ BAD_ARGUMENTS: dict[str, JsonValue] = {"x": "pas un entier", "intrus": True}
 CORRECTION_REFUSED = (
     "Appel à virement non exécuté : les arguments corrigés par l'approbateur sont refusés "
     "par le schéma de l'outil. Arguments non conformes au schéma de l'outil :\n"
-    "- (racine) : Additional properties are not allowed ('intrus' was unexpected)\n"
-    "- x : 'pas un entier' is not of type 'integer'"
+    "- (racine) : propriété non prévue par le schéma : intrus\n"
+    "- x : doit être un entier (reçu : du texte)"
 )
 
 

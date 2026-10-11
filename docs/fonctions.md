@@ -789,7 +789,7 @@ model.responded → guard.checked (échec, motif, tentative 1)
 
   | | Réponse finale | Rôle ou outil |
   |---|---|---|
-  | `fail` | run `FAILED`, `error_type` `guard.contract` | résultat d'erreur pour l'orchestrateur (« Sortie non conforme à son contrat », diagnostic, sortie reçue) ; le run continue |
+  | `fail` | run `FAILED`, `error_type` `guard.contract` | résultat d'erreur pour l'orchestrateur (« Sortie non conforme à son contrat » et le diagnostic ; la sortie refusée n'est pas recopiée) ; le run continue |
   | `unverified` | réponse gardée (normalisée), `run.completed.unverified` | sortie gardée, `ToolOutput.unverified` |
   | `fallback` | `fallback_message` devient la réponse | `fallback_message` devient le résultat |
 

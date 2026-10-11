@@ -61,6 +61,7 @@ from loom_ia.core.model import (
     TextBlock,
     ToolOutput,
 )
+from loom_ia.core.schema_errors import schema_problem
 
 _TOO_NESTED: Final = "le JSON est trop imbriqué pour être contrôlé"
 
@@ -127,7 +128,7 @@ def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checke
                     problems.append(_TOO_NESTED)
             for error in errors:
                 location = ".".join(str(part) for part in error.absolute_path) or "(racine)"
-                problems.append(f"{location} : {error.message}")
+                problems.append(f"{location} : {schema_problem(error)}")
     if contract.must_match is not None:
         try:
             if search(contract.must_match, kept) is None:
@@ -278,9 +279,9 @@ class ContractGuard:
                 return Replace(ToolOutput.text(contract.fallback_message or ""), reason="repli")
             case "fail":
                 context.record(_failed(target, checked, reason, "fail"))
-                refused = (
-                    f"Sortie non conforme à son contrat.\n{feedback}\n\nSortie reçue :\n{text}"
-                )
+                # Le diagnostic, jamais la sortie : elle peut porter un secret, qui
+                # passerait dans le journal et sous les yeux du modèle.
+                refused = f"Sortie non conforme à son contrat.\n{feedback}"
                 return Replace(ToolOutput.error(refused), reason="contrat non respecté")
 
 
