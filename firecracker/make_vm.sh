@@ -1772,6 +1772,22 @@ prune_tree() {
     sudo rm -rf "$VM_TREE"
 }
 
+# img_has <image> <chemin>
+#
+# Vrai si le chemin existe dans l'image. `debugfs` rend 0 même quand le chemin
+# manque (il écrit « File not found by ext2_lookup » et sort quand même en 0) :
+# son code de sortie ne dit donc rien, c'est sa sortie qu'il faut lire. `stat`
+# d'un chemin présent commence par « Inode: ». Capturer plutôt que chaîner
+# avec `grep -q` : sous pipefail, grep qui sort tôt ferait échouer le tube.
+img_has() {
+    local out
+    out="$(debugfs -R "stat $2" "$1" 2>&1 || true)"
+    case "$out" in
+        *"Inode:"*) return 0 ;;
+        *)          return 1 ;;
+    esac
+}
+
 # ----------------------------------------------------------------------------
 # verify
 #
@@ -1790,8 +1806,7 @@ verify() {
 
     local img="${VM_DIR}/rootfs.ext4"
 
-    if debugfs -R "stat /etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf" \
-        "$img" >/dev/null 2>&1; then
+    if img_has "$img" /etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf; then
         log "  autologin ttyS0 : ok"
     else
         warn "  autologin ttyS0 : absent"
@@ -1806,8 +1821,7 @@ verify() {
     # Les deux moitiés du montage de /data : l'unité doit exister ET être
     # activée. Une unité présente mais sans symlink dans local-fs.target.wants
     # ne démarre jamais, et le seul symptôme est un /data vide au boot.
-    if debugfs -R "stat /etc/systemd/system/local-fs.target.wants/data.mount" \
-        "$img" >/dev/null 2>&1; then
+    if img_has "$img" /etc/systemd/system/local-fs.target.wants/data.mount; then
         log "  montage /data (unité activée) : ok"
     else
         warn "  montage /data : unité absente ou non activée"
@@ -1838,9 +1852,8 @@ verify() {
 
     # Même logique que pour data.mount : l'unité doit exister ET être activée.
     # Une unité seule est inerte, un symlink seul empêche le boot.
-    if debugfs -R "stat /opt/execd/${EXECD_ENTRY}" "$img" >/dev/null 2>&1; then
-        if debugfs -R "stat /etc/systemd/system/multi-user.target.wants/execd.service" \
-            "$img" >/dev/null 2>&1; then
+    if img_has "$img" "/opt/execd/${EXECD_ENTRY}"; then
+        if img_has "$img" /etc/systemd/system/multi-user.target.wants/execd.service; then
             log "  execd : ok (port ${EXECD_PORT}, activé)"
         else
             warn "  execd : code présent mais unité non activée"
@@ -1852,13 +1865,11 @@ verify() {
         warn "    ./make_vm.sh ${VM_ARG} --execd <dossier-du-service>"
     fi
 
-    if debugfs -R "stat /etc/systemd/system/agent-executor.service" \
-        "$img" >/dev/null 2>&1; then
+    if img_has "$img" /etc/systemd/system/agent-executor.service; then
         warn "  ancien agent-executor toujours dans l'image — deux services vsock actifs"
     fi
 
-    if debugfs -R "stat /etc/systemd/system.conf.d/fast-shutdown.conf" \
-        "$img" >/dev/null 2>&1; then
+    if img_has "$img" /etc/systemd/system.conf.d/fast-shutdown.conf; then
         log "  extinction rapide (5 s) : ok"
     else
         warn "  extinction rapide : absente — SendCtrlAltDel risque de dépasser le timeout"
