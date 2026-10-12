@@ -757,7 +757,7 @@ def _mcp(loom: Loom) -> McpHttp:
         from loom_ia.access.mcp_server.http import McpHttp
     except ImportError as manque:  # pragma: no cover - dépend de l'installation
         raise RuntimeError(
-            "'server.mcp.http' demande l'extra 'mcp' : uv sync --extra http --extra mcp"
+            "'server.mcp.http' demande l'extra 'mcp' (installer l'extra : loom-ia[http,mcp])"
         ) from manque
     return McpHttp(loom)
 

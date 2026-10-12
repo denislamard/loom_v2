@@ -2,9 +2,24 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.4 — non publiée
+## 2.0.4 - publiée
 
 Correctifs de packaging, de lecture du journal et de l'unité du service `execd`. Aucune fonctionnalité nouvelle.
+
+### Ligne de commande et paquet
+- ⚠ `loom --version` affiche la version (`loom 2.0.4`) et sort en code 0 (avant : erreur, code 2). `python -m loom_ia` lance le même programme que `loom` (nouveau `src/loom_ia/__main__.py`).
+- ⚠ Les messages d'extra manquant de `loom serve`, `loom serve --reload`, `loom mcp` et de `server.mcp.http` nomment le paquet et non `uv` : « demande l'extra 'http' (installer l'extra : loom-ia[http]) » (avant : `… : uv sync --extra http`). Un script qui cherchait l'ancien texte doit s'adapter.
+- L'aide de `loom report --periode` ne cite plus un nom de jalon interne.
+
+### Intégration continue et dépôt
+- `twine` est épinglé à 7.0.0 dans `ci.yml` et `publish.yml` ; le commentaire sur la version d'uv de `publish.yml` dit vrai.
+- Nouveaux fichiers : `.github/dependabot.yml` (mise à jour hebdomadaire des actions GitHub épinglées par SHA ; pas des dépendances Python, dont les bornes sont choisies à la main) et `SECURITY.md` (comment signaler une vulnérabilité).
+- Le dossier vide `tests/e2e/` est supprimé.
+
+### Documentation
+- `README.md` : Python 3.14 en tête ; l'exemple `Bench` dit comment il s'exécute (`asyncio_mode = "auto"` ou `@pytest.mark.asyncio`) ; `server.mcp.http` demande aussi l'extra `mcp` ; chemin d'import de `ToolError` ; les lignes de log portent `run_id`, `span_id` et `tenant_id` « quand elles les connaissent » ; `examples/` n'est pas dans le paquet pip.
+- `docs/conception.md` et `docs/fonctions.md` : exemples de configuration qui passent le chargeur (`approval: {expires_in, on_expiry, scope}`, `lease: 60`, `shutdown_timeout` une seule fois) ; modèle de référence `claude-haiku-5-5` partout (conception, howto, exemples `j2` à `j5`) ; Firestore et GCS marqués « non réalisé » ; `run.paused` et `run.resumed` remplacés par `run.transitioned` (`to_state=paused`, puis `running`) ; listes d'extras alignées sur `pyproject.toml` ; plafond MCP de 4 Mio du SDK (`max_body_bytes` ne peut que l'abaisser) ; champ `PendingApproval.launched` documenté.
+- `docs/conception.md` relu contre le code des contrats modifiés en 2.0.2 à 2.0.4 : contrat de `cancel` (run `CANCELLED`, non `CancelledError`), clé d'idempotence `client:outil:clé`, 404 (et non 403) pour un agent fermé au client, 403 sur le flux d'un arbre contenant un agent interdit, 422/503/500 du journal, codes de sortie de la CLI et règle de `serve --host`, rotation de la clé de tête du chiffrement, secrets copiés au premier accès, garde « journal durable », noms MCP réservés, dépendances du noyau (`regex`, `jsonschema<4.27`), délais Postgres, sandbox (liens, tubes, `hidepid`), compaction, évals, contrats (`$ref`, `$schema`, `REGEX_TIMEOUT`).
 
 ### Dépendances
 - `referencing` et `jsonschema-specifications` sont déclarées dans les dépendances du noyau : `core/bounded_regex.py` les importe directement. Elles étaient déjà installées, comme dépendances de `jsonschema`. Planchers : ceux que `jsonschema` 4.26 exige (`referencing>=0.28.4,<1`, `jsonschema-specifications>=2023.3.6`).

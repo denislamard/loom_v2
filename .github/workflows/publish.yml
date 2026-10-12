@@ -20,7 +20,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # La même version d'uv que la CI et qu'en local.
+  # Version d'uv épinglée, la même que dans ci.yml. L'uv local peut être plus récent :
+  # uv.lock est vérifié tel quel (--locked), il doit rester lisible par celle-ci.
   UV_VERSION: "0.11.14"
 
 defaults:
@@ -57,7 +58,7 @@ jobs:
         run: uv build
 
       - name: Vérifier les métadonnées et le README (twine)
-        run: uvx twine check --strict dist/*
+        run: uvx --from twine==7.0.0 twine check --strict dist/*
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

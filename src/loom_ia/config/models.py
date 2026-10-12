@@ -675,9 +675,10 @@ class HttpServer(DomainModel):
     # Préfixe commun des routes, par exemple ``/loom``.
     base_path: str = ""
     # Plafond du corps d'une requête (JSON, déclencheurs, MCP, envois de fichiers) :
-    # au-delà, 413 sans lire la suite. Par MCP les fichiers voyagent en base64 dans
-    # le JSON (4 octets pour 3) : à relever si ``execution.attachments`` en autorise
-    # plus que ce plafond n'en laisse passer (défaut : 10 fichiers de 5 Mio, 67 Mio).
+    # au-delà, 413 sans lire la suite. Par MCP, le SDK plafonne déjà le corps à 4 Mio
+    # avant tout code de Loom-IA : cette valeur ne peut que l'abaisser, pas le relever.
+    # Les fichiers y voyagent en base64 dans le JSON (4 octets pour 3), donc environ
+    # 3 Mio de fichier brut ; REST accepte jusqu'à ce plafond (défaut 128 Mio).
     max_body_bytes: PositiveInt = 128 * 1024 * 1024
 
     @model_validator(mode="after")

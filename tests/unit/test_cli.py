@@ -542,3 +542,55 @@ def _write(directory: Path, journal: RunJournal) -> None:
 def _field(out: str, label: str) -> str:
     line = next(line for line in out.splitlines() if label in line)
     return line.split(label, 1)[1].strip()
+
+
+# --- Version et point d'entrée du paquet (CIP-6) -------------------------------------------
+
+
+def test_version_prints_the_installed_version_and_exits_zero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from loom_ia import __version__
+
+    with pytest.raises(SystemExit) as stop:
+        main(["--version"])
+    assert stop.value.code == 0
+    assert capsys.readouterr().out.strip() == f"loom {__version__}"
+
+
+def test_the_package_runs_as_a_module() -> None:
+    """``python -m loom_ia`` est le même programme que ``loom``."""
+    import subprocess
+    import sys
+
+    from loom_ia import __version__
+
+    done = subprocess.run(
+        [sys.executable, "-m", "loom_ia", "--version"], capture_output=True, text=True, timeout=60
+    )
+    assert (done.returncode, done.stdout.strip()) == (0, f"loom {__version__}")
+
+
+def test_help_does_not_leak_internal_milestone_names(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        main(["report", "--help"])
+    assert "J5" not in capsys.readouterr().out
+
+
+def test_a_missing_extra_names_the_package_not_the_tool(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], demo: ConfigFactory
+) -> None:
+    """Le message vaut pour pip comme pour uv (CIP-5) : l'extra, pas ``uv sync``."""
+    import builtins
+
+    real = builtins.__import__
+
+    def refuse(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "loom_ia.access.http":
+            raise ImportError(name)
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+    assert main(["--config", str(demo()), "serve"]) == 2
+    err = capsys.readouterr().err
+    assert "loom-ia[http]" in err and "uv sync" not in err

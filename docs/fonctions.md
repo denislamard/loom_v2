@@ -64,7 +64,7 @@
 - **F2** `[V2]` Historique structuré conservé tel quel, sans aplatissement, indépendant du fournisseur.
 - **F3** Compaction automatique : seuil, modèle dédié, N derniers tours conservés.
 - **F4** Nettoyage : thinking retiré, médias remplacés par des références.
-- **F5** Backends : mémoire vive, fichier, `[V2]` Firestore ou SQL.
+- **F5** Backends : mémoire vive, fichier, `[V2]` Firestore (non réalisé) ou SQL.
 - **F6** `[V2]` Mémoire long terme / RAG, exposée comme un outil. Réalisée en 6.4d : un serveur MCP, `loom-notes`, branché en source d'outils (point 19).
 - **F7** `[V2]` Gestion des sessions : lister, supprimer, exporter (RGPD).
 
@@ -176,7 +176,7 @@ Les couches ne dépendent que de celles du dessous. Les adaptateurs implémenten
 | 8 | **engine.hooks** | Politiques : points d'accroche (`before_model`, `after_model`, `before_tool`, `after_tool`, `on_output`), décisions typées, composition, garde-fous | support de E5, J4, H4, D10 |
 | 9 | **guards** | Contrats de sortie, normalisation déterministe, réparation par le modèle auteur, juge, politique d'échec, détection du juge corrélé | E1–E6 |
 | 10 | **usage** | Ledger = projection du journal (`model.responded`), tarifs, ventilation, plafonds, rapport | J1–J5 |
-| 11 | **sessions** | Projection de l'historique LLM depuis le journal, snapshots, compaction en tâche de fond via l'agent interne `_compaction` (`session.compacted`, contrôle de fidélité, filet synchrone `ensure_fits`), nettoyage, backends `EventStore` (JSONL, SQLite/Postgres, Firestore), RGPD | F1–F5, F7 |
+| 11 | **sessions** | Projection de l'historique LLM depuis le journal, snapshots, compaction en tâche de fond via l'agent interne `_compaction` (`session.compacted`, contrôle de fidélité, filet synchrone `ensure_fits`), nettoyage, backends `EventStore` (JSONL, SQLite/Postgres ; Firestore : non réalisé), RGPD | F1–F5, F7 |
 | 12 | **artifacts** | Validation des entrées, stockage par URI, fichiers produits par les outils | G1–G3 |
 | 13 | **agents** | `AgentSpec` et `AgentRegistry` : définition et enregistrement des agents nommés | A9 |
 | 14 | **runtime** | Cycle de vie d'un run : lancer, streamer, annuler, timeout, pause et reprise par relecture du journal, approbation (asynchrone ou approbateur en ligne), arrière-plan (`TaskQueue`, `recover()`, concession par run), déclencheurs, contexte appelant, planification de la compaction en fin de run | A1, A5, A6, A8, H2–H6 |
@@ -676,6 +676,7 @@ ToolOutput
 
 - `ToolContext.idempotency_key` rend la clé technique `sha256(run_id:call_id)` ; `ToolContext.idempotency` porte le magasin de l'appel, donné par l'exécuteur.
 - `@idempotent`, au-dessus de `@tool`, **déclare** l'outil idempotent (`spec.idempotent: true`) et tient la promesse : `get` → `reserve` → effet → `complete`, la réservation étant rendue si l'outil lève. Un appel rejoué dont l'effet a eu lieu rend le résultat mémorisé sans rien refaire.
+- `PendingApproval.launched` (champ de la demande, déduit de l'ordre du journal, aucun événement de plus) dit qu'un `tool.called` a été écrit depuis l'accord. Un accord vaut pour **un** lancement : s'il a servi et que l'outil n'est pas sûr à relancer (`safe_to_retry` faux), la reprise ne relance pas l'appel et la règle `on_unknown` s'applique comme sans accord. Un accord encore intact répond, lui, à un état inconnu quand l'appel est déjà parti.
 - La règle de reprise est complétée : un appel repris dont la reprise n'est pas sûre n'est pas relancé, et l'outil dit ce qu'il advient — `on_unknown: error` (défaut) rend l'erreur « état inconnu » au modèle, `on_unknown: pause` écrit une demande d'approbation et met le run en pause. Une approbation accordée relance l'appel ; un refus le termine en erreur. `on_unknown` se déclare sur l'outil, pas dans la config : c'est son auteur qui sait ce que refaire coûte.
 - Fenêtre résiduelle assumée : l'effet est mémorisé **après** qu'il a eu lieu. Une interruption entre les deux laisse la clé sans trace, et l'appel rejoué refait l'effet. Le magasin `journal` réduit la fenêtre à une écriture ; l'en-tête `Idempotency-Key` d'une API externe reste la seule protection complète.
 - Portée assumée : la règle protège **un appel**, pas une intention. Un modèle à qui l'on rend l'erreur « état inconnu » peut redemander la même action sous un autre `call_id` — c'est un autre appel, donc une autre clé technique, et rien ne l'arrête (constaté en réel le 21/09). Il y faut une clé métier et un magasin partagé.
@@ -889,7 +890,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `session.compacted` | résumé, up_to_seq, tours gardés, tokens avant/après, coût, fidélité (`ok`, `warning`, `skipped`) (voir point 23) |
 | `session.trimmed` | up_to_seq, messages retirés, motif (voir point 23) |
 | `run.cancelled` | motif (`requested`, `parent`), auteur, itérations, usage, coût (voir point 27) |
-| `run.paused` / `.resumed` | motif |
+| `run.transitioned` avec `to_state=paused`, puis `running` | pause et reprise : il n'y a pas de type `run.paused` ni `run.resumed` |
 | `run.claimed` | worker_id, lease_until (voir point 27) |
 | `run.transitioned` | from, to, step_no, cause (voir point 3) |
 | `step.started` / `.completed` | step_no, état, effet, durée, statut (voir point 3) |
@@ -939,7 +940,7 @@ Exemples : les échecs d'un outil sur une période, les runs où le juge a bloqu
 |---|---|---|
 | JSONL | Mode librairie, dev | Un fichier par session, requêtes via DuckDB |
 | SQLite / Postgres | Mode service | Colonnes pour l'enveloppe et les facettes, payload en JSONB, index composés dont `(session_id, seq)` |
-| Firestore | Mode service | Sous-collection `events` par session, seulement quelques facettes indexées |
+| Firestore (non réalisé) | Mode service | Sous-collection `events` par session, seulement quelques facettes indexées |
 
 **Contrat pour l'interface (K2)** : un JSON Schema est généré depuis les modèles Pydantic, ce qui donne les types TypeScript de l'interface. Ajouter un champ optionnel ne change pas la version : un code plus ancien ignore à la lecture les champs qu'il ne connaît pas (journaux JSONL, SQLite, Postgres et rejeu ; l'écriture reste stricte). Une modification incompatible crée une nouvelle `schema_version`, aujourd'hui refusée à la lecture ; le convertisseur n'est écrit qu'avec la première.
 
@@ -1536,12 +1537,13 @@ src/loom_ia/
 | `anthropic` | `anthropic` | `adapters/models/anthropic` |
 | `openai` | `openai` | `openai_chat`, `openai_responses` |
 | `mcp` | `mcp` (bornes `>=1.30.0,<2`) | `adapters/mcp`, `access/mcp_server` |
-| `http` | `fastapi`, `uvicorn`, `sse-starlette` | `access/http` |
+| `http` | `fastapi`, `uvicorn`, `sse-starlette`, `python-multipart`, `watchfiles`, `starlette` | `access/http` |
 | `sqlite` | `aiosqlite` | `stores/sqlite` |
 | `postgres` | `asyncpg` | `stores/postgres`, `bus/postgres` |
 | `rabbitmq` | `aio-pika` | `queue/rabbitmq` |
 | `redis` | `redis` | `bus/redis` |
 | `otel` | `opentelemetry-sdk` et un exporteur | `adapters/telemetry/otel` |
+| `crypto` | `cryptography` | `adapters/crypto` |
 | `all` | Tous les extras ci-dessus | — |
 
 - **Outils de dev** (pytest, respx, ruff, pyright, import-linter) : dans `[dependency-groups]` (uv), pas dans les extras.

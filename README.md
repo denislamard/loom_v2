@@ -4,6 +4,8 @@ Loom-IA est un moteur d'agents IA écrit en Python asynchrone. Vous décrivez un
 
 Il a été conçu pour des agents qui travaillent pour de vrai, chez des artisans et dans des PME : relancer un devis, répondre à un client, préparer un document. Ce sont des tâches où un montant inventé ou un e-mail envoyé deux fois ne se rattrapent pas avec des excuses.
 
+Loom-IA demande **Python 3.14** ou plus récent.
+
 ```bash
 pip install "loom-ia[anthropic,http,mcp]"
 ```
@@ -80,7 +82,7 @@ Les trois accès partagent la même configuration et le même moteur. Un même a
 
 ## Loom-IA sur le terrain
 
-Tous les cas qui suivent viennent des exemples du dépôt, dans `examples/`. La plupart tournent avec des modèles simulés, sans clé ni réseau. L'option `--reel` les relance avec de vrais modèles, dont les clés sont lues dans l'environnement.
+Tous les cas qui suivent viennent des exemples du dépôt, dans `examples/` (ce dossier n'est pas dans le paquet installé par pip : clonez le dépôt, au tag de la version que vous utilisez). La plupart tournent avec des modèles simulés, sans clé ni réseau. L'option `--reel` les relance avec de vrais modèles, dont les clés sont lues dans l'environnement.
 
 ### Relancer un devis resté sans réponse
 
@@ -170,7 +172,7 @@ Le noyau ne dépend que de pydantic, pyyaml, jsonschema (avec `referencing` et `
 | `anthropic` | Claude, ou un fournisseur qui expose l'API d'Anthropic (MiniMax, par exemple) |
 | `openai` | OpenAI ou un fournisseur compatible (Together, vLLM, Ollama…) |
 | `mcp` | Des serveurs MCP comme outils, ou `loom mcp` |
-| `http` | L'API REST et le serveur MCP en HTTP (`loom serve`) |
+| `http` | L'API REST et le serveur MCP en HTTP (`loom serve`) ; `server.mcp.http` demande aussi l'extra `mcp` |
 | `sqlite` | Le journal ou le magasin d'idempotence en SQLite |
 | `postgres` | Le journal, l'idempotence ou le bus en Postgres |
 | `redis` | Le bus ou l'idempotence en Redis |
@@ -812,7 +814,7 @@ async def envoyer_email(destinataire: str, objet: str, corps: str, ctx: ToolCont
 | `on_unknown` | `error`, `pause` | Que faire d'un appel interrompu dont on ne sait pas s'il a abouti |
 | `timeout`, `offload_over` | secondes, caractères | Délai de l'appel, seuil de déport des gros résultats |
 
-La plupart de ces réglages peuvent aussi se poser dans la configuration de l'agent, qui a le dernier mot. Un paramètre annoté `ToolContext` reçoit le contexte de l'appel, avec notamment sa clé d'idempotence, et n'apparaît pas dans le schéma. Une exception devient un résultat d'erreur pour le modèle ; `ToolError("…")` lui donne un message qu'il peut exploiter.
+La plupart de ces réglages peuvent aussi se poser dans la configuration de l'agent, qui a le dernier mot. Un paramètre annoté `ToolContext` reçoit le contexte de l'appel, avec notamment sa clé d'idempotence, et n'apparaît pas dans le schéma. Une exception devient un résultat d'erreur pour le modèle ; `ToolError("…")` (`from loom_ia.core.ports import ToolError`) lui donne un message qu'il peut exploiter.
 
 **Serveurs MCP.** Un serveur se déclare une fois à la racine, puis plusieurs agents peuvent s'en servir :
 
@@ -1222,9 +1224,9 @@ async def test_le_ttc_passe_par_l_outil() -> None:
         )
 ```
 
-Les modèles s'y remplacent par des `ScriptedModel`, les outils par des doublures. Un modèle réel non remplacé est refusé, sauf `real_models=True`, pour qu'un test ne dépense rien par mégarde, et un outil à effet de bord sans doublure n'est jamais exécuté.
+Ce test est asynchrone : il s'exécute tel quel avec `asyncio_mode = "auto"` de `pytest-asyncio` (réglage du dépôt) ; en mode strict, ajoutez `@pytest.mark.asyncio`. Les modèles s'y remplacent par des `ScriptedModel`, les outils par des doublures. Un modèle réel non remplacé est refusé, sauf `real_models=True`, pour qu'un test ne dépense rien par mégarde, et un outil à effet de bord sans doublure n'est jamais exécuté.
 
-**Logs.** Les logs techniques restent séparés des traces. En niveau `INFO`, Loom-IA écrit une ligne par appel de modèle et d'outil, sans aucun contenu. Chaque ligne porte `run_id`, `span_id` et `tenant_id`, au format console ou JSON.
+**Logs.** Les logs techniques restent séparés des traces. En niveau `INFO`, Loom-IA écrit une ligne par appel de modèle et d'outil, sans aucun contenu. Chaque ligne porte `run_id`, `span_id` et `tenant_id` quand elle les connaît (certaines n'ont que `run_id`, ou que `run_id` et `tenant_id`), au format console ou JSON.
 
 ### Les accès en détail
 

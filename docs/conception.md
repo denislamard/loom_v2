@@ -252,11 +252,11 @@ Transverse     Config/Builder · Kit de test
 |---|---|---|
 | `ModelClient` | Appeler un modèle en streaming | `anthropic` ; `openai` (`chat`, `responses`) |
 | `ToolSource` | Fournir des outils | Fonctions Python, client MCP, paquets installés par points d'entrée `loom_ia.tools` (6.4b), dont la sandbox Firecracker que loom-ia déclare lui-même (`forge`, 6.4c) |
-| `EventStore` | Écrire et interroger le journal | Mémoire, JSONL, SQLite, Postgres, Firestore |
-| `ArtifactStore` | Stocker les fichiers hors journal | Fichier local, GCS |
+| `EventStore` | Écrire et interroger le journal | Mémoire, JSONL, SQLite, Postgres (Firestore : non réalisé) |
+| `ArtifactStore` | Stocker les fichiers hors journal | Fichier local (GCS : non réalisé) |
 | `EventSink` | Exporter les événements | OpenTelemetry, logs |
 | `EventBus` | Notifier entre workers (nouvelles d'écriture, pas d'événements) | Mémoire (défaut), Postgres `LISTEN/NOTIFY`, Redis |
-| `IdempotencyStore` | Mémoriser les résultats par clé d'idempotence | Journal (défaut), mémoire, SQLite, Postgres, Firestore, Redis (§9.5) |
+| `IdempotencyStore` | Mémoriser les résultats par clé d'idempotence | Journal (défaut), mémoire, SQLite, Postgres, Redis (§9.5) ; Firestore : non réalisé |
 | `SecretProvider` | Lire les secrets | Variables d'environnement, gestionnaire de secrets |
 | `TaskQueue` | Exécuter des jobs en arrière-plan | asyncio (défaut), RabbitMQ |
 
@@ -344,7 +344,7 @@ Event
 | `step.started` / `.completed` | step_no, état, effet, durée, statut |
 | `run.transitioned` | from, to, step_no, cause |
 | `run.cancelled` | motif, auteur, itérations, usage, coût |
-| `run.paused` / `.resumed` | motif |
+| `run.transitioned` avec `to_state=paused`, puis `running` | pause et reprise : il n'y a pas de type `run.paused` ni `run.resumed` |
 | `run.claimed` | worker_id, lease_until |
 | `run.completed` / `.failed` / `.cancelled` | itérations, usage total, coût total, erreur ; `data` et `unverified` (réponse finale) |
 
@@ -406,7 +406,7 @@ drive(run_id, deps):                          # le pilote
 
 - Reprise : l'état est reconstruit depuis le journal ; seuls les appels sans `tool.completed` sont examinés (§9.5).
 - Pause : `PAUSED` n'exécute rien ; un `approval.granted` relance `drive`.
-- Annulation et timeout : le délai est contrôlé avant chaque étape et borne celle qui commence ; l'annulation vient de `Loom.cancel`, seule à écrire `run.cancelled` — un run seulement interrompu ne laisse rien et reste reprenable (4.2a). Un arrêt écrit par un autre process que celui qui pilote se voit à la prochaine écriture du pilote : l'écrivain de session, refusé, y lit la clôture et lève `RunMoved` au lieu de réécrire, et le pilote s'arrête sur l'état du journal ; un arrêt arrivé après la fin rend « déjà fini » (6.4, défaut trouvé en 6.3c : le run arrêté ailleurs allait au bout).
+- Annulation et timeout : le délai est contrôlé avant chaque étape et borne celle qui commence ; l'annulation vient de `Loom.cancel`, seule à écrire `run.cancelled` — un run seulement interrompu ne laisse rien et reste reprenable (4.2a). Un arrêt écrit par un autre process que celui qui pilote se voit à la prochaine écriture du pilote : l'écrivain de session, refusé, y lit la clôture et lève `RunMoved` au lieu de réécrire, et le pilote s'arrête sur l'état du journal ; un arrêt arrivé après la fin rend « déjà fini » (6.4, défaut trouvé en 6.3c : le run arrêté ailleurs allait au bout). Contrat de l'appelant : `run()`, `stream()` et `resume()` rendent le run `CANCELLED` quand c'est `Loom.cancel` qui l'a arrêté, et non `CancelledError` ; celui-ci reste réservé à l'annulation de la tâche appelante (`task.cancel()`, délai), qui laisse le run reprenable. Si l'arrêt n'a pas pu clore le run, l'interruption se propage. Un `TimeoutError` étranger à l'échéance du run remonte à l'appelant au lieu de clore le run en `failed/timeout`.
 - Arrière-plan : n'importe quel worker peut reprendre `drive(run_id)`.
 - Tests : `apply` se teste sans rien simuler, `step` avec un faux modèle.
 
@@ -565,7 +565,7 @@ IdempotencyStore
 |---|---|---|
 | `journal` (défaut) | Clés techniques | Événement `idempotency.recorded` dans le journal du run ; pas de stockage supplémentaire, durable dès que le journal l'est |
 | `sqlite` / `postgres` | Techniques et métier | Table `(key, tenant_id, status, result, expires_at)`, réservation par `INSERT … ON CONFLICT DO NOTHING` |
-| `firestore` | Techniques et métier | Un document par clé, créé dans une transaction s'il n'existe pas |
+| `firestore` (non réalisé) | Techniques et métier | Un document par clé, créé dans une transaction s'il n'existe pas |
 | `redis` | Métier, courte durée | `SET NX PX` |
 | `memory` | Tests | Non durable |
 
@@ -597,7 +597,7 @@ autrement que `journal` ou `memory` est refusé au chargement.
 
 **Réalisation (phase 4.4b) :** la clé **métier** et le magasin partagé.
 
-- `@idempotent(key=…)` tire la clé des arguments, préfixée par le client : deux appels, deux runs,
+- `@idempotent(key=…)` tire la clé des arguments et la compose `client:outil:clé` (renommer un outil change ses clés, et deux outils ne partagent plus une clé ; un repli provisoire reconnaît encore l'ancienne forme, sans l'outil) : deux appels, deux runs,
   deux sessions, deux process demandent la même chose et n'en font qu'un seul effet.
 - Magasin `sqlite`, sa propre base, `path` obligatoire. `reserve` tient en une seule instruction
   (`INSERT … ON CONFLICT DO UPDATE … WHERE expires_at < maintenant`) : c'est SQLite qui arbitre, et
@@ -717,10 +717,10 @@ Les tentatives refusées restent dans le journal mais sont exclues de l'historiq
 
 **Réalisation (phase 3.2)** (détails : `fonctions.md`, point 20) :
 
-- Le contrat (`OutputContract`) se déclare par `output` sur l'agent, un rôle, un outil Python ou un outil MCP (config du serveur ou référence dans l'agent) ; `schema_file` est lu au chargement.
+- Le contrat (`OutputContract`) se déclare par `output` sur l'agent, un rôle, un outil Python ou un outil MCP (config du serveur ou référence dans l'agent) ; `schema_file` est lu au chargement. Un `schema_file` dont un `$ref` ne se résout pas (rien n'est jamais téléchargé) est refusé au chargement ; un `$schema` n'est accepté qu'à la racine d'un schéma. Les motifs de la config s'exécutent avec `regex`, bornés à une seconde (`REGEX_TIMEOUT`) — la boucle est bloquée jusque-là — ; le diagnostic d'un motif interdit donne sa position et sa longueur, non le texte trouvé.
 - Il est appliqué par la politique fournie `loom.contract` (`loom_ia.guards`), branchée d'office en tête des politiques de l'agent : `on_output` pour la réponse finale, `after_tool` pour un rôle ou un outil. Chaque contrôle écrit un `guard.checked`, réussi ou non.
 - Normalisation d'abord (sortie remplacée si elle devient conforme) ; puis réparation : l'orchestrateur pour la réponse finale (sans outils, sauf `repair.tools: allowed`), le modèle du rôle pour un rôle, à la suite de sa conversation ; un outil n'est jamais réparé. Les tentatives d'un rôle se comptent par appel.
-- `on_failure` : pour la réponse finale, `fail` fait échouer le run (`guard.contract`), `unverified` la garde en marquant `run.completed`, `fallback` la remplace ; pour un rôle ou un outil, `fail` rend un résultat d'erreur à l'orchestrateur (le run continue), `unverified` garde la sortie marquée, `fallback` la remplace.
+- `on_failure` : pour la réponse finale, `fail` fait échouer le run (`guard.contract`), `unverified` la garde en marquant `run.completed`, `fallback` la remplace ; pour un rôle ou un outil, `fail` rend un résultat d'erreur à l'orchestrateur (le run continue), `unverified` garde la sortie marquée, `fallback` la remplace. Quand `fail` refuse la sortie d'un rôle ou d'un outil (contrat ou juge), le résultat d'erreur ne porte que le diagnostic : la sortie refusée n'est recopiée ni au journal ni sous les yeux du modèle.
 - Avec un schéma, l'objet JSON est dans `run.completed.data` (réponse finale) ou dans le `data` du `tool.completed` terminal ; `RunResult.data` et `RunResult.unverified` côté Python. Schéma natif du fournisseur : 3.5.
 
 **Juge** (#21) :
@@ -789,7 +789,7 @@ models:
 ```
 
 - `api: responses` permet de renvoyer le raisonnement chiffré ; `chat` couvre les fournisseurs compatibles (Together, vLLM, Ollama).
-- Les SDK sont des extras (`loom-ia[anthropic]`, `loom-ia[openai]`), importés à la demande, et n'apparaissent que dans leur adaptateur.
+- Les SDK sont des extras (`loom-ia[anthropic]`, `loom-ia[openai]`), importés à la demande, et n'apparaissent que dans leur adaptateur. Les variables d'environnement des SDK ne s'imposent pas au client : les en-têtes qu'elles portent (`ANTHROPIC_CUSTOM_HEADERS`, `OPENAI_ORG_ID`…) sont neutralisés à la construction, et `x-api-key` / `Authorization` sont épinglés à la clé du client (en multi-clients, la clé et la facturation du process ne s'imposent jamais).
 - Leurs retries internes sont désactivés (`max_retries=0`) : une seule politique de retry, celle de loom-ia.
 - Chaque adaptateur a des tests de contrat avec des réponses HTTP enregistrées (respx).
 
@@ -803,7 +803,7 @@ models:
 
 **Port minimal** (#11) : `ModelClient.stream(request) -> AsyncIterator[ModelChunk]`. `complete()` est un utilitaire qui rassemble le flux.
 
-**Morceaux neutres :** `TextDelta`, `ReasoningDelta`, `ToolCallStarted`, `ToolArgsDelta`, `ToolCallEnded`, `UsageDelta`, `Stopped(reason)`. Le `provider_meta` peut arriver en cours de flux. Un flux sans `Stopped` (coupé, vide) est une erreur `transient`, jamais une réponse ; un flux arrêté par `max_tokens` échoue en `model.truncated`.
+**Morceaux neutres :** `TextDelta`, `ReasoningDelta`, `ToolCallStarted`, `ToolArgsDelta`, `ToolCallEnded`, `UsageDelta`, `Stopped(reason)`. Le `provider_meta` peut arriver en cours de flux. Un flux sans `Stopped` (coupé, vide) est une erreur `transient`, jamais une réponse ; un flux arrêté par `max_tokens` échoue en `model.truncated`. Non streamée, une réponse Responses `failed` ou `cancelled` lève de même (`transient` : retry, secours, disjoncteur) au lieu de finir en run réussi à réponse vide.
 
 **Accumulation :** les deltas partent sur le bus (`model.delta`) ; la réponse complète est écrite (`model.responded`). Les arguments d'outils partiels ne sont jamais transmis aux hooks.
 
@@ -877,11 +877,11 @@ EventQuery(tenant, session, run, types, categories, status,
 | Mémoire | Tests, runs sans pause | — |
 | JSONL | Mode librairie, dev | Un fichier par session, requêtes via DuckDB |
 | SQLite / Postgres | Mode service | Colonnes pour l'enveloppe et les facettes, payload en JSONB, index composés dont `(session_id, seq)` ; RLS en Postgres |
-| Firestore | Mode service | Sous-collection `events` par session, quelques facettes indexées |
+| Firestore (non réalisé) | Mode service | Sous-collection `events` par session, quelques facettes indexées |
 
 **Réalisation (phase 4.1a)** (détails : `fonctions.md`, point 22) : le port gagne `sessions(tenant)` (un `SessionRecord` par journal : session, dernier `seq`, dernière écriture) et `delete(tenant, session)` (suppression physique, F7 et §11.5) ; `ArtifactStore` gagne `delete(tenant, session)`. Backends réalisés : mémoire, JSONL et SQLite (extra `sqlite`, `aiosqlite` : une table `events`, clé primaire `(tenant_id, session_id, seq)`, l'événement entier en JSON, les facettes à part et filtrées par `json_extract` ; contrôle de séquence et écriture dans une transaction `BEGIN IMMEDIATE`, WAL et commits synchrones). Une écriture refusée est reprise par l'écrivain de session, qui relit la position et réécrit ; deux runs d'une même session partagent leur écrivain dans l'instance.
 
-**Réalisation (phase 5.3a)** (détails : `fonctions.md`, point 22) : backend `postgres` (extra `postgres`, `asyncpg`). Table `loom_events`, mêmes colonnes et index qu'en SQLite, facettes en `jsonb` filtrées par contenance, index GIN. Le DSN vient de la variable que `storage.events.dsn_env` nomme, jamais de la config. Contrôle de séquence et insertion sous verrou consultatif par `(tenant, session)`, clé primaire en dernier mot (`SequenceConflict`). **Sécurité au niveau des lignes** : politique sur `tenant_id = current_setting('loom.tenant_id')` — posé par transaction —, en lecture et en écriture, `FORCE` pour qu'elle vaille aussi pour le propriétaire ; le réglage absent ne laisse rien passer. **Deux rôles** : le propriétaire pose le schéma, un rôle applicatif (`role`, `loom_app` par défaut) exécute, sans `UPDATE` sur le journal — l'immuabilité devient un privilège. Schéma créé à la première requête si le rôle le peut, sinon `loom storage sql` l'imprime pour un DBA. Un journal Postgres oblige à déclarer `storage.artifacts` : il ne donne pas de dossier.
+**Réalisation (phase 5.3a)** (détails : `fonctions.md`, point 22) : backend `postgres` (extra `postgres`, `asyncpg`). Table `loom_events`, mêmes colonnes et index qu'en SQLite, facettes en `jsonb` filtrées par contenance, index GIN. Le DSN vient de la variable que `storage.events.dsn_env` nomme, jamais de la config. Contrôle de séquence et insertion sous verrou consultatif par `(tenant, session)`, clé primaire en dernier mot (`SequenceConflict`). **Sécurité au niveau des lignes** : politique sur `tenant_id = current_setting('loom.tenant_id')` — posé par transaction —, en lecture et en écriture, `FORCE` pour qu'elle vaille aussi pour le propriétaire ; le réglage absent ne laisse rien passer. **Deux rôles** : le propriétaire pose le schéma, un rôle applicatif (`role`, `loom_app` par défaut) exécute, sans `UPDATE` sur le journal — l'immuabilité devient un privilège. Schéma créé à la première requête si le rôle le peut, sinon `loom storage sql` l'imprime pour un DBA. Un journal Postgres oblige à déclarer `storage.artifacts` : il ne donne pas de dossier. **Délais :** `command_timeout` (60 s), `lock_timeout` (10 s, posé par transaction), `acquire_timeout` (30 s) ; un verrou attendu trop longtemps lève `JournalBusy`. Le pool se règle par la clé `pool` de `storage.events` et `storage.idempotency`, et l'idempotence compare et pose ses échéances avec `now()` de la base, non l'horloge du client.
 
 ### 11.2 Projections
 
@@ -918,20 +918,20 @@ runtime (fin du run) ──enqueue──▶ TaskQueue ──▶ worker
 
 - **Déclenchement :** à `run.completed`, si l'historique dépasse `compact_over_tokens` ; le `runtime` appelle `sessions.maybe_schedule(session_id)`.
 - **Exécution :** agent interne `_compaction` (pas d'outils, un appel modèle, contrôle de fidélité en `on_output`), lancé comme un run système (`kind: compaction`, `triggered_by`). Un seul job par session à la fois (clé `session_id` + `up_to_seq`). Modèle dédié `compact_model`.
-- **Résumé glissant :** les `keep_last` derniers tours restent intacts ; le reste est résumé avec le résumé précédent. Gros résultats et images sont remplacés par leur référence ; raisonnement et tentatives refusées sont exclus.
+- **Résumé glissant :** les `keep_last` derniers tours **terminés avec succès** restent intacts ; le reste est résumé avec le résumé précédent. Gros résultats et images sont remplacés par leur référence ; raisonnement et tentatives refusées sont exclus.
 - **Fidélité :** consigne de conserver identifiants, montants, dates, noms et numéros de devis ; contrôle déterministe que les nombres, e-mails et références du segment se retrouvent dans le résumé (une nouvelle tentative, puis avertissement).
 - **Filet de sécurité :** au démarrage d'un run, si l'historique dépasse `compact_hard_tokens` sans résumé disponible, `sessions.ensure_fits()` lance `_compaction` en synchrone ; en cas d'échec, les tours les plus anciens sont retirés, avec un avertissement.
 - **Exécutant :** tâche asyncio dans le process en mode librairie (`aclose()` attend les compactions en cours, dans la limite d'un timeout) ; tout worker en mode service.
 - **Mesure :** tokens avant et après, coût.
 
-**Réalisation (phase 4.1b)** (détails : `fonctions.md`, point 23) : `sessions.compaction` produit un agent ordinaire, `_compaction` (sans outils, une itération, non publié, nom réservé), monté comme les autres ; le job lit le journal, choisit la coupe sur une frontière de run (`keep_last` tours gardés), rend le segment en texte et fait tourner l'agent — sans l'historique de la session, qui doublerait la requête et déborderait la coupe —, puis écrit `session.compacted` sans contrôle de séquence, suivi d'un snapshot rafraîchi qui contient déjà le résumé. Quand plusieurs marqueurs coexistent, c'est le **dernier écrit** qui fait foi, pas le plus large : sinon un snapshot antérieur mais couvrant un tour de plus masquerait le résumé. Le contrôle de fidélité est la politique fournie `loom.fidelity` (`on_output`, branchée d'office sur cet agent) : elle relève les repères du segment — références, adresses, nombres d'au moins trois chiffres — et demande une réparation s'il en manque, puis garde le résumé avec `fidelity: warning`. `ensure_fits` compacte en synchrone au démarrage d'un run au-delà de `hard_tokens` ; si la compaction échoue, `session.trimmed` retire les tours les plus anciens.
+**Réalisation (phase 4.1b)** (détails : `fonctions.md`, point 23) : `sessions.compaction` produit un agent ordinaire, `_compaction` (sans outils, une itération, non publié, nom réservé), monté comme les autres (`loom validate` le monte aussi : une clé d'API manquante se voit au contrôle, non au premier résumé) ; le job lit le journal (une panne de la compaction n'échoue pas le run), choisit la coupe sur une frontière de run (`keep_last` tours terminés gardés ; `run_starts` rend les débuts de ces runs), rend le segment en texte et fait tourner l'agent — sans l'historique de la session, qui doublerait la requête et déborderait la coupe —, puis écrit `session.compacted` sans contrôle de séquence, suivi d'un snapshot rafraîchi qui contient déjà le résumé. Quand plusieurs marqueurs coexistent, c'est le **dernier écrit** qui fait foi, pas le plus large : sinon un snapshot antérieur mais couvrant un tour de plus masquerait le résumé. Le contrôle de fidélité est la politique fournie `loom.fidelity` (`on_output`, branchée d'office sur cet agent) : elle relève les repères du segment — références, adresses, nombres d'au moins trois chiffres — et demande une réparation s'il en manque, puis garde le résumé avec `fidelity: warning`. `ensure_fits` compacte en synchrone au démarrage d'un run au-delà de `hard_tokens` ; si la compaction échoue, `session.trimmed` retire les tours les plus anciens.
 
 ### 11.4 Artefacts
 
 - Les pièces jointes sont validées à l'entrée, avant tout écrit : format par signature binaire (images JPEG, PNG, GIF, WebP au jalon J2), type annoncé cohérent, taille et nombre (`execution.attachments` : 5 Mio et 10 fichiers par défaut) (G1). Chacune donne un `artifact.stored`, puis le message de l'utilisateur les porte en références.
 - Stockage hors journal, désigné par une URI adressée par le contenu : `artifact://<client>/<session>/<sha256>.<ext>`. Un même fichier n'est rangé qu'une fois par session, et la suppression d'une session touche un seul dossier.
 - Les outils peuvent produire des artefacts, récupérables par l'appelant (G3) : `RunResult.artifacts`, `Loom.artifact(uri)`.
-- En mode librairie, le stockage par défaut suit le journal : dossier `.artifacts` sous celui d'un journal JSONL, mémoire pour un journal en mémoire ; GCS en mode service.
+- En mode librairie, le stockage par défaut suit le journal : dossier `.artifacts` sous celui d'un journal JSONL, mémoire pour un journal en mémoire ; GCS en mode service (non réalisé).
 
 ### 11.5 RGPD
 
@@ -973,7 +973,7 @@ Port `TaskQueue` (#27) : `submit(job, key, delay?)`, `status(job_id)`, `cancel(j
 
 **Déclencheurs :** webhook (endpoint REST qui crée le run), planification (adaptateur cron qui met en file), file de messages (consommateur qui crée les runs).
 
-**Réalisation (phase 5.4c) :** le **webhook**, sous la forme d'une porte déclarée. `triggers:` nomme une porte, son agent et un gabarit de message rendu sur la charge reçue (`{{ payload.… }}`, plus `{{ trigger }}` et `{{ delivery }}`) ; `POST /v1/hooks/{nom}` la sonne, et le run part en arrière-plan. Une porte ne nomme **pas** de client : il vient de la clé (#34), dont la liste `agents` borne du même coup ce qu'elle peut déclencher. L'en-tête de livraison déclaré devient le `run_id`, si bien qu'une relivraison retrouve son run (200, `repeated`) au lieu d'en ouvrir un second. La **planification est celle de la plateforme** : loom ne tient aucun cron, et un en-tête de livraison daté rend une tournée quotidienne idempotente. Le déclencheur « file de messages » reste ouvert.
+**Réalisation (phase 5.4c) :** le **webhook**, sous la forme d'une porte déclarée. `triggers:` nomme une porte, son agent et un gabarit de message rendu sur la charge reçue (`{{ payload.… }}`, plus `{{ trigger }}` et `{{ delivery }}`) ; `POST /v1/hooks/{nom}` la sonne, et le run part en arrière-plan. Une porte ne nomme **pas** de client : il vient de la clé (#34), dont la liste `agents` borne du même coup ce qu'elle peut déclencher. L'en-tête de livraison déclaré devient le `run_id`, si bien qu'une relivraison retrouve son run (200, `repeated`) au lieu d'en ouvrir un second. La **planification est celle de la plateforme** : loom ne tient aucun cron, et un en-tête de livraison daté rend une tournée quotidienne idempotente. Le déclencheur « file de messages » reste ouvert. Un identifiant de livraison déjà pris par un run d'une autre porte, ou par un run ordinaire, est refusé (`DeliveryRefused`, 422 en REST) au lieu de rendre `repeated` sur le run d'autrui.
 
 **Réalisation (phase 4.1b) :** le port est livré avec son adaptateur asyncio (une tâche par travail, dédoublonnage par `key`, `drain` et fermeture bornée par `execution.shutdown_timeout`). Un seul type de tâche est traité, `compaction` ; `run`, `resume` et `expire_approval` sont déclarés et refusés tant que leur phase n'est pas là. Une tâche en échec est journalisée et ne fait jamais échouer le run qui l'a demandée. `Loom.compact(session_id)` résume à la demande, sans tenir compte du seuil ; `Loom.drain()` attend les tâches en cours.
 
@@ -1004,7 +1004,7 @@ ne relit rien. Un bus en panne n'échoue pas une écriture. Magasin d'idempotenc
 
 ### 12.2 Pause en mode librairie
 
-- Un agent qui peut se mettre en pause (outil en `approval: always | policy`, ou politique qui peut renvoyer `Pause`) exige un `EventStore` durable (JSONL au minimum) : erreur de config, avertissement seulement en profil dev (#28).
+- Un agent qui peut se mettre en pause (outil en `approval: always | policy`, ou politique qui peut renvoyer `Pause`) exige un `EventStore` durable (JSONL au minimum) : erreur de config, avertissement seulement en profil dev (#28). La garde suit les mêmes déclarations pour les outils MCP et de paquet — `tools` du serveur ou de la source, puis la référence de l'agent, puis `tenants[].approvals`, qui l'emporte —, sans connexion réseau, et vaut par client : un client au journal en mémoire sous une racine durable est refusé, l'inverse est accepté.
 - **Réalisation (phase 4.3a) :** le contrôle est une erreur de chargement, les profils arrivant en J5. `Loom.approve()` et `Loom.reject()` écrivent la décision et mettent un travail `resume` en file ; `run(..., approver=…)` décide dans la boucle, sans passer par `PAUSED`, et journalise quand même la demande et sa décision. Réglages sur l'agent : `approval: {expires_in, on_expiry, scope}`, `expires_in` valant 24 h par défaut — rien d'autre ne borne l'attente d'un humain, et `null` la rend explicitement illimitée.
 - Approbation asynchrone (défaut) : `run()` renvoie `RunResult(status=paused, run_id, pending_approvals)` ; plus tard, `await loom.approve(run_id, décision)` écrit la décision et met un `resume` en file.
 - Approbateur en ligne : `run(..., approver=callback)` appelle le callback dans le process, sans état `PAUSED` durable (scripts, CLI, tests).
@@ -1075,7 +1075,7 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 **Réalisation (phase 6.2b — la variante)** (détails : `fonctions.md`, point 31) : `Loom.replay(run_id, mode="variant", models=…, doubles=…)` et `loom replay <run_id> --mode variant [--model ETAPE=MODELE] [--double OUTIL=REF]`. Même montage qu'à l'identique — en mémoire, même `run_id`, la logique de loom qui tourne —, avec la config d'aujourd'hui, ou un autre modèle par étape (`main`, un rôle, `judge:<nom>`). Le livre porte l'arbre du run (sous-agents compris). Une requête que le journal connaît (même empreinte) reçoit sa réponse, **avant comme après** la divergence ; les autres partent pour de vrai, le vrai client n'étant créé qu'au premier appel qui part. Un outil est cherché au journal par son nom et ses arguments ; sinon : sa doublure, un sous-agent relancé (en variante lui aussi), un outil à effets de bord **refusé** (jamais réexécuté, le modèle reçoit une erreur qui le dit), un outil sans effets exécuté. Une approbation reprend la décision du journal, est accordée quand rien ne part (doublure, refus), et refusée pour une exécution réelle. Le rapport compare les deux runs : issue, réponse, appels servis et partis, sort de chaque appel d'outil, tokens, coût et dépense réelle, durée de pilotage, verdicts des juges. Code de sortie : 0 si la variante est allée au bout, 1 sinon, 2 impossible. La dépense n'entre pas dans les compteurs du client. Le rejeu dit sa divergence une fois (`WARNING` à l'identique, `INFO` en variante) ; le moteur, qui la reçoit comme un arrêt voulu (`ModelError.by_client`), ne la note plus qu'en `DEBUG`.
 - **Usages :** diagnostic, évals comparatives entre modèles et configurations (O1), tests de non-régression à partir de traces (O3).
 
-**Réalisation (phase 6.3a — les évals)** (détails : `fonctions.md`, point 31) : `Loom.evaluate(suite)` et `loom eval suite.yaml`. Une suite (YAML) désigne une config et un agent, et porte des **cas** — une demande, des contrôles (`status`, `contains`, `not_contains`, `matches`, `fields`, `called`, `not_called`) et des critères notés par le **juge d'éval** — et les **variantes** à comparer (autre config, ou autre modèle par étape, comme la variante du rejeu), chaque cas joué `repeat` fois. Chaque variante est montée **à part** : journal temporaire, ni collecteur, ni quotas, ni plafonds de période ; rien n'entre dans le journal ni les compteurs de l'instance, `export` garde un journal par run. Un outil à effets de bord n'est **jamais** exécuté : sa doublure répond, sinon le modèle reçoit une erreur (décision du 06/10) ; l'approbation est accordée quand rien ne part, refusée pour une exécution réelle. Le juge d'éval note la réponse finale **hors du run**, son coût à part ; il voit la demande et les résultats des outils que la suite nomme (`tool_results`). `max_cost_usd` plafonne la dépense, vérifié avant chaque run. Rapport par variante et par cas, code de sortie 0 (tout passe), 1 (un attendu tombe, ou un run non joué), 2 (suite injouable).
+**Réalisation (phase 6.3a — les évals)** (détails : `fonctions.md`, point 31) : `Loom.evaluate(suite)` et `loom eval suite.yaml`. Une suite (YAML) désigne une config et un agent, et porte des **cas** — une demande, des contrôles (`status`, `contains`, `not_contains`, `matches`, `fields`, `called`, `not_called`) et des critères notés par le **juge d'éval** — et les **variantes** à comparer (autre config, ou autre modèle par étape, comme la variante du rejeu), chaque cas joué `repeat` fois. Un cas sans `status` n'est vert que si le run est terminé : un échec, un arrêt ou une pause le rend rouge (pour attendre l'échec, `status: failed`). Chaque variante est montée **à part** : journal temporaire, ni collecteur, ni quotas, ni plafonds de période ; rien n'entre dans le journal ni les compteurs de l'instance, `export` garde un journal par run. Un outil à effets de bord n'est **jamais** exécuté : sa doublure répond, sinon le modèle reçoit une erreur (décision du 06/10) ; l'approbation est accordée quand rien ne part, refusée pour une exécution réelle. Le juge d'éval note la réponse finale **hors du run**, son coût à part ; il voit la demande et les résultats des outils que la suite nomme (`tool_results`). `max_cost_usd` plafonne la dépense, vérifié avant chaque run. Rapport par variante et par cas, code de sortie 0 (tout passe), 1 (un attendu tombe, ou un run non joué), 2 (suite injouable).
 
 **Réalisation (phase 6.3b — la non-régression depuis les traces)** (détails : `fonctions.md`, point 31) : un journal exporté (`loom sessions export`, `loom eval --export`) se rejoue à l'identique avec la config d'aujourd'hui, sans être dans le journal de l'instance : `Loom.replay_journal(fichier)` et `loom replay --journal FICHIER` rejouent chacun de ses runs racines finis, au nom du client qu'il porte, et nomment ceux qui sont restés inachevés ; un **cas de rejeu** d'une suite d'évals (`replay: journaux/*.jsonl`) rejoue ses journaux, lus avant le premier run, avec la config de chaque variante, et passe s'ils se rejouent ; `loom_ia.testing.assert_replays(config, *journaux)` fait de même dans un test, l'agent monté à part, et lève avec chaque écart. Un cas peut être joué au nom de son client. Le corpus `tests/regression/` rejoue les runs enregistrés des exemples J1 à J5. Code de sortie : 0 tout se rejoue, 1 un run diverge ou reste inachevé, 2 journal impossible à rejouer.
 
@@ -1144,9 +1144,9 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - Secrets lus via `SecretProvider` ; la config ne contient que des noms de variables (`api_key_env`).
 - Chiffrement au repos du journal ; clé par client en option (§11.5).
 
-**Réalisation (phase 5.1a) :** port `SecretProvider` (`secrets(tenant_id) -> Mapping[str, str]` : la table d'un client, telle qu'elle descend aux adaptateurs) et adaptateur `EnvironmentSecrets`, qui résout la redirection `secrets` d'un client sur l'environnement. Ce qu'un client ne redirige pas y est lu tel quel ; une redirection vers une variable absente vaut **vide**, jamais le secret commun. La table d'un client (celle qui part aussi aux fabriques de paquets tiers) ne contient que ce que la config nomme et ce que les clients redirigent, figée et en lecture seule, pas l'environnement entier ; sans clients déclarés, c'est l'environnement, en lecture seule. Le client d'une requête REST vient de sa **clé d'API** et de nulle part ailleurs ; en MCP stdio, où il n'y a pas de clé, un serveur sert un client, choisi à son lancement. Chiffrement : J5.5 ; RLS : faite en 5.3a, avec le journal Postgres (§11.1).
+**Réalisation (phase 5.1a) :** port `SecretProvider` (`secrets(tenant_id) -> Mapping[str, str]` : la table d'un client, telle qu'elle descend aux adaptateurs) et adaptateur `EnvironmentSecrets`, qui résout la redirection `secrets` d'un client sur l'environnement. Ce qu'un client ne redirige pas y est lu tel quel ; une redirection vers une variable absente vaut **vide**, jamais le secret commun. La table d'un client (celle qui part aussi aux fabriques de paquets tiers) ne contient que ce que la config nomme et ce que les clients redirigent, copiée au premier accès (une variable changée après la création de `Loom` n'y paraît pas) et en lecture seule, pas l'environnement entier : en multi-clients, un plugin qui lit une variable que la config ne nomme pas ne la trouve pas, et la lui donner demande une redirection `secrets: {X: X}` ; sans clients déclarés, c'est l'environnement, en lecture seule. Le client d'une requête REST vient de sa **clé d'API** et de nulle part ailleurs ; en MCP stdio, où il n'y a pas de clé, un serveur sert un client, choisi à son lancement. Chiffrement : J5.5 ; RLS : faite en 5.3a, avec le journal Postgres (§11.1).
 
-**Réalisation (phase 5.5b — le sceau ; détails : `fonctions.md`, point 30) :** `storage.encryption: {keys: [NOM_DU_SECRET]}` scelle la charge de chaque événement et les octets de chaque fichier, en AES-256-GCM. Port `Cipher`/`Keyring` (`core/ports/cipher.py`), codec de ligne (`adapters/stores/codec.py`, partagé par les trois journaux qui sérialisent), enrobage `SealingArtifactStore`, adaptateur `AesGcmCipher` et trousseau `SecretKeyring` dans l'extra **`crypto`**. La **clé vient des secrets du client** : le sceau se déclare à la racine — un client ne le surcharge pas —, et ce qui lui est propre est sa clé, par la redirection de 5.1a. Effacer sa variable rend son journal illisible pour de bon (*crypto-shredding*) sans toucher au voisin ; deux clients qui partagent une clé sont **dits** au chargement, comme un client qui n'en a plus. L'enveloppe du journal reste en clair, donc les requêtes filtrent comme avant, et lister comme supprimer une session ne demandent pas la clé — c'est ce que le RGPD exige. Un magasin d'idempotence **partagé** (`sqlite`, `postgres`, `redis`), lui, garde en clair les résultats qu'il mémorise ; le magasin `journal` les range dans le journal, donc sous le sceau.
+**Réalisation (phase 5.5b — le sceau ; détails : `fonctions.md`, point 30) :** `storage.encryption: {keys: [NOM_DU_SECRET]}` scelle la charge de chaque événement et les octets de chaque fichier, en AES-256-GCM. Port `Cipher`/`Keyring` (`core/ports/cipher.py`), codec de ligne (`adapters/stores/codec.py`, partagé par les trois journaux qui sérialisent), enrobage `SealingArtifactStore`, adaptateur `AesGcmCipher` et trousseau `SecretKeyring` dans l'extra **`crypto`**. La **clé vient des secrets du client** : le sceau se déclare à la racine — un client ne le surcharge pas —, et ce qui lui est propre est sa clé, par la redirection de 5.1a. Effacer sa variable rend son journal illisible pour de bon (*crypto-shredding*) sans toucher au voisin ; deux clients qui partagent une clé sont **dits** au chargement, comme un client qui n'en a plus. **Rotation :** avec `keys: [NEUVE, ANCIENNE]`, un client dont la variable de la clé de tête (`NEUVE`) est absente ou vide est refusé **en entier**, écriture comme lecture, même si `ANCIENNE` est là — il ne scelle jamais en silence avec l'ancienne — ; sa session reste listable et supprimable. Poser la variable de tête pour tous les clients avant de mettre la nouvelle clé devant dans `keys` ; un secret de queue absent reste toléré, il ne sert qu'à ouvrir. L'enveloppe du journal reste en clair, donc les requêtes filtrent comme avant, et lister comme supprimer une session ne demandent pas la clé — c'est ce que le RGPD exige. Un magasin d'idempotence **partagé** (`sqlite`, `postgres`, `redis`), lui, garde en clair les résultats qu'il mémorise ; le magasin `journal` les range dans le journal, donc sous le sceau.
 
 ## 17. Configuration
 
@@ -1198,7 +1198,7 @@ models:
   - id: HAIKU
     sdk: anthropic                    # anthropic | openai
     api: chat                         # openai seulement : chat | responses
-    model: claude-haiku-4-5-20251001
+    model: claude-haiku-5-5
     base_url: https://api.anthropic.com
     api_key_env: ANTHROPIC_API_KEY
     max_tokens: 4096
@@ -1244,7 +1244,7 @@ stream_output: after_guards           # live | after_guards ; défaut : after_gu
 output: {...}                         # OutputSpec (réponse finale, A7)
 judge: {...}                          # JudgeSpec (on_output)
 budget: {...}                         # surcharge des défauts
-approval: {expires_after: 86400, on_expire: deny, on_unknown_state: error}
+approval: {expires_in: 86400, on_expiry: deny, scope: approve}
 tools:
   - python: myapp.tools:chercher_devis
     timeout: 30
@@ -1378,14 +1378,16 @@ tool_sources:
 
 Le paquet n'est importé qu'au montage d'un agent qui référence la source ; la fabrique reçoit `name`, `params`, la table des secrets du client et le dossier de la config, et rend un `ToolSource` dont loom n'utilise que `open` (et `aclose` s'il existe). Un nom de source ne peut pas être celui d'un serveur MCP. Détails : `fonctions.md`, point 41.
 
+**Sandbox (forge) :** la racine d'une session reste `root:root 0711` ; le job ne possède que `code/`, `in/`, `out/`, `work/` et `run/` (0700, qui porte `result.json`), et le changement de propriétaire ne suit pas les liens. Un tube à la place de `result.json` ou d'un fichier est refusé (`file.get` rend `not_found`) et `file.get` ne suit aucun lien. Dans l'image, `/proc` est remonté en `hidepid=2` (unité `procfs-hidepid.service`, requise avant `execd`) : un job ne lit que ses propres processus.
+
 ### 17.6 Stockages, sessions, exécution
 
 ```yaml
 storage:
-  events:      {backend: jsonl, path: data/events}      # memory|jsonl|sqlite|postgres|firestore (+ dsn_env)
+  events:      {backend: jsonl, path: data/events}      # memory|jsonl|sqlite|postgres (+ dsn_env) ; firestore : non réalisé
                                                         # jsonl : dossier ; sqlite : fichier de la base
                                                         # postgres : dsn_env, et role (défaut loom_app, null pour s'en passer)
-  artifacts:   {backend: local, path: data/artifacts}   # local|memory|gcs (+ bucket) ; défaut : suit le journal
+  artifacts:   {backend: local, path: data/artifacts}   # local|memory ; défaut : suit le journal (gcs : non réalisé)
   idempotency: {backend: journal}                       # journal|memory|sqlite (+ path)|postgres (+ dsn_env)
                                                         # firestore|redis plus tard
   bus:         {backend: memory}                        # memory|postgres (+ dsn_env)|redis (+ url_env)
@@ -1393,7 +1395,7 @@ storage:
   queue:       {backend: asyncio}                       # asyncio|rabbitmq (+ url_env)
                                                         # rabbitmq : les tâches tournent dans `loom worker`
   encryption:  {keys: [LOOM_JOURNAL_KEY]}               # absent : contenus en clair au repos (5.5b)
-                                                        # noms de secrets ; le premier ferme, tous ouvrent
+                                                        # noms de secrets ; le premier ferme (il doit exister pour chaque client), tous ouvrent
                                                         # chaque client redirige ce nom vers sa variable
   retention:   {events_days: null}                      # null : rien ne s'efface (5.5c)
                                                         # sinon : sessions dormantes effacées par `loom retention`
@@ -1413,8 +1415,7 @@ execution:
   shutdown_timeout: 30                # délai laissé aux tâches de fond à la fermeture
   tools: {timeout: 30, validate_arguments: true, offload_over: 50000}
   attachments: {max_bytes: 5242880, max_files: 10, types: [image/jpeg, image/png, image/gif, image/webp]}
-  lease: {ttl: 60, renew_every: 20}
-  shutdown_timeout: 30
+  lease: 60
 ```
 
 ### 17.7 Budgets et télémétrie
@@ -1494,7 +1495,7 @@ triggers:                           # portes d'entrée déclarées (H6, 5.4c)
     delivery_header: Stripe-Id
 ```
 
-**Réalisation (phase 5.1a) :** `tenants` et `security.api_keys[].tenant` sont débloqués ; la liste des clients est **fermée** dès qu'elle existe, et une clé dont le client n'est pas déclaré est refusée au chargement. `storage` d'un client accepte `events` et `artifacts`, et doit déclarer `events` (un bloc muet donnerait au client un journal en mémoire) ; `idempotency` y est refusé en nommant 5.3 (le port n'a le client que sur `reserve`). Contrôles au démarrage ajoutés : client en double, agent ou modèle de remplacement inconnu, modèle qui se remplace lui-même, variable `{{ }}` d'un prompt non définie pour un client, clé d'API sur un client non déclaré. `rate_limit` et `expires` d'une clé attendent 5.2, `budgets`/`quotas` d'un client 5.1b.
+**Réalisation (phase 5.1a) :** `tenants` et `security.api_keys[].tenant` sont débloqués ; la liste des clients est **fermée** dès qu'elle existe, et une clé dont le client n'est pas déclaré est refusée au chargement. `storage` d'un client accepte `events` et `artifacts`, et doit déclarer `events` (un bloc muet donnerait au client un journal en mémoire) : sans lui, le chargement échoue en nommant le client — déclarer `storage.events`, `{backend: memory}` si c'est voulu, ou retirer le bloc pour partager le journal de la racine ; `idempotency` y est refusé en nommant 5.3 (le port n'a le client que sur `reserve`). Contrôles au démarrage ajoutés : client en double, agent ou modèle de remplacement inconnu, modèle qui se remplace lui-même, variable `{{ }}` d'un prompt non définie pour un client, clé d'API sur un client non déclaré. `rate_limit` et `expires` d'une clé attendent 5.2, `budgets`/`quotas` d'un client 5.1b.
 
 **Réalisation (phase 5.1b) :** `budgets` et `quotas` d'un client sont débloqués, ainsi que `rate_limit` d'une clé d'API (#39) ; `expires` reste renvoyé à 5.2. `budgets` d'un client surcharge celui de la racine clé par clé et porte en plus `tenant: {max_cost_per_day, max_tokens_per_day, max_cost_per_month, max_tokens_per_month}`.
 
@@ -1512,8 +1513,8 @@ triggers:                           # portes d'entrée déclarées (H6, 5.4c)
 
 - **Trois états, pas deux.** Sans `profile`, loom se comporte **exactement** comme avant : les avertissements restent des avertissements et les deux erreurs restent des erreurs. `prod` durcit les premiers, `dev` assouplit les secondes. Aucune config existante ne change de comportement en s'installant.
 - **Le profil se choisit à trois endroits**, du plus fort au plus faible : `--profile`, `LOOM_PROFILE`, puis `profile:` dans le fichier. `chosen_profile` rend l'arbitrage **et sa provenance**, que `loom validate` et `loom serve` impriment : un profil qu'on ne voit pas est un profil qu'on oublie. Un profil inconnu est refusé en nommant d'où il vient.
-- **Ce que `prod` durcit** (une erreur de chargement là où c'était un avertissement) : juge corrélé et juge bloquant échantillonné (3.3), modèle sans tarif sous un budget en dollars (#010), secours à fenêtre plus petite (#10), service éparpillé dont les fichiers ne suivent pas (5.3c), API REST sans clé déclarée (#39), et `judges="skip"` (qui retire un contrôle).
-- **Ce que `dev` assouplit** : un agent qui peut se mettre en pause sur un journal non durable (#28) — perdre un run en pause à la fermeture est le prix d'un essai sur une machine, pas en service.
+- **Ce que `prod` durcit** (une erreur de chargement là où c'était un avertissement) : juge corrélé et juge bloquant échantillonné (3.3), modèle sans tarif sous un budget en dollars (#010 ; budgets de run, de session et de client), secours à fenêtre plus petite (#10), service éparpillé dont les fichiers ne suivent pas (5.3c), API REST sans clé déclarée (#39), et `judges="skip"` (qui retire un contrôle).
+- **Ce que `dev` assouplit** : un agent qui peut se mettre en pause (outil Python, MCP ou de paquet, ou approbation de client) sur un journal non durable (#28) — perdre un run en pause à la fermeture est le prix d'un essai sur une machine, pas en service.
 - **`when.profiles` d'un juge** est débloqué : ailleurs, le juge est **sauté et le journal le dit** (`guard.checked`, `outcome: skipped`, `reason: other_profile`), plutôt que de ne pas être monté. Un juge déclaré ne disparaît pas en silence parce qu'on a changé de profil ; et c'est cohérent avec `when.tenants`, évalué lui aussi à l'exécution.
 - **Un seul endroit décide** : `runtime.announce(config, warnings)` logue ou lève selon le profil. Les fonctions qui *trouvent* les avertissements n'ont pas changé — elles rendent toujours une liste de phrases.
 - **Surcharges par client :** liste fermée (§6).
@@ -1555,17 +1556,17 @@ async with loom:
     await loom.approve(res.run_id, decision)
 ```
 
-- `run()` accepte `session_id`, `tenant`, des pièces jointes, `judges` (`auto`, `force`, `skip` ; depuis 3.3) et un `approver` optionnel ; il renvoie un `RunResult` (statut, réponse, `run_id`, approbations en attente). Depuis 3.6, le `RunResult` porte aussi `unverified`, la consommation ventilée du run et de ses sous-runs (`report`), les verdicts des juges (`verdicts`) et, pour un échec, son type (`error_type`) à part de son message (`error`) ; REST et MCP rendent ce même résultat.
+- `run()` accepte `session_id`, `tenant`, des pièces jointes, `judges` (`auto`, `force`, `skip` ; depuis 3.3) et un `approver` optionnel ; il renvoie un `RunResult` (statut, réponse, `run_id`, approbations en attente). Depuis 3.6, le `RunResult` porte aussi `unverified`, la consommation ventilée du run et de ses sous-runs (`report`), les verdicts des juges (`verdicts`) et, pour un échec, son type (`error_type`) à part de son message (`error`) ; REST et MCP rendent ce même résultat. `artifacts` liste aussi les fichiers des sous-runs. Une session dont l'historique est illisible lève `SessionUnreadable` **avant** d'ouvrir le run : rien n'est écrit.
 - `stream()` renvoie un itérateur d'événements (durables et éphémères).
 - `report(run_id)` ou `report(session_id=…)` rend la consommation d'un run (et de ses sous-runs) ou d'une session : total, par run, par rôle, par modèle (depuis 3.4).
 - Les disjoncteurs des modèles et des serveurs MCP sont communs aux runs d'une instance ; `Loom(config, breakers=…)` les partage entre instances (depuis 3.5a).
 - `stream()`, `follow()` et `events()` rendent l'arbre du run : ses événements et ceux de ses sous-runs, dans l'ordre du journal ; `subruns=False` s'en tient au run.
-- `sessions()`, `export_session(session_id)` et `delete_session(session_id)` listent, exportent et suppriment les journaux de session (F7, depuis 4.1a) ; `session(session_id)` en rend la fiche — ses runs, et les approbations qu'il faut trancher pour que la conversation avance (4.5). L'API REST les expose toutes (18.2).
+- `sessions()`, `export_session(session_id)` et `delete_session(session_id)` listent, exportent et suppriment les journaux de session (F7, depuis 4.1a) ; `session(session_id)` en rend la fiche — ses runs, et les approbations qu'il faut trancher pour que la conversation avance (4.5). L'API REST les expose toutes (18.2). `delete_session` lève `UnusableId` pour une session ou un client vide (REST : 422, CLI : code 2) ; seul `tenant_id=None` désigne le client par défaut. Un run fini, ou déjà passé à son état final, n'attend plus rien : `pending_approvals` est vide, et `approve()` / `reject()` rendent `()` sans rien écrire.
 - `compact(session_id)` résume une session à la demande et `drain()` attend les tâches de fond (depuis 4.1b) ; `aclose()` les attend aussi, dans la limite d'`execution.shutdown_timeout`.
 - **Consommation (5.1b) :** `consumption(tenant_id, period="day" | "month")` rend ce qu'un client a dépensé sur la fenêtre en cours, ce qu'il lui reste sur chaque plafond et la date de remise à zéro ; elle relit le journal, donc elle vaut aussi pour un client sans budget. `run()`, `stream()` et `submit()` lèvent `BudgetExhausted` (enveloppe de la période épuisée) ou `QuotaExceeded` (runs par minute) **avant** d'ouvrir le run : rien n'est écrit.
 - **Client (5.1a) :** `run()`, `stream()` et `submit()` prennent `tenant=`, raccourci de `CallerContext(tenant_id=…)` ; toutes les lectures prennent `tenant_id=`. `tenants` liste les clients de l'instance, `tenant(id)` rend ce qu'un client surcharge, et `context(agent, tenant_id)` monte l'agent **pour ce client**. Un agent fermé à un client lève `AgentNotAllowed` ; un client non déclaré, `UnknownTenant`.
 - **Déclencheurs (5.4c) :** `triggers` liste les portes déclarées, `trigger_spec(nom)` en rend une, et `trigger(nom, charge, delivery_id=…, tenant_id=…)` ouvre son run en arrière-plan et rend un `Triggered` — la porte, le run, sa session, son statut, et `repeated` si cette livraison avait déjà été reçue. La route REST s'y adosse.
-- **Listes et recherche (5.4a) :** `runs(agent=…, status=…, since=…, until=…, limit=…, sessions=…)` rend une `RunPage` — les runs du client repliés au journal, du plus récent au plus ancien, avec ce que la page a coûté (`scanned`) et si une borne l'a arrêtée (`truncated`). `query(EventQuery)` interroge le journal ; l'ordre est celui des identifiants d'événement et `after` reprend la pagination. Les deux accès REST (18.2) s'y adossent.
+- **Listes et recherche (5.4a) :** `runs(agent=…, status=…, since=…, until=…, limit=…, sessions=…)` rend une `RunPage` — les runs du client repliés au journal, du plus récent au plus ancien, avec ce que la page a coûté (`scanned`) et si une borne l'a arrêtée (`truncated`). `query(EventQuery)` interroge le journal ; l'ordre est celui des identifiants d'événement et `after` reprend la pagination. Les deux accès REST (18.2) s'y adossent. `runs(limit=N)` continue de lire tant qu'une session restante peut porter un run plus récent que le dernier de la page ; `truncated` reste vrai si des sessions restent non lues.
 
 ### 18.2 HTTP REST
 
@@ -1595,30 +1596,32 @@ app.mount("/loom", loom.asgi_app(rest=True, mcp=True))
 
 OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
-- **Pièces jointes :** le lancement d'un run accepte le JSON ou `multipart/form-data` (fichiers sous `attachments`). Limites de `execution.attachments` ; envoi trop gros refusé sur son en-tête ou, sans `Content-Length`, à mesure qu'il arrive (413), pièce refusée en 422. Tout corps — JSON, déclencheurs, MCP — est de plus plafonné par `server.http.max_body_bytes` (413).
-- **Sous-runs :** le flux SSE d'un run contient les événements de ses sous-runs (`?subruns=false` pour le run seul) ; il se ferme sur la clôture du run demandé.
+- **Pièces jointes :** le lancement d'un run accepte le JSON ou `multipart/form-data` (fichiers sous `attachments`). Limites de `execution.attachments` ; envoi trop gros refusé sur son en-tête ou, sans `Content-Length`, à mesure qu'il arrive (413), pièce refusée en 422. Tout corps — JSON, déclencheurs — est de plus plafonné par `server.http.max_body_bytes` (413). Le MCP HTTP l'est aussi, mais le SDK `mcp` le plafonne déjà à 4 Mio (413 en texte brut, avant tout code de Loom-IA) : `max_body_bytes` ne peut qu'abaisser ce plafond, pas le relever.
+- **Sous-runs :** le flux SSE d'un run contient les événements de ses sous-runs (`?subruns=false` pour le run seul) ; il se ferme sur la clôture du run demandé. Une clé limitée à certains agents reçoit **403** sur ce flux si l'arbre déjà écrit contient un agent interdit (filtrer ne cacherait rien : la réponse d'un sous-agent figure aussi dans l'appel d'outil de son parent) ; un sous-agent interdit qui apparaît après l'ouverture ferme le flux sur un dernier `event: error`, et une reconnexion avec `Last-Event-ID` reçoit le 403 ; `?subruns=false` reste permis. La ressource MCP `loom://runs/{id}/events` refuse de même.
+- **Entrées mal formées :** un `session_id` ou `run_id` que le journal JSONL ne peut pas nommer (lettres, chiffres, `.`, `_`, `-`, 128 caractères) donne 422 ; un `Last-Event-ID` non numérique est ignoré ; un JSON en UTF-8 invalide, une charge de déclencheur trop imbriquée, ou des `metadata` / `arguments` imbriqués au-delà de 64 niveaux donnent 422 (au-delà, la session était empoisonnée : `JournalCorrupted` à la relecture) ; un multipart illisible, 400.
+- **Erreurs du journal :** un verrou Postgres attendu trop longtemps lève `JournalBusy` (503, avec la cause d'asyncpg en `__cause__`) ; `SessionUnreadable`, `ProjectionError` et `JournalCorrupted` donnent un 500 JSON avec `detail`.
 - **Résultat (3.6) :** celui de l'API Python (`RunResult`, voir 18.1), en JSON. Un run échoué garde le code 201 (`status: failed`, `error_type`, `error`). Le champ `judges` du corps règle les juges du run ; `skip` demande la portée `admin`.
 - **Rapport de session (3.6) :** `GET /v1/sessions/{id}/report`, la consommation de toute la session (portée `read`, droit sur chaque agent de la session).
 - **Arrière-plan (4.5) :** `background: true` rend 202 et `{run_id, session_id, status}` — le run est inscrit au journal avant la réponse, donc lisible et suivable aussitôt.
 - **Décisions (4.5) :** `approve` et `reject` prennent un `call_id` optionnel (sans lui, tout ce que le run attend est tranché), un motif, et pour un accord des arguments corrigés. L'approbateur inscrit au journal est **l'identifiant de la clé d'API**, qu'un `by` dans le corps remplace : une passerelle nomme ainsi l'humain qui a tranché.
-- **Client (5.1a) :** il vient de la **clé d'API**, et de nulle part ailleurs — rien dans le corps d'une requête ne le change. Toute lecture est donc bornée au client de la clé : la session d'un autre est « introuvable », pas « interdite », puisqu'on n'a aucun moyen d'apprendre qu'elle existe. Un agent publié mais fermé à ce client donne 403, comme pour une clé limitée à certains agents. Sans clé déclarée, l'instance agit pour `default` : si la config nomme ses clients et pas `default`, tout est refusé, et `create_app` le dit au démarrage.
+- **Client (5.1a) :** il vient de la **clé d'API**, et de nulle part ailleurs — rien dans le corps d'une requête ne le change. Toute lecture est donc bornée au client de la clé : la session d'un autre est « introuvable », pas « interdite », puisqu'on n'a aucun moyen d'apprendre qu'elle existe. Lancer un agent publié mais fermé à ce client donne 404, identique à un agent inconnu — la liste du 404 ne nomme que les agents de ce client —, tandis qu'une clé limitée à certains agents reçoit 403. Sans clé déclarée, l'instance agit pour `default` : si la config nomme ses clients et pas `default`, tout est refusé, et `create_app` le dit au démarrage.
 - **Contenu et expiration (5.2a) :** une clé expirée est reconnue puis refusée (401, avec sa date). Sans la portée `read_content`, les **relectures** sont masquées — `GET /runs/{id}`, le SSE d'un run, l'export JSONL d'une session, la fiche d'une session — tandis que la réponse d'un `POST …/runs` ne l'est jamais : ce qu'une clé lance, elle le reçoit. Une clé qui lance en arrière-plan et relit son résultat a donc besoin de `read_content`, et une clé qui approuve aussi, faute de voir ce qu'elle tranche.
 - **Débit et budgets (5.1b) :** un client qui a épuisé son enveloppe de la période, ou dépassé ses runs par minute, reçoit **429** avec un `Retry-After` — quelques secondes pour un débit, la bascule de la fenêtre pour une journée épuisée. Le `rate_limit` d'une **clé** donne le même 429, mais il compte toutes ses requêtes, lectures comprises, et vaut avant même que la demande ne soit servie.
 - **Sessions (4.5) :** la liste est refusée à une clé limitée à certains agents — elle ne dit pas de quels agents sont les runs d'une session, et la filtrer honnêtement demanderait de lire chaque journal. La fiche et l'export vérifient le droit sur chaque agent rencontré ; l'effacement, irréversible et commun à tous les agents de la session, demande `admin`.
 - **Résumés de runs (5.4a, #32) :** `GET /v1/runs` rend les runs du client, du plus récemment écrit au plus ancien, filtrables par `agent`, `status` (répétable), `since` et `until`. Ils sont **lus au journal** — session par session, repliés à la lecture — et non tenus dans une projection : aucun second état à garder juste, et les chiffres sont ceux de la fiche d'une session. Le prix est une lecture par journal ouvert, borné par `limit` (runs rendus) et `sessions` (journaux ouverts) ; la page dit ce qu'elle a coûté (`scanned`) et si une borne l'a arrêtée (`truncated`). Un filtre ne baisse pas ce prix, il s'applique après le repli. Aucun contenu dans une liste — seulement le **type** d'un échec —, donc rien à masquer, et une clé limitée à certains agents y a droit : chaque run dit de quel agent il est, si bien que la liste se filtre honnêtement, là où `/sessions` doit refuser.
 - **Recherche au journal (5.4a, #22, #32) :** `GET /v1/events` expose `EventQuery` en paramètres — `session_id`, `run_id`, `type`, `category`, `status`, `agent`, `role`, `tool_name`, `model_id`, `since`, `until`, `after`, `limit`. Le client vient de la clé : rien dans l'URL ne le nomme, donc on ne cherche que chez soi. L'ordre est celui des identifiants d'événement (UUIDv7, donc du temps) et `after` reprend la pagination après le dernier rendu. Sans `read_content`, les mêmes événements arrivent privés de leur contenu. Les facettes libres ne sont pas interrogeables par l'URL ; les deux que `EventQuery` nomme le sont.
-- **Déclencheurs (5.4c, H6) :** `POST /v1/hooks/{nom}` sonne une porte déclarée (`triggers:`). Le corps est la charge de l'appelant — du JSON, ou rien : un planificateur n'a que l'heure à dire. Le message part du gabarit de la porte, le run est lancé en **arrière-plan** (202, `Triggered`), et la portée `run` est exigée sur **l'agent que la porte nomme**. L'en-tête déclaré (`delivery_header`) devient le `run_id` : une relivraison rend 200 avec `repeated`, sans rien relancer. Une charge illisible ou un identifiant de livraison inutilisable donnent 422 ; une porte inconnue, ou dont l'agent est fermé au client de la clé, 404 — le même, en ne nommant que les portes de ce client.
+- **Déclencheurs (5.4c, H6) :** `POST /v1/hooks/{nom}` sonne une porte déclarée (`triggers:`). Le corps est la charge de l'appelant — du JSON, ou rien : un planificateur n'a que l'heure à dire. Le message part du gabarit de la porte, le run est lancé en **arrière-plan** (202, `Triggered`), et la portée `run` est exigée sur **l'agent que la porte nomme**. L'en-tête déclaré (`delivery_header`) devient le `run_id` : une relivraison rend 200 avec `repeated`, sans rien relancer. Une charge illisible, un identifiant de livraison inutilisable ou déjà pris par un autre run donnent 422 ; une porte inconnue, ou dont l'agent est fermé au client de la clé, 404 — le même, en ne nommant que les portes de ce client.une porte inconnue, ou dont l'agent est fermé au client de la clé, 404 — le même, en ne nommant que les portes de ce client. La portée `run` est vérifiée **avant** de chercher la porte : une clé sans `run` reçoit 403 pour une porte inconnue comme pour une connue, de sorte que les noms existants ne se devinent pas.
 - **Document OpenAPI (5.4a) :** chaque route porte un résumé et une famille (`agents`, `runs`, `sessions`, `journal`), chaque famille est décrite, et les deux façons de présenter une clé (`Authorization: Bearer`, `X-API-Key`) sont déclarées — de quoi essayer l'API depuis sa propre page. Un test vérifie que le document reste complet quand une route s'ajoute.
 
 ### 18.3 Serveur MCP
 
-- Chaque agent devient un outil MCP ; trois outils de contrôle s'ajoutent : `run_status`, `run_report` et `cancel`.
+- Chaque agent devient un outil MCP ; trois outils de contrôle s'ajoutent : `run_status`, `run_report` et `cancel`. Un agent publié en MCP ne peut pas porter l'un de ces trois noms : `loom mcp` et `create_app` refusent de démarrer (`ConfigError`) — le renommer, ou mettre `expose.mcp: false`.
 - Traces et sessions exposées en ressources en lecture seule (`loom://runs/{id}`, et depuis 6.2c la trace en spans : `loom://traces/{run_id}{?session_id}`).
 - Transports : stdio (local, `loom mcp`) et HTTP, monté dans la même application que l'API REST.
 - Limites : notifications de progression seulement, pas de flux d'événements complet.
-- **Approbations (4.5) :** `approve` n'est jamais un outil MCP (16.2). Si le client déclare l'`elicitation`, chaque demande part en formulaire (accorder ou refuser, avec un motif) et la réponse est tranchée **dans la boucle** : le run ne passe pas par `PAUSED`, et le journal garde qui a décidé (`mcp:<client>`, faute d'identité plus précise sur stdio). Un formulaire ne corrige pas les arguments d'un appel : cela reste à l'API. Sinon, le run s'arrête en pause et l'outil **rend la main aussitôt, sans erreur** : le texte dit ce qui attend, le résultat structuré porte `run_id` et `pending_approvals`, un humain tranche ailleurs, et `run_status` relit le run.
+- **Approbations (4.5) :** `approve` n'est jamais un outil MCP (16.2). Si le client déclare l'`elicitation`, chaque demande part en formulaire (accorder ou refuser, avec un motif) et la réponse est tranchée **dans la boucle** : le run ne passe pas par `PAUSED`, et le journal garde qui a décidé (`mcp:<client>`, faute d'identité plus précise sur stdio). Un formulaire ne corrige pas les arguments d'un appel : cela reste à l'API. Sinon, le run s'arrête en pause et l'outil **rend la main aussitôt, sans erreur** : le texte dit ce qui attend, le résultat structuré porte `run_id` et `pending_approvals`, un humain tranche ailleurs, et `run_status` relit le run. En MCP HTTP, l'élicitation n'est pas employée : le run se met en pause, comme sans elle.
 - **Pièces jointes :** argument `attachments` de l'outil d'un agent : image en base64, ou lien `artifact://` (fichier déjà rangé, même client) ou `file://` (seulement sous `server.mcp.file_roots`, vide par défaut). Le résultat structuré liste les fichiers du run.
-- **Progression :** si le client fournit un `progressToken`, le déroulé du run (appels d'outils, fichiers, sous-agents et leurs appels) lui arrive en notifications de progression.
+- **Progression :** si le client fournit un `progressToken`, le déroulé du run (appels d'outils, fichiers, sous-agents et leurs appels) lui arrive en notifications de progression. Un outil inconnu ou refusé (arguments refusés par le schéma, référence `result:` invalide, politique, approbation) s'y lit `· outil : refusé — <motif>` (motif coupé à 160 caractères), comme dans `loom run --stream` ; une vraie panne d'outil reste `fait (erreur)`.
 - **Résultat (3.6) :** le texte est la réponse ; le résultat structuré est celui de l'API Python (`unverified`, usage, coût, ventilation, verdicts). Une réponse non vérifiée est suivie d'un second texte qui le dit. Un run échoué est un résultat d'erreur (`isError`) dont le texte dit en clair ce qui l'a arrêté (« Échec de l'agent … : … ») ; son type est dans `error_type`. Les juges suivent leur `when` (pas de forçage par MCP).
 - **Rapport (3.6) :** outil `run_report` (`run_id` ou `session_id`) : consommation d'un run et de ses sous-runs, ou d'une session, en texte et en structuré.
 - **Client (5.1a) :** en stdio il n'y a pas de clé, donc rien dans le protocole ne dirait au nom de qui une requête arrive : **un serveur sert un client**, choisi à son lancement (`loom mcp --tenant`, `create_server(loom, tenant=…)`). Tout ce qu'il publie, lance et relit porte ce client-là.
@@ -1630,6 +1633,8 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
 Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `replay` (6.2a et 6.2b), `inspect` (6.2c : l'arbre lisible d'un run, `--full`, `--json`), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --periode jour|mois` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`. Depuis 5.2a, `keys create` prend `--tenant`, `--expires` (date ISO ou durée : `90j`, `12h`) et `--rate-limit`, et imprime le bloc YAML complet ; `validate` montre une ligne par clé — client, portées, agents, débit, état de l'expiration — et signale une clé qui approuve sans pouvoir lire. Depuis 5.4b, `validate` et `serve` annoncent les ressources MCP quand le serveur HTTP est monté : elles ne dépendent d'aucun réglage, et c'est la clé de la requête qui dit ce qu'une lecture en voit. Depuis 5.5a, `--profile` est une option **globale** (elle l'emporte sur `LOOM_PROFILE` et sur le fichier), et `validate` comme `serve` impriment le profil actif, sa provenance et ce qu'il change. Depuis 5.4c, `validate` liste les **portes** déclarées avec leur route, leur agent, leur session et leur en-tête de livraison — et signale celle qui n'en a pas, dont une relivraison rouvrirait un run ; `serve` imprime l'adresse de chaque porte, celle qu'on donne au planificateur de la plateforme. Depuis 6.4a, `serve --reload` (#48) relance le **process** qui sert à chaque changement d'un fichier de la config, rien n'étant rechargé à chaud : un superviseur garde la socket — partagée, une requête de la relève attend dans sa file — et surveille le dossier de la config sauf ce que loom y écrit (journaux, fichiers, bases SQLite, ceux de chaque client) et le bruit d'usage ; un **nouveau** process charge la config et monte chaque agent pour chaque client (clients de modèle jamais appelés : une clé absente ne bloque pas) pendant que l'ancien sert ; s'il échoue, il dit pourquoi et l'ancien continue ; sinon il prend la main une fois l'ancien sourd, et l'ancien finit ses requêtes et ses runs comme sur un Ctrl+C. Refusé en profil `prod`. `watchfiles` vient avec l'extra `http`.
 
+**Codes de sortie :** 0 (réussi), 1 (run échoué ou erreur d'exécution, dont `JournalCorrupted`), 2 (refus : usage, config, extra manquant, agent / approbation / run / client inconnu, `AgentNotAllowed`, `UnusableId`, `SessionUnreadable`, `JournalBusy`, `OSError`), le refus tient en une ligne de `stderr`, sans trace. `--version` rend la version, et `python -m loom_ia` vaut `loom`. **`serve --host`** remplace l'adresse de la config, et c'est l'adresse **servie** qui décide si une API sans clé est « ouverte » (avertissement en dev, refus en prod) : `--host 0.0.0.0` sur une config en `127.0.0.1` est jugé comme tel, et inversement.
+
 ## 19. Projet
 
 | Sujet | Décision |
@@ -1638,7 +1643,7 @@ Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loo
 | Licence | Apache 2.0, en-têtes SPDX `Apache-2.0` (#46) |
 | Python | 3.14, géré avec uv, en local comme dans l'image Docker (#43) |
 | Découpage | Un package avec des extras (#41) |
-| Dépendances du noyau | `pydantic`, `pyyaml`, `jsonschema` ; toute nouvelle dépendance justifiée par écrit ; borne haute sur les majeures fragiles ; `uv.lock` versionné (#44) |
+| Dépendances du noyau | `pydantic`, `pyyaml`, `jsonschema` (borne haute `<4.27` : `core/bounded_regex.py` copie des fonctions privées), `regex` (motifs bornés dans le temps), et, importés directement, `jsonschema-specifications` et `referencing` ; toute nouvelle dépendance justifiée par écrit ; borne haute sur les majeures fragiles ; `uv.lock` versionné (#44) |
 | Logs | `logging` de la stdlib (#45) |
 
 **Arborescence :**
@@ -1651,8 +1656,8 @@ src/loom_ia/
   runtime/  telemetry/  replay/  tenancy/  config/
   adapters/
     models/      anthropic  openai_chat  openai_responses
-    stores/      memory  jsonl  sqlite  postgres  firestore
-    artifacts/   local  gcs
+    stores/      memory  jsonl  sqlite  postgres   (firestore : non réalisé)
+    artifacts/   local                           (gcs : non réalisé)
     bus/         memory  postgres  redis
     queue/       asyncio  rabbitmq
     mcp/         client
@@ -1669,15 +1674,16 @@ src/loom_ia/
 | `anthropic` | `anthropic` |
 | `openai` | `openai` |
 | `mcp` | `mcp` (borne `<2`) |
-| `http` | `fastapi`, `uvicorn`, `sse-starlette` |
+| `http` | `fastapi`, `uvicorn`, `sse-starlette`, `python-multipart`, `watchfiles` (et `starlette`) |
 | `sqlite` | `aiosqlite` |
 | `postgres` | `asyncpg` |
-| `firestore` | `google-cloud-firestore` |
-| `gcs` | `google-cloud-storage` |
+| `crypto` | `cryptography` |
 | `rabbitmq` | `aio-pika` |
 | `redis` | `redis` |
 | `otel` | `opentelemetry-sdk` et un exporteur |
 | `all` | Tous les extras |
+
+Les extras `firestore` et `gcs` ne sont pas réalisés.
 
 - Outils de dev (pytest, respx, ruff, pyright, import-linter) dans `[dependency-groups]`.
 - Adaptateurs externes par entry points (`loom_ia.adapters`), par exemple un package `loom-ia-firecracker` pour la sandbox. Réalisé en 6.4b pour les outils seulement : le groupe `loom_ia.tools` (sources d'outils, `tool_sources`) ; les autres ports n'en ont pas. La sandbox a finalement rejoint loom-ia (J6.4c, `loom_ia.adapters.firecracker`, sans extra) : loom-ia déclare sa source `forge` dans ce groupe, et la plateforme qu'elle pilote vit dans le dossier `firecracker/` du dépôt, hors du paquet.

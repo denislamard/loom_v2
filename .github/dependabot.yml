@@ -1,0 +1,15 @@
+# Mises à jour des actions GitHub. Elles sont épinglées par SHA (le commentaire de version
+# est réécrit avec le SHA) et ne se mettraient jamais à jour toutes seules.
+#
+# Les dépendances Python n'y sont pas : leurs bornes hautes sont choisies à la main
+# (`jsonschema<4.27` demande de relire `core/bounded_regex.py`), et `uv.lock` se met à jour
+# par `uv lock --upgrade` ; le workflow hebdomadaire éprouve déjà les versions récentes.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

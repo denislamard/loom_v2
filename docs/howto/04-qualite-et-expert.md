@@ -4267,12 +4267,12 @@ Tous les messages ci-dessous ont été relevés sur loom-ia 2.0.0. Sauf mention,
 | Situation | Message |
 |---|---|
 | Journal `sqlite` | `le paquet 'aiosqlite' n'est pas installé (installer l'extra : loom-ia[sqlite])` |
-| `loom serve` | `'loom serve' demande l'extra 'http' : uv sync --extra http` |
+| `loom serve` | `'loom serve' demande l'extra 'http' (installer l'extra : loom-ia[http])` (depuis la 2.0.4 ; avant : `… : uv sync --extra http`) |
 | `loom mcp` | même forme, avec l'extra `mcp` |
 | Modèle `anthropic` | `Demande refusée : Modèle 'M' : le SDK 'anthropic' n'est pas installé (installer l'extra : loom-ia[anthropic])` |
 | Exporteur OpenTelemetry | `'telemetry.exporters' demande OpenTelemetry, qui n'est pas installé (installer l'extra : loom-ia[otel])` |
 
-`uv sync --extra …` ne vaut que dans le dépôt de loom-ia. Dans votre projet : `uv add "loom-ia[http]"`. Les extras s'additionnent : le projet du chapitre 25 porte `loom-ia[http,mcp,otel,sqlite]`.
+Le message vaut pour `pip install 'loom-ia[http]'` comme pour `uv add "loom-ia[http]"` (`uv sync --extra …` ne vaut que dans le dépôt de loom-ia). Les extras s'additionnent : le projet du chapitre 25 porte `loom-ia[http,mcp,otel,sqlite]`.
 
 ### Erreurs de chargement fréquentes
 

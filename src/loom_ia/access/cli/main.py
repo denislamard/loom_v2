@@ -42,6 +42,7 @@ from typing import Final, cast
 
 from pydantic import JsonValue
 
+from loom_ia import __version__
 from loom_ia.access.api import (
     AgentNotAllowed,
     Loom,
@@ -130,7 +131,7 @@ from loom_ia.usage import render as render_report
 
 PROG: Final = "loom"
 DEFAULT_CONFIG: Final = Path("loom.yaml")
-MISSING_EXTRA: Final = "{what} demande l'extra '{extra}' : uv sync --extra {extra}"
+MISSING_EXTRA: Final = "{what} demande l'extra '{extra}' (installer l'extra : loom-ia[{extra}])"
 
 # Codes de sortie.
 OK: Final = 0
@@ -200,6 +201,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=PROG, description="Agents loom en ligne de commande")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument(
         "--config",
         type=Path,
@@ -457,7 +459,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--periode",
         choices=("jour", "mois"),
         default=None,
-        help="consommation du client sur la journée ou le mois en cours (J5.1b)",
+        help="consommation du client sur la journée ou le mois en cours",
     )
     report.add_argument("--json", action="store_true", help="affiche le rapport en JSON")
     report.set_defaults(handler=cmd_report)

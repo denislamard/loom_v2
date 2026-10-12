@@ -2631,7 +2631,7 @@ Le cache de prompt ne se joue pas avec le modèle simulé, mais ses garde-fous s
 ```yaml
   - id: HAIKU
     sdk: anthropic
-    model: claude-haiku-4-5
+    model: claude-haiku-5-5
     cache: {system: true, tools: true, messages: true}
 ```
 

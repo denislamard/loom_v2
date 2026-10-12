@@ -266,7 +266,7 @@ jobs:
         run: uv build
 
       - name: Vérifier les métadonnées et le README (twine)
-        run: uvx twine check --strict dist/*
+        run: uvx --from twine==7.0.0 twine check --strict dist/*
 
       - name: Vérifier le wheel
         run: |
