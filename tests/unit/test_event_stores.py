@@ -186,6 +186,31 @@ async def test_query_filters_and_paginates(store: EventStore) -> None:
     assert [e.event_id for e in page + rest] == sorted(e.event_id for e in page + rest)
 
 
+async def test_after_follows_the_order_of_writing_not_the_order_of_ids(store: EventStore) -> None:
+    """Un suiveur qui reprend après le dernier événement vu ne perd rien.
+
+    L'identifiant est posé à la création du brouillon, le `seq` à l'écriture :
+    deux écrivains concurrents (approbateur REST, sous-agents, autres workers)
+    peuvent donc écrire un événement dont l'identifiant est plus petit que
+    celui d'un événement déjà écrit. Reprendre « après » celui-ci doit le rendre.
+    """
+    if isinstance(store, JsonlEventStore):
+        pytest.skip("JSONL : un fichier par session, aucun ordre d'écriture commun (tri par id)")
+    _, early = run_drafts(session=SessionId("a"))  # identifiants plus petits
+    _, late = run_drafts(session=SessionId("b"))  # identifiants plus grands
+    assert max(d.event_id for d in early) < min(d.event_id for d in late)
+
+    await store.append(late, expected_seq=0)  # écrit en premier
+    seen = await store.query(EventQuery(tenant_id=DEFAULT_TENANT, limit=1000))
+    assert len(seen) == len(late)
+
+    await store.append(early, expected_seq=0)  # écrit ensuite, identifiants plus petits
+    more = await store.query(
+        EventQuery(tenant_id=DEFAULT_TENANT, limit=1000, after=seen[-1].event_id)
+    )
+    assert sorted(e.event_id for e in more) == sorted(d.event_id for d in early)
+
+
 @pytest.mark.parametrize(
     "zone", [UTC, timezone(timedelta(hours=2)), timezone(timedelta(hours=-5))], ids=str
 )

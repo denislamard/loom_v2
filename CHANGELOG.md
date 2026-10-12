@@ -2,6 +2,13 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.0.5 - non publiée
+
+### Journal
+- ⚠ **`after` (REST `GET /v1/events`, `EventQuery.after`) suit l'ordre d'écriture, non l'ordre des identifiants.** L'identifiant d'un événement est posé à la création du brouillon, avant l'écriture : un écrivain lent (approbateur REST, sous-agents, autre worker) pouvait écrire après un autre un événement d'identifiant plus petit, que reprendre « après » le dernier id vu ne rendait jamais. Les résultats sont désormais rendus dans l'ordre d'écriture (mémoire, SQLite, Postgres) ; un `after` inconnu du journal (session effacée) retombe sur la comparaison des identifiants. Le journal JSONL, qui a un fichier par session, reste trié par identifiant.
+- SQLite : un index `events_ingestion` est créé à l'ouverture d'un journal existant (une fois).
+- ⚠ Postgres : le schéma du journal passe en **version 3** (colonne `ingested`, identité, et son index). L'ouverture migre une base existante, comme pour la version 2 ; qui applique le DDL à la main reprend la sortie de `loom storage sql`. Une écriture prend un verrou consultatif par client juste avant l'insertion (les écritures d'un même client se suivent pendant l'insertion et la validation).
+
 ## 2.0.4 - publiée
 
 Correctifs de packaging, de lecture du journal et de l'unité du service `execd`. Aucune fonctionnalité nouvelle.

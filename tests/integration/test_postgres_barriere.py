@@ -40,8 +40,8 @@ from loom_ia.adapters.postgres.sql import (
     role_ddl,
 )
 from loom_ia.adapters.stores.postgres import PostgresEventStore
-from loom_ia.core.events import EventDraft
-from loom_ia.core.model import SessionId, TenantId
+from loom_ia.core.events import EventDraft, EventQuery
+from loom_ia.core.model import EventId, SessionId, TenantId
 from loom_ia.core.ports import JournalBusy
 from loom_ia.testing import RunJournal
 
@@ -224,6 +224,65 @@ async def test_ten_writers_on_one_journal_do_not_interleave(postgres_dsn: str) -
             await store.aclose()
 
 
+async def test_writers_of_one_client_queue_on_the_ingestion_lock(postgres_dsn: str) -> None:
+    """MOT-10 : le rang d'écriture n'est tiré que sous un verrou propre au client.
+
+    Sans lui, une transaction qui tire le rang 10 puis valide après celle qui a
+    tiré 11 ferait manquer la ligne 10 à un suiveur déjà passé. Tant qu'un
+    autre détient le verrou du client, une écriture de ce client attend ; celle
+    d'un autre client passe.
+    """
+    store = PostgresEventStore(postgres_dsn)
+    holder = await asyncpg.connect(postgres_dsn)
+    try:
+        # Prépare la base (schéma) avant de tenir le verrou.
+        await store.append(drafts(AUTRE, SessionId("s-amorce")), expected_seq=0)
+        async with holder.transaction():
+            await holder.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", f"ingestion:{UN}"
+            )
+            waiting = asyncio.create_task(
+                store.append(drafts(UN, SessionId("s-attend")), expected_seq=0)
+            )
+            await store.append(drafts(AUTRE, SessionId("s-passe")), expected_seq=0)
+            await asyncio.sleep(0.3)
+            assert not waiting.done()
+        assert len(await asyncio.wait_for(waiting, 10)) == len(drafts(UN, SessionId("x")))
+    finally:
+        await holder.close()
+        await store.aclose()
+
+
+async def test_after_follows_writing_order_across_sessions_of_one_client(
+    postgres_dsn: str,
+) -> None:
+    """MOT-10 : des écrivains concurrents ne font perdre aucun événement à un suiveur."""
+    stores = [PostgresEventStore(postgres_dsn) for _ in range(4)]
+    written = [drafts(UN, SessionId(f"s-suivi-{n}")) for n in range(12)]
+    expected = {d.event_id for lot in written for d in lot}
+    seen: set[str] = set()
+    cursor: EventId | None = None
+
+    async def follow() -> None:
+        nonlocal cursor
+        for _ in range(500):
+            page = await stores[0].query(EventQuery(tenant_id=UN, limit=5, after=cursor))
+            seen.update(event.event_id for event in page)
+            if page:
+                cursor = page[-1].event_id
+            elif expected <= seen:
+                return
+            await asyncio.sleep(0.02)
+
+    try:
+        writers = [stores[n % 4].append(lot, expected_seq=0) for n, lot in enumerate(written)]
+        await asyncio.wait_for(asyncio.gather(follow(), *writers), 60)
+    finally:
+        for store in stores:
+            await store.aclose()
+    assert expected <= seen
+
+
 # --- Délais, horloge et pool (DON-2) ----------------------------------------
 
 
@@ -400,7 +459,7 @@ async def test_a_new_database_is_created_at_the_current_version(postgres_dsn: st
         await store.append(drafts(UN, SessionId("s-neuf")), expected_seq=0)
     finally:
         await store.aclose()
-    assert await _state(postgres_dsn) == (2, True)
+    assert await _state(postgres_dsn) == (3, True)
 
 
 async def test_a_2_0_database_is_migrated_and_keeps_its_events(postgres_dsn: str) -> None:
@@ -412,15 +471,18 @@ async def test_a_2_0_database_is_migrated_and_keeps_its_events(postgres_dsn: str
             await store.append(drafts(UN, SessionId(f"s-n{number}")), expected_seq=0)
         finally:
             await store.aclose()
-        assert await _state(postgres_dsn) == (2, True)
+        assert await _state(postgres_dsn) == (3, True)
     connection = await asyncpg.connect(postgres_dsn)
     try:
         async with connection.transaction():
             await connection.execute("SELECT set_config('loom.tenant_id', $1, true)", UN)
             kept = await connection.fetchval(f"SELECT count(*) FROM {EVENTS_TABLE} WHERE seq = 1")
+            ranks = await connection.fetch(f"SELECT ingested FROM {EVENTS_TABLE}")
     finally:
         await connection.close()
     assert kept == 4  # les 2 événements de la 2.0 et ceux des 2 sessions écrites ensuite
+    # Les lignes d'avant la migration ont reçu un rang d'écriture, tous distincts.
+    assert len({row["ingested"] for row in ranks}) == len(ranks) > 4
 
 
 async def test_a_duplicate_event_id_stops_the_migration_and_changes_nothing(

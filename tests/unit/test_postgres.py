@@ -83,6 +83,9 @@ def test_the_journal_schema_is_versioned_and_the_event_id_index_unique() -> None
     assert "CREATE UNIQUE INDEX loom_events_event_id ON loom_events (tenant_id, event_id)" in sql
     # La migration n'est jouée que si sa version n'est pas déjà inscrite.
     assert "< 2 THEN" in sql and "VALUES ('events', 2)" in sql
+    # Version 3 : le rang d'écriture que ``after`` suit (MOT-10).
+    assert "< 3 THEN" in sql and "VALUES ('events', 3)" in sql
+    assert "ADD COLUMN IF NOT EXISTS ingested bigint" in sql
     # Le rôle applicatif lit la version, sans pouvoir l'écrire.
     assert "GRANT SELECT ON loom_schema TO loom_app;" in sql
     # Sans le journal, rien ne parle de la version du journal.

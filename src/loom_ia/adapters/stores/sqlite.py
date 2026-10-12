@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_run ON events (tenant_id, run_id, seq);
 CREATE INDEX IF NOT EXISTS events_event_id ON events (tenant_id, event_id);
+-- Ordre d'écriture : le rowid, qu'un index sur le seul client parcourt dans l'ordre.
+CREATE INDEX IF NOT EXISTS events_ingestion ON events (tenant_id);
 CREATE INDEX IF NOT EXISTS events_type ON events (tenant_id, type, ts);
 """
 
@@ -129,8 +131,13 @@ def _conditions(query: EventQuery) -> tuple[str, list[Any]]:
         clauses.append("ts < ?")
         values.append(query.until.astimezone(UTC).isoformat())
     if query.after is not None:
-        clauses.append("event_id > ?")
-        values.append(query.after)
+        # Après l'événement indiqué dans l'ordre d'écriture (rowid) ; un
+        # événement inconnu de ce client retombe sur la comparaison des ids.
+        known = "SELECT c.rowid FROM events AS c WHERE c.tenant_id = ? AND c.event_id = ?"
+        clauses.append(
+            f"CASE WHEN EXISTS ({known}) THEN events.rowid > ({known}) ELSE event_id > ? END"
+        )
+        values.extend([query.tenant_id, query.after] * 2 + [query.after])
     return " AND ".join(clauses), values
 
 
@@ -228,8 +235,8 @@ class SqliteEventStore:
 
     async def query(self, query: EventQuery) -> list[Event]:
         where, values = _conditions(query)
-        sql = f"SELECT event FROM events WHERE {where} ORDER BY event_id LIMIT ?"
-        return query.select(await self._events(sql, [*values, query.limit]))
+        sql = f"SELECT event FROM events WHERE {where} ORDER BY events.rowid LIMIT ?"
+        return query.refine(await self._events(sql, [*values, query.limit]))
 
     async def _events(self, sql: str, values: Sequence[Any]) -> list[Event]:
         async with self._lock:

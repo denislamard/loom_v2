@@ -200,7 +200,7 @@ CREATE INDEX IF NOT EXISTS {IDEMPOTENCY_TABLE}_expiry
     ON {IDEMPOTENCY_TABLE} (status, expires_at);"""
 
 # Version du schéma du journal que ce loom attend : en deçà, l'ouverture migre.
-EVENTS_SCHEMA_VERSION: Final = 2
+EVENTS_SCHEMA_VERSION: Final = 3
 
 # Version 1 : le schéma de la 2.0 (``EVENTS_DDL``). Version 2 : l'identifiant
 # d'un événement est unique par client — l'index de la 2.0 ne l'était pas. La
@@ -208,6 +208,16 @@ EVENTS_SCHEMA_VERSION: Final = 2
 EVENTS_V2: Final = f"""\
         DROP INDEX IF EXISTS {EVENTS_TABLE}_event_id;
         CREATE UNIQUE INDEX {EVENTS_TABLE}_event_id ON {EVENTS_TABLE} (tenant_id, event_id);"""
+
+# Version 3 : ``ingested``, le rang d'écriture, que ``after`` suit (l'id d'un
+# événement est posé avant son écriture, donc pas dans l'ordre où elle se fait).
+# Les lignes existantes reçoivent leur rang dans l'ordre où la table les
+# parcourt, ce qui est celui de leur écriture tant qu'aucune n'a été supprimée.
+EVENTS_V3: Final = f"""\
+        ALTER TABLE {EVENTS_TABLE} ADD COLUMN IF NOT EXISTS ingested bigint
+            GENERATED ALWAYS AS IDENTITY;
+        CREATE INDEX IF NOT EXISTS {EVENTS_TABLE}_ingested
+            ON {EVENTS_TABLE} (tenant_id, ingested);"""
 
 # Rejouable : c'est ce que loom applique à l'ouverture d'une table qui existe
 # déjà. Une table de la 2.0 n'a pas de ligne de version : elle est au moins en
@@ -217,7 +227,8 @@ EVENTS_UPGRADE: Final = "\n".join(
         SCHEMA_DDL,
         f"INSERT INTO {SCHEMA_TABLE} (component, version) VALUES ('events', 1)"
         " ON CONFLICT (component) DO NOTHING;",
-        _migration("events", EVENTS_SCHEMA_VERSION, EVENTS_V2),
+        _migration("events", 2, EVENTS_V2),
+        _migration("events", EVENTS_SCHEMA_VERSION, EVENTS_V3),
     ]
 )
 

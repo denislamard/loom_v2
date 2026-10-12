@@ -60,6 +60,13 @@ _INSERT: Final = (
 # Un verrou par journal, tenu jusqu'à la fin de la transaction. ``hashtext``
 # peut faire se rencontrer deux journaux : ils s'attendent, c'est tout.
 _LOCK: Final = "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)"
+# Un second verrou, par client, pris juste avant l'insertion : la colonne
+# ``ingested`` est tirée d'une séquence, et sans lui une transaction qui
+# tire 10 puis valide après celle qui a tiré 11 ferait manquer la ligne 10 à
+# un suiveur déjà passé. Tenu jusqu'à la validation, il rend l'ordre des
+# valeurs égal à celui de la visibilité. Pris après le verrou du journal,
+# toujours dans cet ordre : pas d'interblocage.
+_INGEST_LOCK: Final = "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)"
 _LAST_SEQ: Final = (
     f"SELECT COALESCE(MAX(seq), 0) FROM {EVENTS_TABLE} WHERE tenant_id = $1 AND session_id = $2"
 )
@@ -85,7 +92,7 @@ def _row(event: Event, codec: JournalCodec) -> tuple[Any, ...]:
 
 
 class _Conditions:
-    """Clauses SQL numérotées ; ``EventQuery.select`` tranche ensuite."""
+    """Clauses SQL numérotées ; ``EventQuery.refine`` les rejoue ensuite."""
 
     def __init__(self) -> None:
         self.clauses: list[str] = []
@@ -132,7 +139,17 @@ def _conditions(query: EventQuery) -> _Conditions:
     if query.until is not None:
         found.add("ts < ${n}", query.until)
     if query.after is not None:
-        found.add("event_id > ${n}", query.after)
+        # Après l'événement indiqué dans l'ordre d'écriture (``ingested``) ; un
+        # événement inconnu de ce client retombe sur la comparaison des ids.
+        # ``$1`` est le client : la première condition posée plus haut.
+        known = (
+            f"SELECT c.ingested FROM {EVENTS_TABLE} AS c"
+            " WHERE c.tenant_id = $1 AND c.event_id = ${n}"
+        )
+        found.add(
+            f"CASE WHEN EXISTS ({known}) THEN ingested > ({known}) ELSE event_id > ${{n}} END",
+            query.after,
+        )
     return found
 
 
@@ -175,6 +192,7 @@ class PostgresEventStore:
             if expected_seq is not None and expected_seq != last:
                 raise SequenceConflict(session_id, expected_seq, last)
             events = [draft.to_event(last + i) for i, draft in enumerate(drafts, start=1)]
+            await connection.execute(_INGEST_LOCK, f"ingestion:{tenant_id}")
             try:
                 await connection.executemany(
                     _INSERT, [_row(event, self._codec) for event in events]
@@ -213,10 +231,10 @@ class PostgresEventStore:
         found = _conditions(query)
         sql = (
             f"SELECT event FROM {EVENTS_TABLE} WHERE {found.where}"
-            f" ORDER BY event_id LIMIT ${len(found.values) + 1}"
+            f" ORDER BY ingested LIMIT ${len(found.values) + 1}"
         )
         events = await self._events(query.tenant_id, sql, [*found.values, query.limit])
-        return query.select(events)
+        return query.refine(events)
 
     async def _events(self, tenant_id: TenantId, sql: str, values: Sequence[Any]) -> list[Event]:
         async with self._pg.transaction(tenant_id) as connection:

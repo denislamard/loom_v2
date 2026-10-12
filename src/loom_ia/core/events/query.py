@@ -19,8 +19,15 @@ EVENTS_MAX: Final = 10_000
 class EventQuery(DomainModel):
     """Critères de recherche. Le client est toujours obligatoire (#34).
 
-    Les résultats sont triés par ``event_id`` (UUIDv7, donc par date) ;
-    ``after`` reprend la pagination après l'événement indiqué.
+    Les résultats sont rendus **dans l'ordre où le journal les a reçus** (mémoire,
+    SQLite, Postgres) et ``after`` reprend la pagination après l'événement
+    indiqué *dans cet ordre*. L'``event_id`` (UUIDv7) est posé à la création du
+    brouillon, avant l'écriture : un écrivain lent peut donc écrire après un
+    autre un événement d'identifiant plus petit. Trier ou borner sur l'id le
+    perdrait pour qui suit le journal ; l'ordre d'écriture, non. Un ``after``
+    inconnu du journal (session effacée, id inventé) retombe sur la comparaison
+    des identifiants. Le journal JSONL, qui a un fichier par session et aucun
+    ordre commun, reste trié par ``event_id`` (``select``).
     """
 
     tenant_id: TenantId
@@ -65,8 +72,16 @@ class EventQuery(DomainModel):
             name in event.facets and event.facets[name] == value for name, value in wanted.items()
         )
 
+    def refine(self, events: list[Event]) -> list[Event]:
+        """Rejoue les critères sur des événements qu'un magasin a déjà ordonnés.
+
+        L'ordre est celui de l'écriture, fixé par le magasin avec le curseur
+        ``after`` : ni tri ni curseur ici, seulement les critères et la borne.
+        """
+        return [e for e in events if self.matches(e)][: self.limit]
+
     def select(self, events: list[Event]) -> list[Event]:
-        """Filtre, trie et pagine une liste d'événements."""
+        """Filtre, trie par ``event_id`` et pagine une liste d'événements."""
         found = sorted((e for e in events if self.matches(e)), key=lambda e: e.event_id)
         if self.after is not None:
             found = [e for e in found if e.event_id > self.after]
