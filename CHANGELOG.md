@@ -4,6 +4,11 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.5 - non publiée
 
+### Exécution durable
+- ⚠ **Un worker qui a perdu sa concession s'arrête au lieu de piloter le run en même temps que son successeur.** Un worker incapable de renouveler son bail (store injoignable, process gelé) pouvait se faire reprendre le run par un autre, puis continuer : ses écritures étaient rejouées derrière la concession du nouveau pilote. Les deux appelaient le modèle et lançaient des outils, un appel pouvait être soldé deux fois, et la session devenait illisible. Le pilote dépossédé n'écrit désormais plus rien sur le run, sous-runs compris : `Loom.run()`, `Loom.stream()` et `Loom.resume()` peuvent lever `ClaimConflict` en cours de run, et plus seulement au départ (un travail en file est reposé pour l'après-bail, comme avant). Si le run a été mené à son terme entre-temps, l'état du journal est rendu. Un run mis en pause dont la concession a été prise ne la rend plus : sa restitution aurait effacé celle du nouveau pilote (MOT-16).
+- Un arrêt écrit par un autre process est vu par le pilote même quand l'écriture d'un autre run de la même session a avancé l'écrivain par-dessus : le pilote n'écrit plus après la clôture.
+- `ClaimConflict` est défini dans `loom_ia.engine.writer` ; les imports `loom_ia.engine`, `loom_ia.access` et `loom_ia.engine.loop` restent valables.
+
 ### Journal
 - ⚠ **`after` (REST `GET /v1/events`, `EventQuery.after`) suit l'ordre d'écriture, non l'ordre des identifiants.** L'identifiant d'un événement est posé à la création du brouillon, avant l'écriture : un écrivain lent (approbateur REST, sous-agents, autre worker) pouvait écrire après un autre un événement d'identifiant plus petit, que reprendre « après » le dernier id vu ne rendait jamais. Les résultats sont désormais rendus dans l'ordre d'écriture (mémoire, SQLite, Postgres) ; un `after` inconnu du journal (session effacée) retombe sur la comparaison des identifiants. Le journal JSONL, qui a un fichier par session, reste trié par identifiant.
 - SQLite : un index `events_ingestion` est créé à l'ouverture d'un journal existant (une fois).

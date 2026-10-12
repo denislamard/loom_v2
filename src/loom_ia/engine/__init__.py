@@ -41,7 +41,6 @@ from loom_ia.engine.loop import (
     DEFAULT_MAX_ITERATIONS,
     FINALIZE_HINT,
     TERMINAL_RULE,
-    ClaimConflict,
     ParentRun,
     RunContext,
     SessionUnreadable,
@@ -87,7 +86,13 @@ from loom_ia.engine.transcript import (
     rendered,
     transcript,
 )
-from loom_ia.engine.writer import RunExists, RunMoved, SessionWriter, SessionWriters
+from loom_ia.engine.writer import (
+    ClaimConflict,
+    RunExists,
+    RunMoved,
+    SessionWriter,
+    SessionWriters,
+)
 
 __all__ = [
     "AGENT_HINT",

@@ -1526,7 +1526,12 @@ async def test_a_renewal_does_not_take_the_claim_back_from_another_worker(
     ticks: Ticks,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Un autre worker a pris le run pendant que le bail était en souffrance : on s'arrête là."""
+    """Un autre worker a pris le run pendant que le bail était en souffrance : on s'arrête là.
+
+    Le renouvellement voit la prise et s'arrête, et le pilote aussi, à son écriture
+    suivante : la position de l'écrivain a pourtant avancé par-dessus la prise (MOT-16).
+    """
+    seen: list[RunState] = []
     appending = store.append
     claims = 0
     attempts = asyncio.Queue[None]()
@@ -1548,6 +1553,7 @@ async def test_a_renewal_does_not_take_the_claim_back_from_another_worker(
 
     async def renewal(run: RunState) -> None:
         nonlocal other
+        seen.append(run)
         until = datetime.now(UTC) + timedelta(seconds=600)
         other = run_scope(run).draft(RunClaimed(worker_id="worker-ailleurs", lease_until=until))
         ticks.fire()
@@ -1555,17 +1561,20 @@ async def test_a_renewal_does_not_take_the_claim_back_from_another_worker(
 
     monkeypatch.setattr(store, "append", append)
     with caplog.at_level(logging.WARNING, logger="loom_ia.engine.loop"):
-        state = await drive_held(store, renewal)
+        with pytest.raises(ClaimConflict) as lost:
+            await drive_held(store, renewal)
 
-    assert state.status is RunStatus.COMPLETED
-    held = [
-        e.payload.worker_id
-        for e in await journal(store, state)
-        if isinstance(e.payload, RunClaimed)
-    ]
+    assert lost.value.worker_id == "worker-ailleurs"
+    [run] = seen
+    events = await journal(store, run)
+    held = [e.payload.worker_id for e in events if isinstance(e.payload, RunClaimed)]
     # La concession de l'autre est la dernière : notre reconduction ne s'est pas écrite derrière.
     assert held == ["worker-1", "worker-ailleurs"]
+    # Ni le résultat de l'outil, ni la suite du run : rien n'est écrit après la prise.
+    assert written_after_takeover(events) == []
+    assert fold(events, run.run_id).status is RunStatus.AWAITING_TOOLS
     assert [r for r in caplog.records if "renouvellement arrêté" in r.getMessage()]
+    assert [r for r in caplog.records if "pilotage arrêté" in r.getMessage()]
 
 
 async def test_the_renewal_timer_is_stopped_before_the_lease_is_handed_back(
@@ -1587,6 +1596,402 @@ async def test_the_renewal_timer_is_stopped_before_the_lease_is_handed_back(
 
     assert state.status is RunStatus.COMPLETED
     assert kinds(await journal(store, state)).count("run.claimed") == 1
+
+
+# --- Concession perdue en plein pilotage (MOT-16) ------------------------------
+
+ELSEWHERE = "worker-ailleurs"
+
+
+async def taken_over(store: EventStore, run: RunState, *, handed_back: bool = False) -> None:
+    """Un autre worker prend la concession du run ; avec ``handed_back``, il la rend aussitôt."""
+    scope = run_scope(run)
+    until = datetime.now(UTC) + timedelta(seconds=600)
+    drafts = [scope.draft(RunClaimed(worker_id=ELSEWHERE, lease_until=until))]
+    if handed_back:
+        drafts.append(scope.draft(RunClaimed(worker_id=ELSEWHERE, lease_until=datetime.now(UTC))))
+    await store.append(drafts, expected_seq=None)
+
+
+def written_after_takeover(events: Sequence[Event]) -> list[str]:
+    """Ce que le pilote dépossédé a écrit après la première concession de l'autre worker."""
+    taken = min(
+        e.seq
+        for e in events
+        if isinstance(e.payload, RunClaimed) and e.payload.worker_id == ELSEWHERE
+    )
+    return [
+        e.type
+        for e in events
+        if e.seq > taken
+        and not (isinstance(e.payload, RunClaimed) and e.payload.worker_id == ELSEWHERE)
+    ]
+
+
+async def test_a_pilot_whose_claim_was_taken_writes_nothing_more(
+    store: EventStore, ticks: Ticks
+) -> None:
+    """Deux pilotes, un seul journal : le premier, dépossédé, ne lance plus rien."""
+    sent: list[str] = []
+    entered, gate = asyncio.Event(), asyncio.Event()
+
+    @tool(name="envoyer", side_effects="irreversible")
+    async def envoyer_a() -> str:
+        """Envoie."""
+        sent.append("A")
+        entered.set()
+        await gate.wait()
+        return "envoyé"
+
+    blocked, release = asyncio.Event(), asyncio.Event()
+
+    @tool(name="attendre")
+    async def attendre_b() -> str:
+        """Attend."""
+        blocked.set()
+        await release.wait()
+        return "ok"
+
+    @tool(name="envoyer", side_effects="irreversible")
+    async def envoyer_b() -> str:
+        """Envoie."""
+        sent.append("B")
+        return "envoyé"
+
+    model_a = scripted(
+        tool_call_message(("c1", "envoyer", {})),
+        tool_call_message(("c2", "envoyer", {})),
+        Message.assistant("A a fini."),
+    )
+    ctx_a = context(
+        store, model_a, tools=ToolExecutor([envoyer_a]), worker_id="worker-1", lease=0.01
+    )
+    run = await begin_run(ctx_a, "?")
+    pilot_a = asyncio.create_task(drive(ctx_a, run.run_id))
+    async with asyncio.timeout(5):
+        await entered.wait()
+    await asyncio.sleep(0.05)  # le bail de A expire : aucun tour de renouvellement ne vient
+
+    model_b = scripted(tool_call_message(("k1", "attendre", {})), Message.assistant("B a fini."))
+    ctx_b = context(
+        store, model_b, tools=ToolExecutor([envoyer_b, attendre_b]), worker_id="worker-2"
+    )
+    pilot_b = asyncio.create_task(drive(ctx_b, run.run_id))
+    async with asyncio.timeout(5):
+        await blocked.wait()  # B pilote : il a pris la concession et attend dans son outil
+
+    gate.set()
+    with pytest.raises(ClaimConflict) as lost:
+        async with asyncio.timeout(5):
+            await pilot_a
+    release.set()
+    async with asyncio.timeout(5):
+        state = await pilot_b
+
+    assert lost.value.worker_id == "worker-2"
+    assert state.status is RunStatus.COMPLETED and state.output is not None
+    assert state.output.text == "B a fini."
+    # A n'a rien lancé après la reprise, ni appelé son modèle une seconde fois.
+    assert sent == ["A"] and len(model_a.requests) == 1
+    events = await journal(store, run)
+    assert kinds(events).count("run.completed") == 1
+    claimed = max(
+        e.seq
+        for e in events
+        if isinstance(e.payload, RunClaimed) and e.payload.worker_id == "worker-2"
+    )
+    # Après la prise de B, c1 n'est soldé qu'une fois : par la reprise de B (état inconnu).
+    [c1] = [
+        e.payload
+        for e in events
+        if e.seq > claimed and isinstance(e.payload, ToolCompleted) and e.payload.call_id == "c1"
+    ]
+    assert c1.output == ToolOutput.error(UNKNOWN_STATE)
+
+
+async def test_a_claim_taken_then_handed_back_still_stops_the_former_pilot(
+    store: EventStore, ticks: Ticks
+) -> None:
+    """Un autre a pris le run puis l'a rendu : l'état de l'ancien pilote est périmé."""
+
+    seen: list[RunState] = []
+
+    async def taken_and_back(run: RunState) -> None:
+        seen.append(run)
+        await taken_over(store, run, handed_back=True)
+
+    with pytest.raises(ClaimConflict) as lost:
+        await drive_held(store, taken_and_back)
+
+    assert lost.value.worker_id == ELSEWHERE
+    [run] = seen
+    assert written_after_takeover(await journal(store, run)) == []
+
+
+async def test_handing_the_claim_back_does_not_erase_a_newer_one(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch, ticks: Ticks
+) -> None:
+    """Un run mis en pause rend sa concession, sauf si un autre l'a prise entre-temps.
+
+    Il n'y a alors plus rien à rendre : le run est en plan, tel que le pilote l'a écrit
+    avant la prise, et c'est cet état que rend ``drive``.
+    """
+    real = loop_module._handed_back  # pyright: ignore[reportPrivateUsage]
+    ctx = context(
+        store,
+        scripted(tool_call_message(("c1", "calculer", {"expr": "1+1"}))),
+        policies=unbounded(attente_humaine),
+        worker_id="worker-1",
+    )
+    run = await begin_run(ctx, "?")
+
+    async def handed_back(*args: Any) -> None:
+        await taken_over(store, run)
+        await real(*args)
+
+    monkeypatch.setattr("loom_ia.engine.loop._handed_back", handed_back)
+    state = await drive(ctx, run.run_id)
+
+    assert state.status is RunStatus.PAUSED
+    journaled = fold(await journal(store, run), run.run_id)
+    assert journaled.status is RunStatus.PAUSED
+    assert journaled.claim is not None and journaled.claim.worker_id == ELSEWHERE
+    assert journaled.claim.alive(datetime.now(UTC))
+
+
+async def test_a_subrun_of_a_lost_run_writes_nothing_more(store: EventStore, ticks: Ticks) -> None:
+    """L'enfant écrit par l'écrivain du parent : la perte de la concession l'arrête aussi."""
+    entered, gate = asyncio.Event(), asyncio.Event()
+
+    @tool
+    async def attendre() -> str:
+        """Attend le feu vert."""
+        entered.set()
+        await gate.wait()
+        return "ok"
+
+    child_model = scripted(tool_call_message(("k1", "attendre", {})), Message.assistant("Vu."))
+    agents = {"verificateur": context(store, child_model, tools=ToolExecutor([attendre]))}
+    sub = delegating("verifier", "verificateur", agents)
+    model = scripted(
+        tool_call_message(("c1", "verifier", {"message": "?"})), Message.assistant("Fini.")
+    )
+    ctx = context(store, model, tools=ToolExecutor([sub]), worker_id="worker-1")
+    run = await begin_run(ctx, "?")
+    pilot = asyncio.create_task(drive(ctx, run.run_id))
+    async with asyncio.timeout(5):
+        await entered.wait()
+    await taken_over(store, run)
+    gate.set()
+
+    with pytest.raises(ClaimConflict):
+        async with asyncio.timeout(5):
+            await pilot
+
+    assert written_after_takeover(await journal(store, run)) == []
+    assert len(child_model.requests) == 1 and len(model.requests) == 1
+
+
+async def test_the_other_calls_of_the_batch_stop_with_the_pilot(
+    store: EventStore, ticks: Ticks
+) -> None:
+    """Un appel finit après la prise : rien n'est écrit, et son voisin encore en cours est coupé."""
+    entered, gate = asyncio.Event(), asyncio.Event()
+    started, cut = asyncio.Event(), asyncio.Event()
+
+    @tool
+    async def vite() -> str:
+        """Répond au feu vert."""
+        entered.set()
+        await gate.wait()
+        return "vite"
+
+    @tool
+    async def lent() -> str:
+        """Ne répond jamais."""
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cut.set()
+            raise
+        return "jamais"
+
+    model = scripted(tool_call_message(("c1", "vite", {}), ("c2", "lent", {})))
+    ctx = context(store, model, tools=ToolExecutor([vite, lent]), worker_id="worker-1")
+    run = await begin_run(ctx, "?")
+    pilot = asyncio.create_task(drive(ctx, run.run_id))
+    async with asyncio.timeout(5):
+        await entered.wait()
+        await started.wait()
+    await taken_over(store, run)
+    gate.set()
+
+    with pytest.raises(ClaimConflict):
+        async with asyncio.timeout(5):
+            await pilot
+
+    assert cut.is_set()
+    assert written_after_takeover(await journal(store, run)) == []
+
+
+async def _held_in_session(
+    store: EventStore,
+) -> tuple[RunState, SessionWriter, asyncio.Event, asyncio.Task[RunState]]:
+    """Un run piloté dans une session nommée, par un écrivain que le test garde en main.
+
+    Le pilote attend dans son outil ; le feu vert, rendu, le laisse finir.
+    """
+    session = SessionId("atelier")
+    entered, gate = asyncio.Event(), asyncio.Event()
+
+    @tool
+    async def attendre() -> str:
+        """Attend le feu vert."""
+        entered.set()
+        await gate.wait()
+        return "ok"
+
+    model = scripted(tool_call_message(("c1", "attendre", {})), Message.assistant("Fini."))
+    ctx = context(store, model, tools=ToolExecutor([attendre]), worker_id="worker-1")
+    writer = await SessionWriter.open(store, DEFAULT_TENANT, session)
+    run = await begin_run(ctx, "?", session_id=session, writer=writer)
+    pilot = asyncio.create_task(drive(ctx, run.run_id, session_id=session, writer=writer))
+    async with asyncio.timeout(5):
+        await entered.wait()
+    return run, writer, gate, pilot
+
+
+async def test_a_takeover_passed_over_by_another_run_of_the_session_still_stops_the_pilot(
+    store: EventStore, ticks: Ticks
+) -> None:
+    """Un autre run de la session écrit par-dessus la prise : le pilote ne la manque pas."""
+    run, writer, gate, pilot = await _held_in_session(store)
+    await taken_over(store, run)
+    # Son écriture, reprise, lit la prise et avance la position commune par-dessus.
+    await begin_run(context(store, scripted()), "Autre", session_id=run.session_id, writer=writer)
+    gate.set()
+
+    with pytest.raises(ClaimConflict) as lost:
+        async with asyncio.timeout(5):
+            await pilot
+
+    assert lost.value.worker_id == ELSEWHERE
+    ours = [e for e in await journal(store, run) if e.root_run_id == run.run_id]
+    assert written_after_takeover(ours) == []
+
+
+async def test_a_pilot_whose_run_was_closed_by_the_other_gets_its_final_state(
+    store: EventStore, ticks: Ticks
+) -> None:
+    """Pris, puis arrêté ailleurs : le pilote rend l'état du journal, comme pour un run clos."""
+    run, writer, gate, pilot = await _held_in_session(store)
+    current = fold(await store.read(DEFAULT_TENANT, run.session_id, run_id=run.run_id), run.run_id)
+    await taken_over(store, run)
+    await store.append(cancellation(current, by=ELSEWHERE), expected_seq=None)
+    await begin_run(context(store, scripted()), "Autre", session_id=run.session_id, writer=writer)
+    gate.set()
+
+    async with asyncio.timeout(5):
+        state = await pilot
+
+    assert state.status is RunStatus.CANCELLED
+    ours = [e for e in await journal(store, run) if e.root_run_id == run.run_id]
+    assert written_after_takeover(ours) == ["run.transitioned", "run.cancelled"]
+
+
+async def test_a_cancellation_passed_over_by_another_run_of_the_session_stops_the_pilot(
+    store: EventStore, ticks: Ticks
+) -> None:
+    """Un arrêt écrit ailleurs, sans reprise : le pilote s'arrête quand même, sans réécrire.
+
+    Le conflit de séquence ne le lui dit plus : l'écriture d'un autre run de la session
+    a avancé la position commune par-dessus l'arrêt.
+    """
+    run, writer, gate, pilot = await _held_in_session(store)
+    current = fold(await store.read(DEFAULT_TENANT, run.session_id, run_id=run.run_id), run.run_id)
+    await store.append(cancellation(current, by="denis"), expected_seq=None)
+    await begin_run(context(store, scripted()), "Autre", session_id=run.session_id, writer=writer)
+    gate.set()
+
+    async with asyncio.timeout(5):
+        state = await pilot
+
+    assert state.status is RunStatus.CANCELLED
+    events = await journal(store, run)
+    closing = max(e.seq for e in events if e.type == "run.cancelled")
+    assert [e.type for e in events if e.root_run_id == run.run_id and e.seq > closing] == []
+
+
+async def test_only_the_pilots_view_is_refused_once_its_run_is_taken(store: EventStore) -> None:
+    """Ses propres concessions ne comptent pas ; un arrêt écrit par l'écrivain passe toujours."""
+    run = await begin_run(context(store, scripted()), "?")
+    scope = run_scope(run)
+    writer = await SessionWriter.open(store, run.context.tenant_id, run.session_id)
+
+    def renewal() -> EventDraft:
+        until = datetime.now(UTC) + timedelta(seconds=60)
+        return scope.draft(RunClaimed(worker_id="worker-1", lease_until=until))
+
+    with writer.held(run.run_id, "worker-1") as view:
+        await view.append([renewal()])
+        await view.append([renewal()])
+        await taken_over(store, run)
+        with pytest.raises(ClaimConflict) as lost:
+            await view.append([renewal()])
+        before = await journal(store, run)
+        # Refusé jusqu'au bout, même sans conflit ni contrôle de séquence.
+        with pytest.raises(ClaimConflict):
+            await view.append([renewal()])
+        with pytest.raises(ClaimConflict):
+            await view.append([renewal()], checked=False)
+        assert await journal(store, run) == before
+        # Un arrêt venu d'ailleurs ne passe pas par la vue d'un pilote : il s'écrit.
+        await writer.append(cancellation(fold(before, run.run_id), by="denis"))
+
+    assert lost.value.worker_id == ELSEWHERE
+    assert fold(await journal(store, run), run.run_id).status is RunStatus.CANCELLED
+
+
+async def test_a_takeover_jumped_over_by_an_unchecked_write_is_still_seen(
+    store: EventStore,
+) -> None:
+    """La compaction écrit sans contrôle de séquence : ce qu'elle saute est tout de même lu."""
+    run = await begin_run(context(store, scripted()), "?")
+    other = await begin_run(context(store, scripted()), "Autre", session_id=run.session_id)
+    writer = await SessionWriter.open(store, run.context.tenant_id, run.session_id)
+    until = datetime.now(UTC) + timedelta(seconds=60)
+
+    with writer.held(run.run_id, "worker-1") as view:
+        await taken_over(store, run)
+        await writer.append(
+            [run_scope(other).draft(RunClaimed(worker_id="worker-2", lease_until=until))],
+            checked=False,
+        )
+        with pytest.raises(ClaimConflict):
+            await view.append(
+                [run_scope(run).draft(RunClaimed(worker_id="worker-1", lease_until=until))]
+            )
+
+
+async def test_the_claim_of_another_run_of_the_session_does_not_stop_the_pilot(
+    store: EventStore,
+) -> None:
+    run = await begin_run(context(store, scripted()), "?")
+    other = await begin_run(context(store, scripted()), "Autre", session_id=run.session_id)
+    writer = await SessionWriter.open(store, run.context.tenant_id, run.session_id)
+    until = datetime.now(UTC) + timedelta(seconds=60)
+
+    with writer.held(run.run_id, "worker-1") as view:
+        await store.append(
+            [run_scope(other).draft(RunClaimed(worker_id=ELSEWHERE, lease_until=until))],
+            expected_seq=None,
+        )
+        written = await view.append(
+            [run_scope(run).draft(RunClaimed(worker_id="worker-1", lease_until=until))]
+        )
+
+    assert [e.type for e in written] == ["run.claimed"]
 
 
 async def test_transitions_are_logged(store: EventStore, caplog: pytest.LogCaptureFixture) -> None:

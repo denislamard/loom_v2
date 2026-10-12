@@ -84,7 +84,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import aclosing, asynccontextmanager, nullcontext
+from contextlib import AbstractContextManager, aclosing, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Final
@@ -192,7 +192,7 @@ from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.model_call import responded
 from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
-from loom_ia.engine.writer import RunExists, RunMoved, SessionWriter
+from loom_ia.engine.writer import ClaimConflict, RunExists, RunMoved, SessionWriter
 
 logger = logging.getLogger(__name__)
 
@@ -207,19 +207,6 @@ _CALL_EVENTS: Final = (ModelExchanged, ModelRetried, ModelFellBack, CircuitOpene
 
 # États où ``step`` a quelque chose à faire (effet ou clôture).
 DEFAULT_LEASE: Final = 60.0
-
-
-class ClaimConflict(RuntimeError):
-    """Un autre pilote tient la concession de ce run, et elle est vivante (#27)."""
-
-    def __init__(self, run_id: RunId, worker_id: str, until: datetime) -> None:
-        self.run_id = run_id
-        self.worker_id = worker_id
-        self.lease_until = until
-        super().__init__(
-            f"Run {run_id} : piloté par {worker_id}, concession valable jusqu'à "
-            f"{until.isoformat(timespec='seconds')}"
-        )
 
 
 # Événements que l'exécuteur rend tels quels, sans enveloppe d'appel.
@@ -516,10 +503,23 @@ async def drive(
         claimed = await _claim(state, ctx, journal, scope)
     except RunMoved as moved:
         return await _closed_elsewhere(ctx, run_id, tenant, session, moved)
+    # La vue du pilote s'ouvre aussitôt la concession écrite, sans attente entre les
+    # deux : tout ce qui s'écrit ensuite sur la session passe sous ses yeux (#27).
+    held: AbstractContextManager[SessionWriter] = (
+        nullcontext(journal) if claimed is None else journal.held(run_id, claimed.worker_id)
+    )
     try:
-        return await _driven(ctx, state, tenant, session, journal, scope, claimed, earlier, cause)
+        with held as piloting:
+            return await _driven(
+                ctx, state, tenant, session, piloting, scope, claimed, earlier, cause
+            )
     except RunMoved as moved:
         return await _closed_elsewhere(ctx, run_id, tenant, session, moved)
+    except ClaimConflict as taken:
+        if claimed is None:
+            # Un sous-run écrit par la vue de son parent : c'est le parent qui s'arrête.
+            raise
+        return await _taken_over(ctx, run_id, tenant, session, taken)
 
 
 def _effect(event: Event) -> bool:
@@ -551,6 +551,32 @@ async def _closed_elsewhere(
     )
     own = await ctx.store.read(tenant, session, run_id=run_id)
     return fold(own, run_id)
+
+
+async def _taken_over(
+    ctx: RunContext, run_id: RunId, tenant: TenantId, session: SessionId, taken: ClaimConflict
+) -> RunState:
+    """Un autre worker a pris la concession en plein pilotage : le pilote s'arrête (#27).
+
+    Son bail a expiré sans être renouvelé — store injoignable, process gelé —,
+    et l'autre a repris le run. Rien n'a été écrit depuis cette prise : ce qui
+    était en cours (un appel de modèle, un outil) est allé au bout ou a été
+    coupé, et son résultat n'est pas écrit ; le nouveau pilote traite l'appel
+    resté en suspens comme après un plantage (#18). Si le run a été mené à son
+    terme entre-temps, le journal le dit et son état est rendu, comme pour un
+    run clos ailleurs ; sinon ``ClaimConflict`` remonte : il est mené ailleurs.
+    """
+    logger.warning(
+        "Run %s : concession prise par %s pendant son pilotage — pilotage arrêté",
+        run_id,
+        taken.worker_id,
+        extra={"run_id": run_id, "tenant_id": tenant},
+    )
+    own = await ctx.store.read(tenant, session, run_id=run_id)
+    state = fold(own, run_id)
+    if state.finished:
+        return state
+    raise taken
 
 
 async def _history_unreadable(
@@ -790,7 +816,20 @@ async def _handed_back(
     """
     if claim is None or state.finished:
         return
-    await write(scope.draft(RunClaimed(worker_id=claim.worker_id, lease_until=datetime.now(UTC))))
+    try:
+        await write(
+            scope.draft(RunClaimed(worker_id=claim.worker_id, lease_until=datetime.now(UTC)))
+        )
+    except ClaimConflict as taken:
+        # Un autre worker a pris la concession entre-temps : il n'y a plus rien à rendre.
+        # Ce que le pilote a écrit l'a été avant cette prise, sans quoi il aurait été
+        # refusé : le run est bien en plan, tel qu'il le laisse.
+        logger.info(
+            "Run %s : concession déjà prise par %s, rien à rendre",
+            state.run_id,
+            taken.worker_id,
+            extra={"run_id": state.run_id, "tenant_id": state.context.tenant_id},
+        )
 
 
 async def _claim(
@@ -854,9 +893,11 @@ async def _renewed(
     concession au profit d'un second pilote.
 
     Un renouvellement raté — panne du store, journal écrit sans répit — est
-    journalisé et retenté au tour suivant : le bail couvre trois tours. Le
-    minuteur ne s'arrête que si le run est clos ailleurs, ou si un autre
-    worker a pris la concession.
+    journalisé et retenté au tour suivant : le bail couvre trois tours, donc
+    deux échecs de suite. Au-delà, un autre worker peut prendre le run ; la vue
+    du pilote (``SessionWriter.held``) refuse alors ses écritures, et le pilote
+    s'arrête à la suivante (#27). Le minuteur ne s'arrête que si le run est
+    clos ailleurs, ou si un autre worker a pris la concession.
 
     Il rend de quoi l'arrêter avant la fin du bloc : le pilote le fait avant de
     restituer la concession, ou de sortir.
