@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Coûts et budgets : paliers, ledger, rapport, loom.budget, part des sous-agents (J3.4)."""
 
+import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -14,7 +15,10 @@ from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.core.events import (
     BudgetExceeded,
     Event,
+    EventDraft,
+    ModelResponded,
     PolicyDecided,
+    RunCancelled,
     RunCompleted,
     RunStarted,
     RunTransitioned,
@@ -49,7 +53,7 @@ from loom_ia.engine import (
     drive,
 )
 from loom_ia.policies import CONTINUE, Decision, OnOutput, policy
-from loom_ia.testing import ScriptedModel, tool_call_message
+from loom_ia.testing import RunJournal, ScriptedModel, tool_call_message
 from loom_ia.tools import tool
 from loom_ia.usage import BUDGET_POLICY, BudgetGuard, amount, render, usage_report
 
@@ -348,6 +352,57 @@ async def test_the_ledger_counts_each_call_once(store: EventStore) -> None:
     assert lines[0] == f"Consommation — run {state.run_id}"
     assert lines[1].startswith("  Total") and lines[1].endswith("0,00450 $")
     assert "  Par run :" in lines and "  Par modèle :" in lines
+
+
+def test_the_report_says_a_cancelled_run_is_cancelled() -> None:
+    """Un run annulé est clos : le rapport le dit, au lieu de le croire « en cours »."""
+    session = SessionId("atelier")
+    fini, rate, ouvert, annule = (RunJournal(session_id=session) for _ in range(4))
+    for journal in (fini, rate, ouvert, annule):
+        journal.start("Relance martin.")
+        journal.model_turn(Message.assistant("Fait."), usage=USAGE, cost_usd=CALL_COST)
+    fini.complete()
+    rate.fail("ModelError", "panne")
+    drafts = [*fini.take(), *rate.take(), *ouvert.take(), *annule.take()]
+    drafts.append(annule.scope.draft(RunCancelled(by="denis", iterations=1, usage=USAGE)))
+    events = [draft.to_event(seq) for seq, draft in enumerate(drafts, start=1)]
+
+    report = usage_report(events, session)
+    assert [(run.name, run.status, run.calls) for run in report.runs] == [
+        (fini.run_id, "completed", 1),
+        (rate.run_id, "failed", 1),
+        (ouvert.run_id, None, 1),
+        (annule.run_id, "cancelled", 1),
+    ]
+    lines = render(report)
+    assert any(line.endswith(f"demo (cancelled) {annule.run_id}") for line in lines)
+    assert any(line.endswith(f"demo (en cours) {ouvert.run_id}") for line in lines)
+
+
+def test_the_report_of_a_busy_session_grows_with_it_not_faster() -> None:
+    """6 000 runs : la liste des runs était refaite à chaque fin (4 000 runs, deux secondes)."""
+    session = SessionId("chargee")
+    reponse = ModelResponded(
+        model_id="main-1",
+        provider="fake",
+        message=Message.assistant("Fait."),
+        usage=USAGE,
+        cost_usd=CALL_COST,
+        request_hash="h",
+    )
+    drafts: list[EventDraft] = []
+    for _ in range(6_000):
+        scope = RunJournal(session_id=session).scope
+        drafts += [scope.draft(RunStarted()), scope.draft(reponse), scope.draft(RunCompleted())]
+    events = [draft.to_event(seq) for seq, draft in enumerate(drafts, start=1)]
+
+    start = time.perf_counter()
+    report = usage_report(events, session)
+    elapsed = time.perf_counter() - start
+    assert len(report.runs) == 6_000
+    assert all(run.status == "completed" and run.calls == 1 for run in report.runs)
+    assert report.total.calls == 6_000
+    assert elapsed < 1, f"rapport de 6 000 runs en {elapsed:.2f} s"
 
 
 async def test_a_subagent_gets_a_share_of_what_is_left(store: EventStore) -> None:

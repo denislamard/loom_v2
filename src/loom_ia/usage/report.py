@@ -9,11 +9,12 @@ préfixés par l'agent quand plusieurs agents ont travaillé) et par modèle.
 Par client et par période : J5.
 """
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Final
 
 from pydantic import NonNegativeFloat, NonNegativeInt
 
-from loom_ia.core.events import Event, RunCompleted, RunFailed, RunStarted
+from loom_ia.core.events import Event, Payload, RunCancelled, RunCompleted, RunFailed, RunStarted
 from loom_ia.core.model import DomainModel, RunId, SessionId, Usage
 from loom_ia.core.projections import LedgerEntry, RunTree, ledger
 
@@ -32,8 +33,16 @@ class RunUsage(UsageLine):
 
     agent: str
     depth: NonNegativeInt = 0
-    # ``completed``, ``failed``, ou None pour un run pas encore clos.
+    # ``completed``, ``failed``, ``cancelled``, ou None pour un run pas encore clos.
     status: str | None = None
+
+
+# Ce que devient un run à l'événement qui le clôt.
+_CLOSED: Final[Mapping[type[Payload], str]] = {
+    RunCompleted: "completed",
+    RunFailed: "failed",
+    RunCancelled: "cancelled",
+}
 
 
 class UsageReport(DomainModel):
@@ -59,33 +68,29 @@ def usage_report(
     def role(entry: LedgerEntry) -> str:
         return f"{entry.agent} · {entry.role}" if len(agents) > 1 else entry.role
 
-    runs: list[RunUsage] = []
+    # Un passage sur les appels, un sur les événements : chaque run est retrouvé
+    # par son identifiant, et le rapport croît avec la session, pas plus vite.
+    calls = _by(entries, lambda e: e.run_id)
+    runs: dict[RunId, RunUsage] = {}
     for event in selected:
         payload = event.payload
         if isinstance(payload, RunStarted):
-            mine = [e for e in entries if e.run_id == event.run_id]
-            line = _line(event.run_id, mine)
-            runs.append(
-                RunUsage(
-                    name=line.name,
-                    calls=line.calls,
-                    usage=line.usage,
-                    cost=line.cost,
-                    agent=event.agent or "",
-                    depth=payload.depth,
-                )
+            line = _line(event.run_id, calls.get(event.run_id, ()))
+            runs[event.run_id] = RunUsage(
+                name=line.name,
+                calls=line.calls,
+                usage=line.usage,
+                cost=line.cost,
+                agent=event.agent or "",
+                depth=payload.depth,
             )
-        elif isinstance(payload, RunCompleted | RunFailed):
-            status = "completed" if isinstance(payload, RunCompleted) else "failed"
-            runs = [
-                r.model_copy(update={"status": status}) if r.name == event.run_id else r
-                for r in runs
-            ]
+        elif (status := _CLOSED.get(type(payload))) is not None and event.run_id in runs:
+            runs[event.run_id] = runs[event.run_id].model_copy(update={"status": status})
     return UsageReport(
         session_id=session_id,
         run_id=run_id,
         total=_line("total", entries),
-        runs=tuple(runs),
+        runs=tuple(runs.values()),
         roles=_grouped(entries, role),
         models=_grouped(entries, lambda e: e.model_id),
     )
@@ -121,8 +126,17 @@ def _grouped(
     entries: Sequence[LedgerEntry], key: Callable[[LedgerEntry], str]
 ) -> tuple[UsageLine, ...]:
     """Une ligne par clé, dans l'ordre de première apparition."""
-    names = list(dict.fromkeys(key(entry) for entry in entries))
-    return tuple(_line(name, [e for e in entries if key(e) == name]) for name in names)
+    return tuple(_line(name, mine) for name, mine in _by(entries, key).items())
+
+
+def _by[K](
+    entries: Iterable[LedgerEntry], key: Callable[[LedgerEntry], K]
+) -> dict[K, list[LedgerEntry]]:
+    """Les appels rangés par clé, dans l'ordre de première apparition."""
+    grouped: dict[K, list[LedgerEntry]] = {}
+    for entry in entries:
+        grouped.setdefault(key(entry), []).append(entry)
+    return grouped
 
 
 def _row(label: str, line: UsageLine, width: int) -> str:
