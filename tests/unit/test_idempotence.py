@@ -1009,13 +1009,33 @@ async def test_the_executor_deadline_keeps_the_key_too() -> None:
         await asyncio.Event().wait()
         return "envoyée"
 
-    executor = ToolExecutor([relancer], idempotency=InMemoryIdempotency())  # pyright: ignore[reportArgumentType]
+    store = InMemoryIdempotency()
+    executor = ToolExecutor([relancer], idempotency=store)  # pyright: ignore[reportArgumentType]
     first = await _run(executor, awaiting(call("c1", "relancer", devis="D-1")))
     assert "Délai dépassé" in completed(first)["c1"].as_text
+    key = f"{DEFAULT_TENANT}:relancer:relance:D-1"
+    held = await store.get(key)
+    assert held is not None and held.status == "in_progress"
+    # La réservation suit le délai de l'outil : elle échoit quand ce délai tombe, à quelques
+    # millisecondes près, et le modèle relance après une réponse. L'essai attend l'échéance
+    # au lieu de relancer aussitôt, ce qui pariait sur la vitesse de la machine.
+    await _until_stale(store, key)
     again = await _run(executor, awaiting(call("c2", "relancer", devis="D-1")))
-    # La réservation suit le délai de l'outil : elle est périmée quand le modèle relance.
     assert "État inconnu" in completed(again)["c2"].as_text
     assert effets == ["D-1"]
+
+
+async def _until_stale(store: IdempotencyStore, key: str) -> None:
+    """Attend qu'une réservation soit périmée, à l'horloge du magasin (cinq secondes au plus)."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5
+    while loop.time() < deadline:
+        record = await store.get(key)
+        now = datetime.now(UTC)
+        if record is None or not record.alive(now):
+            return
+        await asyncio.sleep((record.expires_at - now).total_seconds() + 0.001)
+    pytest.fail(f"La réservation {key} n'a pas expiré en cinq secondes")
 
 
 async def test_a_cancelled_call_keeps_its_key(magasin: Magasin) -> None:
