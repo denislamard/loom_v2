@@ -1182,7 +1182,8 @@ install_execd() {
     # --- Retrait explicite ---------------------------------------------------
     if [ "$NO_EXECD" -eq 1 ]; then
         log "Retrait du service execd (--no-execd)"
-        sudo rm -rf "$dest" "$unit" "${wants}/execd.service"
+        sudo rm -rf "$dest" "$unit" "${wants}/execd.service" \
+            "${tree}/etc/systemd/system/procfs-hidepid.service"
         return 0
     fi
 
@@ -1244,10 +1245,15 @@ Description=execd - service d execution de tools (vsock:${EXECD_PORT})
 # DefaultDependencies=no evite l ordonnancement implicite derriere
 # basic.target, que rien ici ne justifie et qui retarde le boot.
 DefaultDependencies=no
-Requires=data.mount
-After=data.mount
+Requires=data.mount procfs-hidepid.service
+After=data.mount procfs-hidepid.service
 Before=shutdown.target
 Conflicts=shutdown.target
+# Pas de plafond de redemarrages : le plafond par defaut de systemd (5 departs en
+# 10 s) serait atteint en 1 s a RestartSec=200ms, et l unite resterait alors
+# arretee pour de bon, VM injoignable jusqu au prochain boot. Un defaut qui boucle
+# tourne a 5 departs par seconde, ce que la VM supporte ; le journal le montre.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -1275,6 +1281,12 @@ ExecStart=/usr/bin/python3 /opt/execd/${EXECD_ENTRY}
 Restart=always
 RestartSec=200ms
 
+# Chaque connexion refusee en busy garde un descripteur jusqu a 10 s : une rafale
+# peut depasser les 1024 du defaut. Le plafond est ici explicite ; au-dela, la
+# boucle d accept journalise l erreur et reessaie (EMFILE ne tue plus execd). Les
+# jobs ont leur propre RLIMIT_NOFILE, pose par runner.py : cette ligne ne les touche pas.
+LimitNOFILE=8192
+
 # execd n ecrit QUE dans /data. Le reste de l arborescence, /opt/execd compris,
 # est en lecture seule pour le service lui-meme : un defaut du daemon ne peut
 # pas reecrire son propre code ni les unites systemd.
@@ -1297,6 +1309,34 @@ WantedBy=multi-user.target
 UNIT
     sudo chown root:root "$unit"
     sudo chmod 644 "$unit"
+
+    # --- /proc cloisonné -----------------------------------------------------
+    #
+    # Tous les jobs tournent sous le même uid, et la ligne de commande de leur
+    # runner porte le dossier de la session (/data/jobs/<uuid>/job.json) : sans
+    # hidepid, un job lit celle des autres processus, et le secret du chemin,
+    # seule séparation entre deux sessions, est livré à tout job qui tourne en
+    # même temps qu'un autre (SBX-11 b, mesuré sur l'image réelle). hidepid=2
+    # cache à un compte les processus des autres ; root, donc execd, voit tout.
+    #
+    # Une unité à part, remontée avant execd, plutôt qu'une ligne dans
+    # /etc/fstab : même raison que data.mount (fichier réécrit en entier, donc
+    # idempotent). execd la REQUIERT : si le remontage échoue, il ne démarre pas
+    # plutôt que de démarrer avec un /proc ouvert.
+    sudo tee "${tree}/etc/systemd/system/procfs-hidepid.service" >/dev/null <<HIDEPID
+[Unit]
+Description=/proc sans les processus des autres comptes (hidepid=2)
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=execd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/mount -o remount,hidepid=2 /proc
+HIDEPID
+    sudo chown root:root "${tree}/etc/systemd/system/procfs-hidepid.service"
+    sudo chmod 644 "${tree}/etc/systemd/system/procfs-hidepid.service"
 
     # --- Activation ----------------------------------------------------------
     sudo mkdir -p "$wants"
@@ -1863,6 +1903,14 @@ verify() {
     else
         warn "  execd : /opt/execd/${EXECD_ENTRY} absent de l'image"
         warn "    ./make_vm.sh ${VM_ARG} --execd <dossier-du-service>"
+    fi
+
+    if [ "$NO_EXECD" -ne 1 ]; then
+        if img_has "$img" /etc/systemd/system/procfs-hidepid.service; then
+            log "  /proc cloisonné (hidepid=2) : ok"
+        else
+            warn "  /proc cloisonné : unité absente — un job lirait les processus des autres"
+        fi
     fi
 
     if img_has "$img" /etc/systemd/system/agent-executor.service; then

@@ -264,7 +264,7 @@ def read_journal(path: Path) -> list[Event]:
         if not line.strip():
             continue
         try:
-            events.append(Event.model_validate_json(line))
+            events.append(Event.model_validate_json(line, extra="ignore"))
         except ValidationError as exc:
             first = exc.errors()[0]
             where = ".".join(str(part) for part in first["loc"]) or "ligne"

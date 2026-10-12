@@ -163,7 +163,7 @@ uv add "loom-ia[anthropic,http,mcp]"
 
 Le paquet s'appelle `loom-ia`, s'importe sous le nom `loom_ia` et installe la commande `loom`.
 
-Le noyau ne dépend que de pydantic, pyyaml, jsonschema et regex. Tout le reste arrive par des extras, à choisir selon ce que vous utilisez :
+Le noyau ne dépend que de pydantic, pyyaml, jsonschema (avec `referencing` et `jsonschema-specifications`, qu'il tire déjà) et regex. Tout le reste arrive par des extras, à choisir selon ce que vous utilisez :
 
 | Extra | À installer si vous utilisez |
 |---|---|

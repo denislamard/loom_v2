@@ -33,25 +33,39 @@ dependencies = [
     # test_jsonschema_has_no_other_function_that_searches_a_pattern (le workflow
     # hebdomadaire n'installe pas ce que la borne exclut).
     "jsonschema>=4.26.0,<4.27",
+    # core/bounded_regex.py importe directement jsonschema_specifications et referencing
+    # (méta-schémas, résolution des $ref) : ce sont des dépendances de jsonschema, mais un
+    # import direct se déclare. Leurs planchers sont ceux que jsonschema 4.26 exige.
+    "jsonschema-specifications>=2023.3.6",
     "pydantic>=2.12.0,<3",
     "pyyaml>=6.0.3,<7",
+    "referencing>=0.28.4,<1",
     "regex>=2025.7.29",
 ]
 
+# Les paquets que le code d'un extra importe directement (httpx, httpx2, anyio, starlette)
+# y sont déclarés aussi, même quand le SDK les tire déjà ; planchers = ceux du SDK.
+# tests/unit/test_dependances.py le vérifie.
 [project.optional-dependencies]
 anthropic = [
     "anthropic>=1.6.0,<2",
+    "httpx2>=2.0.0,<3",
 ]
 openai = [
+    "httpx2>=2.7.0,<3",
     "openai>=3.14.1,<4",
 ]
 mcp = [
+    "anyio>=4.5",
+    "httpx>=0.27.1,<1",
     "mcp>=1.30.0,<2",
+    "starlette>=0.48.0",
 ]
 http = [
     "fastapi>=0.141.1,<1",
     "python-multipart>=0.0.32",
     "sse-starlette>=3.4.11,<4",
+    "starlette>=0.48.0",
     "uvicorn>=0.53.0",
     "watchfiles>=1.3.0",
 ]

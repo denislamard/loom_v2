@@ -106,6 +106,11 @@ logger = logging.getLogger(__name__)
 
 PROVIDER: Final = "openai"
 # Le raisonnement revient chiffré, pour être renvoyé sans rien garder chez le fournisseur.
+# Envoyé sans condition, même pour un modèle déclaré ``thinking: false`` (MOD-1, décidé) :
+# un modèle à raisonnement non déclaré en a besoin entre deux tours d'outils.
+# Non vérifié sur l'API réelle : si un modèle sans raisonnement refuse ce paramètre, le
+# conditionner à ``thinking`` en adaptant
+# test_request_is_stateless_and_sends_encrypted_reasoning_back.
 INCLUDE: Final[list[ResponseIncludable]] = ["reasoning.encrypted_content"]
 
 type _Item = dict[str, object]

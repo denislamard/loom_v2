@@ -112,7 +112,8 @@ class PlainCodec:
         return event.model_dump_json()
 
     def loads(self, line: str | bytes) -> Event:
-        return Event.model_validate_json(line)
+        # Un champ ajouté par un code plus récent est ignoré à la lecture (DEC-1).
+        return Event.model_validate_json(line, extra="ignore")
 
     def mark(self, line: str | bytes) -> EventMark:
         return EventMark.model_validate_json(line)
@@ -145,13 +146,13 @@ class SealingCodec:
         payload: object = shell.get("payload")
         if not isinstance(payload, dict) or SEALED not in cast("dict[str, Any]", payload):
             # Ligne écrite avant que le sceau soit déclaré.
-            return Event.model_validate(shell)
+            return Event.model_validate(shell, extra="ignore")
         seal = _seal(cast("dict[str, Any]", payload))
         mark = _mark(shell)
         cipher = self._opener(mark.tenant_id, seal.key_id)
         aad = aad_of(mark.tenant_id, mark.session_id, mark.seq, mark.event_id, mark.ts)
         shell["payload"] = _clear(cipher.unseal(_closed(seal), aad))
-        return Event.model_validate(shell)
+        return Event.model_validate(shell, extra="ignore")
 
     def mark(self, line: str | bytes) -> EventMark:
         return _mark(_shell(line))
