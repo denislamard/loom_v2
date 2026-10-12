@@ -93,9 +93,11 @@ from loom_ia.engine import RunContext, begin_run, drive
 from loom_ia.engine.hooks import PolicyFailure
 from loom_ia.engine.model_call import ModelCall
 from loom_ia.replay import (
+    Comparison,
     ReplayBook,
     ReplayError,
     ReplayModelClient,
+    RunSide,
     VariantModelClient,
     VariantTools,
     journal_runs,
@@ -1158,6 +1160,39 @@ async def test_another_model_runs_for_real_and_never_sends_again(variante: Path)
     assert comparison.spent_usd == pytest.approx(sum(reels))
     assert comparison.variant.text == "Fait autrement." != comparison.original.text
     assert not comparison.same_answer
+
+
+def failed_side(error_type: str) -> RunSide:
+    return RunSide(
+        end="failed",
+        text=None,
+        data=None,
+        error_type=error_type,
+        model_calls=1,
+        tool_calls=0,
+        usage=Usage(),
+        cost_usd=0.0,
+        active_ms=1.0,
+        verdicts=(),
+    )
+
+
+def test_two_failures_of_different_causes_are_not_the_same_answer() -> None:
+    """« Réponse : la même » ne vaut que si l'échec a la même cause (comme au rejeu identique)."""
+
+    def compared(original: str, variant: str) -> Comparison:
+        return Comparison(
+            original=failed_side(original),
+            variant=failed_side(variant),
+            served_models=0,
+            real_models=1,
+            spent_usd=0.0,
+            real_usage=Usage(),
+            tools={},
+        )
+
+    assert compared("timeout", "timeout").same_answer
+    assert not compared("timeout", "model.invalid_request").same_answer
 
 
 async def test_the_journal_is_asked_with_the_written_request_and_the_model_gets_the_files() -> None:

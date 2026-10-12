@@ -13,6 +13,14 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 - ⚠ Un événement de flux complet, ou une réponse non streamée, au JSON invalide devient une erreur `transient` (« Réponse illisible : JSON invalide du fournisseur… ») sur les trois adaptateurs (Anthropic, OpenAI Chat, OpenAI Responses) : nouvelle tentative, modèle de secours et disjoncteur s'appliquent. Avant, `JSONDecodeError` sortait brut et le run échouait avec `error_type="JSONDecodeError"` (MOD-7).
 - Client MCP : un run annulé, ou dont le délai tombe, pendant la fermeture d'une connexion perdue n'est plus ignoré ; l'appel s'arrête au lieu de se rejouer sur une connexion neuve (MOD-6).
 
+### Évals, rejeu et kit de test
+- ⚠ Un contrôle de texte vide (`contains`, `not_contains` ou `matches` avec `""`) est refusé au chargement de la suite : il passait toujours, ou tombait toujours (REJ-5).
+- ⚠ `fields` et les arguments attendus de `called` se comparent en JSON strict : `1` n'est plus `true`, ni `0` `false` ; `2` vaut toujours `2.0`. Un cas qui passait sur cette confusion tombe (REJ-5).
+- ⚠ `matches` cherche avec le moteur `regex` et un délai (`REGEX_TIMEOUT`, 1 s) : un motif trop coûteux fait tomber son contrôle en le disant, au lieu de geler `loom eval` et tous ses runs. Un motif valide pour `regex` mais pas pour `re` (`\p{L}`, quantificateurs possessifs) est désormais accepté (REJ-7).
+- ⚠ Une doublure déclarée pour un sous-agent (`doubles`, ou un faux du `Bench`) répond à sa place, comme à la variante du rejeu : le sous-agent ne tourne plus. Elle était acceptée puis ignorée, et le sous-agent tournait pour de vrai, avec son coût (REJ-3).
+- ⚠ `loom replay --mode variant` : deux échecs de causes différentes ne sont plus « la même » réponse (`same_answer` compare aussi `error_type`) (REJ-4).
+- Un cas de rejeu dont le dossier de la suite contient `[`, `*` ou `?` trouve ses journaux : seul le motif du cas est interprété (REJ-6).
+
 ### Journal
 - ⚠ **`after` (REST `GET /v1/events`, `EventQuery.after`) suit l'ordre d'écriture, non l'ordre des identifiants.** L'identifiant d'un événement est posé à la création du brouillon, avant l'écriture : un écrivain lent (approbateur REST, sous-agents, autre worker) pouvait écrire après un autre un événement d'identifiant plus petit, que reprendre « après » le dernier id vu ne rendait jamais. Les résultats sont désormais rendus dans l'ordre d'écriture (mémoire, SQLite, Postgres) ; un `after` inconnu du journal (session effacée) retombe sur la comparaison des identifiants. Le journal JSONL, qui a un fichier par session, reste trié par identifiant.
 - SQLite : un index `events_ingestion` est créé à l'ouverture d'un journal existant (une fois).

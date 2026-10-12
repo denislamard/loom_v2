@@ -132,10 +132,12 @@ class Comparison:
 
     @property
     def same_answer(self) -> bool:
+        """Même fin, même réponse ; pour deux échecs, la même cause (comme au rejeu identique)."""
         return (
             self.original.end == self.variant.end
             and self.original.text == self.variant.text
             and self.original.data == self.variant.data
+            and self.original.error_type == self.variant.error_type
         )
 
     def as_json(self) -> dict[str, JsonValue]:

@@ -79,6 +79,7 @@ from loom_ia.adapters.firecracker.session import (
 )
 from loom_ia.adapters.firecracker.vm import Vm, VmError
 from loom_ia.core.bounded_regex import RegexTimeout, bounded_validator, check_schema
+from loom_ia.core.json_values import same_json
 from loom_ia.core.model import TextBlock, ToolOutput, ToolSpec
 from loom_ia.core.ports import SourceContext, SourceUnavailable, Tool, ToolContext, ToolError
 
@@ -476,24 +477,6 @@ def _check_signature(name: str, code: str, properties: set[str], required: set[s
         )
 
 
-def _same(left: object, right: object) -> bool:
-    """Égalité de valeurs JSON : un booléen n'est pas un nombre, 2 vaut 2.0."""
-    if isinstance(left, bool) or isinstance(right, bool):
-        # True et False sont uniques : 1 n'est pas True.
-        return left is right
-    if isinstance(left, int | float) and isinstance(right, int | float):
-        return left == right
-    if isinstance(left, str) and isinstance(right, str):
-        return left == right
-    if isinstance(left, dict) and isinstance(right, dict):
-        a, b = cast(dict[str, object], left), cast(dict[str, object], right)
-        return a.keys() == b.keys() and all(_same(a[k], b[k]) for k in a)
-    if isinstance(left, list) and isinstance(right, list):
-        a, b = cast(list[object], left), cast(list[object], right)
-        return len(a) == len(b) and all(_same(x, y) for x, y in zip(a, b, strict=True))
-    return left is None and right is None
-
-
 def _json_kind(value: object) -> str:
     """Le type JSON d'une valeur, tel que le refus le nomme."""
     match value:
@@ -524,7 +507,7 @@ def _mismatch_hint(expected: object, result: object) -> str:
         except ValueError, RecursionError:
             pass
         else:
-            if _same(decoded, result):
+            if same_json(decoded, result):
                 return (
                     " (`expected` est le texte JSON de la valeur rendue : "
                     "donne la valeur elle-même)"
@@ -664,7 +647,7 @@ class _ForgeTool:
                     f"Outil {name} refusé — exemple {index} {json.dumps(example)} :\n"
                     + _failure(execution)
                 )
-            if not _same(execution.result, expected):
+            if not same_json(execution.result, expected):
                 got = json.dumps(execution.result, ensure_ascii=False)
                 wanted = json.dumps(expected, ensure_ascii=False)
                 streams = _streams(execution)

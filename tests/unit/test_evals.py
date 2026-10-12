@@ -35,6 +35,7 @@ rejoue.
 
 import asyncio
 import json
+import time
 from collections.abc import Mapping
 from dataclasses import replace
 from importlib.util import find_spec
@@ -398,6 +399,17 @@ def test_a_replay_pattern_is_relative_to_the_suite(tmp_path: Path) -> None:
     assert [p.name for p in lue.journals(absolu)] == ["a.jsonl", "b.jsonl"]
 
 
+def test_a_replay_pattern_in_a_folder_with_glob_characters(tmp_path: Path) -> None:
+    """Le dossier de la suite est un chemin, pas un motif : ``[``, ``*``, ``?`` sont du texte."""
+    base = tmp_path / "suite [v2] *?"
+    (base / "journaux").mkdir(parents=True)
+    (base / "journaux" / "a.jsonl").write_text("", encoding="utf-8")
+    lue = EvalSuite.model_validate(
+        {"agent": "demo", "base_dir": base, "cases": [{"name": "r", "replay": "journaux/*.jsonl"}]}
+    )
+    assert [p.name for p in lue.journals(lue.cases[0])] == ["a.jsonl"]
+
+
 def test_a_suite_file_must_be_an_object(tmp_path: Path) -> None:
     path = tmp_path / "liste.yaml"
     path.write_text("- un\n- deux\n", encoding="utf-8")
@@ -463,6 +475,56 @@ def test_checks_say_what_they_found() -> None:
         results["contient « dupont »"].detail == ""
         and results["contient « dupont »"].kind == "text"
     )
+
+
+@pytest.mark.parametrize("key", ["contains", "not_contains", "matches"])
+def test_an_empty_text_check_is_refused(key: str) -> None:
+    """``""`` est dans tout texte : le contrôle passerait (ou tomberait) toujours."""
+    with pytest.raises(ValidationError, match="texte vide"):
+        Expect.model_validate({key: ["devis", ""]})
+
+
+def test_fields_and_arguments_tell_a_boolean_from_a_number() -> None:
+    """``1`` n'est pas ``true`` : un champ ou un argument attendu se compare en JSON strict."""
+    outcome = Outcome(
+        status=RunStatus.COMPLETED,
+        text="Fait.",
+        data={"ok": True, "n": 1, "total": 2.0, "liste": [0, False]},
+        error_type=None,
+        tools=(ToolUse("envoyer", {"urgent": True, "copies": 0}, "double"),),
+    )
+    expect = Expect.model_validate(
+        {
+            "fields": {"ok": 1, "n": True, "total": 2, "liste": [False, 0]},
+            "called": [
+                {"name": "envoyer", "arguments": {"urgent": 1}},
+                {"name": "envoyer", "arguments": {"copies": False}},
+            ],
+        }
+    )
+    passed = {r.label: r.passed for r in check(expect, outcome)}
+    assert passed == {
+        "champ ok = 1": False,
+        "champ n = true": False,
+        # Un nombre vaut le même nombre, entier ou non.
+        "champ total = 2": True,
+        "champ liste = [false, 0]": False,
+        'appelle envoyer avec {"urgent": 1}': False,
+        'appelle envoyer avec {"copies": false}': False,
+    }
+
+
+def test_a_pattern_runs_with_a_time_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Un motif de la suite ne gèle plus l'éval : borné, il échoue en le disant."""
+    monkeypatch.setattr("loom_ia.core.bounded_regex.REGEX_TIMEOUT", 0.1)
+    outcome = Outcome(status=RunStatus.COMPLETED, text="a" * 26 + "!", data=None, error_type=None)
+    expect = Expect.model_validate({"matches": ["(a+)+$", "(a|a)+$"]})
+    began = time.perf_counter()
+    quick, slow = check(expect, outcome)
+    assert time.perf_counter() - began < 1.0
+    # Le motif de la revue finit tout de suite avec ``regex`` ; l'autre dépasse le délai.
+    assert (quick.passed, quick.detail) == (False, "")
+    assert not slow.passed and "délai de 0.1 s dépassé" in slow.detail
 
 
 @pytest.mark.parametrize(
@@ -678,6 +740,41 @@ async def test_a_subagent_runs_and_its_tools_are_intercepted(
     assert run.passed, [c for c in run.checks if not c.passed]
     # Le sous-agent tourne (pas de sort) ; l'outil de l'enfant est doublé.
     assert [(t.name, t.fate) for t in run.tools] == [("verifier", None), ("calculer", "double")]
+
+
+async def test_a_double_on_a_subagent_answers_in_its_place(tree: Any) -> None:
+    """Une doublure déclarée pour un sous-agent répond à sa place : l'enfant ne tourne pas."""
+    path = tree()
+    (path.parent / "doublures_sous_agent.py").write_text(
+        "from pathlib import Path\n"
+        "def verif(message: str) -> str:\n"
+        "    Path(__file__).with_name('verifs.txt').open('a').write(message + '\\n')\n"
+        "    return 'doublure : vérifié'\n",
+        encoding="utf-8",
+    )
+    target = path.parent / "suite.yaml"
+    target.write_text(
+        yaml.safe_dump(
+            {
+                "config": "loom.yaml",
+                "agent": "demo",
+                "doubles": {"verifier": "doublures_sous_agent:verif"},
+                "cases": [
+                    {
+                        "name": "arbre",
+                        "input": "Combien font 2 + 2 ?",
+                        "expect": {"called": ["verifier"]},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = await jouer(target)
+    [run] = report.runs
+    assert run.passed, [c for c in run.checks if not c.passed]
+    assert [(t.name, t.fate) for t in run.tools] == [("verifier", "double")]
+    assert lignes(path.parent / "verifs.txt") == ["Vérifie 2 + 2."]
 
 
 # --- Variantes, répétitions, juge ------------------------------------------------------------

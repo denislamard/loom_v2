@@ -29,9 +29,10 @@ tomber le cas.
 Le monde, pendant une éval (décision du 06/10) : un outil à **effets de
 bord** n'est **jamais** exécuté — sa doublure (``doubles``) répond à sa place,
 sinon le modèle reçoit une erreur qui le dit. Les autres outils s'exécutent ;
-les rôles et les sous-agents tournent. Une approbation est accordée quand rien
-ne part pour de vrai (doublure, refus), refusée pour une exécution réelle :
-personne n'est là pour trancher.
+les rôles tournent, les sous-agents aussi — sauf s'ils ont une doublure, qui
+répond alors à leur place, comme à la variante du rejeu. Une approbation est
+accordée quand rien ne part pour de vrai (doublure, refus), refusée pour une
+exécution réelle : personne n'est là pour trancher.
 
 Ce module décrit la suite, sert les outils et juge les résultats ; la façade
 (``Loom.evaluate``, ``loom eval``) monte chaque variante — en mémoire, hors des
@@ -40,7 +41,6 @@ quotas et des plafonds de période des clients (``isolated``) — et joue les ca
 
 import glob
 import json
-import re
 from collections.abc import Mapping, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
@@ -62,6 +62,8 @@ from pydantic import (
 from loom_ia.config import ConfigError, LoomConfig
 from loom_ia.config.errors import from_validation
 from loom_ia.config.models import EventsStorage, IdempotencyStorage, StorageConfig
+from loom_ia.core.bounded_regex import PatternError, RegexTimeout, compile_pattern, search
+from loom_ia.core.json_values import same_json
 from loom_ia.core.model import (
     CRITERION_NAME_PATTERN,
     DEFAULT_MIN_SCORE,
@@ -168,20 +170,28 @@ class Expect(DomainModel):
     status: RunStatus | None = None
     contains: tuple[str, ...] = ()
     not_contains: tuple[str, ...] = ()
-    # Motifs cherchés dans le texte (``re.search``) ; ``(?i)``, ``(?s)`` s'y écrivent.
+    # Motifs cherchés dans le texte, avec un délai (``core.bounded_regex``) ;
+    # ``(?i)``, ``(?s)`` s'y écrivent.
     matches: tuple[str, ...] = ()
     # Champs de la sortie structurée, par chemin pointé (``lignes.0.total``).
     fields: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
     called: tuple[ToolExpectation, ...] = ()
     not_called: tuple[str, ...] = ()
 
+    @field_validator("contains", "not_contains", "matches")
+    @classmethod
+    def _not_empty(cls, texts: tuple[str, ...]) -> tuple[str, ...]:
+        if "" in texts:
+            raise ValueError("texte vide : il est dans tout texte, le contrôle ne prouverait rien")
+        return texts
+
     @field_validator("matches")
     @classmethod
     def _patterns(cls, patterns: tuple[str, ...]) -> tuple[str, ...]:
         for pattern in patterns:
             try:
-                re.compile(pattern)
-            except re.error as exc:
+                compile_pattern(pattern)
+            except PatternError as exc:
                 raise ValueError(f"motif {pattern!r} invalide : {exc}") from exc
         return patterns
 
@@ -326,10 +336,13 @@ class EvalSuite(DomainModel):
         """Les journaux d'un cas de rejeu, triés ; son motif est relatif à la suite."""
         if case.replay is None:
             return []
-        pattern = Path(case.replay)
-        if not pattern.is_absolute() and self.base_dir is not None:
-            pattern = self.base_dir / pattern
-        found = (Path(name) for name in glob.glob(str(pattern), recursive=True))
+        if Path(case.replay).is_absolute() or self.base_dir is None:
+            found = [Path(name) for name in glob.glob(case.replay, recursive=True)]
+        else:
+            # Le dossier de la suite est un chemin, pas un motif : ses ``[``, ``*``
+            # et ``?`` sont du texte. Seul le motif du cas est interprété.
+            names = glob.glob(case.replay, root_dir=self.base_dir, recursive=True)
+            found = [self.base_dir / name for name in names]
         return sorted(path for path in found if path.is_file())
 
     def played_variants(self) -> tuple[EvalVariant, ...]:
@@ -441,8 +454,11 @@ class EvalTools:
         self._effects: dict[tuple[str, str], str] = {}
 
     def serves(self, tool: AnyTool, call: PendingCall, run_id: RunId) -> bool:
-        if tool.spec.kind in ("role", "agent"):
-            # De la logique, et un agent : ils tournent ; leurs outils passent ici.
+        if tool.spec.kind == "role" or (
+            tool.spec.kind == "agent" and call.name not in self.doubles
+        ):
+            # De la logique, et un sous-agent sans doublure : ils tournent ; les outils
+            # du sous-agent passent ici. Doublé, il ne tourne pas : sa doublure répond.
             return False
         key = (run_id, call.call_id)
         fate = self.fates.get(key)
@@ -558,8 +574,14 @@ def check(expect: Expect, outcome: Outcome) -> list[CheckResult]:
             CheckResult(f"ne contient pas « {unwanted} »", unwanted not in text, kind="text")
         )
     for pattern in expect.matches:
-        found = re.search(pattern, text) is not None
-        results.append(CheckResult(f"correspond à /{pattern}/", found, kind="text"))
+        label = f"correspond à /{pattern}/"
+        try:
+            found = search(pattern, text) is not None
+        except RegexTimeout as exc:
+            # Faute d'avoir pu finir, le contrôle tombe : il ne conclut jamais « trouvé ».
+            results.append(CheckResult(label, False, str(exc), kind="text"))
+            continue
+        results.append(CheckResult(label, found, kind="text"))
     for path, value in expect.fields.items():
         present, actual = _field(outcome.data, path)
         label = f"champ {path} = {_compact(value)}"
@@ -568,7 +590,7 @@ def check(expect: Expect, outcome: Outcome) -> list[CheckResult]:
                 CheckResult(label, False, "absent de la sortie structurée", kind="field")
             )
         else:
-            same = actual == value
+            same = same_json(actual, value)
             detail = "" if same else f"vaut {_compact(actual)}"
             results.append(CheckResult(label, same, detail, kind="field"))
     for wanted_tool in expect.called:
@@ -646,7 +668,7 @@ def _contains(actual: Mapping[str, JsonValue], wanted: Mapping[str, JsonValue]) 
         if isinstance(value, dict) and isinstance(found, dict):
             if not _contains(found, value):
                 return False
-        elif found != value:
+        elif not same_json(found, value):
             return False
     return True
 

@@ -33,7 +33,6 @@ from loom_ia.adapters.firecracker.forge import (
     Forged,
     ForgeSource,
     Jobs,
-    _same,  # pyright: ignore[reportPrivateUsage]
     check_forged,
     forge_source,
 )
@@ -42,6 +41,7 @@ from loom_ia.adapters.firecracker.vm import VmError
 from loom_ia.config import load_config
 from loom_ia.core import bounded_regex
 from loom_ia.core.events import ToolCompleted
+from loom_ia.core.json_values import same_json
 from loom_ia.core.model import RunId, RunStatus, SessionId, TenantId
 from loom_ia.core.ports import SourceContext, Tool, ToolContext, ToolError
 
@@ -278,14 +278,14 @@ def test_a_pattern_of_the_regex_engine_is_accepted() -> None:
 
 
 def test_json_values_compare_as_json() -> None:
-    assert _same(2, 2.0)
-    assert not _same(True, 1)
-    assert not _same(0, False)
-    assert _same({"a": [1, {"b": None}]}, {"a": [1.0, {"b": None}]})
-    assert not _same({"a": 1}, {"a": 1, "b": 2})
-    assert not _same([1, 2], [2, 1])
-    assert not _same("1", 1)
-    assert not _same(None, 0)
+    assert same_json(2, 2.0)
+    assert not same_json(True, 1)
+    assert not same_json(0, False)
+    assert same_json({"a": [1, {"b": None}]}, {"a": [1.0, {"b": None}]})
+    assert not same_json({"a": 1}, {"a": 1, "b": 2})
+    assert not same_json([1, 2], [2, 1])
+    assert not same_json("1", 1)
+    assert not same_json(None, 0)
 
 
 # ---------------------------------------------------------------------- #
