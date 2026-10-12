@@ -19,8 +19,9 @@ création à la demande éprouvée trente fois par suite.
 """
 
 import asyncio
+import logging
 import os
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from importlib.util import find_spec
 from typing import Any, NoReturn
@@ -36,6 +37,27 @@ REDIS_ENV = "LOOM_TEST_REDIS"
 # Drapeau des passes où les services sont **censés** tourner : la CI complète,
 # et toute vérification qui prétend les avoir éprouvés.
 REQUIRE = "--require-services"
+
+
+@pytest.fixture(autouse=True)
+def restore_loom_logger() -> Iterator[None]:
+    """Rend le logger ``loom_ia`` dans l'état où le test l'a trouvé.
+
+    ``configure_logging`` (appelé par ``apply_logging``, donc par toute commande
+    de la CLI et par ``serve``) pose un handler, un niveau et coupe la
+    propagation. Un essai qui lance une commande laissait donc ce réglage aux
+    suivants, et ``caplog`` ne voyait plus rien : le résultat dépendait de
+    l'ordre d'exécution (TST-8). Le rétablissement vaut pour tous les essais.
+    """
+    racine = logging.getLogger("loom_ia")
+    handlers, level, propagate = list(racine.handlers), racine.level, racine.propagate
+    yield
+    for handler in list(racine.handlers):
+        if handler not in handlers:
+            racine.removeHandler(handler)
+            handler.close()
+    racine.setLevel(level)
+    racine.propagate = propagate
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

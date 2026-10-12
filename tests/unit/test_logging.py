@@ -6,7 +6,6 @@ import json
 import logging
 import subprocess
 import sys
-from collections.abc import Iterator
 
 import pytest
 
@@ -14,21 +13,6 @@ import pytest
 from loom_ia.telemetry import configure_logging
 
 ROOT = logging.getLogger("loom_ia")
-
-
-@pytest.fixture(autouse=True)
-def restore_root_logger() -> Iterator[None]:
-    """Remet le logger ``loom_ia`` dans son état initial après chaque test."""
-    handlers = list(ROOT.handlers)
-    level = ROOT.level
-    propagate = ROOT.propagate
-    yield
-    for handler in list(ROOT.handlers):
-        if handler not in handlers:
-            ROOT.removeHandler(handler)
-            handler.close()
-    ROOT.setLevel(level)
-    ROOT.propagate = propagate
 
 
 def test_null_handler_is_installed() -> None:

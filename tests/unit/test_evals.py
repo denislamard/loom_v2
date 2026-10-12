@@ -35,8 +35,7 @@ rejoue.
 
 import asyncio
 import json
-import logging
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import replace
 from importlib.util import find_spec
 from pathlib import Path
@@ -1101,7 +1100,6 @@ async def test_a_replay_case_replays_each_recorded_run(labo: Path) -> None:
     }
 
 
-@pytest.mark.usefixtures("logs_intacts")
 async def test_a_replay_case_says_where_todays_config_diverges(labo: Path) -> None:
     await enregistre(labo)
     path = suite(labo, cases=[REJEU])
@@ -1438,25 +1436,6 @@ async def test_provided_models_do_not_serve_a_config_the_suite_designates(labo: 
 # --- loom eval --------------------------------------------------------------------------------
 
 
-@pytest.fixture
-def logs_intacts() -> Iterator[None]:
-    """La commande installe ses logs (``apply_logging``) : ils sont rendus tels quels après.
-
-    Sans cela, le logger ``loom_ia`` resterait sans propagation, et les essais
-    suivants qui lisent les logs par ``caplog`` ne verraient plus rien.
-    """
-    racine = logging.getLogger("loom_ia")
-    handlers, level, propagate = list(racine.handlers), racine.level, racine.propagate
-    yield
-    for handler in list(racine.handlers):
-        if handler not in handlers:
-            racine.removeHandler(handler)
-            handler.close()
-    racine.setLevel(level)
-    racine.propagate = propagate
-
-
-@pytest.mark.usefixtures("logs_intacts")
 async def test_the_command_says_0_1_or_2(labo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = suite(
         labo,

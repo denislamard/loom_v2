@@ -15,6 +15,7 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ### Tests
 - `tests/firecracker/test_firecracker_session.py` : deux essais vérifient, sans root, les options que `Session._run` passe au lancement du job (`user`, `group`, `extra_groups=[]` en root ; aucune sans root) ; ils n'étaient jamais exercés.
+- `tests/conftest.py` : une fixture automatique rend le logger `loom_ia` tel qu'elle l'a trouvé. Un essai qui lançait une commande de la CLI coupait la propagation des logs pour les suivants, et `test_jsonl_partial_last_line_is_ignored_then_quarantined` échouait selon l'ordre d'exécution (TST-8). Les deux copies locales (`test_logging.py`, `test_evals.py`) sont retirées.
 
 ## 2.0.4 - publiée
 
