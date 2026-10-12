@@ -575,7 +575,7 @@ async def test_the_redis_store_hands_the_holder_to_its_scripts(
 
     faux = _FauxRedis()
 
-    def from_url(url: str) -> _FauxRedis:
+    def from_url(url: str, **options: Any) -> _FauxRedis:
         return faux
 
     monkeypatch.setattr(redis_asyncio, "from_url", from_url)
@@ -611,6 +611,26 @@ async def test_the_redis_store_hands_the_holder_to_its_scripts(
     await _referme(store)
 
 
+@pytest.mark.skipif(find_spec("redis") is None, reason="extra 'redis' absent")
+async def test_the_redis_store_does_not_wait_forever_on_a_mute_redis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un Redis qui ne répond plus fait échouer l'appel, au lieu de le suspendre."""
+    import redis.asyncio as redis_asyncio
+
+    seen: dict[str, Any] = {}
+
+    def from_url(url: str, **options: Any) -> _FauxRedis:
+        seen.update(options)
+        return _FauxRedis()
+
+    monkeypatch.setattr(redis_asyncio, "from_url", from_url)
+    store = _redis("redis://essai")
+    await store.reserve("k", 60, SCOPE)
+    assert seen["socket_timeout"] > 0 and seen["socket_connect_timeout"] > 0
+    await _referme(store)
+
+
 # --- Redis : l'ensemble d'appartenance vit autant que sa plus longue clé -------
 
 
@@ -633,6 +653,26 @@ async def _until_gone(client: Any, *keys: str) -> None:
             return
         await asyncio.sleep(0.02)
     pytest.fail(f"Redis n'a pas retiré {keys} en cinq secondes")
+
+
+@pytest.mark.integration
+async def test_a_redis_key_taken_back_by_another_session_is_not_forgotten_with_the_old_one(
+    redis_url: str, redis_client: Any
+) -> None:
+    """Expirée, puis reprise par une autre session : elle reste listée dans l'ancien ensemble,
+    mais elle est à la nouvelle, et l'oubli de l'ancienne ne l'emporte pas."""
+    store = _redis(redis_url, retention=0.2)
+    await store.reserve("reprise", 0.2, SCOPE)
+    # Une clé plus longue garde l'ensemble de la première session en vie.
+    await store.reserve("longue", 60, SCOPE)
+    await _until_gone(redis_client, "loom:idem:k:reprise")
+    ailleurs = KeyScope(tenant_id=DEFAULT_TENANT, session_id=SessionId("ailleurs"))
+    assert await store.reserve("reprise", 60, ailleurs)
+
+    assert await store.forget(DEFAULT_TENANT, SESSION) == 1
+    assert await store.get("longue") is None
+    assert await store.get("reprise") is not None
+    await _referme(store)
 
 
 @pytest.mark.integration
@@ -1689,6 +1729,33 @@ async def test_a_client_takes_all_of_them(magasin: Magasin) -> None:
     await store.reserve("c", 60, etranger)
     assert await store.forget(DEFAULT_TENANT) == 2
     assert await store.get("c") is not None
+
+
+async def test_forgetting_a_client_spares_the_clients_whose_id_looks_like_it(
+    magasin: Magasin,
+) -> None:
+    """Un oubli RGPD ne touche que son client : ``a`` n'est ni le début de ``a:b``, ni un motif."""
+    store = magasin()
+    clients = ["a", "a:b", "*", "a?", "[a]", "a%3Ab"]
+    for n, client in enumerate(clients):
+        await store.reserve(f"k{n}", 60, KeyScope(tenant_id=TenantId(client), session_id=SESSION))
+
+    assert await store.forget(TenantId("a")) == 1
+    assert await store.forget(TenantId("*")) == 1
+    gone = [client for n, client in enumerate(clients) if await store.get(f"k{n}") is None]
+    assert gone == ["a", "*"]
+
+
+async def test_forgetting_a_session_spares_the_one_whose_ids_join_alike(magasin: Magasin) -> None:
+    """``(a, b:s)`` et ``(a:b, s)`` sont deux sessions de deux clients, même mises bout à bout."""
+    store = magasin()
+    await store.reserve(
+        "mienne", 60, KeyScope(tenant_id=TenantId("a"), session_id=SessionId("b:s"))
+    )
+    await store.reserve("autre", 60, KeyScope(tenant_id=TenantId("a:b"), session_id=SessionId("s")))
+    assert await store.forget(TenantId("a"), SessionId("b:s")) == 1
+    assert await store.get("mienne") is None
+    assert await store.get("autre") is not None
 
 
 async def test_the_journal_store_has_nothing_of_its_own_to_forget() -> None:

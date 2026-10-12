@@ -38,6 +38,9 @@ type EventFilter = Callable[[Event], bool]
 # Attentes successives, en secondes, avant de se réabonner à un bus tombé : la
 # dernière vaut ensuite pour toutes les tentatives suivantes.
 FOLLOW_BACKOFF: Final = (1.0, 2.0, 5.0, 10.0, 30.0)
+# Attente maximale d'une publication sur le bus : au-delà, la nouvelle est abandonnée
+# (l'écriture, elle, a eu lieu), et un bus muet ne suspend pas chaque écriture.
+PUBLISH_TIMEOUT: Final = 5.0
 
 
 class Subscription:
@@ -204,7 +207,10 @@ class NotifyingEventStore:
             source=self._source,
         )
         try:
-            await self._bus.publish(notice)
+            async with asyncio.timeout(PUBLISH_TIMEOUT):
+                await self._bus.publish(notice)
+        except TimeoutError:
+            logger.warning("Bus : nouvelle non publiée (pas de réponse en %g s)", PUBLISH_TIMEOUT)
         except Exception as error:  # le bus ne met jamais une écriture en échec
             logger.warning("Bus : nouvelle non publiée (%s)", error)
 

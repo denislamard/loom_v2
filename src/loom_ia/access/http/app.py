@@ -88,6 +88,7 @@ import math
 import re
 from collections.abc import AsyncGenerator
 from contextlib import aclosing, asynccontextmanager
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Annotated, Final, cast
 
@@ -162,7 +163,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import JournalBusy, JournalCorrupted, SealError, SessionRecord, UnusableId
 from loom_ia.core.projections import ProjectionError
-from loom_ia.engine import SessionUnreadable
+from loom_ia.engine import ClaimConflict, SessionUnreadable
 from loom_ia.runtime import announce
 from loom_ia.telemetry import Trace
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
@@ -347,6 +348,19 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             {"detail": _message(exc)},
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             headers={"Retry-After": str(max(1, math.ceil(float(after))))},
+        )
+
+    @app.exception_handler(ClaimConflict)
+    async def _piloted_elsewhere(request: Request, exc: Exception) -> JSONResponse:
+        # Un autre worker tient le run : la demande est juste, mais elle tombe sur un
+        # run mené ailleurs. 409, et ``Retry-After`` jusqu'à la fin de son bail (au
+        # moins une seconde : une concession rendue est déjà échue).
+        until = getattr(exc, "lease_until", None)
+        left = (until - datetime.now(UTC)).total_seconds() if isinstance(until, datetime) else 1.0
+        return JSONResponse(
+            {"detail": _message(exc)},
+            status_code=status.HTTP_409_CONFLICT,
+            headers={"Retry-After": str(max(1, math.ceil(left)))},
         )
 
     @app.exception_handler(SealError)

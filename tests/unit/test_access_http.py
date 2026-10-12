@@ -6,8 +6,9 @@ Le client parle à l'application ASGI en direct : pas de serveur, pas de port.
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path as FilePath
 from typing import Any
 from urllib.parse import quote
@@ -20,7 +21,7 @@ from loom_ia.access import Loom
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
-from loom_ia.core.events import Event
+from loom_ia.core.events import Event, EventDraft, RunClaimed, RunScope
 from loom_ia.core.model import DEFAULT_TENANT, Message, RunStatus, SessionId, new_run_id
 from loom_ia.core.ports import JournalBusy
 from loom_ia.testing import RunJournal
@@ -97,6 +98,41 @@ async def test_a_busy_journal_is_a_503_that_says_so(demo: ConfigFactory) -> None
 
     assert opened.status_code == 503
     assert "verrou" in opened.json()["detail"]
+
+
+class _TakenStore(InMemoryEventStore):
+    """Un journal où un autre worker prend le run au moment même où l'instance le prend."""
+
+    taken = False
+
+    async def append(
+        self, drafts: Sequence[EventDraft], *, expected_seq: int | None
+    ) -> list[Event]:
+        claims = [d for d in drafts if isinstance(d.payload, RunClaimed)]
+        if claims and not self.taken:
+            self.taken = True
+            until = datetime.now(UTC) + timedelta(seconds=600)
+            mine = claims[0]
+            scope = RunScope(
+                tenant_id=mine.tenant_id,
+                session_id=mine.session_id,
+                run_id=mine.run_id,
+                root_run_id=mine.root_run_id,
+                agent=mine.agent or "demo",
+            )
+            other = RunClaimed(worker_id="worker-ailleurs", lease_until=until)
+            await super().append([scope.draft(other)], expected_seq=None)
+        return await super().append(drafts, expected_seq=expected_seq)
+
+
+async def test_a_run_piloted_elsewhere_is_a_409_with_retry_after(demo: ConfigFactory) -> None:
+    """Un autre worker tient le run : réessayer après son bail, et non une panne (500)."""
+    async with serving_store(demo(), _TakenStore()) as (_, http):
+        refused = await http.post("/v1/agents/demo/runs", json={"message": QUESTION})
+
+    assert refused.status_code == 409
+    assert "piloté par worker-ailleurs" in refused.json()["detail"]
+    assert 590 <= int(refused.headers["Retry-After"]) <= 600
 
 
 async def test_agents_are_listed(demo: ConfigFactory) -> None:

@@ -37,14 +37,34 @@ async def attendre(secondes: float) -> str:
     return "fini"
 '''
 
+# Le même outil, mais qui met du temps à s'arrêter quand on l'annule (un process qu'on attend).
+TENACE = '''
+import asyncio
+
+from loom_ia.tools import tool
+
+
+@tool
+async def attendre(secondes: float) -> str:
+    """Attend ; annulé, finit d'abord de ranger."""
+    try:
+        await asyncio.sleep(secondes)
+    except asyncio.CancelledError:
+        await asyncio.sleep(0.3)
+        raise
+    return "fini"
+'''
+
 
 @pytest.fixture
 def patient(tmp_path: Path) -> ConfigFactory:
     """Agent dont le seul outil dort : de quoi dépasser un délai en plein effet."""
 
-    def build(*, timeout: float | None = None, attente: float = 5.0, **root: Any) -> Path:
+    def build(
+        *, timeout: float | None = None, attente: float = 5.0, code: str = LENT, **root: Any
+    ) -> Path:
         (tmp_path / "agents").mkdir(exist_ok=True)
-        (tmp_path / "outils_lents.py").write_text(LENT, encoding="utf-8")
+        (tmp_path / "outils_lents.py").write_text(code, encoding="utf-8")
         config: dict[str, Any] = {
             "version": 1,
             "imports": ["outils_lents"],
@@ -285,6 +305,35 @@ def test_cancelling_a_running_run_closes_it(patient: ConfigFactory) -> None:
     assert payload.reason == "requested"
     assert payload.by == "denis"
     assert cancelled.status == "warning"
+    assert fold(events, cancelled.run_id).status is RunStatus.CANCELLED
+
+
+def test_a_cancel_whose_caller_gives_up_still_closes_the_run(patient: ConfigFactory) -> None:
+    """L'appelant de ``cancel`` est coupé par son délai pendant l'arrêt : l'arrêt va au bout,
+    puis le délai remonte (``TimeoutError``) au lieu d'être avalé."""
+    path = patient(attente=5.0, code=TENACE)
+
+    async def go() -> tuple[bool, list[Event]]:
+        run_id = new_run_id()
+        async with Loom.from_config(path) as loom:
+            run = asyncio.create_task(loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id))
+            await asyncio.sleep(0.15)
+            timed_out = False
+            try:
+                async with asyncio.timeout(0.05):
+                    await loom.cancel(run_id, session_id=SESSION, by="denis")
+            except TimeoutError:
+                timed_out = True
+            # Le run est déjà clos quand le délai remonte : rien d'autre à attendre.
+            events = await loom.export_session(SESSION)
+            run.cancel()
+            with suppress(asyncio.CancelledError):
+                await run
+            return timed_out, events
+
+    timed_out, events = asyncio.run(go())
+    assert timed_out
+    cancelled = next(e for e in events if e.type == "run.cancelled")
     assert fold(events, cancelled.run_id).status is RunStatus.CANCELLED
 
 

@@ -29,6 +29,26 @@ clé puis la modifier hors de Redis laisserait passer un autre détenteur entre
 les deux, ce qu'on veut justement exclure. Un enregistrement sans jeton (écrit
 avant lui, ou sans) ne répond à aucun jeton.
 
+Le nom de l'ensemble porte le client et la session **encodés** (encodage
+« pourcent » d'URL) : ni ``:`` ni caractère de motif (``*``, ``?``, ``[``) n'y
+restent. Sans cela, ``forget`` du client ``a`` emportait aussi les clés du
+client ``a:b`` — et celles de tous les clients pour ``*`` —, et la session
+``b:s`` du client ``a`` se confondait avec la session ``s`` du client ``a:b``.
+Un identifiant fait de lettres, de chiffres et de ``_.-~`` s'écrit tel quel :
+les ensembles existants de ces identifiants ne changent pas de nom. Ceux
+d'identifiants à caractères spéciaux, écrits avant, ne sont plus retrouvés par
+``forget`` ; ils expirent avec leurs clés (la rétention).
+
+``forget`` vide chaque ensemble d'un bloc (script Lua) et ne supprime que les
+clés qui lui appartiennent encore : une clé expirée, puis reprise par une autre
+session, reste listée dans l'ancien ensemble, mais son ``owner`` dit à qui elle
+est.
+
+Un Redis qui ne répond plus fait échouer l'appel au bout de ``SOCKET_TIMEOUT``
+au lieu de le suspendre. **Redis Cluster n'est pas pris en charge** : les
+scripts touchent l'enregistrement et son ensemble, qui n'ont pas de raison
+d'être dans le même emplacement (``CROSSSLOT``).
+
 Le SDK ``redis`` laisse des ``Unknown`` dans ses signatures asynchrones (des
 ``**kwargs`` non typés) : les trois règles pyright concernées sont levées pour
 ce module, comme pour le bus Redis.
@@ -40,6 +60,7 @@ ce module, comme pour le bus Redis.
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
+from urllib.parse import quote
 
 import redis.asyncio as redis
 
@@ -56,6 +77,8 @@ from loom_ia.core.ports import KeyScope
 # Préfixes : les enregistrements d'un côté, les appartenances de l'autre.
 RECORD: Final = "loom:idem:k:"
 OWNER: Final = "loom:idem:o:"
+# Délai d'une connexion et d'une réponse de Redis, en secondes.
+SOCKET_TIMEOUT: Final = 5.0
 
 # Prendre la clé, ou la reprendre si sa date est passée. Rend 1 si elle est à
 # nous, 0 si quelqu'un la tient encore. L'ensemble d'appartenance survit à la
@@ -125,6 +148,36 @@ return 1
 """
 
 
+# Oublier un ensemble d'appartenance (KEYS[1]) d'un bloc, avec les clés qui lui
+# appartiennent encore. Une clé sans `owner` (écrite avant lui) est à l'ensemble
+# qui la liste ; une clé illisible aussi : l'oubli ne la laisse pas derrière lui.
+_FORGET: Final = """
+local removed = 0
+for _, key in ipairs(redis.call('SMEMBERS', KEYS[1])) do
+  local raw = redis.call('GET', key)
+  if raw then
+    local ok, held = pcall(cjson.decode, raw)
+    local owner = ok and type(held) == 'table' and held.owner or nil
+    if type(owner) ~= 'string' or owner == KEYS[1] then
+      redis.call('DEL', key)
+      removed = removed + 1
+    end
+  end
+end
+redis.call('DEL', KEYS[1])
+return removed
+"""
+
+
+def _owner(tenant_id: TenantId, session_id: SessionId) -> str:
+    """Nom de l'ensemble d'une session : client et session encodés, sans ``:`` ni motif."""
+    return f"{OWNER}{_part(tenant_id)}:{_part(session_id)}"
+
+
+def _part(value: str) -> str:
+    return quote(value, safe="")
+
+
 def _seconds(moment: datetime) -> float:
     return moment.timestamp()
 
@@ -152,7 +205,9 @@ class RedisIdempotency:
 
     def _redis(self) -> redis.Redis:
         if self._client is None:
-            self._client = redis.from_url(self._url)
+            self._client = redis.from_url(
+                self._url, socket_timeout=SOCKET_TIMEOUT, socket_connect_timeout=SOCKET_TIMEOUT
+            )
         return self._client
 
     async def get(self, key: str) -> IdempotencyRecord | None:
@@ -173,7 +228,7 @@ class RedisIdempotency:
         self, key: str, ttl: float, scope: KeyScope, *, holder: str | None = None
     ) -> bool:
         now = datetime.now(UTC)
-        owner = f"{OWNER}{scope.tenant_id}:{scope.session_id}"
+        owner = _owner(scope.tenant_id, scope.session_id)
         record = json.dumps(
             {
                 "status": "in_progress",
@@ -234,18 +289,17 @@ class RedisIdempotency:
         """
         client = self._redis()
         if session_id is not None:
-            owners = [f"{OWNER}{tenant_id}:{session_id}"]
+            owners = [_owner(tenant_id, session_id)]
         else:
+            # Le client encodé n'a ni ``:`` ni caractère de motif : le motif ne
+            # désigne que ses ensembles.
             owners = [
                 key.decode() if isinstance(key, bytes) else str(key)
-                async for key in client.scan_iter(match=f"{OWNER}{tenant_id}:*")
+                async for key in client.scan_iter(match=f"{OWNER}{_part(tenant_id)}:*")
             ]
         removed = 0
         for owner in owners:
-            keys = await client.smembers(owner)
-            if keys:
-                removed += int(await client.delete(*keys))
-            _ = await client.delete(owner)
+            removed += int(await client.eval(_FORGET, 1, owner))
         return removed
 
     async def aclose(self) -> None:

@@ -279,6 +279,77 @@ async def test_a_bus_that_fails_does_not_fail_the_write() -> None:
     assert len(written) == len(asked)
 
 
+async def test_a_mute_bus_does_not_hold_the_write(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Un bus qui ne répond plus ne suspend pas l'écriture : la nouvelle est abandonnée."""
+
+    class Muet:
+        async def publish(self, notice: Notice) -> None:
+            await asyncio.Event().wait()
+
+        def notices(self) -> AsyncIterator[Notice]:  # pragma: no cover - jamais écouté ici
+            raise RuntimeError("bus muet")
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(notifying, "PUBLISH_TIMEOUT", 0.05)
+    store = NotifyingEventStore(InMemoryEventStore(), bus=Muet(), source="ici")
+    asked = drafts()
+    with caplog.at_level(logging.WARNING, logger="loom_ia.adapters.stores.notifying"):
+        async with asyncio.timeout(2):
+            written = await store.append(asked, expected_seq=0)
+    assert len(written) == len(asked)
+    assert [r for r in caplog.records if "non publiée" in r.getMessage()]
+
+
+@sans_redis
+async def test_the_redis_bus_bounds_its_sockets_but_not_its_listening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parler à Redis a un délai ; écouter le canal, non (le silence y est normal)."""
+    import redis.asyncio as redis_asyncio
+
+    from loom_ia.adapters.bus.redis import RedisBus
+
+    seen: list[dict[str, Any]] = []
+
+    class Faux:
+        async def publish(self, channel: str, data: str) -> int:
+            return 0
+
+        def pubsub(self) -> Any:
+            raise ConnectionError("pas de Redis ici")
+
+        async def aclose(self) -> None:
+            return None
+
+    def from_url(url: str, **options: Any) -> Faux:
+        seen.append(options)
+        return Faux()
+
+    monkeypatch.setattr(redis_asyncio, "from_url", from_url)
+    bus = RedisBus("redis://essai")
+    await bus.publish(
+        Notice(
+            tenant_id=DEFAULT_TENANT,
+            session_id=SessionId("s"),
+            first_seq=1,
+            last_seq=1,
+            source="ici",
+        )
+    )
+    with pytest.raises(ConnectionError):
+        async for _ in bus.notices():
+            pass
+    await bus.aclose()
+    speaking, hearing = seen
+    assert speaking["socket_timeout"] > 0 and speaking["socket_connect_timeout"] > 0
+    assert "socket_timeout" not in hearing and hearing["socket_connect_timeout"] > 0
+    assert hearing["health_check_interval"] > 0
+
+
 # --- Ce qui tombe en route ---------------------------------------------------
 
 

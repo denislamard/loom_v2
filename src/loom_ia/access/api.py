@@ -58,7 +58,7 @@ import asyncio
 import logging
 import re
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import ExitStack, asynccontextmanager, suppress
+from contextlib import ExitStack, asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -1354,8 +1354,11 @@ class Loom:
             finally:
                 if not task.done():
                     task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+                # Attendre la fin du run sans avaler une annulation de l'appelant ; une
+                # erreur du run (hors annulation) ressort, comme avant.
+                await asyncio.wait({task})
+                if not task.cancelled():
+                    task.result()
             # Le run est terminé : une erreur de la boucle ressort ici.
             await task
 
@@ -2149,8 +2152,11 @@ class Loom:
                     del self._driving[key]
                 if not task.done():
                     task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await task
+                    # Sans avaler une annulation de l'appelant ; une erreur du pilote
+                    # (hors annulation) ressort, comme avant.
+                    await asyncio.wait({task})
+                    if not task.cancelled():
+                        task.result()
         # ``cancel`` tient le run jusqu'à la clôture : on la laisse s'écrire, puis
         # le journal dit ce qu'il en est.
         async with self._holding(key):
@@ -2203,14 +2209,43 @@ class Loom:
         finir), et non ``CancelledError``.
         Un run qu'un autre process finit entre la lecture et l'écriture de
         l'arrêt est déjà fini : rien n'est écrit après sa fin.
+        Si l'appelant est lui-même annulé pendant l'arrêt — un délai qui tombe,
+        un client REST qui se déconnecte —, l'arrêt va quand même au bout
+        (``run.cancelled`` est écrit), puis l'annulation remonte :
+        ``CancelledError``, ou ``TimeoutError`` sous ``asyncio.timeout``.
+        L'appelant ne reçoit pas le booléen ; le journal dit ce qu'il en est.
         """
+        stopping = asyncio.create_task(
+            self._cancel(run_id, session_id=session_id, tenant_id=tenant_id, by=by)
+        )
+        try:
+            return await asyncio.shield(stopping)
+        except asyncio.CancelledError:
+            # L'arrêt demandé va au bout, puis l'annulation de l'appelant remonte.
+            await asyncio.wait({stopping})
+            if not stopping.cancelled() and (error := stopping.exception()) is not None:
+                logger.warning(
+                    "Run %s : l'arrêt a échoué, son appelant étant parti — %s", run_id, error
+                )
+            raise
+
+    async def _cancel(
+        self,
+        run_id: RunId,
+        *,
+        session_id: SessionId | None,
+        tenant_id: TenantId | None,
+        by: str | None,
+    ) -> bool:
+        """L'arrêt lui-même : interrompre le pilote d'ici, puis écrire la clôture."""
         key = (tenant_id or DEFAULT_TENANT, session_id or SessionId(run_id), run_id)
         async with self._holding(key, takeover=True):
             task = self._driving.get(key)
             if task is not None and not task.done():
                 task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+                await asyncio.wait({task})
+                if not task.cancelled():
+                    task.result()
             state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
             if state.finished:
                 return False
