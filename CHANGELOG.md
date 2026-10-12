@@ -9,6 +9,13 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 - SQLite : un index `events_ingestion` est créé à l'ouverture d'un journal existant (une fois).
 - ⚠ Postgres : le schéma du journal passe en **version 3** (colonne `ingested`, identité, et son index). L'ouverture migre une base existante, comme pour la version 2 ; qui applique le DDL à la main reprend la sortie de `loom storage sql`. Une écriture prend un verrou consultatif par client juste avant l'insertion (les écritures d'un même client se suivent pendant l'insertion et la validation).
 
+### Intégration continue
+- Le job `build` de `ci.yml` et celui de `publish.yml` essaient le wheel construit : environnement vierge (`uv venv`), installation du seul wheel, interpréteur isolé hors du dépôt, puis `loom --version` (égale à la version du `pyproject.toml`), `python -m loom_ia --version`, `loom --help`, `loom schema`, `loom validate` d'une config minimale (la source d'outils `forge` du paquet doit apparaître) et `loom run` avec un modèle simulé. Un wheel qui oublierait une dépendance ou un fichier ne passe plus à `twine check` seul.
+- Le job `tests-complets` lance en root (`sudo`) l'essai qui fait vraiment abandonner ses droits à `execd` : le job tourne sous l'uid 1500 et sans groupe supplémentaire, et ne lit pas un fichier de root. Hors CI, l'essai est sauté hors de root.
+
+### Tests
+- `tests/firecracker/test_firecracker_session.py` : deux essais vérifient, sans root, les options que `Session._run` passe au lancement du job (`user`, `group`, `extra_groups=[]` en root ; aucune sans root) ; ils n'étaient jamais exercés.
+
 ## 2.0.4 - publiée
 
 Correctifs de packaging, de lecture du journal et de l'unité du service `execd`. Aucune fonctionnalité nouvelle.

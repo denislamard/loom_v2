@@ -1130,3 +1130,121 @@ def test_main_exits_in_error_when_serving_stops_on_one(
     monkeypatch.setenv("EXECD_JOBS_DIR", str(execd_root / "jobs"))
     monkeypatch.setattr(execd_main, "serve", dead)
     assert execd_main.main() == 1
+
+
+# ---------------------------------------------------------------------- #
+# L'abandon de droits du job (TST-5)
+# ---------------------------------------------------------------------- #
+#
+# execd tourne en root dans la VM et lance chaque job sous l'uid 1500, sans groupe
+# supplémentaire. Deux essais : le premier passe de root et vérifie ce que `_run` demande au
+# noyau ; le second, qui exige root, le fait vraiment et regarde ce que le job est devenu.
+
+
+class _Spawned(Exception):
+    """Levée par le faux ``create_subprocess_exec`` : le job n'est jamais lancé."""
+
+
+def _spawn_options(
+    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, euid: int
+) -> dict[str, Any]:
+    """Les options que ``Session._run`` passe au lancement du job, pour un execd d'uid ``euid``."""
+    cfg = SimpleNamespace(
+        jobs_dir=str(tmp_path / "jobs"),
+        uid=1500,
+        gid=1500,
+        version="essai",
+        pydeps=str(tmp_path / "pydeps"),
+    )
+    session = service.Session(conn=None, cfg=cfg, exec_sem=None)
+    with monkeypatch.context() as patch:
+        _Chowns(patch)  # fait croire à root, sans rien changer
+        session.setup()
+    monkeypatch.setattr(os, "geteuid", lambda: euid)
+    seen: dict[str, Any] = {}
+
+    async def spawn(*args: object, **options: Any) -> None:
+        seen.update(options)
+        raise _Spawned
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    with pytest.raises(_Spawned):
+        asyncio.run(session._run("essai:principal", {}, {"wall_ms": 1000}, None))
+    return seen
+
+
+def test_run_as_root_the_job_is_started_under_the_sandbox_ids_and_no_extra_group(
+    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    options = _spawn_options(service, tmp_path, monkeypatch, euid=0)
+    assert options["user"] == 1500
+    assert options["group"] == 1500
+    assert options["extra_groups"] == []  # les groupes de root ne suivent pas le job
+    assert options["start_new_session"] is True
+
+
+def test_run_without_root_the_job_keeps_the_callers_ids(
+    service: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sur l'hôte, changer d'uid échouerait : le processus est déjà le propriétaire."""
+    options = _spawn_options(service, tmp_path, monkeypatch, euid=1000)
+    assert not {"user", "group", "extra_groups"} & options.keys()
+
+
+IDS = b"""import os
+
+
+def ids():
+    return {
+        "uid": os.getuid(), "euid": os.geteuid(), "gid": os.getgid(), "egid": os.getegid(),
+        "groups": sorted(os.getgroups()),
+    }
+
+
+def lit(chemin):
+    try:
+        with open(chemin) as f:
+            return f.read()
+    except PermissionError:
+        return "refuse"
+
+
+def ecrit():
+    chemin = os.path.join(os.environ["OUT_DIR"], "sortie.txt")
+    with open(chemin, "w") as f:
+        f.write("x")
+    return [os.stat(chemin).st_uid, os.stat(chemin).st_gid]
+"""
+
+
+# Les identifiants du compte sandbox de la VM, écrits ici comme les attend le service.
+SANDBOX_UID = SANDBOX_GID = 1500
+
+
+async def test_a_real_job_runs_as_the_sandbox_and_cannot_read_what_is_roots(
+    root_execd: Any,  # l'``Execd`` de la fixture de conftest.py
+) -> None:
+    root = root_execd.socket.parent
+    secret = root / "secret.txt"
+    secret.write_text("a root")
+    secret.chmod(0o600)
+    open_file = root / "ouvert.txt"
+    open_file.write_text("lisible")
+    open_file.chmod(0o644)
+
+    async with await _open(root_execd.socket) as session:
+        await session.put_code("ids.py", IDS)
+        done = await session.exec("ids:ids")
+        assert done.ok, done.error
+        assert done.result == {
+            "uid": SANDBOX_UID,
+            "euid": SANDBOX_UID,
+            "gid": SANDBOX_GID,
+            "egid": SANDBOX_GID,
+            "groups": [],
+        }
+        # Témoin : le chemin est atteignable ; c'est bien l'identité qui refuse le secret.
+        assert (await session.exec("ids:lit", args={"chemin": str(open_file)})).result == "lisible"
+        assert (await session.exec("ids:lit", args={"chemin": str(secret)})).result == "refuse"
+        written = await session.exec("ids:ecrit")
+        assert written.result == [SANDBOX_UID, SANDBOX_GID]

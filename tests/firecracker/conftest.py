@@ -136,7 +136,20 @@ class Execd:
     process: subprocess.Popen[bytes]
 
 
-def start_execd(service: Path, root: Path, *, max_sessions: int = 4) -> Execd:
+# Les identifiants du compte sandbox de la VM (uid 1500) : ceux de l'abandon de droits réel.
+SANDBOX_UID = 1500
+SANDBOX_GID = 1500
+
+
+def start_execd(
+    service: Path,
+    root: Path,
+    *,
+    max_sessions: int = 4,
+    drop_to: tuple[int, int] | None = None,
+    python: str | None = None,
+) -> Execd:
+    """Lance execd ; ``drop_to=(uid, gid)`` : root, qui abandonne ses droits comme dans la VM."""
     socket_path = root / "execd.sock"
     jobs = root / "jobs"
     env = {
@@ -147,11 +160,14 @@ def start_execd(service: Path, root: Path, *, max_sessions: int = 4) -> Execd:
         "EXECD_MAX_SESSIONS": str(max_sessions),
         "EXECD_LOG_LEVEL": "WARNING",
     }
-    # Pas d'abandon de droits hors de la VM : execd tourne sous notre uid.
+    # Sauf demande (``drop_to``, root requis), pas d'abandon de droits hors de la VM :
+    # execd tourne sous notre uid.
     env.pop("EXECD_UID", None)
     env.pop("EXECD_GID", None)
+    if drop_to is not None:
+        env["EXECD_UID"], env["EXECD_GID"] = (str(number) for number in drop_to)
     process = subprocess.Popen(
-        [sys.executable, str(service / "execd.py")],
+        [python or sys.executable, str(service / "execd.py")],
         cwd=service,
         env=env,
         stdout=subprocess.DEVNULL,
@@ -209,6 +225,46 @@ def make_execd(execd_service: Path) -> Iterator[MakeExecd]:
         for running, root in started:
             stop_execd(running)
             shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture
+def root_execd(execd_service: Path) -> Iterator[Execd]:
+    """Un execd réel lancé en **root**, qui abandonne ses droits pour l'uid 1500 comme dans la VM.
+
+    Sauté hors de root, où l'abandon de droits est simulé ailleurs — sauf si
+    ``LOOM_TEST_AS_ROOT`` est posée : la CI qui lance cet essai sous ``sudo`` la pose, et un
+    essai sauté y serait un job vert qui n'a rien éprouvé. Le service est copié
+    sous ``/tmp`` (lisible par le compte sandbox, où que soit le dépôt) et lancé par
+    ``/usr/bin/python3``, l'interpréteur du système, que ce compte peut exécuter — celui des
+    essais vit souvent sous le dossier personnel de l'utilisateur, fermé aux autres.
+    """
+    expected = bool(os.environ.get("LOOM_TEST_AS_ROOT"))
+    absent = pytest.fail if expected else pytest.skip
+    if os.geteuid() != 0:
+        absent("abandon de droits réel : exige root (LOOM_TEST_AS_ROOT=1 sous sudo, en CI)")
+    system_python = Path("/usr/bin/python3")
+    if not os.access(system_python, os.X_OK):
+        absent("/usr/bin/python3 absent")
+    root = _short_dir("fcr-")
+    root.chmod(0o711)  # le compte sandbox traverse, il ne liste ni n'écrit
+    service = root / "service"
+    shutil.copytree(execd_service, service, ignore=shutil.ignore_patterns("__pycache__"))
+    subprocess.run(["chmod", "-R", "a+rX", str(service)], check=True)
+    # root n'a souvent aucun groupe supplémentaire : on lui en donne un, sinon l'essai ne
+    # verrait pas la différence entre « groupes retirés » et « jamais eus ».
+    groups_before = os.getgroups()
+    os.setgroups([0, SANDBOX_GID + 1])
+    try:
+        running = start_execd(
+            service, root, drop_to=(SANDBOX_UID, SANDBOX_GID), python=str(system_python)
+        )
+    finally:
+        os.setgroups(groups_before)
+    try:
+        yield running
+    finally:
+        stop_execd(running)
+        shutil.rmtree(root, ignore_errors=True)
 
 
 @pytest.fixture

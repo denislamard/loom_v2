@@ -60,6 +60,54 @@ jobs:
       - name: Vérifier les métadonnées et le README (twine)
         run: uvx --from twine==7.0.0 twine check --strict dist/*
 
+      - name: Essayer le wheel dans un environnement vierge
+        # Ce que `twine` et l'inspection du zip ne voient pas : une dépendance déclarée en trop
+        # peu, un point d'entrée mal posé, un fichier du paquet manquant. Le wheel est installé
+        # seul, hors du dépôt, puis la CLI valide une config et lance un run avec un modèle simulé.
+        run: |
+          set -euo pipefail
+          wheel=$(ls "$PWD"/dist/*.whl)
+          pyproject="$PWD/pyproject.toml"
+          smoke=$(mktemp -d)
+          uv venv "$smoke/venv" --python 3.14
+          version=$("$smoke/venv/bin/python" -c "import sys, tomllib; print(tomllib.load(open(sys.argv[1], 'rb'))['project']['version'])" "$pyproject")
+          uv pip install --python "$smoke/venv/bin/python" "$wheel"
+          mkdir -p "$smoke/cfg/agents" "$smoke/cfg/prompts"
+          cat > "$smoke/cfg/loom.yaml" <<'YAML'
+          version: 1
+          agents_dir: agents/
+          prompts_dir: prompts/
+          models:
+            - id: FAKE
+              sdk: fake
+              model: fake-1
+              params:
+                script:
+                  - text: ok
+          YAML
+          cat > "$smoke/cfg/agents/smoke.yaml" <<'YAML'
+          name: smoke
+          description: Essai du wheel.
+          main:
+            model: FAKE
+            system_file: smoke.md
+          max_iterations: 2
+          YAML
+          echo "Réponds." > "$smoke/cfg/prompts/smoke.md"
+          # Hors du dépôt, interpréteur isolé : seul le wheel installé peut être importé.
+          cd "$smoke"
+          loom="$smoke/venv/bin/loom"
+          "$smoke/venv/bin/python" -I -c "import loom_ia; assert 'site-packages' in loom_ia.__file__, loom_ia.__file__"
+          test "$("$loom" --version)" = "loom $version"
+          test "$("$smoke/venv/bin/python" -m loom_ia --version)" = "loom $version"
+          "$loom" --help > /dev/null
+          "$loom" schema > /dev/null
+          "$loom" --config cfg/loom.yaml validate | tee validate.txt
+          grep -q "1 agent(s) monté(s) sans erreur" validate.txt
+          grep -q "forge (loom-ia $version)" validate.txt
+          "$loom" --config cfg/loom.yaml run smoke "bonjour" 2> /dev/null | tee run.txt
+          grep -qx "ok" run.txt
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
