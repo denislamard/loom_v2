@@ -27,11 +27,13 @@ Traduction des messages :
   échoue en ``transient``, au lieu de rendre un début de réponse sans consommation ;
 - coupure, délai ou erreur de protocole du client HTTP (``httpx2``) pendant la lecture du flux :
   le SDK ne les enrobe pas ; elles deviennent des ``ModelError`` ``transient`` (retry, secours,
-  disjoncteur). L'annulation (``CancelledError``) n'est jamais convertie.
+  disjoncteur). De même un événement de flux, ou une réponse non streamée, au JSON
+  invalide. L'annulation (``CancelledError``) n'est jamais convertie.
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 """
 
+import json
 import logging
 from collections.abc import AsyncGenerator, Sequence
 from typing import Any, Final, Literal, cast
@@ -47,6 +49,7 @@ from loom_ia.adapters.models._common import (
     image_data,
     json_text,
     retry_after,
+    unreadable_json,
     unresolved,
 )
 from loom_ia.core.model import (
@@ -209,6 +212,8 @@ class AnthropicModel:
                 return
         except (anthropic.APIError, httpx2.HTTPError) as exc:
             raise to_model_error(exc) from exc
+        except json.JSONDecodeError as exc:
+            raise unreadable_json(exc) from exc
         for chunk in chunks:
             yield chunk
 

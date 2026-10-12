@@ -349,6 +349,30 @@ async def test_other_choices_and_reasoning_field() -> None:
     assert response.stop_reason == "end"
 
 
+def without_streaming(spec: ModelSpec) -> ModelSpec:
+    return spec.model_copy(
+        update={"capabilities": spec.capabilities.model_copy(update={"streaming": False})}
+    )
+
+
+async def test_an_unreadable_event_or_answer_is_a_transient_model_error() -> None:
+    """Un JSON illisible du fournisseur est un échec d'appel, pas une panne du moteur."""
+    started = chunk({"role": "assistant", "content": "Le"})
+    stream = httpx2.Response(
+        200, text=started + "data: {pas du json\n\n", headers={"content-type": "text/event-stream"}
+    )
+    answer = httpx2.Response(
+        200, text='{"id": "c1", "object"', headers={"content-type": "application/json"}
+    )
+    for response, spec in ((stream, SPEC), (answer, without_streaming(SPEC))):
+        with pytest.raises(ModelError, match="JSON invalide") as caught:
+            await complete(Server(response).model(spec), request())
+        failure = caught.value
+        assert (failure.kind, failure.http_status, failure.retryable) == ("transient", None, True)
+        assert isinstance(failure.__cause__, json.JSONDecodeError)
+        assert "pas du json" not in failure.message
+
+
 async def test_non_streaming_models() -> None:
     completion: dict[str, Any] = {
         "id": "c2",

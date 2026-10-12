@@ -643,6 +643,72 @@ async def test_an_expired_session_is_a_lost_connection(retry: bool) -> None:
     await server.aclose()
 
 
+def slow_to_close(
+    log: list[str], cleaning: asyncio.Event, cleaned: asyncio.Event
+) -> SessionFactory:
+    """Connexion 1 perdue au premier appel ; sa fermeture traîne, même une fois annulée.
+
+    Comme un process qu'on attend : la tâche qui tient la session, annulée, met encore
+    un moment à finir, et la fermeture l'attend.
+    """
+    lost = McpError(types.ErrorData(code=types.CONNECTION_CLOSED, message="Connection closed"))
+    factory, _ = dying_factory(log, lost)
+
+    @asynccontextmanager
+    async def open_session(handler: MessageHandlerFnT) -> AsyncGenerator[ClientSession]:
+        async with factory(handler) as session:
+            try:
+                yield session
+            finally:
+                if getattr(session, "number", 0) == 1:
+                    try:
+                        await asyncio.sleep(30)
+                    except asyncio.CancelledError:
+                        cleaning.set()
+                        await asyncio.sleep(0.3)
+                        cleaned.set()
+                        raise
+
+    return open_session
+
+
+@pytest.mark.parametrize("stop", ["cancel", "timeout"])
+async def test_the_callers_cancellation_is_not_swallowed_while_a_connection_closes(
+    stop: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le run est annulé, ou son délai tombe, pendant la fermeture d'une connexion perdue.
+
+    L'appel doit s'arrêter là : pas de reconnexion, pas de second appel au serveur.
+    """
+    monkeypatch.setattr("loom_ia.adapters.mcp.server.CLOSE_TIMEOUT", 0.05)
+    log: list[str] = []
+    cleaning, cleaned = asyncio.Event(), asyncio.Event()
+    server = McpServer(spec(), slow_to_close(log, cleaning, cleaned))
+    await server.tools()
+    limits: list[asyncio.Timeout] = []
+
+    async def bounded() -> types.CallToolResult:
+        async with asyncio.timeout(None) as limit:
+            limits.append(limit)
+            return await server.call("lire", {}, meta={}, retry=True)
+
+    caller = asyncio.create_task(bounded())
+    # La connexion 1 est perdue ; sa fermeture dépasse son délai et la tâche est annulée.
+    await reached(cleaning)
+    if stop == "cancel":
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+    else:
+        limits[0].reschedule(asyncio.get_running_loop().time())
+        with pytest.raises(TimeoutError):
+            await caller
+
+    assert log == ["lire sur 1"]
+    await reached(cleaned)
+    await server.aclose()
+
+
 # --- Transports réels ----------------------------------------------------------
 
 STDIO_SERVER = '''

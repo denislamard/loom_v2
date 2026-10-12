@@ -26,10 +26,13 @@ Vise les fournisseurs compatibles (Together, vLLM, Ollama…) ; sans
   ou, à défaut (certains serveurs compatibles l'omettent), quand la ligne
   ``data: [DONE]`` est reçue. Ni l'un ni l'autre : le flux a été coupé, et
   l'appel échoue en ``transient`` plutôt que de rendre un début de réponse.
+  Un événement de flux, ou une réponse non streamée, au JSON invalide échoue
+  aussi en ``transient`` : le SDK laisse passer l'erreur de ``json`` telle quelle.
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 """
 
+import json
 import logging
 import re
 from collections.abc import AsyncGenerator, Mapping, Sequence
@@ -62,6 +65,7 @@ from loom_ia.adapters.models._common import (
     output_text,
     reasoning_loop,
     retry_after,
+    unreadable_json,
     unresolved,
 )
 from loom_ia.core.model import (
@@ -245,6 +249,8 @@ class OpenAIChatModel:
                 return
         except openai.APIError as exc:
             raise to_model_error(exc) from exc
+        except json.JSONDecodeError as exc:
+            raise unreadable_json(exc) from exc
         for chunk in chunks:
             yield chunk
 

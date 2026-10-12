@@ -9,6 +9,10 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 - Un arrêt écrit par un autre process est vu par le pilote même quand l'écriture d'un autre run de la même session a avancé l'écrivain par-dessus : le pilote n'écrit plus après la clôture.
 - `ClaimConflict` est défini dans `loom_ia.engine.writer` ; les imports `loom_ia.engine`, `loom_ia.access` et `loom_ia.engine.loop` restent valables.
 
+### Modèles et client MCP
+- ⚠ Un événement de flux complet, ou une réponse non streamée, au JSON invalide devient une erreur `transient` (« Réponse illisible : JSON invalide du fournisseur… ») sur les trois adaptateurs (Anthropic, OpenAI Chat, OpenAI Responses) : nouvelle tentative, modèle de secours et disjoncteur s'appliquent. Avant, `JSONDecodeError` sortait brut et le run échouait avec `error_type="JSONDecodeError"` (MOD-7).
+- Client MCP : un run annulé, ou dont le délai tombe, pendant la fermeture d'une connexion perdue n'est plus ignoré ; l'appel s'arrête au lieu de se rejouer sur une connexion neuve (MOD-6).
+
 ### Journal
 - ⚠ **`after` (REST `GET /v1/events`, `EventQuery.after`) suit l'ordre d'écriture, non l'ordre des identifiants.** L'identifiant d'un événement est posé à la création du brouillon, avant l'écriture : un écrivain lent (approbateur REST, sous-agents, autre worker) pouvait écrire après un autre un événement d'identifiant plus petit, que reprendre « après » le dernier id vu ne rendait jamais. Les résultats sont désormais rendus dans l'ordre d'écriture (mémoire, SQLite, Postgres) ; un `after` inconnu du journal (session effacée) retombe sur la comparaison des identifiants. Le journal JSONL, qui a un fichier par session, reste trié par identifiant.
 - SQLite : un index `events_ingestion` est créé à l'ouverture d'un journal existant (une fois).

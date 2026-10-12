@@ -23,7 +23,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable, Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from typing import Any, Final, cast
 
 import anyio
@@ -116,6 +116,12 @@ class _Held:
             self._ready.set()
 
     async def close(self, *, force: bool = False) -> None:
+        """Ferme la session : laisse ``CLOSE_TIMEOUT`` à la tâche (sauf ``force``), puis l'annule.
+
+        L'attente ne lève jamais l'issue de la tâche, mais laisse passer l'annulation de
+        l'appelant : un run annulé, ou dont le délai tombe, pendant une fermeture ne
+        poursuit pas son appel. La tâche, déjà annulée, finit alors seule.
+        """
         self._stop.set()
         task = self._task
         if task is None or task.done():
@@ -124,8 +130,10 @@ class _Held:
             await asyncio.wait({task}, timeout=CLOSE_TIMEOUT)
         if not task.done():
             task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            await asyncio.wait({task})
+            if not task.cancelled():
+                # Ce que ``_hold`` laisse passer (hors ``Exception``) remonte, comme avant.
+                task.result()
 
 
 class McpServer:

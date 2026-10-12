@@ -398,6 +398,30 @@ async def test_raw_reasoning_of_an_open_model() -> None:
     assert block.provider_meta == {"openai": OpenAIMeta(item_id="rs_1")}
 
 
+def without_streaming(spec: ModelSpec) -> ModelSpec:
+    return spec.model_copy(
+        update={"capabilities": spec.capabilities.model_copy(update={"streaming": False})}
+    )
+
+
+async def test_an_unreadable_event_or_answer_is_a_transient_model_error() -> None:
+    """Un JSON illisible du fournisseur est un échec d'appel, pas une panne du moteur."""
+    created = event("response.created", response=response("in_progress"))
+    text = f"event: {created['type']}\ndata: {json.dumps(created)}\n\n"
+    text += "event: response.output_text.delta\ndata: {pas du json\n\n"
+    stream = httpx2.Response(200, text=text, headers={"content-type": "text/event-stream"})
+    answer = httpx2.Response(
+        200, text='{"id": "resp_1", "object"', headers={"content-type": "application/json"}
+    )
+    for body, spec in ((stream, SPEC), (answer, without_streaming(SPEC))):
+        with pytest.raises(ModelError, match="JSON invalide") as caught:
+            await complete(Server(body).model(spec), request())
+        failure = caught.value
+        assert (failure.kind, failure.http_status, failure.retryable) == ("transient", None, True)
+        assert isinstance(failure.__cause__, json.JSONDecodeError)
+        assert "pas du json" not in failure.message
+
+
 async def test_non_streaming_models() -> None:
     body = response(
         output=[

@@ -180,6 +180,22 @@ def json_text(data: JsonValue) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+def unreadable_json(error: json.JSONDecodeError) -> ModelError:
+    """Réponse du fournisseur dont le JSON ne se lit pas : erreur transitoire.
+
+    Un événement de flux complet ou un corps de réponse au JSON invalide — proxy
+    qui réécrit, corps abîmé en route — ne dit rien de la requête : rien ne dit
+    qu'elle échouera encore. Les SDK laissent passer l'erreur de ``json`` telle
+    quelle ; sans cette traduction, elle échappait au retry, au secours et au
+    disjoncteur. Le message ne recopie pas ce qui a été reçu.
+    """
+    return ModelError(
+        "transient",
+        f"Réponse illisible : JSON invalide du fournisseur ({error.msg}, "
+        f"ligne {error.lineno}, colonne {error.colno})",
+    )
+
+
 def unresolved(block: ArtifactRefBlock) -> ModelError:
     return ModelError(
         "invalid_request",

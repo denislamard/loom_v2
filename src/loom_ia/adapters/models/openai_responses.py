@@ -23,12 +23,14 @@ Sans état chez le fournisseur : ``store: false``, toute la conversation part
 - le schéma de sortie (``output_schema``) devient ``text.format``
   (``json_schema``) pour un modèle déclaré ``native_json: true`` (B9) ;
 - fin du flux : ``response.completed`` ou ``response.incomplete`` la dit. Sans
-  l'un ni l'autre, le flux a été coupé : l'appel échoue en ``transient``.
+  l'un ni l'autre, le flux a été coupé : l'appel échoue en ``transient``. Un
+  événement de flux, ou une réponse non streamée, au JSON invalide aussi.
 
 Les retries du SDK sont désactivés : la politique de loom-ia s'applique.
 Adaptateur testé sur des réponses HTTP enregistrées.
 """
 
+import json
 import logging
 from collections.abc import AsyncGenerator, Sequence
 from typing import Final, cast
@@ -72,6 +74,7 @@ from loom_ia.adapters.models._common import (
     is_strict,
     json_text,
     reasoning_loop,
+    unreadable_json,
     unresolved,
 )
 from loom_ia.adapters.models.openai_chat import DEFAULT_BASE_URL, own_headers, to_model_error
@@ -197,6 +200,8 @@ class OpenAIResponsesModel:
                 return
         except openai.APIError as exc:
             raise to_model_error(exc) from exc
+        except json.JSONDecodeError as exc:
+            raise unreadable_json(exc) from exc
         for chunk in chunks:
             yield chunk
 

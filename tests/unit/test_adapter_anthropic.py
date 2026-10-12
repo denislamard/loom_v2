@@ -573,6 +573,57 @@ async def test_a_cut_stream_trips_the_breaker_and_falls_back() -> None:
     assert isinstance(answered, Answered) and answered.spec is backup_spec
 
 
+def without_streaming(spec: ModelSpec) -> ModelSpec:
+    return spec.model_copy(
+        update={"capabilities": spec.capabilities.model_copy(update={"streaming": False})}
+    )
+
+
+def unreadable_stream() -> httpx2.Response:
+    """Flux dont un événement, complet, n'est pas du JSON (proxy qui réécrit, corps abîmé)."""
+    body = sse(start(), block_start(0, {"type": "text", "text": ""}))
+    body += "event: content_block_delta\ndata: {pas du json\n\n"
+    return httpx2.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+
+def unreadable_answer() -> httpx2.Response:
+    return httpx2.Response(
+        200, text='{"id": "msg_2", "type"', headers={"content-type": "application/json"}
+    )
+
+
+async def test_an_unreadable_event_or_answer_is_a_transient_model_error() -> None:
+    """Un JSON illisible du fournisseur est un échec d'appel, pas une panne du moteur."""
+    for response, spec in (
+        (unreadable_stream(), SPEC),
+        (unreadable_answer(), without_streaming(SPEC)),
+    ):
+        with pytest.raises(ModelError, match="JSON invalide") as caught:
+            await complete(Server(response).model(spec), request())
+        failure = caught.value
+        assert (failure.kind, failure.http_status, failure.retryable) == ("transient", None, True)
+        assert isinstance(failure.__cause__, json.JSONDecodeError)
+        # Le message dit ce qui ne va pas, sans recopier ce qui a été reçu.
+        assert "pas du json" not in failure.message and "msg_2" not in failure.message
+
+
+async def test_an_unreadable_event_goes_through_the_retry_policy() -> None:
+    """Comme une coupure : ``ModelCall`` relance l'appel, et la seconde réponse est la bonne."""
+    server = Server(unreadable_stream(), completed())
+    waits: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        waits.append(delay)
+
+    model_call = ModelCall(server.model(), SPEC, sleep=sleep, jitter=lambda: 0.0)
+    retried, response = [item async for item in model_call.run(request())]
+
+    assert isinstance(retried, ModelRetried)
+    assert (retried.error_kind, retried.attempt) == ("transient", 1)
+    assert isinstance(response, ModelResponse) and response.message == Message.assistant("Voilà")
+    assert len(server.requests) == 2 and len(waits) == 1
+
+
 async def test_attachments_are_refused_before_calling() -> None:
     server = Server()
     image = ArtifactRefBlock(uri="file://photo.png", media_type="image/png")
