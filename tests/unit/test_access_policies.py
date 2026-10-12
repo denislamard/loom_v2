@@ -1,10 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Politiques par les trois accès : mêmes décisions au journal, déroulé MCP et CLI (J3.1)."""
 
+import sys
 from pathlib import Path
 
 import pytest
-from conftest import ANSWER, QUESTION, ConfigFactory, demo_agent
+from conftest import (
+    ANSWER,
+    HOSTILE,
+    HOSTILE_SHOWN,
+    MODEL,
+    QUESTION,
+    ConfigFactory,
+    demo_agent,
+)
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -110,3 +119,26 @@ def test_the_cli_shows_policies_and_decisions(
     # Le texte d'une réponse qui appelle des outils part à sa fin, la réponse
     # finale une fois contrôlée (et signée).
     assert captured.out.splitlines() == ["Je calcule.", SIGNED]
+
+
+def test_a_live_answer_replaced_after_its_stream_is_shown_like_it(
+    demo: ConfigFactory,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """« [Réponse retenue] » : la réponse d'une politique suit la règle de la réponse diffusée."""
+    (tmp_path / "politiques_acces.py").write_text(POLITIQUES, encoding="utf-8")
+    path = demo(
+        imports=["outils_acces", "politiques_acces"],
+        models=[{**MODEL, "params": {"script": [{"text": HOSTILE}]}}],
+        agents=[demo_agent(tools=[], policies=[{"hook": "signature"}], stream_output="live")],
+    )
+    command = ["--config", str(path), "run", "demo", QUESTION, "--stream"]
+    assert main(command) == 0
+    assert capsys.readouterr().out == f"{HOSTILE}\n\n[Réponse retenue]\n{HOSTILE} (vérifié)\n"
+
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    assert main(command) == 0
+    shown = f"{HOSTILE_SHOWN}\n\n[Réponse retenue]\n{HOSTILE_SHOWN} (vérifié)\n"
+    assert capsys.readouterr().out == shown

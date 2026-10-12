@@ -47,7 +47,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import MODEL, PNG, ConfigFactory, demo_agent
+from conftest import HOSTILE, HOSTILE_SHOWN, MODEL, PNG, ConfigFactory, demo_agent
 from pydantic import JsonValue
 
 from loom_ia.access import Loom
@@ -1482,3 +1482,23 @@ async def test_the_variant_command_compares_and_says_if_it_went_through(
     assert await _cli([*base, "--model", "main"]) == 2
     assert "ETAPE=MODELE" in capsys.readouterr().err
     assert envois(variante) == ["martin"]
+
+
+def test_the_variant_command_shows_both_answers_without_obeying_them(
+    variante: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Les deux réponses se lisent côte à côte ; leurs caractères de contrôle n'agissent pas.
+
+    Essai synchrone : la commande lance sa propre boucle, le run d'origine aussi.
+    """
+    run_id = asyncio.run(enregistre(variante))
+    config = yaml.safe_load(variante.read_text(encoding="utf-8"))
+    [autre] = [model for model in config["models"] if model["id"] == "AUTRE"]
+    autre["params"]["script"][-1]["text"] = HOSTILE
+    variante.write_text(yaml.safe_dump(config), encoding="utf-8")
+    base = ["--config", str(variante), "replay", run_id, "--session", SESSION, "--mode", "variant"]
+
+    assert main([*base, "--model", "main=AUTRE"]) == 0
+    sortie = capsys.readouterr().out
+    assert f"--- en variante\n{HOSTILE_SHOWN}" in sortie
+    assert not {"\x1b", "\x07", "\x9b"} & set(sortie)

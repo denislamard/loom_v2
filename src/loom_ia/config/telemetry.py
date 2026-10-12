@@ -9,10 +9,11 @@ Ces réglages disent ce qui **sort** du journal vers un collecteur.
   d'outils ; ``content`` emporte aussi les champs que chaque charge déclare
   comme contenu (``content_fields``), après masquage. Un client peut avoir
   sa propre valeur (``tenants[].telemetry.capture``).
-- ``redaction.patterns`` : ce qui est masqué dans le contenu exporté. Trois
-  motifs fournis (``email``, ``phone``, ``iban``) et des motifs à soi
-  (``{name, regex}``). Le masquage ne touche que les exports : le journal et
-  l'API (portée ``read_content``) ne le voient pas.
+- ``redaction.patterns`` : ce qui est masqué dans le contenu exporté. Quatre
+  motifs fournis (``secret``, ``email``, ``phone``, ``iban``), qui
+  s'appliquent toujours, et des motifs à soi (``{name, regex}``) qui s'y
+  ajoutent. Le masquage ne touche que les exports : le journal et l'API
+  (portée ``read_content``) ne le voient pas.
 - ``exporters`` : les collecteurs. Un seul type à ce jalon, ``otel`` (OTLP).
 - ``capture.raw_exchanges`` (6.1b) : en opt-in, chaque échange HTTP avec un
   fournisseur entre **au journal** (``model.exchanged``), sous le sceau et la
@@ -92,7 +93,7 @@ class RedactionPattern(DomainModel):
     def _check(self) -> Self:
         if self.name in BUILTIN_PATTERNS:
             raise ValueError(
-                f"Masquage : {self.name!r} est un motif fourni — le citer par son nom, ou "
+                f"Masquage : {self.name!r} est un motif fourni, qui s'applique déjà — "
                 "donner un autre nom à celui-ci"
             )
         try:
@@ -118,7 +119,12 @@ type DeclaredPattern = Annotated[
 
 
 class RedactionConfig(DomainModel):
-    """Motifs masqués dans le contenu exporté, dans l'ordre déclaré."""
+    """Motifs masqués dans le contenu exporté.
+
+    Les motifs fournis s'appliquent toujours : la liste ajoute les siens, et y
+    place ceux des fournis qu'elle cite. Les fournis qu'elle ne cite pas passent
+    avant elle, dans l'ordre par défaut — les secrets en premier.
+    """
 
     patterns: tuple[DeclaredPattern, ...] = BUILTIN_PATTERNS
 
@@ -141,7 +147,10 @@ class RedactionConfig(DomainModel):
         return self
 
     def redactor(self) -> Redactor:
-        return Redactor.of(p if isinstance(p, str) else (p.name, p.regex) for p in self.patterns)
+        cited = {pattern for pattern in self.patterns if isinstance(pattern, str)}
+        first = [name for name in BUILTIN_PATTERNS if name not in cited]
+        declared = (p if isinstance(p, str) else (p.name, p.regex) for p in self.patterns)
+        return Redactor.of([*first, *declared])
 
 
 class ExporterConfig(DomainModel):

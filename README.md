@@ -1166,15 +1166,15 @@ L'API rend la même trace, sans le contenu si la clé n'a pas `read_content`.
 ```yaml
 telemetry:
   capture: {exports: metadata}             # metadata | content
-  redaction:
-    patterns: [email, phone, iban, {name: devis, regex: "D-\\d{4}-\\d{3}"}]
+  redaction:                               # secret, email, phone, iban s'appliquent toujours
+    patterns: [{name: devis, regex: "D-\\d{4}-\\d{3}"}]
   exporters:
     - type: otel
       endpoint_env: OTEL_EXPORTER_OTLP_ENDPOINT
       protocol: http/protobuf
 ```
 
-En `metadata` (par défaut), seuls la structure, les durées, l'usage et les coûts quittent la machine. En `content`, le contenu sort aussi, masqué selon les motifs déclarés. Pour le débogage, `capture: {raw_exchanges: true}` ajoute au journal chaque échange HTTP avec le fournisseur. Les secrets et les octets des fichiers en sont retirés.
+En `metadata` (par défaut), seuls la structure, les durées, l'usage et les coûts quittent la machine. En `content`, le contenu sort aussi, masqué : secrets (clés d'API, jetons, mots de passe), e-mails, téléphones et IBAN toujours, plus les motifs déclarés. Pour le débogage, `capture: {raw_exchanges: true}` ajoute au journal chaque échange HTTP avec le fournisseur. Les secrets et les octets des fichiers en sont retirés.
 
 **Rejeu.** Un run se rejoue de deux façons :
 

@@ -44,6 +44,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import HOSTILE, HOSTILE_SHOWN
 from pydantic import JsonValue, ValidationError
 
 from loom_ia.access import Loom
@@ -811,6 +812,23 @@ async def test_variants_compare_models_and_configs(labo: Path) -> None:
     assert "Variante autre-modele (main=AUTRE) — 1/2 cas réussi(s)" in texte
     assert "ÉCHEC    relance (0/2)" in texte and "  texte :" in texte
     assert "Relance faite." in texte
+
+
+def test_the_eval_report_shows_a_text_without_obeying_it(
+    labo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le texte d'un attendu qui tombe se montre ; ses caractères de contrôle n'agissent pas."""
+    config = yaml.safe_load(labo.read_text(encoding="utf-8"))
+    [principal] = [model for model in config["models"] if model["id"] == "MAIN"]
+    principal["params"]["script"][-1]["text"] = HOSTILE
+    labo.write_text(yaml.safe_dump(config), encoding="utf-8")
+    cas = {"name": "calcul", "input": CALCUL, "expect": {"contains": ["introuvable"]}}
+    path = suite(labo, cases=[cas])
+
+    assert cli_main(["eval", str(path)]) == 1
+    sortie = capsys.readouterr().out
+    assert f"      {HOSTILE_SHOWN}" in sortie
+    assert not {"\x1b", "\x07", "\x9b"} & set(sortie)
 
 
 def avec_panne(config: Path) -> None:

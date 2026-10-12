@@ -86,6 +86,15 @@ def demo_agent(**changes: Any) -> dict[str, Any]:
     return {**agent, **changes}
 
 
+# --- Un texte qui piloterait le terminal ----------------------------------------------
+
+# Ce qu'un modèle ou un outil pourrait rendre pour piloter le terminal de
+# l'opérateur : écrire dans son presse-papier (OSC 52), effacer l'écran, puis
+# une séquence CSI sur 8 bits.
+HOSTILE = "Fait.\x1b]52;c;Y29waWU=\x07\x1b[2J\x9b6n"
+# Le même, tel que la CLI le montre : chaque caractère de contrôle rendu visible.
+HOSTILE_SHOWN = "Fait.\\x1b]52;c;Y29waWU=\\x07\\x1b[2J\\x9b6n"
+
 # --- Délégation à un sous-agent (J2.5) ---------------------------------------------
 
 TREE_QUESTION = "Combien font 2 + 2 ?"

@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 import pytest
+from conftest import HOSTILE, HOSTILE_SHOWN
 
 # Importer un sous-module exécute d'abord loom_ia/__init__.py (NullHandler).
 from loom_ia.telemetry import configure_logging
@@ -54,6 +55,18 @@ def test_console_format_without_context_has_no_suffix() -> None:
     logging.getLogger("loom_ia").info("démarrage")
 
     assert stream.getvalue().strip().endswith("— démarrage")
+
+
+def test_console_format_shows_control_characters_without_obeying_them() -> None:
+    """Un message qui cite un modèle, un outil ou un serveur ne pilote pas le terminal."""
+    stream = io.StringIO()
+    configure_logging(format="console", stream=stream)
+
+    logging.getLogger("loom_ia.engine").warning(
+        "outil inconnu : %s", HOSTILE, extra={"run_id": "r\x1b-1"}
+    )
+
+    assert stream.getvalue().endswith(f"outil inconnu : {HOSTILE_SHOWN} [run_id=r\\x1b-1]\n")
 
 
 def test_json_format_is_one_object_per_line() -> None:

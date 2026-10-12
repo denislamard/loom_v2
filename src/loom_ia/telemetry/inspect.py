@@ -12,6 +12,10 @@ Arguments et résultats tiennent sur une ligne, coupés à ``WIDTH`` caractères
 en le disant (``…``) ; ``full`` les montre en entier. La réponse finale n'est
 jamais coupée. Sans contenu dans la trace (``content`` faux), seules les
 métadonnées restent, et le texte le dit.
+
+Les lignes portent les textes du modèle et des outils tels quels, caractères
+de contrôle compris : qui les imprime dans un terminal les passe par
+``telemetry.logs.printable``, comme ``loom inspect``.
 """
 
 import json

@@ -711,7 +711,7 @@ storage:
 Trois réglages comptent :
 
 - `capture.exports` : `metadata` (par défaut) n'exporte que la forme du run (durées, tokens, coûts, noms d'outils) ; `content` ajoute les messages, les arguments et les résultats, sous forme d'événements de span.
-- `redaction.patterns` : les motifs masqués dans le contenu exporté. `email`, `phone` et `iban` sont fournis ; un motif maison s'écrit `{name, regex}`. Ici, `devis` masque tout numéro de la forme `D-2026-042`.
+- `redaction.patterns` : les motifs masqués dans le contenu exporté. `secret` (clés d'API, jetons, mots de passe), `email`, `phone` et `iban` sont fournis et s'appliquent toujours : les citer ne fait que fixer leur place. Un motif maison s'écrit `{name, regex}` et s'y ajoute. Ici, `devis` masque tout numéro de la forme `D-2026-042`.
 - `exporters` : le collecteur. La config nomme la **variable d'environnement** qui porte son adresse (`endpoint_env`), jamais l'adresse elle-même. Le protocole est `http/protobuf` ou `grpc`. `headers_env` (même principe) porte les en-têtes d'authentification et `timeout` la patience, en secondes.
 
 #### Exécution

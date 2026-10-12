@@ -34,7 +34,15 @@ from importlib.util import find_spec
 from typing import Any
 
 import pytest
-from conftest import QUESTION, TREE_ANSWER, TREE_QUESTION, ConfigFactory
+from conftest import (
+    HOSTILE,
+    HOSTILE_SHOWN,
+    MODEL,
+    QUESTION,
+    TREE_ANSWER,
+    TREE_QUESTION,
+    ConfigFactory,
+)
 
 from loom_ia.access import Loom, UnknownRun
 from loom_ia.access.cli import main as cli_main
@@ -56,6 +64,7 @@ from loom_ia.core.model import (
     Usage,
 )
 from loom_ia.telemetry import (
+    BUILTIN_PATTERNS,
     Redactor,
     RunExporter,
     SpanRecord,
@@ -154,10 +163,10 @@ def attributs(spans: Sequence[SpanRecord]) -> list[str]:
 # --- La config ---------------------------------------------------------------
 
 
-def test_by_default_nothing_but_metadata_and_the_three_patterns() -> None:
+def test_by_default_nothing_but_metadata_and_the_four_patterns() -> None:
     config = config_of()
     assert config.telemetry.capture.exports == "metadata"
-    assert config.telemetry.redaction.redactor().names == ("email", "phone", "iban")
+    assert config.telemetry.redaction.redactor().names == ("secret", "email", "phone", "iban")
     assert config.telemetry.exporters == ()
 
 
@@ -207,6 +216,7 @@ def test_a_tenant_overrides_the_capture_and_only_it() -> None:
         ({"redaction": {"patterns": [{"name": "x", "regex": "a*"}]}}, "accepte une chaîne vide"),
         ({"redaction": {"patterns": [{"name": "x", "regex": "("}]}}, "expression invalide"),
         ({"redaction": {"patterns": [{"name": "iban", "regex": "x"}]}}, "est un motif fourni"),
+        ({"redaction": {"patterns": [{"name": "secret", "regex": "x"}]}}, "est un motif fourni"),
     ],
 )
 def test_what_the_telemetry_block_refuses(telemetry: dict[str, Any], message: str) -> None:
@@ -227,8 +237,11 @@ def test_the_three_patterns_mask_what_looks_personal() -> None:
 
 
 def test_business_numbers_are_left_alone() -> None:
-    masque = Redactor.of(["email", "phone", "iban"])
-    texte = "Devis D-2026-042, 1 840 €, SIRET 732 829 320 00074, le 12/10/2026 à 14h30, 21000."
+    masque = config_of().telemetry.redaction.redactor()
+    texte = (
+        "Devis D-2026-042, 1 840 €, SIRET 732 829 320 00074, le 12/10/2026 à 14h30, 21000. "
+        "Mot de passe oublié ? Réf. sk-8, ticket gh-12, tâche task-2026-042."
+    )
     assert masque.text(texte) == texte
 
 
@@ -269,6 +282,87 @@ def test_a_pattern_that_does_not_finish_masks_the_whole_text() -> None:
 def test_a_pattern_of_the_regex_engine_is_accepted_by_the_config() -> None:
     config = config_of(redaction={"patterns": [{"name": "nom", "regex": r"\p{Lu}{3,}"}]})
     assert config.telemetry.redaction.redactor().text("le sieur DUPONT") == "le sieur [nom]"
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "sk-proj-AbCdEf0123456789AbCdEf0123456789",
+        "sk-ant-api03-AbCdEf0123456789AbCdEf0123456789",
+        # Coupés en deux : un scanner de secrets ne doit pas les prendre pour des vrais.
+        "sk_" + "live_0123456789abcdefABCDEF",
+        "ghp_" + "0123456789abcdefABCDEF0123456789abcd",
+        "github_pat_" + "11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz",
+        "AKIAIOSFODNN7EXAMPLE",
+        "xoxb-" + "0612345678-0612345678-AbCdEfGhIjKl",
+        "AIza" + "Sy0123456789abcdefghijklmnopqrstuvw",
+        "Bearer abc.def-ghi_jkl~mno+pqr/stu==",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2lnbmF0dXJl",
+        "password=hunter2-hunter2",
+        "api_key: 0123456789abcdef",
+        "mot de passe : Azerty123!",
+    ],
+)
+def test_a_secret_is_masked_whole_and_before_anything_else(secret: str) -> None:
+    """Masqué en entier : ni le téléphone ni l'IBAN n'y mordent pour en laisser filer le reste."""
+    masque = config_of().telemetry.redaction.redactor()
+    assert masque.text(f"Clé {secret} fin") == "Clé [secret] fin"
+
+
+def test_an_address_keeps_its_host_but_not_its_credentials() -> None:
+    masque = config_of().telemetry.redaction.redactor()
+    assert masque.text("postgresql://loom:s3cr3t@localhost/loom") == (
+        "postgresql://[secret]@localhost/loom"
+    )
+
+
+def test_a_private_key_is_masked_to_its_end_or_to_the_end_of_the_text() -> None:
+    masque = config_of().telemetry.redaction.redactor()
+    cle = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\nAAAABG5vbmU=\n"
+    fin = "-----END OPENSSH PRIVATE KEY-----"
+    assert masque.text(f"Voici :\n{cle}{fin}\nMerci.") == "Voici :\n[secret]\nMerci."
+    assert masque.text(f"Coupée :\n{cle}") == "Coupée :\n[secret]"
+
+
+@pytest.mark.parametrize(
+    "numero",
+    [
+        "0033 6 12 34 56 78",
+        "0033612345678",
+        "+33 (0)6 12 34 56 78",
+        "+33(0)612345678",
+        "0033 (0)6.12.34.56.78",
+    ],
+)
+def test_a_french_number_is_masked_whatever_its_prefix(numero: str) -> None:
+    assert Redactor.of(["phone"]).text(f"Appeler le {numero}.") == "Appeler le [phone]."
+
+
+@pytest.mark.parametrize(
+    "iban", [IBAN, IBAN.lower(), "Fr76 3000 6000 0112 3456 7890 189", "fr7630006000011234567890189"]
+)
+def test_an_iban_is_masked_whatever_its_case(iban: str) -> None:
+    assert Redactor.of(["iban"]).text(f"IBAN {iban}.") == "IBAN [iban]."
+
+
+def test_keys_masked_alike_keep_every_entry() -> None:
+    """Deux clés qui se masquent pareil ne s'écrasent plus : la seconde est numérotée."""
+    masque = Redactor.of(["email"])
+    table: dict[str, Any] = {"a@b.fr": 1, "c@d.fr": 2, "[email]": 3, "x": {"e@f.fr": 4}}
+    assert masque.json(table) == {"[email]": 1, "[email]#2": 2, "[email]#3": 3, "x": {"[email]": 4}}
+
+
+def test_the_provided_patterns_always_apply_those_not_named_first() -> None:
+    """Ses motifs s'ajoutent aux fournis ; ceux que la liste ne cite pas passent avant elle."""
+    devis = {"name": "devis", "regex": r"D-\d{4}-\d{3}"}
+    assert config_of().telemetry.redaction.redactor().names == BUILTIN_PATTERNS
+    seul = config_of(redaction={"patterns": [devis]}).telemetry.redaction.redactor()
+    assert seul.names == ("secret", "email", "phone", "iban", "devis")
+    assert seul.text(f"{SECRET} Devis D-2026-042.") == (
+        "Écrire à [email] ou au [phone], IBAN [iban]. Devis [devis]."
+    )
+    place = config_of(redaction={"patterns": ["iban", devis, "email"]}).telemetry.redaction
+    assert place.redactor().names == ("secret", "phone", "iban", "devis", "email")
 
 
 # --- Le contenu d'un événement ------------------------------------------------
@@ -933,6 +1027,30 @@ async def test_inspect_says_a_call_refused_before_running(demo: ConfigFactory) -
     assert tetes[1].startswith("outil calculer — ") and tetes[1].endswith(" (erreur)")
     assert not any("[tool.completed]" in ligne for ligne in lignes)
     assert lignes[-1].endswith("2 appel(s) d'outil dont 1 refusé(s) avant exécution")
+
+
+async def test_inspect_shows_control_characters_without_obeying_them(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ce que rendent le modèle et les outils se lit sans piloter le terminal, en entier ou non."""
+    script: list[dict[str, Any]] = [
+        {"tool_calls": [{"name": f"inconnu{HOSTILE}", "arguments": {}}]},
+        {"text": HOSTILE},
+    ]
+    path = demo(
+        models=[{**MODEL, "params": {"script": script}}],
+        storage={"events": {"backend": "jsonl", "path": "data"}},
+    )
+    async with Loom(load_config(path)) as loom:
+        result = await loom.run("demo", QUESTION)
+
+    for full in ([], ["--full"]):
+        assert await _cli(["--config", str(path), "inspect", result.run_id, *full]) == 0
+        sortie = capsys.readouterr().out
+        assert f"appel inconnu{HOSTILE_SHOWN} — refusé avant exécution" in sortie
+        assert f"répond    : {HOSTILE_SHOWN}" in sortie
+        assert f"Réponse finale :\n  {HOSTILE_SHOWN}" in sortie
+        assert not {"\x1b", "\x07", "\x9b"} & set(sortie)
 
 
 def _marge(ligne: str) -> int:

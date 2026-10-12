@@ -4,12 +4,21 @@
 import asyncio
 import io
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, NoReturn
 
 import pytest
-from conftest import ANSWER, MODEL, QUESTION, ConfigFactory, demo_agent
+from conftest import (
+    ANSWER,
+    HOSTILE,
+    HOSTILE_SHOWN,
+    MODEL,
+    QUESTION,
+    ConfigFactory,
+    demo_agent,
+)
 
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
@@ -109,6 +118,48 @@ def test_run_in_stream_shows_the_answer_as_it_comes(
     assert captured.out.startswith("Je calcule.")
     assert ANSWER in captured.out
     assert "· calculer(expr='12*7+3')" in captured.err
+
+
+def test_the_answer_reaches_a_pipe_whole_and_a_terminal_without_driving_it(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La réponse d'un run va telle quelle dans un tube ; un terminal voit ses contrôles sans agir.
+
+    Le déroulé et le bilan, sur la sortie d'erreur, ne sont lus que par un humain :
+    leurs contrôles se montrent toujours. Ici, un appel refusé porte le nom
+    hostile que le modèle a demandé.
+    """
+    script: list[dict[str, Any]] = [
+        {"tool_calls": [{"name": f"inconnu{HOSTILE}", "arguments": {}}]},
+        {"text": HOSTILE},
+    ]
+    path = demo(models=[{**MODEL, "params": {"script": script}}])
+    command = ["--config", str(path), "run", "demo", QUESTION]
+    for flags in ([], ["--stream"]):
+        assert main([*command, *flags]) == 0
+        captured = capsys.readouterr()
+        assert HOSTILE in captured.out
+        assert not {"\x1b", "\x07", "\x9b"} & set(captured.err)
+    assert f"· inconnu{HOSTILE_SHOWN} : refusé" in captured.err
+
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    for flags in ([], ["--stream"]):
+        assert main([*command, *flags]) == 0
+        captured = capsys.readouterr()
+        assert HOSTILE_SHOWN in captured.out
+        assert not {"\x1b", "\x07", "\x9b"} & set(captured.out + captured.err)
+
+
+def test_sessions_list_shows_a_session_id_without_obeying_it(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Un journal SQLite accepte tout identifiant de session : la liste ne le laisse pas agir."""
+    path = demo(storage={"events": {"backend": "sqlite", "path": "loom.db"}})
+    assert main(["--config", str(path), "run", "demo", QUESTION, "--session", HOSTILE]) == 0
+    capsys.readouterr()
+    assert main(["--config", str(path), "sessions", "list"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith(HOSTILE_SHOWN) and not {"\x1b", "\x07", "\x9b"} & set(out)
 
 
 def test_resume_finishes_an_interrupted_run(

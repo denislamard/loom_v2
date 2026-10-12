@@ -1053,7 +1053,7 @@ drive ──append──▶ EventStore ──publish──▶ Bus ──▶ abon
 
 **Réalisation (phase 5.2a)** (détails : `fonctions.md`, point 39) : chaque charge d'événement déclare ses `content_fields` — les champs qui portent ce qu'un utilisateur a écrit, ce qu'un modèle a répondu, ce qu'un outil a reçu et rendu —, et `redacted(event)` rend le JSON privé de ces champs, en nommant à côté ce qui est parti. Sans la portée `read_content`, les relectures REST passent par là : statuts, durées, coûts, ventilation et notes des juges restent, la correspondance part. Le **journal garde tout** : c'est un réglage d'accès, pas de stockage. Les niveaux de capture des exports et le masquage fin (e-mails, IBAN) restent à J6.
 
-**Réalisation (phase 6.1a)** : `telemetry.capture.exports` vaut `metadata` (défaut) ou `content`, et un client a la sienne (`tenants[].telemetry.capture`). En `metadata`, seuls l'enveloppe, les facettes, l'usage, les coûts et les durées sortent ; en `content`, chaque champ déclaré `content_fields` part en plus, sous `loom.content.<chemin>`, après masquage par motifs (`telemetry.redaction` : `email`, `phone`, `iban` fournis, et des `{name, regex}`). Le masquage par motifs ne touche que les exports : l'API garde sa règle de portée (`read_content`). Un `content` sans collecteur est refusé au chargement.
+**Réalisation (phase 6.1a)** : `telemetry.capture.exports` vaut `metadata` (défaut) ou `content`, et un client a la sienne (`tenants[].telemetry.capture`). En `metadata`, seuls l'enveloppe, les facettes, l'usage, les coûts et les durées sortent ; en `content`, chaque champ déclaré `content_fields` part en plus, sous `loom.content.<chemin>`, après masquage par motifs (`telemetry.redaction` : `secret`, `email`, `phone`, `iban` fournis et toujours appliqués, et des `{name, regex}` qui s'y ajoutent). Le masquage par motifs ne touche que les exports : l'API garde sa règle de portée (`read_content`). Un `content` sans collecteur est refusé au chargement.
 
 ### 14.3 Rejeu
 
@@ -1433,8 +1433,8 @@ telemetry:
     exports: metadata                                   # metadata | content
     raw_exchanges: false                                # échanges HTTP bruts au journal (6.1b)
     raw_max_bytes: 262144                               # borne d'un corps brut, coupé au-delà
-  redaction:                                            # masqué dans le contenu exporté, dans l'ordre
-    patterns: [email, phone, iban, {name: devis, regex: "D-\\d{4}-\\d{3}"}]
+  redaction:                                            # masqué dans le contenu exporté : secret, email,
+    patterns: [{name: devis, regex: "D-\\d{4}-\\d{3}"}] # phone, iban toujours, puis les siens
   exporters:                                            # sans collecteur, rien ne sort que les logs
     - type: otel                                        # seul type à ce jalon (OTLP)
       endpoint_env: OTEL_EXPORTER_OTLP_ENDPOINT         # variable qui porte l'adresse

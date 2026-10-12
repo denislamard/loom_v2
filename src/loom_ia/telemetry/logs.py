@@ -12,6 +12,11 @@ Le contexte d'exécution passe par ``extra`` :
 
 Les champs ``run_id``, ``span_id`` et ``tenant_id`` sont repris par les deux
 formats quand ils sont présents.
+
+Le format ``console`` est lu dans un terminal : un message qui cite un modèle,
+un outil ou un serveur y montre ses caractères de contrôle au lieu de les
+exécuter (``printable``, qui sert aussi à la CLI). Le format ``json`` est pour
+les machines, et JSON échappe déjà les contrôles C0.
 """
 
 import json
@@ -28,6 +33,22 @@ ROOT_LOGGER: Final = "loom_ia"
 # Marqueur posé sur le handler installé par configure_logging, pour le
 # retrouver et le remplacer lors d'un nouvel appel (idempotence).
 _HANDLER_MARK: Final = "_loom_ia_configured"
+
+# Caractères qu'un terminal exécute au lieu de les afficher — C0 sauf la
+# tabulation et le saut de ligne, DEL, C1 —, et ce qui les montre à leur place.
+_CONTROLS: Final = {
+    code: f"\\x{code:02x}" for code in (*range(0x09), *range(0x0B, 0x20), *range(0x7F, 0xA0))
+}
+
+
+def printable(text: str) -> str:
+    """Le texte pour un terminal : chaque caractère de contrôle montré (``\\x1b``), pas exécuté.
+
+    Ce que rendent un modèle, un outil ou un serveur peut porter des séquences
+    qui pilotent le terminal (presse-papier, écran, titre). Montrées, elles se
+    lisent sans agir. ``\\n`` et ``\\t`` restent ce qu'ils sont.
+    """
+    return text.translate(_CONTROLS)
 
 
 def _context(record: logging.LogRecord) -> dict[str, object]:
@@ -53,12 +74,12 @@ class ConsoleFormatter(logging.Formatter):
         line = super().format(record)
         context = _context(record)
         if not context:
-            return line
+            return printable(line)
         suffix = " ".join(f"{key}={value}" for key, value in context.items())
         # L'éventuelle trace d'exception suit la première ligne : le contexte
         # reste sur la ligne du message.
         first, sep, rest = line.partition("\n")
-        return f"{first} [{suffix}]{sep}{rest}"
+        return printable(f"{first} [{suffix}]{sep}{rest}")
 
 
 class JsonFormatter(logging.Formatter):

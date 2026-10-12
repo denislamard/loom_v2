@@ -38,7 +38,7 @@ from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Final, cast
+from typing import Final, TextIO, cast
 
 from pydantic import JsonValue
 
@@ -125,6 +125,7 @@ from loom_ia.runtime import (
 from loom_ia.runtime.sources import GROUP as SOURCES_GROUP
 from loom_ia.runtime.sources import PackagedSource, installed
 from loom_ia.telemetry import Trace, render_trace
+from loom_ia.telemetry.logs import printable
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, Tenant, UnknownTenant
 from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import render as render_report
@@ -870,7 +871,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 live = loom.context(args.agent, tenant).stream_output == "live"
                 if live and state.replaced_output is not None and state.output is not None:
                     # Réponse remplacée par une politique après sa diffusion.
-                    print(f"[Réponse retenue]\n{state.output.text}")
+                    print(f"[Réponse retenue]\n{_for_stdout(state.output.text)}")
                 return await loom.result(run_id, session_id=session, tenant_id=tenant)
             return await loom.run(
                 args.agent,
@@ -1006,28 +1007,28 @@ def _print_replay(report: ReplayReport, export: Path | None) -> int:
     if report.comparison is not None:
         _print_variant(report, report.comparison, export)
         return _replay_code(report)
-    print(f"Run        : {report.run_id} (agent {report.agent}, client {report.tenant_id})")
-    print(f"Session    : {report.session_id}")
-    print(f"Issue      : {report.original_end} au journal, {report.replay_end} au rejeu")
-    print(
+    _say(f"Run        : {report.run_id} (agent {report.agent}, client {report.tenant_id})")
+    _say(f"Session    : {report.session_id}")
+    _say(f"Issue      : {report.original_end} au journal, {report.replay_end} au rejeu")
+    _say(
         f"Modèles    : {report.model_calls[0]} appel(s) au journal, "
         f"{report.model_calls[1]} servi(s) au rejeu"
     )
-    print(
+    _say(
         f"Outils     : {report.tool_calls[0]} résultat(s) au journal (rôles à part), "
         f"{report.tool_calls[1]} servi(s) au rejeu"
     )
     if export is not None:
-        print(f"Journal    : {export} ({len(report.events)} événement(s))")
+        _say(f"Journal    : {export} ({len(report.events)} événement(s))")
     divergence = report.divergence
     if divergence is None:
-        print("Identique  : le run se rejoue tel qu'il a été, appel par appel.")
+        _say("Identique  : le run se rejoue tel qu'il a été, appel par appel.")
         return OK
-    print(f"Divergence : {divergence.where}")
+    _say(f"Divergence : {divergence.where}")
     if divergence.detail:
-        print(f"             {divergence.detail}")
+        _say(f"             {divergence.detail}")
     if divergence.expected_hash and divergence.actual_hash:
-        print(
+        _say(
             f"             empreinte {divergence.expected_hash[:12]} au journal, "
             f"{divergence.actual_hash[:12]} au rejeu"
         )
@@ -1057,7 +1058,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     if args.json:
         print(trace.model_dump_json(indent=2))
     else:
-        print("\n".join(render_trace(trace, full=args.full)))
+        _say("\n".join(render_trace(trace, full=args.full)))
     return OK
 
 
@@ -1089,7 +1090,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(report.as_json(), ensure_ascii=False, indent=2))
     else:
-        print("\n".join(render_eval(report)))
+        _say("\n".join(render_eval(report)))
     return OK if report.passed else FAILED
 
 
@@ -1120,20 +1121,20 @@ _FATE_ORDER: Final[tuple[ToolFate, ...]] = ("journal", "run", "relaunched", "dou
 def _print_variant(report: ReplayReport, comparison: Comparison, export: Path | None) -> None:
     """Le run d'origine et sa variante, côte à côte."""
     original, variant = comparison.original, comparison.variant
-    print(f"Run        : {report.run_id} (agent {report.agent}, client {report.tenant_id})")
-    print(f"Session    : {report.session_id}")
+    _say(f"Run        : {report.run_id} (agent {report.agent}, client {report.tenant_id})")
+    _say(f"Session    : {report.session_id}")
     swapped = ", ".join(f"{step} → {model}" for step, model in comparison.swapped.items())
-    print(f"Variante   : {swapped or 'la config, telle quelle'}")
+    _say(f"Variante   : {swapped or 'la config, telle quelle'}")
     divergence = report.divergence
     if divergence is None:
-        print("Écart      : aucun — la variante n'a rien demandé que le journal ne connaisse")
+        _say("Écart      : aucun — la variante n'a rien demandé que le journal ne connaisse")
     else:
-        print(f"Écart      : {divergence.where}")
+        _say(f"Écart      : {divergence.where}")
         if divergence.detail:
-            print(f"             {divergence.detail}")
-    print(f"{'':13}{'origine':<24}variante")
-    print(f"{'Issue':<11}: {_ended(original):<24}{_ended(variant)}")
-    print(
+            _say(f"             {divergence.detail}")
+    _say(f"{'':13}{'origine':<24}variante")
+    _say(f"{'Issue':<11}: {_ended(original):<24}{_ended(variant)}")
+    _say(
         f"{'Modèles':<11}: {f'{original.model_calls} appel(s)':<24}"
         f"{variant.model_calls} appel(s) : "
         f"{comparison.served_models} servi(s) par le journal, "
@@ -1144,32 +1145,32 @@ def _print_variant(report: ReplayReport, comparison: Comparison, export: Path | 
         for fate in _FATE_ORDER
         if comparison.tools.get(fate)
     )
-    print(
+    _say(
         f"{'Outils':<11}: {f'{original.tool_calls} appel(s)':<24}{variant.tool_calls} appel(s)"
         + (f" : {fates}" if fates else "")
     )
-    print(f"{'Tokens':<11}: {_tokens(original):<24}{_tokens(variant)} (entrée / sortie)")
-    print(
+    _say(f"{'Tokens':<11}: {_tokens(original):<24}{_tokens(variant)} (entrée / sortie)")
+    _say(
         f"{'Coût':<11}: {f'{original.cost_usd:.6f} $':<24}{variant.cost_usd:.6f} $ "
         f"(dépensé pour de vrai : {comparison.spent_usd:.6f} $)"
     )
-    print(
+    _say(
         f"{'Durée':<11}: {f'{original.active_ms / 1000:.1f} s':<24}{variant.active_ms / 1000:.1f} s"
     )
     for label, side in (("origine", original), ("variante", variant)):
         for verdict in side.verdicts:
             notes = ", ".join(f"{name} {score:.2f}" for name, score in verdict.scores)
             said = "accepté" if verdict.passed else "refusé"
-            print(
+            _say(
                 f"Juge       : {label}, {verdict.judge} (essai {verdict.attempt}) : "
                 f"{notes} — {said}"
             )
-    print(f"Réponse    : {'la même' if comparison.same_answer else 'différente'}")
+    _say(f"Réponse    : {'la même' if comparison.same_answer else 'différente'}")
     if export is not None:
-        print(f"Journal    : {export} ({len(report.events)} événement(s))")
+        _say(f"Journal    : {export} ({len(report.events)} événement(s))")
     if not comparison.same_answer:
-        print(f"--- au journal\n{original.text or '(aucune)'}")
-        print(f"--- en variante\n{variant.text or '(aucune)'}")
+        _say(f"--- au journal\n{original.text or '(aucune)'}")
+        _say(f"--- en variante\n{variant.text or '(aucune)'}")
 
 
 def _ended(side: RunSide) -> str:
@@ -1240,7 +1241,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
         print(f"Run {run_id} : rien n'attend de décision.", file=sys.stderr)
         return REFUSED
     verdict = "Accordé" if args.verdict == "approve" else "Refusé"
-    print(f"{verdict} : {', '.join(calls)}", file=sys.stderr)
+    _say(f"{verdict} : {', '.join(calls)}", file=sys.stderr)
     if result is None:
         return OK
     return _report(result, as_json=args.json)
@@ -1346,7 +1347,7 @@ def cmd_sessions_list(args: argparse.Namespace) -> int:
         return OK
     for record in records:
         moment = record.updated_at.astimezone().strftime("%Y-%m-%d %H:%M")
-        print(f"{record.session_id:<24} {record.last_seq:>6} événements   {moment}")
+        _say(f"{record.session_id:<24} {record.last_seq:>6} événements   {moment}")
     return OK
 
 
@@ -1696,7 +1697,7 @@ class _Live:
 
     def show(self, item: StreamItem) -> None:
         if isinstance(item, TextDelta):
-            sys.stdout.write(item.text)
+            sys.stdout.write(_for_stdout(item.text))
             sys.stdout.flush()
             if item.text:
                 self._open = not item.text.endswith("\n")
@@ -1713,7 +1714,7 @@ class _Live:
         if self._open:
             print(file=sys.stdout, flush=True)
             self._open = False
-        print(line, file=sys.stderr)
+        _say(line, file=sys.stderr)
 
 
 def _tenant(args: argparse.Namespace) -> TenantId | None:
@@ -1749,15 +1750,15 @@ async def _show_sources(agent: str, tools: ToolExecutor) -> None:
     async with tools.opened(context) as opened:
         if servers:
             found = [spec.name for spec in opened.tools.specs if spec.kind == "mcp"]
-            print(f"    MCP : {_listed(found)}")
+            _say(f"    MCP : {_listed(found)}")
         for name, source in packaged.items():
             mine = f"{source.prefix}{MCP_PREFIX_SEPARATOR}"
             found = [spec.name for spec in opened.tools.specs if spec.name.startswith(mine)]
-            print(f"    source {name} : {_listed(found)}")
+            _say(f"    source {name} : {_listed(found)}")
         for missing in opened.unavailable:
             required = " (requis)" if missing.required else ""
             kind = "source" if missing.source in packaged else "MCP"
-            print(f"    {kind} {missing.source} indisponible{required} : {missing.error}")
+            _say(f"    {kind} {missing.source} indisponible{required} : {missing.error}")
 
 
 def _report(result: RunResult, *, as_json: bool = False, quiet: bool = False) -> int:
@@ -1765,32 +1766,32 @@ def _report(result: RunResult, *, as_json: bool = False, quiet: bool = False) ->
         print(result.model_dump_json(indent=2, exclude_none=True))
     else:
         if not quiet:
-            print(result.text or result.error or "—")
+            print(_for_stdout(result.text or result.error or "—"))
         usage = result.usage
-        print(
+        _say(
             f"\nStatut     : {result.status} · itérations : {result.iterations} "
             f"· tokens : {usage.input_tokens}/{usage.output_tokens} "
             f"· coût : {result.cost_usd:.4f} $",
             file=sys.stderr,
         )
-        print(f"Run        : {result.run_id}", file=sys.stderr)
+        _say(f"Run        : {result.run_id}", file=sys.stderr)
         for produced in result.produced:
-            print(
+            _say(
                 f"Fichier    : {produced.uri} ({produced.media_type}, {produced.size} octets)",
                 file=sys.stderr,
             )
         for line in _verdicts(result):
-            print(f"Juge       : {line}", file=sys.stderr)
+            _say(f"Juge       : {line}", file=sys.stderr)
         for asked in result.pending_approvals:
-            print(
+            _say(
                 f"En attente : {asked.tool_name} ({asked.call_id}) — "
                 f"loom approve {result.run_id} --call {asked.call_id}",
                 file=sys.stderr,
             )
         if result.unverified:
-            print("Vérifiée   : non (gardée malgré son contrat ou son juge)", file=sys.stderr)
+            _say("Vérifiée   : non (gardée malgré son contrat ou son juge)", file=sys.stderr)
         if result.error:
-            print(f"Erreur     : {result.error} ({result.error_type})", file=sys.stderr)
+            _say(f"Erreur     : {result.error} ({result.error_type})", file=sys.stderr)
     return OK if result.ok else FAILED
 
 
@@ -1818,6 +1819,25 @@ def _verdicts(result: RunResult) -> list[str]:
 
 def _listed(names: Iterable[str]) -> str:
     return ", ".join(names) or "aucun"
+
+
+def _say(text: str = "", *, file: TextIO | None = None) -> None:
+    """Une ligne pour un humain : ses caractères de contrôle se montrent, sans agir.
+
+    Les rendus (``inspect``, ``eval``, ``replay``), le déroulé et le bilan citent
+    ce qu'ont écrit un modèle, un outil, un serveur ou un journal reçu : ils ne
+    doivent piloter ni le terminal, ni plus tard celui qui lira leur copie.
+    """
+    print(printable(text), file=file)
+
+
+def _for_stdout(answer: str) -> str:
+    """La réponse d'un run pour la sortie standard : montrée vers un terminal, intacte ailleurs.
+
+    Un tube ou un fichier reçoit le texte du modèle tel quel ; ``--json`` le
+    donne toujours, échappé par JSON.
+    """
+    return printable(answer) if sys.stdout.isatty() else answer
 
 
 def _message(error: Exception) -> str:
