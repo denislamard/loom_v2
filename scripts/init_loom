@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Initialise un projet Loom-IA : environnement uv, loom.yaml, un agent et son prompt.
+#
+# Usage :
+#   init_harness.sh <projet> <agent> <prompt> [--anthropic]
+#
+#   <projet>   nom du dossier à créer (il ne doit pas exister)
+#   <agent>    nom de l'agent  -> agents/<agent>.yaml
+#   <prompt>   nom du prompt   -> prompts/<prompt>.md   (sans l'extension)
+#   --anthropic  modèle Claude Haiku (clé dans ANTHROPIC_API_KEY) au lieu du
+#                modèle simulé, qui fonctionne sans clé ni réseau
+#
+# Exemple :
+#   ./init_harness.sh mon-agent agent system
+#   ./init_harness.sh mon-agent agent system --anthropic
+
+set -euo pipefail
+
+usage() {
+    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    exit 2
+}
+
+[[ $# -ge 3 ]] || usage
+
+projet=$1
+agent=$2
+prompt=$3
+fournisseur=simule
+
+shift 3
+for arg in "$@"; do
+    case $arg in
+        --anthropic) fournisseur=anthropic ;;
+        *) echo "Option inconnue : $arg" >&2; usage ;;
+    esac
+done
+
+for nom in "$projet" "$agent" "$prompt"; do
+    if [[ ! $nom =~ ^[A-Za-z0-9_-]+$ ]]; then
+        echo "Nom invalide : '$nom' (lettres, chiffres, '_' et '-' seulement)" >&2
+        exit 2
+    fi
+done
+
+command -v uv >/dev/null || { echo "uv est introuvable : https://docs.astral.sh/uv/" >&2; exit 1; }
+
+if [[ -e $projet ]]; then
+    echo "Le dossier '$projet' existe déjà : rien n'a été modifié." >&2
+    exit 1
+fi
+
+uv init --bare --python 3.14 "$projet"
+cd "$projet"
+uv add "loom-ia[anthropic,openai,http,mcp,sqlite]"
+mkdir agents prompts
+
+if [[ $fournisseur == anthropic ]]; then
+    modele_id=HAIKU
+    cat > loom.yaml <<EOF
+version: 1
+
+agents_dir: agents/
+prompts_dir: prompts/
+
+models:
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+
+storage:
+  events: {backend: jsonl, path: data}
+EOF
+else
+    modele_id=SIMULE
+    cat > loom.yaml <<EOF
+version: 1
+
+agents_dir: agents/
+prompts_dir: prompts/
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+
+storage:
+  events: {backend: jsonl, path: data}
+EOF
+fi
+
+cat > "agents/${agent}.yaml" <<EOF
+name: ${agent}
+description: Agent ${agent}.
+
+main:
+  model: ${modele_id}
+  system_file: ${prompt}.md
+EOF
+
+printf 'Tu es un assistant et tu réponds en français.\n' > "prompts/${prompt}.md"
+
+echo
+echo "Projet '$projet' créé :"
+echo "  loom.yaml"
+echo "  agents/${agent}.yaml"
+echo "  prompts/${prompt}.md"
+echo
+
+# Vérification de la configuration (n'appelle aucun modèle). Non bloquante :
+# avec --anthropic, elle peut se plaindre d'une clé absente.
+uv run loom validate || echo "validate a signalé un problème : voir le message ci-dessus." >&2
+
+echo
+echo "Suite :"
+echo "  cd $projet"
+echo "  uv run loom run ${agent} \"Bonjour\""

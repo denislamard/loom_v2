@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+"""Génère une page HTML à partir d'un journal Loom (.jsonl) : pour chaque tour,
+ce qui est envoyé au modèle (entrée) et ce qui en sort (sortie).
+
+Prérequis : le journal doit avoir été écrit avec  telemetry.capture.raw_exchanges: true
+(sans cela, seules les sorties du modèle sont connues, pas les entrées).
+
+Usage :
+    python journal_html.py data/agent_denis/<session>.jsonl [-o rapport.html]
+"""
+
+from __future__ import annotations
+
+import argparse
+import html
+import json
+import sys
+from pathlib import Path
+
+esc = html.escape
+
+
+def lire_evenements(chemin: Path) -> list[dict]:
+    evenements = []
+    with chemin.open(encoding="utf-8") as f:
+        for numero, ligne in enumerate(f, 1):
+            ligne = ligne.strip()
+            if not ligne:
+                continue
+            try:
+                evenements.append(json.loads(ligne))
+            except json.JSONDecodeError as exc:
+                print(f"ligne {numero} ignorée : {exc}", file=sys.stderr)
+    return evenements
+
+
+def lire_flux_anthropic(corps: str) -> dict:
+    """Reconstitue la réponse d'un flux SSE Anthropic : texte, appels d'outils, usage."""
+    blocs: dict[int, dict] = {}
+    usage: dict = {}
+    arret = None
+    for ligne in corps.split("\n"):
+        if not ligne.startswith("data: "):
+            continue
+        try:
+            d = json.loads(ligne[6:])
+        except json.JSONDecodeError:
+            continue
+        t = d.get("type")
+        if t == "message_start":
+            usage.update(d["message"].get("usage", {}))
+        elif t == "content_block_start":
+            cb = d["content_block"]
+            blocs[d["index"]] = {"type": cb["type"], "name": cb.get("name"), "texte": "", "json": ""}
+        elif t == "content_block_delta":
+            b = blocs.setdefault(d["index"], {"type": "text", "name": None, "texte": "", "json": ""})
+            dl = d["delta"]
+            if dl["type"] == "text_delta":
+                b["texte"] += dl["text"]
+            elif dl["type"] == "thinking_delta":
+                b["texte"] += dl.get("thinking", "")
+            elif dl["type"] == "input_json_delta":
+                b["json"] += dl["partial_json"]
+        elif t == "message_delta":
+            usage.update(d.get("usage", {}))
+            arret = d["delta"].get("stop_reason", arret)
+    return {"blocs": [blocs[i] for i in sorted(blocs)], "usage": usage, "arret": arret}
+
+
+def rendre_json(valeur) -> str:
+    return f"<pre>{esc(json.dumps(valeur, ensure_ascii=False, indent=2))}</pre>"
+
+
+def rendre_contenu(contenu) -> str:
+    if isinstance(contenu, str):
+        return f"<pre>{esc(contenu)}</pre>"
+    morceaux = []
+    for c in contenu:
+        t = c.get("type")
+        if t == "text":
+            morceaux.append(f"<pre>{esc(c['text'])}</pre>")
+        elif t == "tool_use":
+            morceaux.append(
+                f"<div class='bloc outil'><span class='etiquette'>appel d'outil</span> "
+                f"<b>{esc(c['name'])}</b>{rendre_json(c['input'])}</div>"
+            )
+        elif t == "tool_result":
+            texte = c.get("content")
+            if isinstance(texte, list):
+                texte = "\n".join(x.get("text", "") for x in texte)
+            erreur = " erreur" if c.get("is_error") else ""
+            morceaux.append(
+                f"<div class='bloc resultat{erreur}'><span class='etiquette'>résultat d'outil"
+                f"{' (erreur)' if erreur else ''}</span><pre>{esc(str(texte))}</pre></div>"
+            )
+        else:
+            morceaux.append(rendre_json(c))
+    return "".join(morceaux)
+
+
+def rendre_entree(corps: dict) -> str:
+    parties = []
+    systeme = corps.get("system")
+    if isinstance(systeme, list):
+        systeme = "\n".join(x.get("text", "") for x in systeme)
+    parties.append(f"<h4>Prompt système</h4><pre>{esc(systeme or '(aucun)')}</pre>")
+
+    outils = corps.get("tools", [])
+    noms = ", ".join(t["name"] for t in outils) or "aucun"
+    parties.append(
+        f"<details><summary>Outils proposés ({len(outils)}) : {esc(noms)}</summary>"
+        f"{rendre_json(outils)}</details>"
+    )
+    reglages = {k: v for k, v in corps.items() if k not in ("system", "tools", "messages")}
+    parties.append(f"<details><summary>Réglages</summary>{rendre_json(reglages)}</details>")
+
+    messages = corps.get("messages", [])
+    parties.append(f"<h4>Messages ({len(messages)})</h4>")
+    for i, m in enumerate(messages):
+        parties.append(
+            f"<div class='message {esc(m['role'])}'><span class='role'>{i} · {esc(m['role'])}</span>"
+            f"{rendre_contenu(m['content'])}</div>"
+        )
+    return "".join(parties)
+
+
+def rendre_sortie(rep: dict) -> str:
+    parties = []
+    for b in rep["blocs"]:
+        if b["type"] == "tool_use":
+            try:
+                args = json.loads(b["json"]) if b["json"] else {}
+                arguments = rendre_json(args)
+            except json.JSONDecodeError:
+                arguments = f"<pre>{esc(b['json'])}</pre>"
+            parties.append(
+                f"<div class='bloc outil'><span class='etiquette'>le modèle demande un outil</span> "
+                f"<b>{esc(b['name'])}</b>{arguments}</div>"
+            )
+        elif b["type"] == "thinking":
+            parties.append(f"<div class='bloc'><span class='etiquette'>raisonnement</span><pre>{esc(b['texte'])}</pre></div>")
+        else:
+            parties.append(f"<div class='bloc texte'><span class='etiquette'>réponse</span><pre>{esc(b['texte'])}</pre></div>")
+    return "".join(parties) or "<p><i>(sortie vide)</i></p>"
+
+
+def construire(evenements: list[dict]) -> str:
+    # model.responded, par span : coût, latence, usage normalisé par Loom
+    repondu = {e["span_id"]: e for e in evenements if e["type"] == "model.responded"}
+    runs: dict[str, list[dict]] = {}
+    ordre: list[str] = []
+    for e in evenements:
+        r = e["run_id"]
+        if r not in runs:
+            runs[r] = []
+            ordre.append(r)
+        runs[r].append(e)
+
+    sections = []
+    total_in = total_out = 0
+    total_cout = 0.0
+    sans_capture = False
+    for r in ordre:
+        evs = runs[r]
+        question = next(
+            (e["payload"]["message"]["blocks"][0].get("text", "")
+             for e in evs if e["type"] == "message.user" and e["payload"].get("kind") == "request"),
+            "",
+        )
+        agent = evs[0].get("agent") or ""
+        tour = 0
+        tours = []
+        for e in evs:
+            if e["type"] == "model.exchanged":
+                tour += 1
+                p = e["payload"]
+                try:
+                    corps = json.loads(p["request_body"])
+                    entree = rendre_entree(corps)
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    entree = f"<pre>{esc(str(p.get('request_body')))}</pre>"
+                rep = lire_flux_anthropic(p.get("response_body") or "")
+                sortie = rendre_sortie(rep)
+                resp = repondu.get(e["span_id"])
+                u = rep["usage"]
+                tin, tout = u.get("input_tokens", 0), u.get("output_tokens", 0)
+                cout = (resp or {}).get("payload", {}).get("cost_usd") or 0.0
+                total_in += tin
+                total_out += tout
+                total_cout += cout
+                meta = (
+                    f"{esc(p.get('model_id', ''))} · {tin} tokens en entrée · {tout} en sortie · "
+                    f"{p['duration_ms']:.0f} ms · {cout:.6f} $ · arrêt : {esc(str(rep['arret']))}"
+                )
+                tours.append(
+                    f"<section class='tour'><h3>Tour {tour}</h3><p class='meta'>{meta}</p>"
+                    f"<div class='colonnes'><div class='col'><h2>Envoyé au modèle</h2>{entree}</div>"
+                    f"<div class='col'><h2>Sorti du modèle</h2>{sortie}</div></div></section>"
+                )
+            elif e["type"] == "tool.completed":
+                p = e["payload"]
+                texte = " ".join(b.get("text", "") for b in p["output"]["blocks"])
+                err = " (erreur)" if p["output"].get("is_error") else ""
+                tours.append(
+                    f"<p class='intertour'>⚙ outil <b>{esc(p['tool_name'])}</b> exécuté"
+                    f"{err} → {esc(texte[:300])}</p>"
+                )
+        if not tours:
+            sans_capture = True
+            tours.append("<p><i>Aucun échange brut dans ce run.</i></p>")
+        sections.append(
+            f"<article class='run'><h2 class='titre-run'>Run {esc(r[:8])} · agent {esc(agent)}</h2>"
+            f"<p class='question'>Question : {esc(question)}</p>{''.join(tours)}</article>"
+        )
+
+    avertissement = ""
+    if sans_capture:
+        avertissement = (
+            "<p class='alerte'>Certains runs n'ont pas d'échanges bruts. Activez "
+            "<code>telemetry.capture.raw_exchanges: true</code> dans loom.yaml, puis relancez.</p>"
+        )
+    entete = (
+        f"<p class='meta'>{len(ordre)} run(s) · {total_in} tokens en entrée · {total_out} en sortie · "
+        f"{total_cout:.6f} $</p>"
+    )
+    return PAGE.format(titre="Journal Loom", entete=entete, avertissement=avertissement, corps="".join(sections))
+
+
+PAGE = """<!doctype html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{titre}</title>
+<style>
+:root {{ --fond:#fafaf9; --texte:#1c1917; --doux:#78716c; --carte:#fff; --bord:#e7e5e4;
+  --accent:#2563eb; --outil:#b45309; --ok:#15803d; --alerte:#b91c1c; }}
+@media (prefers-color-scheme: dark) {{ :root {{ --fond:#1c1917; --texte:#f5f5f4; --doux:#a8a29e;
+  --carte:#292524; --bord:#44403c; --accent:#60a5fa; --outil:#fbbf24; --ok:#4ade80; --alerte:#f87171; }} }}
+body {{ margin:0; background:var(--fond); color:var(--texte); font:15px/1.5 system-ui,sans-serif; }}
+main {{ max-width:1400px; margin:0 auto; padding:16px; }}
+h1 {{ margin:0 0 4px; font-size:22px; }}
+.meta {{ color:var(--doux); font-size:13px; margin:2px 0 10px; }}
+.run {{ margin:28px 0; }}
+.titre-run {{ font-size:18px; margin:0 0 4px; }}
+.question {{ background:var(--carte); border:1px solid var(--bord); border-left:4px solid var(--accent);
+  padding:8px 12px; border-radius:6px; }}
+.tour {{ background:var(--carte); border:1px solid var(--bord); border-radius:8px; padding:12px 16px; margin:14px 0; }}
+.tour h3 {{ margin:0; font-size:16px; }}
+.colonnes {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }}
+@media (max-width: 800px) {{ .colonnes {{ grid-template-columns:1fr; }} }}
+.col h2 {{ font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--doux); margin:6px 0; }}
+h4 {{ margin:12px 0 4px; font-size:13px; color:var(--doux); }}
+pre {{ white-space:pre-wrap; word-break:break-word; margin:4px 0; font:13px/1.45 ui-monospace,monospace; }}
+.message {{ border:1px solid var(--bord); border-radius:6px; padding:6px 10px; margin:6px 0; }}
+.message.assistant {{ border-left:4px solid var(--ok); }}
+.message.user {{ border-left:4px solid var(--accent); }}
+.role {{ font-size:12px; color:var(--doux); }}
+.bloc {{ border:1px solid var(--bord); border-radius:6px; padding:6px 10px; margin:6px 0; }}
+.bloc.outil {{ border-left:4px solid var(--outil); }}
+.bloc.resultat {{ border-left:4px solid var(--outil); opacity:.9; }}
+.bloc.texte {{ border-left:4px solid var(--ok); }}
+.etiquette {{ font-size:12px; color:var(--doux); margin-right:6px; }}
+.intertour {{ color:var(--doux); font-size:13px; margin:2px 8px; }}
+.alerte {{ color:var(--alerte); }}
+details {{ margin:6px 0; }} summary {{ cursor:pointer; color:var(--doux); font-size:13px; }}
+</style></head>
+<body><main>
+<h1>{titre}</h1>
+{entete}
+{avertissement}
+{corps}
+</main></body></html>
+"""
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Journal Loom (.jsonl) -> page HTML des tours")
+    ap.add_argument("journal", type=Path, help="fichier .jsonl d'une session")
+    ap.add_argument("-o", "--sortie", type=Path, help="fichier HTML à écrire (défaut : à côté du journal)")
+    args = ap.parse_args()
+    if not args.journal.is_file():
+        print(f"Fichier introuvable : {args.journal}", file=sys.stderr)
+        return 2
+    sortie = args.sortie or args.journal.with_suffix(".html")
+    sortie.write_text(construire(lire_evenements(args.journal)), encoding="utf-8")
+    print(f"Écrit : {sortie}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
