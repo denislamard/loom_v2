@@ -144,8 +144,9 @@ async def _clean(dsn: str) -> None:
 def rabbitmq_url(request: pytest.FixtureRequest) -> str:
     """URL d'un RabbitMQ de test, files vidées ; saute l'essai s'il n'y en a pas.
 
-    Les deux files de loom sont purgées avant chaque essai : un travail resté
-    d'un essai précédent serait pris par le worker du suivant.
+    Les trois files de loom sont purgées avant chaque essai : un travail resté
+    d'un essai précédent serait pris par le worker du suivant, ou lu dans la
+    file des travaux mis de côté.
     """
     url = os.environ.get(RABBITMQ_ENV, "")
     if not url:
@@ -159,7 +160,12 @@ def rabbitmq_url(request: pytest.FixtureRequest) -> str:
 async def _empty(url: str) -> None:
     import aio_pika
 
-    from loom_ia.adapters.queue.rabbitmq import DELAY_ARGUMENTS, DELAY_QUEUE, WORK_QUEUE
+    from loom_ia.adapters.queue.rabbitmq import (
+        DEAD_QUEUE,
+        DELAY_ARGUMENTS,
+        DELAY_QUEUE,
+        WORK_QUEUE,
+    )
 
     connection = await aio_pika.connect_robust(url)
     try:
@@ -168,6 +174,8 @@ async def _empty(url: str) -> None:
         await delayed.purge()
         work = await channel.declare_queue(WORK_QUEUE, durable=True)
         await work.purge()
+        dead = await channel.declare_queue(DEAD_QUEUE, durable=True)
+        await dead.purge()
     finally:
         await connection.close()
 

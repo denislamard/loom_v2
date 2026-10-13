@@ -1062,7 +1062,7 @@ triggers:
 
 Le client du run vient de la clé d'API de l'appelant. Loom-IA ne tient aucun cron : une tâche planifiée appelle simplement la porte à l'heure voulue.
 
-**Workers.** Avec `storage: {queue: {backend: rabbitmq, url_env: LOOM_AMQP}}`, l'instance qui reçoit les demandes publie les tâches, et `loom worker` les exécute. Lancez-en autant que nécessaire. Un run passe d'un worker mort à un worker vivant sans intervention.
+**Workers.** Avec `storage: {queue: {backend: rabbitmq, url_env: LOOM_AMQP}}`, l'instance qui reçoit les demandes publie les tâches, et `loom worker` les exécute. Lancez-en autant que nécessaire. Un run passe d'un worker mort à un worker vivant sans intervention. Réglez le `consumer_timeout` du courtier (30 minutes par défaut) au-delà de votre run le plus long : au-delà, il redélivre le travail. Un message qu'aucun worker ne sait traiter est mis de côté dans la file `loom.jobs.dead`, avec son motif.
 
 ### Coûts, budgets et quotas
 

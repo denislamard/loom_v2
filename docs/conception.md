@@ -1392,7 +1392,7 @@ storage:
                                                         # firestore|redis plus tard
   bus:         {backend: memory}                        # memory|postgres (+ dsn_env)|redis (+ url_env)
                                                         # ne porte que des nouvelles ; le contenu reste au journal
-  queue:       {backend: asyncio}                       # asyncio|rabbitmq (+ url_env)
+  queue:       {backend: asyncio, max_running: 16}      # asyncio|rabbitmq (+ url_env) ; max_running : asyncio seul
                                                         # rabbitmq : les tâches tournent dans `loom worker`
   encryption:  {keys: [LOOM_JOURNAL_KEY]}               # absent : contenus en clair au repos (5.5b)
                                                         # noms de secrets ; le premier ferme (il doit exister pour chaque client), tous ouvrent

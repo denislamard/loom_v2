@@ -100,6 +100,35 @@ def test_secret_query_parameters_are_removed() -> None:
     assert scrubbed_url("https://api.test/v1/messages") == "https://api.test/v1/messages"
 
 
+def test_rate_limit_counters_are_kept_they_hold_no_secret() -> None:
+    """« tokens » dans le nom d'un compteur de débit n'est pas un jeton : le diagnostic reste."""
+    headers = scrubbed_headers(
+        {
+            "x-ratelimit-remaining-tokens": "9000",
+            "anthropic-ratelimit-input-tokens-remaining": "120000",
+            "x-ratelimit-limit-requests": "500",
+            "x-session-token": "abc",
+        }
+    )
+    assert headers == {
+        "x-ratelimit-remaining-tokens": "9000",
+        "anthropic-ratelimit-input-tokens-remaining": "120000",
+        "x-ratelimit-limit-requests": "500",
+        "x-session-token": REMOVED,
+    }
+
+
+def test_credentials_in_an_address_are_removed_and_the_host_kept() -> None:
+    """Une passerelle jointe en ``https://user:mot-de-passe@hôte`` : l'hôte reste, pas eux."""
+    marque = "[retir%C3%A9]"
+    assert scrubbed_url("https://loom:s3cr3t@gateway.test:8443/v1/chat") == (
+        f"https://{marque}@gateway.test:8443/v1/chat"
+    )
+    assert scrubbed_url("https://sk-proj-abc@gateway.test/v1/chat?key=k&alt=sse") == (
+        f"https://{marque}@gateway.test/v1/chat?key={marque}&alt=sse"
+    )
+
+
 @pytest.mark.parametrize(
     "image",
     [

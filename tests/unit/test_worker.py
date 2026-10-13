@@ -48,6 +48,44 @@ def test_the_default_queue_runs_where_it_is_filled(demo: ConfigFactory) -> None:
     assert isinstance(queue_of(demo()), AsyncioTaskQueue)
 
 
+def test_the_memory_queue_runs_sixteen_jobs_at_once_by_default(demo: ConfigFactory) -> None:
+    assert QueueStorage().max_running == 16
+    assert load_config(demo(storage={"queue": {"max_running": 3}})).storage.queue.max_running == 3
+
+
+def test_a_cap_on_a_brokered_queue_is_refused() -> None:
+    """Le plafond d'un worker, c'est ``loom worker --jobs`` : la clé ne ferait rien."""
+    with pytest.raises(ValueError, match=r"max_running.*loom worker --jobs"):
+        QueueStorage(backend="rabbitmq", url_env=VARIABLE, max_running=4)
+    assert QueueStorage(backend="rabbitmq", url_env=VARIABLE).brokered
+
+
+async def test_the_memory_queue_runs_no_more_than_its_cap_at_once(demo: ConfigFactory) -> None:
+    """La reprise remet tout en file d'un coup : la file n'en mène que ``max_running`` de front."""
+    running, peak = 0, 0
+    gate = asyncio.Event()
+
+    async def handler(job: Job) -> None:
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await gate.wait()
+        running -= 1
+
+    path = demo(storage={"queue": {"max_running": 3}})
+    queue = create_task_queue(load_config(path), {"run": handler})
+    job = Job(kind="run", tenant_id=DEFAULT_TENANT, session_id=SessionId("s"))
+    ids = [await queue.submit(job) for _ in range(10)]
+    await asyncio.sleep(0.05)
+    states = [await queue.state(job_id) for job_id in ids]
+    assert running == 3
+    assert states.count("running") == 3 and states.count("pending") == 7
+    gate.set()
+    await queue.drain()
+    assert peak == 3
+    assert [await queue.state(job_id) for job_id in ids] == ["done"] * 10
+
+
 def test_rabbitmq_is_the_only_brokered_backend() -> None:
     assert BROKERED_QUEUES == ("rabbitmq",)
     assert set(BROKERED_QUEUES) <= set(QUEUE_BACKENDS)
@@ -243,6 +281,8 @@ def test_the_worker_recovers_then_listens_when_the_queue_is_served(
     out = capsys.readouterr().out
     assert calls == [("recover", DEFAULT_TENANT), ("work", 2)]
     assert "Reprise  : 0 run(s) remis en file" in out
+    # Un run plus long que le délai d'acquittement du courtier lui serait redélivré.
+    assert "consumer_timeout" in out
     assert "Worker arrêté" in out
 
 
@@ -288,6 +328,10 @@ class _Message:
         self.body = body
         self.refuses = refuses
         self.answers: list[str] = []
+        self.content_type = "application/json"
+        self.message_id = "m-1"
+        self.type = "run"
+        self.headers: dict[str, Any] = {"x-origine": "essai"}
 
     async def ack(self) -> None:
         self.answers.append("ack")
@@ -308,12 +352,19 @@ class _Courtier:
     """
 
     def __init__(
-        self, messages: list[_Message] | None = None, gate: asyncio.Event | None = None
+        self,
+        messages: list[_Message] | None = None,
+        gate: asyncio.Event | None = None,
+        *,
+        refuses_to_publish: bool = False,
     ) -> None:
         self.messages = list(messages or [])
         self.gate = gate
         self.qos: list[int] = []
         self.published = 0
+        self.sent: list[tuple[Any, str]] = []
+        self.declared: list[str] = []
+        self.refuses_to_publish = refuses_to_publish
         self.delivered = 0
         self.default_exchange = self
 
@@ -327,10 +378,14 @@ class _Courtier:
         self.qos.append(prefetch_count)
 
     async def declare_queue(self, name: str, **options: Any) -> Self:
+        self.declared.append(name)
         return self
 
     async def publish(self, message: Any, routing_key: str) -> None:
+        if self.refuses_to_publish:
+            raise ConnectionError("canal fermé")
         self.published += 1
+        self.sent.append((message, routing_key))
 
     async def close(self) -> None:
         return None
@@ -387,6 +442,78 @@ async def test_a_message_without_a_client_is_dropped_and_the_worker_goes_on(
 
 
 @sans_extra
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        (b"ceci n'est pas un travail", "illisible"),
+        (NO_TENANT, "Champ 'tenant_id' absent"),
+        (b'{"kind": "venu_du_futur", "tenant_id": "t", "session_id": "s"}', "type inconnu"),
+        (b'{"kind": "compaction", "tenant_id": "t", "session_id": "s"}', "sans traitement"),
+    ],
+    ids=["illisible", "incomplet", "inconnu", "sans-traitement"],
+)
+async def test_a_job_this_worker_cannot_run_is_set_aside_with_its_reason(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, body: bytes, reason: str
+) -> None:
+    """Acquitté sans trace, il était perdu : il est recopié, motif compris, dans la file morte."""
+    from loom_ia.adapters.queue.rabbitmq import DEAD_QUEUE, REASON_HEADER
+
+    seen: list[Job] = []
+
+    async def handler(job: Job) -> None:
+        seen.append(job)
+
+    écarté, fine = _Message(body), _Message(GOOD)
+    courtier = _Courtier([écarté, fine])
+    queue = _worker(monkeypatch, courtier, handler)
+
+    await asyncio.wait_for(queue.serve(jobs=1), 5)
+
+    assert DEAD_QUEUE in courtier.declared
+    assert (écarté.answers, fine.answers) == (["ack"], ["ack"])
+    assert len(seen) == 1
+    [(copie, routing_key)] = courtier.sent
+    assert routing_key == DEAD_QUEUE
+    assert copie.body == body and copie.message_id == "m-1"
+    assert copie.headers["x-origine"] == "essai"
+    assert reason in copie.headers[REASON_HEADER]
+    assert DEAD_QUEUE in caplog.text
+
+
+@sans_extra
+async def test_a_failed_job_is_acknowledged_not_set_aside(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Le run a écrit son échec au journal : c'est là qu'il se lit, pas dans la file morte."""
+
+    async def handler(job: Job) -> None:
+        raise RuntimeError("panne")
+
+    raté = _Message(GOOD)
+    courtier = _Courtier([raté])
+    queue = _worker(monkeypatch, courtier, handler)
+
+    await asyncio.wait_for(queue.serve(jobs=1), 5)
+
+    assert raté.answers == ["ack"] and courtier.sent == []
+    assert "en échec" in caplog.text
+
+
+@sans_extra
+async def test_a_job_that_cannot_be_set_aside_leaves_its_body_in_the_log(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Courtier qui refuse la copie : le message est acquitté quand même, son corps est au log."""
+    écarté = _Message(b"ceci n'est pas un travail")
+    queue = _worker(monkeypatch, _Courtier([écarté], refuses_to_publish=True), None)
+
+    await asyncio.wait_for(queue.serve(jobs=1), 5)
+
+    assert écarté.answers == ["ack"]
+    assert "ceci n'est pas un travail" in caplog.text
+
+
+@sans_extra
 async def test_a_refused_acknowledgement_does_not_stop_the_worker(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -405,6 +532,8 @@ async def test_a_refused_acknowledgement_does_not_stop_the_worker(
     assert (refused.answers, fine.answers) == (["ack"], ["ack"])
     assert len(seen) == 2
     assert "Réponse au courtier impossible" in caplog.text
+    # La cause la plus fréquente est dite : un travail plus long que le délai du courtier.
+    assert "consumer_timeout" in caplog.text
 
 
 @sans_extra

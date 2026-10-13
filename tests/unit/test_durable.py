@@ -9,6 +9,7 @@ arrive après la fin rend « déjà fini ».
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -19,7 +20,7 @@ import pytest
 import yaml
 from conftest import demo_agent
 
-from loom_ia.access.api import Loom, StreamItem
+from loom_ia.access.api import Loom, RunResult, StreamItem
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import load_config
 from loom_ia.core.events import (
@@ -30,6 +31,7 @@ from loom_ia.core.events import (
     RunCancelled,
     RunClaimed,
     RunScope,
+    RunStarted,
     SessionTrimmed,
 )
 from loom_ia.core.model import (
@@ -278,6 +280,54 @@ def test_recover_ignores_a_subrun(durable: ConfigFactory) -> None:
             return len(await loom.recover())
 
     assert asyncio.run(go()) == 0
+
+
+def test_recover_reads_a_busy_session_in_linear_time(
+    durable: ConfigFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """4 000 runs dans une session : chacun était cherché dans tout le journal."""
+    path = durable(storage={"events": {"backend": "memory"}})
+    reponse = ModelResponded(
+        model_id="fake-1", provider="fake", message=Message.assistant(ANSWER), request_hash="h"
+    )
+
+    async def go() -> tuple[tuple[RunId, ...], float]:
+        drafts: list[EventDraft] = []
+        for _ in range(4_000):
+            # Un agent que la config ne déclare plus : rien n'est remis en file,
+            # seul le balayage du journal compte.
+            scope = RunJournal(agent="disparu", session_id=SESSION).scope
+            drafts += [scope.draft(RunStarted()), scope.draft(reponse)]
+        async with Loom.from_config(path) as loom:
+            await loom.store.append(drafts, expected_seq=0)
+            start = time.perf_counter()
+            repris = await loom.recover()
+            return repris, time.perf_counter() - start
+
+    with caplog.at_level(logging.ERROR, logger="loom_ia"):
+        repris, elapsed = asyncio.run(go())
+    assert repris == ()
+    assert elapsed < 1, f"balayage de 4 000 runs en {elapsed:.2f} s"
+
+
+def test_the_result_of_a_run_with_many_subruns_reads_in_linear_time() -> None:
+    """2 000 sous-runs : chacun était cherché dans tout l'arbre, pour ses approbations."""
+    parent = RunJournal(agent="demo", session_id=SESSION)
+    parent.start(QUESTION)
+    drafts = parent.take()
+    for _ in range(2_000):
+        enfant = RunJournal(agent="demo", session_id=SESSION, root_run_id=parent.run_id)
+        enfant.start(QUESTION, parent_run_id=parent.run_id, depth=1)
+        enfant.model_turn(Message.assistant(ANSWER)).complete()
+        drafts += enfant.take()
+    events = [draft.to_event(seq) for seq, draft in enumerate(drafts, start=1)]
+    state = fold(events, parent.run_id)
+
+    start = time.perf_counter()
+    result = RunResult.of(state, events)
+    elapsed = time.perf_counter() - start
+    assert not state.finished and result.pending_approvals == ()
+    assert elapsed < 1, f"résultat d'un run à 2 000 sous-runs en {elapsed:.2f} s"
 
 
 def test_recover_reads_past_a_session_marker(durable: ConfigFactory) -> None:

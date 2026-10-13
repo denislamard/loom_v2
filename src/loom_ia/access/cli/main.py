@@ -1607,6 +1607,12 @@ async def _worker(args: argparse.Namespace) -> int:
         )
     print(f"Agents   : {_listed(agent.name for agent in config.agents)}")
     print(f"Clients  : {_listed(config.tenant_ids)}")
+    # Au-delà, le courtier ferme le canal et redélivre : la concession évite
+    # deux pilotes, mais le réglage est à faire chez lui.
+    print(
+        "Délai    : un travail plus long que le consumer_timeout du courtier "
+        "(30 min par défaut) lui est redélivré — le régler au-delà du run le plus long"
+    )
     async with Loom(config) as loom:
         repris = [
             run for tenant in config.tenant_ids for run in await loom.recover(tenant_id=tenant)

@@ -334,7 +334,11 @@ def create_task_queue(config: LoomConfig, handlers: Mapping[JobKind, Handler]) -
                 "c'est elle qui porte l'URL du courtier"
             )
         return RabbitMqTaskQueue(url, handlers)
-    return AsyncioTaskQueue(handlers, shutdown_timeout=config.execution.shutdown_timeout)
+    return AsyncioTaskQueue(
+        handlers,
+        shutdown_timeout=config.execution.shutdown_timeout,
+        max_running=declared.max_running,
+    )
 
 
 def create_bus(config: LoomConfig) -> EventBus | None:

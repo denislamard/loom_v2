@@ -6,9 +6,11 @@ ce qui a circulé, secrets compris. Avant d'en faire un ``model.exchanged``,
 trois retouches, et seulement trois :
 
 1. **les secrets partent** : un en-tête dont le nom dit une clé, un jeton,
-   un mot de passe ou un cookie, et un paramètre d'adresse du même genre
-   (``?key=…``), sont remplacés par ``[retiré]`` — le nom reste, pour qu'on
-   voie qu'il y était ;
+   un mot de passe ou un cookie, un paramètre d'adresse du même genre
+   (``?key=…``) et les identifiants d'une adresse (``https://user:pw@hôte``)
+   sont remplacés par ``[retiré]`` — le nom, ou l'hôte, reste, pour qu'on
+   voie qu'il y était. Un compteur de débit (``x-ratelimit-remaining-tokens``)
+   n'est pas un jeton : il reste, c'est le diagnostic d'un refus pour débit ;
 2. **les octets d'un fichier partent** : une URI ``data:…;base64,…`` (la
    forme des images chez OpenAI), un objet ``{"type": "base64", "data": …}``
    (chez Anthropic) et un bloc ``{"type": "inline_data", "data": …}`` (celui
@@ -29,7 +31,7 @@ import json
 import re
 from collections.abc import AsyncGenerator, Mapping
 from typing import Any, Final, cast
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from loom_ia.core.events import ModelExchanged
 from loom_ia.core.model import ModelChunk, ModelRequest
@@ -42,6 +44,8 @@ _SECRET_NAME: Final = re.compile(
     r"|credential",
     re.IGNORECASE,
 )
+# Un compteur de débit : « tokens » y compte des jetons de modèle, il n'en est pas un.
+_RATE_LIMIT: Final = re.compile(r"rate-?limit", re.IGNORECASE)
 # Une URI de données en base64, telle qu'elle s'écrit dans un corps JSON.
 _DATA_URI: Final = re.compile(r"data:(?P<mime>[\w.+-]+/[\w.+-]+);base64,(?P<data>[A-Za-z0-9+/=]+)")
 
@@ -108,22 +112,27 @@ def exchanged(
 
 
 def scrubbed_headers(headers: Mapping[str, str]) -> dict[str, str]:
-    return {
-        name.lower(): REMOVED if _SECRET_NAME.search(name) else value
-        for name, value in headers.items()
-    }
+    return {name.lower(): REMOVED if _secret(name) else value for name, value in headers.items()}
 
 
 def scrubbed_url(url: str) -> str:
-    """L'adresse, sans la valeur des paramètres qui portent un secret."""
-    parts = urlsplit(url)
-    if not parts.query:
-        return url
+    """L'adresse, sans ses identifiants ni la valeur des paramètres qui portent un secret."""
+    parts = original = urlsplit(url)
+    if "@" in parts.netloc:
+        # Ce qui précède le dernier « @ » : l'utilisateur, son mot de passe, ou une clé.
+        host = parts.netloc.rpartition("@")[2]
+        parts = parts._replace(netloc=f"{quote(REMOVED, safe='[]')}@{host}")
     pairs = parse_qsl(parts.query, keep_blank_values=True)
-    if not any(_SECRET_NAME.search(name) for name, _ in pairs):
-        return url
-    kept = [(name, REMOVED if _SECRET_NAME.search(name) else value) for name, value in pairs]
-    return urlunsplit(parts._replace(query=urlencode(kept, safe="[]")))
+    if any(_secret(name) for name, _ in pairs):
+        kept = [(name, REMOVED if _secret(name) else value) for name, value in pairs]
+        parts = parts._replace(query=urlencode(kept, safe="[]"))
+    # Rien à retirer : l'adresse reste telle qu'elle a été écrite, au caractère près.
+    return url if parts == original else urlunsplit(parts)
+
+
+def _secret(name: str) -> bool:
+    """Vrai si le nom d'un en-tête ou d'un paramètre dit qu'il porte un secret."""
+    return bool(_SECRET_NAME.search(name)) and not _RATE_LIMIT.search(name)
 
 
 def without_files(text: str) -> str:

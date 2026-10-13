@@ -7,6 +7,9 @@ reprise, pas par la file.
 
 ``key`` dédoublonne : un même travail demandé deux fois pendant qu'il tourne
 n'est lancé qu'une fois (un seul résumé par session et par position, #23).
+``max_running`` borne les travaux menés de front : les suivants attendent
+leur tour, ``pending``. Une reprise au démarrage remet d'un coup tous les
+runs laissés en plan ; sans borne, ils partaient tous ensemble.
 Une tâche qui échoue est journalisée et ne fait jamais échouer le run qui
 l'a demandée.
 """
@@ -14,6 +17,7 @@ l'a demandée.
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Final
 
@@ -51,10 +55,16 @@ class AsyncioTaskQueue:
     """File non durable : une ``asyncio.Task`` par travail."""
 
     def __init__(
-        self, handlers: Mapping[JobKind, Handler], *, shutdown_timeout: float = 30.0
+        self,
+        handlers: Mapping[JobKind, Handler],
+        *,
+        shutdown_timeout: float = 30.0,
+        max_running: int | None = None,
     ) -> None:
         self._handlers = dict(handlers)
         self._shutdown_timeout = shutdown_timeout
+        # Sans borne quand rien n'est dit : celle de la config est posée par le montage.
+        self._places = asyncio.Semaphore(max_running) if max_running is not None else None
         self._entries: dict[str, _Entry] = {}
         self._by_key: dict[str, str] = {}
         self._closed = False
@@ -152,14 +162,15 @@ class AsyncioTaskQueue:
             if delay:
                 await asyncio.sleep(delay)
             entry.delayed = False
-            entry.state = "running"
-            handler = self._handlers.get(entry.job.kind)
-            if handler is None:
-                entry.state = "failed"
-                logger.error("Tâche %s : aucun gestionnaire pour %r", job_id, entry.job.kind)
-                return
-            await handler(entry.job)
-            entry.state = "done"
+            async with self._place():
+                entry.state = "running"
+                handler = self._handlers.get(entry.job.kind)
+                if handler is None:
+                    entry.state = "failed"
+                    logger.error("Tâche %s : aucun gestionnaire pour %r", job_id, entry.job.kind)
+                    return
+                await handler(entry.job)
+                entry.state = "done"
         except asyncio.CancelledError:
             entry.state = "cancelled"
             raise
@@ -169,6 +180,10 @@ class AsyncioTaskQueue:
         finally:
             if entry.key is not None and self._by_key.get(entry.key) == job_id and not entry.open:
                 del self._by_key[entry.key]
+
+    def _place(self) -> AbstractAsyncContextManager[object]:
+        """Une place parmi les travaux menés de front, ou aucune attente sans borne."""
+        return self._places if self._places is not None else nullcontext()
 
     def _forget_old(self) -> None:
         """Oublie les tâches terminées les plus anciennes."""

@@ -212,6 +212,43 @@ async def test_a_message_that_is_not_a_job_is_dropped_not_replayed(rabbitmq_url:
         await queue.aclose()
 
 
+async def test_a_message_that_is_not_a_job_waits_in_the_dead_queue(rabbitmq_url: str) -> None:
+    """Acquitté, il n'est pas perdu pour autant : la file morte le garde, avec son motif."""
+    import aio_pika
+
+    from loom_ia.adapters.queue.rabbitmq import DEAD_QUEUE, REASON_HEADER, WORK_QUEUE
+
+    seen: list[Job] = []
+    queue = RabbitMqTaskQueue(rabbitmq_url, {"run": lambda job: _remember(seen, job)})
+    connection = await aio_pika.connect_robust(rabbitmq_url)
+    try:
+        await queue.submit(job_of("run", "r-4"))
+        channel = await connection.channel()
+        await channel.default_exchange.publish(
+            aio_pika.Message(b"ceci n'est pas un travail", message_id="m-morte"),
+            routing_key=WORK_QUEUE,
+        )
+        task = asyncio.create_task(queue.serve())
+        assert await waited(lambda: len(seen) == 1, limit=10.0)
+        dead = await channel.declare_queue(DEAD_QUEUE, durable=True)
+        found = None
+        for _ in range(100):
+            found = await dead.get(fail=False)
+            if found is not None:
+                break
+            await asyncio.sleep(0.05)
+        await queue.stop()
+        await task
+        assert found is not None, "rien dans la file morte"
+        await found.ack()
+        assert found.body == b"ceci n'est pas un travail"
+        assert found.message_id == "m-morte"
+        assert "illisible" in str(found.headers[REASON_HEADER])
+    finally:
+        await connection.close()
+        await queue.aclose()
+
+
 async def test_a_job_that_fails_is_not_replayed_for_ever(rabbitmq_url: str) -> None:
     tries: list[Job] = []
 

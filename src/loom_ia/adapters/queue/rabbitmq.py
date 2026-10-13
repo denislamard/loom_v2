@@ -16,10 +16,24 @@ l'exécution : un worker tué sans préavis ne l'envoie pas, et le courtier
 redélivre. Deux pilotes pour un même run, c'est la concession qui les sépare
 (#27) ; une tâche rejouée retrouve un état qu'elle reconnaît, puisque le
 journal fait foi. Une tâche qui **échoue** est acquittée quand même, et
-journalisée : la rejouer sans fin serait pire que de la perdre. Un message
-mal formé (champ absent, type faux) est traité de même : acquitté, journalisé.
+journalisée : la rejouer sans fin serait pire que de la perdre, et le run a
+écrit son échec au journal. Un message que ce worker ne traitera **jamais**
+(illisible, champ absent, type inconnu, type sans traitement ici — un worker
+plus ancien que celui qui publie) est mis de côté : recopié tel quel, son
+motif dans l'en-tête ``x-loom-reason``, dans la file ``loom.jobs.dead``, puis
+acquitté. Le rejouer tournerait en rond, le jeter le perdrait ; de là, un
+opérateur peut le relire ou le republier. Si même la copie échoue, son corps
+est au log.
 Un acquittement que le courtier refuse (canal fermé) est journalisé et
 n'abat pas le worker : le courtier redélivre, c'est le contrat.
+
+**Le délai d'acquittement du courtier.** RabbitMQ ferme le canal d'un
+consommateur qui garde un message plus de ``consumer_timeout`` (30 minutes par
+défaut) sans l'acquitter, et redélivre ce message. Un run plus long que ce
+délai est donc redélivré : la concession empêche qu'il soit piloté deux fois,
+mais le réglage du courtier doit dépasser le run le plus long
+(``consumer_timeout`` dans ``rabbitmq.conf``, ou une politique sur la file).
+``loom worker`` le rappelle au démarrage, et un acquittement refusé le dit.
 
 **Le délai n'existe pas chez RabbitMQ.** Un travail différé va dans une file
 sans consommateur, avec une durée de vie par message ; à l'échéance, le
@@ -37,6 +51,7 @@ port l'a prévu, et l'état d'un run se lit au journal.
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Mapping
 from typing import Any, Final, cast
 
@@ -49,9 +64,15 @@ from loom_ia.core.ports import Job, JobKind, JobState
 
 logger = logging.getLogger(__name__)
 
-# File de travail, et file d'attente des travaux différés.
+# File de travail, file d'attente des travaux différés, et file des travaux
+# mis de côté — ceux qu'aucun worker de cette version ne traitera.
 WORK_QUEUE: Final = "loom.jobs"
 DELAY_QUEUE: Final = "loom.jobs.delayed"
+DEAD_QUEUE: Final = "loom.jobs.dead"
+# En-tête d'un travail mis de côté : pourquoi il l'a été.
+REASON_HEADER: Final = "x-loom-reason"
+# Ce que le log garde du corps d'un message qui n'a pas pu être mis de côté.
+_LOGGED_BODY: Final = 2_000
 # À l'échéance de sa durée de vie, un message de la file d'attente retombe dans
 # la file de travail. Exposées, parce que RabbitMQ refuse une redéclaration qui
 # diverge : qui déclare cette file ailleurs doit le faire à l'identique.
@@ -104,12 +125,15 @@ def decoded(body: bytes) -> tuple[str, Job]:
     )
 
 
-async def _settle(message: AbstractIncomingMessage, *, requeue: bool | None = None) -> None:
+async def _settle(
+    message: AbstractIncomingMessage, *, requeue: bool | None = None, ran: float = 0.0
+) -> None:
     """Acquitte le message (ou, avec ``requeue``, le remet en file) sans jamais lever.
 
     Un canal fermé fait échouer la réponse : le courtier redélivre alors le
     message, ce que le contrat « au moins une fois » prévoit. L'échec n'a pas à
-    abattre le worker, ni les travaux qui tournent à côté.
+    abattre le worker, ni les travaux qui tournent à côté. ``ran`` : la durée
+    du travail, que le log donne pour qu'on la compare au délai du courtier.
     """
     try:
         if requeue is None:
@@ -117,7 +141,12 @@ async def _settle(message: AbstractIncomingMessage, *, requeue: bool | None = No
         else:
             await message.nack(requeue=requeue)
     except Exception:
-        logger.exception("Réponse au courtier impossible, il redélivrera le message")
+        logger.exception(
+            "Réponse au courtier impossible, il redélivrera le message (travail de %.0f s). "
+            "Cause la plus fréquente : un travail plus long que le consumer_timeout du "
+            "courtier (30 min par défaut) — le régler au-delà du run le plus long",
+            ran,
+        )
 
 
 class RabbitMqTaskQueue:
@@ -152,6 +181,7 @@ class RabbitMqTaskQueue:
             self._connection = await aio_pika.connect_robust(self._url)
             self._channel = await self._connection.channel()
             await self._channel.declare_queue(DELAY_QUEUE, durable=True, arguments=DELAY_ARGUMENTS)
+            await self._channel.declare_queue(DEAD_QUEUE, durable=True)
             self._declared = await self._channel.declare_queue(WORK_QUEUE, durable=True)
         assert self._declared is not None
         return self._declared
@@ -234,24 +264,53 @@ class RabbitMqTaskQueue:
                 job_id, job = decoded(message.body)
             except ValueError as error:
                 # Un message que loom ne comprend pas ne sera jamais compris :
-                # l'acquitter est la seule sortie qui ne boucle pas.
-                logger.error("Travail illisible, abandonné : %s", error)
-                await _settle(message)
+                # le remettre en file tournerait en rond.
+                await self._set_aside(message, str(error))
                 return
             handler = self._handlers.get(job.kind)
             if handler is None:
-                logger.error("Travail %r sans traitement dans ce worker, abandonné", job.kind)
-                await _settle(message)
+                await self._set_aside(message, f"type {job.kind!r} sans traitement dans ce worker")
                 return
+            started = time.monotonic()
             try:
                 await handler(job)
             except Exception:
                 # Journalisé, acquitté : rejouer sans fin serait pire. Ce que
                 # le run en retient, il l'a écrit lui-même au journal.
                 logger.exception("Travail %s (%s) en échec", job_id, job.kind)
-            await _settle(message)
+            await _settle(message, ran=time.monotonic() - started)
         finally:
             places.release()
+
+    async def _set_aside(self, message: AbstractIncomingMessage, reason: str) -> None:
+        """Recopie le message dans ``DEAD_QUEUE``, son motif en en-tête, puis l'acquitte.
+
+        Si la copie échoue, le message est acquitté quand même — le remettre en
+        file le ferait revenir ici — et son corps est au log.
+        """
+        assert self._channel is not None
+        try:
+            await self._channel.default_exchange.publish(
+                aio_pika.Message(
+                    message.body,
+                    content_type=message.content_type,
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                    message_id=message.message_id,
+                    type=message.type,
+                    headers={**(message.headers or {}), REASON_HEADER: reason},
+                ),
+                routing_key=DEAD_QUEUE,
+            )
+        except Exception:
+            logger.exception(
+                "Travail écarté (%s), non recopié dans %s ; son corps : %r",
+                reason,
+                DEAD_QUEUE,
+                message.body[:_LOGGED_BODY],
+            )
+        else:
+            logger.error("Travail écarté (%s) : recopié dans %s", reason, DEAD_QUEUE)
+        await _settle(message)
 
     async def aclose(self) -> None:
         await self.stop()

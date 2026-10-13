@@ -245,6 +245,9 @@ class QueueStorage(DomainModel):
     # ``rabbitmq`` : nom de la variable d'environnement qui porte l'URL du
     # courtier (``amqp://…``). La config ne porte jamais un secret (§16.3).
     url_env: str | None = None
+    # ``asyncio`` : tâches menées de front ; les suivantes attendent leur tour.
+    # Une reprise remet tous les runs laissés en plan d'un coup (#27, H3).
+    max_running: PositiveInt = 16
 
     @model_validator(mode="after")
     def _check_backend(self) -> Self:
@@ -252,6 +255,11 @@ class QueueStorage(DomainModel):
             raise ValueError(
                 f"File {self.backend!r} : seuls {', '.join(QUEUE_BACKENDS)} "
                 "sont disponibles à ce jalon"
+            )
+        if self.brokered and "max_running" in self.model_fields_set:
+            raise ValueError(
+                f"File {self.backend!r} : 'max_running' ne vaut que pour la file en mémoire — "
+                "les tâches tournent dans les workers, que borne 'loom worker --jobs'"
             )
         if self.backend == "rabbitmq" and self.url_env is None:
             raise ValueError(

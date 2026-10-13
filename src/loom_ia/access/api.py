@@ -686,11 +686,11 @@ def _awaited(state: RunState, tree: Sequence[Event]) -> tuple[PendingApproval, .
     """
     if state.finished:
         return state.awaiting
-    runs = dict.fromkeys(event.run_id for event in tree if event.run_id != state.run_id)
     inner = [
         approval
-        for run_id in runs
-        for approval in fold([e for e in tree if e.run_id == run_id], run_id).awaiting
+        for run_id, own in _by_run(tree).items()
+        if run_id != state.run_id
+        for approval in fold(own, run_id).awaiting
     ]
     return (*state.awaiting, *inner)
 
@@ -794,13 +794,11 @@ def _unfinished(events: Sequence[Event]) -> list[RunState]:
     Les marqueurs de session sont écartés : ils portent l'identifiant de leur
     session, pas celui d'un run, et une session résumée en a.
     """
-    states: list[RunState] = []
-    runs = (e.run_id for e in events if e.category != "session")
-    for run_id in dict.fromkeys(runs):
-        state = fold([e for e in events if e.run_id == run_id], RunId(run_id))
-        if state.parent_run_id is None and state.kind == "normal" and not state.finished:
-            states.append(state)
-    return states
+    return [
+        state
+        for state in _run_states(events)
+        if state.parent_run_id is None and state.kind == "normal" and not state.finished
+    ]
 
 
 def traced_agents(trace: Trace) -> list[str]:
@@ -2568,6 +2566,11 @@ class Loom:
 
         Sans ``session_id``, toutes les sessions du locataire sont balayées —
         c'est la reprise au démarrage d'un process. Avec, une seule l'est.
+
+        Tout ce qui est trouvé est remis en file d'un coup : avec la file en
+        mémoire, ``storage.queue.max_running`` (16 par défaut) borne ce qui
+        tourne de front, les autres attendent leur tour ; avec RabbitMQ, c'est
+        ``loom worker --jobs``.
 
         Au balayage, une session dont le journal est illisible est sautée, avec
         un avertissement qui nomme le client et la session : les runs des

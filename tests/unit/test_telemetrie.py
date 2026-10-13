@@ -743,6 +743,150 @@ async def test_the_otel_translation_keeps_ids_parents_and_status() -> None:
     assert span_id("relance-42") == span_id("relance-42") != span_id("relance-43")
 
 
+def _span(i: int, *, tenant: str = "martin", **attributes: Any) -> SpanRecord:
+    """Un span d'outil, avec ce qu'il faut d'attributs."""
+    from datetime import UTC, datetime
+
+    moment = datetime.now(UTC)
+    return SpanRecord(
+        trace_id="0190a5b4-1c2d-7e3f-8a9b-0c1d2e3f4a5b",
+        span_id=f"span-{i}",
+        parent_span_id=None,
+        name="execute_tool calculer",
+        kind="tool",
+        start=moment,
+        end=moment,
+        attributes={"loom.tenant_id": tenant, **attributes},
+    )
+
+
+def _slow(delay: float) -> Any:
+    """Un collecteur en mémoire qui met ``delay`` secondes à prendre chaque lot."""
+    from opentelemetry.sdk.trace.export import SpanExportResult
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    class Lent(InMemorySpanExporter):
+        def export(self, spans: Sequence[Any]) -> SpanExportResult:
+            time.sleep(delay)
+            return super().export(spans)
+
+    return Lent()
+
+
+@sans_otel
+async def test_a_burst_of_spans_is_not_dropped_by_the_otel_queue() -> None:
+    """5 000 spans d'un coup, un collecteur à 50 ms par lot : la file du SDK (2 048) en jetait."""
+    from loom_ia.adapters.telemetry.otel import OtelSpanSink
+
+    lent = _slow(0.05)
+    sink = OtelSpanSink(lent, schedule_delay=0.01)
+    sink.export([_span(i) for i in range(5_000)])
+    await sink.aclose(30)
+    assert len(lent.get_finished_spans()) == 5_000
+
+
+@sans_otel
+async def test_the_otel_queue_size_variable_still_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``OTEL_BSP_MAX_QUEUE_SIZE`` posé, c'est lui qui borne la file."""
+    from loom_ia.adapters.telemetry.otel import OtelSpanSink
+
+    monkeypatch.setenv("OTEL_BSP_MAX_QUEUE_SIZE", "600")
+    lent = _slow(0.05)
+    sink = OtelSpanSink(lent, schedule_delay=0.01)
+    sink.export([_span(i) for i in range(1_000)])
+    await sink.aclose(30)
+    assert len(lent.get_finished_spans()) < 1_000
+
+
+@sans_otel
+async def test_closing_a_sink_whose_collector_hangs_takes_its_grace_not_more() -> None:
+    """``shutdown`` attendait le collecteur lot après lot, sans autre borne que son délai."""
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+
+    from loom_ia.adapters.telemetry.otel import OtelSpanSink
+
+    relache = threading.Event()
+
+    class Muet(SpanExporter):
+        def export(self, spans: Sequence[Any]) -> SpanExportResult:
+            relache.wait(30)
+            return SpanExportResult.SUCCESS
+
+    sink = OtelSpanSink(Muet(), schedule_delay=0.01)
+    sink.export([_span(i) for i in range(10)])
+    await asyncio.sleep(0.1)
+    start = time.perf_counter()
+    try:
+        await sink.aclose(0.3)
+        elapsed = time.perf_counter() - start
+    finally:
+        relache.set()
+    assert elapsed < 2, f"fermeture en {elapsed:.2f} s pour un délai de 0,3 s"
+
+
+@sans_otel
+@pytest.mark.parametrize(("limit", "expected"), [(None, 16_384), ("1000", 1_000)])
+async def test_a_long_content_is_cut_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, limit: str | None, expected: int
+) -> None:
+    """``loom.content.*`` partait entier : un résultat d'outil de 50 000 caractères aussi."""
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from loom_ia.adapters.telemetry.otel import OtelSpanSink
+
+    if limit is None:
+        monkeypatch.delenv("OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT", raising=False)
+    else:
+        monkeypatch.setenv("OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT", limit)
+    memoire = InMemorySpanExporter()
+    sink = OtelSpanSink(memoire)
+    long = "x" * 50_000
+    sink.export([_span(1, **{"loom.content.output": long, "loom.court": "court"})])
+    await sink.aclose(5)
+    [otel] = memoire.get_finished_spans()
+    assert otel.attributes is not None
+    coupe = str(otel.attributes["loom.content.output"])
+    assert len(coupe) == expected and coupe.endswith("[coupé : 50000 caractères]")
+    assert otel.attributes["loom.court"] == "court"
+
+
+@sans_otel
+def test_a_trace_id_keeps_a_canonical_uuid_and_separates_the_rest() -> None:
+    """Un run nommé pareil chez deux clients, ou un UUID écrit autrement, partageaient une trace."""
+    from loom_ia.adapters.telemetry.otel import trace_id
+
+    canonique = "0190a5b4-1c2d-7e3f-8a9b-0c1d2e3f4a5b"
+    # L'identifiant que loom tire reste la trace : on le cherche tel quel au collecteur.
+    assert (
+        trace_id(canonique, "martin")
+        == trace_id(canonique, "dupont")
+        == int(canonique.replace("-", ""), 16)
+    )
+    autres = [canonique.upper(), f"{{{canonique}}}", canonique.replace("-", "")]
+    assert len({trace_id(value, "martin") for value in [canonique, *autres]}) == 4
+    assert trace_id("devis-42", "martin") != trace_id("devis-42", "dupont")
+    assert trace_id("devis-42", "martin") == trace_id("devis-42", "martin")
+
+
+@sans_otel
+async def test_the_otel_span_carries_the_trace_of_its_client() -> None:
+    from dataclasses import replace
+
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from loom_ia.adapters.telemetry.otel import OtelSpanSink, trace_id
+
+    memoire = InMemorySpanExporter()
+    sink = OtelSpanSink(memoire)
+    # Un run nommé par l'appelant : son identifiant n'est pas un UUID.
+    nomme = replace(_span(1, tenant="dupont"), trace_id="devis-42")
+    sink.export([nomme])
+    await sink.aclose(5)
+    [otel] = memoire.get_finished_spans()
+    assert otel.context is not None
+    assert otel.context.trace_id == trace_id("devis-42", "dupont") != trace_id("devis-42", "martin")
+
+
 # --- Traces à relire : API, MCP, inspect (J6.2c) -----------------------------------
 
 TRACE_SESSION = SessionId("relue")
