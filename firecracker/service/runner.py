@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """runner — execute UN job, dans son propre processus.
 
 Programme autonome, stdlib pure. Il n'importe rien de l'agent hote : le

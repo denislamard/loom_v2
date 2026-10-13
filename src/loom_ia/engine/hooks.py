@@ -16,8 +16,9 @@ Garde-fous :
 - ``Retry`` est borné : au-delà de ``max_attempts`` réparations demandées par
   une même politique pour une même sortie (compteur du ``RunState`` pour la
   réponse finale, compteur de l'appel pour un rôle), sa décision devient
-  ``Fail``. Un guard qui gère lui-même ses réparations (contrat de sortie)
-  n'a pas de borne ici (``max_attempts: None``).
+  ``Fail``. Un guard ou un juge qui borne lui-même ses réparations (contrat
+  de sortie, juge, fidélité d'un résumé) n'a pas de borne ici
+  (``max_attempts: None``) : la sienne est son ``repair.max_attempts``.
 
 Guards : une politique peut enregistrer ses contrôles dans son contexte
 (``record``) ; ils deviennent des ``guard.checked``, écrits avant sa décision.

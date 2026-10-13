@@ -35,10 +35,10 @@ import random
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing, nullcontext
 from dataclasses import dataclass
-from typing import Final
 
 from loom_ia.core.events import ModelExchanged, ModelResponded, ModelRetried
 from loom_ia.core.model import (
+    CHARS_PER_TOKEN,
     Message,
     ModelRequest,
     ModelResponse,
@@ -60,9 +60,6 @@ from loom_ia.engine.exchange import Recorded, exchanged
 from loom_ia.engine.media import IMAGE_TOKENS, MediaResolver
 
 logger = logging.getLogger(__name__)
-
-# Approximation du nombre de caractères JSON par token (B7).
-CHARS_PER_TOKEN: Final = 4
 
 type Sleep = Callable[[float], Awaitable[None]]
 

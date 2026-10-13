@@ -28,14 +28,6 @@ from pydantic import (
 from loom_ia.agents.spec import AGENT_NAME_PATTERN, AgentSpec
 from loom_ia.config.compaction import COMPACTION_AGENT, CompactionConfig, compaction_agent
 from loom_ia.config.keys import ALGORITHM, FINGERPRINT, matches
-from loom_ia.config.later import (
-    LATER_API_KEY,
-    LATER_MCP_ACCESS,
-    LATER_ROOT,
-    LATER_STORAGE,
-    LATER_TELEMETRY,
-    LATER_TENANT,
-)
 from loom_ia.config.telemetry import (
     CaptureConfig,
     ExporterConfig,
@@ -43,6 +35,7 @@ from loom_ia.config.telemetry import (
     TenantTelemetry,
 )
 from loom_ia.core.model import (
+    DEFAULT_LEASE,
     DEFAULT_TENANT,
     MCP_NAME_PATTERN,
     Approval,
@@ -55,7 +48,6 @@ from loom_ia.core.model import (
     RateLimit,
     TenantId,
     ToolOverrides,
-    reject_later,
 )
 from loom_ia.core.template import Template, TemplateError
 from loom_ia.telemetry.logs import LogFormat
@@ -382,12 +374,6 @@ class StorageConfig(DomainModel):
     # Rétention des sessions dormantes ; sans borne, rien ne s'efface.
     retention: RetentionStorage = RetentionStorage()
 
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_STORAGE)
-        return data
-
     @model_validator(mode="after")
     def _check_encryption(self) -> Self:
         if self.encryption is None:
@@ -471,7 +457,7 @@ class ExecutionConfig(DomainModel):
     # (#27), en secondes ; elle est renouvelée au tiers tant qu'il tourne.
     # Passée, un autre worker peut reprendre le run — ce qui n'arrive que si
     # le porteur est mort.
-    lease: PositiveFloat = 60.0
+    lease: PositiveFloat = DEFAULT_LEASE
 
 
 def _declares(data: object, key: str) -> bool:
@@ -504,8 +490,7 @@ class TelemetryConfig(DomainModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_TELEMETRY)
+    def _bus_elsewhere(cls, data: object) -> object:
         if _declares(data, "bus"):
             # Prévu ici par la conception, réalisé ailleurs : le bus est un
             # stockage partagé entre process (5.3c), pas un réglage d'export.
@@ -563,12 +548,6 @@ class TenantSpec(DomainModel):
     # Capture des exports propre à ce client (6.1a) : la sienne, clé par clé,
     # sur celle de la racine. Ses collecteurs et ses motifs restent communs.
     telemetry: TenantTelemetry = TenantTelemetry()
-
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_TENANT)
-        return data
 
     @model_validator(mode="after")
     def _check(self) -> Self:
@@ -643,12 +622,6 @@ class ApiKey(DomainModel):
     # Agents autorisés ; vide signifie tous.
     agents: tuple[str, ...] = ()
 
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_API_KEY)
-        return data
-
     @model_validator(mode="after")
     def _check_hash(self) -> Self:
         # Un modèle recopié tel quel (``sha256:…``) se refuse ici, au chargement,
@@ -713,12 +686,6 @@ class McpAccess(DomainModel):
     # (``127.0.0.1:*``, ``localhost:*``, et ``server.http.host``). À renseigner
     # derrière un nom de domaine ou un proxy.
     allowed_hosts: tuple[str, ...] = ()
-
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_MCP_ACCESS)
-        return data
 
 
 class ServerConfig(DomainModel):
@@ -823,12 +790,6 @@ class LoomConfig(DomainModel):
     triggers: tuple[TriggerSpec, ...] = ()
     # Remplis depuis ``agents_dir`` au chargement, ou donnés directement en Python.
     agents: tuple[AgentSpec, ...] = ()
-
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_ROOT)
-        return data
 
     @property
     def strict(self) -> bool:

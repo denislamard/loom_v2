@@ -1362,7 +1362,7 @@ Le run 2 démarre parce que, à son lancement, la journée n'est qu'à 0,012 $ :
 La même consommation en ligne de commande :
 
 ```bash
-uv run loom report --tenant dupont-plomberie --periode jour
+uv run loom report --tenant dupont-plomberie --period day
 ```
 
 ```text
@@ -1374,7 +1374,7 @@ Dépense    : 0.024025 $, 6202 tokens
 Remise à 0 : 2026-10-11 00:00 UTC
 ```
 
-`--periode` accepte `jour` ou `mois`. Avec `--json`, la forme est celle d'un `TenantConsumption` (`tenant_id`, `period`, `since`, `resets_at`, `runs`, `cost_usd`, `tokens`, `limits`, `left`).
+`--period` accepte `day` ou `month` ; l'écriture d'avant, `--periode jour|mois`, reste comprise. Avec `--json`, la forme est celle d'un `TenantConsumption` (`tenant_id`, `period`, `since`, `resets_at`, `runs`, `cost_usd`, `tokens`, `limits`, `left`).
 
 Passons au **quota**. Dans `loom.yaml`, remplacez le plafond de la journée par un quota de débit :
 

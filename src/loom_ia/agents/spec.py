@@ -47,19 +47,10 @@ from loom_ia.core.model import (
     SideEffects,
     StreamOutput,
     ToolOverrides,
-    UnsupportedKey,
-    reject_later,
 )
 from loom_ia.core.template import Template, TemplateError
 
 AGENT_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
-
-# Clés du schéma complet d'un agent, prévues pour plus tard (§17.4).
-LATER_AGENT: Final[dict[str, str]] = {}
-LATER_MAIN: Final[dict[str, str]] = {}
-LATER_ROLE: Final[dict[str, str]] = {}
-LATER_SUBAGENT: Final[dict[str, str]] = {}
-LATER_CONTEXT: Final[dict[str, str]] = {}
 
 
 class Expose(DomainModel):
@@ -123,7 +114,6 @@ class MainRole(BaseRole):
     @classmethod
     def _check_input(cls, data: object) -> object:
         _reject_two_prompts(data)
-        reject_later(data, LATER_MAIN)
         return data
 
 
@@ -179,12 +169,6 @@ class JudgeSpec(DomainModel):
     timeout: PositiveFloat | None = None
     # Erreur du juge (modèle, verdict) : ``block`` fait échouer le run, ``allow`` laisse passer.
     on_error: Literal["block", "allow"] = "block"
-
-    @model_validator(mode="before")
-    @classmethod
-    def _check_input(cls, data: object) -> object:
-        _reject_later_context(data)
-        return data
 
     @model_validator(mode="after")
     def _check(self) -> Self:
@@ -244,8 +228,6 @@ class RoleSpec(BaseRole):
     @classmethod
     def _check_input(cls, data: object) -> object:
         _reject_two_prompts(data)
-        reject_later(data, LATER_ROLE)
-        _reject_later_context(data)
         return data
 
     @model_validator(mode="after")
@@ -295,19 +277,6 @@ def _declared_context(context: tuple[ContextItem, ...]) -> list[str]:
         else:
             names.append(item)
     return names
-
-
-def _reject_later_context(data: object) -> None:
-    """Refuse un contexte prévu pour plus tard, sous ses deux formes (nom ou objet)."""
-    if not isinstance(data, dict):
-        return
-    items = cast(dict[str, object], data).get("context")
-    if not isinstance(items, list | tuple):
-        return
-    for item in cast(list[object], items):
-        if isinstance(item, str) and item in LATER_CONTEXT:
-            raise UnsupportedKey(item, LATER_CONTEXT[item])
-        reject_later(item, LATER_CONTEXT)
 
 
 def _check_input_schema(schema: dict[str, JsonValue]) -> set[str]:
@@ -478,12 +447,6 @@ class SubAgentRef(DomainModel):
     # Part de ce qui reste au budget du run appelant au moment de l'appel (J4).
     budget_share: float | None = Field(default=None, gt=0.0, le=1.0)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_SUBAGENT)
-        return data
-
     @property
     def tool_name(self) -> str:
         return self.name or self.agent
@@ -574,12 +537,6 @@ class AgentSpec(DomainModel):
     # Profondeur maximale d'un run de cet agent pour appeler ses sous-agents :
     # à 1, un run racine les appelle, mais un sous-run de cet agent ne le peut pas.
     max_depth: PositiveInt = 1
-
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_AGENT)
-        return data
 
     @model_validator(mode="after")
     def _unique_tools(self) -> Self:

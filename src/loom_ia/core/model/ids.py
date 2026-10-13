@@ -5,6 +5,7 @@ Les identifiants générés par loom-ia sont des UUIDv7 : triés dans l'ordre
 chronologique, ils servent aussi de curseur de pagination (#22, #43).
 """
 
+import re
 import uuid
 from typing import Final, NewType
 
@@ -16,6 +17,11 @@ EventId = NewType("EventId", str)
 
 # Client implicite du mode librairie (#33).
 DEFAULT_TENANT: Final = TenantId("default")
+
+# Un identifiant qui peut servir de nom de fichier : ce que le journal JSONL
+# accepte pour un client ou une session (pas de chemin, pas de « .. »), et ce
+# qu'un déclencheur accepte d'un appelant pour en tirer une session.
+SAFE_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 def new_id() -> str:

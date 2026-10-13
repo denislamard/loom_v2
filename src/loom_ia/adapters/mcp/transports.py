@@ -7,7 +7,6 @@ initialisée. Les secrets sont lus dans l'environnement à la création de la
 fabrique : une variable absente est une erreur de config, signalée au montage.
 """
 
-import importlib.metadata
 from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
@@ -17,6 +16,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
+from loom_ia import __version__
 from loom_ia.core.model import McpServerSpec
 
 type SessionFactory = Callable[[MessageHandlerFnT], AbstractAsyncContextManager[ClientSession]]
@@ -26,14 +26,7 @@ class McpConfigError(ValueError):
     """Serveur MCP inutilisable en l'état (variable d'environnement absente…)."""
 
 
-def _version() -> str:
-    try:
-        return importlib.metadata.version("loom-ia")
-    except importlib.metadata.PackageNotFoundError:
-        return "dev"
-
-
-CLIENT_INFO = types.Implementation(name="loom-ia", version=_version())
+CLIENT_INFO = types.Implementation(name="loom-ia", version=__version__)
 
 
 def session_factory(spec: McpServerSpec, *, environ: Mapping[str, str]) -> SessionFactory:

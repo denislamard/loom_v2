@@ -455,7 +455,7 @@ Le LLM `main` n'est pas forcément Anthropic.
   - Avec `sdk: anthropic`, le champ `api` est refusé à la validation de la config.
 - **SDK en extras** (`loom-ia[anthropic]`, `loom-ia[openai]`), importés à la demande. Ils n'apparaissent que dans leur adaptateur.
 - **Retries internes du SDK désactivés** (`max_retries=0`) : une seule politique de retry, celle de loom, visible dans le journal.
-- **Tests de contrat par adaptateur**, avec des réponses HTTP enregistrées (respx).
+- **Tests de contrat par adaptateur**, avec des réponses HTTP enregistrées (`httpx2.MockTransport`, passé au SDK par `http_client`).
 
 **Réalisation (phase 3.5b) :** adaptateur `api: responses` (`openai_responses.py`), testé seulement sur des réponses HTTP enregistrées. Sans état chez le fournisseur (`store: false`, toute la conversation à chaque appel) ; `instructions` pour le prompt système ; une réponse du modèle redevient ses éléments `reasoning`, son message `assistant` et ses `function_call`, dans l'ordre ; résultats d'outils en `function_call_output` (texte, ou texte et images ; préfixe d'erreur) ; `max_output_tokens` ; un outil est `strict` si son schéma en suit les règles ; lecture des événements `response.*` (résumés et texte du raisonnement, texte, refus, arguments), avec repli sur les éléments complets quand un fournisseur ne donne pas de deltas ; `incomplete` → `max_tokens` ou `refusal` ; tokens en cache retirés des tokens d'entrée ; `response.failed` et `error` classés comme les erreurs HTTP.
 
@@ -1356,9 +1356,9 @@ Un client est toujours présent, mais implicite : `tenant_id = "default"`. Le co
 - **Lu une fois, au lancement du run**, et non avant chaque appel comme le budget d'un run. Une enveloppe quotidienne épuisée ne veut pas dire « réponds vite » mais « reviens demain » : le run qui franchit le plafond va jusqu'au bout, et c'est le **suivant** qui est refusé (`BudgetExhausted` : la limite atteinte, ce qui a été dépensé, et les secondes jusqu'à la remise à zéro). Un run refusé **n'écrit rien** — il n'a pas eu lieu.
 - **Compteur** — port `UsageCounter` (`consumed`, `record`) et adaptateur mémoire ; Postgres et Redis en 5.3. `record` **pose** ce qu'un run racine a coûté au lieu de l'ajouter : c'est ce qui le rend idempotent et permet au **réchauffage** — la relecture des `model.responded` du journal depuis le début de la fenêtre, une fois par client et par fenêtre — de chevaucher la vie courante sans compter deux fois. Le réchauffage est **atomique** : un seul à la fois par client et par fenêtre, les contrôles concurrents l'attendent, et la fenêtre n'est tenue pour chaude qu'une fois la lecture réussie — si le journal ne peut pas être relu, l'erreur se propage et le run est refusé (rien n'est écrit) au lieu de laisser le plafond ouvert ; le contrôle suivant relit. Seul un run **racine** est enregistré : la consommation d'un sous-agent est déjà dans le total de son parent.
 - **Quota d'un client (`quotas.runs_per_minute`)** — fenêtre **glissante** de soixante secondes, vérifiée à la façade, donc valable par les quatre accès. Un plafond de débit qui laisserait passer le double à cheval sur la minute n'en serait pas un. Un sous-run n'est pas une demande du client : il est lancé par son parent.
-- **Débit d'une clé d'API (`security.api_keys[].rate_limit`, #39)** — même fenêtre glissante, mais c'est la **clé** qu'on protège et non le client : elle compte toutes ses requêtes, lectures comprises, et deux clés d'un même client peuvent ne pas avoir le même débit. Vérifié par l'accès HTTP seul.
+- **Débit d'une clé d'API (`security.api_keys[].rate_limit`, #39)** — même fenêtre glissante, mais c'est la **clé** qu'on protège et non le client : elle compte toutes ses requêtes, lectures comprises, et deux clés d'un même client peuvent ne pas avoir le même débit. Vérifié par l'accès HTTP : les routes REST **et le MCP HTTP** monté sur la même application comptent dans une seule fenêtre par clé. `Loom.runs()` tient les bornes de la route REST : `limit` et `sessions` de 1 à 200 (`RUNS_MAX`, `SESSIONS_MAX`), `ValueError` au-delà.
 - **Ordre du contrôle, du moins cher au plus cher** : le client, l'agent qu'on lui ouvre, son débit (en mémoire), puis son budget de période (qui peut relire le journal). Rien n'est écrit tant que les quatre ne sont pas passés.
-- **Rapport (J5)** — `Loom.consumption(tenant_id, period="day" | "month")` et `loom report --periode jour|mois [--tenant …]` : ce qui a été dépensé sur la fenêtre, ce qu'il en reste, le nombre de runs et la date de remise à zéro. Il **relit le journal** à chaque appel au lieu de lire le compteur : c'est une question qu'un humain pose, et elle doit valoir même pour un client sans budget — dont le compteur, justement, ne retient rien.
+- **Rapport (J5)** — `Loom.consumption(tenant_id, period="day" | "month")` et `loom report --period day|month [--tenant …]` (l'écriture d'avant, `--periode jour|mois`, reste comprise) : ce qui a été dépensé sur la fenêtre, ce qu'il en reste, le nombre de runs et la date de remise à zéro. Il **relit le journal** à chaque appel au lieu de lire le compteur : c'est une question qu'un humain pose, et elle doit valoir même pour un client sans budget — dont le compteur, justement, ne retient rien.
 - **Accès** — en Python, `run()`, `stream()` et `submit()` lèvent `BudgetExhausted` ou `QuotaExceeded` ; en REST, **429** avec un `Retry-After` (quelques secondes pour un débit, la bascule de la fenêtre pour une journée épuisée) ; `loom validate` montre le budget et le quota de chaque client, et le `--tenant` qui manquait à `report` et à `sessions` en 5.1a est réparé.
 
 **Reste connu (5.1b) :** le compteur vit dans le process — un second worker a le sien, qu'il réchauffe depuis le journal (compteur partagé : 5.3) ; des runs lancés **en parallèle** sont tous admis, le contrôle ayant lieu avant qu'aucun n'ait consommé ; la dépense d'une **compaction** n'entre au compteur qu'au réchauffage suivant, n'étant le résultat d'aucun run de l'appelant (le rapport, lui, la voit toujours) ; un run refusé ne laisse aucune trace au journal, seulement un avertissement dans les logs — c'est pourquoi `BudgetScope` et `budget.exceeded` restent ceux du run et de la session ; les fenêtres sont en **UTC** et non dans le fuseau du client ; pas de `max_calls` par période (les tokens disent la même chose) ; le quota compte les lancements, pas les appels de modèle.
@@ -1549,7 +1549,7 @@ src/loom_ia/
 | `crypto` | `cryptography` | `adapters/crypto` |
 | `all` | Tous les extras ci-dessus | — |
 
-- **Outils de dev** (pytest, respx, ruff, pyright, import-linter) : dans `[dependency-groups]` (uv), pas dans les extras.
+- **Outils de dev** (pytest, ruff, pyright, import-linter) : dans `[dependency-groups]` (uv), pas dans les extras.
 - **CLI :** dans le noyau, avec `argparse` (stdlib). `loom serve` exige l'extra `http`.
 
 **Chargement des adaptateurs :**
@@ -1633,6 +1633,10 @@ Le package s'appelle `loom-ia` et vit dans un nouveau dépôt. Les extras s'écr
 ### 46. Licence : Apache 2.0
 
 Les en-têtes SPDX deviennent `Apache-2.0`. Pour reprendre le code de V1 (AGPL-3.0) sous cette licence, il faut en être le seul auteur, ou avoir l'accord des contributeurs.
+
+### 47. Ordre de réalisation
+
+Celui de `jalons.md`.
 
 ### 48. Enregistrement des agents
 
@@ -1761,8 +1765,4 @@ profiles: {prod: {...}}               # surcharges partielles
 
 ## Ouverts
 
-La recommandation suit la flèche.
-
-**Projet**
-
-47. Ordre de réalisation : jalons à revoir ensemble.
+Aucun : le dernier, l'ordre de réalisation (#47), est décidé.

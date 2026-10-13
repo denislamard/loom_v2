@@ -58,6 +58,7 @@ from typing import Final
 from pydantic import Field, JsonValue, TypeAdapter
 
 from loom_ia.core.model import (
+    CHARS_PER_TOKEN,
     FINALIZE_HINT,
     MOVED_IMAGES,
     REPAIR_PREFIX,
@@ -77,7 +78,6 @@ from loom_ia.core.model import (
 from loom_ia.core.ports import ModelError, RawExchange, exchange_log
 
 PROVIDER: Final = "fake"
-_CHARS_PER_TOKEN: Final = 4
 
 
 class FakeToolCall(DomainModel):
@@ -183,8 +183,8 @@ class FakeModel:
                 "alors que la requête en impose un (tool_choice: required)",
             )
         usage = Usage(
-            input_tokens=len(request.model_dump_json()) // _CHARS_PER_TOKEN,
-            output_tokens=len(message.model_dump_json()) // _CHARS_PER_TOKEN,
+            input_tokens=len(request.model_dump_json()) // CHARS_PER_TOKEN,
+            output_tokens=len(message.model_dump_json()) // CHARS_PER_TOKEN,
         )
         self._deposit(request, message, None)
         for chunk in message_to_chunks(message, usage=usage, model_id=request.model_id):

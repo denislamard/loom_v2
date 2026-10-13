@@ -40,7 +40,6 @@ import asyncio
 import fcntl
 import logging
 import os
-import re
 import threading
 from collections.abc import Sequence
 from pathlib import Path
@@ -50,7 +49,7 @@ from pydantic import ValidationError
 
 from loom_ia.adapters.stores.codec import PLAIN, EventMark, JournalCodec
 from loom_ia.core.events import Event, EventDraft, EventQuery
-from loom_ia.core.model import RunId, SessionId, TenantId
+from loom_ia.core.model import SAFE_ID, RunId, SessionId, TenantId
 from loom_ia.core.ports import (
     JournalCorrupted,
     SequenceConflict,
@@ -61,8 +60,6 @@ from loom_ia.core.ports import (
 
 logger = logging.getLogger(__name__)
 
-# Identifiants utilisables comme nom de fichier (pas de chemin, pas de « .. »).
-_SAFE_COMPONENT: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 SUFFIX: Final = ".jsonl"
 CORRUPT_SUFFIX: Final = ".corrupt"
 # Fin de fichier lue pour connaître le dernier événement sans relire tout le
@@ -71,7 +68,7 @@ TAIL_BYTES: Final = 64 * 1024
 
 
 def _component(value: str, kind: str) -> str:
-    if not _SAFE_COMPONENT.fullmatch(value):
+    if not SAFE_ID.fullmatch(value):
         raise UnusableId(f"{kind} inutilisable comme nom de fichier : {value!r}")
     return value
 

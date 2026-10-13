@@ -52,8 +52,8 @@ def rendered(messages: Sequence[Message]) -> str:
 
 def transcript(turns: Sequence[Sequence[Message]]) -> str:
     """Tours rendus en texte, séparés les uns des autres."""
-    rendus = [rendered(turn) for turn in turns]
-    return TURN_SEPARATOR.join(rendu for rendu in rendus if rendu)
+    texts = [rendered(turn) for turn in turns]
+    return TURN_SEPARATOR.join(text for text in texts if text)
 
 
 def _body(message: Message) -> str:

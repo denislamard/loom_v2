@@ -527,8 +527,6 @@ def test_each_counted_thing_has_its_own_window() -> None:
     assert window.take("tenant:b", 1, now=0.0) is None
     assert window.take("tenant:a", 1, now=1.0) is not None
     assert "2 compteur(s)" in repr(window)
-    window.forget("tenant:a")
-    assert window.take("tenant:a", 1, now=1.0) is None
 
 
 def test_a_tenant_quota_refuses_the_second_run_of_the_minute() -> None:
@@ -718,10 +716,10 @@ async def test_a_key_rate_limit_protects_the_server_even_on_a_read(demo: ConfigF
                 assert (await http.get("/v1/agents", headers=chez_libre)).status_code == 200
 
 
-# --- Ligne de commande : `report --periode`, et ce que `validate` en dit -------
+# --- Ligne de commande : `report --period`, et ce que `validate` en dit --------
 
 
-def test_report_periode_prints_what_a_tenant_spent_and_what_is_left(
+def test_report_period_prints_what_a_tenant_spent_and_what_is_left(
     demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from loom_ia.access.cli import main
@@ -734,13 +732,14 @@ def test_report_periode_prints_what_a_tenant_spent_and_what_is_left(
     assert main(["--config", str(config), "run", "demo", QUESTION, "--tenant", DUPONT]) == 0
     capsys.readouterr()
 
-    assert main(["--config", str(config), "report", "--periode", "jour", "--tenant", DUPONT]) == 0
+    assert main(["--config", str(config), "report", "--period", "day", "--tenant", DUPONT]) == 0
     out = capsys.readouterr().out
     assert f"Client     : {DUPONT}" in out
     assert "Runs       : 1" in out
     assert "plafond max_cost" in out and "reste" in out
     assert "Remise à 0 :" in out
 
+    # L'écriture d'avant reste comprise : ``--periode jour|mois``.
     arguments = ["report", "--periode", "mois", "--tenant", DUPONT, "--json"]
     assert main(["--config", str(config), *arguments]) == 0
     found = json.loads(capsys.readouterr().out)
@@ -758,7 +757,10 @@ def test_report_without_a_target_says_what_it_expects(
     from loom_ia.access.cli import main
 
     assert main(["--config", str(demo()), "report"]) == 2
-    assert "--periode" in capsys.readouterr().err
+    assert "--period." in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        main(["--config", str(demo()), "report", "--period", "semaine"])
+    assert "invalid choice: 'semaine'" in capsys.readouterr().err
 
 
 def test_validate_shows_the_budget_and_the_quota_of_a_tenant(

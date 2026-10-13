@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 #
 # ============================================================================
 # make_vm.sh — prépare une microVM Firecracker dans son propre dossier

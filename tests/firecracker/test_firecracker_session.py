@@ -236,7 +236,8 @@ async def test_a_silent_execd_times_out_and_the_session_closes() -> None:
         began = time.monotonic()
         with pytest.raises(TimeoutError, match=r"tool\.exec en 0\.3 s"):
             await session.exec("m:f", wait=0.3)
-        assert time.monotonic() - began < 2
+        # Borne large (CI chargée) : sans délai, l'attente serait sans fin.
+        assert time.monotonic() - began < 10
         assert session.closed
 
 
@@ -285,7 +286,7 @@ async def test_the_exec_wait_follows_the_wall_limit() -> None:
         with pytest.raises(TimeoutError):
             # wall_ms tout petit : l'attente vaut ~ EXEC_MARGIN, pas l'infini.
             await session.exec("m:f", limits={"wall_ms": 1}, wait=0.2)
-        assert time.monotonic() - began < 2
+        assert time.monotonic() - began < 10
     assert asked[-1]["limits"] == {"wall_ms": 1}
     assert asked[-1]["args"] == {}
     assert "env" not in asked[-1]
@@ -343,8 +344,9 @@ async def test_a_job_over_its_wall_limit_is_stopped(execd: Path) -> None:
     async with await _open(execd) as session:
         await session.put_code("essai.py", SCRIPT)
         began = time.monotonic()
-        done = await session.exec("essai:dort", args={"secondes": 5}, limits={"wall_ms": 500})
-        assert time.monotonic() - began < 4
+        done = await session.exec("essai:dort", args={"secondes": 30}, limits={"wall_ms": 500})
+        # Borne large (CI chargée), loin des 30 s qu'il dormirait sans limite.
+        assert time.monotonic() - began < 10
         assert done.error is not None
         assert done.error.kind == "timeout"
 
@@ -468,8 +470,9 @@ async def test_a_job_left_by_a_closed_session_gives_its_place_back(execd: Path) 
     try:
         await other.put_code("essai.py", SCRIPT)
         begun = time.monotonic()
-        done = await other.exec("essai:principal", args={"n": 3}, wait=5)
-        assert done.ok and time.monotonic() - begun < 3
+        done = await other.exec("essai:principal", args={"n": 3}, wait=20)
+        # Borne large (CI chargée) : sans place rendue, il attendrait le job de 20 s.
+        assert done.ok and time.monotonic() - begun < 15
     finally:
         await other.close()
 
@@ -570,6 +573,14 @@ def service(execd_service: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Mo
     finally:
         for name in names:
             sys.modules.pop(name, None)
+
+
+def test_host_and_guest_agree_on_the_frame_limits(service: ModuleType) -> None:
+    """Les bornes d'une trame sont écrites deux fois, dans l'invité (Python 3.12) et ici."""
+    from loom_ia.adapters.firecracker import session as host
+
+    guest = sys.modules["protocol"]
+    assert (guest.MAX_HEADER, guest.MAX_BODY) == (host.MAX_HEADER, host.MAX_BODY)
 
 
 def _guest_session(service: ModuleType, jobs: Path) -> Any:

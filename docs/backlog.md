@@ -57,7 +57,7 @@ storage:
 
 **À faire :** passer #47 en décidé dans `fonctions.md` avec un renvoi vers `jalons.md`, et retirer la ligne correspondante du §20 de `conception.md`.
 
-**Statut :** à faire.
+**Statut :** fait (revue, lot 37).
 
 ---
 
@@ -69,7 +69,7 @@ storage:
 
 **À faire :** remplacer « respx » par `httpx2.MockTransport` dans `docs/fonctions.md` (#9 et outils de dev), `docs/conception.md` (§10.1 et §19) et `docs/jalons.md` (principes et tests du J1).
 
-**Statut :** à faire.
+**Statut :** fait (revue, lot 37).
 
 ---
 

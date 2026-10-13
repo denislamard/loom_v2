@@ -245,7 +245,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
         case RunClaimed(worker_id=worker, lease_until=until):
             update["claim"] = RunClaim(worker_id=worker, lease_until=until)
         case ApprovalRequested() as asked:
-            update["approvals"] = (*state.approvals, _asked(asked))
+            update["approvals"] = (*state.approvals, asked.as_pending())
         case ApprovalGranted(call_id=call_id) as granted:
             corriges = granted.arguments
             if corriges is not None:
@@ -316,19 +316,6 @@ def _restated(
         != message.blocks
         else message
         for message in messages
-    )
-
-
-def _asked(payload: ApprovalRequested) -> PendingApproval:
-    """Demande d'approbation, telle qu'elle attend dans l'état."""
-    return PendingApproval(
-        call_id=payload.call_id,
-        tool_name=payload.tool_name,
-        arguments=payload.arguments,
-        reason=payload.reason,
-        policy=payload.policy,
-        scope=payload.scope,
-        expire_at=payload.expire_at,
     )
 
 

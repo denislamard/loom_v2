@@ -169,8 +169,12 @@ jobs:
       # un échec au lieu d'un saut. Sans lui, un conteneur tombé ou une variable
       # mal écrite rendrait un job vert qui n'a rien éprouvé — exactement ce que
       # cette CI faisait avant d'avoir des services.
+      # Couverture en branches (`[tool.coverage.run]`) : 94,67 % mesurés le 13/10 sans
+      # RabbitMQ ; le seuil est ce plancher, et un recul le fait échouer.
       - name: Tests avec couverture
-        run: uv run --locked pytest --require-services --cov=loom_ia --cov-report=term-missing
+        run: >-
+          uv run --locked pytest --require-services
+          --cov=loom_ia --cov-report=term-missing --cov-fail-under=94
 
       # execd lance chaque job sous l'uid 1500, sans groupe supplémentaire : le dernier essai
       # passe en root (sudo) pour le faire vraiment — hors de root, il est sauté, et les autres

@@ -13,8 +13,10 @@ rejouée retrouve un état qu'elle reconnaît. Un courtier ne sait pas non plus
 toujours répondre sur une tâche : ``state`` peut rendre ``unknown`` et
 ``cancel`` faux sans que rien n'aille mal — le journal fait foi, pas la file.
 
-Un seul type de tâche est traité au jalon J4.1b, la compaction (#23) ; les
-autres sont déclarés ici et refusés tant que leur phase n'est pas là.
+Quatre types de tâche (``JobKind``) : le résumé d'une session (``compaction``),
+un run lancé en arrière-plan (``run``), sa reprise après une approbation
+(``resume``) et l'expiration différée d'une demande d'approbation
+(``expire_approval``).
 """
 
 from collections.abc import Mapping

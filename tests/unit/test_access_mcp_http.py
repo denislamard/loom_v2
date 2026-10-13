@@ -168,6 +168,42 @@ async def test_a_key_is_required(demo: ConfigFactory) -> None:
     assert response.headers["www-authenticate"] == "Bearer"
 
 
+async def test_a_key_rate_limit_counts_the_mcp_requests_too(demo: ConfigFactory) -> None:
+    """Le débit n'était compté qu'en REST : par le MCP HTTP, la même clé passait sans limite.
+
+    REST et MCP comptent dans la même fenêtre : c'est la clé qu'on bride, pas la route.
+    """
+    security, jetons = cles(bridee={"scopes": ["run", "read"], "rate_limit": {"per_minute": 2}})
+    loom = Loom.from_config(demo(security=security, server=MCP_HTTP))
+    app = create_app(loom, own=True)
+    cle = {"authorization": f"Bearer {jetons['bridee']}"}
+    mcp = {
+        **cle,
+        "content-type": "application/json",
+        "accept": "application/json, text/event-stream",
+    }
+    init = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "essai", "version": "1"},
+        },
+    }
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://127.0.0.1"
+        ) as http:
+            assert (await http.get("/v1/agents", headers=cle)).status_code == 200
+            assert (await http.post("/mcp/", json=init, headers=mcp)).status_code == 200
+            refus = await http.post("/mcp/", json=init, headers=mcp)
+    assert refus.status_code == 429
+    assert "requêtes par minute" in refus.json()["detail"]
+    assert 1 <= int(refus.headers["Retry-After"]) <= 60
+
+
 async def test_an_expired_key_is_refused_with_its_date(demo: ConfigFactory) -> None:
     security, jetons = cles(
         morte={"scopes": ["run", "read"], "expires": "2020-01-01T00:00:00Z"},

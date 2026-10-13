@@ -149,6 +149,8 @@ activemq-data/
 
 # Environments
 .env
+.env.*
+!.env.example
 .envrc
 .venv
 env/
@@ -224,3 +226,6 @@ htmlcov/
 # et les VM qu'il construit quand on ne lui donne pas de dossier.
 firecracker/cache/
 firecracker/vms/
+
+# macOS
+.DS_Store

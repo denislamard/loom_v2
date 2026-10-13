@@ -7,11 +7,11 @@ Le magasin ``journal`` ne voit que son run, ``memory`` que son process.
 
 Une table, une ligne par clé. ``reserve`` tient en **une seule instruction** :
 
-    INSERT … ON CONFLICT(key) DO UPDATE … WHERE status = 'in_progress'
-                                            AND expires_at < <maintenant>
+    INSERT … ON CONFLICT(key) DO UPDATE … WHERE idempotency.expires_at < <maintenant>
 
-Prendre la clé si elle est libre, la reprendre si la réservation d'un autre a
-expiré, ne rien faire sinon — et c'est SQLite qui arbitre, pas nous. Un
+Prendre la clé si elle est libre, la reprendre si la ligne qui la tient a
+expiré (une réservation dont l'effet est d'état inconnu, ou un résultat qui
+n'a plus cours), ne rien faire sinon — et c'est SQLite qui arbitre, pas nous. Un
 ``get`` suivi d'un ``INSERT`` serait un check-then-act : entre les deux, un
 second worker passerait. Le nombre de lignes touchées (0 ou 1) fait foi.
 

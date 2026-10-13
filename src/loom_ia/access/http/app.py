@@ -89,7 +89,6 @@ import re
 from collections.abc import AsyncGenerator
 from contextlib import aclosing, asynccontextmanager
 from datetime import UTC, datetime
-from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Annotated, Final, cast
 
 from fastapi import (
@@ -108,6 +107,7 @@ from fastapi.security.http import HTTPAuthorizationCredentials
 from pydantic import AwareDatetime, JsonValue
 from sse_starlette.sse import EventSourceResponse
 
+from loom_ia import __version__
 from loom_ia.access.api import (
     RUNS_LIMIT,
     RUNS_MAX,
@@ -253,14 +253,6 @@ async def _payload(request: Request) -> JsonValue:
         ) from exc
 
 
-def package_version() -> str:
-    """Version du paquet servi, ou ``0`` hors installation."""
-    try:
-        return version("loom-ia")
-    except PackageNotFoundError:  # pragma: no cover - dépend de l'installation
-        return "0"
-
-
 async def caller(
     request: Request,
     bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(BEARER_SCHEME)] = None,
@@ -268,8 +260,9 @@ async def caller(
 ) -> Caller:
     """Appelant de la requête, reconnu par les clés de l'instance servie.
 
-    Le débit de la clé est compté ici, donc sur toutes les routes : une clé qui
-    s'emballe est arrêtée avant qu'on ne lise son corps (#39).
+    Le débit de la clé est compté ici, donc sur toutes les routes REST : une clé qui
+    s'emballe est arrêtée avant qu'on ne lise son corps (#39). Le MCP HTTP
+    monté par l'application compte dans la même fenêtre (``app.state.rates``).
 
     Les deux schémas sont là pour le document OpenAPI ; la clé se relit sur la
     requête elle-même, une instance ouverte n'en demandant aucune.
@@ -298,9 +291,12 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     # Profil prod : une API sans clé y est une erreur, pas un avertissement (M4).
     announce(loom.config, _open_warnings(loom.config, host))
 
+    # Débit des clés d'API (#39) : une fenêtre glissante par application servie,
+    # que le MCP HTTP monté ici partage.
+    rates = RateWindow()
     # Serveur MCP monté dans la même application (J5.2b) : un seul port, une
     # seule authentification, et la clé donne le client à chaque requête.
-    served = _mcp(loom) if loom.config.server.mcp.http else None
+    served = _mcp(loom, rates) if loom.config.server.mcp.http else None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -317,15 +313,14 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     app = FastAPI(
         title="loom-ia",
         summary="Agents loom exposés en HTTP",
-        version=package_version(),
+        version=__version__,
         openapi_tags=list(TAGS),
         lifespan=lifespan,
     )
     app.state.loom = loom
     # Aucun corps n'est lu sans borne : JSON, déclencheurs, MCP, comme les envois de fichiers.
     app.add_middleware(BodyLimit, limit=http.max_body_bytes)
-    # Débit des clés d'API (#39) : une fenêtre glissante par application servie.
-    app.state.rates = RateWindow()
+    app.state.rates = rates
     router = APIRouter(prefix=f"{http.base_path}/v1")
 
     @app.exception_handler(UnknownAgent)
@@ -334,7 +329,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     @app.exception_handler(UnknownSession)
     @app.exception_handler(UnknownTrigger)
     async def _not_found(request: Request, exc: Exception) -> JSONResponse:
-        return JSONResponse({"detail": _message(exc)}, status_code=status.HTTP_404_NOT_FOUND)
+        return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_404_NOT_FOUND)
 
     @app.exception_handler(BudgetExhausted)
     @app.exception_handler(QuotaExceeded)
@@ -345,7 +340,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         # pour l'autre.
         after = getattr(exc, "retry_after", 1.0)
         return JSONResponse(
-            {"detail": _message(exc)},
+            {"detail": str(exc)},
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             headers={"Retry-After": str(max(1, math.ceil(float(after))))},
         )
@@ -358,7 +353,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         until = getattr(exc, "lease_until", None)
         left = (until - datetime.now(UTC)).total_seconds() if isinstance(until, datetime) else 1.0
         return JSONResponse(
-            {"detail": _message(exc)},
+            {"detail": str(exc)},
             status_code=status.HTTP_409_CONFLICT,
             headers={"Retry-After": str(max(1, math.ceil(left)))},
         )
@@ -369,9 +364,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         # un état voulu (5.5b), et 424 le dit mieux qu'un 500 — la demande est
         # juste, ce qui manque est ailleurs, et le message nomme l'empreinte
         # attendue.
-        return JSONResponse(
-            {"detail": _message(exc)}, status_code=status.HTTP_424_FAILED_DEPENDENCY
-        )
+        return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_424_FAILED_DEPENDENCY)
 
     @app.exception_handler(JournalCorrupted)
     @app.exception_handler(ProjectionError)
@@ -384,9 +377,9 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         return JSONResponse(
             {
                 "detail": (
-                    _message(exc)
+                    str(exc)
                     if isinstance(exc, SessionUnreadable)
-                    else f"Journal de la session illisible : {_message(exc)}"
+                    else f"Journal de la session illisible : {exc!s}"
                 )
             },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -397,24 +390,20 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         # Le journal est tenu par un autre écrivain : rien n'a été écrit et la même
         # demande passera sans doute dans un instant. 503, pas 500.
         logger.warning("Journal occupé sur %s : %s", request.url.path, exc)
-        return JSONResponse(
-            {"detail": _message(exc)}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE
-        )
+        return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
     @app.exception_handler(AgentNotAllowed)
     @app.exception_handler(UnknownTenant)
     async def _forbidden(request: Request, exc: Exception) -> JSONResponse:
         # Le client vient de la clé : ce n'est pas une demande mal formée,
         # c'est une demande que cette clé n'a pas le droit de faire.
-        return JSONResponse({"detail": _message(exc)}, status_code=status.HTTP_403_FORBIDDEN)
+        return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_403_FORBIDDEN)
 
     @app.exception_handler(UnusableId)
     async def _unusable(request: Request, exc: Exception) -> JSONResponse:
         # Un identifiant que le journal ne peut pas nommer ne désigne aucun journal
         # et n'en désignera jamais : une demande mal formée, pas une panne.
-        return JSONResponse(
-            {"detail": _message(exc)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT
-        )
+        return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
 
     @router.get("/agents", tags=["agents"], summary="Agents publiés par l'API")
     async def agents(who: Who) -> list[AgentInfo]:
@@ -765,7 +754,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     return app
 
 
-def _mcp(loom: Loom) -> McpHttp:
+def _mcp(loom: Loom, rates: RateWindow) -> McpHttp:
     """Monte le serveur MCP, ou dit ce qui manque pour l'extra ``mcp``."""
     try:
         from loom_ia.access.mcp_server.http import McpHttp
@@ -773,7 +762,7 @@ def _mcp(loom: Loom) -> McpHttp:
         raise RuntimeError(
             "'server.mcp.http' demande l'extra 'mcp' (installer l'extra : loom-ia[http,mcp])"
         ) from manque
-    return McpHttp(loom)
+    return McpHttp(loom, rates=rates)
 
 
 def sse(item: StreamItem, *, masked: bool = False) -> dict[str, str]:
@@ -837,7 +826,3 @@ def _trigger(loom: Loom, name: str, tenant: TenantId) -> TriggerSpec:
         if spec.name == name:
             return spec
     raise UnknownTrigger(name, [spec.name for spec in opened])
-
-
-def _message(exc: Exception) -> str:
-    return str(exc.args[0]) if exc.args else str(exc)

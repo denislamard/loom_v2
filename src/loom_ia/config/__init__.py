@@ -7,7 +7,6 @@ from loom_ia.config.loader import load_config
 from loom_ia.config.models import ApiKey, LoomConfig, SecurityConfig, TenantSpec
 from loom_ia.config.references import Registry, import_modules, resolve
 from loom_ia.config.schema import agent_json_schema, config_json_schema
-from loom_ia.core.model import UnsupportedKey
 
 __all__ = [
     "ApiKey",
@@ -16,7 +15,6 @@ __all__ = [
     "Registry",
     "SecurityConfig",
     "TenantSpec",
-    "UnsupportedKey",
     "agent_json_schema",
     "config_json_schema",
     "fingerprint",

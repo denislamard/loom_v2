@@ -292,7 +292,7 @@ def test_a_run_in_flight_ends_in_the_old_process(
     demo: ConfigFactory, served: Callable[[Path], Served]
 ) -> None:
     script: list[dict[str, Any]] = [
-        {"tool_calls": [{"name": "attendre", "arguments": {"secondes": 4}}]},
+        {"tool_calls": [{"name": "attendre", "arguments": {"secondes": 8}}]},
         {"text": "C'est fait."},
     ]
     config = demo(
@@ -316,7 +316,8 @@ def test_a_run_in_flight_ends_in_the_old_process(
     # Le nouveau sert tout de suite, et lit au journal le run de l'ancien.
     begun = time.monotonic()
     assert server.agents() == {"demo": "Répond aux questions de calcul."}
-    assert time.monotonic() - begun < 1.0
+    # Borne large (CI chargée) : s'il attendait l'ancien, ce serait le reste des 8 s.
+    assert time.monotonic() - begun < 3.0
     assert server.call("GET", f"/runs/{run_id}")["status"] == "awaiting_tools"
 
     # L'ancien le mène au bout avant de sortir.

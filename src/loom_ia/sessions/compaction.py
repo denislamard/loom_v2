@@ -27,7 +27,6 @@ avertissement dans le journal.
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Final
 
 from loom_ia.core.events import (
     Event,
@@ -67,11 +66,6 @@ logger = logging.getLogger(__name__)
 # clients ne résument pas leurs conversations avec le même modèle ni les mêmes
 # identifiants.
 type SummaryResolver = Callable[[str, TenantId], RunContext]
-
-# Résultat d'outil tronqué dans le segment : le résumé n'a pas besoin du
-# détail, et le contrôle de fidélité compare au segment tel qu'il est envoyé.
-MAX_RESULT_CHARS: Final = 800
-CUT_MARK: Final = "… (résultat tronqué)"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

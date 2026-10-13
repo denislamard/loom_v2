@@ -2,7 +2,7 @@
 
 > Synthèse de la conception validée. Les renvois pointent vers `fonctions.md` : une lettre et un chiffre (A1, K6…) désignent une fonction, `#n` un point tranché.
 >
-> **Statut :** conception validée, sauf l'ordre de réalisation (#47). Aucun code n'est encore écrit. Le schéma de config (§17) est validé ; les autres exemples de code sont indicatifs.
+> **Statut :** conception validée ; l'ordre de réalisation (#47) est celui de `jalons.md`. Le schéma de config (§17) est validé ; les autres exemples de code sont indicatifs.
 
 ## Sommaire
 
@@ -791,7 +791,7 @@ models:
 - `api: responses` permet de renvoyer le raisonnement chiffré ; `chat` couvre les fournisseurs compatibles (Together, vLLM, Ollama).
 - Les SDK sont des extras (`loom-ia[anthropic]`, `loom-ia[openai]`), importés à la demande, et n'apparaissent que dans leur adaptateur. Les variables d'environnement des SDK ne s'imposent pas au client : les en-têtes qu'elles portent (`ANTHROPIC_CUSTOM_HEADERS`, `OPENAI_ORG_ID`…) sont neutralisés à la construction, et `x-api-key` / `Authorization` sont épinglés à la clé du client (en multi-clients, la clé et la facturation du process ne s'imposent jamais).
 - Leurs retries internes sont désactivés (`max_retries=0`) : une seule politique de retry, celle de loom-ia.
-- Chaque adaptateur a des tests de contrat avec des réponses HTTP enregistrées (respx).
+- Chaque adaptateur a des tests de contrat avec des réponses HTTP enregistrées (`httpx2.MockTransport`, passé au SDK par `http_client`).
 
 **Réalisation (3.5b) :**
 
@@ -1113,8 +1113,8 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 - Budget d'un client : `budgets.tenant` — `max_cost_per_day`, `max_tokens_per_day`, `max_cost_per_month`, `max_tokens_per_month` —, fusionné clé par clé comme les autres budgets. Fenêtres **calendaires, en UTC** : un compteur par fenêtre suffit, il se reconstruit depuis le journal, et la remise à zéro est une date.
 - Contrôle **au lancement du run**, une fois, et non avant chaque appel : le run qui franchit le plafond va jusqu'au bout, le suivant est refusé (`BudgetExhausted`, avec les secondes jusqu'à la remise à zéro). Un run refusé n'écrit rien au journal, donc pas de `budget.exceeded` : `BudgetScope` reste `run | session`.
 - Compteur : port `UsageCounter` et adaptateur mémoire (Postgres et Redis en 5.3). `record` **pose** ce qu'a coûté un run racine au lieu de l'ajouter, ce qui rend l'enregistrement idempotent et permet au réchauffage depuis le journal de chevaucher la vie courante sans compter deux fois.
-- Quota d'un client : `quotas.runs_per_minute`, fenêtre **glissante** de 60 s, vérifiée à la façade (donc par les quatre accès). Débit d'une clé d'API : `rate_limit.per_minute`, même fenêtre, vérifié par l'accès HTTP — c'est la clé qu'il protège, lectures comprises, et non le client.
-- Rapport : `Loom.consumption(tenant_id, period=…)` et `loom report --periode jour|mois`, relus dans le journal à chaque appel, donc valables même pour un client sans budget.
+- Quota d'un client : `quotas.runs_per_minute`, fenêtre **glissante** de 60 s, vérifiée à la façade (donc par les quatre accès). Débit d'une clé d'API : `rate_limit.per_minute`, même fenêtre, vérifié par l'accès HTTP (routes REST et MCP HTTP, une fenêtre par clé) — c'est la clé qu'il protège, lectures comprises, et non le client.
+- Rapport : `Loom.consumption(tenant_id, period=…)` et `loom report --period day|month`, relus dans le journal à chaque appel, donc valables même pour un client sans budget.
 
 ## 16. Sécurité
 
@@ -1631,7 +1631,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
 ### 18.4 CLI
 
-Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `replay` (6.2a et 6.2b), `inspect` (6.2c : l'arbre lisible d'un run, `--full`, `--json`), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --periode jour|mois` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`. Depuis 5.2a, `keys create` prend `--tenant`, `--expires` (date ISO ou durée : `90j`, `12h`) et `--rate-limit`, et imprime le bloc YAML complet ; `validate` montre une ligne par clé — client, portées, agents, débit, état de l'expiration — et signale une clé qui approuve sans pouvoir lire. Depuis 5.4b, `validate` et `serve` annoncent les ressources MCP quand le serveur HTTP est monté : elles ne dépendent d'aucun réglage, et c'est la clé de la requête qui dit ce qu'une lecture en voit. Depuis 5.5a, `--profile` est une option **globale** (elle l'emporte sur `LOOM_PROFILE` et sur le fichier), et `validate` comme `serve` impriment le profil actif, sa provenance et ce qu'il change. Depuis 5.4c, `validate` liste les **portes** déclarées avec leur route, leur agent, leur session et leur en-tête de livraison — et signale celle qui n'en a pas, dont une relivraison rouvrirait un run ; `serve` imprime l'adresse de chaque porte, celle qu'on donne au planificateur de la plateforme. Depuis 6.4a, `serve --reload` (#48) relance le **process** qui sert à chaque changement d'un fichier de la config, rien n'étant rechargé à chaud : un superviseur garde la socket — partagée, une requête de la relève attend dans sa file — et surveille le dossier de la config sauf ce que loom y écrit (journaux, fichiers, bases SQLite, ceux de chaque client) et le bruit d'usage ; un **nouveau** process charge la config et monte chaque agent pour chaque client (clients de modèle jamais appelés : une clé absente ne bloque pas) pendant que l'ancien sert ; s'il échoue, il dit pourquoi et l'ancien continue ; sinon il prend la main une fois l'ancien sourd, et l'ancien finit ses requêtes et ses runs comme sur un Ctrl+C. Refusé en profil `prod`. `watchfiles` vient avec l'extra `http`.
+Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `replay` (6.2a et 6.2b), `inspect` (6.2c : l'arbre lisible d'un run, `--full`, `--json`), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --period day|month` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`. Depuis 5.2a, `keys create` prend `--tenant`, `--expires` (date ISO ou durée : `90j`, `12h`) et `--rate-limit`, et imprime le bloc YAML complet ; `validate` montre une ligne par clé — client, portées, agents, débit, état de l'expiration — et signale une clé qui approuve sans pouvoir lire. Depuis 5.4b, `validate` et `serve` annoncent les ressources MCP quand le serveur HTTP est monté : elles ne dépendent d'aucun réglage, et c'est la clé de la requête qui dit ce qu'une lecture en voit. Depuis 5.5a, `--profile` est une option **globale** (elle l'emporte sur `LOOM_PROFILE` et sur le fichier), et `validate` comme `serve` impriment le profil actif, sa provenance et ce qu'il change. Depuis 5.4c, `validate` liste les **portes** déclarées avec leur route, leur agent, leur session et leur en-tête de livraison — et signale celle qui n'en a pas, dont une relivraison rouvrirait un run ; `serve` imprime l'adresse de chaque porte, celle qu'on donne au planificateur de la plateforme. Depuis 6.4a, `serve --reload` (#48) relance le **process** qui sert à chaque changement d'un fichier de la config, rien n'étant rechargé à chaud : un superviseur garde la socket — partagée, une requête de la relève attend dans sa file — et surveille le dossier de la config sauf ce que loom y écrit (journaux, fichiers, bases SQLite, ceux de chaque client) et le bruit d'usage ; un **nouveau** process charge la config et monte chaque agent pour chaque client (clients de modèle jamais appelés : une clé absente ne bloque pas) pendant que l'ancien sert ; s'il échoue, il dit pourquoi et l'ancien continue ; sinon il prend la main une fois l'ancien sourd, et l'ancien finit ses requêtes et ses runs comme sur un Ctrl+C. Refusé en profil `prod`. `watchfiles` vient avec l'extra `http`.
 
 **Codes de sortie :** 0 (réussi), 1 (run échoué ou erreur d'exécution, dont `JournalCorrupted`), 2 (refus : usage, config, extra manquant, agent / approbation / run / client inconnu, `AgentNotAllowed`, `UnusableId`, `SessionUnreadable`, `JournalBusy`, `OSError`), le refus tient en une ligne de `stderr`, sans trace. `--version` rend la version, et `python -m loom_ia` vaut `loom`. **`serve --host`** remplace l'adresse de la config, et c'est l'adresse **servie** qui décide si une API sans clé est « ouverte » (avertissement en dev, refus en prod) : `--host 0.0.0.0` sur une config en `127.0.0.1` est jugé comme tel, et inversement.
 
@@ -1685,7 +1685,7 @@ src/loom_ia/
 
 Les extras `firestore` et `gcs` ne sont pas réalisés.
 
-- Outils de dev (pytest, respx, ruff, pyright, import-linter) dans `[dependency-groups]`.
+- Outils de dev (pytest, ruff, pyright, import-linter) dans `[dependency-groups]`.
 - Adaptateurs externes par entry points (`loom_ia.adapters`), par exemple un package `loom-ia-firecracker` pour la sandbox. Réalisé en 6.4b pour les outils seulement : le groupe `loom_ia.tools` (sources d'outils, `tool_sources`) ; les autres ports n'en ont pas. La sandbox a finalement rejoint loom-ia (J6.4c, `loom_ia.adapters.firecracker`, sans extra) : loom-ia déclare sa source `forge` dans ce groupe, et la plateforme qu'elle pilote vit dans le dossier `firecracker/` du dépôt, hors du paquet.
 
 **Règles `import-linter` :**
@@ -1698,15 +1698,13 @@ indépendance : adapters.models ↮ adapters.stores ↮ adapters.queue …
 
 **Tests :**
 
-- CI noyau seul (`uv sync`, sans extra) et CI complète (`uv sync --all-extras`), celle-ci avec les **services** : Postgres, RabbitMQ et Redis en conteneurs, et `--require-services` pour qu'une variable absente y soit un échec et non un saut (sans quoi un job vert ne dirait rien).
-- Tests d'adaptateur ignorés si l'extra manque (`pytest.importorskip`).
+- CI noyau seul (`uv sync`, sans extra) et CI complète (`uv sync --all-extras`), celle-ci avec les **services** : Postgres, RabbitMQ et Redis en conteneurs, et `--require-services` pour qu'une variable absente ou un extra manquant y soit un échec et non un saut (sans quoi un job vert ne dirait rien).
+- Tests d'adaptateur ignorés si l'extra manque (`pytest.importorskip`), sauf sous `--require-services`.
 - `apply` testé sans simulation ; `step` et `drive` avec les faux modèles et faux outils du package `testing`.
-- Tests de contrat des adaptateurs de modèles avec des réponses HTTP enregistrées (respx).
+- Tests de contrat des adaptateurs de modèles avec des réponses HTTP enregistrées (`httpx2.MockTransport`).
 
 ## 20. Questions ouvertes
 
-| Sujet | État |
-|---|---|
-| Ordre de réalisation (#47) | Jalons à revoir ensemble |
+Aucune : l'ordre de réalisation (#47) est décidé, c'est celui de `jalons.md`.
 
 **Évolutions prévues après V2 :** API d'administration et port `TenantStore` ; enregistrement dynamique d'agents déclaratifs ; stratégie de réparation par un modèle dédié ; WebSocket si un besoin apparaît.

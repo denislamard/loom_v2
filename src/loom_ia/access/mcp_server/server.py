@@ -3,9 +3,10 @@
 
 Chaque agent publié (``expose.mcp``) devient un outil MCP qui prend un
 message, éventuellement des images (argument ``attachments``, décrit dans le
-module du même nom), et rend la réponse du run avec la liste de ses fichiers. Deux outils de
-plus : ``run_status`` relit un run par son identifiant, ``run_report`` rend la
-consommation d'un run (avec ses sous-runs) ou de toute une session.
+module du même nom), et rend la réponse du run avec la liste de ses fichiers. Trois outils
+de plus : ``run_status`` relit un run par son identifiant, ``run_report`` rend
+la consommation d'un run (avec ses sous-runs) ou de toute une session, et
+``cancel`` arrête un run.
 
 Résultat (J3) : le texte est la réponse ; le résultat structuré y ajoute
 ``unverified``, l'usage et le coût, leur ventilation (``report``) et les
@@ -58,7 +59,6 @@ déclarés dynamiquement, puisqu'ils viennent de la configuration.
 
 import json
 from collections.abc import Callable
-from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Final
 
 import mcp.types as types
@@ -69,6 +69,7 @@ from mcp.shared.context import RequestContext
 from pydantic import AnyUrl
 from pydantic.json_schema import models_json_schema
 
+from loom_ia import __version__
 from loom_ia.access.api import JudgeVerdict, Loom, RunResult, UnknownRun
 from loom_ia.access.caller import Caller
 from loom_ia.access.mcp_server.attachments import ATTACHMENTS_INPUT, AttachmentReader
@@ -299,7 +300,7 @@ def create_server(
         return fixed if callers is None else callers()
 
     instructions = _INSTRUCTIONS if callers is not None else _instructions(loom, tenant)
-    server = Server[object, Any](name, version=_package_version(), instructions=instructions)
+    server = Server[object, Any](name, version=__version__, instructions=instructions)
 
     def attachments_of(caller: Caller) -> AttachmentReader:
         return AttachmentReader(
@@ -649,10 +650,3 @@ def _published(loom: Loom, name: str, tenant: TenantId = DEFAULT_TENANT) -> None
     published = [spec.name for spec in loom.exposed("mcp", tenant)]
     if name not in published:
         raise UnknownAgent(name, published)
-
-
-def _package_version() -> str | None:
-    try:
-        return version("loom-ia")
-    except PackageNotFoundError:
-        return None

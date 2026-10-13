@@ -7,6 +7,10 @@ from pydantic import NonNegativeFloat, NonNegativeInt, PositiveInt, model_valida
 
 from loom_ia.core.model.base import DomainModel
 
+# Approximation du nombre de caractères (de JSON) par token : l'estimation de
+# loom quand le fournisseur ne compte pas, et le compte du modèle simulé (B7).
+CHARS_PER_TOKEN: Final = 4
+
 
 class Usage(DomainModel):
     input_tokens: NonNegativeInt = 0

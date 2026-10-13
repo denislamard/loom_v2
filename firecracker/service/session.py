@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Une session execd = une connexion.
 
 Il n'existe pas de `session.open` ni de `session.close`. Le workdir nait a

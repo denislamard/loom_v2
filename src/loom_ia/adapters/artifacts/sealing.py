@@ -19,10 +19,12 @@ sceau ne réécrit pas ce qui existe.
 
 L'URI est adressée par le contenu (un condensé des octets en clair, calculé
 par le noyau) : le sceau ne la change pas, et deux fermetures des mêmes
-octets donnent des octets différents, puisque chacune tire son nonce. Ranger
-deux fois le même fichier réécrit donc son contenu au lieu de le laisser en
-place ; l'écriture passant par un fichier temporaire renommé, un lecteur voit
-l'un ou l'autre, jamais un mélange.
+octets donnent des octets différents, puisque chacune tire son nonce. Mais
+elles ont la même taille, et le stockage sur disque laisse en place un fichier
+de même taille : ranger deux fois le même fichier y garde la première
+fermeture, avec sa clé. Le stockage en mémoire, lui, remplace. Sur disque,
+l'écriture passe par un fichier temporaire renommé : un lecteur voit l'un ou
+l'autre, jamais un mélange.
 """
 
 from typing import Final

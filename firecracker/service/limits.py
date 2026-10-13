@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Resolution des limites de ressources d'un job.
 
 REGLE : L'HOTE PROPOSE, LA VM PLAFONNE

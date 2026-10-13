@@ -14,7 +14,6 @@ from loom_ia.config import (
     ConfigError,
     LoomConfig,
     Registry,
-    UnsupportedKey,
     agent_json_schema,
     config_json_schema,
     import_modules,
@@ -467,8 +466,3 @@ def test_prompt_is_read_only_when_needed(tmp_path: Path) -> None:
     # Un agent sans fichier de prompt garde le texte en ligne.
     config = load_config(write(tmp_path))
     assert system_prompt(config.agents[0]) == "Tu calcules."
-
-
-def test_unsupported_key_carries_its_phase() -> None:
-    error = UnsupportedKey("budgets", "J3 (coûts et budgets)")
-    assert (error.key, error.phase) == ("budgets", "J3 (coûts et budgets)")

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Cadrage des frames et erreurs typees du protocole execd.
 
 FORMAT D'UNE FRAME (identique dans les deux sens)

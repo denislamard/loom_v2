@@ -122,6 +122,7 @@ from loom_ia.core.events import (
     UserMessage,
 )
 from loom_ia.core.model import (
+    DEFAULT_LEASE,
     DEFAULT_TENANT,
     FINALIZE_HINT,
     MAIN_ROLE,
@@ -204,9 +205,6 @@ TERMINAL_RULE: Final = "loom.terminal"
 
 # Événements d'un appel de modèle, journalisés dans son span.
 _CALL_EVENTS: Final = (ModelExchanged, ModelRetried, ModelFellBack, CircuitOpened, ModelResponded)
-
-# États où ``step`` a quelque chose à faire (effet ou clôture).
-DEFAULT_LEASE: Final = 60.0
 
 
 # Événements que l'exécuteur rend tels quels, sans enveloppe d'appel.
@@ -539,7 +537,7 @@ async def _closed_elsewhere(
 ) -> RunState:
     """Le run a été clos par un autre process pendant qu'on le pilotait : le journal fait foi.
 
-    Un arrêt demandé ailleurs (``loom cancel``, REST, MCP sur un autre process)
+    Un arrêt demandé ailleurs (``Loom.cancel``, REST ou MCP sur un autre process)
     se voit à l'écriture suivante du pilote, qui s'arrête là, sans rien
     réécrire après la clôture.
     """
@@ -1739,12 +1737,12 @@ async def _tool_step(
         approver=ctx.approver,
     )
     # Appels laissés en suspens : leur run délégué attend une décision humaine.
-    attente: list[RunId] = []
+    paused_children: list[RunId] = []
     async with aclosing(batch) as events:
         async for item in events:
             if isinstance(item, Waiting):
                 # Rien à écrire pour cet appel : il n'a pas de résultat.
-                attente.append(item.run_id)
+                paused_children.append(item.run_id)
                 continue
             span = spans.setdefault(item.call_id, new_span_id())
             seen = item if isinstance(item, _BARE_EVENTS) else item.payload
@@ -1796,7 +1794,7 @@ async def _tool_step(
             yield event
         return
     yield current.completed(emitted)
-    if attente:
+    if paused_children:
         # Le parent s'arrête là : il reprendra en rejouant l'appel, qui
         # reprendra l'enfant (C5, H4). Son délai ne court pas pendant ce
         # temps — l'étape est terminée, et l'attente n'en fait pas partie.

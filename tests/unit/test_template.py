@@ -60,3 +60,9 @@ def test_lookup_and_render_value() -> None:
     assert lookup(values, ("texte", "0")) is None
     assert render_value(None) == ""
     assert render_value([1, "a"]) == '[1, "a"]'
+
+
+@pytest.mark.parametrize("key", ["²", "٣", "9" * 5_000])
+def test_a_digit_that_is_not_an_index_is_no_step(key: str) -> None:
+    """``str.isdigit`` accepte « ² » ou 5 000 chiffres, que ``int`` refuse : pas d'élément là."""
+    assert lookup({"liste": [1, 2]}, ("liste", key)) is None

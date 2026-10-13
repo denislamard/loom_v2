@@ -63,10 +63,10 @@ from loom_ia.core.ports import ArtifactStore, ChunkCallback, ModelClient, ModelE
 from loom_ia.engine.circuit import CIRCUIT_ERRORS, CircuitBreakers, Tripped, model_key
 from loom_ia.engine.model_call import ModelCall, Sleep
 
-# Erreurs qui font passer au modèle suivant, tentatives épuisées.
-FALLBACK_ERRORS: Final[frozenset[ModelErrorKind]] = frozenset(
-    {"transient", "overloaded", "quota_exhausted"}
-)
+# Erreurs qui font passer au modèle suivant, tentatives épuisées : celles qui
+# comptent pour le disjoncteur. Un modèle qu'on quitte pour elles est un modèle
+# en difficulté ; les écrire deux fois les laissait diverger.
+FALLBACK_ERRORS: Final[frozenset[ModelErrorKind]] = CIRCUIT_ERRORS
 
 type ChainEvent = ModelExchanged | ModelRetried | ModelFellBack | CircuitOpened
 

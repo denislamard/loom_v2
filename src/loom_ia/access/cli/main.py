@@ -32,6 +32,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import signal
 import sys
 from collections.abc import Callable, Iterable, Sequence
@@ -138,6 +139,8 @@ MISSING_EXTRA: Final = "{what} demande l'extra '{extra}' (installer l'extra : lo
 OK: Final = 0
 FAILED: Final = 1
 REFUSED: Final = 2
+# ``loom report --period`` : l'écriture d'avant (``--periode jour|mois``) reste comprise.
+_PERIODS: Final = {"day": "day", "month": "month", "jour": "day", "mois": "month"}
 # Délai au-delà duquel `loom validate` ne dit plus qu'une clé expire bientôt.
 _BIENTOT: Final = timedelta(days=7)
 
@@ -151,38 +154,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Configuration : {error}", file=sys.stderr)
         return REFUSED
     except (UnknownAgent, UnknownApproval, UnknownRun, UnknownTenant) as error:
-        print(_message(error), file=sys.stderr)
+        print(str(error), file=sys.stderr)
         return REFUSED
     except AgentNotAllowed as error:
-        print(_message(error), file=sys.stderr)
+        print(str(error), file=sys.stderr)
         return REFUSED
     except ValueError as error:
         print(f"Demande refusée : {error}", file=sys.stderr)
         return REFUSED
     except BudgetExhausted as error:
         # Rien n'a été lancé ni écrit : la même demande passera quand la période repart.
-        print(f"{_message(error)} — réessayer dans {_delay(error.retry_after)}", file=sys.stderr)
+        print(f"{error!s} — réessayer dans {_delay(error.retry_after)}", file=sys.stderr)
         return REFUSED
     except QuotaExceeded as error:
         # Son message dit déjà dans combien de temps réessayer.
-        print(_message(error), file=sys.stderr)
+        print(str(error), file=sys.stderr)
         return REFUSED
     except ClaimConflict as error:
         print(
-            f"{_message(error)} — ce run est mené ailleurs : réessayer après l'échéance",
+            f"{error!s} — ce run est mené ailleurs : réessayer après l'échéance",
             file=sys.stderr,
         )
         return REFUSED
     except SessionUnreadable as error:
         # Refusé avant d'écrire : le run illisible est à réparer à part.
-        print(_message(error), file=sys.stderr)
+        print(str(error), file=sys.stderr)
         return REFUSED
     except JournalBusy as error:
         # Rien n'a été écrit : la même commande passera quand le verrou sera rendu.
-        print(_message(error), file=sys.stderr)
+        print(str(error), file=sys.stderr)
         return REFUSED
     except JournalCorrupted as error:
-        print(f"Journal illisible : {_message(error)}", file=sys.stderr)
+        print(f"Journal illisible : {error!s}", file=sys.stderr)
         return FAILED
     except EOFError:
         print(
@@ -229,6 +232,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate = commands.add_parser("validate", help="vérifie la config et monte les agents")
     validate.add_argument(
+        "--no-keys",
         "--sans-cles",
         action="store_true",
         help="monte les agents sans créer leurs clients de modèle : "
@@ -457,10 +461,13 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("run_id", nargs="?", default=None)
     report.add_argument("--session", type=str, default=None, help="journal du run, ou session")
     report.add_argument(
+        "--period",
         "--periode",
-        choices=("jour", "mois"),
+        type=_period,
+        choices=("day", "month"),
         default=None,
-        help="consommation du client sur la journée ou le mois en cours",
+        help="consommation du client sur la journée (day) ou le mois (month) en cours ; "
+        "'jour' et 'mois', l'ancienne écriture, restent compris",
     )
     report.add_argument("--json", action="store_true", help="affiche le rapport en JSON")
     report.set_defaults(handler=cmd_report)
@@ -559,10 +566,10 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Config     : {args.config}")
     print(f"Profil     : {_profile_line(config, args.profile)}")
     print(f"Modèles    : {_listed(spec.id for spec in config.models)}")
-    if args.sans_cles:
+    if args.no_keys:
         # Les clients de modèle ne sont pas créés : ce que le montage aurait
         # vérifié d'eux — clé d'API présente, SDK installé — ne l'est pas.
-        print("    clients de modèle non créés (--sans-cles) : clés d'API et SDK non vérifiés")
+        print("    clients de modèle non créés (--no-keys) : clés d'API et SDK non vérifiés")
     print(f"Agents     : {_listed(agent.name for agent in config.agents)}")
     named = [(name, registry.get(name)) for name in registry.names]
     print(f"Outils     : {_listed(name for name, obj in named if isinstance(obj, Tool))}")
@@ -613,7 +620,7 @@ async def _validate(args: argparse.Namespace) -> int:
         print(f"Clients    : {_listed(tenant.id for tenant in config.tenants)}")
 
     mounted = 0
-    clients = {spec.id: FakeModel(spec) for spec in config.models} if args.sans_cles else None
+    clients = {spec.id: FakeModel(spec) for spec in config.models} if args.no_keys else None
     async with Loom(config, registry=registry, models=clients) as loom:
         for tenant_id in config.tenant_ids:
             tenant = loom.tenant(tenant_id)
@@ -1263,10 +1270,10 @@ def _json_object(text: str) -> dict[str, JsonValue] | None:
 def cmd_report(args: argparse.Namespace) -> int:
     config = load_config(args.config, profile=args.profile)
     apply_logging(config)
-    if args.periode is not None:
+    if args.period is not None:
         return _cmd_consumption(args, config)
     if args.run_id is None and args.session is None:
-        print("Donner un run_id, --session ou --periode.", file=sys.stderr)
+        print("Donner un run_id, --session ou --period.", file=sys.stderr)
         return REFUSED
     run_id = RunId(args.run_id) if args.run_id else None
     session = SessionId(args.session) if args.session else None
@@ -1288,8 +1295,8 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def _cmd_consumption(args: argparse.Namespace, config: LoomConfig) -> int:
-    """``loom report --periode jour|mois`` : la dépense d'un client et ce qui lui reste."""
-    period: BudgetPeriod = "day" if args.periode == "jour" else "month"
+    """``loom report --period day|month`` : la dépense d'un client et ce qui lui reste."""
+    period: BudgetPeriod = "day" if args.period == "day" else "month"
 
     async def go() -> TenantConsumption:
         async with Loom(config) as loom:
@@ -1563,12 +1570,17 @@ def cmd_keys_create(args: argparse.Namespace) -> int:
     return OK
 
 
+def _period(value: str) -> str:
+    """``day`` ou ``month`` ; ``jour`` et ``mois``, l'écriture d'avant, restent compris."""
+    return _PERIODS.get(value, value)
+
+
 def _deadline(given: str | None) -> datetime | None:
     """Une date (``2027-01-01``) ou une durée à partir de maintenant (``90j``)."""
     if not given:
         return None
     unites = {"j": "days", "h": "hours", "m": "minutes"}
-    if given[-1] in unites and given[:-1].isdigit():
+    if given[-1] in unites and re.fullmatch(r"[0-9]{1,6}", given[:-1]):
         return datetime.now(UTC) + timedelta(**{unites[given[-1]]: int(given[:-1])})
     try:
         moment = datetime.fromisoformat(given)
@@ -1844,10 +1856,6 @@ def _for_stdout(answer: str) -> str:
     donne toujours, échappé par JSON.
     """
     return printable(answer) if sys.stdout.isatty() else answer
-
-
-def _message(error: Exception) -> str:
-    return str(error.args[0]) if error.args else str(error)
 
 
 def _delay(seconds: float) -> str:

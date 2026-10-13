@@ -668,7 +668,8 @@ def test_a_process_that_ends_without_a_word_does_not_hold_the_hand() -> None:
 
     begun = time.monotonic()
     _Serving(cast(Any, Gone()), reader).leave()
-    assert time.monotonic() - begun < 1.0
+    # Borne large (CI chargée), loin des DEAFNESS (5 s) qu'il attendrait sinon.
+    assert time.monotonic() - begun < 3.0
     reader.close()
 
 

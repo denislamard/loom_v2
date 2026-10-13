@@ -2,7 +2,9 @@
 """Erreurs de configuration, lisibles au démarrage (M1).
 
 Le message nomme le fichier et l'endroit dans le YAML :
-``agents/demo.yaml: main.model — modèle 'X' non déclaré``.
+``agents/demo.yaml: main.model — modèle 'X' non déclaré``. Quand la
+validation trouve plusieurs erreurs, elles viennent une par ligne, et seule la
+première porte le nom du fichier.
 """
 
 from pathlib import Path

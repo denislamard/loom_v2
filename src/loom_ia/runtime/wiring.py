@@ -102,7 +102,6 @@ from loom_ia.core.closing import Closing
 from loom_ia.core.model import (
     ALLOWED_DECISIONS,
     DEFAULT_TENANT,
-    LATER_DECISIONS,
     MCP_PREFIX_SEPARATOR,
     RESERVED_PREFIX,
     Approval,
@@ -799,12 +798,6 @@ def build_policies(
                 f"{label} : ne s'applique pas à {', '.join(outside)} "
                 f"(points déclarés : {', '.join(sorted(found.points))})"
             )
-        for kind in sorted(found.decisions):
-            if kind in LATER_DECISIONS:
-                raise ConfigError(
-                    f"{label} : décision {kind!r} prévue pour le jalon {LATER_DECISIONS[kind]}, "
-                    "pas encore prise en charge"
-                )
         for point in sorted(points):
             refused = sorted(found.decisions - ALLOWED_DECISIONS[point])
             if refused:

@@ -27,9 +27,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue
 
-from loom_ia.core.model.base import DomainModel, reject_later
+from loom_ia.core.model.base import DomainModel
 from loom_ia.core.model.context import CallerContext
 
 # Juges d'un run, choisis par l'appelant : selon leur ``when``, tous, ou aucun.
@@ -42,9 +42,6 @@ type SkipReason = Literal[
 JUDGES_MODES: Final[tuple[JudgesMode, ...]] = ("auto", "force", "skip")
 CRITERION_NAME_PATTERN: Final = r"^[A-Za-z0-9_-]{1,64}$"
 DEFAULT_MIN_SCORE: Final = 0.8
-
-# Clés de ``when`` prévues pour plus tard.
-LATER_WHEN: Final[dict[str, str]] = {}
 
 
 class Criterion(DomainModel):
@@ -71,12 +68,6 @@ class JudgeWhen(DomainModel):
     # journal le dit (``other_profile``) — un juge déclaré ne disparaît pas en
     # silence parce qu'on a changé de profil.
     profiles: tuple[str, ...] | None = Field(default=None, min_length=1)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_WHEN)
-        return data
 
 
 class CriterionScore(DomainModel):

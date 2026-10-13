@@ -41,6 +41,7 @@ quotas et des plafonds de période des clients (``isolated``) — et joue les ca
 
 import glob
 import json
+import re
 from collections.abc import Mapping, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
@@ -652,7 +653,9 @@ def _field(data: JsonValue, path: str) -> tuple[bool, JsonValue]:
     for step in path.split("."):
         if isinstance(node, dict) and step in node:
             node = node[step]
-        elif isinstance(node, list) and step.isdigit() and int(step) < len(node):
+        elif (
+            isinstance(node, list) and re.fullmatch(r"[0-9]{1,18}", step) and int(step) < len(node)
+        ):
             node = node[int(step)]
         else:
             return False, None

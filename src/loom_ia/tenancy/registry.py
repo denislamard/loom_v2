@@ -29,7 +29,6 @@ que ``build_agent`` ait à connaître les clients, et les plafonds par période
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final
 
 from pydantic import JsonValue
 
@@ -42,14 +41,13 @@ from loom_ia.core.model import (
     Quotas,
     TenantBudget,
     TenantId,
+    Unknown,
 )
 from loom_ia.core.ports import SecretProvider
 from loom_ia.tenancy.secrets import EnvironmentSecrets
 
-EMPTY: Final[Mapping[str, str]] = {}
 
-
-class UnknownTenant(KeyError):
+class UnknownTenant(Unknown):
     """Aucun client de cet identifiant dans la configuration."""
 
     def __init__(self, tenant_id: TenantId, declared: tuple[TenantId, ...]) -> None:

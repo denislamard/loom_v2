@@ -69,12 +69,6 @@ _PART_LABELS: Final[Mapping[str, str]] = {
     "messages": "les messages",
     "settings": "les réglages (choix d'outil, plafond de tokens, paramètres, schéma de sortie)",
 }
-# Fournisseur de chaque SDK, tel qu'un adaptateur l'écrit dans ``model.responded``.
-_PROVIDERS: Final[Mapping[str, str]] = {
-    "fake": "fake",
-    "anthropic": "anthropic",
-    "openai": "openai",
-}
 STOPPED: Final = "rejeu arrêté : une divergence a été trouvée plus haut"
 
 
@@ -427,8 +421,8 @@ def recorded_response(recorded: ModelResponded) -> ModelResponse:
 
 
 def provider_of(spec: ModelSpec) -> str:
-    """Fournisseur d'un modèle, tel que son adaptateur l'écrirait."""
-    return _PROVIDERS.get(spec.sdk, spec.sdk)
+    """Fournisseur d'un modèle, tel que son adaptateur l'écrirait : le nom de son SDK."""
+    return spec.sdk
 
 
 def _servable(record: ToolCallRecord) -> bool:

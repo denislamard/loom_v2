@@ -21,7 +21,6 @@ pour réduire le contexte.
 """
 
 from collections.abc import Sequence
-from typing import Final
 
 from loom_ia.core.events import (
     Event,
@@ -32,17 +31,17 @@ from loom_ia.core.events import (
     RunStarted,
     SessionSnapshot,
 )
-from loom_ia.core.model import Message, RunId, RunState
+from loom_ia.core.model import CHARS_PER_TOKEN, Message, RunId, RunState
 from loom_ia.core.projections import history, last_marker
 from loom_ia.engine import SessionWriter
 
-# Estimation sans tokenizer : la sérialisation JSON d'un message, divisée par
-# ce nombre de caractères. Elle sert aux seuils, pas à une facturation.
-CHARS_PER_TOKEN: Final = 4
-
 
 def estimate_tokens(messages: Sequence[Message]) -> int:
-    """Taille approximative d'un historique, en tokens."""
+    """Taille approximative d'un historique, en tokens.
+
+    Sans tokenizer : la sérialisation JSON de chaque message, divisée par
+    ``CHARS_PER_TOKEN``. Elle sert aux seuils, pas à une facturation.
+    """
     return sum(len(message.model_dump_json()) for message in messages) // CHARS_PER_TOKEN
 
 

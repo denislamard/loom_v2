@@ -462,7 +462,7 @@ async def debit(config: LoomConfig, agent: str, prefixe: str) -> None:
         code, _, corps = await appel(f"{base}/agents", key=cles[DUPONT])
         print(f"  GET  …/agents (clé de Dupont, non bridée) → {code} {len(corps)} agent(s)")
 
-    print(f"\n  CLI : uv run loom --config {shown(CONFIG)} report --periode jour --tenant {DUPONT}")
+    print(f"\n  CLI : uv run loom --config {shown(CONFIG)} report --period day --tenant {DUPONT}")
 
 
 # --- Mise en route -----------------------------------------------------------

@@ -74,7 +74,11 @@ def lookup(values: Mapping[str, JsonValue], path: Path) -> JsonValue:
     for key in path:
         if isinstance(current, Mapping):
             current = cast(Mapping[str, object], current).get(key)
-        elif isinstance(current, Sequence) and not isinstance(current, str) and key.isdigit():
+        elif (
+            isinstance(current, Sequence)
+            and not isinstance(current, str)
+            and re.fullmatch(r"[0-9]{1,18}", key)
+        ):
             items = cast(Sequence[object], current)
             index = int(key)
             current = items[index] if index < len(items) else None

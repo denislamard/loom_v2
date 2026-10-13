@@ -485,6 +485,15 @@ def test_an_empty_text_check_is_refused(key: str) -> None:
         Expect.model_validate({key: ["devis", ""]})
 
 
+def test_a_field_path_whose_step_is_not_an_index_is_absent() -> None:
+    """``liste.²`` levait ``ValueError`` : « ² » passe ``isdigit`` mais pas ``int``."""
+    outcome = Outcome(
+        status=RunStatus.COMPLETED, text="Fait.", data={"liste": [1]}, error_type=None, tools=()
+    )
+    [result] = check(Expect.model_validate({"fields": {"liste.²": 1}}), outcome)
+    assert not result.passed and result.detail == "absent de la sortie structurée"
+
+
 def test_fields_and_arguments_tell_a_boolean_from_a_number() -> None:
     """``1`` n'est pas ``true`` : un champ ou un argument attendu se compare en JSON strict."""
     outcome = Outcome(

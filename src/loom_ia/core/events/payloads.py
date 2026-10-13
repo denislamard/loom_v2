@@ -5,8 +5,9 @@ Chaque classe déclare son ``type`` (``<catégorie>.<action au passé>``), sa
 catégorie et ses facettes : les champs de recherche que l'enveloppe recopie
 pour que les stores les indexent sans connaître les payloads.
 
-Événements des jalons J1 et J2, des politiques (J3.1) et des guards (J3.2). Les autres types
-(guards, approbations, compaction…) arrivent avec leurs phases.
+Tous les événements du journal sont déclarés ici : runs et étapes, appels de
+modèle et d'outil, politiques, guards, budgets, juges, approbations,
+idempotence, artefacts et sessions.
 
 Un appel de modèle fait par un rôle délégué (C2) est journalisé dans le run
 de l'orchestrateur, entre le ``tool.called`` et le ``tool.completed`` de
@@ -73,7 +74,7 @@ from loom_ia.core.model.judge import CriterionScore, JudgesMode
 from loom_ia.core.model.media import ArtifactOrigin, ArtifactRecord
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.policy import CheckOutcome, CheckResolution, DecisionKind, HookPoint
-from loom_ia.core.model.run_state import CancelReason, RunKind, RunStatus
+from loom_ia.core.model.run_state import CancelReason, PendingApproval, RunKind, RunStatus
 from loom_ia.core.model.streaming import ModelErrorKind, StopReason
 from loom_ia.core.model.tooling import ExpiryAction, ToolKind
 from loom_ia.core.model.usage import Usage
@@ -854,6 +855,18 @@ class ApprovalRequested(Payload):
     @property
     def event_status(self) -> EventStatus:
         return "warning"
+
+    def as_pending(self) -> PendingApproval:
+        """La demande telle qu'elle attend, dans l'état du run ou devant l'approbateur."""
+        return PendingApproval(
+            call_id=self.call_id,
+            tool_name=self.tool_name,
+            arguments=self.arguments,
+            reason=self.reason,
+            policy=self.policy,
+            scope=self.scope,
+            expire_at=self.expire_at,
+        )
 
 
 class ApprovalGranted(Payload):

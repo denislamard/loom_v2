@@ -56,7 +56,6 @@ lisible (``error``). Les trois accès rendent ce même résultat.
 
 import asyncio
 import logging
-import re
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import replace
@@ -95,6 +94,7 @@ from loom_ia.core.events import (
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    SAFE_ID,
     Approver,
     ArtifactRecord,
     Attachment,
@@ -114,6 +114,7 @@ from loom_ia.core.model import (
     SpanId,
     Spent,
     TenantId,
+    Unknown,
     Usage,
     new_id,
     new_run_id,
@@ -226,9 +227,6 @@ SESSIONS_READ: Final = 50
 # décode pas, un sceau qui ne s'ouvre pas (clé effacée), des événements que la
 # projection refuse. Un balayage de sessions (``runs``, ``recover``) saute celle-là.
 _UNREADABLE: Final = (JournalCorrupted, SealError, ValidationError, ProjectionError)
-# Un identifiant de livraison, et la session qu'un déclencheur en tire : ce que
-# le journal JSONL accepte comme nom de fichier (adapters/stores/jsonl.py).
-_SAFE_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 # Ce qu'un appelant peut demander au plus : une lecture par journal ouvert, donc
 # une borne bien plus basse que celle d'une recherche d'événements.
@@ -263,7 +261,7 @@ class AgentNotAllowed(PermissionError):
         self.tenant_id = tenant_id
 
 
-class UnknownRun(KeyError):
+class UnknownRun(Unknown):
     """Aucun run de cet identifiant dans le journal."""
 
     def __init__(self, run_id: RunId) -> None:
@@ -271,14 +269,14 @@ class UnknownRun(KeyError):
         self.run_id = run_id
 
 
-class UnknownApproval(KeyError):
+class UnknownApproval(Unknown):
     """Aucune demande d'approbation en attente pour cet appel."""
 
     def __init__(self, run_id: RunId, call_id: str) -> None:
         super().__init__(f"Run {run_id} : aucune approbation en attente pour l'appel {call_id!r}")
 
 
-class UnknownSession(KeyError):
+class UnknownSession(Unknown):
     """Aucune session de cet identifiant dans le journal."""
 
     def __init__(self, session_id: SessionId) -> None:
@@ -286,7 +284,7 @@ class UnknownSession(KeyError):
         self.session_id = session_id
 
 
-class UnknownTrigger(KeyError):
+class UnknownTrigger(Unknown):
     """Aucune porte d'entrée de ce nom dans la configuration (H6)."""
 
     def __init__(self, name: str, declared: Sequence[str]) -> None:
@@ -702,7 +700,7 @@ def _usable(what: str, value: str) -> str:
     finit en ``run_id``, donc en nom de session, donc en nom de fichier pour le
     journal JSONL. Il est contrôlé à la porte, et non au moment d'écrire.
     """
-    if not _SAFE_ID.fullmatch(value):
+    if not SAFE_ID.fullmatch(value):
         raise DeliveryRefused(
             f"{what} inutilisable : {value!r} (attendu lettres, chiffres, '.', '_' ou '-')"
         )
@@ -1827,8 +1825,10 @@ class Loom:
         session, et il n'y a aucune projection à tenir à jour, à reconstruire
         ou à resynchroniser. Le prix est une lecture par session ouverte, et
         deux bornes le tiennent : ``limit`` runs rendus au plus, ``sessions``
-        journaux ouverts au plus. Quand une borne arrête la recherche, la page
-        le dit (``truncated``) — il peut y avoir d'autres runs derrière.
+        journaux ouverts au plus, chacune de 1 à 200 (``RUNS_MAX``,
+        ``SESSIONS_MAX``, comme en REST ; ``ValueError`` au-delà). Quand une
+        borne arrête la recherche, la page le dit (``truncated``) — il peut y
+        avoir d'autres runs derrière.
 
         ``since`` et ``until`` se comparent à la **dernière** écriture du run.
         Un sous-run est listé comme les autres, en nommant son délégant.
@@ -1839,6 +1839,10 @@ class Loom:
         (``scanned``) et la page ne le signale pas : le journal fait foi, et
         c'est lui qu'il faut réparer.
         """
+        if not 1 <= limit <= RUNS_MAX:
+            raise ValueError(f"limit : de 1 à {RUNS_MAX}, reçu {limit}")
+        if not 1 <= sessions <= SESSIONS_MAX:
+            raise ValueError(f"sessions : de 1 à {SESSIONS_MAX}, reçu {sessions}")
         tenant = tenant_id or DEFAULT_TENANT
         known = await self._store.sessions(tenant)
         found: list[RunListed] = []

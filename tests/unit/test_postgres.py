@@ -155,7 +155,8 @@ def test_a_plain_role_name_passes() -> None:
 
 @sans_extra
 @pytest.mark.parametrize(
-    ("status", "expected"), [("INSERT 0 1", 1), ("UPDATE 0", 0), ("DELETE 12", 12), ("", 0)]
+    ("status", "expected"),
+    [("INSERT 0 1", 1), ("UPDATE 0", 0), ("DELETE 12", 12), ("", 0), ("UPDATE ²", 0)],
 )
 def test_how_many_rows_a_command_touched(status: str, expected: int) -> None:
     from loom_ia.adapters.postgres.pool import rows_touched

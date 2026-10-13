@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Modèle de domaine : messages, blocs, fichiers, usage, outils, flux des modèles, état d'un run."""
 
-from loom_ia.core.model.base import DomainModel, UnsupportedKey, reject_later
+from loom_ia.core.model.base import DomainModel, Unknown
 from loom_ia.core.model.budget import (
-    LATER_BUDGETS,
     BudgetLimit,
     BudgetPeriod,
     Budgets,
@@ -40,6 +39,7 @@ from loom_ia.core.model.contract import (
 )
 from loom_ia.core.model.ids import (
     DEFAULT_TENANT,
+    SAFE_ID,
     EventId,
     RunId,
     SessionId,
@@ -104,7 +104,6 @@ from loom_ia.core.model.policy import (
     DECISION_KINDS,
     FINALIZE_HINT,
     HOOK_POINTS,
-    LATER_DECISIONS,
     POLICY_NAME_PATTERN,
     REPAIR_PREFIX,
     RESERVED_PREFIX,
@@ -131,6 +130,7 @@ from loom_ia.core.model.policy import (
 )
 from loom_ia.core.model.quota import WINDOW, Quotas, RateLimit
 from loom_ia.core.model.run_state import (
+    DEFAULT_LEASE,
     ApprovalDecision,
     ApprovalOutcome,
     ApprovalVerdict,
@@ -186,15 +186,17 @@ from loom_ia.core.model.tooling import (
     UnknownState,
     recordable,
 )
-from loom_ia.core.model.usage import PriceTier, Pricing, Usage
+from loom_ia.core.model.usage import CHARS_PER_TOKEN, PriceTier, Pricing, Usage
 
 __all__ = [
     "ALLOWED_DECISIONS",
     "ARTIFACT_SCHEME",
+    "CHARS_PER_TOKEN",
     "CONTINUE",
     "CRITERION_NAME_PATTERN",
     "DECISION_KINDS",
     "DEFAULT_APPROVAL_DELAY",
+    "DEFAULT_LEASE",
     "DEFAULT_MIN_SCORE",
     "DEFAULT_RETENTION",
     "DEFAULT_TENANT",
@@ -203,8 +205,6 @@ __all__ = [
     "IMAGE_TYPES",
     "INVALID_JSON_KEY",
     "JUDGES_MODES",
-    "LATER_BUDGETS",
-    "LATER_DECISIONS",
     "MAIN_ROLE",
     "MAX_RECORDED",
     "MCP_NAME_PATTERN",
@@ -213,6 +213,7 @@ __all__ = [
     "POLICY_NAME_PATTERN",
     "REPAIR_PREFIX",
     "RESERVED_PREFIX",
+    "SAFE_ID",
     "TERMINAL_HINT",
     "TOOL_NAME_PATTERN",
     "WINDOW",
@@ -341,8 +342,8 @@ __all__ = [
     "ToolOverrides",
     "ToolResultBlock",
     "ToolSpec",
+    "Unknown",
     "UnknownState",
-    "UnsupportedKey",
     "Usage",
     "UsageDelta",
     "artifact_uri",
@@ -355,7 +356,6 @@ __all__ = [
     "new_run_id",
     "new_span_id",
     "recordable",
-    "reject_later",
     "sampled",
     "sniff",
 ]

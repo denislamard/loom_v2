@@ -255,7 +255,7 @@ class ContractGuard:
         context: PolicyContext,
     ) -> Decision:
         """Sortie d'un rôle (réparée par son modèle) ou résultat d'un outil (jamais réparé)."""
-        text = _visible(output)
+        text = visible_text(output)
         checked = check(contract, text, output.data)
         if checked.ok:
             context.record(_passed(target, checked))
@@ -296,8 +296,11 @@ def _structured(output: ToolOutput, checked: Checked) -> ToolOutput:
     return output.model_copy(update={"blocks": blocks, "data": checked.data})
 
 
-def _visible(output: ToolOutput) -> str:
-    """Texte d'un résultat : ses blocs de texte, sinon ses données en JSON."""
+def visible_text(output: ToolOutput) -> str:
+    """Texte d'un résultat : ses blocs de texte, sinon ses données en JSON.
+
+    Ce que lisent le contrat d'un outil et son juge : la même chose.
+    """
     if output.as_text:
         return output.as_text
     if output.data is not None:

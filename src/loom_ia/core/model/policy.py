@@ -65,9 +65,6 @@ ALLOWED_DECISIONS: Final[Mapping[HookPoint, frozenset[DecisionKind]]] = {
     "on_output": frozenset({"continue", "replace", "retry", "fail"}),
 }
 
-# Décisions prévues pour plus tard, refusées au démarrage.
-LATER_DECISIONS: Final[Mapping[DecisionKind, str]] = {}
-
 # Début du message qui demande une réparation au modèle orchestrateur (#20).
 REPAIR_PREFIX: Final = "Réponse refusée par un contrôle"
 

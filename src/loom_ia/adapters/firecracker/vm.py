@@ -2,9 +2,8 @@
 """Une microVM Firecracker construite par ``make_vm.sh``, vue de l'hôte.
 
 Portage de l'ancien client de la plateforme (``vm_client.py``, resté hors du
-dépôt), dans sa version qui laisse le verrou d'instance à ``run.sh``
-(``OLD/source_python``) : c'est la seule qui
-s'accorde avec le ``run.sh`` actuel, qui prend lui-même ``flock -n`` sur
+dépôt), dans sa version qui laisse le verrou d'instance à ``run.sh`` : c'est la
+seule qui s'accorde avec le ``run.sh`` actuel, qui prend lui-même ``flock -n`` sur
 ``runtime/vm.lock`` — un verrou déjà pris côté Python le lui ferait refuser.
 
 Ce que ce module garde de la plateforme, et pourquoi :

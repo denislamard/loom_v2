@@ -28,10 +28,6 @@ class Caller:
     without_key: TenantId = DEFAULT_TENANT
 
     @property
-    def anonymous(self) -> bool:
-        return self.key is None
-
-    @property
     def tenant(self) -> TenantId:
         """Client au nom duquel cet appelant agit."""
         return self.key.tenant if self.key is not None else self.without_key

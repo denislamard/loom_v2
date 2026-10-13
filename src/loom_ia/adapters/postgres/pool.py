@@ -34,6 +34,7 @@ politique ne verrait rien.
 
 import asyncio
 import logging
+import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -329,4 +330,4 @@ class PostgresPool:
 def rows_touched(status: str) -> int:
     """Nombre de lignes d'un état de commande asyncpg (« UPDATE 1 », « INSERT 0 1 »)."""
     parts = status.split()
-    return int(parts[-1]) if parts and parts[-1].isdigit() else 0
+    return int(parts[-1]) if parts and re.fullmatch(r"[0-9]{1,18}", parts[-1]) else 0

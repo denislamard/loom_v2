@@ -91,29 +91,25 @@ class BudgetGuard(TracingPolicy):
         state = subject.state
         run = self.budgets.run.tightest(state.budget)
         used = state.spent
-        checks = [
-            _check("run", "max_cost", run.max_cost, used.cost),
-            _check("run", "max_tokens", run.max_tokens, used.tokens),
-            _check("run", "max_calls", run.max_calls, used.calls),
+        checks: list[tuple[BudgetScope, BudgetLimit, float | None, float]] = [
+            ("run", "max_cost", run.max_cost, used.cost),
+            ("run", "max_tokens", run.max_tokens, used.tokens),
+            ("run", "max_calls", run.max_calls, used.calls),
         ]
         if state.parent_run_id is None:
             session = subject.session + used
             limits = self.budgets.session
-            checks += [
-                _check("session", "max_cost", limits.max_cost, session.cost),
-                _check("session", "max_tokens", limits.max_tokens, session.tokens),
-            ]
+            checks.extend(
+                [
+                    ("session", "max_cost", limits.max_cost, session.cost),
+                    ("session", "max_tokens", limits.max_tokens, session.tokens),
+                ]
+            )
         return [
             (scope, limit, value, used)
             for scope, limit, value, used in checks
             if value is not None and used >= value
         ]
-
-
-def _check(
-    scope: BudgetScope, limit: BudgetLimit, value: float | None, used: float
-) -> tuple[BudgetScope, BudgetLimit, float | None, float]:
-    return scope, limit, value, used
 
 
 def describe(scope: BudgetScope, limit: BudgetLimit, value: float, used: float) -> str:

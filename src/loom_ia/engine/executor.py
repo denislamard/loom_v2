@@ -643,7 +643,7 @@ class ToolExecutor:
             # décision sont journalisées quand même — c'est le seul endroit où
             # l'on saura qui a validé quoi (#17).
             yield request
-            decided = await approver(_asked(request))
+            decided = await approver(request.as_pending())
             yield _decision(request, decided)
             if isinstance(decided, Rejected):
                 text = _refused(request.tool_name, "rejected", decided.reason)
@@ -723,9 +723,9 @@ class ToolExecutor:
         # Un appel d'état inconnu n'a ni résultat ni conclusion : c'est son
         # outil qui dit ce qu'il advient (#18). L'erreur revient au modèle ;
         # la pause demande une approbation, comme la règle de reprise.
-        lances = {item.call.call_id: item for item in ready}
+        launched = {item.call.call_id: item for item in ready}
         for call_id, message in inconnus.items():
-            item = lances[call_id]
+            item = launched[call_id]
             if item.tool.spec.on_unknown == "error":
                 yield _completed(item.call, ToolOutput.error(message), started=None)
                 continue
@@ -737,7 +737,7 @@ class ToolExecutor:
             # son lot est fini. Accordé, il repartira au tour suivant, avec
             # la décision au journal ; refusé, il se conclut en erreur.
             yield request
-            decided = await approver(_asked(request))
+            decided = await approver(request.as_pending())
             yield _decision(request, decided)
             if isinstance(decided, Rejected):
                 text = _refused(request.tool_name, "rejected", decided.reason)
@@ -1229,19 +1229,6 @@ def _request(
         policy=policy,
         scope=settings.scope,
         expire_at=expire_at,
-    )
-
-
-def _asked(request: ApprovalRequested) -> PendingApproval:
-    """Ce que l'approbateur en ligne reçoit : la demande, telle qu'elle attendrait."""
-    return PendingApproval(
-        call_id=request.call_id,
-        tool_name=request.tool_name,
-        arguments=request.arguments,
-        reason=request.reason,
-        policy=request.policy,
-        scope=request.scope,
-        expire_at=request.expire_at,
     )
 
 

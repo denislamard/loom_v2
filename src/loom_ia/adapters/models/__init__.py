@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Adaptateurs de modèles : ``anthropic``, ``openai`` (``chat``) et ``fake`` (#9).
+"""Adaptateurs de modèles : ``anthropic``, ``openai`` (``chat`` et ``responses``) et ``fake`` (#9).
 
 Ce package n'importe aucun SDK : chaque adaptateur le charge à la demande.
 """

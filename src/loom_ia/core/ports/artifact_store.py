@@ -9,10 +9,11 @@ rendre des octets.
 
 from typing import Protocol
 
+from loom_ia.core.model.base import Unknown
 from loom_ia.core.model.ids import SessionId, TenantId
 
 
-class ArtifactNotFound(KeyError):
+class ArtifactNotFound(Unknown):
     """Aucun artefact à cette URI."""
 
     def __init__(self, uri: str) -> None:

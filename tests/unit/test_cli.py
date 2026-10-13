@@ -90,10 +90,12 @@ def test_validate_without_keys_mounts_the_agents_a_missing_key_would_refuse(
     assert main(["--config", str(path), "validate"]) == 2
     assert ABSENTE in capsys.readouterr().err
 
-    assert main(["--config", str(path), "validate", "--sans-cles"]) == 0
-    out = capsys.readouterr().out
-    assert "clients de modèle non créés (--sans-cles)" in out
-    assert "1 agent(s) monté(s) sans erreur." in out
+    # L'option s'écrit en anglais ; l'écriture d'avant reste comprise.
+    for flag in ("--no-keys", "--sans-cles"):
+        assert main(["--config", str(path), "validate", flag]) == 0
+        out = capsys.readouterr().out
+        assert "clients de modèle non créés (--no-keys)" in out
+        assert "1 agent(s) monté(s) sans erreur." in out
 
 
 def test_run_prints_the_answer(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
@@ -362,6 +364,14 @@ def test_deleting_a_session_with_an_unusable_id_is_refused_in_one_line(
     assert main(["--config", str(path), "sessions", "list"]) == 0
     assert "atelier" in capsys.readouterr().out
     assert kept.read_bytes() == b"a garder"
+
+
+def test_keys_create_refuses_an_expiry_that_is_not_a_number(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """« ²j » passait ``isdigit`` et ``int`` le refusait : le refus nomme l'option."""
+    assert main(["keys", "create", "atelier", "--scope", "run", "--expires", "²j"]) == 2
+    assert "--expires" in capsys.readouterr().err
 
 
 def test_keys_create_gives_a_key_and_its_fingerprint(capsys: pytest.CaptureFixture[str]) -> None:

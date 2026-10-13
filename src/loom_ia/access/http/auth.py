@@ -18,7 +18,8 @@ demander le journal d'un autre, faute de façon de le nommer.
 Débit (#39, J5.1b) : une clé peut porter un ``rate_limit``. Il protège le
 serveur, il ne dit rien du métier — c'est le quota du client qui le fait, et
 lui vaut par tous les accès. Vérifié à l'identification, donc sur **toutes**
-les routes, et répondu par un 429 avec un ``Retry-After``.
+les routes REST et sur le MCP HTTP, dans une même fenêtre par clé, et répondu
+par un 429 avec un ``Retry-After``.
 
 Expiration et contenu (J5.2a) : une clé peut porter une date de fin — elle
 est alors reconnue puis **refusée** (401), pour que le message dise « expirée »

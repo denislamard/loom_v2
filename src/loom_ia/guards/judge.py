@@ -99,6 +99,7 @@ from loom_ia.engine import (
 from loom_ia.engine.media import describe
 from loom_ia.engine.model_call import responded
 from loom_ia.engine.refs import RefError
+from loom_ia.guards.contract import visible_text
 
 JUDGE_POLICY_PREFIX: Final = "loom.judge"
 JUDGE_GUARD: Final = "judge"
@@ -273,7 +274,7 @@ class JudgeGuard(TracingPolicy):
                 spec.kind == "role" and spec.name == role and not output.is_error
             ):
                 return _Judged(
-                    text=_visible(output),
+                    text=visible_text(output),
                     data=output.data,
                     arguments=arguments,
                     call_id=call.call_id,
@@ -584,15 +585,6 @@ def _listed(scores: tuple[CriterionScore, ...]) -> str:
 
 def _score(value: float) -> str:
     return f"{value:.2f}".replace(".", ",")
-
-
-def _visible(output: ToolOutput) -> str:
-    """Texte d'un résultat : ses blocs de texte, sinon ses données en JSON."""
-    if output.as_text:
-        return output.as_text
-    if output.data is not None:
-        return json.dumps(output.data, ensure_ascii=False)
-    return ""
 
 
 def _json(text: str) -> JsonValue:

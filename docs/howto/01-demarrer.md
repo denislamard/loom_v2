@@ -1314,7 +1314,7 @@ Le coût est nul parce que le modèle simulé n'a pas de tarif ; l'exemple 5.1 e
 
 - **`loom inspect <run_id>`** : l'arbre du run, étape par étape. C'est le premier réflexe quand un résultat surprend.
 - **`--full`** pour les arguments et résultats sans coupe, **`--json`** pour les outils.
-- **`loom report <run_id>`** : tokens et coût par rôle et par modèle. Avec `--session <id>`, il couvre toute une conversation ; avec `--periode jour` ou `--periode mois`, toute la consommation du client sur la période.
+- **`loom report <run_id>`** : tokens et coût par rôle et par modèle. Avec `--session <id>`, il couvre toute une conversation ; avec `--period day` ou `--period month`, toute la consommation du client sur la période.
 - **Si le run est dans une session nommée, ajoutez `--session`** pour le retrouver (le niveau 2 y revient).
 - **Piège : un identifiant erroné.** `uv run loom inspect 00000000` répond simplement `Run 00000000 introuvable`. Copiez l'identifiant complet.
 
@@ -1987,7 +1987,7 @@ Le résultat attendu, d'après le comportement du modèle simulé, a la même fo
 - **Piège : `loom validate` exige la variable.** Tant que `ANTHROPIC_API_KEY` n'existe pas dans votre environnement, `loom validate` échoue pour **tout** le projet, même pour les agents simulés (voir l'écart noté ci-dessous). Ce qui peut vous aider : pour une validation sans clé, exportez une valeur factice comme ci-dessus.
 - **Piège : ne mettez pas la clé dans le YAML, ni dans un `.env` versionné.** Si vous utilisez un fichier `.env`, passez-le à uv : `uv run --env-file .env loom run …`.
 
-> **Écart documentation / version 2.0.0.** Les sources du projet (2.0.1) ajoutent à `loom validate` une option `--sans-cles`, qui monte les agents sans créer les clients de modèle, donc sans exiger de clé. Elle n'existe pas dans la version 2.0.0 publiée sur PyPI et n'est pas documentée dans le README.
+> **Écart documentation / version 2.0.0.** Les sources du projet (2.0.1) ajoutent à `loom validate` une option `--no-keys` (écrite `--sans-cles` jusqu'en 2.0.4, et toujours comprise), qui monte les agents sans créer les clients de modèle, donc sans exiger de clé. Elle n'existe pas dans la version 2.0.0 publiée sur PyPI et n'est pas documentée dans le README.
 
 ### Exemple 5.3 : un modèle local avec Ollama
 

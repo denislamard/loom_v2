@@ -184,7 +184,7 @@ class ResourceReader:
                 return [_json(self._shown(events))]
             found = await self._loom.result(run_id, session_id=session_id, tenant_id=tenant)
         except (UnknownRun, UnknownSession) as exc:
-            raise _unknown(_said(exc)) from None
+            raise _unknown(str(exc)) from None
         shown = found.restricted(self._caller.allows)
         return [_json(self._sent(shown.masked() if self._caller.masks else shown))]
 
@@ -201,7 +201,7 @@ class ResourceReader:
                 content=not self._caller.masks,
             )
         except (UnknownRun, UnknownSession) as exc:
-            raise _unknown(_said(exc)) from None
+            raise _unknown(str(exc)) from None
         # Le droit vaut pour chaque agent de l'arbre : un sous-agent compris.
         for agent in traced_agents(found):
             self._allowed(agent)
@@ -223,7 +223,7 @@ class ResourceReader:
                 return [_json(self._shown(events))]
             info = await self._loom.session(session_id, tenant_id=tenant)
         except (UnknownRun, UnknownSession) as exc:
-            raise _unknown(_said(exc)) from None
+            raise _unknown(str(exc)) from None
         for agent in dict.fromkeys(run.agent for run in info.runs):
             self._allowed(agent)
         return [_json(self._sent(info.masked() if self._caller.masks else info))]
@@ -302,10 +302,6 @@ def _media(name: str) -> str:
     """Type d'un fichier, deviné sur son extension."""
     guessed, _ = mimetypes.guess_type(name)
     return guessed or "application/octet-stream"
-
-
-def _said(exc: Exception) -> str:
-    return str(exc.args[0]) if exc.args else str(exc)
 
 
 def _unknown(what: str) -> McpError:

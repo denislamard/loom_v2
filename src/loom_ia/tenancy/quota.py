@@ -55,9 +55,6 @@ class RateWindow:
         seen.append(moment)
         return None
 
-    def forget(self, key: Counted) -> None:
-        self._seen.pop(key, None)
-
     def __repr__(self) -> str:
         return f"RateWindow({self.window:g} s, {len(self._seen)} compteur(s))"
 

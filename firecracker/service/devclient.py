@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Client minimal pour exercer le protocole execd. Outil de DEVELOPPEMENT.
 
 Ce n'est pas le client de production : celui-la vivra cote hote, dans le

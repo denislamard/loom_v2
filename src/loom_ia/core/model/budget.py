@@ -25,11 +25,11 @@ limite la plus basse l'emporte).
 
 import math
 from dataclasses import dataclass, field
-from typing import Final, Literal, Self
+from typing import Literal, Self
 
-from pydantic import NonNegativeFloat, NonNegativeInt, model_validator
+from pydantic import NonNegativeFloat, NonNegativeInt
 
-from loom_ia.core.model.base import DomainModel, reject_later
+from loom_ia.core.model.base import DomainModel
 from loom_ia.core.model.usage import Usage
 
 type BudgetScope = Literal["run", "session"]
@@ -37,9 +37,6 @@ type BudgetLimit = Literal["max_cost", "max_tokens", "max_calls"]
 type OnExceed = Literal["warn", "stop"]
 # Fenêtres calendaires d'un budget de client (J5.1b) ; UTC.
 type BudgetPeriod = Literal["day", "month"]
-
-# Clés prévues pour plus tard.
-LATER_BUDGETS: Final[dict[str, str]] = {}
 
 
 class RunBudget(DomainModel):
@@ -141,12 +138,6 @@ class Budgets(DomainModel):
     # et c'est la fiche du client qui les porte le plus souvent.
     tenant: TenantBudget = TenantBudget()
     on_exceed: OnExceed = "stop"
-
-    @model_validator(mode="before")
-    @classmethod
-    def _later(cls, data: object) -> object:
-        reject_later(data, LATER_BUDGETS)
-        return data
 
     @property
     def limited(self) -> bool:

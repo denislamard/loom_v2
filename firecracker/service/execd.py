@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """execd — service d'execution de tools, ecoute sur vsock.
 
 Recoit un arbre de code et des fichiers, execute une fonction sous contrainte

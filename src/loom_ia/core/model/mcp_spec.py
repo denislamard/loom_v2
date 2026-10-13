@@ -13,7 +13,7 @@ CRM sous la même session.
 """
 
 from pathlib import Path
-from typing import Final, Literal, Self, cast
+from typing import Final, Literal, Self
 
 from pydantic import Field, PositiveFloat, model_validator
 
@@ -29,8 +29,6 @@ type McpScope = Literal["shared", "run", "tenant"]
 MCP_NAME_PATTERN: Final = r"^[A-Za-z0-9-]+(_[A-Za-z0-9-]+)*$"
 # Séparateur entre le préfixe et le nom de l'outil.
 MCP_PREFIX_SEPARATOR: Final = "__"
-
-LATER_SCOPES: Final[dict[str, str]] = {}
 
 
 class McpServerSpec(DomainModel):
@@ -60,12 +58,6 @@ class McpServerSpec(DomainModel):
     # Disjoncteur (backlog #011) : connexions ratées de suite ; ``null`` le retire.
     circuit_breaker: CircuitBreaker | None = CircuitBreaker()
 
-    @model_validator(mode="before")
-    @classmethod
-    def _later_scope(cls, data: object) -> object:
-        _reject_later_scope(data)
-        return data
-
     @model_validator(mode="after")
     def _check_transport(self) -> Self:
         stdio = {
@@ -88,14 +80,3 @@ class McpServerSpec(DomainModel):
                 f"Serveur {self.name!r} : {', '.join(misplaced)} sans effet en {self.transport}"
             )
         return self
-
-
-def _reject_later_scope(data: object) -> None:
-    if not isinstance(data, dict):
-        return
-    scope = cast(dict[str, object], data).get("scope")
-    if isinstance(scope, str) and scope in LATER_SCOPES:
-        raise ValueError(
-            f"scope {scope!r} : prévu pour le jalon {LATER_SCOPES[scope]}, "
-            "pas encore pris en charge"
-        )

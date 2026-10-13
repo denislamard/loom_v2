@@ -1085,7 +1085,7 @@ Les budgets ne se contrôlent pas tous au même moment :
 
 Deux limites de débit complètent les budgets : un quota de runs par minute pour chaque client (`quotas: {runs_per_minute: 30}`) et un débit par clé d'API. Les deux reposent sur une fenêtre glissante d'une minute. En REST, un dépassement rend un 429 avec `Retry-After`.
 
-Le rapport de consommation se lit avec `loom report` (d'un run, d'une session avec `--session`, ou d'un client sur la journée ou le mois avec `--tenant` et `--periode`), en Python avec `Loom.report()` et `Loom.consumption()`, en REST sur `GET /v1/sessions/{id}/report` et en MCP avec l'outil `run_report`.
+Le rapport de consommation se lit avec `loom report` (d'un run, d'une session avec `--session`, ou d'un client sur la journée ou le mois avec `--tenant` et `--period`), en Python avec `Loom.report()` et `Loom.consumption()`, en REST sur `GET /v1/sessions/{id}/report` et en MCP avec l'outil `run_report`.
 
 ### Plusieurs clients et sécurité
 
@@ -1348,13 +1348,13 @@ export LOOM_TEST_REDIS=redis://127.0.0.1:6379/1
 uv run pytest --require-services
 ```
 
-Avec `--require-services`, un service absent fait échouer le test au lieu de le sauter, pour qu'une suite verte prouve vraiment quelque chose. Le rôle Postgres ne doit pas être superutilisateur, puisqu'un superutilisateur contourne la sécurité au niveau des lignes. Il lui faut en revanche le droit `CREATEROLE`, car le stockage crée son rôle applicatif à la première requête.
+Avec `--require-services`, un service absent, ou un extra manquant, fait échouer le test au lieu de le sauter, pour qu'une suite verte prouve vraiment quelque chose. Le rôle Postgres ne doit pas être superutilisateur, puisqu'un superutilisateur contourne la sécurité au niveau des lignes. Il lui faut en revanche le droit `CREATEROLE`, car le stockage crée son rôle applicatif à la première requête.
 
 La CI, sur GitHub Actions, compte cinq jobs :
 
 1. la qualité : ruff, pyright et les contrats d'import ;
 2. les tests du noyau seul, sans aucun extra, pour vérifier que le noyau s'importe sans SDK ;
-3. les tests avec tous les extras, Postgres 16, RabbitMQ 3.12 et Redis 7 en conteneurs, et la couverture ;
+3. les tests avec tous les extras, Postgres 16, RabbitMQ 3.12 et Redis 7 en conteneurs, et la couverture (en branches, au moins 94 %) ;
 4. les mêmes tests avec chaque dépendance directe à la plus basse version que `pyproject.toml` autorise, pour que les bornes déclarées soient vraies ;
 5. la construction du paquet.
 

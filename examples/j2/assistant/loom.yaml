@@ -94,7 +94,7 @@ models:
     image_formats: [ jpeg, png, gif, webp ]
     max_image_bytes: 5242880
     tool_result_media: true
-  pricing: { input: 1.0, output: 5.0, cache_read: 0.10, cache_write: 1.25 }
+  pricing: { input: 0.1, output: 0.5, cache_read: 0.125, cache_write: 0.01 }
 
 # gpt-oss-120b chez Together (API compatible OpenAI). Écarté du sous-agent :
 # avec des outils, il enchaîne les appels sans attendre leurs résultats, puis

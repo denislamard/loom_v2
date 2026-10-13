@@ -21,10 +21,11 @@ création à la demande éprouvée trente fois par suite.
 import asyncio
 import logging
 import os
-from collections.abc import Callable, Coroutine, Iterator
+import re
+from collections.abc import Callable, Coroutine, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from importlib.util import find_spec
-from typing import Any, NoReturn
+from typing import Any, Final, NoReturn
 
 import pytest
 
@@ -37,6 +38,11 @@ REDIS_ENV = "LOOM_TEST_REDIS"
 # Drapeau des passes où les services sont **censés** tourner : la CI complète,
 # et toute vérification qui prétend les avoir éprouvés.
 REQUIRE = "--require-services"
+
+# Motif d'un saut faute d'un paquet : un extra de loom-ia, ou le client HTTP de
+# test (groupe dev). « extra … présent » n'en est pas un : l'essai d'un refus,
+# joué seulement sans l'extra, saute à bon droit quand tous sont installés.
+MISSING: Final = re.compile(r"extra '[a-z]+' absent|client HTTP de test absent")
 
 
 @pytest.fixture(autouse=True)
@@ -83,6 +89,40 @@ def _absent(request: pytest.FixtureRequest, why: str) -> NoReturn:
     if request.config.getoption(REQUIRE):
         pytest.fail(f"{why} — et {REQUIRE} exige que cet essai tourne")
     pytest.skip(why)
+
+
+def _required(report: pytest.CollectReport | pytest.TestReport, config: pytest.Config) -> None:
+    """Sous ``--require-services``, un saut faute d'un paquet devient un échec (TST-3).
+
+    Les sauts d'extra se font par ``importorskip`` (au chargement d'un module ou
+    dans un essai) et par des marques ``skipif`` : une centaine, que ``_absent``
+    ne voit pas. Là où tous les extras sont installés, un tel saut veut dire
+    qu'un essai n'a rien éprouvé.
+    """
+    if not report.skipped or not isinstance(report.longrepr, tuple):
+        return
+    reason = report.longrepr[2].removeprefix("Skipped: ")
+    if MISSING.search(reason) and config.getoption(REQUIRE):
+        report.outcome = "failed"
+        report.longrepr = f"{reason} — et {REQUIRE} exige que cet essai tourne"
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(
+    collector: pytest.Collector,
+) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
+    report = yield
+    _required(report, collector.config)
+    return report
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    report = yield
+    _required(report, item.config)
+    return report
 
 
 @pytest.fixture

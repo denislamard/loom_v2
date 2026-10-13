@@ -37,6 +37,22 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 ### Rapport de consommation
 - ⚠ Un run annulé a le statut `cancelled` dans le rapport (`Loom.report()`, `loom report`, `GET /v1/sessions/{id}/report`, le `report` d'un résultat, outil MCP `run_report`). Il restait sans statut, que `loom report` affichait « (en cours) ». Le rapport d'une session chargée croît avec elle : 4 000 runs en 0,1 s au lieu de 2 s, la liste des runs étant refaite à chaque fin de run (GAR-5).
 
+### Accès, API et CLI
+- ⚠ **MCP HTTP** : le débit d'une clé (`security.api_keys[].rate_limit`) compte aussi les requêtes du MCP HTTP monté par `loom serve`, dans la même fenêtre que les routes REST, et un dépassement y répond 429 avec `Retry-After`. Une clé passait jusqu'ici sans limite par le MCP HTTP (COH-8).
+- ⚠ **`Loom.runs()`** : `limit` et `sessions` hors de 1 à 200 (`RUNS_MAX`, `SESSIONS_MAX`) lèvent `ValueError`, comme la route REST les refuse (422). L'API Python ne bornait rien (COH-8).
+- ⚠ **Erreurs « inconnu »** : `UnknownAgent`, `UnknownTenant`, `UnknownRun`, `UnknownApproval`, `UnknownSession`, `UnknownTrigger` et `ArtifactNotFound` héritent de la nouvelle `loom_ia.core.model.Unknown`, toujours une `KeyError`, dont `str()` rend le message tel quel : `Client 'acme' non déclaré (clients : a, b)`, et non plus le même texte entre guillemets. Les réponses de la CLI, du REST et du MCP ne changent pas (COH-7).
+- ⚠ **CLI** : `loom report --period day|month` et `loom validate --no-keys`. Les formes d'avant, `--periode jour|mois` et `--sans-cles`, restent comprises ; l'aide et les messages nomment les nouvelles (COH-7).
+- ⚠ Un chiffre qui n'est pas un index ASCII (`²`, `٣`, ou un nombre de 5 000 chiffres) n'est plus pris pour un index. Dans un template (`{{ liste.² }}`) et dans les `fields` d'une éval, le pas est absent, comme un index hors de la liste, au lieu de lever `ValueError`. `loom keys create --expires ²j` est refusé en nommant l'option (code 2) (COH-5).
+- ⚠ La version annoncée par le serveur MCP (`serverInfo`), par le client MCP (`clientInfo`) et dans le document OpenAPI vient de `loom_ia.__version__`. Depuis des sources non installées, elle vaut `0` partout ; avant, le serveur MCP annonçait la version du SDK `mcp`, et le client `dev`. Une fois le paquet installé, rien ne change (COH-5).
+
+### Code retiré ou rangé
+- ⚠ **Retirés, faute d'effet ou d'usage** : le module `loom_ia.config.later` et les tables vides `LATER_*` (dont `LATER_BUDGETS` et `LATER_DECISIONS` de `loom_ia.core.model`), `reject_later` et `UnsupportedKey` (`loom_ia.core.model`, `loom_ia.config`), `Caller.anonymous`, `loom_ia.tenancy.registry.EMPTY`, `RateWindow.forget`, `MAX_RESULT_CHARS` et `CUT_MARK` de `loom_ia.sessions.compaction` (ceux de `loom_ia.engine` restent), `package_version` de `loom_ia.access.http.app` (remplacée par `loom_ia.__version__`), et le paquet vide `loom_ia.artifacts`. Un code qui les importait ne se charge plus (COH-6).
+- Rangés, sans changement de comportement : `SAFE_ID` (`loom_ia.core.model`), motif commun des identifiants de l'API et du journal JSONL ; `DEFAULT_LEASE` et `CHARS_PER_TOKEN` dans `loom_ia.core.model` (toujours importables de `loom_ia.engine.loop` et de `loom_ia.sessions`) ; `FALLBACK_ERRORS` est désormais `CIRCUIT_ERRORS` ; `ApprovalRequested.as_pending()` ; `loom_ia.guards.contract.visible_text`, partagée avec le juge (COH-5).
+
+### Documentation
+- Docstrings remises d'accord avec le code : file de tâches (quatre types), événements du journal, troisième outil MCP `cancel`, erreurs de configuration à plusieurs lignes, bornes de réparation des guards et des juges, adaptateur OpenAI Responses, sceau des artefacts sur disque, SQL de la réservation d'idempotence ; un `loom cancel` qui n'existe pas n'est plus cité (COH-2).
+- `docs/` : `respx` remplacé par `httpx2.MockTransport` (backlog #004) ; l'ordre de réalisation (#47) passe en décidé, avec renvoi à `jalons.md` (backlog #003) ; la démo voix 6.4e est marquée abandonnée ; le statut de `conception.md` ne dit plus qu'aucun code n'est écrit (COH-4).
+
 ### Journal
 - ⚠ **`after` (REST `GET /v1/events`, `EventQuery.after`) suit l'ordre d'écriture, non l'ordre des identifiants.** L'identifiant d'un événement est posé à la création du brouillon, avant l'écriture : un écrivain lent (approbateur REST, sous-agents, autre worker) pouvait écrire après un autre un événement d'identifiant plus petit, que reprendre « après » le dernier id vu ne rendait jamais. Les résultats sont désormais rendus dans l'ordre d'écriture (mémoire, SQLite, Postgres) ; un `after` inconnu du journal (session effacée) retombe sur la comparaison des identifiants. Le journal JSONL, qui a un fichier par session, reste trié par identifiant.
 - SQLite : un index `events_ingestion` est créé à l'ouverture d'un journal existant (une fois).
@@ -45,11 +61,18 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 ### Intégration continue
 - Le job `build` de `ci.yml` et celui de `publish.yml` essaient le wheel construit : environnement vierge (`uv venv`), installation du seul wheel, interpréteur isolé hors du dépôt, puis `loom --version` (égale à la version du `pyproject.toml`), `python -m loom_ia --version`, `loom --help`, `loom schema`, `loom validate` d'une config minimale (la source d'outils `forge` du paquet doit apparaître) et `loom run` avec un modèle simulé. Un wheel qui oublierait une dépendance ou un fichier ne passe plus à `twine check` seul.
 - Le job `tests-complets` lance en root (`sudo`) l'essai qui fait vraiment abandonner ses droits à `execd` : le job tourne sous l'uid 1500 et sans groupe supplémentaire, et ne lit pas un fichier de root. Hors CI, l'essai est sauté hors de root.
+- La couverture du job `tests-complets` se mesure en branches (`[tool.coverage.run]`, `branch = true`) et le fait échouer sous 94 % (`--cov-fail-under=94` ; 94,67 % mesurés le 13/10, hors RabbitMQ). pytest refuse une marque non déclarée et une clé de configuration inconnue (`--strict-markers`, `--strict-config`) (TST-2).
 
 ### Tests
 - `tests/firecracker/test_firecracker_session.py` : deux essais vérifient, sans root, les options que `Session._run` passe au lancement du job (`user`, `group`, `extra_groups=[]` en root ; aucune sans root) ; ils n'étaient jamais exercés.
 - `tests/conftest.py` : une fixture automatique rend le logger `loom_ia` tel qu'elle l'a trouvé. Un essai qui lançait une commande de la CLI coupait la propagation des logs pour les suivants, et `test_jsonl_partial_last_line_is_ignored_then_quarantined` échouait selon l'ordre d'exécution (TST-8). Les deux copies locales (`test_logging.py`, `test_evals.py`) sont retirées.
 - `tests/unit/test_idempotence.py` : `test_the_executor_deadline_keeps_the_key_too` attend l'échéance de la réservation avant de relancer. Il relançait aussitôt après « Délai dépassé », alors que la réservation suit le délai de l'outil à quelques millisecondes près (marge mesurée : 0,1 à 5 ms) : l'essai dépendait de la vitesse de la machine et a échoué en CI (`tests-complets`, avec la couverture). Aucun code de production touché.
+- Sous `--require-services`, un essai qui saute faute d'un extra ou du client HTTP de test (`importorskip`, ou marque `skipif` « extra '…' absent ») est un échec : la CI complète, qui installe tout, ne peut plus verdir sans l'avoir joué. Sans le drapeau, il saute comme avant (TST-3).
+- Six bornes de temps élargies (Firecracker, rechargement), chacune loin de la durée qu'elle doit exclure, pour une CI chargée (TST-1).
+- Un essai vérifie que l'hôte et l'invité Firecracker ont les mêmes plafonds de trame (`MAX_HEADER`, `MAX_BODY`) (COH-5).
+
+### Dépôt
+- `.gitignore` : `.env.*` (sauf `.env.example`) et `.DS_Store`. En-tête SPDX sur les huit fichiers de `firecracker/` qui n'en avaient pas ; une mention de dossier interne retirée d'une docstring (HYG-1 à HYG-3).
 
 ## 2.0.4 - publiée
 

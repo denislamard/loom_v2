@@ -533,3 +533,33 @@ async def test_aclose_goes_on_after_a_cancellation(
         await loom.aclose()
 
     assert closed == ["modèle", "journal", "compteur"]
+
+
+def test_unknown_things_say_their_message_without_quotes() -> None:
+    """``str(KeyError("…"))`` met le message entre guillemets : pas les nôtres."""
+    from loom_ia.access.api import UnknownApproval, UnknownSession, UnknownTrigger
+    from loom_ia.core.ports import ArtifactNotFound
+    from loom_ia.tenancy import UnknownTenant
+
+    errors: list[KeyError] = [
+        UnknownAgent("acme", ("a", "b")),
+        UnknownTenant(TenantId("acme"), (TenantId("a"),)),
+        UnknownRun(RunId("r-1")),
+        UnknownApproval(RunId("r-1"), "c-1"),
+        UnknownSession(SessionId("s-1")),
+        UnknownTrigger("devis", ["relance"]),
+        ArtifactNotFound("loom://x"),
+    ]
+    for error in errors:
+        assert str(error) == error.args[0] and not str(error).startswith(("'", '"'))
+    assert str(errors[1]) == "Client 'acme' non déclaré (clients : a)"
+
+
+async def test_runs_keeps_the_ceilings_of_the_rest_route(demo: ConfigFactory) -> None:
+    """``RUNS_MAX`` et ``SESSIONS_MAX`` ne bornaient que le REST : la librairie les tient aussi."""
+    async with Loom(load_config(demo())) as loom:
+        with pytest.raises(ValueError, match="limit : de 1 à 200"):
+            await loom.runs(limit=201)
+        with pytest.raises(ValueError, match="sessions : de 1 à 200"):
+            await loom.runs(sessions=0)
+        assert (await loom.runs(limit=200, sessions=200)).runs == ()

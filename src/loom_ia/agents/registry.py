@@ -9,6 +9,7 @@ from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, Literal, Self
 
 from loom_ia.agents.spec import AgentSpec
+from loom_ia.core.model import Unknown
 
 if TYPE_CHECKING:
     from loom_ia.config.models import LoomConfig
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 type Access = Literal["rest", "mcp"]
 
 
-class UnknownAgent(KeyError):
+class UnknownAgent(Unknown):
     """Aucun agent de ce nom dans le registre."""
 
     def __init__(self, name: str, known: Iterable[str]) -> None:

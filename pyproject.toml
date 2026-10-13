@@ -149,9 +149,15 @@ typeCheckingMode = "strict"
 include = ["src", "tests", "examples", "scripts"]
 
 [tool.pytest.ini_options]
+# Une marque mal écrite ou une clé de configuration inconnue est une erreur, pas un avertissement.
+addopts = ["--strict-markers", "--strict-config"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = ["integration: lance de vrais sous-process ou un service externe (plus lent)"]
+
+# Couverture en branches, pour toute mesure (`--cov=loom_ia`) ; le seuil est dans `ci.yml`.
+[tool.coverage.run]
+branch = true
 
 [tool.importlinter]
 root_package = "loom_ia"
@@ -183,7 +189,6 @@ forbidden_modules = [
     "loom_ia.access",
     "loom_ia.adapters",
     "loom_ia.agents",
-    "loom_ia.artifacts",
     "loom_ia.config",
     "loom_ia.engine",
     "loom_ia.guards",

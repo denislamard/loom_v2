@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import Field, JsonValue, NonNegativeFloat, NonNegativeInt
 
@@ -21,6 +21,10 @@ from loom_ia.core.model.judge import JudgesMode
 from loom_ia.core.model.media import ArtifactRecord
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.usage import Usage
+
+# Durée d'une concession sur un run, en secondes (#27) : renouvelée au tiers,
+# reprise par un autre worker si son porteur se tait plus longtemps.
+DEFAULT_LEASE: Final = 60.0
 
 # Un run de compaction résume une session (#23) : il vit dans le journal de
 # cette session, mais n'entre ni dans son historique ni dans son arbre.

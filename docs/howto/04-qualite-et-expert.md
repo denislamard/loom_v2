@@ -3973,7 +3973,7 @@ Consommation — run 01a12688-c2a2-744d-9f35-79d9cfa9cbc8
 La consommation de la journée d'un client, avec son plafond :
 
 ```bash
-uv run loom report --tenant dupont-plomberie --periode jour
+uv run loom report --tenant dupont-plomberie --period day
 ```
 
 ```text
@@ -4085,7 +4085,7 @@ Relevée avec `uv run loom <commande> --help` (loom-ia 2.0.0). Les options globa
 | `replay` | `[run_id]` · `--tenant` · `--session` · `--journal FICHIER` · `--mode exact\|variant` · `--model ETAPE=MODELE` · `--double OUTIL=REF` · `--export FICHIER` · `--json` | Rejoue un run (chapitre 26) |
 | `inspect` | `run_id` · `--tenant` · `--session` · `--full` · `--json` | Affiche la trace d'un run (chapitre 25) |
 | `eval` | `suite` · `--case NOM` · `--variant NOM` · `--export DOSSIER` · `--json` | Exécute une suite d'évaluations (chapitre 27) |
-| `report` | `[run_id]` · `--tenant` · `--session` · `--periode jour\|mois` · `--json` | Rapport de consommation |
+| `report` | `[run_id]` · `--tenant` · `--session` · `--period day\|month` · `--json` | Rapport de consommation |
 | `sessions list` | `--tenant` · `--json` | Liste les sessions |
 | `sessions export` | `session_id` · `--tenant` · `--out FICHIER` | Exporte le journal d'une session |
 | `sessions delete` | `session_id` · `--tenant` · `--yes` | Supprime une session |
