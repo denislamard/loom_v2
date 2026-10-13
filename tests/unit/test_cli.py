@@ -6,6 +6,7 @@ import io
 import json
 import sys
 from datetime import UTC, datetime, timedelta
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -150,6 +151,7 @@ def test_the_answer_reaches_a_pipe_whole_and_a_terminal_without_driving_it(
         assert not {"\x1b", "\x07", "\x9b"} & set(captured.out + captured.err)
 
 
+@pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")
 def test_sessions_list_shows_a_session_id_without_obeying_it(
     demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
 ) -> None:
