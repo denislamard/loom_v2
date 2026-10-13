@@ -2,7 +2,7 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.5 - non publiée
+## 2.0.5 - publiée
 
 ### Exécution durable
 - ⚠ **Un worker qui a perdu sa concession s'arrête au lieu de piloter le run en même temps que son successeur.** Un worker incapable de renouveler son bail (store injoignable, process gelé) pouvait se faire reprendre le run par un autre, puis continuer : ses écritures étaient rejouées derrière la concession du nouveau pilote. Les deux appelaient le modèle et lançaient des outils, un appel pouvait être soldé deux fois, et la session devenait illisible. Le pilote dépossédé n'écrit désormais plus rien sur le run, sous-runs compris : `Loom.run()`, `Loom.stream()` et `Loom.resume()` peuvent lever `ClaimConflict` en cours de run, et plus seulement au départ (un travail en file est reposé pour l'après-bail, comme avant). Si le run a été mené à son terme entre-temps, l'état du journal est rendu. Un run mis en pause dont la concession a été prise ne la rend plus : sa restitution aurait effacé celle du nouveau pilote (MOT-16).
