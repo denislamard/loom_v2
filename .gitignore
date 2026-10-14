@@ -231,3 +231,7 @@ firecracker/vms/
 .DS_Store
 
 examples/agents/
+
+# Verrous de LibreOffice (fichier ouvert) et sorties des sessions Claude
+.~lock.*#
+Claude outputs/

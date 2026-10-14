@@ -14,7 +14,7 @@ Le fond de `docs/state-et-context.md` est bon et à garder : un state **déclar�
 | B4 | Le rejeu sert `tool.completed.output` : un state retiré de l'output et journalisé à part n'est pas reproduit, donc divergence dès que le state est injecté | Lu dans `replay/book.py` |
 | B5 | L'« écriture atomique avec le tool.completed » n'existe pas : la boucle écrit un brouillon par `append` ; un plantage entre les deux laisse un state sans résultat | Lu dans `engine/loop.py` |
 
-**Recommandation : option C.** Le state voyage dans des événements qui existent déjà — `ToolOutput.state` gardé dans `tool.completed`, et `run.started.state` pour l'application — sans nouveau type d'événement. Les cinq points tombent d'eux-mêmes, et le socle prototypé (4 fichiers, 11 lignes) garde **2 564 tests verts sur 2 564**, pyright `src` à 0 et les 5 contrats d'import.
+**Recommandation : option C.** Le state voyage dans des événements qui existent déjà — `ToolOutput.state` gardé dans `tool.completed`, et `run.started.state` pour l'application — sans nouveau type d'événement. Les cinq points tombent d'eux-mêmes, et le socle prototypé (4 fichiers, 11 lignes) garde **2 564 tests verts sur 2 564**, pyright `src` à 0 et les 5 contrats d'import. Les valeurs ne sont pas codées dans les outils : loom les lit dans leur résultat d'après une déclaration `from:`. Et le bloc va à la fin de chaque requête, après le point de cache, pour que le state fasse économiser des tokens au lieu d'en coûter.
 
 Préalable : la CI qualité est **rouge sur `main`** depuis `4426b0d` (ruff et pyright sur `scripts/journal_html.py` et `Claude outputs/`). À remettre au vert avant de coder, sinon une régression de typage passera inaperçue. Un bug latent du même mécanisme que B1 est aussi à corriger d'abord (X10).
 
@@ -86,7 +86,7 @@ Ces points ne cassent rien seuls, mais chacun doit avoir sa règle et son test a
 | Moteur | Un lot d'outils rend ses résultats dans l'ordre où les tâches finissent (`executor.py` l. 699-716) ; au rejeu, ils arrivent instantanément, donc dans un autre ordre. Deux outils qui écrivent la même clé donnent un state différent en direct et au rejeu | Appliquer les écritures d'un lot à la fin du lot, **dans l'ordre des appels**, comme `in_call_order` le fait pour les messages |
 | Moteur | `RunView.state` est l'état au début du lot : un outil ne voit pas ce qu'un voisin du même lot vient d'écrire | `ToolContext.state` = state au début du lot ; à documenter |
 | Moteur | Une politique `after_tool` qui refuse un résultat passe par `model_copy(is_error=True)`, qui **garde** les autres champs, dont `state` | Un résultat final en erreur ne pose rien ; seul compte le résultat après politiques |
-| Moteur | `_settle` peut changer le résultat en erreur (stockage d'artefacts en panne) ; `offloaded()` et `truncated()` le reconstruisent | Tester que le state survit au déport et qu'il disparaît avec une erreur de stockage |
+| Moteur | `_settle` peut changer le résultat en erreur (stockage d'artefacts en panne) ; `offloaded()` et `truncated()` le reconstruisent **sans** `data` ni `state` (`offload.py` l. 79-98) | Lire `from:` avant `_settle` et reporter `state` sur le résultat déporté ; tester le déport et l'erreur de stockage |
 | Moteur | « Erreur renvoyée à l'outil » (§3.1) est impossible : l'outil a déjà rendu la main | Comme un contrat de sortie d'outil non tenu : résultat en erreur qui nomme la clé et le motif, rien n'est posé |
 | Moteur | Un événement écrit hors d'un run (sans `run.started`) lève `ProjectionError` dans `fold_all` (session illisible) et fige la frontière des snapshots (`Cuts`) | Aucune écriture hors run : l'application passe par l'ouverture du run suivant |
 | Rejeu | La copie de session s'arrête à `message.user` (`runner.py` l. 344) | Le state de l'application doit être écrit avant ou avec `run.started`, jamais après la demande |
@@ -95,12 +95,12 @@ Ces points ne cassent rien seuls, mais chacun doit avoir sa règle et son test a
 | Sessions | Deux agents sur une même session, ou une config modifiée : une valeur stockée peut ne plus tenir son schéma | À l'injection : clé non déclarée ignorée, valeur invalide ignorée avec un WARNING. Jamais `SessionUnreadable` à cause du state |
 | Sous-runs | Leurs outils écrivent dans le journal de la session, sous leur propre `run_id` | Décision D3 ci-dessous |
 | Config | `ContextItem` sert aussi à `JudgeSpec.context` : ajouter `session_state` l'ouvre aux juges | Le gérer dans `guards/judge.py`, ou le refuser pour les juges en v1 |
-| Config | Les noms des outils Python ne sont connus qu'au montage ; MCP et forge ne le sont qu'à l'ouverture du run, et ne peuvent pas rendre de `ToolOutput.state` | Valider `writers` au montage et dans `loom validate` ; refuser un writer MCP ou forge |
+| Config | Les noms des outils Python ne sont connus qu'au montage, ceux des outils MCP et de la forge à l'ouverture du run ; `path:` exige un résultat avec `data` | Valider les sources `from:` au montage et dans `loom validate` ; pour MCP, à l'ouverture du run (outil qui déclare un `outputSchema`), avertissement sinon |
 | Config | `_check_template` refuse tout sous-chemin sauf `caller_context` ; `TAGS` et `described()` ignorent la nouvelle balise | Ajouter `session_state` aux trois. Ajouter une balise à `TAGS` échappe aussi `<session_state` dans des textes existants : effet négligeable, mais c'est un changement de requête |
 | Sécurité | Une valeur est du contenu (un téléphone, un montant) ; les facettes restent en clair même sous scellé (`codec.py`) | Champ déclaré dans `content_fields`, jamais en facette ; lecture REST ou MCP du state soumise à `read_content` |
 | Sécurité | Une valeur texte peut contenir `</session_state>` (injection de prompt) | Rendu par `tagged()`, qui échappe les balises connues, en JSON compact à clés triées |
 | Accès | La proposition ne prévoit que `run()` ; `stream()`, `submit()`, REST `RunRequest`, MCP, déclencheurs et CLI sont d'autres portes, et l'écriture d'un state de contrôle par REST pose la question des droits | Décision D5 ci-dessous |
-| Coût | En fin de `system`, tout changement de state invalide le cache de prompt du `system` et de tout l'historique | Décision D4 ci-dessous |
+| Coût | En fin de `system`, tout changement de state invalide le cache de prompt du `system` et de tout l'historique | Bloc en fin de requête, point de cache juste avant (D4) |
 | Évals | `EvalCase` n'a ni session ni state (`evals.py` l. 212), et une doublure ne pose pas de state | `cases[].state` et `expect.state`, ou limite documentée en v1 |
 | Idempotence | Le cache d'un outil idempotent est `output.model_dump()` (`idempotent.py` l. 241), relu en strict (l. 199) : le state y est gardé, mais un enregistrement écrit par la nouvelle version est refusé par une 2.0.x | À documenter (versions mêlées seulement) |
 | Contrats | Le JSON Schema des événements (K2) et celui de la config (`loom schema`) changent | Notes de version, en 2.1.0 |
@@ -108,23 +108,24 @@ Ces points ne cassent rien seuls, mais chacun doit avoir sa règle et son test a
 | Idempotence | Résultat trop gros pour le cache (`ResultTooLarge`) : `_reduced` ne garde que la note, `artifacts` et `offloaded` (`idempotent.py` l. 246-293). Une reprise reconnaît l'effet mais perd ses écritures de state | Garder `state` dans le résultat réduit ; test de reprise avec un résultat trop gros |
 | Idempotence | La clé métier vaut `client:outil:clé`, sans la session (`idempotent.py` l. 166-169) : un effet réutilisé dans une autre conversation y repose le state calculé dans la première | Acceptable (même effet, même client) ; à documenter |
 | Réparation | Une sortie terminale refusée par `on_output` est réparée : l'historique retire l'appel et son résultat (`_accepted`, `history.py` l. 180-196), mais l'outil a écrit son state | Ne compter que les écritures des appels que l'historique garde (D2) |
+| Démarrage | Session nouvelle sans state passé : un outil qui lit `ctx.state["client_id"]` lève `KeyError`, rendue au modèle en erreur (`executor.py` l. 1317) | `required: true` refuse le run à l'ouverture ; `default:` pour les autres clés (D13) |
 
 ## Option recommandée : le state porté par les événements existants
 
-On garde tout le modèle de la proposition (clés déclarées avec schéma, `writers`, projection pure, contexte déclaratif sur `main`) et on change seulement le porteur : pas de `state.set`, mais deux champs ajoutés à des événements qui existent, omis quand ils sont vides.
+On garde tout le modèle de la proposition (clés déclarées avec schéma, projection pure, contexte déclaratif sur `main`) et on change le porteur : pas de `state.set`, mais deux champs ajoutés à des événements qui existent, omis quand ils sont vides. Et `writers` devient `from:` : loom lit lui-même la valeur dans le résultat de l'outil déclaré.
 
 ```mermaid
 flowchart TD
     APP["Application<br/>run, stream, submit : state=…<br/>CLI : --state clé=valeur"]
-    TOOL["Outil Python déclaré dans writers<br/>rend ToolOutput(state=…)<br/>MCP et forge : ne peuvent pas écrire"]
+    TOOL["Outil cité dans from:<br/>loom lit data au chemin déclaré<br/>texte, rôle, sous-agent : pas de data"]
     BEGIN["begin_run<br/>écrit le state dans run.started<br/>avant message.user, donc rejouable"]
-    EXEC["Exécuteur : contrôle<br/>clé déclarée, schéma, writers, taille<br/>refus : résultat d’outil en erreur"]
+    EXEC["Exécuteur : contrôle<br/>from: lu avant le déport ; schéma, taille<br/>refus : résultat d’outil en erreur"]
     subgraph J["Journal : aucun nouveau type d’événement"]
         RS["run.started<br/>nouveau champ state, omis si vide"]
         TC["tool.completed<br/>nouveau champ output.state, omis si vide"]
     end
     PROJ["Projection session_state(events)<br/>runs racine terminés et run en cours (D2, D3)<br/>écritures d’un lot dans l’ordre des appels (D9)"]
-    MAIN["main (orchestrateur)<br/>bloc session_state<br/>en fin de system (D4)"]
+    MAIN["main (orchestrateur)<br/>bloc session_state<br/>en fin de requête (D4)"]
     ROLES["Rôles délégués<br/>context.session_state.clé<br/>s’ils le déclarent (#50)"]
     OUTILS["Outils<br/>ToolContext.state, en lecture<br/>state au début du lot"]
     APP --> BEGIN --> RS
@@ -141,14 +142,15 @@ Ni le stockage, ni les filtres de catégorie, ni la cause du run ne changent ; l
 
 | Fichier | Changement |
 | --- | --- |
-| `core/model/content.py` | `ToolOutput.state: dict[str, JsonValue]`, `exclude_if` vide |
+| `core/model/content.py` | `ToolOutput.state: dict[str, JsonValue]`, `exclude_if` vide ; rempli par loom d'après `from:`, ou par l'outil lui-même en secours |
 | `core/events/payloads.py` | `RunStarted.state` (state posé par l'application), `exclude_if` vide, ajouté à `content_fields` ; aucune facette |
 | `core/model/run_state.py`, `core/projections/run_state.py` | `RunState.state_delta` ; `apply` retire `state` du `ToolResultBlock` montré au modèle et cumule les écritures d'un résultat non en erreur, à la fin du lot, dans l'ordre des appels |
-| `core/projections/state.py` (nouveau) | `session_state(events)` : `run.started.state` puis deltas des runs retenus (D2, D3), dans l'ordre du journal |
-| `engine/executor.py` | Contrôle des écritures avant `_completed` : clé déclarée, schéma (`bounded_validator`, comme les arguments), `writers`, tailles ; violation = résultat en erreur. `ToolContext.state` en lecture |
-| `engine/loop.py` | `begin_run(..., state=)` ; `RunContext.session_state` posé par `_driven` à côté de `turns` et `summary` ; injection avant `before_model` |
+| `core/projections/state.py` (nouveau) | `session_state(events)` : `run.started.state` puis deltas des runs retenus (D2, D3), dans l'ordre du journal ; `default` appliqué à la lecture |
+| `engine/executor.py` | Après les politiques `after_tool` et **avant** le déport : pour chaque source `from:` de l'outil, lit `data` au chemin déclaré (ou prend `value`), vérifie schéma (`bounded_validator`) et taille, range le tout dans `output.state` ; violation = résultat en erreur. `ToolContext.state` en lecture |
+| `engine/loop.py` | `begin_run(..., state=)`, qui refuse le run si une clé `required` manque ; `RunContext.session_state` posé par `_driven` à côté de `turns` et `summary` ; bloc ajouté **à la fin** de la requête, avant `before_model` |
+| `adapters/models/anthropic.py` | `_last_cacheable` pose le point de cache `messages` sur le bloc qui précède celui du state |
 | `engine/{roles,delegated,hooks}.py`, `guards/judge.py`, `core/model/policy.py` | Item de contexte `session_state`, transmis comme `turns` et `summary` |
-| `agents/spec.py`, `runtime/wiring.py` | Bloc `state:`, `main.context:`, validation des `writers` au montage |
+| `agents/spec.py`, `runtime/wiring.py` | Bloc `state:` (`schema`, `description`, `from`, `required`, `default`) et `main.context:` ; au montage, refus d'un `path:` sur un outil qui ne peut pas avoir de `data` |
 | `access/api.py`, `access/cli` | `state=` sur `run`, `stream`, `submit` ; `Loom.session_state()` ; `loom state <session>` |
 
 | Critère | A — proposition corrigée (`state.set`, catégorie `state`) | C — porteur existant |
@@ -164,25 +166,100 @@ Ni le stockage, ni les filtres de catégorie, ni la cause du run ne changent ; l
 
 **Prototype du socle** (champs, `apply`, rien d'autre) : 4 fichiers, 11 lignes. Résultat : 2 564 tests passés comme avant, dont les 5 suites de non-régression ; pyright `src` 0 erreur ; 5 contrats d'import tenus.
 
-**Ce que C demande à l'application.** `get_client` d'agent_01 rend aujourd'hui un `dict` ; il devra rendre un `ToolOutput(blocks=(JsonBlock(data=fiche),), data=fiche, state={"client_courant": code})`. Une option B, plus tard, dispenserait l'outil de tout changement : dériver la clé de son résultat par déclaration (`from: {tool: get_client, path: /code}`), ce qui marcherait aussi pour MCP et la forge.
+**Ce que C demande à l'application.** Rien dans les outils : `get_client` d'agent_01 peut continuer à rendre un `dict`, une ligne de config suffit (`from: {tool: get_client, path: /code}`). Un `ToolOutput(..., state=…)` écrit par l'outil reste possible pour une règle qui dépend du contexte, mais il n'est pas nécessaire en v1.
+
+### Écriture : `from:` au lieu de `writers`
+
+`writers` disait qui peut écrire, pas quelle valeur prendre. `from:` dit les deux, et c'est loom qui écrit :
+
+```yaml
+state:
+  client_courant:
+    schema: { type: string, pattern: "^C-[0-9]+$" }
+    from:
+      - { tool: get_client, path: /code }        # champ du résultat (pointeur JSON)
+  ticket_ouvert:
+    schema: { type: string, pattern: "^T-[0-9]+$" }
+    from:
+      - { tool: creer_ticket, path: /numero }
+      - { tool: cloturer_ticket, value: null }   # valeur fixe : null efface la clé
+```
+
+`path:` lit `ToolOutput.data`, qui n'est pas toujours rempli :
+
+| Type d'outil | Valeur rendue | `data` rempli ? | `path:` possible ? |
+| --- | --- | --- | --- |
+| Python `@tool` | `dict`, `list`, modèle Pydantic, nombre | Oui (`tools/python.py` l. 160-162) | Oui |
+| Python `@tool` | `str`, `None`, `Image` | Non | Non : `value:` seulement |
+| Python `@tool` | `ToolOutput` construit à la main | Si l'outil le remplit | Si `data` est rempli |
+| MCP | `structuredContent` du serveur | S'il en fournit (`adapters/mcp/convert.py` l. 61) | Si l'outil déclare un `outputSchema` |
+| Forge (Firecracker) | Résultat de l'exécution | Oui (`forge.py` l. 571) | Oui |
+| Rôle délégué, sous-agent | Texte | Non | Non |
+
+La valeur est lue sur le résultat final, après les politiques `after_tool`, et avant le déport : `offloaded()` et `truncated()` reconstruisent le résultat sans `data` (`engine/offload.py` l. 79-98). On lit le **résultat** plutôt que les arguments : les arguments sont ce que le modèle a écrit, le résultat ce que l'outil a confirmé.
+
+### State absent au démarrage
+
+| Cas | State vu au premier appel du modèle |
+| --- | --- |
+| Session nouvelle, l'application ne passe rien | Vide : pas de bloc dans la requête ; `ctx.state` vaut `{}` |
+| Session existante, l'application ne passe rien | Ce que les runs précédents ont écrit, relu dans le journal |
+| L'application passe une partie des clés | Les clés passées sont mises à jour, les autres gardées ; `null` efface |
+
+Sans réglage, un outil qui lit `ctx.state["client_id"]` sur une session nouvelle lève `KeyError`, que l'exécuteur rend au modèle en erreur (`executor.py` l. 1317). Deux réglages par clé l'évitent :
+
+```yaml
+state:
+  client_id:
+    schema: { type: string, pattern: "^CL-[0-9]{5}$" }
+    required: true      # run refusé à l'ouverture, avant toute écriture
+  langue:
+    schema: { enum: [fr, en, de] }
+    default: fr         # valeur lue quand la clé n'a jamais été écrite
+```
+
+`required` refuse le run comme une pièce jointe invalide l'est déjà (`begin_run`, `loop.py` l. 352-359) : 422 en REST, code 2 en CLI. `default` s'applique à la lecture, sans être écrit au journal.
+
+### Injection et consommation de tokens
+
+À **chaque appel** du modèle, `_model_step` calcule le state (runs précédents plus écritures du run en cours), garde les clés que `main.context` demande, et ajoute le bloc à la requête seulement, comme `FINALIZE_HINT` : il n'est jamais journalisé comme message, et le rejeu le recalcule à l'identique.
+
+Le bloc coûte quelques dizaines de tokens ; l'économie vient d'ailleurs :
+
+1. **Moins d'appels au modèle.** Chaque appel renvoie outils, system et historique. Retrouver une valeur par deux appels d'outils coûte deux fois tout le contexte : avec 15 000 tokens d'historique, environ 30 000 tokens d'entrée (ordre de grandeur, à mesurer).
+2. **Moins de tokens de sortie**, les plus chers. Les outils lisent `ctx.state` au lieu de recevoir la valeur en argument, et les rôles la reçoivent par leur template.
+3. **Un historique plus court.** Les identifiants ne dépendent plus du résumé, donc la compaction peut venir plus tôt (`over_tokens` plus bas, `keep_last` plus petit).
+4. **Le cache de prompt.** Le bloc va à la toute fin de la requête, et le point de cache juste avant lui. Un changement de state ne casse jamais le cache de l'historique.
+
+```
+outils             ┐
+system             │  préfixe stable : relu depuis le cache
+historique         │
+messages du run    ┘  ← point de cache posé ici
+<session_state>{…}</session_state>   ← seul morceau payé plein tarif
+```
+
+Le cache de prompt Anthropic est à activer par modèle dans loom (`cache:`, `model_spec.py` l. 74) ; les modèles d'agent_01 ne le déclarent pas. C'est le premier levier, indépendamment du state.
 
 ## Analyse fonctionnelle : décisions à prendre
 
-Onze décisions fixent le comportement ; les six de la proposition y sont, complétées par ce que l'analyse a fait apparaître. Chacune porte une recommandation.
+Treize décisions fixent le comportement ; les six de la proposition y sont, complétées par ce que l'analyse et nos échanges ont fait apparaître. Chacune porte une recommandation.
 
 | # | Décision | Recommandation | Pourquoi |
 | --- | --- | --- | --- |
 | D1 | Porteur du state : nouvel événement `state.set` (A) ou champs ajoutés (C) | **C** | Compatibilité ascendante, atomicité, rejeu et idempotence sans travail (B1 à B5) |
 | D2 | Les écritures d'un run échoué ou annulé comptent-elles pour les runs suivants ? | **Non** (la proposition disait oui) : seules comptent les écritures que l'historique garde (runs racine terminés, hors appels retirés par une réparation) ; le run en cours voit toujours ses propres écritures | Le modèle ne voit jamais un state que l'historique ne justifie pas ; le rejeu et les évals ne portent que sur des runs finis. Ce qui a vraiment eu lieu reste dans la base métier |
 | D3 | Les sous-runs écrivent-ils dans le state de la session ? | **Non** en v1 : leurs écritures sont ignorées, et un sous-run ne reçoit pas le state | Même règle que l'historique, qui exclut les sous-runs |
-| D4 | Où injecter le bloc pour `main` ? | **Fin du `system`** en v1, bloc `<session_state>` en JSON trié, absent si vide ; mesurer `cache_read` sur agent_01 avant d'envisager un message dédié | Le plus simple et déterministe ; un state qui change rarement coûte peu en cache |
+| D4 | Où injecter le bloc pour `main` ? | **À la fin de la requête**, bloc `<session_state>` en JSON trié, absent si vide ; l'adaptateur Anthropic pose son point de cache juste avant. La première version de cette analyse disait : fin du `system` | En fin de `system`, chaque changement de state invalide le cache de tout l'historique ; en fin de requête, seul le bloc est payé plein tarif |
 | D5 | Par où l'application pose-t-elle du state ? | **API Python** (`run`, `stream`, `submit`) **et CLI** (`--state clé=valeur`) en v1 ; REST et MCP ensuite, sous une portée dédiée | Un appelant REST peut être l'utilisateur final : écrire un state de contrôle doit être un droit distinct de `run` |
 | D6 | Clés déclarées obligatoirement ? | **Oui**, avec un JSON Schema par clé, vérifié au chargement (`check_schema`) | Le typage est la protection contre un outil qui écrit n'importe quoi |
 | D7 | Limites de taille | **1 Kio par valeur, 4 Kio au total** (JSON compact), réglables ; à valider | Le bloc part à chaque appel et échappe à `hard_tokens` |
-| D8 | Écriture refusée (clé non déclarée, schéma, outil hors `writers`, taille) | **Résultat d'outil en erreur** qui nomme la clé et le motif ; rien n'est posé | Même règle qu'un contrat de sortie d'outil non tenu ; visible au journal et au modèle |
+| D8 | Écriture refusée (clé non déclarée, schéma, taille, chemin absent du résultat) | **Résultat d'outil en erreur** qui nomme la clé et le motif ; rien n'est posé | Même règle qu'un contrat de sortie d'outil non tenu ; visible au journal et au modèle |
 | D9 | Deux outils d'un même lot écrivent la même clé | **L'ordre des appels** décide, pas l'ordre d'arrivée | Seule règle identique en direct et au rejeu |
 | D10 | Effacer une clé | **`null` efface** (proposition gardée) | Visible au journal, sans opération de plus |
 | D11 | `session_state` pour les juges | **Refusé au chargement en v1**, avec un message clair ; ajout ensuite | `ContextItem` est partagé : sans refus explicite, l'item serait accepté en config et ignoré à l'exécution |
+| D12 | Qui fixe la valeur écrite par un outil ? | **loom, d'après `from:`** (`path:` dans le résultat, ou `value:` fixe), qui remplace `writers`. Un `ToolOutput(..., state=…)` écrit par l'outil reste un secours pour une règle qui dépend du contexte ; s'il écrit la même clé dans le même appel, sa valeur l'emporte. Pas d'extraction par modèle en v1 | Aucun outil à modifier ; marche aussi pour MCP et la forge ; déterministe et rejouable |
+| D13 | Clé absente au démarrage | **`required: true`** refuse le run avant toute écriture ; **`default:`** donne une valeur à la lecture, sans l'écrire | Une clé de contrôle absente ne doit pas devenir une `KeyError` dans un outil |
 
 Question ouverte : exposer le state de la session dans `RunResult` (API Python) et dans un `GET` REST. Recommandé pour l'API Python dès la v1 ; REST avec D5.
 
@@ -200,13 +277,16 @@ Le garde-fou principal existe déjà : les suites `tests/regression/j1` à `j5` 
 | Idempotence | Plantage après l'effet, avant `tool.completed` : la reprise réutilise le cache et pose le même state | `test_idempotence.py` |
 | D9 — ordre dans un lot | Deux outils écrivent la même clé et finissent dans l'ordre inverse : l'ordre des appels gagne, en direct et au rejeu | `test_executor.py`, `test_rejeu.py` |
 | Politiques et déport | `after_tool` qui refuse : rien n'est posé ; qui remplace : state du résultat retenu ; résultat déporté : state gardé ; stockage en panne : rien | `test_loop_policies.py`, `test_offload.py` |
-| D8 — écritures refusées | Clé non déclarée, schéma non tenu, outil hors `writers`, taille dépassée, motif ReDoS : résultat en erreur, rien de posé | `test_executor.py` |
+| D8 — écritures refusées | Clé non déclarée, schéma non tenu, chemin absent du résultat, taille dépassée, motif ReDoS : résultat en erreur, rien de posé | `test_executor.py` |
 | Projection | Application puis outils ; runs échoués et sous-runs ignorés (D2, D3) ; `null` efface ; inchangée après snapshot, compaction et trim ; deux runs concurrents sur la session | `test_projections.py`, `test_sessions.py`, `test_compaction.py` |
-| Injection | Sans `main.context`, requête **identique octet pour octet** même avec `state:` déclaré ; state vide : pas de bloc ; clés triées ; `</session_state>` dans une valeur échappé ; `before_model` voit le bloc | `test_loop.py`, `test_loop_policies.py` |
+| Injection | Sans `main.context`, requête **identique octet pour octet** même avec `state:` déclaré ; state vide : pas de bloc ; bloc en dernière position, clés triées ; `</session_state>` dans une valeur échappé ; `before_model` voit le bloc | `test_loop.py`, `test_loop_policies.py` |
 | Rôles et juges | `context.session_state.<clé>` dans un template ; règle #50 ; description vue par l'orchestrateur ; refus pour un juge (D11) | `test_roles.py`, `test_config_judges.py` |
-| Config | Schéma de clé invalide, `writers` inconnu, writer MCP ou forge, item non permis dans `main.context` : erreurs claires au chargement ; `loom validate` les dit | `test_config.py`, `test_config_roles.py`, `test_cli.py` |
+| Config | Schéma de clé invalide, outil inconnu dans `from:`, `path:` sur un outil sans `data`, item non permis dans `main.context` : erreurs claires au chargement ; `loom validate` les dit | `test_config.py`, `test_config_roles.py`, `test_cli.py` |
 | Masquage et sceau | `run.started` masqué sans `read_content` : `state` retiré et nommé dans `redacted` ; charge scellée | `test_securite.py`, `test_chiffrement.py` |
 | Accès | `run`, `stream`, `submit` avec `state=` : écrit dans `run.started`, avant `message.user` ; CLI `--state` | `test_access_api.py`, `test_cli.py` |
+| D12 — `from:` | `path:` lu dans `data` ; `value: null` efface ; résultat en erreur ou chemin absent : rien ; résultat déporté : state gardé ; conflit avec `ToolOutput.state` sur un même appel : la valeur de l'outil gagne | `test_executor.py`, `test_offload.py` |
+| D13 — démarrage | Clé `required` absente : run refusé, journal vide ; `default` lu sans être écrit au journal | `test_loop.py`, `test_access_api.py` |
+| D4 — cache | Point de cache `messages` sur le bloc qui précède le state ; préfixe identique d'un appel à l'autre quand seul le state change | `test_adapter_anthropic.py` |
 | Corpus | Nouvelle suite `tests/regression/j7` : un agent avec state, ses journaux rejoués à l'identique | `tests/regression/` |
 
 CI à tenir à chaque étape : ruff, pyright strict, import-linter, couverture ≥ 94 %, et le job « bornes basses », qui éprouve `exclude_if` sur Pydantic 2.12.0.
@@ -217,14 +297,14 @@ Dix étapes, chacune livrable et testable seule ; aucune ne réenregistre les jo
 
 0. **CI au vert d'abord.** Corriger ruff et pyright sur `scripts/journal_html.py`, sortir `Claude outputs/` et `docs/.~lock.fonctions.md#` du dépôt. Corriger aussi le bug latent X10 (`_effect` ne doit pas retenir `tool.source_unavailable` comme cause) : même mécanisme que B1, et son test protège la suite. Repère : 2 564 tests passés.
 1. **Socle `core`** (option C) : `ToolOutput.state` et `RunStarted.state` omis quand vides, `RunState.state_delta`, `apply` (retrait du state montré au modèle, cumul à la fin du lot dans l'ordre des appels), projection `session_state` (D2, D3, D10). Tests : B2, B3, projection.
-2. **Déclaration** : bloc `state:` et `main.context:` dans `agents/spec.py`, item `session_state` dans les deux `ContextItem` et `wiring._context_item`, refus pour les juges (D11), validation des `writers` au montage, JSON Schema régénéré. Tests de config.
-3. **Exécuteur** : contrôle des écritures (D6, D7, D8), `ToolContext.state`, règles `after_tool` et `_settle`. Tests exécuteur, politiques, déport, idempotence.
-4. **Boucle** : `begin_run(..., state=)`, `RunContext.session_state`, injection D4 avant `before_model`. Tests B1, balayage de plantage (B5), requête identique sans `main.context`.
+2. **Déclaration** : bloc `state:` (`schema`, `description`, `from`, `required`, `default`) et `main.context:` dans `agents/spec.py`, item `session_state` dans les deux `ContextItem` et `wiring._context_item`, refus pour les juges (D11), validation des sources `from:` au montage, JSON Schema régénéré. Tests de config.
+3. **Exécuteur** : dérivation `from:` sur le résultat final, avant le déport (D12) ; contrôle des écritures (D6, D7, D8) ; `ToolContext.state` ; règles `after_tool` et `_settle`. Tests exécuteur, politiques, déport, idempotence.
+4. **Boucle et adaptateur** : `begin_run(..., state=)` avec refus des clés `required` absentes (D13), `RunContext.session_state`, bloc en fin de requête avant `before_model` (D4), point de cache Anthropic juste avant le bloc. Tests B1, balayage de plantage (B5), requête identique sans `main.context`.
 5. **Rôles** : item `session_state`, sous-chemin dans `_check_template`, `TAGS`, `described()`. Tests rôles.
 6. **Accès** : `state=` sur `run`, `stream`, `submit` ; `RunResult` et `Loom.session_state()` ; CLI `--state` et `loom state <session>`. REST et MCP restent pour plus tard (D5).
 7. **Rejeu et corpus** : rejeu exact, variante et ordre des appels ; exemple `examples/j7` et suite `tests/regression/j7` ; évals (`cases[].state`) ou limite documentée.
-8. **Documentation** : `fonctions.md` (nouveau point F, « State de session »), `conception.md` (§8.3, §9.5, §9.6, §11.2), un how-to, `CHANGELOG.md` en 2.1.0, et `state-et-context.md` mis à jour avec D1 à D11.
-9. **Essai réel sur agent_01** : `get_client` pose `client_courant` ; « donne-moi son téléphone » après une compaction ; relevé de `cache_read` pour trancher D4 à la mesure.
+8. **Documentation** : `fonctions.md` (nouveau point F, « State de session »), `conception.md` (§8.3, §9.5, §9.6, §11.2), un how-to, `CHANGELOG.md` en 2.1.0, et `state-et-context.md` mis à jour avec D1 à D13.
+9. **Essai réel sur agent_01** : `from: {tool: get_client, path: /code}` sans toucher à l'outil ; `cache:` activé sur ses modèles ; « donne-moi son téléphone » après une compaction ; relevé de `cache_read` et du nombre d'appels, avant et après.
 
 ## Annexe : expériences reproduites
 

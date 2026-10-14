@@ -527,7 +527,15 @@ def _effect(event: Event) -> bool:
     événements viennent après l'effet qu'il juge, et une reprise qui les
     prendrait pour lui ne retrouverait plus le ``tool.completed`` d'un outil
     terminal dont le juge a écrit avant la clôture.
+
+    Une source d'outils injoignable (``tool.source_unavailable``) n'est l'effet de
+    rien non plus : elle est écrite à l'ouverture des sources, y compris à la
+    reprise d'un run dont le dernier effet est le ``tool.completed`` d'un outil
+    terminal. Prise pour cause, elle masquait ce résultat, et la clôture levait
+    ``RuntimeError`` à chaque reprise (X10, ``docs/state-et-context-analyse.md``).
     """
+    if isinstance(event.payload, ToolSourceUnavailable):
+        return False
     judged = isinstance(event.payload, _CALL_EVENTS) and event.payload.judge is not None
     return event.category in {"model", "tool"} and not judged
 

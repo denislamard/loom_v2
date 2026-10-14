@@ -590,13 +590,13 @@ class FlakyStore(InMemoryEventStore):
 
 
 class Erp:
-    """Source d'outils requise, que l'on peut faire tomber."""
+    """Source d'outils que l'on peut faire tomber ; requise, sauf mention contraire."""
 
     name = "erp"
-    required = True
 
-    def __init__(self, *, up: bool) -> None:
+    def __init__(self, *, up: bool, required: bool = True) -> None:
         self.up = up
+        self.required = required
 
     @asynccontextmanager
     async def open(self, context: SourceContext) -> AsyncGenerator[Sequence[Tool]]:
@@ -632,6 +632,10 @@ def crash_plan(scenario: str) -> tuple[list[Message], ToolExecutor, Erp | None]:
         case "source_lost_on_resume":
             erp = Erp(up=True)
             return [Message.assistant("Bonjour")], ToolExecutor(sources=[erp]), erp
+        case "terminal_tool_optional_source_lost":
+            script = [tool_call_message(("c1", "rediger", {"sujet": "la pluie"}))]
+            erp = Erp(up=True, required=False)
+            return script, ToolExecutor([REDIGER], sources=[erp]), erp
         case _:
             return [Message.assistant("Bonjour")], ToolExecutor(), None
 
@@ -639,7 +643,14 @@ def crash_plan(scenario: str) -> tuple[list[Message], ToolExecutor, Erp | None]:
 @pytest.mark.parametrize("worker", [None, "worker-1"])
 @pytest.mark.parametrize(
     "scenario",
-    ["answer", "tool", "terminal_tool", "required_source_down", "source_lost_on_resume"],
+    [
+        "answer",
+        "tool",
+        "terminal_tool",
+        "required_source_down",
+        "source_lost_on_resume",
+        "terminal_tool_optional_source_lost",
+    ],
 )
 async def test_a_crash_at_any_write_leaves_a_journal_that_resumes_cleanly(
     scenario: str, worker: str | None
@@ -650,6 +661,9 @@ async def test_a_crash_at_any_write_leaves_a_journal_that_resumes_cleanly(
     clôture —, la reprise ne lève pas, le journal se relit (``fold``) et le run
     est clos. ``source_lost_on_resume`` : la source requise tombe entre-temps ;
     elle ne compte que si le run n'est pas déjà dans son état final.
+    ``terminal_tool_optional_source_lost`` : une source facultative tombe avant la
+    reprise d'un outil terminal ; son ``tool.source_unavailable``, écrit à la
+    reprise après le ``tool.completed``, ne doit pas en prendre la place de cause.
     """
     crashes = 0
     for k in range(1, 60):
@@ -666,7 +680,8 @@ async def test_a_crash_at_any_write_leaves_a_journal_that_resumes_cleanly(
             break
         # Reprise : un nouveau pilote, dont le modèle reprend le script où il en était.
         store.crash_at = None
-        if scenario == "source_lost_on_resume" and erp is not None:
+        lost_on_resume = {"source_lost_on_resume", "terminal_tool_optional_source_lost"}
+        if scenario in lost_on_resume and erp is not None:
             erp.up = False
         done = sum(1 for e in await journal(store, run) if isinstance(e.payload, ModelResponded))
         second = context(store, scripted(*script[done:]), tools=tools, worker_id=worker)
