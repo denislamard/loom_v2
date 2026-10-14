@@ -81,11 +81,11 @@ références. Chaque appel de modèle les résout selon ses capacités (#14).
 State de la session (option C) : l'application en pose à l'ouverture d'un run
 racine, écrit dans son ``run.started`` après contrôle — ou le run est refusé
 avant tout écrit, comme pour une pièce jointe (``StateRefused``, D13). Un
-orchestrateur qui déclare ``main.context`` reçoit le state à chaque appel :
-celui des runs précédents, ce que l'application a posé et ce que les outils du
-run ont écrit, en dernier message de la requête (avant la consigne d'une
-réponse forcée), jamais journalisé comme message, et avant les politiques
-``before_model`` (D4). Sans ``main.context``, la requête ne change pas.
+orchestrateur qui déclare ``main.context`` reçoit le state à chaque appel,
+même vide : celui des runs précédents, ce que l'application a posé et ce que
+les outils du run ont écrit, en dernier message de la requête (avant la
+consigne d'une réponse forcée), jamais journalisé comme message, et avant les
+politiques ``before_model`` (D4). Sans ``main.context``, la requête ne change pas.
 """
 
 import asyncio
@@ -1667,8 +1667,7 @@ async def _model_step(
         system = f"{system}\n\n{rules.hint(keys)}" if system else rules.hint(keys)
         names = rules.shown(keys)
         values = rules.visible(state_of_run(ctx.session_state, state))
-        block = state_message({name: values[name] for name in names if name in values})
-        shown = (block,) if block is not None else ()
+        shown = (state_message({name: values[name] for name in names if name in values}),)
     # Réponse forcée : sa consigne en dernier message, dans la requête seulement.
     hint = (Message.user(FINALIZE_HINT),) if forced else ()
     tools = ctx.tools.definitions(view)

@@ -787,9 +787,7 @@ async def test_marked_blocks_and_the_four_points_limit() -> None:
 
 def shown(**values: Any) -> Message:
     """Le state de la session tel que le moteur l'ajoute en fin de requête (D4)."""
-    block = state_message(values)
-    assert block is not None
-    return block
+    return state_message(values)
 
 
 async def test_the_conversation_cache_point_precedes_the_session_state() -> None:

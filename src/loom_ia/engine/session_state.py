@@ -60,9 +60,10 @@ DEFAULT_MAX_TOTAL_BYTES: Final = 4096
 # Début de la consigne du prompt système d'un orchestrateur qui reçoit le state ;
 # suit une ligne par clé montrée, avec ce qu'elle désigne.
 STATE_HINT: Final = (
-    "La fin de la requête donne l'état courant de la session, quand il n'est pas vide, "
-    f"entre balises <{SESSION_STATE_TAG}> : un objet JSON tenu à jour par l'application "
-    "et les outils. Une clé absente n'a pas de valeur. Clés :"
+    "La fin de chaque requête donne l'état courant de la session, entre balises "
+    f"<{SESSION_STATE_TAG}> : un objet JSON tenu à jour par l'application et les outils. "
+    f"Seul le dernier bloc <{SESSION_STATE_TAG}> de la requête fait foi ; une clé absente "
+    "n'a pas de valeur. Clés :"
 )
 
 
@@ -288,15 +289,15 @@ def keeps_state(state: RunState) -> bool:
     return state.parent_run_id is None and state.kind == "normal"
 
 
-def state_message(values: Mapping[str, JsonValue]) -> Message | None:
-    """Le state que reçoit l'orchestrateur, en message de fin de requête (D4) ; None s'il est vide.
+def state_message(values: Mapping[str, JsonValue]) -> Message:
+    """Le state que reçoit l'orchestrateur, en message de fin de requête (D4).
 
-    JSON compact aux clés triées, à tous les niveaux : un même state donne un
-    même texte, donc une même requête. La balise est échappée dans les valeurs,
-    qui ne peuvent ni fermer le bloc ni en ouvrir un autre.
+    Envoyé à chaque appel, même vide (``{}``) : le dernier message de la requête
+    est toujours lui, jamais une demande ou un résultat d'outil qui l'imiterait
+    (D4 amendé le 14/10). JSON compact aux clés triées, à tous les niveaux : un
+    même state donne un même texte, donc une même requête. La balise est
+    échappée dans les valeurs, qui ne peuvent ni fermer le bloc ni en ouvrir un autre.
     """
-    if not values:
-        return None
     body = json.dumps(values, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return Message.user(tagged(SESSION_STATE_TAG, body))
 

@@ -133,7 +133,7 @@ async def test_fake_model_does_not_take_the_session_state_for_a_request() -> Non
 
 def shown() -> Message:
     block = state_message({"mode": "détaillé"})
-    assert block is not None and is_session_state(block)
+    assert is_session_state(block)
     return block
 
 
