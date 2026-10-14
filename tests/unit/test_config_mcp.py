@@ -189,6 +189,22 @@ async def test_mounting_builds_one_source_per_reference(tmp_path: Path) -> None:
     await built.aclose()
 
 
+async def test_a_state_source_may_be_an_mcp_tool(tmp_path: Path) -> None:
+    """Les outils d'un serveur ne sont connus qu'au début du run : le préfixe suffit au montage."""
+    sourced: list[dict[str, Any]] = [
+        {"tool": "time__maintenant", "path": "/heure"},
+        {"tool": "m__calculer", "value": 1},
+    ]
+    config = load_config(write(tmp_path, agent(state={"k": {"schema": {}, "from": sourced}})))
+    built = build_agent(config, "assistant", InMemoryEventStore())
+    await built.aclose()
+
+    elsewhere: dict[str, Any] = {"k": {"schema": {}, "from": [{"tool": "crm__fiche", "value": 1}]}}
+    config = load_config(write(tmp_path, agent(state=elsewhere)))
+    with pytest.raises(ConfigError, match=r"from désigne 'crm__fiche'.*outils : time__…, m__…\)"):
+        build_agent(config, "assistant", InMemoryEventStore())
+
+
 @pytest.mark.parametrize(
     ("changes", "tools", "name"),
     [

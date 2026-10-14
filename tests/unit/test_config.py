@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Configuration : schéma, lecture YAML, contrôles au démarrage, références Python."""
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,17 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from loom_ia.agents import AgentRegistry, AgentSpec, MainRole, UnknownAgent
+from loom_ia.adapters.stores import InMemoryEventStore
+from loom_ia.agents import (
+    AgentRegistry,
+    AgentSpec,
+    MainRole,
+    RoleSpec,
+    SessionStateContext,
+    StateKey,
+    StateSource,
+    UnknownAgent,
+)
 from loom_ia.config import (
     ConfigError,
     LoomConfig,
@@ -20,7 +31,8 @@ from loom_ia.config import (
     load_config,
     resolve,
 )
-from loom_ia.runtime import system_prompt
+from loom_ia.core.model import state_size
+from loom_ia.runtime import build_agent, system_prompt
 
 MODEL: dict[str, Any] = {"id": "FAKE", "sdk": "fake", "model": "fake-1"}
 AGENT: dict[str, Any] = {"name": "demo", "main": {"model": "FAKE", "system": "Tu calcules."}}
@@ -466,3 +478,352 @@ def test_prompt_is_read_only_when_needed(tmp_path: Path) -> None:
     # Un agent sans fichier de prompt garde le texte en ligne.
     config = load_config(write(tmp_path))
     assert system_prompt(config.agents[0]) == "Tu calcules."
+
+
+# --- State de session : déclaration (option C) --------------------------------
+
+STATE_TOOLS = """
+from loom_ia.tools import configure, idempotent, tool
+
+
+@tool
+def get_client(nom: str) -> dict[str, str]:
+    '''Fiche du client.'''
+    return {"code": "C-002", "nom": nom}
+
+
+@tool
+def cloturer(code: str) -> str:
+    '''Clôt le dossier.'''
+    return f"Dossier {code} clos."
+
+
+@idempotent
+@tool
+def archiver(code: str) -> str:
+    '''Archive le dossier.'''
+    return f"Dossier {code} archivé."
+
+
+def _resumer(code: str) -> str:
+    '''Résume le dossier.'''
+    return code
+
+
+# Réglé dans le code ; la config peut le régler encore : deux couches.
+resumer = configure(tool(name="resumer")(_resumer), timeout=3)
+"""
+
+
+def state_agent(**changes: Any) -> dict[str, Any]:
+    """Agent qui déclare un state : une clé posée par ses outils, une par défaut, une requise."""
+    spec: dict[str, Any] = {
+        "name": "demo",
+        "main": {"model": "FAKE", "system": "Tu aides.", "context": ["session_state"]},
+        "tools": [{"python": "get_client"}, {"python": "cloturer"}],
+        "state": {
+            "client_courant": {
+                "schema": {"type": "string", "pattern": "^C-[0-9]+$"},
+                "description": "Code du client dont on parle.",
+                "from": [
+                    {"tool": "get_client", "path": "/code"},
+                    {"tool": "cloturer", "value": None},
+                ],
+            },
+            "langue": {"schema": {"enum": ["fr", "en"]}, "default": "fr"},
+            "client_id": {"schema": {"type": "string"}, "required": True},
+        },
+    }
+    return {**spec, **changes}
+
+
+def write_state(
+    tmp_path: Path, *agents: dict[str, Any], root: dict[str, Any] | None = None
+) -> Path:
+    return write(
+        tmp_path,
+        root={"imports": ["outils_state"], **(root or {})},
+        agents={agent["name"]: agent for agent in agents or (state_agent(),)},
+        modules={"outils_state": STATE_TOOLS},
+    )
+
+
+def with_key(name: str, key: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    """L'agent du state, avec cette seule clé."""
+    return state_agent(state={name: key}, **changes)
+
+
+async def test_the_session_state_is_declared_by_the_agent(tmp_path: Path) -> None:
+    config = load_config(write_state(tmp_path))
+    spec = config.agents[0]
+    client = spec.state["client_courant"]
+    assert client.json_schema == {"type": "string", "pattern": "^C-[0-9]+$"}
+    assert client.description == "Code du client dont on parle."
+    assert [(s.tool, s.path, s.value) for s in client.sources] == [
+        ("get_client", "/code", None),
+        ("cloturer", None, None),
+    ]
+    assert (spec.state["langue"].default, spec.state["langue"].required) == ("fr", False)
+    assert (spec.state["client_id"].default, spec.state["client_id"].required) == (None, True)
+    # Tout le state, ou certaines clés.
+    assert spec.main.state_keys == ()
+    limits = config.sessions.state
+    assert (limits.max_value_bytes, limits.max_total_bytes) == (1024, 4096)
+    # Le schéma pour l'éditeur parle comme le YAML : « schema », « from ».
+    definitions = agent_json_schema()["$defs"]
+    assert {"schema", "from", "required", "default"} <= set(definitions["StateKey"]["properties"])
+    assert {"tool", "path", "value"} == set(definitions["StateSource"]["properties"])
+    assert "StateLimits" in config_json_schema()["$defs"]
+    agent = build_agent(config, "demo", InMemoryEventStore())
+    await agent.aclose()
+
+    some = state_agent(main={"model": "FAKE", "context": [{"session_state": ["langue"]}]})
+    assert load_config(write_state(tmp_path, some)).agents[0].main.state_keys == ("langue",)
+    plain = load_config(write_state(tmp_path, state_agent(main={"model": "FAKE"}, state={})))
+    assert (plain.agents[0].state, plain.agents[0].main.state_keys) == ({}, None)
+
+
+STRING: dict[str, Any] = {"type": "string"}
+
+
+@pytest.mark.parametrize(
+    ("agent", "message"),
+    [
+        (with_key("1client", {"schema": STRING}), "clé '1client' invalide"),
+        (with_key("k", {"schema": {"type": "chaine"}}), "schema invalide"),
+        (
+            with_key("k", {"schema": STRING, "required": True, "default": "x"}),
+            "'required' et 'default' s'excluent",
+        ),
+        (with_key("k", {"schema": STRING, "default": 3}), "default ne suit pas le schéma"),
+        (
+            with_key("k", {"schema": STRING, "from": [{"tool": "get_client"}]}),
+            "from, outil 'get_client' : 'path' ou 'value', l'un des deux",
+        ),
+        (
+            with_key(
+                "k",
+                {"schema": STRING, "from": [{"tool": "get_client", "path": "/a", "value": "x"}]},
+            ),
+            "'path' ou 'value', l'un des deux",
+        ),
+        (
+            with_key("k", {"schema": STRING, "from": [{"tool": "get_client", "path": "code"}]}),
+            "path 'code' n'est pas un pointeur JSON",
+        ),
+        (
+            with_key("k", {"schema": STRING, "from": [{"tool": "cloturer", "value": 3}]}),
+            "from, outil 'cloturer' : value ne suit pas le schéma",
+        ),
+        (
+            with_key(
+                "k",
+                {
+                    "schema": STRING,
+                    "from": [
+                        {"tool": "cloturer", "value": None},
+                        {"tool": "cloturer", "value": "x"},
+                    ],
+                },
+            ),
+            "outil cité deux fois : cloturer",
+        ),
+        # La proposition d'origine disait « writers » : remplacé par « from ».
+        (with_key("k", {"schema": STRING, "writers": ["get_client"]}), "writers"),
+        (
+            state_agent(main={"model": "FAKE", "context": [{"session_state": ["inconnue"]}]}),
+            "session_state cite 'inconnue', absente(s) de 'state'",
+        ),
+        (
+            state_agent(state={}),
+            "main.context : session_state, mais aucune clé déclarée dans 'state'",
+        ),
+        (
+            state_agent(main={"model": "FAKE", "context": ["session_summary"]}),
+            "main.context : 'session_summary' refusé, seul 'session_state' est accepté",
+        ),
+        (
+            state_agent(
+                main={"model": "FAKE", "context": ["session_state", {"session_state": ["langue"]}]}
+            ),
+            "session_state déclaré deux fois",
+        ),
+    ],
+)
+def test_a_declared_state_is_checked_at_load(
+    tmp_path: Path, agent: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        load_config(write_state(tmp_path, agent))
+
+
+def test_the_state_values_of_the_config_stay_within_the_session_limits(tmp_path: Path) -> None:
+    """D7 : une valeur par défaut ou fixe ne dépasse pas les limites de la session."""
+    # Une valeur : son JSON compact, en octets UTF-8.
+    assert state_size({"k": "é"}) == len('{"k":"é"}'.encode()) == 10
+    limits = {"sessions": {"state": {"max_value_bytes": 16, "max_total_bytes": 32}}}
+    long = "x" * 20
+
+    def refused(agent: dict[str, Any], message: str) -> None:
+        with pytest.raises(ConfigError, match=re.escape(message)):
+            load_config(write_state(tmp_path, agent, root=limits))
+
+    refused(
+        with_key("k", {"schema": STRING, "default": long}),
+        "state 'k' : default fait 22 octets, au-delà de sessions.state.max_value_bytes (16)",
+    )
+    refused(
+        with_key("k", {"schema": STRING, "from": [{"tool": "cloturer", "value": long}]}),
+        "from, outil 'cloturer' : value fait 22 octets",
+    )
+    ten = "x" * 10
+    both = state_agent(
+        main={"model": "FAKE"},
+        state={"a": {"schema": STRING, "default": ten}, "b": {"schema": STRING, "default": ten}},
+    )
+    refused(
+        both, "les valeurs par défaut font 35 octets, au-delà de sessions.state.max_total_bytes"
+    )
+    load_config(
+        write_state(tmp_path, with_key("k", {"schema": STRING, "default": ten}), root=limits)
+    )
+
+    inverted = {"sessions": {"state": {"max_value_bytes": 64, "max_total_bytes": 32}}}
+    with pytest.raises(ConfigError, match=re.escape("max_value_bytes (64) dépasse")):
+        load_config(write_state(tmp_path, root=inverted))
+
+
+ROLE: dict[str, Any] = {
+    "name": "rediger",
+    "description": "Rédige un message.",
+    "model": "FAKE",
+    "input_schema": {"type": "object", "properties": {"sujet": {"type": "string"}}},
+}
+HELPER: dict[str, Any] = {
+    "name": "verifier",
+    "description": "Vérifie un dossier.",
+    "main": {"model": "FAKE"},
+}
+OBJECT_CONTRACT: dict[str, Any] = {"schema": {"type": "object"}}
+
+
+def mounted(**changes: Any) -> dict[str, Any]:
+    """L'agent du state, avec un rôle et un sous-agent."""
+    base: dict[str, Any] = {
+        "main": {"model": "FAKE"},
+        "roles": [ROLE],
+        "subagents": [{"agent": "verifier"}],
+    }
+    return state_agent(**{**base, **changes})
+
+
+def sourced(source: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    return mounted(state={"k": {"schema": {}, "from": [source]}}, **changes)
+
+
+@pytest.mark.parametrize(
+    ("agent", "message"),
+    [
+        (
+            sourced({"tool": "absent", "value": "x"}),
+            "state 'k' : from désigne 'absent', qui n'est pas un outil de l'agent "
+            "(outils : get_client, cloturer, rediger, verifier)",
+        ),
+        (sourced({"tool": "cloturer", "path": ""}), "l'outil 'cloturer' ne rend pas de données"),
+        (sourced({"tool": "rediger", "path": "/a"}), "le rôle 'rediger' rend du texte"),
+        (sourced({"tool": "verifier", "path": "/a"}), "le sous-agent 'verifier' rend du texte"),
+        # Ce qui a des données, ou n'en demande pas, passe.
+        (sourced({"tool": "get_client", "path": "/code"}), None),
+        (sourced({"tool": "cloturer", "value": None}), None),
+        (sourced({"tool": "rediger", "value": "x"}), None),
+        (sourced({"tool": "verifier", "value": "x"}), None),
+        # Ce que la signature dit reste vrai à travers les réglages et la mémorisation.
+        (
+            sourced(
+                {"tool": "cloturer", "path": "/a"},
+                tools=[{"python": "cloturer", "timeout": 5}],
+            ),
+            "l'outil 'cloturer' ne rend pas de données",
+        ),
+        (
+            sourced({"tool": "archiver", "path": "/a"}, tools=[{"python": "archiver"}]),
+            "l'outil 'archiver' ne rend pas de données",
+        ),
+        (
+            sourced({"tool": "resumer", "path": "/a"}, tools=[{"python": "resumer", "timeout": 5}]),
+            "l'outil 'resumer' ne rend pas de données",
+        ),
+        # Un contrat avec schéma range l'objet JSON validé dans les données.
+        (
+            sourced(
+                {"tool": "cloturer", "path": "/a"},
+                tools=[{"python": "get_client"}, {"python": "cloturer", "output": OBJECT_CONTRACT}],
+            ),
+            None,
+        ),
+        # Donné par fichier, le schéma est lu au chargement : il compte de même.
+        (
+            sourced(
+                {"tool": "cloturer", "path": "/a"},
+                tools=[{"python": "cloturer", "output": {"schema_file": "objet.json"}}],
+            ),
+            None,
+        ),
+        (
+            mounted(
+                roles=[{**ROLE, "output": OBJECT_CONTRACT}],
+                state={"k": {"schema": {}, "from": [{"tool": "rediger", "path": "/a"}]}},
+            ),
+            None,
+        ),
+    ],
+)
+async def test_the_sources_of_the_state_are_checked_at_mount(
+    tmp_path: Path, agent: dict[str, Any], message: str | None
+) -> None:
+    (tmp_path / "objet.json").write_text('{"type": "object"}', encoding="utf-8")
+    config = load_config(write_state(tmp_path, agent, HELPER))
+    if message is not None:
+        with pytest.raises(ConfigError, match=re.escape(message)):
+            build_agent(config, "demo", InMemoryEventStore())
+        return
+    built = build_agent(config, "demo", InMemoryEventStore())
+    await built.aclose()
+
+
+def test_a_path_is_a_json_pointer() -> None:
+    """RFC 6901 : « ~0 » pour « ~ », « ~1 » pour « / » ; rien d'autre après un « ~ »."""
+    for path in ("", "/", "/code", "/lignes/0/montant", "/a~0b~1c"):
+        assert StateSource.model_validate({"tool": "t", "path": path}).path == path
+    for path in ("code", "/a~2", "/a~"):
+        with pytest.raises(ValidationError, match="pointeur JSON"):
+            StateSource.model_validate({"tool": "t", "path": path})
+    # « null » efface la clé : c'est une valeur donnée, pas une valeur absente.
+    erase = StateSource.model_validate({"tool": "t", "value": None})
+    assert (erase.path, erase.value) == (None, None)
+
+
+def test_the_state_can_be_declared_in_python() -> None:
+    main = MainRole(model="FAKE", context=(SessionStateContext(session_state=("langue",)),))
+    assert main.state_keys == ("langue",)
+    key = StateKey.model_validate({"schema": {"enum": ["fr", "en"]}, "default": "fr"})
+    spec = AgentSpec(name="demo", main=main, state={"langue": key})
+    assert spec.state["langue"].default == "fr"
+    with pytest.raises(ValidationError, match="clé citée deux fois : langue"):
+        MainRole(model="FAKE", context=(SessionStateContext(session_state=("langue", "langue")),))
+    with pytest.raises(ValidationError, match="pas encore disponible pour un rôle"):
+        RoleSpec.model_validate(
+            {
+                "name": "rediger",
+                "description": "Rédige.",
+                "model": "FAKE",
+                "context": [SessionStateContext(session_state=("langue",))],
+            }
+        )
+
+
+def test_a_null_value_weighs_nothing(tmp_path: Path) -> None:
+    """``value: null`` efface la clé : il ne compte pas dans les limites."""
+    tiny = {"sessions": {"state": {"max_value_bytes": 3, "max_total_bytes": 3}}}
+    agent = with_key("k", {"schema": STRING, "from": [{"tool": "cloturer", "value": None}]})
+    load_config(write_state(tmp_path, agent, root=tiny))

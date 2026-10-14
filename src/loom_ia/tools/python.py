@@ -29,10 +29,24 @@ moteur, mais ne peut pas interrompre le thread.
 
 import asyncio
 import inspect
+import types
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self, cast, get_type_hints, overload
+from typing import (
+    Annotated,
+    Any,
+    Literal,
+    NewType,
+    Self,
+    TypeAliasType,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+    overload,
+)
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError, create_model
 
@@ -103,6 +117,7 @@ class FunctionTool[**P, R]:
         if not text:
             raise ValueError(f"Outil {tool_name!r} : description manquante (docstring vide)")
         self._context_param, self._arguments = _arguments_model(fn, tool_name)
+        self._returns_data = _may_return_data(fn)
         schema = self._arguments.model_json_schema()
         schema.pop("title", None)
         self._spec = ToolSpec(
@@ -121,6 +136,16 @@ class FunctionTool[**P, R]:
     @property
     def spec(self) -> ToolSpec:
         return self._spec
+
+    @property
+    def returns_data(self) -> bool:
+        """Faux si la signature dit que l'outil ne rend jamais de données (``data``).
+
+        ``str``, ``None`` et ``Image`` donnent un résultat sans données ; tout
+        autre type, un ``ToolOutput`` construit par l'outil, ou une signature
+        sans annotation de retour, peuvent en porter.
+        """
+        return self._returns_data
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         return self.fn(*args, **kwargs)
@@ -237,6 +262,35 @@ def _arguments_model(fn: Callable[..., object], name: str) -> tuple[str | None, 
         **fields,
     )
     return context_param, model
+
+
+def _may_return_data(fn: Callable[..., object]) -> bool:
+    """Vrai sauf si chaque type que la signature annonce donne un résultat sans données."""
+    returned = get_type_hints(fn, include_extras=True).get("return", Any)
+    return not all(_without_data(kind) for kind in _members(returned))
+
+
+def _without_data(kind: object) -> bool:
+    """Type que ``to_output`` traduit sans ``data`` : texte (énumération comprise), rien, image."""
+    if kind is type(None):
+        return True
+    return isinstance(kind, type) and not get_args(kind) and issubclass(kind, str | Image)
+
+
+def _members(annotation: object) -> list[object]:
+    """Types qu'une annotation peut rendre : ceux d'une union, d'un alias, d'un ``Literal``."""
+    if isinstance(annotation, TypeAliasType):
+        return _members(annotation.__value__)
+    if isinstance(annotation, NewType):
+        return _members(annotation.__supertype__)
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _members(get_args(annotation)[0])
+    if origin is Literal:
+        return [type(value) for value in get_args(annotation)]
+    if origin is Union or origin is types.UnionType:
+        return [kind for arg in get_args(annotation) for kind in _members(arg)]
+    return [annotation]
 
 
 def _describe(error: ValidationError) -> str:

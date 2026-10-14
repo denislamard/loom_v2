@@ -48,6 +48,7 @@ from loom_ia.core.model import (
     RateLimit,
     TenantId,
     ToolOverrides,
+    state_size,
 )
 from loom_ia.core.template import Template, TemplateError
 from loom_ia.telemetry.logs import LogFormat
@@ -427,8 +428,30 @@ class StorageConfig(DomainModel):
         return None if directory is None else directory / ARTIFACTS_SUBDIR
 
 
+class StateLimits(DomainModel):
+    """Taille du state d'une session (D7), en octets de JSON compact.
+
+    Le state part avec chaque appel de l'orchestrateur qui le reçoit, et
+    l'estimation qui déclenche la compaction ne le compte pas : il reste petit.
+    """
+
+    # Une valeur, écrite par un outil ou posée par l'application.
+    max_value_bytes: PositiveInt = 1024
+    # Tout le state de la session.
+    max_total_bytes: PositiveInt = 4096
+
+    @model_validator(mode="after")
+    def _check_sizes(self) -> Self:
+        if self.max_value_bytes > self.max_total_bytes:
+            raise ValueError(
+                f"sessions.state : max_value_bytes ({self.max_value_bytes}) dépasse "
+                f"max_total_bytes ({self.max_total_bytes})"
+            )
+        return self
+
+
 class SessionsConfig(DomainModel):
-    """Vie d'une session : historique matérialisé et compaction (F1 à F4)."""
+    """Vie d'une session : historique matérialisé, compaction (F1 à F4), state."""
 
     # Événements ajoutés depuis le dernier marqueur avant qu'un snapshot de
     # l'historique soit écrit (§11.2). Le relire coûte moins que de rejouer
@@ -437,6 +460,8 @@ class SessionsConfig(DomainModel):
     # Sans ce bloc, une session n'est jamais résumée : elle grandit jusqu'à
     # la fenêtre du modèle.
     compaction: CompactionConfig | None = None
+    # Limites du state de la session ; ses clés sont déclarées par les agents.
+    state: StateLimits = StateLimits()
 
 
 class ToolsExecution(DomainModel):
@@ -889,6 +914,8 @@ class LoomConfig(DomainModel):
                             "(params.thinking), que l'API Anthropic refuse avec un outil "
                             "imposé (verdict du juge)"
                         )
+        for agent in self.agents:
+            self._check_state(agent)
         agents = {agent.name: agent for agent in self.agents}
         for agent in self.agents:
             for ref in agent.subagents:
@@ -908,6 +935,41 @@ class LoomConfig(DomainModel):
                         f"Agent {agent.name!r}, sous-agent {ref.tool_name!r} : description "
                         f"manquante (ni dans la référence ni dans l'agent {ref.agent!r})"
                     )
+
+    def _check_state(self, agent: AgentSpec) -> None:
+        """Valeurs de la config qui iront dans le state : dans ses limites (D7).
+
+        Une valeur par défaut est lue à chaque fois que sa clé manque : si les
+        valeurs par défaut ne tiennent pas ensemble, le state de la session est
+        trop gros avant même la première écriture.
+        """
+        limits = self.sessions.state
+        for key, declared in agent.state.items():
+            given = [("default", declared.default)] if declared.default is not None else []
+            # Une valeur ``null`` efface la clé : elle ne pèse rien dans le state.
+            given += [
+                (f"from, outil {source.tool!r} : value", source.value)
+                for source in declared.sources
+                if source.path is None and source.value is not None
+            ]
+            for label, value in given:
+                size = state_size(value)
+                if size > limits.max_value_bytes:
+                    raise ValueError(
+                        f"Agent {agent.name!r}, state {key!r} : {label} fait {size} octets, "
+                        f"au-delà de sessions.state.max_value_bytes ({limits.max_value_bytes})"
+                    )
+        defaults: dict[str, JsonValue] = {
+            key: declared.default
+            for key, declared in agent.state.items()
+            if declared.default is not None
+        }
+        size = state_size(defaults)
+        if defaults and size > limits.max_total_bytes:
+            raise ValueError(
+                f"Agent {agent.name!r}, state : les valeurs par défaut font {size} octets, "
+                f"au-delà de sessions.state.max_total_bytes ({limits.max_total_bytes})"
+            )
 
     def _check_triggers(self) -> None:
         """Déclencheurs nommés une fois, sur des agents qui existent, gabarits valides.

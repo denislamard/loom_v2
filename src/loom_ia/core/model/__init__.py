@@ -146,6 +146,7 @@ from loom_ia.core.model.run_state import (
     RunState,
     RunStatus,
     StateWrite,
+    state_size,
 )
 from loom_ia.core.model.streaming import (
     INVALID_JSON_KEY,
@@ -360,4 +361,5 @@ __all__ = [
     "recordable",
     "sampled",
     "sniff",
+    "state_size",
 ]

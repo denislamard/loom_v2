@@ -5,6 +5,7 @@ Le ``RunState`` n'est jamais stocké : c'est la projection des événements de
 son ``run_id`` (#24). Il ne contient que des données sérialisables.
 """
 
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -160,6 +161,11 @@ class RunClaim(DomainModel):
 
     def alive(self, now: datetime) -> bool:
         return now < self.lease_until
+
+
+def state_size(value: JsonValue) -> int:
+    """Taille d'une valeur du state : son JSON compact, en octets UTF-8 (D7)."""
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
 
 
 class StateWrite(DomainModel):

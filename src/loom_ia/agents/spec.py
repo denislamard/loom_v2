@@ -9,14 +9,22 @@ run, secours) donne une erreur qui nomme sa phase.
 
 ``main`` est lui-même un rôle (C6) : il partage avec les rôles délégués le
 modèle, le prompt système et les réglages ``llm``.
+
+State de la session (option C) : ``state`` déclare les clés que la session
+peut porter, chacune avec son schéma, et les outils dont un résultat la pose
+(``from``) ; ``main.context`` dit ce que l'orchestrateur en reçoit. Un juge ne
+reçoit pas le state dans cette version (D11), un rôle pas encore.
 """
 
+import re
 from pathlib import Path
 from typing import Annotated, Final, Literal, Self, cast
 
-from jsonschema import Draft202012Validator, SchemaError
+from jsonschema import Draft202012Validator, SchemaError, ValidationError
+from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
 from pydantic import (
+    ConfigDict,
     Discriminator,
     Field,
     JsonValue,
@@ -26,6 +34,7 @@ from pydantic import (
     model_validator,
 )
 
+from loom_ia.core.bounded_regex import RegexTimeout, bounded_validator, check_schema
 from loom_ia.core.model import (
     CRITERION_NAME_PATTERN,
     MAIN_ROLE,
@@ -107,14 +116,48 @@ def system_text(role: BaseRole) -> str:
     return role.system_file.read_text(encoding="utf-8")
 
 
+class SessionStateContext(DomainModel):
+    """Contexte ``session_state`` limité à certaines clés du state de la session."""
+
+    session_state: tuple[str, ...] = Field(min_length=1)
+
+
+# Ce que l'orchestrateur reçoit en plus de ses messages : le state de la
+# session, entier (``session_state``) ou certaines de ses clés.
+type MainContextItem = Literal["session_state"] | SessionStateContext
+
+SESSION_STATE: Final = "session_state"
+
+
 class MainRole(BaseRole):
     """Rôle orchestrateur : le modèle qui mène le run."""
+
+    # Contexte ajouté à chaque appel de l'orchestrateur, à la fin de sa requête (D4).
+    context: tuple[MainContextItem, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
     def _check_input(cls, data: object) -> object:
         _reject_two_prompts(data)
+        _only_session_state(data)
         return data
+
+    @model_validator(mode="after")
+    def _check_context(self) -> Self:
+        if len(self.context) > 1:
+            raise ValueError("main.context : session_state déclaré deux fois")
+        keys = list(self.state_keys or ())
+        doubles = sorted({key for key in keys if keys.count(key) > 1})
+        if doubles:
+            raise ValueError(f"main.context : clé citée deux fois : {', '.join(doubles)}")
+        return self
+
+    @property
+    def state_keys(self) -> tuple[str, ...] | None:
+        """Clés nommées dans ``main.context`` ; () pour tout le state, None sans contexte."""
+        for item in self.context:
+            return item.session_state if isinstance(item, SessionStateContext) else ()
+        return None
 
 
 type ContextScope = Literal["run", "session"]
@@ -169,6 +212,12 @@ class JudgeSpec(DomainModel):
     timeout: PositiveFloat | None = None
     # Erreur du juge (modèle, verdict) : ``block`` fait échouer le run, ``allow`` laisse passer.
     on_error: Literal["block", "allow"] = "block"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _check_input(cls, data: object) -> object:
+        _reject_session_state(data, "un juge ne le reçoit pas dans cette version")
+        return data
 
     @model_validator(mode="after")
     def _check(self) -> Self:
@@ -228,6 +277,9 @@ class RoleSpec(BaseRole):
     @classmethod
     def _check_input(cls, data: object) -> object:
         _reject_two_prompts(data)
+        _reject_session_state(
+            data, "pas encore disponible pour un rôle, seulement dans main.context"
+        )
         return data
 
     @model_validator(mode="after")
@@ -347,6 +399,45 @@ def _reject_two_prompts(data: object) -> None:
     keys = cast(dict[object, object], data).keys()
     if {"system", "system_file"} <= keys:
         raise ValueError("'system' et 'system_file' ne peuvent pas être donnés ensemble")
+
+
+def _context_items(data: object) -> list[object]:
+    """Éléments de ``context`` tels qu'écrits, avant validation."""
+    if not isinstance(data, dict):
+        return []
+    context = cast(dict[object, object], data).get("context")
+    if not isinstance(context, list | tuple):
+        return []
+    return list(cast(list[object] | tuple[object, ...], context))
+
+
+def _names_session_state(item: object) -> bool:
+    if isinstance(item, SessionStateContext):
+        return True
+    return item == SESSION_STATE or (
+        isinstance(item, dict) and SESSION_STATE in cast(dict[object, object], item)
+    )
+
+
+def _reject_session_state(data: object, reason: str) -> None:
+    """``session_state`` dans un contexte qui ne le reçoit pas : refusé, et dit pourquoi.
+
+    Sans ce refus, l'élément serait lu comme un contexte inconnu, avec la liste
+    de ceux qu'attend un rôle, ou pire, accepté et ignoré à l'exécution.
+    """
+    if any(_names_session_state(item) for item in _context_items(data)):
+        raise ValueError(f"contexte 'session_state' : {reason}")
+
+
+def _only_session_state(data: object) -> None:
+    """``main.context`` n'accepte que ``session_state`` : le reste est déjà dans les messages."""
+    for item in _context_items(data):
+        if not _names_session_state(item):
+            raise ValueError(
+                f"main.context : {item!r} refusé, seul 'session_state' est accepté "
+                "(la demande, l'historique et les pièces jointes sont déjà dans les messages "
+                "de l'orchestrateur)"
+            )
 
 
 class PythonTool(DomainModel):
@@ -502,6 +593,91 @@ type ToolRef = Annotated[
 ]
 
 
+# Nom d'une clé du state : un identifiant, que les templates citent tel quel.
+STATE_KEY_PATTERN: Final = r"^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+# Pointeur JSON (RFC 6901) : vide, ou des segments « /… » où « ~ » s'écrit
+# « ~0 » et « / » s'écrit « ~1 ».
+_JSON_POINTER: Final = re.compile(r"(?:/(?:[^~/]|~[01])*)*")
+
+
+class StateSource(DomainModel):
+    """Ce qui pose une clé du state (D12) : chaque résultat réussi de l'outil ``tool``.
+
+    ``path`` : pointeur JSON (RFC 6901) dans les données du résultat
+    (``data``) ; ``""`` les prend entières. ``value`` : valeur fixe ; ``null``
+    efface la clé (D10). L'un ou l'autre, pas les deux.
+    """
+
+    tool: str = Field(min_length=1)
+    path: str | None = None
+    value: JsonValue = None
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        if (self.path is not None) == ("value" in self.model_fields_set):
+            raise ValueError(f"from, outil {self.tool!r} : 'path' ou 'value', l'un des deux")
+        if self.path is not None and not _JSON_POINTER.fullmatch(self.path):
+            raise ValueError(
+                f"from, outil {self.tool!r} : path {self.path!r} n'est pas un pointeur JSON "
+                "(« /champ/0 », ou « » pour tout le résultat)"
+            )
+        return self
+
+
+class StateKey(DomainModel):
+    """Clé du state de la session (D6) : son schéma, ce qu'elle désigne, ce qui la pose."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", validate_by_name=True)
+
+    # JSON Schema de la valeur, contrôlé au chargement : une écriture qui ne le
+    # tient pas est refusée (D8).
+    json_schema: dict[str, JsonValue] = Field(alias="schema")
+    # Ce que la clé désigne : donné avec sa valeur à qui la reçoit.
+    description: str = ""
+    # Outils dont un résultat réussi pose la clé (D12) ; sans source, seule
+    # l'application l'écrit.
+    sources: tuple[StateSource, ...] = Field(default=(), alias="from")
+    # Run refusé à l'ouverture si la clé manque au state de la session (D13).
+    required: bool = False
+    # Valeur lue quand la clé est absente ; elle n'est jamais écrite (D13).
+    default: JsonValue = None
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        try:
+            check_schema(self.json_schema)
+        except SchemaError as exc:
+            raise ValueError(f"schema invalide : {exc.message}") from exc
+        if self.required and self.default is not None:
+            raise ValueError(
+                "'required' et 'default' s'excluent : une clé qui a une valeur par défaut "
+                "ne manque jamais"
+            )
+        validator = bounded_validator(self.json_schema)
+        if self.default is not None:
+            _conforms(validator, self.default, "default")
+        tools = [source.tool for source in self.sources]
+        doubles = sorted({tool for tool in tools if tools.count(tool) > 1})
+        if doubles:
+            raise ValueError(f"from : outil cité deux fois : {', '.join(doubles)}")
+        for source in self.sources:
+            if source.path is None and source.value is not None:
+                _conforms(validator, source.value, f"from, outil {source.tool!r} : value")
+        return self
+
+
+def _conforms(validator: Validator, value: JsonValue, label: str) -> None:
+    """La valeur suit le schéma de la clé, ou le chargement s'arrête en le disant."""
+    try:
+        validator.validate(value)
+    except ValidationError as exc:
+        raise ValueError(f"{label} ne suit pas le schéma de la clé : {exc.message}") from None
+    except RegexTimeout as exc:
+        raise ValueError(
+            f"{label} : le schéma de la clé ne peut pas être appliqué ({exc})"
+        ) from None
+
+
 class AgentSpec(DomainModel):
     name: str = Field(pattern=AGENT_NAME_PATTERN)
     description: str = ""
@@ -537,6 +713,27 @@ class AgentSpec(DomainModel):
     # Profondeur maximale d'un run de cet agent pour appeler ses sous-agents :
     # à 1, un run racine les appelle, mais un sous-run de cet agent ne le peut pas.
     max_depth: PositiveInt = 1
+    # State de la session (option C) : les clés qu'elle peut porter (D6).
+    state: dict[str, StateKey] = Field(default_factory=dict[str, StateKey])
+
+    @model_validator(mode="after")
+    def _check_state(self) -> Self:
+        for key in self.state:
+            if not re.fullmatch(STATE_KEY_PATTERN, key):
+                raise ValueError(
+                    f"state : clé {key!r} invalide (lettres, chiffres et '_', 64 au plus, "
+                    "sans chiffre en tête)"
+                )
+        named = self.main.state_keys
+        if named is not None and not self.state:
+            raise ValueError("main.context : session_state, mais aucune clé déclarée dans 'state'")
+        unknown = sorted(key for key in named or () if key not in self.state)
+        if unknown:
+            raise ValueError(
+                f"main.context : session_state cite {', '.join(map(repr, unknown))}, "
+                f"absente(s) de 'state' (clés : {', '.join(self.state)})"
+            )
+        return self
 
     @model_validator(mode="after")
     def _unique_tools(self) -> Self:

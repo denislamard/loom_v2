@@ -75,6 +75,26 @@ def test_validate_refuses_a_compaction_model_without_its_key(
     assert "CLE_DU_RESUME" in capsys.readouterr().err
 
 
+def test_validate_tells_what_is_wrong_with_the_declared_state(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Au chargement (schéma de la clé) comme au montage (source ``from``)."""
+    loaded: dict[str, Any] = {"k": {"schema": {"type": "chaine"}}}
+    assert main(["--config", str(demo(agents=[demo_agent(state=loaded)])), "validate"]) == 2
+    assert "state.k — schema invalide" in capsys.readouterr().err
+
+    # « calculer » rend du texte : rien à lire au chemin « /resultat ».
+    mounted: dict[str, Any] = {
+        "k": {"schema": {}, "from": [{"tool": "calculer", "path": "/resultat"}]}
+    }
+    assert main(["--config", str(demo(agents=[demo_agent(state=mounted)])), "validate"]) == 2
+    assert "state 'k' : l'outil 'calculer' ne rend pas de données" in capsys.readouterr().err
+
+    fixed: dict[str, Any] = {"k": {"schema": {}, "from": [{"tool": "calculer", "value": "fait"}]}}
+    assert main(["--config", str(demo(agents=[demo_agent(state=fixed)])), "validate"]) == 0
+    assert "1 agent(s) monté(s) sans erreur." in capsys.readouterr().out
+
+
 ABSENTE = "LOOM_VALIDATE_CLE_ABSENTE"
 REEL: dict[str, Any] = {"id": "REEL", "sdk": "openai", "model": "gpt-x", "api_key_env": ABSENTE}
 

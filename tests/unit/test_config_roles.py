@@ -182,6 +182,12 @@ def broken(**changes: Any) -> dict[str, Any]:
             "scope",
         ),
         (broken(context=["user_input", "user_input"]), "Contexte déclaré deux fois : user_input"),
+        (
+            broken(context=["session_state"]),
+            "contexte 'session_state' : pas encore disponible pour un rôle, "
+            "seulement dans main.context",
+        ),
+        (broken(context=[{"session_state": ["client"]}]), "pas encore disponible pour un rôle"),
         (broken(context=[], input_schema={"type": "object"}), "ne recevrait rien"),
         (broken(input_schema={"type": "array"}), "'type: object' attendu"),
         (broken(input_schema={"type": "object", "properties": 3}), "input_schema invalide"),

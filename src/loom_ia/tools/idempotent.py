@@ -153,6 +153,11 @@ class IdempotentTool[**P, R]:
         return self._spec
 
     @property
+    def returns_data(self) -> bool:
+        """Comme l'outil qu'il mémorise : faux si sa signature exclut toute donnée."""
+        return self._tool.returns_data
+
+    @property
     def held_for(self) -> float:
         """Durée d'une réservation de cet outil."""
         return self.reservation or self._spec.timeout or DEFAULT_RESERVATION

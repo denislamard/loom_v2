@@ -106,6 +106,7 @@ from loom_ia.core.model import (
     RESERVED_PREFIX,
     Approval,
     ModelSpec,
+    OutputContract,
     StreamOutput,
     TenantId,
     ToolOverrides,
@@ -158,7 +159,7 @@ from loom_ia.policies import BUILTIN_POLICIES
 from loom_ia.runtime.sources import PackagedSource, described, source_factory
 from loom_ia.telemetry import RunExporter, SpanSink, configure_logging
 from loom_ia.tenancy import EnvironmentSecrets, Tenant
-from loom_ia.tools import FunctionTool, configure
+from loom_ia.tools import ConfiguredTool, FunctionTool, IdempotentTool, configure
 from loom_ia.usage import BudgetGuard
 
 if TYPE_CHECKING:
@@ -592,6 +593,7 @@ def build_agent(
     tools = [_tool(declared, known, config.base_dir) for declared in spec.python_tools]
     roles = [role_definition(role, variables) for role in spec.roles]
     _check_names(spec, [tool.spec.name for tool in tools])
+    _check_state(spec, tools)
 
     clients: dict[str, ModelClient] = {}
     breakers = breakers if breakers is not None else CircuitBreakers()
@@ -1346,6 +1348,72 @@ def _check_names(spec: AgentSpec, python_tools: list[str]) -> None:
                 f"Agent {spec.name!r}, rôle {role.name!r} : tool_results désigne {tool!r}, "
                 f"qui n'est pas un outil de l'agent (outils : {known})"
             )
+
+
+def _check_state(spec: AgentSpec, tools: Sequence[Tool]) -> None:
+    """Sources ``from`` du state : des outils de l'agent, avec des données pour ``path`` (D12).
+
+    ``path`` se lit dans les données du résultat (``data``), après les
+    politiques ``after_tool`` : un contrat avec schéma en donne à un outil ou à
+    un rôle qui rend du texte. Un sous-agent n'en a jamais. Les outils MCP et
+    ceux d'une source ne sont connus qu'au début du run : un nom qui porte leur
+    préfixe est accepté ici.
+    """
+    python = {tool.spec.name: tool for tool in tools}
+    roles = {role.name: role for role in spec.roles}
+    subagents = {ref.tool_name for ref in spec.subagents}
+    prefixed = (*spec.mcp_tools, *spec.source_tools)
+    for key, declared in spec.state.items():
+        label = f"Agent {spec.name!r}, state {key!r}"
+        for source in declared.sources:
+            name, wants_data = source.tool, source.path is not None
+            if name in python:
+                tool = python[name]
+                if wants_data and not (_returns_data(tool) or _has_schema(tool.spec.output)):
+                    raise ConfigError(
+                        f"{label} : l'outil {name!r} ne rend pas de données (sa signature "
+                        "annonce str, None ou Image) : 'path' impossible, donner une 'value' "
+                        "ou un contrat de sortie avec schéma"
+                    )
+            elif name in roles:
+                if wants_data and not _has_schema(roles[name].output):
+                    raise ConfigError(
+                        f"{label} : le rôle {name!r} rend du texte : 'path' impossible, "
+                        "donner une 'value' ou un contrat de sortie avec schéma"
+                    )
+            elif name in subagents:
+                if wants_data:
+                    raise ConfigError(
+                        f"{label} : le sous-agent {name!r} rend du texte : 'path' impossible, "
+                        "donner une 'value'"
+                    )
+            elif not any(ref.owns(name) for ref in prefixed):
+                names = [*python, *roles, *subagents]
+                prefixes = [f"{ref.prefix}__…" for ref in prefixed]
+                known = ", ".join([*names, *prefixes]) or "aucun"
+                raise ConfigError(
+                    f"{label} : from désigne {name!r}, qui n'est pas un outil de l'agent "
+                    f"(outils : {known})"
+                )
+
+
+def _returns_data(tool: Tool) -> bool:
+    """Faux si l'outil est une fonction dont la signature exclut toute donnée."""
+    inner = tool
+    while isinstance(inner, ConfiguredTool):
+        inner = inner.tool
+    if isinstance(inner, FunctionTool | IdempotentTool):
+        return inner.returns_data
+    return True
+
+
+def _has_schema(contract: OutputContract | None) -> bool:
+    """Vrai pour un contrat qui valide un objet JSON : il le range dans ``data``.
+
+    Un ``schema_file`` compte une fois lu au chargement, qui le range dans ``schema`` :
+    c'est ce champ que le guard applique.
+    """
+    return contract is not None and contract.json_schema is not None
 
 
 def _mcp_sources(

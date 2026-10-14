@@ -158,6 +158,15 @@ def test_judge_warnings_at_startup(demo: ConfigFactory, caplog: pytest.LogCaptur
         ({"criteria": []}, "criteria"),
         ({"context": ["session_summary", "session_summary"]}, "Contexte déclaré deux fois"),
         ({"context": ["attachments"]}, "n'a pas la capacité vision"),
+        # D11 : refusé avec un message clair, plutôt qu'accepté puis ignoré.
+        (
+            {"context": ["user_input", "session_state"]},
+            "contexte 'session_state' : un juge ne le reçoit pas dans cette version",
+        ),
+        (
+            {"context": [{"session_state": ["client"]}]},
+            "contexte 'session_state' : un juge ne le reçoit pas",
+        ),
     ],
 )
 def test_judge_config_errors(demo: ConfigFactory, judge: dict[str, Any], message: str) -> None:

@@ -2,7 +2,8 @@
 """Outils Python : schéma déduit, appel, conversion du résultat."""
 
 import asyncio
-from typing import Annotated
+from enum import StrEnum
+from typing import Annotated, Literal, NewType
 
 import pytest
 from pydantic import BaseModel, Field
@@ -16,7 +17,7 @@ from loom_ia.core.model import (
     ToolOutput,
 )
 from loom_ia.core.ports import ToolContext, ToolError, idempotency_key
-from loom_ia.tools import FunctionTool, to_output, tool
+from loom_ia.tools import FunctionTool, Image, idempotent, to_output, tool
 
 CONTEXT = ToolContext(
     tenant_id=DEFAULT_TENANT,
@@ -131,6 +132,87 @@ def test_result_conversion() -> None:
     assert to_output([1, "a"]).blocks == (JsonBlock(data=[1, "a"]),)
     with pytest.raises(Exception, match="serialize"):
         to_output(object())
+
+
+# Ce qu'une signature peut annoncer sans le dire en clair : ``to_output`` y voit du texte.
+type Texte = str
+type PeutEtre = str | None
+type Fiche = dict[str, str]
+Code = NewType("Code", str)
+
+
+class Etat(StrEnum):
+    OK = "ok"
+    KO = "ko"
+
+
+def test_the_signature_says_whether_a_tool_returns_data() -> None:
+    """Un ``path`` du state se lit dans ``data`` : la signature dit s'il peut y en avoir.
+
+    Le doute (annotation absente, ``ToolOutput`` construit par l'outil) laisse passer.
+    """
+
+    def texte() -> str:
+        return ""
+
+    def rien() -> None:
+        return None
+
+    def image() -> Image:
+        return Image(b"")
+
+    def texte_ou_rien() -> str | None:
+        return None
+
+    def annote() -> Annotated[str, "note"]:
+        return ""
+
+    def fiche() -> dict[str, str]:
+        return {}
+
+    def adresse() -> Adresse:
+        return Adresse(ville="Dijon")
+
+    def nombre_ou_texte() -> int | str:
+        return 0
+
+    def sortie() -> ToolOutput:
+        return ToolOutput()
+
+    def libre():
+        return 0
+
+    async def asynchrone() -> dict[str, int]:
+        return {}
+
+    def statut() -> Literal["ok", "ko"]:
+        return "ok"
+
+    def alias() -> Texte:
+        return ""
+
+    def alias_ou_rien() -> PeutEtre:
+        return None
+
+    def code() -> Code:
+        return Code("C-002")
+
+    def etat() -> Etat:
+        return Etat.OK
+
+    def rang() -> Literal[1, 2]:
+        return 1
+
+    def fiche_aliasee() -> Fiche:
+        return {}
+
+    without = [texte, rien, image, texte_ou_rien, annote, statut, alias, alias_ou_rien, code, etat]
+    with_data = [fiche, adresse, nombre_ou_texte, sortie, libre, asynchrone, rang, fiche_aliasee]
+    for fn in [*without, *with_data]:
+        fn.__doc__ = "Outil d'essai."
+    assert [FunctionTool(fn).returns_data for fn in without] == [False] * len(without)
+    assert [FunctionTool(fn).returns_data for fn in with_data] == [True] * len(with_data)
+    assert idempotent(FunctionTool(texte)).returns_data is False
 
 
 def test_invalid_declarations() -> None:
