@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Configuration : schéma, lecture YAML, contrôles au démarrage, références Python."""
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -32,9 +33,10 @@ from loom_ia.config import (
     load_config,
     resolve,
 )
-from loom_ia.core.events import ToolCompleted
+from loom_ia.core.events import ModelExchanged, ToolCompleted
 from loom_ia.core.model import SessionId, state_size
 from loom_ia.core.projections import session_state
+from loom_ia.engine import STATE_HINT, StateRefused
 from loom_ia.runtime import build_agent, system_prompt
 
 MODEL: dict[str, Any] = {"id": "FAKE", "sdk": "fake", "model": "fake-1"}
@@ -607,6 +609,20 @@ STRING: dict[str, Any] = {"type": "string"}
         ),
         (with_key("k", {"schema": STRING, "default": 3}), "default ne suit pas le schéma"),
         (
+            with_key("k", {"schema": {"type": "number"}, "default": float("inf")}),
+            "default contient NaN ou un infini",
+        ),
+        (
+            with_key(
+                "k",
+                {
+                    "schema": {"type": "number"},
+                    "from": [{"tool": "cloturer", "value": float("nan")}],
+                },
+            ),
+            "from, outil 'cloturer' : value contient NaN ou un infini",
+        ),
+        (
             with_key("k", {"schema": STRING, "from": [{"tool": "get_client"}]}),
             "from, outil 'get_client' : 'path' ou 'value', l'un des deux",
         ),
@@ -888,3 +904,58 @@ async def test_a_tool_reads_what_an_earlier_run_of_the_session_wrote(tmp_path: P
     [read] = [e.payload for e in after if isinstance(e.payload, ToolCompleted)]
     assert read.output.as_text == "C-002 / fr"
     assert session_state([*before, *after]) == {"client_courant": "C-002"}
+
+
+async def test_the_orchestrator_reads_the_session_state_declared_by_its_config(
+    tmp_path: Path,
+) -> None:
+    """De bout en bout avec ``main.context`` : le state en fin de requête, recalculé au rejeu."""
+    script: list[dict[str, Any]] = [
+        {"with_text": "Martin", "tool_calls": [{"name": "get_client", "arguments": {"nom": "M"}}]},
+        {"with_text": "Martin", "text": "Client trouvé."},
+        {"with_text": "maintenant", "text": "C'est C-002."},
+    ]
+    scripted = {**MODEL, "params": {"script": script}}
+    agent = state_agent(
+        tools=[{"python": "get_client"}],
+        state={
+            "client_courant": {
+                "schema": {"type": "string"},
+                "description": "Code du client dont on parle.",
+                "from": [{"tool": "get_client", "path": "/code"}],
+            },
+            "langue": {"schema": {"enum": ["fr", "en"]}, "default": "fr"},
+        },
+    )
+    captured = {"models": [scripted], "telemetry": {"capture": {"raw_exchanges": True}}}
+    path = write_state(tmp_path, agent, root=captured)
+    session = SessionId("conversation")
+    async with Loom(load_config(path)) as loom:
+        first = await loom.run("demo", "Qui est Martin ?", session_id=session)
+        second = await loom.run("demo", "Et maintenant ?", session_id=session)
+        events = [
+            *await loom.events(first.run_id, session_id=session),
+            *await loom.events(second.run_id, session_id=session),
+        ]
+        for run in (first, second):
+            report = await loom.replay(run.run_id, session_id=session)
+            assert report.identical, report.divergence
+
+    sent = [
+        json.loads(e.payload.request_body) for e in events if isinstance(e.payload, ModelExchanged)
+    ]
+    assert [request["messages"][-1]["blocks"][0]["text"] for request in sent] == [
+        '<session_state>\n{"langue":"fr"}\n</session_state>',
+        '<session_state>\n{"client_courant":"C-002","langue":"fr"}\n</session_state>',
+        '<session_state>\n{"client_courant":"C-002","langue":"fr"}\n</session_state>',
+    ]
+    described = "- client_courant : Code du client dont on parle.\n- langue"
+    assert {request["system"] for request in sent} == {f"Tu aides.\n\n{STATE_HINT}\n{described}"}
+
+
+async def test_a_required_key_of_the_config_refuses_a_run_without_it(tmp_path: Path) -> None:
+    """D13 : ``client_id`` est obligatoire ; sans valeur, le run n'est pas ouvert."""
+    async with Loom(load_config(write_state(tmp_path))) as loom:
+        with pytest.raises(StateRefused, match="client_id : clé obligatoire sans valeur"):
+            await loom.run("demo", "Bonjour", session_id=SessionId("s1"))
+        assert await loom.sessions() == []

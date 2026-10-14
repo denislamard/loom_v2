@@ -85,7 +85,7 @@ from loom_ia.core.model.media import (
     is_image,
     sniff,
 )
-from loom_ia.core.model.messages import Message, Role
+from loom_ia.core.model.messages import SESSION_STATE_TAG, Message, Role, is_session_state
 from loom_ia.core.model.model_spec import (
     CacheTtl,
     CircuitBreaker,
@@ -146,6 +146,7 @@ from loom_ia.core.model.run_state import (
     RunState,
     RunStatus,
     StateWrite,
+    finite_json,
     state_size,
 )
 from loom_ia.core.model.streaming import (
@@ -216,6 +217,7 @@ __all__ = [
     "REPAIR_PREFIX",
     "RESERVED_PREFIX",
     "SAFE_ID",
+    "SESSION_STATE_TAG",
     "TERMINAL_HINT",
     "TOOL_NAME_PATTERN",
     "WINDOW",
@@ -351,8 +353,10 @@ __all__ = [
     "UsageDelta",
     "artifact_uri",
     "extension",
+    "finite_json",
     "has_inline_data",
     "is_image",
+    "is_session_state",
     "message_to_chunks",
     "new_event_id",
     "new_id",

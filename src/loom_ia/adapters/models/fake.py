@@ -73,6 +73,7 @@ from loom_ia.core.model import (
     TextBlock,
     ToolCallBlock,
     Usage,
+    is_session_state,
     message_to_chunks,
 )
 from loom_ia.core.ports import ModelError, RawExchange, exchange_log
@@ -199,7 +200,8 @@ def _turn(request: ModelRequest) -> int:
     """Réponses déjà données depuis la dernière demande de l'utilisateur.
 
     Ne sont pas des demandes : le message qui porte les images des résultats
-    d'outils, le diagnostic d'une réparation, la consigne de la réponse forcée.
+    d'outils, le diagnostic d'une réparation, la consigne de la réponse forcée,
+    le state de la session.
     """
     count = 0
     for message in reversed(request.messages):
@@ -221,8 +223,13 @@ def _repair(message: Message) -> bool:
 
 
 def _engine_note(message: Message) -> bool:
-    """Message ajouté par le moteur : images déplacées, réparation, réponse forcée."""
-    return _moved_images(message) or _repair(message) or message.text == FINALIZE_HINT
+    """Message ajouté par le moteur : images déplacées, réparation, réponse forcée, state."""
+    return (
+        _moved_images(message)
+        or _repair(message)
+        or message.text == FINALIZE_HINT
+        or is_session_state(message)
+    )
 
 
 def _last_user_text(request: ModelRequest) -> str:

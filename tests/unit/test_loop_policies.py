@@ -57,6 +57,8 @@ from loom_ia.engine import (
     BoundPolicy,
     Policies,
     RunContext,
+    StateKeyRule,
+    StateRules,
     ToolExecutor,
     Trace,
     TracingPolicy,
@@ -254,6 +256,28 @@ async def test_fail_before_the_model_fails_the_run(store: EventStore) -> None:
         "run.failed",
     ]
     assert events[3].status == "error"
+
+
+async def test_before_model_sees_the_session_state_and_can_replace_it(store: EventStore) -> None:
+    """D4 : le state est déjà dans la requête que reçoivent les politiques ``before_model``."""
+    seen: list[str] = []
+
+    @policy(points=["before_model"], decisions=["replace"])
+    def sans_state(subject: BeforeModel) -> Decision:
+        *asked, last = subject.request.messages
+        seen.append(last.text)
+        return Replace(subject.request.model_copy(update={"messages": tuple(asked)}))
+
+    rules = StateRules({"note": StateKeyRule(schema={"type": "string"})})
+    model = scripted(Message.assistant("Noté."))
+    tools = ToolExecutor([calculer], state_rules=rules)
+    ctx = context(store, model, bind(sans_state), tools=tools, state_keys=())
+    state = await drive(ctx, (await begin_run(ctx, "?", state={"note": "rappeler"})).run_id)
+
+    assert state.status is RunStatus.COMPLETED
+    assert seen == ['<session_state>\n{"note":"rappeler"}\n</session_state>']
+    # La requête remplacée est celle qui part : sans le state.
+    assert model.requests[0].messages == (Message.user("?"),)
 
 
 async def test_finalizing_keeps_its_answer_without_tools(store: EventStore) -> None:

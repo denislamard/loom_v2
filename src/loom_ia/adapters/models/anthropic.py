@@ -18,7 +18,9 @@ Traduction des messages :
   dernier outil, dernier bloc de la conversation) et les blocs marqués
   ``cache_breakpoint`` reçoivent un ``cache_control``, au plus quatre par
   requête (les marques les plus récentes d'abord) ; jamais sur un bloc de
-  raisonnement ;
+  raisonnement. Le state de la session, que le moteur ajoute en fin de requête
+  (D4), n'est pas de la conversation : son point se pose sur le bloc qui le
+  précède, et un state qui change ne fait pas perdre le cache de l'historique ;
 - le schéma de sortie (``output_schema``) devient ``output_config.format``
   pour un modèle déclaré ``native_json: true``, après adaptation par le SDK
   (``transform_schema`` : mots-clés non pris en charge reportés dans les
@@ -53,6 +55,7 @@ from loom_ia.adapters.models._common import (
     unresolved,
 )
 from loom_ia.core.model import (
+    FINALIZE_HINT,
     AnthropicMeta,
     ArtifactRefBlock,
     ContentBlock,
@@ -78,6 +81,7 @@ from loom_ia.core.model import (
     ToolResultBlock,
     Usage,
     UsageDelta,
+    is_session_state,
     message_to_chunks,
 )
 from loom_ia.core.ports import ModelError
@@ -160,7 +164,8 @@ class AnthropicModel:
     async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
         cache = self.spec.cache
         marks: list[_Mark] = []
-        messages = to_anthropic_messages(request.messages, marks=marks)
+        tail: list[_Mark] = []
+        messages = to_anthropic_messages(request.messages, marks=marks, tail=tail)
         tools = to_anthropic_tools(request)
         tool_choice: sdk.ToolChoiceParam | anthropic.Omit = anthropic.omit
         if tools:
@@ -169,7 +174,7 @@ class AnthropicModel:
         system: str | list[sdk.TextBlockParam] | anthropic.Omit = request.system or anthropic.omit
         if request.system and cache is not None and cache.system:
             system = [{"type": "text", "text": request.system}]
-        place_cache_points(cache, system, tools, messages, marks)
+        place_cache_points(cache, system, tools, messages, marks, tail=next(iter(tail), None))
         params = dict(request.params)
         output_config = self._output_config(request, params)
         extra_body = params or None
@@ -244,14 +249,19 @@ type _Mark = tuple[int, int]
 
 
 def to_anthropic_messages(
-    messages: Sequence[Message], *, marks: list[_Mark] | None = None
+    messages: Sequence[Message],
+    *,
+    marks: list[_Mark] | None = None,
+    tail: list[_Mark] | None = None,
 ) -> list[sdk.MessageParam]:
     """Messages neutres → messages de l'API, fusionnés par rôle.
 
-    ``marks`` reçoit la place des blocs marqués ``cache_breakpoint``.
+    ``marks`` reçoit la place des blocs marqués ``cache_breakpoint`` ; ``tail``,
+    celle du state de la session (D4) en fin de requête, où finit la conversation.
     """
     turns: list[tuple[_Role, list[sdk.ContentBlockParam]]] = []
-    for message in messages:
+    state = _trailing_state(messages) if tail is not None else None
+    for position, message in enumerate(messages):
         role: _Role = "assistant" if message.role == "assistant" else "user"
         converted = [(b, block) for b in message.blocks if (block := _to_block(b)) is not None]
         if not converted:
@@ -259,11 +269,26 @@ def to_anthropic_messages(
         if not (turns and turns[-1][0] == role):
             turns.append((role, []))
         content = turns[-1][1]
+        if tail is not None and position == state:
+            tail.append((len(turns) - 1, len(content)))
         for neutral, block in converted:
             if neutral.cache_breakpoint and marks is not None:
                 marks.append((len(turns) - 1, len(content)))
             content.append(block)
     return [{"role": role, "content": content} for role, content in turns]
+
+
+def _trailing_state(messages: Sequence[Message]) -> int | None:
+    """Place du state que le moteur ajoute en fin de requête (D4), ou None.
+
+    C'est le dernier message, ou l'avant-dernier devant la consigne d'une
+    réponse forcée. Une demande plus ancienne qui commencerait par la balise
+    n'est pas lui : elle ne déplace pas le point de cache.
+    """
+    last = len(messages) - 1
+    if last > 0 and messages[last].role == "user" and messages[last].text == FINALIZE_HINT:
+        last -= 1
+    return last if last >= 0 and is_session_state(messages[last]) else None
 
 
 def place_cache_points(
@@ -272,11 +297,14 @@ def place_cache_points(
     tools: list[sdk.ToolParam],
     messages: list[sdk.MessageParam],
     marks: Sequence[_Mark] = (),
+    *,
+    tail: _Mark | None = None,
 ) -> None:
     """Pose les ``cache_control`` : réglage ``cache`` du modèle, puis blocs marqués (B5).
 
     Au plus quatre : ceux du réglage d'abord (outils, système, conversation),
-    puis les marques, des plus récentes aux plus anciennes.
+    puis les marques, des plus récentes aux plus anciennes. ``tail`` : place du
+    state de la session (D4) ; le point de la conversation se pose avant lui.
     """
     control: sdk.CacheControlEphemeralParam = {"type": "ephemeral"}
     if cache is not None and cache.ttl != "5m":
@@ -287,7 +315,7 @@ def place_cache_points(
             targets.append(cast(dict[str, Any], tools[-1]))
         if cache.system and isinstance(system, list) and system:
             targets.append(cast(dict[str, Any], system[-1]))
-        if cache.messages and (last := _last_cacheable(messages)) is not None:
+        if cache.messages and (last := _last_cacheable(messages, tail)) is not None:
             targets.append(last)
     for turn, index in reversed(marks):
         content = messages[turn]["content"]
@@ -306,17 +334,34 @@ def place_cache_points(
         block["cache_control"] = dict(control)
 
 
-def _last_cacheable(messages: list[sdk.MessageParam]) -> dict[str, Any] | None:
-    """Dernier bloc de la conversation qui peut porter un point de cache."""
+def _last_cacheable(
+    messages: list[sdk.MessageParam], tail: _Mark | None = None
+) -> dict[str, Any] | None:
+    """Dernier bloc de la conversation qui peut porter un point de cache.
+
+    Sans ``tail``, dans le dernier message. Avec, avant ce bloc — le state de
+    la session (D4) —, en remontant les messages s'il le faut : un point posé
+    sur le state, qui change, ne servirait à aucun appel suivant.
+    """
     if not messages:
         return None
-    content = messages[-1]["content"]
-    if isinstance(content, str):
-        return None
-    for block in reversed(list(content)):
-        typed = cast(dict[str, Any], block)
-        if typed.get("type") not in _UNCACHEABLE:
-            return typed
+    blocks: list[dict[str, Any]] = []
+    if tail is None:
+        content = messages[-1]["content"]
+        if isinstance(content, str):
+            return None
+        blocks = [cast(dict[str, Any], block) for block in content]
+    else:
+        turn, index = tail
+        for position, message in enumerate(messages[: turn + 1]):
+            content = message["content"]
+            if isinstance(content, str):
+                continue
+            kept = list(content)[:index] if position == turn else list(content)
+            blocks += [cast(dict[str, Any], block) for block in kept]
+    for block in reversed(blocks):
+        if block.get("type") not in _UNCACHEABLE:
+            return block
     return None
 
 

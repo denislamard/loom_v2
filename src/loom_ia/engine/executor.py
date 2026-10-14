@@ -149,7 +149,7 @@ from loom_ia.engine.offload import (
     visible_text,
 )
 from loom_ia.engine.refs import RefError, RefOrigin, ResultIndex, ref_origin
-from loom_ia.engine.session_state import StateRules
+from loom_ia.engine.session_state import StateRules, keeps_state
 from loom_ia.engine.writer import SessionWriter
 
 logger = logging.getLogger(__name__)
@@ -574,7 +574,7 @@ class ToolExecutor:
         # Un sous-run et un run de compaction n'ont pas de state (D3).
         current = (
             state_of_run(session_state or {}, state, before=_batch_turn(state))
-            if self.state_rules and _keeps_state(state)
+            if self.state_rules and keeps_state(state)
             else {}
         )
         # Taille du state au fil du lot : chaque appel compte ce que les
@@ -928,7 +928,7 @@ class ToolExecutor:
             ),
             state=(
                 self.state_rules.visible(view.session_state)
-                if self.state_rules and _keeps_state(state)
+                if self.state_rules and keeps_state(state)
                 else {}
             ),
         )
@@ -978,7 +978,7 @@ class ToolExecutor:
         est alors retiré sans bruit. Un outil qui n'écrit rien et qu'aucune
         source ne désigne garde son résultat tel quel.
         """
-        if output.is_error or not self.state_rules or not _keeps_state(view.state):
+        if output.is_error or not self.state_rules or not keeps_state(view.state):
             if output.state or output.state_refused:
                 logger.debug("State : écritures de l'outil %s ignorées", tool)
                 return output.model_copy(update={"state": {}, "state_refused": ()})
@@ -1372,11 +1372,6 @@ def _kind(value: object) -> str:
             return _KINDS["number"]
         case _:
             return _KINDS["null"]
-
-
-def _keeps_state(state: RunState) -> bool:
-    """Vrai pour un run racine ordinaire : seul lui lit et écrit le state de la session (D3)."""
-    return state.parent_run_id is None and state.kind == "normal"
 
 
 def _as_served(output: ToolOutput, served: ToolOutput) -> ToolOutput:

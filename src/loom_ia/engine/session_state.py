@@ -16,11 +16,21 @@ un succès : l'outil a pu produire son effet, et le dire en erreur pousserait
 le modèle à le refaire. Le refus est gardé dans le résultat
 (``ToolOutput.state_refused``), que le modèle lit à sa suite, et dit au log
 (D8, décision du 14/10).
+
+Le state que l'application pose à l'ouverture d'un run suit les mêmes
+contrôles, mais un refus y refuse le run, avant tout écrit (``StateRefused``) ;
+de même une clé ``required`` restée sans valeur (D13).
+
+L'orchestrateur qui déclare ``main.context`` reçoit le state en dernier message
+de chaque requête (D4, ``state_message``), jamais journalisé comme message, et,
+dans son prompt système, ce que désigne chaque clé (``StateRules.hint``) : le
+système ne change pas d'un appel à l'autre, seul le bloc de fin est payé hors cache.
 """
 
 import copy
+import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Final
@@ -30,14 +40,30 @@ from jsonschema.protocols import Validator
 from pydantic import JsonValue
 
 from loom_ia.core.bounded_regex import RegexTimeout, bounded_validator
-from loom_ia.core.model import ToolOutput, state_size
+from loom_ia.core.model import (
+    SESSION_STATE_TAG,
+    Message,
+    RunState,
+    ToolOutput,
+    finite_json,
+    state_size,
+)
 from loom_ia.core.schema_errors import schema_problem
+from loom_ia.engine.roles import tagged
 
 logger = logging.getLogger(__name__)
 
 # Tailles par défaut (D7), en octets de JSON compact : celles de ``sessions.state``.
 DEFAULT_MAX_VALUE_BYTES: Final = 1024
 DEFAULT_MAX_TOTAL_BYTES: Final = 4096
+
+# Début de la consigne du prompt système d'un orchestrateur qui reçoit le state ;
+# suit une ligne par clé montrée, avec ce qu'elle désigne.
+STATE_HINT: Final = (
+    "La fin de la requête donne l'état courant de la session, quand il n'est pas vide, "
+    f"entre balises <{SESSION_STATE_TAG}> : un objet JSON tenu à jour par l'application "
+    "et les outils. Une clé absente n'a pas de valeur. Clés :"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,12 +76,31 @@ class StateSourceRule:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class StateKeyRule:
-    """Une clé déclarée : son schéma, ce qu'elle désigne, ses sources par outil, son défaut."""
+    """Une clé déclarée : son schéma, ce qu'elle désigne, ses sources par outil, son défaut.
+
+    ``required`` : un run racine ne s'ouvre pas tant qu'elle n'a pas de valeur (D13).
+    """
 
     schema: Mapping[str, JsonValue]
     description: str = ""
     sources: Mapping[str, StateSourceRule] = field(default_factory=dict[str, StateSourceRule])
+    required: bool = False
     default: JsonValue = None
+
+
+class StateRefused(ValueError):
+    """State refusé à l'ouverture d'un run (D6, D7, D13) : rien n'est écrit.
+
+    ``problems`` : un motif par ligne, qui nomme la clé.
+    """
+
+    def __init__(self, problems: Sequence[str]) -> None:
+        self.problems = tuple(problems)
+        super().__init__(f"State refusé : {' ; '.join(self.problems)}")
+
+    def __reduce__(self) -> tuple[type[StateRefused], tuple[tuple[str, ...]]]:
+        # Copie et pickle refont l'exception à partir de ses motifs, pas de son message.
+        return type(self), (self.problems,)
 
 
 class StateRules:
@@ -111,6 +156,59 @@ class StateRules:
             if rule.default is not None:
                 shown[name] = rule.default
         return MappingProxyType(copy.deepcopy(shown))
+
+    def opening(
+        self, posed: Mapping[str, JsonValue], session: Mapping[str, JsonValue]
+    ) -> list[str]:
+        """Ce qui empêche d'ouvrir un run avec ce state posé par l'application ; vide sinon.
+
+        Chaque écriture est contrôlée comme celle d'un outil (D6, D7), ``None``
+        effaçant la clé. Puis chaque clé ``required`` doit avoir une valeur dans
+        le state qui en résulte, ``session`` étant celui des runs précédents
+        (D13) : une valeur gardée qui ne tient plus son schéma ne compte pas.
+        """
+        problems: list[str] = []
+        accepted: dict[str, JsonValue] = {}
+        for name, value in posed.items():
+            problem = self._problem(name, value)
+            if problem is None:
+                accepted[name] = value
+            else:
+                problems.append(f"{name} : {problem}")
+        merged = _merged(session, accepted)
+        total = state_size(merged)
+        if total > self.max_total_bytes and total > state_size(dict(session)):
+            problems.append(
+                f"le state de la session ferait {total} octets, au-delà de "
+                f"sessions.state.max_total_bytes ({self.max_total_bytes})"
+            )
+        if any(rule.required for rule in self.keys.values()):
+            shown = self.visible(merged)
+            problems += [
+                f"{name} : clé obligatoire sans valeur"
+                for name, rule in self.keys.items()
+                if rule.required and name not in shown
+            ]
+        return problems
+
+    def shown(self, keys: Sequence[str]) -> tuple[str, ...]:
+        """Clés que reçoit l'orchestrateur : celles nommées, ou toutes si aucune ne l'est.
+
+        Dans l'ordre de leur déclaration.
+        """
+        return tuple(name for name in self.keys if not keys or name in keys)
+
+    def hint(self, keys: Sequence[str]) -> str:
+        """Consigne du prompt système de l'orchestrateur : la balise, et ce que désigne chaque clé.
+
+        Elle ne dépend que de la config : le préfixe de la requête, et son cache,
+        ne bougent pas quand le state change.
+        """
+        lines = [STATE_HINT]
+        for name in self.shown(keys):
+            description = self.keys[name].description
+            lines.append(f"- {name} : {description}" if description else f"- {name}")
+        return "\n".join(lines)
 
     def posed(self, tool: str, output: ToolOutput, tally: dict[str, JsonValue]) -> ToolOutput:
         """Le résultat réussi d'un outil, avec les écritures qu'il pose et celles qui sont refusées.
@@ -169,6 +267,8 @@ class StateRules:
             return "clé non déclarée dans 'state'"
         if value is None:
             return None
+        if not finite_json(value):
+            return "contient NaN ou un infini, que le JSON du journal n'écrit pas"
         try:
             errors = sorted(validator.iter_errors(value), key=lambda e: list(e.absolute_path))
         except RegexTimeout as exc:
@@ -181,6 +281,24 @@ class StateRules:
                 f"{size} octets, au-delà de sessions.state.max_value_bytes ({self.max_value_bytes})"
             )
         return None
+
+
+def keeps_state(state: RunState) -> bool:
+    """Vrai pour un run racine ordinaire : seul lui lit et écrit le state de la session (D3)."""
+    return state.parent_run_id is None and state.kind == "normal"
+
+
+def state_message(values: Mapping[str, JsonValue]) -> Message | None:
+    """Le state que reçoit l'orchestrateur, en message de fin de requête (D4) ; None s'il est vide.
+
+    JSON compact aux clés triées, à tous les niveaux : un même state donne un
+    même texte, donc une même requête. La balise est échappée dans les valeurs,
+    qui ne peuvent ni fermer le bloc ni en ouvrir un autre.
+    """
+    if not values:
+        return None
+    body = json.dumps(values, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return Message.user(tagged(SESSION_STATE_TAG, body))
 
 
 def _merged(

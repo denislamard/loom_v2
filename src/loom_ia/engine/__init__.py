@@ -73,7 +73,13 @@ from loom_ia.engine.roles import (
     tagged,
     user_input,
 )
-from loom_ia.engine.session_state import StateKeyRule, StateRules, StateSourceRule
+from loom_ia.engine.session_state import (
+    STATE_HINT,
+    StateKeyRule,
+    StateRefused,
+    StateRules,
+    StateSourceRule,
+)
 from loom_ia.engine.subagents import (
     AGENT_HINT,
     AgentResolver,
@@ -111,6 +117,7 @@ __all__ = [
     "REFS_HINT",
     "REF_KEY",
     "REF_PREFIX",
+    "STATE_HINT",
     "TERMINAL_RULE",
     "TURN_SEPARATOR",
     "UNKNOWN_STATE",
@@ -154,6 +161,7 @@ __all__ = [
     "SessionWriter",
     "SessionWriters",
     "StateKeyRule",
+    "StateRefused",
     "StateRules",
     "StateSourceRule",
     "Stored",

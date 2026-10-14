@@ -77,6 +77,15 @@ Pièces jointes (G1) : validées avant tout écrit (signature binaire, type,
 taille), rangées dans le stockage d'artefacts, annoncées par un
 ``artifact.stored`` chacune, puis jointes au message de l'utilisateur en
 références. Chaque appel de modèle les résout selon ses capacités (#14).
+
+State de la session (option C) : l'application en pose à l'ouverture d'un run
+racine, écrit dans son ``run.started`` après contrôle — ou le run est refusé
+avant tout écrit, comme pour une pièce jointe (``StateRefused``, D13). Un
+orchestrateur qui déclare ``main.context`` reçoit le state à chaque appel :
+celui des runs précédents, ce que l'application a posé et ce que les outils du
+run ont écrit, en dernier message de la requête (avant la consigne d'une
+réponse forcée), jamais journalisé comme message, et avant les politiques
+``before_model`` (D4). Sans ``main.context``, la requête ne change pas.
 """
 
 import asyncio
@@ -185,6 +194,7 @@ from loom_ia.core.projections import (
     last_summary,
     session_state,
     spent,
+    state_of_run,
     turns,
 )
 from loom_ia.engine.circuit import CircuitBreakers
@@ -194,6 +204,7 @@ from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.model_call import responded
 from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
+from loom_ia.engine.session_state import StateRefused, keeps_state, state_message
 from loom_ia.engine.writer import ClaimConflict, RunExists, RunMoved, SessionWriter
 
 logger = logging.getLogger(__name__)
@@ -260,6 +271,9 @@ class RunContext:
     # State de la session avant ce run, posé par ``drive`` pour un agent qui en
     # déclare : vide pour un sous-run et un run de compaction, qui ne le reçoivent pas.
     session_state: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
+    # Clés du state que l'orchestrateur reçoit à chaque appel (``main.context``,
+    # D4) : () pour toutes celles déclarées, None pour aucune.
+    state_keys: tuple[str, ...] | None = None
     # Contrat de la réponse finale : son schéma donne la réponse structurée (A7).
     output: OutputContract | None = None
     # Diffusion de la réponse finale : au fil de l'eau, ou après ses contrôles (#11).
@@ -333,6 +347,7 @@ async def begin_run(
     kind: RunKind = "normal",
     triggered_by: RunId | None = None,
     trigger: str | None = None,
+    state: Mapping[str, JsonValue] | None = None,
 ) -> RunState:
     """Écrit le démarrage d'un run et la demande de l'utilisateur.
 
@@ -352,6 +367,12 @@ async def begin_run(
     session (#23) tourne dans le journal de cette session sans entrer dans son
     historique. ``trigger`` nomme la porte d'entrée déclarée qui a ouvert le
     run (H6) : une facette du journal, pour savoir ce qu'une porte a lancé.
+
+    ``state`` : écritures du state de la session par l'application (``None``
+    efface la clé), pour un run racine ordinaire seulement. Contrôlées comme
+    celles d'un outil, elles vont dans ``run.started`` ; une écriture refusée,
+    ou une clé ``required`` restée sans valeur, lève ``StateRefused`` (une
+    ``ValueError``) avant tout écrit (D13).
     """
     message = Message.user(prompt) if isinstance(prompt, str) else prompt
     if message.role != "user":
@@ -361,6 +382,13 @@ async def begin_run(
     store = ctx.artifacts
     if checked and store is None:
         raise ValueError("Pièces jointes refusées : aucun stockage d'artefacts n'est configuré")
+    posed = dict(state or {})
+    rooted = parent is None and kind == "normal"
+    if posed and not rooted:
+        raise ValueError("Seul un run racine ordinaire reçoit un state de l'application")
+    rules = ctx.tools.state_rules
+    if posed and not rules:
+        raise StateRefused([f"l'agent {ctx.agent!r} ne déclare pas de state"])
     context = context or CallerContext()
     chosen = run_id is not None
     run_id = run_id or new_run_id()
@@ -378,6 +406,7 @@ async def begin_run(
         kind=kind,
         triggered_by=triggered_by,
         trigger=trigger,
+        state=posed,
     )
     if parent is not None:
         started = RunStarted(
@@ -393,8 +422,13 @@ async def begin_run(
         )
     if chosen and await ctx.store.read(scope.tenant_id, scope.session_id, run_id=run_id):
         raise RunExists(run_id)
-    if parent is None and kind == "normal" and session_id is not None:
-        await _check_history(ctx, scope)
+    prior: dict[str, JsonValue] = {}
+    if rooted and session_id is not None:
+        prior = await _check_history(ctx, scope)
+    if rooted and rules:
+        problems = rules.opening(posed, prior)
+        if problems:
+            raise StateRefused(problems)
     stored: list[ArtifactStored] = []
     if store is not None:
         stored = [await _store_attachment(store, scope, *item) for item in checked]
@@ -432,12 +466,17 @@ class SessionUnreadable(Exception):
         self.session_id = session_id
 
 
-async def _check_history(ctx: RunContext, scope: RunScope) -> None:
-    """Relit l'historique de la session avant d'y ouvrir un run racine."""
+async def _check_history(ctx: RunContext, scope: RunScope) -> dict[str, JsonValue]:
+    """Relit l'historique de la session avant d'y ouvrir un run racine.
+
+    Rend le state de la session pour un agent qui en déclare (vide sinon) : il
+    se lit sur tout le journal, au-delà du dernier snapshot.
+    """
     events = await ctx.store.read(scope.tenant_id, scope.session_id)
     try:
         turns(events)
         spent(events)
+        prior = session_state(events) if ctx.tools.state_rules else {}
     except (ProjectionError, ValidationError) as error:
         logger.error(
             "Session %s illisible : aucun run n'y est ouvert — %s",
@@ -446,6 +485,7 @@ async def _check_history(ctx: RunContext, scope: RunScope) -> None:
             extra={"tenant_id": scope.tenant_id},
         )
         raise SessionUnreadable(scope.session_id, error) from error
+    return prior
 
 
 async def _store_attachment(
@@ -1619,6 +1659,16 @@ async def _model_step(
     if ctx.tools.shows_refs(view):
         messages = mark_results(messages, ResultIndex(messages))
         system = f"{system}\n\n{REFS_HINT}" if system else REFS_HINT
+    rules, keys = ctx.tools.state_rules, ctx.state_keys
+    # State de la session (D4) : consigne fixe dans le système, valeurs en fin de
+    # requête, dans la requête seulement (jamais journalisées comme message).
+    shown: tuple[Message, ...] = ()
+    if keys is not None and rules and keeps_state(state):
+        system = f"{system}\n\n{rules.hint(keys)}" if system else rules.hint(keys)
+        names = rules.shown(keys)
+        values = rules.visible(state_of_run(ctx.session_state, state))
+        block = state_message({name: values[name] for name in names if name in values})
+        shown = (block,) if block is not None else ()
     # Réponse forcée : sa consigne en dernier message, dans la requête seulement.
     hint = (Message.user(FINALIZE_HINT),) if forced else ()
     tools = ctx.tools.definitions(view)
@@ -1626,7 +1676,7 @@ async def _model_step(
     request = ModelRequest(
         model_id=spec.model,
         system=system,
-        messages=(*in_call_order(previous), *messages, *hint),
+        messages=(*in_call_order(previous), *messages, *shown, *hint),
         tools=tools,
         tool_choice="none" if forced or state.repair_without_tools else "auto",
         max_tokens=ctx.max_tokens or spec.max_tokens,

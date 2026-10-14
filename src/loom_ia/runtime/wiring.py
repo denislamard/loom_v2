@@ -738,6 +738,7 @@ def build_agent(
         fallbacks=links(spec.main.fallbacks),
         breakers=breakers,
         approval=spec.approval,
+        state_keys=spec.main.state_keys,
     )
     return Agent(spec=spec, context=context, clients=tuple(clients.values()), owned=owned)
 
@@ -840,6 +841,7 @@ def state_rules(config: LoomConfig, spec: AgentSpec) -> StateRules:
                     source.tool: StateSourceRule(path=source.path, value=source.value)
                     for source in key.sources
                 },
+                required=key.required,
                 default=key.default,
             )
             for name, key in spec.state.items()

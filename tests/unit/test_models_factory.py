@@ -23,8 +23,10 @@ from loom_ia.core.model import (
     ToolCallBlock,
     ToolOutput,
     ToolResultBlock,
+    is_session_state,
 )
 from loom_ia.core.ports import ModelError, complete
+from loom_ia.engine.session_state import state_message
 
 SCRIPT = [
     {"tool_calls": [{"name": "calculer", "arguments": {"expr": "12*7+3"}}], "reasoning": "hmm"},
@@ -106,6 +108,42 @@ async def test_fake_model_honours_required_tools_and_repairs() -> None:
         model, request(Message.user("?"), Message.assistant("Sans outil."), repair)
     )
     assert again.message == Message.assistant("Réparé.")
+
+
+async def test_fake_model_does_not_take_the_session_state_for_a_request() -> None:
+    """Le state de fin de requête (D4) n'est pas une demande : le script continue."""
+    model = create_model_client(fake_spec(script=SCRIPT))
+    first = await complete(model, request(Message.user("Combien ?"), shown()))
+    assert first.message.tool_calls
+    result = Message(
+        role="tool",
+        blocks=(ToolResultBlock(call_id="fake_0_0", output=ToolOutput.text("87")),),
+    )
+    second = await complete(
+        model, request(Message.user("Combien ?"), first.message, result, shown())
+    )
+    assert second.message == Message.assistant("12 * 7 + 3 = 87")
+
+    # Le texte de la demande est celui de l'utilisateur, pas celui du state.
+    script = [{"text": "Détaillé.", "with_text": "détaillé"}, {"text": "Court."}]
+    model = create_model_client(fake_spec(script=script))
+    answer = await complete(model, request(Message.user("Bref."), shown()))
+    assert answer.message.text == "Court."
+
+
+def shown() -> Message:
+    block = state_message({"mode": "détaillé"})
+    assert block is not None and is_session_state(block)
+    return block
+
+
+def test_only_the_engine_message_is_the_session_state() -> None:
+    assert not is_session_state(Message.user("Voir <session_state> plus bas"))
+    assert not is_session_state(Message.assistant("<session_state>{}</session_state>"))
+    two = Message(role="user", blocks=(TextBlock(text="<session_state>"), TextBlock(text="x")))
+    assert not is_session_state(two)
+    image = Message(role="user", blocks=(ArtifactRefBlock(uri="u", media_type="image/png"),))
+    assert not is_session_state(image)
 
 
 async def test_fake_model_answers_by_request_and_forced_answer() -> None:

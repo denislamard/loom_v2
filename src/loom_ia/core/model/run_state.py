@@ -168,6 +168,19 @@ def state_size(value: JsonValue) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
 
 
+def finite_json(value: JsonValue) -> bool:
+    """Faux si la valeur contient NaN ou un infini.
+
+    Le JSON n'en a pas : le journal les écrirait ``null``, qui efface une clé
+    du state. Le run qui les a posées et sa relecture ne verraient pas le même state.
+    """
+    try:
+        json.dumps(value, allow_nan=False)
+    except ValueError:
+        return False
+    return True
+
+
 class StateWrite(DomainModel):
     """Écritures du state de la session portées par le résultat réussi d'un appel.
 

@@ -56,6 +56,7 @@ from loom_ia.core.model import (
     SideEffects,
     StreamOutput,
     ToolOverrides,
+    finite_json,
 )
 from loom_ia.core.template import Template, TemplateError
 
@@ -668,6 +669,8 @@ class StateKey(DomainModel):
 
 def _conforms(validator: Validator, value: JsonValue, label: str) -> None:
     """La valeur suit le schéma de la clé, ou le chargement s'arrête en le disant."""
+    if not finite_json(value):
+        raise ValueError(f"{label} contient NaN ou un infini, que le JSON du journal n'écrit pas")
     try:
         validator.validate(value)
     except ValidationError as exc:

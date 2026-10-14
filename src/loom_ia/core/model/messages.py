@@ -5,7 +5,7 @@ Trois rôles : ``user``, ``assistant`` et ``tool`` (résultats d'outils).
 Le prompt système n'est pas un message : il appartient à la requête.
 """
 
-from typing import Literal, Self
+from typing import Final, Literal, Self
 
 from pydantic import model_validator
 
@@ -19,6 +19,10 @@ from loom_ia.core.model.content import (
 )
 
 type Role = Literal["user", "assistant", "tool"]
+
+# Balise du state de la session que le moteur ajoute à la fin d'une requête de
+# l'orchestrateur (D4). Ce message n'est jamais journalisé comme message.
+SESSION_STATE_TAG: Final = "session_state"
 
 
 class Message(DomainModel):
@@ -65,3 +69,20 @@ class Message(DomainModel):
         if not kept:
             return None
         return self.model_copy(update={"blocks": kept})
+
+
+def is_session_state(message: Message) -> bool:
+    """Vrai pour le message du state de la session ajouté par le moteur à une requête (D4).
+
+    Un adaptateur pose son point de cache avant lui, car c'est la partie de la
+    requête qui change d'un appel à l'autre ; le faux modèle ne le prend pas
+    pour une demande de l'utilisateur. Le moteur échappe la balise dans les
+    valeurs du state : seul un message qui commence par elle passe pour lui.
+    """
+    first = message.blocks[0]
+    return (
+        message.role == "user"
+        and len(message.blocks) == 1
+        and isinstance(first, TextBlock)
+        and first.text.startswith(f"<{SESSION_STATE_TAG}>")
+    )

@@ -2,7 +2,10 @@
 """Exécuteur d'outils : lot parallèle, contrôles, timeout, reprise."""
 
 import asyncio
+import copy
 import logging
+import math
+import pickle
 from contextlib import aclosing
 from dataclasses import dataclass, field
 
@@ -42,6 +45,7 @@ from loom_ia.core.model import (
     TextBlock,
     ToolOutput,
     ToolSpec,
+    state_size,
 )
 from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.core.projections import fold
@@ -51,6 +55,7 @@ from loom_ia.engine import (
     Policies,
     RunContext,
     StateKeyRule,
+    StateRefused,
     StateRules,
     StateSourceRule,
     ToolExecutor,
@@ -1059,6 +1064,46 @@ async def test_a_session_over_its_limit_can_still_shrink() -> None:
     ).values()
     assert output.state == {}
     assert "ferait" in output.state_refused[0]
+
+
+async def test_nan_and_infinity_are_never_posed() -> None:
+    """Le journal les écrirait ``null`` : la clé serait effacée, et la relecture différerait."""
+    score = StateKeyRule(schema={"type": "number"}, sources={"fiche": StateSourceRule(path="")})
+    rules = StateRules({"score": score})
+    for value in (math.nan, math.inf, -math.inf):
+        fiche = RecordingTool(spec("fiche"), result=data(value))
+        executor = ToolExecutor([fiche], state_rules=rules)
+        [output] = completed(await collect(executor, awaiting(call("c1", "fiche")))).values()
+        assert (output.state, output.is_error) == ({}, False)
+        problem = "contient NaN ou un infini, que le JSON du journal n'écrit pas"
+        assert output.state_refused == (f"score non posé : {problem}",)
+        assert rules.opening({"score": [1, {"x": value}]}, {}) == [f"score : {problem}"]
+    assert rules.opening({"score": 1.5}, {}) == []
+
+
+def test_a_refused_state_survives_copy_and_pickle() -> None:
+    refused = StateRefused(["a : clé non déclarée dans 'state'", "b : clé obligatoire sans valeur"])
+    for twin in (copy.copy(refused), pickle.loads(pickle.dumps(refused))):
+        assert isinstance(twin, StateRefused)
+        assert twin.problems == refused.problems and str(twin) == str(refused)
+
+
+def test_the_application_can_still_shrink_a_session_over_its_limit() -> None:
+    """À l'ouverture d'un run, comme pour un outil : seul ce qui fait grossir est refusé."""
+    text = StateKeyRule(schema={"type": "string"})
+    rules = StateRules({"a": text, "b": text}, max_value_bytes=1000, max_total_bytes=1000)
+    # 1 217 octets en session : la limite a été abaissée depuis.
+    session: dict[str, JsonValue] = {"a": "x" * 600, "b": "y" * 600}
+    # Même réduite, la session reste au-delà de sa limite ; elle ne grossit pas.
+    assert rules.opening({"a": "x" * 500}, session) == []
+    assert rules.opening({"a": None}, session) == []
+    grown: dict[str, JsonValue] = {"a": "x" * 700, "b": "y" * 600}
+    assert rules.opening({"a": "x" * 700}, session) == [
+        f"le state de la session ferait {state_size(grown)} octets, "
+        "au-delà de sessions.state.max_total_bytes (1000)"
+    ]
+    # Sans clé obligatoire, rien ne manque jamais.
+    assert rules.opening({}, {}) == []
 
 
 async def test_a_sub_run_neither_reads_nor_writes_the_state() -> None:

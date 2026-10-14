@@ -68,6 +68,7 @@ from pydantic import JsonValue
 
 from loom_ia.core.model import (
     REPAIR_PREFIX,
+    SESSION_STATE_TAG,
     ContentBlock,
     Message,
     ModelRequest,
@@ -92,7 +93,8 @@ from loom_ia.engine.transcript import transcript
 
 logger = logging.getLogger(__name__)
 
-# Balises des blocs de contexte que reçoivent les rôles, les juges et le juge d'éval.
+# Balises des blocs de contexte que reçoivent les rôles, les juges et le juge
+# d'éval, et du state de la session que reçoit l'orchestrateur (D4).
 TAGS: Final = (
     "criteria",
     "user_input",
@@ -103,6 +105,7 @@ TAGS: Final = (
     "tool_result",
     "arguments",
     "output",
+    SESSION_STATE_TAG,
 )
 # Le ``<`` qui ouvre ou ferme l'une d'elles, même espacé ou en majuscules.
 _OWN_TAG: Final = re.compile(rf"<(?=\s*/?\s*(?:{'|'.join(TAGS)})\b)", re.IGNORECASE)
