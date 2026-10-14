@@ -114,7 +114,10 @@ die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # VM_ID nomme un dossier que ce script efface en root (rm -rf) : ni « .. », ni « / »,
 # ni rien d'autre que ce que le jailer accepte pour un id. À contrôler avant tout le reste.
-[[ $VM_ID =~ ^[A-Za-z0-9-]{1,64}$ ]] \
+# En locale C : sous une locale UTF-8 (celle de l'appelant, que sudo garde), bash range
+# « é » dans [A-Za-z].
+vm_id_valide() { local LC_ALL=C; [[ $1 =~ ^[A-Za-z0-9-]{1,64}$ ]]; }
+vm_id_valide "$VM_ID" \
     || die "VM_ID invalide : ${VM_ID} (alphanumérique et tirets, 64 caractères au plus)"
 
 # ----------------------------------------------------------------------------

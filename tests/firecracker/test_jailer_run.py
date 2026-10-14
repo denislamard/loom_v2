@@ -131,3 +131,24 @@ def test_the_jail_of_the_same_id_is_rebuilt_and_the_vm_files_stay(atelier: Path)
     # La jail précédente est effacée ; les disques du dossier de la VM, eux, restent.
     assert (atelier / "rootfs.ext4").read_bytes() == b"rootfs"
     assert (atelier / "data.ext4").read_bytes() == b"data"
+
+
+def _letter_in(locale: str) -> bool:
+    """Vrai si, dans cette locale, bash range « é » dans ``[A-Za-z]`` : le piège du contrôle."""
+    done = subprocess.run(
+        ["bash", "-c", "[[ é =~ ^[A-Za-z]$ ]]"],
+        env={**os.environ, "LC_ALL": locale},
+        capture_output=True,
+        check=False,
+    )
+    return done.returncode == 0
+
+
+@pytest.mark.parametrize("locale", ["en_US.UTF-8", "fr_FR.UTF-8"])
+def test_the_vm_id_is_checked_whatever_the_locale_of_the_caller(atelier: Path, locale: str) -> None:
+    """Sous une locale UTF-8, ``[A-Za-z]`` accepte « é » : le contrôle se fait en locale C."""
+    if not _letter_in(locale):
+        pytest.skip(f"{locale} : locale absente, ou sans ce piège")
+    done = _run(atelier, "é", LC_ALL=locale)
+    assert done.returncode != 0
+    assert "VM_ID invalide" in done.stderr

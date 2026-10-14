@@ -10,6 +10,7 @@ import contextlib
 import errno
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -761,12 +762,61 @@ async def _gone(pid: int, wait: float) -> None:
         await asyncio.sleep(0.02)
 
 
+# Tâches que l'essai ajoute à celles du compte, execd déjà lancé : le job et son enfant.
+_FORK_ROOM = 2
+
+
+def _tasks_of(uid: int) -> int:
+    """Tâches de l'uid réel ``uid``, threads compris : ce que compte ``RLIMIT_NPROC``."""
+    count = 0
+    for entry in Path("/proc").glob("[0-9]*"):
+        try:
+            fields = dict(
+                line.split(":", 1) for line in (entry / "status").read_text().splitlines()
+            )
+            if int(fields["Uid"].split()[0]) == uid:
+                count += int(fields["Threads"])
+        except OSError, KeyError, ValueError:
+            continue  # processus disparu entre-temps, ou lecture refusée
+    return count
+
+
+@pytest.fixture
+def room_to_fork(execd: Path, execd_service: Path) -> None:
+    """Saute l'essai si le compte n'a plus de place sous ``RLIMIT_NPROC`` pour le fork du job.
+
+    Compté une fois l'execd lancé (``execd``) : ses tâches entrent dans le compte.
+
+    Hors root, l'execd d'essai tourne sous l'uid de l'utilisateur, et la limite ``nproc`` d'un
+    job compte toutes les tâches de cet uid, threads compris : sur un poste de travail chargé,
+    le fork du job échoue (``EAGAIN``) sans rien dire de ce que l'essai éprouve. Root n'est pas
+    borné par cette limite. En CI (``CI`` posée), le compte a peu de tâches : l'essai y échoue
+    au lieu d'être sauté.
+    """
+    if os.geteuid() == 0:
+        return
+    spec = importlib.util.spec_from_file_location("execd_limits", execd_service / "limits.py")
+    assert spec is not None and spec.loader is not None
+    limits = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(limits)
+    allowed: int = limits.DEFAULTS["nproc"]
+    used = _tasks_of(os.getuid())
+    if used + _FORK_ROOM > allowed:
+        absent = pytest.fail if os.environ.get("CI") else pytest.skip
+        absent(
+            f"le compte {os.getuid()} a déjà {used} tâches (threads compris) et un job n'en "
+            f"permet que {allowed} : son fork échouerait. À lancer en root ou depuis un compte "
+            "peu chargé, comme en CI"
+        )
+
+
 def _kill(pidfile: Path) -> None:
     """Ne laisse aucun descendant en vie, même si l'essai a échoué."""
     if pidfile.exists() and _alive(pid := int(pidfile.read_text())):
         os.kill(pid, signal.SIGKILL)
 
 
+@pytest.mark.usefixtures("room_to_fork")
 async def test_the_group_of_a_job_ends_with_it_and_holds_nothing_back(
     execd: Path, tmp_path: Path
 ) -> None:
@@ -782,6 +832,7 @@ async def test_the_group_of_a_job_ends_with_it_and_holds_nothing_back(
         _kill(pidfile)
 
 
+@pytest.mark.usefixtures("room_to_fork")
 async def test_a_descendant_out_of_the_group_cannot_hold_the_reply_or_the_place(
     execd: Path, tmp_path: Path
 ) -> None:
