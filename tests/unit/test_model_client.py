@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from loom_ia.core.model import (
     INVALID_JSON_KEY,
     AnthropicMeta,
+    JsonBlock,
     Message,
     ModelChunk,
     ModelRequest,
@@ -26,6 +27,8 @@ from loom_ia.core.model import (
     ToolCallEnded,
     ToolCallStarted,
     ToolDefinition,
+    ToolOutput,
+    ToolResultBlock,
     ToolSpec,
     Usage,
     UsageDelta,
@@ -50,6 +53,27 @@ def test_request_hash_is_stable_and_sensitive() -> None:
     assert request.request_hash() == same.request_hash()
     assert request.request_hash() != other.request_hash()
     assert len(request.request_hash()) == 64
+
+
+def test_the_hash_of_a_request_with_a_tool_result_is_frozen() -> None:
+    """Empreinte calculée avant l'ajout du state : un résultat sans state la garde.
+
+    Un champ nouveau sérialisé avec sa valeur par défaut changerait l'empreinte
+    de toute requête qui porte un résultat d'outil, et les journaux enregistrés
+    ne se rejoueraient plus.
+    """
+    found = ToolOutput(blocks=(JsonBlock(data={"code": "C-002"}),), data={"code": "C-002"})
+    request = ModelRequest(
+        model_id="m",
+        messages=(
+            Message.user("Qui est le client ?"),
+            tool_call_message(("c1", "get_client", {"nom": "Martin"})),
+            Message(role="tool", blocks=(ToolResultBlock(call_id="c1", output=found),)),
+        ),
+    )
+    assert request.request_hash() == (
+        "599c1cdebf4174d2b781c8a35d140f5c5c111824a8e0bcb5b28e9db9f2bd4ff3"
+    )
 
 
 def test_accumulator_keeps_block_order() -> None:

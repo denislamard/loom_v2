@@ -37,7 +37,7 @@ dependencies = [
     # (méta-schémas, résolution des $ref) : ce sont des dépendances de jsonschema, mais un
     # import direct se déclare. Leurs planchers sont ceux que jsonschema 4.26 exige.
     "jsonschema-specifications>=2023.3.6",
-    "pydantic>=2.12.0,<3",
+    "pydantic>=2.12.2,<3",
     "pyyaml>=6.0.3,<7",
     "referencing>=0.28.4,<1",
     "regex>=2025.7.29",

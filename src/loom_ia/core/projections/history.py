@@ -178,14 +178,20 @@ def _conversation(state: RunState) -> tuple[Message, ...]:
 
 
 def _accepted(state: RunState) -> tuple[Message, ...]:
-    """Messages du run sans les réponses refusées ni leurs diagnostics.
+    """Messages du run sans les réponses refusées ni leurs diagnostics."""
+    if not state.repairs:
+        return state.messages
+    dropped = repaired(state)
+    return tuple(m for i, m in enumerate(state.messages) if i not in dropped)
+
+
+def repaired(state: RunState) -> set[int]:
+    """Positions, dans les messages du run, de ce que les réparations retirent.
 
     Chaque réparation retire la dernière réponse de l'assistant qui la
     précède, les résultats d'outils qui suivent cette réponse, et le
     diagnostic : la séquence reste valide pour les API.
     """
-    if not state.repairs:
-        return state.messages
     dropped: set[int] = set()
     for repair in state.repairs:
         start = next(
@@ -193,7 +199,7 @@ def _accepted(state: RunState) -> tuple[Message, ...]:
             repair,
         )
         dropped.update(range(start, repair + 1))
-    return tuple(m for i, m in enumerate(state.messages) if i not in dropped)
+    return dropped
 
 
 def _without_empty_text(message: Message) -> Message | None:

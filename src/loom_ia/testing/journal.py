@@ -103,13 +103,16 @@ class RunJournal:
         parent_run_id: RunId | None = None,
         parent_call_id: str | None = None,
         depth: int = 0,
+        state: Mapping[str, JsonValue] | None = None,
     ) -> Self:
+        """Ouverture du run et demande ; ``state`` : state de session posé par l'application."""
         self._add(
             RunStarted(
                 context=context or CallerContext(tenant_id=self.scope.tenant_id),
                 parent_run_id=parent_run_id,
                 parent_call_id=parent_call_id,
                 depth=depth,
+                state=dict(state or {}),
             )
         )
         self._add(UserMessage(message=Message.user(prompt)))

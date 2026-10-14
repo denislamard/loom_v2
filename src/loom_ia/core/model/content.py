@@ -135,6 +135,14 @@ class ToolOutput(DomainModel):
     offloaded: str | None = None
     # Sortie gardée bien qu'elle ne respecte pas son contrat (``on_failure: unverified``).
     unverified: bool = False
+    # Écritures du state de la session : ``{clé: valeur}``, ``None`` efface la
+    # clé. Le journal les garde dans ``tool.completed``, que le rejeu ressert
+    # tel quel ; la projection les retire du résultat montré au modèle. Omis
+    # quand il est vide : un résultat sans state se sérialise comme avant, et
+    # les empreintes des requêtes ne changent pas.
+    state: dict[str, JsonValue] = Field(
+        default_factory=dict[str, JsonValue], exclude_if=lambda value: not value
+    )
 
     @classmethod
     def text(cls, text: str, *, is_error: bool = False) -> Self:

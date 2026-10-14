@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Projections pures du journal : état d'un run, arbre des runs, historique, ledger."""
+"""Projections pures du journal : état d'un run, arbre des runs, historique, ledger, state."""
 
 from loom_ia.core.projections.history import (
     SUMMARY_MARKER,
@@ -11,6 +11,7 @@ from loom_ia.core.projections.history import (
 )
 from loom_ia.core.projections.ledger import LedgerEntry, ledger, spent
 from loom_ia.core.projections.run_state import ProjectionError, apply, fold, fold_all
+from loom_ia.core.projections.state import session_state
 from loom_ia.core.projections.tree import RunTree
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "last_marker",
     "last_summary",
     "ledger",
+    "session_state",
     "spent",
     "turns",
 ]

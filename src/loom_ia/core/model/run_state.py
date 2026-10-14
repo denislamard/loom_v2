@@ -162,6 +162,21 @@ class RunClaim(DomainModel):
         return now < self.lease_until
 
 
+class StateWrite(DomainModel):
+    """Écritures du state de la session portées par le résultat réussi d'un appel.
+
+    ``turn`` est la position, dans les messages du run, de la réponse du
+    modèle qui a demandé l'appel, et ``rank`` le rang de l'appel dans cette
+    réponse : c'est l'ordre des appels, et non celui d'arrivée des résultats,
+    qui départage deux écritures d'une même clé (D9).
+    """
+
+    call_id: str
+    turn: NonNegativeInt
+    rank: NonNegativeInt
+    values: dict[str, JsonValue]
+
+
 class RunState(DomainModel):
     run_id: RunId
     session_id: SessionId
@@ -206,6 +221,9 @@ class RunState(DomainModel):
     models: dict[str, str] = Field(default_factory=dict[str, str])
     # Fichiers du run (pièces jointes, sorties d'outils, déports), une fois par URI.
     artifacts: tuple[ArtifactRecord, ...] = ()
+    # Écritures du state de la session faites par les outils du run, dans
+    # l'ordre des appels (D9) ; un résultat en erreur n'en porte pas.
+    state_writes: tuple[StateWrite, ...] = ()
 
     # Réparations de l'orchestrateur demandées par chaque politique (``Retry`` à
     # ``after_model`` ou ``on_output``), bornées par son ``max_attempts``.
@@ -243,6 +261,18 @@ class RunState(DomainModel):
     finished: bool = False
     # Dernier événement appliqué.
     last_seq: NonNegativeInt = 0
+
+    @property
+    def state_delta(self) -> dict[str, JsonValue]:
+        """State écrit par ce run : ses écritures fusionnées dans l'ordre des appels.
+
+        Une valeur ``None`` y reste : appliquée au state de la session, elle
+        efface la clé (D10).
+        """
+        delta: dict[str, JsonValue] = {}
+        for write in self.state_writes:
+            delta |= write.values
+        return delta
 
     @property
     def spent(self) -> Spent:

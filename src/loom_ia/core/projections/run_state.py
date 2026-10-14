@@ -17,6 +17,11 @@ réparations de chaque politique. Le message de réparation (``message.user``
 de ``kind: repair``) entre dans la conversation du run, et sa position est
 retenue pour l'exclure de l'historique de session.
 
+State de la session : le résultat réussi d'un outil peut porter des
+écritures (``output.state``). Elles sont retirées du résultat que lit le
+modèle et rangées dans ``state_writes``, dans l'ordre des appels ;
+``session_state`` en tire le state de la session.
+
 Les événements de catégorie ``session`` (J4.1) sont ignorés : ils décrivent
 la session, pas le run, et s'écrivent après sa clôture. Une concession
 (``run.claimed``) écrite après l'état final est absorbée de même : elle
@@ -72,6 +77,7 @@ from loom_ia.core.model import (
     RunId,
     RunState,
     RunStatus,
+    StateWrite,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
@@ -177,8 +183,13 @@ def apply(state: RunState | None, event: Event) -> RunState:
             remaining = tuple(
                 c for c in _require_pending(state, call_id, event) if c.call_id != call_id
             )
-            result = Message(role="tool", blocks=(ToolResultBlock(call_id=call_id, output=output),))
+            # Le state écrit n'est pas montré au modèle : le résultat qu'il lit
+            # reste celui d'un outil qui n'en écrit pas.
+            shown = output.model_copy(update={"state": {}}) if output.state else output
+            result = Message(role="tool", blocks=(ToolResultBlock(call_id=call_id, output=shown),))
             update |= {"pending_calls": remaining, "messages": (*state.messages, result)}
+            if output.state and not output.is_error:
+                update["state_writes"] = _written(state, call_id, output.state)
             if usage is not None:
                 update |= {"usage": state.usage + usage, "cost_usd": state.cost_usd + cost}
         case ArtifactStored() as stored:
@@ -420,6 +431,25 @@ def _terminal_result(state: RunState, event: Event) -> ToolResultBlock:
             f"message n'est pas un résultat d'outil unique (seq {event.seq})"
         )
     return results[0]
+
+
+def _written(state: RunState, call_id: str, values: dict[str, JsonValue]) -> tuple[StateWrite, ...]:
+    """Écritures du run, celles de cet appel rangées à leur place dans l'ordre des appels.
+
+    Les résultats d'un lot arrivent dans l'ordre où les outils finissent : il
+    change d'une exécution à l'autre, et au rejeu, où ils sont instantanés.
+    L'ordre des appels ne dépend que de la réponse du modèle, comme celui des
+    résultats dans une requête (``in_call_order``) : c'est lui qui départage
+    deux écritures d'une même clé (D9).
+    """
+    turn, rank = len(state.messages), 0
+    for position in range(len(state.messages) - 1, -1, -1):
+        calls = [c.call_id for c in state.messages[position].tool_calls]
+        if call_id in calls:
+            turn, rank = position, calls.index(call_id)
+            break
+    write = StateWrite(call_id=call_id, turn=turn, rank=rank, values=values)
+    return tuple(sorted((*state.state_writes, write), key=lambda w: (w.turn, w.rank)))
 
 
 def _require_pending(state: RunState, call_id: str, event: Event) -> tuple[PendingCall, ...]:

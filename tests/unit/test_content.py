@@ -120,6 +120,18 @@ def test_tool_output_helpers() -> None:
     assert error.as_text == "panne"
 
 
+def test_an_empty_state_is_not_serialized() -> None:
+    """Sans state, un résultat se sérialise comme avant : journaux et empreintes inchangés."""
+    plain = ToolOutput.text("ok")
+    assert "state" not in plain.model_dump()
+    assert "state" not in plain.model_dump(mode="json")
+    assert '"state"' not in plain.model_dump_json()
+
+    written = ToolOutput(blocks=plain.blocks, state={"client": "C-002", "ticket": None})
+    assert written.model_dump(mode="json")["state"] == {"client": "C-002", "ticket": None}
+    assert ToolOutput.model_validate_json(written.model_dump_json()) == written
+
+
 def test_usage_addition_and_total() -> None:
     total = Usage(input_tokens=10, output_tokens=5, cache_read_tokens=2) + Usage(
         input_tokens=1, cache_write_tokens=3, reasoning_tokens=4

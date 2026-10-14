@@ -4,6 +4,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from pydantic import JsonValue
 
 from loom_ia.core.events import (
     ApprovalGranted,
@@ -13,9 +14,13 @@ from loom_ia.core.events import (
     Event,
     EventDraft,
     RunClaimed,
+    RunStarted,
     RunTransitioned,
+    SessionCompacted,
+    SessionTrimmed,
     ToolCalled,
     ToolSourceUnavailable,
+    UserMessage,
 )
 from loom_ia.core.model import (
     Message,
@@ -28,7 +33,14 @@ from loom_ia.core.model import (
     ToolResultBlock,
     Usage,
 )
-from loom_ia.core.projections import ProjectionError, apply, fold, fold_all, history
+from loom_ia.core.projections import (
+    ProjectionError,
+    apply,
+    fold,
+    fold_all,
+    history,
+    session_state,
+)
 from loom_ia.testing import RunJournal, tool_call_message
 
 
@@ -368,3 +380,238 @@ def test_history_keeps_completed_root_runs_without_reasoning() -> None:
         Message.user("Et là ?"),
         Message.assistant("Oui"),
     ]
+
+
+# --- State de la session ------------------------------------------------------
+
+
+def written(text: str, **state: JsonValue) -> ToolOutput:
+    """Résultat d'outil réussi qui écrit ces clés du state."""
+    return ToolOutput(blocks=(TextBlock(text=text),), state=state)
+
+
+def writing_run(
+    session: SessionId,
+    *outputs: ToolOutput,
+    posed: dict[str, JsonValue] | None = None,
+) -> RunJournal:
+    """Run dont le modèle appelle un outil par résultat donné, dans un même lot."""
+    journal = RunJournal(session_id=session)
+    journal.start("x", state=posed)
+    if outputs:
+        calls: list[tuple[str, str, dict[str, JsonValue]]] = [
+            (f"c{n}", "outil", {}) for n in range(1, len(outputs) + 1)
+        ]
+        journal.model_turn(tool_call_message(*calls))
+        journal.tool_results({f"c{n}": out for n, out in enumerate(outputs, start=1)})
+    return journal.model_turn(Message.assistant("fait"))
+
+
+def test_the_state_written_by_a_tool_is_not_shown_to_the_model() -> None:
+    """Le résultat que lit le modèle est celui d'un outil sans state : mêmes requêtes."""
+    session = SessionId("c-42")
+    with_state = writing_run(session, written("ok", client="C-002")).complete()
+    without = writing_run(session, ToolOutput.text("ok")).complete()
+
+    state = fold(numbered(with_state), with_state.run_id)
+    plain = fold(numbered(without), without.run_id)
+
+    assert state.messages == plain.messages
+    assert [(w.call_id, w.values) for w in state.state_writes] == [("c1", {"client": "C-002"})]
+    assert state.state_delta == {"client": "C-002"}
+    assert plain.state_writes == ()
+
+
+def test_a_result_in_error_writes_nothing() -> None:
+    """Un résultat en erreur ne pose rien, même s'il garde un state (politique qui refuse)."""
+    refused = ToolOutput(blocks=(TextBlock(text="refusé"),), is_error=True, state={"k": 1})
+    journal = writing_run(SessionId("c-42"), refused).complete()
+    events = numbered(journal)
+    assert fold(events, journal.run_id).state_writes == ()
+    assert session_state(events) == {}
+
+
+def test_the_call_order_decides_between_two_writes_of_a_key() -> None:
+    """D9 : l'ordre des appels, et non celui d'arrivée des résultats, départage."""
+    for arrival in (("c1", "c2"), ("c2", "c1")):
+        journal = RunJournal()
+        journal.start("x").model_turn(tool_call_message(("c1", "a", {}), ("c2", "b", {})))
+        outputs = {"c1": written("1", k=1, seul_c1=True), "c2": written("2", k=2)}
+        journal.tool_results({call: outputs[call] for call in arrival})
+        first_batch = numbered(journal)
+        assert fold(first_batch, journal.run_id).state_delta == {"k": 2, "seul_c1": True}
+
+        journal.model_turn(tool_call_message(("c3", "a", {})))
+        journal.tool_results({"c3": written("3", k=3)})
+        second_batch = journal.take()
+        start = len(first_batch) + 1
+        events = [*first_batch, *(d.to_event(n) for n, d in enumerate(second_batch, start))]
+        state = fold(events, journal.run_id)
+
+        assert [w.call_id for w in state.state_writes] == ["c1", "c2", "c3"]
+        assert [(w.turn, w.rank) for w in state.state_writes] == [(1, 0), (1, 1), (4, 0)]
+        assert state.state_delta == {"k": 3, "seul_c1": True}
+
+
+def test_the_session_state_follows_the_journal() -> None:
+    """L'application pose à l'ouverture, les outils écrivent, ``None`` efface (D10)."""
+    session = SessionId("c-42")
+    first = writing_run(
+        session, written("ticket", ticket="T-1"), posed={"client_id": "CL-1", "langue": "fr"}
+    ).complete()
+    second = writing_run(session, written("clos", ticket=None), posed={"langue": "en"}).complete()
+    events = numbered(first, second)
+    first_run = [e for e in events if e.run_id == first.run_id]
+
+    assert session_state(first_run) == {"client_id": "CL-1", "langue": "fr", "ticket": "T-1"}
+    assert session_state(events) == {"client_id": "CL-1", "langue": "en"}
+    assert session_state([]) == {}
+
+
+def test_failed_runs_sub_runs_and_compactions_do_not_write() -> None:
+    """D2 et D3 : seuls les runs racine ordinaires terminés écrivent.
+
+    Ce que l'application a posé à l'ouverture d'un run racine reste, quel que
+    soit son sort ; un sous-run ou une compaction ne pose rien, même ouvert avec
+    du state.
+    """
+    session = SessionId("c-42")
+    failed = writing_run(session, written("ok", perdu=1), posed={"client_id": "CL-1"})
+    failed.fail("E", "boom")
+
+    parent = writing_run(session).complete()
+    child = RunJournal(session_id=session, root_run_id=parent.run_id)
+    child.start(
+        "sous-tâche",
+        parent_run_id=parent.run_id,
+        parent_call_id="c9",
+        depth=1,
+        state={"pose_par_le_sous_run": 1},
+    )
+    child.model_turn(tool_call_message(("c1", "outil", {})))
+    child.tool_results({"c1": written("ok", du_sous_run=1)})
+    child.model_turn(Message.assistant("fait")).complete()
+
+    compaction = writing_run(session, written("ok", de_la_compaction=1), posed={"x": 1}).complete()
+    opening, *rest = compaction.take()
+    started = opening.payload
+    assert isinstance(started, RunStarted)
+    system = compaction.scope.draft(started.model_copy(update={"kind": "compaction"}))
+
+    events = numbered(failed, parent, child)
+    tail = [d.to_event(seq) for seq, d in enumerate([system, *rest], start=len(events) + 1)]
+    assert session_state([*events, *tail]) == {"client_id": "CL-1"}
+
+
+def test_the_run_in_progress_sees_its_own_writes() -> None:
+    """Le run en cours voit ses écritures ; elles ne comptent pour la session qu'à sa clôture."""
+
+    def running() -> RunJournal:
+        posed: dict[str, JsonValue] = {"client_id": "CL-1"}
+        return writing_run(SessionId("c-42"), written("ok", ticket="T-7"), posed=posed)
+
+    journal = running()
+    events = numbered(journal)
+    assert session_state(events) == {"client_id": "CL-1"}
+    assert session_state(events, run_id=journal.run_id) == {"client_id": "CL-1", "ticket": "T-7"}
+
+    completed = running().complete()
+    events = numbered(completed)
+    assert session_state(events) == {"client_id": "CL-1", "ticket": "T-7"}
+    assert session_state(events, run_id=completed.run_id) == session_state(events)
+
+    failed = running().fail("E", "boom")
+    events = numbered(failed)
+    assert session_state(events, run_id=failed.run_id) == {"client_id": "CL-1"}
+
+
+@pytest.mark.parametrize("second_call", ["c2", "c1"])
+def test_the_writes_of_a_repaired_call_are_dropped(second_call: str) -> None:
+    """D2 : l'historique retire l'appel refusé et son résultat, le state ses écritures.
+
+    Le run lui-même a vu le résultat refusé, et ses écritures avec lui. Un
+    fournisseur peut redonner le même identifiant d'appel après la réparation :
+    c'est la position de l'appel qui compte.
+    """
+    journal = RunJournal(session_id=SessionId("c-42"))
+    journal.start("Rédige la relance")
+    journal.model_turn(tool_call_message(("c1", "rediger", {})))
+    journal.tool_results({"c1": written("v1", brouillon="v1")})
+    repair = UserMessage(message=Message.user("Montant absent."), kind="repair", policy="p")
+    drafts = [*journal.take(), journal.scope.draft(repair)]
+    journal.model_turn(tool_call_message((second_call, "rediger", {})))
+    journal.tool_results({second_call: written("v2", version=2)})
+    drafts += journal.take()
+    running = [draft.to_event(seq) for seq, draft in enumerate(drafts, start=1)]
+    journal.model_turn(Message.assistant("fait")).complete()
+    drafts += journal.take()
+    events = [draft.to_event(seq) for seq, draft in enumerate(drafts, start=1)]
+
+    seen = {"brouillon": "v1", "version": 2}
+    assert session_state(running, run_id=journal.run_id) == seen
+    assert fold(events, journal.run_id).state_delta == seen
+    assert session_state(events) == {"version": 2}
+
+
+def test_defaults_fill_the_absent_keys_without_being_written() -> None:
+    session = SessionId("c-42")
+    defaults: dict[str, JsonValue] = {"langue": "fr"}
+    posed = writing_run(session, written("ok", langue="en")).complete()
+    erased = writing_run(session, written("ok", langue=None)).complete()
+    events = numbered(posed, erased)
+    first_run = [e for e in events if e.run_id == posed.run_id]
+
+    assert session_state([], defaults=defaults) == {"langue": "fr"}
+    assert session_state(first_run, defaults=defaults) == {"langue": "en"}
+    assert session_state(events, defaults=defaults) == {"langue": "fr"}
+
+
+def test_the_state_given_is_a_copy() -> None:
+    """Modifier le state rendu ne touche ni au journal lu, ni aux valeurs par défaut."""
+    session = SessionId("c-42")
+    events = numbered(writing_run(session, written("ok", client={"code": "C-002"})).complete())
+    defaults: dict[str, JsonValue] = {"options": {"ton": "cordial"}}
+    state = session_state(events, defaults=defaults)
+    client, options = state["client"], state["options"]
+    assert isinstance(client, dict) and isinstance(options, dict)
+    client["code"] = "modifié"
+    options["ton"] = "modifié"
+    assert session_state(events, defaults=defaults) == {
+        "client": {"code": "C-002"},
+        "options": {"ton": "cordial"},
+    }
+
+
+def test_session_markers_do_not_change_the_state() -> None:
+    """Snapshot, compaction et coupe remplacent l'historique, pas le state."""
+    session = SessionId("c-42")
+    first = writing_run(session, written("ok", client="C-002"), posed={"langue": "fr"})
+    events = numbered(first.complete())
+    expected = session_state(events)
+    seq = len(events)
+    for marker in (
+        SessionTrimmed(up_to_seq=seq, dropped=1),
+        SessionCompacted(up_to_seq=seq, summary="Le client C-002 a demandé un devis."),
+    ):
+        marked = [*events, first.scope.draft(marker).to_event(seq + 1)]
+        assert history(marked) != history(events)
+        assert session_state(marked) == expected == {"langue": "fr", "client": "C-002"}
+
+
+def test_concurrent_runs_write_in_the_order_they_finish() -> None:
+    """Deux runs sur une session : les écritures d'un run comptent à sa clôture."""
+    session = SessionId("c-42")
+    slow, fast = RunJournal(session_id=session), RunJournal(session_id=session)
+    slow.start("lent").model_turn(tool_call_message(("c1", "outil", {})))
+    slow.tool_results({"c1": written("ok", k="lent")})
+    opened = slow.take()
+    fast.start("rapide").model_turn(tool_call_message(("c1", "outil", {})))
+    fast.tool_results({"c1": written("ok", k="rapide")})
+    fast.model_turn(Message.assistant("fait")).complete()
+    finished = fast.take()
+    slow.model_turn(Message.assistant("fait")).complete()
+
+    drafts = [*opened, *finished, *slow.take()]
+    events = [draft.to_event(seq) for seq, draft in enumerate(drafts, start=1)]
+    assert session_state(events[: len(opened) + len(finished)]) == {"k": "rapide"}
+    assert session_state(events) == {"k": "lent"}

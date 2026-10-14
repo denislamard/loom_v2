@@ -140,7 +140,7 @@ class RunStarted(Payload):
     category: ClassVar[EventCategory] = "run"
     facet_fields: ClassVar[tuple[str, ...]] = ("kind",)
 
-    content_fields: ClassVar[tuple[str, ...]] = ("context.metadata",)
+    content_fields: ClassVar[tuple[str, ...]] = ("context.metadata", "state")
     type: Literal["run.started"] = "run.started"
     kind: RunKind = "normal"
     context: CallerContext = CallerContext()
@@ -157,6 +157,13 @@ class RunStarted(Payload):
     judges: JudgesMode = "auto"
     # Part de budget donnée par le run parent à un sous-run (``budget_share``, #4).
     budget: RunBudget | None = None
+    # State de la session posé par l'application à l'ouverture du run : ``{clé:
+    # valeur}``, ``None`` efface la clé. Écrit avant la demande, il est copié
+    # avec elle au rejeu. Du contenu, jamais une facette : un lecteur plus
+    # ancien ignore un champ ajouté, pas une facette. Omis quand il est vide.
+    state: dict[str, JsonValue] = Field(
+        default_factory=dict[str, JsonValue], exclude_if=lambda value: not value
+    )
 
     def facets(self) -> dict[str, FacetValue]:
         facets = super().facets()

@@ -148,6 +148,18 @@ def test_a_nested_path_is_followed(demo: ConfigFactory) -> None:
     assert charge["redacted"] == ["context.metadata"]
 
 
+def test_the_session_state_posed_by_the_application_is_content() -> None:
+    # Un identifiant client, une langue : ce que l'application pose est du contenu.
+    charge = redacted(wrote(RunStarted(state={"client_id": "CL-04217"})))["payload"]
+    assert isinstance(charge, dict)
+    assert "state" not in charge
+    assert charge["redacted"] == ["state"]
+    # Vide, il n'est même pas écrit : rien à retirer, rien à dire.
+    empty = redacted(wrote(RunStarted()))["payload"]
+    assert isinstance(empty, dict)
+    assert "state" not in empty and "redacted" not in empty
+
+
 def test_every_criterion_loses_its_reason_and_keeps_its_score() -> None:
     """Chaque élément de la liste est traité : pas d'arrêt au premier."""
     verdict = JudgeEvaluated(

@@ -145,6 +145,7 @@ from loom_ia.core.model.run_state import (
     RunKind,
     RunState,
     RunStatus,
+    StateWrite,
 )
 from loom_ia.core.model.streaming import (
     INVALID_JSON_KEY,
@@ -322,6 +323,7 @@ __all__ = [
     "SkipReason",
     "SpanId",
     "Spent",
+    "StateWrite",
     "Stop",
     "StopReason",
     "Stopped",
