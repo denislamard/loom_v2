@@ -2,7 +2,7 @@
 # Initialise un projet Loom-IA : environnement uv, loom.yaml, un agent et son prompt.
 #
 # Usage :
-#   init_harness.sh <projet> <agent> <prompt> [--anthropic]
+#   init_loom <projet> <agent> <prompt> [--anthropic]
 #
 #   <projet>   nom du dossier à créer (il ne doit pas exister)
 #   <agent>    nom de l'agent  -> agents/<agent>.yaml
@@ -11,8 +11,8 @@
 #                modèle simulé, qui fonctionne sans clé ni réseau
 #
 # Exemple :
-#   ./init_harness.sh mon-agent agent system
-#   ./init_harness.sh mon-agent agent system --anthropic
+#   ./init_loom mon-agent agent system
+#   ./init_loom mon-agent agent system --anthropic
 
 set -euo pipefail
 

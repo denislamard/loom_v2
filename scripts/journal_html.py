@@ -16,12 +16,17 @@ import html
 import json
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 esc = html.escape
 
+# Le journal et les corps bruts des échanges sont du JSON sans schéma ici : on les lit
+# en `Any`, explicitement, pour que pyright strict sache que c'est voulu.
+type Objet = dict[str, Any]
 
-def lire_evenements(chemin: Path) -> list[dict]:
-    evenements = []
+
+def lire_evenements(chemin: Path) -> list[Objet]:
+    evenements: list[Objet] = []
     with chemin.open(encoding="utf-8") as f:
         for numero, ligne in enumerate(f, 1):
             ligne = ligne.strip()
@@ -34,11 +39,11 @@ def lire_evenements(chemin: Path) -> list[dict]:
     return evenements
 
 
-def lire_flux_anthropic(corps: str) -> dict:
+def lire_flux_anthropic(corps: str) -> Objet:
     """Reconstitue la réponse d'un flux SSE Anthropic : texte, appels d'outils, usage."""
-    blocs: dict[int, dict] = {}
-    usage: dict = {}
-    arret = None
+    blocs: dict[int, Objet] = {}
+    usage: Objet = {}
+    arret: str | None = None
     for ligne in corps.split("\n"):
         if not ligne.startswith("data: "):
             continue
@@ -51,9 +56,16 @@ def lire_flux_anthropic(corps: str) -> dict:
             usage.update(d["message"].get("usage", {}))
         elif t == "content_block_start":
             cb = d["content_block"]
-            blocs[d["index"]] = {"type": cb["type"], "name": cb.get("name"), "texte": "", "json": ""}
+            blocs[d["index"]] = {
+                "type": cb["type"],
+                "name": cb.get("name"),
+                "texte": "",
+                "json": "",
+            }
         elif t == "content_block_delta":
-            b = blocs.setdefault(d["index"], {"type": "text", "name": None, "texte": "", "json": ""})
+            b = blocs.setdefault(
+                d["index"], {"type": "text", "name": None, "texte": "", "json": ""}
+            )
             dl = d["delta"]
             if dl["type"] == "text_delta":
                 b["texte"] += dl["text"]
@@ -67,14 +79,14 @@ def lire_flux_anthropic(corps: str) -> dict:
     return {"blocs": [blocs[i] for i in sorted(blocs)], "usage": usage, "arret": arret}
 
 
-def rendre_json(valeur) -> str:
+def rendre_json(valeur: object) -> str:
     return f"<pre>{esc(json.dumps(valeur, ensure_ascii=False, indent=2))}</pre>"
 
 
-def rendre_contenu(contenu) -> str:
+def rendre_contenu(contenu: Any) -> str:
     if isinstance(contenu, str):
         return f"<pre>{esc(contenu)}</pre>"
-    morceaux = []
+    morceaux: list[str] = []
     for c in contenu:
         t = c.get("type")
         if t == "text":
@@ -87,7 +99,7 @@ def rendre_contenu(contenu) -> str:
         elif t == "tool_result":
             texte = c.get("content")
             if isinstance(texte, list):
-                texte = "\n".join(x.get("text", "") for x in texte)
+                texte = "\n".join(x.get("text", "") for x in cast("list[Any]", texte))
             erreur = " erreur" if c.get("is_error") else ""
             morceaux.append(
                 f"<div class='bloc resultat{erreur}'><span class='etiquette'>résultat d'outil"
@@ -98,14 +110,14 @@ def rendre_contenu(contenu) -> str:
     return "".join(morceaux)
 
 
-def rendre_entree(corps: dict) -> str:
-    parties = []
+def rendre_entree(corps: Objet) -> str:
+    parties: list[str] = []
     systeme = corps.get("system")
     if isinstance(systeme, list):
-        systeme = "\n".join(x.get("text", "") for x in systeme)
+        systeme = "\n".join(x.get("text", "") for x in cast("list[Any]", systeme))
     parties.append(f"<h4>Prompt système</h4><pre>{esc(systeme or '(aucun)')}</pre>")
 
-    outils = corps.get("tools", [])
+    outils: list[Any] = corps.get("tools", [])
     noms = ", ".join(t["name"] for t in outils) or "aucun"
     parties.append(
         f"<details><summary>Outils proposés ({len(outils)}) : {esc(noms)}</summary>"
@@ -114,40 +126,48 @@ def rendre_entree(corps: dict) -> str:
     reglages = {k: v for k, v in corps.items() if k not in ("system", "tools", "messages")}
     parties.append(f"<details><summary>Réglages</summary>{rendre_json(reglages)}</details>")
 
-    messages = corps.get("messages", [])
+    messages: list[Any] = corps.get("messages", [])
     parties.append(f"<h4>Messages ({len(messages)})</h4>")
     for i, m in enumerate(messages):
         parties.append(
-            f"<div class='message {esc(m['role'])}'><span class='role'>{i} · {esc(m['role'])}</span>"
+            f"<div class='message {esc(m['role'])}'>"
+            f"<span class='role'>{i} · {esc(m['role'])}</span>"
             f"{rendre_contenu(m['content'])}</div>"
         )
     return "".join(parties)
 
 
-def rendre_sortie(rep: dict) -> str:
-    parties = []
+def rendre_sortie(rep: Objet) -> str:
+    parties: list[str] = []
     for b in rep["blocs"]:
         if b["type"] == "tool_use":
             try:
-                args = json.loads(b["json"]) if b["json"] else {}
+                args: object = json.loads(b["json"]) if b["json"] else dict[str, Any]()
                 arguments = rendre_json(args)
             except json.JSONDecodeError:
                 arguments = f"<pre>{esc(b['json'])}</pre>"
             parties.append(
-                f"<div class='bloc outil'><span class='etiquette'>le modèle demande un outil</span> "
+                "<div class='bloc outil'>"
+                "<span class='etiquette'>le modèle demande un outil</span> "
                 f"<b>{esc(b['name'])}</b>{arguments}</div>"
             )
         elif b["type"] == "thinking":
-            parties.append(f"<div class='bloc'><span class='etiquette'>raisonnement</span><pre>{esc(b['texte'])}</pre></div>")
+            parties.append(
+                "<div class='bloc'><span class='etiquette'>raisonnement</span>"
+                f"<pre>{esc(b['texte'])}</pre></div>"
+            )
         else:
-            parties.append(f"<div class='bloc texte'><span class='etiquette'>réponse</span><pre>{esc(b['texte'])}</pre></div>")
+            parties.append(
+                "<div class='bloc texte'><span class='etiquette'>réponse</span>"
+                f"<pre>{esc(b['texte'])}</pre></div>"
+            )
     return "".join(parties) or "<p><i>(sortie vide)</i></p>"
 
 
-def construire(evenements: list[dict]) -> str:
+def construire(evenements: list[Objet]) -> str:
     # model.responded, par span : coût, latence, usage normalisé par Loom
     repondu = {e["span_id"]: e for e in evenements if e["type"] == "model.responded"}
-    runs: dict[str, list[dict]] = {}
+    runs: dict[str, list[Objet]] = {}
     ordre: list[str] = []
     for e in evenements:
         r = e["run_id"]
@@ -156,20 +176,24 @@ def construire(evenements: list[dict]) -> str:
             ordre.append(r)
         runs[r].append(e)
 
-    sections = []
-    total_in = total_out = 0
-    total_cout = 0.0
+    sections: list[str] = []
+    total_in: int = 0
+    total_out: int = 0
+    total_cout: float = 0.0
     sans_capture = False
     for r in ordre:
         evs = runs[r]
         question = next(
-            (e["payload"]["message"]["blocks"][0].get("text", "")
-             for e in evs if e["type"] == "message.user" and e["payload"].get("kind") == "request"),
+            (
+                e["payload"]["message"]["blocks"][0].get("text", "")
+                for e in evs
+                if e["type"] == "message.user" and e["payload"].get("kind") == "request"
+            ),
             "",
         )
         agent = evs[0].get("agent") or ""
         tour = 0
-        tours = []
+        tours: list[str] = []
         for e in evs:
             if e["type"] == "model.exchanged":
                 tour += 1
@@ -177,7 +201,7 @@ def construire(evenements: list[dict]) -> str:
                 try:
                     corps = json.loads(p["request_body"])
                     entree = rendre_entree(corps)
-                except (json.JSONDecodeError, KeyError, TypeError):
+                except json.JSONDecodeError, KeyError, TypeError:
                     entree = f"<pre>{esc(str(p.get('request_body')))}</pre>"
                 rep = lire_flux_anthropic(p.get("response_body") or "")
                 sortie = rendre_sortie(rep)
@@ -194,7 +218,8 @@ def construire(evenements: list[dict]) -> str:
                 )
                 tours.append(
                     f"<section class='tour'><h3>Tour {tour}</h3><p class='meta'>{meta}</p>"
-                    f"<div class='colonnes'><div class='col'><h2>Envoyé au modèle</h2>{entree}</div>"
+                    "<div class='colonnes'>"
+                    f"<div class='col'><h2>Envoyé au modèle</h2>{entree}</div>"
                     f"<div class='col'><h2>Sorti du modèle</h2>{sortie}</div></div></section>"
                 )
             elif e["type"] == "tool.completed":
@@ -220,10 +245,12 @@ def construire(evenements: list[dict]) -> str:
             "<code>telemetry.capture.raw_exchanges: true</code> dans loom.yaml, puis relancez.</p>"
         )
     entete = (
-        f"<p class='meta'>{len(ordre)} run(s) · {total_in} tokens en entrée · {total_out} en sortie · "
-        f"{total_cout:.6f} $</p>"
+        f"<p class='meta'>{len(ordre)} run(s) · {total_in} tokens en entrée · "
+        f"{total_out} en sortie · {total_cout:.6f} $</p>"
     )
-    return PAGE.format(titre="Journal Loom", entete=entete, avertissement=avertissement, corps="".join(sections))
+    return PAGE.format(
+        titre="Journal Loom", entete=entete, avertissement=avertissement, corps="".join(sections)
+    )
 
 
 PAGE = """<!doctype html>
@@ -234,22 +261,27 @@ PAGE = """<!doctype html>
 :root {{ --fond:#fafaf9; --texte:#1c1917; --doux:#78716c; --carte:#fff; --bord:#e7e5e4;
   --accent:#2563eb; --outil:#b45309; --ok:#15803d; --alerte:#b91c1c; }}
 @media (prefers-color-scheme: dark) {{ :root {{ --fond:#1c1917; --texte:#f5f5f4; --doux:#a8a29e;
-  --carte:#292524; --bord:#44403c; --accent:#60a5fa; --outil:#fbbf24; --ok:#4ade80; --alerte:#f87171; }} }}
+  --carte:#292524; --bord:#44403c; --accent:#60a5fa; --outil:#fbbf24; \
+--ok:#4ade80; --alerte:#f87171; }} }}
 body {{ margin:0; background:var(--fond); color:var(--texte); font:15px/1.5 system-ui,sans-serif; }}
 main {{ max-width:1400px; margin:0 auto; padding:16px; }}
 h1 {{ margin:0 0 4px; font-size:22px; }}
 .meta {{ color:var(--doux); font-size:13px; margin:2px 0 10px; }}
 .run {{ margin:28px 0; }}
 .titre-run {{ font-size:18px; margin:0 0 4px; }}
-.question {{ background:var(--carte); border:1px solid var(--bord); border-left:4px solid var(--accent);
+.question {{ background:var(--carte); border:1px solid var(--bord); \
+border-left:4px solid var(--accent);
   padding:8px 12px; border-radius:6px; }}
-.tour {{ background:var(--carte); border:1px solid var(--bord); border-radius:8px; padding:12px 16px; margin:14px 0; }}
+.tour {{ background:var(--carte); border:1px solid var(--bord); border-radius:8px; \
+padding:12px 16px; margin:14px 0; }}
 .tour h3 {{ margin:0; font-size:16px; }}
 .colonnes {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }}
 @media (max-width: 800px) {{ .colonnes {{ grid-template-columns:1fr; }} }}
-.col h2 {{ font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--doux); margin:6px 0; }}
+.col h2 {{ font-size:13px; text-transform:uppercase; letter-spacing:.05em; \
+color:var(--doux); margin:6px 0; }}
 h4 {{ margin:12px 0 4px; font-size:13px; color:var(--doux); }}
-pre {{ white-space:pre-wrap; word-break:break-word; margin:4px 0; font:13px/1.45 ui-monospace,monospace; }}
+pre {{ white-space:pre-wrap; word-break:break-word; margin:4px 0; \
+font:13px/1.45 ui-monospace,monospace; }}
 .message {{ border:1px solid var(--bord); border-radius:6px; padding:6px 10px; margin:6px 0; }}
 .message.assistant {{ border-left:4px solid var(--ok); }}
 .message.user {{ border-left:4px solid var(--accent); }}
@@ -275,7 +307,9 @@ details {{ margin:6px 0; }} summary {{ cursor:pointer; color:var(--doux); font-s
 def main() -> int:
     ap = argparse.ArgumentParser(description="Journal Loom (.jsonl) -> page HTML des tours")
     ap.add_argument("journal", type=Path, help="fichier .jsonl d'une session")
-    ap.add_argument("-o", "--sortie", type=Path, help="fichier HTML à écrire (défaut : à côté du journal)")
+    ap.add_argument(
+        "-o", "--sortie", type=Path, help="fichier HTML à écrire (défaut : à côté du journal)"
+    )
     args = ap.parse_args()
     if not args.journal.is_file():
         print(f"Fichier introuvable : {args.journal}", file=sys.stderr)

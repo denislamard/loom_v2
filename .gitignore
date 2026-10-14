@@ -229,3 +229,5 @@ firecracker/vms/
 
 # macOS
 .DS_Store
+
+examples/agents/
