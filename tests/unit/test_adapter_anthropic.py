@@ -835,18 +835,29 @@ async def test_the_conversation_cache_point_precedes_the_session_state() -> None
     assert "cache_control" not in body["messages"][2]["content"][0]
 
 
-async def test_a_lone_session_state_gets_no_cache_point() -> None:
+async def test_a_session_state_with_nothing_cacheable_before_it_gets_no_cache_point() -> None:
     """Rien avant le state qui puisse porter le point : il n'est posé nulle part."""
-    server = Server(answered(), answered())
+    server = Server(answered())
     reasoning = Message(
         role="assistant",
         blocks=(
             ReasoningBlock(text="x", provider_meta={"anthropic": AnthropicMeta(signature="s")}),
         ),
     )
-    for messages in ((shown(a=1),), (reasoning, shown(a=1))):
-        await complete(server.model(cached_spec(messages=True)), request(*messages))
-        assert all("cache_control" not in b for m in server.body["messages"] for b in m["content"])
+    await complete(server.model(cached_spec(messages=True)), request(reasoning, shown(a=1)))
+    assert all("cache_control" not in b for m in server.body["messages"] for b in m["content"])
+
+
+async def test_a_role_message_that_opens_with_its_state_keeps_its_cache_point() -> None:
+    """Le state du moteur n'est jamais le premier message : celui d'un rôle qui commence par
+    sa section ``<session_state>`` est sa demande, et porte le point de cache."""
+    server = Server(answered())
+    asked = Message.user(f"{shown(a=1).text}\n\n<arguments>\n{{}}\n</arguments>")
+    await complete(server.model(cached_spec(messages=True)), request(asked))
+    assert server.body["messages"][0]["content"][-1]["cache_control"] == EPHEMERAL
+    marks: list[tuple[int, int]] = []
+    to_anthropic_messages([shown(a=1)], tail=marks)
+    assert marks == []
 
 
 def test_only_the_trailing_state_message_marks_the_end_of_the_conversation() -> None:

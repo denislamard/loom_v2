@@ -131,6 +131,14 @@ async def test_fake_model_does_not_take_the_session_state_for_a_request() -> Non
     assert answer.message.text == "Court."
 
 
+async def test_fake_model_reads_a_role_message_that_opens_with_its_state() -> None:
+    """Premier message, c'est la demande d'un rôle (sa section ``<session_state>`` en tête)."""
+    script = [{"text": "Pour C-002.", "with_text": "C-002"}, {"text": "Inconnu."}]
+    model = create_model_client(fake_spec(script=script))
+    asked = Message.user('<session_state>\n{"client":"C-002"}\n</session_state>')
+    assert (await complete(model, request(asked))).message.text == "Pour C-002."
+
+
 def shown() -> Message:
     block = state_message({"mode": "détaillé"})
     assert is_session_state(block)

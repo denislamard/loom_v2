@@ -80,12 +80,15 @@ from loom_ia.agents.spec import (
     PolicyRef,
     PythonTool,
     RoleSpec,
+    SessionStateContext,
     SourceTools,
+    StateKey,
     SubAgentRef,
     ToolResultsContext,
     system_text,
 )
 from loom_ia.agents.spec import ContextItem as DeclaredContext
+from loom_ia.agents.spec import RoleContextItem as DeclaredRoleContext
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.errors import ConfigError
 from loom_ia.config.models import (
@@ -139,9 +142,11 @@ from loom_ia.engine import (
     ModelLink,
     Policies,
     Recorded,
+    RoleContextItem,
     RoleDefinition,
     RoleTool,
     RunContext,
+    SessionState,
     StateKeyRule,
     StateRules,
     StateSourceRule,
@@ -594,7 +599,7 @@ def build_agent(
     denied: frozenset[str] = tenant.denied if tenant is not None else frozenset()
     imposed: Mapping[str, Approval] = tenant.approvals if tenant is not None else {}
     tools = [_tool(declared, known, config.base_dir) for declared in spec.python_tools]
-    roles = [role_definition(role, variables) for role in spec.roles]
+    roles = [role_definition(role, variables, state=spec.state) for role in spec.roles]
     _check_names(spec, [tool.spec.name for tool in tools])
     _check_state(spec, tools)
 
@@ -912,9 +917,12 @@ def prompt_text(role: BaseRole, variables: Mapping[str, JsonValue] | None = None
 
 
 def role_definition(
-    role: RoleSpec, variables: Mapping[str, JsonValue] | None = None
+    role: RoleSpec,
+    variables: Mapping[str, JsonValue] | None = None,
+    *,
+    state: Mapping[str, StateKey] | None = None,
 ) -> RoleDefinition:
-    """Rôle délégué tel que le moteur l'exécute."""
+    """Rôle délégué tel que le moteur l'exécute ; ``state`` : les clés que déclare l'agent."""
     template = Template.parse(role.input_template) if role.input_template is not None else None
     return RoleDefinition(
         name=role.name,
@@ -922,7 +930,7 @@ def role_definition(
         system=prompt_text(role, variables),
         input_schema=role.input_schema,
         template=template,
-        context=tuple(_context_item(item) for item in role.context),
+        context=tuple(_role_context_item(item, state or {}) for item in role.context),
         terminal=role.terminal,
         timeout=role.timeout,
         output=role.output,
@@ -1264,6 +1272,17 @@ def fallback_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
                     f"que {model} ({smaller} < {window} tokens)"
                 )
     return warnings
+
+
+def _role_context_item(item: DeclaredRoleContext, state: Mapping[str, StateKey]) -> RoleContextItem:
+    match item:
+        case SessionStateContext(session_state=keys):
+            described = tuple((key, state[key].description) for key in keys if key in state)
+            return SessionState(keys=keys, described=described)
+        case "session_state":
+            return SessionState(described=tuple((k, key.description) for k, key in state.items()))
+        case _:
+            return _context_item(item)
 
 
 def _context_item(item: DeclaredContext) -> ContextItem:

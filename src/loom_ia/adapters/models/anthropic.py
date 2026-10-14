@@ -282,13 +282,15 @@ def _trailing_state(messages: Sequence[Message]) -> int | None:
     """Place du state que le moteur ajoute en fin de requête (D4), ou None.
 
     C'est le dernier message, ou l'avant-dernier devant la consigne d'une
-    réponse forcée. Une demande plus ancienne qui commencerait par la balise
-    n'est pas lui : elle ne déplace pas le point de cache.
+    réponse forcée, et jamais le premier : la demande le précède toujours.
+    Une demande plus ancienne qui commencerait par la balise, ou le message
+    d'un rôle qui commence par sa section ``<session_state>``, n'est pas lui :
+    ils ne déplacent pas le point de cache.
     """
     last = len(messages) - 1
     if last > 0 and messages[last].role == "user" and messages[last].text == FINALIZE_HINT:
         last -= 1
-    return last if last >= 0 and is_session_state(messages[last]) else None
+    return last if last > 0 and is_session_state(messages[last]) else None
 
 
 def place_cache_points(

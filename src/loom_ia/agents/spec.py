@@ -12,8 +12,9 @@ modèle, le prompt système et les réglages ``llm``.
 
 State de la session (option C) : ``state`` déclare les clés que la session
 peut porter, chacune avec son schéma, et les outils dont un résultat la pose
-(``from``) ; ``main.context`` dit ce que l'orchestrateur en reçoit. Un juge ne
-reçoit pas le state dans cette version (D11), un rôle pas encore.
+(``from``) ; ``main.context`` dit ce que l'orchestrateur en reçoit, et le
+``context`` d'un rôle ce que ce rôle en reçoit (#50 : déclaré, il est cité par
+son ``input_template``). Un juge ne reçoit pas le state dans cette version (D11).
 """
 
 import re
@@ -181,6 +182,15 @@ class LastTurnsContext(DomainModel):
 
 type ContextName = Literal["user_input", "caller_context", "attachments", "session_summary"]
 type ContextItem = ContextName | ToolResultsContext | LastTurnsContext
+# Contexte d'un rôle : celui d'un juge, et le state de la session — entier
+# (``session_state``) ou certaines de ses clés. À plat, pour que les erreurs de
+# la config gardent des chemins courts.
+type RoleContextItem = (
+    Literal["user_input", "caller_context", "attachments", "session_summary", "session_state"]
+    | ToolResultsContext
+    | LastTurnsContext
+    | SessionStateContext
+)
 
 # Nom d'un juge pour la réponse finale, quand il n'en déclare pas.
 OUTPUT_JUDGE: Final = "output"
@@ -264,7 +274,7 @@ class RoleSpec(BaseRole):
     # Construction du message (#12) ; sans template, blocs de contexte puis arguments.
     input_template: str | None = None
     # Contexte ajouté aux arguments, pris dans une liste fixe (#12).
-    context: tuple[ContextItem, ...] = ()
+    context: tuple[RoleContextItem, ...] = ()
     # Sortie transmise telle quelle comme réponse finale (C3, #13).
     terminal: bool = False
     # Délai de l'appel ; sans lui, ceux du modèle et son retry le bornent.
@@ -278,9 +288,6 @@ class RoleSpec(BaseRole):
     @classmethod
     def _check_input(cls, data: object) -> object:
         _reject_two_prompts(data)
-        _reject_session_state(
-            data, "pas encore disponible pour un rôle, seulement dans main.context"
-        )
         return data
 
     @model_validator(mode="after")
@@ -288,6 +295,8 @@ class RoleSpec(BaseRole):
         if self.name == MAIN_ROLE:
             raise ValueError(f"Le nom {MAIN_ROLE!r} est réservé à l'orchestrateur")
         properties = _check_input_schema(self.input_schema)
+        if sum(1 for item in self.context if _names_session_state(item)) > 1:
+            raise ValueError("Contexte déclaré deux fois : session_state")
         declared = self.declared_context
         doubles = sorted({name for name in declared if declared.count(name) > 1})
         if doubles:
@@ -300,13 +309,24 @@ class RoleSpec(BaseRole):
 
     @property
     def declared_context(self) -> list[str]:
-        """Noms du contexte déclaré : ``tool_results.<outil>`` pour chaque outil."""
+        """Noms du contexte déclaré : ``tool_results.<outil>`` pour chaque outil,
+        ``session_state.<clé>`` pour chaque clé nommée du state."""
         return _declared_context(self.context)
 
     @property
     def wants_attachments(self) -> bool:
         """Vrai pour un rôle vision : il reçoit les pièces jointes du run (C4)."""
         return "attachments" in self.context
+
+    @property
+    def state_keys(self) -> tuple[str, ...] | None:
+        """Clés du state que reçoit le rôle ; () pour toutes, None s'il ne le reçoit pas."""
+        for item in self.context:
+            if isinstance(item, SessionStateContext):
+                return item.session_state
+            if item == SESSION_STATE:
+                return ()
+        return None
 
     @property
     def tool_results(self) -> tuple[str, ...]:
@@ -319,12 +339,15 @@ class RoleSpec(BaseRole):
         )
 
 
-def _declared_context(context: tuple[ContextItem, ...]) -> list[str]:
-    """Noms d'un contexte déclaré : ``tool_results.<outil>`` pour chaque outil."""
+def _declared_context(context: tuple[RoleContextItem, ...]) -> list[str]:
+    """Noms d'un contexte déclaré : ``tool_results.<outil>`` pour chaque outil,
+    ``session_state.<clé>`` pour chaque clé nommée du state."""
     names: list[str] = []
     for item in context:
         if isinstance(item, ToolResultsContext):
             names += [f"tool_results.{tool}" for tool in item.tool_results]
+        elif isinstance(item, SessionStateContext):
+            names += [f"{SESSION_STATE}.{key}" for key in item.session_state]
         elif isinstance(item, LastTurnsContext):
             names.append("last_turns")
         else:
@@ -379,12 +402,14 @@ def _check_template(source: str, properties: set[str], declared: list[str]) -> N
                 if f"tool_results.{tool}" not in declared:
                     raise ValueError(f"input_template : {shown} — {tool!r} absent de tool_results")
                 used.add(f"tool_results.{tool}")
+            case ("context", "session_state", *rest):
+                used |= _state_used(shown, rest, declared)
             case _:
                 raise ValueError(
                     f"input_template : variable inconnue {shown} (attendu args.<argument>, "
                     "context.user_input, context.caller_context, context.attachments, "
-                    "context.session_summary, context.last_turns "
-                    "ou context.tool_results.<outil>)"
+                    "context.session_summary, context.last_turns, "
+                    "context.tool_results.<outil> ou context.session_state.<clé>)"
                 )
     # Les pièces jointes partent en images après le texte : les citer est facultatif.
     unused = [name for name in declared if name not in used and name != "attachments"]
@@ -392,6 +417,35 @@ def _check_template(source: str, properties: set[str], declared: list[str]) -> N
         raise ValueError(
             f"input_template : contexte déclaré mais non utilisé : {', '.join(unused)}"
         )
+
+
+def _state_used(shown: str, rest: list[str], declared: list[str]) -> set[str]:
+    """Contexte déclaré qu'utilise ``context.session_state``, entier ou par l'une de ses clés.
+
+    Avec des clés nommées, seules elles peuvent être citées. Avec le state
+    entier, ce sont celles de l'agent : ``AgentSpec`` les contrôle.
+    """
+    prefix = f"{SESSION_STATE}."
+    named = [name.removeprefix(prefix) for name in declared if name.startswith(prefix)]
+    whole = SESSION_STATE in declared
+    if not named and not whole:
+        raise ValueError(f"input_template : {shown} — contexte 'session_state' non déclaré")
+    if not rest:
+        used = {prefix + key for key in named}
+        return used | {SESSION_STATE} if whole else used
+    key = rest[0]
+    if named and key not in named:
+        raise ValueError(f"input_template : {shown} — {key!r} absente de session_state")
+    return {SESSION_STATE} if whole else {prefix + key}
+
+
+def state_cited(source: str) -> set[str]:
+    """Clés du state citées par un template (``context.session_state.<clé>``)."""
+    return {
+        path[2]
+        for path in Template.parse(source).variables
+        if len(path) > 2 and path[:2] == ("context", SESSION_STATE)
+    }
 
 
 def _reject_two_prompts(data: object) -> None:
@@ -736,7 +790,32 @@ class AgentSpec(DomainModel):
                 f"main.context : session_state cite {', '.join(map(repr, unknown))}, "
                 f"absente(s) de 'state' (clés : {', '.join(self.state)})"
             )
+        for role in self.roles:
+            self._check_role_state(role)
         return self
+
+    def _check_role_state(self, role: RoleSpec) -> None:
+        """Le state que reçoit un rôle : des clés que l'agent déclare, citées comme telles."""
+        keys = role.state_keys
+        if keys is None:
+            return
+        label = f"Rôle {role.name!r} : contexte session_state"
+        if not self.state:
+            raise ValueError(f"{label}, mais aucune clé déclarée dans 'state'")
+        declared = f"(clés : {', '.join(self.state)})"
+        unknown = sorted(key for key in keys if key not in self.state)
+        if unknown:
+            raise ValueError(
+                f"{label} : {', '.join(map(repr, unknown))} absente(s) de 'state' {declared}"
+            )
+        template = role.input_template
+        cited: set[str] = state_cited(template) if template is not None else set()
+        unknown = sorted(key for key in cited if key not in self.state)
+        if unknown:
+            raise ValueError(
+                f"Rôle {role.name!r} : input_template cite {', '.join(map(repr, unknown))}, "
+                f"absente(s) de 'state' {declared}"
+            )
 
     @model_validator(mode="after")
     def _unique_tools(self) -> Self:

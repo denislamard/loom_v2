@@ -58,9 +58,11 @@ import logging
 import time
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
 from contextlib import AsyncExitStack, aclosing, asynccontextmanager
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
+from types import MappingProxyType
 from typing import Final, Protocol, cast
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
@@ -572,10 +574,9 @@ class ToolExecutor:
         if self.replay is not None:
             approver = partial(self.replay.approve, state.run_id)
         # Un sous-run et un run de compaction n'ont pas de state (D3).
+        keeps = bool(self.state_rules) and keeps_state(state)
         current = (
-            state_of_run(session_state or {}, state, before=_batch_turn(state))
-            if self.state_rules and keeps_state(state)
-            else {}
+            state_of_run(session_state or {}, state, before=_batch_turn(state)) if keeps else {}
         )
         # Taille du state au fil du lot : chaque appel compte ce que les
         # précédents ont posé (D7).
@@ -588,7 +589,8 @@ class ToolExecutor:
             step_span=step_span,
             turns=turns,
             summary=summary,
-            session_state=current,
+            # Ce qu'outils et rôles lisent : lu une fois pour le lot.
+            session_state=self.state_rules.visible(current) if keeps else {},
         )
         if on_chunk is not None and len(state.pending_calls) == 1:
             alone = self._tools.get(state.pending_calls[0].name)
@@ -926,11 +928,8 @@ class ToolExecutor:
             on_reuse=lambda key: emit(
                 IdempotencyReused(key=key, call_id=call.call_id, tool_name=spec.name)
             ),
-            state=(
-                self.state_rules.visible(view.session_state)
-                if self.state_rules and keeps_state(state)
-                else {}
-            ),
+            # Une copie par appel : un outil qui modifierait une valeur ne touche pas les autres.
+            state=MappingProxyType(deepcopy(dict(view.session_state))),
         )
         started = time.perf_counter()
         consumption: Consumption | None = None

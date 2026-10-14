@@ -28,7 +28,6 @@ système ne change pas d'un appel à l'autre, seul le bloc de fin est payé hors
 """
 
 import copy
-import json
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -46,6 +45,7 @@ from loom_ia.core.model import (
     RunState,
     ToolOutput,
     finite_json,
+    state_json,
     state_size,
 )
 from loom_ia.core.schema_errors import schema_problem
@@ -298,8 +298,7 @@ def state_message(values: Mapping[str, JsonValue]) -> Message:
     même state donne un même texte, donc une même requête. La balise est
     échappée dans les valeurs, qui ne peuvent ni fermer le bloc ni en ouvrir un autre.
     """
-    body = json.dumps(values, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-    return Message.user(tagged(SESSION_STATE_TAG, body))
+    return Message.user(tagged(SESSION_STATE_TAG, state_json(dict(values))))
 
 
 def _merged(

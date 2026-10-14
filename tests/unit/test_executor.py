@@ -883,6 +883,32 @@ async def test_a_tool_reads_the_state_as_it_was_when_its_batch_began(
         context.state["client"] = "C-1"  # type: ignore[index]
 
 
+async def test_each_call_reads_its_own_copy_of_the_state() -> None:
+    """Un outil qui modifie une valeur imbriquée ne touche pas ce que lisent les autres appels."""
+
+    @tool
+    def remplit(ctx: ToolContext) -> str:
+        """Ajoute au panier qu'il lit."""
+        panier = ctx.state["panier"]
+        assert isinstance(panier, list)
+        panier.append("x")
+        return "ajouté"
+
+    @tool
+    async def lit(ctx: ToolContext) -> JsonValue:
+        """Lit le panier, après l'autre."""
+        await asyncio.sleep(0.02)
+        return ctx.state["panier"]
+
+    rules = StateRules({"panier": StateKeyRule(schema={"type": "array"})})
+    executor = ToolExecutor([remplit, lit], state_rules=rules)
+    pending = awaiting(call("c1", "remplit"), call("c2", "lit"))
+    session: dict[str, JsonValue] = {"panier": ["a"]}
+    outputs = completed([e async for e in executor.run_batch(pending, session_state=session)])
+    assert (outputs["c1"].as_text, outputs["c2"].data) == ("ajouté", ["a"])
+    assert session == {"panier": ["a"]}
+
+
 async def test_a_replayed_result_is_served_as_recorded() -> None:
     """Le rejeu sert le résultat du journal, qui porte déjà son state : rien n'est recalculé."""
     recorded = data(FICHE, state={"client": "C-002"}, state_refused=("ville non posé : …",))

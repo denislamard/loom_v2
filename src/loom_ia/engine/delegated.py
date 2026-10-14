@@ -30,6 +30,7 @@ retrouve l'enfant. L'enfant écrit dans le journal du parent, par le même
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Self
 
 from pydantic import JsonValue
@@ -124,8 +125,9 @@ class RunView:
     # résumé de compaction : un rôle les reçoit s'il les déclare (#12).
     turns: tuple[tuple[Message, ...], ...] = ()
     summary: str | None = None
-    # State de la session au début du lot : ce qui est écrit, toutes clés, sans
-    # valeurs par défaut. Vide dans un sous-run, qui ne le reçoit pas (D3).
+    # State de la session au début du lot, tel que les outils et les rôles le
+    # lisent : clés déclarées, valeurs par défaut comprises. Vide dans un
+    # sous-run, qui ne le reçoit pas (D3).
     session_state: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
     @property
@@ -157,7 +159,7 @@ class RunView:
             step_span=step_span,
             turns=turns,
             summary=summary,
-            session_state=dict(session_state or {}),
+            session_state=MappingProxyType(dict(session_state or {})),
         )
 
     @property

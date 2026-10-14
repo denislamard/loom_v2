@@ -14,7 +14,7 @@ from loom_ia.agents import RoleSpec, ToolResultsContext
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import ModelResponded, RunCompleted, ToolCalled
 from loom_ia.core.model import MAIN_ROLE, RunStatus
-from loom_ia.engine import RoleTool, ToolResults
+from loom_ia.engine import RoleTool, SessionState, ToolResults
 from loom_ia.runtime import build_agent
 
 MAIN_SCRIPT: list[dict[str, Any]] = [
@@ -139,6 +139,52 @@ async def test_run_with_a_terminal_role(tmp_path: Path) -> None:
     assert isinstance(closing, RunCompleted) and closing.output_event_id is not None
 
 
+async def test_a_role_cites_the_state_it_receives(tmp_path: Path) -> None:
+    """Le state entier se cite par clé ; des clés nommées, par le state entier."""
+    whole = rediger(
+        name="tout",
+        context=["session_state"],
+        input_template="{{ args.ton }} {{ context.session_state.langue }}",
+    )
+    named = rediger(
+        name="certaines",
+        context=[{"session_state": ["client", "langue"]}],
+        input_template="{{ args.ton }} {{ context.session_state }}",
+    )
+    config = load_config(write(tmp_path, stateful(whole, named)))
+    roles = {role.name: role for role in config.agents[0].roles}
+    assert (roles["tout"].state_keys, roles["certaines"].state_keys) == ((), ("client", "langue"))
+
+    agent_ = build_agent(config, "demo", InMemoryEventStore())
+    definitions = {
+        name: tool.definition
+        for name in ("tout", "certaines")
+        if isinstance(tool := agent_.context.tools.get(name), RoleTool)
+    }
+    # Chaque clé reçue, avec ce qu'elle désigne : un rôle sans template les lit dans sa consigne.
+    described = (("client", "Client dont on parle."), ("langue", ""))
+    assert definitions["tout"].context == (SessionState(described=described),)
+    assert definitions["certaines"].context == (
+        SessionState(keys=("client", "langue"), described=described),
+    )
+    await agent_.aclose()
+
+
+async def test_a_role_of_the_config_receives_the_session_state(tmp_path: Path) -> None:
+    """De bout en bout : ``calculer`` pose ``client`` au premier lot, le rôle le lit au second."""
+    template = "Ton : {{ args.ton }}\nClient : {{ context.session_state.client }}"
+    spec = stateful(rediger(context=[{"session_state": ["client"]}], input_template=template))
+    # Le modèle du rôle répond selon ce qu'il a reçu.
+    role_script = [{"with_text": "Client : C-002", "text": "Pour C-002."}, {"text": "Inconnu."}]
+    models = [MODELS[0], {**MODELS[1], "params": {"script": role_script}}]
+    async with Loom(load_config(write(tmp_path, spec, models=models))) as loom:
+        result = await loom.run("demo", "Combien ?")
+        report = await loom.replay(result.run_id)
+
+    assert (result.status, result.text) == (RunStatus.COMPLETED, "Pour C-002.")
+    assert report.identical, report.divergence
+
+
 def test_cli_shows_roles_and_the_terminal_output(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -156,6 +202,22 @@ def test_cli_shows_roles_and_the_terminal_output(
 
 def broken(**changes: Any) -> dict[str, Any]:
     return agent(roles=[rediger(**changes)])
+
+
+# State de la session de l'agent : ``client`` posé par ``calculer``, ``langue`` par défaut.
+STATE: dict[str, Any] = {
+    "client": {
+        "schema": {"type": "string"},
+        "description": "Client dont on parle.",
+        "from": [{"tool": "calculer", "value": "C-002"}],
+    },
+    "langue": {"schema": {"enum": ["fr", "en"]}, "default": "fr"},
+}
+
+
+def stateful(*roles: dict[str, Any]) -> dict[str, Any]:
+    """L'agent, avec un state et ces rôles."""
+    return agent(state=STATE, roles=list(roles))
 
 
 @pytest.mark.parametrize(
@@ -183,11 +245,48 @@ def broken(**changes: Any) -> dict[str, Any]:
         ),
         (broken(context=["user_input", "user_input"]), "Contexte déclaré deux fois : user_input"),
         (
-            broken(context=["session_state"]),
-            "contexte 'session_state' : pas encore disponible pour un rôle, "
-            "seulement dans main.context",
+            broken(context=["session_state"], input_template=None),
+            "Rôle 'rediger' : contexte session_state, mais aucune clé déclarée dans 'state'",
         ),
-        (broken(context=[{"session_state": ["client"]}]), "pas encore disponible pour un rôle"),
+        (
+            stateful(rediger(context=[{"session_state": ["inconnue"]}], input_template=None)),
+            "Rôle 'rediger' : contexte session_state : 'inconnue' absente(s) de 'state' "
+            "(clés : client, langue)",
+        ),
+        (
+            stateful(
+                rediger(context=["session_state"], input_template="{{ context.session_state.x }}")
+            ),
+            "Rôle 'rediger' : input_template cite 'x', absente(s) de 'state' "
+            "(clés : client, langue)",
+        ),
+        (
+            broken(context=["session_state", {"session_state": ["client"]}]),
+            "Contexte déclaré deux fois : session_state",
+        ),
+        (
+            broken(context=[{"session_state": ["client", "client"]}]),
+            "Contexte déclaré deux fois : session_state.client",
+        ),
+        (broken(context=[{"session_state": []}]), "at least 1 item"),
+        (
+            broken(input_template="{{ context.session_state }}"),
+            "{{ context.session_state }} — contexte 'session_state' non déclaré",
+        ),
+        (
+            broken(
+                context=[{"session_state": ["client"]}],
+                input_template="{{ context.session_state.langue }}",
+            ),
+            "{{ context.session_state.langue }} — 'langue' absente de session_state",
+        ),
+        (
+            broken(
+                context=[{"session_state": ["client", "langue"]}],
+                input_template="{{ context.session_state.client }}",
+            ),
+            "contexte déclaré mais non utilisé : session_state.langue",
+        ),
         (broken(context=[], input_schema={"type": "object"}), "ne recevrait rien"),
         (broken(input_schema={"type": "array"}), "'type: object' attendu"),
         (broken(input_schema={"type": "object", "properties": 3}), "input_schema invalide"),

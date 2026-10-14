@@ -147,6 +147,7 @@ from loom_ia.core.model.run_state import (
     RunStatus,
     StateWrite,
     finite_json,
+    state_json,
     state_size,
 )
 from loom_ia.core.model.streaming import (
@@ -365,5 +366,6 @@ __all__ = [
     "recordable",
     "sampled",
     "sniff",
+    "state_json",
     "state_size",
 ]

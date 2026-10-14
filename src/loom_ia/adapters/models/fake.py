@@ -204,8 +204,9 @@ def _turn(request: ModelRequest) -> int:
     le state de la session.
     """
     count = 0
-    for message in reversed(request.messages):
-        if message.role == "user" and not _engine_note(message):
+    for position in range(len(request.messages) - 1, -1, -1):
+        message = request.messages[position]
+        if message.role == "user" and not _engine_note(message, first=position == 0):
             break
         if message.role == "assistant":
             count += 1
@@ -222,20 +223,25 @@ def _repair(message: Message) -> bool:
     return isinstance(first, TextBlock) and first.text.startswith(REPAIR_PREFIX)
 
 
-def _engine_note(message: Message) -> bool:
-    """Message ajouté par le moteur : images déplacées, réparation, réponse forcée, state."""
+def _engine_note(message: Message, *, first: bool) -> bool:
+    """Message ajouté par le moteur : images déplacées, réparation, réponse forcée, state.
+
+    Le state n'est jamais le premier message (``first``) : la demande le précède.
+    Un message de rôle qui commence par sa section ``<session_state>`` est une demande.
+    """
     return (
         _moved_images(message)
         or _repair(message)
         or message.text == FINALIZE_HINT
-        or is_session_state(message)
+        or (is_session_state(message) and not first)
     )
 
 
 def _last_user_text(request: ModelRequest) -> str:
     """Dernière demande de l'utilisateur, sans les messages ajoutés par le moteur."""
-    for message in reversed(request.messages):
-        if message.role == "user" and not _engine_note(message):
+    for position in range(len(request.messages) - 1, -1, -1):
+        message = request.messages[position]
+        if message.role == "user" and not _engine_note(message, first=position == 0):
             return message.text
     return ""
 

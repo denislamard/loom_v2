@@ -168,6 +168,14 @@ def state_size(value: JsonValue) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
 
 
+def state_json(values: JsonValue) -> str:
+    """Le state tel qu'un modèle le lit : JSON compact, clés triées à tous les niveaux.
+
+    Un même state donne un même texte, donc une même requête et la même empreinte.
+    """
+    return json.dumps(values, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
 def finite_json(value: JsonValue) -> bool:
     """Faux si la valeur contient NaN ou un infini.
 

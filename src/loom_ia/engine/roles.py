@@ -13,6 +13,13 @@ entier même s'ils ont été déportés) et ``attachments`` (les pièces jointes
 run). Si un outil nommé n'a encore rien donné, le rôle n'est pas appelé :
 l'orchestrateur reçoit une erreur qui lui dit quoi faire d'abord.
 
+State de la session (``session_state``, entier ou certaines clés) : tel que
+les outils le lisent au début du lot — clés déclarées, valeurs par défaut
+comprises —, en JSON compact aux clés triées ; ``{}`` s'il est vide, et dans
+un sous-run, qui ne le reçoit pas (D3). Un template cite le state entier
+(``context.session_state``) ou une clé (``context.session_state.<clé>``) ;
+une clé sans valeur y donne une chaîne vide.
+
 Rôle vision (C4) : un rôle qui déclare ``attachments`` reçoit les images
 jointes à la demande, à la suite de son texte ; son modèle les voit s'il a la
 capacité ``vision``. Sans pièce jointe dans le run, il est masqué à
@@ -80,6 +87,7 @@ from loom_ia.core.model import (
     ToolCallBlock,
     ToolOutput,
     ToolSpec,
+    state_json,
 )
 from loom_ia.core.ports import ModelClient, ModelError, ToolContext, stopped_by_client
 from loom_ia.core.template import Template
@@ -112,6 +120,14 @@ _OWN_TAG: Final = re.compile(rf"<(?=\s*/?\s*(?:{'|'.join(TAGS)})\b)", re.IGNOREC
 
 # Mention ajoutée à la description d'un rôle qui déclare du contexte.
 CONTEXT_HINT: Final = "Reçoit déjà, inutile de les transmettre"
+# Consigne ajoutée au prompt système d'un rôle sans template qui reçoit le
+# state ; suit une ligne par clé, avec ce qu'elle désigne. Avec un template,
+# c'est son texte qui présente les valeurs.
+ROLE_STATE_HINT: Final = (
+    f"La section <{SESSION_STATE_TAG}> de ta demande donne l'état courant de la session : "
+    "un objet JSON tenu à jour par l'application et les outils. Une clé absente n'a pas "
+    "de valeur."
+)
 
 
 type ContextScope = Literal["run", "session"]
@@ -133,11 +149,25 @@ class LastTurns:
     count: int
 
 
+@dataclass(frozen=True, slots=True)
+class SessionState:
+    """Contexte ``session_state`` d'un rôle : les clés nommées du state, ou toutes (``()``).
+
+    ``described`` : chaque clé que reçoit le rôle, avec ce qu'elle désigne ; un
+    rôle sans template les lit dans son prompt système (``ROLE_STATE_HINT``).
+    """
+
+    keys: tuple[str, ...] = ()
+    described: tuple[tuple[str, str], ...] = ()
+
+
 type ContextItem = (
     Literal["user_input", "caller_context", "attachments", "session_summary"]
     | ToolResults
     | LastTurns
 )
+# Contexte d'un rôle : celui d'un juge, et le state de la session.
+type RoleContextItem = ContextItem | SessionState
 
 
 def _empty_object() -> dict[str, JsonValue]:
@@ -154,7 +184,7 @@ class RoleDefinition:
     # Sans ``additionalProperties`` déclaré, les arguments non prévus sont refusés.
     input_schema: dict[str, JsonValue] = field(default_factory=_empty_object)
     template: Template | None = None
-    context: tuple[ContextItem, ...] = ()
+    context: tuple[RoleContextItem, ...] = ()
     terminal: bool = False
     # Délai de l'appel ; sans lui, ceux du modèle et son retry le bornent.
     timeout: float | None = None
@@ -178,6 +208,8 @@ class RoleTool(DelegatedTool):
         breakers: CircuitBreakers | None = None,
     ):
         self.definition = definition
+        # Prompt système envoyé : celui du rôle, et la consigne du state s'il le reçoit.
+        self.system = _with_state_hint(definition)
         self.model = model
         self.model_spec = model_spec
         # Secours du modèle du rôle, dans l'ordre (B4, #10).
@@ -249,6 +281,12 @@ class RoleTool(DelegatedTool):
                     values["last_turns"] = listing
                     if listing:
                         sections.append(tagged("last_turns", listing))
+                case SessionState(keys=keys):
+                    shown = {k: v for k, v in run.session_state.items() if not keys or k in keys}
+                    text = state_json(shown)
+                    # Pour le template aussi, les clés triées à tous les niveaux.
+                    values["session_state"] = json.loads(text)
+                    sections.append(tagged(SESSION_STATE_TAG, text))
                 case ToolResults(tools=names, scope=scope):
                     for name in names:
                         index = run.results
@@ -314,7 +352,7 @@ class RoleTool(DelegatedTool):
         spec = chain.link(current).spec
         request = ModelRequest(
             model_id=spec.model,
-            system=role.system,
+            system=self.system,
             messages=(built,),
             max_tokens=role.max_tokens or spec.max_tokens,
             params={**spec.params, **role.params},
@@ -418,9 +456,29 @@ def described(definition: RoleDefinition) -> str:
                 received.append(f"les {count} derniers tours de la conversation")
             case ToolResults(tools=names):
                 received.append(f"les résultats de {', '.join(names)}")
+            case SessionState(keys=keys):
+                named = f" ({', '.join(keys)})" if keys else ""
+                received.append(f"l'état de la session{named}")
     if not received:
         return definition.description
     return f"{definition.description}\n\n{CONTEXT_HINT} : {' ; '.join(received)}."
+
+
+def _with_state_hint(definition: RoleDefinition) -> str:
+    """Prompt système d'un rôle sans template qui reçoit le state : la consigne s'y ajoute."""
+    if definition.template is not None:
+        return definition.system
+    for item in definition.context:
+        if isinstance(item, SessionState):
+            lines = [ROLE_STATE_HINT]
+            if item.described:
+                lines[0] += " Clés :"
+                lines += [
+                    f"- {key} : {text}" if text else f"- {key}" for key, text in item.described
+                ]
+            hint = "\n".join(lines)
+            return f"{definition.system}\n\n{hint}" if definition.system else hint
+    return definition.system
 
 
 def strict_schema(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:

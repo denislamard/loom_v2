@@ -837,15 +837,18 @@ def test_the_state_can_be_declared_in_python() -> None:
     assert spec.state["langue"].default == "fr"
     with pytest.raises(ValidationError, match="clé citée deux fois : langue"):
         MainRole(model="FAKE", context=(SessionStateContext(session_state=("langue", "langue")),))
-    with pytest.raises(ValidationError, match="pas encore disponible pour un rôle"):
-        RoleSpec.model_validate(
-            {
-                "name": "rediger",
-                "description": "Rédige.",
-                "model": "FAKE",
-                "context": [SessionStateContext(session_state=("langue",))],
-            }
-        )
+    role = RoleSpec.model_validate(
+        {
+            "name": "rediger",
+            "description": "Rédige.",
+            "model": "FAKE",
+            "context": [SessionStateContext(session_state=("langue",))],
+        }
+    )
+    assert role.state_keys == ("langue",)
+    assert AgentSpec(name="demo", main=main, state={"langue": key}, roles=(role,)).roles == (role,)
+    whole = role.model_copy(update={"context": ("session_state",)})
+    assert whole.state_keys == ()
 
 
 def test_a_null_value_weighs_nothing(tmp_path: Path) -> None:
