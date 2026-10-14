@@ -120,7 +120,14 @@ async def test_the_content_is_nowhere_in_the_clear(tmp_path: Path) -> None:
     # Les arguments et le résultat de l'outil sont du contenu ; le **nom** de
     # l'outil est une facette, donc en clair et voulu tel quel (5.4c) — c'est
     # ce qui permet de chercher ses appels dans un journal scellé.
-    assert "2+2" not in raw
+    # « 2+2 » se cherche hors des sceaux : un sceau est du base64 aléatoire,
+    # dont l'alphabet contient « 2 » et « + », et il y tombe par hasard (un
+    # journal sur 75 environ).
+    outside = [
+        {**line, "payload": {k: v for k, v in line["payload"].items() if k != SEALED}}
+        for line in lines(tmp_path)
+    ]
+    assert "2+2" not in json.dumps(outside)
     assert "calculer" in raw
     # La charge est remplacée par un sceau, et rien d'autre n'en subsiste.
     for line in lines(tmp_path):
