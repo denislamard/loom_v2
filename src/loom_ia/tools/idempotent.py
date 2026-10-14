@@ -293,9 +293,14 @@ def _reduced(output: ToolOutput, size: int) -> JsonValue:
     note = ToolOutput.text(
         OVERSIZED.format(size=size, limit=MAX_RECORDED), is_error=output.is_error
     )
-    return note.model_copy(
-        update={"artifacts": output.artifacts, "offloaded": output.offloaded}
-    ).model_dump(mode="json")
+    reduced = note.model_copy(update={"artifacts": output.artifacts, "offloaded": output.offloaded})
+    # Le state que l'outil écrit lui-même est gardé s'il tient dans la limite ;
+    # celui que la config lit dans ses données (``from: path``) ne peut pas
+    # l'être, faute de données.
+    kept = reduced.model_copy(update={"state": output.state}).model_dump(mode="json")
+    if len(json.dumps(kept, ensure_ascii=False)) <= MAX_RECORDED:
+        return kept
+    return reduced.model_dump(mode="json")
 
 
 @overload

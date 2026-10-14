@@ -28,6 +28,9 @@ from loom_ia.engine import (
     RoleDefinition,
     RoleTool,
     RunContext,
+    StateKeyRule,
+    StateRules,
+    StateSourceRule,
     ToolExecutor,
     ToolResults,
     begin_run,
@@ -67,11 +70,13 @@ def context(
     artifacts: ArtifactStore | None,
     store: EventStore | None = None,
     offload_over: int | None = 10_000,
+    state_rules: StateRules | None = None,
 ) -> RunContext:
     executor = ToolExecutor(
         list(tools),  # pyright: ignore[reportArgumentType]
         artifacts=artifacts,
         offload_over=offload_over,
+        state_rules=state_rules,
     )
     return RunContext(
         agent="demo",
@@ -338,3 +343,41 @@ async def test_journal_keeps_no_offloaded_content() -> None:
     assert isinstance(completed.payload, ToolCompleted)
     assert completed.payload.size < 4_000
     assert LONG not in completed.model_dump_json()
+
+
+# --- State de la session ----------------------------------------------------------
+
+DEVIS_KEY = StateRules(
+    {
+        "devis": StateKeyRule(
+            schema={"type": "string"}, sources={"devis": StateSourceRule(path="/devis")}
+        )
+    }
+)
+
+
+async def test_the_state_is_read_before_the_offload_and_kept_by_it() -> None:
+    """Le déport retire les données du résultat : le state y a été lu avant, et il reste."""
+
+    class Broken(InMemoryArtifactStore):
+        async def put(self, uri: str, data: bytes) -> None:
+            raise OSError("disque plein")
+
+    for artifacts, offload_over in ((InMemoryArtifactStore(), 10_000), (None, 100)):
+        main = ScriptedModel(tool_call_message(("c1", "devis", {})), Message.assistant("Ok."))
+        ctx = context(
+            main, devis, artifacts=artifacts, offload_over=offload_over, state_rules=DEVIS_KEY
+        )
+        state, events = await run(ctx)
+        [completed] = [e.payload for e in events if isinstance(e.payload, ToolCompleted)]
+        assert completed.output.data is None
+        assert (completed.output.offloaded is None) == (artifacts is None)
+        assert completed.output.state == {"devis": "D-42"}
+        assert state.state_delta == {"devis": "D-42"}
+
+    # Stockage en panne : le résultat est perdu, et le state avec lui.
+    main = ScriptedModel(tool_call_message(("c1", "devis", {})), Message.assistant("Tant pis."))
+    state, events = await run(context(main, devis, artifacts=Broken(), state_rules=DEVIS_KEY))
+    [completed] = [e.payload for e in events if isinstance(e.payload, ToolCompleted)]
+    assert completed.output.is_error and completed.output.state == {}
+    assert state.state_delta == {}

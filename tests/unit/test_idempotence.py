@@ -69,6 +69,9 @@ from loom_ia.engine import (
     JournalIdempotency,
     RunContext,
     SessionWriter,
+    StateKeyRule,
+    StateRules,
+    StateSourceRule,
     ToolExecutor,
     begin_run,
     drive,
@@ -2185,3 +2188,95 @@ async def test_deleting_a_session_takes_its_keys(
     relu = _sqlite(tmp_path / "keys.db")
     assert await relu.get("default:relance:D-1") is None
     await _referme(relu)
+
+
+# --- State de la session ----------------------------------------------------------
+
+TICKET = StateRules(
+    {
+        "ticket": StateKeyRule(
+            schema={"type": "string"}, sources={"creer_ticket": StateSourceRule(path="/numero")}
+        )
+    }
+)
+
+
+async def test_a_reused_effect_poses_the_same_state() -> None:
+    """Reprise entre l'effet et son ``tool.completed`` : le cache rend le résultat et son state."""
+    effets: list[str] = []
+
+    @idempotent
+    @tool(side_effects="irreversible")
+    async def creer_ticket() -> dict[str, str]:
+        """Crée un ticket."""
+        effets.append("ticket")
+        return {"numero": "T-7"}
+
+    executor = ToolExecutor(
+        [creer_ticket],  # pyright: ignore[reportArgumentType]
+        idempotency=InMemoryIdempotency(),
+        state_rules=TICKET,
+    )
+    state = awaiting(call("c1", "creer_ticket"))
+    first = completed(await _run(executor, state))["c1"]
+    repris = state.model_copy(update={"pending_calls": (call("c1", "creer_ticket", started=True),)})
+    again = completed(await _run(executor, repris))["c1"]
+    assert first.state == again.state == {"ticket": "T-7"}
+    assert effets == ["ticket"]
+
+
+async def test_an_oversized_result_keeps_the_state_its_tool_wrote() -> None:
+    """Forme réduite : le state écrit par l'outil reste ; celui tiré de ses données part avec."""
+    effets: list[str] = []
+
+    @idempotent
+    @tool(side_effects="irreversible")
+    async def creer_ticket() -> ToolOutput:
+        """Crée un ticket."""
+        effets.append("ticket")
+        big: JsonValue = {"numero": "T-7", "journal": "x" * (MAX_RECORDED + 1)}
+        return ToolOutput(data=big, state={"ticket": "T-7"})
+
+    rules = StateRules(
+        {
+            "numero": StateKeyRule(
+                schema={"type": "string"}, sources={"creer_ticket": StateSourceRule(path="/numero")}
+            ),
+            "ticket": StateKeyRule(schema={"type": "string"}),
+        }
+    )
+    executor = ToolExecutor(
+        [creer_ticket],  # pyright: ignore[reportArgumentType]
+        idempotency=InMemoryIdempotency(),
+        state_rules=rules,
+    )
+    state = awaiting(call("c1", "creer_ticket"))
+    first = completed(await _run(executor, state))["c1"]
+    assert first.state == {"numero": "T-7", "ticket": "T-7"}
+    repris = state.model_copy(update={"pending_calls": (call("c1", "creer_ticket", started=True),)})
+    again = completed(await _run(executor, repris))["c1"]
+    assert again.state == {"ticket": "T-7"}
+    assert again.state_refused == ("numero non posé : chemin '/numero' absent du résultat",)
+    assert effets == ["ticket"]
+
+
+async def test_a_reduced_form_drops_a_state_too_big_to_be_recorded() -> None:
+    """Sinon la forme réduite dépasserait elle-même la limite, et rien ne serait mémorisé."""
+    store = InMemoryIdempotency()
+
+    @idempotent
+    @tool(side_effects="irreversible")
+    async def exporter() -> ToolOutput:
+        """Exporte tout."""
+        return ToolOutput(
+            blocks=ToolOutput.text("x" * (MAX_RECORDED + 1)).blocks,
+            state={"journal": "y" * (MAX_RECORDED + 1)},
+        )
+
+    ctx = context(store=store)
+    await exporter.invoke({}, ctx)
+    record = await store.get(ctx.idempotency_key)
+    assert record is not None and record.status == "completed"
+    again = await exporter.invoke({}, ctx)
+    assert again.as_text.startswith("Cet appel a déjà produit son effet")
+    assert again.state == {}

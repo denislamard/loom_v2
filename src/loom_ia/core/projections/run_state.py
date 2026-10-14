@@ -111,6 +111,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
             context=payload.context,
             judges=payload.judges,
             budget=payload.budget,
+            posed_state=payload.state,
             last_seq=event.seq,
         )
 

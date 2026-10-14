@@ -354,10 +354,15 @@ def _tool_output(output: ToolOutput) -> str | list[_Item]:
         parts = _parts(output.blocks)
         if prefix:
             parts.insert(0, {"type": "input_text", "text": prefix.strip()})
+        if output.state_note:
+            parts.append({"type": "input_text", "text": output.state_note})
         return parts
     texts = [_text(block) for block in output.blocks]
     if not any(texts) and output.data is not None:
         texts = [json_text(output.data)]
+    if output.state_note:
+        # Écritures du state refusées : le modèle les lit à la suite du résultat.
+        texts.append(output.state_note)
     return prefix + "\n".join(texts)
 
 

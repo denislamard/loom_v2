@@ -44,6 +44,13 @@ erreur, avec le diagnostic : c'est lui qui a écrit l'appel.
 
 Diffusion (backlog #009) : un rôle terminal seul dans son lot diffuse sa
 sortie en direct si l'agent diffuse en ``live`` (``on_chunk``).
+
+State de la session (option C) : un outil lit le state tel qu'au début de son
+lot (``ToolContext.state``). Son résultat réussi, après les politiques
+``after_tool`` et avant ses fichiers et son déport, reçoit les écritures que
+ses sources ``from`` et lui-même posent, contrôlées par ``StateRules`` ; un
+résultat en erreur n'en pose aucune. Au rejeu, le résultat servi porte déjà
+les siennes : elles ne sont pas recalculées.
 """
 
 import asyncio
@@ -119,6 +126,7 @@ from loom_ia.core.ports import (
     ToolSource,
     UnknownEffect,
 )
+from loom_ia.core.projections import state_of_run
 from loom_ia.core.schema_errors import schema_problem
 from loom_ia.engine.circuit import CircuitBreakers, mcp_key
 from loom_ia.engine.delegated import (
@@ -141,6 +149,7 @@ from loom_ia.engine.offload import (
     visible_text,
 )
 from loom_ia.engine.refs import RefError, RefOrigin, ResultIndex, ref_origin
+from loom_ia.engine.session_state import StateRules
 from loom_ia.engine.writer import SessionWriter
 
 logger = logging.getLogger(__name__)
@@ -299,6 +308,9 @@ class ToolExecutor:
     ``breakers`` : disjoncteurs des sources (#19, backlog #011), réglés par
     ``circuits`` (nom de la source → réglage, ``None`` pour aucun ; réglage
     par défaut pour une source absente). Sans eux, pas de disjoncteur.
+
+    ``state_rules`` : clés du state que l'agent déclare (option C) ; sans
+    elles, un outil ne voit pas de state et toute écriture est refusée.
     """
 
     def __init__(
@@ -316,8 +328,10 @@ class ToolExecutor:
         idempotency: IdempotencyStore | None = None,
         denied: Iterable[str] = (),
         imposed: Mapping[str, Approval] | None = None,
+        state_rules: StateRules | None = None,
     ) -> None:
         self.default_timeout = default_timeout
+        self.state_rules = state_rules or StateRules()
         # Délai, effet d'une expiration et droit exigé (#17).
         self.approval = approval or ApprovalSettings()
         # Outils retirés, et approbations imposées quoi qu'en dise leur
@@ -445,6 +459,7 @@ class ToolExecutor:
             idempotency=self.idempotency,
             denied=self.denied,
             imposed=self.imposed,
+            state_rules=self.state_rules,
         )
         copy._tools = dict(self._tools)
         copy._validators = dict(self._validators)
@@ -497,6 +512,7 @@ class ToolExecutor:
         step_span: SpanId | None = None,
         turns: tuple[tuple[Message, ...], ...] = (),
         summary: str | None = None,
+        session_state: Mapping[str, JsonValue] | None = None,
     ) -> RunView:
         """Ce que les outils délégués voient du run."""
         return RunView.of(
@@ -508,6 +524,7 @@ class ToolExecutor:
             step_span=step_span,
             turns=turns,
             summary=summary,
+            session_state=session_state,
         )
 
     def definitions(self, run: RunView | None = None) -> tuple[ToolDefinition, ...]:
@@ -534,6 +551,7 @@ class ToolExecutor:
         turns: tuple[tuple[Message, ...], ...] = (),
         summary: str | None = None,
         approver: Approver | None = None,
+        session_state: Mapping[str, JsonValue] | None = None,
     ) -> AsyncGenerator[ToolEvent]:
         """Traite les appels en attente du run et émet leurs événements.
 
@@ -546,11 +564,22 @@ class ToolExecutor:
         seul dans son lot. ``approver`` : approbateur en ligne (#28) — il
         tranche ici même, et le run ne passe jamais par ``PAUSED`` ; les
         arguments qu'il corrige sont validés comme ceux du modèle. Au rejeu,
-        c'est le rejeu qui tranche (``ToolReplay.approve``).
+        c'est le rejeu qui tranche (``ToolReplay.approve``). ``session_state`` :
+        le state de la session à l'ouverture du run ; les outils voient en plus
+        ce que le run a écrit avant ce lot.
         """
         policies = policies or Policies()
         if self.replay is not None:
             approver = partial(self.replay.approve, state.run_id)
+        # Un sous-run et un run de compaction n'ont pas de state (D3).
+        current = (
+            state_of_run(session_state or {}, state, before=_batch_turn(state))
+            if self.state_rules and _keeps_state(state)
+            else {}
+        )
+        # Taille du state au fil du lot : chaque appel compte ce que les
+        # précédents ont posé (D7).
+        tally = dict(current)
         view = self.view(
             state,
             writer=writer,
@@ -559,6 +588,7 @@ class ToolExecutor:
             step_span=step_span,
             turns=turns,
             summary=summary,
+            session_state=current,
         )
         if on_chunk is not None and len(state.pending_calls) == 1:
             alone = self._tools.get(state.pending_calls[0].name)
@@ -685,7 +715,7 @@ class ToolExecutor:
         async def execute(item: _Ready) -> None:
             began = time.perf_counter()
             try:
-                await self._execute(item, view, queue.put_nowait, policies)
+                await self._execute(item, view, queue.put_nowait, policies, tally)
             except asyncio.CancelledError as exc:
                 if stopping:
                     raise
@@ -874,8 +904,12 @@ class ToolExecutor:
         view: RunView,
         emit: Callable[[ToolEvent | _Unknown], None],
         policies: Policies | None = None,
+        tally: dict[str, JsonValue] | None = None,
     ) -> None:
-        """Exécute un appel ; ses événements et son résultat partent dans la file du lot."""
+        """Exécute un appel ; ses événements et son résultat partent dans la file du lot.
+
+        ``tally`` : le state de la session tel que le lot l'a laissé jusqu'ici.
+        """
         tool, call, state = item.tool, item.call, view.state
         spec = tool.spec
         delegated = isinstance(tool, DelegatedTool)
@@ -892,14 +926,21 @@ class ToolExecutor:
             on_reuse=lambda key: emit(
                 IdempotencyReused(key=key, call_id=call.call_id, tool_name=spec.name)
             ),
+            state=(
+                self.state_rules.visible(view.session_state)
+                if self.state_rules and _keeps_state(state)
+                else {}
+            ),
         )
         started = time.perf_counter()
         consumption: Consumption | None = None
         exchange: Exchange | None = None
+        served: ToolOutput | None = None
         if item.replayed and self.replay is not None:
             output, consumption = await self.replay.output(
                 state.run_id, call.call_id, spec.name, call.arguments, item.arguments
             )
+            served = output
         elif isinstance(tool, DelegatedTool):
             produced = tool.run(item.arguments, context, view)
             output, consumption, exchange = await _delegated(
@@ -919,8 +960,32 @@ class ToolExecutor:
             return
         if policies:
             output = await self._after_tool(item, output, exchange, context, view, emit, policies)
+        if served is not None:
+            output = _as_served(output, served)
+        else:
+            output = self._posed(output, spec.name, view, tally if tally is not None else {})
         output = await self._settle(output, spec, call.call_id, view, emit)
         emit(_completed(call, output, started=started, consumption=consumption))
+
+    def _posed(
+        self, output: ToolOutput, tool: str, view: RunView, tally: dict[str, JsonValue]
+    ) -> ToolOutput:
+        """Le résultat avec les écritures du state qu'il pose (D6 à D8, D12).
+
+        Un résultat en erreur n'en pose aucune, même s'il en portait avant
+        qu'une politique ne le refuse. Un sous-run n'écrit pas le state de la
+        session (D3), ni un agent qui n'en déclare pas : ce qu'un outil y écrit
+        est alors retiré sans bruit. Un outil qui n'écrit rien et qu'aucune
+        source ne désigne garde son résultat tel quel.
+        """
+        if output.is_error or not self.state_rules or not _keeps_state(view.state):
+            if output.state or output.state_refused:
+                logger.debug("State : écritures de l'outil %s ignorées", tool)
+                return output.model_copy(update={"state": {}, "state_refused": ()})
+            return output
+        if not output.state and not self.state_rules.writes(tool):
+            return output
+        return self.state_rules.posed(tool, output, tally)
 
     def _idempotency(self, call_id: str, tool_name: str, view: RunView) -> IdempotencyStore | None:
         """Magasin donné à cet appel : le partagé s'il y en a un, sinon le journal.
@@ -1307,6 +1372,37 @@ def _kind(value: object) -> str:
             return _KINDS["number"]
         case _:
             return _KINDS["null"]
+
+
+def _keeps_state(state: RunState) -> bool:
+    """Vrai pour un run racine ordinaire : seul lui lit et écrit le state de la session (D3)."""
+    return state.parent_run_id is None and state.kind == "normal"
+
+
+def _as_served(output: ToolOutput, served: ToolOutput) -> ToolOutput:
+    """Résultat d'un appel rejoué : les écritures du state sont celles du journal.
+
+    Les politiques ``after_tool`` tournent de nouveau sur le résultat servi, et
+    peuvent en rendre un neuf (repli d'un contrat) : le state que le journal
+    avait retenu y est remis, sans être recalculé. Un résultat en erreur n'en
+    porte pas.
+    """
+    state, refused = ({}, ()) if output.is_error else (served.state, served.state_refused)
+    if output.state == state and output.state_refused == refused:
+        return output
+    return output.model_copy(update={"state": state, "state_refused": refused})
+
+
+def _batch_turn(state: RunState) -> int:
+    """Position de la réponse du modèle dont le lot s'exécute : la dernière de l'assistant."""
+    return next(
+        (
+            i
+            for i in range(len(state.messages) - 1, -1, -1)
+            if state.messages[i].role == "assistant"
+        ),
+        len(state.messages),
+    )
 
 
 def _offered(tool: AnyTool, run: RunView) -> bool:

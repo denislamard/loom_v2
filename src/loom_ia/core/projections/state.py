@@ -68,6 +68,26 @@ def session_state(
     return copy.deepcopy({**(defaults or {}), **values})
 
 
+def state_of_run(
+    base: Mapping[str, JsonValue], run: RunState, *, before: int | None = None
+) -> dict[str, JsonValue]:
+    """State que voit un run en cours : la session avant lui, ce qui est posé, ce qu'il a écrit.
+
+    ``base`` : le state de la session avant le run (``session_state`` des
+    événements qui le précèdent). ``before`` : position, dans les messages du
+    run, de la réponse du modèle dont le lot s'exécute ; seules comptent alors
+    les écritures des lots précédents. Un outil voit ainsi le state au début de
+    son lot, quel que soit l'ordre dans lequel ses voisins finissent, et la
+    reprise d'un lot interrompu lui montre le même.
+    """
+    values = dict(base)
+    _merge(values, run.posed_state)
+    for write in run.state_writes:
+        if before is None or write.turn < before:
+            _merge(values, write.values)
+    return copy.deepcopy(values)
+
+
 def _counted(run: RunState) -> bool:
     """Run dont le state compte pour la session : un run racine ordinaire (D3)."""
     return run.parent_run_id is None and run.kind == "normal"

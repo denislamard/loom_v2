@@ -73,6 +73,7 @@ from loom_ia.engine.roles import (
     tagged,
     user_input,
 )
+from loom_ia.engine.session_state import StateKeyRule, StateRules, StateSourceRule
 from loom_ia.engine.subagents import (
     AGENT_HINT,
     AgentResolver,
@@ -152,6 +153,9 @@ __all__ = [
     "SessionUnreadable",
     "SessionWriter",
     "SessionWriters",
+    "StateKeyRule",
+    "StateRules",
+    "StateSourceRule",
     "Stored",
     "SubAgentDefinition",
     "ToolEvent",

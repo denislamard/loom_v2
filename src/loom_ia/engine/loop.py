@@ -183,6 +183,7 @@ from loom_ia.core.projections import (
     apply,
     fold,
     last_summary,
+    session_state,
     spent,
     turns,
 )
@@ -256,6 +257,9 @@ class RunContext:
     # de compaction : posés par ``drive`` pour les contextes déclarés (#12, #23).
     turns: tuple[tuple[Message, ...], ...] = ()
     summary: str | None = None
+    # State de la session avant ce run, posé par ``drive`` pour un agent qui en
+    # déclare : vide pour un sous-run et un run de compaction, qui ne le reçoivent pas.
+    session_state: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     # Contrat de la réponse finale : son schéma donne la réponse structurée (A7).
     output: OutputContract | None = None
     # Diffusion de la réponse finale : au fil de l'eau, ou après ses contrôles (#11).
@@ -627,6 +631,8 @@ async def _driven(
         previous = [message for turn in session_turns for message in turn]
         # Consommation des runs précédents de la session : budget de session (J4).
         session_spent = spent(earlier)
+        # Seul un agent qui déclare un state le lit : les autres n'ont pas à relire la session.
+        prior_state = session_state(earlier) if ctx.tools.state_rules else {}
     except (ProjectionError, ValidationError) as error:
         return await _history_unreadable(state, journal, scope, error)
 
@@ -685,6 +691,7 @@ async def _driven(
             writer=journal,
             turns=session_turns,
             summary=last_summary(earlier),
+            session_state=prior_state,
         )
         # Les décisions (``after_model``, ``on_output``, juges) n'ont pas d'étape : leur
         # durée n'entre pas dans ``active_ms``. Le pilote la cumule ici, pour que le
@@ -1743,6 +1750,7 @@ async def _tool_step(
         turns=ctx.turns,
         summary=ctx.summary,
         approver=ctx.approver,
+        session_state=ctx.session_state,
     )
     # Appels laissés en suspens : leur run délégué attend une décision humaine.
     paused_children: list[RunId] = []

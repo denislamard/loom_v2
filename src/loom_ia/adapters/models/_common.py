@@ -173,6 +173,9 @@ def output_text(output: ToolOutput) -> str:
     parts = [_block_text(block) for block in output.blocks]
     if not parts and output.data is not None:
         parts.append(json_text(output.data))
+    if output.state_note:
+        # Écritures du state refusées : le modèle les lit à la suite du résultat.
+        parts.append(output.state_note)
     return "\n".join(parts)
 
 

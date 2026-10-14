@@ -10,6 +10,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from loom_ia.access import Loom
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.agents import (
     AgentRegistry,
@@ -31,7 +32,9 @@ from loom_ia.config import (
     load_config,
     resolve,
 )
-from loom_ia.core.model import state_size
+from loom_ia.core.events import ToolCompleted
+from loom_ia.core.model import SessionId, state_size
+from loom_ia.core.projections import session_state
 from loom_ia.runtime import build_agent, system_prompt
 
 MODEL: dict[str, Any] = {"id": "FAKE", "sdk": "fake", "model": "fake-1"}
@@ -483,7 +486,14 @@ def test_prompt_is_read_only_when_needed(tmp_path: Path) -> None:
 # --- State de session : déclaration (option C) --------------------------------
 
 STATE_TOOLS = """
+from loom_ia.core.ports import ToolContext
 from loom_ia.tools import configure, idempotent, tool
+
+
+@tool
+def lire_client(ctx: ToolContext) -> str:
+    '''Dit le client courant.'''
+    return f"{ctx.state.get('client_courant', 'aucun')} / {ctx.state.get('langue')}"
 
 
 @tool
@@ -827,3 +837,54 @@ def test_a_null_value_weighs_nothing(tmp_path: Path) -> None:
     tiny = {"sessions": {"state": {"max_value_bytes": 3, "max_total_bytes": 3}}}
     agent = with_key("k", {"schema": STRING, "from": [{"tool": "cloturer", "value": None}]})
     load_config(write_state(tmp_path, agent, root=tiny))
+
+
+async def test_a_tool_reads_what_an_earlier_run_of_the_session_wrote(tmp_path: Path) -> None:
+    """De bout en bout : la config déclare, l'exécuteur pose, le journal garde, l'outil relit.
+
+    Et le run se rejoue à l'identique : le rejeu sert les résultats du journal,
+    leur state et leurs refus compris, sans les recalculer.
+    """
+    # Le modèle scripté répond selon la demande : un tour pour chercher, un pour relire.
+    script: list[dict[str, Any]] = [
+        {"with_text": "Martin", "tool_calls": [{"name": "get_client", "arguments": {"nom": "M"}}]},
+        {"with_text": "Martin", "text": "Client trouvé."},
+        {"with_text": "maintenant", "tool_calls": [{"name": "lire_client", "arguments": {}}]},
+        {"with_text": "maintenant", "text": "C'est lui."},
+    ]
+    scripted = {**MODEL, "params": {"script": script}}
+    agent = state_agent(
+        main={"model": "FAKE"},
+        tools=[{"python": "get_client"}, {"python": "lire_client"}],
+        state={
+            "client_courant": {
+                "schema": {"type": "string"},
+                "from": [{"tool": "get_client", "path": "/code"}],
+            },
+            "langue": {"schema": {"enum": ["fr", "en"]}, "default": "fr"},
+            # Refusée à chaque fois : « nom » est un texte.
+            "rang": {
+                "schema": {"type": "integer"},
+                "from": [{"tool": "get_client", "path": "/nom"}],
+            },
+        },
+    )
+    path = write_state(tmp_path, agent, root={"models": [scripted]})
+    session = SessionId("conversation")
+    async with Loom(load_config(path)) as loom:
+        first = await loom.run("demo", "Qui est Martin ?", session_id=session)
+        second = await loom.run("demo", "Et maintenant ?", session_id=session)
+        before = await loom.events(first.run_id, session_id=session)
+        after = await loom.events(second.run_id, session_id=session)
+        for run in (first, second):
+            report = await loom.replay(run.run_id, session_id=session)
+            assert report.identical, report.divergence
+
+    [found] = [e.payload for e in before if isinstance(e.payload, ToolCompleted)]
+    assert found.output.state == {"client_courant": "C-002"}
+    assert found.output.state_refused == (
+        "rang non posé : ne suit pas son schéma — doit être un entier (reçu : du texte)",
+    )
+    [read] = [e.payload for e in after if isinstance(e.payload, ToolCompleted)]
+    assert read.output.as_text == "C-002 / fr"
+    assert session_state([*before, *after]) == {"client_courant": "C-002"}

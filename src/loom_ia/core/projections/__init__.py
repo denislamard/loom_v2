@@ -11,7 +11,7 @@ from loom_ia.core.projections.history import (
 )
 from loom_ia.core.projections.ledger import LedgerEntry, ledger, spent
 from loom_ia.core.projections.run_state import ProjectionError, apply, fold, fold_all
-from loom_ia.core.projections.state import session_state
+from loom_ia.core.projections.state import session_state, state_of_run
 from loom_ia.core.projections.tree import RunTree
 
 __all__ = [
@@ -29,5 +29,6 @@ __all__ = [
     "ledger",
     "session_state",
     "spent",
+    "state_of_run",
     "turns",
 ]

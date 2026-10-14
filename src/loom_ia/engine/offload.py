@@ -81,6 +81,9 @@ def offloaded(output: ToolOutput, *, uri: str, content: str, refs: bool) -> Tool
         is_error=output.is_error,
         artifacts=output.artifacts,
         offloaded=uri,
+        # Lu avant le déport, le state ne vient plus des données : il reste tel quel.
+        state=output.state,
+        state_refused=output.state_refused,
     )
 
 
@@ -95,6 +98,8 @@ def truncated(output: ToolOutput, limit: int) -> ToolOutput:
         blocks=(TextBlock(text=text[:limit] + note), *_files(output)),
         is_error=output.is_error,
         artifacts=output.artifacts,
+        state=output.state,
+        state_refused=output.state_refused,
     )
 
 

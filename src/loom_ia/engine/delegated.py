@@ -124,6 +124,9 @@ class RunView:
     # résumé de compaction : un rôle les reçoit s'il les déclare (#12).
     turns: tuple[tuple[Message, ...], ...] = ()
     summary: str | None = None
+    # State de la session au début du lot : ce qui est écrit, toutes clés, sans
+    # valeurs par défaut. Vide dans un sous-run, qui ne le reçoit pas (D3).
+    session_state: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
     @property
     def session(self) -> tuple[Message, ...]:
@@ -142,6 +145,7 @@ class RunView:
         step_span: SpanId | None = None,
         turns: tuple[tuple[Message, ...], ...] = (),
         summary: str | None = None,
+        session_state: Mapping[str, JsonValue] | None = None,
     ) -> Self:
         return cls(
             state=state,
@@ -153,6 +157,7 @@ class RunView:
             step_span=step_span,
             turns=turns,
             summary=summary,
+            session_state=dict(session_state or {}),
         )
 
     @property

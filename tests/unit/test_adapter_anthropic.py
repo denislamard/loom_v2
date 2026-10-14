@@ -18,7 +18,7 @@ pytest.importorskip("anthropic")
 import httpx2
 
 from loom_ia.adapters.models import create_model_client
-from loom_ia.adapters.models.anthropic import AnthropicModel
+from loom_ia.adapters.models.anthropic import AnthropicModel, to_anthropic_messages
 from loom_ia.core.events import CircuitOpened, ModelFellBack, ModelRetried
 from loom_ia.core.model import (
     AnthropicMeta,
@@ -814,3 +814,34 @@ async def test_output_schema_goes_to_output_config_with_native_json() -> None:
     # Schéma que le SDK ne sait pas adapter : non transmis, l'appel part quand même.
     await complete(server.model(native), request(output_schema={"properties": {}}))
     assert "output_config" not in server.body
+
+
+# --- State de la session : écritures refusées (D8) ---------------------------------
+
+REFUSED = ToolOutput(
+    blocks=(JsonBlock(data={"code": "X"}),),
+    data={"code": "X"},
+    state_refused=("client non posé : ne suit pas son schéma",),
+)
+NOTED = '{"code": "X"}\n[state] client non posé : ne suit pas son schéma'
+
+
+def refused_result() -> list[Message]:
+    return [Message(role="tool", blocks=(ToolResultBlock(call_id="t1", output=REFUSED),))]
+
+
+def test_refused_state_writes_follow_the_tool_result() -> None:
+    """Le modèle lit, à la suite du résultat, les écritures du state qui n'ont pas été posées."""
+    assert to_anthropic_messages(refused_result()) == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "t1",
+                    "is_error": False,
+                    "content": [{"type": "text", "text": NOTED}],
+                }
+            ],
+        }
+    ]

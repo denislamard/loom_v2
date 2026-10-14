@@ -142,6 +142,9 @@ from loom_ia.engine import (
     RoleDefinition,
     RoleTool,
     RunContext,
+    StateKeyRule,
+    StateRules,
+    StateSourceRule,
     SubAgentDefinition,
     ToolExecutor,
     ToolResults,
@@ -720,6 +723,7 @@ def build_agent(
             idempotency=idempotency,
             denied=denied,
             imposed=imposed,
+            state_rules=state_rules(config, spec),
         ),
         system=system_prompt(spec, variables),
         max_iterations=spec.max_iterations,
@@ -822,6 +826,27 @@ def build_policies(
             )
         )
     return Policies(bound)
+
+
+def state_rules(config: LoomConfig, spec: AgentSpec) -> StateRules:
+    """Clés du state que déclare l'agent, telles que le moteur les applique, et leurs limites."""
+    limits = config.sessions.state
+    return StateRules(
+        {
+            name: StateKeyRule(
+                schema=key.json_schema,
+                description=key.description,
+                sources={
+                    source.tool: StateSourceRule(path=source.path, value=source.value)
+                    for source in key.sources
+                },
+                default=key.default,
+            )
+            for name, key in spec.state.items()
+        },
+        max_value_bytes=limits.max_value_bytes,
+        max_total_bytes=limits.max_total_bytes,
+    )
 
 
 def stream_output(spec: AgentSpec, policies: Policies) -> StreamOutput:

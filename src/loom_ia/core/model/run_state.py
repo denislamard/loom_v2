@@ -227,6 +227,8 @@ class RunState(DomainModel):
     models: dict[str, str] = Field(default_factory=dict[str, str])
     # Fichiers du run (pièces jointes, sorties d'outils, déports), une fois par URI.
     artifacts: tuple[ArtifactRecord, ...] = ()
+    # State de la session posé par l'application à l'ouverture du run.
+    posed_state: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
     # Écritures du state de la session faites par les outils du run, dans
     # l'ordre des appels (D9) ; un résultat en erreur n'en porte pas.
     state_writes: tuple[StateWrite, ...] = ()

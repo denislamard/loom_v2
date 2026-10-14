@@ -403,6 +403,8 @@ def _result_content(output: ToolOutput) -> list[sdk.tool_result_block_param.Cont
                 raise unresolved(block)
     if not output.blocks and output.data is not None:
         texts.append(json_text(output.data))
+    if output.state_note:
+        texts.append(output.state_note)
     flush()
     return content
 

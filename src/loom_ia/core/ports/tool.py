@@ -61,6 +61,10 @@ class ToolContext:
     # lui, le journal ne dirait pas pourquoi l'appel n'a rien fait, le
     # magasin partagé n'y écrivant rien. Absent hors moteur.
     on_reuse: ReuseNote | None = field(default=None, compare=False)
+    # State de la session tel qu'au début du lot de l'appel, en lecture : les
+    # clés que l'agent déclare, valeurs par défaut comprises. Ce qu'un voisin
+    # du même lot écrit n'y est pas encore. Vide hors moteur, et dans un sous-run.
+    state: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
     @property
     def idempotency_key(self) -> str:

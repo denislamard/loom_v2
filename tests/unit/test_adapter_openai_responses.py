@@ -17,7 +17,7 @@ import httpx2
 
 from loom_ia.adapters.models import create_model_client
 from loom_ia.adapters.models._common import is_strict
-from loom_ia.adapters.models.openai_responses import OpenAIResponsesModel
+from loom_ia.adapters.models.openai_responses import OpenAIResponsesModel, to_input_items
 from loom_ia.core.model import (
     InlineDataBlock,
     JsonBlock,
@@ -745,3 +745,24 @@ async def test_failure_without_details_and_an_image_in_an_error_result() -> None
         if item.get("type") == "function_call_output"
     ]
     assert output[0] == {"type": "input_text", "text": "[erreur]"}
+
+
+# --- State de la session : écritures refusées (D8) ---------------------------------
+
+REFUSED = ToolOutput(
+    blocks=(JsonBlock(data={"code": "X"}),),
+    data={"code": "X"},
+    state_refused=("client non posé : ne suit pas son schéma",),
+)
+NOTED = '{"code": "X"}\n[state] client non posé : ne suit pas son schéma'
+
+
+def refused_result() -> list[Message]:
+    return [Message(role="tool", blocks=(ToolResultBlock(call_id="t1", output=REFUSED),))]
+
+
+def test_refused_state_writes_follow_the_tool_result() -> None:
+    """Le modèle lit, à la suite du résultat, les écritures du state qui n'ont pas été posées."""
+    assert to_input_items(refused_result()) == [
+        {"type": "function_call_output", "call_id": "t1", "output": NOTED}
+    ]

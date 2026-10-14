@@ -143,10 +143,19 @@ class ToolOutput(DomainModel):
     state: dict[str, JsonValue] = Field(
         default_factory=dict[str, JsonValue], exclude_if=lambda value: not value
     )
+    # Écritures du state refusées (D8) : une ligne par clé, avec le motif. Le
+    # résultat reste un succès — l'outil a pu produire son effet — et le modèle
+    # lit ces lignes à la suite du résultat (``state_note``). Omis quand il est vide.
+    state_refused: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @classmethod
     def text(cls, text: str, *, is_error: bool = False) -> Self:
         return cls(blocks=(TextBlock(text=text),), is_error=is_error)
+
+    @property
+    def state_note(self) -> str:
+        """Ce que le modèle lit des écritures refusées, à la suite du résultat ; vide sinon."""
+        return "\n".join(f"[state] {line}" for line in self.state_refused)
 
     @classmethod
     def error(cls, message: str) -> Self:
