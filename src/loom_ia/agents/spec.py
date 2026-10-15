@@ -496,7 +496,8 @@ def _only_session_state(data: object) -> None:
 
 
 class PythonTool(DomainModel):
-    """Outil Python référencé par un nom enregistré ou un chemin ``module:attr``.
+    """Outil Python référencé par un nom enregistré, un chemin ``module:attr``, ou
+    ``loom.<outil>`` pour un outil fourni par loom-ia (``loom_ia.tools_builtin``).
 
     Les champs renseignés ici remplacent ce que l'outil déclare lui-même.
     """

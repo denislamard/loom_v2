@@ -168,6 +168,7 @@ from loom_ia.runtime.sources import PackagedSource, described, source_factory
 from loom_ia.telemetry import RunExporter, SpanSink, configure_logging
 from loom_ia.tenancy import EnvironmentSecrets, Tenant
 from loom_ia.tools import ConfiguredTool, FunctionTool, IdempotentTool, configure
+from loom_ia.tools_builtin import BUILTIN_TOOLS, builtin_tool
 from loom_ia.usage import BudgetGuard
 
 if TYPE_CHECKING:
@@ -1563,7 +1564,11 @@ def _missing_mcp(reason: str) -> ConfigError:
 
 
 def _tool(declared: PythonTool, registry: Registry, base_dir: Path | None) -> Tool:
-    found = resolve(declared.python, registry, base_dir=base_dir)
+    # ``loom.x:y`` reste un chemin d'import : celui d'un paquet à soi nommé ``loom``.
+    if declared.python.startswith(RESERVED_PREFIX) and ":" not in declared.python:
+        found: object = _builtin_tool(declared.python)
+    else:
+        found = resolve(declared.python, registry, base_dir=base_dir)
     tool = found if isinstance(found, Tool) else _from_function(declared, found)
     return configure(
         tool,
@@ -1574,6 +1579,18 @@ def _tool(declared: PythonTool, registry: Registry, base_dir: Path | None) -> To
         offload_over=declared.offload_over,
         output=declared.output,
     )
+
+
+def _builtin_tool(reference: str) -> Tool:
+    """Outil fourni par loom-ia (préfixe ``loom.``) : son module n'est importé qu'ici."""
+    try:
+        return builtin_tool(reference)
+    except KeyError:
+        provided = ", ".join(BUILTIN_TOOLS) or "aucun"
+        raise ConfigError(f"Outil fourni {reference!r} inconnu (fournis : {provided})") from None
+    except ImportError as exc:
+        missing = exc.name or str(exc)
+        raise ConfigError(f"Outil fourni {reference!r} : dépendance {missing!r} absente") from exc
 
 
 def _from_function(declared: PythonTool, found: object) -> Tool:

@@ -200,6 +200,7 @@ forbidden_modules = [
     "loom_ia.tenancy",
     "loom_ia.testing",
     "loom_ia.tools",
+    "loom_ia.tools_builtin",
     "loom_ia.usage",
 ]
 
@@ -216,6 +217,7 @@ forbidden_modules = [
     "loom_ia.tenancy",
     "loom_ia.testing",
     "loom_ia.tools",
+    "loom_ia.tools_builtin",
     "loom_ia.usage",
 ]
 
