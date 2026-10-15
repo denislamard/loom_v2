@@ -1,12 +1,26 @@
 #!/usr/bin/env python3
-"""Génère une page HTML à partir d'un journal Loom (.jsonl) : pour chaque tour,
-ce qui est envoyé au modèle (entrée) et ce qui en sort (sortie).
+"""Page HTML lisible d'un journal Loom (.jsonl).
 
-Prérequis : le journal doit avoir été écrit avec  telemetry.capture.raw_exchanges: true
-(sans cela, seules les sorties du modèle sont connues, pas les entrées).
+Pour chaque échange (un run racine) :
+
+- la question, la réponse finale et le bilan (tours, coût, durée) ;
+- le déroulé : une ligne par tour de modèle et par outil exécuté, les
+  sous-agents et les rôles en retrait ;
+- le détail de chaque tour : ce qui est entré de neuf dans le contexte du
+  modèle (message, résultats d'outils), son prompt système et ses outils
+  (marqués nouveaux, inchangés ou modifiés), puis ce qui en est sorti
+  (raisonnement, texte, demandes d'outils) ;
+- le détail de chaque outil : arguments, résultat, contrôles. Un rôle y montre
+  son propre appel de modèle, un sous-agent son run complet.
+
+En tête : le bilan de la session et la consommation par modèle.
+
+L'entrée exacte de chaque tour vient des échanges bruts
+(telemetry.capture.raw_exchanges: true). Sans eux, elle est reconstituée à
+partir des événements du journal, sans prompt système ni liste d'outils.
 
 Usage :
-    python journal_html.py data/agent_denis/<session>.jsonl [-o rapport.html]
+    scripts/journal_html data/default/session-05.jsonl [-o rapport.html]
 """
 
 from __future__ import annotations
@@ -14,15 +28,241 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 import sys
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, tzinfo
 from pathlib import Path
 from typing import Any, cast
-
-esc = html.escape
 
 # Le journal et les corps bruts des échanges sont du JSON sans schéma ici : on les lit
 # en `Any`, explicitement, pour que pyright strict sache que c'est voulu.
 type Objet = dict[str, Any]
+
+try:
+    from zoneinfo import ZoneInfo
+
+    FUSEAU: tzinfo | None = ZoneInfo("Europe/Paris")
+except Exception:  # pas de base de fuseaux : heures en UTC
+    FUSEAU = None
+
+# Au-delà, un texte est coupé et la suite repliée.
+COURT = 1500
+# Longueur des résumés du déroulé.
+RESUME = 120
+# Mécanique interne du moteur : rien à lire pour comprendre un run.
+IGNORES = frozenset(
+    {
+        "run.started",
+        "run.claimed",
+        "run.transitioned",
+        "step.started",
+        "step.completed",
+        "session.snapshot",
+        "model.exchanged",
+    }
+)
+# Événements rattachés à un appel d'outil par leur call_id.
+CONTROLES = frozenset(
+    {
+        "guard.checked",
+        "policy.decided",
+        "judge.evaluated",
+        "approval.requested",
+        "approval.granted",
+        "approval.denied",
+        "approval.expired",
+        "budget.exceeded",
+        "model.retried",
+        "model.fell_back",
+        "artifact.stored",
+    }
+)
+GENRES = {
+    "python": ("⚙", "outil"),
+    "role": ("✎", "rôle"),
+    "agent": ("◆", "sous-agent"),
+    "mcp": ("⇄", "outil MCP"),
+}
+REF = re.compile(r"^\[(result:\d+)\]\s*")
+
+
+# ---------------------------------------------------------------------- #
+# Mise en forme
+# ---------------------------------------------------------------------- #
+
+
+def esc(valeur: object) -> str:
+    return html.escape(str(valeur), quote=True)
+
+
+def nombre(n: object) -> str:
+    try:
+        v = int(cast("Any", n) or 0)
+    except (TypeError, ValueError):
+        return esc(n)
+    return f"{v:,}".replace(",", " ")
+
+
+def cout(c: object) -> str:
+    v = float(cast("Any", c) or 0.0)
+    if v == 0:
+        return "0 $"
+    return (f"{v:.4f}" if v >= 0.001 else f"{v:.6f}").replace(".", ",") + " $"
+
+
+def duree(ms: object) -> str:
+    if ms is None:
+        return "—"
+    v = float(cast("Any", ms))
+    if v < 1000:
+        return f"{v:.0f} ms"
+    if v < 60_000:
+        return f"{v / 1000:.1f} s".replace(".", ",")
+    return f"{int(v // 60_000)} min {int(v % 60_000 / 1000)} s"
+
+
+def instant(ts: str) -> datetime:
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+def heure(ts: str, avec_date: bool = False) -> str:
+    d = instant(ts)
+    d = d.astimezone(FUSEAU) if FUSEAU is not None else d
+    return d.strftime("%d/%m/%Y %H:%M:%S" if avec_date else "%H:%M:%S")
+
+
+def ecart_ms(debut: str, fin: str) -> float:
+    return (instant(fin) - instant(debut)).total_seconds() * 1000
+
+
+def resume(texte: str, n: int = RESUME) -> str:
+    t = " ".join(texte.split())
+    return t if len(t) <= n else t[: n - 1] + "…"
+
+
+def pre(texte: str, classe: str = "", limite: int = COURT) -> str:
+    """Texte préformaté ; au-delà de `limite` caractères, la suite est repliée."""
+    attr = f" class='{classe}'" if classe else ""
+    if len(texte) <= limite:
+        return f"<pre{attr}>{esc(texte)}</pre>"
+    return (
+        f"<pre{attr}>{esc(texte[:limite])}…</pre><details class='suite'>"
+        f"<summary>Tout afficher ({nombre(len(texte))} caractères)</summary>"
+        f"<pre{attr}>{esc(texte)}</pre></details>"
+    )
+
+
+def prose(texte: str, limite: int = COURT) -> str:
+    """Texte en langue naturelle : police de lecture, retours à la ligne gardés."""
+    return pre(texte, "prose", limite)
+
+
+def jolie(valeur: object, retrait: int = 0) -> str:
+    """JSON indenté, mais une valeur qui tient sur une ligne reste sur une ligne."""
+    ligne = json.dumps(valeur, ensure_ascii=False)
+    if len(ligne) + retrait <= 88 or not isinstance(valeur, (dict, list)) or not valeur:
+        return ligne
+    pad = " " * (retrait + 2)
+    if isinstance(valeur, dict):
+        d = cast("Objet", valeur)
+        corps = [f"{pad}{json.dumps(k, ensure_ascii=False)}: {jolie(v, retrait + 2)}" for k, v in d.items()]
+        return "{\n" + ",\n".join(corps) + "\n" + " " * retrait + "}"
+    elements = [f"{pad}{jolie(v, retrait + 2)}" for v in cast("list[Any]", valeur)]
+    return "[\n" + ",\n".join(elements) + "\n" + " " * retrait + "]"
+
+
+def pre_json(valeur: object, limite: int = COURT) -> str:
+    return pre(jolie(valeur), "json", limite)
+
+
+CODE = frozenset({"code", "source", "script", "sql", "python", "programme"})
+
+
+def arguments(args: object) -> str:
+    """Arguments d'un outil : une ligne par clé, texte lisible, code en code, JSON décodé."""
+    if not isinstance(args, dict) or not args:
+        return pre_json(args)
+    lignes: list[str] = []
+    for cle, v in cast("Objet", args).items():
+        if isinstance(v, str):
+            s = v.strip()
+            valeur = ""
+            if s[:1] in ("{", "["):
+                try:
+                    valeur = pre_json(json.loads(s)) + "<span class='qui'>(texte JSON, décodé)</span>"
+                except json.JSONDecodeError:
+                    valeur = ""
+            if not valeur:
+                valeur = pre(v, "code") if cle.lower() in CODE else prose(v)
+        else:
+            valeur = pre_json(v)
+        lignes.append(f"<dt>{esc(cle)}</dt><dd>{valeur}</dd>")
+    return f"<dl class='args'>{''.join(lignes)}</dl>"
+
+
+def json_court(valeur: object) -> str:
+    return resume(json.dumps(valeur, ensure_ascii=False), 70)
+
+
+def texte_outil(texte: str, limite: int = COURT) -> str:
+    """Résultat d'outil : référence [result:n] en étiquette, JSON mis en forme."""
+    ref = ""
+    m = REF.match(texte)
+    if m:
+        ref = f"<span class='ref'>{esc(m.group(1))}</span>"
+        texte = texte[m.end() :]
+    s = texte.strip()
+    if s[:1] in ("{", "[", '"'):
+        try:
+            v: object = json.loads(s)
+        except json.JSONDecodeError:
+            pass
+        else:
+            return ref + (prose(v, limite) if isinstance(v, str) else pre_json(v, limite))
+    return ref + prose(texte, limite)
+
+
+def texte_brut(texte: str) -> str:
+    """Le texte d'un résultat pour un résumé : sans référence, chaîne JSON décodée."""
+    texte = REF.sub("", texte).strip()
+    if texte.startswith('"'):
+        try:
+            v: object = json.loads(texte)
+        except json.JSONDecodeError:
+            return texte
+        if isinstance(v, str):
+            return v
+    return texte
+
+
+def badge(etat: str) -> str:
+    classe = {"nouveau": "nouveau", "inchangé": "inchange", "modifié": "modifie"}.get(etat, "")
+    return f"<span class='badge {classe}'>{esc(etat)}</span>"
+
+
+def canon(valeur: object) -> str:
+    """Forme comparable d'un morceau de requête : sans marques de cache ni signatures."""
+
+    def nettoie(v: Any) -> Any:
+        if isinstance(v, dict):
+            d = cast("Objet", v)
+            return {k: nettoie(x) for k, x in d.items() if k not in ("cache_control", "signature")}
+        if isinstance(v, list):
+            return [nettoie(x) for x in cast("list[Any]", v)]
+        return v
+
+    return json.dumps(nettoie(valeur), ensure_ascii=False, sort_keys=True)
+
+
+def textes(blocs: list[Any]) -> str:
+    return "\n".join(str(b.get("text", "")) for b in blocs if b.get("type") == "text")
+
+
+# ---------------------------------------------------------------------- #
+# Lecture du journal
+# ---------------------------------------------------------------------- #
 
 
 def lire_evenements(chemin: Path) -> list[Objet]:
@@ -39,218 +279,767 @@ def lire_evenements(chemin: Path) -> list[Objet]:
     return evenements
 
 
-def lire_flux_anthropic(corps: str) -> Objet:
-    """Reconstitue la réponse d'un flux SSE Anthropic : texte, appels d'outils, usage."""
-    blocs: dict[int, Objet] = {}
-    usage: Objet = {}
-    arret: str | None = None
-    for ligne in corps.split("\n"):
-        if not ligne.startswith("data: "):
-            continue
-        try:
-            d = json.loads(ligne[6:])
-        except json.JSONDecodeError:
-            continue
-        t = d.get("type")
-        if t == "message_start":
-            usage.update(d["message"].get("usage", {}))
-        elif t == "content_block_start":
-            cb = d["content_block"]
-            blocs[d["index"]] = {
-                "type": cb["type"],
-                "name": cb.get("name"),
-                "texte": "",
-                "json": "",
-            }
-        elif t == "content_block_delta":
-            b = blocs.setdefault(
-                d["index"], {"type": "text", "name": None, "texte": "", "json": ""}
-            )
-            dl = d["delta"]
-            if dl["type"] == "text_delta":
-                b["texte"] += dl["text"]
-            elif dl["type"] == "thinking_delta":
-                b["texte"] += dl.get("thinking", "")
-            elif dl["type"] == "input_json_delta":
-                b["json"] += dl["partial_json"]
-        elif t == "message_delta":
-            usage.update(d.get("usage", {}))
-            arret = d["delta"].get("stop_reason", arret)
-    return {"blocs": [blocs[i] for i in sorted(blocs)], "usage": usage, "arret": arret}
+@dataclass
+class Appel:
+    """Un appel d'outil et tout ce qui s'y rattache par son call_id."""
+
+    call_id: str
+    nom: str = "?"
+    genre: str = "python"
+    appele: Objet | None = None
+    termine: Objet | None = None
+    controles: list[Objet] = field(default_factory=list[Objet])
+    # Appels de modèle faits pour cet outil : un rôle, un juge.
+    tours: list[Objet] = field(default_factory=list[Objet])
+    enfant: str | None = None
 
 
-def rendre_json(valeur: object) -> str:
-    return f"<pre>{esc(json.dumps(valeur, ensure_ascii=False, indent=2))}</pre>"
+class Journal:
+    def __init__(self, evenements: list[Objet]) -> None:
+        self.evenements = evenements
+        self.runs: dict[str, list[Objet]] = defaultdict(list)
+        self.ordre: list[str] = []
+        self.echanges: dict[str, list[Objet]] = defaultdict(list)
+        self.noms: dict[str, str] = {}
+        self.parents: dict[str, str | None] = {}
+        self.par_id: dict[str, Objet] = {str(e.get("event_id")): e for e in evenements}
+        for e in evenements:
+            r = str(e.get("run_id") or "?")
+            if r not in self.runs:
+                self.ordre.append(r)
+            self.runs[r].append(e)
+            t = e.get("type")
+            p: Objet = e.get("payload") or {}
+            if t == "model.exchanged":
+                self.echanges[str(e.get("span_id"))].append(e)
+            elif t == "tool.called":
+                self.noms[str(p.get("call_id"))] = str(p.get("tool_name"))
+            elif t == "run.started":
+                self.parents[r] = p.get("parent_run_id")
+        self.racines = [r for r in self.ordre if self.parents.get(r) is None]
 
+    def appels(self, run: str) -> dict[str, Appel]:
+        appels: dict[str, Appel] = {}
 
-def rendre_contenu(contenu: Any) -> str:
-    if isinstance(contenu, str):
-        return f"<pre>{esc(contenu)}</pre>"
-    morceaux: list[str] = []
-    for c in contenu:
-        t = c.get("type")
-        if t == "text":
-            morceaux.append(f"<pre>{esc(c['text'])}</pre>")
-        elif t == "tool_use":
-            morceaux.append(
-                f"<div class='bloc outil'><span class='etiquette'>appel d'outil</span> "
-                f"<b>{esc(c['name'])}</b>{rendre_json(c['input'])}</div>"
-            )
-        elif t == "tool_result":
-            texte = c.get("content")
-            if isinstance(texte, list):
-                texte = "\n".join(x.get("text", "") for x in cast("list[Any]", texte))
-            erreur = " erreur" if c.get("is_error") else ""
-            morceaux.append(
-                f"<div class='bloc resultat{erreur}'><span class='etiquette'>résultat d'outil"
-                f"{' (erreur)' if erreur else ''}</span><pre>{esc(str(texte))}</pre></div>"
-            )
-        else:
-            morceaux.append(rendre_json(c))
-    return "".join(morceaux)
+        def appel(cid: str) -> Appel:
+            if cid not in appels:
+                appels[cid] = Appel(cid, nom=self.noms.get(cid, "?"))
+            return appels[cid]
 
+        for e in self.runs[run]:
+            t = e["type"]
+            p: Objet = e["payload"]
+            cid = p.get("call_id")
+            if not cid:
+                continue
+            if t == "tool.called":
+                a = appel(cid)
+                a.appele, a.nom = e, p["tool_name"]
+                a.genre = p.get("tool_kind") or "python"
+                a.enfant = p.get("child_run_id")
+            elif t == "tool.completed":
+                a = appel(cid)
+                a.termine, a.nom = e, p.get("tool_name") or a.nom
+            elif t == "model.responded" and (e.get("role") or "main") != "main":
+                appel(cid).tours.append(e)
+            elif t in CONTROLES:
+                appel(cid).controles.append(e)
+        return appels
 
-def rendre_entree(corps: Objet) -> str:
-    parties: list[str] = []
-    systeme = corps.get("system")
-    if isinstance(systeme, list):
-        systeme = "\n".join(x.get("text", "") for x in cast("list[Any]", systeme))
-    parties.append(f"<h4>Prompt système</h4><pre>{esc(systeme or '(aucun)')}</pre>")
-
-    outils: list[Any] = corps.get("tools", [])
-    noms = ", ".join(t["name"] for t in outils) or "aucun"
-    parties.append(
-        f"<details><summary>Outils proposés ({len(outils)}) : {esc(noms)}</summary>"
-        f"{rendre_json(outils)}</details>"
-    )
-    reglages = {k: v for k, v in corps.items() if k not in ("system", "tools", "messages")}
-    parties.append(f"<details><summary>Réglages</summary>{rendre_json(reglages)}</details>")
-
-    messages: list[Any] = corps.get("messages", [])
-    parties.append(f"<h4>Messages ({len(messages)})</h4>")
-    for i, m in enumerate(messages):
-        parties.append(
-            f"<div class='message {esc(m['role'])}'>"
-            f"<span class='role'>{i} · {esc(m['role'])}</span>"
-            f"{rendre_contenu(m['content'])}</div>"
+    def fin(self, run: str) -> Objet | None:
+        return next(
+            (e for e in reversed(self.runs[run]) if e["type"] in ("run.completed", "run.cancelled")),
+            None,
         )
-    return "".join(parties)
+
+    def reponse(self, fin: Objet) -> tuple[str, object]:
+        """Texte et données de la réponse d'un run ; un rôle terminal la porte ailleurs."""
+        p: Objet = fin["payload"]
+        sortie: Objet | None = p.get("output")
+        source = self.par_id.get(str(p.get("output_event_id")))
+        if sortie is None and source is not None:
+            sp: Objet = source["payload"]
+            sortie = sp.get("message") or sp.get("output")
+        blocs: list[Any] = (sortie or {}).get("blocks") or []
+        donnees: object = p.get("data")
+        if donnees is None:
+            donnees = next((b.get("data") for b in blocs if b.get("type") == "json"), None)
+        return textes(blocs), donnees
+
+    def question(self, run: str) -> str:
+        for e in self.runs[run]:
+            if e["type"] == "message.user":
+                return textes(e["payload"]["message"]["blocks"])
+        return ""
 
 
-def rendre_sortie(rep: Objet) -> str:
-    parties: list[str] = []
-    for b in rep["blocs"]:
-        if b["type"] == "tool_use":
-            try:
-                args: object = json.loads(b["json"]) if b["json"] else dict[str, Any]()
-                arguments = rendre_json(args)
-            except json.JSONDecodeError:
-                arguments = f"<pre>{esc(b['json'])}</pre>"
-            parties.append(
-                "<div class='bloc outil'>"
-                "<span class='etiquette'>le modèle demande un outil</span> "
-                f"<b>{esc(b['name'])}</b>{arguments}</div>"
+def agent_du_run(evs: list[Objet]) -> str:
+    return str(evs[0].get("agent") or "?") if evs else "?"
+
+
+# ---------------------------------------------------------------------- #
+# Rendu
+# ---------------------------------------------------------------------- #
+
+
+@dataclass
+class Voie:
+    """Le dernier contexte envoyé par un (agent, rôle) : pour ne montrer que le neuf."""
+
+    messages: list[str]
+    systeme: str
+    outils: str
+    run: str
+    tour: int
+
+
+@dataclass
+class Ligne:
+    niveau: int
+    ts: str
+    icone: str
+    texte: str
+    meta: str
+    ancre: str
+    classe: str = ""
+
+
+class Rendu:
+    def __init__(self, journal: Journal) -> None:
+        self.j = journal
+        self.voies: dict[tuple[str, str], Voie] = {}
+        self.lignes: list[Ligne] = []
+        self.sans_brut = False
+
+    # -- déroulé ---------------------------------------------------------
+
+    def ligne(self, niveau: int, e: Objet, icone: str, texte: str, meta: str, ancre: str, classe: str = "") -> None:
+        self.lignes.append(Ligne(niveau, str(e.get("ts", "")), icone, texte, meta, ancre, classe))
+
+    def deroule(self, debut: str) -> str:
+        items: list[str] = []
+        for li in self.lignes:
+            t = f"+{duree(ecart_ms(debut, li.ts))}" if li.ts and debut else ""
+            classes = " ".join(f"d-{c}" for c in li.classe.split())
+            items.append(
+                f"<li class='n{min(li.niveau, 4)} {classes}'><span class='t'>{esc(t)}</span>"
+                f"<a class='c' href='#{esc(li.ancre)}'><span class='ic'>{li.icone}</span> {li.texte}</a>"
+                f"<span class='m'>{li.meta}</span></li>"
             )
-        elif b["type"] == "thinking":
-            parties.append(
-                "<div class='bloc'><span class='etiquette'>raisonnement</span>"
-                f"<pre>{esc(b['texte'])}</pre></div>"
+        return f"<ol class='deroule'>{''.join(items)}</ol>"
+
+    # -- session ---------------------------------------------------------
+
+    def page(self, titre: str) -> str:
+        sections: list[str] = []
+        sommaire: list[str] = []
+        n = 0
+        for r in self.j.racines:
+            evs = self.j.runs[r]
+            if agent_du_run(evs) == "_compaction":
+                sections.append(self.compaction(r))
+                continue
+            n += 1
+            sections.append(self.echange(n, r))
+            fin = self.j.fin(r)
+            c = (fin or {}).get("payload", {}).get("cost_usd")
+            sommaire.append(
+                f"<li><a href='#echange-{n}'><b>Échange {n}</b> · {esc(resume(self.j.question(r), 90))}</a>"
+                f"<span class='m'>{esc(heure(evs[0]['ts']))} · {cout(c)}</span></li>"
             )
-        else:
-            parties.append(
-                "<div class='bloc texte'><span class='etiquette'>réponse</span>"
-                f"<pre>{esc(b['texte'])}</pre></div>"
+        entete = self.entete(titre, n)
+        avert = ""
+        if self.sans_brut:
+            avert = (
+                "<p class='avert boite'>Certains tours n'ont pas leurs échanges bruts : leur entrée est "
+                "reconstituée depuis le journal, sans prompt système ni outils. Pour l'entrée exacte, "
+                "activez <code>telemetry.capture.raw_exchanges: true</code> dans loom.yaml.</p>"
             )
-    return "".join(parties) or "<p><i>(sortie vide)</i></p>"
-
-
-def construire(evenements: list[Objet]) -> str:
-    # model.responded, par span : coût, latence, usage normalisé par Loom
-    repondu = {e["span_id"]: e for e in evenements if e["type"] == "model.responded"}
-    runs: dict[str, list[Objet]] = {}
-    ordre: list[str] = []
-    for e in evenements:
-        r = e["run_id"]
-        if r not in runs:
-            runs[r] = []
-            ordre.append(r)
-        runs[r].append(e)
-
-    sections: list[str] = []
-    total_in: int = 0
-    total_out: int = 0
-    total_cout: float = 0.0
-    sans_capture = False
-    for r in ordre:
-        evs = runs[r]
-        question = next(
-            (
-                e["payload"]["message"]["blocks"][0].get("text", "")
-                for e in evs
-                if e["type"] == "message.user" and e["payload"].get("kind") == "request"
-            ),
-            "",
+        som = f"<nav><h2>Échanges</h2><ol class='sommaire'>{''.join(sommaire)}</ol></nav>" if n > 1 else ""
+        return PAGE.format(
+            titre=esc(titre), entete=entete, avertissement=avert, sommaire=som, corps="".join(sections)
         )
-        agent = evs[0].get("agent") or ""
+
+    def entete(self, titre: str, echanges: int) -> str:
+        evs = self.j.evenements
+        reponses = [e for e in evs if e.get("type") == "model.responded"]
+        outils = sum(1 for e in evs if e.get("type") == "tool.called")
+        sous = sum(1 for r in self.j.ordre if self.j.parents.get(r))
+        total = sum(float(e["payload"].get("cost_usd") or 0) for e in reponses)
+        par_modele: dict[str, Objet] = {}
+        for e in reponses:
+            p: Objet = e["payload"]
+            u: Objet = p.get("usage") or {}
+            m = par_modele.setdefault(
+                str(p.get("model_id")),
+                {"qui": set[str](), "n": 0, "in": 0, "cr": 0, "cw": 0, "out": 0, "rs": 0, "cout": 0.0, "ms": 0.0},
+            )
+            role = e.get("role") or "main"
+            m["qui"].add(f"{e.get('agent')}" + ("" if role == "main" else f" · {role}"))
+            m["n"] += 1
+            m["in"] += u.get("input_tokens") or 0
+            m["cr"] += u.get("cache_read_tokens") or 0
+            m["cw"] += u.get("cache_write_tokens") or 0
+            m["out"] += u.get("output_tokens") or 0
+            m["rs"] += u.get("reasoning_tokens") or 0
+            m["cout"] += float(p.get("cost_usd") or 0)
+            m["ms"] += float(p.get("latency_ms") or 0)
+        lignes = "".join(
+            f"<tr><td><b>{esc(mod)}</b></td><td>{esc(', '.join(sorted(m['qui'])))}</td>"
+            f"<td class='n'>{m['n']}</td><td class='n'>{nombre(m['in'])}</td><td class='n'>{nombre(m['cr'])}</td>"
+            f"<td class='n'>{nombre(m['cw'])}</td><td class='n'>{nombre(m['out'])}</td>"
+            f"<td class='n'>{nombre(m['rs'])}</td><td class='n'>{duree(m['ms'])}</td>"
+            f"<td class='n'><b>{cout(m['cout'])}</b></td></tr>"
+            for mod, m in sorted(par_modele.items(), key=lambda kv: -kv[1]["cout"])
+        )
+        debut = heure(evs[0]["ts"], avec_date=True) if evs else ""
+        stats = [
+            (str(echanges), "échange(s)"),
+            (str(len(reponses)), "appels de modèle"),
+            (str(outils), "appels d'outils"),
+            (str(sous), "runs de sous-agents"),
+            (cout(total), "coût total"),
+        ]
+        tuiles = "".join(f"<div class='stat'><b>{esc(v)}</b><span>{esc(l)}</span></div>" for v, l in stats)
+        tableau = (
+            "<table><thead><tr><th>Modèle</th><th>Utilisé par</th><th>Appels</th><th>Entrée</th>"
+            "<th>Cache lu</th><th>Cache écrit</th><th>Sortie</th><th>Raisonnement</th><th>Latence</th>"
+            f"<th>Coût</th></tr></thead><tbody>{lignes}</tbody></table>"
+            if lignes
+            else ""
+        )
+        return (
+            f"<h1>{esc(titre)}</h1><p class='sous'>Début : {esc(debut)}"
+            f"{' (heure de Paris)' if FUSEAU else ' (UTC)'}</p>"
+            f"<div class='stats'>{tuiles}</div>{tableau}"
+        )
+
+    def compaction(self, run: str) -> str:
+        evs = self.j.runs[run]
+        e = next((x for x in evs if x["type"] == "session.compacted"), None)
+        if e is None:
+            return ""
+        p: Objet = e["payload"]
+        return (
+            f"<section class='note compaction'><b>Compaction de la session</b> · "
+            f"{nombre(p.get('tokens_before'))} → {nombre(p.get('tokens_after'))} tokens · "
+            f"{nombre(p.get('kept'))} message(s) gardé(s) · fidélité : {esc(p.get('fidelity'))} · "
+            f"{cout(p.get('cost_usd'))}<details><summary>Résumé qui remplace l'historique</summary>"
+            f"{pre(str(p.get('summary') or ''))}</details></section>"
+        )
+
+    def echange(self, n: int, run: str) -> str:
+        self.lignes = []
+        evs = self.j.runs[run]
+        debut = str(evs[0].get("ts", ""))
+        agent = agent_du_run(evs)
+        corps = self.run(run, 0)
+        fin = self.j.fin(run)
+        if fin is None:
+            reponse = "<p class='avert'>Run non terminé dans ce journal.</p>"
+            bilan = "non terminé"
+        elif fin["type"] == "run.cancelled":
+            fp: Objet = fin["payload"]
+            reponse = f"<p class='avert'>Run annulé ({esc(fp.get('by'))}) : {esc(fp.get('reason'))}</p>"
+            bilan = f"annulé · {cout(fp.get('cost_usd'))}"
+        else:
+            fp = fin["payload"]
+            texte, donnees = self.j.reponse(fin)
+            reponse = (prose(texte) if texte else "") + (pre_json(donnees) if donnees is not None else "")
+            reponse = reponse or "<p class='vide'>(réponse vide)</p>"
+            u: Objet = fp.get("usage") or {}
+            bilan = (
+                f"{nombre(fp.get('iterations'))} tour(s) de l'agent · {duree(ecart_ms(debut, fin['ts']))} · "
+                f"{nombre(u.get('input_tokens'))} tokens en entrée · {nombre(u.get('output_tokens'))} en sortie · "
+                f"<b>{cout(fp.get('cost_usd'))}</b>"
+            )
+            self.ligne(0, fin, "✓", "<b>Réponse finale</b>", "", f"echange-{n}", "fin")
+        return (
+            f"<article class='echange' id='echange-{n}'>"
+            f"<h2>Échange {n} · agent <code>{esc(agent)}</code></h2>"
+            f"<p class='sous'>{esc(heure(debut))} · {bilan} · run <code>{esc(run)}</code></p>"
+            f"<div class='qr'><div class='boite question'><span class='lbl'>Question</span>"
+            f"{prose(self.j.question(run))}</div>"
+            f"<div class='boite reponse'><span class='lbl'>Réponse finale</span>{reponse}</div></div>"
+            f"<h3 class='titre-partie'>Déroulé</h3>{self.deroule(debut)}"
+            f"<h3 class='titre-partie'>Détail</h3>{corps}</article>"
+        )
+
+    # -- run -------------------------------------------------------------
+
+    def run(self, run: str, niveau: int) -> str:
+        appels = self.j.appels(run)
+        rendus: set[str] = set()
+        morceaux: list[str] = []
+        # Ce qui est entré dans le contexte depuis le dernier tour, d'après les
+        # événements : l'entrée de secours quand l'échange brut manque.
+        attente: list[str] = []
         tour = 0
-        tours: list[str] = []
-        for e in evs:
-            if e["type"] == "model.exchanged":
-                tour += 1
-                p = e["payload"]
-                try:
-                    corps = json.loads(p["request_body"])
-                    entree = rendre_entree(corps)
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    entree = f"<pre>{esc(str(p.get('request_body')))}</pre>"
-                rep = lire_flux_anthropic(p.get("response_body") or "")
-                sortie = rendre_sortie(rep)
-                resp = repondu.get(e["span_id"])
-                u = rep["usage"]
-                tin, tout = u.get("input_tokens", 0), u.get("output_tokens", 0)
-                cout = (resp or {}).get("payload", {}).get("cost_usd") or 0.0
-                total_in += tin
-                total_out += tout
-                total_cout += cout
-                meta = (
-                    f"{esc(p.get('model_id', ''))} · {tin} tokens en entrée · {tout} en sortie · "
-                    f"{p['duration_ms']:.0f} ms · {cout:.6f} $ · arrêt : {esc(str(rep['arret']))}"
-                )
-                tours.append(
-                    f"<section class='tour'><h3>Tour {tour}</h3><p class='meta'>{meta}</p>"
-                    "<div class='colonnes'>"
-                    f"<div class='col'><h2>Envoyé au modèle</h2>{entree}</div>"
-                    f"<div class='col'><h2>Sorti du modèle</h2>{sortie}</div></div></section>"
-                )
-            elif e["type"] == "tool.completed":
-                p = e["payload"]
-                texte = " ".join(b.get("text", "") for b in p["output"]["blocks"])
-                err = " (erreur)" if p["output"].get("is_error") else ""
-                tours.append(
-                    f"<p class='intertour'>⚙ outil <b>{esc(p['tool_name'])}</b> exécuté"
-                    f"{err} → {esc(texte[:300])}</p>"
-                )
-        if not tours:
-            sans_capture = True
-            tours.append("<p><i>Aucun échange brut dans ce run.</i></p>")
-        sections.append(
-            f"<article class='run'><h2 class='titre-run'>Run {esc(r[:8])} · agent {esc(agent)}</h2>"
-            f"<p class='question'>Question : {esc(question)}</p>{''.join(tours)}</article>"
+        for e in self.j.runs[run]:
+            t = e["type"]
+            p: Objet = e["payload"]
+            cid = p.get("call_id")
+            if cid and cid in appels:
+                a = appels[cid]
+                if cid not in rendus and (t == "tool.called" or a.appele is None):
+                    rendus.add(cid)
+                    morceaux.append(self.appel(a, niveau))
+                if t == "tool.completed":
+                    attente.append(self.resultat_reconstitue(a))
+                continue
+            if t in IGNORES:
+                continue
+            if t == "message.user":
+                blocs: list[Any] = p["message"]["blocks"]
+                attente.append(self.message("user", blocs, None))
+                if p.get("kind") != "request":
+                    ancre = f"evt-{e['event_id']}"
+                    morceaux.append(
+                        f"<div class='note' id='{esc(ancre)}'><b>Message de correction</b>"
+                        f" ({esc(p.get('policy') or p.get('kind'))}){prose(textes(blocs))}</div>"
+                    )
+                    self.ligne(niveau, e, "↻", f"correction : {esc(resume(textes(blocs)))}", "", ancre, "note")
+                elif tour == 0 and niveau == 0:
+                    self.ligne(niveau, e, "❓", f"<b>Question</b> : {esc(resume(textes(blocs)))}", "", "", "")
+                continue
+            if t == "model.responded":
+                if (e.get("role") or "main") == "main":
+                    tour += 1
+                    morceaux.append(self.tour(e, tour, niveau, attente))
+                else:  # juge de la réponse finale
+                    morceaux.append(self.tour(e, None, niveau, attente))
+                attente = []
+                continue
+            if t in ("run.completed",):
+                continue
+            morceaux.append(self.note(e, niveau))
+        return "".join(morceaux)
+
+    # -- tour de modèle ----------------------------------------------------
+
+    def tour(self, e: Objet, numero: int | None, niveau: int, attente: list[str]) -> str:
+        p: Objet = e["payload"]
+        u: Objet = p.get("usage") or {}
+        role = str(e.get("role") or "main")
+        agent = str(e.get("agent") or "")
+        ancre = f"tour-{e['span_id']}"
+        if numero is not None:
+            titre = f"Tour {numero}"
+            classe = "principal"
+        elif role.startswith("judge:"):
+            titre = f"Juge {role.removeprefix('judge:')}"
+            classe = "juge"
+        else:
+            titre = f"Rôle {role}"
+            classe = "role"
+        echanges = self.j.echanges.get(str(e.get("span_id")), [])
+        brut = next(
+            (x for x in reversed(echanges) if x["payload"].get("status_code") == 200),
+            echanges[-1] if echanges else None,
+        )
+        entree = self.entree(e, brut, attente)
+        blocs: list[Any] = p["message"]["blocks"]
+        sortie = self.sortie(blocs, u)
+        cache = ""
+        if u.get("cache_read_tokens") or u.get("cache_write_tokens"):
+            cache = f" (cache lu {nombre(u.get('cache_read_tokens'))}, écrit {nombre(u.get('cache_write_tokens'))})"
+        raisonnement = (
+            f" · raisonnement {nombre(u.get('reasoning_tokens'))}" if u.get("reasoning_tokens") else ""
+        )
+        essais = f" · {p.get('attempts')} essais" if (p.get("attempts") or 1) > 1 else ""
+        metr = (
+            f"entrée {nombre(u.get('input_tokens'))}{cache} · sortie {nombre(u.get('output_tokens'))}"
+            f"{raisonnement} · {duree(p.get('latency_ms'))} · {cout(p.get('cost_usd'))} · "
+            f"arrêt : {esc(p.get('stop_reason'))}{essais}"
+        )
+        # Déroulé : ce que le tour a produit.
+        demandes = [b for b in blocs if b.get("type") == "tool_call"]
+        if demandes:
+            quoi = "demande " + ", ".join(f"<b>{esc(b.get('name'))}</b>" for b in demandes)
+        else:
+            quoi = f"répond : « {esc(resume(textes(blocs), 90))} »"
+        qui = esc(agent)
+        self.ligne(
+            niveau,
+            e,
+            "●" if numero is not None else "✎",
+            f"<b>{esc(titre)}</b> · {qui} · <code>{esc(p.get('model_id'))}</code> → {quoi}",
+            f"{duree(p.get('latency_ms'))} · {cout(p.get('cost_usd'))}",
+            ancre,
+            classe,
+        )
+        return (
+            f"<section class='tour {classe}' id='{esc(ancre)}'><header><h3>{esc(titre)}</h3>"
+            f"<span class='pill'>{esc(agent)}{'' if role == 'main' else ' · ' + esc(role)}</span>"
+            f"<span class='pill modele'>{esc(p.get('model_id'))}</span>"
+            f"<span class='metr'>{esc(heure(e['ts']))} · {metr}</span></header>"
+            f"<div class='cols'><div class='col'><h4 class='lbl'>Entrée du modèle</h4>{entree}</div>"
+            f"<div class='col'><h4 class='lbl'>Sortie du modèle</h4>{sortie}</div></div></section>"
         )
 
-    avertissement = ""
-    if sans_capture:
-        avertissement = (
-            "<p class='alerte'>Certains runs n'ont pas d'échanges bruts. Activez "
-            "<code>telemetry.capture.raw_exchanges: true</code> dans loom.yaml, puis relancez.</p>"
+    def entree(self, e: Objet, brut: Objet | None, attente: list[str]) -> str:
+        corps: Any = None
+        if brut is not None:
+            try:
+                corps = json.loads(brut["payload"].get("request_body") or "")
+            except (json.JSONDecodeError, TypeError):
+                corps = None
+        if not isinstance(corps, dict):
+            self.sans_brut = True
+            if (e.get("role") or "main") != "main":
+                return (
+                    "<p class='avert'>Échange brut absent : l'entrée d'un rôle ou d'un juge "
+                    "(son gabarit rempli) n'est pas dans le journal.</p>"
+                )
+            return (
+                "<p class='avert'>Échange brut absent : entrée reconstituée depuis le journal.</p>"
+                + ("".join(attente) or "<p class='vide'>(rien de neuf)</p>")
+            )
+        c = cast("Objet", corps)
+        cle = (str(e.get("agent") or ""), str(e.get("role") or "main"))
+        voie = self.voies.get(cle)
+        parts: list[str] = []
+
+        systeme_brut: Any = c.get("system") or ""
+        if isinstance(systeme_brut, list):
+            systeme = "\n".join(str(x.get("text", "")) for x in cast("list[Any]", systeme_brut))
+        else:
+            systeme = str(systeme_brut)
+        sig_sys = canon(systeme)
+        etat = "nouveau" if voie is None else ("inchangé" if voie.systeme == sig_sys else "modifié")
+        parts.append(
+            f"<details class='systeme'><summary>Prompt système {badge(etat)} "
+            f"<span class='apercu'>{esc(resume(systeme, 70)) or '(aucun)'}</span></summary>"
+            f"{pre(systeme or '(aucun)')}</details>"
         )
-    entete = (
-        f"<p class='meta'>{len(ordre)} run(s) · {total_in} tokens en entrée · "
-        f"{total_out} en sortie · {total_cout:.6f} $</p>"
-    )
-    return PAGE.format(
-        titre="Journal Loom", entete=entete, avertissement=avertissement, corps="".join(sections)
-    )
+
+        outils: list[Any] = c.get("tools") or []
+        noms = [str(o.get("name") or (o.get("function") or {}).get("name") or "?") for o in outils]
+        sig_out = canon(outils)
+        etat = "nouveau" if voie is None else ("inchangé" if voie.outils == sig_out else "modifié")
+        puces = "".join(f"<span class='puce'>{esc(nm)}</span>" for nm in noms) or "<i>aucun</i>"
+        parts.append(
+            f"<details class='outils'><summary>Outils proposés ({len(noms)}) {badge(etat)} {puces}</summary>"
+            f"{pre_json(outils)}</details>"
+        )
+
+        messages: list[Any] = c.get("messages") or []
+        norm = [canon(m) for m in messages]
+        if voie is not None and norm[: len(voie.messages)] == voie.messages:
+            nouveaux = messages[len(voie.messages) :]
+            if voie.messages:
+                deja = (
+                    f"{len(voie.messages)} message(s) de la session déjà montrés"
+                    if voie.run != e["run_id"]
+                    else f"{len(voie.messages)} message(s) déjà envoyés aux tours précédents"
+                )
+                parts.append(f"<p class='deja'>+ {esc(deja)}, renvoyés tels quels</p>")
+        else:
+            nouveaux = messages
+            if voie is not None and voie.run == e["run_id"]:
+                parts.append(
+                    "<p class='avert'>Historique réécrit depuis le tour précédent "
+                    "(compaction, troncature…) : voici le contexte complet.</p>"
+                )
+        parts.append(f"<h4>Nouveau dans le contexte ({len(nouveaux)} message(s))</h4>")
+        parts.extend(self.message_brut(m) for m in nouveaux)
+
+        reglages = {k: v for k, v in c.items() if k not in ("system", "tools", "messages")}
+        parts.append(f"<details class='reglages'><summary>Réglages de la requête</summary>{pre_json(reglages)}</details>")
+        if brut is not None and brut["payload"].get("request_truncated"):
+            parts.append("<p class='avert'>Requête tronquée dans le journal.</p>")
+        self.voies[cle] = Voie(norm, sig_sys, sig_out, str(e["run_id"]), 0)
+        return "".join(parts)
+
+    def message_brut(self, m: Objet) -> str:
+        """Un message de la requête brute (format Anthropic, ou OpenAI à défaut)."""
+        role = str(m.get("role") or "?")
+        contenu: Any = m.get("content")
+        blocs: list[Any] = (
+            [{"type": "text", "text": contenu}] if isinstance(contenu, str) else list(contenu or [])
+        )
+        if role == "tool":  # OpenAI
+            nom = self.j.noms.get(str(m.get("tool_call_id")), "?")
+            texte = contenu if isinstance(contenu, str) else textes(blocs)
+            return self.carte_resultat(nom, texte, False)
+        for appel in m.get("tool_calls") or []:  # OpenAI
+            fn: Objet = appel.get("function") or {}
+            blocs.append({"type": "tool_use", "name": fn.get("name"), "input": fn.get("arguments")})
+        return self.message(role, blocs, None)
+
+    def message(self, role: str, blocs: list[Any], _: None) -> str:
+        if role == "assistant":
+            quoi = ", ".join(
+                f"appel {b.get('name')}" if b.get("type") == "tool_use" else str(b.get("type"))
+                for b in blocs
+                if b.get("type") not in ("thinking", "redacted_thinking")
+            )
+            interieur = "".join(self.bloc(b, "assistant") for b in blocs)
+            return (
+                f"<details class='msg assistant'><summary>↩ Sortie précédente du modèle, renvoyée"
+                f" : {esc(quoi or 'raisonnement')}</summary>{interieur}</details>"
+            )
+        if role == "system":
+            return f"<div class='msg systeme'><span class='qui'>système</span>{pre(textes(blocs))}</div>"
+        return "".join(self.bloc(b, role) for b in blocs)
+
+    def bloc(self, b: Objet, role: str) -> str:
+        t = b.get("type")
+        if t == "text":
+            qui = "message de l'utilisateur" if role == "user" else "texte"
+            classe = "user" if role == "user" else "texte"
+            return f"<div class='msg {classe}'><span class='qui'>{qui}</span>{prose(str(b.get('text', '')))}</div>"
+        if t == "tool_result":
+            nom = self.j.noms.get(str(b.get("tool_use_id")), "?")
+            contenu: Any = b.get("content")
+            texte = contenu if isinstance(contenu, str) else textes(list(contenu or []))
+            return self.carte_resultat(nom, texte, bool(b.get("is_error")))
+        if t == "tool_use":
+            entree: Any = b.get("input")
+            return (
+                f"<div class='msg demande'><span class='qui'>demande l'outil</span> <b>{esc(b.get('name'))}</b>"
+                f"{pre_json(entree)}</div>"
+            )
+        if t in ("thinking", "redacted_thinking"):
+            texte = str(b.get("thinking") or "")
+            return (
+                f"<details class='msg raisonnement'><summary>raisonnement renvoyé</summary>"
+                f"{pre(texte) if texte else '<p class=vide>(chiffré)</p>'}</details>"
+            )
+        if t == "artifact":
+            return f"<div class='msg user'><span class='qui'>pièce jointe</span> {esc(b.get('name'))} ({esc(b.get('media_type'))})</div>"
+        if t in ("image", "document"):
+            return f"<div class='msg user'><span class='qui'>{esc(t)}</span></div>"
+        return f"<div class='msg'><span class='qui'>{esc(t)}</span>{pre_json(b)}</div>"
+
+    def carte_resultat(self, nom: str, texte: str, erreur: bool) -> str:
+        return (
+            f"<div class='msg resultat{' erreur' if erreur else ''}'><span class='qui'>résultat de "
+            f"<b>{esc(nom)}</b>{' (erreur)' if erreur else ''}</span>{texte_outil(texte, 600)}</div>"
+        )
+
+    def resultat_reconstitue(self, a: Appel) -> str:
+        sortie: Objet = ((a.termine or {}).get("payload") or {}).get("output") or {}
+        blocs: list[Any] = sortie.get("blocks") or []
+        texte = textes(blocs) or json.dumps(sortie.get("data"), ensure_ascii=False)
+        return self.carte_resultat(a.nom, texte, bool(sortie.get("is_error")))
+
+    def sortie(self, blocs: list[Any], u: Objet) -> str:
+        parts: list[str] = []
+        for b in blocs:
+            t = b.get("type")
+            if t == "reasoning":
+                texte = str(b.get("text") or "")
+                n = u.get("reasoning_tokens")
+                titre = f"Raisonnement ({nombre(n)} tokens)" if n else "Raisonnement"
+                corps = (
+                    pre(texte)
+                    if texte
+                    else "<p class='vide'>Contenu chiffré par le fournisseur : seul le nombre de tokens est connu.</p>"
+                )
+                parts.append(f"<details class='msg raisonnement'><summary>{titre}</summary>{corps}</details>")
+            elif t == "text":
+                parts.append(f"<div class='msg texte'><span class='qui'>texte</span>{prose(str(b.get('text', '')))}</div>")
+            elif t == "tool_call":
+                cid = str(b.get("call_id"))
+                lien = (
+                    f" <a class='lien' href='#appel-{esc(cid)}'>voir l'exécution ↓</a>"
+                    if cid in self.j.noms
+                    else ""
+                )
+                parts.append(
+                    f"<div class='msg demande'><span class='qui'>demande l'outil</span> "
+                    f"<b>{esc(b.get('name'))}</b>{lien}<details><summary>arguments "
+                    f"<code>{esc(json_court(b.get('arguments')))}</code></summary>"
+                    f"{arguments(b.get('arguments'))}</details></div>"
+                )
+            else:
+                parts.append(f"<div class='msg'><span class='qui'>{esc(t)}</span>{pre_json(b)}</div>")
+        return "".join(parts) or "<p class='vide'>(sortie vide)</p>"
+
+    # -- appel d'outil -----------------------------------------------------
+
+    def appel(self, a: Appel, niveau: int) -> str:
+        icone, libelle = GENRES.get(a.genre, ("⚙", a.genre))
+        pc: Objet = (a.appele or {}).get("payload") or {}
+        pt: Objet = (a.termine or {}).get("payload") or {}
+        sortie: Objet = pt.get("output") or {}
+        blocs: list[Any] = sortie.get("blocks") or []
+        erreur = bool(sortie.get("is_error"))
+        ancre = f"appel-{a.call_id}"
+        args: Any = pc.get("arguments")
+
+        if a.termine is None:
+            res = "<span class='avert'>pas de résultat</span>"
+        else:
+            texte = texte_brut(textes(blocs)) or json_court(sortie.get("data"))
+            res = f"« {esc(resume(texte, 80))} »"
+        args_court = "" if args is None or a.genre == "agent" else f"({esc(json_court(args))})"
+        meta = [duree(pt.get("latency_ms"))] if a.termine is not None else []
+        if pt.get("cost_usd"):
+            meta.append(cout(pt.get("cost_usd")))
+        self.ligne(
+            niveau,
+            a.appele or a.termine or {},
+            icone,
+            f"{esc(libelle)} <b>{esc(a.nom)}</b>{args_court} → {'<span class=err>erreur</span> ' if erreur else ''}{res}",
+            " · ".join(meta),
+            ancre,
+            f"appel genre-{a.genre}{' erreur' if erreur else ''}",
+        )
+
+        corps: list[str] = []
+        if args is not None:
+            if a.genre == "agent" and isinstance(args, dict) and "message" in args:
+                corps.append(f"<h4>Message envoyé au sous-agent</h4>{prose(str(cast('Objet', args)['message']))}")
+            else:
+                corps.append(f"<h4>Arguments</h4>{arguments(args)}")
+        for tour in a.tours:
+            corps.append(self.tour(tour, None, niveau + 1, []))
+        if a.enfant and a.enfant in self.j.runs:
+            corps.append(self.sous_run(a.enfant, niveau + 1))
+        if a.controles:
+            corps.append("<h4>Contrôles</h4>" + "".join(self.controle(c) for c in a.controles))
+        if a.termine is not None and a.genre == "agent" and not erreur:
+            corps.append(
+                f"<details class='resultat-agent'><summary>Résultat rendu à l'appelant (la réponse du "
+                f"sous-agent ci-dessus) : « {esc(resume(textes(blocs), 90))} »</summary>{self.resultat(sortie)}</details>"
+            )
+        elif a.termine is not None:
+            corps.append(f"<h4>Résultat{' — erreur' if erreur else ''}</h4>{self.resultat(sortie)}")
+
+        statut = "en attente" if a.termine is None else ("erreur" if erreur else "ok")
+        details = [f"{esc(heure(str((a.appele or a.termine or {}).get('ts', ''))))}"] if (a.appele or a.termine) else []
+        if a.termine is not None:
+            details.append(duree(pt.get("latency_ms")))
+            if pt.get("size"):
+                details.append(f"{nombre(pt.get('size'))} octets")
+            if pt.get("cost_usd"):
+                details.append(cout(pt.get("cost_usd")))
+        return (
+            f"<section class='appel genre-{esc(a.genre)}{' erreur' if erreur else ''}' id='{esc(ancre)}'>"
+            f"<header><span class='ic'>{icone}</span> <span class='lbl'>{esc(libelle)}</span> "
+            f"<b>{esc(a.nom)}</b> <span class='statut {esc(statut.replace(' ', '-'))}'>{esc(statut)}</span>"
+            f"<span class='metr'>{' · '.join(details)}</span></header>"
+            f"<div class='corps'>{''.join(corps)}</div></section>"
+        )
+
+    def resultat(self, sortie: Objet) -> str:
+        parts: list[str] = []
+        for b in sortie.get("blocks") or []:
+            t = b.get("type")
+            if t == "text":
+                parts.append(texte_outil(str(b.get("text", ""))))
+            elif t == "json":
+                parts.append(pre_json(b.get("data")))
+            elif t == "artifact":
+                parts.append(
+                    f"<p>Artefact <b>{esc(b.get('name'))}</b> ({esc(b.get('media_type'))}, "
+                    f"{nombre(b.get('size'))} octets) <code>{esc(b.get('uri'))}</code></p>"
+                )
+            else:
+                parts.append(pre_json(b))
+        if sortie.get("offloaded"):
+            parts.append(f"<p class='avert'>Résultat déporté : {esc(json_court(sortie.get('offloaded')))}</p>")
+        if sortie.get("unverified"):
+            parts.append("<p class='avert'>Résultat non vérifié.</p>")
+        return "".join(parts) or "<p class='vide'>(vide)</p>"
+
+    def sous_run(self, run: str, niveau: int) -> str:
+        evs = self.j.runs[run]
+        agent = agent_du_run(evs)
+        modeles = sorted(
+            {str(e["payload"].get("model_id")) for e in evs if e["type"] == "model.responded"}
+        )
+        fin = self.j.fin(run)
+        bilan = ""
+        if fin is not None:
+            fp: Objet = fin["payload"]
+            bilan = (
+                f" · {nombre(fp.get('iterations'))} tour(s) · {duree(ecart_ms(str(evs[0]['ts']), str(fin['ts'])))}"
+                f" · {cout(fp.get('cost_usd'))}"
+            )
+        corps = self.run(run, niveau)
+        return (
+            f"<details class='sous-run' open><summary>Run du sous-agent <b>{esc(agent)}</b> · "
+            f"{esc(', '.join(modeles))}{bilan}</summary>{corps}</details>"
+        )
+
+    # -- contrôles et notes ------------------------------------------------
+
+    def controle(self, e: Objet) -> str:
+        t = e["type"]
+        p: Objet = e["payload"]
+        if t == "guard.checked":
+            ok = p.get("outcome") == "passed"
+            raison = f" : {esc(p.get('reason'))}" if p.get("reason") else ""
+            return (
+                f"<div class='ctrl {'ok' if ok else 'ko'}'>{'✓' if ok else '✗'} contrôle "
+                f"<b>{esc(p.get('guard'))}</b> sur {esc(p.get('target'))} : {esc(p.get('outcome'))}{raison}</div>"
+            )
+        if t == "policy.decided":
+            raison = f" : {esc(p.get('reason'))}" if p.get("reason") else ""
+            return (
+                f"<div class='ctrl'>⚑ politique <b>{esc(p.get('policy'))}</b> ({esc(p.get('point'))}) → "
+                f"<b>{esc(p.get('decision'))}</b>{raison}</div>"
+            )
+        if t == "judge.evaluated":
+            lignes = "".join(
+                f"<tr><td>{esc(c.get('name'))}</td><td class='n'>{esc(c.get('score'))} / {esc(c.get('min_score'))}</td>"
+                f"<td>{'bloquant' if c.get('blocking') else ''}</td><td>{esc(c.get('reason'))}</td></tr>"
+                for c in p.get("criteria") or []
+            )
+            verdict = "accepté" if p.get("passed") else ("bloqué" if p.get("blocked") else "refusé")
+            return (
+                f"<div class='ctrl {'ok' if p.get('passed') else 'ko'}'>⚖ juge <b>{esc(p.get('judge'))}</b> "
+                f"({esc(p.get('model_id'))}) : <b>{verdict}</b><table><tr><th>Critère</th><th>Score</th>"
+                f"<th></th><th>Raison</th></tr>{lignes}</table></div>"
+            )
+        if t.startswith("approval."):
+            quoi = {"requested": "demandée", "granted": "accordée", "denied": "refusée", "expired": "expirée"}.get(
+                t.split(".", 1)[1], t
+            )
+            par = f" par {esc(p.get('by'))}" if p.get("by") else ""
+            return f"<div class='ctrl'>✋ approbation {quoi}{par} : {esc(p.get('reason'))}</div>"
+        if t == "budget.exceeded":
+            return (
+                f"<div class='ctrl ko'>budget dépassé ({esc(p.get('scope'))}) : {esc(p.get('spent'))} / "
+                f"{esc(p.get('limit'))} → {esc(p.get('action'))}</div>"
+            )
+        if t == "model.retried":
+            return (
+                f"<div class='ctrl'>↻ nouvel essai n°{esc(p.get('attempt'))} du modèle {esc(p.get('model_id'))} "
+                f"après {esc(p.get('error_kind'))} ({esc(p.get('http_status'))}), attente {esc(p.get('delay_s'))} s</div>"
+            )
+        if t == "model.fell_back":
+            return (
+                f"<div class='ctrl ko'>⤳ repli de {esc(p.get('from_model'))} vers {esc(p.get('to_model'))} "
+                f"({esc(p.get('reason'))})</div>"
+            )
+        if t == "artifact.stored":
+            return f"<div class='ctrl'>artefact stocké : {esc(p.get('name'))} ({esc(p.get('media_type'))})</div>"
+        return f"<div class='ctrl'>{esc(t)} {esc(json_court(p))}</div>"
+
+    def note(self, e: Objet, niveau: int) -> str:
+        ancre = f"evt-{e.get('event_id')}"
+        t = str(e.get("type"))
+        p: Objet = e.get("payload") or {}
+        if t == "session.compacted":
+            interieur = (
+                f"<b>Compaction</b> : {nombre(p.get('tokens_before'))} → {nombre(p.get('tokens_after'))} tokens"
+                f"<details><summary>Résumé</summary>{pre(str(p.get('summary') or ''))}</details>"
+            )
+        elif t == "run.cancelled":
+            interieur = f"<b>Run annulé</b> ({esc(p.get('by'))}) : {esc(p.get('reason'))}"
+        else:
+            interieur = self.controle(e)
+        brut = html.unescape(re.sub(r"<[^>]+>", " ", interieur)).strip().lstrip("⚑✓✗⚖✋↻⤳ ")
+        self.ligne(niveau, e, "⚑", esc(resume(brut, 110)), "", ancre, "note")
+        return f"<div class='note' id='{esc(ancre)}'>{interieur}</div>"
+
+
+def construire(evenements: list[Objet], titre: str) -> str:
+    return Rendu(Journal(evenements)).page(titre)
 
 
 PAGE = """<!doctype html>
@@ -258,54 +1047,130 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{titre}</title>
 <style>
-:root {{ --fond:#fafaf9; --texte:#1c1917; --doux:#78716c; --carte:#fff; --bord:#e7e5e4;
-  --accent:#2563eb; --outil:#b45309; --ok:#15803d; --alerte:#b91c1c; }}
-@media (prefers-color-scheme: dark) {{ :root {{ --fond:#1c1917; --texte:#f5f5f4; --doux:#a8a29e;
-  --carte:#292524; --bord:#44403c; --accent:#60a5fa; --outil:#fbbf24; \
---ok:#4ade80; --alerte:#f87171; }} }}
-body {{ margin:0; background:var(--fond); color:var(--texte); font:15px/1.5 system-ui,sans-serif; }}
-main {{ max-width:1400px; margin:0 auto; padding:16px; }}
-h1 {{ margin:0 0 4px; font-size:22px; }}
-.meta {{ color:var(--doux); font-size:13px; margin:2px 0 10px; }}
-.run {{ margin:28px 0; }}
-.titre-run {{ font-size:18px; margin:0 0 4px; }}
-.question {{ background:var(--carte); border:1px solid var(--bord); \
-border-left:4px solid var(--accent);
-  padding:8px 12px; border-radius:6px; }}
-.tour {{ background:var(--carte); border:1px solid var(--bord); border-radius:8px; \
-padding:12px 16px; margin:14px 0; }}
-.tour h3 {{ margin:0; font-size:16px; }}
-.colonnes {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }}
-@media (max-width: 800px) {{ .colonnes {{ grid-template-columns:1fr; }} }}
-.col h2 {{ font-size:13px; text-transform:uppercase; letter-spacing:.05em; \
-color:var(--doux); margin:6px 0; }}
-h4 {{ margin:12px 0 4px; font-size:13px; color:var(--doux); }}
-pre {{ white-space:pre-wrap; word-break:break-word; margin:4px 0; \
-font:13px/1.45 ui-monospace,monospace; }}
-.message {{ border:1px solid var(--bord); border-radius:6px; padding:6px 10px; margin:6px 0; }}
-.message.assistant {{ border-left:4px solid var(--ok); }}
-.message.user {{ border-left:4px solid var(--accent); }}
-.role {{ font-size:12px; color:var(--doux); }}
-.bloc {{ border:1px solid var(--bord); border-radius:6px; padding:6px 10px; margin:6px 0; }}
-.bloc.outil {{ border-left:4px solid var(--outil); }}
-.bloc.resultat {{ border-left:4px solid var(--outil); opacity:.9; }}
-.bloc.texte {{ border-left:4px solid var(--ok); }}
-.etiquette {{ font-size:12px; color:var(--doux); margin-right:6px; }}
-.intertour {{ color:var(--doux); font-size:13px; margin:2px 8px; }}
-.alerte {{ color:var(--alerte); }}
-details {{ margin:6px 0; }} summary {{ cursor:pointer; color:var(--doux); font-size:13px; }}
+:root {{ --fond:#f6f5f2; --carte:#fff; --texte:#1d1b18; --doux:#6f6a63; --bord:#e4e1db; --code:#efede8;
+  --user:#2563eb; --sortie:#15803d; --outil:#b45309; --role:#0f766e; --agent:#7c3aed; --juge:#be185d;
+  --erreur:#b91c1c; --avert:#a16207; }}
+@media (prefers-color-scheme: dark) {{ :root {{ --fond:#171614; --carte:#22201d; --texte:#efece6;
+  --doux:#a39e96; --bord:#3a3733; --code:#2d2a26; --user:#60a5fa; --sortie:#4ade80; --outil:#fbbf24;
+  --role:#2dd4bf; --agent:#a78bfa; --juge:#f472b6; --erreur:#f87171; --avert:#facc15; }} }}
+* {{ box-sizing:border-box; }}
+body {{ margin:0; background:var(--fond); color:var(--texte); font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }}
+main {{ max-width:1320px; margin:0 auto; padding:24px 16px 80px; }}
+a {{ color:inherit; text-decoration:none; }}
+code {{ font:13px ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--code); padding:0 4px; border-radius:4px; }}
+h1 {{ font-size:24px; margin:0; }}
+h2 {{ font-size:19px; margin:0 0 2px; }}
+h4 {{ font-size:13px; color:var(--doux); margin:14px 0 4px; }}
+.sous {{ color:var(--doux); font-size:13px; margin:2px 0 10px; }}
+.outils-page {{ position:sticky; top:0; z-index:2; background:var(--fond); padding:8px 0; display:flex; gap:8px; }}
+.outils-page button {{ font:13px system-ui; padding:4px 10px; border-radius:6px; border:1px solid var(--bord);
+  background:var(--carte); color:var(--texte); cursor:pointer; }}
+.stats {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin:14px 0; }}
+.stat {{ background:var(--carte); border:1px solid var(--bord); border-radius:8px; padding:10px 12px; }}
+.stat b {{ display:block; font-size:20px; font-variant-numeric:tabular-nums; }}
+.stat span {{ color:var(--doux); font-size:12px; }}
+table {{ border-collapse:collapse; width:100%; font-size:13px; background:var(--carte); }}
+th, td {{ padding:6px 10px; border-bottom:1px solid var(--bord); text-align:left; vertical-align:top; }}
+th {{ color:var(--doux); font-weight:600; font-size:12px; }}
+td.n {{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }}
+.stats + table {{ border:1px solid var(--bord); border-radius:8px; overflow:hidden; display:block; overflow-x:auto; }}
+nav {{ margin:20px 0; }}
+ol.sommaire {{ margin:6px 0; padding:0; list-style:none; }}
+ol.sommaire li {{ display:flex; justify-content:space-between; gap:12px; padding:4px 0; border-bottom:1px solid var(--bord); }}
+.echange {{ margin:40px 0; padding-top:8px; border-top:2px solid var(--bord); }}
+.titre-partie {{ font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--doux); margin:22px 0 6px; }}
+.qr {{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:12px 0; }}
+.boite {{ background:var(--carte); border:1px solid var(--bord); border-left:4px solid var(--user); border-radius:8px; padding:8px 14px; }}
+.boite.reponse {{ border-left-color:var(--sortie); }}
+.boite.avert {{ border-left-color:var(--avert); }}
+.lbl {{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--doux); font-weight:600; margin:0; }}
+ol.deroule {{ list-style:none; padding:0; margin:0; background:var(--carte); border:1px solid var(--bord); border-radius:8px; overflow:hidden; }}
+ol.deroule li {{ display:grid; grid-template-columns:72px 1fr auto; gap:10px; padding:6px 12px; border-bottom:1px solid var(--bord); font-size:14px; }}
+ol.deroule li:last-child {{ border-bottom:0; }}
+ol.deroule li:hover {{ background:var(--fond); }}
+li .t {{ font:12px ui-monospace,monospace; color:var(--doux); padding-top:2px; }}
+li .m {{ color:var(--doux); font-size:12px; white-space:nowrap; }}
+li .ic {{ display:inline-block; width:1.2em; text-align:center; }}
+li.n1 .c {{ padding-left:26px; }} li.n2 .c {{ padding-left:52px; }} li.n3 .c, li.n4 .c {{ padding-left:78px; }}
+li.d-principal .ic, li.d-fin .ic {{ color:var(--sortie); }} li.d-appel .ic {{ color:var(--outil); }}
+li.d-role .ic, li.d-genre-role .ic {{ color:var(--role); }} li.d-juge .ic {{ color:var(--juge); }}
+li.d-genre-agent .ic {{ color:var(--agent); }} li.d-note {{ color:var(--avert); }}
+li.d-erreur {{ background:color-mix(in srgb, var(--erreur) 8%, transparent); }}
+.err {{ color:var(--erreur); font-weight:600; }}
+.tour {{ background:var(--carte); border:1px solid var(--bord); border-top:3px solid var(--sortie); border-radius:10px; margin:14px 0; }}
+.tour.role {{ border-top-color:var(--role); }} .tour.juge {{ border-top-color:var(--juge); }}
+.tour > header {{ padding:8px 14px; border-bottom:1px solid var(--bord); display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; }}
+.tour > header h3 {{ margin:0; font-size:16px; }}
+.pill {{ font-size:12px; padding:1px 8px; border-radius:99px; background:var(--code); }}
+.pill.modele {{ font-family:ui-monospace,monospace; }}
+.metr {{ font-size:12px; color:var(--doux); }}
+.cols {{ display:grid; grid-template-columns:1fr 1fr; }}
+.col {{ padding:8px 14px 12px; min-width:0; }}
+.col + .col {{ border-left:1px solid var(--bord); }}
+@media (max-width:900px) {{ .cols, .qr {{ grid-template-columns:1fr; }} .col + .col {{ border-left:0; border-top:1px solid var(--bord); }}
+  ol.deroule li {{ grid-template-columns:56px 1fr; }} li .m {{ grid-column:2; }} }}
+.msg {{ border:1px solid var(--bord); border-left:3px solid var(--doux); border-radius:6px; padding:5px 10px; margin:8px 0; background:var(--fond); }}
+.msg.user {{ border-left-color:var(--user); }} .msg.resultat {{ border-left-color:var(--outil); }}
+.msg.texte {{ border-left-color:var(--sortie); }} .msg.demande {{ border-left-color:var(--outil); }}
+.msg.erreur {{ border-left-color:var(--erreur); }} .msg.assistant {{ border-left-color:var(--sortie); opacity:.85; }}
+.qui {{ font-size:12px; color:var(--doux); }}
+pre {{ white-space:pre-wrap; word-break:break-word; margin:4px 0; font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }}
+pre.prose {{ font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }}
+dl.args {{ margin:4px 0; display:grid; grid-template-columns:max-content minmax(0,1fr); gap:2px 12px; }}
+dl.args dt {{ font:12px ui-monospace,monospace; color:var(--doux); padding-top:6px; }}
+dl.args dd {{ margin:0; min-width:0; border-bottom:1px dashed var(--bord); }}
+dl.args dd:last-child {{ border-bottom:0; }}
+.lien {{ font-size:12px; color:var(--user); margin-left:6px; }}
+.msg.demande details {{ margin-top:2px; }}
+details.resultat-agent {{ margin-top:12px; }}
+details > summary {{ cursor:pointer; color:var(--doux); font-size:13px; }}
+details.systeme, details.outils, details.reglages {{ margin:4px 0; }}
+.apercu {{ font-style:italic; }}
+.badge {{ font-size:11px; border-radius:4px; padding:0 6px; border:1px solid currentColor; }}
+.badge.nouveau {{ color:var(--user); }} .badge.modifie {{ color:var(--avert); }} .badge.inchange {{ color:var(--doux); opacity:.8; }}
+.puce {{ display:inline-block; font:12px ui-monospace,monospace; background:var(--code); color:var(--texte); border-radius:4px; padding:0 6px; margin:2px 2px 0 0; }}
+.deja {{ font-size:12px; color:var(--doux); margin:10px 0 0; }}
+.vide {{ color:var(--doux); font-style:italic; font-size:13px; }}
+.avert {{ color:var(--avert); font-size:13px; }}
+.ref {{ font:11px ui-monospace,monospace; background:var(--code); border-radius:4px; padding:0 5px; color:var(--doux); }}
+.appel {{ background:var(--carte); border:1px solid var(--bord); border-left:4px solid var(--outil); border-radius:10px; margin:14px 0 14px 28px; }}
+.appel.genre-role {{ border-left-color:var(--role); }} .appel.genre-agent {{ border-left-color:var(--agent); }}
+.appel.erreur {{ border-left-color:var(--erreur); }}
+.appel > header {{ padding:8px 14px; border-bottom:1px solid var(--bord); display:flex; flex-wrap:wrap; gap:4px 8px; align-items:baseline; }}
+.appel > header b {{ font-family:ui-monospace,monospace; }}
+.appel .corps {{ padding:2px 14px 12px; }}
+.appel .tour, .appel .appel {{ margin-left:0; }}
+.statut {{ font-size:11px; border-radius:4px; padding:0 6px; background:var(--code); }}
+.statut.ok {{ color:var(--sortie); }} .statut.erreur {{ color:var(--erreur); }} .statut.en-attente {{ color:var(--avert); }}
+details.sous-run {{ border:1px dashed var(--agent); border-radius:10px; padding:6px 12px; margin:12px 0; }}
+details.sous-run > summary {{ color:var(--agent); font-size:14px; }}
+.ctrl {{ font-size:13px; margin:4px 0; }} .ctrl.ok {{ color:var(--sortie); }} .ctrl.ko {{ color:var(--erreur); }}
+.ctrl table {{ margin-top:4px; color:var(--texte); }}
+.note {{ font-size:13px; margin:10px 0 10px 28px; padding:6px 12px; border-left:3px solid var(--avert); background:var(--carte); border-radius:6px; }}
+.note.compaction {{ margin:24px 0; }}
+:target {{ outline:2px solid var(--user); outline-offset:2px; }}
 </style></head>
 <body><main>
-<h1>{titre}</h1>
+<div class="outils-page"><button data-tout="1">Tout déplier</button><button data-tout="0">Tout replier</button></div>
 {entete}
 {avertissement}
+{sommaire}
 {corps}
-</main></body></html>
+</main>
+<script>
+document.querySelectorAll("[data-tout]").forEach(function (b) {{
+  b.addEventListener("click", function () {{
+    var ouvrir = b.getAttribute("data-tout") === "1";
+    document.querySelectorAll("details").forEach(function (d) {{ d.open = ouvrir; }});
+  }});
+}});
+</script>
+</body></html>
 """
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Journal Loom (.jsonl) -> page HTML des tours")
+    ap = argparse.ArgumentParser(description="Journal Loom (.jsonl) -> page HTML lisible")
     ap.add_argument("journal", type=Path, help="fichier .jsonl d'une session")
     ap.add_argument(
         "-o", "--sortie", type=Path, help="fichier HTML à écrire (défaut : à côté du journal)"
@@ -314,8 +1179,9 @@ def main() -> int:
     if not args.journal.is_file():
         print(f"Fichier introuvable : {args.journal}", file=sys.stderr)
         return 2
-    sortie = args.sortie or args.journal.with_suffix(".html")
-    sortie.write_text(construire(lire_evenements(args.journal)), encoding="utf-8")
+    sortie: Path = args.sortie or args.journal.with_suffix(".html")
+    evenements = lire_evenements(args.journal)
+    sortie.write_text(construire(evenements, f"Journal Loom — {args.journal.stem}"), encoding="utf-8")
     print(f"Écrit : {sortie}")
     return 0
 

@@ -2,7 +2,9 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.6 - non publiée
+## 2.0.7 - non publiée
+
+## 2.0.6 - publiée
 
 ### State de session (nouveau)
 - **State de session (F8)** : quelques valeurs typées et durables que la session garde d'un run à l'autre, et que la compaction ne touche pas. Un agent déclare ses clés (`state:`), chacune avec un JSON Schema contrôlé au chargement, une `description`, et au choix `required: true` (run refusé tant qu'elle n'a pas de valeur) ou `default:` (lue quand elle manque, jamais écrite). Les tailles se règlent par `sessions.state` (`max_value_bytes` 1 024, `max_total_bytes` 4 096, en octets de JSON compact). Sans `state:` ni `main.context`, rien ne change : requêtes et empreintes identiques, journaux identiques. Référence : `docs/state-et-context.md` ; `fonctions.md`, point 51.
