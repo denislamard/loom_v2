@@ -1,0 +1,44 @@
+# Corpus de non-régression : l'agent relance de examples/j7/relance, dont la session
+# tient un state — posé par chaque cas à l'ouverture de son run, et par chercher_devis
+# (from). Modèles simulés. Chaque journal de journaux/ doit se rejouer à l'identique
+# (tests/regression/test_regression.py), avec le state qu'il porte. Le rejeu sert à chaque
+# appel d'outil le résultat du journal, state compris : un changement des seules sources
+# from: ne le fait pas diverger. La suite est donc aussi jouée, et ses `expect.state`
+# contrôlent le state que chaque run laisse.
+# Réenregistrer, après un changement voulu, et relire le diff :
+#   uv run loom eval tests/regression/j7/relance.yaml --export tests/regression/j7/journaux/
+config: ../../../examples/j7/relance/loom.yaml
+agent: relance
+cases:
+  # Seule la signature est posée : le ton vaut cordial par défaut, sans être écrit.
+  - name: cordial
+    input: Relance le client du devis D-2026-042.
+    state: {signature: Plomberie Dupont}
+    expect:
+      status: completed
+      contains: [D-2026-042, Plomberie Dupont, Avez-vous pu]
+      called: [{name: chercher_devis, arguments: {numero: D-2026-042}}, rediger_relance]
+      state:
+        signature: Plomberie Dupont
+        devis_courant: D-2026-042
+        client_courant: Mme Martin
+        ton: null
+  # Le ton posé par l'application arrive jusqu'au rôle.
+  - name: ferme
+    input: Relance le client du devis D-2026-042.
+    state: {signature: Plomberie Dupont, ton: ferme}
+    expect:
+      status: completed
+      contains: [D-2026-042, donner suite]
+      called: [{name: chercher_devis, arguments: {numero: D-2026-042}}, rediger_relance]
+      state: {ton: ferme, devis_courant: D-2026-042, client_courant: Mme Martin}
+  # Un devis absent du carnet : la recherche échoue, elle ne pose rien.
+  - name: absent
+    input: Relance le client du devis D-2026-999.
+    state: {signature: Plomberie Dupont}
+    expect:
+      status: completed
+      contains: [ne figure pas]
+      called: [{name: chercher_devis, arguments: {numero: D-2026-999}}]
+      not_called: [rediger_relance]
+      state: {devis_courant: null, client_courant: null}

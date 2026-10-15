@@ -917,6 +917,9 @@ async def test_a_replayed_result_is_served_as_recorded() -> None:
         def serves(self, tool: object, call: PendingCall, run_id: object) -> bool:
             return True
 
+        def from_journal(self, run_id: object, call_id: str) -> bool:
+            return True
+
         async def output(self, *args: object) -> tuple[ToolOutput, None]:
             return recorded, None
 
@@ -927,6 +930,131 @@ async def test_a_replayed_result_is_served_as_recorded() -> None:
     executor.replay = Journal()  # pyright: ignore[reportAttributeAccessIssue]
     [output] = completed(await collect(executor, awaiting(call("c1", "fiche")))).values()
     assert output == recorded
+
+
+async def test_a_double_result_is_posed_like_the_tool_result() -> None:
+    """Une doublure rend un résultat neuf : le state s'y pose comme sur celui de l'outil.
+
+    En variante, en éval ou au banc : ses sources ``from`` s'appliquent, et ce
+    que la doublure écrit elle-même est contrôlé.
+    """
+
+    class Doublure:
+        def serves(self, tool: object, call: PendingCall, run_id: object) -> bool:
+            return True
+
+        def from_journal(self, run_id: object, call_id: str) -> bool:
+            return False
+
+        async def output(self, *args: object) -> tuple[ToolOutput, None]:
+            return data(FICHE, state={"intrus": 1}), None
+
+        async def approve(self, run_id: object, pending: PendingApproval) -> Approved:
+            return Approved()
+
+    fiche = RecordingTool(spec("fiche"))
+    executor = stateful(fiche)
+    executor.replay = Doublure()  # pyright: ignore[reportAttributeAccessIssue]
+    [output] = completed(await collect(executor, awaiting(call("c1", "fiche")))).values()
+    assert output.state == {"client": "C-002", "ville": "Dijon", "etiquette": "vip"}
+    assert output.state_refused == ("intrus non posé : clé non déclarée dans 'state'",)
+    assert fiche.calls == []
+
+
+async def test_a_result_read_from_the_journal_counts_for_the_batch_size() -> None:
+    """D7 : ce que pose un résultat lu au journal compte pour les appels suivants du lot.
+
+    En variante, un lot peut mêler un résultat lu et un résultat neuf : le
+    second ne passe pas la limite qu'il aurait dépassée en direct.
+    """
+    big = StateKeyRule(schema={"type": "string"})
+    rules = StateRules({"a": big, "b": big}, max_value_bytes=1000, max_total_bytes=1500)
+
+    class Melange:
+        def serves(self, tool: object, call: PendingCall, run_id: object) -> bool:
+            return True
+
+        def from_journal(self, run_id: object, call_id: str) -> bool:
+            return call_id == "c1"
+
+        async def output(
+            self, run_id: object, call_id: str, *args: object
+        ) -> tuple[ToolOutput, None]:
+            if call_id == "c1":
+                return ToolOutput(state={"a": "x" * 900}), None
+            # La doublure répond après la lecture du journal.
+            await asyncio.sleep(0.02)
+            return ToolOutput(state={"b": "x" * 900}), None
+
+        async def approve(self, run_id: object, pending: PendingApproval) -> Approved:
+            return Approved()
+
+    executor = ToolExecutor([RecordingTool(spec("a")), RecordingTool(spec("b"))], state_rules=rules)
+    executor.replay = Melange()  # pyright: ignore[reportAttributeAccessIssue]
+    outputs = completed(await collect(executor, awaiting(call("c1", "a"), call("c2", "b"))))
+    assert outputs["c1"].state == {"a": "x" * 900}
+    assert outputs["c2"].state == {}
+    assert "max_total_bytes (1500)" in outputs["c2"].state_refused[0]
+
+
+async def test_an_erasure_read_from_the_journal_frees_its_room_in_the_batch() -> None:
+    """D7, D10 : la clé effacée par un résultat lu au journal ne compte plus pour la suite."""
+    big = StateKeyRule(schema={"type": "string"})
+    rules = StateRules({"a": big, "b": big}, max_value_bytes=1000, max_total_bytes=1000)
+
+    class Melange:
+        def serves(self, tool: object, call: PendingCall, run_id: object) -> bool:
+            return True
+
+        def from_journal(self, run_id: object, call_id: str) -> bool:
+            return call_id == "c1"
+
+        async def output(
+            self, run_id: object, call_id: str, *args: object
+        ) -> tuple[ToolOutput, None]:
+            if call_id == "c1":
+                return ToolOutput(state={"a": None}), None
+            await asyncio.sleep(0.02)
+            # 992 octets seul ; avec « "a":null », il passerait la limite.
+            return ToolOutput(state={"b": "x" * 984}), None
+
+        async def approve(self, run_id: object, pending: PendingApproval) -> Approved:
+            return Approved()
+
+    executor = ToolExecutor([RecordingTool(spec("a")), RecordingTool(spec("b"))], state_rules=rules)
+    executor.replay = Melange()  # pyright: ignore[reportAttributeAccessIssue]
+    session: dict[str, JsonValue] = {"a": "x" * 900}
+    state = awaiting(call("c1", "a"), call("c2", "b"))
+    outputs = completed([e async for e in executor.run_batch(state, session_state=session)])
+    assert outputs["c1"].state == {"a": None}
+    assert (outputs["c2"].state, outputs["c2"].state_refused) == ({"b": "x" * 984}, ())
+
+
+async def test_a_sub_run_keeps_no_state_from_the_journal() -> None:
+    """D3 : un résultat lu au journal pour un sous-run n'y pose rien, comme en direct."""
+    recorded = data(FICHE, state={"client": "C-002"})
+
+    class Journal:
+        def serves(self, tool: object, call: PendingCall, run_id: object) -> bool:
+            return True
+
+        def from_journal(self, run_id: object, call_id: str) -> bool:
+            return True
+
+        async def output(self, *args: object) -> tuple[ToolOutput, None]:
+            return recorded, None
+
+        async def approve(self, run_id: object, pending: PendingApproval) -> Approved:
+            return Approved()
+
+    child = awaiting(call("c1", "fiche")).model_copy(
+        update={"parent_run_id": RunId("parent"), "depth": 1}
+    )
+    executor = stateful(RecordingTool(spec("fiche")))
+    executor.replay = Journal()  # pyright: ignore[reportAttributeAccessIssue]
+    [output] = completed([e async for e in executor.run_batch(child)]).values()
+    assert (output.state, output.state_refused) == ({}, ())
+    assert output.data == FICHE
 
 
 async def test_after_tool_policies_decide_which_result_writes() -> None:
@@ -1026,6 +1154,9 @@ async def test_a_replayed_result_keeps_its_state_whatever_the_policies_rebuild()
 
     class Journal:
         def serves(self, tool: object, call: PendingCall, run_id: object) -> bool:
+            return True
+
+        def from_journal(self, run_id: object, call_id: str) -> bool:
             return True
 
         async def output(self, *args: object) -> tuple[ToolOutput, None]:

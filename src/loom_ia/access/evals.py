@@ -348,7 +348,7 @@ async def _play(
         return replace(played, skipped=CAP_REACHED.format(spent=spent, cap=cap))
     tenant = suite.tenant_of(case)
     try:
-        result = await loom.run(suite.agent, case.request, tenant=tenant)
+        result = await loom.run(suite.agent, case.request, tenant=tenant, state=case.state)
     except Exception as exc:
         # Une éval dit ce qui a cassé et continue : le rapport le porte.
         logger.warning("Éval %s/%s : le run n'a pas pu aller au bout", variant.name, case.name)
@@ -356,7 +356,8 @@ async def _play(
     tenant_id = tenant or DEFAULT_TENANT
     events = await loom.events(result.run_id, session_id=result.session_id, tenant_id=tenant_id)
     state = await loom.state(result.run_id, session_id=result.session_id, tenant_id=tenant_id)
-    outcome = await run_outcome(result, events, tools, loom.artifacts)
+    kept = await loom.session_state(result.session_id, tenant_id=tenant_id)
+    outcome = await run_outcome(result, events, tools, loom.artifacts, state=kept)
     checks: list[CheckResult] = check(case.expect, outcome)
     judge_cost = 0.0
     criteria = suite.criteria(case)
@@ -499,9 +500,17 @@ def _replay_run(run: EvalRun, report: ReplayReport) -> EvalRun:
 
 
 async def run_outcome(
-    result: RunResult, events: Sequence[Event], tools: EvalTools, artifacts: ArtifactStore
+    result: RunResult,
+    events: Sequence[Event],
+    tools: EvalTools,
+    artifacts: ArtifactStore,
+    *,
+    state: Mapping[str, JsonValue] | None = None,
 ) -> Outcome:
-    """Ce que le run a rendu, et les appels d'outil de son arbre : reçu, sort et résultat."""
+    """Ce que le run a rendu, et les appels d'outil de son arbre : reçu, sort et résultat.
+
+    ``state`` : le state de la session après le run (``Loom.session_state``).
+    """
     done = {
         (event.run_id, event.payload.call_id): event.payload.output
         for event in events
@@ -532,6 +541,7 @@ async def run_outcome(
         data=result.data,
         error_type=result.error_type,
         tools=tuple(uses),
+        state=dict(state or {}),
     )
 
 

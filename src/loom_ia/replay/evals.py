@@ -11,12 +11,17 @@ Deux sortes d'attendus :
 
 - des **contrôles** déterministes : le statut du run ; son texte (contient,
   ne contient pas, motif) ; un champ de sa sortie structurée ; un outil
-  appelé, avec une partie de ses arguments, ou jamais appelé ;
+  appelé, avec une partie de ses arguments, ou jamais appelé ; une clé du
+  state de la session après le run, avec sa valeur ou absente ;
 - des **critères** notés par le **juge d'éval**, au format des juges de 3.3
   (``rule``, ``min_score``) : il voit la demande et la réponse finale, et rend
   une note par critère. Il juge **hors du run** : il ne le change pas, et ce
   qu'il coûte est compté à part. Les juges propres à l'agent, eux, tournent
   dans le run comme configurés.
+
+Un cas peut poser le **state de la session** à l'ouverture de son run
+(``state``), comme l'application le fait par ``Loom.run(state=…)`` : chaque
+cas part d'une session neuve.
 
 Un cas peut aussi **rejouer des journaux** (``replay: journaux/*.jsonl``,
 J6.3b) : chaque run fini de chaque fichier est rejoué à l'identique avec la
@@ -166,6 +171,11 @@ class Expect(DomainModel):
     ``not_contains`` ou un ``not_called`` tiennent d'un run mort). Avec
     ``status``, ce contrôle seul décide du statut : ``status: failed`` attend
     l'échec.
+
+    ``state`` se lit sur le state de la session après le run, tel que le
+    journal l'a gardé : ce que l'application a posé, ce que les outils des
+    runs terminés ont écrit, sans valeur par défaut. ``null`` attend la clé
+    absente.
     """
 
     status: RunStatus | None = None
@@ -178,6 +188,8 @@ class Expect(DomainModel):
     fields: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
     called: tuple[ToolExpectation, ...] = ()
     not_called: tuple[str, ...] = ()
+    # Clés du state de la session après le run, et leur valeur ; ``null`` : absente.
+    state: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
 
     @field_validator("contains", "not_contains", "matches")
     @classmethod
@@ -206,6 +218,7 @@ class Expect(DomainModel):
             + len(self.fields)
             + len(self.called)
             + len(self.not_called)
+            + len(self.state)
         )
 
 
@@ -219,6 +232,9 @@ class EvalCase(DomainModel):
     replay: Annotated[str, Field(min_length=1)] | None = None
     # Client au nom duquel le cas est joué ; à défaut, celui de la suite.
     tenant: TenantId | None = None
+    # State que l'application pose à l'ouverture du run (``Loom.run(state=…)``) :
+    # chaque cas part d'une session neuve, ses clés obligatoires comprises.
+    state: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
     expect: Expect = Expect()
     criteria: tuple[EvalCriterion, ...] = ()
 
@@ -233,11 +249,13 @@ class EvalCase(DomainModel):
                 f"cas {self.name!r} : une demande ('input') ou des journaux à rejouer "
                 "('replay'), pas les deux"
             )
-        if self.replay is not None and (self.expect.count or self.criteria or self.tenant):
+        if self.replay is not None and (
+            self.expect.count or self.criteria or self.tenant or self.state
+        ):
             raise ValueError(
-                f"cas {self.name!r} : un cas de rejeu n'a ni attendus, ni critères, ni client — "
-                "il passe si chaque run de ses journaux se rejoue à l'identique, au nom du "
-                "client que le journal porte"
+                f"cas {self.name!r} : un cas de rejeu n'a ni attendus, ni critères, ni client, "
+                "ni state — il passe si chaque run de ses journaux se rejoue à l'identique, au "
+                "nom du client et avec le state que le journal porte"
             )
         return self
 
@@ -474,6 +492,10 @@ class EvalTools:
             self._effects[key] = tool.spec.side_effects
         return fate != "run"
 
+    def from_journal(self, run_id: RunId, call_id: str) -> bool:
+        # Une éval ne lit aucun journal : doublure et refus sont des résultats neufs.
+        return False
+
     async def output(
         self,
         run_id: RunId,
@@ -529,9 +551,11 @@ class Outcome:
     data: JsonValue
     error_type: str | None
     tools: tuple[ToolUse, ...] = ()
+    # State de la session après le run, tel que le journal l'a gardé.
+    state: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
 
-type CheckKind = Literal["status", "text", "field", "tool", "judge", "replay"]
+type CheckKind = Literal["status", "text", "field", "tool", "judge", "replay", "state"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -618,7 +642,22 @@ def check(expect: Expect, outcome: Outcome) -> list[CheckResult]:
                 kind="tool",
             )
         )
+    for key, value in expect.state.items():
+        results.append(_state_check(key, value, outcome.state))
     return results
+
+
+def _state_check(key: str, wanted: JsonValue, state: Mapping[str, JsonValue]) -> CheckResult:
+    """Une clé du state après le run : sa valeur, ou son absence (``None``)."""
+    present = key in state
+    if wanted is None:
+        detail = f"vaut {_compact(state[key])}" if present else ""
+        return CheckResult(f"state {key} absent", not present, detail, kind="state")
+    label = f"state {key} = {_compact(wanted)}"
+    if not present:
+        return CheckResult(label, False, "absent du state", kind="state")
+    same = same_json(state[key], wanted)
+    return CheckResult(label, same, "" if same else f"vaut {_compact(state[key])}", kind="state")
 
 
 def judged(scores: Sequence[CriterionScore]) -> list[CheckResult]:

@@ -306,6 +306,17 @@ def state_message(values: Mapping[str, JsonValue]) -> Message:
     return Message.user(tagged(SESSION_STATE_TAG, state_json(dict(values))))
 
 
+def apply_writes(tally: dict[str, JsonValue], writes: Mapping[str, JsonValue]) -> None:
+    """Reporte dans ``tally`` des écritures déjà retenues, qui comptent pour la suite du lot (D7).
+
+    Ce sont celles d'un résultat lu au journal : elles ne repassent pas par
+    ``StateRules.posed``, mais les appels suivants du lot doivent les compter.
+    """
+    merged = _merged(tally, writes)
+    tally.clear()
+    tally.update(merged)
+
+
 def _merged(
     values: Mapping[str, JsonValue], writes: Mapping[str, JsonValue]
 ) -> dict[str, JsonValue]:

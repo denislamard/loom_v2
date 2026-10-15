@@ -35,6 +35,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
+from pydantic import JsonValue
+
 from loom_ia.access import Loom, RunResult
 from loom_ia.access.api import doubles_problem
 from loom_ia.access.evals import run_outcome
@@ -189,20 +191,25 @@ class Bench:
         *,
         tenant: TenantId | None = None,
         session_id: SessionId | None = None,
+        state: Mapping[str, JsonValue] | None = None,
     ) -> RunResult:
         """Lance un run et attend sa fin ; ce que ses outils ont reçu et rendu est gardé.
 
         Chaque faux doit viser un outil de l'agent ou de ses sous-agents, jamais
         un rôle : vérifié au premier run de chaque agent (``BenchError``).
-        ``session_id`` enchaîne les tours d'une conversation.
+        ``session_id`` enchaîne les tours d'une conversation ; ``state`` est
+        celui que l'application pose à l'ouverture du run (``Loom.run``). Un
+        faux rend un résultat neuf : les sources ``from`` du state s'y
+        appliquent comme au résultat de l'outil.
         """
         loom = self.loom
         self._check(loom, agent, tenant)
-        result = await loom.run(agent, message, tenant=tenant, session_id=session_id)
+        result = await loom.run(agent, message, tenant=tenant, session_id=session_id, state=state)
         tenant_id = tenant or DEFAULT_TENANT
         events = await loom.events(result.run_id, session_id=result.session_id, tenant_id=tenant_id)
+        kept = await loom.session_state(result.session_id, tenant_id=tenant_id)
         self._outcomes[result.run_id] = await run_outcome(
-            result, events, self._tools, loom.artifacts
+            result, events, self._tools, loom.artifacts, state=kept
         )
         self._tenants[result.run_id] = tenant_id
         return result

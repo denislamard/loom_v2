@@ -1,0 +1,73 @@
+name: relance
+description: >-
+  Relance un client au sujet d'un devis en attente ; la session tient la
+  signature, le ton et le devis en cours (modèles simulés).
+
+main:
+  model: FAKE_MAIN
+  system_file: relance.md
+  # Le state de la session, en dernier message de chaque requête.
+  context: [session_state]
+
+max_iterations: 6
+
+# Les clés que le state de la session peut porter, chacune avec son schéma :
+# une écriture qui ne le tient pas est refusée.
+state:
+  signature:
+    schema: {type: string, minLength: 1, maxLength: 80}
+    description: Nom de l'entreprise, au bas de chaque e-mail.
+    # Posée par l'application : sans elle, le run est refusé avant de commencer.
+    required: true
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances, choisi par l'artisan.
+    # Valeur lue tant que l'application n'en pose pas ; elle n'est jamais écrite.
+    default: cordial
+  devis_courant:
+    schema: {type: string, pattern: "^D-[0-9]{4}-[0-9]{3}$"}
+    description: Numéro du devis dont parle la conversation.
+    # Posée par chaque résultat réussi de chercher_devis : son champ `numero`.
+    from: [{tool: chercher_devis, path: /numero}]
+  client_courant:
+    schema: {type: string}
+    description: Client du devis dont parle la conversation.
+    from: [{tool: chercher_devis, path: /client}]
+
+tools:
+  - python: chercher_devis
+    side_effects: none
+    idempotent: true
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance du devis cherché, prêt à envoyer.
+    model: FAKE_ROLE
+    system_file: rediger.md
+    input_schema:
+      type: object
+      properties:
+        consignes: {type: string, description: Corrections demandées par l'artisan, s'il y en a}
+    # Du state, le rôle ne reçoit que le ton et la signature.
+    context: [user_input, {tool_results: [chercher_devis]}, {session_state: [ton, signature]}]
+    input_template: |-
+      Demande : {{ context.user_input }}
+
+      Devis :
+      {{ context.tool_results.chercher_devis }}
+
+      Ton : {{ context.session_state.ton }}
+      Signature : {{ context.session_state.signature }}
+      Consignes : {{ args.consignes }}
+    llm: {max_tokens: 2000, params: {temperature: 0.3}}
+    terminal: true
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      repair: {max_attempts: 1}
+      on_failure: fail

@@ -49,8 +49,9 @@ State de la session (option C) : un outil lit le state tel qu'au début de son
 lot (``ToolContext.state``). Son résultat réussi, après les politiques
 ``after_tool`` et avant ses fichiers et son déport, reçoit les écritures que
 ses sources ``from`` et lui-même posent, contrôlées par ``StateRules`` ; un
-résultat en erreur n'en pose aucune. Au rejeu, le résultat servi porte déjà
-les siennes : elles ne sont pas recalculées.
+résultat en erreur n'en pose aucune. Au rejeu, un résultat lu au journal
+porte déjà les siennes : elles ne sont pas recalculées. Celui d'une doublure
+est neuf : il les reçoit comme celui de l'outil.
 """
 
 import asyncio
@@ -151,7 +152,7 @@ from loom_ia.engine.offload import (
     visible_text,
 )
 from loom_ia.engine.refs import RefError, RefOrigin, ResultIndex, ref_origin
-from loom_ia.engine.session_state import StateRules, keeps_state
+from loom_ia.engine.session_state import StateRules, apply_writes, keeps_state
 from loom_ia.engine.writer import SessionWriter
 
 logger = logging.getLogger(__name__)
@@ -277,9 +278,19 @@ class ToolReplay(Protocol):
     (``arguments`` : ceux que le journal garde, que le rejeu compare) et ceux
     que l'outil aurait reçus (``resolved`` : références résolues, arguments
     remplacés par une politique ou une approbation) — ceux d'une doublure.
+    ``from_journal`` dit, après ``output``, si ce résultat est celui du
+    journal : il porte alors le state que le run d'origine a posé.
     """
 
     def serves(self, tool: AnyTool, call: PendingCall, run_id: RunId) -> bool: ...
+
+    def from_journal(self, run_id: RunId, call_id: str) -> bool:
+        """Le résultat servi pour cet appel vient du journal, avec ses écritures du state.
+
+        Sinon — doublure, refus —, il est neuf : le state se pose dessus comme
+        sur le résultat de l'outil (sources ``from``, contrôles).
+        """
+        ...
 
     async def output(
         self,
@@ -939,7 +950,8 @@ class ToolExecutor:
             output, consumption = await self.replay.output(
                 state.run_id, call.call_id, spec.name, call.arguments, item.arguments
             )
-            served = output
+            if self.replay.from_journal(state.run_id, call.call_id):
+                served = output
         elif isinstance(tool, DelegatedTool):
             produced = tool.run(item.arguments, context, view)
             output, consumption, exchange = await _delegated(
@@ -959,8 +971,11 @@ class ToolExecutor:
             return
         if policies:
             output = await self._after_tool(item, output, exchange, context, view, emit, policies)
-        if served is not None:
+        if served is not None and self.state_rules and keeps_state(view.state):
+            # Lu au journal : le state que le run d'origine a retenu, compté pour le lot.
             output = _as_served(output, served)
+            if tally is not None:
+                apply_writes(tally, output.state)
         else:
             output = self._posed(output, spec.name, view, tally if tally is not None else {})
         output = await self._settle(output, spec, call.call_id, view, emit)
@@ -1374,7 +1389,7 @@ def _kind(value: object) -> str:
 
 
 def _as_served(output: ToolOutput, served: ToolOutput) -> ToolOutput:
-    """Résultat d'un appel rejoué : les écritures du state sont celles du journal.
+    """Résultat d'un appel lu au journal : les écritures du state sont les siennes.
 
     Les politiques ``after_tool`` tournent de nouveau sur le résultat servi, et
     peuvent en rendre un neuf (repli d'un contrat) : le state que le journal

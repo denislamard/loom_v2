@@ -24,6 +24,14 @@ rejouent, il dit où ils s'écartent sinon ; ses journaux sont lus avant le
 premier run ; un fichier illisible, un run inachevé ou d'un autre agent, un
 motif sans fichier le font tomber. Un cas peut être joué au nom de son client.
 
+Et le state de la session (option C) : un cas pose le sien à l'ouverture de
+son run, part d'une session neuve, et son journal se rejoue avec ; un state
+refusé fait tomber le cas en le disant ; une doublure ou un faux du banc rend
+un résultat neuf, sur lequel les sources ``from`` s'appliquent comme sur celui
+de l'outil ; ``Bench.run`` pose le state comme ``Loom.run`` ; ``expect.state``
+contrôle une clé du state après le run, sa valeur ou son absence, au banc
+comme en éval.
+
 Et le kit (J6.3c) : ``called`` lit ce que l'outil a reçu — référence résolue,
 arguments d'une politique —, en le disant à côté de ce que le modèle a écrit ;
 ``Loom(models=…)`` sert des clients fournis, sans les fermer ; le banc
@@ -52,7 +60,7 @@ from loom_ia.access.cli import main as cli_main
 from loom_ia.access.evals import evaluate
 from loom_ia.adapters.models import ModelConfigError
 from loom_ia.config import ConfigError, load_config
-from loom_ia.core.events import ApprovalGranted, Event, ToolCompleted
+from loom_ia.core.events import ApprovalGranted, Event, RunStarted, ToolCompleted
 from loom_ia.core.model import (
     Approved,
     Message,
@@ -65,6 +73,8 @@ from loom_ia.core.model import (
     SessionId,
     TenantId,
 )
+from loom_ia.core.projections import session_state
+from loom_ia.engine import StateRefused
 from loom_ia.replay import (
     IDENTICAL,
     EvalCriterion,
@@ -356,6 +366,10 @@ def test_a_suite_is_read_relative_to_its_file(labo: Path) -> None:
             "un cas de rejeu n'a ni attendus, ni critères, ni client",
         ),
         (
+            {"cases": [{"name": "c", "replay": "j/*.jsonl", "state": {"client": "C-002"}}]},
+            "ni client, ni state — il passe si chaque run de ses journaux se rejoue",
+        ),
+        (
             {
                 "judge": {"model": "JUGE"},
                 "cases": [
@@ -476,6 +490,36 @@ def test_checks_say_what_they_found() -> None:
         results["contient « dupont »"].detail == ""
         and results["contient « dupont »"].kind == "text"
     )
+
+
+def test_a_state_check_says_what_it_found() -> None:
+    """Une clé du state après le run : sa valeur au sens JSON, ou son absence (``null``)."""
+    outcome = Outcome(
+        status=RunStatus.COMPLETED,
+        text="",
+        data=None,
+        error_type=None,
+        state={"devis": "D-1", "n": 1, "liste": [1, 2], "actif": True},
+    )
+    attendu = Expect(
+        state={
+            "devis": "D-1",
+            "liste": [1, 3],
+            "client": "C-1",
+            "ton": None,
+            "n": None,
+            "actif": 1,
+        }
+    )
+    assert attendu.count == 6
+    assert [(c.label, c.passed, c.detail, c.kind) for c in check(attendu, outcome)] == [
+        ('state devis = "D-1"', True, "", "state"),
+        ("state liste = [1, 3]", False, "vaut [1, 2]", "state"),
+        ('state client = "C-1"', False, "absent du state", "state"),
+        ("state ton absent", True, "", "state"),
+        ("state n absent", False, "vaut 1", "state"),
+        ("state actif = 1", False, "vaut true", "state"),
+    ]
 
 
 @pytest.mark.parametrize("key", ["contains", "not_contains", "matches"])
@@ -1339,6 +1383,75 @@ async def test_a_case_is_played_for_its_own_tenant(labo: Path) -> None:
         await jouer(suite(labo, cases=[{**DEUX_CAS[1], "tenant": "inconnu"}]))
 
 
+# --- Le state de la session (option C) ---------------------------------------------------------
+
+
+def avec_state(config: Path) -> None:
+    """L'agent de la config déclare un state, que l'orchestrateur reçoit à chaque requête.
+
+    ``destinataire`` : posé par l'application, obligatoire. ``calcul`` et
+    ``envoye`` : posés par un résultat réussi de ``calculer`` et d'``envoyer``.
+    """
+    chemin = config.parent / "agents" / "demo.yaml"
+    agent = yaml.safe_load(chemin.read_text(encoding="utf-8"))
+    agent["main"]["context"] = ["session_state"]
+    agent["state"] = {
+        "destinataire": {"schema": {"type": "string"}, "required": True},
+        "calcul": {"schema": {"type": "string"}, "from": [{"tool": "calculer", "value": "fait"}]},
+        "envoye": {"schema": {"type": "boolean"}, "from": [{"tool": "envoyer", "value": True}]},
+    }
+    chemin.write_text(yaml.safe_dump(agent, allow_unicode=True), encoding="utf-8")
+
+
+ETAT: dict[str, JsonValue] = {"destinataire": "martin"}
+
+
+async def test_a_case_poses_its_state_when_its_run_opens(labo: Path) -> None:
+    """Chaque cas part d'une session neuve, avec son state ; son journal se rejoue avec lui."""
+    avec_state(labo)
+    journaux = labo.parent / "journaux"
+    apres = {"destinataire": "martin", "calcul": "fait", "envoye": True}
+    cas = [
+        {**DEUX_CAS[0], "state": ETAT, "expect": {"state": apres}},
+        {
+            **DEUX_CAS[1],
+            "state": {"destinataire": "dupont"},
+            "expect": {"state": {"destinataire": "dupont", "envoye": None}},
+        },
+    ]
+    path = suite(labo, cases=cas, doubles={"envoyer": "doublures_labo:faux_envoi"})
+    assert load_suite(path).cases[0].state == ETAT
+    report = await jouer(path, export=journaux)
+    assert report.passed, "\n".join(render_eval(report))
+    relance = _journal(journaux / "base--relance--1.jsonl")
+    calcul = _journal(journaux / "base--calcul--1.jsonl")
+    [ouvert] = [e.payload for e in relance if isinstance(e.payload, RunStarted)]
+    assert ouvert.state == ETAT
+    # L'envoi doublé rend un résultat neuf : sa source ``from`` s'y applique.
+    assert session_state(relance) == apres
+    assert [c.kind for r in report.runs for c in r.checks] == ["state"] * 5
+    assert session_state(calcul) == {"destinataire": "dupont", "calcul": "fait"}
+    # Rejoués, les deux runs reposent le state de leur journal, à l'identique.
+    assert (await jouer(suite(labo, cases=[REJEU]))).passed
+
+
+async def test_a_case_whose_state_is_refused_fails_saying_why(labo: Path) -> None:
+    """Clé obligatoire absente, clé non déclarée : le run ne part pas, le cas tombe et le dit."""
+    avec_state(labo)
+    cas = [
+        {**DEUX_CAS[1], "name": "sans"},
+        {**DEUX_CAS[1], "name": "intrus", "state": {**ETAT, "intrus": 1}},
+        {**DEUX_CAS[1], "name": "bon", "state": ETAT},
+    ]
+    report = await jouer(suite(labo, cases=cas))
+    sans, intrus, bon = report.runs
+    assert sans.error is not None and sans.error.startswith("StateRefused: State refusé : ")
+    assert "destinataire" in sans.error
+    assert intrus.error is not None and "intrus : clé non déclarée" in intrus.error
+    assert sans.run_id is None and intrus.run_id is None
+    assert bon.passed and not report.passed
+
+
 # --- Le banc (J6.3c) --------------------------------------------------------------------------
 
 
@@ -1496,6 +1609,33 @@ async def test_a_bench_journal_replays(labo: Path) -> None:
         await banc.export(result, fichier)
     [rejoue] = await assert_replays(labo, fichier)
     assert rejoue.identical and [r.run_id for r in rejoue.reports] == [result.run_id]
+
+
+async def test_a_bench_run_poses_its_state_and_a_fake_poses_like_its_tool(labo: Path) -> None:
+    avec_state(labo)
+    modele = relance_scriptee()
+
+    def faux(destinataire: str) -> str:
+        return f"envoyé à {destinataire}"
+
+    async with Bench(labo, models={"MAIN": modele}, tools={"envoyer": faux}) as banc:
+        with pytest.raises(StateRefused, match="destinataire"):
+            await banc.run("demo", RELANCE)
+        result = await banc.run("demo", RELANCE, state=ETAT)
+        etat = await banc.loom.session_state(result.session_id)
+        tenus = banc.expect(result, state={"envoye": True, "calcul": "fait"})
+        with pytest.raises(AssertionError, match="✗ state envoye absent — vaut true"):
+            banc.expect(result, state={"envoye": None})
+    assert all(c.passed for c in tenus)
+    assert result.ok
+    assert etat == {"destinataire": "martin", "calcul": "fait", "envoye": True}
+    # L'orchestrateur reçoit le state à la fin de chaque requête : posé, puis complété.
+    assert [r.messages[-1].text for r in modele.requests] == [
+        '<session_state>\n{"destinataire":"martin"}\n</session_state>',
+        '<session_state>\n{"calcul":"fait","destinataire":"martin"}\n</session_state>',
+        '<session_state>\n{"calcul":"fait","destinataire":"martin","envoye":true}\n'
+        "</session_state>",
+    ]
 
 
 async def test_an_instance_serves_provided_models_and_leaves_them_open(labo: Path) -> None:

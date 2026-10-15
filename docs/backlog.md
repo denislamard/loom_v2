@@ -374,3 +374,23 @@ Ce qui manque, c'est la **défense en profondeur** : un `SELECT` sans `WHERE ten
 **Mise à jour (5.3c, 24/09) :** le magasin **Redis** est arrivé sans que le port change. Il en tient compte à sa façon — l'appartenance d'une clé (client, session) est rangée dans un ensemble à part, ce qui donne l'oubli RGPD sans balayage —, mais il n'a pas plus de barrière que les tables SQL. Le changement de port coûte donc maintenant **trois** adaptateurs au lieu de deux, et Firestore (5.3d) en ferait quatre.
 
 **Statut :** sans échéance — ne bloque aucun jalon.
+
+---
+
+## #022 — Variante : `from:` sans données sur un résultat d'un autre run, déporté
+
+**Origine :** state de session, étape 7 (rejeu et corpus), relecture du 15/10.
+
+**Constat :** en variante, le livre porte tout l'arbre du run, et `match_tool` sert le premier appel du journal de même nom et mêmes arguments, quel que soit le run qui l'a fait. Un résultat lu dans le journal d'**un autre run** de l'arbre (un appel du run racine qui retrouve celui d'un sous-run, ou l'inverse) n'est pas celui que ce run-ci a posé : depuis l'étape 7, il est traité comme un résultat neuf, et les sources `from` s'y appliquent. Mais si ce résultat avait été **déporté** (#16), le journal n'en garde qu'un aperçu et une référence, sans `data` : une source `path:` est alors refusée (« chemin … absent du résultat »), et le modèle lit une ligne de refus qu'il n'a pas eue en direct, où le state se lit avant le déport.
+
+**Ce que ça touche :** les variantes seulement — ni le rejeu exact (qui ne sert que les appels de son propre run), ni les évals, ni le direct. Il faut réunir à la fois : le même appel, mêmes arguments, dans le run racine et dans un sous-run ; un résultat assez gros pour être déporté ; une clé du state dont la source sur cet outil est un `path:`. Le state de la variante diffère alors de celui du direct pour cette clé.
+
+**Pistes :**
+
+| Piste | Effet | Coût |
+|---|---|---|
+| Ne rien faire | Le cas reste possible, et dit par la ligne de refus | Aucun |
+| Relire les données déportées avant d'appliquer `from:` | Le state de la variante redevient celui du direct | Le rejeu doit lire le stockage d'artefacts du journal ; un essai sur un arbre réel |
+| N'apparier qu'avec les appels du même run | Plus de résultat d'un autre run servi au racine | Change l'appariement des outils en variante, qui cherche aujourd'hui dans tout l'arbre : un sous-agent relancé ne retrouverait plus les appels de son premier passage |
+
+**Statut :** noté le 15/10 avec Denis, sans échéance — ne bloque aucun jalon.

@@ -35,6 +35,17 @@ Et depuis un journal exporté (J6.3b) :
   disant ;
 - ``assert_replays`` rejoue à part et lève avec chaque écart ;
 - ``loom replay --journal`` rend 0, 1 ou 2.
+
+Et avec le state de la session (option C) :
+
+- un run qui pose du state — l'application à l'ouverture, ses outils par
+  ``from`` — se rejoue à l'identique, le second run de la session avec le
+  state que le premier a laissé, et le state rejoué est celui d'origine ;
+- un state différent au journal fait diverger le rejeu, sur les messages ;
+- deux outils d'un lot qui écrivent la même clé : l'ordre des appels décide,
+  en direct comme au rejeu, quel que soit l'ordre où ils ont fini (D9) ;
+- en variante, un résultat lu au journal garde son state ; un outil exécuté
+  ou une doublure pose le sien, comme en direct ; un refus n'en pose aucun.
 """
 
 import asyncio
@@ -89,6 +100,7 @@ from loom_ia.core.model import (
     artifact_uri,
 )
 from loom_ia.core.ports import AnsweringClient, ModelClient, ModelError, stopped_by_client
+from loom_ia.core.projections import session_state
 from loom_ia.engine import RunContext, begin_run, drive
 from loom_ia.engine.hooks import PolicyFailure
 from loom_ia.engine.model_call import ModelCall
@@ -1502,3 +1514,347 @@ def test_the_variant_command_shows_both_answers_without_obeying_them(
     sortie = capsys.readouterr().out
     assert f"--- en variante\n{HOSTILE_SHOWN}" in sortie
     assert not {"\x1b", "\x07", "\x9b"} & set(sortie)
+
+
+# --- Le state de la session (option C) ----------------------------------------------
+
+OUTILS_ETAT = '''
+import asyncio
+import os
+from pathlib import Path
+
+from loom_ia.tools import tool
+
+
+@tool
+def chercher(numero: str) -> dict[str, str]:
+    """Cherche un devis."""
+    return {"numero": numero, "client": "Mme Martin"}
+
+
+@tool
+async def lent() -> dict[str, str]:
+    """Appelé le premier, il finit le dernier."""
+    await asyncio.sleep(0.05)
+    return {"v": "lent"}
+
+
+@tool
+async def vite() -> dict[str, str]:
+    """Appelé le second, il finit le premier."""
+    return {"v": "vite"}
+
+
+@tool
+async def noter(texte: str) -> dict[str, str]:
+    """Note au CRM : chaque note laisse une ligne dans notes.txt."""
+    with Path(os.environ["NOTES_REJEU"]).open("a", encoding="utf-8") as fichier:
+        fichier.write(texte + "\\n")
+    return {"id": "N-1"}
+'''
+
+
+def relance_etat(*, devis: str = "D-1", note: str = "relancé") -> list[dict[str, Any]]:
+    """Cherche, lance deux outils dans un lot, note, conclut ; au tour suivant, fait rédiger."""
+    return [
+        {
+            "with_text": "Relance",
+            "tool_calls": [{"name": "chercher", "arguments": {"numero": devis}}],
+        },
+        {
+            "with_text": "Relance",
+            "tool_calls": [{"name": "lent", "arguments": {}}, {"name": "vite", "arguments": {}}],
+        },
+        {"with_text": "Relance", "tool_calls": [{"name": "noter", "arguments": {"texte": note}}]},
+        {"with_text": "Relance", "text": "Fait."},
+        {
+            "with_text": "Encore",
+            "tool_calls": [{"name": "rediger", "arguments": {"consigne": "plus court"}}],
+        },
+        {"with_text": "Encore", "text": "Refait."},
+    ]
+
+
+@pytest.fixture
+def etat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Un agent à state, que l'orchestrateur reçoit à chaque requête et le rôle en partie.
+
+    ``ton`` : posé par l'application, obligatoire. ``devis`` : le numéro que
+    rend ``chercher``. ``dernier`` : écrit par ``lent`` et ``vite``, d'un même
+    lot. ``note`` : l'identifiant que rend ``noter``, irréversible. ``MAIN`` a
+    fait les runs ; ``AUTRE`` cherche D-2 et note autre chose.
+    """
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "outils_etat.py").write_text(OUTILS_ETAT, encoding="utf-8")
+    monkeypatch.setenv("NOTES_REJEU", str(tmp_path / "notes.txt"))
+    modeles: list[dict[str, Any]] = [
+        {"id": "MAIN", "sdk": "fake", "model": "main-1", "params": {"script": relance_etat()}},
+        {
+            "id": "AUTRE",
+            "sdk": "fake",
+            "model": "main-2",
+            "params": {"script": relance_etat(devis="D-2", note="autre")},
+        },
+        {
+            "id": "ROLE",
+            "sdk": "fake",
+            "model": "role-1",
+            # Il ne répond que s'il reçoit le ton et le devis du state.
+            "params": {
+                "script": [{"with_text": "Ton : ferme\nDevis : D-1", "text": "Relance courte."}]
+            },
+        },
+    ]
+    config = {
+        "version": 1,
+        "imports": ["outils_etat"],
+        "models": modeles,
+        "storage": {"events": {"backend": "jsonl", "path": "data"}},
+        "telemetry": {"logging": {"level": "CRITICAL"}},
+    }
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    agent = {
+        "name": "demo",
+        "main": {"model": "MAIN", "system": "Tu relances.", "context": ["session_state"]},
+        "tools": [
+            {"python": "chercher"},
+            {"python": "lent"},
+            {"python": "vite"},
+            {"python": "noter", "side_effects": "irreversible"},
+        ],
+        "roles": [
+            {
+                "name": "rediger",
+                "description": "Rédige la relance.",
+                "model": "ROLE",
+                "system": "Tu rédiges.",
+                "input_schema": {"type": "object", "properties": {"consigne": {"type": "string"}}},
+                "context": [{"session_state": ["ton", "devis"]}],
+                "input_template": (
+                    "Consigne : {{ args.consigne }}\n"
+                    "Ton : {{ context.session_state.ton }}\n"
+                    "Devis : {{ context.session_state.devis }}"
+                ),
+            }
+        ],
+        "state": {
+            "ton": {"schema": {"enum": ["cordial", "ferme"]}, "required": True},
+            "devis": {
+                "schema": {"type": "string"},
+                "from": [{"tool": "chercher", "path": "/numero"}],
+            },
+            "dernier": {
+                "schema": {"type": "string"},
+                # Déclarés dans l'ordre inverse des appels : c'est l'ordre des appels qui compte.
+                "from": [{"tool": "vite", "path": "/v"}, {"tool": "lent", "path": "/v"}],
+            },
+            "note": {"schema": {"type": "string"}, "from": [{"tool": "noter", "path": "/id"}]},
+        },
+    }
+    (tmp_path / "agents" / "demo.yaml").write_text(
+        yaml.safe_dump(agent, allow_unicode=True), encoding="utf-8"
+    )
+    return tmp_path / "loom.yaml"
+
+
+ETAT_FINAL: dict[str, JsonValue] = {
+    "ton": "ferme",
+    "devis": "D-1",
+    "dernier": "vite",
+    "note": "N-1",
+}
+
+
+async def relances(path: Path) -> list[RunId]:
+    """Deux runs dans la session : le premier pose le ton, le second hérite du state."""
+    async with Loom.from_config(path) as loom:
+        first = await loom.run("demo", "Relance D-1.", session_id=SESSION, state={"ton": "ferme"})
+        second = await loom.run("demo", "Encore.", session_id=SESSION)
+    assert first.ok and second.ok
+    return [first.run_id, second.run_id]
+
+
+def notes(path: Path) -> list[str]:
+    fichier = path.parent / "notes.txt"
+    return fichier.read_text(encoding="utf-8").splitlines() if fichier.exists() else []
+
+
+def avant(events: Sequence[Event], run_id: RunId) -> list[Event]:
+    """La session avant ce run."""
+    first = next(e.seq for e in events if e.run_id == run_id)
+    return [e for e in events if e.seq < first]
+
+
+async def test_a_run_with_state_replays_identically_and_ends_with_the_same_state(
+    etat: Path,
+) -> None:
+    run_ids = await relances(etat)
+    original = await journal(etat)
+    assert session_state(original) == ETAT_FINAL
+    async with Loom.from_config(etat) as loom:
+        for run_id in run_ids:
+            report = await loom.replay(run_id, session_id=SESSION)
+            assert report.identical, report.divergence
+            assert report.model_calls[0] == report.model_calls[1] > 0
+            jusque = [
+                e for e in original if e.seq <= max(x.seq for x in original if x.run_id == run_id)
+            ]
+            assert session_state([*avant(original, run_id), *report.events]) == session_state(
+                jusque
+            )
+    # Le second run n'a rien posé : il a vu le state du premier, son rôle aussi (ROLE ne
+    # répond qu'avec le ton et le devis ; sinon son script s'épuise, en erreur).
+    assert [e.payload.state for e in original if isinstance(e.payload, RunStarted)] == [
+        {"ton": "ferme"},
+        {},
+    ]
+    [redige] = [
+        e.payload.output
+        for e in original
+        if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "rediger"
+    ]
+    assert not redige.is_error and redige.as_text == "Relance courte."
+    assert notes(etat) == ["relancé"]
+
+
+async def test_a_different_state_in_the_journal_makes_the_replay_diverge(
+    etat: Path, tmp_path: Path
+) -> None:
+    """Le state posé à l'ouverture du premier run change : chaque run diverge, sur les messages."""
+    [premier, _] = await relances(etat)
+    retouche = [
+        e.model_copy(update={"payload": e.payload.model_copy(update={"state": {"ton": "cordial"}})})
+        if isinstance(e.payload, RunStarted) and e.run_id == premier
+        else e
+        for e in await journal(etat)
+    ]
+    fichier = ecrit(tmp_path / "retouche.jsonl", retouche)
+    async with Loom.from_config(etat) as loom:
+        rejoue = await loom.replay_journal(fichier)
+    assert not rejoue.identical and len(rejoue.reports) == 2
+    for report in rejoue.reports:
+        divergence = report.divergence
+        assert divergence is not None and divergence.parts == ("messages",)
+        assert "appel de modèle n°1 (main au journal)" in divergence.where
+
+
+def sans_state(event: Event, outil: str) -> Event:
+    """L'événement, et si c'est un résultat de cet outil, sans les écritures du state."""
+    payload = event.payload
+    if not isinstance(payload, ToolCompleted) or payload.tool_name != outil:
+        return event
+    output = payload.output.model_copy(update={"state": {}})
+    return event.model_copy(update={"payload": payload.model_copy(update={"output": output})})
+
+
+async def test_a_result_read_from_the_journal_poses_the_recorded_state(
+    etat: Path, tmp_path: Path
+) -> None:
+    """Le rejeu sert le state que le journal a retenu, sans le recalculer par ``from``.
+
+    Le résultat de ``chercher`` perd ses écritures au journal : rejoué, il n'en
+    pose pas, et la requête suivante s'écarte — sur ses messages, au second
+    appel. En variante aussi, un résultat lu au journal garde son state.
+    """
+    [premier, _] = await relances(etat)
+    fichier = ecrit(
+        tmp_path / "sans-state.jsonl", [sans_state(e, "chercher") for e in await journal(etat)]
+    )
+    async with Loom.from_config(etat) as loom:
+        [exact] = (await loom.replay_journal(fichier, run_id=premier)).reports
+        [variante] = (await loom.replay_journal(fichier, run_id=premier, mode="variant")).reports
+    divergence = exact.divergence
+    assert divergence is not None and divergence.parts == ("messages",)
+    assert "appel de modèle n°2 (main au journal)" in divergence.where
+    assert variante.comparison is not None
+    assert ("chercher", "journal") in variante.comparison.calls
+    assert "devis" not in session_state(variante.events)
+
+
+async def test_a_variant_keeps_the_state_of_a_record_from_its_own_run_only() -> None:
+    """Lu dans le journal d'un autre run de l'arbre, un résultat est neuf pour ce run-ci.
+
+    Le livre d'une variante porte tout l'arbre : un appel du run racine peut
+    retrouver celui d'un sous-run, dont le state n'est pas le sien (D3).
+    """
+
+    @tool
+    def fiche() -> dict[str, str]:
+        """Fiche."""
+        return {}
+
+    racine, sous_run = RunId("racine"), RunId("sous-run")
+    events: list[Event] = []
+    for run_id in (sous_run, racine):
+        lu = RunJournal(agent="demo", session_id=SESSION, run_id=run_id).start("Cherche.")
+        lu.model_turn(tool_call_message(("c1", "fiche", {})))
+        lu.tool_results({"c1": ToolOutput(state={"client": f"C-{run_id}"})})
+        store = InMemoryEventStore()
+        events += await store.append(lu.take(), expected_seq=0)
+    tools = VariantTools(ReplayBook.of(events))
+    for call_id in ("c1", "c2"):
+        assert tools.serves(fiche, PendingCall(call_id=call_id, name="fiche"), racine)
+        await tools.output(racine, call_id, "fiche", {}, {})
+    # Le premier appel du racine trouve celui du sous-run, le second le sien.
+    assert tools.fates == {(racine, "c1"): "journal", (racine, "c2"): "journal"}
+    assert not tools.from_journal(racine, "c1")
+    assert tools.from_journal(racine, "c2")
+    assert not tools.from_journal(racine, "inconnu")
+
+
+async def test_the_call_order_decides_the_state_live_and_in_replay(etat: Path) -> None:
+    """D9 : ``lent`` est appelé le premier et finit le dernier ; ``vite`` l'emporte partout."""
+    [premier, _] = await relances(etat)
+    original = await journal(etat)
+    finis = [
+        e.payload.tool_name
+        for e in original
+        if isinstance(e.payload, ToolCompleted) and e.payload.tool_name in ("lent", "vite")
+    ]
+    assert finis == ["vite", "lent"]
+    assert session_state(e for e in original if e.run_id == premier)["dernier"] == "vite"
+    async with Loom.from_config(etat) as loom:
+        report = await loom.replay(premier, session_id=SESSION)
+    assert report.identical, report.divergence
+    assert session_state(report.events)["dernier"] == "vite"
+
+
+async def test_a_variant_keeps_the_journal_state_and_poses_what_runs_anew(etat: Path) -> None:
+    """Ce qui ne change rien est servi avec son state ; un outil exécuté ou doublé pose le sien,
+    un refus rien."""
+    [premier, _] = await relances(etat)
+    original = [e for e in await journal(etat) if e.run_id == premier]
+
+    def doublure(texte: str) -> dict[str, str]:
+        return {"id": "N-double"}
+
+    async with Loom.from_config(etat) as loom:
+        meme = await loom.replay(premier, session_id=SESSION, mode="variant")
+        doublee = await loom.replay(
+            premier,
+            session_id=SESSION,
+            mode="variant",
+            models={"main": "AUTRE"},
+            doubles={"noter": doublure},
+        )
+        refusee = await loom.replay(
+            premier, session_id=SESSION, mode="variant", models={"main": "AUTRE"}
+        )
+    assert meme.identical and meme.comparison is not None and meme.comparison.real_models == 0
+    assert session_state(meme.events) == session_state(original)
+    assert doublee.comparison is not None
+    assert doublee.comparison.calls == (
+        ("chercher", "run"),
+        ("lent", "journal"),
+        ("vite", "journal"),
+        ("noter", "double"),
+    )
+    # D-2 cherché pour de vrai, le lot lu au journal, la note doublée.
+    assert session_state(doublee.events) == {
+        "ton": "ferme",
+        "devis": "D-2",
+        "dernier": "vite",
+        "note": "N-double",
+    }
+    assert session_state(refusee.events) == {"ton": "ferme", "devis": "D-2", "dernier": "vite"}
+    assert notes(etat) == ["relancé"]

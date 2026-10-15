@@ -466,6 +466,10 @@ class JournalTools:
         # Un rôle est de la logique : il tourne, et son modèle rejoue.
         return tool.spec.kind != "role"
 
+    def from_journal(self, run_id: RunId, call_id: str) -> bool:
+        # Au rejeu identique, tout résultat servi vient du journal.
+        return True
+
     async def approve(self, run_id: RunId, pending: PendingApproval) -> ApprovalDecision:
         """La décision du journal, rendue en ligne."""
         return await self.book.approve(run_id, pending)

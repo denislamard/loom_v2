@@ -166,6 +166,14 @@ class VariantTools:
             self.fates[key] = decision.fate
         return decision.fate in ("journal", "double", "refused")
 
+    def from_journal(self, run_id: RunId, call_id: str) -> bool:
+        # Doublé ou refusé, le résultat est neuf : le state s'y pose comme en direct.
+        # Lu dans le journal d'un autre run de l'arbre aussi : son state n'est pas
+        # celui que ce run-ci a posé. Seul un appel lu au journal a un ``record``.
+        decision = self._decisions.get((run_id, call_id))
+        record = decision.record if decision is not None else None
+        return record is not None and record.run_id == run_id
+
     async def output(
         self,
         run_id: RunId,
