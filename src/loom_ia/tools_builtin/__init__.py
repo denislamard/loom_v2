@@ -17,7 +17,9 @@ from typing import Final
 from loom_ia.core.ports import Tool
 
 # Référence ``loom.<outil>`` → ``module:attr`` de l'outil.
-BUILTIN_TOOLS: Final[Mapping[str, str]] = {}
+BUILTIN_TOOLS: Final[Mapping[str, str]] = {
+    "loom.fetch_page": "loom_ia.tools_builtin.fetch_page:fetch_page",
+}
 
 
 def builtin_tool(reference: str) -> Tool:
