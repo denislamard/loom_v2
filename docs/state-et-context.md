@@ -1,10 +1,10 @@
-# State de session et contexte de l'orchestrateur — proposition pour loom_v2
+# State de session et contexte de l'orchestrateur
 
-> Statut : **proposition**, rien n'est codé. Rédigé après lecture de `core/events`, `core/projections`, `core/model`, `engine/loop.py`, `engine/executor.py`, `engine/roles.py`, `agents/spec.py`, `config/models.py`, `sessions/`, `replay/` et des tests associés. Les numéros de ligne sont ceux du dépôt au moment de la lecture.
+> Statut : **réalisé en 2.0.6**. Ce document décrit ce que fait loom. La proposition d'origine — un événement `state.set` et des `writers` — a été remplacée par l'**option C** après l'analyse du 14/10 (`state-et-context-analyse.md`), qui garde le raisonnement, les preuves et le plan de non-régression. Voir aussi `fonctions.md` (F8, point 51), `conception.md` (§9.5, §9.6, §11.2, §14.3, §17.4, §18), l'exemple `examples/j7/` et le guide `howto/05-state-de-session.md`.
 
 ## 1. Le problème
 
-Ce que loom garde aujourd'hui d'une session :
+Ce que loom garde d'une session :
 
 | Quoi | Où | Survit à la compaction ? |
 |---|---|---|
@@ -13,206 +13,189 @@ Ce que loom garde aujourd'hui d'une session :
 | Résultats d'outils structurés | dans `tool.completed` | **Plus dans l'historique** après compaction (seul le journal les garde) |
 | Faits métier | base de l'application | Oui, hors loom |
 
-Il manque deux choses, une par côté de la requête :
+Il manquait deux choses, une par côté de la requête :
 
-1. **Un state de session** : quelques valeurs **typées, petites, durables**, que l'application ou un outil pose (« client courant = C-002 ») et que tout le reste relit — sans dépendre de ce que le modèle a gardé dans sa conversation ni de la qualité d'un résumé.
-2. **Un contexte déclaratif pour l'orchestrateur** : aujourd'hui seuls les **rôles** déclarent ce qu'ils reçoivent (`context:` : `session_summary`, `last_turns`, `tool_results`…). `main` n'a rien d'équivalent : sa requête est « system + historique + messages du run », point.
+1. **Un state de session** : quelques valeurs **typées, petites, durables**, que l'application ou un outil pose (« client courant = C-002 ») et que tout le reste relit, sans dépendre de ce que le modèle a gardé de la conversation ni de la qualité d'un résumé.
+2. **Un contexte déclaratif pour l'orchestrateur** : seuls les rôles déclaraient ce qu'ils reçoivent (`context:`). `main` recevait « système + historique + messages du run », rien d'autre.
 
-Le fil conducteur : le **state** est ce que le système *sait* (contrôle) ; le **contexte** est ce que le modèle *voit* à un appel donné. Le contexte est une projection du state, de l'historique et des résultats d'outils, choisie par la config.
+Le **state** est ce que le système *sait* ; le **contexte** est ce que le modèle en *voit* à un appel donné.
 
-## 2. Ce que le code impose (contraintes vérifiées)
+## 2. Le principe
 
-1. **Le journal est la source de vérité** ; `RunState`, historique, coûts, rejeu en sont des projections (`core/projections/`, fonctions pures). Un state doit suivre la même règle : *événements écrits, projection pure*, sinon la reprise après plantage et le rejeu divergent.
-2. **La compaction ne supprime rien.** `session.compacted` n'est qu'un marqueur ; le journal complet reste lisible, et `drive()` le relit déjà en entier (`events = await ctx.store.read(...)`, `loop.py` ~l. 497). Un state peut donc se **recalculer depuis le début du journal** sans passer par les marqueurs. Un snapshot du state reste une optimisation possible, jamais une nécessité (même logique que `snapshot.py`).
-3. **Couches (import-linter)** : `core` n'importe rien d'autre ; `engine` ne dépend ni de `config`, `agents`, `sessions`, `tools`… Le state (modèle + projection + événement) va dans `core` ; l'injection dans `engine` ; la déclaration dans `agents/spec.py` et `config/`.
-4. **Lecture tolérante (DEC-1)** : un champ **ajouté** à un payload est ignoré par un ancien lecteur ; un **type d'événement inconnu** ne l'est pas — l'union `DurablePayload` est discriminée sur `type`, un `type` absent de l'union fait échouer la validation. Conséquence : ajouter un type d'événement rend les journaux *nouveaux* illisibles par un *ancien* loom (l'inverse marche). Précédent dans le dépôt : `run.claimed` et `run.cancelled` ont été ajoutés après coup à l'union (commentaire de `DURABLE_PAYLOADS`, `payloads.py` ~l. 1158). À couvrir par un test sur le modèle de `test_lecture_tolerante.py`.
-5. **Les événements de catégorie `session` sont écartés des projections par run** : `fold`/`_by_run` filtrent `category != "session"` (`run_state.py` ~l. 437/452, `access/api.py` ~l. 737), `Cuts` les ignore (`snapshot.py` l. 105), et ils portent l'identifiant de la session comme `run_id` quand ils sont écrits hors run. Un événement de state **ne doit donc pas** être de catégorie `session` : il doit être visible dans le `RunState` du run en cours (pour que l'appel de modèle suivant, dans le même run, voie la valeur posée à l'étape précédente) et être clos avec son run.
-6. **`ToolContext` est figé** et n'a aucun accès à un magasin de state (`core/ports/tool.py`) ; les outils reçoivent `tenant_id`, `session_id`, `run_id`, `call_id`, `agent`, `caller`, idempotence.
-7. **Construction de la requête** : `_model_step` (`loop.py` ~l. 1580-1620) assemble `system` (+ `REFS_HINT` si besoin), `messages = (*previous, *messages du run, *hint)`, puis exécute les politiques `before_model` avec `turns` et `summary` déjà disponibles dans `RunContext` (posés par `_driven` à partir de `earlier`). C'est le point d'injection naturel, à côté de ce qui existe.
-8. **Contexte des rôles** : `engine/roles.py` (~l. 225-275) construit le message du rôle à partir de `ContextItem` (`agents/spec.py` l. 120-140) et `RoleSpec` impose que tout contexte déclaré soit **utilisé** dans `input_template` (#50). Cette mécanique se réutilise telle quelle pour un nouvel item `session_state`.
-9. **Schéma de config** : `DomainModel` = `extra="forbid"` + `frozen` ; le JSON Schema (`config/schema.py`) est généré par Pydantic, donc tout nouveau champ de `AgentSpec` y apparaît sans travail supplémentaire. Un champ **optionnel avec valeur par défaut** ne casse aucune config existante.
+- **Le journal fait foi.** Le state est une projection pure du journal (`session_state`), recalculée sur tout le journal : la reprise après plantage, le rejeu et les évals le retrouvent sans rien de plus.
+- **Aucun type d'événement nouveau** (D1). Le state voyage dans deux champs d'événements existants, omis quand ils sont vides :
+  - `run.started.state` : ce que l'application pose à l'ouverture d'un run ;
+  - la sortie de `tool.completed` (`ToolOutput.state`) : ce que pose le résultat réussi d'un outil.
 
-## 3. Conception du state
+  Un journal sans state s'écrit exactement comme avant ; un loom 2.0.5 relit un journal qui en porte (un champ ajouté est ignoré, un type d'événement inconnu ne le serait pas) ; le rejeu ressert le state avec le résultat de l'outil ; écrit avec son `tool.completed`, il ne peut pas en être séparé par un plantage.
+- **Des clés déclarées** (D6) : chacune a un JSON Schema, contrôlé au chargement. Un outil ou l'application ne posent jamais une clé que l'agent ne déclare pas.
+- **Rien de métier dans loom** : « client courant » est une clé que l'application déclare ; loom ne connaît que des clés, des schémas et des valeurs. Les données métier restent dans la base de l'application : le state n'en porte que les repères.
 
-### 3.1 Modèle
+## 3. Déclarer
 
-Un state de session = un dictionnaire `clé → valeur JSON`, dont les **clés sont déclarées** par l'agent (avec un JSON Schema par clé), pour qu'un outil ou le modèle ne puisse pas y poser n'importe quoi.
-
-```yaml
-# agents/agent.yaml
-state:
-  client_courant:
-    schema: { type: string, pattern: "^C-[0-9]+$" }
-    description: Code du client dont on parle.        # montrée au modèle si la clé est injectée
-    writers: [get_client]                              # outils autorisés à la poser
-  dernier_devis:
-    schema: { type: string }
-    writers: [creer_devis]
-```
-
-Règles :
-- valeur **petite** (limite de taille par clé et au total, configurable) : ce n'est ni un stockage de documents ni de la mémoire longue (F6 / RAG reste pour les notes) ;
-- une clé a **un schéma** ; une écriture invalide est **refusée** comme le sont les arguments d'outil (erreur renvoyée à l'outil, rien n'est écrit) ;
-- `writers` : liste blanche d'outils. Sans liste, seule l'application (API/`run(..., state=...)`) peut écrire. Évite qu'une sortie d'outil détourne un état de contrôle ;
-- pas de `delete` implicite : une valeur `null` écrite = clé effacée (visible dans le journal).
-
-### 3.2 Événement
-
-Un seul nouveau type de payload, **`state.set`**, ajouté à `DurablePayload` :
-
-```python
-class StateSet(Payload):
-    category: ClassVar[EventCategory] = "tool"      # voir 2.5 : reste dans le run
-    type: Literal["state.set"] = "state.set"
-    key: str
-    value: JsonValue                                 # None = effacé
-    source: Literal["tool", "application"]
-    call_id: str | None = None                       # l'appel d'outil qui l'a posé
-    tool_name: str | None = None
-    content_fields = ("value",)                      # masquage / chiffrement / rétention comme un contenu
-```
-
-- Catégorie `tool` : aucun changement de `EventCategory`, aucun changement des filtres `session`, `Cuts`, `_by_run`.
-- Écrit **dans le même lot atomique** que le `tool.completed` qui l'a produit (le lot d'un outil est déjà une écriture unique) : jamais un résultat sans son state, ni l'inverse.
-- `content_fields=("value",)` : la valeur est une donnée (« C-002 », un téléphone, un montant) ; elle suit la rédaction et la rétention des contenus (voir `core/events/redaction.py`) — pas de fuite par un chemin que la config RGPD ne couvre pas.
-- Rejeu (`replay/`) : il rejoue le journal ; un événement ignoré par son `match` ne le perturbe pas, mais il faut un test (rejeu d'une session qui contient du state).
-
-### 3.3 Projection
-
-Dans `core/projections/` (pure, comme `history.py`) :
-
-```python
-def session_state(events: Iterable[Event]) -> Mapping[str, JsonValue]:
-    """State de la session : dernier `state.set` de chaque clé, dans l'ordre du journal."""
-```
-
-- Elle lit **tout** le journal (ou repart d'un snapshot si on l'ajoute plus tard) ; elle ne dépend d'aucun marqueur, donc **survit à la compaction, au trim et au snapshot** sans rien y changer.
-- Dans un run : `RunState` gagne `state_delta: Mapping[str, JsonValue] = {}` (valeur par défaut → anciens états inchangés), alimenté par `apply` sur `StateSet`. L'état vu par un appel de modèle = `{**état avant le run, **state_delta}`.
-- Ordre : l'ordre du journal (`seq`) fait foi. Deux runs concurrents sur la même session : le dernier écrit gagne, déterministe au rejeu. À documenter, pas à verrouiller.
-- Runs échoués / annulés : leurs `state.set` **comptent** (l'outil a eu lieu ; le journal dit la vérité). C'est une différence assumée avec l'historique, qui ne garde que les tours réussis. Alternative possible si on préfère : ignorer les runs non réussis dans la projection — décision à prendre (§6).
-- Sous-runs : `earlier` est vide pour eux (`rooted` faux, `loop.py` ~l. 505) ; ils ne voient pas le state. Un rôle, lui, le reçoit par son contexte (§4.3), construit depuis le run parent.
-
-### 3.4 API côté outil
-
-Deux écritures possibles, la première suffit pour démarrer :
-
-```python
-# 1) retour d'outil — aucune dépendance au contexte
-return ToolOutput(blocks=(...), state={"client_courant": code})
-
-# 2) lecture dans l'outil
-async def creer_devis(ctx: ToolContext, ...):
-    code = ctx.state.get("client_courant")
-```
-
-- `ToolOutput.state` : champ **optionnel** (`Mapping[str, JsonValue] = {}`), consommé par l'exécuteur qui émet les `state.set` puis **retire** le champ avant d'écrire `tool.completed` (le journal garde ainsi un seul chemin de vérité, et les anciens lecteurs voient un `ToolOutput` inchangé).
-- `ToolContext.state` : vue **en lecture seule** (mapping figé) calculée au lancement de l'appel — dans `executor._execute` (~l. 883), qui a déjà `view.state` ; il suffit d'un paramètre de plus (valeur par défaut vide : les tests et outils existants ne changent pas).
-- Les outils Python décorés par `@tool` (`tools/python.py`) renvoient déjà `str | ToolOutput | Image…` : rien à casser, seul le cas `ToolOutput` apporte `state`.
-- Côté application : `loom.run(prompt, session_id=..., state={"client_courant": "C-002"})` et/ou une commande CLI. Elle écrit des `state.set` `source="application"` dans `begin_run`, dans le même lot que `run.started` et `user.message`, pour rester dans le run (contrainte 5). À confirmer à l'implémentation.
-
-### 3.5 Compaction
-
-Rien à changer pour la correction (le state ne dépend pas de l'historique). Deux améliorations optionnelles, séparées :
-- le résumé de compaction ne doit **pas** recopier le state (il est réinjecté par ailleurs) — ajouter une phrase au prompt de `_compaction` ;
-- si la relecture complète devient coûteuse, ajouter un champ optionnel `state` à `SessionSnapshot` (champ ajouté = lecture tolérante, DEC-1). Trois écrivains de marqueurs seraient à tenir à jour (`snapshot.write_snapshot`, `compaction._refresh`, `compaction.compact`) : **ne pas le faire tant qu'il n'y a pas de besoin mesuré**.
-
-## 4. Conception du contexte de l'orchestrateur
-
-### 4.1 Déclaration
-
-Même vocabulaire que les rôles, sur `main` :
+Dans l'agent (`agents/*.yaml`), l'exemple de `examples/j7/relance/` :
 
 ```yaml
 main:
-  model: HAIKU
-  system_file: system.md
-  context:                       # NOUVEAU, optionnel
-    - session_state              # tout le state déclaré
-    - { session_state: [client_courant] }   # ou certaines clés
-    - session_summary            # déjà connu des rôles
+  model: FAKE_MAIN
+  system_file: relance.md
+  context: [session_state]          # le state à la fin de chaque requête
+
+state:
+  signature:
+    schema: {type: string, minLength: 1, maxLength: 80}
+    description: Nom de l'entreprise, au bas de chaque e-mail.
+    required: true                  # run refusé tant qu'elle n'a pas de valeur
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances, choisi par l'artisan.
+    default: cordial                # lue quand la clé manque, jamais écrite
+  devis_courant:
+    schema: {type: string, pattern: "^D-[0-9]{4}-[0-9]{3}$"}
+    description: Numéro du devis dont parle la conversation.
+    from: [{tool: chercher_devis, path: /numero}]
+  client_courant:
+    schema: {type: string}
+    description: Client du devis dont parle la conversation.
+    from: [{tool: chercher_devis, path: /client}]
 ```
 
-- Sans `context`, **comportement identique à aujourd'hui** (valeur par défaut `()` ; aucun journal, test ou config existant ne change).
-- Réutilise `ContextItem` (`agents/spec.py`) ; on y ajoute `session_state` (forme simple ou avec clés). `MainRole` reçoit `context: tuple[ContextItem, ...] = ()`.
-- Pour `main`, tous les items n'ont pas de sens : `user_input` est déjà dans les messages, `attachments` aussi. On valide en config que `main.context` n'accepte que `session_state` et, plus tard, `session_summary`/`last_turns` s'ils sont utiles (sinon erreur claire au chargement — comme les autres validations de `spec.py`).
+Règles contrôlées au chargement :
 
-### 4.2 Injection
+- **Nom** : un identifiant (lettres, chiffres, `_`, 64 caractères, pas de chiffre en tête), que les templates citent tel quel.
+- **`schema`** : un JSON Schema valide, appliqué avec le moteur borné des contrats de sortie (un motif qui ne finit pas est arrêté).
+- **`description`** : ce que la clé désigne, donné avec sa valeur à qui la reçoit.
+- **`from`** : les outils dont un résultat réussi pose la clé (D12), chacun cité une fois, avec un `path` (pointeur JSON, RFC 6901, dans les **données** du résultat ; `""` les prend entières) ou une `value` fixe (`null` efface la clé). L'outil est un outil de l'agent : Python, rôle, sous-agent, ou un préfixe MCP ou de source (connu seulement au début du run). `path` exige des données : il est refusé pour un outil Python dont la signature annonce `str`, `None` ou `Image` et qui n'a pas de contrat de sortie à schéma, pour un rôle sans contrat de sortie à schéma, et pour un sous-agent.
+- **`required`** et **`default`** s'excluent (D13). `default` et chaque `value` doivent tenir le schéma et les limites.
+- **Limites** (D7), à la racine : `sessions.state.max_value_bytes` (1 024 par défaut) et `max_total_bytes` (4 096), en octets de JSON compact. Les valeurs par défaut d'un agent doivent tenir ensemble dans la seconde.
+- **`main.context`** n'accepte que `session_state` (la demande, l'historique et les pièces jointes sont déjà dans les messages), entier ou limité à des clés déclarées : `[{session_state: [devis_courant, ton]}]`.
 
-Dans `_model_step`, juste après la construction de `system`/`messages` et **avant** les politiques `before_model` :
+## 4. Écrire
 
-```python
-system = with_context(system, ctx, state)    # bloc <session_state>…</session_state>
+### 4.1 L'application
+
+`Loom.run(agent, message, state={…})`, de même `stream` et `submit` ; en ligne de commande, `loom run --state CLE=VALEUR`, répétable (la valeur se lit en JSON — `3`, `true`, `null` qui efface, `"texte"` —, sinon elle est prise telle quelle). REST et MCP ne posent pas de state dans cette version (D5).
+
+Avant d'ouvrir le run, loom contrôle chaque écriture (clé déclarée, schéma, taille), puis vérifie que chaque clé `required` a une valeur dans le state qui en résulte, celui des runs précédents compris. Un refus lève `StateRefused` (une `ValueError` ; `problems` porte un motif par clé) **avant tout écrit**, y compris avant la compaction de sécurité d'une session trop longue : le journal ne garde aucune trace d'une demande refusée. La CLI dit « Demande refusée : State refusé : signature : clé obligatoire sans valeur » et rend le code 2 ; REST rend 422 (lancement d'un run, déclencheur). Un agent qui ne déclare pas de state refuse tout state posé ; un sous-run n'en reçoit jamais de l'application.
+
+Ce qui est posé va dans le `run.started` du run, avant la demande.
+
+### 4.2 Un outil
+
+La valeur se déclare dans la config, l'outil n'a pas à changer : `chercher_devis` rend le devis entier, et `from: [{tool: chercher_devis, path: /numero}]` en tire le numéro. Un outil peut aussi écrire lui-même — `ToolOutput(..., state={"cle": valeur})`, pour une règle qui dépend du contexte — ; sur une même clé, sa valeur l'emporte sur celle de `from` (D12).
+
+Les écritures se posent sur le résultat **réussi** d'un appel, après les politiques `after_tool` (un résultat remplacé pose d'après le nouveau ; refusé, il ne pose rien) et **avant** ses fichiers et son déport : un résultat déporté garde son state. Un résultat en erreur ne pose rien. Les écritures sont rangées dans `tool.completed`, mais retirées du résultat que lit le modèle.
+
+### 4.3 Contrôles et refus (D6, D7, D8)
+
+Chaque écriture d'un outil est contrôlée : clé déclarée, valeur finie (ni NaN ni infini, que le JSON du journal écrirait `null`), schéma, taille de la valeur, puis taille du state de la session, comptée appel après appel sur le lot. Une écriture refusée n'est pas posée, les autres le sont — sauf si l'appel faisait dépasser la taille totale : toutes ses écritures qui ajoutent sont alors refusées, la limite se comptant dans l'ordre où les appels du lot finissent —, et **le résultat reste un succès** : l'outil a pu produire son effet, et une erreur pousserait le modèle à le refaire. Le refus est gardé dans la sortie (`state_refused`), dit au log, et le modèle le lit à la suite du résultat :
+
+```text
+[state] devis_courant non posé : ne suit pas son schéma — ne respecte pas le motif ^D-[0-9]{4}-[0-9]{3}$
 ```
 
-- Fonction pure, dans `engine/` (à côté de `transcript.py`), qui lit `ctx.session_state` (posé par `_driven` comme `turns`/`summary`) et `state.state_delta`.
-- Rendu : balises comme les rôles (`tagged(...)` dans `roles.py`), JSON compact, clés triées → **déterministe**, donc stable pour le cache de prompt tant que le state ne change pas.
-- **Où l'injecter** (décision, §6) :
-  - *Fin du `system`* — simple ; une modification du state invalide le cache du system et des messages. Le state change rarement : acceptable.
-  - *Message `user` inséré juste avant les messages du run* — n'invalide que la partie du run en cours ; mais place du texte « hors conversation » dans les messages.
-- Les politiques `before_model` voient la requête **déjà enrichie** (elles peuvent la lire ou la remplacer), et `ModelExchanged` (capture brute) la journalise : le rejeu voit exactement ce qui est parti.
-- Si le state est vide : rien n'est ajouté (pas de balise vide).
+Le motif nomme la clé et le problème, sans recopier la valeur, qui peut porter un secret.
 
-### 4.3 Rôles et `session_state`
+### 4.4 Deux écritures d'une même clé dans un lot (D9)
 
-Même item pour les rôles : `engine/roles.py` ajoute un `case SessionState(...)` qui expose `context.session_state` (mapping) au template, avec la règle #50 existante (déclaré ⇒ utilisé). Les rôles ne reçoivent donc le state que s'ils le demandent, comme tout le reste.
+Les appels d'un lot tournent en parallèle et finissent dans un ordre qui change d'une exécution à l'autre — et au rejeu, où leurs résultats sont instantanés. C'est donc **l'ordre des appels** dans la réponse du modèle qui décide : le dernier appelé l'emporte, quel que soit celui qui a fini le dernier.
 
-## 5. Compatibilité : ce qui ne casse pas, ce qui change
+## 5. Lire
 
-| Élément | Impact |
+### 5.1 L'orchestrateur (D4)
+
+Avec `main.context`, chaque requête de l'orchestrateur se termine par le state, après l'historique et les résultats du run (et avant la consigne d'une réponse forcée) :
+
+```text
+<session_state>
+{"client_courant":"Mme Martin","devis_courant":"D-2026-042","signature":"Plomberie Dupont","ton":"cordial"}
+</session_state>
+```
+
+- JSON compact, clés triées à tous les niveaux : un même state donne la même requête, donc la même empreinte.
+- Envoyé **à chaque appel, même vide** (`{}`) : il termine toujours la requête, seule la consigne d'une réponse forcée venant après lui (D4 amendé le 14/10).
+- Les clés montrées ont leur valeur par défaut tant qu'elles n'en ont pas d'autre. Une valeur qui ne tient plus son schéma (config changée depuis son écriture) est écartée avec un avertissement, remplacée par la valeur par défaut s'il y en a une — jamais une erreur.
+- Le bloc n'est jamais journalisé comme un message : il est recalculé à chaque appel. Les politiques `before_model` le voient.
+- La consigne qui l'explique, et la description de chaque clé montrée, vont dans le **prompt système**, qui ne dépend que de la config ; elle dit aussi que seul le dernier bloc `<session_state>` de la requête fait foi.
+- **Cache** : l'adaptateur Anthropic pose son point de cache des messages **avant** le bloc. Un state qui change ne fait perdre que le bloc, jamais le cache de l'historique.
+- Sans `main.context`, la requête ne change pas d'un octet, même avec `state:` déclaré.
+
+### 5.2 Un rôle
+
+`context: [session_state]`, ou `[{session_state: [ton, signature]}]`. Avec un `input_template`, il cite `{{ context.session_state }}` (le JSON) ou `{{ context.session_state.ton }}` ; la règle #50 s'applique (tout contexte déclaré est cité). Une clé sans valeur donne une chaîne vide. Sans template, le rôle reçoit la section `<session_state>`, et la consigne qui l'explique, avec la description des clés, s'ajoute à son prompt système. L'orchestrateur lit, dans la description du rôle, qu'il reçoit déjà « l'état de la session (ton, signature) ». Un juge ne reçoit pas le state dans cette version (D11) : `session_state` dans son contexte est refusé au chargement.
+
+### 5.3 Un outil
+
+`ToolContext.state` : en lecture seule, une copie par appel, les clés déclarées avec leurs valeurs par défaut, telles qu'au **début du lot** — ce qu'un voisin du même lot écrit n'y est pas encore, et la reprise d'un lot interrompu montre le même state. Vide dans un sous-run et hors moteur.
+
+### 5.4 L'application
+
+`Loom.session_state(session_id, tenant_id=…)` et `loom state <session> [--tenant]` rendent ce qui est **écrit** — sans les valeurs par défaut — en JSON. Une session vide lève `UnknownSession` (code 1 en CLI) ; une session illisible, `SessionUnreadable`. Le `RunResult` ne porte pas de state.
+
+## 6. Ce que la session garde
+
+La projection `session_state` lit le journal dans l'ordre :
+
+- le state posé par l'application compte dès le `run.started` d'un run racine, **quel que soit le sort du run** ;
+- les écritures des outils d'un run racine comptent à sa clôture `run.completed`, **s'il a réussi**, sans celles des appels qu'une réparation a retirés de l'historique (D2) : le modèle ne lit jamais un state que l'historique ne justifie pas, et ce qui a vraiment eu lieu reste dans la base métier ;
+- le run en cours voit, en plus, ses propres écritures, lot après lot ;
+- un sous-run ne reçoit pas le state et n'y écrit pas ; un run de compaction non plus (D3) ;
+- `null` efface une clé (D10) ;
+- les écritures de deux runs concurrents d'une même session comptent dans l'ordre de leurs clôtures ; le state posé par l'application, dans l'ordre de leurs ouvertures.
+
+Snapshots, compaction et coupes de l'historique ne changent rien au state : la projection ne passe pas par leurs marqueurs. Le state ne compte pas dans l'estimation qui déclenche la compaction : il doit rester petit (D7).
+
+`run.started.state` est du **contenu** : masqué dans les relectures sans la portée `read_content`, fermé par le sceau quand le journal est chiffré, effacé avec la session (RGPD).
+
+## 7. Rejeu, évals, banc
+
+- **Rejeu identique** : la session est recopiée jusqu'à la demande du run, `run.started` compris : le state posé par l'application est rejoué. Un résultat d'outil lu au journal garde le state que le journal a retenu, sans que les sources `from` soient recalculées. Quand l'orchestrateur reçoit le state, une config qui change ce qu'il en voit (valeur par défaut, clés de `main.context`, schéma qui écarte une valeur) fait diverger le rejeu, sur les messages.
+- **Variante** : un résultat lu au journal garde le sien ; un outil exécuté, une doublure, ou un résultat retrouvé dans le journal d'un autre run de l'arbre pose le sien comme en direct ; un refus n'en pose aucun.
+- **Évals** : un cas pose son state (`cases[].state`) et part d'une session neuve ; `expect.state` contrôle une clé du state après le run, sa valeur ou son absence (`null`). Une doublure reçoit les sources `from` comme l'outil qu'elle remplace : elle doit répondre comme lui. Un state refusé fait tomber le cas, en le disant.
+- **Banc** : `Bench.run(…, state=…)` et `Bench.expect(…, state=…)` ; un faux reçoit les sources `from` comme l'outil.
+- **Corpus** : `tests/regression/j7/relance.yaml`, ses trois journaux rejoués à l'identique, et la suite jouée en simulé pour que ses `expect.state` voient ce que le rejeu ne voit pas.
+
+## 8. Les décisions
+
+| # | Décision |
 |---|---|
-| Configs existantes (`loom.yaml`, `agents/*.yaml`) | Aucun : `state:` et `main.context:` optionnels |
-| Journaux existants | Lus normalement (pas de `state.set` → state vide) |
-| Journaux **nouveaux** avec `state.set` lus par un **ancien** loom | **Illisibles** (type inconnu de l'union) — upgrade à sens unique, comme `run.claimed` en son temps. À noter dans les notes de version |
-| `RunState` | Champ ajouté avec défaut → sérialisations et tests existants intacts |
-| `ToolOutput` | Champ `state` optionnel, retiré avant journalisation |
-| `ToolContext` | Champ ajouté avec défaut |
-| Couches import-linter | Respectées : modèle/projection/événement dans `core`, injection dans `engine`, déclaration dans `agents`/`config` |
-| Compaction / snapshot / trim | Inchangés (le state ne dépend pas des marqueurs) |
-| Rejeu | À tester avec une session contenant du state |
-| Idempotence | `state.set` rejoué à la reprise : même valeur, même clé → idempotent par construction (dernier écrit) ; la reprise d'un lot déjà écrit ne le réécrit pas |
-| Coût | Le state ajoute des tokens d'entrée à **chaque** appel du modèle : à garder petit |
+| D1 | Option C : le state dans `run.started` et `tool.completed`, aucun type d'événement nouveau |
+| D2 | State posé par l'application : compte toujours. Écritures d'outils : runs racine terminés avec succès, hors appels retirés par une réparation ; le run en cours voit les siennes |
+| D3 | Sous-runs et runs de compaction : ni lecture ni écriture |
+| D4 | Bloc en fin de requête, JSON trié, envoyé à chaque appel même vide (amendé le 14/10) ; consigne fixe dans le système ; point de cache Anthropic avant le bloc |
+| D5 | API Python et CLI ; REST et MCP plus tard, sous une portée dédiée |
+| D6 | Clés déclarées, un JSON Schema chacune, contrôlé au chargement |
+| D7 | 1 Kio par valeur, 4 Kio au total (`sessions.state`), en JSON compact |
+| D8 | Écriture d'outil refusée : pas posée, résultat qui reste un succès, refus lu par le modèle (amendé le 14/10) ; state refusé à l'ouverture : run refusé avant tout écrit |
+| D9 | L'ordre des appels départage deux écritures d'une même clé dans un lot |
+| D10 | `null` efface |
+| D11 | Pas de state pour les juges dans cette version, refusé au chargement |
+| D12 | `from:` (`path` ou `value`) dans la config ; `ToolOutput.state` de l'outil en secours, prioritaire sur une même clé |
+| D13 | `required` refuse l'ouverture ; `default` se lit sans s'écrire ; exclusifs |
 
-## 6. Décisions à prendre
-
-1. **Catégorie de l'événement** : `tool` (proposée) ou nouvelle catégorie `state` ?
-2. **Runs échoués/annulés** : leurs écritures de state comptent-elles (proposé : oui) ?
-3. **Emplacement dans la requête** : fin du `system` (proposé) ou message `user` dédié ?
-4. **Écriture par l'application** : option `state=` sur `run()`/CLI dès la première version, ou seulement par les outils ?
-5. **Déclaration obligatoire des clés** (proposé) ou state libre ? Le typage est ce qui protège d'un outil qui écrit n'importe quoi.
-6. **Limites** de taille (par clé / total) et valeurs par défaut.
-
-## 7. Plan de mise en œuvre (par petites étapes, chacune testable seule)
-
-1. `core` : `StateSet` + union `DurablePayload` + `session_state()` + `RunState.state_delta` + `apply` ; tests dans `test_events.py`, `test_projections.py`, `test_lecture_tolerante.py` (journal avec `state.set` : lu par le nouveau, refusé par l'ancien — documenté).
-2. `core/model` + `engine/executor.py` : `ToolOutput.state` consommé par l'exécuteur (validation contre les clés déclarées, `writers`), `ToolContext.state` ; tests `test_executor.py`, `test_tools.py`.
-3. `agents/spec.py` + `config/` : bloc `state:` et `main.context:` avec validations ; tests `test_config.py`, `test_config_roles.py` ; régénérer le JSON Schema.
-4. `engine/loop.py` : `RunContext.session_state`, posé par `_driven` ; `with_context` dans `_model_step` ; tests `test_loop.py`, `test_loop_policies.py` (la politique voit le bloc), `test_rejeu.py`.
-5. `engine/roles.py` : item `session_state` pour les rôles ; `test_roles.py`.
-6. Application : option `state=` (API Python + CLI), `loom state <session>` pour lire (même esprit que les commandes qui lisent le journal).
-7. Documentation : `fonctions.md` (nouveau point en F : « State de session »), `conception.md` (§11 et §9.6), un how-to.
-
-## 8. Ce que ça donne sur agent_01
+## 9. Sur agent_01 (essai à faire)
 
 ```yaml
 state:
   client_courant:
-    schema: { type: string, pattern: "^C-[0-9]+$" }
-    writers: [get_client]
+    schema: {type: string, pattern: "^C-[0-9]+$"}
+    description: Code du client dont parle la conversation.
+    from: [{tool: get_client, path: /code}]
 main:
   model: HAIKU
   system_file: system.md
-  context:
-    - session_state
+  context: [session_state]
 ```
 
-`get_client` renvoie `ToolOutput(..., state={"client_courant": code})`. À partir de là :
-- « donne-moi son téléphone » ne dépend plus d'un résumé de compaction : `client_courant` est dans chaque requête ;
-- le rôle `rediger_message_client` n'a plus besoin de `tool_results: [get_client] scope: session` pour savoir *quel* client — il peut lire `context.session_state.client_courant` ;
-- les données métier (téléphone, adresse) **restent dans la base** : le state ne porte que l'identifiant.
+Ce que l'essai réel doit montrer : `get_client` ne change pas ; « donne-moi son téléphone » ne dépendrait plus d'un résumé de compaction, `client_courant` étant dans chaque requête de l'orchestrateur ; un rôle comme `rediger_message_client` pourrait lire `{{ context.session_state.client_courant }}` au lieu de chercher le dernier `get_client` de la session. Le téléphone et l'adresse resteraient dans la base : le state ne porte que l'identifiant.
 
-## 9. Ce que cette proposition ne fait pas
+## 10. Ce que le state ne fait pas
 
 - Pas de mémoire longue ni de RAG (F6 reste séparée).
-- Pas de logique métier dans loom : « client courant » est une clé déclarée par l'application, loom ne connaît que des clés, des schémas et des valeurs.
-- Pas de state partagé entre sessions ni entre clients (le state appartient à `(tenant, session)`, comme le journal).
+- Pas de state partagé entre sessions ni entre clients : il appartient à `(client, session)`, comme le journal.
 - Pas de modification de l'historique ni de la compaction.
+- Pas d'écriture par REST ni par MCP (D5) : un agent qui a une clé `required` n'y ouvre un run que dans une session où elle a déjà une valeur.
+- Pas de state pour les juges (D11).
+- Le rejeu identique ne recalcule pas les sources `from` : un changement de ces seules sources ne le fait pas diverger. Les évals le voient (`expect.state`).
+- En variante, un résultat d'un autre run de l'arbre, déporté, ne donne pas de données à un `path:` (backlog #022).
+- L'effet du bloc de fin de requête sur un modèle à raisonnement n'est pas encore mesuré en réel.

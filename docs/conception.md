@@ -320,7 +320,7 @@ Event
 
 | Type | Champs principaux |
 |---|---|
-| `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte, `judges` (`auto`, `force`, `skip`), `budget` (part reçue du parent) |
+| `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte, `judges` (`auto`, `force`, `skip`), `budget` (part reçue du parent), `state` (state de session posé par l'application, omis s'il est vide ; 2.0.6) |
 | `message.user` | blocs de contenu ; `kind` (`request`, `repair`), politique et `tools` d'une réparation |
 | `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, `request_parts` (empreintes par partie, 6.2a), call_id (rôle délégué), `judge` (appel d'un juge) |
 | `model.retried` | tentative, type d'erreur, délai, call_id (rôle délégué) |
@@ -330,7 +330,7 @@ Event
 | `idempotency.recorded` | clé, call_id, résultat |
 | `idempotency.reused` | clé, call_id, outil |
 | `tool.called` | tool_name, tool_kind, call_id, arguments, refs, child_run_id (sous-agent) |
-| `tool.completed` | tool_name, call_id, is_error, sortie (blocs, références de fichiers, aperçu et référence si déportée), latence, taille, consommation d'un sous-agent (usage, coût) ; facette `offloaded` |
+| `tool.completed` | tool_name, call_id, is_error, sortie (blocs, références de fichiers, aperçu et référence si déportée ; `state` et `state_refused`, écritures du state de session posées et refusées, omis s'ils sont vides, 2.0.6), latence, taille, consommation d'un sous-agent (usage, coût) ; facette `offloaded` |
 | `tool.source_unavailable` | source (serveur MCP), erreur, required |
 | `guard.checked` | guard, cible (`output`, `role:<nom>`, `tool:<nom>`), outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized, resolution, politique, call_id |
 | `judge.evaluated` | juge, cible, modèle juge, notes par critère (note, seuil, bloquant, motif), `passed`, `blocked`, tentative, politique, call_id |
@@ -485,7 +485,11 @@ ToolOutput
   is_error    bool
   artifacts   références produites (G3)
   offloaded   référence du contenu complet, s'il a été déporté (#16)
+  state       écritures du state de la session : clé → valeur, null efface (F8, 2.0.6)
+  state_refused   écritures refusées, une ligne par clé ; lues par le modèle à la suite du résultat
 ```
+
+`state` et `state_refused` sont omis quand ils sont vides : un résultat sans state se sérialise comme avant, et les empreintes des requêtes ne changent pas.
 
 - Outils Python : une `str` donne `Text` ; `dict`, `list` ou modèle Pydantic donnent `Json` ; une `Image` est stockée et renvoyée en `ArtifactRef` ; un `ToolOutput` explicite donne le contrôle total.
 - Une exception donne `is_error` ; une `ToolError(message)` porte un message exploitable par le modèle.
@@ -503,6 +507,8 @@ ToolOutput
 6. Politiques `after_tool`.
 
 **Lot parallèle :** tous les appels d'un tour s'exécutent en parallèle ; chaque résultat est écrit dès qu'il arrive. Dans la requête suivante, les résultats du tour suivent l'ordre des appels, pas leur ordre d'arrivée : la requête ne dépend pas des durées des outils. Si certains exigent une approbation, les autres s'exécutent d'abord, puis le run passe en `PAUSED`.
+
+**State de la session** (F8, 2.0.6 ; détails : `fonctions.md`, point 51) : un outil lit le state tel qu'au **début de son lot** (`ToolContext.state`, en lecture seule, une copie par appel : les clés que l'agent déclare, valeurs par défaut comprises ; vide dans un sous-run). Sur un résultat **réussi**, après les politiques `after_tool` et avant ses fichiers et son déport, le moteur pose les écritures de l'appel : celles des sources `from` des clés qui désignent l'outil (`path` dans les données du résultat, ou `value` fixe), puis celles que l'outil a écrites lui-même (`ToolOutput.state`), qui l'emportent sur une même clé. Chaque écriture est contrôlée — clé déclarée, schéma, taille de la valeur et du state de la session, la limite totale se comptant sur le lot dans l'ordre où les appels finissent ; une écriture refusée n'est pas posée, le résultat reste un succès et le refus va dans `state_refused`. Un résultat en erreur ne pose rien. Les écritures sont retirées du résultat que lit le modèle et rangées par la projection dans l'**ordre des appels** : deux outils d'un lot qui écrivent la même clé sont départagés par la réponse du modèle, pas par leurs durées. Au rejeu, un résultat lu au journal garde le state que le journal a retenu ; une doublure le reçoit comme l'outil (§14.3).
 
 **Approbation** (#17) : une politique peut exiger une approbation sur n'importe quel outil, mais ne peut la lever que si l'outil n'est pas en `always` (seule la config admin le peut). Déroulé :
 
@@ -670,8 +676,9 @@ tools:
 | `session_summary` | Dernier résumé de compaction |
 | `last_turns: N` | N derniers tours de la session (un tour = un run) |
 | `caller_context` | Métadonnées de l'appelant (A8) |
+| `session_state` ou `{session_state: [clés]}` | State de la session (F8, 2.0.6), entier ou certaines clés, tel qu'au début du lot : clés déclarées, valeurs par défaut comprises, JSON compact aux clés triées ; `{}` dans un sous-run. Refusé dans le contexte d'un juge |
 
-Le message du rôle est construit par un `input_template` explicite (`{{ args.x }}`, `{{ context.y }}`, #50) ; sans template, le rôle reçoit les blocs de contexte balisés, suivis des arguments en JSON.
+Le message du rôle est construit par un `input_template` explicite (`{{ args.x }}`, `{{ context.y }}`, #50) ; sans template, le rôle reçoit les blocs de contexte balisés, suivis des arguments en JSON. Un template cite le state entier (`{{ context.session_state }}`) ou une clé (`{{ context.session_state.<clé> }}`, une chaîne vide si elle n'a pas de valeur) ; sans template, la section `<session_state>` s'explique par une consigne ajoutée au prompt système du rôle, avec ce que désigne chaque clé.
 
 **Appel d'un rôle :** un seul appel de modèle, sans historique ni outils, journalisé dans le run de l'orchestrateur entre `tool.called` et `tool.completed` (`model.responded` avec le `call_id` de l'appel, enveloppe au nom du rôle). Une erreur du modèle ou une sortie vide deviennent un résultat d'erreur. Le délai par défaut des outils ne s'applique pas ; ceux du modèle et son retry bornent l'appel.
 
@@ -891,12 +898,14 @@ Journal (append) ───┼─▶ RunState         (reprise, pause, checkpoint
                     ├─▶ Traces           (arbre de spans pour l'interface)
                     ├─▶ Usage            (tokens, coûts)
                     ├─▶ run_summaries    (liste et filtres de l'interface)
+                    ├─▶ State de session (valeurs posées par l'application et les outils)
                     └─▶ Rejeu            (réponses modèle et outils enregistrées)
 ```
 
 - **Historique LLM :** matérialisé en **snapshot** à la fin de chaque run ; le journal n'est relu qu'au-delà. Il repart du dernier `session.compacted`, exclut les tentatives refusées et le raisonnement.
 - **Checkpoint :** chaque événement durable en est un (#25).
 - **`run_summaries` :** run_id, agent, statut, durées, coût, tokens, nombre d'étapes, erreurs ; mise à jour à chaque `run.transitioned` (#32).
+- **State de session (F8, 2.0.6 ; `fonctions.md`, point 51) :** `session_state(events)`, fonction pure de `core/projections/state.py`, recalculée sur **tout** le journal : ni snapshot, ni compaction, ni coupe ne la changent. Dans l'ordre du journal : le `state` du `run.started` de chaque run racine, quel que soit le sort du run ; puis, à sa clôture `run.completed`, les écritures des outils d'un run racine terminé, sans celles des appels qu'une réparation a retirés de l'historique ; en dernier, celles du run en cours, s'il est désigné. Sous-runs et runs de compaction n'y entrent pas ; `null` efface une clé ; une valeur par défaut vaut pour une clé absente sans jamais être écrite. Dans le `RunState`, `posed_state` et `state_writes` (dans l'ordre des appels) ; `state_delta` fusionne les `state_writes`.
 
 **Snapshot et compaction ne se confondent pas :** le snapshot est une vue matérialisée sans LLM, pour lire vite ; la compaction est un résumé par LLM, pour réduire le contexte.
 
@@ -1081,6 +1090,8 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 
 **Réalisation (phase 6.3c — le kit de test)** (détails : `fonctions.md`, point 31) : `loom_ia.testing.Bench` met un agent de sa config au banc d'essai, monté à part comme une éval : des faux modèles par identifiant (`ScriptedModel`, ou tout client de modèle, servis par `Loom(models=…)`), un modèle réel non remplacé refusé à son premier appel sauf `real_models=True`, des faux outils par nom avec la règle des doublures d'éval, les contrôles d'un cas d'éval (`expect`, qui lève en disant ce qui tombe), les appels de chaque run (`calls`), l'export d'un journal qui se rejoue. `called` lit désormais les arguments que l'outil a reçus — références résolues, arguments d'une politique. Deux configs d'un même process ont chacune leurs modules voisins, même de même nom (#50).
 
+**State de session (2.0.6)** (détails : `fonctions.md`, point 51) : le rejeu recopie la session jusqu'à la demande du run, `run.started` compris, donc le state que l'application a posé. Un résultat d'outil **lu au journal** garde le state que le journal a retenu, sans que les sources `from` soient recalculées — un changement de ces seules sources ne fait donc pas diverger un rejeu identique. Un résultat **neuf** — doublure en variante, doublure ou refus en éval, faux du banc, ou, en variante, résultat retrouvé dans le journal d'un autre run de l'arbre — reçoit les sources `from` et les contrôles comme celui de l'outil (`ToolReplay.from_journal`). Un cas d'éval pose son state (`cases[].state`) et `expect.state` contrôle celui que le run laisse ; le corpus `tests/regression/` gagne `j7/relance`, et chaque suite y est aussi **jouée** en simulé, ce que le rejeu seul ne vérifie pas.
+
 ### 14.4 Logs
 
 - `logging` de la stdlib : `getLogger("loom_ia.…")` et `NullHandler` ; loom-ia ne configure jamais les handlers de l'application hôte (#45).
@@ -1237,6 +1248,7 @@ main:                                 # RoleSpec, sans name
   model: M3_MAIN
   fallbacks: [SONNET]
   system_file: relance_devis/main.md
+  context: [session_state]            # le state en fin de chaque requête (2.0.6) ; ou [{session_state: [clés]}]
 max_iterations: 10
 timeout: 300
 max_depth: 2
@@ -1245,6 +1257,17 @@ output: {...}                         # OutputSpec (réponse finale, A7)
 judge: {...}                          # JudgeSpec (on_output)
 budget: {...}                         # surcharge des défauts
 approval: {expires_in: 86400, on_expiry: deny, scope: approve}
+state:                                # state de la session (2.0.6) : les seules clés qu'elle peut porter
+  devis_courant:
+    schema: {type: string, pattern: "^D-[0-9]{4}-[0-9]{3}$"}   # JSON Schema, contrôlé au chargement
+    description: Numéro du devis dont parle la conversation.     # donnée à qui reçoit la clé
+    from: [{tool: chercher_devis, path: /numero}]             # posée par chaque résultat réussi ; ou value: …
+  signature:
+    schema: {type: string, maxLength: 80}
+    required: true                    # run refusé tant que la clé n'a pas de valeur
+  ton:
+    schema: {enum: [cordial, ferme]}
+    default: cordial                  # lue quand la clé manque, jamais écrite ; exclut required
 tools:
   - python: myapp.tools:chercher_devis
     timeout: 30
@@ -1329,6 +1352,8 @@ judge:
 ```
 
 `when.profiles` arrive avec les profils (J5). Un juge ne se déclare pas sur un outil Python ou MCP.
+
+**State de session (2.0.6 ; `fonctions.md`, point 51) :** le nom d'une clé est un identifiant (lettres, chiffres, `_`, 64 caractères, pas de chiffre en tête). Une source `from` nomme un outil de l'agent (Python, rôle, sous-agent, ou un préfixe MCP ou de source) avec un seul `path` (pointeur JSON dans les données du résultat, `""` pour toutes) ou une seule `value` (`null` efface la clé). `path` exige des données : refusé au chargement pour un outil Python qui annonce `str`, `None` ou `Image` sans contrat de sortie à schéma, pour un rôle sans contrat de sortie à schéma et pour un sous-agent. Un rôle reçoit le state par son `context` — `session_state`, ou `{session_state: [clés]}` —, cité par son `input_template` (`{{ context.session_state.ton }}`) ; un juge ne le reçoit pas. Les tailles se règlent à la racine : `sessions: {state: {max_value_bytes: 1024, max_total_bytes: 4096}}`, en octets de JSON compact.
 
 ### 17.5 Serveurs MCP
 
@@ -1563,6 +1588,7 @@ async with loom:
 - `stream()`, `follow()` et `events()` rendent l'arbre du run : ses événements et ceux de ses sous-runs, dans l'ordre du journal ; `subruns=False` s'en tient au run.
 - `sessions()`, `export_session(session_id)` et `delete_session(session_id)` listent, exportent et suppriment les journaux de session (F7, depuis 4.1a) ; `session(session_id)` en rend la fiche — ses runs, et les approbations qu'il faut trancher pour que la conversation avance (4.5). L'API REST les expose toutes (18.2). `delete_session` lève `UnusableId` pour une session ou un client vide (REST : 422, CLI : code 2) ; seul `tenant_id=None` désigne le client par défaut. Un run fini, ou déjà passé à son état final, n'attend plus rien : `pending_approvals` est vide, et `approve()` / `reject()` rendent `()` sans rien écrire.
 - `compact(session_id)` résume une session à la demande et `drain()` attend les tâches de fond (depuis 4.1b) ; `aclose()` les attend aussi, dans la limite d'`execution.shutdown_timeout`.
+- **State de session (2.0.6) :** `run()`, `stream()` et `submit()` prennent `state={clé: valeur}` — `None` efface une clé —, écrit dans le `run.started` après contrôle. Une écriture refusée (clé non déclarée, schéma, taille), un agent qui ne déclare pas de state, ou une clé `required` restée sans valeur lèvent `StateRefused` (`loom_ia.engine`, une `ValueError`, `problems` : un motif par clé) **avant** d'ouvrir le run : rien n'est écrit, pas même la compaction de sécurité. `session_state(session_id, tenant_id=…)` relit le state de la session — ce qui est écrit, sans valeurs par défaut ; `UnknownSession` pour une session vide, `SessionUnreadable` pour une session illisible. Le `RunResult` ne porte pas de state.
 - **Consommation (5.1b) :** `consumption(tenant_id, period="day" | "month")` rend ce qu'un client a dépensé sur la fenêtre en cours, ce qu'il lui reste sur chaque plafond et la date de remise à zéro ; elle relit le journal, donc elle vaut aussi pour un client sans budget. `run()`, `stream()` et `submit()` lèvent `BudgetExhausted` (enveloppe de la période épuisée) ou `QuotaExceeded` (runs par minute) **avant** d'ouvrir le run : rien n'est écrit.
 - **Client (5.1a) :** `run()`, `stream()` et `submit()` prennent `tenant=`, raccourci de `CallerContext(tenant_id=…)` ; toutes les lectures prennent `tenant_id=`. `tenants` liste les clients de l'instance, `tenant(id)` rend ce qu'un client surcharge, et `context(agent, tenant_id)` monte l'agent **pour ce client**. Un agent fermé à un client lève `AgentNotAllowed` ; un client non déclaré, `UnknownTenant`.
 - **Déclencheurs (5.4c) :** `triggers` liste les portes déclarées, `trigger_spec(nom)` en rend une, et `trigger(nom, charge, delivery_id=…, tenant_id=…)` ouvre son run en arrière-plan et rend un `Triggered` — la porte, le run, sa session, son statut, et `repeated` si cette livraison avait déjà été reçue. La route REST s'y adosse.
@@ -1611,6 +1637,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - **Résumés de runs (5.4a, #32) :** `GET /v1/runs` rend les runs du client, du plus récemment écrit au plus ancien, filtrables par `agent`, `status` (répétable), `since` et `until`. Ils sont **lus au journal** — session par session, repliés à la lecture — et non tenus dans une projection : aucun second état à garder juste, et les chiffres sont ceux de la fiche d'une session. Le prix est une lecture par journal ouvert, borné par `limit` (runs rendus) et `sessions` (journaux ouverts) ; la page dit ce qu'elle a coûté (`scanned`) et si une borne l'a arrêtée (`truncated`). Un filtre ne baisse pas ce prix, il s'applique après le repli. Aucun contenu dans une liste — seulement le **type** d'un échec —, donc rien à masquer, et une clé limitée à certains agents y a droit : chaque run dit de quel agent il est, si bien que la liste se filtre honnêtement, là où `/sessions` doit refuser.
 - **Recherche au journal (5.4a, #22, #32) :** `GET /v1/events` expose `EventQuery` en paramètres — `session_id`, `run_id`, `type`, `category`, `status`, `agent`, `role`, `tool_name`, `model_id`, `since`, `until`, `after`, `limit`. Le client vient de la clé : rien dans l'URL ne le nomme, donc on ne cherche que chez soi. L'ordre est celui de **l'écriture au journal**, non celui des identifiants : l'`event_id` (UUIDv7) est posé à la création du brouillon, avant l'écriture, et un écrivain lent (approbateur REST, sous-agents, autre worker) peut écrire après un autre un événement d'identifiant plus petit — borner sur l'id le ferait manquer à qui suit le journal. `after` reprend donc après l'événement indiqué *dans l'ordre d'écriture* ; un `after` que le journal ne connaît pas (session effacée) retombe sur la comparaison des identifiants. Mémoire, SQLite et Postgres tiennent cet ordre (rowid ; colonne `ingested`, version 3 du schéma, tirée sous un verrou par client) ; le journal JSONL, un fichier par session, reste trié par identifiant. Sans `read_content`, les mêmes événements arrivent privés de leur contenu. Les facettes libres ne sont pas interrogeables par l'URL ; les deux que `EventQuery` nomme le sont.
 - **Déclencheurs (5.4c, H6) :** `POST /v1/hooks/{nom}` sonne une porte déclarée (`triggers:`). Le corps est la charge de l'appelant — du JSON, ou rien : un planificateur n'a que l'heure à dire. Le message part du gabarit de la porte, le run est lancé en **arrière-plan** (202, `Triggered`), et la portée `run` est exigée sur **l'agent que la porte nomme**. L'en-tête déclaré (`delivery_header`) devient le `run_id` : une relivraison rend 200 avec `repeated`, sans rien relancer. Une charge illisible, un identifiant de livraison inutilisable ou déjà pris par un autre run donnent 422 ; une porte inconnue, ou dont l'agent est fermé au client de la clé, 404 — le même, en ne nommant que les portes de ce client.une porte inconnue, ou dont l'agent est fermé au client de la clé, 404 — le même, en ne nommant que les portes de ce client. La portée `run` est vérifiée **avant** de chercher la porte : une clé sans `run` reçoit 403 pour une porte inconnue comme pour une connue, de sorte que les noms existants ne se devinent pas.
+- **State de session (2.0.6) :** le corps d'un lancement ne pose pas de state (D5 : REST et MCP plus tard, sous une portée dédiée) ; un champ `state` y est refusé (422), comme tout champ inconnu. Un run que le state refuse — une clé `required` sans valeur dans la session — donne **422**, sur `POST /v1/agents/{name}/runs` comme sur `POST /v1/hooks/{nom}`. `run.started.state` est du contenu : masqué sans `read_content`.
 - **Document OpenAPI (5.4a) :** chaque route porte un résumé et une famille (`agents`, `runs`, `sessions`, `journal`), chaque famille est décrite, et les deux façons de présenter une clé (`Authorization: Bearer`, `X-API-Key`) sont déclarées — de quoi essayer l'API depuis sa propre page. Un test vérifie que le document reste complet quand une route s'ajoute.
 
 ### 18.3 Serveur MCP
@@ -1631,7 +1658,7 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 
 ### 18.4 CLI
 
-Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `replay` (6.2a et 6.2b), `inspect` (6.2c : l'arbre lisible d'un run, `--full`, `--json`), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --period day|month` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`. Depuis 5.2a, `keys create` prend `--tenant`, `--expires` (date ISO ou durée : `90j`, `12h`) et `--rate-limit`, et imprime le bloc YAML complet ; `validate` montre une ligne par clé — client, portées, agents, débit, état de l'expiration — et signale une clé qui approuve sans pouvoir lire. Depuis 5.4b, `validate` et `serve` annoncent les ressources MCP quand le serveur HTTP est monté : elles ne dépendent d'aucun réglage, et c'est la clé de la requête qui dit ce qu'une lecture en voit. Depuis 5.5a, `--profile` est une option **globale** (elle l'emporte sur `LOOM_PROFILE` et sur le fichier), et `validate` comme `serve` impriment le profil actif, sa provenance et ce qu'il change. Depuis 5.4c, `validate` liste les **portes** déclarées avec leur route, leur agent, leur session et leur en-tête de livraison — et signale celle qui n'en a pas, dont une relivraison rouvrirait un run ; `serve` imprime l'adresse de chaque porte, celle qu'on donne au planificateur de la plateforme. Depuis 6.4a, `serve --reload` (#48) relance le **process** qui sert à chaque changement d'un fichier de la config, rien n'étant rechargé à chaud : un superviseur garde la socket — partagée, une requête de la relève attend dans sa file — et surveille le dossier de la config sauf ce que loom y écrit (journaux, fichiers, bases SQLite, ceux de chaque client) et le bruit d'usage ; un **nouveau** process charge la config et monte chaque agent pour chaque client (clients de modèle jamais appelés : une clé absente ne bloque pas) pendant que l'ancien sert ; s'il échoue, il dit pourquoi et l'ancien continue ; sinon il prend la main une fois l'ancien sourd, et l'ancien finit ses requêtes et ses runs comme sur un Ctrl+C. Refusé en profil `prod`. `watchfiles` vient avec l'extra `http`.
+Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `replay` (6.2a et 6.2b), `inspect` (6.2c : l'arbre lisible d'un run, `--full`, `--json`), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --period day|month` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`. Depuis 5.2a, `keys create` prend `--tenant`, `--expires` (date ISO ou durée : `90j`, `12h`) et `--rate-limit`, et imprime le bloc YAML complet ; `validate` montre une ligne par clé — client, portées, agents, débit, état de l'expiration — et signale une clé qui approuve sans pouvoir lire. Depuis 5.4b, `validate` et `serve` annoncent les ressources MCP quand le serveur HTTP est monté : elles ne dépendent d'aucun réglage, et c'est la clé de la requête qui dit ce qu'une lecture en voit. Depuis 5.5a, `--profile` est une option **globale** (elle l'emporte sur `LOOM_PROFILE` et sur le fichier), et `validate` comme `serve` impriment le profil actif, sa provenance et ce qu'il change. Depuis 5.4c, `validate` liste les **portes** déclarées avec leur route, leur agent, leur session et leur en-tête de livraison — et signale celle qui n'en a pas, dont une relivraison rouvrirait un run ; `serve` imprime l'adresse de chaque porte, celle qu'on donne au planificateur de la plateforme. Depuis 6.4a, `serve --reload` (#48) relance le **process** qui sert à chaque changement d'un fichier de la config, rien n'étant rechargé à chaud : un superviseur garde la socket — partagée, une requête de la relève attend dans sa file — et surveille le dossier de la config sauf ce que loom y écrit (journaux, fichiers, bases SQLite, ceux de chaque client) et le bruit d'usage ; un **nouveau** process charge la config et monte chaque agent pour chaque client (clients de modèle jamais appelés : une clé absente ne bloque pas) pendant que l'ancien sert ; s'il échoue, il dit pourquoi et l'ancien continue ; sinon il prend la main une fois l'ancien sourd, et l'ancien finit ses requêtes et ses runs comme sur un Ctrl+C. Refusé en profil `prod`. `watchfiles` vient avec l'extra `http`. Depuis 2.0.6, `run --state CLE=VALEUR` (répétable) pose du state à l'ouverture du run — la valeur se lit en JSON (`3`, `true`, `null` qui efface, `"texte"`), sinon elle est prise telle quelle ; une clé donnée deux fois donne le code 2 (« --state : clé donnée deux fois : … »), un state refusé aussi (« Demande refusée : State refusé : … ») —, et `state <session> [--tenant]` imprime le state d'une session en JSON, sans les valeurs par défaut (code 1 pour une session inconnue).
 
 **Codes de sortie :** 0 (réussi), 1 (run échoué ou erreur d'exécution, dont `JournalCorrupted`), 2 (refus : usage, config, extra manquant, agent / approbation / run / client inconnu, `AgentNotAllowed`, `UnusableId`, `SessionUnreadable`, `JournalBusy`, `OSError`), le refus tient en une ligne de `stderr`, sans trace. `--version` rend la version, et `python -m loom_ia` vaut `loom`. **`serve --host`** remplace l'adresse de la config, et c'est l'adresse **servie** qui décide si une API sans clé est « ouverte » (avertissement en dev, refus en prod) : `--host 0.0.0.0` sur une config en `127.0.0.1` est jugé comme tel, et inversement.
 

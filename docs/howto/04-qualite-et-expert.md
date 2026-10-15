@@ -4,9 +4,9 @@
 
 > **Dans ce fichier** : relire ce qu'un run a fait (traces, journal, OpenTelemetry), le rejouer, le noter, le tester, brancher des sources d'outils (paquet Python, sandbox `forge`, mémoire `loom-notes`), puis assembler le tout dans un projet de synthèse (chapitres 25 à 30), suivis des annexes de référence.
 >
-> **Navigation** : précédent : [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) (vous êtes ici)
+> **Navigation** : précédent : [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) (vous êtes ici) · suivant : [05-state-de-session.md](05-state-de-session.md)
 
-Le niveau 4 a mis l'agent en service : plusieurs clients, une API, un journal durable, des budgets. Ce dernier fichier répond à la question qui vient ensuite : comment savoir, une semaine plus tard, ce que l'agent a vraiment fait, et comment être sûr qu'une modification de prompt ou de modèle ne l'a pas dégradé ? Il suppose les chapitres 1 à 24 lus, en particulier les approbations (chapitre 9), les juges (chapitre 14), l'idempotence (chapitre 19) et les clients (chapitre 22).
+Le niveau 4 a mis l'agent en service : plusieurs clients, une API, un journal durable, des budgets. Ce fichier répond à la question qui vient ensuite : comment savoir, une semaine plus tard, ce que l'agent a vraiment fait, et comment être sûr qu'une modification de prompt ou de modèle ne l'a pas dégradé ? Il suppose les chapitres 1 à 24 lus, en particulier les approbations (chapitre 9), les juges (chapitre 14), l'idempotence (chapitre 19) et les clients (chapitre 22).
 
 ---
 
@@ -4395,4 +4395,4 @@ Variable d'environnement de l'exporteur absente : simple WARNING (« ce collecte
 
 Vous savez maintenant relire un run (`loom inspect`), l'exporter vers un collecteur, le rejouer à l'identique ou avec un autre modèle, le noter avec une suite d'évaluations, figer un comportement dans un test, brancher des outils venus d'un paquet, d'une sandbox ou d'une mémoire, et assembler le tout dans un projet de deux clients (chapitre 30). Les annexes A à E servent de référence : commandes, routes, couverture des fonctions, dépannage, vocabulaire.
 
-Navigation : [01-demarrer.md](01-demarrer.md) · [02-maitriser.md](02-maitriser.md) · [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md)
+Navigation : [01-demarrer.md](01-demarrer.md) · [02-maitriser.md](02-maitriser.md) · [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md)

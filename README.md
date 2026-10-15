@@ -118,6 +118,12 @@ Ce code ne s'exécute jamais sur la machine hôte. Chaque exemple tourne dans un
 
 La mémoire long terme passe par un serveur MCP, loom-notes, branché comme n'importe quel autre. L'agent y cherche librement, mais chaque écriture attend l'accord de l'artisan, et chaque client a sa propre base. À voir dans `examples/j6/memoire.py`.
 
+### Une conversation qui sait de quel devis elle parle
+
+L'artisan demande une relance du devis D-2026-042, puis, un peu plus tard : « Refais-la, plus ferme. » La demande ne cite plus aucun devis. Plutôt que d'espérer que le modèle s'en souvienne, ou qu'un résumé de compaction l'ait gardé, la session tient un **state** : quelques valeurs typées, déclarées clé par clé avec leur schéma.
+
+L'application en pose une partie en ouvrant le run, comme la signature de l'entreprise ou le ton choisi par l'artisan ; une clé obligatoire absente fait refuser le run avant qu'il n'écrive quoi que ce soit. L'outil `chercher_devis` en pose une autre sans le savoir : la configuration dit de lire le numéro du devis dans son résultat. L'orchestrateur reçoit le state à la fin de chaque requête, là où un changement ne fait pas perdre le cache de l'historique, et le rôle qui rédige n'en reçoit que les clés qu'il demande. Le journal garde chaque écriture, si bien que la reprise et le rejeu retrouvent le même state, et une évaluation contrôle celui que chaque run laisse. À voir dans `examples/j7/`.
+
 ### Vos agents dans Claude Desktop ou Claude Code
 
 `loom mcp` publie chaque agent comme un outil MCP. Vous demandez à Claude Code de relancer le devis 042, et c'est votre agent qui fait le travail, avec ses règles et ses contrôles.

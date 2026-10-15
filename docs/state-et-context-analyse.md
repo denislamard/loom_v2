@@ -202,7 +202,7 @@ La valeur est lue sur le résultat final, après les politiques `after_tool`, et
 
 | Cas | State vu au premier appel du modèle |
 | --- | --- |
-| Session nouvelle, l'application ne passe rien | Vide : pas de bloc dans la requête ; `ctx.state` vaut `{}` |
+| Session nouvelle, l'application ne passe rien | Vide : pas de bloc dans la requête ; `ctx.state` vaut `{}`. **D4 amendé le 14/10 :** le bloc part, vide (`{}`) |
 | Session existante, l'application ne passe rien | Ce que les runs précédents ont écrit, relu dans le journal |
 | L'application passe une partie des clés | Les clés passées sont mises à jour, les autres gardées ; `null` efface |
 
@@ -250,18 +250,18 @@ Treize décisions fixent le comportement ; les six de la proposition y sont, com
 | D1 | Porteur du state : nouvel événement `state.set` (A) ou champs ajoutés (C) | **C** | Compatibilité ascendante, atomicité, rejeu et idempotence sans travail (B1 à B5) |
 | D2 | Les écritures d'un run échoué ou annulé comptent-elles pour les runs suivants ? | **Non** (la proposition disait oui) : seules comptent les écritures que l'historique garde (runs racine terminés, hors appels retirés par une réparation) ; le run en cours voit toujours ses propres écritures | Le modèle ne voit jamais un state que l'historique ne justifie pas ; le rejeu et les évals ne portent que sur des runs finis. Ce qui a vraiment eu lieu reste dans la base métier |
 | D3 | Les sous-runs écrivent-ils dans le state de la session ? | **Non** en v1 : leurs écritures sont ignorées, et un sous-run ne reçoit pas le state | Même règle que l'historique, qui exclut les sous-runs |
-| D4 | Où injecter le bloc pour `main` ? | **À la fin de la requête**, bloc `<session_state>` en JSON trié, absent si vide ; l'adaptateur Anthropic pose son point de cache juste avant. La première version de cette analyse disait : fin du `system` | En fin de `system`, chaque changement de state invalide le cache de tout l'historique ; en fin de requête, seul le bloc est payé plein tarif |
+| D4 | Où injecter le bloc pour `main` ? | **À la fin de la requête**, bloc `<session_state>` en JSON trié ; l'adaptateur Anthropic pose son point de cache juste avant. La première version de cette analyse disait : fin du `system`. **Amendé le 14/10 :** le bloc part à chaque appel, **même vide** (`{}`), et non plus « absent si vide » — il termine toujours la requête, seule la consigne d'une réponse forcée venant après lui | En fin de `system`, chaque changement de state invalide le cache de tout l'historique ; en fin de requête, seul le bloc est payé plein tarif |
 | D5 | Par où l'application pose-t-elle du state ? | **API Python** (`run`, `stream`, `submit`) **et CLI** (`--state clé=valeur`) en v1 ; REST et MCP ensuite, sous une portée dédiée | Un appelant REST peut être l'utilisateur final : écrire un state de contrôle doit être un droit distinct de `run` |
 | D6 | Clés déclarées obligatoirement ? | **Oui**, avec un JSON Schema par clé, vérifié au chargement (`check_schema`) | Le typage est la protection contre un outil qui écrit n'importe quoi |
-| D7 | Limites de taille | **1 Kio par valeur, 4 Kio au total** (JSON compact), réglables ; à valider | Le bloc part à chaque appel et échappe à `hard_tokens` |
-| D8 | Écriture refusée (clé non déclarée, schéma, taille, chemin absent du résultat) | **Résultat d'outil en erreur** qui nomme la clé et le motif ; rien n'est posé | Même règle qu'un contrat de sortie d'outil non tenu ; visible au journal et au modèle |
+| D7 | Limites de taille | **1 Kio par valeur, 4 Kio au total** (JSON compact), réglables (`sessions.state`) ; retenu | Le bloc part à chaque appel et échappe à `hard_tokens` |
+| D8 | Écriture refusée (clé non déclarée, schéma, taille, chemin absent du résultat) | **Résultat d'outil en erreur** qui nomme la clé et le motif ; rien n'est posé. **Amendé le 14/10 :** rien n'est posé pour cette clé, mais le résultat **reste un succès** — l'outil a pu produire son effet, et une erreur pousserait le modèle à le refaire ; le refus est gardé dans la sortie (`state_refused`) et lu par le modèle à la suite du résultat (`[state] …`) | Même règle qu'un contrat de sortie d'outil non tenu ; visible au journal et au modèle |
 | D9 | Deux outils d'un même lot écrivent la même clé | **L'ordre des appels** décide, pas l'ordre d'arrivée | Seule règle identique en direct et au rejeu |
 | D10 | Effacer une clé | **`null` efface** (proposition gardée) | Visible au journal, sans opération de plus |
 | D11 | `session_state` pour les juges | **Refusé au chargement en v1**, avec un message clair ; ajout ensuite | `ContextItem` est partagé : sans refus explicite, l'item serait accepté en config et ignoré à l'exécution |
 | D12 | Qui fixe la valeur écrite par un outil ? | **loom, d'après `from:`** (`path:` dans le résultat, ou `value:` fixe), qui remplace `writers`. Un `ToolOutput(..., state=…)` écrit par l'outil reste un secours pour une règle qui dépend du contexte ; s'il écrit la même clé dans le même appel, sa valeur l'emporte. Pas d'extraction par modèle en v1 | Aucun outil à modifier ; marche aussi pour MCP et la forge ; déterministe et rejouable |
 | D13 | Clé absente au démarrage | **`required: true`** refuse le run avant toute écriture ; **`default:`** donne une valeur à la lecture, sans l'écrire | Une clé de contrôle absente ne doit pas devenir une `KeyError` dans un outil |
 
-Question ouverte : exposer le state de la session dans `RunResult` (API Python) et dans un `GET` REST. Recommandé pour l'API Python dès la v1 ; REST avec D5.
+Question ouverte : exposer le state de la session dans `RunResult` (API Python) et dans un `GET` REST. Recommandé pour l'API Python dès la v1 ; REST avec D5. **Tranché le 14/10 :** pas de champ dans `RunResult` ; le state se relit par `Loom.session_state()` et `loom state <session>`. REST avec D5.
 
 ## Plan de non-régression
 
@@ -277,9 +277,9 @@ Le garde-fou principal existe déjà : les suites `tests/regression/j1` à `j5` 
 | Idempotence | Plantage après l'effet, avant `tool.completed` : la reprise réutilise le cache et pose le même state | `test_idempotence.py` |
 | D9 — ordre dans un lot | Deux outils écrivent la même clé et finissent dans l'ordre inverse : l'ordre des appels gagne, en direct et au rejeu | `test_executor.py`, `test_rejeu.py` |
 | Politiques et déport | `after_tool` qui refuse : rien n'est posé ; qui remplace : state du résultat retenu ; résultat déporté : state gardé ; stockage en panne : rien | `test_loop_policies.py`, `test_offload.py` |
-| D8 — écritures refusées | Clé non déclarée, schéma non tenu, chemin absent du résultat, taille dépassée, motif ReDoS : résultat en erreur, rien de posé | `test_executor.py` |
+| D8 — écritures refusées | Clé non déclarée, schéma non tenu, chemin absent du résultat, taille dépassée, motif ReDoS : rien de posé pour la clé, résultat qui reste un succès, refus dans `state_refused` (D8 amendé) | `test_executor.py` |
 | Projection | Application puis outils ; runs échoués et sous-runs ignorés (D2, D3) ; `null` efface ; inchangée après snapshot, compaction et trim ; deux runs concurrents sur la session | `test_projections.py`, `test_sessions.py`, `test_compaction.py` |
-| Injection | Sans `main.context`, requête **identique octet pour octet** même avec `state:` déclaré ; state vide : pas de bloc ; bloc en dernière position, clés triées ; `</session_state>` dans une valeur échappé ; `before_model` voit le bloc | `test_loop.py`, `test_loop_policies.py` |
+| Injection | Sans `main.context`, requête **identique octet pour octet** même avec `state:` déclaré ; state vide : pas de bloc (D4 amendé : bloc `{}`) ; bloc en dernière position, clés triées ; `</session_state>` dans une valeur échappé ; `before_model` voit le bloc | `test_loop.py`, `test_loop_policies.py` |
 | Rôles et juges | `context.session_state.<clé>` dans un template ; règle #50 ; description vue par l'orchestrateur ; refus pour un juge (D11) | `test_roles.py`, `test_config_judges.py` |
 | Config | Schéma de clé invalide, outil inconnu dans `from:`, `path:` sur un outil sans `data`, item non permis dans `main.context` : erreurs claires au chargement ; `loom validate` les dit | `test_config.py`, `test_config_roles.py`, `test_cli.py` |
 | Masquage et sceau | `run.started` masqué sans `read_content` : `state` retiré et nommé dans `redacted` ; charge scellée | `test_securite.py`, `test_chiffrement.py` |
@@ -301,9 +301,9 @@ Dix étapes, chacune livrable et testable seule ; aucune ne réenregistre les jo
 3. **Exécuteur** : dérivation `from:` sur le résultat final, avant le déport (D12) ; contrôle des écritures (D6, D7, D8) ; `ToolContext.state` ; règles `after_tool` et `_settle`. Tests exécuteur, politiques, déport, idempotence.
 4. **Boucle et adaptateur** : `begin_run(..., state=)` avec refus des clés `required` absentes (D13), `RunContext.session_state`, bloc en fin de requête avant `before_model` (D4), point de cache Anthropic juste avant le bloc. Tests B1, balayage de plantage (B5), requête identique sans `main.context`.
 5. **Rôles** : item `session_state`, sous-chemin dans `_check_template`, `TAGS`, `described()`. Tests rôles.
-6. **Accès** : `state=` sur `run`, `stream`, `submit` ; `RunResult` et `Loom.session_state()` ; CLI `--state` et `loom state <session>`. REST et MCP restent pour plus tard (D5).
+6. **Accès** : `state=` sur `run`, `stream`, `submit` ; `RunResult` (finalement non, tranché le 14/10) et `Loom.session_state()` ; CLI `--state` et `loom state <session>`. REST et MCP restent pour plus tard (D5).
 7. **Rejeu et corpus** : rejeu exact, variante et ordre des appels ; exemple `examples/j7` et suite `tests/regression/j7` ; évals (`cases[].state`) ou limite documentée.
-8. **Documentation** : `fonctions.md` (nouveau point F, « State de session »), `conception.md` (§8.3, §9.5, §9.6, §11.2), un how-to, `CHANGELOG.md` en 2.1.0, et `state-et-context.md` mis à jour avec D1 à D13.
+8. **Documentation** : `fonctions.md` (nouveau point F, « State de session »), `conception.md` (§8.3, §9.5, §9.6, §11.2), un how-to, `CHANGELOG.md` en 2.1.0, et `state-et-context.md` mis à jour avec D1 à D13. **Amendé le 15/10 :** les changements restent dans la 2.0.6, non publiée ; `conception.md` couvre aussi §14.3, §17.4 et §18, le how-to est le chapitre 31 (`howto/05-state-de-session.md`), et `state-et-context.md` devient la référence de ce qui est réalisé.
 9. **Essai réel sur agent_01** : `from: {tool: get_client, path: /code}` sans toucher à l'outil ; `cache:` activé sur ses modèles ; « donne-moi son téléphone » après une compaction ; relevé de `cache_read` et du nombre d'appels, avant et après.
 
 ## Annexe : expériences reproduites

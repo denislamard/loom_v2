@@ -67,6 +67,7 @@
 - **F5** Backends : mémoire vive, fichier, `[V2]` Firestore (non réalisé) ou SQL.
 - **F6** `[V2]` Mémoire long terme / RAG, exposée comme un outil. Réalisée en 6.4d : un serveur MCP, `loom-notes`, branché en source d'outils (point 19).
 - **F7** `[V2]` Gestion des sessions : lister, supprimer, exporter (RGPD).
+- **F8** `[V2]` State de session : quelques valeurs typées et durables (clés déclarées, un JSON Schema chacune), posées par l'application à l'ouverture d'un run ou par le résultat d'un outil, relues par l'orchestrateur, les rôles et les outils, et que la compaction ne touche pas. Réalisé en 2.0.6 (point 51).
 
 ## G. Pièces jointes et artefacts
 
@@ -176,7 +177,7 @@ Les couches ne dépendent que de celles du dessous. Les adaptateurs implémenten
 | 8 | **engine.hooks** | Politiques : points d'accroche (`before_model`, `after_model`, `before_tool`, `after_tool`, `on_output`), décisions typées, composition, garde-fous | support de E5, J4, H4, D10 |
 | 9 | **guards** | Contrats de sortie, normalisation déterministe, réparation par le modèle auteur, juge, politique d'échec, détection du juge corrélé | E1–E6 |
 | 10 | **usage** | Ledger = projection du journal (`model.responded`), tarifs, ventilation, plafonds, rapport | J1–J5 |
-| 11 | **sessions** | Projection de l'historique LLM depuis le journal, snapshots, compaction en tâche de fond via l'agent interne `_compaction` (`session.compacted`, contrôle de fidélité, filet synchrone `ensure_fits`), nettoyage, backends `EventStore` (JSONL, SQLite/Postgres ; Firestore : non réalisé), RGPD | F1–F5, F7 |
+| 11 | **sessions** | Projection de l'historique LLM depuis le journal, snapshots, compaction en tâche de fond via l'agent interne `_compaction` (`session.compacted`, contrôle de fidélité, filet synchrone `ensure_fits`), nettoyage, backends `EventStore` (JSONL, SQLite/Postgres ; Firestore : non réalisé), RGPD ; state de session (projection `session_state`, point 51) | F1–F5, F7, F8 |
 | 12 | **artifacts** | Validation des entrées, stockage par URI, fichiers produits par les outils | G1–G3 |
 | 13 | **agents** | `AgentSpec` et `AgentRegistry` : définition et enregistrement des agents nommés | A9 |
 | 14 | **runtime** | Cycle de vie d'un run : lancer, streamer, annuler, timeout, pause et reprise par relecture du journal, approbation (asynchrone ou approbateur en ligne), arrière-plan (`TaskQueue`, `recover()`, concession par run), déclencheurs, contexte appelant, planification de la compaction en fin de run | A1, A5, A6, A8, H2–H6 |
@@ -875,11 +876,11 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 
 | Type | Champs principaux |
 |---|---|
-| `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte, `judges` (`auto`, `force`, `skip` ; facette si autre que `auto`), `budget` (part reçue du parent, voir point 1) |
+| `run.started` | agent, kind (`normal`, `compaction`), triggered_by, entrée (réf.), contexte, `judges` (`auto`, `force`, `skip` ; facette si autre que `auto`), `budget` (part reçue du parent, voir point 1), `state` (posé par l'application, omis s'il est vide ; voir point 51) |
 | `message.user` | blocs de contenu (pièces jointes par référence) ; `kind` : `request`, ou `repair` pour le diagnostic d'une réparation (politique, `tools`) |
 | `model.responded` | model_id, fournisseur, blocs, usage, coût, stop_reason, latence, tentatives, request_hash, `request_parts` (6.2a), call_id (rôle délégué), `judge` (appel d'un juge : coût compté, ni message ni itération) |
 | `tool.called` | tool_name, tool_kind, call_id, arguments, refs, child_run_id (sous-agent) |
-| `tool.completed` | tool_name, call_id, is_error, sortie (blocs ou réf.), latence, taille |
+| `tool.completed` | tool_name, call_id, is_error, sortie (blocs ou réf. ; `state` et `state_refused`, écritures du state posées et refusées, omis s'ils sont vides : voir point 51), latence, taille |
 | `tool.source_unavailable` | source (serveur MCP), erreur, required (voir point 19) |
 | `guard.checked` | guard, cible (`output`, `role:<nom>`, `tool:<nom>`), outcome (`passed`, `failed`, `skipped`), motif, tentative, normalized, resolution (`retry`, `fail`, `unverified`, `fallback`), politique, call_id (voir points 20 et 21) |
 | `judge.evaluated` | juge, cible, modèle juge, notes par critère (note, seuil, bloquant, motif), `passed`, `blocked`, tentative, politique, call_id (voir point 21) |
@@ -1268,6 +1269,8 @@ Réglé par le journal : réponses des modèles et résultats d'outils sont touj
 - **Le défaut #50** (point 50) : deux configs d'un même process ont chacune leurs modules voisins, même de même nom.
 
 **Reste connu (6.3c) :** le banc vérifie ses faux au premier run de chaque agent, pas à sa construction — un faux destiné à un autre agent de la même config fait refuser le run (un banc par agent) ; `calls` et `expect` ne voient que les runs lancés par le banc ; un module importé depuis un module voisin, à l'appel d'une fonction et non à son chargement, reçoit celui de la dernière config chargée ; un objet déjà pris par une première config reste le sien, mais un `import outils` ailleurs dans le process donne celui de la dernière ; pas de plugin pytest : la fixture s'écrit en trois lignes.
+
+**Avec le state de session (2.0.6, point 51) :** un cas pose son state (`cases[].state`) et `expect.state` contrôle celui que le run laisse ; une doublure ou un faux du banc reçoit les sources `from` du state comme l'outil qu'il remplace ; le rejeu sert le state que le journal a retenu.
 
 ### 32. Stockage des traces pour l'interface
 
@@ -1762,6 +1765,48 @@ profiles: {prod: {...}}               # surcharges partielles
 - juge bloquant échantillonné ;
 - `scope: tenant` sans secrets pour un client ;
 - serveur MCP référencé mais non déclaré, préfixes MCP en double.
+
+### 51. State de session
+
+**Le besoin (F8) :** quelques valeurs typées, petites et durables, que la session garde d'un run à l'autre — le devis ou le client dont parle la conversation, un réglage choisi par l'utilisateur —, posées par l'application ou tirées du résultat d'un outil, et relues par l'orchestrateur, les rôles et les outils sans dépendre de ce que le modèle a retenu de la conversation ni de la qualité d'un résumé de compaction. Le **state** est ce que le système sait ; le **contexte** (`main.context`, le `context` d'un rôle) est ce qu'un modèle en voit à un appel donné. Référence : `docs/state-et-context.md` ; analyse et décisions du 14/10 : `docs/state-et-context-analyse.md`.
+
+**Décisions :**
+
+| # | Décision |
+|---|---|
+| D1 | **Aucun type d'événement nouveau** (option C) : le state voyage dans `run.started.state` (ce que pose l'application) et dans la sortie de `tool.completed` (`state`, ce que pose un résultat d'outil). Les deux champs sont omis quand ils sont vides : un journal sans state s'écrit comme avant, une 2.0.5 relit un journal qui en porte, et le rejeu ressert le state avec le résultat |
+| D2 | Ce que l'application pose compte dès l'ouverture du run, quel que soit son sort. Les écritures des outils ne comptent que pour un **run racine terminé avec succès** (`run.completed`), sans celles des appels qu'une réparation a retirés de l'historique ; le run en cours voit toujours les siennes |
+| D3 | Un **sous-run** ne reçoit pas le state et n'y écrit pas (ses écritures sont retirées sans bruit) ; un run de compaction non plus |
+| D4 | Bloc `<session_state>` en **fin de requête** de l'orchestrateur qui déclare `main.context` (seule la consigne d'une réponse forcée vient après lui), JSON compact aux clés triées, **envoyé à chaque appel, même vide** (`{}`) — amendé le 14/10, la première version disait « absent si vide ». La consigne qui l'explique, et ce que désigne chaque clé, vont dans le prompt système, qui ne change pas d'un appel à l'autre. L'adaptateur Anthropic pose son point de cache avant le bloc |
+| D5 | L'application pose du state par l'**API Python** (`run`, `stream`, `submit`) et la **CLI** (`loom run --state`) ; REST et MCP plus tard, sous une portée dédiée |
+| D6 | **Clés déclarées**, chacune avec un JSON Schema contrôlé au chargement ; une clé non déclarée est refusée |
+| D7 | **1 Kio par valeur, 4 Kio pour tout le state** (JSON compact, octets UTF-8), réglables (`sessions.state`) |
+| D8 | **Écriture d'un outil refusée** (clé non déclarée, schéma non tenu, taille, chemin absent du résultat, motif de schéma qui ne finit pas) : rien n'est posé pour cette clé, mais le **résultat reste un succès** — l'outil a pu produire son effet, et une erreur pousserait le modèle à le refaire. Le refus est gardé dans la sortie (`state_refused`) et le modèle le lit à la suite du résultat (`[state] <clé> non posé : <motif>`) — amendé le 14/10, l'analyse disait « résultat en erreur ». Un state refusé à l'**ouverture** refuse le run, avant tout écrit (`StateRefused`) |
+| D9 | Deux outils d'un même lot écrivent la même clé : **l'ordre des appels** décide, pas l'ordre où ils finissent — en direct comme au rejeu |
+| D10 | `null` **efface** la clé |
+| D11 | Un **juge** ne reçoit pas le state dans cette version : `session_state` dans son `context` est refusé au chargement, en le disant |
+| D12 | La valeur écrite par un outil se déclare dans la config (`from:` d'une clé : `path:` dans les données du résultat, ou `value:` fixe) — l'outil n'a pas à changer. Un `ToolOutput(..., state=…)` rendu par l'outil reste possible ; sur une même clé, il l'emporte |
+| D13 | `required: true` refuse d'ouvrir un run tant que la clé n'a pas de valeur ; `default:` donne une valeur à la lecture, **jamais écrite** ; les deux s'excluent |
+
+Question ouverte de l'analyse, tranchée le 14/10 : pas de champ de state dans `RunResult` ; le state d'une session se relit par `Loom.session_state()` et `loom state`.
+
+**Réalisation (2.0.6) :**
+
+- **Déclarer** (`state:` d'un agent) : `<clé>: {schema, description, from, required, default}`. Le nom d'une clé est un identifiant (lettres, chiffres, `_`, 64 caractères, pas de chiffre en tête) que les templates citent tel quel. Le schéma est contrôlé au chargement, avec le même moteur borné que les contrats de sortie ; `default` et chaque `value:` doivent le tenir, et tenir dans les limites (D7). Une source `from` nomme un outil de l'agent — Python, rôle, sous-agent, ou un préfixe MCP ou de source, connu seulement au début du run — et un seul `path` (pointeur JSON, RFC 6901 ; `""` prend les données entières) ou une seule `value`. `path` exige des données : refusé au chargement pour un outil Python dont la signature annonce `str`, `None` ou `Image` et qui n'a pas de contrat de sortie à schéma, pour un rôle sans contrat de sortie à schéma, et pour un sous-agent. Chaque outil n'est cité qu'une fois par clé.
+- **Ce que reçoit l'orchestrateur** (`main.context: [session_state]`, ou `[{session_state: [clés]}]`) : le bloc en fin de requête, après l'historique et les résultats du run, avant la consigne d'une réponse forcée, jamais journalisé comme message ; les politiques `before_model` le voient. Les clés montrées ont leur valeur par défaut si elles n'en ont pas d'autre ; une valeur qui ne tient plus son schéma (config changée depuis) est écartée avec un avertissement, et remplacée par la valeur par défaut s'il y en a une. La consigne du système (`STATE_HINT`) dit que seul le dernier bloc fait foi et liste les clés montrées avec leur description. Sans `main.context`, la requête ne change pas d'un octet, même avec `state:` déclaré. `main.context` n'accepte que `session_state` : le reste est déjà dans les messages.
+- **Ce que reçoit un rôle** : `context: [session_state]` ou `[{session_state: [clés]}]`. Avec un `input_template`, il cite `{{ context.session_state }}` (le JSON) ou `{{ context.session_state.<clé> }}` (une clé sans valeur y donne une chaîne vide), et la règle #50 s'applique — tout contexte déclaré est cité ; sans template, il reçoit la section `<session_state>`, et la consigne `ROLE_STATE_HINT` avec la description des clés va dans son prompt système. La description qu'en voit l'orchestrateur dit « l'état de la session (clés) ». Le state d'un rôle est celui du début du lot.
+- **Ce que reçoit un outil** : `ToolContext.state`, en lecture seule, une copie par appel — les clés déclarées, valeurs par défaut comprises, telles qu'au **début du lot** : ce qu'un voisin du même lot écrit n'y est pas encore. Vide dans un sous-run et hors moteur.
+- **Poser depuis l'application** : `Loom.run(…, state={…})`, comme `stream` et `submit` ; `loom run --state CLE=VALEUR` (répétable ; la valeur est lue en JSON — `3`, `true`, `null` qui efface, `"texte"` —, sinon prise telle quelle ; `NaN` ou `1e999` restent du texte ; une clé donnée deux fois est refusée). Chaque écriture est contrôlée comme celle d'un outil ; puis chaque clé `required` doit avoir une valeur dans le state qui en résulte. Un refus lève `StateRefused` (une `ValueError`, `problems` : un motif par clé) **avant tout écrit** — avant aussi la compaction de sécurité d'une session trop longue. Un agent sans `state:` refuse tout state posé ; un sous-run n'en reçoit pas de l'application. CLI : « Demande refusée : State refusé : … », code 2.
+- **Poser depuis un outil** : sur le résultat **réussi** d'un appel, après les politiques `after_tool` (un résultat remplacé pose d'après le nouveau ; refusé, rien) et **avant** ses fichiers et son déport — un résultat déporté garde son state. Chaque source donne une valeur ; ce que l'outil écrit lui-même l'emporte sur une même clé (D12). Les écritures acceptées vont dans `output.state`, les refusées dans `output.state_refused` (D8), et un avertissement va au log. Le state que lit le modèle dans le résultat ne contient pas ces écritures : il n'en voit que les refus. La limite totale se compte sur le lot, appel après appel, dans l'ordre où ils finissent : un appel qui ferait dépasser le total voit refusées toutes ses écritures qui ajoutent (un effacement passe toujours). Un outil d'un agent sans `state:` qui écrit du state le voit retiré sans bruit.
+- **Ce que garde la session** (`session_state`, projection pure, `core/projections/state.py`) : recalculée sur tout le journal à chaque ouverture de run, elle ne dépend ni des snapshots, ni de la compaction, ni des coupes ; les écritures de deux runs concurrents d'une session comptent dans l'ordre de leurs clôtures au journal, le state posé par l'application dans l'ordre de leurs ouvertures. Le `RunState` porte `posed_state` et `state_writes` (dans l'ordre des appels, D9) ; `state_delta` fusionne les `state_writes`.
+- **Relire** : `Loom.session_state(session_id, tenant_id=…)` rend ce qui est écrit, **sans valeurs par défaut** (`UnknownSession` pour une session vide, `SessionUnreadable` pour une session illisible) ; `loom state <session> [--tenant]` l'imprime en JSON (code 1 pour une session inconnue).
+- **Accès** : REST et MCP ne posent pas de state (D5). Un run refusé à cause du state donne **422** sur `POST /v1/agents/{nom}/runs` et sur `POST /v1/hooks/{nom}`. `run.started.state` est du contenu : masqué sans `read_content`, sous le sceau quand le journal est chiffré.
+- **Rejeu** : la copie de session va jusqu'à la demande du run, `run.started` compris, donc le state posé par l'application est rejoué. Un résultat d'outil **lu au journal** garde le state que le journal a retenu, sans le recalculer — même si une politique le refait —, et compte pour la limite du lot. Un résultat **neuf** — doublure en variante, doublure ou refus en éval, faux du banc — reçoit les sources `from` et les contrôles comme le résultat de l'outil ; en variante, un résultat retrouvé dans le journal d'un autre run de l'arbre est un résultat neuf. Nouvelle méthode du port `ToolReplay` : `from_journal(run_id, call_id)`.
+- **Évals et banc** : un cas pose son state (`cases[].state`, interdit à un cas de rejeu) ; chaque cas part d'une session neuve. `expect.state` contrôle une clé du state après le run, sa valeur au sens JSON ou son absence (`null`) — au banc aussi (`Bench.expect(…, state=…)`). Un state refusé fait tomber le cas, « StateRefused: … », sans run. `Bench.run(…, state=…)`.
+- **Corpus** (`tests/regression/`) : `j7/relance`, l'agent de `examples/j7/relance/` (clés `signature` obligatoire, `ton` par défaut, `devis_courant` et `client_courant` tirées de `chercher_devis`), trois cas. Chaque suite du corpus est désormais aussi **jouée** en simulé, en plus du rejeu de ses journaux : le rejeu ne voit pas un changement des seules sources `from`, les `expect.state` de j7 le voient.
+- **Exemple** : `examples/j7/state.py` — un run sans `signature` refusé sans rien écrire, puis deux runs : ce que l'application pose, ce que `chercher_devis` pose, le bloc tel que l'orchestrateur l'a reçu (échanges bruts), le ton changé par l'application et reçu par le rôle, et le rejeu identique des deux runs.
+
+**Reste connu (2.0.6) :** REST et MCP ne posent pas de state : un agent qui a une clé `required` n'y ouvre un run que dans une session où elle a déjà une valeur. Un juge ne reçoit pas le state (D11). Le rejeu identique ne recalcule pas les sources `from` : un changement de ces seules sources ne le fait pas diverger (les évals, si). En variante, un résultat d'un autre run de l'arbre, déporté, ne donne pas de données à un `path:` (backlog #022). Quand un lot fait dépasser la taille totale du state, l'appel refusé dépend de l'ordre où les appels finissent. L'effet du bloc de fin de requête sur un modèle à raisonnement n'est pas encore mesuré en réel.
 
 ## Ouverts
 
