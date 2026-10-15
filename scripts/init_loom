@@ -93,7 +93,7 @@ fi
 
 cat > "agents/${agent}.yaml" <<EOF
 name: ${agent}
-description: Agent ${agent}.
+description: Agent personnel.
 
 main:
   model: ${modele_id}

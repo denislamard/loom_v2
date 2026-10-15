@@ -23,6 +23,7 @@ from conftest import (
 
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
+from loom_ia.access.cli.main import _state_item  # pyright: ignore[reportPrivateUsage]
 from loom_ia.adapters.stores import JsonlEventStore
 from loom_ia.config.keys import matches
 from loom_ia.core.events import Event, EventDraft, RunClaimed
@@ -171,6 +172,90 @@ def test_the_answer_reaches_a_pipe_whole_and_a_terminal_without_driving_it(
         captured = capsys.readouterr()
         assert HOSTILE_SHOWN in captured.out
         assert not {"\x1b", "\x07", "\x9b"} & set(captured.out + captured.err)
+
+
+# State : ``client_id`` obligatoire, ``rang`` un entier, ``calcul`` posé par ``calculer``.
+STATE: dict[str, Any] = {
+    "client_id": {"schema": {"type": "string"}, "required": True},
+    "rang": {"schema": {"type": "integer"}},
+    "calcul": {"schema": {"type": "string"}, "from": [{"tool": "calculer", "value": "fait"}]},
+}
+
+
+def test_run_poses_the_state_and_state_reads_it(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--state`` lit sa valeur en JSON, sinon en texte ; ``loom state`` montre la session."""
+    path = str(demo(storage=JOURNAL, agents=[demo_agent(state=STATE)]))
+    asked = ["--state", "client_id=CL 42", "--state", "rang=3", "--session", "atelier"]
+    assert main(["--config", path, "run", "demo", QUESTION, *asked]) == 0
+    capsys.readouterr()
+
+    assert main(["--config", path, "state", "atelier"]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown == {"calcul": "fait", "client_id": "CL 42", "rang": 3}
+
+    # ``null`` efface : la clé obligatoire manque, le run est refusé avant tout écrit.
+    erase = ["--state", "client_id=null", "--session", "atelier"]
+    assert main(["--config", path, "run", "demo", QUESTION, *erase]) == 2
+    assert capsys.readouterr().err == (
+        "Demande refusée : State refusé : client_id : clé obligatoire sans valeur\n"
+    )
+    assert main(["--config", path, "state", "inconnue"]) == 1
+    assert capsys.readouterr().err == "Session inconnue inconnue\n"
+
+
+@pytest.mark.parametrize(
+    ("given", "value"),
+    [
+        ("note=b=c", "b=c"),
+        ("note=", ""),
+        ("note=007", "007"),
+        ("note=NaN", "NaN"),
+        ("note=-Infinity", "-Infinity"),
+        ("note=1e999", "1e999"),
+        ('note="3"', "3"),
+        ("note=[1, 2]", [1, 2]),
+        ("note=null", None),
+    ],
+)
+def test_a_state_value_is_json_or_else_text(given: str, value: object) -> None:
+    """NaN et les infinis ne sont pas du JSON : ils restent du texte."""
+    assert _state_item(given) == ("note", value)
+
+
+def test_state_of_an_unreadable_session_is_one_line(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = demo(storage=JOURNAL)
+    journal = RunJournal(agent="demo", session_id=SessionId("casse"))
+    journal.start(QUESTION).model_turn(Message.assistant(ANSWER)).complete()
+    journal.transition(RunStatus.READY_FOR_MODEL)
+    _write(path.parent / "journaux", journal)
+
+    assert main(["--config", str(path), "state", "casse"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("Historique de la session casse illisible")
+    assert "Traceback" not in err
+
+
+@pytest.mark.parametrize(
+    ("given", "said"),
+    [
+        (["--state", "client_id"], "'client_id' : attendu CLE=VALEUR"),
+        (["--state", "=x"], "'=x' : attendu CLE=VALEUR"),
+        (["--state", "a=1", "--state", "a=2"], "--state : clé donnée deux fois : a"),
+    ],
+)
+def test_a_malformed_state_is_refused(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], given: list[str], said: str
+) -> None:
+    path = str(demo(agents=[demo_agent(state=STATE)]))
+    with pytest.raises(SystemExit) as exited:
+        code = main(["--config", path, "run", "demo", QUESTION, *given])
+        raise SystemExit(code)
+    assert exited.value.code == 2
+    assert said in capsys.readouterr().err
 
 
 @pytest.mark.skipif(find_spec("aiosqlite") is None, reason="extra 'sqlite' absent")

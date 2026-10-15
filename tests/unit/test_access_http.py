@@ -210,6 +210,33 @@ async def test_the_same_run_id_twice_is_refused(demo: ConfigFactory) -> None:
     assert "existe déjà" in again.json()["detail"]
 
 
+async def test_a_run_refused_for_its_state_is_a_422(demo: ConfigFactory) -> None:
+    """D13 : une clé ``required`` sans valeur ; la demande ne peut pas ouvrir de run."""
+    required = {"client_id": {"schema": {"type": "string"}, "required": True}}
+    async with serving(demo(agents=[demo_agent(state=required)])) as (_, http):
+        refused = [
+            await http.post("/v1/agents/demo/runs", json=body)
+            for body in ({"message": QUESTION}, {"message": QUESTION, "background": True})
+        ]
+    for answer in refused:
+        assert answer.status_code == 422
+        assert answer.json()["detail"] == "State refusé : client_id : clé obligatoire sans valeur"
+
+
+async def test_rest_does_not_show_the_session_state_yet(demo: ConfigFactory) -> None:
+    """Lire le state demandera sa portée (D5) : le résultat REST ne le porte pas."""
+    written = {
+        "calcul": {"schema": {"type": "string"}, "from": [{"tool": "calculer", "value": "x"}]}
+    }
+    async with serving(demo(agents=[demo_agent(state=written)])) as (loom, http):
+        started = (await http.post("/v1/agents/demo/runs", json={"message": QUESTION})).json()
+        again = (await http.get(f"/v1/runs/{started['run_id']}")).json()
+        stored = await loom.session_state(SessionId(started["session_id"]))
+
+    assert stored == {"calcul": "x"}
+    assert "session_state" not in started and "session_state" not in again
+
+
 async def test_unknown_agent_and_unknown_run_give_404(demo: ConfigFactory) -> None:
     path = demo(agents=[demo_agent(), demo_agent(name="cache", expose={"rest": False})])
     async with serving(path) as (_, http):

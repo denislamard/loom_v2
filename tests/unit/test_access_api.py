@@ -8,15 +8,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import ANSWER, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, MODEL, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
+from pydantic import JsonValue
 
-from loom_ia.access import Loom, UnknownRun
+from loom_ia.access import Loom, UnknownRun, UnknownSession
 from loom_ia.adapters.models.fake import FakeModel
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.adapters.usage import InMemoryUsageCounter
 from loom_ia.agents import UnknownAgent
 from loom_ia.config import load_config
-from loom_ia.core.events import Event, EventQuery, ToolCalled
+from loom_ia.core.events import Event, EventQuery, RunStarted, ToolCalled
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     Message,
@@ -31,7 +32,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import MissingKey
 from loom_ia.core.projections import ProjectionError
-from loom_ia.engine import SessionUnreadable
+from loom_ia.engine import RunExists, SessionUnreadable, StateRefused
 from loom_ia.testing import RunJournal, tool_call_message
 from loom_ia.tools import tool
 
@@ -563,3 +564,151 @@ async def test_runs_keeps_the_ceilings_of_the_rest_route(demo: ConfigFactory) ->
         with pytest.raises(ValueError, match="sessions : de 1 à 200"):
             await loom.runs(sessions=0)
         assert (await loom.runs(limit=200, sessions=200)).runs == ()
+
+
+# --- State de la session (étape 6) -------------------------------------------------------
+
+# ``client_id`` obligatoire (D13), ``calcul`` posé par ``calculer``, ``langue`` lue par défaut.
+STATE: dict[str, Any] = {
+    "client_id": {"schema": {"type": "string", "pattern": "^CL-[0-9]{5}$"}, "required": True},
+    "calcul": {"schema": {"type": "string"}, "from": [{"tool": "calculer", "value": "fait"}]},
+    "langue": {"schema": {"enum": ["fr", "en"]}, "default": "fr"},
+}
+CONVERSATION = SessionId("conversation")
+
+
+def stateful(demo: ConfigFactory, **root: Any) -> Path:
+    return demo(agents=[demo_agent(state=STATE)], **root)
+
+
+async def test_run_poses_the_state_of_the_application(demo: ConfigFactory) -> None:
+    """Écrit dans ``run.started``, avant la demande ; ``session_state`` relit la session."""
+    async with Loom.from_config(stateful(demo)) as loom:
+        first = await loom.run(
+            "demo", QUESTION, session_id=CONVERSATION, state={"client_id": "CL-00042"}
+        )
+        after_first = await loom.session_state(CONVERSATION)
+        # La clé obligatoire est dans la session : le run suivant n'a rien à reposer.
+        second = await loom.run("demo", QUESTION, session_id=CONVERSATION)
+        events = await loom.export_session(CONVERSATION)
+        with pytest.raises(UnknownSession, match="Session absente inconnue"):
+            await loom.session_state(SessionId("absente"))
+
+    assert first.ok and second.ok
+    # Ce qui est écrit, sans la valeur par défaut de ``langue``.
+    assert after_first == {"client_id": "CL-00042", "calcul": "fait"}
+    opening = [e for e in events if e.run_id == first.run_id][:2]
+    assert kinds(opening) == ["run.started", "message.user"]
+    assert isinstance(opening[0].payload, RunStarted)
+    assert opening[0].payload.state == {"client_id": "CL-00042"}
+    # Le résultat ne le porte pas : il se lit à part, au moment voulu.
+    assert "session_state" not in first.model_dump()
+
+
+async def test_session_state_stays_with_its_tenant(demo: ConfigFactory) -> None:
+    config = demo(agents=[demo_agent(state=STATE)], tenants=[{"id": ACME}, {"id": BETA}])
+    async with Loom.from_config(config) as loom:
+        for tenant, client in ((ACME, "CL-00001"), (BETA, "CL-00002")):
+            await loom.run(
+                "demo",
+                QUESTION,
+                session_id=CONVERSATION,
+                tenant=tenant,
+                state={"client_id": client},
+            )
+        states = [await loom.session_state(CONVERSATION, tenant_id=t) for t in (ACME, BETA)]
+        with pytest.raises(UnknownSession):
+            await loom.session_state(CONVERSATION)
+
+    assert [state["client_id"] for state in states] == ["CL-00001", "CL-00002"]
+
+
+async def test_stream_and_submit_pose_the_state_too(demo: ConfigFactory) -> None:
+    async with Loom.from_config(stateful(demo)) as loom:
+        streamed = [
+            item
+            async for item in loom.stream(
+                "demo", QUESTION, session_id=SessionId("s1"), state={"client_id": "CL-00001"}
+            )
+        ]
+        await loom.submit(
+            "demo", QUESTION, session_id=SessionId("s2"), state={"client_id": "CL-00002"}
+        )
+        await loom.drain()
+        states = [await loom.session_state(SessionId(s)) for s in ("s1", "s2")]
+
+    started = next(item for item in streamed if isinstance(item, Event))
+    assert isinstance(started.payload, RunStarted)
+    assert started.payload.state == {"client_id": "CL-00001"}
+    assert [state["client_id"] for state in states] == ["CL-00001", "CL-00002"]
+
+
+async def test_a_run_without_its_required_key_is_refused_before_anything_is_written(
+    demo: ConfigFactory,
+) -> None:
+    """D13 : ``run``, ``stream`` et ``submit`` refusent ; la session n'existe pas."""
+    async with Loom.from_config(stateful(demo)) as loom:
+        with pytest.raises(StateRefused, match="client_id : clé obligatoire sans valeur"):
+            await loom.run("demo", QUESTION, session_id=CONVERSATION)
+        with pytest.raises(StateRefused, match="client_id : ne suit pas son schéma"):
+            await loom.submit("demo", QUESTION, session_id=CONVERSATION, state={"client_id": "x"})
+        with pytest.raises(StateRefused, match="clé non déclarée dans 'state'"):
+            async with aclosing(
+                loom.stream("demo", QUESTION, session_id=CONVERSATION, state={"autre": 1})
+            ) as items:
+                async for _ in items:
+                    pass
+        assert await loom.sessions() == []
+
+    async with Loom.from_config(demo()) as loom:
+        with pytest.raises(StateRefused, match="l'agent 'demo' ne déclare pas de state"):
+            await loom.run("demo", QUESTION, state={"client_id": "CL-00001"})
+
+
+async def test_a_refused_state_does_not_compact_the_session(demo: ConfigFactory) -> None:
+    """La compaction de sécurité écrit dans la session : le state est contrôlé avant elle."""
+    resume: dict[str, Any] = {
+        "id": "RESUME",
+        "sdk": "fake",
+        "model": "fake-resume",
+        "params": {"script": [{"text": "12 fois 7 plus 3 : 87."}]},
+    }
+    compaction = {"model": "RESUME", "over_tokens": 1, "hard_tokens": 2, "keep_last": 0}
+    config = stateful(demo, models=[MODEL, resume], sessions={"compaction": compaction})
+    async with Loom.from_config(config) as loom:
+        await loom.run("demo", QUESTION, session_id=CONVERSATION, state={"client_id": "CL-00042"})
+        await loom.drain()
+        before = await loom.export_session(CONVERSATION)
+        erased: dict[str, JsonValue] = {"client_id": None}
+        with pytest.raises(StateRefused, match="client_id : clé obligatoire sans valeur"):
+            await loom.run("demo", QUESTION, session_id=CONVERSATION, state=erased)
+        with pytest.raises(StateRefused, match="client_id : clé obligatoire sans valeur"):
+            await loom.submit("demo", QUESTION, session_id=CONVERSATION, state=erased)
+        after = await loom.export_session(CONVERSATION)
+        # Une demande rejouée (même run_id) garde sa réponse : le run existe déjà.
+        done = await loom.run(
+            "demo",
+            QUESTION,
+            session_id=CONVERSATION,
+            run_id=RunId("r1"),
+            state={"client_id": "CL-00007"},
+        )
+        with pytest.raises(RunExists):
+            await loom.run(
+                "demo", QUESTION, session_id=CONVERSATION, run_id=RunId("r1"), state=erased
+            )
+        with pytest.raises(RunExists):
+            await loom.submit(
+                "demo", QUESTION, session_id=CONVERSATION, run_id=RunId("r1"), state=erased
+            )
+
+    assert after == before
+    assert done.ok
+
+
+async def test_session_state_of_an_unreadable_session_says_so(demo: ConfigFactory) -> None:
+    store = InMemoryEventStore()
+    await _unreadable_session(store, CONVERSATION)
+    async with Loom(load_config(stateful(demo)), store=store) as loom:
+        with pytest.raises(SessionUnreadable, match="Historique de la session conversation"):
+            await loom.session_state(CONVERSATION)

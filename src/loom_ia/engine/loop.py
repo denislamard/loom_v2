@@ -386,9 +386,7 @@ async def begin_run(
     rooted = parent is None and kind == "normal"
     if posed and not rooted:
         raise ValueError("Seul un run racine ordinaire reçoit un state de l'application")
-    rules = ctx.tools.state_rules
-    if posed and not rules:
-        raise StateRefused([f"l'agent {ctx.agent!r} ne déclare pas de state"])
+    _accepts_state(ctx, posed)
     context = context or CallerContext()
     chosen = run_id is not None
     run_id = run_id or new_run_id()
@@ -424,11 +422,9 @@ async def begin_run(
         raise RunExists(run_id)
     prior: dict[str, JsonValue] = {}
     if rooted and session_id is not None:
-        prior = await _check_history(ctx, scope)
-    if rooted and rules:
-        problems = rules.opening(posed, prior)
-        if problems:
-            raise StateRefused(problems)
+        prior = await _check_history(ctx, scope.tenant_id, scope.session_id)
+    if rooted:
+        _check_opening(ctx, posed, prior)
     stored: list[ArtifactStored] = []
     if store is not None:
         stored = [await _store_attachment(store, scope, *item) for item in checked]
@@ -466,13 +462,67 @@ class SessionUnreadable(Exception):
         self.session_id = session_id
 
 
-async def _check_history(ctx: RunContext, scope: RunScope) -> dict[str, JsonValue]:
+async def check_state(
+    ctx: RunContext,
+    state: Mapping[str, JsonValue] | None,
+    *,
+    tenant_id: TenantId,
+    session_id: SessionId,
+    run_id: RunId | None = None,
+) -> None:
+    """Contrôle, sans rien écrire, le state avec lequel s'ouvrirait un run racine (D13).
+
+    ``begin_run`` fait ce contrôle lui-même ; il se fait ici plus tôt quand
+    l'ouverture est précédée d'une écriture — la compaction de sécurité d'une
+    session trop longue —, pour qu'un run refusé ne laisse rien au journal.
+    Lève ``StateRefused``, ou ``SessionUnreadable`` pour une session illisible.
+
+    Rien n'est relu quand rien ne peut être refusé : aucun state posé, aucune
+    clé ``required``. Un ``run_id`` choisi qui existe déjà est laissé à
+    ``begin_run`` : une demande rejouée garde sa réponse (``RunExists``).
+    """
+    posed = dict(state or {})
+    _accepts_state(ctx, posed)
+    rules = ctx.tools.state_rules
+    if not rules or not (posed or rules.requires):
+        return
+    if run_id is not None and await ctx.store.read(tenant_id, session_id, run_id=run_id):
+        return
+    events = await ctx.store.read(tenant_id, session_id)
+    try:
+        prior = session_state(events)
+    except (ProjectionError, ValidationError) as error:
+        raise SessionUnreadable(session_id, error) from error
+    _check_opening(ctx, posed, prior)
+
+
+def _accepts_state(ctx: RunContext, posed: Mapping[str, JsonValue]) -> None:
+    """Un agent sans state ne reçoit rien de l'application."""
+    if posed and not ctx.tools.state_rules:
+        raise StateRefused([f"l'agent {ctx.agent!r} ne déclare pas de state"])
+
+
+def _check_opening(
+    ctx: RunContext, posed: Mapping[str, JsonValue], prior: Mapping[str, JsonValue]
+) -> None:
+    """Le state posé, puis les clés obligatoires, sur le state de la session (D6, D7, D13)."""
+    rules = ctx.tools.state_rules
+    if not rules:
+        return
+    problems = rules.opening(posed, prior)
+    if problems:
+        raise StateRefused(problems)
+
+
+async def _check_history(
+    ctx: RunContext, tenant_id: TenantId, session_id: SessionId
+) -> dict[str, JsonValue]:
     """Relit l'historique de la session avant d'y ouvrir un run racine.
 
     Rend le state de la session pour un agent qui en déclare (vide sinon) : il
     se lit sur tout le journal, au-delà du dernier snapshot.
     """
-    events = await ctx.store.read(scope.tenant_id, scope.session_id)
+    events = await ctx.store.read(tenant_id, session_id)
     try:
         turns(events)
         spent(events)
@@ -480,11 +530,11 @@ async def _check_history(ctx: RunContext, scope: RunScope) -> dict[str, JsonValu
     except (ProjectionError, ValidationError) as error:
         logger.error(
             "Session %s illisible : aucun run n'y est ouvert — %s",
-            scope.session_id,
+            session_id,
             error,
-            extra={"tenant_id": scope.tenant_id},
+            extra={"tenant_id": tenant_id},
         )
-        raise SessionUnreadable(scope.session_id, error) from error
+        raise SessionUnreadable(session_id, error) from error
     return prior
 
 

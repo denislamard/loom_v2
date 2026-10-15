@@ -3,7 +3,9 @@
 
     loom validate                  vérifie la config et monte les agents
     loom run demo "Bonjour"        lance un run (``--stream`` pour le direct,
-                                   ``--attach photo.jpg`` pour joindre une image)
+                                   ``--attach photo.jpg`` pour joindre une image,
+                                   ``--state client=C-002`` pour poser du state)
+    loom state <session>           state d'une session, en JSON
     loom resume <run_id>           reprend un run interrompu
     loom replay <run_id>           rejoue un run, à l'identique ou en variante
                                    (``--journal F`` : les runs d'un journal exporté)
@@ -90,6 +92,7 @@ from loom_ia.core.model import (
     StreamReset,
     TenantId,
     TextDelta,
+    finite_json,
     new_run_id,
 )
 from loom_ia.core.ports import (
@@ -261,7 +264,24 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="juges : selon leur 'when' (auto), tous (force) ou aucun (skip)",
     )
+    run.add_argument(
+        "--state",
+        type=_state_item,
+        action="append",
+        default=None,
+        metavar="CLE=VALEUR",
+        help="state de la session posé à l'ouverture (répétable) : la valeur en JSON "
+        '(3, true, null qui efface, "texte"), sinon telle quelle',
+    )
     run.set_defaults(handler=cmd_run)
+
+    state = tenanted(
+        commands.add_parser(
+            "state", help="state d'une session : ce que l'application et les outils y ont écrit"
+        )
+    )
+    state.add_argument("session_id")
+    state.set_defaults(handler=cmd_state)
 
     resume = tenanted(commands.add_parser("resume", help="reprend un run interrompu"))
     resume.add_argument("run_id")
@@ -858,6 +878,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     except OSError as error:
         print(f"Pièce jointe illisible : {error}", file=sys.stderr)
         return REFUSED
+    items: list[tuple[str, JsonValue]] = args.state or []
+    keys = [key for key, _ in items]
+    doubles = sorted({key for key in keys if keys.count(key) > 1})
+    if doubles:
+        print(f"--state : clé donnée deux fois : {', '.join(doubles)}", file=sys.stderr)
+        return REFUSED
+    posed = dict(items) or None
 
     async def go() -> RunResult:
         async with Loom(config) as loom:
@@ -871,6 +898,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     run_id=run_id,
                     judges=args.judges,
                     tenant=tenant,
+                    state=posed,
                 ):
                     live.show(item)
                 print()
@@ -888,9 +916,44 @@ def cmd_run(args: argparse.Namespace) -> int:
                 run_id=run_id,
                 judges=args.judges,
                 tenant=tenant,
+                state=posed,
             )
 
     return _report(asyncio.run(go()), as_json=args.json, quiet=args.stream)
+
+
+def _state_item(text: str) -> tuple[str, JsonValue]:
+    """Un ``--state CLE=VALEUR`` : la valeur en JSON si elle se lit ainsi, sinon le texte.
+
+    ``NaN``, ``Infinity`` ou ``1e999`` ne sont pas du JSON : ils restent du texte.
+    """
+    key, sep, raw = text.partition("=")
+    if not sep or not key:
+        raise argparse.ArgumentTypeError(f"{text!r} : attendu CLE=VALEUR")
+    try:
+        value: JsonValue = json.loads(raw)
+    except json.JSONDecodeError:
+        return key, raw
+    return key, value if finite_json(value) else raw
+
+
+def cmd_state(args: argparse.Namespace) -> int:
+    """State d'une session : ce qui est écrit, sans les valeurs par défaut, en JSON."""
+    config = load_config(args.config, profile=args.profile)
+    apply_logging(config)
+    session = SessionId(args.session_id)
+
+    async def go() -> dict[str, JsonValue]:
+        async with Loom(config) as loom:
+            return await loom.session_state(session, tenant_id=_tenant(args))
+
+    try:
+        values = asyncio.run(go())
+    except UnknownSession as error:
+        print(error.args[0], file=sys.stderr)
+        return FAILED
+    print(_for_stdout(json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True)))
+    return OK
 
 
 def cmd_resume(args: argparse.Namespace) -> int:

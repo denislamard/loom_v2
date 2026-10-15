@@ -201,7 +201,7 @@ def construire(evenements: list[Objet]) -> str:
                 try:
                     corps = json.loads(p["request_body"])
                     entree = rendre_entree(corps)
-                except json.JSONDecodeError, KeyError, TypeError:
+                except (json.JSONDecodeError, KeyError, TypeError):
                     entree = f"<pre>{esc(str(p.get('request_body')))}</pre>"
                 rep = lire_flux_anthropic(p.get("response_body") or "")
                 sortie = rendre_sortie(rep)

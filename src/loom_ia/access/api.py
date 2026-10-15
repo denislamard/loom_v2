@@ -136,7 +136,7 @@ from loom_ia.core.ports import (
     UnusableId,
     UsageCounter,
 )
-from loom_ia.core.projections import ProjectionError, RunTree, fold
+from loom_ia.core.projections import ProjectionError, RunTree, fold, session_state
 from loom_ia.core.template import Template
 from loom_ia.engine import (
     CircuitBreakers,
@@ -144,11 +144,13 @@ from loom_ia.engine import (
     RunContext,
     RunExists,
     RunMoved,
+    SessionUnreadable,
     SessionWriter,
     SessionWriters,
     ToolReplay,
     begin_run,
     cancellation,
+    check_state,
     drive,
     run_scope,
     subruns_cancellation,
@@ -1267,12 +1269,20 @@ class Loom:
         judges: JudgesMode = "auto",
         approver: Approver | None = None,
         tenant: TenantId | None = None,
+        state: Mapping[str, JsonValue] | None = None,
     ) -> RunResult:
         """Fait tourner un run jusqu'au bout et renvoie ce qu'il a produit.
 
         Une pièce jointe refusée (format, taille) lève ``AttachmentError``
         avant que le run ne commence. ``judges`` (#21) : ``auto``, chaque juge
         selon son ``when`` ; ``force``, tous (audit, évals) ; ``skip``, aucun.
+
+        ``state`` : écritures du state de la session par l'application (D5),
+        ``None`` effaçant une clé. Contrôlées comme celles d'un outil, elles
+        vont dans le ``run.started`` ; une écriture refusée, ou une clé
+        ``required`` sans valeur, lève ``StateRefused`` (une ``ValueError``)
+        avant que rien ne soit écrit (D13). ``session_state(session_id)`` relit
+        ensuite le state de la session.
 
         ``approver`` (#28) : un approbateur en ligne, appelé dans la boucle
         pour chaque appel qui demande une approbation. Le run ne passe alors
@@ -1292,8 +1302,10 @@ class Loom:
         """
         caller, who = await self._admitted(agent, context, tenant)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
-        state = await self._start(ctx, message, attachments, session_id, caller, run_id, judges)
-        return await self._result(state)
+        started = await self._start(
+            ctx, message, attachments, session_id, caller, run_id, judges, state
+        )
+        return await self._result(started)
 
     async def stream(
         self,
@@ -1308,6 +1320,7 @@ class Loom:
         judges: JudgesMode = "auto",
         approver: Approver | None = None,
         tenant: TenantId | None = None,
+        state: Mapping[str, JsonValue] | None = None,
     ) -> AsyncGenerator[StreamItem]:
         """Événements du journal et morceaux du modèle, dans l'ordre d'arrivée.
 
@@ -1316,7 +1329,7 @@ class Loom:
         ``subruns``, les événements des sous-runs sont mêlés au flux. Le flux
         ne montre que le journal de ce run — son client, sa session : un autre
         run qui aurait choisi le même ``run_id`` n'y paraît pas.
-        ``judges`` et ``approver`` : comme pour ``run``.
+        ``judges``, ``approver`` et ``state`` : comme pour ``run``.
 
         Un run arrêté par ``cancel()`` termine le flux proprement, après
         ``run.cancelled`` ; l'arrêt de la tâche qui itère, lui, se propage.
@@ -1341,7 +1354,7 @@ class Loom:
         # Écoute posée avant le démarrage : l'arbre se reconnaît dans l'ordre d'écriture.
         with self._store.listen(items.put_nowait, accept=accept):
             task = asyncio.create_task(
-                self._start(ctx, message, attachments, session_id, caller, run_id, judges)
+                self._start(ctx, message, attachments, session_id, caller, run_id, judges, state)
             )
             task.add_done_callback(lambda _: items.put_nowait(None))
             try:
@@ -1918,6 +1931,23 @@ class Loom:
             raise UnknownSession(session_id)
         return events
 
+    async def session_state(
+        self, session_id: SessionId, *, tenant_id: TenantId | None = None
+    ) -> dict[str, JsonValue]:
+        """State de la session, relu dans son journal : ce qui est écrit, sans valeurs par défaut.
+
+        Ce que l'application a posé à l'ouverture de chaque run, et ce que les
+        outils des runs terminés ont écrit (D2). ``UnknownSession`` si la session
+        n'a aucun événement ; ``SessionUnreadable`` si l'un de ses runs ne se relit pas.
+        """
+        events = await self._store.read(tenant_id or DEFAULT_TENANT, session_id)
+        if not events:
+            raise UnknownSession(session_id)
+        try:
+            return session_state(events)
+        except (ProjectionError, ValidationError) as error:
+            raise SessionUnreadable(session_id, error) from error
+
     async def delete_session(
         self, session_id: SessionId, *, tenant_id: TenantId | None = None
     ) -> SessionDeletion:
@@ -2415,6 +2445,7 @@ class Loom:
         judges: JudgesMode = "auto",
         tenant: TenantId | None = None,
         trigger: str | None = None,
+        state: Mapping[str, JsonValue] | None = None,
     ) -> RunId:
         """Ouvre un run et met son pilotage en file ; rend son identifiant (H5).
 
@@ -2423,13 +2454,16 @@ class Loom:
         (``state``) ou arrêter (``cancel``) aussitôt. Son résultat se relit
         ensuite avec ``result(run_id)``, ou s'attend avec ``drain()``.
 
-        Une pièce jointe refusée lève ``AttachmentError`` avant l'ouverture.
+        Une pièce jointe refusée lève ``AttachmentError`` avant l'ouverture ;
+        un ``state`` refusé, ``StateRefused`` (voir ``run``).
         """
         caller, who = await self._admitted(agent, context, tenant)
         ctx = self.context(agent, who.id)
         if self._compaction is not None and session_id is not None:
+            # Le state se contrôle avant : un run refusé ne compacte pas la session.
+            await check_state(ctx, state, tenant_id=who.id, session_id=session_id, run_id=run_id)
             await self._compaction.ensure_fits(who.id, session_id)
-        state = await begin_run(
+        opened = await begin_run(
             ctx,
             message,
             attachments=attachments,
@@ -2439,17 +2473,18 @@ class Loom:
             judges=self._judged(judges),
             trigger=trigger,
             writer=await self._writer(who.id, session_id),
+            state=state,
         )
         await self._queue.submit(
             Job(
                 kind="run",
                 tenant_id=who.id,
-                session_id=state.session_id,
-                run_id=state.run_id,
+                session_id=opened.session_id,
+                run_id=opened.run_id,
             ),
-            key=f"run:{state.run_id}",
+            key=f"run:{opened.run_id}",
         )
-        return state.run_id
+        return opened.run_id
 
     # --- Déclencheurs (H6, J5.4c) ---------------------------------------------
 
@@ -2873,14 +2908,17 @@ class Loom:
         context: CallerContext | None,
         run_id: RunId | None,
         judges: JudgesMode = "auto",
+        state: Mapping[str, JsonValue] | None = None,
     ) -> RunState:
         tenant = (context or CallerContext()).tenant_id
         if self._compaction is not None and session_id is not None:
+            # Le state se contrôle avant : un run refusé ne compacte pas la session.
+            await check_state(ctx, state, tenant_id=tenant, session_id=session_id, run_id=run_id)
             # Filet de sécurité : une session trop longue est résumée avant
             # que le run ne commence (#23).
             await self._compaction.ensure_fits(tenant, session_id)
         writer = await self._writer(tenant, session_id)
-        state = await begin_run(
+        opened = await begin_run(
             ctx,
             message,
             attachments=attachments,
@@ -2889,8 +2927,9 @@ class Loom:
             run_id=run_id,
             judges=self._judged(judges),
             writer=writer,
+            state=state,
         )
-        return await self._piloted(ctx, state, writer)
+        return await self._piloted(ctx, opened, writer)
 
 
 def _caller_cancelled() -> bool:

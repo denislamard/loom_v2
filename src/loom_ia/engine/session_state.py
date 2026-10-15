@@ -129,6 +129,11 @@ class StateRules:
     def __bool__(self) -> bool:
         return bool(self.keys)
 
+    @property
+    def requires(self) -> bool:
+        """Vrai si une clé est ``required`` : ouvrir un run demande de relire la session."""
+        return any(rule.required for rule in self.keys.values())
+
     def __repr__(self) -> str:
         return f"StateRules({', '.join(self.keys)})"
 
@@ -183,7 +188,7 @@ class StateRules:
                 f"le state de la session ferait {total} octets, au-delà de "
                 f"sessions.state.max_total_bytes ({self.max_total_bytes})"
             )
-        if any(rule.required for rule in self.keys.values()):
+        if self.requires:
             shown = self.visible(merged)
             problems += [
                 f"{name} : clé obligatoire sans valeur"

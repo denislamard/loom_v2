@@ -163,7 +163,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import JournalBusy, JournalCorrupted, SealError, SessionRecord, UnusableId
 from loom_ia.core.projections import ProjectionError
-from loom_ia.engine import ClaimConflict, SessionUnreadable
+from loom_ia.engine import ClaimConflict, SessionUnreadable, StateRefused
 from loom_ia.runtime import announce
 from loom_ia.telemetry import Trace
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
@@ -458,7 +458,9 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
                 run_id=body.run_id,
                 judges=body.judges,
             )
-        except AttachmentError as exc:
+        except (AttachmentError, StateRefused) as exc:
+            # Une clé ``required`` du state sans valeur : la demande ne peut pas
+            # ouvrir de run, ce n'est pas un conflit (D13).
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
         except UnusableId:
             # Le ``session_id`` ou le ``run_id`` du corps est refusé tel quel (422), non pris
@@ -493,7 +495,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
                 delivery_id=delivery,
                 tenant_id=who.tenant,
             )
-        except DeliveryRefused as exc:
+        except (DeliveryRefused, StateRefused) as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
         if opened.repeated:
             # Rien n'a été relancé : le code le dit, pour qu'une plateforme qui

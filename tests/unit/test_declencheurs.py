@@ -255,6 +255,19 @@ async def test_a_hook_answers_202_then_200_on_a_repeat(demo: ConfigFactory) -> N
     assert started.facets["trigger"] == "relance-quotidienne"
 
 
+async def test_a_delivery_refused_for_its_state_is_a_422(demo: ConfigFactory) -> None:
+    """L'agent exige une clé du state qu'une livraison ne pose pas : refusé, sans run."""
+    required = {"client_id": {"schema": {"type": "string"}, "required": True}}
+    path = demo(storage=JOURNAL, triggers=[RELANCE], agents=[demo_agent(state=required)])
+    async with servie(path) as (loom, http):
+        refused = await http.post("/v1/hooks/relance-quotidienne", json=CHARGE)
+        sessions = await loom.sessions()
+
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == "State refusé : client_id : clé obligatoire sans valeur"
+    assert sessions == []
+
+
 async def test_a_delivery_id_taken_by_another_door_is_a_422(demo: ConfigFactory) -> None:
     facturation = {**RELANCE, "name": "facturation", "agent": "autre"}
     relance = {**RELANCE, "delivery_header": "X-Delivery-Id"}

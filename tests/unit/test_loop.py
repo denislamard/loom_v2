@@ -90,6 +90,7 @@ from loom_ia.engine import (
     ToolExecutor,
     begin_run,
     cancellation,
+    check_state,
     drive,
     in_call_order,
     run_scope,
@@ -2523,3 +2524,24 @@ async def test_an_agent_with_state_rereads_the_whole_session_before_opening_a_ru
     with pytest.raises(SessionUnreadable, match="casse-avant"):
         await begin_run(with_state(store, scripted()), "?", session_id=session)
     assert await store.last_seq(DEFAULT_TENANT, session) == before
+
+
+async def test_check_state_reads_nothing_when_nothing_can_be_refused() -> None:
+    """Ni state posé, ni clé obligatoire : rien à relire, la session n'est pas lue."""
+
+    class Unread(InMemoryEventStore):
+        async def read(self, *args: Any, **kwargs: Any) -> list[Event]:
+            raise AssertionError("session relue")
+
+    ctx = with_state(Unread(), scripted())
+    await check_state(ctx, None, tenant_id=DEFAULT_TENANT, session_id=SessionId("s1"))
+    with pytest.raises(AssertionError, match="session relue"):
+        await check_state(ctx, {"note": "x"}, tenant_id=DEFAULT_TENANT, session_id=SessionId("s1"))
+
+
+async def test_check_state_says_when_the_session_is_unreadable(store: EventStore) -> None:
+    session = SessionId("casse")
+    await _break(store, session)
+    ctx = with_state(store, scripted())
+    with pytest.raises(SessionUnreadable, match="casse"):
+        await check_state(ctx, {"note": "x"}, tenant_id=DEFAULT_TENANT, session_id=session)
