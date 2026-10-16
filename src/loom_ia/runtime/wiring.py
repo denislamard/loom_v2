@@ -168,7 +168,7 @@ from loom_ia.runtime.sources import PackagedSource, described, source_factory
 from loom_ia.telemetry import RunExporter, SpanSink, configure_logging
 from loom_ia.tenancy import EnvironmentSecrets, Tenant
 from loom_ia.tools import ConfiguredTool, FunctionTool, IdempotentTool, configure
-from loom_ia.tools_builtin import BUILTIN_TOOLS, builtin_tool
+from loom_ia.tools_builtin import BUILTIN_TOOLS, builtin_tool, is_builtin
 from loom_ia.usage import BudgetGuard
 
 if TYPE_CHECKING:
@@ -1564,8 +1564,7 @@ def _missing_mcp(reason: str) -> ConfigError:
 
 
 def _tool(declared: PythonTool, registry: Registry, base_dir: Path | None) -> Tool:
-    # ``loom.x:y`` reste un chemin d'import : celui d'un paquet à soi nommé ``loom``.
-    if declared.python.startswith(RESERVED_PREFIX) and ":" not in declared.python:
+    if is_builtin(declared.python):
         found: object = _builtin_tool(declared.python)
     else:
         found = resolve(declared.python, registry, base_dir=base_dir)

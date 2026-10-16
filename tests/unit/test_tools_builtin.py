@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Outils fournis par loom-ia (``loom.<outil>``) : catalogue et montage.
+"""Outils fournis par loom-ia (``loom.<outil>``) : catalogue, montage, ``loom validate``,
+et le préfixe ``loom.`` réservé dans le registre.
 
 Aucun n'est actif d'office : un agent n'a que les outils qu'il liste. Les essais
 de montage s'appuient sur un outil fourni d'essai, ajouté au catalogue le temps
@@ -14,14 +15,17 @@ from typing import Any
 import pytest
 from conftest import MODEL, ConfigFactory, demo_agent
 
+from loom_ia.access.api import Loom
+from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
+from loom_ia.config.references import Registry
 from loom_ia.core.events import ToolCompleted
 from loom_ia.core.model import DEFAULT_TENANT, RESERVED_PREFIX
 from loom_ia.engine import begin_run, drive
 from loom_ia.runtime import Agent, build_agent
 from loom_ia.tools import tool
-from loom_ia.tools_builtin import BUILTIN_TOOLS, builtin_tool
+from loom_ia.tools_builtin import BUILTIN_TOOLS, builtin_tool, is_builtin
 
 # Module d'essai des outils fournis : jamais sur disque, posé dans sys.modules.
 PROVIDED = "loom_essai_fourni"
@@ -183,13 +187,66 @@ async def test_a_run_calls_the_builtin_tool(demo: ConfigFactory) -> None:
     assert (completed.tool_name, completed.output.as_text) == ("lire", "Lu : exemple")
 
 
+# --- Ce que montre loom validate (D3) ------------------------------------------------
+
+
+def test_validate_lists_the_provided_tools(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tools = [{"python": "calculer"}, {"python": "loom.fetch_page"}]
+    path = demo(agents=[demo_agent(tools=tools)])
+    assert main(["--config", str(path), "validate"]) == 0
+    out = capsys.readouterr().out
+    assert "Outils     : calculer\nFournis    : loom.fetch_page\n" in out
+    assert "  demo : modèle FAKE, 2 outil(s) Python" in out
+
+
+def test_validate_says_nothing_without_provided_tools(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--config", str(demo()), "validate"]) == 0
+    assert "Fournis" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("reference", "provided"),
+    [
+        ("loom.fetch_page", True),
+        ("loom.outils:lire", False),  # chemin d'import dans un paquet à soi nommé loom
+        ("fetch_page", False),
+        ("outils:lire", False),
+        ("loomx.lire", False),
+    ],
+)
+def test_is_builtin(reference: str, provided: bool) -> None:
+    assert is_builtin(reference) is provided
+
+
+# --- Le préfixe loom. réservé dans le registre (D5) ----------------------------------
+
+
+def test_the_registry_refuses_a_loom_name() -> None:
+    with pytest.raises(ConfigError, match=r"Nom 'loom\.lire' refusé \(registre\) : le préfixe"):
+        Registry({"loom.lire": lire})
+    registry = Registry()
+    with pytest.raises(ConfigError, match=r"\(module essai\) : le préfixe 'loom\.' est réservé"):
+        registry.add("loom.lire", lire, source="module essai")
+    assert len(registry) == 0
+
+
+async def test_register_refuses_a_loom_name(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo()) as loom:
+        with pytest.raises(ConfigError, match=r"Nom 'loom\.fetch_page' refusé \(register\(\)\)"):
+            loom.register("loom.fetch_page", lire)
+
+
 # --- Catalogue ----------------------------------------------------------------------
 
 
 def test_catalogue_is_consistent() -> None:
     """Chaque entrée : préfixe ``loom.``, module importable, un outil, nommé sans le préfixe."""
     for reference in BUILTIN_TOOLS:
-        assert reference.startswith(RESERVED_PREFIX) and ":" not in reference, reference
+        assert is_builtin(reference), reference
         found = builtin_tool(reference)
         assert found.spec.name == reference.removeprefix(RESERVED_PREFIX), reference
         assert found.spec.description, reference

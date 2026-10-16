@@ -8,6 +8,9 @@ Deux formes, le nom d'abord :
   enregistrés sous leur nom ;
 - un **chemin d'import** ``module:attr``, qui ne demande aucun ``imports``.
 
+Le préfixe ``loom.`` est réservé à ce que fournit loom-ia (outils et politiques) :
+aucun nom enregistré ne le porte (D5).
+
 Les modules voisins du fichier de config sont importables : son dossier est
 ajouté à ``sys.path`` le temps du chargement. Un module voisin est importé
 sous son seul nom ; deux configs d'un même process peuvent pourtant avoir
@@ -27,6 +30,7 @@ from pathlib import Path
 from types import ModuleType
 
 from loom_ia.config.errors import ConfigError
+from loom_ia.core.model import RESERVED_PREFIX
 from loom_ia.core.ports import Policy, Tool
 
 
@@ -34,9 +38,18 @@ class Registry:
     """Objets Python nommés, disponibles pour la config."""
 
     def __init__(self, objects: Mapping[str, object] | None = None) -> None:
-        self._objects: dict[str, object] = dict(objects or {})
+        self._objects: dict[str, object] = {}
+        for name, obj in (objects or {}).items():
+            self.add(name, obj)
 
     def add(self, name: str, obj: object, *, source: str = "") -> None:
+        # Une référence ``loom.…`` désigne ce que fournit loom-ia : un objet enregistré
+        # sous ce nom ne serait jamais atteint (D5).
+        if name.startswith(RESERVED_PREFIX):
+            raise ConfigError(
+                f"Nom {name!r} refusé ({source or 'registre'}) : le préfixe "
+                f"{RESERVED_PREFIX!r} est réservé aux outils et politiques fournis par loom-ia"
+            )
         known = self._objects.get(name)
         if known is not None and known is not obj:
             raise ConfigError(f"Deux objets portent le nom {name!r} ({source})")

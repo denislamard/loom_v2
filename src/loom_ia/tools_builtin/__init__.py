@@ -14,12 +14,21 @@ import importlib
 from collections.abc import Mapping
 from typing import Final
 
+from loom_ia.core.model import RESERVED_PREFIX
 from loom_ia.core.ports import Tool
 
 # Référence ``loom.<outil>`` → ``module:attr`` de l'outil.
 BUILTIN_TOOLS: Final[Mapping[str, str]] = {
     "loom.fetch_page": "loom_ia.tools_builtin.fetch_page:fetch_page",
 }
+
+
+def is_builtin(reference: str) -> bool:
+    """Vrai si la référence désigne un outil fourni : ``loom.<outil>``.
+
+    ``loom.x:y`` reste un chemin d'import : celui d'un paquet à soi nommé ``loom``.
+    """
+    return reference.startswith(RESERVED_PREFIX) and ":" not in reference
 
 
 def builtin_tool(reference: str) -> Tool:

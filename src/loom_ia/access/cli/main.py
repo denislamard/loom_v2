@@ -131,6 +131,7 @@ from loom_ia.runtime.sources import PackagedSource, installed
 from loom_ia.telemetry import Trace, render_trace
 from loom_ia.telemetry.logs import printable
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, Tenant, UnknownTenant
+from loom_ia.tools_builtin import is_builtin
 from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import render as render_report
 
@@ -593,6 +594,10 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Agents     : {_listed(agent.name for agent in config.agents)}")
     named = [(name, registry.get(name)) for name in registry.names]
     print(f"Outils     : {_listed(name for name, obj in named if isinstance(obj, Tool))}")
+    references = {ref.python for spec in config.agents for ref in spec.python_tools}
+    provided = sorted(ref for ref in references if is_builtin(ref))
+    if provided:
+        print(f"Fournis    : {_listed(provided)}")
     policies = [name for name, obj in named if isinstance(obj, Policy)]
     if policies:
         print(f"Politiques : {_listed(policies)}")
