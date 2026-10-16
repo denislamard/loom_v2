@@ -8,7 +8,7 @@ import re
 import socket
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import Final
+from typing import Final, Literal
 from urllib.parse import urljoin, urlsplit
 
 import httpx2
@@ -291,8 +291,16 @@ _BLOCKS: Final = frozenset(
     "figcaption dl dt dd address details summary fieldset caption".split()
 )
 _HEADINGS: Final = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
-# Pourtour de la page : ses liens passent après ceux du contenu.
-_CHROME: Final = frozenset({"nav", "header", "footer", "aside"})
+# Repères de la page (landmarks HTML et ARIA). Le texte et les liens du contenu principal
+# (``<main>``, ``role="main"``) passent en premier, ceux du pourtour (menus, bandeaux, pied de
+# page, encadrés) en dernier : un aperçu tronqué montre ainsi le contenu, pas les menus.
+# Dans le contenu principal, rien n'est pourtour : un header y est le titre d'une fiche.
+_CHROME_TAGS: Final = frozenset({"nav", "aside"})
+_CHROME_ROLES: Final = frozenset({"navigation", "complementary", "banner", "contentinfo"})
+# header et footer ne sont le bandeau et le pied de page que hors d'un article ou d'une
+# section : dans l'un d'eux, ils en sont le titre et la signature.
+_EDGE_TAGS: Final = frozenset({"header", "footer"})
+_SECTIONING: Final = frozenset({"article", "section"})
 # Sans balise fermante, ou facultative : sans arbre DOM, impossible de savoir où ils
 # finissent, donc jamais écartés comme décoratifs.
 _UNBOUNDED: Final = frozenset(
@@ -326,6 +334,18 @@ class _Region:
     depth: int = 1
 
 
+type _Kind = Literal["main", "chrome", "section"]
+
+
+@dataclass(slots=True)
+class _Landmark:
+    """Repère ouvert : le contenu principal, un élément du pourtour, ou un article."""
+
+    tag: str
+    kind: _Kind
+    depth: int = 1
+
+
 @dataclass(slots=True)
 class _Table:
     parent: list[str]  # où vont les lignes rendues
@@ -334,7 +354,11 @@ class _Table:
 
 
 class _Extractor(HTMLParser):
-    """Texte d'une page dans l'ordre du document : titres, listes, tableaux, blocs de code."""
+    """Texte d'une page : titres, listes, tableaux, blocs de code.
+
+    Le contenu principal vient d'abord, puis le reste du corps, puis le pourtour ; dans
+    chacune de ces parties, l'ordre du document.
+    """
 
     def __init__(self, url: str) -> None:
         super().__init__(convert_charrefs=True)
@@ -342,14 +366,17 @@ class _Extractor(HTMLParser):
         self.base = url  # remplacée par <base href> s'il y en a un
         self.title = ""
         self._title: list[str] | None = None
-        self._parts: list[str] = []
+        # Texte de la page, par partie : contenu principal, reste du corps, pourtour.
+        self._main: list[str] = []
+        self._body: list[str] = []
+        self._chrome: list[str] = []
+        self._landmarks: list[_Landmark] = []
         self._code: list[str] = []  # contenus des <pre>, remis à leur place en fin de rendu
         self._pre: list[str] | None = None
         self._pre_depth = 0
         self._raw: str | None = None
         self._regions: list[_Region] = []
         self._tables: list[_Table] = []
-        self._chrome = 0
         self._based = False
         self._links: list[tuple[str, str, bool]] = []  # adresse, libellé, dans le pourtour
         self._link: tuple[str, str, int] | None = None  # adresse, libellé de repli, régions
@@ -367,6 +394,12 @@ class _Extractor(HTMLParser):
         for region in self._regions:
             if region.tag == tag:
                 region.depth += 1
+        for landmark in self._landmarks:
+            if landmark.tag == tag:
+                landmark.depth += 1
+        # Avant les régions : une région ouverte par ce même élément écrit dans sa partie.
+        if (kind := self._landmark_kind(tag, attributes)) is not None:
+            self._landmarks.append(_Landmark(tag, kind))
         if tag in _DROPPED or (attrs and tag not in _UNBOUNDED and _is_decorative(attributes)):
             out = self._out()
             self._regions.append(_Region(tag, tag not in _DROPPED, out, len(out), len(self._links)))
@@ -398,8 +431,6 @@ class _Extractor(HTMLParser):
             self._add_label(f" {alt} ")
         if tag in _BLOCKS and (self._pre is None or tag == "br"):
             self._out().append("\n")
-        if tag in _CHROME:
-            self._chrome += 1
 
     def handle_endtag(self, tag: str) -> None:
         if self._raw is not None:
@@ -424,9 +455,8 @@ class _Extractor(HTMLParser):
             self._close_link()
         if tag in _BLOCKS and tag not in ("br", "hr") and self._pre is None:
             self._out().append("\n")
-        if tag in _CHROME and self._chrome:
-            self._chrome -= 1
         self._end_regions(tag)
+        self._end_landmarks(tag)
 
     def handle_data(self, data: str) -> None:
         if self._raw is not None:
@@ -451,7 +481,7 @@ class _Extractor(HTMLParser):
     # -- Résultat
 
     def text(self) -> str:
-        text = _tidy(self._parts)
+        text = _tidy([*self._main, "\n\n", *self._body, "\n\n", *self._chrome])
         return _CODE_MARK.sub(lambda mark: f"```\n{self._code[int(mark[1])]}\n```", text)
 
     def links(self) -> list[tuple[str, str]]:
@@ -471,13 +501,44 @@ class _Extractor(HTMLParser):
     # -- Rouages
 
     def _out(self) -> list[str]:
-        """Où écrire : bloc de code, cellule de tableau ou texte de la page."""
+        """Où écrire : bloc de code, cellule de tableau ou partie de la page."""
         if self._pre is not None:
             return self._pre
         if self._tables:
             table = self._tables[-1]
             return table.parent if table.cell is None else table.cell
-        return self._parts
+        return self._part()
+
+    def _part(self) -> list[str]:
+        """La partie de la page où l'on est : contenu principal, pourtour ou reste du corps."""
+        kinds = {landmark.kind for landmark in self._landmarks}
+        if "main" in kinds:
+            return self._main
+        return self._chrome if "chrome" in kinds else self._body
+
+    def _landmark_kind(self, tag: str, attributes: dict[str, str | None]) -> _Kind | None:
+        """Le repère qu'ouvre cet élément, s'il en ouvre un."""
+        if tag in _UNBOUNDED:  # sans fin connue, il ne délimite rien
+            return None
+        role = (attributes.get("role") or "").strip().lower()
+        if tag == "main" or role == "main":
+            return "main"
+        if tag in _CHROME_TAGS or role in _CHROME_ROLES:
+            return "chrome"
+        if tag in _EDGE_TAGS:
+            sectioned = any(landmark.kind == "section" for landmark in self._landmarks)
+            return None if sectioned else "chrome"
+        return "section" if tag in _SECTIONING else None
+
+    def _end_landmarks(self, tag: str) -> None:
+        for landmark in self._landmarks:
+            if landmark.tag == tag:
+                landmark.depth -= 1
+        for index, landmark in enumerate(self._landmarks):
+            if landmark.depth <= 0:
+                # Ceux ouverts à l'intérieur et restés ouverts tombent avec lui.
+                del self._landmarks[index:]
+                return
 
     def _end_regions(self, tag: str) -> None:
         for region in self._regions:
@@ -552,7 +613,7 @@ class _Extractor(HTMLParser):
         label = " ".join("".join(self._label).split()) or " ".join(fallback.split()) or href
         if len(label) > _LABEL_MAX:
             label = label[: _LABEL_MAX - 1].rstrip() + "…"
-        self._links.append((href, label, self._chrome > 0))
+        self._links.append((href, label, self._part() is self._chrome))
 
 
 def _is_decorative(attributes: dict[str, str | None]) -> bool:

@@ -213,7 +213,7 @@ uv run loom inspect 32-1-lecture --full
                     …
 ```
 
-Le modèle reçoit l'adresse finale (après les redirections), le titre, le texte sans le HTML, puis jusqu'à 50 liens, ceux du contenu avant ceux des menus et du pied de page. Dans le texte, les intertitres commencent par `#`, les éléments de liste par `-`, les lignes d'un tableau de données s'écrivent `| … |`, et un bloc de code reste entre ```` ``` ````. Une réponse JSON, XML ou texte brut est rendue telle quelle, après la ligne `URL :`.
+Le modèle reçoit l'adresse finale (après les redirections), le titre, le texte sans le HTML, puis jusqu'à 50 liens. Depuis la 2.0.8, le texte commence par le contenu principal de la page (`<main>`, ou `role="main"`), et ses menus, bandeaux et pied de page (`nav`, `aside`, et `header` ou `footer` hors d'un article) passent à la fin : un aperçu de page déportée montre ainsi le contenu, pas les menus. Les liens suivent le même ordre. La page de cet exemple n'a ni menu ni `main` : son rendu est le même en 2.0.7 et en 2.0.8. Dans le texte, les intertitres commencent par `#`, les éléments de liste par `-`, les lignes d'un tableau de données s'écrivent `| … |`, et un bloc de code reste entre ```` ``` ````. Une réponse JSON, XML ou texte brut est rendue telle quelle, après la ligne `URL :`.
 
 #### À retenir
 

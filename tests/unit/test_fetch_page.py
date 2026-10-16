@@ -571,6 +571,108 @@ async def test_duplicate_and_empty_links(web: Web) -> None:
     ]
 
 
+# --- Le contenu principal d'abord, le pourtour ensuite -----------------------------------
+
+
+def in_order(text: str, *pieces: str) -> bool:
+    """Vrai si chaque morceau est dans le texte, et dans cet ordre."""
+    positions = [text.index(piece) for piece in pieces]
+    return positions == sorted(positions)
+
+
+async def test_main_content_comes_first(web: Web) -> None:
+    html = """<a href="#contenu">Aller au contenu</a>
+    <header><a href="/">Logo</a><nav><a href="/menu">Menu</a></nav></header>
+    <div class="bandeau">Cookies acceptés</div>
+    <main id="contenu"><h1>Cours TOTALENERGIES</h1><p>80,21 €</p></main>
+    <footer role="contentinfo">Mentions légales</footer>"""
+    text = (await read(web, html)).split("Liens :")[0]
+    # Contenu principal, puis le reste du corps, puis le pourtour : chacun dans l'ordre du document.
+    assert in_order(
+        text,
+        "# Cours TOTALENERGIES",
+        "80,21 €",
+        "Aller au contenu",
+        "Cookies acceptés",
+        "Logo",
+        "Menu",
+        "Mentions légales",
+    )
+
+
+async def test_role_main_ends_with_its_own_element(web: Web) -> None:
+    html = """<div>Avant</div><div role="main"><div><p>Contenu</p></div><div>Suite</div></div>
+    <div>Après</div>"""
+    assert in_order(await read(web, html), "Contenu", "Suite", "Avant", "Après")
+
+
+async def test_nothing_is_chrome_inside_main(web: Web) -> None:
+    html = """<nav><a href="/menu">Menu du site</a></nav>
+    <main><header><nav><a href="/cours">Cours</a></nav><h1>Fiche</h1></header>
+    <p>Corps</p><aside>Encadré</aside><footer>Pied de fiche</footer></main>"""
+    text, links = (await read(web, html)).split("Liens :\n")
+    assert in_order(text, "Cours", "# Fiche", "Corps", "Encadré", "Pied de fiche", "Menu du site")
+    # Les liens suivent le même partage : ceux de l'en-tête de la fiche sont du contenu.
+    assert links.splitlines() == [
+        "- Cours : https://exemple.fr/cours",
+        "- Menu du site : https://exemple.fr/menu",
+    ]
+
+
+async def test_without_main_the_chrome_goes_last(web: Web) -> None:
+    html = """<header>Plomberie Dupont</header><nav>Accueil · Tarifs</nav>
+    <article><header><h1>Nos tarifs</h1></header><p>Déplacement 45 €</p>
+    <footer>Mis à jour en octobre</footer></article>
+    <aside>Avis clients</aside><footer>Mentions légales</footer>"""
+    # Le header et le footer d'un article en sont le titre et la signature : ils restent.
+    assert in_order(
+        await read(web, html),
+        "# Nos tarifs",
+        "Déplacement 45 €",
+        "Mis à jour en octobre",
+        "Plomberie Dupont",
+        "Accueil · Tarifs",
+        "Avis clients",
+        "Mentions légales",
+    )
+
+
+async def test_aria_roles_mark_the_chrome(web: Web) -> None:
+    html = """<div role="banner">Bandeau</div><div role="navigation">Menu</div><p>Texte</p>
+    <div role="complementary">Encadré</div><div role="contentinfo">Pied</div>"""
+    assert in_order(await read(web, html), "Texte", "Bandeau", "Menu", "Encadré", "Pied")
+
+
+async def test_an_element_without_known_end_is_no_landmark(web: Web) -> None:
+    # Un <li> se ferme sans balise : en faire le contenu principal prendrait toute la suite.
+    html = '<p>Avant</p><ul><li role="main">Élément<li>Autre</ul><p>Après</p>'
+    assert in_order(await read(web, html), "Avant", "Élément", "Autre", "Après")
+
+
+async def test_a_long_site_header_no_longer_hides_the_content(web: Web) -> None:
+    """La structure de la page de cours de Boursorama : un en-tête de site de plus de
+    20 000 caractères, puis main, qui commence par l'en-tête de la fiche (titre et cours)."""
+    menus = "".join(f'<li><a href="/rubrique/{n}">Rubrique {n}</a></li>' for n in range(1500))
+    html = f"""<a href="#main-content">Aller au contenu principal</a>
+    <header class="l-header"><nav><ul>{menus}</ul></nav></header>
+    <main id="main-content"><section class="l-quotepage">
+    <header class="l-quotepage__header"><nav><ul><li><a href="/cours/">Cours</a></li>
+    <li><a href="/actualites/">Actualités</a></li></ul></nav>
+    <h1>Cours TOTALENERGIES</h1><p>80,210 EUR</p></header>
+    <article><h2>Historique 5 jours</h2></article></section></main>
+    <footer role="contentinfo">Mentions légales</footer>"""
+    out = await read(web, html)
+    text, links = out.split("Liens :\n")
+    assert len(text) > 20_000
+    # Ce qu'un aperçu montrerait : le début du texte, le titre et le cours.
+    assert text.index("# Cours TOTALENERGIES") < 200
+    assert in_order(text, "80,210 EUR", "Historique 5 jours", "Aller au contenu", "Rubrique 0")
+    assert links.splitlines()[:2] == [
+        "- Cours : https://exemple.fr/cours/",
+        "- Actualités : https://exemple.fr/actualites/",
+    ]
+
+
 async def test_at_most_fifty_links(web: Web) -> None:
     html = "".join(f'<a href="/p{n}">Page {n}</a>' for n in range(60))
     links = (await read(web, html)).split("Liens :\n")[1].splitlines()

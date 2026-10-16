@@ -2,6 +2,14 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.0.8 - non publiée
+
+### Outils fournis
+- ⚠ **`loom.fetch_page` donne le contenu d'une page avant ses menus.** Le texte du contenu principal (`<main>`, ou `role="main"`) vient en premier, puis le reste du corps, puis le pourtour : `nav` et `aside`, `header` et `footer` hors d'un article ou d'une section, et les rôles ARIA `navigation`, `banner`, `complementary` et `contentinfo`. Dans le contenu principal, rien n'est déplacé, pas même son `header` ; rien n'est retiré non plus, seul l'ordre change, et les liens suivent le même partage. Un résultat déporté (au-delà de 20 000 caractères) montre ainsi le contenu dans son aperçu, là où il ne montrait que des menus : sur la page de cours de Boursorama, le titre et le cours venaient après 11 000 caractères d'en-tête de site, et le modèle lisait la suite avec `artifact_read` sans les trouver. La description de l'outil, que lit le modèle, ne change pas.
+
+### Documentation
+- Guide, chapitre 32 : l'ordre du texte que rend `loom.fetch_page`.
+
 ## 2.0.7 - non publiée
 
 ### Outils fournis (nouveau)
