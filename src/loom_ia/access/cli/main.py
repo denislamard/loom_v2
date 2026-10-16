@@ -22,7 +22,12 @@
     loom schema                    JSON Schema du fichier de configuration
 
 ``--config`` désigne le fichier de configuration (``./loom.yaml`` par
-défaut). Les codes de sortie : 0 tout va bien, 1 le run a échoué, 2 la
+défaut). Avant de le lire, chaque commande pose les variables du fichier
+d'environnement du projet : ``env_file:`` de la config, sinon le ``.env`` de
+son dossier ; ``--env-file`` en désigne un autre, ``--no-env-file`` n'en lit
+aucun, et une variable déjà définie l'emporte toujours.
+
+Les codes de sortie : 0 tout va bien, 1 le run a échoué, 2 la
 configuration ou la demande est en cause. Un refus d'exploitation sort lui aussi
 en 2, sur une ligne de ``stderr`` et sans trace : budget ou quota atteint, run
 mené par un autre worker, fichier ou réseau inaccessible, entrée standard fermée
@@ -69,6 +74,7 @@ from loom_ia.agents.registry import UnknownAgent
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, LoomConfig, config_json_schema, load_config
 from loom_ia.config.compaction import compaction_agent
+from loom_ia.config.env_file import DISABLED, EnvFileReport, load_env_file
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.config.loader import PROFILE_ENV, chosen_profile
 from loom_ia.config.models import (
@@ -221,6 +227,19 @@ def build_parser() -> argparse.ArgumentParser:
         choices=PROFILES,
         default=None,
         help=f"profil actif ; l'emporte sur {PROFILE_ENV} et sur la config",
+    )
+    env = parser.add_mutually_exclusive_group()
+    env.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="fichier de variables à lire, au lieu de 'env_file:' de la config "
+        "ou du .env voisin de la config (une variable déjà définie l'emporte)",
+    )
+    env.add_argument(
+        "--no-env-file",
+        action="store_true",
+        help="ne lit aucun fichier de variables",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -571,12 +590,29 @@ def build_parser() -> argparse.ArgumentParser:
 # --- Commandes ---------------------------------------------------------------
 
 
+def _config(args: argparse.Namespace, path: Path | None = None) -> LoomConfig:
+    """La config de la commande, lue après le fichier d'environnement de son projet.
+
+    Le fichier passe avant la config : il peut donner ``LOOM_PROFILE``. Le
+    rapport reste sur ``args`` (``env_report``) pour ``validate`` et le bandeau
+    de ``serve`` ; en profil prod, des variables venues du fichier valent un
+    avertissement.
+    """
+    given = args.config if path is None else path
+    report = DISABLED if args.no_env_file else load_env_file(given, env_file=args.env_file)
+    args.env_report = report
+    config = load_config(given, profile=args.profile)
+    if config.strict and (warning := report.prod_warning()) is not None:
+        print(f"Avertissement : {warning}", file=sys.stderr)
+    return config
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     return asyncio.run(_validate(args))
 
 
 async def _validate(args: argparse.Namespace) -> int:
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     registry = load_registry(config)
     storage = config.storage
@@ -584,8 +620,10 @@ async def _validate(args: argparse.Namespace) -> int:
     files = storage.artifacts_path
     artifacts = f"{storage.artifacts_backend} ({files})" if files else storage.artifacts_backend
     keys = ", ".join(key.id for key in config.security.api_keys)
+    env: EnvFileReport = args.env_report
     print(f"Config     : {args.config}")
     print(f"Profil     : {_profile_line(config, args.profile)}")
+    print(f"Env        : {env.describe()}")
     print(f"Modèles    : {_listed(spec.id for spec in config.models)}")
     if args.no_keys:
         # Les clients de modèle ne sont pas créés : ce que le montage aurait
@@ -872,7 +910,7 @@ def _chain(models: tuple[str, ...]) -> str:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     session = SessionId(args.session) if args.session else None
     tenant = _tenant(args)
@@ -944,7 +982,7 @@ def _state_item(text: str) -> tuple[str, JsonValue]:
 
 def cmd_state(args: argparse.Namespace) -> int:
     """State d'une session : ce qui est écrit, sans les valeurs par défaut, en JSON."""
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     session = SessionId(args.session_id)
 
@@ -962,7 +1000,7 @@ def cmd_state(args: argparse.Namespace) -> int:
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     session = SessionId(args.session) if args.session else None
 
@@ -985,7 +1023,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     fini du fichier est rejoué ; un seul qui diverge, ou un run inachevé,
     rend 1.
     """
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     session = SessionId(args.session) if args.session else None
     try:
@@ -1116,7 +1154,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     En local, la commande lit le journal elle-même : elle montre le contenu.
     ``--json`` rend la trace telle que l'API la rend à une clé ``read_content``.
     """
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     session = SessionId(args.session) if args.session else None
 
@@ -1146,7 +1184,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     """
     suite = load_suite(args.suite)
     path = suite.resolved(suite.config) or args.config
-    config = load_config(path, profile=args.profile)
+    config = _config(args, path)
     apply_logging(config)
     try:
         report = asyncio.run(
@@ -1266,7 +1304,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
     écoute ailleurs — un worker (la file d'un courtier a reçu le travail),
     ``loom resume``, ou la reprise au démarrage d'un worker.
     """
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     run_id = RunId(args.run_id)
     session = SessionId(args.session) if args.session else None
@@ -1336,7 +1374,7 @@ def _json_object(text: str) -> dict[str, JsonValue] | None:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     if args.period is not None:
         return _cmd_consumption(args, config)
@@ -1404,7 +1442,7 @@ def _consumption_json(found: TenantConsumption) -> dict[str, JsonValue]:
 
 
 def cmd_sessions_list(args: argparse.Namespace) -> int:
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
 
     async def go() -> list[SessionRecord]:
@@ -1427,7 +1465,7 @@ def cmd_sessions_list(args: argparse.Namespace) -> int:
 
 
 def cmd_sessions_export(args: argparse.Namespace) -> int:
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     session = SessionId(args.session_id)
 
@@ -1450,7 +1488,7 @@ def cmd_sessions_export(args: argparse.Namespace) -> int:
 
 
 def cmd_sessions_delete(args: argparse.Namespace) -> int:
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     session = SessionId(args.session_id)
     # Refusé avant la question : « Supprimer la session  ? » n'a pas de sens.
@@ -1486,7 +1524,7 @@ def cmd_retention(args: argparse.Namespace) -> int:
     commande est faite pour être mise à l'heure par une plateforme, et une
     question sans personne pour y répondre bloquerait le balayage.
     """
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
 
     async def go() -> RetentionReport:
@@ -1522,7 +1560,7 @@ def cmd_retention(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     try:
         from loom_ia.access.http import serve
@@ -1534,7 +1572,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     port = args.port or http.port
     if args.reload:
         return _serve_reloading(config, args, host, port)
-    serving_banner(config, args.profile, host, port)
+    serving_banner(config, args.profile, host, port, args.env_report)
     serve(Loom(config), host=args.host, port=args.port)
     return OK
 
@@ -1557,18 +1595,26 @@ def _serve_reloading(config: LoomConfig, args: argparse.Namespace, host: str, po
     # le dossier surveillé relanceraient le serveur à chaque écriture.
     watched(config)
     return serve_reloading(
-        Path(args.config), profile=args.profile, host=host, port=port, banner=serving_banner
+        Path(args.config),
+        profile=args.profile,
+        host=host,
+        port=port,
+        banner=serving_banner,
+        env=args.env_report,
     )
 
 
-def serving_banner(config: LoomConfig, given: str | None, host: str, port: int) -> None:
-    """Le bandeau de ``loom serve`` : profil, adresses, agents, portes.
+def serving_banner(
+    config: LoomConfig, given: str | None, host: str, port: int, env: EnvFileReport
+) -> None:
+    """Le bandeau de ``loom serve`` : profil, fichier d'environnement, adresses, agents, portes.
 
     ``--reload`` le fait imprimer par chaque process qui prend la main : ce
     qu'on lit après un rechargement est ce que sert le nouveau.
     """
     http = config.server.http
     print(f"Profil     : {_profile_line(config, given)}")
+    print(f"Env        : {env.describe()}")
     print(f"API REST   : http://{host}:{port}{http.base_path}/v1")
     print(f"Agents     : {_listed(agent.name for agent in config.agents if agent.expose.rest)}")
     if config.server.mcp.http:
@@ -1587,7 +1633,7 @@ def serving_banner(config: LoomConfig, given: str | None, host: str, port: int) 
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     try:
         from loom_ia.access.mcp_server import run_stdio
@@ -1670,7 +1716,7 @@ async def _worker(args: argparse.Namespace) -> int:
     un worker mort, et ce qui restait en plan n'est dans aucune file — il est
     au journal (H3).
     """
-    config = load_config(args.config, profile=args.profile)
+    config = _config(args)
     apply_logging(config)
     if args.jobs < 1:
         raise ValueError(f"--jobs : au moins 1, reçu {args.jobs}")
@@ -1757,7 +1803,7 @@ def cmd_storage_sql(args: argparse.Namespace) -> int:
     avec le rôle qui en a le droit (``psql -f``). loom l'applique aussi de
     lui-même à la première ouverture, si le rôle connecté le peut.
     """
-    print(postgres_ddl(load_config(args.config, profile=args.profile)), end="")
+    print(postgres_ddl(_config(args)), end="")
     return OK
 
 

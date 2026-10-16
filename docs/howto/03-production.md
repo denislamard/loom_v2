@@ -4471,7 +4471,7 @@ Redémarrez l'application : les outils `devis`, `photo` et `relance` apparaissen
 
 - Un serveur stdio, c'est une **commande** que l'application lance. Tous les chemins relatifs sont ceux du dossier courant du process : fixez-le (`uv --directory`).
 - Le client MCP agit toujours **au nom d'un seul client Loom** en stdio (`--tenant`). Pour servir plusieurs entreprises, passez au MCP en HTTP.
-- Un `loom.yaml` avec des modèles réels a besoin de ses clés d'API (`ANTHROPIC_API_KEY`…) dans l'environnement du process lancé par l'application : Claude Desktop ne transmet pas celui de votre terminal. Ajoutez un bloc `"env": {…}` à la configuration JSON si besoin.
+- Un `loom.yaml` avec des modèles réels a besoin de ses clés d'API (`ANTHROPIC_API_KEY`…) dans l'environnement du process lancé par l'application : Claude Desktop ne transmet pas celui de votre terminal. Le `.env` voisin de `loom.yaml` (ou celui que désigne `env_file:`) suffit : `loom` le lit quel que soit le dossier de lancement. Sinon, ajoutez un bloc `"env": {…}` à la configuration JSON.
 
 ### Exemple 21.5 : le MCP en HTTP, avec clé d'API
 

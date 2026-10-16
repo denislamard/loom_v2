@@ -219,6 +219,8 @@ Les exemples qui appellent de vrais modèles lisent leurs clés dans l'environne
 uv run --env-file .env python examples/j3/juge.py --reel
 ```
 
+`--env-file` reste nécessaire ici : les exemples passent par la librairie, qui ne lit aucun `.env` d'elle-même, et leurs configurations sont dans des sous-dossiers, où la commande `loom` ne chercherait pas celui de la racine.
+
 ### Pour un déploiement en service
 
 En local, Loom-IA n'a besoin d'aucun service : le journal tient dans des fichiers JSONL et les tâches de fond tournent dans le process. Un service à plusieurs workers s'appuie sur trois briques :
@@ -440,12 +442,14 @@ main:
   system_file: devis.md
 ```
 
-Puis lancez le même run :
+Puis donnez la clé dans un fichier `.env` à côté de `loom.yaml`, gardé hors de git, et lancez le même run :
 
 ```bash
-export ANTHROPIC_API_KEY=...
+echo 'ANTHROPIC_API_KEY=...' >> .env
 loom run devis "Quel prix TTC pour un devis de 1 250 € HT en rénovation (TVA à 10 %) ?"
 ```
+
+`loom` lit ce fichier au démarrage de chaque commande, quel que soit le dossier d'où vous la lancez. Une variable déjà définie (un `export`, l'environnement d'un service) l'emporte sur le fichier. Le détail est dans « La configuration », plus bas.
 
 `pricing` est facultatif. Sans lui, Loom-IA ne sait pas calculer de coût, et ne peut donc pas appliquer un budget en dollars.
 
@@ -475,6 +479,8 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+La librairie ne lit aucun `.env` d'elle-même. Pour les mêmes règles que la commande, appelez `load_env_file("loom.yaml")` (de `loom_ia.config`) avant `Loom.from_config`.
 
 `run()` attend la fin du run et renvoie un `RunResult` : le statut, le texte de la réponse, la consommation, et les appels en attente d'approbation s'il y en a.
 
@@ -638,6 +644,7 @@ Le fichier racine regroupe les sections suivantes :
 ```yaml
 version: 1
 profile: dev                  # dev | prod
+env_file: ../secrets/loom.env # fichier de variables (par défaut : le .env voisin)
 imports: [outils, politiques] # modules Python chargés au démarrage
 agents_dir: agents/
 prompts_dir: prompts/
@@ -662,6 +669,8 @@ profiles: {prod: {...}}       # surcharges par profil
 **Variables dans les prompts.** Les prompts et les gabarits acceptent des variables `{{ … }}`. Une variable inconnue est une erreur de chargement, pas un trou silencieux dans le prompt.
 
 **Profils.** Il y en a deux, `dev` et `prod`. Le profil actif se choisit, du plus fort au plus faible, par `--profile`, par la variable `LOOM_PROFILE`, puis par la clé `profile:` du fichier. `prod` change certains avertissements en erreurs : un juge qui utilise le même modèle que ce qu'il juge, un modèle sans tarif sous un budget en dollars, une API REST sans clé. `dev` tolère au contraire ce que la production refuserait, comme un agent qui peut se mettre en pause sur un journal non durable. Sans profil, rien n'est durci ni assoupli.
+
+**Fichier d'environnement.** Avant de lire la configuration, chaque commande `loom` pose dans l'environnement les variables d'un fichier : celui de `--env-file`, sinon celui que désigne `env_file:` (relatif au dossier de `loom.yaml`), sinon le `.env` voisin de `loom.yaml` s'il existe. Jamais celui du dossier courant ni d'un dossier parent. Une variable déjà définie, même vide, l'emporte sur le fichier ; `--no-env-file` n'en lit aucun. Le fichier peut donner `LOOM_PROFILE` : c'est pourquoi `env_file:` n'est accepté qu'à la racine, pas dans `profiles`. `loom validate` et le bandeau de `loom serve` disent le fichier lu et les noms des variables posées, jamais leurs valeurs ; en profil `prod`, des variables venues du fichier valent un avertissement. Sous `--reload`, chaque nouveau process relit le fichier, surveillé même rangé hors du dossier de la config. Un serveur MCP stdio se lance depuis le dossier de la config : s'il lit lui-même un `.env` dans son dossier courant, il lira celui de Loom-IA. Rangez alors les clés ailleurs (`env_file:`), ou donnez-lui un `cwd`.
 
 **Contrôles au démarrage.** Le chargement refuse notamment :
 

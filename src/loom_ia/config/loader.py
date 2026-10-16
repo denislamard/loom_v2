@@ -19,6 +19,7 @@ import yaml
 from pydantic import ValidationError
 
 from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools, SourceTools, system_text
+from loom_ia.config.env_file import ENV_FILE_KEY
 from loom_ia.config.errors import ConfigError, from_validation
 from loom_ia.config.models import PROFILES, LoomConfig, Profile, StorageConfig, TenantSpec
 from loom_ia.core.model import (
@@ -49,6 +50,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
     root = Path(path).resolve()
     data = _read_yaml(root)
     base_dir = root.parent
+    _check_env_file_at_root(data, source=root)
     active, _ = chosen_profile(profile, data.get("profile"))
     data = _merged(data, active, source=root)
     draft = _validate(LoomConfig, {**data, "agents": data.get("agents", [])}, source=root)
@@ -72,6 +74,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
             # chargée porte le profil qui s'applique vraiment.
             "profile": active,
             "base_dir": base_dir,
+            "env_file": None if config.env_file is None else (base_dir / config.env_file).resolve(),
             "agents_dir": base_dir / config.agents_dir,
             "prompts_dir": base_dir / config.prompts_dir,
             "storage": _absolute_storage(config.storage, base_dir),
@@ -105,6 +108,25 @@ def chosen_profile(given: str | None, in_file: object = None) -> tuple[Profile |
             raise ConfigError(f"Profil {value!r} inconnu ({source}) : attendu {known}")
         return value, source
     return None, "aucun"
+
+
+def _check_env_file_at_root(data: dict[str, Any], *, source: Path) -> None:
+    """Refuse ``env_file`` dans ``profiles`` : il est lu avant le choix du profil.
+
+    Accepté là, il passerait la validation et ne serait jamais lu — le fichier
+    qu'il désigne peut lui-même donner ``LOOM_PROFILE``. Tous les profils sont
+    vérifiés, pas seulement l'actif : l'erreur ne doit pas attendre la prod.
+    """
+    declared = data.get("profiles")
+    if not isinstance(declared, dict):
+        return
+    for name, overrides in cast("dict[str, Any]", declared).items():
+        if isinstance(overrides, dict) and ENV_FILE_KEY in overrides:
+            raise ConfigError(
+                f"profiles.{name}.{ENV_FILE_KEY} — refusé : le fichier d'environnement est lu "
+                f"avant le choix du profil ; déclarer '{ENV_FILE_KEY}' à la racine",
+                source=source,
+            )
 
 
 def _merged(data: dict[str, Any], active: Profile | None, *, source: Path) -> dict[str, Any]:

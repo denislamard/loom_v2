@@ -1131,7 +1131,7 @@ sed -i 's/max_iteration: 5/max_iterations: 5/' agents/devis.yaml
 - **Le message dit le fichier, la clé et la raison.** Les erreurs de référence dressent aussi la liste de ce qui existe (« enregistrés : … », « modèles connus : … »).
 - **Code de retour 2 pour toute erreur de configuration.** Branchez `uv run loom validate` dans votre CI.
 - **`loom validate` monte les agents un par un et s'arrête à la première erreur.** Il ne fait aucun appel de modèle.
-- **Piège : la clé d'API est exigée par `validate`.** Dès qu'un agent utilise un modèle avec `api_key_env`, la variable doit exister dans votre environnement pour que `validate` passe, même si aucun appel n'est fait (voir le chapitre 5).
+- **Piège : la clé d'API est exigée par `validate`.** Dès qu'un agent utilise un modèle avec `api_key_env`, la variable doit exister dans votre environnement, ou dans le `.env` voisin de `loom.yaml`, pour que `validate` passe, même si aucun appel n'est fait (voir le chapitre 5).
 
 ### Exemple 3.2 : la complétion dans l'éditeur
 
@@ -1925,8 +1925,10 @@ tools:
 Sans la clé dans l'environnement, `loom validate` refuse, avant tout appel réseau :
 
 ```bash
-env -u ANTHROPIC_API_KEY uv run loom validate; echo "code de retour : $?"
+env -u ANTHROPIC_API_KEY uv run loom --no-env-file validate; echo "code de retour : $?"
 ```
+
+(`--no-env-file` écarte le `.env` voisin de `loom.yaml` : s'il donne la clé, la validation passerait.)
 
 ```text
 …
@@ -1977,6 +1979,8 @@ export ANTHROPIC_API_KEY=...
 uv run loom run devis_reel "Quel prix TTC pour un devis de 1 250 € HT en rénovation (TVA à 10 %) ?"
 ```
 
+Ou, une fois pour toutes, une ligne `ANTHROPIC_API_KEY=...` dans un fichier `.env` à côté de `loom.yaml` : `loom` le lit au démarrage de chaque commande.
+
 Le résultat attendu, d'après le comportement du modèle simulé, a la même forme que celui de l'exemple 2.1 (statut `completed`, l'outil `prix_ttc` appelé, un coût non nul). Le texte exact, le nombre d'itérations et les tokens dépendent du vrai modèle et ne sont pas garantis.
 
 #### À retenir
@@ -1987,7 +1991,7 @@ Le résultat attendu, d'après le comportement du modèle simulé, a la même fo
 - **`params`** (dans `ModelSpec`) est transmis tel quel au fournisseur : `temperature`, par exemple.
 - **Évoqués ici, détaillés plus loin** : `cache: {system: true, tools: true, messages: true}` pose des points de cache de prompt (réservé à `sdk: anthropic`, refusé avec `sdk: openai` qui cache seul) ; `capabilities` (`tools`, `vision`, `thinking`, `native_json`, `context_window`…) déclare ce que le modèle sait faire et est contrôlé au chargement ; `timeouts`, `retry`, `circuit_breaker` et les modèles de secours (`fallbacks`) font l'objet du chapitre 15 dans [03-production.md](03-production.md).
 - **Piège : `loom validate` exige la variable.** Tant que `ANTHROPIC_API_KEY` n'existe pas dans votre environnement, `loom validate` échoue pour **tout** le projet, même pour les agents simulés (voir l'écart noté ci-dessous). Ce qui peut vous aider : pour une validation sans clé, exportez une valeur factice comme ci-dessus.
-- **Piège : ne mettez pas la clé dans le YAML, ni dans un `.env` versionné.** Si vous utilisez un fichier `.env`, passez-le à uv : `uv run --env-file .env loom run …`.
+- **Piège : ne mettez pas la clé dans le YAML, ni dans un `.env` versionné.** `loom` lit le `.env` voisin de `loom.yaml` (ou celui que désigne `env_file:`) au démarrage de chaque commande : gardez-le hors de git. Une variable déjà définie l'emporte sur le fichier, et `--no-env-file` n'en lit aucun.
 
 > **Écart documentation / version 2.0.0.** Les sources du projet (2.0.1) ajoutent à `loom validate` une option `--no-keys` (écrite `--sans-cles` jusqu'en 2.0.4, et toujours comprise), qui monte les agents sans créer les clients de modèle, donc sans exiger de clé. Elle n'existe pas dans la version 2.0.0 publiée sur PyPI et n'est pas documentée dans le README.
 

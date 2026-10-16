@@ -72,6 +72,11 @@ models:
 
 storage:
   events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: { level: WARNING }
+  capture: { raw_exchanges: true }
+
 EOF
 else
     modele_id=SIMULE
@@ -88,6 +93,11 @@ models:
 
 storage:
   events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: { level: WARNING }
+  capture: { raw_exchanges: true }
+
 EOF
 fi
 
@@ -98,6 +108,10 @@ description: Agent personnel.
 main:
   model: ${modele_id}
   system_file: ${prompt}.md
+
+tools:
+- python: loom.fetch_page  
+
 EOF
 
 printf 'Tu es un assistant et tu réponds en français.\n' > "prompts/${prompt}.md"

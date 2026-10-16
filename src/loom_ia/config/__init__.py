@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Configuration : schéma Pydantic, lecture YAML, références Python (M1 à M3)."""
 
+from loom_ia.config.env_file import EnvFileReport, load_env_file
 from loom_ia.config.errors import ConfigError
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.config.loader import load_config
@@ -11,6 +12,7 @@ from loom_ia.config.schema import agent_json_schema, config_json_schema
 __all__ = [
     "ApiKey",
     "ConfigError",
+    "EnvFileReport",
     "LoomConfig",
     "Registry",
     "SecurityConfig",
@@ -20,6 +22,7 @@ __all__ = [
     "fingerprint",
     "import_modules",
     "load_config",
+    "load_env_file",
     "new_api_key",
     "resolve",
 ]

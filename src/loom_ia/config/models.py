@@ -789,6 +789,10 @@ class LoomConfig(DomainModel):
     # Dossier du fichier de config, posé au chargement : les modules voisins
     # sont importables et les chemins relatifs s'y rapportent.
     base_dir: Path | None = None
+    # Fichier d'environnement du projet, relatif au dossier de la config : lu
+    # par ``loom`` avant la config elle-même (config/env_file.py), au lieu du
+    # ``.env`` voisin. À la racine seulement, car il peut donner le profil.
+    env_file: Path | None = None
     # Modules chargés au démarrage, qui enregistrent leurs outils (#50).
     imports: tuple[str, ...] = ()
     agents_dir: Path = Path("agents")

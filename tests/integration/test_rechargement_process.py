@@ -288,6 +288,28 @@ def test_a_folder_that_starts_being_watched_is_watched(
     assert server.stop() == 0
 
 
+def test_an_env_file_outside_the_config_folder_reloads_and_is_reread(
+    demo: ConfigFactory, served: Callable[[Path], Served], tmp_path: Path
+) -> None:
+    """Rangé ailleurs, le fichier d'environnement est surveillé seul, et relu au rechargement."""
+    secrets = tmp_path.parent / f"{tmp_path.name}-secrets" / "loom.env"
+    secrets.parent.mkdir()
+    secrets.write_text("LOOM_ESSAI_CLE=valeur-secrete-1\n", encoding="utf-8")
+    config = demo(env_file=f"../{secrets.parent.name}/loom.env")
+    server = served(config)
+    server.ready()
+    assert f"Env        : {secrets} (par config) — lues : LOOM_ESSAI_CLE" in server.said
+
+    secrets.write_text("LOOM_ESSAI_CLE=valeur-secrete-2\nLOOM_ESSAI_NOUVELLE=1\n", encoding="utf-8")
+    server.until(lambda: "Rechargé" in server.said, "pas rechargé")
+    said = server.said
+    assert f"Rechargement : {secrets} modifié" in said
+    assert "lues : LOOM_ESSAI_CLE, LOOM_ESSAI_NOUVELLE" in said
+    # Les valeurs ne sont jamais imprimées.
+    assert "valeur-secrete" not in said
+    assert server.stop() == 0
+
+
 def test_a_run_in_flight_ends_in_the_old_process(
     demo: ConfigFactory, served: Callable[[Path], Served]
 ) -> None:

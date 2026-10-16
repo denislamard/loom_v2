@@ -42,6 +42,10 @@ dependencies = [
     # import direct se déclare. Leurs planchers sont ceux que jsonschema 4.26 exige.
     "jsonschema-specifications>=2023.3.6",
     "pydantic>=2.12.2,<3",
+    # config/env_file.py lit le .env d'un projet au démarrage de `loom` : son analyseur
+    # (dotenv.parser), sans interpolation, dit la ligne illisible au lieu de la sauter.
+    # Plancher : la plus basse version éprouvée par les tests (job des bornes basses).
+    "python-dotenv>=1.0.1,<2",
     "pyyaml>=6.0.3,<7",
     "referencing>=0.28.4,<1",
     "regex>=2025.7.29",

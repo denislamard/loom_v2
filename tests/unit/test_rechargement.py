@@ -40,7 +40,8 @@ from loom_ia.access.http.serve import (
     changed,
     watched,
 )
-from loom_ia.config import ConfigError, load_config
+from loom_ia.config import ConfigError, EnvFileReport, load_config
+from loom_ia.config.env_file import DISABLED
 
 # Le module, que le paquet ombre par sa fonction ``serve``.
 http_serve = importlib.import_module("loom_ia.access.http.serve")
@@ -523,7 +524,12 @@ class _Supervised:
         alarm.start()
         try:
             return http_serve.serve_reloading(
-                self.path, profile=None, host="127.0.0.1", port=0, banner=_no_banner
+                self.path,
+                profile=None,
+                host="127.0.0.1",
+                port=0,
+                banner=_no_banner,
+                env=DISABLED,
             )
         finally:
             alarm.cancel()
@@ -714,15 +720,89 @@ async def test_the_process_that_serves_judges_the_host_it_listens_on(
         def close(self) -> None:
             pass
 
-    def banner(config: Any, given: str | None, host: str, port: int) -> None:
+    def banner(config: Any, given: str | None, host: str, port: int, env: EnvFileReport) -> None:
         pass
 
     monkeypatch.setattr(http_serve, "_Taking", Listening)
     started = await _served(
-        demo(), None, "0.0.0.0", 8000, cast(Any, None), banner, cast(Any, Ready()), 0
+        demo(), None, "0.0.0.0", 8000, cast(Any, None), banner, cast(Any, Ready()), 0, DISABLED
     )
     assert started
     assert "API REST ouverte sur 0.0.0.0 sans clé déclarée" in capsys.readouterr().err
+
+
+# --- Le fichier d'environnement ---------------------------------------------------
+
+
+def test_an_env_file_outside_the_config_folder_is_watched_alone(
+    demo: ConfigFactory, tmp_path: Path
+) -> None:
+    config = load_config(demo())
+    base = config.base_dir
+    assert base is not None
+    # Voisin de la config, il est déjà dans le dossier surveillé.
+    assert watched(config, base / ".env").extra == ()
+    assert watched(config, base / ".env").counts(base / ".env")
+
+    outside = tmp_path.parent / f"{tmp_path.name}-secrets" / "loom.env"
+    outside.parent.mkdir()
+    outside.write_text("LOOM_ESSAI_A=v1\n", encoding="utf-8")
+    spec = watched(config, outside)
+    assert spec.extra == (outside,)
+    assert spec.counts(outside)
+    # Son dossier, lui, n'est pas surveillé.
+    assert not spec.counts(outside.parent / "voisin.txt")
+    known = spec.state()
+    assert outside in known
+    assert str(outside) in spec.describe()
+    assert not spec.moved(known)
+    outside.write_text("LOOM_ESSAI_A=v2, plus long\n", encoding="utf-8")
+    assert spec.moved(known)
+    assert changed([], known, spec.state(), base) == f"{outside} modifié"
+
+
+async def test_a_new_serving_process_rereads_the_env_file(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La clé changée dans le fichier est celle du process neuf ; celle du shell reste."""
+
+    class Listening:
+        started = True
+
+        def __init__(self, *args: Any) -> None:
+            pass
+
+        async def serve(self, sockets: Any = None) -> None:
+            pass
+
+    class Ready:
+        def close(self) -> None:
+            pass
+
+    def banner(config: Any, given: str | None, host: str, port: int, env: EnvFileReport) -> None:
+        pass
+
+    path = demo()
+    (path.parent / ".env").write_text(
+        "LOOM_ESSAI_CLE=nouvelle\nLOOM_ESSAI_SHELL=fichier\n", encoding="utf-8"
+    )
+    # Ce que le superviseur avait posé à son démarrage, et ce que le shell donnait.
+    monkeypatch.setenv("LOOM_ESSAI_CLE", "ancienne")
+    monkeypatch.setenv("LOOM_ESSAI_SHELL", "shell")
+    before = EnvFileReport(
+        path=path.resolve().parent / ".env",
+        source="défaut",
+        found=True,
+        loaded=("LOOM_ESSAI_CLE",),
+        kept=("LOOM_ESSAI_SHELL",),
+    )
+    monkeypatch.setattr(http_serve, "_Taking", Listening)
+    started = await _served(
+        path, None, "127.0.0.1", 8000, cast(Any, None), banner, cast(Any, Ready()), 0, before
+    )
+    assert started
+    assert os.environ["LOOM_ESSAI_CLE"] == "nouvelle"
+    assert os.environ["LOOM_ESSAI_SHELL"] == "shell"
 
 
 # --- La ligne de commande -----------------------------------------------------------
@@ -733,8 +813,10 @@ def test_reload_hands_the_config_to_the_supervisor(
 ) -> None:
     given: dict[str, Any] = {}
 
-    def fake(path: Path, *, profile: str | None, host: str, port: int, banner: Any) -> int:
-        given.update(path=path, profile=profile, host=host, port=port, banner=banner)
+    def fake(
+        path: Path, *, profile: str | None, host: str, port: int, banner: Any, env: Any
+    ) -> int:
+        given.update(path=path, profile=profile, host=host, port=port, banner=banner, env=env)
         return 0
 
     monkeypatch.setattr(http_serve, "serve_reloading", fake)
@@ -748,6 +830,8 @@ def test_reload_hands_the_config_to_the_supervisor(
         "host": "127.0.0.1",
         "port": 8000,
         "banner": serving_banner,
+        # La lecture du superviseur : chaque process neuf retire ce qu'elle a posé, et relit.
+        "env": EnvFileReport(path=config.resolve().parent / ".env", source="défaut"),
     }
     # Le bandeau est celui du process qui prend la main, pas du superviseur.
     assert "API REST" not in capsys.readouterr().out

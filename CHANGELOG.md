@@ -4,6 +4,15 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.8 - non publiée
 
+### Fichier d'environnement (nouveau)
+- ⚠ **`loom` lit le fichier d'environnement du projet** avant la config, à chaque commande : celui de `--env-file`, sinon celui que désigne `env_file:` à la racine de `loom.yaml` (relatif à son dossier), sinon le `.env` voisin de `loom.yaml` s'il existe. Jamais celui du dossier courant ni d'un dossier parent, et rien sans `loom.yaml`. Un `.env` posé à côté de la config est donc lu là où il ne l'était pas. Une variable déjà définie, même vide, l'emporte sur le fichier : `uv run --env-file .env loom …` marche comme avant. `--no-env-file` n'en lit aucun ; les deux options ensemble sont refusées. Un fichier demandé (`--env-file`, `env_file:`) et absent arrête la commande (code 2) ; une ligne illisible aussi, en disant son numéro, jamais son contenu. Le fichier est lu sans interpolation (`${A}` reste tel quel).
+- Le fichier peut donner `LOOM_PROFILE`. `env_file:` est refusé dans `profiles`, pour tous les profils : il est lu avant le choix du profil.
+- `loom validate` et le bandeau de `loom serve` ont une ligne `Env` : le fichier, d'où il vient, les variables posées et celles déjà définies, par leur nom seulement. En profil `prod`, des variables venues du fichier valent un avertissement sur `stderr` ; la commande continue.
+- `loom serve --reload` : chaque nouveau process retire ce que la première lecture a posé, puis relit le fichier ; une clé changée y est prise, une variable du shell reste celle du shell. Le fichier rangé hors du dossier de la config est surveillé seul.
+- La librairie ne lit rien d'elle-même : `load_env_file("loom.yaml")` (de `loom_ia.config`) applique les mêmes règles, sans les options, et rend un `EnvFileReport`. `LoomConfig.env_file` porte le chemin absolu.
+- ⚠ `loom_ia.access.http.serve` : `serve_reloading()` prend `env=` (la lecture du superviseur), et le bandeau (`Banner`, `serving_banner`) reçoit le rapport en cinquième argument.
+- **`python-dotenv` rejoint les dépendances du noyau** (`>=1.0.1,<2`), pour son analyseur.
+
 ### Outils fournis
 - ⚠ **`loom.fetch_page` donne le contenu d'une page avant ses menus.** Le texte du contenu principal (`<main>`, ou `role="main"`) vient en premier, puis le reste du corps, puis le pourtour : `nav` et `aside`, `header` et `footer` hors d'un article ou d'une section, et les rôles ARIA `navigation`, `banner`, `complementary` et `contentinfo`. Dans le contenu principal, rien n'est déplacé, pas même son `header` ; rien n'est retiré non plus, seul l'ordre change, et les liens suivent le même partage. Un résultat déporté (au-delà de 20 000 caractères) montre ainsi le contenu dans son aperçu, là où il ne montrait que des menus : sur la page de cours de Boursorama, le titre et le cours venaient après 11 000 caractères d'en-tête de site, et le modèle lisait la suite avec `artifact_read` sans les trouver. La description de l'outil, que lit le modèle, ne change pas.
 

@@ -25,7 +25,11 @@ relève attend dans sa file, elle n'est pas refusée.
 Ce qui est surveillé : tout le dossier de la config (et ``agents_dir``,
 ``prompts_dir`` s'ils sont ailleurs), **sauf** ce que la config écrit —
 journal, fichiers, bases SQLite, ceux de chaque client — et le bruit d'usage
-(``__pycache__``, ``.git``, ``.venv``, fichiers temporaires d'éditeur).
+(``__pycache__``, ``.git``, ``.venv``, fichiers temporaires d'éditeur). Le
+fichier d'environnement en fait partie : voisin de la config, il est dans son
+dossier ; ailleurs (``env_file:``, ``--env-file``), il est surveillé seul.
+Chaque process neuf le relit : une clé changée y est prise, une variable du
+shell reste celle du shell.
 
 Rien ne passe entre deux guetteurs. « Rechargement : surveille … » n'est dit
 qu'une fois le guetteur armé ; et ce qui a changé avant — pendant que le
@@ -64,6 +68,7 @@ from loom_ia.access.api import Loom
 from loom_ia.access.http.app import create_app
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, LoomConfig, load_config
+from loom_ia.config.env_file import EnvFileReport, reload_env_file
 from loom_ia.config.models import StorageConfig
 from loom_ia.core.model import ModelChunk, ModelRequest, ModelSpec
 from loom_ia.runtime import apply_logging, build_agent
@@ -72,8 +77,8 @@ if TYPE_CHECKING:
     from watchfiles import Change
 
 # Bandeau imprimé par chaque process qui prend la main : la config, le profil
-# demandé par l'option, l'adresse servie.
-type Banner = Callable[[LoomConfig, str | None, str, int], None]
+# demandé par l'option, l'adresse servie, le fichier d'environnement qu'il a lu.
+type Banner = Callable[[LoomConfig, str | None, str, int, EnvFileReport], None]
 
 # Code de sortie d'un process qui refuse sa config : celui de la CLI.
 REFUSED: Final = 2
@@ -160,9 +165,15 @@ class Watched:
     # Fichiers écrits par loom : bases SQLite (leurs ``-wal``, ``-shm`` et
     # ``-journal`` avec elles).
     files: tuple[Path, ...]
+    # Fichiers surveillés seuls, hors des dossiers : le fichier d'environnement
+    # rangé ailleurs. Le guetteur ne les voit pas ; leur état se relève à
+    # chaque réveil du superviseur (``moved``).
+    extra: tuple[Path, ...] = ()
 
     def counts(self, path: Path) -> bool:
         """Vrai si un changement de ce fichier doit relancer le serveur."""
+        if path in self.extra:
+            return True
         root = next((r for r in self.roots if path.is_relative_to(r)), None)
         if root is None:
             return False
@@ -208,7 +219,19 @@ class Watched:
                         # Parti entre la liste du dossier et son état.
                         continue
                     found[path] = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+        for path in self.extra:
+            state = _file_state(path)
+            if state is not None:
+                found[path] = state
         return found
+
+    def moved(self, known: Mapping[Path, FileState]) -> bool:
+        """Vrai si un fichier surveillé seul a changé depuis ``known``.
+
+        Quelques ``stat`` par seconde : surveiller son dossier, ce serait
+        surveiller tout ce qu'il contient, ``$HOME`` peut-être.
+        """
+        return any(_file_state(path) != known.get(path) for path in self.extra)
 
     def describe(self) -> str:
         """Une ligne : les dossiers surveillés, puis ce qui en est écarté."""
@@ -221,7 +244,7 @@ class Watched:
         def covered(path: Path) -> bool:
             return any(path != d and path.is_relative_to(d) for d in self.dirs)
 
-        roots = ", ".join(str(root) for root in self.roots)
+        roots = ", ".join(str(root) for root in (*self.roots, *self.extra))
         excluded = [
             *(shown(d, folder=True) for d in self.dirs if _under(d, self.roots) and not covered(d)),
             *(
@@ -233,12 +256,13 @@ class Watched:
         return f"{roots} (sauf {', '.join(excluded)})" if excluded else roots
 
 
-def watched(config: LoomConfig) -> Watched:
+def watched(config: LoomConfig, env_file: Path | None = None) -> Watched:
     """Ce que le rechargement surveille pour cette config.
 
-    Lève ``ConfigError`` si un dossier que loom écrit contient un dossier
-    surveillé : le rechargement ne saurait pas distinguer ses écritures de
-    celles du développeur.
+    ``env_file`` est le fichier d'environnement lu : hors des dossiers
+    surveillés, il l'est seul. Lève ``ConfigError`` si un dossier que loom
+    écrit contient un dossier surveillé : le rechargement ne saurait pas
+    distinguer ses écritures de celles du développeur.
     """
     base = config.base_dir if config.base_dir is not None else Path.cwd()
     roots = [base]
@@ -259,7 +283,17 @@ def watched(config: LoomConfig) -> Watched:
                     f"--reload : {folder} est écrit par loom (journal ou fichiers) et contient "
                     f"{root}, surveillé — mettre les données dans un sous-dossier"
                 )
-    return Watched(roots=tuple(roots), dirs=tuple(dirs), files=tuple(files))
+    extra = (env_file,) if env_file is not None and not _under(env_file, roots) else ()
+    return Watched(roots=tuple(roots), dirs=tuple(dirs), files=tuple(files), extra=extra)
+
+
+def _file_state(path: Path) -> FileState | None:
+    """L'état d'un fichier (date, taille, inode), ou None s'il n'est pas là."""
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
 
 
 def _written(storage: StorageConfig) -> tuple[list[Path], list[Path]]:
@@ -334,6 +368,7 @@ def serve_reloading(
     host: str,
     port: int,
     banner: Banner,
+    env: EnvFileReport,
 ) -> int:
     """Sert la config de ``path`` et la recharge à chaque changement ; rend le code de sortie.
 
@@ -341,6 +376,8 @@ def serve_reloading(
     config ou si la socket ne s'ouvre pas : il n'y a alors rien à garder.
     ``banner`` est appelée par chaque process qui prend la main ; elle doit
     être une fonction de module (le process neuf la retrouve par son nom).
+    ``env`` est la lecture du fichier d'environnement faite par le
+    superviseur : chaque process neuf retire ce qu'elle a posé et relit.
     """
     from watchfiles import watch
 
@@ -356,7 +393,7 @@ def serve_reloading(
         stopping.set()
 
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
-    launch = _Launcher(context, path, profile, host, port, sock, banner, stopping)
+    launch = _Launcher(context, path, profile, host, port, sock, banner, env, stopping)
     leaving: list[_Serving] = []
     current: _Serving | None = None
     try:
@@ -388,7 +425,7 @@ def serve_reloading(
                     if not armed:
                         armed = True
                         _say(f"Rechargement : surveille {spec.describe()}")
-                    elif not changes:
+                    elif not changes and not spec.moved(known):
                         continue
                     leaving = _reaped(leaving)
                     now = spec.state()
@@ -465,10 +502,11 @@ class _Launcher:
         port: int,
         sock: socket.socket,
         banner: Banner,
+        env: EnvFileReport,
         stopping: threading.Event,
     ) -> None:
         self.context = context
-        self.args = (path, profile, host, port, sock, banner)
+        self.args = (path, profile, host, port, sock, banner, env)
         self.stopping = stopping
 
     def __call__(self) -> tuple[_Serving, Watched, dict[Path, FileState]] | None:
@@ -537,13 +575,16 @@ def _serving(
     port: int,
     sock: socket.socket,
     banner: Banner,
+    env: EnvFileReport,
     ready: Connection,
 ) -> None:
     """Corps d'un process qui sert : charger, monter, puis prendre la socket."""
     # Le superviseur, tant qu'il est là : un process qui lui survit s'arrête.
     supervisor = os.getppid()
     try:
-        started = asyncio.run(_served(path, profile, host, port, sock, banner, ready, supervisor))
+        started = asyncio.run(
+            _served(path, profile, host, port, sock, banner, ready, supervisor, env)
+        )
     except KeyboardInterrupt:
         return
     except ConfigError as exc:
@@ -582,8 +623,11 @@ async def _served(
     banner: Banner,
     ready: Connection,
     supervisor: int,
+    env: EnvFileReport,
 ) -> bool:
-    config, spec, seen = _read(path, profile)
+    # Avant la config : le fichier, peut-être modifié, peut donner le profil.
+    env = reload_env_file(path, env)
+    config, spec, seen = _read(path, profile, env.path)
     apply_logging(config)
     if config.strict:
         raise ConfigError(
@@ -599,7 +643,7 @@ async def _served(
         raise
 
     def taken() -> None:
-        banner(config, profile, host, port)
+        banner(config, profile, host, port, env)
         sys.stdout.flush()
         ready.send((spec, seen))
 
@@ -618,7 +662,9 @@ async def _served(
     return server.started
 
 
-def _read(path: Path, profile: str | None) -> tuple[LoomConfig, Watched, dict[Path, FileState]]:
+def _read(
+    path: Path, profile: str | None, env_file: Path | None = None
+) -> tuple[LoomConfig, Watched, dict[Path, FileState]]:
     """La config qui sert, ce qu'elle fait surveiller, et l'état des fichiers relevé avant elle.
 
     Une première lecture dit quoi relever ; la config qui sert est lue après
@@ -627,12 +673,12 @@ def _read(path: Path, profile: str | None) -> tuple[LoomConfig, Watched, dict[Pa
     n'échappe jamais aux deux. Si la relecture fait surveiller d'autres
     dossiers, le relevé est refait sur eux.
     """
-    spec = watched(load_config(path, profile=profile))
+    spec = watched(load_config(path, profile=profile), env_file)
     reads = 1
     while True:
         seen = spec.state()
         config = load_config(path, profile=profile)
-        read = watched(config)
+        read = watched(config, env_file)
         reads += 1
         if read == spec or reads >= READS:
             return config, read, seen
