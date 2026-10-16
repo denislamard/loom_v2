@@ -13,7 +13,8 @@ l'écrit que lorsqu'il fait gagner quelque chose — au moins
 recopier l'historique dans le journal à chaque run.
 
 Sa position s'arrête avant le premier événement d'un run encore en cours :
-un run repris au milieu ne se projette pas.
+un run repris au milieu ne se projette pas. Un run de compaction, qui ne se
+reprend pas, n'y compte pas (``Cuts``).
 
 À ne pas confondre avec la compaction (#23) : le snapshot est une vue
 matérialisée sans LLM, pour lire vite ; la compaction est un résumé par LLM,
@@ -93,6 +94,12 @@ class Cuts:
     ce que sont les orphelins des journaux d'avant la fermeture des sous-runs
     avec leur parent (2.0.0) : sans cela, leur parent clos, ils figeraient la
     frontière pour toujours. Rien n'est écrit : le journal reste tel quel.
+
+    Un run de compaction n'y compte pas non plus : l'historique ne le lit
+    jamais, et une coupe qui le traverse ne perd rien. Interrompu — process
+    fermé pendant le résumé —, il reste sans fin au journal, puisque rien ne le
+    reprend ; compté, il figerait la frontière avant lui, et avec elle les
+    compactions, les snapshots et la coupe de sécurité de la session.
     """
 
     def __init__(self, events: Sequence[Event]) -> None:
@@ -100,6 +107,7 @@ class Cuts:
         last: dict[RunId, int] = {}
         parents: dict[RunId, RunId] = {}
         closed: set[RunId] = set()
+        summaries: set[RunId] = set()
         self._newest = 0
         for event in events:
             if event.category == "session":
@@ -108,7 +116,9 @@ class Cuts:
             last[event.run_id] = event.seq
             self._newest = max(self._newest, event.seq)
             payload = event.payload
-            if isinstance(payload, RunStarted) and payload.parent_run_id is not None:
+            if isinstance(payload, RunStarted) and payload.kind == "compaction":
+                summaries.add(event.run_id)
+            elif isinstance(payload, RunStarted) and payload.parent_run_id is not None:
                 parents[event.run_id] = payload.parent_run_id
             elif isinstance(payload, RunCompleted | RunFailed | RunCancelled):
                 closed.add(event.run_id)
@@ -120,6 +130,7 @@ class Cuts:
         self._runs = [
             (first[run_id], last[run_id] if run_id in closed else None)
             for run_id in sorted(first, key=first.__getitem__, reverse=True)
+            if run_id not in summaries
         ]
 
     def at_most(self, position: int | None = None) -> int:

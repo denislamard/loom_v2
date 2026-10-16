@@ -551,6 +551,7 @@ L'appel a réussi, le run aussi, et `client_courant` est posé. Seul `devis_cour
 
 - Une écriture refusée par un outil (clé non déclarée, schéma, taille, chemin absent du résultat) n'est pas posée, mais **le résultat reste un succès** : l'outil a pu faire son travail, et une erreur pousserait le modèle à le refaire. Les autres écritures du même appel sont posées, sauf si l'appel faisait dépasser la taille totale du state : toutes celles qui ajoutent sont alors refusées.
 - Le refus est gardé au journal avec le résultat (`state_refused`), dit dans le log (`WARNING`), et lu par le modèle à la suite du résultat, une ligne `[state]` par clé. Le motif ne recopie pas la valeur.
+- Un outil générique, comme une requête SQL, rend souvent des résultats qui ne parlent pas de la clé. Pour qu'un chemin absent n'y soit pas un refus, déclarez la source avec `on_missing: ignore` : `{tool: requete_sql, path: /rows/0/code, on_missing: ignore}`. Rien n'est alors posé ni dit au modèle ; une valeur trouvée reste contrôlée.
 - À l'inverse, un state refusé **à l'ouverture** (exemple 31.1) refuse le run : c'est l'application qui se trompe, et rien n'a encore eu lieu.
 
 ### Exemple 31.5 : tester le state, et ce que le rejeu ne voit pas

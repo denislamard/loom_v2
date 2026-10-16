@@ -32,7 +32,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Final
+from typing import Final, Literal
 
 from jsonschema import ValidationError
 from jsonschema.protocols import Validator
@@ -69,10 +69,15 @@ STATE_HINT: Final = (
 
 @dataclass(frozen=True, slots=True)
 class StateSourceRule:
-    """Ce que pose un résultat réussi de l'outil : ``path`` dans ses données, ou ``value``."""
+    """Ce que pose un résultat réussi de l'outil : ``path`` dans ses données, ou ``value``.
+
+    ``on_missing`` : ``ignore`` ne dit rien d'un ``path`` absent du résultat, que
+    ``refuse`` compte comme une écriture refusée (D8).
+    """
 
     path: str | None = None
     value: JsonValue = None
+    on_missing: Literal["refuse", "ignore"] = "refuse"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -216,13 +221,16 @@ class StateRules:
             lines.append(f"- {name} : {description}" if description else f"- {name}")
         return "\n".join(lines)
 
-    def posed(self, tool: str, output: ToolOutput, tally: dict[str, JsonValue]) -> ToolOutput:
+    def posed(
+        self, tool: str, output: ToolOutput, tally: BatchTally, call_id: str = ""
+    ) -> ToolOutput:
         """Le résultat réussi d'un outil, avec les écritures qu'il pose et celles qui sont refusées.
 
-        ``tally`` : le state de la session tel que le lot l'a laissé jusqu'ici,
-        pour sa taille ; les écritures posées y sont reportées. Les appels d'un
-        lot se comptent ainsi l'un après l'autre, et le lot ne dépasse pas la
-        limite à lui tous.
+        ``tally`` : le state que le lot laissera, compté dans l'ordre des appels ;
+        les écritures posées par l'appel ``call_id`` y sont reportées. Chaque
+        appel est ainsi jugé sur ce que la session gardera vraiment, quel que
+        soit l'ordre d'arrivée des résultats, et le lot ne dépasse pas la limite
+        à lui tous (D7, D9).
         """
         given: dict[str, JsonValue] = {}
         refused: list[str] = []
@@ -234,10 +242,17 @@ class StateRules:
                 given[name] = source.value
                 continue
             found = pointed(output.data, source.path)
-            if isinstance(found, _Absent):
-                refused.append(f"{name} non posé : chemin {source.path!r} absent du résultat")
-            else:
+            if not isinstance(found, _Absent):
                 given[name] = found
+            elif source.on_missing == "ignore":
+                logger.debug(
+                    "State : outil %s, %s non posé : chemin %r absent du résultat",
+                    tool,
+                    name,
+                    source.path,
+                )
+            else:
+                refused.append(f"{name} non posé : chemin {source.path!r} absent du résultat")
         given |= output.state
         accepted: dict[str, JsonValue] = {}
         for name, value in given.items():
@@ -246,22 +261,25 @@ class StateRules:
                 accepted[name] = value
             else:
                 refused.append(f"{name} non posé : {problem}")
-        projected = _merged(tally, accepted)
-        total = state_size(projected)
-        if total > self.max_total_bytes and total > state_size(tally):
+        total = state_size(tally.state(call_id, accepted))
+        if total > self.max_total_bytes and total > state_size(tally.state()):
             # Seul ce qui fait grossir le state au-delà de la limite est refusé :
-            # un effacement passe toujours, et une session déjà trop grosse (limite
-            # abaissée) peut encore remplacer une valeur par une plus petite.
-            grown = [name for name, value in accepted.items() if value is not None]
+            # un effacement passe toujours, une session déjà trop grosse (limite
+            # abaissée) peut encore remplacer une valeur par une plus petite, et
+            # une clé qu'un appel suivant du lot écrit aussi ne compte pas — c'est
+            # sa valeur à lui que la session gardera (D9).
+            grown = [
+                name
+                for name, value in accepted.items()
+                if value is not None and not tally.overridden(call_id, name)
+            ]
             refused += [
                 f"{name} non posé : le state de la session ferait {total} octets, au-delà "
                 f"de sessions.state.max_total_bytes ({self.max_total_bytes})"
                 for name in grown
             ]
-            accepted = {name: value for name, value in accepted.items() if value is None}
-            projected = _merged(tally, accepted)
-        tally.clear()
-        tally.update(projected)
+            accepted = {name: value for name, value in accepted.items() if name not in grown}
+        tally.record(call_id, accepted)
         for line in refused:
             logger.warning("State : outil %s, %s", tool, line)
         return output.model_copy(update={"state": accepted, "state_refused": tuple(refused)})
@@ -306,15 +324,57 @@ def state_message(values: Mapping[str, JsonValue]) -> Message:
     return Message.user(tagged(SESSION_STATE_TAG, state_json(dict(values))))
 
 
-def apply_writes(tally: dict[str, JsonValue], writes: Mapping[str, JsonValue]) -> None:
-    """Reporte dans ``tally`` des écritures déjà retenues, qui comptent pour la suite du lot (D7).
+class BatchTally:
+    """Le state que la session gardera d'un lot d'appels, compté dans l'ordre des appels (D7, D9).
 
-    Ce sont celles d'un résultat lu au journal : elles ne repassent pas par
-    ``StateRules.posed``, mais les appels suivants du lot doivent les compter.
+    Il part du state au début du lot. S'y ajoutent les écritures de chaque appel
+    soldé, rangées à son rang dans la réponse du modèle — et non dans l'ordre où
+    les résultats arrivent —, comme les range la projection : deux appels qui
+    écrivent une même clé, c'est le dernier appelé qui l'emporte. Un appel déjà
+    soldé au journal (reprise d'un lot interrompu, rejeu) compte comme les autres.
+
+    ``ranks`` : le rang de chaque appel du lot ; un appel absent se range après,
+    dans l'ordre où il est reporté.
     """
-    merged = _merged(tally, writes)
-    tally.clear()
-    tally.update(merged)
+
+    def __init__(
+        self, base: Mapping[str, JsonValue] | None = None, ranks: Mapping[str, int] | None = None
+    ) -> None:
+        self._base = dict(base or {})
+        self._ranks = dict(ranks or {})
+        self._writes: dict[str, dict[str, JsonValue]] = {}
+
+    def record(self, call_id: str, writes: Mapping[str, JsonValue]) -> None:
+        """Les écritures retenues de l'appel ``call_id``."""
+        self._writes[call_id] = dict(writes)
+
+    def state(
+        self, call_id: str | None = None, writes: Mapping[str, JsonValue] | None = None
+    ) -> dict[str, JsonValue]:
+        """Le state du lot ; avec ``call_id``, comme si cet appel écrivait aussi ``writes``."""
+        recorded = dict(self._writes)
+        if call_id is not None:
+            recorded[call_id] = dict(writes or {})
+        result = dict(self._base)
+        for done in sorted(recorded, key=lambda done: self._rank(done, recorded)):
+            result = _merged(result, recorded[done])
+        return result
+
+    def overridden(self, call_id: str, name: str) -> bool:
+        """Vrai si un appel suivant du lot, déjà soldé, écrit aussi ``name`` : il l'emporte."""
+        mine = self._rank(call_id, self._writes)
+        return any(
+            name in writes and self._rank(other, self._writes) > mine
+            for other, writes in self._writes.items()
+            if other != call_id
+        )
+
+    def _rank(self, call_id: str, recorded: Mapping[str, object]) -> int:
+        if call_id in self._ranks:
+            return self._ranks[call_id]
+        arrived = [done for done in recorded if done not in self._ranks]
+        position = arrived.index(call_id) if call_id in arrived else len(arrived)
+        return len(self._ranks) + position
 
 
 def _merged(

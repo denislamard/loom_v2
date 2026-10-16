@@ -18,6 +18,10 @@ résumé : c'est ce qui fait que « le marqueur au plus grand ``up_to_seq``
 gagne » reste vrai. Un plantage entre les deux laisse un historique non
 réduit mais juste, et la compaction sera refaite.
 
+Le résumé se fait en tâche de fond, à la fin du run qui a fait dépasser
+``over_tokens`` ; avec ``blocking``, à l'ouverture du run suivant, qui l'attend
+(``before_run``).
+
 Filet de sécurité : au démarrage d'un run, si l'historique dépasse
 ``hard_tokens``, ``ensure_fits`` compacte en synchrone ; si cela échoue, les
 tours les plus anciens sont retirés (``session.trimmed``), avec un
@@ -77,6 +81,8 @@ class CompactionPlan:
     hard_tokens: int
     keep_last: int
     fidelity_check: bool = True
+    # Résumé à l'ouverture du run suivant plutôt qu'en tâche de fond après le run.
+    blocking: bool = False
 
 
 def run_starts(events: Sequence[Event]) -> list[int]:
@@ -206,6 +212,26 @@ class CompactionJob:
             payload.fidelity,
         )
         return payload
+
+    async def before_run(
+        self, tenant_id: TenantId, session_id: SessionId, *, run_id: RunId | None = None
+    ) -> None:
+        """À l'ouverture d'un run : le résumé dû, s'il est bloquant, puis le filet.
+
+        Un résumé bloquant qui échoue ne fait pas échouer le run : il part avec
+        l'historique non réduit, et le résumé sera retenté à l'ouverture du
+        suivant. Une annulation, elle, passe.
+        """
+        if self.plan.blocking:
+            try:
+                await self.compact(tenant_id, session_id, triggered_by=run_id)
+            except Exception:
+                logger.warning(
+                    "Session %s : résumé avant le run impossible, le run part sans",
+                    session_id,
+                    exc_info=True,
+                )
+        await self.ensure_fits(tenant_id, session_id)
 
     async def ensure_fits(self, tenant_id: TenantId, session_id: SessionId) -> None:
         """Filet de sécurité : compacte en synchrone, ou retire les vieux tours."""

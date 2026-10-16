@@ -36,8 +36,9 @@ from loom_ia.config import (
 from loom_ia.core.events import ModelExchanged, ToolCompleted
 from loom_ia.core.model import SessionId, state_size
 from loom_ia.core.projections import session_state
-from loom_ia.engine import STATE_HINT, StateRefused
+from loom_ia.engine import STATE_HINT, StateRefused, StateSourceRule
 from loom_ia.runtime import build_agent, system_prompt
+from loom_ia.runtime.wiring import state_rules
 
 MODEL: dict[str, Any] = {"id": "FAKE", "sdk": "fake", "model": "fake-1"}
 AGENT: dict[str, Any] = {"name": "demo", "main": {"model": "FAKE", "system": "Tu calcules."}}
@@ -584,7 +585,7 @@ async def test_the_session_state_is_declared_by_the_agent(tmp_path: Path) -> Non
     # Le schéma pour l'éditeur parle comme le YAML : « schema », « from ».
     definitions = agent_json_schema()["$defs"]
     assert {"schema", "from", "required", "default"} <= set(definitions["StateKey"]["properties"])
-    assert {"tool", "path", "value"} == set(definitions["StateSource"]["properties"])
+    assert {"tool", "path", "value", "on_missing"} == set(definitions["StateSource"]["properties"])
     assert "StateLimits" in config_json_schema()["$defs"]
     agent = build_agent(config, "demo", InMemoryEventStore())
     await agent.aclose()
@@ -636,6 +637,26 @@ STRING: dict[str, Any] = {"type": "string"}
         (
             with_key("k", {"schema": STRING, "from": [{"tool": "get_client", "path": "code"}]}),
             "path 'code' n'est pas un pointeur JSON",
+        ),
+        (
+            with_key(
+                "k",
+                {
+                    "schema": STRING,
+                    "from": [{"tool": "cloturer", "value": "x", "on_missing": "ignore"}],
+                },
+            ),
+            "from, outil 'cloturer' : 'on_missing' ne vaut qu'avec 'path'",
+        ),
+        (
+            with_key(
+                "k",
+                {
+                    "schema": STRING,
+                    "from": [{"tool": "get_client", "path": "/a", "on_missing": "skip"}],
+                },
+            ),
+            "on_missing",
         ),
         (
             with_key("k", {"schema": STRING, "from": [{"tool": "cloturer", "value": 3}]}),
@@ -827,6 +848,18 @@ def test_a_path_is_a_json_pointer() -> None:
     # « null » efface la clé : c'est une valeur donnée, pas une valeur absente.
     erase = StateSource.model_validate({"tool": "t", "value": None})
     assert (erase.path, erase.value) == (None, None)
+
+
+def test_a_missing_path_is_refused_unless_its_source_ignores_it(tmp_path: Path) -> None:
+    """``on_missing`` : ``refuse`` par défaut ; ``ignore`` va jusqu'aux règles du moteur."""
+    assert StateSource.model_validate({"tool": "t", "path": "/a"}).on_missing == "refuse"
+    source = {"tool": "get_client", "path": "/code", "on_missing": "ignore"}
+    config = load_config(write_state(tmp_path, with_key("k", {"schema": STRING, "from": [source]})))
+    [spec] = config.agents
+    rules = state_rules(config, spec)
+    assert rules.keys["k"].sources["get_client"] == StateSourceRule(
+        path="/code", on_missing="ignore"
+    )
 
 
 def test_the_state_can_be_declared_in_python() -> None:

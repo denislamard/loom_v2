@@ -48,7 +48,7 @@ from loom_ia.core.model import (
     state_size,
 )
 from loom_ia.core.ports import ToolContext, ToolError
-from loom_ia.core.projections import fold
+from loom_ia.core.projections import fold, session_state
 from loom_ia.engine import (
     UNKNOWN_STATE,
     BoundPolicy,
@@ -804,6 +804,47 @@ async def test_what_the_tool_writes_itself_wins_and_is_checked_the_same() -> Non
     assert not output.is_error
 
 
+async def test_a_source_that_ignores_a_missing_path_says_nothing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``on_missing: ignore`` : un résultat qui ne parle pas de la clé ne pose rien, sans refus.
+
+    Le modèle ne lit rien de plus, le log n'a qu'un message de débogage ; le chemin
+    présent, la valeur reste contrôlée comme toute autre.
+    """
+    code = StateKeyRule(
+        schema={"type": "string", "pattern": "^C-[0-9]+$"},
+        sources={"sql": StateSourceRule(path="/rows/0/code", on_missing="ignore")},
+    )
+    ville = StateKeyRule(
+        schema={"type": "string"}, sources={"sql": StateSourceRule(path="/rows/0/ville")}
+    )
+    rules = StateRules({"client": code, "ville": ville})
+
+    async def run(rows: JsonValue) -> ToolOutput:
+        sql = RecordingTool(spec("sql"), result=data({"rows": rows}))
+        executor = ToolExecutor([sql], state_rules=rules)
+        [output] = completed(await collect(executor, awaiting(call("c1", "sql")))).values()
+        return output
+
+    with caplog.at_level(logging.DEBUG, logger="loom_ia.engine.session_state"):
+        products = await run([{"sku": "P-0001", "ville": "Dijon"}])
+    assert (products.state, products.state_refused) == ({"ville": "Dijon"}, ())
+    assert products.as_text == ToolOutput(blocks=products.blocks).as_text
+    [debug] = [r for r in caplog.records if r.name == "loom_ia.engine.session_state"]
+    assert debug.levelno == logging.DEBUG and "'/rows/0/code' absent" in debug.getMessage()
+
+    # La source par défaut, elle, refuse toujours un chemin absent.
+    nothing = await run([])
+    assert nothing.state == {}
+    assert nothing.state_refused == ("ville non posé : chemin '/rows/0/ville' absent du résultat",)
+    # Présente, la valeur suit son schéma : un mauvais code reste un refus.
+    wrong = await run([{"code": "X-1", "ville": "Dijon"}])
+    assert wrong.state == {"ville": "Dijon"}
+    [line] = wrong.state_refused
+    assert line.startswith("client non posé : ne suit pas son schéma")
+
+
 @pytest.mark.parametrize(
     ("result", "options", "line"),
     [
@@ -1199,6 +1240,68 @@ async def test_a_batch_cannot_grow_the_state_beyond_its_limit_together() -> None
     refused = [line for output in outputs.values() for line in output.state_refused]
     assert len(posed) == 2 and len(refused) == 1
     assert "max_total_bytes (2500)" in refused[0]
+
+
+async def test_the_batch_limit_counts_in_call_order_whatever_order_the_tools_finish_in() -> None:
+    """D7 et D9 : chaque appel est jugé sur le state que la session gardera, pas sur l'arrivée.
+
+    Le premier appelé finit le dernier. Compté dans l'ordre d'arrivée, chacun passait
+    le contrôle, et la session gardait 1 115 octets pour une limite de 1 000.
+    """
+    texte = StateKeyRule(schema={"type": "string"})
+    rules = StateRules({"k": texte, "j": texte}, max_value_bytes=1000, max_total_bytes=1000)
+    lent = RecordingTool(
+        spec("lent"), delay=0.05, result=ToolOutput(state={"k": "x" * 10, "j": "y" * 500})
+    )
+    rapide = RecordingTool(spec("rapide"), result=ToolOutput(state={"k": "z" * 600}))
+    model = ScriptedModel(
+        tool_call_message(("c1", "lent", {}), ("c2", "rapide", {})), Message.assistant("Fait.")
+    )
+    ctx = RunContext(
+        agent="demo",
+        store=InMemoryEventStore(),
+        model=model,
+        model_spec=ModelSpec(id="M", sdk="fake", model="m", retry=RetryPolicy(initial_delay=0)),
+        tools=ToolExecutor([lent, rapide], state_rules=rules),
+    )
+    started = await begin_run(ctx, "?")
+    state = await drive(ctx, started.run_id)
+    events = await ctx.store.read(state.context.tenant_id, state.session_id)
+    outputs = {
+        e.payload.call_id: e.payload.output for e in events if isinstance(e.payload, ToolCompleted)
+    }
+    kept = session_state(events)
+
+    assert list(outputs) == ["c2", "c1"]
+    assert kept == {"k": "z" * 600}
+    assert state_size(kept) <= 1000
+    # Seul « j » faisait grossir ce que la session garde : le « k » de c1, que c2
+    # remplace (D9), ne compte pas.
+    assert outputs["c1"].state == {"k": "x" * 10}
+    [line] = outputs["c1"].state_refused
+    assert line.startswith("j non posé : le state de la session ferait 1115 octets")
+
+
+async def test_a_resumed_batch_counts_the_calls_already_settled() -> None:
+    """Reprise d'un lot interrompu : le voisin déjà soldé au journal compte pour la limite."""
+    texte = StateKeyRule(schema={"type": "string"})
+    rules = StateRules({"k": texte, "j": texte}, max_value_bytes=1000, max_total_bytes=1000)
+    journal = RunJournal(agent="demo")
+    journal.start("?")
+    journal.model_turn(tool_call_message(("c1", "rapide", {}), ("c2", "lent", {})))
+    drafts = journal.take()
+    done = ToolCompleted(
+        call_id="c1", tool_name="rapide", output=ToolOutput(state={"k": "z" * 600})
+    )
+    drafts.append(journal.scope.draft(done))
+    state = fold([d.to_event(seq) for seq, d in enumerate(drafts, start=1)], journal.run_id)
+    assert [c.call_id for c in state.pending_calls] == ["c2"]
+
+    lent = RecordingTool(spec("lent"), result=ToolOutput(state={"j": "y" * 500}))
+    [output] = completed(await collect(ToolExecutor([lent], state_rules=rules), state)).values()
+    assert output.state == {}
+    [line] = output.state_refused
+    assert line.startswith("j non posé : le state de la session ferait 1115 octets")
 
 
 async def test_a_session_over_its_limit_can_still_shrink() -> None:

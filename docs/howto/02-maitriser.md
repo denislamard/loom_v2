@@ -448,7 +448,7 @@ Statut     : completed · itérations : 1 · tokens : 319/36 · coût : 0.0000 $
 Run        : martin-3
 ```
 
-La compaction tourne en tâche de fond après le run ; la CLI attend sa fin avant de rendre la main. Voici ce qu'elle a écrit :
+La compaction tourne en tâche de fond après le run ; la CLI attend sa fin avant de rendre la main, dans la limite d'`execution.shutdown_timeout` (30 s par défaut). Voici ce qu'elle a écrit :
 
 ```console
 $ uv run python historique.py
@@ -476,9 +476,10 @@ Lecture, de haut en bas :
 
 #### À retenir
 
-- Réglages de `sessions.compaction` : `model` (le modèle qui résume, souvent un modèle moins cher), `over_tokens` (seuil de déclenchement, 12 000 par défaut), `hard_tokens` (limite dure, 150 000 par défaut), `keep_last` (échanges conservés intacts, 6 par défaut), `fidelity_check`. Ici 150 et 1 sont de simples valeurs de démonstration : en vrai, partez des défauts.
+- Réglages de `sessions.compaction` : `model` (le modèle qui résume, souvent un modèle moins cher), `over_tokens` (seuil de déclenchement, 12 000 par défaut), `hard_tokens` (limite dure, 150 000 par défaut), `keep_last` (échanges conservés intacts, 6 par défaut), `fidelity_check`, `blocking` (faux par défaut). Ici 150 et 1 sont de simples valeurs de démonstration : en vrai, partez des défauts.
 - Le contrôle de fidélité est **déterministe** (aucun appel de modèle) : il compare des repères textuels (références comme `D-2026-042`, adresses e-mail, nombres d'au moins trois chiffres) entre les messages d'origine et le résumé. Il réessaie une fois avec le diagnostic ; si le second résumé échoue encore, il est gardé avec `fidelity: warning` dans l'événement `session.compacted`.
 - Piège : ce contrôle garantit que les identifiants survivent, pas que le sens est juste. Un résumé peut citer `D-2026-042` et se tromper sur le délai.
+- `blocking: true` fait le résumé à l'ouverture du run suivant, qui l'attend, au lieu d'une tâche de fond après le run : c'est le bon choix en ligne de commande, où chaque `loom run` est un process qui se ferme. Une tâche de fond plus longue qu'`execution.shutdown_timeout` y est annulée à la fermeture, et le résumé ne se fait pas.
 - En Python, `loom.compact(session_id)` déclenche la compaction à la demande et renvoie `None` s'il n'y a rien de nouveau à résumer.
 - Les événements `session.compacted` et `guard.checked` restent dans le journal : la compaction se vérifie après coup, sans rejouer quoi que ce soit.
 

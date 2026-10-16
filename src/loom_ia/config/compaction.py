@@ -49,6 +49,10 @@ class CompactionConfig(DomainModel):
     keep_last: NonNegativeInt = 6
     # Contrôle déterministe des repères du segment dans le résumé.
     fidelity_check: bool = True
+    # Vrai : le résumé dû se fait à l'ouverture du run suivant, qui l'attend,
+    # au lieu d'une tâche de fond après le run. Rien ne reste alors en cours
+    # quand un process de courte vie (CLI) se ferme.
+    blocking: bool = False
     # Prompt interne surchargé, relatif au dossier des prompts.
     system_file: Path | None = None
 

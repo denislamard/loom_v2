@@ -21,13 +21,17 @@ from loom_ia.core.events import (
     Event,
     ModelResponded,
     RunCancelled,
+    RunStarted,
     SessionCompacted,
     SessionTrimmed,
     ToolCompleted,
+    UserMessage,
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    CallerContext,
     Message,
+    RunId,
     RunStatus,
     SessionId,
     TenantId,
@@ -47,6 +51,7 @@ from loom_ia.sessions import (
     run_starts,
     summarised,
 )
+from loom_ia.sessions.snapshot import boundary
 from loom_ia.testing import RunJournal, tool_call_message
 
 SESSION = SessionId("atelier")
@@ -275,6 +280,32 @@ async def test_only_completed_runs_are_turns_for_keep_last() -> None:
     await store.append([marker], expected_seq=events[-1].seq)
     kept = history(await store.read(DEFAULT_TENANT, SESSION))
     assert [m.text for m in kept if m.role == "user"][1:] == [f"{DEVIS} (1)", f"{DEVIS} (2)"]
+
+
+async def test_an_interrupted_summary_does_not_freeze_the_session() -> None:
+    """Un run de compaction resté sans fin — process fermé pendant le résumé — ne fige rien.
+
+    Rien ne le reprend : compté comme un run en cours, il bloquait la coupe avant
+    lui, et avec elle toute compaction, tout snapshot et la coupe de sécurité.
+    """
+    store = InMemoryEventStore()
+    await filled(store, 2)
+    summary = RunJournal(agent=COMPACTION_AGENT, session_id=SESSION)
+    opened = summary.scope.draft(
+        RunStarted(context=CallerContext(tenant_id=DEFAULT_TENANT), kind="compaction")
+    )
+    asked = summary.scope.draft(UserMessage(message=Message.user("Segment à résumer")))
+    await store.append([opened, asked], expected_seq=await store.last_seq(DEFAULT_TENANT, SESSION))
+    events = await filled(store, 3)
+    starts = run_starts(events)
+
+    assert len(starts) == 5
+    assert boundary(events) == events[-1].seq
+    assert cut(events, keep_last=2) == starts[-2] - 1
+    # Le run interrompu n'entre pas dans l'historique.
+    assert [m.text for m in history(events) if m.role == "user"] == [
+        f"{DEVIS} ({n})" for n in (0, 1, 0, 1, 2)
+    ]
 
 
 async def test_nothing_is_summarised_twice() -> None:
@@ -614,6 +645,68 @@ def test_fidelity_can_be_turned_off(conversation: ConfigFactory) -> None:
     assert isinstance(payload, SessionCompacted)
     assert payload.fidelity == "skipped"
     assert not [e for e in events if e.facets.get("guard") == "fidelity"]
+
+
+def test_a_blocking_summary_is_made_when_the_next_run_opens(conversation: ConfigFactory) -> None:
+    """``blocking`` : rien en tâche de fond après le run ; le run suivant résume, puis répond.
+
+    Par ``submit`` comme par ``run`` : chaque résumé précède le run qui l'a attendu.
+    """
+    path = conversation(compaction={"over_tokens": 50, "keep_last": 1, "blocking": True})
+
+    async def go() -> tuple[list[Event], list[Event]]:
+        async with Loom.from_config(path) as loom:
+            for _ in range(2):
+                await loom.run("demo", DEVIS, session_id=SESSION)
+            await loom.drain()
+            before = await loom.export_session(SESSION)
+            await loom.submit("demo", DEVIS, session_id=SESSION, run_id=RunId("troisieme"))
+            await loom.drain()
+            await loom.run("demo", DEVIS, session_id=SESSION, run_id=RunId("quatrieme"))
+            return before, await loom.export_session(SESSION)
+
+    before, events = asyncio.run(go())
+    summaries = [
+        e.payload.triggered_by
+        for e in events
+        if isinstance(e.payload, RunStarted) and e.payload.kind == "compaction"
+    ]
+    compacted = [e.seq for e in events if e.type == "session.compacted"]
+    opened = {e.run_id: e.seq for e in events if e.type == "run.started"}
+
+    # Le seuil était dépassé après le deuxième run : avec une tâche de fond, le
+    # résumé serait déjà là (test_compacting_replaces_the_old_turns).
+    assert "session.compacted" not in [e.type for e in before]
+    assert summaries == ["troisieme", "quatrieme"]
+    assert compacted[0] < opened[RunId("troisieme")] < compacted[1] < opened[RunId("quatrieme")]
+    messages = history(events)
+    assert messages[0].text.startswith(SUMMARY_MARKER)
+    assert [m.text for m in messages[1:] if m.role == "user"] == [DEVIS, DEVIS]
+
+
+def test_a_blocking_summary_that_fails_does_not_fail_the_run(
+    conversation: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Le résumé ne se fait pas : le run part avec l'historique entier, la panne est en WARNING."""
+    path = conversation(compaction={"over_tokens": 50, "keep_last": 1, "blocking": True})
+
+    async def down(*args: object, **kwargs: object) -> None:
+        raise ConnectionError("modèle de résumé injoignable")
+
+    async def go() -> tuple[list[RunStatus], list[Event]]:
+        async with Loom.from_config(path) as loom:
+            job = loom._compaction  # pyright: ignore[reportPrivateUsage]
+            assert job is not None
+            monkeypatch.setattr(job, "compact", down)
+            with caplog.at_level(logging.WARNING, logger="loom_ia.sessions.compaction"):
+                runs = [await loom.run("demo", DEVIS, session_id=SESSION) for _ in range(3)]
+            return [run.status for run in runs], await loom.export_session(SESSION)
+
+    statuses, events = asyncio.run(go())
+    assert statuses == [RunStatus.COMPLETED] * 3
+    assert "session.compacted" not in [e.type for e in events]
+    warned = [r for r in caplog.records if "résumé avant le run impossible" in r.getMessage()]
+    assert warned and warned[0].exc_info is not None
 
 
 async def written(path: Path, turns: int) -> None:

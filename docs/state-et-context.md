@@ -65,7 +65,7 @@ Règles contrôlées au chargement :
 - **Nom** : un identifiant (lettres, chiffres, `_`, 64 caractères, pas de chiffre en tête), que les templates citent tel quel.
 - **`schema`** : un JSON Schema valide, appliqué avec le moteur borné des contrats de sortie (un motif qui ne finit pas est arrêté).
 - **`description`** : ce que la clé désigne, donné avec sa valeur à qui la reçoit.
-- **`from`** : les outils dont un résultat réussi pose la clé (D12), chacun cité une fois, avec un `path` (pointeur JSON, RFC 6901, dans les **données** du résultat ; `""` les prend entières) ou une `value` fixe (`null` efface la clé). L'outil est un outil de l'agent : Python, rôle, sous-agent, ou un préfixe MCP ou de source (connu seulement au début du run). `path` exige des données : il est refusé pour un outil Python dont la signature annonce `str`, `None` ou `Image` et qui n'a pas de contrat de sortie à schéma, pour un rôle sans contrat de sortie à schéma, et pour un sous-agent.
+- **`from`** : les outils dont un résultat réussi pose la clé (D12), chacun cité une fois, avec un `path` (pointeur JSON, RFC 6901, dans les **données** du résultat ; `""` les prend entières) ou une `value` fixe (`null` efface la clé). L'outil est un outil de l'agent : Python, rôle, sous-agent, ou un préfixe MCP ou de source (connu seulement au début du run). `path` exige des données : il est refusé pour un outil Python dont la signature annonce `str`, `None` ou `Image` et qui n'a pas de contrat de sortie à schéma, pour un rôle sans contrat de sortie à schéma, et pour un sous-agent. Avec un `path`, `on_missing` dit ce que fait un résultat où le chemin ne mène à rien : `refuse` (défaut) en fait une écriture refusée (§4.3), signe qu'un outil dédié a changé la forme de ses données ; `ignore` ne pose rien et ne dit rien au modèle, pour un outil générique — une requête SQL, par exemple — dont la plupart des résultats ne parlent pas de la clé : `{tool: requete_sql, path: /rows/0/code, on_missing: ignore}`.
 - **`required`** et **`default`** s'excluent (D13). `default` et chaque `value` doivent tenir le schéma et les limites.
 - **Limites** (D7), à la racine : `sessions.state.max_value_bytes` (1 024 par défaut) et `max_total_bytes` (4 096), en octets de JSON compact. Les valeurs par défaut d'un agent doivent tenir ensemble dans la seconde.
 - **`main.context`** n'accepte que `session_state` (la demande, l'historique et les pièces jointes sont déjà dans les messages), entier ou limité à des clés déclarées : `[{session_state: [devis_courant, ton]}]`.
@@ -88,13 +88,15 @@ Les écritures se posent sur le résultat **réussi** d'un appel, après les pol
 
 ### 4.3 Contrôles et refus (D6, D7, D8)
 
-Chaque écriture d'un outil est contrôlée : clé déclarée, valeur finie (ni NaN ni infini, que le JSON du journal écrirait `null`), schéma, taille de la valeur, puis taille du state de la session, comptée appel après appel sur le lot. Une écriture refusée n'est pas posée, les autres le sont — sauf si l'appel faisait dépasser la taille totale : toutes ses écritures qui ajoutent sont alors refusées, la limite se comptant dans l'ordre où les appels du lot finissent —, et **le résultat reste un succès** : l'outil a pu produire son effet, et une erreur pousserait le modèle à le refaire. Le refus est gardé dans la sortie (`state_refused`), dit au log, et le modèle le lit à la suite du résultat :
+Chaque écriture d'un outil est contrôlée : clé déclarée, valeur finie (ni NaN ni infini, que le JSON du journal écrirait `null`), schéma, taille de la valeur, puis taille du state de la session, comptée sur le lot dans l'ordre des appels : chaque appel est jugé sur ce que la session gardera, voisins déjà soldés compris (à la reprise d'un lot interrompu aussi), quel que soit l'ordre où les résultats arrivent. Une écriture refusée n'est pas posée, les autres le sont — sauf si l'appel faisait dépasser la taille totale : toutes ses écritures qui ajoutent sont alors refusées, hors celles qu'un appel suivant du lot remplace (D9) —, et **le résultat reste un succès** : l'outil a pu produire son effet, et une erreur pousserait le modèle à le refaire. Le refus est gardé dans la sortie (`state_refused`), dit au log, et le modèle le lit à la suite du résultat :
 
 ```text
 [state] devis_courant non posé : ne suit pas son schéma — ne respecte pas le motif ^D-[0-9]{4}-[0-9]{3}$
 ```
 
 Le motif nomme la clé et le problème, sans recopier la valeur, qui peut porter un secret.
+
+Un chemin absent d'une source en `on_missing: ignore` n'est pas un refus : rien n'est posé, le modèle ne lit rien, et le log n'en a qu'un message de débogage. Le chemin présent, la valeur suit les mêmes contrôles qu'ailleurs.
 
 ### 4.4 Deux écritures d'une même clé dans un lot (D9)
 

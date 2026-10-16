@@ -152,7 +152,7 @@ from loom_ia.engine.offload import (
     visible_text,
 )
 from loom_ia.engine.refs import RefError, RefOrigin, ResultIndex, ref_origin
-from loom_ia.engine.session_state import StateRules, apply_writes, keeps_state
+from loom_ia.engine.session_state import BatchTally, StateRules, keeps_state
 from loom_ia.engine.writer import SessionWriter
 
 logger = logging.getLogger(__name__)
@@ -589,9 +589,9 @@ class ToolExecutor:
         current = (
             state_of_run(session_state or {}, state, before=_batch_turn(state)) if keeps else {}
         )
-        # Taille du state au fil du lot : chaque appel compte ce que les
-        # précédents ont posé (D7).
-        tally = dict(current)
+        # Taille du state au fil du lot, dans l'ordre des appels : chaque appel
+        # compte ce que les autres ont posé, voisins déjà soldés compris (D7).
+        tally = _batch_tally(state, current) if keeps else BatchTally()
         view = self.view(
             state,
             writer=writer,
@@ -917,11 +917,11 @@ class ToolExecutor:
         view: RunView,
         emit: Callable[[ToolEvent | _Unknown], None],
         policies: Policies | None = None,
-        tally: dict[str, JsonValue] | None = None,
+        tally: BatchTally | None = None,
     ) -> None:
         """Exécute un appel ; ses événements et son résultat partent dans la file du lot.
 
-        ``tally`` : le state de la session tel que le lot l'a laissé jusqu'ici.
+        ``tally`` : le state que le lot laissera, compté dans l'ordre des appels.
         """
         tool, call, state = item.tool, item.call, view.state
         spec = tool.spec
@@ -975,14 +975,16 @@ class ToolExecutor:
             # Lu au journal : le state que le run d'origine a retenu, compté pour le lot.
             output = _as_served(output, served)
             if tally is not None:
-                apply_writes(tally, output.state)
+                tally.record(call.call_id, output.state)
         else:
-            output = self._posed(output, spec.name, view, tally if tally is not None else {})
+            output = self._posed(
+                output, spec.name, view, tally if tally is not None else BatchTally(), call.call_id
+            )
         output = await self._settle(output, spec, call.call_id, view, emit)
         emit(_completed(call, output, started=started, consumption=consumption))
 
     def _posed(
-        self, output: ToolOutput, tool: str, view: RunView, tally: dict[str, JsonValue]
+        self, output: ToolOutput, tool: str, view: RunView, tally: BatchTally, call_id: str
     ) -> ToolOutput:
         """Le résultat avec les écritures du state qu'il pose (D6 à D8, D12).
 
@@ -999,7 +1001,7 @@ class ToolExecutor:
             return output
         if not output.state and not self.state_rules.writes(tool):
             return output
-        return self.state_rules.posed(tool, output, tally)
+        return self.state_rules.posed(tool, output, tally, call_id)
 
     def _idempotency(self, call_id: str, tool_name: str, view: RunView) -> IdempotencyStore | None:
         """Magasin donné à cet appel : le partagé s'il y en a un, sinon le journal.
@@ -1400,6 +1402,29 @@ def _as_served(output: ToolOutput, served: ToolOutput) -> ToolOutput:
     if output.state == state and output.state_refused == refused:
         return output
     return output.model_copy(update={"state": state, "state_refused": refused})
+
+
+def _batch_tally(state: RunState, current: Mapping[str, JsonValue]) -> BatchTally:
+    """Compte du lot : le state au début du lot, puis les voisins déjà soldés à leur rang (D7, D9).
+
+    Le rang d'un appel est sa place dans la réponse du modèle, comme dans la
+    projection ; à la reprise d'un lot interrompu, les appels déjà soldés au
+    journal y sont reportés, pour que les suivants les comptent.
+    """
+    turn = _batch_turn(state)
+    calls = (
+        [call.call_id for call in state.messages[turn].tool_calls]
+        if turn < len(state.messages)
+        else []
+    )
+    for pending in state.pending_calls:
+        if pending.call_id not in calls:
+            calls.append(pending.call_id)
+    tally = BatchTally(current, {call_id: rank for rank, call_id in enumerate(calls)})
+    for write in state.state_writes:
+        if write.turn == turn:
+            tally.record(write.call_id, write.values)
+    return tally
 
 
 def _batch_turn(state: RunState) -> int:

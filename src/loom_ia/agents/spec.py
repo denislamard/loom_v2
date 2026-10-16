@@ -662,16 +662,29 @@ class StateSource(DomainModel):
     ``path`` : pointeur JSON (RFC 6901) dans les données du résultat
     (``data``) ; ``""`` les prend entières. ``value`` : valeur fixe ; ``null``
     efface la clé (D10). L'un ou l'autre, pas les deux.
+
+    ``on_missing`` : ce que fait un résultat où ``path`` ne mène à rien.
+    ``refuse`` (défaut) en fait une écriture refusée (D8) : le modèle la lit à la
+    suite du résultat, et un avertissement va au log — le signe qu'un outil dédié
+    a changé la forme de ses données. ``ignore`` ne pose rien, sans rien dire au
+    modèle (un message de débogage au log) : un outil générique, comme une
+    requête SQL, dont la plupart des résultats ne parlent pas de la clé.
     """
 
     tool: str = Field(min_length=1)
     path: str | None = None
     value: JsonValue = None
+    on_missing: Literal["refuse", "ignore"] = "refuse"
 
     @model_validator(mode="after")
     def _check(self) -> Self:
         if (self.path is not None) == ("value" in self.model_fields_set):
             raise ValueError(f"from, outil {self.tool!r} : 'path' ou 'value', l'un des deux")
+        if self.path is None and "on_missing" in self.model_fields_set:
+            raise ValueError(
+                f"from, outil {self.tool!r} : 'on_missing' ne vaut qu'avec 'path' "
+                "(une 'value' ne manque jamais)"
+            )
         if self.path is not None and not _JSON_POINTER.fullmatch(self.path):
             raise ValueError(
                 f"from, outil {self.tool!r} : path {self.path!r} n'est pas un pointeur JSON "

@@ -1105,6 +1105,7 @@ class Loom:
                     hard_tokens=compaction.hard_tokens,
                     keep_last=compaction.keep_last,
                     fidelity_check=compaction.fidelity_check,
+                    blocking=compaction.blocking,
                 ),
             )
             if compaction is not None
@@ -2462,7 +2463,7 @@ class Loom:
         if self._compaction is not None and session_id is not None:
             # Le state se contrôle avant : un run refusé ne compacte pas la session.
             await check_state(ctx, state, tenant_id=who.id, session_id=session_id, run_id=run_id)
-            await self._compaction.ensure_fits(who.id, session_id)
+            await self._compaction.before_run(who.id, session_id, run_id=run_id)
         opened = await begin_run(
             ctx,
             message,
@@ -2805,8 +2806,11 @@ class Loom:
             await self._compaction.compact(job.tenant_id, job.session_id, triggered_by=job.run_id)
 
     async def _schedule(self, state: RunState, events: Sequence[Event]) -> None:
-        """Met un résumé en file si la session a dépassé son seuil (#23)."""
-        if self._compaction is None or not state.finished:
+        """Met un résumé en file si la session a dépassé son seuil (#23).
+
+        Avec ``blocking``, rien : le résumé se fera à l'ouverture du run suivant.
+        """
+        if self._compaction is None or self._compaction.plan.blocking or not state.finished:
             return
         if state.parent_run_id is not None or state.kind != "normal":
             return
@@ -2914,9 +2918,9 @@ class Loom:
         if self._compaction is not None and session_id is not None:
             # Le state se contrôle avant : un run refusé ne compacte pas la session.
             await check_state(ctx, state, tenant_id=tenant, session_id=session_id, run_id=run_id)
-            # Filet de sécurité : une session trop longue est résumée avant
-            # que le run ne commence (#23).
-            await self._compaction.ensure_fits(tenant, session_id)
+            # Résumé bloquant s'il est demandé, puis filet de sécurité : une
+            # session trop longue est résumée avant que le run ne commence (#23).
+            await self._compaction.before_run(tenant, session_id, run_id=run_id)
         writer = await self._writer(tenant, session_id)
         opened = await begin_run(
             ctx,

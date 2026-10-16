@@ -844,7 +844,9 @@ def state_rules(config: LoomConfig, spec: AgentSpec) -> StateRules:
                 schema=key.json_schema,
                 description=key.description,
                 sources={
-                    source.tool: StateSourceRule(path=source.path, value=source.value)
+                    source.tool: StateSourceRule(
+                        path=source.path, value=source.value, on_missing=source.on_missing
+                    )
                     for source in key.sources
                 },
                 required=key.required,
