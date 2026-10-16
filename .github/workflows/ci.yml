@@ -5,9 +5,10 @@ name: CI
 # étiquette n'en a pas d'autre (ni push de main, ni pull request).
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
   workflow_call:
+
 
 permissions:
   contents: read
@@ -34,62 +35,62 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-suffix: ${{ github.job }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        version: ${{ env.UV_VERSION }}
+        enable-cache: true
+        cache-suffix: ${{ github.job }}
 
-      # --locked échoue si uv.lock n'est pas à jour avec pyproject.toml.
-      # --group types : les stubs des extras (asyncpg-stubs), sans lesquels pyright
-      # ne connaît pas les types d'asyncpg.
-      - name: Installer le projet (tous les extras, et leurs types)
-        run: uv sync --locked --all-extras --group types
+    # --locked échoue si uv.lock n'est pas à jour avec pyproject.toml.
+    # --group types : les stubs des extras (asyncpg-stubs), sans lesquels pyright
+    # ne connaît pas les types d'asyncpg.
+    - name: Installer le projet (tous les extras, et leurs types)
+      run: uv sync --locked --all-extras --group types
 
-      - name: Ruff (lint)
-        run: uv run --locked ruff check .
+    - name: Ruff (lint)
+      run: uv run --locked ruff check .
 
-      - name: Ruff (format)
-        run: uv run --locked ruff format --check .
+    - name: Ruff (format)
+      run: uv run --locked ruff format --check .
 
-      - name: Pyright (strict)
-        run: uv run --locked pyright
+    - name: Pyright (strict)
+      run: uv run --locked pyright
 
-      - name: Contrats d'import
-        run: uv run --locked lint-imports
+    - name: Contrats d'import
+      run: uv run --locked lint-imports
 
   tests-noyau:
     name: Tests (noyau seul)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-suffix: ${{ github.job }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        version: ${{ env.UV_VERSION }}
+        enable-cache: true
+        cache-suffix: ${{ github.job }}
 
-      - name: Installer le projet (aucun extra)
-        run: uv sync --locked
+    - name: Installer le projet (aucun extra)
+      run: uv sync --locked
 
-      - name: Le noyau s'importe sans SDK
-        run: |
-          uv run --locked python - <<'EOF'
-          import importlib.util
+    - name: Le noyau s'importe sans SDK
+      run: |
+        uv run --locked python - <<'EOF'
+        import importlib.util
 
-          import loom_ia  # noqa: F401
+        import loom_ia  # noqa: F401
 
-          extras = ["anthropic", "openai", "fastapi", "mcp"]
-          installes = [m for m in extras if importlib.util.find_spec(m) is not None]
-          if installes:
-              raise SystemExit(f"Modules d'extras installés sans être demandés : {installes}")
-          print("Noyau importé, aucun module d'extra installé.")
-          EOF
+        extras = ["anthropic", "openai", "fastapi", "mcp"]
+        installes = [m for m in extras if importlib.util.find_spec(m) is not None]
+        if installes:
+            raise SystemExit(f"Modules d'extras installés sans être demandés : {installes}")
+        print("Noyau importé, aucun module d'extra installé.")
+        EOF
 
-      - name: Tests
-        run: uv run --locked pytest
+    - name: Tests
+      run: uv run --locked pytest
 
   tests-complets:
     name: Tests (tous les extras, avec les services)
@@ -106,12 +107,9 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-        ports: ["5432:5432"]
+        ports: [ "5432:5432" ]
         options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 10
       rabbitmq:
         image: rabbitmq:3.12
         # Un utilisateur à soi, et non `guest` : RabbitMQ ne laisse `guest`
@@ -119,20 +117,14 @@ jobs:
         env:
           RABBITMQ_DEFAULT_USER: loom
           RABBITMQ_DEFAULT_PASS: loom
-        ports: ["5672:5672"]
+        ports: [ "5672:5672" ]
         options: >-
-          --health-cmd "rabbitmq-diagnostics -q ping"
-          --health-interval 10s
-          --health-timeout 10s
-          --health-retries 15
+          --health-cmd "rabbitmq-diagnostics -q ping" --health-interval 10s --health-timeout 10s --health-retries 15
       redis:
         image: redis:7
-        ports: ["6379:6379"]
+        ports: [ "6379:6379" ]
         options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 10
 
     env:
       LOOM_TEST_POSTGRES: postgresql://loom:loom@127.0.0.1:5432/loom
@@ -140,53 +132,52 @@ jobs:
       LOOM_TEST_REDIS: redis://127.0.0.1:6379/1
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-suffix: ${{ github.job }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        version: ${{ env.UV_VERSION }}
+        enable-cache: true
+        cache-suffix: ${{ github.job }}
 
-      # Le rôle du DSN n'est **pas** superutilisateur : un superutilisateur
-      # contourne la sécurité au niveau des lignes, et les essais passeraient
-      # sans rien prouver — `tests/conftest.py` échoue donc exprès dans ce cas.
-      # Il a en revanche CREATEROLE : le stockage crée son rôle applicatif
-      # (`loom_app`, NOLOGIN) à la première requête, et un essai de la barrière
-      # crée un rôle étranger pour se faire refuser.
-      - name: Rôle Postgres ordinaire, propriétaire de sa base
-        env:
-          PGPASSWORD: postgres
-        run: |
-          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
-            -c "CREATE ROLE loom LOGIN PASSWORD 'loom' NOSUPERUSER CREATEROLE"
-          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
-            -c "CREATE DATABASE loom OWNER loom"
+    # Le rôle du DSN n'est **pas** superutilisateur : un superutilisateur
+    # contourne la sécurité au niveau des lignes, et les essais passeraient
+    # sans rien prouver — `tests/conftest.py` échoue donc exprès dans ce cas.
+    # Il a en revanche CREATEROLE : le stockage crée son rôle applicatif
+    # (`loom_app`, NOLOGIN) à la première requête, et un essai de la barrière
+    # crée un rôle étranger pour se faire refuser.
+    - name: Rôle Postgres ordinaire, propriétaire de sa base
+      env:
+        PGPASSWORD: postgres
+      run: |
+        psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
+          -c "CREATE ROLE loom LOGIN PASSWORD 'loom' NOSUPERUSER CREATEROLE"
+        psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
+          -c "CREATE DATABASE loom OWNER loom"
 
-      - name: Installer le projet (tous les extras)
-        run: uv sync --locked --all-extras
+    - name: Installer le projet (tous les extras)
+      run: uv sync --locked --all-extras
 
-      # `--require-services` : une variable absente ou un extra manquant devient
-      # un échec au lieu d'un saut. Sans lui, un conteneur tombé ou une variable
-      # mal écrite rendrait un job vert qui n'a rien éprouvé — exactement ce que
-      # cette CI faisait avant d'avoir des services.
-      # Couverture en branches (`[tool.coverage.run]`) : 94,67 % mesurés le 13/10 sans
-      # RabbitMQ ; le seuil est ce plancher, et un recul le fait échouer.
-      - name: Tests avec couverture
-        run: >-
-          uv run --locked pytest --require-services
-          --cov=loom_ia --cov-report=term-missing --cov-fail-under=94
+    # `--require-services` : une variable absente ou un extra manquant devient
+    # un échec au lieu d'un saut. Sans lui, un conteneur tombé ou une variable
+    # mal écrite rendrait un job vert qui n'a rien éprouvé — exactement ce que
+    # cette CI faisait avant d'avoir des services.
+    # Couverture en branches (`[tool.coverage.run]`) : 94,67 % mesurés le 13/10 sans
+    # RabbitMQ ; le seuil est ce plancher, et un recul le fait échouer.
+    - name: Tests avec couverture
+      run: >-
+        uv run --locked pytest --require-services --cov=loom_ia --cov-report=term-missing --cov-fail-under=94
 
-      # execd lance chaque job sous l'uid 1500, sans groupe supplémentaire : le dernier essai
-      # passe en root (sudo) pour le faire vraiment — hors de root, il est sauté, et les autres
-      # n'éprouvent que ce que `_run` demande au noyau. `LOOM_TEST_AS_ROOT` fait d'un saut un
-      # échec : un job vert qui n'a rien éprouvé est ce que cette étape doit exclure.
-      - name: Abandon de droits d'execd (root)
-        env:
-          LOOM_TEST_AS_ROOT: "1"
-          PYTHONDONTWRITEBYTECODE: "1"
-        run: |
-          sudo -E .venv/bin/python -m pytest -p no:cacheprovider \
-            "tests/firecracker/test_firecracker_session.py::test_a_real_job_runs_as_the_sandbox_and_cannot_read_what_is_roots"
+    # execd lance chaque job sous l'uid 1500, sans groupe supplémentaire : le dernier essai
+    # passe en root (sudo) pour le faire vraiment — hors de root, il est sauté, et les autres
+    # n'éprouvent que ce que `_run` demande au noyau. `LOOM_TEST_AS_ROOT` fait d'un saut un
+    # échec : un job vert qui n'a rien éprouvé est ce que cette étape doit exclure.
+    - name: Abandon de droits d'execd (root)
+      env:
+        LOOM_TEST_AS_ROOT: "1"
+        PYTHONDONTWRITEBYTECODE: "1"
+      run: |
+        sudo -E .venv/bin/python -m pytest -p no:cacheprovider \
+          "tests/firecracker/test_firecracker_session.py::test_a_real_job_runs_as_the_sandbox_and_cannot_read_what_is_roots"
 
   bornes-basses:
     name: Tests (bornes basses des dépendances, avec les services)
@@ -201,12 +192,9 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-        ports: ["5432:5432"]
+        ports: [ "5432:5432" ]
         options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 10
       rabbitmq:
         image: rabbitmq:3.12
         # Un utilisateur à soi, et non `guest` : RabbitMQ ne laisse `guest`
@@ -214,20 +202,14 @@ jobs:
         env:
           RABBITMQ_DEFAULT_USER: loom
           RABBITMQ_DEFAULT_PASS: loom
-        ports: ["5672:5672"]
+        ports: [ "5672:5672" ]
         options: >-
-          --health-cmd "rabbitmq-diagnostics -q ping"
-          --health-interval 10s
-          --health-timeout 10s
-          --health-retries 15
+          --health-cmd "rabbitmq-diagnostics -q ping" --health-interval 10s --health-timeout 10s --health-retries 15
       redis:
         image: redis:7
-        ports: ["6379:6379"]
+        ports: [ "6379:6379" ]
         options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 10
 
     env:
       LOOM_TEST_POSTGRES: postgresql://loom:loom@127.0.0.1:5432/loom
@@ -235,123 +217,126 @@ jobs:
       LOOM_TEST_REDIS: redis://127.0.0.1:6379/1
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-suffix: ${{ github.job }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        version: ${{ env.UV_VERSION }}
+        enable-cache: true
+        cache-suffix: ${{ github.job }}
 
-      - name: Rôle Postgres ordinaire, propriétaire de sa base
-        env:
-          PGPASSWORD: postgres
-        run: |
-          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
-            -c "CREATE ROLE loom LOGIN PASSWORD 'loom' NOSUPERUSER CREATEROLE"
-          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
-            -c "CREATE DATABASE loom OWNER loom"
+    - name: Rôle Postgres ordinaire, propriétaire de sa base
+      env:
+        PGPASSWORD: postgres
+      run: |
+        psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
+          -c "CREATE ROLE loom LOGIN PASSWORD 'loom' NOSUPERUSER CREATEROLE"
+        psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
+          -c "CREATE DATABASE loom OWNER loom"
 
-      # `uv pip` et non `uv sync` : `uv sync --resolution lowest-direct` réécrit uv.lock
-      # (uv 0.11 n'a pas d'option pour s'en passer), alors que `uv pip` ne le lit ni ne
-      # l'écrit. Les dépendances indirectes restent à leur version la plus récente.
-      - name: Installer le projet (tous les extras, dépendances directes à leur plus basse version)
-        run: |
-          uv venv --python 3.14
-          uv pip install --resolution lowest-direct -r pyproject.toml --all-extras --group dev --group types
-          uv pip install --no-deps -e .
+    # `uv pip` et non `uv sync` : `uv sync --resolution lowest-direct` réécrit uv.lock
+    # (uv 0.11 n'a pas d'option pour s'en passer), alors que `uv pip` ne le lit ni ne
+    # l'écrit. Les dépendances indirectes restent à leur version la plus récente.
+    - name: Installer le projet (tous les extras, dépendances directes à leur plus basse version)
+      run: |
+        uv venv --python 3.14
+        uv pip install --resolution lowest-direct -r pyproject.toml --all-extras --group dev --group types
+        uv pip install --no-deps -e .
 
-      - name: Versions installées
-        run: uv pip list
+    - name: Versions installées
+      run: uv pip list
 
-      - name: Tests
-        run: .venv/bin/python -m pytest --require-services
+    - name: Tests
+      run: .venv/bin/python -m pytest --require-services
 
   build:
     name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-suffix: ${{ github.job }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        version: ${{ env.UV_VERSION }}
+        enable-cache: true
+        cache-suffix: ${{ github.job }}
 
-      - name: Construire le sdist et le wheel
-        run: uv build
+    - name: Construire le sdist et le wheel
+      run: uv build
 
-      - name: Vérifier les métadonnées et le README (twine)
-        run: uvx --from twine==7.0.0 twine check --strict dist/*
+    - name: Vérifier les métadonnées et le README (twine)
+      run: uvx --from twine==7.0.0 twine check --strict dist/*
 
-      - name: Vérifier le wheel
-        run: |
-          python3 - <<'EOF'
-          import glob
-          import zipfile
+    - name: Vérifier le wheel
+      run: |
+        python3 - <<'EOF'
+        import glob
+        import zipfile
 
-          (wheel,) = glob.glob("dist/*.whl")
-          with zipfile.ZipFile(wheel) as zf:
-              noms = zf.namelist()
-              metadata = next(n for n in noms if n.endswith(".dist-info/METADATA"))
-              contenu = zf.read(metadata).decode()
+        (wheel,) = glob.glob("dist/*.whl")
+        with zipfile.ZipFile(wheel) as zf:
+            noms = zf.namelist()
+            metadata = next(n for n in noms if n.endswith(".dist-info/METADATA"))
+            contenu = zf.read(metadata).decode()
 
-          erreurs = []
-          if "loom_ia/py.typed" not in noms:
-              erreurs.append("py.typed absent")
-          if not any(n.endswith(".dist-info/licenses/LICENSE") for n in noms):
-              erreurs.append("LICENSE absente")
-          if "License-Expression: Apache-2.0" not in contenu:
-              erreurs.append("License-Expression incorrecte")
-          if erreurs:
-              raise SystemExit(f"{wheel} : " + ", ".join(erreurs))
-          print(f"{wheel} : OK")
-          EOF
+        erreurs = []
+        if "loom_ia/py.typed" not in noms:
+            erreurs.append("py.typed absent")
+        if not any(n.endswith(".dist-info/licenses/LICENSE") for n in noms):
+            erreurs.append("LICENSE absente")
+        if "License-Expression: Apache-2.0" not in contenu:
+            erreurs.append("License-Expression incorrecte")
+        if erreurs:
+            raise SystemExit(f"{wheel} : " + ", ".join(erreurs))
+        print(f"{wheel} : OK")
+        EOF
 
-      - name: Essayer le wheel dans un environnement vierge
-        # Ce que `twine` et l'inspection du zip ne voient pas : une dépendance déclarée en trop
-        # peu, un point d'entrée mal posé, un fichier du paquet manquant. Le wheel est installé
-        # seul, hors du dépôt, puis la CLI valide une config et lance un run avec un modèle simulé.
-        run: |
-          set -euo pipefail
-          wheel=$(ls "$PWD"/dist/*.whl)
-          pyproject="$PWD/pyproject.toml"
-          smoke=$(mktemp -d)
-          uv venv "$smoke/venv" --python 3.14
-          version=$("$smoke/venv/bin/python" -c "import sys, tomllib; print(tomllib.load(open(sys.argv[1], 'rb'))['project']['version'])" "$pyproject")
-          uv pip install --python "$smoke/venv/bin/python" "$wheel"
-          mkdir -p "$smoke/cfg/agents" "$smoke/cfg/prompts"
-          cat > "$smoke/cfg/loom.yaml" <<'YAML'
-          version: 1
-          agents_dir: agents/
-          prompts_dir: prompts/
-          models:
-            - id: FAKE
-              sdk: fake
-              model: fake-1
-              params:
-                script:
-                  - text: ok
-          YAML
-          cat > "$smoke/cfg/agents/smoke.yaml" <<'YAML'
-          name: smoke
-          description: Essai du wheel.
-          main:
-            model: FAKE
-            system_file: smoke.md
-          max_iterations: 2
-          YAML
-          echo "Réponds." > "$smoke/cfg/prompts/smoke.md"
-          # Hors du dépôt, interpréteur isolé : seul le wheel installé peut être importé.
-          cd "$smoke"
-          loom="$smoke/venv/bin/loom"
-          "$smoke/venv/bin/python" -I -c "import loom_ia; assert 'site-packages' in loom_ia.__file__, loom_ia.__file__"
-          test "$("$loom" --version)" = "loom $version"
-          test "$("$smoke/venv/bin/python" -m loom_ia --version)" = "loom $version"
-          "$loom" --help > /dev/null
-          "$loom" schema > /dev/null
-          "$loom" --config cfg/loom.yaml validate | tee validate.txt
-          grep -q "1 agent(s) monté(s) sans erreur" validate.txt
-          grep -q "forge (loom-ia $version)" validate.txt
-          "$loom" --config cfg/loom.yaml run smoke "bonjour" 2> /dev/null | tee run.txt
-          grep -qx "ok" run.txt
+    - name: Essayer le wheel dans un environnement vierge
+      # Ce que `twine` et l'inspection du zip ne voient pas : une dépendance déclarée en trop
+      # peu, un point d'entrée mal posé, un fichier du paquet manquant. Le wheel est installé
+      # seul, hors du dépôt, puis la CLI valide une config et lance un run avec un modèle simulé.
+      run: |
+        set -euo pipefail
+        wheel=$(ls "$PWD"/dist/*.whl)
+        pyproject="$PWD/pyproject.toml"
+        smoke=$(mktemp -d)
+        uv venv "$smoke/venv" --python 3.14
+        version=$("$smoke/venv/bin/python" -c "import sys, tomllib; print(tomllib.load(open(sys.argv[1], 'rb'))['project']['version'])" "$pyproject")
+        uv pip install --python "$smoke/venv/bin/python" "$wheel"
+        mkdir -p "$smoke/cfg/agents" "$smoke/cfg/prompts"
+        cat > "$smoke/cfg/loom.yaml" <<'YAML'
+        version: 1
+        agents_dir: agents/
+        prompts_dir: prompts/
+        models:
+          - id: FAKE
+            sdk: fake
+            model: fake-1
+            params:
+              script:
+                - text: ok
+        YAML
+        cat > "$smoke/cfg/agents/smoke.yaml" <<'YAML'
+        name: smoke
+        description: Essai du wheel.
+        main:
+          model: FAKE
+          system_file: smoke.md
+        max_iterations: 2
+        # Outil fourni : son module importe httpx2, que le wheel doit apporter seul (D1).
+        tools:
+          - python: loom.fetch_page
+        YAML
+        echo "Réponds." > "$smoke/cfg/prompts/smoke.md"
+        # Hors du dépôt, interpréteur isolé : seul le wheel installé peut être importé.
+        cd "$smoke"
+        loom="$smoke/venv/bin/loom"
+        "$smoke/venv/bin/python" -I -c "import loom_ia; assert 'site-packages' in loom_ia.__file__, loom_ia.__file__"
+        test "$("$loom" --version)" = "loom $version"
+        test "$("$smoke/venv/bin/python" -m loom_ia --version)" = "loom $version"
+        "$loom" --help > /dev/null
+        "$loom" schema > /dev/null
+        "$loom" --config cfg/loom.yaml validate | tee validate.txt
+        grep -q "1 agent(s) monté(s) sans erreur" validate.txt
+        grep -q "forge (loom-ia $version)" validate.txt
+        "$loom" --config cfg/loom.yaml run smoke "bonjour" 2> /dev/null | tee run.txt
+        grep -qx "ok" run.txt

@@ -27,6 +27,10 @@ license-files = ["LICENSE"]
 # (noyau et SDK des extras). cryptography reste sans borne : ses correctifs de
 # sécurité arrivent dans de nouvelles majeures.
 dependencies = [
+    # tools_builtin/fetch_page.py (outil fourni loom.fetch_page) importe httpx2 : une
+    # dépendance du noyau plutôt qu'un extra (décision D1 du 16/10). Plancher : la version
+    # que la CI éprouve (groupe dev, job des bornes basses).
+    "httpx2>=2.13.0,<3",
     # core/bounded_regex.py copie des fonctions privées de jsonschema (modules _keywords,
     # _legacy_keywords, _utils) : une version mineure peut les renommer, ou en ajouter une
     # qui cherche un motif sans délai. Relever la borne, c'est relire ce module avec
