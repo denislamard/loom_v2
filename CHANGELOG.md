@@ -4,6 +4,20 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.9 - non publiée
 
+### Compaction
+- **Résumé bloquant** (nouveau) : `sessions.compaction.blocking: true` fait le résumé dû à l'ouverture du run suivant, qui l'attend, au lieu d'une tâche de fond après le run. C'est le choix d'un process de courte vie (`loom run`) : sa fermeture n'attend les tâches de fond que `execution.shutdown_timeout` (30 s), puis les annule, et un résumé refusé par le contrôle de fidélité puis retenté n'y tenait pas. Vaut pour `run`, `stream` et `submit`, donc pour REST, MCP et les déclencheurs ; `submit` ne rend l'identifiant qu'après le résumé. Le run de compaction porte en `triggered_by` le run qui l'attend. Un résumé qui échoue ne fait pas échouer le run (`WARNING`, historique entier, nouvelle tentative au run suivant). Défaut : `false`, le comportement d'avant. Nouvelle méthode `CompactionJob.before_run()`.
+- ⚠ **Un run de compaction interrompu ne fige plus la session.** Annulé à la fermeture ou coupé par un process tué, il restait sans fin au journal, puisque rien ne le reprend ; compté comme un run en cours, il arrêtait la coupe avant lui, et avec elle toute compaction, tout snapshot et la coupe de sécurité de la session, qui grandissait alors sans limite. La coupe (`Cuts`) ne compte plus les runs de compaction ; un journal déjà dans ce cas se débloque sans réécriture. Le run interrompu reste affiché « en cours » dans les listes de runs.
+
+### State de session
+- **`on_missing`** (nouveau) sur une source `from:` qui a un `path` : `refuse` (défaut) traite un chemin absent du résultat comme une écriture refusée, lue par le modèle (`[state] … non posé`) et dite en `WARNING` ; `ignore` ne pose rien, ne dit rien au modèle et ne laisse qu'un message de débogage, pour un outil générique — une requête SQL — dont la plupart des résultats ne parlent pas de la clé : `{tool: requete_sql, path: /rows/0/code, on_missing: ignore}`. Une valeur trouvée suit les contrôles habituels. Refusé au chargement avec `value`. D8 amendé le 16/10.
+- ⚠ **La taille totale du state se compte sur le lot dans l'ordre des appels**, et plus dans l'ordre où ils finissent. Chaque appel est jugé sur le state que la session gardera — la projection range les écritures dans l'ordre des appels (D9) —, voisins déjà soldés compris, à la reprise d'un lot interrompu et au rejeu aussi. Avant, la session pouvait dépasser `sessions.state.max_total_bytes` sans aucun refus : quand le premier appelé finissait le dernier, ou quand la reprise oubliait un voisin déjà soldé au journal. Une écriture qui passait peut donc être refusée. Une écriture qu'un appel suivant du lot remplace ne compte pas ; quand deux appels se disputent la dernière place, celui qui finit le second est refusé.
+
+### Accès
+- MCP : un run refusé à cause du state (clé `required` sans valeur) rend un résultat d'erreur (`isError`) dont le texte est le refus, sans résultat structuré ni notification de progression, et rien n'est écrit ; un argument `state` est refusé par le schéma de l'outil. Ce comportement, qui vient du SDK `mcp`, est désormais testé et documenté.
+
+### Documentation
+- `fonctions.md` (points 22, 23 et 51, D8), `conception.md` (§9.5, §11.2, §11.3, §17.6, §18.3), `docs/state-et-context.md` (`from`, §4.3, accès MCP), D8 amendé dans `docs/state-et-context-analyse.md`, guide, chapitres 7 (`blocking` ; la CLI n'attend la compaction que dans la limite d'`execution.shutdown_timeout`) et 31 (`on_missing`, réponse MCP).
+
 ## 2.0.8 - publiée
 
 ### Fichier d'environnement (nouveau)
