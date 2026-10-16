@@ -4,6 +4,8 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.8 - non publiée
 
+## 2.0.8 - publiée
+
 ### Fichier d'environnement (nouveau)
 - ⚠ **`loom` lit le fichier d'environnement du projet** avant la config, à chaque commande : celui de `--env-file`, sinon celui que désigne `env_file:` à la racine de `loom.yaml` (relatif à son dossier), sinon le `.env` voisin de `loom.yaml` s'il existe. Jamais celui du dossier courant ni d'un dossier parent, et rien sans `loom.yaml`. Un `.env` posé à côté de la config est donc lu là où il ne l'était pas. Une variable déjà définie, même vide, l'emporte sur le fichier : `uv run --env-file .env loom …` marche comme avant. `--no-env-file` n'en lit aucun ; les deux options ensemble sont refusées. Un fichier demandé (`--env-file`, `env_file:`) et absent arrête la commande (code 2) ; une ligne illisible aussi, en disant son numéro, jamais son contenu. Le fichier est lu sans interpolation (`${A}` reste tel quel).
 - Le fichier peut donner `LOOM_PROFILE`. `env_file:` est refusé dans `profiles`, pour tous les profils : il est lu avant le choix du profil.
@@ -19,7 +21,7 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 ### Documentation
 - Guide, chapitre 32 : l'ordre du texte que rend `loom.fetch_page`.
 
-## 2.0.7 - non publiée
+## 2.0.7 - publiée
 
 ### Outils fournis (nouveau)
 - **Outils fournis par loom-ia** : un agent active un outil que loom-ia fournit en le listant dans ses outils, `- python: loom.<outil>`, sans `imports`. Aucun n'est actif d'office, et le modèle le voit sous son nom sans le préfixe. Les réglages d'un outil Python (`timeout`, `approval`, `side_effects`, `idempotent`, `offload_over`, `output`) s'y appliquent, et ceux d'un client (`tools_deny`, `approvals`) le désignent par ce nom. Une référence inconnue est refusée au chargement, avec la liste des outils fournis ; un outil fourni et un outil de l'agent du même nom aussi. `loom.x:y`, avec un `:`, reste un chemin d'import. Les outils vivent dans `loom_ia.tools_builtin`, un module par outil recensé dans le catalogue `BUILTIN_TOOLS`, et ne sont importés qu'à la première référence. Référence : `docs/tools-builtin-analyse.md` ; `fonctions.md`, point 50.
