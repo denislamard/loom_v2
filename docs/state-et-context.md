@@ -76,7 +76,7 @@ Règles contrôlées au chargement :
 
 `Loom.run(agent, message, state={…})`, de même `stream` et `submit` ; en ligne de commande, `loom run --state CLE=VALEUR`, répétable (la valeur se lit en JSON — `3`, `true`, `null` qui efface, `"texte"` —, sinon elle est prise telle quelle). REST et MCP ne posent pas de state dans cette version (D5).
 
-Avant d'ouvrir le run, loom contrôle chaque écriture (clé déclarée, schéma, taille), puis vérifie que chaque clé `required` a une valeur dans le state qui en résulte, celui des runs précédents compris. Un refus lève `StateRefused` (une `ValueError` ; `problems` porte un motif par clé) **avant tout écrit**, y compris avant la compaction de sécurité d'une session trop longue : le journal ne garde aucune trace d'une demande refusée. La CLI dit « Demande refusée : State refusé : signature : clé obligatoire sans valeur » et rend le code 2 ; REST rend 422 (lancement d'un run, déclencheur). Un agent qui ne déclare pas de state refuse tout state posé ; un sous-run n'en reçoit jamais de l'application.
+Avant d'ouvrir le run, loom contrôle chaque écriture (clé déclarée, schéma, taille), puis vérifie que chaque clé `required` a une valeur dans le state qui en résulte, celui des runs précédents compris. Un refus lève `StateRefused` (une `ValueError` ; `problems` porte un motif par clé) **avant tout écrit**, y compris avant la compaction de sécurité d'une session trop longue : le journal ne garde aucune trace d'une demande refusée. La CLI dit « Demande refusée : State refusé : signature : clé obligatoire sans valeur » et rend le code 2 ; REST rend 422 (lancement d'un run, déclencheur) ; en MCP, l'outil de l'agent rend un résultat d'erreur (`isError`) dont le texte est ce refus, sans résultat structuré. Un agent qui ne déclare pas de state refuse tout state posé ; un sous-run n'en reçoit jamais de l'application.
 
 Ce qui est posé va dans le `run.started` du run, avant la demande.
 
@@ -194,7 +194,7 @@ Ce que l'essai réel doit montrer : `get_client` ne change pas ; « donne-moi so
 - Pas de mémoire longue ni de RAG (F6 reste séparée).
 - Pas de state partagé entre sessions ni entre clients : il appartient à `(client, session)`, comme le journal.
 - Pas de modification de l'historique ni de la compaction.
-- Pas d'écriture par REST ni par MCP (D5) : un agent qui a une clé `required` n'y ouvre un run que dans une session où elle a déjà une valeur.
+- Pas d'écriture par REST ni par MCP (D5) : un agent qui a une clé `required` n'y ouvre un run que dans une session où elle a déjà une valeur (sinon : 422 en REST, un résultat d'erreur en MCP).
 - Pas de state pour les juges (D11).
 - Le rejeu identique ne recalcule pas les sources `from` : un changement de ces seules sources ne le fait pas diverger. Les évals le voient (`expect.state`).
 - En variante, un résultat d'un autre run de l'arbre, déporté, ne donne pas de données à un `path:` (backlog #022).

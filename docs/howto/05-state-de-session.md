@@ -283,7 +283,7 @@ uv run loom state atelier
 
 - `state:` déclare les clés d'une session, chacune avec son schéma. Une clé non déclarée, une valeur qui ne tient pas son schéma ou qui dépasse les limites (1 Kio par valeur, 4 Kio en tout, réglables par `sessions.state`) sont refusées.
 - L'application pose du state à l'ouverture d'un run : `--state CLE=VALEUR` en ligne de commande (répétable ; la valeur se lit en JSON — `3`, `true`, `null` qui efface la clé, `"texte"` —, sinon elle est prise telle quelle), `state={…}` en Python (`Loom.run`, `stream`, `submit`).
-- Un state refusé, ou une clé `required` sans valeur, refusent le run **avant qu'il n'écrive quoi que ce soit** : code 2 en ligne de commande, `StateRefused` en Python, 422 en REST.
+- Un state refusé, ou une clé `required` sans valeur, refusent le run **avant qu'il n'écrive quoi que ce soit** : code 2 en ligne de commande, `StateRefused` en Python, 422 en REST, un résultat d'erreur (`isError`) en MCP.
 - Ce qui est posé reste dans la session pour les runs suivants. `loom state <session>` (et `Loom.session_state()` en Python) relit ce qui est écrit, sans les valeurs par défaut.
 - Un rôle ne reçoit que les clés qu'il déclare, et les cite dans son template.
 
@@ -696,6 +696,6 @@ Remettez `path: /client` : l'évaluation repasse.
 
 - **La référence** : `docs/state-et-context.md` — ce que fait le state, ses règles et ses décisions ; `docs/fonctions.md`, point 51.
 - **L'exemple du dépôt** : `examples/j7/state.py`, qui montre le bloc tel que l'orchestrateur l'a reçu (échanges bruts au journal), et sa suite de non-régression `tests/regression/j7/`.
-- **Ce que le state ne fait pas encore** : REST et MCP ne posent pas de state, si bien qu'un agent qui a une clé `required` n'y ouvre un run que dans une session où elle a déjà une valeur (sinon : 422 en REST) ; un juge ne reçoit pas le state ; un sous-agent non plus.
+- **Ce que le state ne fait pas encore** : REST et MCP ne posent pas de state, si bien qu'un agent qui a une clé `required` n'y ouvre un run que dans une session où elle a déjà une valeur (sinon : 422 en REST, un résultat d'erreur en MCP) ; un juge ne reçoit pas le state ; un sous-agent non plus.
 
 Navigation : [01-demarrer.md](01-demarrer.md) · [02-maitriser.md](02-maitriser.md) · [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md)

@@ -170,6 +170,59 @@ async def test_a_call_on_an_unreadable_session_is_an_error_result_and_writes_not
     assert await store.last_seq(DEFAULT_TENANT, session) == before
 
 
+async def test_a_run_refused_for_its_state_is_an_error_result_and_writes_nothing(
+    demo: ConfigFactory,
+) -> None:
+    """D13 : une clé ``required`` sans valeur, que MCP ne peut pas poser (D5).
+
+    Le client reçoit un résultat d'erreur dont le texte est le refus, sans résultat
+    structuré, avec ou sans suivi de progression ; un argument ``state`` est refusé
+    par le schéma de l'outil. Rien n'est écrit.
+    """
+    required = {"client_id": {"schema": {"type": "string"}, "required": True}}
+    store = InMemoryEventStore()
+    session = SessionId("atelier")
+    ask = {"message": QUESTION, "session_id": session}
+    notes: list[str | None] = []
+
+    async def on_progress(progress: float, total: float | None, message: str | None) -> None:
+        notes.append(message)
+
+    async with Loom(load_config(demo(agents=[demo_agent(state=required)])), store=store) as loom:
+        async with connected(create_server(loom), client_info=CLIENT) as client:
+            refused = [
+                await client.call_tool("demo", ask),
+                await client.call_tool("demo", ask, progress_callback=on_progress),
+            ]
+            posed = await client.call_tool("demo", {**ask, "state": {"client_id": "C-001"}})
+
+    for result in refused:
+        assert result.isError
+        assert _text(result.content) == "State refusé : client_id : clé obligatoire sans valeur"
+        assert result.structuredContent is None
+    assert posed.isError and "'state' was unexpected" in _text(posed.content)
+    assert notes == []
+    assert await store.last_seq(DEFAULT_TENANT, session) == 0
+
+
+async def test_mcp_runs_in_a_session_whose_state_the_application_posed(
+    demo: ConfigFactory,
+) -> None:
+    """Le state posé par l'application vaut pour les runs lancés en MCP ; le résultat ne le
+    montre pas (sa lecture demandera sa portée, D5)."""
+    required = {"client_id": {"schema": {"type": "string"}, "required": True}}
+    session = SessionId("atelier")
+    async with serving(demo(agents=[demo_agent(state=required)])) as (loom, client):
+        await loom.run("demo", QUESTION, session_id=session, state={"client_id": "C-001"})
+        result = await client.call_tool("demo", {"message": QUESTION, "session_id": session})
+        kept = await loom.session_state(session)
+
+    assert not result.isError and result.structuredContent is not None
+    assert result.structuredContent["status"] == "completed"
+    assert "session_state" not in result.structuredContent
+    assert kept == {"client_id": "C-001"}
+
+
 async def test_the_journal_is_the_same_as_by_the_python_access(demo: ConfigFactory) -> None:
     path = demo()
     async with serving(path) as (loom, client):
