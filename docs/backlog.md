@@ -394,3 +394,23 @@ Ce qui manque, c'est la **défense en profondeur** : un `SELECT` sans `WHERE ten
 | N'apparier qu'avec les appels du même run | Plus de résultat d'un autre run servi au racine | Change l'appariement des outils en variante, qui cherche aujourd'hui dans tout l'arbre : un sous-agent relancé ne retrouverait plus les appels de son premier passage |
 
 **Statut :** noté le 15/10 avec Denis, sans échéance — ne bloque aucun jalon.
+
+---
+
+## #023 — `fetch_page` ignore le proxy sortant
+
+**Origine :** outils fournis, analyse d'impact du 15/10 (`docs/tools-builtin-analyse.md`, limite L1).
+
+**Constat :** `loom.fetch_page` passe son propre transport (`_PublicOnlyTransport`) au client `httpx2`, et httpx2 ne lit `HTTP_PROXY` et `HTTPS_PROXY` que sans transport fourni (`allow_env_proxies = trust_env and transport is None`). Là où la sortie vers Internet doit passer par un proxy — réseau d'entreprise, conteneur dont le réseau passe par une liste blanche —, l'outil ne joint rien : le modèle reçoit une erreur de connexion ou « Nom de domaine introuvable ».
+
+**Pourquoi ce n'est pas une ligne à ajouter :** le garde-fou de l'outil repose sur deux choses qu'il fait lui-même, résoudre le nom et se connecter à l'adresse qu'il vient de vérifier. À travers un proxy, c'est le proxy qui résout et qui se connecte : l'outil ne voit plus l'adresse, et ne peut plus refuser une adresse interne.
+
+**Pistes :**
+
+| Piste | Effet | Coût |
+|---|---|---|
+| Ne rien faire | La limite est documentée (guide, chapitre 32) | L'outil reste inutilisable derrière un proxy obligatoire |
+| Proxy déclaré pour l'outil | L'outil passe par le proxy indiqué, et le filtrage des adresses internes revient au proxy | Un réglage propre à l'outil, que la forme `python: loom.…` n'offre pas (D4 de l'analyse) ; un transfert de responsabilité à écrire noir sur blanc |
+| Vérifier l'adresse, puis passer par le proxy vers cette adresse (`CONNECT` vers l'IP, SNI sur le nom) | Le contrôle des adresses reste à l'outil | Le proxy doit accepter un `CONNECT` vers une adresse IP ; plus de code, et des essais avec un vrai proxy |
+
+**Statut :** noté le 16/10 avec Denis, sans échéance — ne bloque aucun jalon.

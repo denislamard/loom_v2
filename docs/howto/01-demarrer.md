@@ -68,7 +68,7 @@ Ce chapitre n'utilise que les six premiers termes et le journal. Les autres ont 
 
 ### Les extras
 
-Le paquet s'appelle `loom-ia`, s'importe sous le nom `loom_ia` et installe la commande `loom`. Le noyau ne dépend que de trois bibliothèques (pydantic, pyyaml, jsonschema). Tout le reste arrive par des extras, à choisir selon ce que vous utilisez :
+Le paquet s'appelle `loom-ia`, s'importe sous le nom `loom_ia` et installe la commande `loom`. Le noyau ne dépend que de quelques bibliothèques (pydantic, pyyaml, jsonschema, regex, et httpx2 pour l'outil fourni `loom.fetch_page`). Tout le reste arrive par des extras, à choisir selon ce que vous utilisez :
 
 | Extra | À installer si vous utilisez | Utile dans ce fichier |
 |---|---|---|
@@ -103,7 +103,7 @@ Les exemples vont du plus simple au plus complexe, dans ce fichier comme dans l'
 - **Les prompts sont écrits au tutoiement** parce qu'ils s'adressent au modèle ; le reste du guide vous vouvoie.
 - **Vous travaillez toujours depuis le dossier du projet** (`cd mon-agent`), car la commande `loom` cherche `loom.yaml` dans le dossier courant.
 
-### Le plan des cinq fichiers
+### Le plan des six fichiers
 
 | Fichier | Chapitres | Contenu |
 |---|---|---|
@@ -112,6 +112,7 @@ Les exemples vont du plus simple au plus complexe, dans ce fichier comme dans l'
 | [03-production.md](03-production.md) | 15 à 24 | Résilience, budgets, sous-agents, gros résultats, exécution durable et idempotence, REST, serveur MCP, plusieurs clients, webhooks et workers, Postgres, chiffrement, RGPD |
 | [04-qualite-et-expert.md](04-qualite-et-expert.md) | 25 à 30 et annexes | Traces et OpenTelemetry, rejeu, évaluations, tests, sources d'outils (forge, loom-notes), projet de synthèse |
 | [05-state-de-session.md](05-state-de-session.md) | 31 | State de session : posé par l'application ou par un outil, reçu par l'orchestrateur et les rôles, testé (loom-ia 2.0.6) |
+| [06-outils-fournis.md](06-outils-fournis.md) | 32 | Outils fournis : activer `loom.fetch_page`, le régler, ce qu'il refuse, le tester sans réseau (loom-ia 2.0.7) |
 
 ---
 

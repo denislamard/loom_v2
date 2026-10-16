@@ -4395,4 +4395,4 @@ Variable d'environnement de l'exporteur absente : simple WARNING (« ce collecte
 
 Vous savez maintenant relire un run (`loom inspect`), l'exporter vers un collecteur, le rejouer à l'identique ou avec un autre modèle, le noter avec une suite d'évaluations, figer un comportement dans un test, brancher des outils venus d'un paquet, d'une sandbox ou d'une mémoire, et assembler le tout dans un projet de deux clients (chapitre 30). Les annexes A à E servent de référence : commandes, routes, couverture des fonctions, dépannage, vocabulaire.
 
-Navigation : [01-demarrer.md](01-demarrer.md) · [02-maitriser.md](02-maitriser.md) · [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md)
+Navigation : [01-demarrer.md](01-demarrer.md) · [02-maitriser.md](02-maitriser.md) · [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md)

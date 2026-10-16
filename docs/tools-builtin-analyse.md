@@ -114,7 +114,7 @@ Non couverts par ces essais :
 
 ### Limites à documenter, sans les traiter dans ce lot
 
-- **L1 — Le proxy sortant est ignoré.** `fetch_page` passe son propre transport, et httpx2 ne lit alors ni `HTTP_PROXY` ni `HTTPS_PROXY` (`allow_env_proxies = trust_env and transport is None`). Là où la sortie doit passer par un proxy, l'outil ne joint rien. Un proxy rendrait d'ailleurs inutile le contrôle des adresses, puisque ce serait lui qui résoudrait le nom.
+- **L1 — Le proxy sortant est ignoré.** `fetch_page` passe son propre transport, et httpx2 ne lit alors ni `HTTP_PROXY` ni `HTTPS_PROXY` (`allow_env_proxies = trust_env and transport is None`). Là où la sortie doit passer par un proxy, l'outil ne joint rien. Un proxy rendrait d'ailleurs inutile le contrôle des adresses, puisque ce serait lui qui résoudrait le nom. Suivi : backlog #023.
 - **L2 — Ce qui n'est pas lu.** Ni JavaScript, ni PDF, ni image, ni page derrière une connexion à un compte.
 - **L3 — Pas de paramètres propres.** La forme `python:` n'accepte que les réglages existants. Il n'y a ni domaines autorisés, ni taille maximale réglable par agent, ni secret. Ça suffit pour `fetch_page` ; un futur outil qui aura besoin d'une clé (`search`) demandera une décision (D4).
 - **L4 — Contenu non fiable.** Le texte d'une page peut contenir des instructions adressées au modèle. La documentation doit recommander deux choses : ne pas activer `fetch_page` sur un agent qui a des outils `irreversible` sans `approval`, et s'appuyer sur les approbations imposées par client.
@@ -247,6 +247,19 @@ src/loom_ia/tools_builtin/
 | D5 | `Loom.register()` et `Bench(register=…)` avec un nom en `loom.` | Refuser ; ou tolérer, puisqu'il n'est jamais atteint | Refuser, avec un message clair |
 | D6 | Migration d'agent-01 | Remplacer `imports: [tools.web_search]` et `- python: fetch_page` par `- python: loom.fetch_page`, puis retirer `tools/web_search.py` | Une fois la version publiée sur PyPI |
 
+**Ce qui a été décidé (15 et 16/10) :**
+
+| # | Décision | Où |
+| --- | --- | --- |
+| D1 | **Une dépendance du noyau** (option b), et non un extra : `"httpx2>=2.13.0,<3"`, plancher égal à la version que la CI éprouve. Le message « dépendance '…' absente » ne nomme donc pas d'extra ; le test du wheel de la CI active `loom.fetch_page` et échoue si le wheel n'apporte plus `httpx2` | Étape 3 |
+| D2 | **2.0.7**, la version non publiée déjà ouverte | Étape 5 (`CHANGELOG.md`) |
+| D3 | **Une ligne `Fournis    : …`**, alignée sur les autres libellés (11 caractères), affichée seulement si un agent active un outil fourni | Étape 4 |
+| D4 | Ouverte : à trancher avec `search` | — |
+| D5 | **Refuser**, dans `Registry` : `Loom.register()`, `Bench(register=…)` et un `Registry({...})` construit à la main | Étape 4 |
+| D6 | Ouverte : après la publication | — |
+
+Écart avec l'analyse, décidé en codant l'étape 1 : `loom.x:y`, avec un `:`, reste un chemin d'import (`is_builtin`), pour ne pas prendre pour un outil fourni le chemin d'un paquet à soi nommé `loom`.
+
 ## Plan de mise en œuvre
 
 Un lot par étape, que tu relis et commites :
@@ -260,6 +273,8 @@ Un lot par étape, que tu relis et commites :
    - le guide : un exemple d'outil fourni, au chapitre 2 de `01-demarrer.md` ou dans `02-maitriser.md`, la table « Les extras » si D1 (a), et les limites L1 à L5 ;
    - le `CHANGELOG`, plus une entrée de jalon ou de backlog.
 6. **Migration d'agent-01 (D6).**
+
+**Réalisé :** étapes 1 à 4 (commits `3d2a6d4`, `b3524bd`, `a52237b`, `a7c1ef5`), puis l'étape 5. Pour le guide, c'est un chapitre à part qui a été retenu, le chapitre 32 (`docs/howto/06-outils-fournis.md`), plutôt qu'un exemple du chapitre 2 ; D1 étant tranché pour le noyau, il n'y a pas de ligne à ajouter à la table « Les extras ». Reste l'étape 6.
 
 ## Annexe : expériences reproduites
 

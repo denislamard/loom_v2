@@ -4,6 +4,16 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.7 - non publiée
 
+### Outils fournis (nouveau)
+- **Outils fournis par loom-ia** : un agent active un outil que loom-ia fournit en le listant dans ses outils, `- python: loom.<outil>`, sans `imports`. Aucun n'est actif d'office, et le modèle le voit sous son nom sans le préfixe. Les réglages d'un outil Python (`timeout`, `approval`, `side_effects`, `idempotent`, `offload_over`, `output`) s'y appliquent, et ceux d'un client (`tools_deny`, `approvals`) le désignent par ce nom. Une référence inconnue est refusée au chargement, avec la liste des outils fournis ; un outil fourni et un outil de l'agent du même nom aussi. `loom.x:y`, avec un `:`, reste un chemin d'import. Les outils vivent dans `loom_ia.tools_builtin`, un module par outil recensé dans le catalogue `BUILTIN_TOOLS`, et ne sont importés qu'à la première référence. Référence : `docs/tools-builtin-analyse.md` ; `fonctions.md`, point 50.
+- **`loom.fetch_page`** : lit une page web publique (http ou https) et rend son adresse finale, son titre, son texte sans le HTML (intertitres, listes, tableaux, blocs de code), puis jusqu'à 50 liens, ceux du contenu d'abord. Il ne se connecte qu'à des adresses publiques, vérifiées au moment de la connexion : nom résolu une seule fois, IPv4 logées dans une IPv6 jugées pour elles-mêmes, ports 80 et 443, cinq redirections au plus, chacune revérifiée. La lecture s'arrête à 5 Mo, et seuls les contenus texte sont acceptés (HTML, texte, JSON, XML). Un refus est un résultat en erreur : le run continue. Déclarations : `side_effects: none`, `timeout` 45 s, `offload_over` 20 000 caractères. Il ignore `HTTP_PROXY` et `HTTPS_PROXY` (backlog #023).
+- **`httpx2` rejoint les dépendances du noyau** (`>=2.13.0,<3`) : `loom.fetch_page` marche sans extra. Le test du wheel de la CI active l'outil, et échoue si le wheel ne l'apporte plus.
+- `loom validate` liste les outils fournis qu'un agent active, sur une ligne `Fournis` ; sans outil fourni, la sortie ne change pas.
+- ⚠ **Le préfixe `loom.` est réservé dans le registre** : `Loom.register()`, `Bench(register=…)` et `Registry` refusent un nom qui commence par `loom.` (`ConfigError`). Un tel objet était accepté, mais jamais atteint, une référence `loom.…` désignant ce que fournit loom-ia.
+
+### Documentation
+- Outils fournis : guide, chapitre 32 (`docs/howto/06-outils-fournis.md`, lié depuis le plan des fichiers et la navigation) ; `fonctions.md` (point 44, dépendances du noyau ; point 50, formes de référence) ; `conception.md` (dépendances du noyau, décision de schéma 1) ; README (dépendances du noyau, références vers le code) ; décisions inscrites dans `docs/tools-builtin-analyse.md` ; backlog #023.
+
 ## 2.0.6 - publiée
 
 ### State de session (nouveau)

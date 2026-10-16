@@ -1613,9 +1613,10 @@ Le package s'appelle `loom-ia` et vit dans un nouveau dépôt. Les extras s'écr
 
 ### 44. Dépendances du noyau
 
-- **Noyau :** `pydantic`, `pyyaml`, `jsonschema`, `jsonschema-specifications`, `referencing`, `regex`. Les deux du milieu sont des dépendances de `jsonschema`, déclarées parce que `core/bounded_regex.py` les importe. Logs et `asyncio` viennent de la stdlib.
+- **Noyau :** `httpx2`, `pydantic`, `pyyaml`, `jsonschema`, `jsonschema-specifications`, `referencing`, `regex`. `jsonschema-specifications` et `referencing` sont des dépendances de `jsonschema`, déclarées parce que `core/bounded_regex.py` les importe. Logs et `asyncio` viennent de la stdlib.
 - **Pourquoi `jsonschema<4.27` :** `core/bounded_regex.py` copie des fonctions privées de `jsonschema` (`_keywords`, `_legacy_keywords`, `_utils`) pour y mettre un délai. Une version mineure peut les renommer ou en ajouter une qui cherche un motif sans délai ; le test `test_jsonschema_has_no_other_function_that_searches_a_pattern` le dirait, mais le workflow hebdomadaire (dépendances récentes) n'installe pas ce que la borne exclut. Relever la borne, c'est relire ce module avec ce test.
 - **Pourquoi `regex` :** un motif fourni par la config ou par le modèle (contrats, masquage, schémas des outils forgés) doit s'exécuter avec un délai, pour qu'un motif catastrophique ne gèle pas la boucle d'événements ; `re` n'en a pas, `regex` en a un (`timeout=`). Borne basse `2025.7.29` (première version avec une roue pour Python 3.14), pas de borne haute (versions datées).
+- **Pourquoi `httpx2` :** l'outil fourni `loom.fetch_page` (`tools_builtin/fetch_page.py`, point 50) l'importe. Une dépendance du noyau plutôt qu'un extra, pour qu'un outil fourni marche sans rien installer de plus (décision D1 du 16/10, `docs/tools-builtin-analyse.md`). Plancher `2.13.0`, la version que la CI éprouve (groupe `dev`, job `bornes-basses`) ; borne haute `<3`. Les extras `anthropic` et `openai` le déclarent aussi, parce que leur code l'importe directement. Le test du wheel dans la CI active `loom.fetch_page` : il échoue si le wheel n'apporte plus `httpx2`.
 - **Tout le reste passe par les extras** (point 41).
 - **Règles :**
   - toute nouvelle dépendance du noyau est justifiée par écrit ;
@@ -1726,7 +1727,7 @@ Le schéma complet est dans `conception.md` (§17).
 
 **Décisions :**
 
-1. **Références vers du code Python** (outils, hooks, conditions) : un nom enregistré en code (`@loom.tool`) ou un chemin d'import `module:attr` ; le nom enregistré est essayé d'abord. `imports:` liste les modules chargés au démarrage. Les modules voisins du fichier de config sont importables (son dossier est ajouté à `sys.path` le temps du chargement). Deux configs d'un même process ont chacune les leurs, même sous un même nom : un module voisin que loom a importé pour une autre config est retiré de `sys.modules` et réimporté depuis le dossier de celle qu'on charge ; ce que la première en a déjà pris reste à elle ; un module que loom n'a pas importé comme voisin (installé, de la bibliothèque standard, importé par l'application) n'est jamais touché (6.3c, décision du 06/10).
+1. **Références vers du code Python** (outils, hooks, conditions) : un nom enregistré en code (`@loom.tool`) ou un chemin d'import `module:attr` ; le nom enregistré est essayé d'abord. `imports:` liste les modules chargés au démarrage. Les modules voisins du fichier de config sont importables (son dossier est ajouté à `sys.path` le temps du chargement). Deux configs d'un même process ont chacune les leurs, même sous un même nom : un module voisin que loom a importé pour une autre config est retiré de `sys.modules` et réimporté depuis le dossier de celle qu'on charge ; ce que la première en a déjà pris reste à elle ; un module que loom n'a pas importé comme voisin (installé, de la bibliothèque standard, importé par l'application) n'est jamais touché (6.3c, décision du 06/10). Une troisième forme, pour les outils seulement : `loom.<outil>` désigne un outil fourni par loom-ia (`loom_ia.tools_builtin`, catalogue `BUILTIN_TOOLS`), dont le module n'est importé qu'à la première référence ; aucun n'est actif d'office, et le modèle le voit sous son nom sans le préfixe (`fetch_page`). `loom.x:y`, avec un `:`, reste un chemin d'import. Le préfixe `loom.` est réservé : aucun nom enregistré ne le porte, `register()` le refuse (2.0.7, décisions des 15 et 16/10, `docs/tools-builtin-analyse.md`).
 2. **Variables dans les prompts et les templates :** `{{ var }}`, avec un moteur interne minimal (sans Jinja) ; une variable inconnue est une erreur.
 3. **Profils :** fusion profonde des objets, remplacement des listes ; `params` et `llm` sont remplacés en bloc.
 4. **Annotations MCP** (`readOnlyHint`, `destructiveHint`, `idempotentHint`) : valeurs par défaut de `side_effects` et `idempotent`, surchargeables par la config.
@@ -1760,6 +1761,7 @@ profiles: {prod: {...}}               # surcharges partielles
 - `version` inconnue ;
 - `system` et `system_file` fournis ensemble ;
 - référence Python introuvable ;
+- outil fourni (`loom.…`) inconnu, ou dont une dépendance manque ;
 - variable `{{ }}` non définie ;
 - clé métier d'idempotence avec un backend `journal` ou `memory` ;
 - juge bloquant échantillonné ;

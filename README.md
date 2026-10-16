@@ -171,7 +171,7 @@ uv add "loom-ia[anthropic,http,mcp]"
 
 Le paquet s'appelle `loom-ia`, s'importe sous le nom `loom_ia` et installe la commande `loom`.
 
-Le noyau ne dépend que de pydantic, pyyaml, jsonschema (avec `referencing` et `jsonschema-specifications`, qu'il tire déjà) et regex. Tout le reste arrive par des extras, à choisir selon ce que vous utilisez :
+Le noyau ne dépend que de pydantic, pyyaml, jsonschema (avec `referencing` et `jsonschema-specifications`, qu'il tire déjà), regex et httpx2 (pour l'outil fourni `loom.fetch_page`). Tout le reste arrive par des extras, à choisir selon ce que vous utilisez :
 
 | Extra | À installer si vous utilisez |
 |---|---|
@@ -657,7 +657,7 @@ triggers: [...]               # webhooks entrants
 profiles: {prod: {...}}       # surcharges par profil
 ```
 
-**Références vers votre code.** Un outil, une politique ou une condition de juge se désigne par un nom enregistré, ou par un chemin `module:attribut`. Les modules voisins de `loom.yaml` s'importent directement, et deux configurations chargées dans un même process gardent chacune les leurs.
+**Références vers votre code.** Un outil, une politique ou une condition de juge se désigne par un nom enregistré, ou par un chemin `module:attribut`. Un outil fourni par Loom-IA se désigne par `loom.<outil>` (`loom.fetch_page`), sans rien importer ; aucun n'est actif d'office. Les modules voisins de `loom.yaml` s'importent directement, et deux configurations chargées dans un même process gardent chacune les leurs.
 
 **Variables dans les prompts.** Les prompts et les gabarits acceptent des variables `{{ … }}`. Une variable inconnue est une erreur de chargement, pas un trou silencieux dans le prompt.
 

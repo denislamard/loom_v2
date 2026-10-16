@@ -4,7 +4,7 @@
 
 > **Dans ce fichier** : donner à une session quelques valeurs typées et durables — posées par l'application, ou tirées du résultat d'un outil —, les montrer à l'orchestrateur et aux rôles, voir ce que loom refuse, puis tester le tout (chapitre 31).
 >
-> **Navigation** : précédent : [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md) (vous êtes ici)
+> **Navigation** : précédent : [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md) (vous êtes ici) · suivant : [06-outils-fournis.md](06-outils-fournis.md)
 
 Au chapitre 7, une conversation se souvient de ce qui précède parce que loom renvoie son historique au modèle, et la compaction le résume quand il devient trop long. C'est le modèle qui « se souvient », avec ce qu'un résumé a bien voulu garder. Pour quelques faits précis — le devis dont on parle, le nom à signer, le ton choisi par l'artisan —, on veut mieux : des valeurs que **le système** connaît, typées, durables, et que le modèle reçoit à chaque appel. C'est le **state de session**.
 
@@ -698,4 +698,4 @@ Remettez `path: /client` : l'évaluation repasse.
 - **L'exemple du dépôt** : `examples/j7/state.py`, qui montre le bloc tel que l'orchestrateur l'a reçu (échanges bruts au journal), et sa suite de non-régression `tests/regression/j7/`.
 - **Ce que le state ne fait pas encore** : REST et MCP ne posent pas de state, si bien qu'un agent qui a une clé `required` n'y ouvre un run que dans une session où elle a déjà une valeur (sinon : 422 en REST) ; un juge ne reçoit pas le state ; un sous-agent non plus.
 
-Navigation : [01-demarrer.md](01-demarrer.md) · [02-maitriser.md](02-maitriser.md) · [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md)
+Navigation : [01-demarrer.md](01-demarrer.md) · [02-maitriser.md](02-maitriser.md) · [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md)
