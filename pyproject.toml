@@ -245,8 +245,3 @@ modules = [
     "loom_ia.adapters.usage",
     "loom_ia.adapters.firecracker",
 ]
-
-[tool.uv.workspace]
-members = [
-    "examples/agents/agent-03",
-]
