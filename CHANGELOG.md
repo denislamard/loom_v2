@@ -2,7 +2,9 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.9 - non publiée
+## 2.0.10 - non publiée
+
+## 2.0.9 - publiée
 
 ### Compaction
 - **Résumé bloquant** (nouveau) : `sessions.compaction.blocking: true` fait le résumé dû à l'ouverture du run suivant, qui l'attend, au lieu d'une tâche de fond après le run. C'est le choix d'un process de courte vie (`loom run`) : sa fermeture n'attend les tâches de fond que `execution.shutdown_timeout` (30 s), puis les annule, et un résumé refusé par le contrôle de fidélité puis retenté n'y tenait pas. Vaut pour `run`, `stream` et `submit`, donc pour REST, MCP et les déclencheurs ; `submit` ne rend l'identifiant qu'après le résumé. Le run de compaction porte en `triggered_by` le run qui l'attend. Un résumé qui échoue ne fait pas échouer le run (`WARNING`, historique entier, nouvelle tentative au run suivant). Défaut : `false`, le comportement d'avant. Nouvelle méthode `CompactionJob.before_run()`.
