@@ -148,9 +148,9 @@ Les messages sont stockés en blocs neutres (texte, image, appel d'outil, raison
 
 Une erreur transitoire (429, 5xx, réseau) est réessayée avec backoff (`model.retried` au journal) ; une erreur définitive (clé invalide, 400) échoue tout de suite. Timeouts réglables (`first_token`, `idle`…).
 
-**Testée** : non
+**Testée** : oui, sauf les délais `timeouts` (17/10, sessions `session-B3` et `session-B3b`)
 
-**Note** :
+**Note** : PANNE (`base_url` sur le port 9 fermé, `retry: {max_attempts: 3, initial_delay: 1, multiplier: 2}`) avec secours HAIKU, session `session-B3`. 3 tentatives, chacune `ConnectError` classée `transient` ; 2 `model.retried` avec des délais de 0,879 s puis 1,109 s (fourchettes attendues [0,5 ; 1] et [1 ; 2] après tirage), délais réellement observés entre les échanges ; bascule `PANNE → HAIKU` seulement après la 3e tentative ; run `completed` en 3 s. Erreur définitive : fausse clé (`ANTHROPIC_API_KEY=sk-ant-fausse`) → un seul échange, réponse 401 `authentication_error`, aucun `model.retried`, `run.failed` immédiat avec `error_type: model.auth` ; la fausse clé elle-même est `[retiré]` dans l'échange brut. Non vus : `first_token`, `idle`, `total` (il faudrait un serveur qui répond lentement).
 
 ### B4 — Modèle de secours et disjoncteur
 
@@ -178,9 +178,9 @@ Une erreur transitoire (429, 5xx, réseau) est réessayée avec backoff (`model.
 
 `max_tokens` et `params` du modèle, surchargés par `llm:` d'un rôle ; la fusion se fait par bloc entier (un bloc `thinking` remplace l'autre, il ne se mélange pas).
 
-**Testée** : non
+**Testée** : oui (17/10, agent `traducteur`, session `session-B6`)
 
-**Note** :
+**Note** : `main.llm: {max_tokens: 200, params: {temperature: 0}}` → requête envoyée `{max_tokens: 200, temperature: 0, …}` : le `max_tokens` du rôle remplace les 20 000 du modèle, `params` part tel quel. Claude Haiku 5.5 refuse `temperature` (400 « `temperature` is deprecated for this model ») : erreur classée `model.invalid_request`, non réessayée, run `failed`. loom ne connaît pas les paramètres d'un modèle : il transmet, le fournisseur juge. Relancé avec `params: {metadata: {user_id: denis}}` (session `session-B6b`) : requête `{max_tokens: 200, metadata: {user_id: denis}, …}`, réponse 200, run `completed`. La fusion clé par clé avec les `params` du modèle n'est pas vue ici (HAIKU n'en déclare pas).
 
 ### B7 — Vérification de la fenêtre de contexte avant l'appel
 
@@ -188,9 +188,9 @@ Une erreur transitoire (429, 5xx, réseau) est réessayée avec backoff (`model.
 
 Estimation des tokens (caractères/4) avant l'envoi ; si la session dépasse, le filet `ensure_fits` la taille (`session.trimmed`) au lieu d'échouer chez le fournisseur.
 
-**Testée** : non
+**Testée** : oui pour le refus avant appel (17/10, agent `traducteur`, sessions `session-B7` et `session-B7b`)
 
-**Note** :
+**Note** : règle : entrée estimée (caractères ÷ 4 du système, des messages et des outils, + 1 600 par image) + `max_tokens` > `capabilities.context_window` → refus. Fenêtre 500 : 103 + 200 = 303, l'appel part (run `completed`). Fenêtre 250 : `run.failed` immédiat, `error_type: model.context_overflow`, « Requête estimée à 103 tokens, plus 200 en sortie : dépasse la fenêtre de 250 tokens du modèle HAIKU », **aucun `model.exchanged`** : rien n'est envoyé. Estimation réelle juste : Anthropic a compté 110 tokens d'entrée pour 103 estimés. Non vus : la bascule vers un secours à plus grande fenêtre (`context_overflow` ne bascule que si les deux fenêtres sont déclarées) et le filet `ensure_fits` d'une session trop longue (F3).
 
 ### B8 — Streaming des tokens
 
@@ -208,9 +208,9 @@ Le texte du modèle arrive au fil de l'eau : `loom run --stream`, `Loom.stream()
 
 Les capacités du modèle décident de ce qui lui est envoyé : images seulement à un modèle vision, schéma JSON natif seulement s'il le gère, raisonnement seulement s'il est `thinking`.
 
-**Testée** : non
+**Testée** : oui pour `vision` (17/10, `loom run agent … --attach chat.jpg`, sessions `session-B9` et `session-B9b`)
 
-**Note** :
+**Note** : HAIKU sans `vision` : l'image n'est pas envoyée ; à sa place, le texte « [image jointe chat.jpg (image/jpeg, 125 Ko) : non visible par ce modèle] », et l'agent répond honnêtement qu'il ne la voit pas. Avec `capabilities: {vision: true}` : bloc `image` en base64 dans la requête, description juste (chat tigré gris et brun aux yeux verts, fond flou ; vérifiée sur l'image), 0,000215 $. Dans `model.exchanged`, les octets de l'image sont remplacés par « [fichier image/jpeg, 127540 octets, sha256 …] » (corps de 3 Ko au journal). `tools` vu indirectement (contrôlé au chargement), `native_json` vu en A7 (schéma non transmis sans la capacité) ; `thinking` non testé.
 
 ---
 
@@ -578,9 +578,9 @@ Clés typées déclarées dans `state:` de l'agent (schéma, `from` d'un outil a
 
 `loom run --attach FICHIER` (répétable), envoi multipart en REST : format reconnu à la signature binaire (jamais au nom), taille (`execution.attachments.max_bytes`, 5 Mio) et nombre (`max_files`, 10) contrôlés avant le run. Seules les images jpeg, png, gif et webp sont acceptées ; PDF, audio et autres fichiers sont refusés (non réalisé).
 
-**Testée** : non
+**Testée** : oui pour une image valide (17/10, sessions `session-B9`, `session-B9b`)
 
-**Note** :
+**Note** : `--attach chat.jpg` (127 540 octets) accepté, type `image/jpeg` reconnu. Restent à voir les refus : fichier trop gros (> 5 Mio), type non image (un PDF), plus de 10 pièces jointes, et un fichier dont l'extension ment.
 
 ### G2 — Stockage d'artefacts référencés par URI
 
@@ -588,9 +588,9 @@ Clés typées déclarées dans `state:` de l'agent (schéma, `from` d'un outil a
 
 `storage.artifacts` (mémoire ou local) : les fichiers vivent hors du journal, qui n'en garde que l'URI.
 
-**Testée** : non
+**Testée** : oui (17/10, sessions `session-A6`, `session-B9`)
 
-**Note** :
+**Note** : pièce jointe rangée dans `data/.artifacts/default/session-B9/<sha256>.jpg` (backend `local` déduit du journal `jsonl`), `artifact.stored` (`origin: attachment`) au journal, et le message utilisateur ne porte que l'URI `artifact://default/session-B9/<sha256>.jpg`. Même mécanisme pour un résultat déporté en A6 (`origin` offload). Adressage par contenu : même fichier, même empreinte d'une session à l'autre.
 
 ### G3 — Artefacts produits par les outils, récupérables
 
@@ -892,9 +892,9 @@ Quotas de consommation par période et `--rate-limit` par clé d'API (requêtes 
 
 `loom.yaml` + `agents/*.yaml`, validés par Pydantic avec des erreurs qui nomment la clé ; `loom validate [--no-keys]` ; `loom schema` imprime le JSON Schema pour l'éditeur.
 
-**Testée** : non
+**Testée** : non — écart trouvé le 17/10
 
-**Note** :
+**Note** : **clé en double acceptée sans erreur** : PANNE portait deux `retry` dans `loom.yaml` ; `yaml.safe_load` garde la dernière, et ni le chargement ni `loom validate` ne le signalent. Une faute de frappe peut ainsi annuler un réglage en silence. Piste : un chargeur YAML qui refuse les clés en double, en donnant la ligne.
 
 ### M2 — Construction entièrement en Python
 

@@ -128,7 +128,7 @@ Liste des modèles. Chaque modèle est cité par son `id` (`main.model`, rôles,
 | `base_url` | Point d'accès : compatible OpenAI (vLLM, Ollama, Together…). Les variables `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` ne sont jamais lues. | URL | adresse officielle du fournisseur du SDK | `base_url: http://localhost:11434/v1` |
 | `api_key_env` | Variable qui porte la clé d'API ; absente ou vide : erreur à la création du client. | nom de variable | `null` : aucune clé envoyée (serveur local, `fake`) | `api_key_env: ANTHROPIC_API_KEY` |
 | `max_tokens` | Plafond de sortie par appel ; un rôle le remplace par `llm.max_tokens`. | entier > 0 | `null` : 4096 chez Anthropic (exigé par l'API) ; non envoyé chez OpenAI | `max_tokens: 4096` |
-| `params` | Bloc transmis tel quel au fournisseur (température, `thinking`…). Pour `sdk: fake`, `script` décrit les réponses simulées. | objet | `{}` | `params: {temperature: 0.2}` |
+| `params` | Bloc transmis tel quel au fournisseur, qui seul juge ce qu'il accepte (`temperature`, `thinking`…) : il ne part qu'avec les appels à ce modèle, c'est donc ici qu'un paramètre propre à un fournisseur se déclare. Pour `sdk: fake`, `script` décrit les réponses simulées. | objet | `{}` | `params: {temperature: 0.2}` sur un modèle `sdk: openai` ; les Claude 5.5 refusent `temperature` (400) |
 | `timeouts.first_token` | Délai avant le premier morceau du flux (s). | nombre > 0, `null` | `60` | `timeouts: {first_token: 20}` |
 | `timeouts.idle` | Délai entre deux morceaux (s). | nombre > 0, `null` | `60` | |
 | `timeouts.total` | Durée maximale d'un appel complet (s). | nombre > 0, `null` | `300` | |
@@ -714,4 +714,4 @@ Sert dans `main.llm`, `roles[].llm` et `judge.llm`.
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
 | `max_tokens` | Remplace `max_tokens` du modèle pour ce rôle. | entier > 0 | `null` : celui du modèle | `max_tokens: 1024` |
-| `params` | Fusionnés clé par clé sur `params` du modèle (une clé remplace la clé entière du modèle). | objet | `{}` | `params: {temperature: 0}` |
+| `params` | Fusionnés clé par clé sur `params` du modèle (une clé remplace la clé entière du modèle), et cela **pour chaque modèle de la chaîne**, secours compris : n'y mettre que ce que tous les modèles de la chaîne acceptent, sinon la bascule échoue (400). Un réglage propre à un fournisseur va dans `models[].params` ; deux réglages d'un même modèle, dans deux déclarations (deux `id`). | objet | `{}` | — (exemple de bloc : `llm: {max_tokens: 1024}`) |
