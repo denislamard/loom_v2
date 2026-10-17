@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# Publie la version en cours de loom-ia et ouvre la suivante.
+#
+# Usage :
+#   scripts/publier [--dry-run] [--no-push] [--yes] [<version suivante>]
+#
+#   <version suivante>  x.y.z ; par défaut, la version en cours avec z + 1
+#   --dry-run           montre ce qui serait fait, sans rien modifier
+#   --no-push           commits et étiquette en local ; rien n'est poussé
+#   --yes               pousse sans demander confirmation
+#
+# Étapes, la version en cours X étant celle de pyproject.toml :
+#   1. contrôles : branche main, arbre propre, à jour avec origin/main, CHANGELOG
+#      avec une section « ## X - non publiée » non vide, étiquette vX libre,
+#      uv.lock à jour ;
+#   2. CHANGELOG : « ## X - non publiée » devient « ## X - publiée » ; commit
+#      « publish vX », puis étiquette annotée vX (« loom-ia X ») sur ce commit ;
+#   3. version suivante N : « ## N - non publiée » au-dessus, pyproject.toml et
+#      uv.lock passent à N ; commit « start version N » ;
+#   4. git push origin main, puis git push origin vX — l'étiquette déclenche la
+#      publication sur PyPI (.github/workflows/publish.yml), qui exige que
+#      l'étiquette corresponde à la version de pyproject.toml : c'est le cas du
+#      commit étiqueté, la version suivante n'arrivant qu'au commit d'après.
+#
+# Exemple :
+#   scripts/publier --dry-run
+#   scripts/publier            # 2.0.9 publiée, 2.0.10 ouverte
+
+set -euo pipefail
+
+usage() {
+    sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+    exit 2
+}
+
+erreur() {
+    echo "Erreur : $*" >&2
+    exit 1
+}
+
+dry_run=false
+push=true
+yes=false
+suivante=""
+for arg in "$@"; do
+    case $arg in
+        --dry-run) dry_run=true ;;
+        --no-push) push=false ;;
+        --yes) yes=true ;;
+        -h|--help) usage ;;
+        -*) echo "Option inconnue : $arg" >&2; usage ;;
+        *)
+            [[ -z $suivante ]] || { echo "Une seule version suivante" >&2; usage; }
+            suivante=$arg
+            ;;
+    esac
+done
+
+racine=$(git rev-parse --show-toplevel 2>/dev/null) || erreur "pas dans un dépôt git"
+cd "$racine"
+[[ -f pyproject.toml && -f CHANGELOG.md && -f uv.lock ]] \
+    || erreur "pyproject.toml, CHANGELOG.md et uv.lock attendus à la racine de $racine"
+command -v uv >/dev/null || erreur "uv est introuvable"
+
+# --- Versions ------------------------------------------------------------------
+
+# La première ligne « version = "…" » de pyproject.toml : celle de [project].
+version=$(sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' pyproject.toml | head -n 1)
+[[ -n $version ]] || erreur "version x.y.z introuvable dans pyproject.toml"
+
+if [[ -z $suivante ]]; then
+    IFS=. read -r majeure mineure correctif <<<"$version"
+    suivante="$majeure.$mineure.$((correctif + 1))"
+fi
+[[ $suivante =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || erreur "version suivante invalide : $suivante (x.y.z)"
+[[ $suivante != "$version" ]] || erreur "la version suivante doit différer de $version"
+[[ $(printf '%s\n%s\n' "$version" "$suivante" | sort -V | tail -n 1) == "$suivante" ]] \
+    || erreur "la version suivante ($suivante) doit être plus grande que $version"
+
+etiquette="v$version"
+echappee=${version//./\\.}
+en_cours="## $version - non publiée"
+publiee="## $version - publiée"
+
+# --- Contrôles -------------------------------------------------------------------
+
+branche=$(git branch --show-current)
+[[ $branche == main ]] || erreur "branche $branche : la publication se fait depuis main"
+
+[[ -z $(git status --porcelain --untracked-files=no) ]] \
+    || erreur "des fichiers suivis sont modifiés ; commiter ou remiser d'abord (git status)"
+
+git fetch --quiet origin main --tags
+[[ $(git rev-parse HEAD) == $(git rev-parse origin/main) ]] \
+    || erreur "main diffère d'origin/main ; pousser ou tirer d'abord"
+
+[[ $(grep -cx "$en_cours" CHANGELOG.md) == 1 ]] \
+    || erreur "CHANGELOG.md : une ligne « $en_cours » attendue, exactement une"
+grep -qx "$publiee" CHANGELOG.md && erreur "CHANGELOG.md : « $publiee » existe déjà"
+grep -qx "## $suivante - .*" CHANGELOG.md && erreur "CHANGELOG.md : une section $suivante existe déjà"
+
+# Le contenu de la section en cours : entre son titre et le titre suivant.
+contenu=$(awk -v titre="$en_cours" '
+    $0 == titre { dedans = 1; next }
+    dedans && /^## / { exit }
+    dedans && NF { print }
+' CHANGELOG.md)
+[[ -n $contenu ]] || erreur "CHANGELOG.md : la section « $en_cours » est vide"
+
+git rev-parse -q --verify "refs/tags/$etiquette" >/dev/null \
+    && erreur "l'étiquette $etiquette existe déjà en local"
+if git ls-remote --exit-code --tags origin "refs/tags/$etiquette" >/dev/null 2>&1; then
+    erreur "l'étiquette $etiquette existe déjà sur origin"
+fi
+
+uv lock --check --quiet || erreur "uv.lock n'est pas à jour (uv lock)"
+
+# --- Plan ------------------------------------------------------------------------
+
+echo "Version publiée : $version (étiquette $etiquette)"
+echo "Version ouverte : $suivante"
+echo
+echo "Section publiée :"
+# Un aperçu : chaque ligne coupée à 110 caractères (et non octets).
+echo "$contenu" | sed -E 's/^(.{110}).+$/\1…/; s/^/  /'
+echo
+
+if $dry_run; then
+    echo "--dry-run : rien n'a été modifié. Seraient faits :"
+    echo "  CHANGELOG.md : « $en_cours » -> « $publiee » ; commit « publish $etiquette »"
+    echo "  git tag -a $etiquette -m \"loom-ia $version\""
+    echo "  CHANGELOG.md : « ## $suivante - non publiée » ajouté ; pyproject.toml et uv.lock à $suivante ;"
+    echo "  commit « start version $suivante »"
+    $push && echo "  git push origin main ; git push origin $etiquette"
+    exit 0
+fi
+
+# --- Publication -------------------------------------------------------------------
+
+sed -i "s/^## $echappee - non publiée\$/## $version - publiée/" CHANGELOG.md
+git add CHANGELOG.md
+git commit --quiet -m "publish $etiquette"
+git tag -a "$etiquette" -m "loom-ia $version"
+echo "Commit « publish $etiquette » et étiquette $etiquette créés."
+
+# --- Version suivante --------------------------------------------------------------
+
+sed -i "/^## $echappee - publiée\$/i ## $suivante - non publiée\n" CHANGELOG.md
+sed -i "0,/^version = \"$echappee\"\$/s//version = \"$suivante\"/" pyproject.toml
+uv lock --quiet
+git add CHANGELOG.md pyproject.toml uv.lock
+git commit --quiet -m "start version $suivante"
+echo "Commit « start version $suivante » créé."
+
+# --- Envoi ---------------------------------------------------------------------------
+
+if ! $push; then
+    echo
+    echo "--no-push : rien n'est poussé. À faire :"
+    echo "  git push origin main"
+    echo "  git push origin $etiquette"
+    exit 0
+fi
+
+if ! $yes; then
+    echo
+    read -r -p "Pousser main et $etiquette (publication sur PyPI) ? [o/N] " reponse
+    if [[ $reponse != [oOyY]* ]]; then
+        echo "Rien n'est poussé. Plus tard : git push origin main && git push origin $etiquette"
+        exit 0
+    fi
+fi
+
+git push origin main
+git push origin "$etiquette"
+echo
+echo "Poussé. La publication de $etiquette suit dans GitHub Actions (Publication)."

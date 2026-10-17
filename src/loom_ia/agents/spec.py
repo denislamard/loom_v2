@@ -758,8 +758,9 @@ class AgentSpec(DomainModel):
     # Délai maximal d'un run, en secondes (A6, backlog #006). Il borne le temps
     # de pilotage cumulé, pas l'horloge : l'attente en file, une pause et le
     # temps entre un plantage et sa reprise ne comptent pas. Un dépassement
-    # écrit ``run.failed`` avec ``error_type: timeout``, donc le run reste
-    # reprenable — avec un délai relevé. Sans valeur, pas de délai.
+    # écrit ``run.failed`` avec ``error_type: timeout`` : c'est une clôture,
+    # que ``resume`` ne relance pas, même avec un délai relevé. Sans valeur,
+    # pas de délai.
     timeout: PositiveFloat | None = None
     # Approbations de l'agent (#17) : délai laissé à l'approbateur, effet
     # d'une demande périmée, droit exigé côté REST. Un outil les demande

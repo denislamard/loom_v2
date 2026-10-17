@@ -4,6 +4,10 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.10 - non publiée
 
+### Documentation
+- `fonctions.md` remis d'accord avec le code : nouvelles fonctions D12 (sources d'outils d'un paquet), D13 (outils fournis, `loom.fetch_page`), E7 (politiques), H7 (worker), I4 (bus entre process), M6 (fichier d'environnement), M7 (variables `{{ }}`), N6 (`serve --reload`) et une catégorie P (données sensibles : chiffrement, rétention, isolation en base) ; F3 cite la compaction bloquante ; tableau des composants, arborescence (point 41 : `tools/`, `tools_builtin/`), dépendances du noyau (point 44 : `python-dotenv`), schéma de la config (point 50 : `env_file:`, `tool_sources:`, `triggers:`, contrôles du fichier d'environnement) ; G1 ne promet plus les PDF, l'audio ni les fichiers en entrée (seules les images sont acceptées) ; E6 dit l'erreur en profil `prod`.
+- Commentaire de `AgentSpec.timeout` (`agents/spec.py`) corrigé : un dépassement écrit `run.failed`, une clôture que `resume` ne relance pas, même avec un délai relevé ; il disait le run « reprenable — avec un délai relevé ».
+
 ## 2.0.9 - publiée
 
 ### Compaction

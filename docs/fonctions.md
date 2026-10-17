@@ -48,6 +48,8 @@
 - **D9** `[V2]` Exécution de code en sandbox (Firecracker), exposée comme un outil. Réalisée en 6.4c : la source d'outils `forge`, des outils forgés par l'agent et exécutés dans une microVM de la plateforme `firecracker/` du dépôt (point 41).
 - **D10** `[V2]` Outils sensibles marqués « approbation requise ».
 - **D11** `[V2]` Idempotence des outils à effet de bord lors d'une reprise.
+- **D12** `[V2]` Sources d'outils fournies par un paquet installé (`tool_sources`, point d'entrée du groupe `loom_ia.tools`), branchées par un agent (`- source: <nom>`). Réalisé en 6.4b.
+- **D13** `[V2]` Outils fournis par loom-ia, inactifs par défaut, activés par un agent (`- python: loom.<outil>`) ; premier outil : `loom.fetch_page`, lecture d'une page web publique. Réalisé en 2.0.7 (point 50).
 
 ## E. Fiabilité des sorties
 
@@ -56,13 +58,14 @@
 - **E3** Juge LLM : critères, seuils, bloquant ou non, échantillonnage.
 - **E4** Politique d'échec : lever une erreur ou avertir.
 - **E5** `[V2]` Contrats et juge applicables à n'importe quel rôle, outil, ou à la réponse finale.
-- **E6** `[V2]` Alerte si le juge utilise le même modèle que celui qu'il évalue.
+- **E6** `[V2]` Alerte si le juge utilise le même modèle que celui qu'il évalue ; erreur en profil `prod`.
+- **E7** `[V2]` Politiques aux points d'accroche (`before_model`, `after_model`, `before_tool`, `after_tool`, `on_output`), qui rendent une décision typée (points 1 et 2).
 
 ## F. Mémoire et sessions
 
 - **F1** Sessions persistantes.
 - **F2** `[V2]` Historique structuré conservé tel quel, sans aplatissement, indépendant du fournisseur.
-- **F3** Compaction automatique : seuil, modèle dédié, N derniers tours conservés.
+- **F3** Compaction automatique : seuil, modèle dédié, N derniers tours conservés ; en tâche de fond après le run, ou bloquante à l'ouverture du run suivant (`blocking: true`, 2.0.9, point 23).
 - **F4** Nettoyage : thinking retiré, médias remplacés par des références.
 - **F5** Backends : mémoire vive, fichier, `[V2]` Firestore (non réalisé) ou SQL.
 - **F6** `[V2]` Mémoire long terme / RAG, exposée comme un outil. Réalisée en 6.4d : un serveur MCP, `loom-notes`, branché en source d'outils (point 19).
@@ -71,7 +74,7 @@
 
 ## G. Pièces jointes et artefacts
 
-- **G1** Entrées validées (format, taille) : images, puis `[V2]` PDF, audio, fichiers.
+- **G1** Entrées validées (format reconnu à la signature binaire, taille, nombre) : images jpeg, png, gif, webp (`execution.attachments`). `[V2]` PDF, audio, fichiers : non réalisé.
 - **G2** `[V2]` Stockage d'artefacts : fichiers hors historique, référencés par URI.
 - **G3** `[V2]` Artefacts produits par les outils, récupérables par l'appelant.
 
@@ -83,12 +86,14 @@
 - **H4** Validation humaine : pause, puis approuver, modifier ou refuser, puis reprise.
 - **H5** Runs en arrière-plan : soumettre, suivre le statut, récupérer le résultat.
 - **H6** Déclencheurs : appel direct, file de messages, webhook, planification.
+- **H7** `[V2]` Worker de file de tâches (`loom worker`) : runs de fond, reprises et résumés menés hors du process qui les soumet (file asyncio ou RabbitMQ) (point 27).
 
 ## I. Streaming et événements `[V2]`
 
 - **I1** Flux d'événements typés pendant le run : début, tokens, appel d'outil, résultat, validation, fin.
 - **I2** Consommable en Python (itérateur async) et en HTTP (SSE).
 - **I3** Latence adaptée à la voix (premier token rapide).
+- **I4** `[V2]` Bus d'événements partagé entre process (mémoire, Postgres, Redis), resynchronisé par `seq` (point 5).
 
 ## J. Coûts et budgets
 
@@ -121,6 +126,8 @@
 - **M3** Secrets via l'environnement ou un gestionnaire de secrets.
 - **M4** `[V2]` Profils (dev, prod) et surcharges.
 - **M5** Contrôles de cohérence : rôle inconnu, modèle absent, juge corrélé.
+- **M6** `[V2]` Fichier d'environnement du projet lu au démarrage de la commande `loom` : `--env-file`, sinon `env_file:` de `loom.yaml`, sinon le `.env` voisin de `loom.yaml` ; `--no-env-file` n'en lit aucun ; une variable déjà définie l'emporte ; la librairie le lit sur appel (`load_env_file`). Réalisé en 2.0.8.
+- **M7** Variables `{{ }}` dans les prompts et les templates ; une variable inconnue est une erreur (point 50).
 
 ## N. Accès
 
@@ -129,12 +136,19 @@
 - **N3** `[V2]` Authentification de l'API par clé client.
 - **N4** `[V2]` CLI : lancer, rejouer, inspecter une trace, valider la config.
 - **N5** `[V2]` Serveur MCP (stdio et HTTP) : chaque agent est exposé comme un outil MCP.
+- **N6** `[V2]` Rechargement du serveur en développement (`loom serve --reload`) quand un fichier de la config change, refusé en profil `prod` (point 48).
 
 ## O. Qualité
 
 - **O1** Runner d'évals : cas, critères, comparaison entre modèles et configurations.
 - **O2** `[V2]` Faux modèles et faux outils fournis, pour des tests déterministes.
 - **O3** `[V2]` Tests de non-régression construits à partir de traces enregistrées.
+
+## P. Données sensibles `[V2]`
+
+- **P1** Chiffrement du journal et des fichiers au repos, une clé par client (point 30).
+- **P2** Rétention : effacement des sessions dormantes au-delà d'une borne déclarée (`storage.retention`, `loom retention`) (point 30).
+- **P3** Isolation des clients en base : `TenantRouter`, rôle et politiques Postgres par client (`loom storage sql`) (point 34).
 
 ## Hors périmètre
 
@@ -170,22 +184,22 @@ Les couches ne dépendent que de celles du dessous. Les adaptateurs implémenten
 | 1 | **core.model** | Messages et blocs de contenu, pièces jointes, `RunState`, `Usage`, événements typés (enveloppe, payloads, facettes) | B2, H1, K2, I1 (types) |
 | 2 | **core.ports** | Interfaces `ModelClient`, `ToolSource`, `EventStore` (journal, requêtes), `ArtifactStore`, `EventSink` (exports), `BusBackend`, `IdempotencyStore`, `SecretProvider`, `TaskQueue` | socle de tout le reste |
 | 3 | **models** | Adaptateurs par SDK (`anthropic`, `openai`, champ `sdk` du LLM), classement des erreurs, retry, modèle de secours et disjoncteur, cache, réglages, fenêtre de contexte, `stream()` comme primitive, capacités | B1, B3–B9, I3 |
-| 4 | **tools** | Contrat d'outil (`side_effects`, `approval`, `idempotent`), `ToolOutput` en blocs, outils Python et MCP (`scope`, cycle de vie, préfixes), `artifact_read`, sandbox, sélection des outils par run | D1–D3, D7–D9, F6 |
+| 4 | **tools** | Contrat d'outil (`side_effects`, `approval`, `idempotent`), `ToolOutput` en blocs, outils Python et MCP (`scope`, cycle de vie, préfixes), `artifact_read`, sandbox, sélection des outils par run, outils fournis (`loom.<outil>`, `tools_builtin`), sources d'outils d'un paquet (`tool_sources`) | D1–D3, D7–D9, D12, D13, F6 |
 | 5 | **engine.executor** | Exécution des outils : parallélisme, validation, résolution des `$ref`, timeout, déport au-delà d'un seuil, approbation (lot partiel puis pause), clé d'idempotence et reprise | A3, D4–D6, D10, D11 |
 | 6 | **engine.roles** | Rôle LLM délégué, sous-agent, rôle terminal, rôle vision, `main` ; contexte déclaré, références `$ref`, `input_template` | C1–C6 |
 | 7 | **engine.loop** | Avance le `RunState` d'un pas, gère les arrêts, la réponse forcée et la réponse structurée | A2, A4, A7 |
-| 8 | **engine.hooks** | Politiques : points d'accroche (`before_model`, `after_model`, `before_tool`, `after_tool`, `on_output`), décisions typées, composition, garde-fous | support de E5, J4, H4, D10 |
+| 8 | **engine.hooks** | Politiques : points d'accroche (`before_model`, `after_model`, `before_tool`, `after_tool`, `on_output`), décisions typées, composition, garde-fous | E7, support de E5, J4, H4, D10 |
 | 9 | **guards** | Contrats de sortie, normalisation déterministe, réparation par le modèle auteur, juge, politique d'échec, détection du juge corrélé | E1–E6 |
 | 10 | **usage** | Ledger = projection du journal (`model.responded`), tarifs, ventilation, plafonds, rapport | J1–J5 |
-| 11 | **sessions** | Projection de l'historique LLM depuis le journal, snapshots, compaction en tâche de fond via l'agent interne `_compaction` (`session.compacted`, contrôle de fidélité, filet synchrone `ensure_fits`), nettoyage, backends `EventStore` (JSONL, SQLite/Postgres ; Firestore : non réalisé), RGPD ; state de session (projection `session_state`, point 51) | F1–F5, F7, F8 |
+| 11 | **sessions** | Projection de l'historique LLM depuis le journal, snapshots, compaction en tâche de fond via l'agent interne `_compaction` (`session.compacted`, contrôle de fidélité, filet synchrone `ensure_fits`), nettoyage, backends `EventStore` (JSONL, SQLite/Postgres ; Firestore : non réalisé), RGPD ; state de session (projection `session_state`, point 51) | F1–F5, F7, F8, P1, P2 |
 | 12 | **artifacts** | Validation des entrées, stockage par URI, fichiers produits par les outils | G1–G3 |
 | 13 | **agents** | `AgentSpec` et `AgentRegistry` : définition et enregistrement des agents nommés | A9 |
-| 14 | **runtime** | Cycle de vie d'un run : lancer, streamer, annuler, timeout, pause et reprise par relecture du journal, approbation (asynchrone ou approbateur en ligne), arrière-plan (`TaskQueue`, `recover()`, concession par run), déclencheurs, contexte appelant, planification de la compaction en fin de run | A1, A5, A6, A8, H2–H6 |
-| 15 | **telemetry** | Bus d'événements (durables et éphémères, abonnés, resynchronisation par `seq`), traces = projection du journal en arbre de spans, projection `run_summaries`, niveaux de capture et masquage, exports (`EventSink`, dont OTel), API de lecture (`EventQuery`), logs | I1, K1, K3–K5, K7 |
+| 14 | **runtime** | Cycle de vie d'un run : lancer, streamer, annuler, timeout, pause et reprise par relecture du journal, approbation (asynchrone ou approbateur en ligne), arrière-plan (`TaskQueue`, `recover()`, concession par run), déclencheurs, contexte appelant, planification de la compaction en fin de run | A1, A5, A6, A8, H2–H7 |
+| 15 | **telemetry** | Bus d'événements (durables et éphémères, abonnés, resynchronisation par `seq`), traces = projection du journal en arbre de spans, projection `run_summaries`, niveaux de capture et masquage, exports (`EventSink`, dont OTel), API de lecture (`EventQuery`), logs | I1, I4, K1, K3–K5, K7 |
 | 16 | **replay** | Rejeu à partir des réponses modèle et outils du journal, à l'identique ou en variante (outils à effet de bord jamais réexécutés), détection de divergence (`request_hash`, transitions), échanges bruts en opt-in, évals, non-régression | K6, O1, O3 |
-| 17 | **tenancy** | Contexte client (`default` implicite), surcharges par client (liste fermée), secrets, quotas et limitation de débit, `TenantRouter` pour l'isolation physique | L1–L3 |
-| 18 | **config** | Schéma Pydantic, chargement YAML (`system_file`, `agents_dir`), JSON Schema généré pour l'éditeur, profils, secrets, contrôles de cohérence, Builder | M1–M5 |
-| 19 | **access** | Trois points d'accès sur le même registre d'agents : API Python, HTTP REST (FastAPI, SSE), MCP (stdio, HTTP) ; authentification ; CLI | N1–N5, I2 |
+| 17 | **tenancy** | Contexte client (`default` implicite), surcharges par client (liste fermée), secrets, quotas et limitation de débit, `TenantRouter` pour l'isolation physique | L1–L3, P3 |
+| 18 | **config** | Schéma Pydantic, chargement YAML (`system_file`, `agents_dir`), JSON Schema généré pour l'éditeur, profils, secrets, contrôles de cohérence, Builder, fichier d'environnement (`.env`), variables `{{ }}` | M1–M7 |
+| 19 | **access** | Trois points d'accès sur le même registre d'agents : API Python, HTTP REST (FastAPI, SSE), MCP (stdio, HTTP) ; authentification ; CLI | N1–N6, I2 |
 | 20 | **testing** | Faux modèles et faux outils | O2 |
 
 ---
@@ -1525,6 +1539,8 @@ src/loom_ia/
   engine/        loop  executor  roles  hooks
   guards/  usage/  sessions/  artifacts/  agents/
   runtime/  telemetry/  replay/  tenancy/  config/
+  tools/         python  configured  idempotent
+  tools_builtin/ fetch_page (outils fournis, loom.<outil>)
   adapters/
     models/      anthropic  openai_chat  openai_responses
     stores/      memory  jsonl  sqlite  postgres
@@ -1615,10 +1631,11 @@ Le package s'appelle `loom-ia` et vit dans un nouveau dépôt. Les extras s'écr
 
 ### 44. Dépendances du noyau
 
-- **Noyau :** `httpx2`, `pydantic`, `pyyaml`, `jsonschema`, `jsonschema-specifications`, `referencing`, `regex`. `jsonschema-specifications` et `referencing` sont des dépendances de `jsonschema`, déclarées parce que `core/bounded_regex.py` les importe. Logs et `asyncio` viennent de la stdlib.
+- **Noyau :** `httpx2`, `pydantic`, `pyyaml`, `jsonschema`, `jsonschema-specifications`, `referencing`, `regex`, `python-dotenv`. `jsonschema-specifications` et `referencing` sont des dépendances de `jsonschema`, déclarées parce que `core/bounded_regex.py` les importe. Logs et `asyncio` viennent de la stdlib.
 - **Pourquoi `jsonschema<4.27` :** `core/bounded_regex.py` copie des fonctions privées de `jsonschema` (`_keywords`, `_legacy_keywords`, `_utils`) pour y mettre un délai. Une version mineure peut les renommer ou en ajouter une qui cherche un motif sans délai ; le test `test_jsonschema_has_no_other_function_that_searches_a_pattern` le dirait, mais le workflow hebdomadaire (dépendances récentes) n'installe pas ce que la borne exclut. Relever la borne, c'est relire ce module avec ce test.
 - **Pourquoi `regex` :** un motif fourni par la config ou par le modèle (contrats, masquage, schémas des outils forgés) doit s'exécuter avec un délai, pour qu'un motif catastrophique ne gèle pas la boucle d'événements ; `re` n'en a pas, `regex` en a un (`timeout=`). Borne basse `2025.7.29` (première version avec une roue pour Python 3.14), pas de borne haute (versions datées).
 - **Pourquoi `httpx2` :** l'outil fourni `loom.fetch_page` (`tools_builtin/fetch_page.py`, point 50) l'importe. Une dépendance du noyau plutôt qu'un extra, pour qu'un outil fourni marche sans rien installer de plus (décision D1 du 16/10, `docs/tools-builtin-analyse.md`). Plancher `2.13.0`, la version que la CI éprouve (groupe `dev`, job `bornes-basses`) ; borne haute `<3`. Les extras `anthropic` et `openai` le déclarent aussi, parce que leur code l'importe directement. Le test du wheel dans la CI active `loom.fetch_page` : il échoue si le wheel n'apporte plus `httpx2`.
+- **Pourquoi `python-dotenv` :** `config/env_file.py` lit le fichier d'environnement du projet au démarrage de `loom` (M6, 2.0.8) avec son analyseur (`dotenv.parser`), sans interpolation, qui dit la ligne illisible au lieu de la sauter. Plancher `1.0.1`, la plus basse version éprouvée par les tests (job `bornes-basses`) ; borne haute `<2`.
 - **Tout le reste passe par les extras** (point 41).
 - **Règles :**
   - toute nouvelle dépendance du noyau est justifiée par écrit ;
@@ -1741,12 +1758,14 @@ Le schéma complet est dans `conception.md` (§17).
 ```yaml
 version: 1
 profile: dev                          # dev | prod
+env_file: .env                        # fichier d'environnement (M6), relatif au dossier ; refusé dans profiles
 imports: [myapp.tools, myapp.policies]
 agents_dir: agents/
 prompts_dir: prompts/                 # base des *_file
 
 models: [...]                         # ModelSpec
 mcp_servers: [...]                    # McpServerSpec
+tool_sources: [...]                   # ToolSourceSpec (D12)
 storage: {...}
 sessions: {...}
 execution: {...}
@@ -1755,6 +1774,7 @@ telemetry: {...}
 tenants: [...]
 security: {...}
 server: {...}
+triggers: [...]                       # TriggerSpec (H6)
 profiles: {prod: {...}}               # surcharges partielles
 ```
 
@@ -1768,7 +1788,8 @@ profiles: {prod: {...}}               # surcharges partielles
 - clé métier d'idempotence avec un backend `journal` ou `memory` ;
 - juge bloquant échantillonné ;
 - `scope: tenant` sans secrets pour un client ;
-- serveur MCP référencé mais non déclaré, préfixes MCP en double.
+- serveur MCP référencé mais non déclaré, préfixes MCP en double ;
+- `env_file:` dans `profiles` (le fichier est lu avant le choix du profil) ; fichier d'environnement demandé (`--env-file`, `env_file:`) et absent, ou ligne illisible (code 2, numéro de ligne sans son contenu).
 
 ### 51. State de session
 

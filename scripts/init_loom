@@ -69,9 +69,21 @@ models:
     model: claude-haiku-5-5
     api_key_env: ANTHROPIC_API_KEY
     max_tokens: 4096
+    pricing: { input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125 }
+    cache: { system: true, tools: true, messages: true }
 
 storage:
   events: {backend: jsonl, path: data}
+  
+execution:
+  shutdown_timeout: 120
+
+sessions:
+  compaction:
+    model: HAIKU
+    over_tokens: 50000
+    keep_last: 2
+    blocking: true  
 
 telemetry:
   logging: { level: WARNING }
@@ -104,6 +116,8 @@ fi
 cat > "agents/${agent}.yaml" <<EOF
 name: ${agent}
 description: Agent personnel.
+
+max_iterations: 5
 
 main:
   model: ${modele_id}
