@@ -57,11 +57,12 @@ Et le journal lui-même (K5, #32) :
   Le droit de lire vaut pour chaque agent de l'arbre ;
 - ``GET /events`` : la recherche au journal (``EventQuery``) — ``session_id``,
   ``run_id``, ``type``, ``category``, ``status``, ``agent``, ``role``,
-  ``tool_name``, ``model_id``, ``since``, ``until``, et ``after`` pour
+  ``tool_name``, ``model_id`` (nom chez le fournisseur), ``model`` (identifiant dans
+  la config), ``since``, ``until``, et ``after`` pour
   reprendre la pagination après un événement. Le client vient de la clé : rien
   dans l'URL ne le nomme, donc on ne cherche que chez soi. Les facettes
-  libres ne sont pas interrogeables par l'URL ; les deux que ``EventQuery``
-  nomme (``tool_name``, ``model_id``) le sont.
+  libres ne sont pas interrogeables par l'URL ; les trois que ``EventQuery``
+  nomme (``tool_name``, ``model_id``, ``model``) le sont.
 
 Résultat d'un run (J3) : la réponse, ``unverified`` si elle a été gardée sans
 respecter son contrat ou son juge, l'usage et le coût, leur ventilation
@@ -550,6 +551,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         role: str | None = None,
         tool_name: str | None = None,
         model_id: str | None = None,
+        model: str | None = None,
         since: AwareDatetime | None = None,
         until: AwareDatetime | None = None,
         after: EventId | None = None,
@@ -569,6 +571,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             role=role,
             tool_name=tool_name,
             model_id=model_id,
+            model=model,
             since=since,
             until=until,
             after=after,

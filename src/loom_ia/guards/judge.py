@@ -240,6 +240,7 @@ class JudgeGuard(TracingPolicy):
                 judge=definition.name,
                 target=definition.target,
                 model_id=spec.model,
+                model=spec.id,
                 criteria=scores,
                 passed=not failed,
                 blocked=bool(blocking),

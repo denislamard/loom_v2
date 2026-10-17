@@ -5,7 +5,9 @@ Le rapport se calcule à partir du ledger (``core.projections.ledger``) :
 chaque appel de modèle du journal, sans double compte des sous-agents. Il
 ventile la consommation par run (le run et ses sous-runs, ou tous les runs
 de la session), par rôle (``main``, rôles délégués, ``judge:<nom>``,
-préfixés par l'agent quand plusieurs agents ont travaillé) et par modèle.
+préfixés par l'agent quand plusieurs agents ont travaillé) et par modèle — son
+identifiant dans la config, qui distingue deux déclarations d'un même modèle du
+fournisseur ; à défaut (journal antérieur), son nom chez le fournisseur.
 Par client et par période : J5.
 """
 
@@ -26,6 +28,14 @@ class UsageLine(DomainModel):
     calls: NonNegativeInt = 0
     usage: Usage = Usage()
     cost: NonNegativeFloat = 0.0
+
+
+class ModelUsage(UsageLine):
+    """Consommation d'un modèle (``name`` : son identifiant dans la config)."""
+
+    # Nom chez le fournisseur ; égal à ``name`` pour un journal antérieur, qui
+    # n'a pas l'identifiant de la config.
+    model_id: str
 
 
 class RunUsage(UsageLine):
@@ -54,7 +64,7 @@ class UsageReport(DomainModel):
     total: UsageLine
     runs: tuple[RunUsage, ...] = ()
     roles: tuple[UsageLine, ...] = ()
-    models: tuple[UsageLine, ...] = ()
+    models: tuple[ModelUsage, ...] = ()
 
 
 def usage_report(
@@ -92,14 +102,19 @@ def usage_report(
         total=_line("total", entries),
         runs=tuple(runs.values()),
         roles=_grouped(entries, role),
-        models=_grouped(entries, lambda e: e.model_id),
+        models=tuple(
+            ModelUsage(**_line(name, mine).model_dump(), model_id=mine[0].model_id)
+            for name, mine in _by(entries, lambda e: e.model_key).items()
+        ),
     )
 
 
 def render(report: UsageReport) -> list[str]:
     """Le rapport en lignes de texte, pour la CLI."""
     subject = f"run {report.run_id}" if report.run_id else f"session {report.session_id}"
-    width = max((len(line.name) for line in (*report.roles, *report.models)), default=10)
+    models = [(_model_label(line), line) for line in report.models]
+    labels = [line.name for line in report.roles] + [label for label, _ in models]
+    width = max((len(label) for label in labels), default=10)
     lines = [f"Consommation — {subject}", f"  {_row('Total', report.total, width)}"]
     if len(report.runs) > 1 or report.run_id is None:
         lines.append("  Par run :")
@@ -111,8 +126,13 @@ def render(report: UsageReport) -> list[str]:
     lines.append("  Par rôle :")
     lines += [f"    {_row(line.name, line, width)}" for line in report.roles]
     lines.append("  Par modèle :")
-    lines += [f"    {_row(line.name, line, width)}" for line in report.models]
+    lines += [f"    {_row(label, line, width)}" for label, line in models]
     return lines
+
+
+def _model_label(line: ModelUsage) -> str:
+    """``HAIKU (claude-haiku-5-5)`` ; le nom seul quand le journal n'avait pas l'identifiant."""
+    return line.name if line.name == line.model_id else f"{line.name} ({line.model_id})"
 
 
 def _line(name: str, entries: Iterable[LedgerEntry]) -> UsageLine:

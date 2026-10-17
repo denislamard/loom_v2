@@ -4,7 +4,8 @@
 Projection des ``model.responded`` du journal : chaque appel de modèle
 (orchestrateur, rôle, juge, sous-agent) avec son run, son agent, son rôle
 (celui de l'enveloppe : ``main``, le nom du rôle, ``judge:<nom>``), son
-modèle, son usage et son coût. La consommation d'un sous-agent recopiée dans
+modèle — son identifiant dans la config et son nom chez le fournisseur —, son
+usage et son coût. La consommation d'un sous-agent recopiée dans
 le ``tool.completed`` de son appel n'y entre pas : ses appels y sont déjà,
 dans son propre run.
 
@@ -34,7 +35,10 @@ class LedgerEntry:
     agent: str
     # ``main``, le nom d'un rôle, ou ``judge:<nom>``.
     role: str
+    # Nom du modèle chez le fournisseur (``claude-haiku-5-5``).
     model_id: str
+    # Identifiant du modèle dans la config (``HAIKU``) ; None pour un journal antérieur.
+    model: str | None
     provider: str
     usage: Usage
     cost: float
@@ -45,6 +49,11 @@ class LedgerEntry:
     @property
     def spent(self) -> Spent:
         return Spent(self.usage, self.cost, 1)
+
+    @property
+    def model_key(self) -> str:
+        """Modèle de l'appel : son id dans la config, sinon son nom chez le fournisseur."""
+        return self.model if self.model is not None else self.model_id
 
 
 def ledger(events: Iterable[Event]) -> tuple[LedgerEntry, ...]:
@@ -60,6 +69,7 @@ def ledger(events: Iterable[Event]) -> tuple[LedgerEntry, ...]:
             agent=event.agent or "",
             role=event.role or MAIN_ROLE,
             model_id=payload.model_id,
+            model=payload.model,
             provider=payload.provider,
             usage=payload.usage,
             cost=payload.cost_usd,

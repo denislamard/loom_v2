@@ -125,6 +125,7 @@ class RunJournal:
         usage: Usage | None = None,
         cost_usd: float = 0.0,
         model_id: str = "fake-model",
+        model: str | None = None,
     ) -> Self:
         """Appel du modèle ; passe en attente d'outils s'il en demande."""
         usage = usage or Usage()
@@ -133,6 +134,7 @@ class RunJournal:
         self._add(
             ModelResponded(
                 model_id=model_id,
+                model=model,
                 provider="fake",
                 message=message,
                 usage=usage,

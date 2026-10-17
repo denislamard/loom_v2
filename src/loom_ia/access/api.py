@@ -489,7 +489,10 @@ class JudgeVerdict(DomainModel):
     target: str
     # Appel du rôle jugé (``tool.called``) ; None pour la réponse finale.
     call_id: str | None = None
+    # Nom du modèle du juge chez le fournisseur.
     model_id: str
+    # Identifiant de ce modèle dans la config ; None pour un journal antérieur.
+    model: str | None = None
     # Tous les critères atteignent leur seuil.
     passed: bool
     # Un critère bloquant est sous son seuil : la sortie a été refusée.
@@ -512,6 +515,7 @@ class JudgeVerdict(DomainModel):
             target=verdict.target,
             call_id=verdict.call_id,
             model_id=verdict.model_id,
+            model=verdict.model,
             passed=verdict.passed,
             blocked=verdict.blocked,
             attempt=verdict.attempt,

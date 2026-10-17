@@ -84,12 +84,14 @@ def exchanged(
     model_id: str,
     provider: str,
     max_bytes: int,
+    model: str | None = None,
 ) -> ModelExchanged:
     """L'événement d'un échange : secrets et fichiers retirés, corps bornés."""
     request, request_bytes, request_sha, request_cut = _body(raw.request_body, max_bytes)
     response, response_bytes, response_sha, response_cut = _body(raw.response_body, max_bytes)
     return ModelExchanged(
         model_id=model_id,
+        model=model,
         provider=provider,
         attempt=attempt,
         method=raw.method,

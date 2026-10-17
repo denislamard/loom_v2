@@ -114,8 +114,11 @@ def _head(span: TraceSpan) -> str:
             said = f"étape {a.get('loom.step', span.name.removeprefix('step '))}"
         case "chat":
             role = a.get("loom.role", "main")
+            model = a.get("gen_ai.request.model", "?")
+            if "loom.model.id" in a and a["loom.model.id"] != model:
+                model = f"{a['loom.model.id']} ({model})"
             said = (
-                f"modèle {a.get('gen_ai.request.model', '?')} ({role}) — "
+                f"modèle {model} ({role}) — "
                 f"{_duration(span.duration_ms)}, {_tokens(a)}, "
                 f"{_cost(a.get('loom.cost_usd', 0))}"
             )

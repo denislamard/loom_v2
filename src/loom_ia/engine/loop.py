@@ -1961,7 +1961,7 @@ def _log_call(event: Event, payload: ModelResponded | ToolCompleted) -> None:
             return
     logger.info(
         "Modèle %s (%s) : %.2f s, %d tokens, %.5f $",
-        payload.model_id,
+        payload.model or payload.model_id,
         who,
         payload.latency_ms / 1000,
         payload.usage.total_tokens,

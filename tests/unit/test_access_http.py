@@ -650,6 +650,7 @@ async def test_the_listing_routes_are_documented(demo: ConfigFactory) -> None:
         "role",
         "tool_name",
         "model_id",
+        "model",
         "since",
         "until",
         "after",

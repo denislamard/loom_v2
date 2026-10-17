@@ -126,11 +126,7 @@ def _conditions(query: EventQuery) -> _Conditions:
     ):
         if choices:
             found.add(f"{column} = ANY(${{n}}::text[])", list(choices))
-    facets: dict[str, Any] = dict(query.facets)
-    if query.tool_name is not None:
-        facets["tool_name"] = query.tool_name
-    if query.model_id is not None:
-        facets["model_id"] = query.model_id
+    facets = query.wanted_facets()
     if facets:
         # Contenance : la facette est présente **et** vaut cette valeur.
         found.add("facets @> ${n}::jsonb", json.dumps(facets, ensure_ascii=False))

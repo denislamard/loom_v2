@@ -186,6 +186,27 @@ async def test_query_filters_and_paginates(store: EventStore) -> None:
     assert [e.event_id for e in page + rest] == sorted(e.event_id for e in page + rest)
 
 
+async def test_query_by_the_model_of_the_config(store: EventStore) -> None:
+    """Deux déclarations d'un même modèle du fournisseur se cherchent chacune par son id."""
+    sessions = {SessionId("a"): "MAIN", SessionId("b"): "BIS", SessionId("c"): None}
+    for session, model in sessions.items():
+        journal = RunJournal(session_id=session)
+        journal.start("Bonjour")
+        # Un journal antérieur (``c``) n'a pas l'identifiant de la config.
+        journal.model_turn(Message.assistant("Bonjour."), model_id="fake-1", model=model)
+        journal.complete()
+        await store.append(journal.take(), expected_seq=0)
+
+    by_id = await store.query(EventQuery(tenant_id=DEFAULT_TENANT, model="BIS"))
+    assert [(e.type, e.session_id) for e in by_id] == [("model.responded", "b")]
+    assert by_id[0].facets["model"] == "BIS"
+    by_name = await store.query(EventQuery(tenant_id=DEFAULT_TENANT, model_id="fake-1"))
+    assert sorted(e.session_id for e in by_name) == ["a", "b", "c"]
+    # Absente quand le journal ne la connaît pas : un ancien événement garde ses facettes.
+    [old] = [e for e in by_name if e.session_id == "c"]
+    assert "model" not in old.facets
+
+
 async def test_after_follows_the_order_of_writing_not_the_order_of_ids(store: EventStore) -> None:
     """Un suiveur qui reprend après le dernier événement vu ne perd rien.
 

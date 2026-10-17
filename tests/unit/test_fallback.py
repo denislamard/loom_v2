@@ -17,7 +17,9 @@ from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
     CircuitOpened,
     Event,
+    EventQuery,
     JudgeEvaluated,
+    ModelExchanged,
     ModelFellBack,
     ModelResponded,
     ModelRetried,
@@ -54,8 +56,10 @@ from loom_ia.engine import (
     drive,
 )
 from loom_ia.runtime import build_agent
-from loom_ia.testing import ScriptedModel, tool_call_message
+from loom_ia.telemetry.inspect import render_trace
+from loom_ia.testing import RunJournal, ScriptedModel, tool_call_message
 from loom_ia.tools import tool
+from loom_ia.usage import render, usage_report
 
 DOWN = ModelError("overloaded", "surchargé", http_status=529)
 REQUEST = ModelRequest(model_id="a", messages=(Message.user("Bonjour"),))
@@ -752,3 +756,96 @@ def test_warnings_when_mounting(demo: ConfigFactory, caplog: pytest.LogCaptureFi
         "Agent 'demo' : le secours SMALL a une fenêtre de contexte plus petite que FAKE "
         "(32000 < 200000 tokens)" in messages
     )
+
+
+# --- Identifiant du modèle dans la config ----------------------------------------------
+
+# Même modèle chez le fournisseur que ``FAKE`` (``fake-1``), déclaré sous un autre id.
+TWIN_DOWN: dict[str, Any] = {
+    "id": "DOWN",
+    "sdk": "fake",
+    "model": "fake-1",
+    "params": {"script": [{"error": "overloaded"}]},
+    "retry": {"max_attempts": 2, "initial_delay": 0},
+}
+
+
+async def test_events_name_the_model_of_the_config(
+    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Deux déclarations du même modèle du fournisseur : le journal dit laquelle a servi."""
+    path = demo(
+        models=[MODEL, TWIN_DOWN],
+        telemetry={"capture": {"raw_exchanges": True}},
+        agents=[
+            demo_agent(main={"model": "DOWN", "fallbacks": ["FAKE"], "system": "Tu calcules."})
+        ],
+    )
+    async with Loom.from_config(path) as loom:
+        with caplog.at_level(logging.INFO, logger="loom_ia.engine.loop"):
+            result = await loom.run("demo", QUESTION)
+        events = await loom.events(result.run_id)
+        trace = await loom.trace(result.run_id)
+    assert result.text == ANSWER
+
+    retried = [(p.model_id, p.model) for e in events if isinstance(p := e.payload, ModelRetried)]
+    exchanged = [
+        (p.model_id, p.model) for e in events if isinstance(p := e.payload, ModelExchanged)
+    ]
+    responded = [
+        (p.model_id, p.model) for e in events if isinstance(p := e.payload, ModelResponded)
+    ]
+    assert retried == [("fake-1", "DOWN")]
+    assert exchanged == [("fake-1", "DOWN")] * 2 + [("fake-1", "FAKE")] * 2
+    assert responded == [("fake-1", "FAKE")] * 2
+    first = next(e for e in events if isinstance(e.payload, ModelRetried))
+    assert first.facets["model"] == "DOWN"
+    # Les logs, la trace et ``loom inspect`` nomment l'id ; ``gen_ai.*`` garde le fournisseur.
+    logged = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Modèle ")]
+    assert logged and all(line.startswith("Modèle FAKE (rôle main)") for line in logged)
+    chats = [s for s in trace.spans if s.kind == "chat"]
+    assert {
+        (s.attributes["loom.model.id"], s.attributes["gen_ai.request.model"]) for s in chats
+    } == {("FAKE", "fake-1")}
+    assert any("modèle FAKE (fake-1) (main)" in line for line in render_trace(trace))
+
+
+async def test_the_report_separates_two_declarations_of_a_model(demo: ConfigFactory) -> None:
+    twin = {**MODEL, "id": "BIS"}
+    path = demo(
+        models=[MODEL, twin],
+        agents=[
+            demo_agent(),
+            demo_agent(name="bis", main={"model": "BIS", "system": "Tu calcules."}),
+        ],
+    )
+    session = SessionId("deux-modeles")
+    async with Loom.from_config(path) as loom:
+        await loom.run("demo", QUESTION, session_id=session)
+        await loom.run("bis", QUESTION, session_id=session)
+        report = await loom.report(session_id=session)
+        found = await loom.query(
+            EventQuery(tenant_id=DEFAULT_TENANT, session_id=session, model="BIS")
+        )
+    assert [(m.name, m.model_id, m.calls) for m in report.models] == [
+        ("FAKE", "fake-1", 2),
+        ("BIS", "fake-1", 2),
+    ]
+    shown = render(report)
+    assert any(line.lstrip().startswith("FAKE (fake-1)") for line in shown)
+    assert any(line.lstrip().startswith("BIS (fake-1)") for line in shown)
+    assert {e.agent for e in found} == {"bis"}
+
+
+async def test_an_older_journal_reports_by_the_provider_name() -> None:
+    """Sans l'id de la config, le rapport retombe sur le nom chez le fournisseur."""
+    journal = RunJournal(agent="demo")
+    journal.start(QUESTION)
+    journal.model_turn(Message.assistant(ANSWER), model_id="fake-1")
+    journal.complete()
+    store = InMemoryEventStore()
+    events = await store.append(journal.take(), expected_seq=0)
+    report = usage_report(events, events[0].session_id)
+    assert [(m.name, m.model_id) for m in report.models] == [("fake-1", "fake-1")]
+    assert any(line.strip().startswith("fake-1 ") for line in render(report))
+    assert not any("fake-1 (fake-1)" in line for line in render(report))

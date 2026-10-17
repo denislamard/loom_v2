@@ -39,7 +39,10 @@ class EventQuery(DomainModel):
     agent: str | None = None
     role: str | None = None
     tool_name: str | None = None
+    # Nom du modèle chez le fournisseur (``claude-haiku-5-5``).
     model_id: str | None = None
+    # Identifiant du modèle dans la config (``HAIKU``) : absent des journaux antérieurs.
+    model: str | None = None
     # Égalité sur n'importe quelle facette.
     facets: dict[str, FacetValue] = Field(default_factory=dict)
     since: AwareDatetime | None = None
@@ -63,14 +66,20 @@ class EventQuery(DomainModel):
         )
         if not all(checks):
             return False
-        wanted = dict(self.facets)
-        if self.tool_name is not None:
-            wanted["tool_name"] = self.tool_name
-        if self.model_id is not None:
-            wanted["model_id"] = self.model_id
+        wanted = self.wanted_facets()
         return all(
             name in event.facets and event.facets[name] == value for name, value in wanted.items()
         )
+
+    def wanted_facets(self) -> dict[str, FacetValue]:
+        """Facettes exigées : ``facets``, plus celles que nomment ``tool_name``, ``model_id``
+        et ``model``. Les magasins SQL les traduisent dans leur requête."""
+        wanted = dict(self.facets)
+        for name in ("tool_name", "model_id", "model"):
+            value: str | None = getattr(self, name)
+            if value is not None:
+                wanted[name] = value
+        return wanted
 
     def refine(self, events: list[Event]) -> list[Event]:
         """Rejoue les critères sur des événements qu'un magasin a déjà ordonnés.

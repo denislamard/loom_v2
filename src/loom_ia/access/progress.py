@@ -132,7 +132,8 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
         case GuardChecked():
             return f"contrôle {payload.guard} {payload.target} : ignoré — {payload.reason}"
         case JudgeEvaluated():
-            return f"juge {payload.judge} ({payload.model_id}) : {notes(payload.criteria)}"
+            model = payload.model or payload.model_id
+            return f"juge {payload.judge} ({model}) : {notes(payload.criteria)}"
         case ModelFellBack(reason="circuit_open"):
             return (
                 f"secours {payload.slot} : {payload.from_model} → {payload.to_model} — "

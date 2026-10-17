@@ -116,12 +116,7 @@ def _conditions(query: EventQuery) -> tuple[str, list[Any]]:
         if choices:
             clauses.append(f"{column} IN ({', '.join('?' * len(choices))})")
             values.extend(choices)
-    facets = dict(query.facets)
-    if query.tool_name is not None:
-        facets["tool_name"] = query.tool_name
-    if query.model_id is not None:
-        facets["model_id"] = query.model_id
-    for name, value in facets.items():
+    for name, value in query.wanted_facets().items():
         clauses.append("json_extract(facets, ?) IS ?")
         values.extend([f"$.{name}", value])
     if query.since is not None:

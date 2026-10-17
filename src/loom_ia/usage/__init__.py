@@ -6,11 +6,19 @@ package y ajoute la politique fournie ``loom.budget`` et le rapport.
 """
 
 from loom_ia.usage.budget import BUDGET_POLICY, BudgetGuard, amount, describe
-from loom_ia.usage.report import RunUsage, UsageLine, UsageReport, render, usage_report
+from loom_ia.usage.report import (
+    ModelUsage,
+    RunUsage,
+    UsageLine,
+    UsageReport,
+    render,
+    usage_report,
+)
 
 __all__ = [
     "BUDGET_POLICY",
     "BudgetGuard",
+    "ModelUsage",
     "RunUsage",
     "UsageLine",
     "UsageReport",

@@ -76,7 +76,7 @@ async def test_a_judged_answer_by_the_python_access(demo: ConfigFactory) -> None
     progress = Progress()
     lines = [line for e in events if (line := progress.line(e)) is not None]
     assert lines[-2:] == [
-        "· juge output (judge-1) : exact 1,00, bref 1,00",
+        "· juge output (JUDGE) : exact 1,00, bref 1,00",
         "· contrôle judge output : conforme",
     ]
 

@@ -280,6 +280,9 @@ def _chat(event: Event, content: bool, redactor: Redactor | None) -> SpanRecord:
         "loom.request_hash": payload.request_hash,
         **_usage(payload.usage),
     }
+    if payload.model is not None:
+        # Identifiant dans la config : ``gen_ai.*`` garde le nom chez le fournisseur.
+        attributes["loom.model.id"] = payload.model
     if payload.judge is not None:
         attributes["loom.judge"] = payload.judge
     if payload.call_id is not None:

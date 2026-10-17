@@ -122,7 +122,11 @@ async def test_a_result_carries_its_breakdown_and_verdicts(demo: ConfigFactory) 
     assert report is not None and report.run_id == result.run_id
     assert report.total.cost == pytest.approx(result.cost_usd) and result.cost_usd > 0
     assert [line.name for line in report.roles] == ["main", "judge:output"]
-    assert [line.name for line in report.models] == ["fake-1", "judge-1"]
+    # Par identifiant dans la config, avec le nom chez le fournisseur à côté.
+    assert [(line.name, line.model_id) for line in report.models] == [
+        ("FAKE", "fake-1"),
+        ("JUDGE", "judge-1"),
+    ]
     [seen] = result.verdicts
     assert (seen.run_id, seen.agent, seen.judge, seen.target) == (
         result.run_id,

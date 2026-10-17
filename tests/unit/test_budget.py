@@ -347,7 +347,8 @@ async def test_the_ledger_counts_each_call_once(store: EventStore) -> None:
         ("verificateur", 1, 1, "completed"),
     ]
     assert [line.name for line in report.roles] == ["demo · main", "verificateur · main"]
-    assert [(m.name, m.calls) for m in report.models] == [("main-1", 2), ("child-1", 1)]
+    assert [(m.name, m.calls) for m in report.models] == [("MAIN", 2), ("CHILD", 1)]
+    assert [m.model_id for m in report.models] == ["main-1", "child-1"]
     lines = render(report)
     assert lines[0] == f"Consommation — run {state.run_id}"
     assert lines[1].startswith("  Total") and lines[1].endswith("0,00450 $")

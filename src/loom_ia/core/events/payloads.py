@@ -366,6 +366,10 @@ class ModelResponded(Payload):
     content_fields: ClassVar[tuple[str, ...]] = ("message",)
     type: Literal["model.responded"] = "model.responded"
     model_id: str
+    # Identifiant du modèle dans la config (``models[].id``) ; ``model_id`` est son
+    # nom chez le fournisseur, que deux déclarations peuvent partager. Absent des
+    # journaux antérieurs.
+    model: str | None = None
     provider: str
     message: Message
     usage: Usage = Usage()
@@ -391,6 +395,8 @@ class ModelResponded(Payload):
 
     def facets(self) -> dict[str, FacetValue]:
         facets: dict[str, FacetValue] = {**super().facets(), "tokens": self.usage.total_tokens}
+        if self.model is not None:
+            facets["model"] = self.model
         if self.judge is not None:
             facets["judge"] = self.judge
         return facets
@@ -405,6 +411,10 @@ class ModelRetried(Payload):
     content_fields: ClassVar[tuple[str, ...]] = ("error",)
     type: Literal["model.retried"] = "model.retried"
     model_id: str
+    # Identifiant du modèle dans la config (``models[].id``) ; ``model_id`` est son
+    # nom chez le fournisseur, que deux déclarations peuvent partager. Absent des
+    # journaux antérieurs.
+    model: str | None = None
     provider: str
     # Numéro de la tentative qui a échoué.
     attempt: PositiveInt
@@ -424,6 +434,8 @@ class ModelRetried(Payload):
 
     def facets(self) -> dict[str, FacetValue]:
         facets = super().facets()
+        if self.model is not None:
+            facets["model"] = self.model
         if self.judge is not None:
             facets["judge"] = self.judge
         return facets
@@ -471,6 +483,10 @@ class ModelExchanged(Payload):
     export_content: ClassVar[bool] = False
     type: Literal["model.exchanged"] = "model.exchanged"
     model_id: str
+    # Identifiant du modèle dans la config (``models[].id``) ; ``model_id`` est son
+    # nom chez le fournisseur, que deux déclarations peuvent partager. Absent des
+    # journaux antérieurs.
+    model: str | None = None
     provider: str
     # Tentative de l'appel à laquelle appartient cet échange.
     attempt: PositiveInt
@@ -505,6 +521,8 @@ class ModelExchanged(Payload):
 
     def facets(self) -> dict[str, FacetValue]:
         facets = super().facets()
+        if self.model is not None:
+            facets["model"] = self.model
         if self.synthetic:
             facets["synthetic"] = True
         if self.judge is not None:
@@ -801,6 +819,10 @@ class JudgeEvaluated(Payload):
     # ``output`` (réponse finale) ou ``role:<nom>``.
     target: str
     model_id: str
+    # Identifiant du modèle dans la config (``models[].id``) ; ``model_id`` est son
+    # nom chez le fournisseur, que deux déclarations peuvent partager. Absent des
+    # journaux antérieurs.
+    model: str | None = None
     criteria: tuple[CriterionScore, ...] = Field(min_length=1)
     # Tous les critères atteignent leur seuil.
     passed: bool
@@ -821,6 +843,12 @@ class JudgeEvaluated(Payload):
     @property
     def event_status(self) -> EventStatus:
         return "ok" if self.passed else "warning"
+
+    def facets(self) -> dict[str, FacetValue]:
+        facets = super().facets()
+        if self.model is not None:
+            facets["model"] = self.model
+        return facets
 
 
 # --- Approbations ------------------------------------------------------------

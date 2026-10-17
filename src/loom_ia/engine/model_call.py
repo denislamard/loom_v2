@@ -77,6 +77,7 @@ def responded(
     """Événement d'une réponse obtenue ; ``message`` remplace celui de la réponse."""
     return ModelResponded(
         model_id=response.model_id,
+        model=spec.id,
         provider=response.provider,
         message=message if message is not None else response.message,
         usage=response.usage,
@@ -173,6 +174,7 @@ class ModelCall:
             )
             yield ModelRetried(
                 model_id=request.model_id,
+                model=self.spec.id,
                 provider=self.client.provider,
                 attempt=attempt,
                 error_kind=failure.kind,
@@ -197,6 +199,7 @@ class ModelCall:
                 raw,
                 attempt=attempt,
                 model_id=request.model_id,
+                model=self.spec.id,
                 provider=self.client.provider,
                 max_bytes=self.raw_max_bytes,
             )

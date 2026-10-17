@@ -430,7 +430,7 @@ async def test_a_non_blocking_failure_is_only_reported(store: EventStore) -> Non
     assert passed.outcome == "passed"
     assert passed.reason == "non bloquant : ton (0,10 < 0,50) : motif ton"
     line = describe(next(e for e in events if isinstance(e.payload, JudgeEvaluated)))
-    assert line == "juge output (judge-1) : exact 0,90, ton 0,10 (seuil 0,50)"
+    assert line == "juge output (JUDGE) : exact 0,90, ton 0,10 (seuil 0,50)"
 
 
 # --- Déclenchement ----------------------------------------------------------------------
