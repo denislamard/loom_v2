@@ -891,13 +891,18 @@ class ApprovalRequested(Payload):
     def event_status(self) -> EventStatus:
         return "warning"
 
-    def as_pending(self) -> PendingApproval:
-        """La demande telle qu'elle attend, dans l'état du run ou devant l'approbateur."""
+    def as_pending(self, run_id: RunId | None = None) -> PendingApproval:
+        """La demande telle qu'elle attend, dans l'état du run ou devant l'approbateur.
+
+        ``run_id`` : le run qui l'a écrite. L'événement ne le porte pas dans
+        son payload (il est dans l'enveloppe) ; qui le lit le donne.
+        """
         return PendingApproval(
             call_id=self.call_id,
             tool_name=self.tool_name,
             arguments=self.arguments,
             reason=self.reason,
+            run_id=run_id,
             policy=self.policy,
             scope=self.scope,
             expire_at=self.expire_at,

@@ -2,6 +2,7 @@
 """Approbations (J4.3a) : pause, accord, refus, expiration, approbateur en ligne."""
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
@@ -12,6 +13,7 @@ import pytest
 import yaml
 
 from loom_ia.access.api import Loom, RunResult, UnknownApproval
+from loom_ia.access.cli import main
 from loom_ia.access.evals import received_arguments
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
@@ -860,6 +862,78 @@ def test_approving_on_the_root_resumes_the_whole_tree(delegue: ConfigFactory) ->
     # L'enfant est repris, pas relancé : deux runs en tout, et l'appel délégant rejoué.
     assert runs == 2
     assert appels == [("secretaire", False), ("secretaire", True), ("envoyer_email", False)]
+
+
+def test_each_pending_approval_names_its_run(delegue: ConfigFactory) -> None:
+    """Le résultat de la racine rend la demande du sous-run : elle dit de quel run elle vient."""
+
+    async def go() -> tuple[str, str | None, str | None, tuple[str | None, ...]]:
+        async with Loom.from_config(delegue()) as loom:
+            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            info = await loom.session(SESSION)
+        enfant = next(r.run_id for r in info.runs if r.parent_run_id == result.run_id)
+        [asked] = result.pending_approvals
+        return (
+            enfant,
+            asked.run_id,
+            next(r.parent_run_id for r in info.runs if r.run_id == enfant),
+            tuple(a.run_id for a in info.pending_approvals),
+        )
+
+    enfant, demandeur, parent, fiche = asyncio.run(go())
+    assert demandeur == enfant and parent is not None
+    assert fiche == (enfant,)
+
+
+def test_sessions_show_lists_runs_and_what_awaits(
+    delegue: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """La commande à lancer vise la racine : c'est elle qui repart."""
+    path = delegue()
+
+    async def go() -> str:
+        async with Loom.from_config(path) as loom:
+            return (await loom.run("demo", DEMANDE, session_id=SESSION)).run_id
+
+    racine = asyncio.run(go())
+    capsys.readouterr()
+    assert main(["--config", str(path), "sessions", "show", SESSION]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith(f"Session    : {SESSION} · ")
+    assert f"  {racine}  demo " in out and "paused" in out
+    assert "(sous-run de " in out
+    assert "envoyer_email (" in out and "expire le " in out
+    assert f"loom approve {racine} --call " in out and f"--session {SESSION}" in out
+    # Les arguments de l'appel ne s'affichent pas.
+    assert "mme.martin@example.com" not in out
+
+    assert main(["--config", str(path), "sessions", "show", SESSION, "--json"]) == 0
+    fiche = json.loads(capsys.readouterr().out)
+    assert [a["tool_name"] for a in fiche["pending_approvals"]] == ["envoyer_email"]
+    assert fiche["pending_approvals"][0]["run_id"] != racine
+
+
+def test_sessions_show_without_anything_to_decide(
+    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = atelier(approval=None)
+
+    async def go() -> None:
+        async with Loom.from_config(path) as loom:
+            await loom.run("demo", DEMANDE, session_id=SESSION)
+
+    asyncio.run(go())
+    capsys.readouterr()
+    assert main(["--config", str(path), "sessions", "show", SESSION]) == 0
+    out = capsys.readouterr().out
+    assert "completed" in out and out.rstrip().endswith("En attente : rien")
+
+
+def test_sessions_show_an_unknown_session(
+    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--config", str(atelier()), "sessions", "show", "inconnue"]) == 1
+    assert "inconnue" in capsys.readouterr().err
 
 
 def test_a_closed_root_awaits_nothing_from_the_subrun_it_left_paused(

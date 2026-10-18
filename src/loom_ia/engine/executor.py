@@ -686,7 +686,7 @@ class ToolExecutor:
             # décision sont journalisées quand même — c'est le seul endroit où
             # l'on saura qui a validé quoi (#17).
             yield request
-            decided = await approver(request.as_pending())
+            decided = await approver(request.as_pending(state.run_id))
             yield _decision(request, decided)
             if isinstance(decided, Rejected):
                 text = _refused(request.tool_name, "rejected", decided.reason)
@@ -780,7 +780,7 @@ class ToolExecutor:
             # son lot est fini. Accordé, il repartira au tour suivant, avec
             # la décision au journal ; refusé, il se conclut en erreur.
             yield request
-            decided = await approver(request.as_pending())
+            decided = await approver(request.as_pending(state.run_id))
             yield _decision(request, decided)
             if isinstance(decided, Rejected):
                 text = _refused(request.tool_name, "rejected", decided.reason)

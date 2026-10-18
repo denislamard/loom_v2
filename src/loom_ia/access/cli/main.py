@@ -57,6 +57,7 @@ from loom_ia.access.api import (
     RetentionReport,
     RunResult,
     SessionDeletion,
+    SessionInfo,
     StreamItem,
     TenantConsumption,
     UnknownApproval,
@@ -522,6 +523,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     listing.add_argument("--json", action="store_true", help="affiche la liste en JSON")
     listing.set_defaults(handler=cmd_sessions_list)
+
+    show = tenanted(
+        session_actions.add_parser(
+            "show", help="fiche d'une session : ses runs, et les approbations en attente"
+        )
+    )
+    show.add_argument("session_id")
+    show.add_argument("--json", action="store_true", help="affiche la fiche en JSON")
+    show.set_defaults(handler=cmd_sessions_show)
 
     export = tenanted(
         session_actions.add_parser("export", help="écrit les événements d'une session en JSONL")
@@ -1461,6 +1471,65 @@ def cmd_sessions_list(args: argparse.Namespace) -> int:
     for record in records:
         moment = record.updated_at.astimezone().strftime("%Y-%m-%d %H:%M")
         _say(f"{record.session_id:<24} {record.last_seq:>6} événements   {moment}")
+    return OK
+
+
+def cmd_sessions_show(args: argparse.Namespace) -> int:
+    """Fiche d'une session : ce qu'un approbateur doit voir en revenant.
+
+    Les runs, avec leur statut, et chaque approbation en attente avec la
+    commande qui la tranche. Les arguments des appels ne sont pas affichés —
+    ils peuvent être longs ou sensibles — mais ``--json`` donne la fiche
+    entière, ``SessionInfo`` tel que l'API le rend.
+    """
+    config = _config(args)
+    apply_logging(config)
+    session = SessionId(args.session_id)
+
+    async def go() -> SessionInfo:
+        async with Loom(config) as loom:
+            return await loom.session(session, tenant_id=_tenant(args))
+
+    try:
+        info = asyncio.run(go())
+    except UnknownSession as error:
+        print(error.args[0], file=sys.stderr)
+        return FAILED
+    if args.json:
+        print(info.model_dump_json(indent=2))
+        return OK
+    moment = info.updated_at.astimezone().strftime("%Y-%m-%d %H:%M")
+    _say(f"Session    : {info.session_id} · {info.last_seq} événements · {moment}")
+    _say("Runs       :")
+    for run in info.runs:
+        child = f"   (sous-run de {run.parent_run_id})" if run.parent_run_id else ""
+        _say(
+            f"  {run.run_id}  {run.agent:<12} {run.status:<15} "
+            f"{run.iterations:>3} itération(s)  {run.cost_usd:.4f} ${child}"
+        )
+    if not info.pending_approvals:
+        _say("En attente : rien")
+        return OK
+    _say("En attente :")
+    parents = {run.run_id: run.parent_run_id for run in info.runs}
+    tenant = f" --tenant {args.tenant}" if args.tenant else ""
+    for asked in info.pending_approvals:
+        holder = asked.run_id
+        expiry = (
+            f"expire le {asked.expire_at.astimezone().strftime('%d/%m %H:%M')}"
+            if asked.expire_at is not None
+            else "sans échéance"
+        )
+        _say(f"  {asked.tool_name} ({asked.call_id}) — run {holder}, {expiry}")
+        # La décision se prend sur la racine : c'est elle qui repart et rejoue
+        # l'appel qui mène au sous-run en attente.
+        root = holder
+        while root is not None and parents.get(root) is not None:
+            root = parents[root]
+        target = root or "<run_id>"
+        _say(
+            f"    loom approve {target} --call {asked.call_id} --session {info.session_id}{tenant}"
+        )
     return OK
 
 

@@ -114,6 +114,11 @@ class PendingApproval(DomainModel):
     tool_name: str
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
     reason: str = ""
+    # Run qui a posé la demande : le run lui-même, ou le sous-run d'un
+    # sous-agent. Une liste d'approbations (fiche de session, résultat d'un run
+    # et de ses sous-runs) en mêle plusieurs ; sans lui, on ne saurait de quel
+    # run elle vient. ``approve`` se fait sur la racine de ce run.
+    run_id: RunId | None = None
     # Politique qui l'a exigée ; absente pour un outil en ``approval: always``.
     policy: str | None = None
     scope: str = "approve"

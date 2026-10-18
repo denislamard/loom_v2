@@ -259,7 +259,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
         case RunClaimed(worker_id=worker, lease_until=until):
             update["claim"] = RunClaim(worker_id=worker, lease_until=until)
         case ApprovalRequested() as asked:
-            update["approvals"] = (*state.approvals, asked.as_pending())
+            update["approvals"] = (*state.approvals, asked.as_pending(state.run_id))
         case ApprovalGranted(call_id=call_id) as granted:
             corriges = granted.arguments
             if corriges is not None:
