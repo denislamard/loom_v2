@@ -19,7 +19,7 @@ from loom_ia.access.cli import main
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.loader import PROFILE_ENV, chosen_profile
 from loom_ia.core.model import JudgeWhen
-from loom_ia.runtime import storage_warnings
+from loom_ia.runtime import model_warnings, storage_warnings
 
 CRITERES: list[dict[str, Any]] = [{"name": "fidele", "rule": "Rien d'inventé."}]
 # Un juge dont le modèle est celui de la sortie qu'il évalue : avertissement
@@ -302,3 +302,50 @@ def test_validate_says_which_profile_applies(
     assert main(["--config", str(demo()), "validate"]) == 0
     aucun = capsys.readouterr().out
     assert "Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')" in aucun
+
+
+# --- Capacités à déclarer -----------------------------------------------------
+
+VOIT: dict[str, Any] = {
+    "id": "VOIT",
+    "sdk": "anthropic",
+    "model": "claude-haiku-5-5",
+    "api_key_env": "CLE_ESSAI",
+    "capabilities": {"vision": True},
+}
+
+
+def test_an_official_anthropic_model_with_vision_is_told_about_tool_result_media(
+    demo: ConfigFactory,
+) -> None:
+    """Constaté au test D8 du 18/10 : sans la capacité, l'image d'un outil part à part."""
+    compatible = {**VOIT, "id": "COMPATIBLE", "base_url": "https://api.minimax.io/anthropic"}
+    declare = {
+        **VOIT,
+        "id": "DECLARE",
+        "capabilities": {"vision": True, "tool_result_media": True},
+    }
+    aveugle: dict[str, Any] = {**VOIT, "id": "AVEUGLE", "capabilities": {}}
+    config = load_config(demo(models=[MODEL, VOIT, compatible, declare, aveugle]))
+    [warning] = model_warnings(config)
+    # Ni un fournisseur compatible (le protocole ne dit pas ce qu'il accepte), ni
+    # un modèle qui l'a déclaré, ni un modèle sans vision.
+    assert warning.startswith("Modèle 'VOIT' : sdk anthropic avec vision")
+    assert "tool_result_media: true" in warning
+
+
+async def test_the_capability_warning_does_not_stop_prod(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("CLE_ESSAI", "sk-essai")
+    path = demo(models=[MODEL, VOIT], security={"api_keys": []})
+    async with Loom.from_config(path, profile="prod"):
+        pass
+    assert any("tool_result_media" in r.getMessage() for r in caplog.records)
+
+
+def test_validate_shows_the_capability_warning(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--config", str(demo(models=[MODEL, VOIT])), "validate", "--no-keys"]) == 0
+    assert "Modèle 'VOIT' : sdk anthropic avec vision" in capsys.readouterr().out

@@ -193,6 +193,7 @@ from loom_ia.runtime import (
     create_task_queue,
     encryption_warnings,
     load_registry,
+    model_warnings,
     storage_warnings,
 )
 from loom_ia.sessions import CompactionJob, CompactionPlan, write_snapshot
@@ -1097,6 +1098,8 @@ class Loom:
             self._exporting.enter_context(self._store.listen(self._exporter, own=True))
         # Profil prod : ce qui avertit ailleurs refuse ici (M4, 5.5a).
         announce(config, storage_warnings(config))
+        # Une capacité à déclarer n'empêche pas de partir, en prod non plus.
+        announce(config, model_warnings(config), refuse=False)
         # Le sceau, lui, avertit dans tous les profils : un client dont la clé a
         # été effacée est un état voulu, pas une config à corriger, et refuser
         # de démarrer arrêterait le service de tous les autres (5.5b).

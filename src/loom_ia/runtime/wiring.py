@@ -1168,6 +1168,32 @@ def storage_warnings(config: LoomConfig) -> list[str]:
     return []
 
 
+def model_warnings(config: LoomConfig) -> list[str]:
+    """Ce qu'un modèle gagnerait à déclarer, et que loom ne peut pas deviner.
+
+    Un modèle ``sdk: anthropic`` sur l'API officielle (sans ``base_url``) qui
+    voit les images peut les recevoir **dans** le résultat d'un outil
+    (``tool_result_media: true``). Sans cette capacité, une image rendue par un
+    outil part dans un message utilisateur placé après les résultats, et le
+    modèle la prend pour une image envoyée par l'utilisateur (test D8 du 18/10).
+    Ce n'est pas un défaut que loom choisit seul : ``sdk: anthropic`` désigne
+    un protocole, que des fournisseurs compatibles (MiniMax…) reprennent sans
+    forcément accepter une image dans un résultat d'outil. Un avertissement
+    donc, dans tous les profils, et seulement pour l'adresse officielle.
+    """
+    return [
+        f"Modèle {spec.id!r} : sdk anthropic avec vision, mais sans "
+        "capabilities.tool_result_media — les images rendues par un outil partiront dans un "
+        "message utilisateur à part ; l'API Anthropic les accepte dans le résultat de l'outil "
+        "(déclarer tool_result_media: true)"
+        for spec in config.models
+        if spec.sdk == "anthropic"
+        and spec.base_url is None
+        and spec.capabilities.vision
+        and not spec.capabilities.tool_result_media
+    ]
+
+
 def encryption_warnings(config: LoomConfig, keyring: Keyring | None) -> list[str]:
     """Ce que le trousseau dit des clients déclarés (5.5b).
 

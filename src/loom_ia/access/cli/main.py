@@ -132,6 +132,7 @@ from loom_ia.runtime import (
     create_keyring,
     encryption_warnings,
     load_registry,
+    model_warnings,
     postgres_ddl,
     storage_warnings,
 )
@@ -660,6 +661,8 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Profil     : {_profile_line(config, args.profile)}")
     print(f"Env        : {env.describe()}")
     print(f"Modèles    : {_listed(spec.id for spec in config.models)}")
+    for warning in model_warnings(config):
+        print(f"    {warning}")
     if args.no_keys:
         # Les clients de modèle ne sont pas créés : ce que le montage aurait
         # vérifié d'eux — clé d'API présente, SDK installé — ne l'est pas.
