@@ -550,6 +550,21 @@ def test_run_says_what_a_paused_run_is_waiting_for(
     assert "En attente : envoyer_email" in erreur and "loom approve" in erreur
 
 
+def test_the_proposed_approve_command_names_its_session_and_tenant(
+    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Copiée telle quelle, la commande doit trouver le run (test D7 du 18/10)."""
+    path = str(atelier(tenants=[{"id": "default"}, {"id": "dupont"}]))
+    args = ["--config", path, "run", "demo", "Relance.", "--session", "s1", "--tenant", "dupont"]
+    assert main(args) == 1
+    erreur = capsys.readouterr().err
+    assert "--call " in erreur and erreur.rstrip().endswith("--session s1 --tenant dupont")
+    # Sans session ni client donnés, la commande n'en porte pas : le run est son journal.
+    assert main(["--config", path, "run", "demo", "Relance."]) == 1
+    seule = capsys.readouterr().err
+    assert "loom approve" in seule and "--session" not in seule and "--tenant" not in seule
+
+
 def test_approve_finishes_the_run_in_this_terminal(
     atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
 ) -> None:

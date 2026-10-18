@@ -306,9 +306,9 @@ Fonction décorée `@tool` dans un module de `imports:`, référencée `- python
 
 Serveurs MCP déclarés dans la config, branchés par `- mcp: <nom>` (`alias`, `include`/`exclude`, `required`) ; outils préfixés `<nom>__<outil>` ; reconnexion automatique ; portée `run` ou partagée.
 
-**Testée** : non
+**Testée** : en partie (18/10, CLI, sessions `session-D3a`, `session-D3b`) : stdio, découverte, préfixe, erreurs, `alias`, `required`, reconnexion oui ; transport HTTP, portées `tenant`/`run`, `idle_timeout` non éprouvés
 
-**Note** :
+**Note** : serveur `loom-fs-mcp` (FastMCP, stdio) déclaré `mcp_servers: [{name: fs, transport: stdio, command: …/.venv/bin/loom-fs-mcp, args: [--config, …/roots.toml]}]`. Les outils arrivent préfixés `fs__…`, avec la description et le schéma du serveur (`additionalProperties: false` ajouté) ; `tool_kind: mcp`. `fs__list_roots` rend les 5 racines. Trois appels dans le même lot (`list_roots`, `read_file` de `agent-01/loom.yaml`, `read_file` de `agent-01/.env`) : la lecture réussit, le `.env` revient en résultat d'erreur avec le message du serveur (« matches deny pattern '.env' »), le run continue et le modèle en rend compte. `alias: f` (`session-D3c`) : outils `f__…` ; l'ancienne référence `- mcp: fs` étant restée, le même serveur est exposé deux fois (`fs__…` et `f__…`, 8 outils), accepté sans avertissement, et le modèle appelle les deux `list_roots`. Serveur `casse` (`command: /bin/false`) : `required: false` → `tool.source_unavailable` (`error: BrokenResourceError`, peu parlant : ni code de sortie ni stderr) et le run se termine normalement ; `required: true` (`session-D3d`) → `run.failed`, « source casse requise et indisponible : Connection closed », code de sortie 1. Reconnexion sous `loom serve` (`session-D3e`) : après `pkill` du serveur MCP, log « Serveur MCP fs : contrôle de santé raté (ClosedResourceError()) » puis relance du serveur au run suivant ; les deux runs ont toutefois échoué sur `casse`, resté `required: true`. Reconnexion confirmée (`session-D3f`, `loom serve`, `casse` retiré) : run 1 réussi, `pkill` du serveur MCP, run 2 → `fs__read_file` de `agent-01/pyproject.toml` réussi sur la connexion rouverte (contrôle de santé raté, serveur relancé), réponse juste. Le double référencement `fs` / `f` était encore là (deux `list_roots` au run 1).
 
 ### D4 — Validation des arguments par schéma, erreur renvoyée au LLM
 
@@ -346,9 +346,9 @@ Au-delà de `offload_over` (20 000 caractères pour `fetch_page`), le résultat 
 
 Filtrage des outils par client (surcharges de tenant), par capacité du modèle, par `include`/`exclude` d'une source.
 
-**Testée** : non
+**Testée** : oui (18/10, CLI, sessions `session-D7a` à `session-D7e`, clients `default` et `dupont`)
 
-**Note** :
+**Note** : `- mcp: fs` avec `include: [list_roots, list_directory, read_file, search_files]` : la requête ne propose que ces 4 outils (ni `write_file`, ni `edit_file`, ni `delete`, que le serveur expose pourtant). Demande de création de fichier : le modèle constate qu'il n'a pas d'outil d'écriture et le dit, sans contournement. `exclude: [write_file, edit_file, move_file, delete, create_directory]` (`session-D7b`) : les mêmes 4 outils `f__…` qu'avec `include`. Client `dupont` (`tenants: [{id: default}, {id: dupont, tools_deny: [f__read_file, traducteur, graphique_devis], approvals: {prix_ttc: always}}]`) : journal rangé dans `data/dupont/` ; la requête de `session-D7c` n'a ni `f__read_file`, ni `traducteur`, ni `graphique_devis` (outil MCP, sous-agent et outil Python retirés) ; le modèle contourne en lisant la ligne voulue par `f__search_files` avec `contains` — `tools_deny` retire un outil, pas une capacité : la frontière reste au serveur. `session-D7d` : `prix_ttc` passe en approbation (`approval.requested`, run `paused`, code 1) ; témoin `default` (`session-D7e`) : `prix_ttc` s'exécute sans pause (1 080 € TTC). Écarts : (1) le motif de la demande dit « outil déclaré à approbation obligatoire (effets : none) », alors que l'approbation vient de la règle du client ; (2) la commande proposée par le CLI (`loom approve <run> --call …`) omet `--session` et `--tenant`, indispensables ici.
 
 ### D8 — Résultats riches : texte, JSON, images, fichiers
 
@@ -386,9 +386,9 @@ Source d'outils `forge` : l'agent forge des outils exécutés dans une microVM (
 
 Un outil `side_effects` + `idempotent` reçoit une clé d'idempotence ; à la reprise, un appel déjà fait n'est pas refait. Magasins : mémoire, SQLite, Postgres, Redis.
 
-**Testée** : non
+**Testée** : oui (18/10, CLI, sessions `session-D11a3b`, `session-D11a4`, `session-D11b`, `session-D11c`) : magasin SQLite ; mémoire, Postgres, Redis non éprouvés
 
-**Note** :
+**Note** : outils de test dans `tools/utils.py`, effet visible = une ligne dans `factures.log` ; `storage.idempotency: {backend: sqlite, path: data/idempotence.db}`. Plantage simulé par `pkill -9` pendant l'attente de 60 s de l'outil, reprise par `loom resume` après expiration du bail (60 s). **Sans idempotence** (`facturer_lent`, irréversible, `session-D11b`) : à la reprise, l'appel n'est pas relancé (pas de nouveau `tool.called`), `tool.completed` en erreur « État inconnu : l'exécution de cet outil a été interrompue… n'a pas été relancé automatiquement » ; le modèle relit le devis et refuse de refacturer (risque de doublon) ; une seule ligne pour ce run. **Avec `@idempotent(reservation=20)`** (`facturer_lent_idem`, `session-D11c`) : l'appel est relancé (`tool.called` `resumed: true`), le décorateur trouve la réservation périmée et rend « État inconnu : une exécution précédente… » sans refaire l'effet ; une seule ligne. **Clé métier** (`facturer_acompte`, clé `acompte:<devis>`) : `session-D11a2` émet la facture (une ligne) ; `session-D11a1` n'a pas appelé l'outil (Haiku a demandé confirmation, le devis n'étant pas « accepté ») : `session-D11a3b` a refait l'effet : la trace de `session-D11a2` n'était pas dans `data/idempotence.db` (cause probable : magasin pas encore pointé vers ce fichier au moment de D11a2 ; le mécanisme est reproduit sans écart en simulé : 3 sessions, 1 effet). `session-D11a4`, autre session, même devis : `idempotency.reused` (clé `default:facturer_acompte:acompte:D-0050`), réponse « facture émise », **aucune nouvelle ligne** dans `factures.log`.
 
 ### D12 — Sources d'outils fournies par un paquet (`tool_sources`)
 

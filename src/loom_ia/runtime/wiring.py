@@ -645,6 +645,8 @@ def build_agent(
         *fallback_warnings(config, spec),
     ]
     announce(config, warnings)
+    # Un double référencement peut être voulu : il avertit, en prod comme ailleurs.
+    announce(config, overlap_warnings(spec), refuse=False)
     budgets = config.budget_of(spec.name)
     shared = any(
         ref.agent == spec.name and ref.budget_share is not None
@@ -1273,6 +1275,40 @@ def judge_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
             warnings.append(
                 f"{label} : bloquant, mais ne juge qu'une partie des runs "
                 f"(sample {judge.when.sample:g})"
+            )
+    return warnings
+
+
+def overlap_warnings(spec: AgentSpec) -> list[str]:
+    """Un serveur MCP ou une source référencés deux fois, et qui peuvent exposer les mêmes outils.
+
+    Deux références à un même serveur, sous deux préfixes, sont légitimes si
+    chacune en expose une part : ``fs_lecture`` pour lire, ``fs_ecriture``
+    pour écrire, avec une approbation. Elles le sont moins quand elles se
+    recouvrent : le modèle voit deux fois les mêmes outils et les appelle
+    tous les deux (test D3 du 18/10, ``fs__list_roots`` et ``f__list_roots``).
+    Seuls deux ``include`` disjoints garantissent l'absence de recouvrement :
+    avec ``exclude``, ou sans filtre, la liste dépend de ce que le serveur
+    annonce, que la config ne connaît pas.
+    """
+    refs: dict[tuple[str, str], list[McpTools | SourceTools]] = {}
+    for ref in (*spec.mcp_tools, *spec.source_tools):
+        key = ("serveur MCP", ref.mcp) if isinstance(ref, McpTools) else ("source", ref.source)
+        refs.setdefault(key, []).append(ref)
+    warnings: list[str] = []
+    for (kind, name), found in refs.items():
+        overlapping = [
+            (a, b)
+            for i, a in enumerate(found)
+            for b in found[i + 1 :]
+            if a.include is None or b.include is None or set(a.include) & set(b.include)
+        ]
+        for a, b in overlapping:
+            warnings.append(
+                f"Agent {spec.name!r} : {kind} {name!r} référencé deux fois "
+                f"(préfixes {a.alias or name}__ et {b.alias or name}__) avec des outils qui "
+                "peuvent se recouvrir — le modèle les verra en double ; séparer par des "
+                "'include' disjoints, ou garder une seule référence"
             )
     return warnings
 

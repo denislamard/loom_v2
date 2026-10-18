@@ -31,7 +31,7 @@ import httpx
 from mcp import ClientSession, McpError, types
 from mcp.shared.session import RequestResponder
 
-from loom_ia.adapters.mcp.transports import SessionFactory
+from loom_ia.adapters.mcp.transports import McpStartError, SessionFactory
 from loom_ia.core.model import McpServerSpec
 from loom_ia.core.ports import SourceUnavailable
 
@@ -343,6 +343,8 @@ class McpServer:
 def _describe(error: BaseException) -> str:
     """Message court d'une erreur de connexion, y compris dans un groupe d'exceptions."""
     cause = _innermost(error)
+    if isinstance(cause, McpStartError):
+        return str(cause)
     if isinstance(cause, McpError):
         return cause.error.message
     kind = type(cause).__name__

@@ -1000,7 +1000,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 state=posed,
             )
 
-    return _report(asyncio.run(go()), as_json=args.json, quiet=args.stream)
+    return _report(asyncio.run(go()), as_json=args.json, quiet=args.stream, tenant=_tenant(args))
 
 
 def _state_item(text: str) -> tuple[str, JsonValue]:
@@ -1048,7 +1048,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
                 RunId(args.run_id), session_id=session, tenant_id=_tenant(args)
             )
 
-    return _report(asyncio.run(go()), as_json=args.json)
+    return _report(asyncio.run(go()), as_json=args.json, tenant=_tenant(args))
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
@@ -1395,7 +1395,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
     _say(f"{verdict} : {', '.join(calls)}", file=sys.stderr)
     if result is None:
         return OK
-    return _report(result, as_json=args.json)
+    return _report(result, as_json=args.json, tenant=_tenant(args))
 
 
 def _json_object(text: str) -> dict[str, JsonValue] | None:
@@ -2083,7 +2083,13 @@ async def _show_sources(agent: str, tools: ToolExecutor) -> None:
             _say(f"    {kind} {missing.source} indisponible{required} : {missing.error}")
 
 
-def _report(result: RunResult, *, as_json: bool = False, quiet: bool = False) -> int:
+def _report(
+    result: RunResult,
+    *,
+    as_json: bool = False,
+    quiet: bool = False,
+    tenant: TenantId | None = None,
+) -> int:
     if as_json:
         print(result.model_dump_json(indent=2, exclude_none=True))
     else:
@@ -2104,10 +2110,15 @@ def _report(result: RunResult, *, as_json: bool = False, quiet: bool = False) ->
             )
         for line in _verdicts(result):
             _say(f"Juge       : {line}", file=sys.stderr)
+        # La commande se copie telle quelle : sans la session ni le client, elle
+        # chercherait le run dans un journal qui n'est pas le sien (18/10).
+        where = "" if result.session_id == result.run_id else f" --session {result.session_id}"
+        if tenant is not None:
+            where += f" --tenant {tenant}"
         for asked in result.pending_approvals:
             _say(
                 f"En attente : {asked.tool_name} ({asked.call_id}) — "
-                f"loom approve {result.run_id} --call {asked.call_id}",
+                f"loom approve {result.run_id} --call {asked.call_id}{where}",
                 file=sys.stderr,
             )
         if result.unverified:

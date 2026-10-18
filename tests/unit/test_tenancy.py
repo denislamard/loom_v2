@@ -179,6 +179,20 @@ async def test_a_tenant_can_impose_an_approval(atelier: Any) -> None:
         assert result.ok and not result.pending_approvals
 
 
+async def test_an_imposed_approval_says_it_comes_from_the_tenant(demo: ConfigFactory) -> None:
+    """Le motif dit d'où vient l'approbation : l'outil ne la déclare pas (test D7 du 18/10)."""
+    config = demo(
+        storage={"events": {"backend": "jsonl", "path": "data"}},
+        tenants=[{"id": DUPONT, "approvals": {"calculer": "always"}}],
+    )
+    async with Loom.from_config(config) as loom:
+        result = await loom.run("demo", QUESTION, tenant=DUPONT)
+    [asked] = result.pending_approvals
+    assert asked.reason == (
+        f"approbation imposée par la configuration pour le client {DUPONT} (effets : none)"
+    )
+
+
 async def test_an_imposed_approval_still_needs_a_durable_journal(demo: ConfigFactory) -> None:
     # Journal en mémoire : imposer une approbation est refusé comme si
     # l'outil la déclarait lui-même (#28).

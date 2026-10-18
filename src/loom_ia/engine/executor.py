@@ -673,7 +673,9 @@ class ToolExecutor:
             asked = (
                 (UNKNOWN_STATE, None)
                 if unknown
-                else _asks_approval(prepared.tool.spec, verdict, self.imposed)
+                else _asks_approval(
+                    prepared.tool.spec, verdict, self.imposed, state.context.tenant_id
+                )
             )
             if asked is None:
                 ready.append(prepared)
@@ -1274,7 +1276,10 @@ async def _delegated(
 
 
 def _asks_approval(
-    spec: ToolSpec, verdict: Verdict, imposed: Mapping[str, Approval] | None = None
+    spec: ToolSpec,
+    verdict: Verdict,
+    imposed: Mapping[str, Approval] | None = None,
+    tenant: str | None = None,
 ) -> tuple[str, str | None] | None:
     """Motif et politique de l'approbation à demander, ou None s'il n'y en a pas.
 
@@ -1283,9 +1288,20 @@ def _asks_approval(
     consigne de l'appelant qui la remplace (``imposed``), et une politique
     ``before_tool`` qui rend ``Pause``, laquelle peut en exiger une sur
     n'importe quel outil.
+
+    Le motif dit laquelle des deux premières s'applique : un approbateur qui lit
+    « outil déclaré à approbation obligatoire » pour un outil qui ne l'est pas
+    cherche la raison au mauvais endroit (test D7 du 18/10).
     """
-    approval = (imposed or {}).get(spec.name, spec.approval)
-    if approval == "always":
+    if (forced := (imposed or {}).get(spec.name)) is not None:
+        if forced == "always":
+            who = f"le client {tenant}" if tenant else "l'appelant"
+            return (
+                f"approbation imposée par la configuration pour {who} "
+                f"(effets : {spec.side_effects})",
+                None,
+            )
+    elif spec.approval == "always":
         return f"outil déclaré à approbation obligatoire (effets : {spec.side_effects})", None
     if isinstance(verdict.decision, Pause):
         return verdict.decision.reason, verdict.by

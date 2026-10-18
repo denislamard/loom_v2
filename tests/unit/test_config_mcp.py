@@ -16,7 +16,7 @@ from loom_ia.agents import AgentSpec, MainRole, McpTools, PythonTool
 from loom_ia.config import ConfigError, agent_json_schema, config_json_schema, load_config
 from loom_ia.core.events import RunFailed, ToolCalled, ToolCompleted, ToolSourceUnavailable
 from loom_ia.core.model import McpServerSpec, RunStatus
-from loom_ia.runtime import build_agent, create_mcp_pool
+from loom_ia.runtime import build_agent, create_mcp_pool, overlap_warnings
 
 pytest.importorskip("mcp", reason="extra 'mcp' absent")
 
@@ -359,3 +359,22 @@ def test_agents_written_in_python() -> None:
     assert spec.mcp_tools[0].owns("t__maintenant") and not spec.mcp_tools[0].owns("time__x")
     with pytest.raises(ValidationError):
         McpServerSpec.model_validate("time")
+
+
+def test_a_server_referenced_twice_with_overlapping_tools_is_reported() -> None:
+    """Vu au test D3 du 18/10 : ``fs__list_roots`` et ``f__list_roots``, appelés tous les deux."""
+
+    def agent(*refs: McpTools) -> AgentSpec:
+        return AgentSpec(name="assistant", main=MainRole(model="FAKE"), tools=refs)
+
+    [warning] = overlap_warnings(agent(McpTools(mcp="fs"), McpTools(mcp="fs", alias="f")))
+    assert warning.startswith("Agent 'assistant' : serveur MCP 'fs' référencé deux fois")
+    assert "fs__ et f__" in warning
+    # Des include qui se recouvrent, ou un exclude (la liste dépend du serveur) : averti.
+    lire = McpTools(mcp="fs", alias="lire", include=("read_file", "list_roots"))
+    assert overlap_warnings(agent(lire, McpTools(mcp="fs", alias="ls", include=("list_roots",))))
+    assert overlap_warnings(agent(lire, McpTools(mcp="fs", alias="w", exclude=("read_file",))))
+    # Deux include disjoints : un partage voulu, rien à dire. Ni pour une seule référence.
+    ecrire = McpTools(mcp="fs", alias="ecrire", include=("write_file",))
+    assert overlap_warnings(agent(lire, ecrire)) == []
+    assert overlap_warnings(agent(McpTools(mcp="fs"), McpTools(mcp="time"))) == []

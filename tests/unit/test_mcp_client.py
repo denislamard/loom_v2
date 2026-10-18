@@ -945,3 +945,66 @@ async def test_an_http_session_the_server_forgot_is_a_lost_connection(
         assert server.connected
     finally:
         await server.aclose()
+
+
+STDIO_BROKEN = """
+import sys
+
+print("lecture de roots.toml", file=sys.stderr)
+print("FileNotFoundError: roots.toml introuvable", file=sys.stderr)
+sys.exit(3)
+"""
+
+STDIO_SILENT = "raise SystemExit(1)\n"
+
+
+def _broken(tmp_path: Path, script: str) -> McpServerSpec:
+    (tmp_path / "casse.py").write_text(script, encoding="utf-8")
+    return McpServerSpec(
+        name="casse",
+        transport="stdio",
+        command=sys.executable,
+        args=("casse.py",),
+        cwd=tmp_path,
+        connect_timeout=20,
+    )
+
+
+async def test_a_stdio_server_that_dies_at_start_says_what_it_wrote(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Vu au test D3 du 18/10 : « BrokenResourceError », sans rien pour comprendre."""
+    spec = _broken(tmp_path, STDIO_BROKEN)
+    server = McpServer(spec, session_factory(spec, environ={}))
+    try:
+        with pytest.raises(SourceUnavailable) as raised:
+            await server.tools()
+    finally:
+        await server.aclose()
+    message = str(raised.value)
+    assert "le serveur s'est arrêté ou a refusé l'ouverture" in message
+    assert "fin de son stderr : lecture de roots.toml | FileNotFoundError: roots.toml" in message
+    # Le stderr du serveur passe toujours par le nôtre : la console ne change pas.
+    assert "FileNotFoundError: roots.toml introuvable" in capsys.readouterr().err
+
+
+async def test_a_silent_stdio_server_is_said_to_be_silent(tmp_path: Path) -> None:
+    spec = _broken(tmp_path, STDIO_SILENT)
+    server = McpServer(spec, session_factory(spec, environ={}))
+    try:
+        with pytest.raises(SourceUnavailable, match="sans rien écrire sur stderr"):
+            await server.tools()
+    finally:
+        await server.aclose()
+
+
+async def test_a_working_stdio_server_keeps_its_stderr_on_ours(
+    stdio_spec: McpServerSpec, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le tuyau ne change rien pour un serveur qui marche : il répond, et ses logs passent."""
+    server = McpServer(stdio_spec, session_factory(stdio_spec, environ={"LOOM_JETON_TEST": "x"}))
+    try:
+        assert len(await server.tools()) == 4
+    finally:
+        await server.aclose()
+    capsys.readouterr()
