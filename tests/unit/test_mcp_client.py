@@ -950,7 +950,11 @@ async def test_an_http_session_the_server_forgot_is_a_lost_connection(
 STDIO_BROKEN = """
 import sys
 
+print("démarrage", file=sys.stderr)
 print("lecture de roots.toml", file=sys.stderr)
+print('  File "config.py", line 171, in load_config', file=sys.stderr)
+print("    raw = tomllib.loads(path.read_text())", file=sys.stderr)
+print("                        ~~~~~~~~~~~~~~^^", file=sys.stderr)
 print("FileNotFoundError: roots.toml introuvable", file=sys.stderr)
 sys.exit(3)
 """
@@ -983,7 +987,11 @@ async def test_a_stdio_server_that_dies_at_start_says_what_it_wrote(
         await server.aclose()
     message = str(raised.value)
     assert "le serveur s'est arrêté ou a refusé l'ouverture" in message
-    assert "fin de son stderr : lecture de roots.toml | FileNotFoundError: roots.toml" in message
+    # Les 3 dernières lignes utiles : les repères ~~~^^ de la trace ne comptent pas.
+    assert message.endswith(
+        'fin de son stderr : File "config.py", line 171, in load_config | '
+        "raw = tomllib.loads(path.read_text()) | FileNotFoundError: roots.toml introuvable"
+    )
     # Le stderr du serveur passe toujours par le nôtre : la console ne change pas.
     assert "FileNotFoundError: roots.toml introuvable" in capsys.readouterr().err
 

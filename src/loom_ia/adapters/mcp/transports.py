@@ -8,6 +8,7 @@ fabrique : une variable absente est une erreur de config, signalée au montage.
 """
 
 import os
+import re
 import sys
 import threading
 from collections import deque
@@ -37,6 +38,10 @@ CLIENT_INFO = types.Implementation(name="loom-ia", version=__version__)
 STDERR_LINES: Final = 20
 # Longueur gardée d'une ligne : un serveur peut écrire une trace d'un seul tenant.
 STDERR_LINE_CHARS: Final = 300
+# Lignes citées dans l'erreur : la dernière est presque toujours l'exception.
+STDERR_SHOWN: Final = 3
+# Ligne faite seulement des repères d'une trace Python (``~~~~^^^^``).
+_MARKERS: Final = re.compile(r"[~^\s]+")
 
 
 class McpStartError(ConnectionError):
@@ -126,8 +131,9 @@ class _StderrTail:
                     sys.stderr.flush()
                 except OSError, ValueError:
                     pass
-                text = line.rstrip()
-                if text:
+                text = line.strip()
+                # Les repères ``~~~^^^`` des traces Python (3.11+) ne disent rien seuls.
+                if text and not _MARKERS.fullmatch(text):
                     self._lines.append(text[:STDERR_LINE_CHARS])
 
     def lines(self) -> list[str]:
@@ -147,7 +153,7 @@ def _started(error: BaseException, lines: list[str]) -> str:
         cause.error.message if isinstance(cause, McpError) else (str(cause) or type(cause).__name__)
     )
     if lines:
-        shown = " | ".join(lines[-5:])
+        shown = " | ".join(lines[-STDERR_SHOWN:])
         return (
             f"le serveur s'est arrêté ou a refusé l'ouverture ({said}) ; "
             f"fin de son stderr : {shown}"
