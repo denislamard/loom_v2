@@ -36,7 +36,13 @@ from loom_ia.access.api import Loom, RunResult, doubles_problem, tree_tools
 from loom_ia.adapters.models import create_model_client
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.config import LoomConfig, Registry, load_config, resolve
-from loom_ia.core.events import Event, PolicyDecided, ToolCalled, ToolCompleted
+from loom_ia.core.events import (
+    ApprovalGranted,
+    Event,
+    PolicyDecided,
+    ToolCalled,
+    ToolCompleted,
+)
 from loom_ia.core.model import DEFAULT_TENANT, RunId, TenantId
 from loom_ia.core.ports import ArtifactStore, ModelClient, SecretProvider
 from loom_ia.core.projections import fold
@@ -552,11 +558,13 @@ async def received_arguments(
 
     Comme l'exécuteur : les références ``$ref`` résolues sur les résultats du
     run (``artifacts`` relit un résultat déporté), puis les arguments qu'une
-    politique ``before_tool`` a mis à la place, la dernière l'emportant. Une
-    référence qui ne se résout plus (contenu déporté introuvable) laisse les
-    arguments tels qu'écrits.
+    politique ``before_tool`` a mis à la place, la dernière l'emportant, puis
+    ceux qu'un approbateur a corrigés en accordant : sa décision vient après
+    les politiques, et c'est elle qui part. Une référence qui ne se résout plus
+    (contenu déporté introuvable) laisse les arguments tels qu'écrits.
     """
     replaced: dict[tuple[str, str], dict[str, JsonValue]] = {}
+    corrected: dict[tuple[str, str], dict[str, JsonValue]] = {}
     for event in events:
         payload = event.payload
         if (
@@ -567,6 +575,9 @@ async def received_arguments(
             and payload.arguments is not None
         ):
             replaced[(event.run_id, payload.call_id)] = dict(payload.arguments)
+        elif isinstance(payload, ApprovalGranted) and payload.arguments is not None:
+            corrected[(event.run_id, payload.call_id)] = dict(payload.arguments)
+    replaced |= corrected
     indexes: dict[str, ResultIndex] = {}
     received: dict[tuple[str, str], dict[str, JsonValue]] = {}
     for event in events:

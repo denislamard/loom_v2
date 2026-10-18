@@ -222,9 +222,9 @@ Les capacités du modèle décident de ce qui lui est envoyé : images seulement
 
 Section `roles:` d'un agent : `name`, `description`, `model`, `system`/`system_file`, `input_schema`, `input_template`, `context`, `llm`, `timeout`, `output`, `judge`.
 
-**Testée** : non
+**Testée** : oui (17/10, agent `agent`, session `session-C1`)
 
-**Note** :
+**Note** : rôle `synthese` (SONNET, `system` en ligne, `input_schema {consigne}`, `context: [{tool_results: [fetch_page]}]`) chargé sans erreur. Proposé à l'orchestrateur comme un outil : sa description, complétée par loom de « Reçoit déjà, inutile de les transmettre : les résultats de fetch_page. », et son schéma, auquel loom ajoute `additionalProperties: false`.
 
 ### C2 — L'orchestrateur appelle un rôle comme un outil
 
@@ -232,9 +232,9 @@ Section `roles:` d'un agent : `name`, `description`, `model`, `system`/`system_f
 
 Le rôle apparaît au modèle `main` comme un outil ; il ne reçoit que ses arguments et le contexte déclaré (`tool_results`, `session_state`…), pas toute la conversation — c'est l'économie de tokens. Les `$ref` dans les arguments transmettent un résultat d'outil sans le recopier.
 
-**Testée** : non
+**Testée** : oui (17/10, session `session-C1`)
 
-**Note** :
+**Note** : Haiku lit la page (`fetch_page`, 12 454 car.), puis appelle `synthese` (`tool_kind: role`) avec la seule `consigne`. Requête du rôle : modèle `claude-sonnet-5-5`, son propre prompt, **aucun outil, un seul message** contenant `<tool_result tool="fetch_page">` (la page) puis `<arguments>` : ni la conversation ni le prompt de l'agent. Synthèse fidèle : les 15 PEP et les pourcentages du JIT cités figurent tous dans la page. Coûts : rôle 0,0391 $ (2 429 tokens de sortie, 738 de raisonnement), orchestrateur 0,0022 $ en 3 appels ; total ≈ 0,0413 $. Constats : (1) Haiku réécrit ensuite toute la synthèse dans sa réponse (1 441 tokens de sortie) — c'est ce qu'évite un rôle terminal (C3) ; (2) le rôle, appelé une fois, écrit 5 902 tokens en cache (+25 % sur son entrée, ≈ 0,003 $), relus seulement si le même rôle reçoit la même page dans les 5 minutes : c'est arrivé par hasard (2e run lancé dans `session-C1`, Sonnet a relu 5 902 tokens et coûté 0,0218 $ au lieu de 0,039 $) ; le cache est réglé par modèle, pas par rôle.
 
 ### C3 — Rôle terminal : sa sortie devient la réponse finale
 
@@ -242,9 +242,9 @@ Le rôle apparaît au modèle `main` comme un outil ; il ne reçoit que ses argu
 
 `terminal: true` : la sortie du rôle est rendue telle quelle comme réponse du run, sans repasser par l'orchestrateur. Un écart est signalé dans l'annexe D du guide 04.
 
-**Testée** : non
+**Testée** : oui (17/10, session `session-C3` ; même résultat sur le 2e run de `session-C1`)
 
-**Note** :
+**Note** : `terminal: true` sur `synthese`. loom ajoute à sa description « À appeler seul : sa sortie est la réponse finale, transmise telle quelle. ». Haiku lit la page puis appelle le rôle ; au retour, `awaiting_tools → completed` (cause `tool.completed`), **sans dernier appel à l'orchestrateur** : 2 itérations au lieu de 3. `run.completed` ne recopie pas la réponse : `output_event_id` pointe sur le `tool.completed` du rôle, dont le texte est la réponse finale mot pour mot (3 599 car.). 0,0373 $ contre 0,0413 $ en C1 : Haiku ne réécrit plus la synthèse (≈ 1 400 tokens de sortie en moins), l'essentiel du coût reste Sonnet. Écart connu non rencontré ici : un rôle terminal clôt le run, les autres outils de son lot ne s'exécutent pas (annexe D du guide 04).
 
 ### C4 — Rôle vision : reçoit les pièces jointes, masqué sans elles
 
@@ -252,9 +252,9 @@ Le rôle apparaît au modèle `main` comme un outil ; il ne reçoit que ses argu
 
 Un rôle sur un modèle vision reçoit les images du run ; quand le run n'a pas de pièce jointe, l'orchestrateur ne le voit pas dans ses outils.
 
-**Testée** : non
+**Testée** : oui (17/10, sessions `session-C4a` et `session-C4b`)
 
-**Note** :
+**Note** : rôle `regard` (HAIKU, `context: [attachments]`). Sans pièce jointe (C4a) : outils proposés `fetch_page, synthese`, **`regard` masqué**. Avec `chat.jpg` (C4b) : `regard` proposé, appelé avec une `question`, et sa requête contient le texte puis le bloc `image` (base64), sans outil. Description juste (assis sur un sol en lames de bois, regard de côté, oreilles dressées, vigilance). 2 itérations, ≈ 0,0013 $. Constat : HAIKU étant déclaré `vision`, l'orchestrateur reçoit aussi l'image à chacun de ses appels (blocs `text, image` dès l'appel 1) ; le rôle vision n'économise donc rien ici — il a du sens quand l'orchestrateur n'est pas `vision` (ou pour confier l'image à un modèle plus fort). Reste connu de la doc : « un orchestrateur vision renvoie les images à chaque appel ».
 
 ### C5 — Sous-agent : un agent complet appelé comme un outil
 
@@ -262,9 +262,9 @@ Un rôle sur un modèle vision reçoit les images du run ; quand le run n'a pas 
 
 `subagents:` : un autre agent, avec ses outils, sa boucle, son propre run enfant ; `budget_share`, `max_depth`. L'enfant ne reçoit pas les pièces jointes du parent ni le state de session.
 
-**Testée** : non
+**Testée** : oui, cas simple (17/10, session `session-C5`, `subagents: [{agent: traducteur}]`)
 
-**Note** :
+**Note** : `traducteur` proposé à l'orchestrateur avec un seul argument `message` (`minLength: 1`), et une description complétée par loom (« Sous-agent : il ne reçoit q[ue]… »). Haiku lit python.org puis appelle `traducteur` (`tool_kind: agent`, `child_run_id`) ; un **run enfant** s'ouvre dans la même session (`agent: traducteur`, `depth: 1`, `parent_run_id` et `parent_call_id` renseignés), avec sa propre requête (son modèle, son prompt, aucun outil, le seul message reçu) ; sa réponse revient comme résultat de l'outil. Coût du run racine (0,001195 $) = ses 3 appels + celui de l'enfant (0,00004 $) : la consommation de l'enfant est bien comptée dans la racine. `expose.mcp: false` n'empêche pas l'usage en sous-agent. Délégation spontanée (prompt système de l'agent complété, sessions `session-C5b`, `session-C5c`) : « Traduis en anglais : … » → `traducteur` appelé sans être nommé ; « Résume la page … puis traduis ce résumé » → `fetch_page`, résumé rédigé par l'orchestrateur (le rôle terminal `synthese` n'est **pas** appelé, sinon le run s'arrêtait avant la traduction), puis `traducteur` (963 tokens de sortie pour un plafond de 1 024). Non vus : `budget_share`, `max_depth`, un enfant qui a lui-même des outils.
 
 ### C6 — L'orchestrateur est lui-même un rôle (`main`)
 
@@ -272,9 +272,9 @@ Un rôle sur un modèle vision reçoit les images du run ; quand le run n'a pas 
 
 `main:` se déclare comme un rôle (modèle, prompt, `fallbacks`, `llm`, `context: [session_state]`, contrat `output`, juge).
 
-**Testée** : non
+**Testée** : oui en partie (17/10, sessions A1 à C1)
 
-**Note** :
+**Note** : `main` déclaré comme un rôle (`model`, `system_file`, `fallbacks` en B4, `llm` en B6, contrat `output` en A7) ; ses appels portent `role: main` dans le journal et le rapport, ceux du rôle `role: synthese`. `main.context: [session_state]` sera vu avec F8.
 
 ---
 
@@ -286,9 +286,9 @@ Un rôle sur un modèle vision reçoit les images du run ; quand le run n'a pas 
 
 Tout outil (Python, MCP, rôle, source) a nom, description, schéma d'entrée et capacités déclarées (`side_effects`, `approval`, `idempotent`, `timeout`, `offload_over`), surchargeables dans `tools:` de l'agent.
 
-**Testée** : non
+**Testée** : oui (18/10, CLI, session `session-D2a`)
 
-**Note** :
+**Note** : les 4 outils de `tools/utils.py` partent au modèle avec leur nom (celui de la fonction), leur description (la docstring) et leur schéma tiré de la signature : `Field(ge=0, le=100)` devient `minimum`/`maximum`, `taux_tva` a son défaut 20.0 et n'est pas requis, `additionalProperties: false` partout. Les capacités (`timeout=3`, `approval="always"`) restent côté loom, absentes de la requête. Surcharges `tools:` de l'agent pas encore essayées.
 
 ### D2 — Outils Python, synchrones ou asynchrones
 
@@ -296,9 +296,9 @@ Tout outil (Python, MCP, rôle, source) a nom, description, schéma d'entrée et
 
 Fonction décorée `@tool` dans un module de `imports:`, référencée `- python: <nom>` ou `module:fonction`. Le schéma vient de la signature.
 
-**Testée** : non
+**Testée** : oui (18/10, CLI, sessions `session-D2a2`, `session-D2b`)
 
-**Note** :
+**Note** : module `tools/utils.py` (paquet implicite, `imports: [tools.utils]`), outils référencés `- python: <nom>`. Sans consigne, Haiku calcule la TVA lui-même (`session-D2a`) ; après ajout au prompt système d'une règle générale « quand un outil correspond à la tâche, appelle-le », il appelle `prix_ttc` (1 250 € HT à 10 % → `{montant_ht: 1250.0, tva: 125.0, montant_ttc: 1375.0}`, 0,7 ms). Un `dict` rendu devient un bloc `json` et le champ `data` du résultat. Asynchrone : `attendre` (`async def`) avec 1 s, `tool.completed` en 1 001 ms.
 
 ### D3 — Outils MCP (stdio, HTTP), découverte et reconnexion
 
@@ -316,9 +316,9 @@ Serveurs MCP déclarés dans la config, branchés par `- mcp: <nom>` (`alias`, `
 
 Des arguments hors schéma ne lancent pas l'outil : le diagnostic part au modèle qui corrige au tour suivant.
 
-**Testée** : non
+**Testée** : oui (18/10, CLI, sessions `session-D2a2`, `session-D4`)
 
-**Note** :
+**Note** : cas survenu sans le provoquer : dans la même réponse, Haiku émet un second `tool_use` `prix_ttc` vide (`{}`, vérifié dans le flux brut : ce n'est pas un artefact de loom). loom le rejette sans l'exécuter (aucun `tool.called`, seulement `tool.completed` en erreur : « propriété requise absente : montant_ht »), exécute l'appel valide du même lot, et le modèle répond normalement. Bornes (`session-D4`) : `prix_ttc(montant_ht=-500, taux_tva=150)` refusé sans exécution, les deux violations listées en français (« doit être supérieur ou égal à 0 », « doit être inférieur ou égal à 100 ») ; le modèle les rapporte fidèlement.
 
 ### D5 — Timeout par outil, erreurs isolées
 
@@ -326,9 +326,9 @@ Des arguments hors schéma ne lancent pas l'outil : le diagnostic part au modèl
 
 Chaque outil a son délai (`fetch_page` : 45 s) ; une exception ou un dépassement devient un résultat d'erreur pour cet appel seul, le run continue.
 
-**Testée** : non
+**Testée** : oui (18/10, CLI, sessions `session-D5a`, `session-D5b`)
 
-**Note** :
+**Note** : délai : `attendre(5)` avec `@tool(timeout=3)` → `tool.completed` en erreur à 3 004 ms, « Délai dépassé : pas de réponse en 3 s. », le run se termine normalement (`completed`). Exception : `lire_devis("1234")` lève `ValueError` → résultat d'erreur « Erreur de l'outil lire_devis : ValueError: Numéro de devis invalide : 1234 » ; `prix_ttc`, appelé dans le même lot, s'exécute (960 € TTC) ; le modèle rend le calcul et demande le bon format. Une exception autre que `ToolError` est journalisée en WARNING avec sa trace (affichée sur la console du CLI) ; une `ToolError` donne le même résultat d'erreur, sans trace ni préfixe. Reste à noter : pour un outil synchrone (exécuté dans un thread), le délai rend la main au run mais Python ne peut pas interrompre le thread, qui finit son travail en arrière-plan.
 
 ### D6 — Gros résultats tronqués puis déportés en artefact
 
@@ -376,9 +376,9 @@ Source d'outils `forge` : l'agent forge des outils exécutés dans une microVM (
 
 `approval:` sur un outil : l'appel est mis en attente ; le reste du lot s'exécute, puis le run se met en pause (voir H4).
 
-**Testée** : non
+**Testée** : oui (18/10, CLI, session `session-D10`)
 
-**Note** :
+**Note** : `envoyer_relance` déclaré `@tool(side_effects="irreversible", approval="always")`. Le modèle lit d'abord le devis (`lire_devis`, exécuté sans attente), puis appelle `envoyer_relance` : `approval.requested` (arguments complets journalisés), transition `awaiting_tools → paused`, bail du worker rendu. Le CLI affiche `Statut : paused`, une réponse vide (« — ») et la commande `loom approve <run_id> --call <call_id>` toute prête. Rien n'est exécuté avant la décision.
 
 ### D11 — Idempotence des outils à effet de bord à la reprise
 
@@ -642,9 +642,9 @@ Chaque transition est écrite au journal avant de passer à la suivante : un arr
 
 Un appel en attente met le run en pause (code de sortie 1) ; `loom approve|reject <run_id> [--call] [--by] [--reason] [--arguments JSON]`, `POST /v1/runs/{id}/approve|reject`, élicitation en MCP, approbateur en ligne en Python.
 
-**Testée** : non
+**Testée** : en partie (18/10, CLI, sessions `session-D10`, `session-H4a`, `session-H4b`) : CLI oui (accord, refus, modification, `--by`, `--reason`) ; REST, MCP, approbateur en ligne à voir
 
-**Note** :
+**Note** : `loom approve <run_id> --call <call_id> --session session-D10` 81 s après la pause : `approval.granted` (`by: null`, `reason: ""` faute d'options), un nouveau worker reprend le run (`paused → awaiting_tools`), l'outil s'exécute avec les arguments d'origine, puis le modèle conclut (`completed`, 3 itérations au total) ; la commande affiche « Accordé : <call_id> » et la réponse finale. Premier essai de refus (`session-D10b`) sans pause : `lire_devis` (bouchon) donne le client Dupont pour tout numéro, le modèle constate l'écart avec « Martin » et refuse d'envoyer de lui-même. Refus (`session-H4a`) : `loom reject … --by denis --reason "Client déjà relancé par téléphone"` → `approval.rejected` (by, reason journalisés), l'outil n'est pas exécuté (pas de `tool.called`), le modèle reçoit « Appel à envoyer_relance refusé : Client déjà relancé par téléphone », n'essaie pas de contourner et propose des suites. La demande porte `reason` (« outil déclaré à approbation obligatoire (effets : irreversible) »), `scope: approve` et `expire_at` (+24 h, défaut de `approval.expires_in`). Modification (`session-H4b`) : `loom approve … --arguments '{…}'` → `approval.granted` porte les arguments corrigés, l'outil s'exécute avec eux (69 caractères au lieu du message du modèle). Écarts relevés, puis traités (CHANGELOG 2.0.10) : (1) `tool.called` garde les arguments du modèle — c'est voulu (le rejeu compare à eux, `approval.granted` porte la correction) ; le vrai défaut était dans les évals (`received_arguments` ignorait la correction de l'approbateur), corrigé ; (2) l'appel réécrit dans l'historique n'était pas annoncé, et le modèle s'attribuait la correction (« Denis » « inventé ») : le résultat est désormais précédé, dans la requête seulement, de « [Appel modifié par denis avant exécution : champs message. … L'appel ci-dessus est celui qui a été exécuté.] » (idem pour une politique `before_tool`) — à revérifier en réel. Code de sortie à la pause : 1, conforme à la doc.
 
 ### H5 — Runs en arrière-plan
 

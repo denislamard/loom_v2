@@ -131,6 +131,7 @@ from loom_ia.core.model.policy import (
 from loom_ia.core.model.quota import WINDOW, Quotas, RateLimit
 from loom_ia.core.model.run_state import (
     DEFAULT_LEASE,
+    Amendment,
     ApprovalDecision,
     ApprovalOutcome,
     ApprovalVerdict,
@@ -224,6 +225,7 @@ __all__ = [
     "WINDOW",
     "AfterModel",
     "AfterTool",
+    "Amendment",
     "AnthropicMeta",
     "Approval",
     "ApprovalDecision",

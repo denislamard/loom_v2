@@ -197,6 +197,7 @@ from loom_ia.core.projections import (
     state_of_run,
     turns,
 )
+from loom_ia.engine.amendments import note_amendments
 from loom_ia.engine.circuit import CircuitBreakers
 from loom_ia.engine.delegated import Waiting
 from loom_ia.engine.executor import Decided, Delegated, OpenedTools, Stored, ToolExecutor
@@ -1706,6 +1707,8 @@ async def _model_step(
     answered: Answered | None = None
     view = ctx.tools.view(state)
     system, messages = ctx.system, in_call_order(state.messages)
+    # Appels réécrits (approbation, politique) : le modèle apprend que ce n'est pas lui.
+    messages = note_amendments(messages, state.amendments)
     if ctx.tools.shows_refs(view):
         messages = mark_results(messages, ResultIndex(messages))
         system = f"{system}\n\n{REFS_HINT}" if system else REFS_HINT

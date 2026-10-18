@@ -133,6 +133,25 @@ class PendingApproval(DomainModel):
         return self.outcome is None and self.expire_at is not None and now >= self.expire_at
 
 
+class Amendment(DomainModel):
+    """Arguments d'un appel changés avant son exécution, par qui le modèle ne l'a pas écrit.
+
+    L'appel est réécrit dans la conversation (le modèle lit ce qui est parti) ;
+    cette trace sert à lui dire que la réécriture n'est pas de lui. Sans elle,
+    il s'attribue la correction, ou cherche à la défaire. Seuls les noms des
+    champs sont gardés : les valeurs d'origine peuvent être longues ou
+    sensibles, et les nouvelles sont déjà dans l'appel réécrit.
+    """
+
+    call_id: str
+    # ``approval`` : corrigé en accordant ; ``policy`` : remplacé par une politique ``before_tool``.
+    origin: Literal["approval", "policy"]
+    fields: tuple[str, ...]
+    # Approbation seulement : qui a corrigé, et pourquoi.
+    by: str | None = None
+    reason: str = ""
+
+
 # Approbateur en ligne (#28) : il décide dans la boucle, sans que le run
 # passe par l'état PAUSED. Ce qu'il rend est écrit au journal comme une
 # décision ordinaire — l'audit de #17 vaut aussi pour les scripts.
@@ -286,6 +305,8 @@ class RunState(DomainModel):
     # attendent encore tiennent le run en PAUSED ; les autres gardent leur
     # décision, que la reprise applique à l'appel.
     approvals: tuple[PendingApproval, ...] = ()
+    # Appels partis avec d'autres arguments que ceux du modèle, dans l'ordre des lancements.
+    amendments: tuple[Amendment, ...] = ()
     # Vrai après run.completed, run.failed ou run.cancelled : plus rien n'est accepté.
     finished: bool = False
     # Dernier événement appliqué.

@@ -68,6 +68,7 @@ from loom_ia.core.events import (
     UserMessage,
 )
 from loom_ia.core.model import (
+    Amendment,
     ApprovalOutcome,
     Message,
     PendingApproval,
@@ -180,6 +181,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 for c in _require_pending(state, call_id, event)
             )
             update["approvals"] = _launched(state, call_id)
+            update["amendments"] = _amended(state, call_id)
         case ToolCompleted(call_id=call_id, output=output, usage=usage, cost_usd=cost):
             remaining = tuple(
                 c for c in _require_pending(state, call_id, event) if c.call_id != call_id
@@ -369,6 +371,46 @@ def _launched(state: RunState, call_id: str) -> tuple[PendingApproval, ...]:
         else a
         for a in state.approvals
     )
+
+
+def _amended(state: RunState, call_id: str) -> tuple[Amendment, ...]:
+    """Ce qui a changé les arguments de cet appel avant son lancement, s'il y a lieu.
+
+    Une politique ``before_tool`` passe d'abord, l'approbateur ensuite : chacun
+    est comparé à ce qu'il a reçu. Un appel relancé après une interruption
+    remplace sa trace au lieu de la doubler.
+    """
+    kept = tuple(a for a in state.amendments if a.call_id != call_id)
+    call = state.pending(call_id)
+    found: list[Amendment] = []
+    if call is not None and call.replaced_arguments is not None:
+        fields = _changed(call.arguments, call.replaced_arguments)
+        if fields:
+            found.append(Amendment(call_id=call_id, origin="policy", fields=fields))
+    asked = state.approval(call_id)
+    outcome = asked.outcome if asked is not None else None
+    if asked is not None and outcome is not None and outcome.arguments is not None:
+        fields = _changed(asked.arguments, outcome.arguments)
+        if fields:
+            found.append(
+                Amendment(
+                    call_id=call_id,
+                    origin="approval",
+                    fields=fields,
+                    by=outcome.by,
+                    reason=outcome.reason,
+                )
+            )
+    return (*kept, *found)
+
+
+def _changed(before: dict[str, JsonValue], after: dict[str, JsonValue]) -> tuple[str, ...]:
+    """Champs dont la valeur diffère : ceux d'après dans leur ordre, puis ceux retirés."""
+    changed = [name for name, value in after.items() if before.get(name, _ABSENT) != value]
+    return (*changed, *(name for name in before if name not in after))
+
+
+_ABSENT: object = object()
 
 
 def _granted(approval: PendingApproval) -> bool:

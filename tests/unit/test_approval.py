@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from loom_ia.access.api import Loom, RunResult, UnknownApproval
+from loom_ia.access.evals import received_arguments
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
@@ -25,6 +26,7 @@ from loom_ia.core.events import (
     ToolCompleted,
 )
 from loom_ia.core.model import (
+    Amendment,
     ApprovalDecision,
     Approved,
     PendingApproval,
@@ -278,6 +280,35 @@ def test_an_approver_can_correct_the_arguments(atelier: ConfigFactory) -> None:
     assert "compta@example.com" in resultat
 
 
+def test_evals_read_the_arguments_the_approver_corrected(atelier: ConfigFactory) -> None:
+    """Ce que l'outil a reçu, pour une éval, c'est la correction de l'approbateur.
+
+    ``received_arguments`` suivait l'exécuteur pour les ``$ref`` et les
+    politiques, pas pour l'approbation : une éval aurait jugé les arguments
+    du modèle, qui ne sont pas partis.
+    """
+
+    async def go() -> dict[tuple[str, str], dict[str, Any]]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            await loom.approve(
+                run.run_id,
+                call_id=run.pending_approvals[0].call_id,
+                by="denis",
+                arguments={"destinataire": "compta@example.com"},
+                session_id=SESSION,
+            )
+            await loom.drain()
+            events = await loom.export_session(SESSION)
+        return {k: dict(v) for k, v in (await received_arguments(events)).items()}
+
+    received = asyncio.run(go())
+    assert sorted(received.values(), key=str) == [
+        {"destinataire": "compta@example.com"},
+        {"numero": "D-1"},
+    ]
+
+
 def test_corrected_arguments_need_a_designated_call(atelier: ConfigFactory) -> None:
     """Sans ``call_id``, la correction serait perdue sans un mot : mieux vaut la refuser."""
 
@@ -327,6 +358,33 @@ def test_the_model_reads_the_call_that_actually_went_out(atelier: ConfigFactory)
         ]
 
     assert asyncio.run(go()) == [{"destinataire": "compta@example.com"}]
+
+
+def test_a_paused_correction_is_kept_for_the_model(atelier: ConfigFactory) -> None:
+    """Après une pause, la correction de l'approbateur reste connue du run.
+
+    C'est d'elle que la requête suivante tire la mention « Appel modifié par
+    denis » (``engine/amendments.py``) : le modèle sait qu'il n'a pas écrit
+    l'appel réécrit.
+    """
+
+    async def go() -> tuple[Amendment, ...]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            await loom.approve(
+                run.run_id,
+                call_id=run.pending_approvals[0].call_id,
+                by="denis",
+                reason="adresse de la compta",
+                arguments={"destinataire": "compta@example.com"},
+                session_id=SESSION,
+            )
+            await loom.drain()
+            return (await loom.state(run.run_id, session_id=SESSION)).amendments
+
+    [amendment] = asyncio.run(go())
+    assert (amendment.origin, amendment.fields) == ("approval", ("destinataire",))
+    assert (amendment.by, amendment.reason) == ("denis", "adresse de la compta")
 
 
 def test_a_policy_replacement_is_visible_to_the_model_too(atelier: ConfigFactory) -> None:
