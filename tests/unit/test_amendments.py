@@ -34,8 +34,7 @@ from loom_ia.testing import ScriptedModel, tool_call_message
 from loom_ia.tools import ConfiguredTool, tool
 
 SPEC = ModelSpec(id="FAKE", sdk="fake", model="fake-1", retry=RetryPolicy(initial_delay=0))
-NOT_YOURS = "L'appel ci-dessus n'est pas celui que tu as écrit"
-EXECUTED = "C'est cette version qui a été exécutée."
+EXECUTED = "c'est exactement ce qui a été exécuté. Tes arguments d'origine n'ont pas été utilisés."
 
 
 @tool
@@ -84,18 +83,21 @@ def test_the_note_names_who_changed_which_fields_and_why() -> None:
         call_id="c1", origin="approval", fields=("message",), by="denis", reason="trop formel"
     )
     assert amendment_note(by_denis) == (
-        f"[{NOT_YOURS} : denis l'a modifié avant exécution "
-        f"(champs : message ; motif : trop formel). {EXECUTED}]"
+        "[Note du système : denis a remplacé les arguments de ton appel avant exécution "
+        "(champs : message ; motif : trop formel). L'appel affiché ci-dessus porte déjà "
+        f"les arguments de denis : {EXECUTED}]"
     )
     anonymous = Amendment(call_id="c1", origin="approval", fields=("client", "message"))
     assert amendment_note(anonymous) == (
-        f"[{NOT_YOURS} : il a été modifié à l'approbation avant exécution "
-        f"(champs : client, message). {EXECUTED}]"
+        "[Note du système : les arguments de ton appel ont été remplacés à l'approbation "
+        "avant exécution (champs : client, message). L'appel affiché ci-dessus porte déjà "
+        f"les arguments corrigés : {EXECUTED}]"
     )
     by_policy = Amendment(call_id="c1", origin="policy", fields=("remise",))
     assert amendment_note(by_policy) == (
-        f"[{NOT_YOURS} : une politique a remplacé ses arguments avant exécution "
-        f"(champs : remise). {EXECUTED}]"
+        "[Note du système : une politique a remplacé les arguments de ton appel avant "
+        "exécution (champs : remise). L'appel affiché ci-dessus porte déjà les arguments "
+        f"remplacés : {EXECUTED}]"
     )
 
 
@@ -136,8 +138,9 @@ async def test_an_approver_correction_is_announced_to_the_model() -> None:
         ),
     )
     assert result_text(model.requests[1]) == (
-        f"[{NOT_YOURS} : denis l'a modifié avant exécution "
-        f"(champs : message ; motif : trop formel). {EXECUTED}]\n"
+        "[Note du système : denis a remplacé les arguments de ton appel avant exécution "
+        "(champs : message ; motif : trop formel). L'appel affiché ci-dessus porte déjà "
+        f"les arguments de denis : {EXECUTED}]\n"
         "Relance envoyée à Dupont (14 caractères)"
     )
     # Le journal ne bouge pas : le résultat y reste tel que l'outil l'a rendu.
@@ -173,8 +176,9 @@ async def test_a_policy_replacement_is_announced_without_its_values() -> None:
     assert state.amendments == (Amendment(call_id="c1", origin="policy", fields=("message",)),)
     text = result_text(model.requests[1])
     assert text == (
-        f"[{NOT_YOURS} : une politique a remplacé ses arguments avant exécution "
-        f"(champs : message). {EXECUTED}]\nRelance envoyée à Dupont (14 caractères)"
+        "[Note du système : une politique a remplacé les arguments de ton appel avant "
+        "exécution (champs : message). L'appel affiché ci-dessus porte déjà les arguments "
+        f"remplacés : {EXECUTED}]\nRelance envoyée à Dupont (14 caractères)"
     )
     # Ni l'ancienne valeur ni le motif de la politique.
     assert "Madame" not in text and "signé" not in text

@@ -25,32 +25,39 @@ from loom_ia.core.model import (
     ToolResultBlock,
 )
 
-NOT_YOURS = "L'appel ci-dessus n'est pas celui que tu as écrit"
-EXECUTED = "C'est cette version qui a été exécutée."
+PREFIX = "Note du système"
+EXECUTED = "c'est exactement ce qui a été exécuté. Tes arguments d'origine n'ont pas été utilisés."
 
 
 def amendment_note(amendment: Amendment) -> str:
     """Texte de la mention d'un changement d'arguments.
 
-    Elle commence par dire que l'appel n'est pas du modèle : il le lit dans son
-    propre tour, et c'est ce qu'il croit d'abord. Au test du 18/10, une mention
-    qui ne disait que « Appel modifié par denis » laissait Haiku s'attribuer la
-    signature ajoutée par l'approbateur.
+    Le modèle lit l'appel réécrit dans son propre tour, et croit d'abord l'avoir
+    écrit. Au test du 18/10, « Appel modifié par denis » laissait Haiku
+    s'attribuer la signature ajoutée par l'approbateur ; « L'appel ci-dessus
+    n'est pas celui que tu as écrit » lui faisait croire qu'une autre version,
+    invisible, était partie. La mention dit donc les trois choses : qui a
+    remplacé quoi, que l'appel affiché porte déjà ces arguments, et que les
+    siens n'ont pas servi.
     """
     details = f"champs : {', '.join(amendment.fields)}"
     match amendment.origin:
         case "approval":
             if amendment.reason:
                 details += f" ; motif : {amendment.reason}"
-            who = (
-                f"{amendment.by} l'a modifié"
-                if amendment.by
-                else "il a été modifié à l'approbation"
-            )
-            text = f"{who} avant exécution ({details})"
+            if amendment.by:
+                done = f"{amendment.by} a remplacé les arguments de ton appel"
+                shown = f"les arguments de {amendment.by}"
+            else:
+                done = "les arguments de ton appel ont été remplacés à l'approbation"
+                shown = "les arguments corrigés"
         case "policy":
-            text = f"une politique a remplacé ses arguments avant exécution ({details})"
-    return f"[{NOT_YOURS} : {text}. {EXECUTED}]"
+            done = "une politique a remplacé les arguments de ton appel"
+            shown = "les arguments remplacés"
+    return (
+        f"[{PREFIX} : {done} avant exécution ({details}). "
+        f"L'appel affiché ci-dessus porte déjà {shown} : {EXECUTED}]"
+    )
 
 
 def note_amendments(
