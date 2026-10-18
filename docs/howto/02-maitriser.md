@@ -1081,7 +1081,7 @@ run relance — completed, 780 ms, 0.000000 $
     approbation pour envoyer_email — refusée par denis
   étape 3
     appel envoyer_email — refusé avant exécution
-      · résultat  : (erreur) Appel à envoyer_email refusé : M. Durand a déjà payé, inutile de le relancer.
+      · résultat  : (erreur) Appel à envoyer_email refusé à l'approbation par denis (motif : M. Durand a déjà payé, i…
   étape 4
     modèle fake-1 (main) — 1 ms, 568 → 41 tokens, 0.000000 $
       · répond    : La relance n'est pas partie : la validation n'a pas été accordée.
@@ -1090,6 +1090,8 @@ Réponse finale :
   La relance n'est pas partie : la validation n'a pas été accordée.
 Bilan      : 2 appel(s) de modèle, 1 appel(s) d'outil dont 1 refusé(s) avant exécution, 1 approbation(s)
 ```
+
+Le modèle lit qui a refusé et pourquoi, et qu'il s'agit d'une décision, pas d'une panne : il ne doit pas réessayer, mais le dire. S'il refait quand même le même appel, mêmes arguments, dans ce run, loom le refuse aussitôt (« le même appel … a déjà été refusé à l'approbation par denis dans ce tour ») sans le remettre à l'approbateur. Un appel aux arguments différents, lui, est redemandé.
 
 **La contrainte de journal.** Une pause doit survivre à la fin du process : il faut un journal durable. Avec un journal `memory`, loom refuse de monter l'agent :
 
@@ -1331,7 +1333,7 @@ run relance_vite — completed, 3.7 s, 0.000000 $
     approbation pour envoyer_email — en attente
   étape 3
     appel envoyer_email — refusé avant exécution
-      · résultat  : (erreur) Appel à envoyer_email sans approbation dans le délai imparti : sans réponse avant 2026-1…
+      · résultat  : (erreur) Appel à envoyer_email non exécuté : personne ne l'a approuvé dans le délai imparti (sans…
   étape 4
     modèle fake-1 (main) — 1 ms, 575 → 41 tokens, 0.000000 $
       · répond    : La relance n'est pas partie : la validation n'a pas été accordée.

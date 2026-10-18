@@ -630,7 +630,7 @@ class ToolExecutor:
             if settled is not None and settled.outcome is not None:
                 outcome = settled.outcome
                 if outcome.verdict != "granted":
-                    text = _refused(settled.tool_name, outcome.verdict, outcome.reason)
+                    text = _refused(settled.tool_name, outcome.verdict, outcome.reason, outcome.by)
                     yield _completed(call, ToolOutput.error(text), started=None)
                     continue
                 if outcome.arguments is not None:
@@ -680,6 +680,13 @@ class ToolExecutor:
             if asked is None:
                 ready.append(prepared)
                 continue
+            # Le même appel déjà refusé dans ce run : on ne le redemande pas.
+            # Au test D12 du 18/10, Haiku a relancé à l'identique un appel que
+            # Denis venait de refuser, et l'approbateur l'aurait revu sans fin.
+            refused = None if unknown else _already_refused(state, prepared)
+            if refused is not None:
+                yield _completed(call, ToolOutput.error(refused), started=None)
+                continue
             request = _request(prepared, asked, self.approval)
             if approver is None:
                 held.append((prepared, request))
@@ -691,7 +698,7 @@ class ToolExecutor:
             decided = await approver(request.as_pending(state.run_id))
             yield _decision(request, decided)
             if isinstance(decided, Rejected):
-                text = _refused(request.tool_name, "rejected", decided.reason)
+                text = _refused(request.tool_name, "rejected", decided.reason, decided.by)
                 yield _completed(call, ToolOutput.error(text), started=None)
                 continue
             if decided.arguments is not None:
@@ -785,7 +792,7 @@ class ToolExecutor:
             decided = await approver(request.as_pending(state.run_id))
             yield _decision(request, decided)
             if isinstance(decided, Rejected):
-                text = _refused(request.tool_name, "rejected", decided.reason)
+                text = _refused(request.tool_name, "rejected", decided.reason, decided.by)
                 yield _completed(item.call, ToolOutput.error(text), started=None)
 
         # Les appels qui ne demandent rien se sont exécutés ; le run passe en
@@ -1349,10 +1356,58 @@ def _decision(
     )
 
 
-def _refused(tool_name: str, verdict: str, reason: str) -> str:
-    """Ce que le modèle lit d'un appel qu'une approbation n'a pas autorisé."""
-    head = "refusé" if verdict == "rejected" else "sans approbation dans le délai imparti"
-    return f"Appel à {tool_name} {head}" + (f" : {reason}" if reason else ".")
+def _refused(tool_name: str, verdict: str, reason: str, by: str | None = None) -> str:
+    """Ce que le modèle lit d'un appel qu'une approbation n'a pas autorisé.
+
+    Au test D12 du 18/10, « Appel à forge__forge refusé : test D12, pas de VM »
+    a été lu comme une panne : Haiku a relancé l'appel, puis conclu que « le
+    service de forge a refusé ». Le texte dit donc qui a tranché, que c'est
+    une décision, et ce que le modèle doit en faire.
+    """
+    if verdict != "rejected":
+        why = f" ({reason.rstrip(' .')})" if reason else ""
+        return (
+            f"Appel à {tool_name} non exécuté : personne ne l'a approuvé dans le délai "
+            f"imparti{why}. Ne le refais pas de toi-même ; dis à l'utilisateur qu'il n'a "
+            "pas été approuvé à temps."
+        )
+    return f"Appel à {tool_name} refusé à l'approbation{_by_why(by, reason)}. {_DECIDED}"
+
+
+# Ce qu'un refus demande au modèle : ne pas insister, et le dire.
+_DECIDED = (
+    "C'est une décision, pas une panne : ne refais pas cet appel ; dis à l'utilisateur "
+    "ce qui a été refusé et pourquoi."
+)
+
+
+def _by_why(by: str | None, reason: str) -> str:
+    why = reason.rstrip(" .")
+    return (f" par {by}" if by else "") + (f" (motif : {why})" if why else "")
+
+
+def _already_refused(state: RunState, item: _Ready) -> str | None:
+    """Texte d'erreur si ce run a déjà vu refuser ce même appel, mêmes arguments.
+
+    Les arguments comparés sont ceux de la demande, après les politiques
+    ``before_tool`` : ceux que l'approbateur a vus. Seul un refus compte —
+    une demande expirée peut être refaite, personne n'a dit non.
+    """
+    for asked in reversed(state.approvals):
+        outcome = asked.outcome
+        if (
+            outcome is not None
+            and outcome.verdict == "rejected"
+            and asked.tool_name == item.call.name
+            and asked.arguments == item.arguments
+        ):
+            who = _by_why(outcome.by, outcome.reason)
+            return (
+                f"Appel à {item.call.name} non exécuté : le même appel, avec les mêmes "
+                f"arguments, a déjà été refusé à l'approbation{who} dans ce tour "
+                f"(appel {asked.call_id}). Il n'est pas redemandé. {_DECIDED}"
+            )
+    return None
 
 
 def _from_ref(error: ValidationError, origin: RefOrigin, results: ResultIndex) -> str:
