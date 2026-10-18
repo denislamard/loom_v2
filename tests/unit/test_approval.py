@@ -37,7 +37,7 @@ from loom_ia.core.model import (
     SessionId,
     ToolCallBlock,
 )
-from loom_ia.core.projections import fold
+from loom_ia.core.projections import awaiting_in_session, fold
 from loom_ia.engine import cancellation
 from loom_ia.runtime import build_agent
 
@@ -883,6 +883,21 @@ def test_each_pending_approval_names_its_run(delegue: ConfigFactory) -> None:
     enfant, demandeur, parent, fiche = asyncio.run(go())
     assert demandeur == enfant and parent is not None
     assert fiche == (enfant,)
+
+
+def test_a_paused_subrun_counts_for_the_next_turn(delegue: ConfigFactory) -> None:
+    """Ce que le sous-agent attend est dit au tour suivant ; une fois tranché, plus rien."""
+
+    async def go() -> tuple[tuple[str, ...], tuple[str, ...]]:
+        async with Loom.from_config(delegue()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            before = awaiting_in_session(await loom.export_session(SESSION))
+            await loom.approve(run.run_id, by="denis", session_id=SESSION)
+            await loom.drain()
+            after = awaiting_in_session(await loom.export_session(SESSION))
+        return tuple(a.tool_name for a in before), tuple(a.tool_name for a in after)
+
+    assert asyncio.run(go()) == (("envoyer_email",), ())
 
 
 def test_sessions_show_lists_runs_and_what_awaits(

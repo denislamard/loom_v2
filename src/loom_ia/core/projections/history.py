@@ -2,7 +2,10 @@
 """Historique d'une session envoyé au modèle (#7, #22).
 
 Seuls les runs racine terminés avec succès y figurent : un run échoué peut
-contenir un appel d'outil sans résultat, que les API refusent. Les sous-runs,
+contenir un appel d'outil sans résultat, que les API refusent. Un run en
+pause non plus ; ce qu'il attend est dit au tour suivant par une note de la
+requête (``engine/pending.py``), sans quoi le modèle proposerait de refaire
+l'action en attente. Les sous-runs,
 écrits dans le même journal, n'en font pas partie. Le raisonnement et les
 textes vides sont retirés ; un message qui ne contient plus rien est omis
 (certaines API refusent un bloc de texte vide).

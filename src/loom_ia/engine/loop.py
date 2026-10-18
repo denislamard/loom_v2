@@ -190,6 +190,7 @@ from loom_ia.core.projections import (
     ProjectionError,
     RunTree,
     apply,
+    awaiting_in_session,
     fold,
     last_summary,
     session_state,
@@ -204,6 +205,7 @@ from loom_ia.engine.executor import Decided, Delegated, OpenedTools, Stored, Too
 from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.model_call import responded
+from loom_ia.engine.pending import pending_note
 from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
 from loom_ia.engine.session_state import StateRefused, keeps_state, state_message
 from loom_ia.engine.writer import ClaimConflict, RunExists, RunMoved, SessionWriter
@@ -720,6 +722,9 @@ async def _driven(
     try:
         session_turns = tuple(turns(earlier))
         previous = [message for turn in session_turns for message in turn]
+        # Un tour précédent en pause n'est pas dans l'historique : la note le dit (18/10).
+        if (note := pending_note(awaiting_in_session(earlier))) is not None:
+            previous.append(note)
         # Consommation des runs précédents de la session : budget de session (J4).
         session_spent = spent(earlier)
         # Seul un agent qui déclare un state le lit : les autres n'ont pas à relire la session.

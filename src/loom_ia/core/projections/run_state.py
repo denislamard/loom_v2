@@ -527,6 +527,31 @@ def fold_all(events: Iterable[Event]) -> dict[RunId, RunState]:
     return states
 
 
+def awaiting_in_session(events: Iterable[Event]) -> tuple[PendingApproval, ...]:
+    """Demandes d'approbation sans réponse des runs racine encore ouverts d'un journal.
+
+    Celles du run racine et celles de ses sous-runs (un sous-agent en pause
+    arrête son parent), dans l'ordre du journal. Un run racine fini n'attend
+    plus rien, même si un sous-run est resté en pause (journaux d'avant leur
+    fermeture avec le parent) ; un run de compaction n'entre pas en compte.
+    """
+    states = fold_all(events)
+
+    def root(state: RunState) -> RunState:
+        while state.parent_run_id is not None and state.parent_run_id in states:
+            state = states[state.parent_run_id]
+        return state
+
+    return tuple(
+        approval
+        for state in states.values()
+        if state.awaiting
+        and (top := root(state)).kind == "normal"
+        and not (top.finished or top.status.is_terminal)
+        for approval in state.awaiting
+    )
+
+
 def _consumed(state: RunState, usage: Usage, cost: float) -> dict[str, object]:
     """Un appel de modèle du run : usage, coût et compte des appels."""
     return {
