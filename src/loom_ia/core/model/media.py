@@ -46,9 +46,19 @@ _EXTENSIONS: Final[Mapping[str, str]] = {
     "image/png": "png",
     "image/gif": "gif",
     "image/webp": "webp",
+    "image/svg+xml": "svg",
     "text/plain": "txt",
+    "text/csv": "csv",
+    "text/markdown": "md",
+    "text/html": "html",
+    "text/xml": "xml",
+    "application/xml": "xml",
     "application/json": "json",
     "application/pdf": "pdf",
+    "application/zip": "zip",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
     "audio/wav": "wav",
     "audio/mpeg": "mp3",
 }
@@ -72,7 +82,11 @@ def is_image(media_type: str) -> bool:
 
 
 def extension(media_type: str) -> str:
-    return _EXTENSIONS.get(media_type, "bin")
+    """Extension d'un fichier de ce type ; ``bin`` pour un type inconnu.
+
+    Les paramètres du type (``text/csv; charset=utf-8``) et la casse ne comptent pas.
+    """
+    return _EXTENSIONS.get(media_type.split(";", 1)[0].strip().lower(), "bin")
 
 
 def _component(value: str) -> str:

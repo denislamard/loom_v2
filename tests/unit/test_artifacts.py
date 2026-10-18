@@ -60,6 +60,10 @@ def test_types_come_from_the_signature() -> None:
         "json",
         "bin",
     )
+    # Constaté au test D8 du 18/10 : un CSV produit par un outil était rangé en `.bin`.
+    assert [
+        extension(t) for t in ("text/csv", "text/csv; charset=utf-8", "TEXT/Markdown", "text/html")
+    ] == ["csv", "csv", "md", "html"]
 
 
 @pytest.mark.parametrize(
