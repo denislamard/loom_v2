@@ -25,21 +25,32 @@ from loom_ia.core.model import (
     ToolResultBlock,
 )
 
-EXECUTED = "L'appel ci-dessus est celui qui a été exécuté."
+NOT_YOURS = "L'appel ci-dessus n'est pas celui que tu as écrit"
+EXECUTED = "C'est cette version qui a été exécutée."
 
 
 def amendment_note(amendment: Amendment) -> str:
-    """Texte de la mention d'un changement d'arguments."""
-    fields = ", ".join(amendment.fields)
+    """Texte de la mention d'un changement d'arguments.
+
+    Elle commence par dire que l'appel n'est pas du modèle : il le lit dans son
+    propre tour, et c'est ce qu'il croit d'abord. Au test du 18/10, une mention
+    qui ne disait que « Appel modifié par denis » laissait Haiku s'attribuer la
+    signature ajoutée par l'approbateur.
+    """
+    details = f"champs : {', '.join(amendment.fields)}"
     match amendment.origin:
         case "approval":
-            who = f"par {amendment.by}" if amendment.by else "à l'approbation"
-            text = f"Appel modifié {who} avant exécution : champs {fields}."
             if amendment.reason:
-                text += f" Motif : {amendment.reason}."
+                details += f" ; motif : {amendment.reason}"
+            who = (
+                f"{amendment.by} l'a modifié"
+                if amendment.by
+                else "il a été modifié à l'approbation"
+            )
+            text = f"{who} avant exécution ({details})"
         case "policy":
-            text = f"Arguments remplacés par une politique avant exécution : champs {fields}."
-    return f"[{text} {EXECUTED}]"
+            text = f"une politique a remplacé ses arguments avant exécution ({details})"
+    return f"[{NOT_YOURS} : {text}. {EXECUTED}]"
 
 
 def note_amendments(

@@ -34,7 +34,8 @@ from loom_ia.testing import ScriptedModel, tool_call_message
 from loom_ia.tools import ConfiguredTool, tool
 
 SPEC = ModelSpec(id="FAKE", sdk="fake", model="fake-1", retry=RetryPolicy(initial_delay=0))
-EXECUTED = "L'appel ci-dessus est celui qui a été exécuté."
+NOT_YOURS = "L'appel ci-dessus n'est pas celui que tu as écrit"
+EXECUTED = "C'est cette version qui a été exécutée."
 
 
 @tool
@@ -83,16 +84,18 @@ def test_the_note_names_who_changed_which_fields_and_why() -> None:
         call_id="c1", origin="approval", fields=("message",), by="denis", reason="trop formel"
     )
     assert amendment_note(by_denis) == (
-        f"[Appel modifié par denis avant exécution : champs message. "
-        f"Motif : trop formel. {EXECUTED}]"
+        f"[{NOT_YOURS} : denis l'a modifié avant exécution "
+        f"(champs : message ; motif : trop formel). {EXECUTED}]"
     )
     anonymous = Amendment(call_id="c1", origin="approval", fields=("client", "message"))
     assert amendment_note(anonymous) == (
-        f"[Appel modifié à l'approbation avant exécution : champs client, message. {EXECUTED}]"
+        f"[{NOT_YOURS} : il a été modifié à l'approbation avant exécution "
+        f"(champs : client, message). {EXECUTED}]"
     )
     by_policy = Amendment(call_id="c1", origin="policy", fields=("remise",))
     assert amendment_note(by_policy) == (
-        f"[Arguments remplacés par une politique avant exécution : champs remise. {EXECUTED}]"
+        f"[{NOT_YOURS} : une politique a remplacé ses arguments avant exécution "
+        f"(champs : remise). {EXECUTED}]"
     )
 
 
@@ -133,8 +136,9 @@ async def test_an_approver_correction_is_announced_to_the_model() -> None:
         ),
     )
     assert result_text(model.requests[1]) == (
-        "[Appel modifié par denis avant exécution : champs message. Motif : trop formel. "
-        f"{EXECUTED}]\nRelance envoyée à Dupont (14 caractères)"
+        f"[{NOT_YOURS} : denis l'a modifié avant exécution "
+        f"(champs : message ; motif : trop formel). {EXECUTED}]\n"
+        "Relance envoyée à Dupont (14 caractères)"
     )
     # Le journal ne bouge pas : le résultat y reste tel que l'outil l'a rendu.
     events = await store.read(state.context.tenant_id, state.session_id)
@@ -168,8 +172,9 @@ async def test_a_policy_replacement_is_announced_without_its_values() -> None:
 
     assert state.amendments == (Amendment(call_id="c1", origin="policy", fields=("message",)),)
     text = result_text(model.requests[1])
-    assert text.startswith(
-        "[Arguments remplacés par une politique avant exécution : champs message."
+    assert text == (
+        f"[{NOT_YOURS} : une politique a remplacé ses arguments avant exécution "
+        f"(champs : message). {EXECUTED}]\nRelance envoyée à Dupont (14 caractères)"
     )
     # Ni l'ancienne valeur ni le motif de la politique.
     assert "Madame" not in text and "signé" not in text
