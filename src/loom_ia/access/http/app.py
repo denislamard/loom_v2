@@ -91,6 +91,7 @@ from collections.abc import AsyncGenerator
 from contextlib import aclosing, asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Final, cast
+from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -120,6 +121,7 @@ from loom_ia.access.api import (
     RunPage,
     RunResult,
     SessionDeletion,
+    SessionFile,
     SessionInfo,
     StreamItem,
     Triggered,
@@ -155,6 +157,7 @@ from loom_ia.core.events import (
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    ArtifactOrigin,
     AttachmentError,
     EventId,
     RunId,
@@ -162,7 +165,14 @@ from loom_ia.core.model import (
     SessionId,
     TenantId,
 )
-from loom_ia.core.ports import JournalBusy, JournalCorrupted, SealError, SessionRecord, UnusableId
+from loom_ia.core.ports import (
+    ArtifactNotFound,
+    JournalBusy,
+    JournalCorrupted,
+    SealError,
+    SessionRecord,
+    UnusableId,
+)
 from loom_ia.core.projections import ProjectionError
 from loom_ia.engine import ClaimConflict, SessionUnreadable, StateRefused
 from loom_ia.runtime import announce
@@ -324,6 +334,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     app.state.rates = rates
     router = APIRouter(prefix=f"{http.base_path}/v1")
 
+    @app.exception_handler(ArtifactNotFound)
     @app.exception_handler(UnknownAgent)
     @app.exception_handler(UnknownApproval)
     @app.exception_handler(UnknownRun)
@@ -727,6 +738,42 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         else:
             dumped = (event.model_dump_json() for event in events)
         return Response("".join(f"{line}\n" for line in dumped), media_type=NDJSON)
+
+    @router.get("/sessions/{session_id}/files", tags=["sessions"], summary="Fichiers d'une session")
+    async def files(
+        who: Who,
+        session_id: SessionId,
+        origins: Annotated[tuple[ArtifactOrigin, ...], Query(alias="origin")] = (),
+    ) -> list[SessionFile]:
+        # La liste vient du journal : mêmes règles que sa lecture. Le nom d'un
+        # fichier est du contenu, masqué sans `read_content`.
+        require(who, "read")
+        found = await loom.session_files(session_id, tenant_id=who.tenant, origin=origins)
+        for agent in dict.fromkeys(f.agent for f in found if f.agent):
+            require(who, "read", agent)
+        return [f.masked() for f in found] if who.masks else list(found)
+
+    @router.get(
+        "/sessions/{session_id}/files/{file}",
+        tags=["sessions"],
+        summary="Octets d'un fichier d'une session",
+        response_class=Response,
+    )
+    async def download(who: Who, session_id: SessionId, file: str) -> Response:
+        # Les octets sont du contenu : `read_content`. Le fichier est cherché
+        # parmi ceux que le journal de cette session décrit, jamais par une URI
+        # libre : ni une autre session, ni un autre client.
+        require(who, "read_content")
+        described, data = await loom.session_file(session_id, file, tenant_id=who.tenant)
+        if described.agent:
+            require(who, "read", described.agent)
+        filename = described.name or described.file
+        disposition = f"attachment; filename*=UTF-8''{quote(filename, safe='')}"
+        return Response(
+            data,
+            media_type=described.media_type,
+            headers={"Content-Disposition": disposition},
+        )
 
     @router.delete(
         "/sessions/{session_id}", tags=["sessions"], summary="Supprime une session (RGPD)"

@@ -57,6 +57,7 @@ from loom_ia.access.api import (
     RetentionReport,
     RunResult,
     SessionDeletion,
+    SessionFile,
     SessionInfo,
     StreamItem,
     TenantConsumption,
@@ -112,6 +113,7 @@ from loom_ia.core.ports import (
     Tool,
 )
 from loom_ia.engine import ClaimConflict, SessionUnreadable, ToolExecutor
+from loom_ia.engine.media import size_label
 from loom_ia.replay import (
     Comparison,
     Double,
@@ -532,6 +534,29 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("session_id")
     show.add_argument("--json", action="store_true", help="affiche la fiche en JSON")
     show.set_defaults(handler=cmd_sessions_show)
+
+    files = tenanted(
+        session_actions.add_parser(
+            "files", help="fichiers d'une session ; --out les écrit sous leur vrai nom"
+        )
+    )
+    files.add_argument("session_id")
+    files.add_argument("--json", action="store_true", help="affiche la liste en JSON")
+    files.add_argument(
+        "--origin",
+        action="append",
+        choices=["attachment", "tool_output", "offload"],
+        help="ne garde que cette origine (répétable)",
+    )
+    files.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        metavar="DOSSIER",
+        help="écrit les fichiers dans ce dossier",
+    )
+    files.add_argument("--force", action="store_true", help="écrase un fichier déjà présent")
+    files.set_defaults(handler=cmd_sessions_files)
 
     export = tenanted(
         session_actions.add_parser("export", help="écrit les événements d'une session en JSONL")
@@ -1486,12 +1511,14 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
     apply_logging(config)
     session = SessionId(args.session_id)
 
-    async def go() -> SessionInfo:
+    async def go() -> tuple[SessionInfo, tuple[SessionFile, ...]]:
         async with Loom(config) as loom:
-            return await loom.session(session, tenant_id=_tenant(args))
+            tenant = _tenant(args)
+            info = await loom.session(session, tenant_id=tenant)
+            return info, await loom.session_files(session, tenant_id=tenant)
 
     try:
-        info = asyncio.run(go())
+        info, files = asyncio.run(go())
     except UnknownSession as error:
         print(error.args[0], file=sys.stderr)
         return FAILED
@@ -1507,6 +1534,10 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
             f"  {run.run_id}  {run.agent:<12} {run.status:<15} "
             f"{run.iterations:>3} itération(s)  {run.cost_usd:.4f} ${child}"
         )
+    if files:
+        _say("Fichiers   :")
+        for line in _file_lines(files):
+            _say(f"  {line}")
     if not info.pending_approvals:
         _say("En attente : rien")
         return OK
@@ -1531,6 +1562,93 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
             f"    loom approve {target} --call {asked.call_id} --session {info.session_id}{tenant}"
         )
     return OK
+
+
+def cmd_sessions_files(args: argparse.Namespace) -> int:
+    """Fichiers d'une session, lus au journal ; ``--out`` les écrit sous leur vrai nom.
+
+    Le stockage les range sous leur condensé (``cea7c3….csv``) : seul le
+    journal dit ce qu'ils sont. Deux fichiers de même nom sont départagés
+    (``graphique-2.png``), un fichier sans nom garde son condensé, et un
+    fichier déjà présent dans le dossier n'est pas écrasé sans ``--force``.
+    """
+    config = _config(args)
+    apply_logging(config)
+    session = SessionId(args.session_id)
+    origins = tuple(args.origin or ())
+
+    async def listed() -> tuple[SessionFile, ...]:
+        async with Loom(config) as loom:
+            return await loom.session_files(session, tenant_id=_tenant(args), origin=origins)
+
+    try:
+        files = asyncio.run(listed())
+    except UnknownSession as error:
+        print(error.args[0], file=sys.stderr)
+        return FAILED
+    if args.out is None:
+        if args.json:
+            print(
+                json.dumps([f.model_dump(mode="json") for f in files], ensure_ascii=False, indent=2)
+            )
+        elif not files:
+            _say("Aucun fichier.")
+        else:
+            for line in _file_lines(files):
+                _say(line)
+        return OK
+    args.out.mkdir(parents=True, exist_ok=True)
+    targets = _extracted_names(files)
+
+    async def extract() -> tuple[int, list[str]]:
+        written, kept = 0, list[str]()
+        async with Loom(config) as loom:
+            for described, target in zip(files, targets, strict=True):
+                path = args.out / target
+                if path.exists() and not args.force:
+                    kept.append(target)
+                    continue
+                _, data = await loom.session_file(session, described.file, tenant_id=_tenant(args))
+                path.write_bytes(data)
+                written += 1
+        return written, kept
+
+    written, kept = asyncio.run(extract())
+    _say(f"{written} fichier(s) écrit(s) dans {args.out}")
+    for target in kept:
+        _say(f"Déjà présent, non écrasé (--force pour écraser) : {target}", file=sys.stderr)
+    return FAILED if kept else OK
+
+
+def _file_lines(files: Sequence[SessionFile]) -> list[str]:
+    """Une ligne par fichier : nom, type, taille, origine, outil ou run qui l'a rangé."""
+    lines: list[str] = []
+    for f in files:
+        source = f"outil {f.tool_name}" if f.tool_name else f"run {f.run_id}"
+        times = f", rangé {f.count} fois" if f.count > 1 else ""
+        lines.append(
+            f"{f.name or f.file}  ({f.media_type}, {size_label(f.size)}, {f.origin}, "
+            f"{source}{times})  {f.file}"
+        )
+    return lines
+
+
+def _extracted_names(files: Sequence[SessionFile]) -> list[str]:
+    """Nom de chaque fichier à l'extraction : le sien, sans chemin, départagé s'il revient."""
+    seen: set[str] = set()
+    names: list[str] = []
+    for f in files:
+        base = Path(f.name).name if f.name else ""
+        if base in {"", ".", ".."}:
+            base = f.file
+        candidate, n = base, 1
+        while candidate in seen:
+            n += 1
+            stem, dot, suffix = base.rpartition(".")
+            candidate = f"{stem}-{n}.{suffix}" if dot and stem else f"{base}-{n}"
+        seen.add(candidate)
+        names.append(candidate)
+    return names
 
 
 def cmd_sessions_export(args: argparse.Namespace) -> int:

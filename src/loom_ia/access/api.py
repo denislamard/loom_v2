@@ -91,11 +91,14 @@ from loom_ia.core.events import (
     RunFailed,
     RunStarted,
     SessionCompacted,
+    ToolCalled,
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     SAFE_ID,
     Approver,
+    ArtifactLocation,
+    ArtifactOrigin,
     ArtifactRecord,
     Attachment,
     BudgetPeriod,
@@ -121,6 +124,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.model.base import DomainModel
 from loom_ia.core.ports import (
+    ArtifactNotFound,
     ArtifactStore,
     ChunkCallback,
     EventStore,
@@ -477,6 +481,36 @@ class SessionInfo(DomainModel):
         return self.model_copy(
             update={"pending_approvals": _masked_approvals(self.pending_approvals)}
         )
+
+
+class SessionFile(DomainModel):
+    """Un fichier d'une session, tel que le journal le décrit (``artifact.stored``).
+
+    Le stockage range les fichiers sous leur condensé (``file``) ; le journal
+    seul dit ce qu'ils sont. Un même contenu rangé plusieurs fois est un seul
+    fichier (l'URI est adressée par le contenu) : sa première production le
+    décrit, et ``count`` dit combien de fois il a été rangé.
+    """
+
+    uri: str
+    # Nom dans le stockage (``<condensé>.<extension>``) : c'est lui qu'on demande au téléchargement.
+    file: str
+    # Nom donné par l'outil ou la pièce jointe ; contenu, donc masqué sans ``read_content``.
+    name: str | None = None
+    media_type: str
+    size: NonNegativeInt
+    origin: ArtifactOrigin
+    run_id: RunId
+    agent: str | None = None
+    # Appel qui l'a produit (sortie d'outil ou déport), et son outil.
+    call_id: str | None = None
+    tool_name: str | None = None
+    stored_at: AwareDatetime
+    count: PositiveInt = 1
+
+    def masked(self) -> Self:
+        """Sans le nom : il peut dire ce que contient le fichier (``facture-Dupont.pdf``)."""
+        return self.model_copy(update={"name": None})
 
 
 class JudgeVerdict(DomainModel):
@@ -1922,6 +1956,70 @@ class Loom:
             runs=tuple(RunSummary.of(state) for state in states),
             pending_approvals=tuple(approval for state in states for approval in state.awaiting),
         )
+
+    async def session_files(
+        self,
+        session_id: SessionId,
+        *,
+        tenant_id: TenantId | None = None,
+        origin: Sequence[ArtifactOrigin] = (),
+    ) -> tuple[SessionFile, ...]:
+        """Fichiers d'une session, dans l'ordre où ils ont été rangés.
+
+        Les fichiers d'un même lot d'appels sont rangés dans l'ordre où leurs
+        outils finissent, qui peut changer d'une exécution à l'autre.
+
+        Tirés du journal (``artifact.stored``), qui est la seule description des
+        fichiers : rien n'est écrit à côté du stockage, la liste vaut pour les
+        journaux déjà écrits, et le sceau comme la suppression RGPD la suivent
+        sans rien à faire. ``origin`` filtre (``attachment``, ``tool_output``,
+        ``offload``). Une session inconnue lève ``UnknownSession``.
+        """
+        events = await self._store.read(tenant_id or DEFAULT_TENANT, session_id)
+        if not events:
+            raise UnknownSession(session_id)
+        tools = {
+            (event.run_id, event.payload.call_id): event.payload.tool_name
+            for event in events
+            if isinstance(event.payload, ToolCalled)
+        }
+        found: dict[str, SessionFile] = {}
+        for event in events:
+            stored = event.payload
+            if not isinstance(stored, ArtifactStored) or (origin and stored.origin not in origin):
+                continue
+            if (known := found.get(stored.uri)) is not None:
+                found[stored.uri] = known.model_copy(update={"count": known.count + 1})
+                continue
+            found[stored.uri] = SessionFile(
+                uri=stored.uri,
+                file=ArtifactLocation.parse(stored.uri).name,
+                name=stored.name,
+                media_type=stored.media_type,
+                size=stored.size,
+                origin=stored.origin,
+                run_id=event.run_id,
+                agent=event.agent,
+                call_id=stored.call_id,
+                tool_name=tools.get((event.run_id, stored.call_id or "")),
+                stored_at=event.ts,
+            )
+        return tuple(found.values())
+
+    async def session_file(
+        self, session_id: SessionId, file: str, *, tenant_id: TenantId | None = None
+    ) -> tuple[SessionFile, bytes]:
+        """Un fichier de la session, désigné par son nom dans le stockage, et ses octets.
+
+        Cherché parmi les fichiers que le journal de **cette** session décrit :
+        un nom qui n'y est pas lève ``ArtifactNotFound``, quel que soit le
+        stockage — on ne lit pas un fichier d'une autre session ou d'un autre
+        client en devinant son condensé.
+        """
+        for described in await self.session_files(session_id, tenant_id=tenant_id):
+            if described.file == file:
+                return described, await self._artifacts.get(described.uri)
+        raise ArtifactNotFound(f"{session_id}/{file}")
 
     async def export_session(
         self, session_id: SessionId, *, tenant_id: TenantId | None = None
