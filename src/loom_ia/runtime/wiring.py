@@ -640,7 +640,7 @@ def build_agent(
         for judged in spec.judges
     ]
     warnings = [
-        *judge_warnings(config, spec),
+        *judge_warnings(config, spec, tenant=tenant),
         *budget_warnings(config, spec),
         *fallback_warnings(config, spec),
     ]
@@ -1251,11 +1251,29 @@ def budget_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
     ]
 
 
-def judge_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
-    """Avertissements sur les juges de l'agent (E6, #21) ; des erreurs en profil prod (5.5a)."""
+def judge_warnings(
+    config: LoomConfig, spec: AgentSpec, *, tenant: Tenant | None = None
+) -> list[str]:
+    """Avertissements sur les juges de l'agent (E6, #21) ; des erreurs en profil prod (5.5a).
+
+    ``tenant`` : le client pour qui l'agent est monté, sa correspondance des
+    modèles déjà appliquée à ``config``. Un client déclaré est nommé, et un
+    modèle qu'il remplace est dit avec sa cible : au test E6 du 19/10, « (OPUS
+    et HAIKU) » pour un client chez qui OPUS devient HAIKU ne disait ni le
+    client, ni que les deux sont le même modèle.
+    """
     warnings: list[str] = []
+    declared = tenant is not None and tenant.spec is not None
+    mapped: Mapping[str, str] = tenant.spec.models if tenant is not None and tenant.spec else {}
+
+    def said(model: str) -> str:
+        target = mapped.get(model)
+        return model if target is None else f"{model} → {target}"
+
     for name, role, judge in spec.judges:
         label = f"Agent {spec.name!r}, juge {name!r}"
+        if declared and tenant is not None:
+            label = f"Client {tenant.id!r}, agent {spec.name!r}, juge {name!r}"
         # Chaînes de secours comprises (#10) : un secours peut rendre le juge corrélé.
         evaluated = role.chain if role is not None else spec.main.chain
         pairs = [
@@ -1265,8 +1283,9 @@ def judge_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
             if correlated(config.model_spec(mine), config.model_spec(theirs))
         ]
         if pairs:
-            same = ", ".join(
-                mine if mine == theirs else f"{mine} et {theirs}" for mine, theirs in pairs
+            same = " ; ".join(
+                said(mine) if mine == theirs else f"juge {said(mine)}, sortie {said(theirs)}"
+                for mine, theirs in pairs
             )
             warnings.append(
                 f"{label} : même modèle que la sortie qu'il évalue ({same}) : juge corrélé"

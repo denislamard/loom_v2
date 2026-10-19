@@ -220,6 +220,32 @@ def test_a_judge_on_a_tool_is_refused_with_its_reason(
     assert "(roles[].judge)" in message and "Extra inputs" not in message
 
 
+def test_a_judge_correlated_for_one_client_names_it(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Test E6 du 19/10 : « (OPUS et HAIKU) », sans le client, pour un client chez
+    # qui OPUS devient HAIKU.
+    path = judged(
+        demo,
+        judge={"when": {"sample": 0.5}},
+        tenants=[{"id": "default"}, {"id": "dupont", "models": {"JUDGE": "FAKE"}}],
+    )
+    assert main(["--config", str(path), "validate"]) == 0
+    err = capsys.readouterr().err
+    assert (
+        "Client 'dupont', agent 'demo', juge 'output' : même modèle que la sortie qu'il évalue "
+        "(juge JUDGE → FAKE, sortie FAKE) : juge corrélé" in err
+    )
+    assert (
+        "Client 'default', agent 'demo', juge 'output' : bloquant, mais ne juge qu'une partie "
+        "des runs (sample 0.5)" in err
+    )
+    assert "Client 'default', agent 'demo', juge 'output' : même modèle" not in err
+    # En prod, l'erreur nomme le client.
+    assert main(["--config", str(path), "--profile", "prod", "validate"]) == 2
+    assert "Profil prod : Client 'default', agent 'demo', juge 'output'" in capsys.readouterr().err
+
+
 def test_two_judges_cannot_share_a_name() -> None:
     role: dict[str, Any] = {
         "name": "output",
