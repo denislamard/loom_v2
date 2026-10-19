@@ -366,9 +366,16 @@ Un outil peut rendre un `ToolOutput` en blocs : texte, données JSON, image, fic
 
 Source d'outils `forge` : l'agent forge des outils exécutés dans une microVM (`firecracker/`, `execd`). Demande KVM, l'image `make_vm.sh` et le jailer sur le poste.
 
-**Testée** : non
+**Testée** : oui (19/10, VM `/home/denis/dev/vm_loomv2/forge` lancée par `run.sh`, sans jailer ; `limits: {wall_ms: 9000}`, `catalog_dir: catalogue`)
 
 **Note** :
+- D9a : `forge__forge` démarre la VM au premier appel, exécute les 2 exemples (3 → 9, -4 → 16) et accepte `carre` en 1,8 s démarrage compris ; `forge__call` rend 144 en 115 ms (VM déjà démarrée). Catalogue `catalogue/default/carre/` (`carre.py`, `outil.json`). La VM est arrêtée à la fin du process (`console.log` : `exit_code=0`, plus de process firecracker).
+- D9b : au run suivant, `forge__carre` est un outil à part entière, appelé directement (49, 1,6 s démarrage compris).
+- D9c1 : exemple faux → « Outil double refusé — exemple 1 {"n": 3} : attendu 7, obtenu 6 », rien au catalogue ; Haiku ne corrige pas l'exemple de lui-même et demande.
+- D9c2 : pas de réseau dans la VM → `tool_raised`, `Temporary failure in name resolution` avec la trace Python ; outil refusé, Haiku attribue bien l'échec au réseau absent.
+- D9d : `while True: pass` avec l'exemple 1 → 1 : Haiku refuse de forger (exemple impossible), limite non atteinte. Refait (D9d2) : `compte(n)` forgé (exemple 1000 → 1000), puis `forge__call` avec n = 10¹⁰ → « Échec dans la VM (timeout) : depassement de wall_ms (9000 ms) {"limit": "wall_ms", "elapsed_ms": 9021} » à 9 027 ms ; le run se termine, la VM survit. D9d3 : nouveau run, `forge__carre(5)` → 25.
+- D9e : client `dupont` → seulement `forge__forge` et `forge__call` : catalogue par client (`catalogue/dupont/`, absent).
+- Détail : le message de délai vient d'execd, dans la VM, en ASCII (« depassement »).
 
 ### D10 — Outils sensibles « approbation requise »
 
@@ -405,7 +412,7 @@ Un outil `side_effects` + `idempotent` reçoit une clé d'idempotence ; à la re
 - D12d1 : vrai `vm_dir` → le modèle voit `forge__forge` et `forge__call` (préfixe = nom de la source) ; catalogue absent accepté, rien créé.
 - D12d2 : `alias: fg`, `include: [call]` → `fg__call` seul.
 - D12d3 : `tool_sources[].tools: {forge: {approval: always}}` → pause sur `forge__forge` (« outil déclaré à approbation obligatoire »), refus → résultat d'erreur « Appel à forge__forge refusé : test D12, pas de VM » ; VM non démarrée (console.log inchangé), `catalogue/` non créé.
-- Écart D12d3 : après le refus, Haiku a redemandé **le même appel, mêmes arguments**, dans le même run → seconde pause. Le texte du refus ne dit ni qu'un humain a refusé, ni de ne pas relancer. (En H4a, sans motif de ce genre, pas de relance.) À traiter.
+- Écart D12d3 : après le refus, Haiku a redemandé **le même appel, mêmes arguments**, dans le même run → seconde pause. Le texte du refus ne dit ni qu'un humain a refusé, ni de ne pas relancer ; après le second refus, Haiku conclut que « le service de forge a refusé l'appel … le problème vient de l'environnement d'exécution ». Traité le 18/10 (CHANGELOG 2.0.10) : le texte devient « Appel à X refusé à l'approbation par denis (motif : …). C'est une décision, pas une panne : ne refais pas cet appel ; dis à l'utilisateur ce qui a été refusé et pourquoi. », et un appel identique (même outil, mêmes arguments) à un appel refusé dans le même run est conclu en erreur sans nouvelle demande. Vérifié en réel (`session-D12e`) : un seul `approval.requested`, refus `--by denis`, Haiku ne relance pas et répond « La création a été refusée à l'approbation par denis, avec le motif « test D12, pas de VM ». Je ne réessaie pas. » ; VM non démarrée. Le garde-fou n'a donc pas servi en réel (couvert par `tests/unit/test_refus.py`).
 - `required` non retesté : même mécanisme que MCP (D3), et une fabrique qui refuse arrête déjà le montage.
 
 ### D13 — Outils fournis : `loom.fetch_page`
