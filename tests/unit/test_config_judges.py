@@ -91,11 +91,20 @@ def test_the_cli_lists_skips_and_forces_the_judges(
     assert "    juge output (réponse finale) : modèle JUDGE, 1 critère(s), sample 0" in out
 
     assert main(["--config", str(path), "run", "demo", QUESTION, "--stream"]) == 0
-    assert "· contrôle judge output : ignoré — sampled_out" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "· contrôle judge output : ignoré — hors échantillon (when.sample)" in err
+    assert (
+        "Juge       : output (réponse finale) — non jugée : hors échantillon (when.sample)" in err
+    )
     assert (
         main(["--config", str(path), "run", "demo", QUESTION, "--stream", "--judges", "skip"]) == 0
     )
-    assert "ignoré — caller_skip" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "ignoré — sauté à la demande de l'appelant (judges: skip)" in err
+    assert (
+        "Juge       : output (réponse finale) — non jugée : "
+        "sauté à la demande de l'appelant (judges: skip)" in err
+    )
 
 
 async def test_a_role_judge_with_a_condition(demo: ConfigFactory, tmp_path: Path) -> None:

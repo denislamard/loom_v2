@@ -346,6 +346,29 @@ async def test_a_passing_judge_is_journaled_and_paid(store: EventStore) -> None:
     assert history(events) == [Message.user(PROMPT), state.output]
 
 
+async def test_the_repair_reminds_the_blocking_criteria_already_met(store: EventStore) -> None:
+    # Test E3 du 19/10 : le diagnostic ne citait que le critère échoué ; Haiku a
+    # raccourci et perdu « traite la demande », refusé à son tour.
+    short = Criterion(name="concise", rule="Trois phrases au plus.")
+    complete = Criterion(name="repond", rule="La réponse traite la demande.")
+    main = scripted(Message.assistant("Long."), Message.assistant("Court et complet."))
+    jury = scripted(
+        verdict(concise=0.0, repond=0.9, ton=0.1), verdict(concise=1.0, repond=0.9, ton=0.9)
+    )
+    state = await run(context(store, main, judge(jury, short, complete, TONE)))
+
+    assert state.status is RunStatus.COMPLETED
+    diagnostic = main.requests[1].messages[-1].text
+    assert diagnostic.endswith(
+        "- concise (note 0,00, seuil 0,80) : motif concise\n"
+        "Critères déjà respectés, à garder dans la sortie corrigée :\n"
+        "- repond : La réponse traite la demande.\n"
+        "Corrige la sortie sur ces points et donne-la de nouveau en entier."
+    )
+    # Ni le motif du juge sur ce qui tient, ni un critère non bloquant.
+    assert "motif repond" not in diagnostic and "ton" not in diagnostic
+
+
 async def test_a_blocking_criterion_asks_the_orchestrator_to_repair(store: EventStore) -> None:
     main = scripted(
         Message.assistant("Bonjour, remise de 10 % offerte."),
@@ -362,7 +385,7 @@ async def test_a_blocking_criterion_asks_the_orchestrator_to_repair(store: Event
     diagnostic = repair.messages[-1].text
     assert diagnostic.startswith("Réponse refusée par un contrôle (loom.judge.output) : ")
     assert "- exact (note 0,10, seuil 0,80) : motif exact" in diagnostic
-    assert "ton" not in diagnostic
+    assert "ton" not in diagnostic and "déjà respectés" not in diagnostic
     events = await journal(store, state)
     assert kinds(events)[5:10] == [
         "judge.responded",
@@ -430,7 +453,7 @@ async def test_a_non_blocking_failure_is_only_reported(store: EventStore) -> Non
     assert passed.outcome == "passed"
     assert passed.reason == "non bloquant : ton (0,10 < 0,50) : motif ton"
     line = describe(next(e for e in events if isinstance(e.payload, JudgeEvaluated)))
-    assert line == "juge output (JUDGE) : exact 0,90, ton 0,10 (seuil 0,50)"
+    assert line == "juge output (JUDGE) : exact 0,90, ton 0,10 (seuil 0,50, non bloquant)"
 
 
 # --- Déclenchement ----------------------------------------------------------------------

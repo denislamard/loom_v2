@@ -85,6 +85,7 @@ from loom_ia.core.events import (
     Event,
     EventDraft,
     EventQuery,
+    GuardChecked,
     JudgeEvaluated,
     RunCancelled,
     RunCompleted,
@@ -114,6 +115,7 @@ from loom_ia.core.model import (
     RunState,
     RunStatus,
     SessionId,
+    SkipReason,
     SpanId,
     Spent,
     TenantId,
@@ -159,6 +161,7 @@ from loom_ia.engine import (
     run_scope,
     subruns_cancellation,
 )
+from loom_ia.guards import JUDGE_POLICY_PREFIX
 from loom_ia.replay import (
     Double,
     EvalReport,
@@ -558,6 +561,42 @@ class JudgeVerdict(DomainModel):
         )
 
 
+class JudgeSkip(DomainModel):
+    """Juge déclaré qui n'a pas jugé une sortie du run (``guard.checked`` ``skipped``).
+
+    Sans lui, un juge sauté ne laissait aucune trace dans le résultat : rien ne
+    distinguait une sortie jugée et acceptée d'une sortie jamais jugée (test
+    E3 du 19/10). Le motif est un code, pas du contenu.
+    """
+
+    run_id: RunId
+    agent: str
+    judge: str
+    # ``output`` (réponse finale) ou ``role:<nom>``.
+    target: str
+    reason: SkipReason
+
+    @classmethod
+    def of(cls, event: Event, checked: GuardChecked) -> Self | None:
+        """Le juge sauté que dit ce contrôle, ou None s'il ne dit pas un juge sauté."""
+        if checked.guard != "judge" or checked.outcome != "skipped":
+            return None
+        policy = checked.policy or ""
+        prefix = f"{JUDGE_POLICY_PREFIX}."
+        try:
+            return cls.model_validate(
+                {
+                    "run_id": event.run_id,
+                    "agent": event.agent or "",
+                    "judge": policy.removeprefix(prefix) if policy.startswith(prefix) else policy,
+                    "target": checked.target,
+                    "reason": checked.reason,
+                }
+            )
+        except ValidationError:
+            return None
+
+
 class RunResult(DomainModel):
     """Ce qu'un run a produit, tiré de son état final et de son journal."""
 
@@ -584,6 +623,8 @@ class RunResult(DomainModel):
     report: UsageReport | None = None
     # Verdicts des juges du run et de ses sous-runs, dans l'ordre du journal.
     verdicts: tuple[JudgeVerdict, ...] = ()
+    # Juges déclarés qui n'ont pas jugé (appelant, échantillon, client, condition, profil).
+    skipped_judges: tuple[JudgeSkip, ...] = ()
     # Approbations qu'il faut trancher pour que ce run avance (#17), celles
     # de ses sous-runs comprises : l'appelant n'a pas à savoir qu'un
     # sous-agent existe pour savoir ce qu'on lui demande.
@@ -648,6 +689,7 @@ class RunResult(DomainModel):
             update={
                 "report": report,
                 "verdicts": tuple(v for v in self.verdicts if v.agent not in hidden),
+                "skipped_judges": tuple(s for s in self.skipped_judges if s.agent not in hidden),
             }
         )
 
@@ -678,6 +720,12 @@ class RunResult(DomainModel):
                 JudgeVerdict.of(event, payload)
                 for event in tree
                 if isinstance(payload := event.payload, JudgeEvaluated)
+            ),
+            skipped_judges=tuple(
+                skip
+                for event in tree
+                if isinstance(checked := event.payload, GuardChecked)
+                and (skip := JudgeSkip.of(event, checked)) is not None
             ),
             pending_approvals=_awaited(state, tree),
         )

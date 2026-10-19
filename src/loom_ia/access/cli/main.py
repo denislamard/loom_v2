@@ -67,7 +67,7 @@ from loom_ia.access.api import (
     check_deletable_id,
 )
 from loom_ia.access.evals import evaluate
-from loom_ia.access.progress import Progress, notes
+from loom_ia.access.progress import SKIP_REASONS, Progress, notes
 from loom_ia.access.resources import RUNS as MCP_RUNS
 from loom_ia.access.resources import SESSIONS as MCP_SESSIONS
 from loom_ia.access.resources import TEMPLATES as MCP_TEMPLATES
@@ -2147,6 +2147,15 @@ def _verdicts(result: RunResult) -> list[str]:
             f"{verdict.judge} ({subject}), tentative {verdict.attempt} — {outcome} : "
             f"{notes(verdict.criteria)}"
         )
+    # Un juge sauté se dit aussi : sans ligne, rien ne distinguait une réponse jugée
+    # et acceptée d'une réponse que personne n'a jugée (test E3 du 19/10).
+    for skipped in result.skipped_judges:
+        subject = (
+            "réponse finale"
+            if skipped.target == "output"
+            else skipped.target.replace("role:", "rôle ", 1)
+        )
+        lines.append(f"{skipped.judge} ({subject}) — non jugée : {SKIP_REASONS[skipped.reason]}")
     return lines
 
 

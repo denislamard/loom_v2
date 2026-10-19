@@ -223,6 +223,6 @@ def test_progress_lines_of_the_other_resolutions() -> None:
     assert lines == [
         None,
         "· contrôle contract role:x : non conforme, remplacée par le message de repli — vide",
-        "· contrôle judge:x output : ignoré — sampled_out",
+        "· contrôle judge:x output : ignoré — hors échantillon (when.sample)",
         None,
     ]

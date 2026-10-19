@@ -261,7 +261,17 @@ class JudgeGuard(TracingPolicy):
             )
             return CONTINUE
         reason = _listed(blocking)
-        feedback = diagnostic(definition.name, blocking)
+        # Les critères bloquants déjà tenus sont rappelés : sans eux, l'auteur
+        # corrige un point et en perd un autre (test E3 du 19/10).
+        refused = {s.name for s in blocking}
+        kept = tuple(
+            c
+            for c in definition.criteria
+            if c.blocking
+            and c.name not in refused
+            and any(s.name == c.name and s.passed for s in scores)
+        )
+        feedback = diagnostic(definition.name, blocking, kept)
         if context.attempt < definition.repair.max_attempts:
             context.record(_failed(definition, reason, "retry"))
             return Retry(feedback, tools=definition.repair.tools != "none")
@@ -551,13 +561,25 @@ def verdict_scores(
     )
 
 
-def diagnostic(judge: str, refused: tuple[CriterionScore, ...]) -> str:
-    """Diagnostic donné à l'auteur de la sortie pour qu'il la répare."""
+def diagnostic(
+    judge: str, refused: tuple[CriterionScore, ...], kept: tuple[Criterion, ...] = ()
+) -> str:
+    """Diagnostic donné à l'auteur de la sortie pour qu'il la répare.
+
+    ``kept`` : les critères bloquants que la sortie tient déjà, avec leur règle
+    (pas le motif du juge, propre à la sortie refusée). Au test E3 du 19/10,
+    le diagnostic ne citait que le critère échoué (« trois phrases au plus ») :
+    Haiku a raccourci sa réponse et perdu celui qu'elle tenait (« traite la
+    demande »), refusé à son tour.
+    """
     lines = [f"Le juge {judge} refuse la sortie :"]
     lines += [
         f"- {s.name} (note {_score(s.score)}, seuil {_score(s.min_score)}) : {s.reason}"
         for s in refused
     ]
+    if kept:
+        lines.append("Critères déjà respectés, à garder dans la sortie corrigée :")
+        lines += [f"- {c.name} : {c.rule}" for c in kept]
     lines.append("Corrige la sortie sur ces points et donne-la de nouveau en entier.")
     return "\n".join(lines)
 

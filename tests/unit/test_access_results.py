@@ -365,6 +365,39 @@ def test_the_cli_shows_verdicts_and_the_error_type(
     assert "Vérifiée   : non" in capsys.readouterr().err
 
 
+async def test_a_result_names_the_judges_that_did_not_judge(demo: ConfigFactory) -> None:
+    path = judged(demo, when={"sample": 0.0})
+    async with Loom.from_config(path) as loom:
+        skipped = await loom.run("demo", QUESTION)
+        forced = await loom.run("demo", QUESTION, judges="force")
+    assert skipped.verdicts == ()
+    [skip] = skipped.skipped_judges
+    assert (skip.run_id, skip.agent, skip.judge, skip.target, skip.reason) == (
+        skipped.run_id,
+        "demo",
+        "output",
+        "output",
+        "sampled_out",
+    )
+    # Un code, pas du contenu : il reste pour une clé sans read_content.
+    assert skipped.masked().skipped_judges == skipped.skipped_judges
+    assert skipped.restricted(lambda agent: agent != "demo").skipped_judges == ()
+    assert forced.skipped_judges == () and len(forced.verdicts) == 1
+
+
+def test_the_cli_marks_a_failed_criterion_that_does_not_block(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    criteria = [{"name": "exact", "rule": "Le calcul est juste.", "blocking": False}]
+    assert (
+        main(["--config", str(judged(demo, 0.2, criteria=criteria)), "run", "demo", QUESTION]) == 0
+    )
+    assert (
+        "Juge       : output (réponse finale), tentative 1 — acceptée : "
+        "exact 0,20 (seuil 0,80, non bloquant)"
+    ) in capsys.readouterr().err
+
+
 async def test_verdicts_name_the_judged_call(demo: ConfigFactory) -> None:
     async with Loom.from_config(role_judged(demo)) as loom:
         result = await loom.run("demo", QUESTION)

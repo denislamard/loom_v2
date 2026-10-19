@@ -17,7 +17,7 @@ lignes d'un sous-run sont décalées selon sa profondeur :
     · verifier : fait
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Final
 
 from loom_ia.core.events import (
@@ -130,7 +130,8 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
                 f"contrôle {payload.guard} {payload.target} : non conforme{then} — {payload.reason}"
             )
         case GuardChecked():
-            return f"contrôle {payload.guard} {payload.target} : ignoré — {payload.reason}"
+            reason = SKIP_REASONS.get(payload.reason, payload.reason)
+            return f"contrôle {payload.guard} {payload.target} : ignoré — {reason}"
         case JudgeEvaluated():
             model = payload.model or payload.model_id
             return f"juge {payload.judge} ({model}) : {notes(payload.criteria)}"
@@ -208,11 +209,28 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
 
 
 def notes(criteria: Iterable[CriterionScore]) -> str:
-    """Notes d'un juge, avec le seuil des critères qui ne l'atteignent pas."""
-    return ", ".join(
-        f"{c.name} {_score(c.score)}" + ("" if c.passed else f" (seuil {_score(c.min_score)})")
-        for c in criteria
-    )
+    """Notes d'un juge, avec le seuil des critères qui ne l'atteignent pas.
+
+    Un critère non bloquant sous son seuil le dit : il n'a pas fait refuser la sortie.
+    """
+    return ", ".join(f"{c.name} {_score(c.score)}{_below(c)}" for c in criteria)
+
+
+def _below(criterion: CriterionScore) -> str:
+    if criterion.passed:
+        return ""
+    blocking = "" if criterion.blocking else ", non bloquant"
+    return f" (seuil {_score(criterion.min_score)}{blocking})"
+
+
+# Motif d'un juge sauté (``guard.checked`` ``skipped``), en clair.
+SKIP_REASONS: Final[Mapping[str, str]] = {
+    "caller_skip": "sauté à la demande de l'appelant (judges: skip)",
+    "sampled_out": "hors échantillon (when.sample)",
+    "filtered": "client hors de when.tenants",
+    "condition_false": "condition fausse (when.condition)",
+    "other_profile": "profil hors de when.profiles",
+}
 
 
 def _score(value: float) -> str:
