@@ -139,6 +139,7 @@ Liste des modèles. Chaque modèle est cité par son `id` (`main.model`, rôles,
 | `capabilities.tools` | Le modèle sait appeler des outils ; exigé d'un orchestrateur qui a des outils et d'un juge. | booléen | `true` | |
 | `capabilities.thinking` | Il produit un raisonnement, qui lui est renvoyé pendant sa boucle d'outils. | booléen | `false` | |
 | `capabilities.native_json` | Il accepte un schéma de sortie : celui du contrat lui est transmis pour un appel sans outils. | booléen | `false` | |
+| `capabilities.forced_tool_choice` | Il accepte qu'on lui impose un appel d'outil (`tool_choice: required`). `false` : la requête qui l'impose part en `auto` — le verdict d'un juge n'est plus demandé que par sa consigne (un verdict absent est une erreur du juge, voir `on_error`), et `loom.require_tool` est refusée au chargement sur ce modèle. **À déclarer `false` pour Claude Opus 5.5 et Fable 5.1**, qui refusent l'outil imposé (erreur 400 « tool_choice: type "tool" and "any" are not supported for this model. », que loom complète par la clé à déclarer). | booléen | `true` | `capabilities: {forced_tool_choice: false}` |
 | `capabilities.streaming` | `false` : appel non streamé, rejoué en un flux d'un seul morceau. | booléen | `true` | |
 | `capabilities.context_window` | Fenêtre en tokens, vérifiée avant l'appel. | entier > 0 | `null` : pas de vérification | `context_window: 200000` |
 | `capabilities.vision` | Il reçoit les images ; sans elle, une simple mention textuelle. Exigé d'un rôle vision. | booléen | `false` | `vision: true` |

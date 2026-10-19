@@ -27,6 +27,11 @@ par-dessus). Le raisonnement produit par un autre modèle est retiré des
 messages (#7) : un fournisseur ne relit que le sien. Le cache de prompt est
 perdu, et le coût suit le tarif du secours.
 
+Outil imposé : un modèle déclaré ``capabilities.forced_tool_choice: false``
+(Claude Opus 5.5, Fable 5.1) refuse ``tool_choice: required``. Sa requête part
+en ``auto`` (``sendable``) : c'est la consigne qui demande l'appel (verdict d'un
+juge), et le journal porte la requête réellement envoyée.
+
 Diffusion : si le modèle qui a échoué avait déjà diffusé des morceaux,
 ``on_chunk`` reçoit un ``StreamReset`` avant ceux du secours.
 """
@@ -137,13 +142,16 @@ class ModelChain:
 
     def request_for(self, spec: ModelSpec, request: ModelRequest) -> ModelRequest:
         """Requête adaptée à un modèle de la chaîne : ses réglages, son raisonnement seul."""
-        return request.model_copy(
-            update={
-                "model_id": spec.model,
-                "max_tokens": self.max_tokens or spec.max_tokens,
-                "params": {**spec.params, **self.params},
-                "messages": own_reasoning(request.messages, spec.model),
-            }
+        return sendable(
+            spec,
+            request.model_copy(
+                update={
+                    "model_id": spec.model,
+                    "max_tokens": self.max_tokens or spec.max_tokens,
+                    "params": {**spec.params, **self.params},
+                    "messages": own_reasoning(request.messages, spec.model),
+                }
+            ),
         )
 
     async def run(
@@ -177,8 +185,11 @@ class ModelChain:
                 index += 1
                 continue
             if index == start and request.model_id == link.spec.model:
-                sent = request.model_copy(
-                    update={"messages": own_reasoning(request.messages, link.spec.model)}
+                sent = sendable(
+                    link.spec,
+                    request.model_copy(
+                        update={"messages": own_reasoning(request.messages, link.spec.model)}
+                    ),
                 )
             else:
                 sent = self.request_for(link.spec, request)
@@ -258,6 +269,17 @@ class ModelChain:
             if larger is not None and larger > window:
                 return following
         return None
+
+
+def sendable(spec: ModelSpec, request: ModelRequest) -> ModelRequest:
+    """Requête que ce modèle accepte : sans outil imposé s'il le refuse.
+
+    ``tool_choice: required`` devient ``auto`` pour un modèle déclaré
+    ``capabilities.forced_tool_choice: false`` ; le reste est inchangé.
+    """
+    if request.tool_choice == "required" and not spec.capabilities.forced_tool_choice:
+        return request.model_copy(update={"tool_choice": "auto"})
+    return request
 
 
 def own_reasoning(messages: Sequence[Message], model: str) -> tuple[Message, ...]:

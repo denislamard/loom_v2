@@ -457,7 +457,7 @@ Une sortie qui ne tient pas le contrat est renvoyée à son modèle avec la sort
 
 **Testée** : non
 
-**Note** :
+**Note** : 19/10, agent `agent_test`, session `session-E3a`, juge `qualite` sur OPUS (Claude Opus 5.5), `context: [user_input]`, 3 critères. **Défaut** : l'appel du juge part avec `tool_choice: {type: any}` (verdict imposé) et Opus 5.5 le refuse : 400 « tool_choice: type "tool" and "any" are not supported for this model. » (Opus 5.5 et Fable 5.1 n'acceptent plus d'outil imposé : seulement `auto` et `none`). `loom validate` ne l'a pas vu (seul `params.thinking` est contrôlé pour un juge). Effet : `policy.decided` `fail` (`error: true`), `run.failed` `policy.loom.judge.qualite` — c'est bien `on_error: block` par défaut. Analyse d'impact en cours.
 
 ### E4 — Politique d'échec : lever une erreur ou avertir
 

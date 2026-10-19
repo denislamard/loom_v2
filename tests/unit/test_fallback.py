@@ -204,6 +204,28 @@ async def test_the_chain_falls_back_after_the_retries() -> None:
     assert sent.messages[1].blocks == (ReasoningBlock(text="ancien"), TextBlock(text="Salut"))
 
 
+async def test_a_model_refusing_a_forced_tool_receives_auto() -> None:
+    # Test E3 du 19/10 : Claude Opus 5.5 refuse tool_choice any/tool (400).
+    free = spec("B", capabilities={"forced_tool_choice": False})
+    forced = REQUEST.model_copy(update={"tool_choice": "required"})
+    first = ScriptedModel(answer("A"))
+    *_, answered = await collect(chain((A, first)), forced)
+    assert isinstance(answered, Answered) and first.requests[0].tool_choice == "required"
+    # Premier modèle de la chaîne, puis secours : la requête envoyée et journalisée est en auto.
+    alone = ScriptedModel(answer("B"))
+    *_, answered = await collect(chain((free, alone)), forced.model_copy(update={"model_id": "b"}))
+    assert isinstance(answered, Answered) and alone.requests[0].tool_choice == "auto"
+    assert answered.request.tool_choice == "auto"
+    second = ScriptedModel(answer("B"))
+    *_, answered = await collect(chain((A, ScriptedModel(DOWN, DOWN)), (free, second)), forced)
+    assert isinstance(answered, Answered) and second.requests[0].tool_choice == "auto"
+    # Seul « required » change : « none » reste « none ».
+    none = REQUEST.model_copy(update={"tool_choice": "none", "model_id": "b"})
+    third = ScriptedModel(answer("B"))
+    await collect(chain((free, third)), none)
+    assert third.requests[0].tool_choice == "none"
+
+
 async def test_quota_falls_back_at_once_and_other_errors_fail() -> None:
     first = ScriptedModel(ModelError("quota_exhausted", "crédit épuisé", http_status=402))
     items = await collect(chain((A, first), (B, ScriptedModel(answer("B")))))
@@ -642,6 +664,54 @@ async def test_a_judge_falls_back(demo: ConfigFactory) -> None:
     # Tentatives, bascule et réponse du juge : un seul span.
     assert fell.span_id == responded.span_id
     assert state.models == {"judge:output": "JUDGE"}
+
+
+async def test_a_judge_on_a_model_refusing_a_forced_tool(demo: ConfigFactory) -> None:
+    scores = [{"name": "exact", "score": 1.0, "reason": "juste"}]
+    verdict = {"tool_calls": [{"name": "verdict", "arguments": {"criteria": scores}}]}
+    judge_model = {
+        "id": "JUDGE",
+        "sdk": "fake",
+        "model": "judge-1",
+        "capabilities": {"forced_tool_choice": False},
+        "params": {"script": [verdict]},
+    }
+    judge = {"model": "JUDGE", "criteria": [{"name": "exact", "rule": "Le résultat est juste."}]}
+    path = demo(models=[MODEL, judge_model], agents=[demo_agent(judge=judge)])
+    async with Loom.from_config(path) as loom:
+        result = await loom.run("demo", QUESTION)
+        events = await loom.events(result.run_id)
+    assert result.text == ANSWER
+    [evaluated] = [e.payload for e in events if isinstance(e.payload, JudgeEvaluated)]
+    assert evaluated.passed
+
+    # Sans verdict, la requête partie en auto aboutit : c'est l'absence de verdict
+    # qui est l'erreur du juge (le faux modèle refuse un « required » sans outil appelé).
+    mute = {**judge_model, "params": {"script": [{"text": "Tout est juste."}]}}
+    path = demo(models=[MODEL, mute], agents=[demo_agent(judge=judge)])
+    async with Loom.from_config(path) as loom:
+        result = await loom.run("demo", QUESTION)
+    assert result.status is RunStatus.FAILED
+    assert result.error is not None and "verdict" in result.error
+    assert "tool_choice" not in result.error
+
+
+def test_require_tool_is_refused_on_a_model_refusing_a_forced_tool(demo: ConfigFactory) -> None:
+    free = {**MODEL, "id": "FREE", "capabilities": {"forced_tool_choice": False}}
+    policies = [{"hook": "loom.require_tool"}]
+    path = demo(
+        models=[MODEL, free],
+        agents=[demo_agent(main={"model": "FAKE", "fallbacks": ["FREE"]}, policies=policies)],
+    )
+    with pytest.raises(ConfigError) as caught:
+        load_config(path)
+    assert (
+        "la politique loom.require_tool impose un appel d'outil, que le modèle 'FREE' refuse"
+        in str(caught.value)
+    )
+    # Sans la politique, le même modèle est accepté ; et elle reste permise ailleurs.
+    load_config(demo(models=[MODEL, free], agents=[demo_agent(main={"model": "FREE"})]))
+    load_config(demo(models=[MODEL, free], agents=[demo_agent(policies=policies)]))
 
 
 NO_TOOLS: dict[str, Any] = {

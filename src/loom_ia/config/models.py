@@ -67,6 +67,9 @@ DURABLE_BACKENDS: Final = ("jsonl", "sqlite", "postgres")
 DSN_BACKENDS: Final = ("postgres",)
 QUEUE_BACKENDS: Final = ("asyncio", "rabbitmq")
 BUS_BACKENDS: Final = ("memory", "postgres", "redis")
+# Politique fournie qui impose un appel d'outil (``policies.builtin``) : la
+# config ne dépend pas des politiques, d'où le nom écrit ici.
+REQUIRE_TOOL: Final = "loom.require_tool"
 # Bus qui franchissent la frontière d'un process : eux seuls servent à
 # quelque chose quand le service tourne à plusieurs.
 SHARED_BUSES: Final = ("postgres", "redis")
@@ -906,8 +909,19 @@ class LoomConfig(DomainModel):
                     role.chain,
                     vision=role.wants_attachments,
                 )
+            if any(ref.hook == REQUIRE_TOOL for ref in agent.policies):
+                # La politique fournie impose un appel d'outil : un modèle qui
+                # le refuse la rendrait muette (sa requête part en ``auto``).
+                for model in agent.main.chain:
+                    if not self.model_spec(model).capabilities.forced_tool_choice:
+                        raise ValueError(
+                            f"Agent {agent.name!r} : la politique {REQUIRE_TOOL} impose un "
+                            f"appel d'outil, que le modèle {model!r} refuse "
+                            "(capabilities.forced_tool_choice: false)"
+                        )
             for name, _, judge in agent.judges:
-                # Le verdict passe par un outil imposé (tool_choice: required).
+                # Le verdict passe par un outil imposé (tool_choice: required), sauf
+                # pour un modèle qui le refuse : la consigne seule le demande alors.
                 label = f"Agent {agent.name!r}, juge {name!r}"
                 self._check_chain(label, judge.chain, vision=judge.wants_attachments, tools=True)
                 for model in judge.chain:

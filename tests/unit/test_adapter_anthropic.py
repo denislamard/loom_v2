@@ -334,6 +334,23 @@ async def test_required_tool_choice_becomes_any() -> None:
     assert server.body["tool_choice"] == {"type": "any"}
 
 
+async def test_a_refused_forced_tool_says_which_capability_to_declare() -> None:
+    # Claude Opus 5.5 et Fable 5.1 refusent l'outil imposé (test E3 du 19/10).
+    refused = 'tool_choice: type "tool" and "any" are not supported for this model.'
+    server = Server(api_error(400, "invalid_request_error", refused))
+    with pytest.raises(ModelError) as caught:
+        await complete(server.model(), request(tools=(TOOL,), tool_choice="required"))
+    error = caught.value
+    assert error.kind == "invalid_request" and refused in error.message
+    assert "déclarer capabilities.forced_tool_choice: false" in error.message
+    assert str(error) == error.message
+    # Une autre erreur, ou une requête sans outil imposé, garde son message.
+    server = Server(api_error(400, "invalid_request_error", refused))
+    with pytest.raises(ModelError) as caught:
+        await complete(server.model(), request(tools=(TOOL,)))
+    assert "forced_tool_choice" not in caught.value.message
+
+
 async def test_unknown_blocks_are_ignored() -> None:
     server = Server(
         streamed(

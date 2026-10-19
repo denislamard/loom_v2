@@ -13,7 +13,9 @@ Traduction des messages :
   (signature ou contenu masqué) ; les autres blocs de raisonnement sont omis ;
 - une image (``inline_data``) devient un bloc ``image`` en base64, dans un
   message comme dans un résultat d'outil ;
-- ``tool_choice: required`` devient ``{"type": "any"}`` ;
+- ``tool_choice: required`` devient ``{"type": "any"}`` ; un modèle qui le
+  refuse est déclaré ``capabilities.forced_tool_choice: false`` (sa requête
+  arrive alors en ``auto``), et l'erreur 400 du fournisseur le rappelle ;
 - cache de prompt (B5) : les points déclarés par ``cache`` (prompt système,
   dernier outil, dernier bloc de la conversation) et les blocs marqués
   ``cache_breakpoint`` reçoivent un ``cache_control``, au plus quatre par
@@ -216,7 +218,7 @@ class AnthropicModel:
                     )
                 return
         except (anthropic.APIError, httpx2.HTTPError) as exc:
-            raise to_model_error(exc) from exc
+            raise _hinted(to_model_error(exc), request) from exc
         except json.JSONDecodeError as exc:
             raise unreadable_json(exc) from exc
         for chunk in chunks:
@@ -365,6 +367,26 @@ def _last_cacheable(
         if block.get("type") not in _UNCACHEABLE:
             return block
     return None
+
+
+def _hinted(error: ModelError, request: ModelRequest) -> ModelError:
+    """Erreur d'un outil imposé refusé : elle dit quelle capacité déclarer.
+
+    Claude Opus 5.5 et Fable 5.1 refusent ``tool_choice`` ``any`` et ``tool``
+    (400, « tool_choice: type "tool" and "any" are not supported for this
+    model. ») ; le message du fournisseur ne dit pas quoi changer dans la config.
+    """
+    if (
+        error.kind == "invalid_request"
+        and request.tool_choice == "required"
+        and "tool_choice" in error.message
+    ):
+        error.message = (
+            f"{error.message} — ce modèle refuse l'outil imposé : déclarer "
+            "capabilities.forced_tool_choice: false"
+        )
+        error.args = (error.message,)
+    return error
 
 
 def _tool_choice(request: ModelRequest) -> sdk.ToolChoiceParam:

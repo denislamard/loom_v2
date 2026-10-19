@@ -14,7 +14,10 @@ Déroulé, pour chaque sortie :
    déclaré (comme un rôle, #12 ; les arguments du rôle jugé en plus). Le
    verdict est imposé par un outil, ``verdict`` (``tool_choice: required``),
    dont les arguments sont contrôlés par un schéma ; l'appel est journalisé
-   dans le run jugé, au nom de ``judge:<nom>`` ;
+   dans le run jugé, au nom de ``judge:<nom>``. Un modèle qui refuse l'outil
+   imposé (``capabilities.forced_tool_choice: false`` : Claude Opus 5.5, Fable
+   5.1) reçoit la requête en ``auto`` : la consigne seule demande ``verdict``,
+   et un verdict absent est une erreur du juge (``on_error``) ;
 3. **verdict** : ``judge.evaluated`` (une note et un motif par critère), puis
    ``guard.checked`` ;
 4. **suite** : un critère bloquant sous son seuil fait refuser la sortie.
