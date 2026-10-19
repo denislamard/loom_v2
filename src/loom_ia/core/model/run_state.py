@@ -296,6 +296,8 @@ class RunState(DomainModel):
     output_data: JsonValue = None
     # Réponse finale gardée bien qu'un contrat ou un juge la refuse (``unverified``).
     unverified: bool = False
+    # Réponse finale remplacée par le message de repli d'un contrat ou d'un juge.
+    fallback: bool = False
     # Appel dont le résultat est devenu la réponse finale (#13).
     terminal_call_id: str | None = None
     # Échec : son type (``guard.judge``, ``model.auth``, ``policy.<nom>``…) et son message.

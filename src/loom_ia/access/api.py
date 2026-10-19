@@ -619,6 +619,9 @@ class RunResult(DomainModel):
     data: JsonValue = None
     # Réponse gardée bien qu'elle ne respecte pas son contrat (``on_failure: unverified``).
     unverified: bool = False
+    # Réponse remplacée par le message de repli d'un contrat ou d'un juge
+    # (``on_failure: fallback``) : le run a abouti sans vraie réponse.
+    fallback: bool = False
     # Consommation ventilée du run et de ses sous-runs : par run, par rôle, par modèle.
     report: UsageReport | None = None
     # Verdicts des juges du run et de ses sous-runs, dans l'ordre du journal.
@@ -715,6 +718,7 @@ class RunResult(DomainModel):
             artifacts=(*state.artifacts, *_produced_below(state, tree)),
             data=state.output_data,
             unverified=state.unverified,
+            fallback=state.fallback,
             report=usage_report(tree, state.session_id, state.run_id) if tree else None,
             verdicts=tuple(
                 JudgeVerdict.of(event, payload)

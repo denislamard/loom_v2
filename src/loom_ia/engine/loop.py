@@ -1402,11 +1402,17 @@ async def _final(
             terminal=_terminal_event(state, cause),
             data=data,
             unverified=verdict.unverified,
+            fallback=verdict.fallback,
             spent=verdict.spent,
         )
     else:
         closing = _completed(
-            state, final, data=data, unverified=verdict.unverified, spent=verdict.spent
+            state,
+            final,
+            data=data,
+            unverified=verdict.unverified,
+            fallback=verdict.fallback,
+            spent=verdict.spent,
         )
     return [*drafts, completion, scope.draft(closing)]
 
@@ -1587,10 +1593,19 @@ def _completed(
     terminal: Event | None = None,
     data: JsonValue = None,
     unverified: bool = False,
+    fallback: bool = False,
     spent: tuple[Usage, float] = (Usage(), 0.0),
 ) -> RunCompleted:
-    """Clôture ; ``spent`` : consommation des juges de la décision, pas encore appliquée."""
+    """Clôture ; ``spent`` : consommation des juges de la décision, pas encore appliquée.
+
+    Pour un outil terminal, sa sortie dit aussi si elle a été gardée malgré son
+    contrat ou remplacée par son repli : la clôture le reprend, comme la
+    projection (``unverified``, ``fallback`` et le statut ``warning``).
+    """
     usage, cost = spent
+    if terminal is not None and isinstance(terminal.payload, ToolCompleted):
+        unverified = unverified or terminal.payload.output.unverified
+        fallback = fallback or terminal.payload.output.fallback
     return RunCompleted(
         output=output,
         output_event_id=terminal.event_id if terminal is not None else None,
@@ -1599,6 +1614,7 @@ def _completed(
         cost_usd=state.cost_usd + cost,
         data=data,
         unverified=unverified or state.unverified,
+        fallback=fallback or state.fallback,
     )
 
 

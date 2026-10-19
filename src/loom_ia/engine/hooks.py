@@ -180,6 +180,11 @@ class Verdict:
         return any(c.resolution == "unverified" for c in self.checked)
 
     @property
+    def fallback(self) -> bool:
+        """Vrai si un contrôle a remplacé la sortie par son message de repli."""
+        return any(c.resolution == "fallback" for c in self.checked)
+
+    @property
     def spent(self) -> tuple[Usage, float]:
         """Consommation des appels de modèle faits par les politiques (juges)."""
         usage, cost = Usage(), 0.0

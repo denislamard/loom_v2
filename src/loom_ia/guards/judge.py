@@ -476,7 +476,12 @@ class JudgeGuard(TracingPolicy):
             case "fallback", None:
                 return Replace(definition.fallback_message or "", reason="message de repli")
             case "fallback", ToolOutput():
-                return Replace(ToolOutput.text(definition.fallback_message or ""), reason="repli")
+                return Replace(
+                    ToolOutput.text(definition.fallback_message or "").model_copy(
+                        update={"fallback": True}
+                    ),
+                    reason="repli",
+                )
             case "fail", None:
                 return Fail(f"réponse finale refusée par le juge {definition.name} : {reason}")
             case "fail", ToolOutput():

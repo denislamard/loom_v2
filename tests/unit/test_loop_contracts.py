@@ -41,7 +41,7 @@ from loom_ia.core.model import (
     Usage,
 )
 from loom_ia.core.ports import EventStore, ToolContext, ToolError
-from loom_ia.core.projections import history
+from loom_ia.core.projections import fold, history
 from loom_ia.engine import (
     BoundPolicy,
     Consumption,
@@ -259,8 +259,12 @@ async def test_exhausted_repairs_follow_on_failure(
         closing = events[-1]
         assert isinstance(closing.payload, RunCompleted)
         assert closing.payload.unverified is unverified
-        assert closing.status == ("warning" if unverified else "ok")
+        # Un repli est aussi une issue dégradée : le run a abouti sans vraie réponse.
+        fallback = on_failure == "fallback"
+        assert closing.payload.fallback is fallback and state.fallback is fallback
+        assert closing.status == "warning"
         assert ("unverified" in closing.facets) is unverified
+        assert ("fallback" in closing.facets) is fallback
 
 
 async def test_a_forbidden_text_stays_out_of_the_diagnostics_and_the_logs(
@@ -366,6 +370,28 @@ async def test_an_exhausted_role_returns_an_error_to_the_orchestrator(store: Eve
     assert main.requests[1].messages[-1].role == "tool"
 
 
+async def test_a_terminal_role_replaced_by_its_fallback_marks_the_run(store: EventStore) -> None:
+    writer = scripted(Message.assistant("Bonjour."))
+    main = scripted(tool_call_message(("c1", "rediger", {"ton": "cordial"})))
+    tools = role(
+        writer,
+        terminal=True,
+        on_failure="fallback",
+        fallback_message="Relance à reprendre.",
+        repair={"max_attempts": 0},
+    )
+    state = await run(context(store, main, tools))
+
+    assert state.status is RunStatus.COMPLETED
+    assert state.output == Message.assistant("Relance à reprendre.")
+    assert state.fallback and not state.unverified
+    # Relu depuis le journal : même verdict.
+    events = await journal(store, state)
+    closing = events[-1]
+    assert isinstance(closing.payload, RunCompleted) and closing.status == "warning"
+    assert fold(events, state.run_id).fallback
+
+
 async def test_a_terminal_role_kept_unverified_marks_the_run(store: EventStore) -> None:
     writer = scripted(Message.assistant("Bonjour."))
     main = scripted(tool_call_message(("c1", "rediger", {"ton": "cordial"})))
@@ -377,6 +403,8 @@ async def test_a_terminal_role_kept_unverified_marks_the_run(store: EventStore) 
     assert state.unverified and state.terminal_call_id == "c1"
     closing = (await journal(store, state))[-1]
     assert isinstance(closing.payload, RunCompleted) and closing.payload.output_event_id
+    # La clôture le dit aussi (2.0.10) : elle restait « ok », sans unverified.
+    assert closing.payload.unverified and closing.status == "warning"
 
 
 async def test_a_terminal_role_gives_the_structured_answer(store: EventStore) -> None:

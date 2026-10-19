@@ -343,7 +343,9 @@ async def test_role_output_is_structured_repaired_or_refused() -> None:
     replaced = await guard.decide(
         result(ToolOutput.text("Bonjour"), contract_=backup), PolicyContext(name="x", attempt=1)
     )
-    assert replaced == Replace(ToolOutput.text("À reprendre."), reason="repli")
+    assert replaced == Replace(
+        ToolOutput.text("À reprendre.").model_copy(update={"fallback": True}), reason="repli"
+    )
 
     kept = contract(schema=SCHEMA, on_failure="unverified")
     marked = await guard.decide(
@@ -380,6 +382,26 @@ async def test_tools_are_never_repaired_and_errors_are_not_checked() -> None:
         )
         == CONTINUE
     )
+
+
+def test_the_repair_reminds_the_rules_already_kept() -> None:
+    # Test E4 du 19/10 : le diagnostic ne citait que la règle violée ; le modèle a
+    # ajouté le motif exigé, qui était aussi interdit, sans le savoir.
+    rules = contract(must_match="D-\\d{4}", must_not_match="(?i)sk-", max_chars=50)
+    text = diagnostic(rules, check(rules, "rien").problems)
+    assert text == (
+        "La sortie ne respecte pas son contrat :\n"
+        "- motif attendu absent : D-\\d{4}\n"
+        "Le contrat exige aussi, et la sortie corrigée doit le garder :\n"
+        "- aucun passage ne doit correspondre au motif (?i)sk-\n"
+        "- 50 caractères au plus\n"
+        "Réponds de nouveau avec la sortie corrigée, et seulement elle."
+    )
+    # Toutes les règles violées : rien à rappeler.
+    broken = check(rules, "sk-" + "x" * 60).problems
+    assert len(broken) == 3 and "exige aussi" not in diagnostic(rules, broken)
+    # Un contrat sans motif ni longueur n'a rien à rappeler non plus.
+    assert "exige aussi" not in diagnostic(contract(schema=SCHEMA), ("x",))
 
 
 async def test_a_refused_tool_result_tells_the_orchestrator_not_to_retry_it() -> None:

@@ -204,6 +204,8 @@ def apply(state: RunState | None, event: Event) -> RunState:
             update |= _decided(state, decided, event)
         case GuardChecked(target="output", resolution="unverified"):
             update["unverified"] = True
+        case GuardChecked(target="output", resolution="fallback"):
+            update["fallback"] = True
         case GuardChecked() | JudgeEvaluated():
             pass
         case IdempotencyRecorded() | IdempotencyReused():
@@ -238,6 +240,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 "output": replaced or output,
                 "output_data": data,
                 "unverified": completed.unverified or result.output.unverified,
+                "fallback": completed.fallback or result.output.fallback,
                 "terminal_call_id": result.call_id,
                 "finished": True,
             }
@@ -247,6 +250,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 "output": output,
                 "output_data": completed.data,
                 "unverified": completed.unverified or state.unverified,
+                "fallback": completed.fallback or state.fallback,
                 "finished": True,
             }
         case RunFailed(error_type=error_type, error=error):

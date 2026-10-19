@@ -70,7 +70,7 @@ from pydantic import AnyUrl
 from pydantic.json_schema import models_json_schema
 
 from loom_ia import __version__
-from loom_ia.access.api import JudgeVerdict, Loom, RunResult, UnknownRun
+from loom_ia.access.api import JudgeSkip, JudgeVerdict, Loom, RunResult, UnknownRun
 from loom_ia.access.caller import Caller
 from loom_ia.access.mcp_server.attachments import ATTACHMENTS_INPUT, AttachmentReader
 from loom_ia.access.mcp_server.resources import ResourceReader
@@ -115,6 +115,10 @@ type FormValue = str | int | float | bool | list[str] | None
 
 UNVERIFIED_NOTE: Final = (
     "Réponse non vérifiée : elle a été gardée sans respecter son contrat ou son juge."
+)
+FALLBACK_NOTE: Final = (
+    "Réponse de repli : la sortie a été refusée par son contrat ou son juge, "
+    "puis remplacée par son message de repli."
 )
 
 AGENT_INPUT: Final[dict[str, Any]] = {
@@ -189,6 +193,7 @@ _REFS, _DEFS = models_json_schema(
         (Usage, "serialization"),
         (UsageReport, "serialization"),
         (JudgeVerdict, "serialization"),
+        (JudgeSkip, "serialization"),
         (PendingApproval, "serialization"),
     ],
     ref_template="#/$defs/{model}",
@@ -235,9 +240,13 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
         "data": {},
         # Réponse gardée sans respecter son contrat ou son juge.
         "unverified": {"type": "boolean"},
+        # Réponse remplacée par le message de repli d'un contrat ou d'un juge.
+        "fallback": {"type": "boolean"},
         # Consommation ventilée du run et de ses sous-runs.
         "report": {"anyOf": [_REFS[(UsageReport, "serialization")], {"type": "null"}]},
         "verdicts": {"type": "array", "items": _REFS[(JudgeVerdict, "serialization")]},
+        # Juges déclarés qui n'ont pas jugé (appelant, échantillon, client, condition, profil).
+        "skipped_judges": {"type": "array", "items": _REFS[(JudgeSkip, "serialization")]},
         # Approbations qu'il faut trancher pour que le run avance, celles de
         # ses sous-runs comprises : un run en ``paused`` n'a pas fini.
         "pending_approvals": {
@@ -518,6 +527,8 @@ def answer(result: RunResult, *, ran: bool = True) -> types.CallToolResult:
     content: list[types.ContentBlock] = [types.TextContent(type="text", text=_text(result))]
     if result.unverified:
         content.append(types.TextContent(type="text", text=UNVERIFIED_NOTE))
+    if result.fallback:
+        content.append(types.TextContent(type="text", text=FALLBACK_NOTE))
     failed = ran and result.status is RunStatus.FAILED
     return types.CallToolResult(
         content=content, structuredContent=structured(result), isError=failed
@@ -539,8 +550,10 @@ def structured(result: RunResult) -> dict[str, Any]:
         "cost_usd": result.cost_usd,
         "data": result.data,
         "unverified": result.unverified,
+        "fallback": result.fallback,
         "report": result.report.model_dump(mode="json") if result.report else None,
         "verdicts": [verdict.model_dump(mode="json") for verdict in result.verdicts],
+        "skipped_judges": [skip.model_dump(mode="json") for skip in result.skipped_judges],
         "pending_approvals": [
             approval.model_dump(mode="json") for approval in result.pending_approvals
         ],

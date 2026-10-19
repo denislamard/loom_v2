@@ -320,6 +320,45 @@ async def test_mcp_says_when_an_answer_is_unverified(demo: ConfigFactory) -> Non
     assert answer == ANSWER and note.startswith("Réponse non vérifiée")
 
 
+def test_the_cli_says_a_fallback_answer(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = judged(demo, 0.2, on_failure="fallback", fallback_message="Réponse indisponible.")
+    assert main(["--config", str(path), "run", "demo", QUESTION]) == 0
+    assert (
+        "Repli      : oui (réponse remplacée par le message de repli de son contrat ou de son juge)"
+        in capsys.readouterr().err
+    )
+
+
+async def test_a_fallback_answer_is_said_by_every_access(demo: ConfigFactory) -> None:
+    # Test E4 du 19/10 : une réponse de repli finissait en « completed », « ok »,
+    # sans rien qui la distingue d'une vraie réponse hors du journal.
+    path = judged(demo, 0.2, on_failure="fallback", fallback_message="Réponse indisponible.")
+    async with Loom.from_config(path) as loom:
+        result = await loom.run("demo", QUESTION)
+    assert result.status is RunStatus.COMPLETED and result.text == "Réponse indisponible."
+    assert result.fallback and not result.unverified
+    assert result.masked().fallback
+
+    async with mcp(path) as (_, client):
+        called = await client.call_tool("demo", {"message": QUESTION})
+    assert called.structuredContent is not None and called.structuredContent["fallback"]
+    jsonschema.validate(called.structuredContent, RUN_OUTPUT)
+    answer, note = _texts(called.content)
+    assert answer == "Réponse indisponible." and note.startswith("Réponse de repli")
+
+
+async def test_mcp_gives_the_judges_that_did_not_judge(demo: ConfigFactory) -> None:
+    async with mcp(judged(demo, when={"sample": 0.0})) as (_, client):
+        called = await client.call_tool("demo", {"message": QUESTION})
+    data = called.structuredContent
+    assert data is not None and not data["fallback"]
+    jsonschema.validate(data, RUN_OUTPUT)
+    [skip] = data["skipped_judges"]
+    assert (skip["judge"], skip["target"], skip["reason"]) == ("output", "output", "sampled_out")
+
+
 async def test_the_mcp_report_tool(demo: ConfigFactory) -> None:
     async with mcp(judged(demo)) as (loom, client):
         listed = {tool.name: tool for tool in (await client.list_tools()).tools}

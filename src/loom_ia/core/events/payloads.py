@@ -240,6 +240,10 @@ class RunCompleted(Payload):
     data: JsonValue = None
     # Réponse gardée bien qu'un contrat ou un juge la refuse (``on_failure: unverified``).
     unverified: bool = False
+    # Réponse remplacée par le message de repli d'un contrat ou d'un juge
+    # (``on_failure: fallback``) : le run a abouti, mais sans vraie réponse.
+    # Omis quand il est faux : un journal antérieur se relit à l'identique.
+    fallback: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def _check_output(self) -> Self:
@@ -248,13 +252,15 @@ class RunCompleted(Payload):
 
     @property
     def event_status(self) -> EventStatus:
-        return "warning" if self.unverified else "ok"
+        return "warning" if self.unverified or self.fallback else "ok"
 
     def facets(self) -> dict[str, FacetValue]:
         facets = super().facets()
         if self.unverified:
             # Absente sinon : les journaux antérieurs restent lisibles.
             facets["unverified"] = True
+        if self.fallback:
+            facets["fallback"] = True
         return facets
 
 

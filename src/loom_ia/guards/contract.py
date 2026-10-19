@@ -173,8 +173,18 @@ def normalize(text: str, *, json_expected: bool = False) -> str:
 
 
 def diagnostic(contract: OutputContract, problems: tuple[str, ...]) -> str:
-    """Diagnostic donné à l'auteur de la sortie pour qu'il la répare."""
+    """Diagnostic donné à l'auteur de la sortie pour qu'il la répare.
+
+    Les règles que la sortie tient déjà sont rappelées : sans elles, l'auteur
+    corrige un point et en casse un autre qu'il ignore (test E4 du 19/10 : un
+    motif exigé ajouté, qui était aussi interdit). Le schéma, lui, est toujours
+    donné en entier.
+    """
     lines = ["La sortie ne respecte pas son contrat :", *(f"- {p}" for p in problems)]
+    kept = _kept_rules(contract, problems)
+    if kept:
+        lines.append("Le contrat exige aussi, et la sortie corrigée doit le garder :")
+        lines += [f"- {rule}" for rule in kept]
     if contract.json_schema is not None:
         schema = json.dumps(contract.json_schema, ensure_ascii=False, separators=(",", ":"))
         lines.append(f"Schéma JSON attendu : {schema}")
@@ -214,6 +224,24 @@ def refusal(name: str, problems: tuple[str, ...], *, role: bool, repairs: int = 
         "ne le refais pas à l'identique. "
         "Dis à l'utilisateur que ce résultat n'a pas pu être validé."
     )
+
+
+def _kept_rules(contract: OutputContract, problems: tuple[str, ...]) -> list[str]:
+    """Règles du contrat (hors schéma) que les problèmes ne citent pas."""
+    rules: list[str] = []
+    if contract.must_match is not None and not any(
+        p.startswith(("motif attendu absent", "must_match :")) for p in problems
+    ):
+        rules.append(f"le motif {contract.must_match} doit figurer dans la sortie")
+    if contract.must_not_match is not None and not any(
+        p.startswith(("motif interdit présent", "must_not_match :")) for p in problems
+    ):
+        rules.append(f"aucun passage ne doit correspondre au motif {contract.must_not_match}")
+    if contract.max_chars is not None and not any(
+        " caractères, au-delà de " in p for p in problems
+    ):
+        rules.append(f"{contract.max_chars} caractères au plus")
+    return rules
 
 
 class ContractGuard:
@@ -311,7 +339,12 @@ class ContractGuard:
                 )
             case "fallback":
                 context.record(_failed(target, checked, reason, "fallback"))
-                return Replace(ToolOutput.text(contract.fallback_message or ""), reason="repli")
+                return Replace(
+                    ToolOutput.text(contract.fallback_message or "").model_copy(
+                        update={"fallback": True}
+                    ),
+                    reason="repli",
+                )
             case "fail":
                 context.record(_failed(target, checked, reason, "fail"))
                 refused = refusal(name, checked.problems, role=repairable, repairs=context.attempt)

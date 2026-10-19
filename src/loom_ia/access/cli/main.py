@@ -2123,6 +2123,12 @@ def _report(
             )
         if result.unverified:
             _say("Vérifiée   : non (gardée malgré son contrat ou son juge)", file=sys.stderr)
+        if result.fallback:
+            _say(
+                "Repli      : oui (réponse remplacée par le message de repli de son contrat "
+                "ou de son juge)",
+                file=sys.stderr,
+            )
         if result.error:
             _say(f"Erreur     : {result.error} ({result.error_type})", file=sys.stderr)
     return OK if result.ok else FAILED

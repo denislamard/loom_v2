@@ -135,6 +135,9 @@ class ToolOutput(DomainModel):
     offloaded: str | None = None
     # Sortie gardée bien qu'elle ne respecte pas son contrat (``on_failure: unverified``).
     unverified: bool = False
+    # Sortie remplacée par le message de repli d'un contrat ou d'un juge
+    # (``on_failure: fallback``) ; omis du journal quand il est faux.
+    fallback: bool = Field(default=False, exclude_if=lambda value: not value)
     # Écritures du state de la session : ``{clé: valeur}``, ``None`` efface la
     # clé. Le journal les garde dans ``tool.completed``, que le rejeu ressert
     # tel quel ; la projection les retire du résultat montré au modèle. Omis
