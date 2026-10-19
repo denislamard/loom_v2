@@ -42,7 +42,7 @@ import os
 import re
 import signal
 import sys
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from importlib.util import find_spec
 from pathlib import Path
@@ -95,6 +95,7 @@ from loom_ia.core.model import (
     Attachment,
     BudgetPeriod,
     Budgets,
+    OutputContract,
     RunId,
     SessionId,
     StreamReset,
@@ -925,15 +926,23 @@ async def _show_agent(loom: Loom, tenant_id: TenantId, spec: AgentSpec, *, inden
     """Une fiche d'agent, montée pour un client."""
     config = loom.config
     context = loom.context(spec.name, tenant_id)
-    roles = "".join(f", rôle {role.name} ({_chain(role.chain)})" for role in spec.roles)
+    tenant = loom.tenant(tenant_id).spec
+    mapped: Mapping[str, str] = tenant.models if tenant is not None else {}
+
+    def chain(models: tuple[str, ...]) -> str:
+        return _chain(models, mapped)
+
+    roles = "".join(f", rôle {role.name} ({chain(role.chain)})" for role in spec.roles)
     subagents = "".join(f", sous-agent {ref.tool_name} ({ref.agent})" for ref in spec.subagents)
     delay = f", délai {spec.timeout:g} s" if spec.timeout is not None else ""
     print(
-        f"{indent}  {spec.name} : modèle {_chain(spec.main.chain)}, "
+        f"{indent}  {spec.name} : modèle {chain(spec.main.chain)}, "
         f"{len(spec.python_tools)} outil(s) Python{roles}{subagents}{delay}"
     )
     for bound in context.policies.bound:
         print(f"{indent}    politique {bound.name} : {', '.join(sorted(bound.points))}")
+    for target, contract, repairs in _contracts(spec):
+        print(f"{indent}    contrat ({target}) : {_contract_line(contract, repairs=repairs)}")
     budgets = config.budget_of(spec.name)
     if budgets.limited:
         print(f"{indent}    budget : {_budget_line(budgets)}")
@@ -941,15 +950,90 @@ async def _show_agent(loom: Loom, tenant_id: TenantId, spec: AgentSpec, *, inden
         target = f"rôle {role.name}" if role is not None else "réponse finale"
         sample = f", sample {judge.when.sample:g}" if judge.when.sample < 1 else ""
         print(
-            f"{indent}    juge {name} ({target}) : modèle {_chain(judge.chain)}, "
+            f"{indent}    juge {name} ({target}) : modèle {chain(judge.chain)}, "
             f"{len(judge.criteria)} critère(s){sample}"
         )
     await _show_sources(spec.name, context.tools)
 
 
-def _chain(models: tuple[str, ...]) -> str:
-    """Modèle et ses secours : ``M3_MAIN → SONNET``."""
-    return " → ".join(models)
+def _chain(models: tuple[str, ...], mapped: Mapping[str, str] | None = None) -> str:
+    """Modèle et ses secours : ``M3_MAIN → SONNET``.
+
+    « → » sépare les secours ; un modèle qu'un client fait correspondre à un
+    autre s'écrit ``OPUS (HAIKU pour ce client)``, pour ne pas se lire comme un
+    secours (test E6 du 19/10 : sous « client dupont », le juge affichait
+    « modèle OPUS » alors que ce client le fait tourner sur HAIKU).
+    """
+    shown = [
+        f"{model} ({mapped[model]} pour ce client)"
+        if mapped and mapped.get(model, model) != model
+        else model
+        for model in models
+    ]
+    return " → ".join(shown)
+
+
+def _contracts(spec: AgentSpec) -> list[tuple[str, OutputContract, bool]]:
+    """Contrats de sortie d'un agent : cible, contrat, et si son auteur le répare.
+
+    La réponse finale et un rôle se réparent ; un outil, non.
+    """
+    found: list[tuple[str, OutputContract, bool]] = []
+    if spec.output is not None:
+        found.append(("réponse finale", spec.output, True))
+    found.extend((f"rôle {role.name}", role.output, True) for role in spec.roles if role.output)
+    found.extend(
+        (f"outil {tool.python}", tool.output, False) for tool in spec.python_tools if tool.output
+    )
+    for ref in (*spec.mcp_tools, *spec.source_tools):
+        found.extend(
+            (f"outil {ref.prefix}{MCP_PREFIX_SEPARATOR}{name}", overrides.output, False)
+            for name, overrides in ref.tools.items()
+            if overrides.output is not None
+        )
+    return found
+
+
+# Longueur montrée d'un message de repli : le contrat se lit d'une ligne.
+_FALLBACK_SHOWN: Final = 40
+
+
+def _contract_line(contract: OutputContract, *, repairs: bool) -> str:
+    """Un contrat en une ligne : ses règles, ses réparations, ce qui se passe à l'échec.
+
+    Au test E1 du 19/10, ``validate`` montrait que ``loom.contract`` était posé,
+    mais pas ce qu'il exigeait. Les motifs sont montrés tels quels ; un schéma,
+    par ses champs requis.
+    """
+    rules: list[str] = []
+    if contract.json_schema is not None:
+        required = contract.json_schema.get("required")
+        names = [str(name) for name in required] if isinstance(required, list) else []
+        rules.append(f"schéma (requis : {', '.join(names)})" if names else "schéma")
+    elif contract.schema_file is not None:
+        rules.append(f"schéma {contract.schema_file}")
+    if contract.must_match is not None:
+        rules.append(f"must_match {contract.must_match}")
+    if contract.must_not_match is not None:
+        rules.append(f"must_not_match {contract.must_not_match}")
+    if contract.max_chars is not None:
+        rules.append(f"max_chars {contract.max_chars}")
+    if not rules:
+        rules.append("sortie non vide")
+    if not contract.normalize:
+        rules.append("sans normalisation")
+    after: list[str] = []
+    if repairs:
+        tools = "" if contract.repair.tools == "auto" else f", outils {contract.repair.tools}"
+        after.append(f"réparations {contract.repair.max_attempts}{tools}")
+    failure = f"échec → {contract.on_failure}"
+    if contract.on_failure == "fallback" and contract.fallback_message is not None:
+        message = contract.fallback_message
+        if len(message) > _FALLBACK_SHOWN:
+            message = message[: _FALLBACK_SHOWN - 1] + "…"
+        failure += f" « {message} »"
+    after.append(failure)
+    return f"{', '.join(rules)} ; {', '.join(after)}"
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -1484,9 +1568,30 @@ def _consumption_json(found: TenantConsumption) -> dict[str, JsonValue]:
     }
 
 
+# Avertissement des commandes qui relisent le journal quand il est en mémoire.
+MEMORY_JOURNAL: Final = (
+    "Journal en mémoire : il ne vit que le temps d'un process ; "
+    "cette commande ne voit pas les runs des autres commandes loom."
+)
+
+
+def _warn_memory_journal(config: LoomConfig, args: argparse.Namespace) -> None:
+    """Dit, sur stderr, qu'un journal ``memory`` ne garde rien d'une commande à l'autre.
+
+    Au test F5 du 19/10, ``loom sessions list`` répondait « Aucune session. »
+    juste après un run : exact — chaque commande ouvre un journal vide —, mais
+    rien ne le disait. Le journal regardé est celui du client de la commande.
+    """
+    spec = config.tenant_spec(_tenant(args) or DEFAULT_TENANT)
+    storage = spec.storage if spec is not None and spec.storage is not None else config.storage
+    if storage.events.backend == "memory":
+        print(MEMORY_JOURNAL, file=sys.stderr)
+
+
 def cmd_sessions_list(args: argparse.Namespace) -> int:
     config = _config(args)
     apply_logging(config)
+    _warn_memory_journal(config, args)
 
     async def go() -> list[SessionRecord]:
         async with Loom(config) as loom:
@@ -1517,6 +1622,7 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
     """
     config = _config(args)
     apply_logging(config)
+    _warn_memory_journal(config, args)
     session = SessionId(args.session_id)
 
     async def go() -> tuple[SessionInfo, tuple[SessionFile, ...]]:
@@ -1582,6 +1688,7 @@ def cmd_sessions_files(args: argparse.Namespace) -> int:
     """
     config = _config(args)
     apply_logging(config)
+    _warn_memory_journal(config, args)
     session = SessionId(args.session_id)
     origins = tuple(args.origin or ())
 
@@ -1662,6 +1769,7 @@ def _extracted_names(files: Sequence[SessionFile]) -> list[str]:
 def cmd_sessions_export(args: argparse.Namespace) -> int:
     config = _config(args)
     apply_logging(config)
+    _warn_memory_journal(config, args)
     session = SessionId(args.session_id)
 
     async def go() -> list[Event]:
@@ -1685,6 +1793,7 @@ def cmd_sessions_export(args: argparse.Namespace) -> int:
 def cmd_sessions_delete(args: argparse.Namespace) -> int:
     config = _config(args)
     apply_logging(config)
+    _warn_memory_journal(config, args)
     session = SessionId(args.session_id)
     # Refusé avant la question : « Supprimer la session  ? » n'a pas de sens.
     check_deletable_id("Session", session)

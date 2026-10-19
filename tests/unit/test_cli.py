@@ -777,3 +777,115 @@ def test_a_missing_extra_names_the_package_not_the_tool(
     assert main(["--config", str(demo()), "serve"]) == 2
     err = capsys.readouterr().err
     assert "loom-ia[http]" in err and "uv sync" not in err
+
+
+# --- Journal en mémoire, contrats et correspondance des modèles dans `validate` (19/10) ---
+
+
+MEMORY_SAID = (
+    "Journal en mémoire : il ne vit que le temps d'un process ; "
+    "cette commande ne voit pas les runs des autres commandes loom.\n"
+)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["sessions", "list"],
+        ["sessions", "list", "--json"],
+        ["sessions", "show", "s-1"],
+        ["sessions", "files", "s-1"],
+        ["sessions", "export", "s-1"],
+        ["sessions", "delete", "s-1", "--yes"],
+    ],
+)
+def test_a_memory_journal_is_said_to_keep_nothing_between_commands(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], command: list[str]
+) -> None:
+    """Test F5 du 19/10 : « Aucune session. » juste après un run, sans dire pourquoi."""
+    main(["--config", str(demo()), *command])
+    captured = capsys.readouterr()
+    assert captured.err.startswith(MEMORY_SAID)
+    assert "Journal en mémoire" not in captured.out  # stdout reste lisible par un script
+
+
+def test_a_lasting_journal_says_nothing_about_memory(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--config", str(demo(storage=JOURNAL)), "sessions", "list"]) == 0
+    assert "Journal en mémoire" not in capsys.readouterr().err
+
+
+def test_the_journal_of_the_named_client_is_the_one_looked_at(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """La racine est en JSONL, mais ce client a son journal à lui, en mémoire."""
+    path = demo(
+        storage=JOURNAL,
+        tenants=[{"id": "dupont", "storage": {"events": {"backend": "memory"}}}, {"id": "martin"}],
+    )
+    assert main(["--config", str(path), "sessions", "list", "--tenant", "martin"]) == 0
+    assert "Journal en mémoire" not in capsys.readouterr().err
+    assert main(["--config", str(path), "sessions", "list", "--tenant", "dupont"]) == 0
+    assert capsys.readouterr().err.startswith(MEMORY_SAID)
+
+
+def test_validate_shows_what_each_contract_requires(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test E1 du 19/10 : `validate` disait que `loom.contract` était posé, pas ce qu'il
+    exigeait."""
+    agent = demo_agent(
+        output={
+            "must_match": r"\d{2}/\d{2}/\d{4}",
+            "must_not_match": "(?i)sk-",
+            "max_chars": 400,
+            "repair": {"max_attempts": 0},
+            "on_failure": "fallback",
+            "fallback_message": "Réponse indisponible pour le moment, merci de réessayer.",
+        },
+        tools=[
+            {
+                "python": "calculer",
+                "output": {"schema": {"type": "object", "required": ["valeur", "unite"]}},
+            }
+        ],
+    )
+    assert main(["--config", str(demo(agents=[agent])), "validate"]) == 0
+    out = capsys.readouterr().out
+    assert (
+        "    contrat (réponse finale) : must_match \\d{2}/\\d{2}/\\d{4}, must_not_match (?i)sk-, "
+        "max_chars 400 ; réparations 0, échec → fallback "
+        "« Réponse indisponible pour le moment, me… »\n"
+    ) in out
+    # Un outil ne se répare pas : pas de « réparations ».
+    assert "    contrat (outil calculer) : schéma (requis : valeur, unite) ; échec → fail\n" in out
+
+
+def test_validate_writes_a_client_model_mapping_apart_from_the_fallbacks(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test E6 du 19/10 : sous « client dupont », le juge affichait « modèle OPUS » sans dire
+    que ce client le fait tourner sur HAIKU ; et « → » est déjà le signe des secours."""
+    models = [
+        MODEL,
+        {**MODEL, "id": "OPUS", "model": "fake-opus"},
+        {**MODEL, "id": "SONNET", "model": "fake-sonnet"},
+    ]
+    agent = demo_agent(
+        judge={
+            "model": "OPUS",
+            "fallbacks": ["SONNET"],
+            "criteria": [{"name": "juste", "rule": "La réponse est juste."}],
+        }
+    )
+    path = demo(
+        models=models,
+        agents=[agent],
+        tenants=[{"id": "dupont", "models": {"OPUS": "FAKE"}}, {"id": "martin"}],
+    )
+    assert main(["--config", str(path), "validate"]) == 0
+    out = capsys.readouterr().out
+    dupont, martin = out.split("client martin")
+    assert "juge output (réponse finale) : modèle OPUS (FAKE pour ce client) → SONNET" in dupont
+    assert "juge output (réponse finale) : modèle OPUS → SONNET," in martin
