@@ -668,7 +668,16 @@ async def test_an_exhausted_role_returns_the_verdict_to_the_orchestrator(
     ]
     assert completed.output.is_error
     text = completed.output.as_text
-    assert text.startswith("Sortie refusée par le juge rediger.\nLe juge rediger refuse")
+    # Test E5 du 19/10 : une règle dite à l'orchestrateur, pas la consigne de réparation.
+    assert text == (
+        "Sortie du rôle rediger refusée par son juge rediger après 1 réparation par son modèle "
+        "(une règle de la configuration, pas une panne) :\n"
+        "- exact (0,00 < 0,80) : motif exact\n"
+        "La même demande serait très probablement refusée de la même façon : "
+        "ne rappelle pas ce rôle à l'identique. "
+        "Dis à l'utilisateur que cette sortie n'a pas pu être validée."
+    )
+    assert "Corrige la sortie" not in text and "déjà respectés" not in text
     assert "Sortie reçue" not in text and "Bonjour, remise." not in text
     result = main.requests[1].messages[-1].blocks[0]
     assert isinstance(result, ToolResultBlock) and result.output.is_error

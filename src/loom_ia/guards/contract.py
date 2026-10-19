@@ -192,8 +192,20 @@ def diagnostic(contract: OutputContract, problems: tuple[str, ...]) -> str:
     return "\n".join(lines)
 
 
-def refusal(name: str, problems: tuple[str, ...], *, role: bool, repairs: int = 0) -> str:
+def refusal(
+    name: str,
+    problems: tuple[str, ...],
+    *,
+    role: bool,
+    repairs: int = 0,
+    by: str = "son contrat de sortie",
+) -> str:
     """Refus d'une sortie de rôle ou d'outil, dit à l'orchestrateur.
+
+    ``by`` : ce qui refuse, « son contrat de sortie » ou « son juge <nom> ». Au
+    test E5 du 19/10, le refus d'un juge sur un rôle portait aussi la consigne
+    de réparation : Haiku a rappelé le rôle à l'identique, puis écrit la sortie
+    lui-même, hors du juge.
 
     Ce n'est pas le diagnostic de réparation : l'orchestrateur n'est pas l'auteur
     de la sortie et ne peut pas la corriger. Au test E1 du 19/10, la consigne
@@ -209,7 +221,7 @@ def refusal(name: str, problems: tuple[str, ...], *, role: bool, repairs: int = 
         if repairs:
             after = f" après {repairs} réparation{'s' if repairs > 1 else ''} par son modèle"
         return (
-            f"Sortie du rôle {name} refusée par son contrat de sortie{after} "
+            f"Sortie du rôle {name} refusée par {by}{after} "
             "(une règle de la configuration, pas une panne) :\n"
             f"{listed}\n"
             "La même demande serait très probablement refusée de la même façon : "
@@ -217,7 +229,7 @@ def refusal(name: str, problems: tuple[str, ...], *, role: bool, repairs: int = 
             "Dis à l'utilisateur que cette sortie n'a pas pu être validée."
         )
     return (
-        f"Résultat de {name} refusé par son contrat de sortie "
+        f"Résultat de {name} refusé par {by} "
         "(une règle de la configuration, pas une panne) :\n"
         f"{listed}\n"
         "Le même appel avec les mêmes arguments sera refusé de la même façon : "

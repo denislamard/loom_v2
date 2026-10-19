@@ -102,7 +102,7 @@ from loom_ia.engine import (
 from loom_ia.engine.media import describe
 from loom_ia.engine.model_call import responded
 from loom_ia.engine.refs import RefError
-from loom_ia.guards.contract import visible_text
+from loom_ia.guards.contract import refusal, visible_text
 
 JUDGE_POLICY_PREFIX: Final = "loom.judge"
 JUDGE_GUARD: Final = "judge"
@@ -276,7 +276,7 @@ class JudgeGuard(TracingPolicy):
             context.record(_failed(definition, reason, "retry"))
             return Retry(feedback, tools=definition.repair.tools != "none")
         context.record(_failed(definition, reason, definition.on_failure))
-        return self._exhausted(judged, feedback, reason)
+        return self._exhausted(judged, blocking, reason, context.attempt)
 
     def _judged(self, subject: PolicySubject) -> _Judged | None:
         """Sortie que ce juge évalue à ce point, ou None."""
@@ -463,8 +463,18 @@ class JudgeGuard(TracingPolicy):
             message, self.definition.criteria, judge=self.definition.name, validator=self._validator
         )
 
-    def _exhausted(self, judged: _Judged, feedback: str, reason: str) -> Decision:
-        """Réparations épuisées : ``on_failure`` décide de la suite."""
+    def _exhausted(
+        self,
+        judged: _Judged,
+        blocking: tuple[CriterionScore, ...],
+        reason: str,
+        repairs: int,
+    ) -> Decision:
+        """Réparations épuisées : ``on_failure`` décide de la suite.
+
+        Le refus d'un rôle est dit à l'orchestrateur, qui n'en est pas l'auteur :
+        une règle et le motif du juge, pas la consigne de réparation (``refusal``).
+        """
         definition = self.definition
         match definition.on_failure, judged.output:
             case "unverified", None:
@@ -485,7 +495,13 @@ class JudgeGuard(TracingPolicy):
             case "fail", None:
                 return Fail(f"réponse finale refusée par le juge {definition.name} : {reason}")
             case "fail", ToolOutput():
-                refused = f"Sortie refusée par le juge {definition.name}.\n{feedback}"
+                refused = refusal(
+                    definition.role or definition.name,
+                    tuple(_listed((score,)) for score in blocking),
+                    role=True,
+                    repairs=repairs,
+                    by=f"son juge {definition.name}",
+                )
                 return Replace(ToolOutput.error(refused), reason="refusée par le juge")
 
 

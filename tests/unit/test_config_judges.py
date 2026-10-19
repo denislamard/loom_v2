@@ -184,6 +184,42 @@ def test_judge_config_errors(demo: ConfigFactory, judge: dict[str, Any], message
         load_config(path)
 
 
+JUDGE = {"model": "JUDGE", "criteria": CRITERIA}
+
+
+@pytest.mark.parametrize(
+    ("agent", "where", "what"),
+    [
+        (
+            demo_agent(tools=[{"python": "calculer", "judge": JUDGE}]),
+            "tools.0.python",
+            "un outil Python",
+        ),
+        (demo_agent(tools=[{"mcp": "crm", "judge": JUDGE}]), "tools.0.mcp", "un serveur MCP"),
+        (
+            demo_agent(tools=[{"source": "forge", "judge": JUDGE}]),
+            "tools.0.source",
+            "une source d'outils",
+        ),
+        (
+            demo_agent(subagents=[{"agent": "autre", "judge": JUDGE}]),
+            "subagents.0",
+            "la référence d'un sous-agent",
+        ),
+    ],
+)
+def test_a_judge_on_a_tool_is_refused_with_its_reason(
+    demo: ConfigFactory, agent: dict[str, Any], where: str, what: str
+) -> None:
+    # Test E5 du 19/10 : « tools.1.python.judge — Extra inputs are not permitted ».
+    path = demo(models=[MODEL, JUDGE_MODEL], agents=[agent])
+    with pytest.raises(ConfigError) as caught:
+        load_config(path)
+    message = str(caught.value)
+    assert where in message and f"{what} n'a pas de juge" in message
+    assert "(roles[].judge)" in message and "Extra inputs" not in message
+
+
 def test_two_judges_cannot_share_a_name() -> None:
     role: dict[str, Any] = {
         "name": "output",

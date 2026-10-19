@@ -448,6 +448,20 @@ def state_cited(source: str) -> set[str]:
     }
 
 
+def _reject_judge(data: object, what: str) -> None:
+    """Un juge porte sur la réponse finale ou sur un rôle, jamais sur un outil.
+
+    Sans ce contrôle, la clé tombait sous « Extra inputs are not permitted »,
+    qui ne dit pas pourquoi (test E5 du 19/10).
+    """
+    if isinstance(data, dict) and "judge" in cast(dict[object, object], data):
+        raise ValueError(
+            f"{what} n'a pas de juge : un juge porte sur la réponse finale (judge: de "
+            "l'agent) ou sur un rôle (roles[].judge) ; le résultat d'un outil se contrôle "
+            "par son contrat (output:)"
+        )
+
+
 def _reject_two_prompts(data: object) -> None:
     if not isinstance(data, dict):
         return
@@ -513,6 +527,12 @@ class PythonTool(DomainModel):
     # à l'orchestrateur en erreur.
     output: OutputContract | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _no_judge(cls, data: object) -> object:
+        _reject_judge(data, "un outil Python")
+        return data
+
 
 class McpTools(DomainModel):
     """Serveur MCP référencé par un agent (#19).
@@ -530,6 +550,12 @@ class McpTools(DomainModel):
     # Sans ce serveur, le run échoue au lieu de continuer sans ses outils.
     required: bool = False
     tools: dict[str, ToolOverrides] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_judge(cls, data: object) -> object:
+        _reject_judge(data, "un serveur MCP")
+        return data
 
     @model_validator(mode="after")
     def _check_filters(self) -> Self:
@@ -563,6 +589,12 @@ class SourceTools(DomainModel):
     required: bool = False
     tools: dict[str, ToolOverrides] = Field(default_factory=dict)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _no_judge(cls, data: object) -> object:
+        _reject_judge(data, "une source d'outils")
+        return data
+
     @model_validator(mode="after")
     def _check_filters(self) -> Self:
         if self.include is not None and self.exclude is not None:
@@ -593,6 +625,13 @@ class SubAgentRef(DomainModel):
     description: str | None = None
     # Part de ce qui reste au budget du run appelant au moment de l'appel (J4).
     budget_share: float | None = Field(default=None, gt=0.0, le=1.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_judge(cls, data: object) -> object:
+        # Le sous-agent juge sa propre réponse finale (son judge:), pas la référence.
+        _reject_judge(data, "la référence d'un sous-agent")
+        return data
 
     @property
     def tool_name(self) -> str:
