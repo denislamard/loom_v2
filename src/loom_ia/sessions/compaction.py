@@ -52,7 +52,7 @@ from loom_ia.core.model import (
     TenantId,
     new_run_id,
 )
-from loom_ia.core.ports import EventStore
+from loom_ia.core.ports import EventStore, StorageNotReady
 from loom_ia.core.projections import history
 from loom_ia.engine import (
     RunContext,
@@ -225,6 +225,9 @@ class CompactionJob:
         if self.plan.blocking:
             try:
                 await self.compact(tenant_id, session_id, triggered_by=run_id)
+            except StorageNotReady:
+                # Le run ne partirait pas non plus : le dire une fois, sans trace.
+                raise
             except Exception:
                 logger.warning(
                     "Session %s : résumé avant le run impossible, le run part sans",

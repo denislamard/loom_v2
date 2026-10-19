@@ -16,6 +16,7 @@ from loom_ia.core.ports.event_store import (
     JournalCorrupted,
     SequenceConflict,
     SessionRecord,
+    StorageNotReady,
     UnusableId,
     journal_key,
 )
@@ -82,6 +83,7 @@ __all__ = [
     "SessionRecord",
     "SourceContext",
     "SourceUnavailable",
+    "StorageNotReady",
     "TaskQueue",
     "Tool",
     "ToolContext",

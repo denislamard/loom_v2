@@ -780,6 +780,23 @@ def broken(failure: BaseException) -> SummaryResolver:
     return resolve
 
 
+async def test_a_storage_not_ready_stops_the_run_before_the_summary() -> None:
+    """Test F5 du 19/10 : une base non préparée faisait journaliser une trace
+    « résumé impossible, le run part sans », puis le run échouait quand même."""
+    from loom_ia.core.ports import StorageNotReady
+
+    class Unprepared(InMemoryEventStore):
+        async def read(self, *args: Any, **kwargs: Any) -> Any:
+            raise StorageNotReady("base non préparée")
+
+    plan = CompactionPlan(
+        agent=COMPACTION_AGENT, over_tokens=40, hard_tokens=60, keep_last=1, blocking=True
+    )
+    job = CompactionJob(broken(RuntimeError("jamais appelé")), Unprepared(), SessionWriters(), plan)
+    with pytest.raises(StorageNotReady, match="non préparée"):
+        await job.before_run(DEFAULT_TENANT, SESSION)
+
+
 @pytest.mark.parametrize("failure", [RuntimeError("panne"), ConfigError("clé absente")])
 async def test_ensure_fits_trims_whatever_makes_the_summary_fail(
     failure: Exception, caplog: pytest.LogCaptureFixture

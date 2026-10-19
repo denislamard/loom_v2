@@ -509,9 +509,9 @@ Contrôle de cohérence au chargement : un juge sur le même modèle (ou un seco
 
 `--session <id>` (ou `session_id`) rattache plusieurs runs au même journal : le run suivant reprend la conversation.
 
-**Testée** : non
+**Testée** : oui (19/10, agent `agent_test`, série 1 (session `session-F1`, trois runs ; F1, F2, F4 et F8 vus dans le même journal))
 
-**Note** :
+**Note** : Run 1 « Calcule le TTC d'un devis de 800 € HT à 20 % » → 960 € ; run 2 « Et si on applique une remise de 10 % sur le HT ? », qui n'a de sens qu'avec le run 1 → Haiku reprend les 800 € HT, appelle `prix_ttc` sur 720 € → 864 € « (contre 960 € sans remise) » ; run 3 « Rappelle-moi le client et le dernier TTC… » → « Dupont » et « 864 € », 1 itération, sans outil. La requête du run 2 porte les 4 messages du run 1 (demande, appel, résultat, réponse) avant la nouvelle demande ; celle du run 3, les 8 des deux runs précédents.
 
 ### F2 — Historique structuré, sans aplatissement
 
@@ -519,9 +519,9 @@ Contrôle de cohérence au chargement : un juge sur le même modèle (ou un seco
 
 L'historique LLM est une projection du journal d'événements (blocs neutres, appels et résultats d'outils), indépendante du fournisseur ; snapshots tous les `snapshot_every` événements.
 
-**Testée** : non
+**Testée** : oui (19/10, agent `agent_test`, série 1 (session `session-F1`, trois runs ; F1, F2, F4 et F8 vus dans le même journal), `sessions.snapshot_every: 20`)
 
-**Note** :
+**Note** : Historique envoyé en blocs, sans aplatissement : `user` (texte), `assistant` (`tool_use`), `user` (`tool_result`), `assistant` (texte), et ainsi de suite, reconstruits depuis le journal. Deux `session.snapshot` écrits en fin de run : `up_to_seq: 20` (4 messages, 233 tokens estimés) puis `up_to_seq: 41` (8 messages, 498 tokens). Le state de session (F8) n'entre pas dans l'historique : il est ajouté en fin de dernier message, à chaque requête.
 
 ### F3 — Compaction automatique
 
@@ -529,9 +529,9 @@ L'historique LLM est une projection du journal d'événements (blocs neutres, ap
 
 Au-delà de `over_tokens` (50 000 dans agent-01), un résumé par un modèle dédié (`HAIKU`) remplace l'ancien segment, les `keep_last` (2) derniers tours restent ; `blocking: true` l'attend en fin de run. Événement `session.compacted`, contrôle de fidélité lexical.
 
-**Testée** : non
+**Testée** : oui (19/10, agent `agent_test`, série 2 : session `session-F1` reprise avec `over_tokens: 400`, `keep_last: 2`, `blocking: true`)
 
-**Note** :
+**Note** : À l'ouverture de chaque run, un run `_compaction` (même session, `kind: compaction`, modèle HAIKU, prompt « Tu résumes les échanges anciens… ») reçoit le segment ancien mis en texte (« Utilisateur : … Agent appelle prix_ttc : {…} … »), puis `guard.checked` `fidelity` `passed` et `session.compacted`. 1er run de la série : `up_to_seq: 21` (run 1), `kept: 2`, 233 → 105 tokens, `fidelity: ok`, 0,00014 $. 2e run : `up_to_seq: 42` (runs 1 et 2), résumé glissant qui reprend le précédent (« Le devis concerne le client Dupont. Pour 800 € HT … 960 € … remise de 10 % … 720 € … 864 € »), 498 → 119 tokens, 0,00025 $. La requête de l'agent commence par « [Résumé des échanges précédents de cette conversation.] … » fusionné avec la demande du premier tour gardé, puis les 2 derniers tours intacts, puis la nouvelle demande. Réponses justes : TVA 10 % sur 720 € → 792 € ; récapitulatif complet (960, 864, 792, client Dupont) à partir du résumé, des tours gardés et du state. Le state n'est pas touché (`dernier_ttc: 792.0`). Ergonomie : rien ne dit qu'une compaction a eu lieu, ni la console de `loom run`, ni le déroulé `--stream` (`access/progress.py` n'a pas de ligne pour `session.compacted`) ; seul le journal le montre. Non vus : `hard_tokens`, mode non bloquant (`blocking: false`).
 
 ### F4 — Nettoyage : thinking retiré, médias en références
 
@@ -539,9 +539,9 @@ Au-delà de `over_tokens` (50 000 dans agent-01), un résumé par un modèle dé
 
 Dans l'historique renvoyé au modèle, les blocs de raisonnement anciens sont retirés et les images remplacées par leur URI.
 
-**Testée** : non
+**Testée** : en partie : raisonnement oui (19/10, agent `agent_test`, série 1 (session `session-F1`, trois runs ; F1, F2, F4 et F8 vus dans le même journal)) ; images à voir en G1 (pas d'image dans cet agent)
 
-**Note** :
+**Note** : Run 2 : Haiku produit `reasoning` + `tool_call` ; dans la requête suivante du même run (boucle d'outils), le bloc `thinking` est renvoyé avant le `tool_use`, comme l'exige l'API. Run 3 : les tours du run 2 reviennent sans aucun `thinking` (`assistant` : `tool_use` seul, puis texte seul), y compris la réponse finale du run 2 qui portait `reasoning` + `text`. Le raisonnement ancien est donc retiré, celui de la boucle en cours gardé. Médias en références : non testés ici, faute d'image dans la session ; repris en G1.
 
 ### F5 — Backends de session : mémoire, JSONL, SQLite, Postgres
 
@@ -551,7 +551,7 @@ Dans l'historique renvoyé au modèle, les blocs de raisonnement anciens sont re
 
 **Testée** : non
 
-**Note** :
+**Note** : série 3 (19/10), Postgres en conteneur (`loom-pg`, port 15432, rôles `dba` propriétaire, `loom_login` connexion, `loom_app` applicatif). `validate` : « Journal : postgres (DSN dans LOOM_PG : renseignée, rôle : loom_app) », « Artefacts : local (…/data-pg/artefacts) ». **Défaut** : base préparée avec la sortie de `loom storage sql` (config en `postgres`) appliquée par `dba`, puis `loom run` (connexion `loom_login`) → `PostgresNotPrepared` « le rôle 'loom_login' n'a pas pu poser le schéma de loom … permission denied for schema public », d'abord dans la compaction d'avant run (WARNING avec trace), puis trace Python brute en sortie de `loom run`. Cause : `postgres_ddl()` (`runtime/wiring.py`), utilisé par `loom storage sql` quand la config déclare Postgres, n'émet que `EVENTS_DDL` (schéma 2.0, version 1) sans `EVENTS_UPGRADE` (table `loom_schema`, migrations 2 et 3 dont la colonne `ingested`) ni `GRANT SELECT ON loom_schema` ; à l'ouverture, loom ne trouve pas de version et tente la migration avec `loom_login`, qui n'en a pas le droit. Le chemin sans config Postgres (`sql.ddl()`) est complet. Le SQL imprimé au chapitre 24 de `howto/03-production.md` est aussi celui de la 2.0. Analyse d'impact en cours ; a), b), d) de la série à faire.
 
 ### F6 — Mémoire long terme / RAG via `loom-notes`
 
@@ -579,9 +579,9 @@ Le serveur MCP `loom-notes` branché comme source d'outils : l'agent cherche et 
 
 Clés typées déclarées dans `state:` de l'agent (schéma, `from` d'un outil avec `path`/`value`/`on_missing`, `required`, `default`), posées par `loom run --state CLE=VALEUR` ou par un résultat d'outil, montrées à `main` par `context: [session_state]`, relues par `loom state <session>`. Limites 1 Kio / 4 Kio ; un state refusé à l'ouverture refuse le run (code 2).
 
-**Testée** : non
+**Testée** : oui (19/10, agent `agent_test`, série 1 (session `session-F1`, trois runs ; F1, F2, F4 et F8 vus dans le même journal), puis deux runs refusés en `session-F1b`)
 
-**Note** :
+**Note** : Agent : `state: {client: {schema: string, maxLength 80}, dernier_ttc: {schema: number, from: [{tool: prix_ttc, path: /montant_ttc}]}}`, `main.context: [session_state]`. `--state client=Dupont` au run 1 → `run.started.state` ; `prix_ttc` pose `dernier_ttc` (960, puis 864) dans `tool.completed.output.state`. Chaque requête finit par `<session_state> {"client":"Dupont","dernier_ttc":…} </session_state>` à jour (après le résultat d'outil dans la boucle). Run 3 répond depuis le state, sans outil. `loom state session-F1` → `{"client": "Dupont", "dernier_ttc": 864.0}`. Refus à l'ouverture, code 2, sans rien écrire (pas de journal `session-F1b`) : `--state inconnu=1` → « State refusé : inconnu : clé non déclarée dans 'state' » ; `--state 'dernier_ttc="abc"'` → « dernier_ttc : ne suit pas son schéma — doit être un nombre (reçu : du texte) ». Non vus : `required`, `default`, `value`, `on_missing`, limites de taille (couverts par les tests unitaires).
 
 ---
 

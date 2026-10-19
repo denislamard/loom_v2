@@ -456,8 +456,18 @@ def postgres_ddl(config: LoomConfig | StorageConfig) -> str:
     from loom_ia.adapters.postgres import sql
 
     storage = _storage(config)
+    # Le schéma complet de chaque table, migrations et table des versions
+    # comprises, comme ``sql.ddl()`` : au test F5 du 19/10, ``EVENTS_DDL`` seul
+    # (le schéma de la 2.0) laissait la base sans ``loom_schema`` ; à
+    # l'ouverture, loom tentait la migration avec le rôle de connexion, qui
+    # n'en a pas le droit (« permission denied for schema public »).
     declared = (
-        (storage.events, sql.EVENTS_TABLE, sql.EVENTS_DDL, False),
+        (
+            storage.events,
+            sql.EVENTS_TABLE,
+            f"{sql.EVENTS_DDL}\n{sql.EVENTS_UPGRADE}",
+            False,
+        ),
         (storage.idempotency, sql.IDEMPOTENCY_TABLE, sql.IDEMPOTENCY_DDL, True),
     )
     used = [d for d in declared if d[0].backend == "postgres"]
@@ -473,6 +483,9 @@ def postgres_ddl(config: LoomConfig | StorageConfig) -> str:
         blocks.append(table_ddl)
         if role is not None:
             blocks.append(sql.grants_ddl(role, table=table, update=update))
+    # Lecture seule de la table des versions : de quoi vérifier sans pouvoir migrer.
+    for role in sorted(roles):
+        blocks.append(f"GRANT SELECT ON {sql.SCHEMA_TABLE} TO {role};")
     return "\n".join(blocks) + "\n"
 
 

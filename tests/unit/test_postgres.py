@@ -25,8 +25,10 @@ from loom_ia.access.cli import main
 from loom_ia.adapters.postgres.sql import (
     DEFAULT_ROLE,
     EVENTS_TABLE,
+    EVENTS_UPGRADE,
     IDEMPOTENCY_TABLE,
     IDEMPOTENCY_UPGRADE,
+    SCHEMA_TABLE,
     check_name,
     ddl,
 )
@@ -311,6 +313,34 @@ def test_only_what_the_config_declares(demo: ConfigFactory) -> None:
     assert IDEMPOTENCY_TABLE not in sql
 
 
+def _statements(text: str) -> list[str]:
+    """Le SQL sans ses commentaires, ligne à ligne."""
+    return [line for line in text.splitlines() if line.strip() and not line.startswith("--")]
+
+
+def test_the_declared_store_gets_the_whole_schema(demo: ConfigFactory) -> None:
+    """Test F5 du 19/10 : la sortie de ``loom storage sql`` d'une config en Postgres
+    n'avait que le schéma de la 2.0 ; sans ``loom_schema``, loom tentait de migrer à
+    l'ouverture avec le rôle de connexion, qui n'en a pas le droit."""
+    sql = postgres_ddl(load_config(demo(storage=PG_STORAGE)))
+    assert EVENTS_UPGRADE in sql and f"CREATE TABLE IF NOT EXISTS {SCHEMA_TABLE}" in sql
+    assert "ADD COLUMN IF NOT EXISTS ingested" in sql
+    assert f"GRANT SELECT ON {SCHEMA_TABLE} TO {DEFAULT_ROLE};" in sql
+    # Le même SQL que celui d'une base préparée d'avance, pour la seule table déclarée.
+    assert _statements(sql) == _statements(ddl(idempotency=False))
+
+
+def test_both_stores_get_the_same_sql_as_the_whole_ddl() -> None:
+    storage = StorageConfig.model_validate(
+        {
+            "events": PG_EVENTS,
+            "artifacts": {"backend": "memory"},
+            "idempotency": {"backend": "postgres", "dsn_env": VARIABLE},
+        }
+    )
+    assert _statements(postgres_ddl(storage)) == _statements(ddl())
+
+
 def test_two_stores_two_roles_two_role_blocks() -> None:
     storage = StorageConfig.model_validate(
         {
@@ -348,6 +378,25 @@ def test_storage_sql_prints_what_there_is_to_apply(
     assert "FORCE ROW LEVEL SECURITY" in out
     # Rien n'a été exécuté : la commande n'ouvre aucune connexion.
     assert "loom_owner" not in out
+
+
+def test_a_storage_not_ready_is_said_without_a_trace(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test F5 du 19/10 : ``PostgresNotPrepared`` sortait en trace Python brute."""
+    import sys
+
+    from loom_ia.core.ports import StorageNotReady
+
+    cli = sys.modules["loom_ia.access.cli.main"]
+
+    def unprepared(args: object) -> int:
+        raise StorageNotReady("Base Postgres non préparée : le rôle 'loom_login' …")
+
+    monkeypatch.setattr(cli, "cmd_validate", unprepared)
+    assert main(["--config", str(demo()), "validate"]) == 2
+    err = capsys.readouterr().err
+    assert err == "Stockage : Base Postgres non préparée : le rôle 'loom_login' …\n"
 
 
 @sans_extra

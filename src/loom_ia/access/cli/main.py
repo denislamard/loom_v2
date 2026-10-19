@@ -110,6 +110,7 @@ from loom_ia.core.ports import (
     SealError,
     SessionRecord,
     SourceContext,
+    StorageNotReady,
     Tool,
 )
 from loom_ia.engine import ClaimConflict, SessionUnreadable, ToolExecutor
@@ -201,6 +202,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except JournalCorrupted as error:
         print(f"Journal illisible : {error!s}", file=sys.stderr)
         return FAILED
+    except StorageNotReady as error:
+        # Rien n'a été écrit : la base est à préparer par son administrateur.
+        print(f"Stockage : {error!s}", file=sys.stderr)
+        return REFUSED
     except EOFError:
         print(
             "Entrée standard fermée : une réponse était attendue "

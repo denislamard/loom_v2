@@ -42,6 +42,16 @@ class JournalCorrupted(Exception):
     """Une ligne complète du journal est illisible."""
 
 
+class StorageNotReady(RuntimeError):
+    """Le stockage n'est pas prêt à servir : c'est à son administrateur de le préparer.
+
+    Base Postgres sans schéma ou à migrer par un rôle qui n'en a pas le droit,
+    migration refusée, rôle applicatif impossible à prendre. Rien n'a été écrit.
+    Défini dans le noyau, sans dépendre d'asyncpg, pour que la ligne de commande
+    et les accès le reconnaissent sans l'extra ``postgres``.
+    """
+
+
 class JournalBusy(Exception):
     """Le journal est tenu par un autre écrivain au-delà du délai de verrou.
 

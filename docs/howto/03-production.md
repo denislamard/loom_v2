@@ -5857,14 +5857,42 @@ DO $$ BEGIN
         WITH CHECK (tenant_id = current_setting('loom.tenant_id', true));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
+CREATE TABLE IF NOT EXISTS loom_schema (
+    component  text        NOT NULL PRIMARY KEY,
+    version    integer     NOT NULL,
+    applied_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO loom_schema (component, version) VALUES ('events', 1) ON CONFLICT (component) DO NOTHING;
+DO $mig$ BEGIN
+    IF coalesce((SELECT version FROM loom_schema WHERE component = 'events'), 0)
+       < 2 THEN
+        DROP INDEX IF EXISTS loom_events_event_id;
+        CREATE UNIQUE INDEX loom_events_event_id ON loom_events (tenant_id, event_id);
+        INSERT INTO loom_schema (component, version) VALUES ('events', 2)
+        ON CONFLICT (component) DO UPDATE SET version = 2, applied_at = now();
+    END IF;
+END $mig$;
+DO $mig$ BEGIN
+    IF coalesce((SELECT version FROM loom_schema WHERE component = 'events'), 0)
+       < 3 THEN
+        ALTER TABLE loom_events ADD COLUMN IF NOT EXISTS ingested bigint
+            GENERATED ALWAYS AS IDENTITY;
+        CREATE INDEX IF NOT EXISTS loom_events_ingested
+            ON loom_events (tenant_id, ingested);
+        INSERT INTO loom_schema (component, version) VALUES ('events', 3)
+        ON CONFLICT (component) DO UPDATE SET version = 3, applied_at = now();
+    END IF;
+END $mig$;
 GRANT SELECT, INSERT, DELETE ON loom_events TO loom_app;
+GRANT SELECT ON loom_schema TO loom_app;
 ```
 
-À lire en trois temps :
+À lire en quatre temps :
 
 1. `ENABLE` puis `FORCE ROW LEVEL SECURITY` et la politique : une ligne n'est visible, ou écrivable, que si son `tenant_id` est égal au réglage `loom.tenant_id` de la transaction. `FORCE` étend la règle au **propriétaire** de la table.
-2. `GRANT SELECT, INSERT, DELETE` à `loom_app` : **pas d'`UPDATE`**. Le journal est immuable par privilège, pas par politesse du code. `DELETE` reste accordé, c'est l'effacement RGPD.
-3. Loom pose `loom.tenant_id` à chaque transaction avec le client de la requête.
+2. `loom_schema` et les blocs `DO $mig$` : la version du schéma est inscrite en base, et les migrations ne s'appliquent que si elle est en retard. Le script est donc rejouable, et c'est aussi lui qu'on applique pour migrer une base existante. À l'ouverture, loom lit cette version une fois par process : à jour, il ne touche à rien et n'a pas besoin de droit sur le schéma.
+3. `GRANT SELECT, INSERT, DELETE` à `loom_app` : **pas d'`UPDATE`**. Le journal est immuable par privilège, pas par politesse du code. `DELETE` reste accordé, c'est l'effacement RGPD. `loom_app` n'a que `SELECT` sur `loom_schema` : il lit la version, il ne la change pas.
+4. Loom pose `loom.tenant_id` à chaque transaction avec le client de la requête.
 
 On applique avec le rôle `dba`, puis on autorise la connexion de l'application à prendre le rôle `loom_app` :
 
@@ -5884,6 +5912,11 @@ CREATE INDEX
 ALTER TABLE
 ALTER TABLE
 DO
+CREATE TABLE
+INSERT 0 1
+DO
+DO
+GRANT
 GRANT
 GRANT ROLE
 ```

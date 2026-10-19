@@ -44,7 +44,7 @@ import asyncpg
 from asyncpg.pool import PoolConnectionProxy
 
 from loom_ia.adapters.postgres.sql import SCHEMA_TABLE, TENANT_SETTING, check_name
-from loom_ia.core.ports import JournalBusy
+from loom_ia.core.ports import JournalBusy, StorageNotReady
 
 # Connexion tenue le temps d'une transaction : ce que rend le pool, et non un
 # ``asyncpg.Connection``, qu'il enrobe.
@@ -116,7 +116,7 @@ _SET_LOCK: Final = "SELECT set_config('lock_timeout', $1, true)"
 DEFAULT_LIMITS: Final = PoolLimits()
 
 
-class PostgresNotPrepared(RuntimeError):
+class PostgresNotPrepared(StorageNotReady):
     """La base n'a pas le schéma de loom, et le rôle connecté ne peut pas le poser.
 
     Le mot de Postgres est repris tel quel : le schéma tient des tables, un
@@ -132,7 +132,7 @@ class PostgresNotPrepared(RuntimeError):
         )
 
 
-class PostgresMigrationFailed(RuntimeError):
+class PostgresMigrationFailed(StorageNotReady):
     """Une migration du schéma a échoué ; elle est annulée en entier, la base n'a pas bougé."""
 
     def __init__(self, table: str, said: str) -> None:
@@ -145,7 +145,7 @@ class PostgresMigrationFailed(RuntimeError):
         )
 
 
-class RoleUnavailable(RuntimeError):
+class RoleUnavailable(StorageNotReady):
     """Le rôle connecté ne peut pas endosser le rôle applicatif."""
 
     def __init__(self, role: str, current: str) -> None:
