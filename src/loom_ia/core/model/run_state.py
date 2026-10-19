@@ -65,6 +65,10 @@ class PendingCall(DomainModel):
     # Arguments remplacés par une politique ``before_tool`` : repris tels quels
     # si l'appel est relancé après une interruption (#2).
     replaced_arguments: dict[str, JsonValue] | None = None
+    # Politiques qui les ont remplacés, et leurs motifs, dans l'ordre : dits au
+    # modèle avec l'appel réécrit (test E7 du 19/10).
+    replaced_by: tuple[str, ...] = ()
+    replaced_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +156,8 @@ class Amendment(DomainModel):
     # ``approval`` : corrigé en accordant ; ``policy`` : remplacé par une politique ``before_tool``.
     origin: Literal["approval", "policy"]
     fields: tuple[str, ...]
-    # Approbation seulement : qui a corrigé, et pourquoi.
+    # Qui a corrigé et pourquoi : l'approbateur, ou la (les) politique(s) et
+    # leur motif (depuis 2.0.10).
     by: str | None = None
     reason: str = ""
 

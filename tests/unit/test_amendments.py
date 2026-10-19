@@ -93,11 +93,26 @@ def test_the_note_names_who_changed_which_fields_and_why() -> None:
         "avant exécution (champs : client, message). L'appel affiché ci-dessus porte déjà "
         f"les arguments corrigés : {EXECUTED}]"
     )
+    again = EXECUTED.removesuffix(".") + ", et un nouvel appel avec eux serait remplacé de même."
     by_policy = Amendment(call_id="c1", origin="policy", fields=("remise",))
     assert amendment_note(by_policy) == (
         "[Note du système : une politique a remplacé les arguments de ton appel avant "
         "exécution (champs : remise). L'appel affiché ci-dessus porte déjà les arguments "
-        f"remplacés : {EXECUTED}]"
+        f"remplacés : {again}]"
+    )
+    # Test E7 du 19/10 : la politique nommée, avec son motif.
+    named = Amendment(
+        call_id="c1", origin="policy", fields=("taux_tva",), by="plafond_ttc", reason="abrogé"
+    )
+    assert amendment_note(named) == (
+        "[Note du système : la politique plafond_ttc a remplacé les arguments de ton appel "
+        "avant exécution (champs : taux_tva ; motif : abrogé). L'appel affiché ci-dessus porte "
+        f"déjà les arguments remplacés : {again}]"
+    )
+    two = Amendment(call_id="c1", origin="policy", fields=("a",), by="p1, p2", reason="x ; y")
+    assert amendment_note(two).startswith(
+        "[Note du système : les politiques p1, p2 ont remplacé les arguments de ton appel "
+        "avant exécution (champs : a ; motif : x ; y)."
     )
 
 
@@ -173,15 +188,19 @@ async def test_a_policy_replacement_is_announced_without_its_values() -> None:
     ctx = context(InMemoryEventStore(), model, envoyer, policies=_bind(signe))
     state = await run(ctx)
 
-    assert state.amendments == (Amendment(call_id="c1", origin="policy", fields=("message",)),)
-    text = result_text(model.requests[1])
-    assert text == (
-        "[Note du système : une politique a remplacé les arguments de ton appel avant "
-        "exécution (champs : message). L'appel affiché ci-dessus porte déjà les arguments "
-        f"remplacés : {EXECUTED}]\nRelance envoyée à Dupont (14 caractères)"
+    assert state.amendments == (
+        Amendment(call_id="c1", origin="policy", fields=("message",), by="signe", reason="signé"),
     )
-    # Ni l'ancienne valeur ni le motif de la politique.
-    assert "Madame" not in text and "signé" not in text
+    text = result_text(model.requests[1])
+    # La politique et son motif sont dits (test E7 du 19/10), jamais l'ancienne valeur.
+    assert text == (
+        "[Note du système : la politique signe a remplacé les arguments de ton appel avant "
+        "exécution (champs : message ; motif : signé). L'appel affiché ci-dessus porte déjà "
+        "les arguments remplacés : c'est exactement ce qui a été exécuté. Tes arguments "
+        "d'origine n'ont pas été utilisés, et un nouvel appel avec eux serait remplacé de "
+        "même.]\nRelance envoyée à Dupont (14 caractères)"
+    )
+    assert "Madame" not in text
 
 
 def _bind(*policies: FunctionPolicy) -> Policies:

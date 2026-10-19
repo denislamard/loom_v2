@@ -41,10 +41,11 @@ def amendment_note(amendment: Amendment) -> str:
     siens n'ont pas servi.
     """
     details = f"champs : {', '.join(amendment.fields)}"
+    if amendment.reason:
+        details += f" ; motif : {amendment.reason}"
+    executed = EXECUTED
     match amendment.origin:
         case "approval":
-            if amendment.reason:
-                details += f" ; motif : {amendment.reason}"
             if amendment.by:
                 done = f"{amendment.by} a remplacé les arguments de ton appel"
                 shown = f"les arguments de {amendment.by}"
@@ -52,11 +53,23 @@ def amendment_note(amendment: Amendment) -> str:
                 done = "les arguments de ton appel ont été remplacés à l'approbation"
                 shown = "les arguments corrigés"
         case "policy":
-            done = "une politique a remplacé les arguments de ton appel"
+            # Nommée, avec son motif (test E7 du 19/10) : sans lui, Haiku a cru
+            # à son erreur, refait l'appel identique, puis écarté le résultat.
+            names = (amendment.by or "").split(", ") if amendment.by else []
+            if len(names) > 1:
+                done = f"les politiques {amendment.by} ont remplacé les arguments de ton appel"
+            elif names:
+                done = f"la politique {amendment.by} a remplacé les arguments de ton appel"
+            else:
+                done = "une politique a remplacé les arguments de ton appel"
             shown = "les arguments remplacés"
+            executed = (
+                EXECUTED.removesuffix(".")
+                + ", et un nouvel appel avec eux serait remplacé de même."
+            )
     return (
         f"[{PREFIX} : {done} avant exécution ({details}). "
-        f"L'appel affiché ci-dessus porte déjà {shown} : {EXECUTED}]"
+        f"L'appel affiché ci-dessus porte déjà {shown} : {executed}]"
     )
 
 

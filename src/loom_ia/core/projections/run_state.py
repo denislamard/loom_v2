@@ -390,7 +390,15 @@ def _amended(state: RunState, call_id: str) -> tuple[Amendment, ...]:
     if call is not None and call.replaced_arguments is not None:
         fields = _changed(call.arguments, call.replaced_arguments)
         if fields:
-            found.append(Amendment(call_id=call_id, origin="policy", fields=fields))
+            found.append(
+                Amendment(
+                    call_id=call_id,
+                    origin="policy",
+                    fields=fields,
+                    by=", ".join(dict.fromkeys(call.replaced_by)) or None,
+                    reason=" ; ".join(call.replaced_reasons),
+                )
+            )
     asked = state.approval(call_id)
     outcome = asked.outcome if asked is not None else None
     if asked is not None and outcome is not None and outcome.arguments is not None:
@@ -444,7 +452,17 @@ def _decided(state: RunState, decided: PolicyDecided, event: Event) -> dict[str,
             arguments=dict() as remplaces,
         ):
             update["pending_calls"] = tuple(
-                c.model_copy(update={"replaced_arguments": remplaces})
+                c.model_copy(
+                    update={
+                        "replaced_arguments": remplaces,
+                        "replaced_by": (*c.replaced_by, decided.policy),
+                        "replaced_reasons": (
+                            (*c.replaced_reasons, decided.reason)
+                            if decided.reason
+                            else c.replaced_reasons
+                        ),
+                    }
+                )
                 if c.call_id == call_id
                 else c
                 for c in _require_pending(state, call_id, event)
