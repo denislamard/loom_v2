@@ -18,7 +18,9 @@ non, puis la décision :
 - **échoué, sans réparation possible** : ``on_failure`` (``fail``,
   ``unverified``, ``fallback``). Pour la réponse finale, ``fail`` fait échouer
   le run ; pour un rôle ou un outil, la sortie revient à l'orchestrateur en
-  erreur, avec le diagnostic.
+  erreur, avec ses problèmes (``refusal``) : une règle, pas une panne, et un
+  appel à ne pas refaire à l'identique. L'orchestrateur n'en est pas l'auteur,
+  il ne reçoit donc pas le diagnostic de réparation.
 
 La normalisation est déterministe et ne coûte aucun appel : retrait d'un
 bloc de code qui entoure la sortie, extraction du JSON quand un schéma est
@@ -180,6 +182,40 @@ def diagnostic(contract: OutputContract, problems: tuple[str, ...]) -> str:
     return "\n".join(lines)
 
 
+def refusal(name: str, problems: tuple[str, ...], *, role: bool, repairs: int = 0) -> str:
+    """Refus d'une sortie de rôle ou d'outil, dit à l'orchestrateur.
+
+    Ce n'est pas le diagnostic de réparation : l'orchestrateur n'est pas l'auteur
+    de la sortie et ne peut pas la corriger. Au test E1 du 19/10, la consigne
+    « Réponds de nouveau avec la sortie corrigée » lui faisait relancer l'appel
+    identique, refusé de la même façon. Le texte dit donc une règle, pas une
+    panne, et demande de ne pas refaire l'appel tel quel. Ni la sortie (elle peut
+    porter un secret, qui passerait dans le journal et sous les yeux du modèle),
+    ni le schéma (il pousse le modèle à fabriquer le résultat lui-même).
+    """
+    listed = "\n".join(f"- {p}" for p in problems)
+    if role:
+        after = ""
+        if repairs:
+            after = f" après {repairs} réparation{'s' if repairs > 1 else ''} par son modèle"
+        return (
+            f"Sortie du rôle {name} refusée par son contrat de sortie{after} "
+            "(une règle de la configuration, pas une panne) :\n"
+            f"{listed}\n"
+            "La même demande serait très probablement refusée de la même façon : "
+            "ne rappelle pas ce rôle à l'identique. "
+            "Dis à l'utilisateur que cette sortie n'a pas pu être validée."
+        )
+    return (
+        f"Résultat de {name} refusé par son contrat de sortie "
+        "(une règle de la configuration, pas une panne) :\n"
+        f"{listed}\n"
+        "Le même appel avec les mêmes arguments sera refusé de la même façon : "
+        "ne le refais pas à l'identique. "
+        "Dis à l'utilisateur que ce résultat n'a pas pu être validé."
+    )
+
+
 class ContractGuard:
     """Politique ``loom.contract`` : contrats de la réponse finale, des rôles et des outils."""
 
@@ -211,8 +247,7 @@ class ContractGuard:
             case AfterTool(spec=spec, output=output) if spec.output is not None:
                 if output.is_error:
                     return CONTINUE
-                target = f"{'role' if spec.kind == 'role' else 'tool'}:{spec.name}"
-                return self._result(spec.output, output, target, spec.kind == "role", context)
+                return self._result(spec.output, output, spec.name, spec.kind == "role", context)
             case _:
                 return CONTINUE
 
@@ -250,11 +285,12 @@ class ContractGuard:
         self,
         contract: OutputContract,
         output: ToolOutput,
-        target: str,
+        name: str,
         repairable: bool,
         context: PolicyContext,
     ) -> Decision:
         """Sortie d'un rôle (réparée par son modèle) ou résultat d'un outil (jamais réparé)."""
+        target = f"{'role' if repairable else 'tool'}:{name}"
         text = visible_text(output)
         checked = check(contract, text, output.data)
         if checked.ok:
@@ -264,10 +300,9 @@ class ContractGuard:
                 return Replace(_structured(output, checked), reason=reason)
             return CONTINUE
         reason = "; ".join(checked.problems)
-        feedback = diagnostic(contract, checked.problems)
         if repairable and context.attempt < contract.repair.max_attempts:
             context.record(_failed(target, checked, reason, "retry"))
-            return Retry(feedback)
+            return Retry(diagnostic(contract, checked.problems))
         match contract.on_failure:
             case "unverified":
                 context.record(_failed(target, checked, reason, "unverified"))
@@ -279,9 +314,7 @@ class ContractGuard:
                 return Replace(ToolOutput.text(contract.fallback_message or ""), reason="repli")
             case "fail":
                 context.record(_failed(target, checked, reason, "fail"))
-                # Le diagnostic, jamais la sortie : elle peut porter un secret, qui
-                # passerait dans le journal et sous les yeux du modèle.
-                refused = f"Sortie non conforme à son contrat.\n{feedback}"
+                refused = refusal(name, checked.problems, role=repairable, repairs=context.attempt)
                 return Replace(ToolOutput.error(refused), reason="contrat non respecté")
 
 

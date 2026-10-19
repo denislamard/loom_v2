@@ -805,7 +805,7 @@ model.responded → guard.checked (échec, motif, tentative 1)
 
   | | Réponse finale | Rôle ou outil |
   |---|---|---|
-  | `fail` | run `FAILED`, `error_type` `guard.contract` | résultat d'erreur pour l'orchestrateur (« Sortie non conforme à son contrat » et le diagnostic ; la sortie refusée n'est pas recopiée) ; le run continue |
+  | `fail` | run `FAILED`, `error_type` `guard.contract` | résultat d'erreur pour l'orchestrateur, qui n'est pas l'auteur de la sortie : « Résultat de X refusé par son contrat de sortie (une règle de la configuration, pas une panne) » (« Sortie du rôle X refusée … après N réparations par son modèle » pour un rôle), la liste des problèmes, puis « ne le refais pas à l'identique » et « dis à l'utilisateur » ; ni la sortie refusée, ni le schéma, ni la consigne de réparation (`refusal`, depuis 2.0.10) ; le run continue |
   | `unverified` | réponse gardée (normalisée), `run.completed.unverified` | sortie gardée, `ToolOutput.unverified` |
   | `fallback` | `fallback_message` devient la réponse | `fallback_message` devient le résultat |
 

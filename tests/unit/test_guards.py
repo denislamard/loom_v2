@@ -333,7 +333,10 @@ async def test_role_output_is_structured_repaired_or_refused() -> None:
     refused = await guard.decide(bad, PolicyContext(name=CONTRACT_POLICY, attempt=1))
     assert isinstance(refused, Replace) and isinstance(refused.value, ToolOutput)
     assert refused.value.is_error
-    assert "Sortie non conforme" in refused.value.as_text
+    assert refused.value.as_text.startswith(
+        "Sortie du rôle rediger refusée par son contrat de sortie après 1 réparation "
+        "par son modèle (une règle de la configuration, pas une panne) :\n- "
+    )
     assert "Sortie reçue" not in refused.value.as_text
 
     backup = contract(schema=SCHEMA, on_failure="fallback", fallback_message="À reprendre.")
@@ -354,7 +357,7 @@ async def test_a_refused_output_is_not_copied_into_the_refusal() -> None:
     bad = result(ToolOutput.text("sk-SECRET-123"), contract_=contract(schema=SCHEMA))
     refused = await ContractGuard().decide(bad, PolicyContext(name=CONTRACT_POLICY, attempt=1))
     assert isinstance(refused, Replace) and isinstance(refused.value, ToolOutput)
-    assert refused.value.is_error and "Sortie non conforme" in refused.value.as_text
+    assert refused.value.is_error and "refusée par son contrat" in refused.value.as_text
     assert "SECRET" not in refused.value.as_text
 
 
@@ -376,6 +379,61 @@ async def test_tools_are_never_repaired_and_errors_are_not_checked() -> None:
             PolicyContext(name=CONTRACT_POLICY),
         )
         == CONTINUE
+    )
+
+
+async def test_a_refused_tool_result_tells_the_orchestrator_not_to_retry_it() -> None:
+    # Test E1 du 19/10 : le diagnostic de réparation (« Réponds de nouveau avec la
+    # sortie corrigée ») faisait relancer l'appel identique. L'orchestrateur n'est pas
+    # l'auteur du résultat : il reçoit une règle, pas une consigne de réparation.
+    bad = result(
+        ToolOutput(data={"montant_ttc": 2400}),
+        kind="python",
+        contract_=contract(
+            schema={"type": "object", "properties": {"montant_ttc": {"maximum": 1000}}}
+        ),
+    )
+    refused = await ContractGuard().decide(bad, PolicyContext(name=CONTRACT_POLICY))
+    assert isinstance(refused, Replace) and isinstance(refused.value, ToolOutput)
+    assert refused.value.is_error
+    assert refused.value.as_text == (
+        "Résultat de rediger refusé par son contrat de sortie "
+        "(une règle de la configuration, pas une panne) :\n"
+        "- montant_ttc : doit être inférieur ou égal à 1000\n"
+        "Le même appel avec les mêmes arguments sera refusé de la même façon : "
+        "ne le refais pas à l'identique. "
+        "Dis à l'utilisateur que ce résultat n'a pas pu être validé."
+    )
+    # Ni la sortie, ni le schéma, ni la consigne de réparation.
+    assert "2400" not in refused.value.as_text
+    assert "Schéma JSON attendu" not in refused.value.as_text
+    assert "Réponds de nouveau" not in refused.value.as_text
+
+
+@pytest.mark.parametrize(
+    ("attempt", "after"),
+    [
+        (0, ""),
+        (1, " après 1 réparation par son modèle"),
+        (2, " après 2 réparations par son modèle"),
+    ],
+)
+async def test_a_refused_role_output_says_how_many_repairs_were_tried(
+    attempt: int, after: str
+) -> None:
+    guarded = contract(must_match="D-", repair={"max_attempts": attempt})
+    refused = await ContractGuard().decide(
+        result(ToolOutput.text("rien"), contract_=guarded),
+        PolicyContext(name=CONTRACT_POLICY, attempt=attempt),
+    )
+    assert isinstance(refused, Replace) and isinstance(refused.value, ToolOutput)
+    assert refused.value.as_text == (
+        f"Sortie du rôle rediger refusée par son contrat de sortie{after} "
+        "(une règle de la configuration, pas une panne) :\n"
+        "- motif attendu absent : D-\n"
+        "La même demande serait très probablement refusée de la même façon : "
+        "ne rappelle pas ce rôle à l'identique. "
+        "Dis à l'utilisateur que cette sortie n'a pas pu être validée."
     )
 
 

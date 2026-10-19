@@ -13,8 +13,12 @@ modèle du rôle pour un rôle ; un outil ne se répare pas. Quand les
 réparations sont épuisées, ``on_failure`` décide :
 
 - ``fail`` : la réponse finale fait échouer le run ; la sortie d'un rôle ou
-  d'un outil revient à l'orchestrateur en erreur, avec le diagnostic ;
-- ``unverified`` : la sortie est gardée telle quelle, marquée non vérifiée ;
+  d'un outil revient à l'orchestrateur en erreur, avec ses problèmes et la
+  consigne de ne pas refaire l'appel à l'identique ;
+- ``unverified`` : la sortie est gardée, marquée non vérifiée ; la réponse
+  finale est gardée normalisée si la normalisation l'a changée (une sortie
+  qui ne tenait que par son bloc de code devient vide), la sortie d'un rôle
+  ou d'un outil telle qu'elle est arrivée ;
 - ``fallback`` : ``fallback_message`` remplace la sortie.
 """
 

@@ -358,8 +358,9 @@ async def test_an_exhausted_role_returns_an_error_to_the_orchestrator(store: Eve
     ]
     assert completed.output.is_error
     assert completed.output.as_text.startswith(
-        "Sortie non conforme à son contrat.\nLa sortie ne respecte pas"
+        "Sortie du rôle rediger refusée par son contrat de sortie après 1 réparation"
     )
+    assert "Réponds de nouveau" not in completed.output.as_text
     assert "Sortie reçue" not in completed.output.as_text
     assert "Bonjour encore." not in completed.output.as_text
     assert main.requests[1].messages[-1].role == "tool"
