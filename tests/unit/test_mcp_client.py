@@ -992,8 +992,12 @@ async def test_a_stdio_server_that_dies_at_start_says_what_it_wrote(
         'fin de son stderr : File "config.py", line 171, in load_config | '
         "raw = tomllib.loads(path.read_text()) | FileNotFoundError: roots.toml introuvable"
     )
-    # Le stderr du serveur passe toujours par le nôtre : la console ne change pas.
-    assert "FileNotFoundError: roots.toml introuvable" in capsys.readouterr().err
+    # Le stderr du serveur passe toujours par le nôtre, chaque ligne au nom du serveur
+    # (test F6 du 19/10 : sans le nom, on ne savait pas qui parlait).
+    err = capsys.readouterr().err
+    assert "[casse] démarrage\n" in err
+    assert "[casse] FileNotFoundError: roots.toml introuvable\n" in err
+    assert "[casse]     raw = tomllib.loads(path.read_text())\n" in err  # retrait gardé
 
 
 async def test_a_silent_stdio_server_is_said_to_be_silent(tmp_path: Path) -> None:

@@ -549,9 +549,15 @@ Dans l'historique renvoyé au modèle, les blocs de raisonnement anciens sont re
 
 `storage.events.backend` : `memory`, `jsonl` (agent-01, dossier `data/`), `sqlite`, `postgres`. Firestore : non réalisé.
 
-**Testée** : non
+**Testée** : oui
 
-**Note** : série 3 (19/10), Postgres en conteneur (`loom-pg`, port 15432, rôles `dba` propriétaire, `loom_login` connexion, `loom_app` applicatif). `validate` : « Journal : postgres (DSN dans LOOM_PG : renseignée, rôle : loom_app) », « Artefacts : local (…/data-pg/artefacts) ». **Défaut** : base préparée avec la sortie de `loom storage sql` (config en `postgres`) appliquée par `dba`, puis `loom run` (connexion `loom_login`) → `PostgresNotPrepared` « le rôle 'loom_login' n'a pas pu poser le schéma de loom … permission denied for schema public », d'abord dans la compaction d'avant run (WARNING avec trace), puis trace Python brute en sortie de `loom run`. Cause : `postgres_ddl()` (`runtime/wiring.py`), utilisé par `loom storage sql` quand la config déclare Postgres, n'émet que `EVENTS_DDL` (schéma 2.0, version 1) sans `EVENTS_UPGRADE` (table `loom_schema`, migrations 2 et 3 dont la colonne `ingested`) ni `GRANT SELECT ON loom_schema` ; à l'ouverture, loom ne trouve pas de version et tente la migration avec `loom_login`, qui n'en a pas le droit. Le chemin sans config Postgres (`sql.ddl()`) est complet. Le SQL imprimé au chapitre 24 de `howto/03-production.md` est aussi celui de la 2.0. Analyse d'impact en cours ; a), b), d) de la série à faire.
+**Note** : série 3 (19/10), même agent (`agent`, Haiku, outil `prix_ttc`), un backend à la fois dans `storage.events`.
+
+- a) **JSONL** (`data/`) : `sessions list` (29 sessions), `sessions show session-F1` (105 événements, 7 runs dont 2 `_compaction`), `sessions export … --out` (105 lignes = `data/default/session-F1.jsonl`), run sur `session-jetable` puis `sessions delete` avec confirmation [o/N] → « 9 événement(s), 0 fichier(s), 0 clé(s) », `sessions show` ensuite → « Session session-jetable inconnue », code 1 ; plus de fichier sur disque. OK.
+- b) **SQLite** (`data/journal.db`, artefacts par défaut `data/.artifacts`) : run 100 € HT → 120 €, 21 événements, `export` sur stdout, `delete --yes`, `list` → « Aucune session. » ; table `events` vide vérifiée dans le fichier. OK.
+- c) **Postgres** (conteneur `loom-pg`, port 15432 ; rôles `dba` propriétaire, `loom_login` connexion, `loom_app` applicatif ; artefacts `data-pg/artefacts`). `validate` : « Journal : postgres (DSN dans LOOM_PG : renseignée, rôle : loom_app) ». **Défaut trouvé et corrigé** : la sortie de `loom storage sql` (config en `postgres`) était le schéma 2.0 — `postgres_ddl()` (`runtime/wiring.py`) n'émettait que `EVENTS_DDL`, sans `loom_schema`, sans les migrations 2 et 3 (index `event_id` unique, colonne `ingested`), sans `GRANT SELECT ON loom_schema`. Base préparée ainsi par `dba` : au premier run, loom ne trouvait pas de version, tentait la migration avec `loom_login` → `PostgresNotPrepared` « permission denied for schema public », sorti deux fois en trace Python (compaction d'avant run en WARNING, puis `loom run`). Correctif (option A) : `loom storage sql` donne le schéma entier, identique à `ddl()` (test unitaire d'égalité), plus `GRANT SELECT ON loom_schema` au rôle applicatif ; `StorageNotReady` (`core/ports`) parent de `PostgresNotPrepared`, `PostgresMigrationFailed`, `RoleUnavailable` ; la compaction la laisse passer ; la CLI imprime « Stockage : … », code 2, sans trace. Vérifié sur Postgres 16 local : ancien SQL → l'erreur ; nouveau SQL → run OK ; base faite avec l'ancien SQL réparée en lui appliquant le nouveau (version 3). Chapitre 24 de `howto/03-production.md`, `fonctions.md` (journal en version 3) et CHANGELOG mis à jour. Relance après correctif (base recréée — `dba` n'a pas `CREATEDB`, recréation par le superutilisateur du conteneur —, `loom storage sql | psql -U dba`) : run 200 € HT → 240 €, sans WARNING ; `sessions list` 21 événements ; `loom_schema` events = 3 ; `UPDATE loom_events` en `loom_app` → « permission denied for table loom_events » (journal immuable par les droits) ; `delete --yes` → 21 événements supprimés ; `list` → « Aucune session. ». OK.
+- d) **Mémoire** : run « Bonjour » sur `session-F5-mem` OK ; `sessions list` dans un autre process → « Aucune session. » : attendu, le journal mémoire vit et meurt avec le process (pas de persistance entre deux commandes `loom`).
+- Firestore : non réalisé (hors périmètre de la fiche).
 
 ### F6 — Mémoire long terme / RAG via `loom-notes`
 
@@ -559,9 +565,16 @@ Dans l'historique renvoyé au modèle, les blocs de raisonnement anciens sont re
 
 Le serveur MCP `loom-notes` branché comme source d'outils : l'agent cherche et ajoute des notes.
 
-**Testée** : non
+**Testée** : oui (côté loom) ; défaut trouvé dans loom-notes, corrigé le 19/10
 
-**Note** :
+**Note** : série 4 (19/10). Serveur `notes` dans `loom.yaml` (stdio, `/home/denis/dev/loom-notes/.venv/bin/loom-notes-mcp`, `LOOM_NOTES_DATA_DIR: /home/denis/temp/agent_test/notes` — Qdrant embarqué dédié, la mémoire réelle du conteneur `qdrant` n'est pas touchée —, `connect_timeout: 30`, `search`/`add_text` à 180 s) ; agent : `- mcp: notes`, `include: [search, get, add_text]`, `required: true`. Chaque `loom run` démarre son propre serveur.
+
+- F6a (`session-F6a`) : `notes__add_text` {texte, titre « Tarif déplacement Dupont », projet `agent_test`} → `doc_id` f22a472d…, 1 chunk, 5,2 s.
+- F6b (`session-F6b`, session neuve, sans historique) : `notes__search` « déplacement Dupont montant » → la note, score 0,9876 ; `prix_ttc` {montant_ht: 45} → « 45 € HT … TTC de 54 € », en citant la note. La mémoire passe d'une session à l'autre par le RAG.
+- F6c (`session-F6c`) : « tarif ramonage », « ramonage prix » → aucun résultat ; l'agent le dit, n'invente pas de tarif, propose d'ajouter la note « si vous me le demandez explicitement ».
+- Côté loom : une erreur d'outil MCP revient au modèle comme erreur, le modèle réessaie puis le dit ; le stderr du serveur est recopié sur la console (voulu depuis D3). Rien à corriger.
+- **Défaut loom-notes** (dépôt séparé) : le préchargement des modèles (`warmup_on_start`, en tâche de fond) et le premier appel d'outil, arrivé 2 s après le démarrage, chargent BGE-M3 en même temps (deux lignes « loading existing colbert_linear and sparse_linear ») ; `_load()` (`embed/bge_m3.py`, `embed/reranker.py`) n'a pas de verrou, et le chargement de transformers n'est pas sûr entre threads. Effets : « Cannot copy out of meta tensor » (F6a, premier essai : modèle cassé gardé en cache, les deux `add_text` échouent ; F6b : premier `search`), « type object 'tqdm' has no attribute '_lock' » (F6c : premier `search`). L'appel suivant passe quand le chargement de l'autre thread a gagné. Indépendant du device (vu sur GPU et sur CPU). Second défaut : `resolve_device("auto")` choisit `cuda` dès que `torch.cuda.is_available()`, même pour une GTX 1050 Ti (sm_61) que `torch 2.14+cu130` ne gère pas (≥ sm_75) ; contourné ici par `LOOM_NOTES_DEVICE: cpu`. Corrigé dans loom-notes (option B, avec le traitement des erreurs) : `LazyModel` (`embed/base.py`) charge sous verrou, une seule fois, fait tourner le modèle une première fois et ne le garde que si ce passage réussit ; l'usage passe aussi sous le verrou ; un échec devient `ModelLoadError` (« Chargement du modèle … impossible sur … : <cause>. Réessayer ; … »), rendue au client en `ToolError` sans trace, préchargement logué en une ligne, et l'appel suivant recharge. `resolve_device("auto")` compare la capacité de la carte aux architectures du build (règle de torch) et passe sur le CPU avec une ligne d'avertissement. 13 tests (`tests/test_models.py`), README (configuration, dépannage).
+- Relance après correctif : `session-F6b2` (`LOOM_NOTES_DEVICE: cpu`) — un seul chargement, premier `notes__search` en `ok` (6,0 s : il attend le préchargement), note trouvée (0,99), 54 € ; `session-F6c2` — premier `search` en `ok` (6,3 s), rien trouvé, dit ; `session-F6d` (`LOOM_NOTES_DEVICE` retiré, `auto`) — une ligne « WARNING loom_notes: GPU NVIDIA GeForce GTX 1050 Ti (sm_61) non pris en charge par ce torch (2.14.0+cu130, architectures : sm_75, …) : modèles sur cpu (LOOM_NOTES_DEVICE pour forcer) », sans les avertissements CUDA de torch, recherche réussie du premier coup, 45 € HT. Plus aucune erreur « meta tensor » ni « tqdm _lock ».
 
 ### F7 — Gestion des sessions : lister, exporter, supprimer (RGPD)
 
@@ -569,9 +582,9 @@ Le serveur MCP `loom-notes` branché comme source d'outils : l'agent cherche et 
 
 `loom sessions list|export|delete`, `GET/DELETE /v1/sessions…`, `Loom.sessions()`, `export_session()`, `delete_session()`. La suppression retire journal, fichiers et clés.
 
-**Testée** : non
+**Testée** : oui (CLI) ; non (REST, API Python)
 
-**Note** :
+**Note** : couverte par la série 3 de F5 (19/10), en CLI sur les trois backends durables. `sessions list` (nombre d'événements, dernière date), `sessions show` (runs, agent, statut, itérations, coût, « En attente »), `sessions export` (stdout ou `--out`, une ligne JSON par événement, nombre exact), `sessions delete` (confirmation [o/N], ou `--yes`) qui annonce événements, fichiers et clés d'idempotence supprimés ; après suppression, `show` → « Session … inconnue », code 1, et rien ne reste (fichier JSONL absent, table SQLite vide, `list` Postgres vide). Sous Postgres, `DELETE` reste permis à `loom_app` (effacement RGPD) quand `UPDATE` est refusé. Pas couvert : suppression d'une session **avec fichiers** et **avec clés d'idempotence** (les trois suppressions ont donné 0 et 0), `GET/DELETE /v1/sessions…` (REST) et `Loom.sessions()`, `export_session()`, `delete_session()` en Python — à faire avec les tests REST (catégorie N).
 
 ### F8 — State de session
 

@@ -84,7 +84,7 @@ def _stdio(spec: McpServerSpec, environ: Mapping[str, str]) -> SessionFactory:
 
     @asynccontextmanager
     async def open_session(handler: MessageHandlerFnT) -> AsyncGenerator[ClientSession]:
-        tail = _StderrTail()
+        tail = _StderrTail(spec.name)
         opened = False
         try:
             async with stdio_client(params, errlog=tail.writer) as (read, write):
@@ -110,12 +110,16 @@ class _StderrTail:
 
     Le SDK branche le stderr du processus sur un fichier : on lui donne
     l'extrémité d'écriture d'un tuyau, et un fil lit l'autre. Chaque ligne
-    part sur notre stderr, comme avant — la console ne change pas —, et les
-    ``STDERR_LINES`` dernières restent en mémoire. Le fil s'arrête quand plus
-    personne n'écrit : le processus est mort et notre extrémité est fermée.
+    part sur notre stderr préfixée du nom du serveur (``[notes] …``), et les
+    ``STDERR_LINES`` dernières restent en mémoire, sans le préfixe. Au test F6
+    du 19/10, les avertissements de torch et les traces de fastmcp d'un
+    serveur se mêlaient à la sortie de loom sans dire qui parlait. Le fil
+    s'arrête quand plus personne n'écrit : le processus est mort et notre
+    extrémité est fermée.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, server: str) -> None:
+        self._prefix = f"[{server}]"
         read_fd, write_fd = os.pipe()
         self.writer: TextIO = os.fdopen(write_fd, "w", encoding="utf-8")
         self._reader = os.fdopen(read_fd, "r", encoding="utf-8", errors="replace")
@@ -126,8 +130,10 @@ class _StderrTail:
     def _pump(self) -> None:
         with self._reader:
             for line in self._reader:
+                body = line.rstrip("\r\n")
+                shown = f"{self._prefix} {body}" if body.strip() else self._prefix
                 try:
-                    sys.stderr.write(line)
+                    sys.stderr.write(shown + "\n")
                     sys.stderr.flush()
                 except OSError, ValueError:
                     pass
