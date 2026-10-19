@@ -37,6 +37,7 @@ from loom_ia.core.events import (
     RunCompleted,
     RunFailed,
     RunStarted,
+    SessionCompacted,
     ToolCalled,
     ToolCompleted,
     ToolSourceUnavailable,
@@ -192,6 +193,8 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
                 f"{STORED[payload.origin]} : {payload.name or payload.uri} "
                 f"({payload.media_type}, {payload.size} octets)"
             )
+        case SessionCompacted():
+            return f"session résumée : {describe_compaction(payload)}"
         case RunStarted() if subrun:
             return f"sous-agent {event.agent} : démarré"
         case RunCompleted() if subrun:
@@ -206,6 +209,23 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             return "run annulé"
         case _:
             return None
+
+
+# Ce que dit le contrôle de fidélité d'un résumé.
+FIDELITY: Final = {
+    "ok": "fidélité vérifiée",
+    "warning": "fidélité douteuse",
+    "skipped": "fidélité non vérifiée",
+}
+
+
+def describe_compaction(payload: SessionCompacted) -> str:
+    """Un résumé de session en une ligne : « 233 → 105 tokens estimés (jusqu'à … ) »."""
+    fidelity = FIDELITY.get(payload.fidelity, f"fidélité {payload.fidelity}")
+    return (
+        f"{payload.tokens_before} → {payload.tokens_after} tokens estimés "
+        f"(jusqu'à l'événement {payload.up_to_seq}, {payload.kept} tour(s) gardé(s), {fidelity})"
+    )
 
 
 def notes(criteria: Iterable[CriterionScore]) -> str:

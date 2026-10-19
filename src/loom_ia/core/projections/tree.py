@@ -13,7 +13,7 @@ ils portent le ``run_id`` du run qui les écrit, mais parlent de la session.
 
 from collections.abc import Iterable
 
-from loom_ia.core.events import Event, RunStarted
+from loom_ia.core.events import Event, RunStarted, SessionCompacted
 from loom_ia.core.model import RunId
 
 
@@ -46,4 +46,40 @@ class RunTree:
 
     def select(self, events: Iterable[Event]) -> list[Event]:
         """Événements de l'arbre, dans l'ordre donné (celui du journal)."""
+        return [event for event in events if self.admit(event)]
+
+
+class OpeningSummaries:
+    """Résumés de session faits à l'ouverture d'un run, reconnus au fil du journal.
+
+    Avant son premier tour, un run peut faire résumer la session (compaction
+    bloquante, ou filet ``hard_tokens``) : un run de compaction démarre avec
+    ``triggered_by`` égal à ce run, et écrit ``session.compacted``. Ni l'un ni
+    l'autre ne sont dans l'arbre du run — un marqueur de session n'en fait pas
+    partie, et le run de compaction n'est pas un sous-run. Au test F3 du
+    19/10, ni la console ni ``--stream`` ne disaient donc qu'un résumé avait eu
+    lieu. Seuls comptent ceux d'avant le ``run.started`` du run : un résumé de
+    fond qu'il déclenche en finissant parle du run suivant.
+    """
+
+    def __init__(self, run_id: RunId) -> None:
+        self.run_id = run_id
+        self._summarisers: set[RunId] = set()
+        self._opened = False
+
+    def admit(self, event: Event) -> bool:
+        """Vrai pour un ``session.compacted`` écrit à l'ouverture du run."""
+        if self._opened:
+            return False
+        payload = event.payload
+        if isinstance(payload, RunStarted):
+            if event.run_id == self.run_id:
+                self._opened = True
+            elif payload.kind == "compaction" and payload.triggered_by == self.run_id:
+                self._summarisers.add(event.run_id)
+            return False
+        return isinstance(payload, SessionCompacted) and event.run_id in self._summarisers
+
+    def select(self, events: Iterable[Event]) -> list[Event]:
+        """Les ``session.compacted`` de l'ouverture du run, dans l'ordre du journal."""
         return [event for event in events if self.admit(event)]

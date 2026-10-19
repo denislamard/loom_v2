@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from loom_ia.access.api import Loom
+from loom_ia.access.cli import main
 from loom_ia.adapters.models import ModelConfigError
 from loom_ia.adapters.queue import AsyncioTaskQueue
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
@@ -39,7 +40,7 @@ from loom_ia.core.model import (
     ToolResultBlock,
 )
 from loom_ia.core.ports import Job
-from loom_ia.core.projections import SUMMARY_MARKER, history
+from loom_ia.core.projections import SUMMARY_MARKER, OpeningSummaries, history
 from loom_ia.engine import RunContext, SessionWriters, rendered
 from loom_ia.guards.fidelity import markers, missing
 from loom_ia.sessions import (
@@ -1101,3 +1102,94 @@ def test_without_the_session_scope_the_role_is_refused(withrole: Callable[..., P
     payload = refused[0].payload
     assert isinstance(payload, ToolCompleted)
     assert "a besoin d'un résultat de chercher" in payload.output.as_text
+
+
+# --- Le résumé de l'ouverture d'un run, montré (test F3 du 19/10) ---------------------------
+
+
+def test_the_safety_net_names_the_run_it_protects(
+    conversation: ConfigFactory, tmp_path: Path
+) -> None:
+    """Le résumé du filet porte ``triggered_by``, comme le résumé bloquant : sans lui, rien
+    ne le rattachait au run qui s'ouvrait."""
+    path = conversation(compaction={"over_tokens": 40, "hard_tokens": 60, "keep_last": 1})
+
+    async def go() -> tuple[RunId, list[Event]]:
+        await written(tmp_path, 2)
+        async with Loom.from_config(path) as loom:
+            result = await loom.run("demo", DEVIS, session_id=SESSION)
+            return result.run_id, await loom.export_session(SESSION)
+
+    run_id, events = asyncio.run(go())
+    summarisers = [
+        e.payload
+        for e in events
+        if isinstance(e.payload, RunStarted) and e.payload.kind == "compaction"
+    ]
+    assert summarisers and all(p.triggered_by == run_id for p in summarisers)
+
+
+def test_the_opening_summary_is_in_the_stream_without_the_summariser_run(
+    conversation: ConfigFactory, tmp_path: Path
+) -> None:
+    path = conversation(compaction={"over_tokens": 40, "keep_last": 1, "blocking": True})
+
+    async def go() -> list[Any]:
+        await written(tmp_path, 2)
+        async with Loom.from_config(path) as loom:
+            return [item async for item in loom.stream("demo", DEVIS, session_id=SESSION)]
+
+    items = asyncio.run(go())
+    events = [item for item in items if isinstance(item, Event)]
+    compacted = [e for e in events if isinstance(e.payload, SessionCompacted)]
+    assert len(compacted) == 1
+    # Le run de compaction lui-même (son modèle, son contrôle de fidélité) reste hors du flux.
+    assert not [
+        e for e in events if isinstance(e.payload, RunStarted) and e.payload.kind == "compaction"
+    ]
+    started = next(i for i, e in enumerate(events) if isinstance(e.payload, RunStarted))
+    assert events.index(compacted[0]) < started
+
+
+def test_a_summary_made_after_a_run_is_not_its_opening(
+    conversation: ConfigFactory, tmp_path: Path
+) -> None:
+    """Un résumé de fond que le run déclenche en finissant parle du run suivant."""
+    path = conversation(compaction={"over_tokens": 40, "keep_last": 1, "blocking": False})
+
+    async def go() -> tuple[RunId, list[Event]]:
+        await written(tmp_path, 2)
+        async with Loom.from_config(path) as loom:
+            result = await loom.run("demo", DEVIS, session_id=SESSION)
+            await loom.drain()
+            return result.run_id, await loom.export_session(SESSION)
+
+    run_id, events = asyncio.run(go())
+    later = [
+        e
+        for e in events
+        if isinstance(e.payload, RunStarted)
+        and e.payload.kind == "compaction"
+        and e.payload.triggered_by == run_id
+    ]
+    assert later, "le run doit avoir déclenché un résumé de fond"
+    assert OpeningSummaries(run_id).select(events) == []
+
+
+def test_the_cli_says_the_session_was_summarised(
+    conversation: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = conversation(compaction={"over_tokens": 40, "keep_last": 1, "blocking": True})
+    asyncio.run(written(tmp_path, 2))
+    assert main(["--config", str(path), "run", "demo", DEVIS, "--session", SESSION]) == 0
+    err = capsys.readouterr().err
+    assert "\nCompaction : " in err and "tokens estimés (jusqu'à l'événement" in err
+    assert "fidélité vérifiée)" in err
+
+    asyncio.run(written(tmp_path, 2))
+    assert (
+        main(["--config", str(path), "run", "demo", DEVIS, "--session", SESSION, "--stream"]) == 0
+    )
+    err = capsys.readouterr().err
+    assert "· session résumée : " in err
+    assert "Compaction : " not in err  # déjà dite dans le déroulé

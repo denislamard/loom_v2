@@ -142,7 +142,13 @@ from loom_ia.core.ports import (
     UnusableId,
     UsageCounter,
 )
-from loom_ia.core.projections import ProjectionError, RunTree, fold, session_state
+from loom_ia.core.projections import (
+    OpeningSummaries,
+    ProjectionError,
+    RunTree,
+    fold,
+    session_state,
+)
 from loom_ia.core.template import Template
 from loom_ia.engine import (
     CircuitBreakers,
@@ -1437,13 +1443,18 @@ class Loom:
         caller, who = await self._admitted(agent, context, tenant)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
         tree = RunTree(run_id, subruns=subruns)
+        summaries = OpeningSummaries(run_id)
         session = session_id or SessionId(run_id)
 
         def accept(event: Event) -> bool:
             # Comme ``follow`` : le journal du run d'abord. L'arbre ne doit rien
             # apprendre d'un autre client ni d'une autre session qui auraient
-            # choisi le même ``run_id``, ni de leurs sous-runs.
-            return event.tenant_id == who.id and event.session_id == session and tree.admit(event)
+            # choisi le même ``run_id``, ni de leurs sous-runs. Le résumé de la
+            # session fait à l'ouverture du run passe aussi : il est hors de
+            # l'arbre, mais c'est ce run qui l'a déclenché.
+            if event.tenant_id != who.id or event.session_id != session:
+                return False
+            return summaries.admit(event) or tree.admit(event)
 
         # Écoute posée avant le démarrage : l'arbre se reconnaît dans l'ordre d'écriture.
         with self._store.listen(items.put_nowait, accept=accept):
@@ -2620,6 +2631,9 @@ class Loom:
         if self._compaction is not None and session_id is not None:
             # Le state se contrôle avant : un run refusé ne compacte pas la session.
             await check_state(ctx, state, tenant_id=who.id, session_id=session_id, run_id=run_id)
+            # Identifiant choisi dès maintenant : le résumé de l'ouverture le porte
+            # en ``triggered_by``, et c'est par lui qu'on le rattache au run.
+            run_id = run_id or new_run_id()
             await self._compaction.before_run(who.id, session_id, run_id=run_id)
         opened = await begin_run(
             ctx,
@@ -3077,6 +3091,9 @@ class Loom:
             await check_state(ctx, state, tenant_id=tenant, session_id=session_id, run_id=run_id)
             # Résumé bloquant s'il est demandé, puis filet de sécurité : une
             # session trop longue est résumée avant que le run ne commence (#23).
+            # L'identifiant est choisi dès maintenant : le résumé le porte en
+            # ``triggered_by`` (sans lui, rien ne le rattachait au run).
+            run_id = run_id or new_run_id()
             await self._compaction.before_run(tenant, session_id, run_id=run_id)
         writer = await self._writer(tenant, session_id)
         opened = await begin_run(

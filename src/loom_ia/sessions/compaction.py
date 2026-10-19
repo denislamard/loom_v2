@@ -234,15 +234,23 @@ class CompactionJob:
                     session_id,
                     exc_info=True,
                 )
-        await self.ensure_fits(tenant_id, session_id)
+        await self.ensure_fits(tenant_id, session_id, run_id=run_id)
 
-    async def ensure_fits(self, tenant_id: TenantId, session_id: SessionId) -> None:
-        """Filet de sécurité : compacte en synchrone, ou retire les vieux tours."""
+    async def ensure_fits(
+        self, tenant_id: TenantId, session_id: SessionId, *, run_id: RunId | None = None
+    ) -> None:
+        """Filet de sécurité : compacte en synchrone, ou retire les vieux tours.
+
+        ``run_id`` : le run qui s'ouvre, noté ``triggered_by`` du résumé, comme
+        pour le résumé bloquant.
+        """
         events = await self._store.read(tenant_id, session_id)
         if not oversized(events, self.plan.hard_tokens):
             return
         try:
-            await self.compact(tenant_id, session_id, limit=self.plan.hard_tokens)
+            await self.compact(
+                tenant_id, session_id, triggered_by=run_id, limit=self.plan.hard_tokens
+            )
         except Exception:
             # Le filet ne tombe pas avec ce qu'il protège : clé du modèle de résumé
             # absente, panne, modèle inconnu… le run démarre, les vieux tours partent.

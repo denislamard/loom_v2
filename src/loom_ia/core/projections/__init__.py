@@ -18,12 +18,13 @@ from loom_ia.core.projections.run_state import (
     fold_all,
 )
 from loom_ia.core.projections.state import session_state, state_of_run
-from loom_ia.core.projections.tree import RunTree
+from loom_ia.core.projections.tree import OpeningSummaries, RunTree
 
 __all__ = [
     "SUMMARY_MARKER",
     "TERMINAL_MARKER",
     "LedgerEntry",
+    "OpeningSummaries",
     "ProjectionError",
     "RunTree",
     "apply",

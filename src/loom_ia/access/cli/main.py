@@ -67,7 +67,7 @@ from loom_ia.access.api import (
     check_deletable_id,
 )
 from loom_ia.access.evals import evaluate
-from loom_ia.access.progress import SKIP_REASONS, Progress, notes
+from loom_ia.access.progress import SKIP_REASONS, Progress, describe_compaction, notes
 from loom_ia.access.resources import RUNS as MCP_RUNS
 from loom_ia.access.resources import SESSIONS as MCP_SESSIONS
 from loom_ia.access.resources import TEMPLATES as MCP_TEMPLATES
@@ -87,7 +87,7 @@ from loom_ia.config.models import (
     QueueStorage,
 )
 from loom_ia.config.references import resolve
-from loom_ia.core.events import Event
+from loom_ia.core.events import Event, SessionCompacted
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     JUDGES_MODES,
@@ -114,6 +114,7 @@ from loom_ia.core.ports import (
     StorageNotReady,
     Tool,
 )
+from loom_ia.core.projections import OpeningSummaries
 from loom_ia.engine import ClaimConflict, SessionUnreadable, ToolExecutor
 from loom_ia.engine.media import size_label
 from loom_ia.replay import (
@@ -1056,7 +1057,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return REFUSED
     posed = dict(items) or None
 
-    async def go() -> RunResult:
+    async def go() -> tuple[RunResult, list[SessionCompacted]]:
         async with Loom(config) as loom:
             if args.stream:
                 live = _Live()
@@ -1077,8 +1078,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 if live and state.replaced_output is not None and state.output is not None:
                     # Réponse remplacée par une politique après sa diffusion.
                     print(f"[Réponse retenue]\n{_for_stdout(state.output.text)}")
-                return await loom.result(run_id, session_id=session, tenant_id=tenant)
-            return await loom.run(
+                # Le résumé de l'ouverture est déjà passé dans le déroulé.
+                return await loom.result(run_id, session_id=session, tenant_id=tenant), []
+            result = await loom.run(
                 args.agent,
                 args.message,
                 attachments=attachments,
@@ -1088,8 +1090,26 @@ def cmd_run(args: argparse.Namespace) -> int:
                 tenant=tenant,
                 state=posed,
             )
+            return result, await _opening_summaries(loom, result, tenant)
 
-    return _report(asyncio.run(go()), as_json=args.json, quiet=args.stream, tenant=_tenant(args))
+    result, summaries = asyncio.run(go())
+    return _report(
+        result, as_json=args.json, quiet=args.stream, tenant=_tenant(args), summaries=summaries
+    )
+
+
+async def _opening_summaries(
+    loom: Loom, result: RunResult, tenant: TenantId | None
+) -> list[SessionCompacted]:
+    """Résumés de la session faits à l'ouverture du run, lus dans le journal.
+
+    Sans compaction déclarée, il n'y en a pas : le journal n'est pas relu.
+    """
+    if loom.config.sessions.compaction is None:
+        return []
+    events = await loom.export_session(result.session_id, tenant_id=tenant)
+    found = OpeningSummaries(result.run_id).select(events)
+    return [event.payload for event in found if isinstance(event.payload, SessionCompacted)]
 
 
 def _state_item(text: str) -> tuple[str, JsonValue]:
@@ -2203,6 +2223,7 @@ def _report(
     as_json: bool = False,
     quiet: bool = False,
     tenant: TenantId | None = None,
+    summaries: Sequence[SessionCompacted] = (),
 ) -> int:
     if as_json:
         print(result.model_dump_json(indent=2, exclude_none=True))
@@ -2217,6 +2238,9 @@ def _report(
             file=sys.stderr,
         )
         _say(f"Run        : {result.run_id}", file=sys.stderr)
+        for summary in summaries:
+            # Au test F3 du 19/10, rien ne disait que la session avait été résumée.
+            _say(f"Compaction : {describe_compaction(summary)}", file=sys.stderr)
         for produced in result.produced:
             _say(
                 f"Fichier    : {produced.uri} ({produced.media_type}, {produced.size} octets)",
