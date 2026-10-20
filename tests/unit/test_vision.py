@@ -585,11 +585,11 @@ async def test_all_sends_the_images_of_earlier_turns_again() -> None:
 
 
 def test_keep_images_is_declared_in_sessions(tmp_path: Path) -> None:
-    assert SessionsConfig().media.keep_images == "last_run"
+    assert SessionsConfig().media.keep_images == "all"
     with pytest.raises(ValidationError, match="keep_images"):
         SessionsConfig.model_validate({"media": {"keep_images": "none"}})
     path = write(tmp_path)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    raw["sessions"] = {"media": {"keep_images": "all"}}
+    raw["sessions"] = {"media": {"keep_images": "last_run"}}
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
-    assert Loom(load_config(path)).context("demo").keep_images == "all"
+    assert Loom(load_config(path)).context("demo").keep_images == "last_run"

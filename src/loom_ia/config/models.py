@@ -457,11 +457,13 @@ class StateLimits(DomainModel):
 class SessionMedia(DomainModel):
     """Fichiers des tours précédents dans les requêtes d'une session (F4)."""
 
-    # ``last_run`` : une image d'un tour précédent est remplacée par une mention
-    # (nom, type, taille) ; seules celles du run en cours partent en octets.
     # ``all`` : un modèle vision revoit toutes les images de la session, à
     # chaque appel, relues dans le stockage d'artefacts.
-    keep_images: KeepImages = "last_run"
+    # ``last_run`` : une image d'un tour précédent est remplacée par une note
+    # (nom, type, taille) ; seules celles du run en cours partent en octets.
+    # Pas par défaut : pour une image rendue par un outil, le modèle peut alors
+    # désavouer la description qu'il en avait faite (tests G3 du 20/10).
+    keep_images: KeepImages = "all"
 
 
 class SessionsConfig(DomainModel):

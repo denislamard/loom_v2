@@ -266,7 +266,7 @@ class RunContext:
     attachments: AttachmentPolicy = field(default_factory=AttachmentPolicy)
     # Images des tours précédents dans la requête (F4) : mentionnées
     # (``last_run``) ou renvoyées en octets (``all``).
-    keep_images: KeepImages = "last_run"
+    keep_images: KeepImages = "all"
     # Écrivain du journal, posé par ``drive`` pour le run en cours : les
     # sous-agents écrivent leur run avec lui.
     writer: SessionWriter | None = None

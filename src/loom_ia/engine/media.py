@@ -19,10 +19,10 @@ l'accepte là (``tool_result_media``) ; sinon, le résultat la mentionne et
 elle part dans un message utilisateur placé après les résultats du tour.
 
 Images des tours précédents (F4, ``sessions.media.keep_images``) : par
-défaut (``last_run``), l'historique de la session les remplace par une mention
+défaut (``all``), toutes sont résolues comme celles du run, à chaque appel.
+Avec ``last_run``, l'historique de la session les remplace par une note
 avant de former la requête (``earlier_images``) ; seules les images du run en
 cours partent en octets. Le journal et les snapshots gardent les références.
-Avec ``all``, toutes sont résolues comme celles du run, à chaque appel.
 
 L'empreinte de la requête (``request_hash``) est calculée sur la requête
 avant résolution : elle ne dépend pas des octets des fichiers.
