@@ -413,7 +413,7 @@ Portes d'entrée pour un appelant qui ne connaît pas l'API de loom (CRM, planif
 | `agent` | Agent lancé (accepté même non publié en REST). | nom d'agent | **obligatoire** | `agent: relance` |
 | `message` | Gabarit du message, rendu sur `{payload, trigger, delivery}` ; une variable absente donne une chaîne vide. | gabarit `{{ }}` | **obligatoire** | `message: "Devis {{ payload.numero }} signé"` |
 | `session` | Gabarit de la session, pour rattacher les livraisons d'un même sujet. | gabarit `{{ }}` | `null` : une session par run | `session: "devis-{{ payload.numero }}"` |
-| `delivery_header` | En-tête porteur de l'identifiant de livraison, qui devient le `run_id` : une livraison en double retrouve le run. | nom d'en-tête | `null` | `delivery_header: X-Delivery-Id` |
+| `delivery_header` | En-tête porteur de l'identifiant de livraison, qui devient le `run_id` : une livraison en double retrouve le run. Avec un gabarit `session`, le même identifiant qui donnerait une autre session (charge différente) est refusé (422) : un identifiant de livraison, un run par client. | nom d'en-tête | `null` | `delivery_header: X-Delivery-Id` |
 
 ## `agents` (en ligne)
 

@@ -2744,7 +2744,10 @@ class Loom:
         ``delivery_id`` devient le ``run_id`` : une **seconde livraison de la
         même chose retrouve son run** au lieu d'en ouvrir un autre
         (``repeated``). C'est ce qui rend une porte tenable — les plateformes
-        réessaient, et une relance ne doit partir qu'une fois.
+        réessaient, et une relance ne doit partir qu'une fois. Un identifiant
+        déjà pris dans une autre session du client (charge différente pour un
+        gabarit ``session``) est refusé (``DeliveryRefused``) : un identifiant
+        de livraison, un run.
 
         Le run est lancé en arrière-plan : celui qui livre attend un accusé,
         pas une réponse de modèle.
@@ -2762,6 +2765,8 @@ class Loom:
             rendered = Template.parse(spec.session).render(values)
             session_id = SessionId(_usable(f"Session du déclencheur {name!r}", rendered))
         if run_id is not None:
+            if session_id is not None:
+                await self._elsewhere(name, run_id, session_id, tenant)
             seen = await self._already(name, run_id, session_id, tenant)
             if seen is not None:
                 return seen
@@ -2787,6 +2792,34 @@ class Loom:
         state = await self.state(opened, session_id=session_id, tenant_id=tenant)
         return Triggered(
             trigger=name, run_id=opened, session_id=state.session_id, status=state.status
+        )
+
+    async def _elsewhere(
+        self, name: str, run_id: RunId, session_id: SessionId, tenant: TenantId
+    ) -> None:
+        """Refuse un identifiant de livraison déjà pris dans une autre session du client.
+
+        Quand la session se rend depuis la charge, la même livraison avec une
+        autre charge (corrigée, ou un identifiant recyclé par l'émetteur)
+        tomberait dans une autre session et y ouvrirait un second run du même
+        nom : l'action partirait deux fois. Au test H6 du 20/10, ``crm-0001``
+        renvoyé avec un autre numéro de devis avait ouvert un second run
+        ``crm-0001``. Le journal est cherché pour tout le client : indexé en
+        SQLite et en Postgres, relu en entier en JSONL — seulement pour une
+        porte qui déclare à la fois ``session`` et ``delivery_header``.
+        """
+        started = await self._store.query(
+            EventQuery(tenant_id=tenant, run_id=run_id, types=("run.started",))
+        )
+        other = next((e for e in started if e.session_id != session_id), None)
+        if other is None:
+            return
+        opened_by = other.payload.trigger if isinstance(other.payload, RunStarted) else None
+        where = f"du déclencheur {opened_by!r}" if opened_by else "qui n'en vient pas"
+        raise DeliveryRefused(
+            f"Identifiant de livraison {run_id!r} déjà utilisé par un run {where} "
+            f"(session {other.session_id}) : une même livraison doit donner la même "
+            f"session, et celle-ci donnerait {session_id}"
         )
 
     async def _already(

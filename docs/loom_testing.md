@@ -692,9 +692,9 @@ Corrigé le 20/10 (CHANGELOG 2.0.10, « Approbations et politiques ») : `approv
 
 `Loom.submit()` ou `background: true` en REST (réponse 202) : le run tourne à part ; statut par `GET /v1/runs/{id}`, outil MCP `run_status`.
 
-**Testée** : non
+**Testée** : oui (20/10, agent `agent-test`, série 3, `session-H5a`, `session-H5b`)
 
-**Note** :
+**Note** : REST (`loom serve`, sans clé) : `POST /v1/agents/agent/runs` avec `background: true` → `HTTP/1.1 202 Accepted`, corps `{"run_id":…,"session_id":"session-H5a","status":"ready_for_model"}` ; le run est au journal dès la réponse : `GET /v1/runs/{id}?session_id=…` aussitôt → `ready_for_model`, 10 s après → `completed`, « le montant TTC est de 960 € (TVA : 160 €) » ; `GET /v1/runs?session_id=…` le liste. Python : `Loom.submit("agent", …, session_id="session-H5b")` rend l'identifiant tout de suite, `state()` aussitôt → `ready_for_model` (run inscrit avant le retour), `drain()` puis `result()` → `completed` (1 200 € HT à 10 % = 1 320 € TTC, refusé par le contrat de sortie de `prix_ttc`, `montant_ttc ≤ 1000` — choix du montant malheureux, comportement du contrat conforme à E1). MCP : `run_status` (stdio, sans elicitation) sur le run REST → `isError: False`, texte = réponse du run, `status: completed`.
 
 ### H6 — Déclencheurs : webhook, planification
 
@@ -702,9 +702,11 @@ Corrigé le 20/10 (CHANGELOG 2.0.10, « Approbations et politiques ») : `approv
 
 `triggers:` (`name`, `agent`, gabarit `message`, gabarit `session`, `delivery_header`) : `POST /v1/hooks/{name}` ouvre un run (202, ou 200 si la livraison est déjà reçue). Un planificateur externe passe par la même porte.
 
-**Testée** : non
+**Testée** : oui (20/10, agent `agent-test`, série 4, `loom serve` sans clé, sessions `devis-D-2026-077` à `devis-D-2026-081`) : livraison, doublon, tournée datée, refus ; écart sur un identifiant de livraison réutilisé avec une autre charge, corrigé et revalidé
 
-**Note** :
+**Note** : déclencheur `devis-signe` (`agent`, message « Le devis {{ payload.numero }} du client {{ payload.client }} est signé : calcule son TTC pour {{ payload.montant_ht }} € HT. », session « devis-{{ payload.numero }} », `delivery_header: X-Delivery-Id`). Livraison `X-Delivery-Id: crm-0001` → `202 Accepted`, `{"trigger":"devis-signe","run_id":"crm-0001","session_id":"devis-D-2026-077","status":"ready_for_model","repeated":false}` : l'identifiant de livraison devient le `run_id`, la session est rendue depuis la charge. Même livraison renvoyée → `200 OK`, même run, `repeated: true`, un seul `run.started` au journal. Run lancé en arrière-plan, `completed` : « Le devis D-2026-077 (client Martin) s'élève à 720,00 € TTC pour 600,00 € HT ». Au journal : `run.started` avec `trigger: devis-signe` (aussi en facette), `message.user` = le gabarit rendu (« Le devis D-2026-077 du client Martin est signé : calcule son TTC pour 600 € HT. »). Tournée « cron » (`X-Delivery-Id: tournee-$(date +%F)`) : `202` puis `200`, run `tournee-2026-10-20` dans `devis-D-2026-078`. Déclencheur inconnu → `404`, « Déclencheur 'inconnu' non déclaré (déclencheurs : devis-signe) ».
+**Écart** : même `X-Delivery-Id: crm-0001` avec une autre charge (`numero: D-2026-079`) → `202`, `repeated: false`, second run `crm-0001` ouvert dans `devis-D-2026-079` (exécuté). Le doublon n'est cherché que dans la session rendue (`Loom._already`, `access/api.py`) : deux runs portent le même identifiant, et `GET /v1/runs/crm-0001` sans `session_id` répond « Run crm-0001 inconnu ». Une plateforme qui renvoie une livraison corrigée, ou qui recycle ses identifiants, déclenche donc l'action deux fois.
+Corrigé le 20/10 (CHANGELOG 2.0.10, « Déclencheurs ») : pour une porte avec `session` et `delivery_header`, l'identifiant est cherché dans tout le journal du client, et refusé (422, `DeliveryRefused`) s'il est déjà pris dans une autre session. Revalidé (`serve` relancé, `crm-0002`) : devis D-2026-081 → `202` ; même identifiant, devis D-2026-082 → `422` « Identifiant de livraison 'crm-0002' déjà utilisé par un run du déclencheur 'devis-signe' (session devis-D-2026-081) : une même livraison doit donner la même session, et celle-ci donnerait devis-D-2026-082 », aucune session `devis-D-2026-082` ; charge d'origine renvoyée → `200`, `repeated: true`, `status: completed`. Même trou, hors H6, à voir en A et N2 : un `run_id` imposé par l'appelant (`--run-id`, `run_id` en REST) n'est contrôlé que dans sa session.
 
 ### H7 — Worker de file de tâches
 

@@ -194,6 +194,27 @@ async def test_a_delivery_id_taken_by_another_door_is_refused(demo: ConfigFactor
     assert [record.session_id for record in journaux] == ["evt-1"]
 
 
+async def test_a_delivery_id_reused_with_another_session_is_refused(demo: ConfigFactory) -> None:
+    """Test H6 du 20/10 : ``crm-0001`` renvoyé avec un autre devis ouvrait un second run."""
+    avec = {**RELANCE, "session": "devis-{{ payload.devis.numero }}"}
+    autre_devis: dict[str, Any] = {**CHARGE, "devis": {"numero": "D-2026-079"}}
+    async with Loom.from_config(demo(storage=JOURNAL, triggers=[avec])) as loom:
+        first = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="crm-0001")
+        with pytest.raises(DeliveryRefused) as refused:
+            await loom.trigger("relance-quotidienne", autre_devis, delivery_id="crm-0001")
+        again = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="crm-0001")
+        await loom.drain()
+        journaux = await loom.sessions()
+
+    assert str(refused.value) == (
+        "Identifiant de livraison 'crm-0001' déjà utilisé par un run du déclencheur "
+        "'relance-quotidienne' (session devis-D-2026-042) : une même livraison doit donner "
+        "la même session, et celle-ci donnerait devis-D-2026-079"
+    )
+    assert first.repeated is False and again.repeated is True
+    assert [record.session_id for record in journaux] == ["devis-D-2026-042"]
+
+
 async def test_a_delivery_id_that_is_not_usable_is_refused(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo(storage=JOURNAL, triggers=[RELANCE])) as loom:
         with pytest.raises(DeliveryRefused, match="Identifiant de livraison"):
@@ -285,6 +306,21 @@ async def test_a_delivery_id_taken_by_another_door_is_a_422(demo: ConfigFactory)
 
     assert first.status_code == 202
     assert other.status_code == 422 and "relance-quotidienne" in other.json()["detail"]
+
+
+async def test_a_delivery_id_reused_with_another_session_is_a_422(demo: ConfigFactory) -> None:
+    avec = {**RELANCE, "session": "devis-{{ payload.devis.numero }}", "delivery_header": "X-Id"}
+    autre_devis: dict[str, Any] = {**CHARGE, "devis": {"numero": "D-2026-079"}}
+    entete = {"X-Id": "crm-0001"}
+    async with servie(demo(storage=JOURNAL, triggers=[avec])) as (loom, http):
+        first = await http.post("/v1/hooks/relance-quotidienne", json=CHARGE, headers=entete)
+        other = await http.post("/v1/hooks/relance-quotidienne", json=autre_devis, headers=entete)
+        await loom.drain()
+        sessions = await loom.sessions()
+
+    assert first.status_code == 202
+    assert other.status_code == 422 and "session devis-D-2026-042" in other.json()["detail"]
+    assert [record.session_id for record in sessions] == ["devis-D-2026-042"]
 
 
 async def test_a_payload_nested_too_deep_is_a_422_not_a_500(demo: ConfigFactory) -> None:
