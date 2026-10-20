@@ -177,13 +177,15 @@ class MediaResolver:
             ) from exc
 
 
-def _earlier(block: ArtifactRefBlock, how: str) -> TextBlock:
-    # Le texte ne dit ni « vue » (faux pour un modèle sans vision) ni « plus
-    # montrée » : au test G3 du 20/10, Haiku l'a lu « jamais montrée » et a
-    # désavoué la description juste qu'il en avait faite.
+def _earlier(block: ArtifactRefBlock, holder: str, origin: str = "") -> TextBlock:
+    # La mention prend la place de l'image : sans dire que celle-ci était là à ce
+    # tour, le modèle croit n'avoir reçu que ce texte, et désavoue la description
+    # qu'il en a faite (tests G3 du 20/10, deux textes essayés). Rien ne dit « vue » :
+    # ce serait faux pour un modèle sans vision.
     return TextBlock(
-        text=f"[image {describe(block)}, {how} à un tour précédent : elle n'est plus "
-        "jointe à la conversation ; si tu l'as décrite alors, ta description reste valable]"
+        text=f"[Note du système : {holder} l'image {describe(block)}{origin}. Elle a été retirée "
+        "de l'historique après ce tour pour alléger les requêtes ; si tu l'as décrite à ce "
+        "tour-là, ta description venait de l'image elle-même et reste valable.]"
     )
 
 
@@ -194,10 +196,10 @@ def _without_images(message: Message) -> Message:
     for block in message.blocks:
         match block:
             case ArtifactRefBlock() if is_image(block.media_type):
-                blocks.append(_earlier(block, "jointe"))
+                blocks.append(_earlier(block, "ce message contenait", ", jointe par l'utilisateur"))
             case ToolResultBlock(output=output):
                 outputs = tuple(
-                    _earlier(item, "rendue par l'outil")
+                    _earlier(item, "ce résultat contenait")
                     if isinstance(item, ArtifactRefBlock) and is_image(item.media_type)
                     else item
                     for item in output.blocks
