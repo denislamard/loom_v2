@@ -493,7 +493,10 @@ def test_cli_attaches_images(tmp_path: Path, capsys: pytest.CaptureFixture[str])
 # --- Images des tours précédents (F4, sessions.media.keep_images) ---------------
 
 
-EARLIER = "[image photo.png (image/png, 32 octets), jointe à un tour précédent : plus montrée]"
+EARLIER = (
+    "[image photo.png (image/png, 32 octets), jointe à un tour précédent : elle n'est plus "
+    "jointe à la conversation ; si tu l'as décrite alors, ta description reste valable]"
+)
 
 
 async def test_earlier_images_become_mentions() -> None:
@@ -518,7 +521,8 @@ async def test_earlier_images_become_mentions() -> None:
         TextBlock(text="Voici."),
         TextBlock(
             text="[image photo.png (image/png, 32 octets), rendue par l'outil "
-            "à un tour précédent : plus montrée]"
+            "à un tour précédent : elle n'est plus jointe à la conversation ; si tu l'as "
+            "décrite alors, ta description reste valable]"
         ),
         note,
     )

@@ -178,7 +178,13 @@ class MediaResolver:
 
 
 def _earlier(block: ArtifactRefBlock, how: str) -> TextBlock:
-    return TextBlock(text=f"[image {describe(block)}, {how} à un tour précédent : plus montrée]")
+    # Le texte ne dit ni « vue » (faux pour un modèle sans vision) ni « plus
+    # montrée » : au test G3 du 20/10, Haiku l'a lu « jamais montrée » et a
+    # désavoué la description juste qu'il en avait faite.
+    return TextBlock(
+        text=f"[image {describe(block)}, {how} à un tour précédent : elle n'est plus "
+        "jointe à la conversation ; si tu l'as décrite alors, ta description reste valable]"
+    )
 
 
 def _without_images(message: Message) -> Message:
