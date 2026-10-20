@@ -628,3 +628,15 @@ def test_refused_state_writes_follow_the_tool_result() -> None:
     assert to_openai_messages("", refused_result()) == [
         {"role": "tool", "tool_call_id": "t1", "content": NOTED}
     ]
+
+
+async def test_a_refusal_without_key_says_no_key_was_sent() -> None:
+    keyless = SPEC.model_copy(update={"api_key_env": None})
+    server = Server(api_error(401, "invalid_api_key", "Incorrect API key provided"))
+    with pytest.raises(ModelError) as caught:
+        await complete(server.model(keyless), request())
+    assert caught.value.kind == "auth"
+    assert str(caught.value).endswith(
+        " — aucune clé d'API envoyée : le modèle "
+        f"{SPEC.id} n'a pas d'api_key_env (déclarer par exemple api_key_env: OPENAI_API_KEY)"
+    )

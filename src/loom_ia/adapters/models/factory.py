@@ -8,16 +8,14 @@ jamais dans les messages d'erreur ni dans les logs.
 
 import os
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
+from loom_ia.adapters.models._common import NO_API_KEY
 from loom_ia.core.model import ModelSpec
 from loom_ia.core.ports import ModelClient
 
 if TYPE_CHECKING:
     import httpx2
-
-# Clé transmise aux serveurs sans authentification (vLLM, Ollama…).
-NO_API_KEY: Final = "not-needed"
 
 
 class ModelConfigError(ValueError):

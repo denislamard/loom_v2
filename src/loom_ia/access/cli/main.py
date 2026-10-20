@@ -134,6 +134,7 @@ from loom_ia.runtime import (
     apply_logging,
     create_keyring,
     encryption_warnings,
+    key_warnings,
     load_registry,
     model_warnings,
     postgres_ddl,
@@ -668,7 +669,7 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Profil     : {_profile_line(config, args.profile)}")
     print(f"Env        : {env.describe()}")
     print(f"Modèles    : {_listed(spec.id for spec in config.models)}")
-    for warning in model_warnings(config):
+    for warning in (*key_warnings(config), *model_warnings(config)):
         print(f"    {warning}")
     if args.no_keys:
         # Les clients de modèle ne sont pas créés : ce que le montage aurait

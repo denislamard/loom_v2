@@ -201,6 +201,7 @@ from loom_ia.runtime import (
     create_run_exporter,
     create_task_queue,
     encryption_warnings,
+    key_warnings,
     load_registry,
     model_warnings,
     storage_warnings,
@@ -1158,6 +1159,8 @@ class Loom:
         announce(config, storage_warnings(config))
         # Une capacité à déclarer n'empêche pas de partir, en prod non plus.
         announce(config, model_warnings(config), refuse=False)
+        # Un modèle qui n'enverra aucune clé, si : chacun de ses appels serait refusé.
+        announce(config, key_warnings(config))
         # Le sceau, lui, avertit dans tous les profils : un client dont la clé a
         # été effacée est un état voulu, pas une config à corriger, et refuser
         # de démarrer arrêterait le service de tous les autres (5.5b).

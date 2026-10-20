@@ -68,11 +68,13 @@ from pydantic import JsonValue
 
 from loom_ia.adapters.models._common import (
     ERROR_PREFIX,
+    NO_API_KEY,
     OUTPUT_SCHEMA_NAME,
     classify_error,
     image_data,
     is_strict,
     json_text,
+    keyless,
     reasoning_loop,
     unreadable_json,
     unresolved,
@@ -130,6 +132,8 @@ class OpenAIResponsesModel:
         http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         self.spec = spec
+        # Sans ``api_key_env``, aucune clé n'est envoyée : un 401 le dira.
+        self._sent_key = api_key != NO_API_KEY
         self._client = openai.AsyncOpenAI(
             api_key=api_key,
             base_url=spec.base_url or DEFAULT_BASE_URL,
@@ -199,7 +203,7 @@ class OpenAIResponsesModel:
                     yield chunk
                 return
         except openai.APIError as exc:
-            raise to_model_error(exc) from exc
+            raise keyless(to_model_error(exc), self.spec, sent_key=self._sent_key) from exc
         except json.JSONDecodeError as exc:
             raise unreadable_json(exc) from exc
         for chunk in chunks:

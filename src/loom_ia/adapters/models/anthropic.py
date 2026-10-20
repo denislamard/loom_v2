@@ -48,10 +48,12 @@ import httpx2
 from pydantic import JsonValue
 
 from loom_ia.adapters.models._common import (
+    NO_API_KEY,
     classify_error,
     custom_header_names,
     image_data,
     json_text,
+    keyless,
     retry_after,
     unreadable_json,
     unresolved,
@@ -144,6 +146,8 @@ class AnthropicModel:
         http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         self.spec = spec
+        # Sans ``api_key_env``, aucune clé n'est envoyée : un 401 le dira.
+        self._sent_key = api_key != NO_API_KEY
         self._client = anthropic.AsyncAnthropic(
             api_key=api_key,
             base_url=spec.base_url or DEFAULT_BASE_URL,
@@ -218,7 +222,8 @@ class AnthropicModel:
                     )
                 return
         except (anthropic.APIError, httpx2.HTTPError) as exc:
-            raise _hinted(to_model_error(exc), request) from exc
+            error = _hinted(to_model_error(exc), request)
+            raise keyless(error, self.spec, sent_key=self._sent_key) from exc
         except json.JSONDecodeError as exc:
             raise unreadable_json(exc) from exc
         for chunk in chunks:

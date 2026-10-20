@@ -61,7 +61,7 @@ from loom_ia.adapters.artifacts import (
     SealingArtifactStore,
 )
 from loom_ia.adapters.idempotency import InMemoryIdempotency
-from loom_ia.adapters.models import create_model_client
+from loom_ia.adapters.models import KEY_VARIABLES, create_model_client
 from loom_ia.adapters.queue import AsyncioTaskQueue, Handler
 from loom_ia.adapters.stores import (
     PLAIN,
@@ -1206,6 +1206,25 @@ def model_warnings(config: LoomConfig) -> list[str]:
         and spec.base_url is None
         and spec.capabilities.vision
         and not spec.capabilities.tool_result_media
+    ]
+
+
+def key_warnings(config: LoomConfig) -> list[str]:
+    """Modèles de l'API officielle déclarés sans ``api_key_env`` : aucune clé n'est envoyée.
+
+    Sans ``api_key_env``, loom envoie une clé de remplacement, prévue pour un
+    serveur local (vLLM, Ollama) ou compatible qui n'en demande pas. Vers
+    l'API officielle (``sdk: anthropic`` ou ``openai`` sans ``base_url``),
+    chaque appel est donc refusé — au 20/10, en « 401 invalid x-api-key », sans
+    que rien n'ait signalé l'oubli. Un avertissement, une erreur en profil
+    ``prod`` : un service qui ne peut appeler aucun de ses modèles ne part pas.
+    """
+    return [
+        f"Modèle {spec.id!r} : sdk {spec.sdk} vers l'API officielle sans api_key_env — "
+        "aucune clé d'API n'est envoyée, chaque appel sera refusé (401) ; déclarer "
+        f"api_key_env: {KEY_VARIABLES.get(spec.sdk, 'NOM_DE_LA_VARIABLE')}"
+        for spec in config.models
+        if spec.sdk in KEY_VARIABLES and spec.base_url is None and spec.api_key_env is None
     ]
 
 

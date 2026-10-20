@@ -26,12 +26,36 @@ from loom_ia.core.model import (
     JsonBlock,
     Message,
     ModelErrorKind,
+    ModelSpec,
     OutputBlock,
     TextBlock,
     ToolOutput,
     is_image,
 )
 from loom_ia.core.ports import ModelError
+
+# Clé transmise aux serveurs sans authentification (vLLM, Ollama…), faute d'``api_key_env``.
+NO_API_KEY: Final = "not-needed"
+
+# Variable proposée quand un modèle de l'API officielle n'a pas d'``api_key_env``.
+KEY_VARIABLES: Final = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+
+
+def keyless(error: ModelError, spec: ModelSpec, *, sent_key: bool) -> ModelError:
+    """Refus d'authentification d'un modèle qui n'a envoyé aucune clé : l'erreur le dit.
+
+    Sans ``api_key_env``, loom envoie ``NO_API_KEY``, prévu pour un serveur local.
+    Au 20/10, un modèle de l'API officielle déclaré ainsi rendait seulement
+    « 401 invalid x-api-key » : rien ne disait que la clé n'avait pas été lue.
+    """
+    if error.kind == "auth" and not sent_key:
+        variable = KEY_VARIABLES.get(spec.sdk, "NOM_DE_LA_VARIABLE")
+        error.message = (
+            f"{error.message} — aucune clé d'API envoyée : le modèle {spec.id} n'a pas "
+            f"d'api_key_env (déclarer par exemple api_key_env: {variable})"
+        )
+        error.args = (error.message,)
+    return error
 
 
 def custom_header_names(variable: str) -> tuple[str, ...]:

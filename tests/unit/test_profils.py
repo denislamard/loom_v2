@@ -19,7 +19,7 @@ from loom_ia.access.cli import main
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.loader import PROFILE_ENV, chosen_profile
 from loom_ia.core.model import JudgeWhen
-from loom_ia.runtime import model_warnings, storage_warnings
+from loom_ia.runtime import key_warnings, model_warnings, storage_warnings
 
 CRITERES: list[dict[str, Any]] = [{"name": "fidele", "rule": "Rien d'inventé."}]
 # Un juge dont le modèle est celui de la sortie qu'il évalue : avertissement
@@ -349,3 +349,43 @@ def test_validate_shows_the_capability_warning(
 ) -> None:
     assert main(["--config", str(demo(models=[MODEL, VOIT])), "validate", "--no-keys"]) == 0
     assert "Modèle 'VOIT' : sdk anthropic avec vision" in capsys.readouterr().out
+
+
+# --- Clé d'API oubliée (20/10) -------------------------------------------------
+
+SANS_CLE: dict[str, Any] = {"id": "HAIKU", "sdk": "anthropic", "model": "claude-haiku-5-5"}
+SANS_CLE_SAID = (
+    "Modèle 'HAIKU' : sdk anthropic vers l'API officielle sans api_key_env — aucune clé "
+    "d'API n'est envoyée, chaque appel sera refusé (401) ; déclarer api_key_env: "
+    "ANTHROPIC_API_KEY"
+)
+
+
+def test_an_official_model_without_api_key_env_is_told(demo: ConfigFactory) -> None:
+    """Au 20/10, une config sans api_key_env a coûté un 401 sans indice, puis une enquête."""
+    gpt: dict[str, Any] = {"id": "GPT", "sdk": "openai", "model": "gpt-5"}
+    local = {**gpt, "id": "LOCAL", "base_url": "http://127.0.0.1:8000/v1"}
+    declared = {**SANS_CLE, "id": "AVEC_CLE", "api_key_env": "CLE_ESSAI"}
+    config = load_config(demo(models=[MODEL, SANS_CLE, gpt, local, declared]))
+    # Ni un serveur local (base_url), ni un modèle qui déclare sa clé, ni un faux modèle.
+    assert key_warnings(config) == [
+        SANS_CLE_SAID,
+        "Modèle 'GPT' : sdk openai vers l'API officielle sans api_key_env — aucune clé "
+        "d'API n'est envoyée, chaque appel sera refusé (401) ; déclarer api_key_env: "
+        "OPENAI_API_KEY",
+    ]
+
+
+def test_validate_shows_the_missing_key(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = demo(models=[MODEL, SANS_CLE])
+    assert main(["--config", str(path), "validate", "--no-keys"]) == 0
+    assert f"    {SANS_CLE_SAID}\n" in capsys.readouterr().out
+
+
+async def test_a_missing_key_stops_prod(demo: ConfigFactory) -> None:
+    path = demo(models=[MODEL, SANS_CLE], security={"api_keys": []})
+    with pytest.raises(ConfigError, match=r"Profil prod : .*sans api_key_env"):
+        async with Loom.from_config(path, profile="prod"):
+            pass

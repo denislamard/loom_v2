@@ -972,3 +972,21 @@ def test_refused_state_writes_follow_the_tool_result() -> None:
             ],
         }
     ]
+
+
+async def test_a_refusal_without_key_says_no_key_was_sent() -> None:
+    """Au 20/10 : « 401 invalid x-api-key », sans dire que la config n'envoyait aucune clé."""
+    keyless = SPEC.model_copy(update={"api_key_env": None})
+    server = Server(api_error(401, "authentication_error", "invalid x-api-key"))
+    with pytest.raises(ModelError) as caught:
+        await complete(server.model(keyless), request())
+    assert caught.value.kind == "auth"
+    assert str(caught.value).endswith(
+        "invalid x-api-key'}} — aucune clé d'API envoyée : le modèle CLAUDE n'a pas "
+        "d'api_key_env (déclarer par exemple api_key_env: ANTHROPIC_API_KEY)"
+    )
+    # Avec une clé, le refus reste celui du fournisseur.
+    server = Server(api_error(401, "authentication_error", "invalid x-api-key"))
+    with pytest.raises(ModelError) as caught:
+        await complete(server.model(), request())
+    assert "aucune clé" not in str(caught.value)
