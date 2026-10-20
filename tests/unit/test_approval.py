@@ -4,6 +4,7 @@
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Any
 import pytest
 import yaml
 
-from loom_ia.access.api import Loom, RunResult, UnknownApproval
+from loom_ia.access.api import ApprovalStale, Loom, RunResult, UnknownApproval
 from loom_ia.access.cli import main
 from loom_ia.access.evals import received_arguments
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
@@ -683,6 +684,63 @@ def test_a_decision_still_wins_over_a_deadline_that_has_not_passed(
     types = asyncio.run(go())
     assert "approval.granted" in types
     assert "approval.expired" not in types
+
+
+def test_a_stale_request_can_no_longer_be_decided(atelier: ConfigFactory) -> None:
+    """L'échéance passée, la demande ne se tranche plus, même sans réveil écrit.
+
+    Test H4 du 20/10 : le process de ``loom run`` s'arrête à la pause et emporte
+    le réveil différé ; un ``loom approve`` lancé 45 s après l'échéance accordait
+    l'appel, qui s'exécutait.
+    """
+
+    async def go() -> tuple[str, list[str], list[str], RunStatus]:
+        path = atelier(settings={"expires_in": 0.3})
+        loom = Loom.from_config(path)
+        run = await loom.run("demo", DEMANDE, session_id=SESSION)
+        call = run.pending_approvals[0].call_id
+        # Comme le process de ``loom run`` : le réveil différé est perdu.
+        await loom.aclose(wait=False)
+        await asyncio.sleep(0.6)
+        async with Loom.from_config(path) as again:
+            paused = [e.type for e in await again.export_session(SESSION)]
+            with pytest.raises(ApprovalStale) as refused:
+                await again.approve(run.run_id, by="denis", session_id=SESSION)
+            with pytest.raises(ApprovalStale):
+                await again.reject(run.run_id, call_id=call, session_id=SESSION)
+            before = [e.type for e in await again.export_session(SESSION)]
+            resumed = await again.resume(run.run_id, session_id=SESSION)
+            after = [e.type for e in await again.export_session(SESSION)]
+        assert before == paused
+        return f"{call}|{refused.value}", before, after, resumed.status
+
+    message, before, after, status = asyncio.run(go())
+    call, message = message.split("|", 1)
+    assert f"envoyer_email (appel {call}) a expiré le " in message
+    assert "loom resume" in message and "approval.on_expiry" in message
+    # Rien n'est écrit par le refus ; la reprise applique l'échéance.
+    assert "approval.granted" not in before and "approval.rejected" not in before
+    assert "approval.expired" in after and "approval.granted" not in after
+    assert status is RunStatus.COMPLETED
+
+
+def test_the_cli_refuses_a_stale_approval(
+    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = str(atelier(settings={"expires_in": 0.3}))
+    assert main(["--config", path, "run", "demo", DEMANDE, "--session", SESSION]) == 1
+    printed = capsys.readouterr()
+    run_id = next(
+        line.split(":", 1)[1].strip()
+        for line in (printed.out + printed.err).splitlines()
+        if line.startswith("Run ")
+    )
+    time.sleep(0.6)
+
+    assert main(["--config", path, "approve", run_id, "--session", SESSION]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith(f"Demande refusée : Run {run_id} : la demande d'approbation de ")
+    assert "ne peut plus être tranchée" in err
 
 
 # --- Approbateur en ligne -----------------------------------------------------

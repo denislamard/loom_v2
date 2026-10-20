@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import quote
 
 import pytest
+import yaml
 from conftest import ANSWER, QUESTION, ConfigFactory, demo_agent
 from pydantic import ValidationError
 
@@ -399,6 +400,28 @@ async def test_an_approval_is_granted_over_rest(atelier: ConfigFactory) -> None:
     assert finished.json()["status"] == "completed"
     # Sans ``by`` dans le corps, c'est la clé d'API qui signe l'accord.
     assert _by(events, "approval.granted") == ["mme-durand"]
+
+
+async def test_a_stale_approval_is_a_409(atelier: ConfigFactory) -> None:
+    """Le process qui a posé la demande s'est arrêté, et son réveil avec lui."""
+    path = atelier(security=CLES)
+    agent = path.parent / "agents" / "demo.yaml"
+    spec = yaml.safe_load(agent.read_text(encoding="utf-8"))
+    agent.write_text(yaml.safe_dump({**spec, "approval": {"expires_in": 0.3}}), encoding="utf-8")
+    first = Loom.from_config(path)
+    run = await first.run("demo", "Relance.")
+    await first.aclose(wait=False)
+    await asyncio.sleep(0.6)
+    async with serving(path) as (loom, http):
+        entete = {"Authorization": f"Bearer {APPROBATEUR}"}
+        refused = await http.post(
+            f"/v1/runs/{run.run_id}/approve?session_id={run.session_id}", json={}, headers=entete
+        )
+        events = await loom.export_session(run.session_id)
+
+    assert refused.status_code == 409
+    assert "ne peut plus être tranchée" in refused.json()["detail"]
+    assert "approval.granted" not in [e.type for e in events]
 
 
 async def test_corrected_arguments_without_a_call_are_a_422(atelier: ConfigFactory) -> None:

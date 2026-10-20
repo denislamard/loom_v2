@@ -116,6 +116,7 @@ from loom_ia.access.api import (
     SESSIONS_MAX,
     SESSIONS_READ,
     AgentNotAllowed,
+    ApprovalStale,
     DeliveryRefused,
     Loom,
     RunPage,
@@ -369,6 +370,12 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             status_code=status.HTTP_409_CONFLICT,
             headers={"Retry-After": str(max(1, math.ceil(left)))},
         )
+
+    @app.exception_handler(ApprovalStale)
+    async def _expired(request: Request, exc: Exception) -> JSONResponse:
+        # La demande existe, mais son échéance est passée : elle ne se tranche
+        # plus, et rien n'a été écrit. 409 : l'état du run, pas la requête, l'empêche.
+        return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_409_CONFLICT)
 
     @app.exception_handler(SealError)
     async def _sealed(request: Request, exc: Exception) -> JSONResponse:

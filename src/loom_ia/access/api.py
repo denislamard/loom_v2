@@ -293,6 +293,39 @@ class UnknownApproval(Unknown):
         super().__init__(f"Run {run_id} : aucune approbation en attente pour l'appel {call_id!r}")
 
 
+class ApprovalStale(ValueError):
+    """Demande d'approbation périmée : elle ne se tranche plus (#17).
+
+    L'``expire_at`` du journal fait foi, même quand le réveil différé qui
+    devait l'appliquer a été perdu (process arrêté, file en mémoire). Rien
+    n'est écrit : c'est la reprise du run qui conclut la demande, selon
+    ``approval.on_expiry``. Au test H4 du 20/10, un ``loom approve`` lancé
+    45 s après l'échéance accordait l'appel, qui s'exécutait.
+    """
+
+    def __init__(
+        self, run_id: RunId, session_id: SessionId, expired: Sequence[PendingApproval]
+    ) -> None:
+        calls = ", ".join(
+            f"{asked.tool_name} (appel {asked.call_id}) a expiré le {_local(asked.expire_at)}"
+            for asked in expired
+        )
+        super().__init__(
+            f"Run {run_id} : la demande d'approbation de {calls} ; elle ne peut plus être "
+            f"tranchée. Reprendre le run (loom resume {run_id} --session {session_id}, "
+            "Loom.resume ou recover()) le conclut selon approval.on_expiry"
+        )
+        self.run_id = run_id
+        self.expired = tuple(expired)
+
+
+def _local(moment: datetime | None) -> str:
+    """Date et heure à l'heure locale de la machine, avec son fuseau."""
+    if moment is None:
+        return "?"
+    return moment.astimezone().strftime("%Y-%m-%d à %H:%M:%S (%Z)")
+
+
 class UnknownSession(Unknown):
     """Aucune session de cet identifiant dans le journal."""
 
@@ -2489,7 +2522,11 @@ class Loom:
         l'identité de l'approbateur : c'est tout l'audit qu'il y aura.
 
         Rend les appels accordés ; vide si le run n'attendait rien — un run fini
-        n'attend plus rien, même annulé en pause.
+        n'attend plus rien, même annulé en pause. Une demande dont l'échéance
+        est passée ne s'accorde plus : ``ApprovalStale`` si c'était la seule
+        visée, et rien n'est écrit (la reprise du run applique
+        ``approval.on_expiry``) ; sans ``call_id``, les demandes périmées sont
+        laissées de côté.
 
         Une fois la décision écrite au journal, une file qui refuse la reprise
         ne fait pas échouer l'appel — la décision, elle, a eu lieu : la panne
@@ -2526,7 +2563,8 @@ class Loom:
 
         Le run n'échoue pas : l'appel rend une erreur, et l'orchestrateur fait
         ce qu'il peut de ce refus. Comme pour ``approve``, une panne de la file
-        après l'écriture du refus est journalisée et ne fait pas échouer l'appel.
+        après l'écriture du refus est journalisée et ne fait pas échouer l'appel,
+        et une demande périmée ne se tranche plus (``ApprovalStale``).
         """
         return await self._decided(
             run_id,
@@ -2568,6 +2606,19 @@ class Loom:
             ]
         if call_id is not None and not decided:
             raise UnknownApproval(run_id, call_id)
+        # Une demande périmée ne se tranche plus, même si personne n'est encore
+        # venu écrire son expiration : seules les autres reçoivent la décision.
+        now = datetime.now(UTC)
+        expired = [asked for _, asked in decided if asked.stale(now)]
+        decided = [(owner, asked) for owner, asked in decided if not asked.stale(now)]
+        if expired and not decided:
+            raise ApprovalStale(root.root_run_id, root.session_id, expired)
+        if expired:
+            logger.warning(
+                "Run %s : demande(s) périmée(s) laissée(s) de côté : %s",
+                root.root_run_id,
+                ", ".join(asked.call_id for asked in expired),
+            )
         if not decided:
             return ()
         writer = await self._writers.open(self._store, tenant, root.session_id)
