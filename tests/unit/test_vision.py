@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Images : pièces jointes, résolution selon les capacités, rôle vision (G1, C4, #14, J2.3)."""
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
@@ -14,6 +15,7 @@ from loom_ia.adapters.artifacts import InMemoryArtifactStore
 from loom_ia.adapters.models.fake import FakeModel
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import load_config
+from loom_ia.config.models import SessionsConfig
 from loom_ia.core.events import ArtifactStored, Event, ModelResponded, UserMessage
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -22,12 +24,14 @@ from loom_ia.core.model import (
     Attachment,
     AttachmentError,
     InlineDataBlock,
+    KeepImages,
     Message,
     ModelCapabilities,
     ModelRequest,
     ModelSpec,
     RetryPolicy,
     RunId,
+    RunState,
     RunStatus,
     SessionId,
     TextBlock,
@@ -47,6 +51,7 @@ from loom_ia.engine import (
     begin_run,
     drive,
 )
+from loom_ia.engine.media import earlier_images, has_refs
 from loom_ia.testing import ScriptedModel, tool_call_message
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
@@ -483,3 +488,101 @@ def test_cli_attaches_images(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert "Demande refusée : devis.pdf : format non reconnu" in capsys.readouterr().err
     assert main(["--config", path, "run", "demo", "?", "--attach", str(tmp_path / "x.png")]) == 2
     assert "Pièce jointe illisible" in capsys.readouterr().err
+
+
+# --- Images des tours précédents (F4, sessions.media.keep_images) ---------------
+
+
+EARLIER = "[image photo.png (image/png, 32 octets), jointe à un tour précédent : plus montrée]"
+
+
+async def test_earlier_images_become_mentions() -> None:
+    files = InMemoryArtifactStore()
+    photo = await stored(files)
+    note = ArtifactRefBlock(uri="artifact://default/s1/n.txt", media_type="text/plain", size=3)
+    result = ToolResultBlock(
+        call_id="c1",
+        output=ToolOutput(blocks=(TextBlock(text="Voici."), photo, note)),
+    )
+    plain = Message.user("Bonjour")
+    asked = Message(role="user", blocks=(TextBlock(text="Regarde"), photo))
+    answered = Message(role="tool", blocks=(result,))
+
+    kept, user, tool = earlier_images([plain, asked, answered])
+
+    assert kept is plain
+    assert user.blocks == (TextBlock(text="Regarde"), TextBlock(text=EARLIER))
+    [block] = tool.blocks
+    assert isinstance(block, ToolResultBlock)
+    assert block.output.blocks == (
+        TextBlock(text="Voici."),
+        TextBlock(
+            text="[image photo.png (image/png, 32 octets), rendue par l'outil "
+            "à un tour précédent : plus montrée]"
+        ),
+        note,
+    )
+    # Un fichier qui n'est pas une image garde sa référence : la résolution le mentionne.
+    assert not has_refs([user]) and has_refs([tool])
+
+
+async def two_turns(keep: KeepImages, *, lost: bool = False) -> tuple[ScriptedModel, RunState]:
+    """Une photo jointe au premier tour d'une session, puis un tour sans pièce jointe."""
+    events, files = InMemoryEventStore(), InMemoryArtifactStore()
+    main = ScriptedModel(Message.assistant("Un carré."), Message.assistant("Bleu."))
+    ctx = replace(context(events, main, artifacts=files, spec=VISION), keep_images=keep)
+    session = SessionId("s1")
+    photo = Attachment(data=PNG, media_type="image/png", name="photo.png")
+    first = await begin_run(ctx, "Que montre la photo ?", attachments=[photo], session_id=session)
+    assert (await drive(ctx, first.run_id, session_id=session)).status is RunStatus.COMPLETED
+    if lost:
+        assert await files.delete(DEFAULT_TENANT, session) == 1
+    second = await begin_run(ctx, "De quelle couleur ?", session_id=session)
+    return main, await drive(ctx, second.run_id, session_id=session)
+
+
+async def test_last_run_mentions_the_images_of_earlier_turns() -> None:
+    main, state = await two_turns("last_run")
+
+    assert state.status is RunStatus.COMPLETED
+    first, second = main.requests
+    assert isinstance(first.messages[0].blocks[1], InlineDataBlock)
+    assert second.messages[0].blocks == (
+        TextBlock(text="Que montre la photo ?"),
+        TextBlock(text=EARLIER),
+    )
+    assert not any(
+        isinstance(block, InlineDataBlock)
+        for message in second.messages
+        for block in message.blocks
+    )
+
+
+async def test_last_run_does_not_read_earlier_images_again() -> None:
+    main, state = await two_turns("last_run", lost=True)
+
+    assert state.status is RunStatus.COMPLETED
+    assert state.output is not None and state.output.text == "Bleu."
+    assert main.requests[1].messages[0].blocks[1] == TextBlock(text=EARLIER)
+
+
+async def test_all_sends_the_images_of_earlier_turns_again() -> None:
+    main, state = await two_turns("all")
+
+    assert state.status is RunStatus.COMPLETED
+    _, second = main.requests
+    [again] = [block for block in second.messages[0].blocks if isinstance(block, InlineDataBlock)]
+    assert again.data == PNG
+    _, lost = await two_turns("all", lost=True)
+    assert lost.status is RunStatus.FAILED
+
+
+def test_keep_images_is_declared_in_sessions(tmp_path: Path) -> None:
+    assert SessionsConfig().media.keep_images == "last_run"
+    with pytest.raises(ValidationError, match="keep_images"):
+        SessionsConfig.model_validate({"media": {"keep_images": "none"}})
+    path = write(tmp_path)
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw["sessions"] = {"media": {"keep_images": "all"}}
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    assert Loom(load_config(path)).context("demo").keep_images == "all"

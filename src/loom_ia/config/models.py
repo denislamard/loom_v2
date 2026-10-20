@@ -42,6 +42,7 @@ from loom_ia.core.model import (
     AttachmentPolicy,
     Budgets,
     DomainModel,
+    KeepImages,
     McpServerSpec,
     ModelSpec,
     Quotas,
@@ -453,6 +454,16 @@ class StateLimits(DomainModel):
         return self
 
 
+class SessionMedia(DomainModel):
+    """Fichiers des tours précédents dans les requêtes d'une session (F4)."""
+
+    # ``last_run`` : une image d'un tour précédent est remplacée par une mention
+    # (nom, type, taille) ; seules celles du run en cours partent en octets.
+    # ``all`` : un modèle vision revoit toutes les images de la session, à
+    # chaque appel, relues dans le stockage d'artefacts.
+    keep_images: KeepImages = "last_run"
+
+
 class SessionsConfig(DomainModel):
     """Vie d'une session : historique matérialisé, compaction (F1 à F4), state."""
 
@@ -463,6 +474,8 @@ class SessionsConfig(DomainModel):
     # Sans ce bloc, une session n'est jamais résumée : elle grandit jusqu'à
     # la fenêtre du modèle.
     compaction: CompactionConfig | None = None
+    # Images des tours précédents dans les requêtes (F4).
+    media: SessionMedia = SessionMedia()
     # Limites du state de la session ; ses clés sont déclarées par les agents.
     state: StateLimits = StateLimits()
 

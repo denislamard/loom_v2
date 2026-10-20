@@ -28,6 +28,10 @@ ARTIFACT_SCHEME: Final = "artifact://"
 
 type ArtifactOrigin = Literal["attachment", "tool_output", "offload"]
 
+# Images des tours précédents d'une session dans une requête (F4) : seules
+# celles du run en cours partent en octets (``last_run``), ou toutes (``all``).
+type KeepImages = Literal["last_run", "all"]
+
 # Début du message utilisateur qui porte, après les résultats d'un tour, les
 # images que le modèle n'accepte pas dans un résultat d'outil (#15).
 MOVED_IMAGES: Final = "Images renvoyées par les outils ci-dessus :"

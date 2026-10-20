@@ -753,6 +753,7 @@ def build_agent(
         params=llm.params,
         on_chunk=on_chunk,
         attachments=config.execution.attachments,
+        keep_images=config.sessions.media.keep_images,
         policies=policies,
         output=spec.output,
         stream_output=stream_output(spec, policies),

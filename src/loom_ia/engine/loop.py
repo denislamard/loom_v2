@@ -147,6 +147,7 @@ from loom_ia.core.model import (
     CancelReason,
     Fail,
     JudgesMode,
+    KeepImages,
     Message,
     ModelRequest,
     ModelSpec,
@@ -204,6 +205,7 @@ from loom_ia.engine.delegated import Waiting
 from loom_ia.engine.executor import Decided, Delegated, OpenedTools, Stored, ToolExecutor
 from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
+from loom_ia.engine.media import earlier_images
 from loom_ia.engine.model_call import responded
 from loom_ia.engine.pending import pending_note
 from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
@@ -262,6 +264,9 @@ class RunContext:
     on_chunk: ChunkCallback | None = None
     # Pièces jointes acceptées à l'entrée d'un run (G1).
     attachments: AttachmentPolicy = field(default_factory=AttachmentPolicy)
+    # Images des tours précédents dans la requête (F4) : mentionnées
+    # (``last_run``) ou renvoyées en octets (``all``).
+    keep_images: KeepImages = "last_run"
     # Écrivain du journal, posé par ``drive`` pour le run en cours : les
     # sous-agents écrivent leur run avec lui.
     writer: SessionWriter | None = None
@@ -722,6 +727,9 @@ async def _driven(
     try:
         session_turns = tuple(turns(earlier))
         previous = [message for turn in session_turns for message in turn]
+        if ctx.keep_images == "last_run":
+            # Les images des tours précédents deviennent des mentions (F4).
+            previous = earlier_images(previous)
         # Un tour précédent en pause n'est pas dans l'historique : la note le dit (18/10).
         if (note := pending_note(awaiting_in_session(earlier))) is not None:
             previous.append(note)

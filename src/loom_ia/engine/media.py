@@ -18,6 +18,12 @@ Une image renvoyée par un outil reste dans son résultat si le modèle
 l'accepte là (``tool_result_media``) ; sinon, le résultat la mentionne et
 elle part dans un message utilisateur placé après les résultats du tour.
 
+Images des tours précédents (F4, ``sessions.media.keep_images``) : par
+défaut (``last_run``), l'historique de la session les remplace par une mention
+avant de former la requête (``earlier_images``) ; seules les images du run en
+cours partent en octets. Le journal et les snapshots gardent les références.
+Avec ``all``, toutes sont résolues comme celles du run, à chaque appel.
+
 L'empreinte de la requête (``request_hash``) est calculée sur la requête
 avant résolution : elle ne dépend pas des octets des fichiers.
 """
@@ -61,6 +67,17 @@ def describe(block: ArtifactRefBlock) -> str:
     """Nom, type et taille d'un fichier : ``photo.jpg (image/jpeg, 45 Ko)``."""
     name = block.name or block.uri.rsplit("/", 1)[-1]
     return f"{name} ({block.media_type}, {size_label(block.size)})"
+
+
+def earlier_images(messages: Sequence[Message]) -> list[Message]:
+    """Historique où chaque image d'un tour précédent devient une mention (F4).
+
+    Pièce jointe ou image rendue par un outil : le modèle apprend qu'elle a
+    existé (nom, type, taille) sans la recevoir ; elle n'est pas relue dans le
+    stockage. Les autres fichiers gardent leur référence, que la résolution
+    mentionne déjà.
+    """
+    return [_without_images(message) for message in messages]
 
 
 def has_refs(messages: Sequence[Message]) -> bool:
@@ -158,6 +175,32 @@ class MediaResolver:
             raise ModelError(
                 "invalid_request", f"Image {label} introuvable dans le stockage : {block.uri}"
             ) from exc
+
+
+def _earlier(block: ArtifactRefBlock, how: str) -> TextBlock:
+    return TextBlock(text=f"[image {describe(block)}, {how} à un tour précédent : plus montrée]")
+
+
+def _without_images(message: Message) -> Message:
+    if not any(is_image(block.media_type) for block in _refs(message.blocks)):
+        return message
+    blocks: list[ContentBlock] = []
+    for block in message.blocks:
+        match block:
+            case ArtifactRefBlock() if is_image(block.media_type):
+                blocks.append(_earlier(block, "jointe"))
+            case ToolResultBlock(output=output):
+                outputs = tuple(
+                    _earlier(item, "rendue par l'outil")
+                    if isinstance(item, ArtifactRefBlock) and is_image(item.media_type)
+                    else item
+                    for item in output.blocks
+                )
+                resolved = output.model_copy(update={"blocks": outputs})
+                blocks.append(block.model_copy(update={"output": resolved}))
+            case _:
+                blocks.append(block)
+    return message.model_copy(update={"blocks": tuple(blocks)})
 
 
 def _refs(blocks: Sequence[ContentBlock] | Sequence[OutputBlock]) -> list[ArtifactRefBlock]:
