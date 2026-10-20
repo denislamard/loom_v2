@@ -86,7 +86,14 @@ from loom_ia.core.model.media import (
     is_image,
     sniff,
 )
-from loom_ia.core.model.messages import SESSION_STATE_TAG, Message, Role, is_session_state
+from loom_ia.core.model.messages import (
+    SESSION_STATE_TAG,
+    SYSTEM_NOTE,
+    Message,
+    Role,
+    is_session_state,
+    is_system_note,
+)
 from loom_ia.core.model.model_spec import (
     CacheTtl,
     CircuitBreaker,
@@ -221,6 +228,7 @@ __all__ = [
     "RESERVED_PREFIX",
     "SAFE_ID",
     "SESSION_STATE_TAG",
+    "SYSTEM_NOTE",
     "TERMINAL_HINT",
     "TOOL_NAME_PATTERN",
     "WINDOW",
@@ -362,6 +370,7 @@ __all__ = [
     "has_inline_data",
     "is_image",
     "is_session_state",
+    "is_system_note",
     "message_to_chunks",
     "new_event_id",
     "new_id",

@@ -21,7 +21,7 @@ import json
 from collections.abc import Sequence
 from typing import Final
 
-from loom_ia.core.model import Message, PendingApproval
+from loom_ia.core.model import SYSTEM_NOTE, Message, PendingApproval
 
 ARGUMENTS_CHARS: Final = 300
 
@@ -43,7 +43,7 @@ def pending_note(approvals: Sequence[PendingApproval]) -> Message | None:
             f"attendent la décision d'un humain : {items}. Elles seront exécutées ou "
             "refusées sans toi ; ne les redemande pas."
         )
-    return Message.user(f"[Note du système : {text}]")
+    return Message.user(f"[{SYSTEM_NOTE} : {text}]")
 
 
 def _item(approval: PendingApproval) -> str:

@@ -74,6 +74,7 @@ from loom_ia.core.model import (
     ToolCallBlock,
     Usage,
     is_session_state,
+    is_system_note,
     message_to_chunks,
 )
 from loom_ia.core.ports import ModelError, RawExchange, exchange_log
@@ -201,7 +202,7 @@ def _turn(request: ModelRequest) -> int:
 
     Ne sont pas des demandes : le message qui porte les images des résultats
     d'outils, le diagnostic d'une réparation, la consigne de la réponse forcée,
-    le state de la session.
+    le state de la session, une note du système.
     """
     count = 0
     for position in range(len(request.messages) - 1, -1, -1):
@@ -224,7 +225,7 @@ def _repair(message: Message) -> bool:
 
 
 def _engine_note(message: Message, *, first: bool) -> bool:
-    """Message ajouté par le moteur : images déplacées, réparation, réponse forcée, state.
+    """Message ajouté par le moteur : images déplacées, réparation, réponse forcée, state, note.
 
     Le state n'est jamais le premier message (``first``) : la demande le précède.
     Un message de rôle qui commence par sa section ``<session_state>`` est une demande.
@@ -234,6 +235,7 @@ def _engine_note(message: Message, *, first: bool) -> bool:
         or _repair(message)
         or message.text == FINALIZE_HINT
         or (is_session_state(message) and not first)
+        or is_system_note(message)
     )
 
 

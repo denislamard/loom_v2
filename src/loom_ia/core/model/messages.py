@@ -86,3 +86,23 @@ def is_session_state(message: Message) -> bool:
         and isinstance(first, TextBlock)
         and first.text.startswith(f"<{SESSION_STATE_TAG}>")
     )
+
+
+# Début des notes que le moteur ajoute à une requête, entre crochets : « [Note
+# du système : …] » (approbation en attente, arguments remplacés).
+SYSTEM_NOTE: Final = "Note du système"
+
+
+def is_system_note(message: Message) -> bool:
+    """Vrai pour un message ``user`` qui n'est qu'une note du moteur, pas une demande.
+
+    Le faux modèle ne compte pas ses réponses à partir d'elle : la note des
+    arguments remplacés suit les résultats d'un tour, au milieu de la boucle.
+    """
+    first = message.blocks[0]
+    return (
+        message.role == "user"
+        and len(message.blocks) == 1
+        and isinstance(first, TextBlock)
+        and first.text.startswith(f"[{SYSTEM_NOTE} : ")
+    )
