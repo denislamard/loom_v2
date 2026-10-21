@@ -292,8 +292,9 @@ type Who = Annotated[Caller, Depends(caller)]
 def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> FastAPI:
     """Application ASGI servant les agents d'une instance.
 
-    ``own`` confie l'instance à l'application : elle la ferme à l'arrêt du
-    serveur. Sans lui, la fermeture reste à l'appelant.
+    ``own`` confie l'instance à l'application : elle l'ouvre au démarrage du
+    serveur (``async with``, ce qui lance l'écoute du bus partagé) et la ferme
+    à son arrêt. Sans lui, l'ouverture et la fermeture restent à l'appelant.
 
     ``host`` dit où l'application sera servie quand ce n'est pas l'adresse de
     la config : ``loom serve --host`` la remplace, et c'est celle-là qu'une API
@@ -312,6 +313,11 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        if own:
+            # L'écoute du bus (``storage.bus``) naît à l'ouverture, dans la boucle
+            # du serveur : sans elle, un flux SSE ne voit pas ce qu'écrit un autre
+            # process, et attend jusqu'au délai du client (test I4 du 21/10).
+            await loom.__aenter__()
         if served is None:
             yield
         else:

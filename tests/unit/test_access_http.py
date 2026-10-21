@@ -19,8 +19,9 @@ from conftest import ANSWER, QUESTION, ConfigFactory, demo_agent
 from pydantic import ValidationError
 
 from loom_ia.access import Loom
+from loom_ia.adapters.bus import InMemoryBus
 from loom_ia.adapters.stores import InMemoryEventStore
-from loom_ia.config import ConfigError, load_config
+from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.core.events import Event, EventDraft, RunClaimed, RunScope
 from loom_ia.core.model import DEFAULT_TENANT, Message, RunStatus, SessionId, new_run_id
@@ -331,6 +332,23 @@ async def test_an_open_instance_off_localhost_warns(
             create_app(loom)
 
     assert "sans clé déclarée" in caplog.text
+
+
+async def test_an_owned_instance_listens_to_the_bus_while_it_serves(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test I4 du 21/10 : ``loom serve`` n'ouvrait pas son instance, le bus restait sourd."""
+
+    def bus_en_memoire(config: LoomConfig) -> InMemoryBus:
+        return InMemoryBus()
+
+    monkeypatch.setattr("loom_ia.access.api.create_bus", bus_en_memoire)
+    loom = Loom.from_config(demo())
+    app = create_app(loom, own=True)
+    async with app.router.lifespan_context(app):
+        following = loom._following  # pyright: ignore[reportPrivateUsage]
+        assert following is not None and not following.done()
+    assert following.done()
 
 
 async def test_an_owned_instance_is_closed_at_shutdown(demo: ConfigFactory) -> None:

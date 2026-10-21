@@ -728,9 +728,9 @@ Corrigé le 20/10 (CHANGELOG 2.0.10, « Déclencheurs ») : pour une porte avec 
 
 `run.started`, `message.user`, `model.responded`, `tool.called`, `tool.completed`, `guard.checked`, `run.completed`… avec `seq`, `span_id`, catégorie, statut.
 
-**Testée** : non
+**Testée** : oui (21/10, agent `agent-test`, série 1, `session-I1a`, `session-I1b`)
 
-**Note** :
+**Note** : `Loom.stream()` sur « Calcule le TTC de 420 € HT… puis explique » : 20 événements, `seq` 1 à 20 sans trou, identiques au journal, dans l'ordre `run.started`, `message.user`, `run.claimed`, `step.started`, `model.exchanged`, `model.responded`, `step.completed`, `run.transitioned`, `step.started`, `tool.called`, `guard.checked` (contrat de `prix_ttc`), `tool.completed`, `step.completed`, `run.transitioned`, second appel au modèle, `run.transitioned`, `run.completed` ; chacun avec sa catégorie (`run`, `message`, `model`, `tool`, `guard`) et son statut (`ok`). Hiérarchie des spans (relue au journal, les 8 premiers caractères des UUIDv7 étant ceux de l'horodatage) : span du run (sans parent) pour `run.*`, `message.user` et les transitions ; un span par étape, enfant du run ; l'appel d'outil a son propre span, enfant de l'étape, qui porte aussi le `guard.checked` de son contrat ; `role: main` sur les événements du modèle. `loom run --stream` : déroulé lisible (« · prix_ttc(montant_ht=90, taux_tva=5.5) », « · contrôle contract tool:prix_ttc : conforme », « · prix_ttc : fait »), puis la réponse (94,95 € TTC), code 0.
 
 ### I2 — Consommation en Python (itérateur async) et en HTTP (SSE)
 
@@ -738,9 +738,9 @@ Corrigé le 20/10 (CHANGELOG 2.0.10, « Déclencheurs ») : pour une porte avec 
 
 `Loom.stream()` / `Loom.follow()` en Python ; `GET /v1/runs/{id}/events` en SSE (`after_seq`, `subruns`).
 
-**Testée** : non
+**Testée** : oui (21/10, agent `agent-test`, séries 1 et 2, `session-I1a`, `session-I2a`)
 
-**Note** :
+**Note** : `Loom.stream()` : itérateur async qui mêle les événements du journal et les morceaux du modèle dans l'ordre d'arrivée (30 morceaux, le premier un `ToolCallStarted` à 3,90 s, avant le `model.exchanged` et le `model.responded` de l'étape à 4,00 s) ; il s'arrête après `run.completed`. `Loom.follow(run_id, session_id=…, after_seq=10)` sur le run terminé : rend `seq` 11 à 20 puis s'arrête de lui-même sur `run.completed`. SSE (`loom serve` sans clé) : run lancé en arrière-plan (`background: true`), `GET /v1/runs/{id}/events?session_id=…` ouvert aussitôt → `id: 1 / event: run.started` … `id: 20 / event: run.completed`, puis le flux se ferme (la commande suivante s'est enchaînée ; délai de fermeture non chronométré). Reprise : en-tête `Last-Event-ID: 15` → reprend à `id: 16` ; `after_seq=18` → reprend à `id: 19` ; les deux se ferment sur `run.completed`. Format : `id: <seq>`, `event: <type>`, `data: <événement JSON complet>` (enveloppe : `event_id`, `ts`, `schema_version`, client, session, run, spans, catégorie, statut, `facets`, `payload`, `seq`), ligne vide. Run inconnu → `404`, « Run inconnu inconnu ». Non vu : `subruns` (pas de sous-agent dans cet agent).
 
 ### I3 — Latence adaptée à la voix
 
@@ -748,9 +748,9 @@ Corrigé le 20/10 (CHANGELOG 2.0.10, « Déclencheurs ») : pour une porte avec 
 
 Premier token rapide, délais `first_token` et `idle` sur le streaming. Mesurable avec un vrai modèle (jamais mesuré en réel).
 
-**Testée** : non
+**Testée** : oui (21/10, agent `agent-test`, séries 1 et 3, `session-I1a`, `session-I3a`, `session-I3b`)
 
-**Note** :
+**Note** : loom n'enregistre pas le délai du premier token (aucun champ d'événement) : mesuré côté client dans `stream()`. HAIKU, réseau domestique : premier morceau à 3,90 s du lancement, dont 1,74 s avant l'appel (démarrage de loom-notes : `step.started` à 2,55 s, `run.claimed` à 0,81 s) — soit ≈ 1,35 s entre le début de l'étape et le premier morceau ; fin du run à 6,00 s (2 appels au modèle et un outil). Pour la voix, le démarrage des serveurs MCP par run pèse plus que le modèle : une instance gardée ouverte (`serve`, worker) ne le paie qu'une fois. Délais (HAIKU, `timeouts` posés le temps du test) : `first_token: 0.01` (`session-I3a`) → 3 tentatives, logs « Tentative 1/3 du modèle HAIKU ratée (transient) : nouvel essai dans 1.0 s », puis 1.3 s, 2 `model.retried` (« Délai dépassé : aucun premier morceau en 0.01 s »), aucun `model.exchanged` (rien reçu), `run.failed` `model.transient`, code 1. `first_token: 30, idle: 0.001` (`session-I3b`, `--stream`) : chaque tentative reçoit son premier morceau puis coupe (« Délai dépassé : aucun nouveau morceau en 0.001 s ») ; 3 `model.exchanged` (statut 200, 1,3 s puis 0,7 s), 2 `model.retried`, `run.failed`. Console : le début de la réponse (« La TVA (») s'affiche, la tentative suivante est annoncée par « · réponse reprise » avant de repartir du début — la reprise est dite, pas mêlée. Constat pour J1/J2 : les tentatives coupées en plein flux ont été facturées par le fournisseur (≈ 1 900 tokens d'entrée chacune, plus les premiers tokens de sortie), mais `run.failed` porte un usage nul et 0,0000 $ : l'usage d'un flux interrompu n'est pas compté.
 
 ### I4 — Bus d'événements entre process
 
@@ -758,9 +758,9 @@ Premier token rapide, délais `first_token` et `idle` sur le streaming. Mesurabl
 
 `storage.bus` : mémoire, Redis ou Postgres ; un client SSE servi par un process suit un run mené par un autre, resynchronisé par `seq`.
 
-**Testée** : non
+**Testée** : oui (21/10, agent `agent-test`, série 4, `session-I4a` à `session-I4c`) : bus `memory` conforme ; bus `postgres` : écart (`loom serve` n'écoutait pas le bus), corrigé et revalidé ; bus `redis` non essayé (extra absent)
 
-**Note** :
+**Note** : un `loom run` (process A, `--run-id`) mène un run lent (`fetch_page` sur httpbin `delay/10`), `loom serve` (process B) le sert en SSE, ouvert 4 s après le lancement. Bus `memory` (`session-I4a`) : le flux rend les événements déjà écrits (`id` 1 à 4, jusqu'à `step.started`), puis plus rien ; `curl` coupé par son `-m 40` (40,0 s), sans `run.completed` — comportement documenté. Bus `postgres` (`session-I4b`, `storage.bus: {backend: postgres, dsn_env: LOOM_BUS_DSN}` vers le conteneur `loom-pg`, `validate` → « Bus : postgres (LOOM_BUS_DSN : renseignée) », `serve` relancé) : **même blocage** (`id` 1 à 4, 40,0 s), alors que le run s'est terminé dans A en 15 s (19 événements, `run.completed` à 08:29:04). Cause : `loom serve` construit son instance sans l'ouvrir (`serve(Loom(config))` dans `cmd_serve`, `Loom(config)` dans le chemin `--reload`), et le lifespan de `create_app` ne l'ouvre pas non plus ; or c'est `Loom.__aenter__` qui lance l'écoute du bus (tâche `loom-bus`) — sa docstring le dit : « Une instance utilisée sans `async with` … ne verra pas ce que les autres process écrivent ». `loom mcp` et `loom worker` ouvrent bien leur instance (`async with`). Le test d'intégration (`test_sse_follows_a_run_piloted_in_another_process`) passe parce qu'il ouvre lui-même l'instance avant `create_app`. Corrigé le 21/10 (CHANGELOG 2.0.10, « Accès REST ») : `create_app(…, own=True)` ouvre l'instance au démarrage du serveur. Revalidé (`session-I4c`, `serve` relancé, bus `postgres`) : le flux ouvert 4 s après le lancement rend `id` 1 à 19 au fil du run, `tool.completed` compris, jusqu'à `run.completed`, puis se ferme seul — 13,5 s au lieu de 40.
 
 ---
 
