@@ -4,8 +4,9 @@
 import json
 from datetime import UTC, datetime, timedelta
 
+import jsonschema
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from loom_ia.core.events import (
     DURABLE_PAYLOADS,
@@ -21,6 +22,7 @@ from loom_ia.core.events import (
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    EventId,
     InlineDataBlock,
     Message,
     RunId,
@@ -172,6 +174,34 @@ def test_json_schema_lists_every_durable_event_type() -> None:
     expected = {p.model_fields["type"].default for p in DURABLE_PAYLOADS}
     assert payload_types == expected
     assert len(expected) == len(DURABLE_PAYLOADS)
+
+
+def test_query_after_must_be_an_event_id_as_the_journal_writes_it() -> None:
+    # Test K5 du 21/10 : ``after=<dernier>`` laissé tel quel passait, se comparait
+    # comme un identifiant et rendait une page vide, sans erreur.
+    invented = "01a15eba-0000-7000-8000-000000000000"
+    assert EventQuery(tenant_id=DEFAULT_TENANT, after=EventId(invented)).after == invented
+    for wrong in ("<dernier>", invented.upper(), invented.replace("-", ""), ""):
+        with pytest.raises(ValidationError, match="identifiant d'événement attendu"):
+            EventQuery(tenant_id=DEFAULT_TENANT, after=EventId(wrong))
+
+
+def test_json_schema_is_open_to_fields_added_later() -> None:
+    # Test K2 du 21/10 : le schéma publié refusait tout champ non décrit, alors
+    # qu'ajouter un champ optionnel ne change pas ``schema_version``. Un
+    # événement d'une version plus récente doit le valider.
+    schema = event_json_schema()
+    assert '"additionalProperties": false' not in json.dumps(schema)
+    later = json.loads(tool_error_event().model_dump_json())
+    later["origine"] = "loom 9.9"
+    later["payload"]["champ_futur"] = {"n": 1}
+    jsonschema.validate(later, schema)
+    closed = TypeAdapter(Event).json_schema(mode="serialization")
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(later, closed)
+    # L'écriture reste stricte : Pydantic refuse ce que le schéma laisse passer.
+    with pytest.raises(ValidationError):
+        Event.model_validate({**later, "payload": {**later["payload"], "champ_futur": 1}})
 
 
 def test_policy_decisions_have_their_own_category_and_status() -> None:

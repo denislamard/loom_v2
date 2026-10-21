@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Recherche d'événements par enveloppe et facettes (#22)."""
 
+import re
 from typing import Final
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, field_validator
 
 from loom_ia.core.events.envelope import Event
 from loom_ia.core.events.payloads import EventCategory, EventStatus, FacetValue
@@ -14,6 +15,13 @@ from loom_ia.core.model.ids import EventId, RunId, SessionId, TenantId
 # peut rendre au plus. Nommées pour que les accès les annoncent sans les redire.
 EVENTS_LIMIT: Final = 100
 EVENTS_MAX: Final = 10_000
+
+# Forme d'un identifiant d'événement : un UUID écrit comme loom les tire, en
+# minuscules et avec ses tirets. Le curseur ``after`` se compare en chaîne :
+# une autre écriture (majuscules, sans tirets, ou un texte quelconque) se
+# classerait ailleurs et rendrait, sans erreur, une page vide ou fausse.
+EVENT_ID_PATTERN: Final = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+_EVENT_ID: Final = re.compile(EVENT_ID_PATTERN)
 
 
 class EventQuery(DomainModel):
@@ -49,6 +57,18 @@ class EventQuery(DomainModel):
     until: AwareDatetime | None = None
     after: EventId | None = None
     limit: int = Field(default=EVENTS_LIMIT, ge=1, le=EVENTS_MAX)
+
+    @field_validator("after")
+    @classmethod
+    def _check_after(cls, value: EventId | None) -> EventId | None:
+        # Un identifiant bien formé mais absent du journal reste permis : il
+        # retombe sur la comparaison des identifiants (voir plus haut).
+        if value is not None and not _EVENT_ID.fullmatch(value):
+            raise ValueError(
+                f"after : identifiant d'événement attendu (UUID en minuscules, avec ses "
+                f"tirets, tel que le journal l'écrit), reçu {value!r}"
+            )
+        return value
 
     def matches(self, event: Event) -> bool:
         """Vrai si l'événement satisfait tous les critères (hors pagination)."""

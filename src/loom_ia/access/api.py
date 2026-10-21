@@ -1985,6 +1985,9 @@ class Loom:
         avoir d'autres runs derrière.
 
         ``since`` et ``until`` se comparent à la **dernière** écriture du run.
+        La lecture s'arrête à la première session écrite avant ``since`` : ni
+        elle ni les suivantes ne peuvent porter un run assez récent, et la page
+        n'est donc pas ``truncated`` pour autant.
         Un sous-run est listé comme les autres, en nommant son délégant.
 
         Un journal de session illisible n'empêche pas de lire les autres : il
@@ -2003,6 +2006,10 @@ class Loom:
         scanned = 0
         truncated = False
         for record in known:
+            if since is not None and record.updated_at < since:
+                # Plus ancienne que ``since`` : ses runs aussi, et ceux de toutes
+                # les sessions qui suivent. Rien n'est laissé derrière.
+                break
             if scanned >= sessions or (
                 len(found) >= limit and record.updated_at < found[-1].updated_at
             ):

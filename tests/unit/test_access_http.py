@@ -793,6 +793,21 @@ async def test_events_are_searched_in_the_journal(demo: ConfigFactory) -> None:
     assert elsewhere == []
 
 
+async def test_a_malformed_after_is_refused_not_an_empty_page(demo: ConfigFactory) -> None:
+    # Test K5 du 21/10 : ``after=<dernier>`` rendait 200 et une page vide.
+    async with serving(demo()) as (_, http):
+        await http.post("/v1/agents/demo/runs", json={"message": QUESTION, "session_id": "c-1"})
+        first = (await http.get("/v1/events?limit=1")).json()
+        upper = first[0]["event_id"].upper()
+        malformed = await http.get("/v1/events?after=%3Cdernier%3E")
+        shouted = await http.get(f"/v1/events?after={upper}")
+        invented = await http.get("/v1/events?after=00000000-0000-7000-8000-000000000000")
+
+    assert malformed.status_code == 422 and shouted.status_code == 422
+    # Bien formé mais absent du journal : permis, comparé comme un identifiant.
+    assert invented.status_code == 200 and len(invented.json()) > 0
+
+
 async def test_a_search_never_leaves_the_client_of_the_key(demo: ConfigFactory) -> None:
     autre = new_api_key()
     security = {

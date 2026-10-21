@@ -958,7 +958,7 @@ session.trimmed          session
 - À `INFO`, Loom-IA écrit une ligne par appel de modèle et par appel d'outil, **et** une ligne par transition d'état (`ready_for_model → awaiting_tools`…). Le README ne parle que des deux premières. Chaque ligne porte `run_id`, `span_id` et `tenant_id` : c'est ce qui permet de retrouver, dans un outil de logs, toutes les lignes d'un run.
 - Pour la production, `WARNING` suffit à surveiller et le format `json` se branche partout. `INFO` sert au diagnostic.
 - Le journal a un **schéma versionné** (`SCHEMA_VERSION`, ici 1). L'enveloppe d'un événement a dix-sept champs, et son champ `type` désigne l'une des 31 charges utiles. Un consommateur d'événements (votre application, un entrepôt de données) doit lire `schema_version` et refuser ce qu'il ne connaît pas.
-- `event_json_schema()` renvoie le schéma JSON complet de l'enveloppe, à donner à un validateur ou à un générateur de modèles (par exemple pour produire les classes Dart de l'application Flutter).
+- `event_json_schema()` renvoie le schéma JSON complet de l'enveloppe, à donner à un validateur ou à un générateur de modèles (par exemple pour produire les classes Dart de l'application Flutter). Il est **ouvert** : un champ qu'il ne décrit pas n'est pas une erreur, car une version plus récente de Loom-IA peut ajouter un champ optionnel sans changer `schema_version`. C'est `schema_version`, et elle seule, qui dit qu'un événement n'est plus lisible.
 
 ---
 

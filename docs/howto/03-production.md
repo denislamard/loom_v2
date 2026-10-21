@@ -4009,7 +4009,7 @@ question-martin
 ```
 
 - `/v1/sessions/{id}/events` rend le journal en **JSONL** : un événement JSON par ligne. C'est le format de l'export RGPD (chapitre 24).
-- `/v1/events` cherche dans tous les journaux du client : `type`, `tool_name`, `agent`, `model_id`, `status`, `since`/`until`, `after` (curseur : reprend après cet événement, dans l'ordre où le journal les a écrits) et `limit`. Par exemple `?tool_name=envoyer_email&type=tool.completed` retrouve tous les envois.
+- `/v1/events` cherche dans tous les journaux du client : `type`, `tool_name`, `agent`, `model_id`, `status`, `since`/`until`, `after` (curseur : reprend après cet événement, dans l'ordre où le journal les a écrits ; un `event_id` tel que le journal l'écrit, sinon 422) et `limit`. Par exemple `?tool_name=envoyer_email&type=tool.completed` retrouve tous les envois.
 - `/v1/traces/{run_id}` rend la trace d'un run (durées, spans, coût, sortie) : c'est ce que consomme `loom inspect`.
 
 L'effacement d'une session (RGPD) emporte son journal, ses fichiers et ses clés d'idempotence :

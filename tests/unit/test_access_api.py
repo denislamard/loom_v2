@@ -325,6 +325,24 @@ async def test_runs_stops_reading_once_older_sessions_cannot_matter(
     assert len(page.runs) == 1 and page.scanned == 1 and page.truncated is True
 
 
+async def test_runs_stops_at_the_first_session_older_than_since(demo: ConfigFactory) -> None:
+    # Test K5 du 21/10 : ``since`` laissait lire jusqu'à la borne ``sessions``, et
+    # la page se disait tronquée alors qu'aucune session plus ancienne ne pouvait
+    # porter un run assez récent.
+    async with Loom.from_config(demo()) as loom:
+        for number in range(3):
+            await loom.run("demo", QUESTION, session_id=SessionId(f"c-{number}"))
+        listed = (await loom.runs()).runs
+        border = listed[1].updated_at
+        page = await loom.runs(since=border)
+        bounded = await loom.runs(since=border, sessions=2)
+
+    assert [run.run_id for run in page.runs] == [listed[0].run_id, listed[1].run_id]
+    assert page.scanned == 2 and page.truncated is False
+    assert [run.run_id for run in bounded.runs] == [listed[0].run_id, listed[1].run_id]
+    assert bounded.scanned == 2 and bounded.truncated is False
+
+
 async def _unreadable_session(store: InMemoryEventStore, session: SessionId) -> RunId:
     """Une session dont un run reprend après sa clôture : la projection la refuse."""
     journal = RunJournal(agent="demo", session_id=session)

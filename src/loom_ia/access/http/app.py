@@ -147,6 +147,7 @@ from loom_ia.agents.registry import UnknownAgent
 from loom_ia.config import LoomConfig
 from loom_ia.config.models import TriggerSpec
 from loom_ia.core.events import (
+    EVENT_ID_PATTERN,
     EVENTS_LIMIT,
     EVENTS_MAX,
     Event,
@@ -578,7 +579,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         model: str | None = None,
         since: AwareDatetime | None = None,
         until: AwareDatetime | None = None,
-        after: EventId | None = None,
+        after: Annotated[EventId | None, Query(pattern=EVENT_ID_PATTERN)] = None,
         limit: Annotated[int, Query(ge=1, le=EVENTS_MAX)] = EVENTS_LIMIT,
     ) -> Response | list[Event]:
         require(who, "read")

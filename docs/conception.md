@@ -352,7 +352,7 @@ Event
 
 **Facettes :** chaque classe d'événement déclare ses champs filtrables (`tool_name`, `model_id`, `is_error`, `cost`, `latency_ms`, `tokens`…). Ils sont copiés dans `facets`, et les adaptateurs les indexent sans connaître les payloads : ajouter un type d'événement ne demande aucun changement de stockage.
 
-**Évolution du schéma :** ajouter un champ optionnel ne change pas la version : un code plus ancien ignore à la lecture les champs qu'il ne connaît pas (l'écriture reste stricte). Une modification incompatible crée une nouvelle `schema_version` (aujourd'hui refusée à la lecture) ; le convertisseur n'est écrit qu'avec la première. Le JSON Schema généré depuis Pydantic donne les types TypeScript de l'interface (K2).
+**Évolution du schéma :** ajouter un champ optionnel ne change pas la version : un code plus ancien ignore à la lecture les champs qu'il ne connaît pas (l'écriture reste stricte). Une modification incompatible crée une nouvelle `schema_version` (aujourd'hui refusée à la lecture) ; le convertisseur n'est écrit qu'avec la première. Le JSON Schema généré depuis Pydantic donne les types TypeScript de l'interface (K2) ; il est publié **ouvert** (sans `additionalProperties: false`), pour qu'un validateur suive la même règle.
 
 ## 9. Moteur d'exécution
 
