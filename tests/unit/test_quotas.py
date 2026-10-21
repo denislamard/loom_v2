@@ -25,7 +25,7 @@ from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.adapters.usage import InMemoryUsageCounter
 from loom_ia.adapters.usage.memory import MAX_PERIODS
 from loom_ia.config import load_config
-from loom_ia.core.events import Event
+from loom_ia.core.events import Event, ModelRetried
 from loom_ia.core.events.query import EventQuery
 from loom_ia.core.model import WINDOW, Message, RunId, Spent, TenantId, Usage, new_run_id
 from loom_ia.core.ports import EventStore
@@ -489,6 +489,41 @@ async def test_consumption_reads_the_journal_and_says_what_is_left(demo: ConfigF
     # Un client sans plafond a droit au même rapport, sans ligne de plafond.
     without = await usage.consumption(DUPONT)
     assert without.limits == () and without.spent.tokens == 300
+
+
+async def test_a_billed_failed_attempt_counts_for_the_tenant(demo: ConfigFactory) -> None:
+    """Test J5 du 21/10 : la période ne lisait que les appels aboutis."""
+    store = InMemoryEventStore()
+    await written(store, spending(DUPONT, 1, tokens=100, cost=0.25))
+    cut = RunJournal(tenant_id=DUPONT)
+    cut.start("Où en est mon devis ?")
+    drafts = cut.take()
+    drafts.append(
+        cut.scope.draft(
+            ModelRetried(
+                model_id="fake-model",
+                provider="fake",
+                attempt=1,
+                error_kind="transient",
+                error="coupé",
+                delay_s=0.0,
+                usage=Usage(input_tokens=400),
+                cost_usd=0.5,
+                final=True,
+            )
+        )
+    )
+    await store.append(drafts, expected_seq=0)
+    budget = {"tenant": {"max_cost_per_day": 0.7}}
+    tenant = registry(demo, budgets=budget).get(DUPONT)
+    usage = TenantUsage(InMemoryUsageCounter(), store)
+
+    found = await usage.consumption(DUPONT, tenant.budget)
+    assert (found.runs, found.spent.tokens, found.spent.calls) == (2, 500, 1)
+    assert found.spent.cost == pytest.approx(0.75)
+    # Le plafond de client voit la tentative facturée : 0,75 $ dépasse 0,70 $.
+    with pytest.raises(BudgetExhausted):
+        await usage.check(tenant)
 
 
 # --- Débit : une fenêtre glissante de soixante secondes (#39) -----------------

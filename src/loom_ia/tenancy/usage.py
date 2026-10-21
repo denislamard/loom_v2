@@ -53,6 +53,9 @@ from loom_ia.tenancy.registry import Tenant
 logger = logging.getLogger(__name__)
 
 MODEL_RESPONDED: Final = "model.responded"
+# Tentatives ratées que le fournisseur a facturées (J1) : le ledger garde
+# celles qui portent un usage.
+MODEL_RETRIED: Final = "model.retried"
 # Événements lus par requête au réchauffage ; la pagination fait le reste.
 PAGE: Final = 5_000
 
@@ -192,6 +195,10 @@ class TenantUsage:
     async def _from_journal(self, tenant_id: TenantId, period: Period) -> dict[RunId, Spent]:
         """Dépense par run racine, lue dans le journal depuis le début de la fenêtre.
 
+        Appels aboutis et tentatives ratées facturées (J1) : un rapport de période
+        ou un plafond de client qui ne lirait que les premiers sous-compterait
+        (test J5 du 21/10).
+
         Les totaux sont assemblés sur **toutes** les pages avant d'être rendus :
         un run dont les appels se répartissent sur deux pages ne doit pas être
         réduit à ceux de la dernière.
@@ -202,7 +209,7 @@ class TenantUsage:
             page = await self._store.query(
                 EventQuery(
                     tenant_id=tenant_id,
-                    types=(MODEL_RESPONDED,),
+                    types=(MODEL_RESPONDED, MODEL_RETRIED),
                     since=period.start,
                     after=after,
                     limit=PAGE,

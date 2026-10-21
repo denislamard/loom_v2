@@ -792,9 +792,9 @@ Entrée, sortie, cache (lecture/écriture), raisonnement, relevés sur chaque `m
 
 Le ledger, projection du journal, répartit la consommation selon ces axes.
 
-**Testée** : non
+**Testée** : oui (21/10, agent `agent-test`, série 3, `session-J3a`, `session-J3b`, rôle `relecteur` sur OPUS et client `dupont` ajoutés le temps du test)
 
-**Note** :
+**Note** : Run « TTC de 450 € HT, puis relecture par le relecteur » : 3 appels HAIKU (`main`) et 1 appel OPUS (`relecteur`). `loom report <run>` : total `4 appels · 6920/559 tokens · 0,00477 $` ; par rôle `main 3 appels · 6812/486 · 0,00287 $` et `relecteur 1 appel · 108/73 · 0,00189 $` ; par modèle `HAIKU (claude-haiku-5-5)` et `OPUS (claude-opus-5-5)`, mêmes chiffres : les parts font le total (6 812 + 108, 486 + 73). OPUS coûte 66 % du run pour 1,6 % des tokens. Session (`loom report --session session-J3a`) : `6 appels · 11861/681 · 0,00554 $`, « Par run » avec les deux runs (`4 appels … 0,00477 $`, `2 appels · 4941/122 · 0,00078 $`), sommes exactes. Client : le run de `dupont` est rangé dans `data/dupont/` et n'apparaît que dans le rapport de `dupont` (`--period day --tenant dupont` : 1 run, 0,000697 $, 4 301 tokens, identique au recalcul).
 
 ### J4 — Plafonds par run, session, client et période
 
@@ -812,9 +812,9 @@ Le ledger, projection du journal, répartit la consommation selon ces axes.
 
 `loom report [run_id] [--session] [--period day|month] [--json]`, `GET /v1/sessions/{id}/report`, outil MCP `run_report`, `Loom.report()`.
 
-**Testée** : non
+**Testée** : en partie (21/10, agent `agent-test`, série 3) : CLI (run, session, période) oui, écart sur la période corrigé et revalidé ; REST, MCP et Python à voir (série 3b)
 
-**Note** :
+**Note** : `loom report <run>`, `--session`, `--period day|month` (`--tenant`), `--json` : voir J3. Période : « Client : default / Période : journée en cours, depuis 2026-10-21 00:00 UTC / Runs : 16 / Dépense : 0.010410 $, 64951 tokens / aucun plafond sur cette période / Remise à 0 : 2026-10-22 00:00 UTC » ; JSON du mois : `period: month:2026-10`, `since`, `resets_at`, `runs`, `cost_usd`, `tokens`, `limits`, `left`. Recalcul : la période rattache chaque **appel** au jour où il a eu lieu (`EventQuery(since=…)`), pas le run à sa date de départ — d'où 16 runs (un run lancé la veille et repris ce jour compte) ; chiffres identiques au recalcul sur les seuls `model.responded`. **Écart** (du correctif J1 du même jour) : `_from_journal` (`tenancy/usage.py`) ne lit que `model.responded` ; les tentatives facturées (`model.retried` avec `usage`, ici `session-J2c1`, 72,93 µ$ et 6 072 tokens) manquent au rapport de période **et au compteur des plafonds de client** (`tenant.max_cost_per_day`…), alors que le run, la session et les budgets de run et de session les comptent. Avec elles : 17 runs, 0,010483 $, 71 023 tokens. Corrigé le 21/10 (CHANGELOG 2.0.10, entrée J1 rectifiée) : la lecture des périodes prend aussi les `model.retried`. Revalidé : `loom report --period day` → « Runs : 17 / Dépense : 0.010483 $, 71023 tokens », exactement le recalcul.
 
 ---
 
