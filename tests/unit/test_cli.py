@@ -26,6 +26,7 @@ from loom_ia.access.cli import main
 from loom_ia.access.cli.main import _state_item  # pyright: ignore[reportPrivateUsage]
 from loom_ia.adapters.stores import JsonlEventStore
 from loom_ia.config.keys import matches
+from loom_ia.config.models import QueueStorage
 from loom_ia.core.events import Event, EventDraft, RunClaimed
 from loom_ia.core.model import DEFAULT_TENANT, Message, RunStatus, SessionId, ToolOutput
 from loom_ia.core.ports import JournalBusy, JournalCorrupted
@@ -621,6 +622,32 @@ def test_without_no_wait_the_decision_is_followed_by_the_resumption(
     assert capsys.readouterr().out.strip() == "Relance envoyée."
     types = [event.type for event in _events(path)]
     assert types.index("approval.granted") < types.index("run.completed") == len(types) - 1
+
+
+@pytest.mark.parametrize("verb", ["approve", "reject"])
+def test_with_a_broker_the_resumption_is_left_to_the_worker(
+    atelier: ConfigFactory,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    verb: str,
+) -> None:
+    """Test H7 du 21/10 : la commande relisait la pause et sortait en 1."""
+    path = atelier()
+    run_id = _paused(path, capsys)
+    # Le travail part au courtier : rien n'est à attendre dans ce terminal.
+    monkeypatch.setattr(QueueStorage, "brokered", property(lambda self: True))
+    monkeypatch.setattr(Loom, "drain", _never_drained)
+
+    assert main(["--config", str(path), verb, run_id, "--session", run_id]) == 0
+    sortie = capsys.readouterr()
+    assert sortie.out == ""
+    assert sortie.err.splitlines()[-1] == (
+        f"Reprise confiée au worker (file asyncio) : suivre avec loom sessions show {run_id}"
+    )
+
+
+async def _never_drained(self: Loom) -> None:
+    raise AssertionError("avec un courtier, la commande n'attend pas la reprise")
 
 
 def test_approving_a_run_that_awaits_nothing_is_refused(

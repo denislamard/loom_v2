@@ -1451,6 +1451,12 @@ def cmd_decide(args: argparse.Namespace) -> int:
     commande sort sans rien reprendre ni attendre : la reprise revient à qui
     écoute ailleurs — un worker (la file d'un courtier a reçu le travail),
     ``loom resume``, ou la reprise au démarrage d'un worker.
+
+    Avec une file servie par un courtier (``storage.queue.backend: rabbitmq``),
+    le travail de reprise part au worker : ce terminal n'a rien à attendre, et
+    relire le run aussitôt montrerait encore la pause (test H7 du 21/10 :
+    « Statut : paused », code 1, pendant que le worker concluait). La commande
+    dit donc à qui la reprise est confiée et sort en 0, comme avec ``--no-wait``.
     """
     config = _config(args)
     apply_logging(config)
@@ -1464,6 +1470,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
     corrected = _json_object(arguments) if arguments is not None else None
     if arguments is not None and corrected is None:
         return REFUSED
+    brokered = config.storage.queue.brokered
 
     async def go() -> tuple[tuple[str, ...], RunResult | None]:
         loom = Loom(config)
@@ -1487,7 +1494,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
                     session_id=session,
                     tenant_id=tenant,
                 )
-            if not calls or args.no_wait:
+            if not calls or args.no_wait or brokered:
                 return calls, None
             # Le travail de reprise est en file ici : on l'attend.
             await loom.drain()
@@ -1503,6 +1510,15 @@ def cmd_decide(args: argparse.Namespace) -> int:
         return REFUSED
     verdict = "Accordé" if args.verdict == "approve" else "Refusé"
     _say(f"{verdict} : {', '.join(calls)}", file=sys.stderr)
+    if brokered and not args.no_wait:
+        follow = f"loom sessions show {session or run_id}"
+        if tenant is not None:
+            follow += f" --tenant {tenant}"
+        _say(
+            f"Reprise confiée au worker (file {config.storage.queue.backend}) : "
+            f"suivre avec {follow}",
+            file=sys.stderr,
+        )
     if result is None:
         return OK
     return _report(result, as_json=args.json, tenant=_tenant(args))
