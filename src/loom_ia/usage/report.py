@@ -9,6 +9,10 @@ préfixés par l'agent quand plusieurs agents ont travaillé) et par modèle —
 identifiant dans la config, qui distingue deux déclarations d'un même modèle du
 fournisseur ; à défaut (journal antérieur), son nom chez le fournisseur.
 Par client et par période : J5.
+
+Les tentatives ratées que le fournisseur a facturées (J1) sont comprises dans
+toutes les lignes (usage et coût, pas le nombre d'appels), et rappelées à part
+dans ``failed`` : leur nombre, leur usage et leur coût.
 """
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -65,6 +69,9 @@ class UsageReport(DomainModel):
     runs: tuple[RunUsage, ...] = ()
     roles: tuple[UsageLine, ...] = ()
     models: tuple[ModelUsage, ...] = ()
+    # Tentatives ratées facturées, déjà comprises ci-dessus ; ``calls`` : leur
+    # nombre. None quand il n'y en a pas.
+    failed: UsageLine | None = None
 
 
 def usage_report(
@@ -106,6 +113,7 @@ def usage_report(
             ModelUsage(**_line(name, mine).model_dump(), model_id=mine[0].model_id)
             for name, mine in _by(entries, lambda e: e.model_key).items()
         ),
+        failed=_attempts([entry for entry in entries if entry.failed]),
     )
 
 
@@ -127,6 +135,13 @@ def render(report: UsageReport) -> list[str]:
     lines += [f"    {_row(line.name, line, width)}" for line in report.roles]
     lines.append("  Par modèle :")
     lines += [f"    {_row(label, line, width)}" for label, line in models]
+    if report.failed is not None:
+        failed = report.failed
+        count = f"{failed.calls} tentative{'s' if failed.calls > 1 else ''} ratée"
+        count += "s" if failed.calls > 1 else ""
+        tokens = f"{failed.usage.prompt_tokens}/{failed.usage.output_tokens} tokens"
+        cost = f"{failed.cost:.5f} $".replace(".", ",")
+        lines.append(f"  Dont, facturé sans réponse : {count} · {tokens} · {cost}")
     return lines
 
 
@@ -138,8 +153,16 @@ def _model_label(line: ModelUsage) -> str:
 def _line(name: str, entries: Iterable[LedgerEntry]) -> UsageLine:
     calls, usage, cost = 0, Usage(), 0.0
     for entry in entries:
-        calls, usage, cost = calls + 1, usage + entry.usage, cost + entry.cost
+        calls, usage, cost = calls + entry.spent.calls, usage + entry.usage, cost + entry.cost
     return UsageLine(name=name, calls=calls, usage=usage, cost=cost)
+
+
+def _attempts(entries: Sequence[LedgerEntry]) -> UsageLine | None:
+    """Les tentatives ratées facturées : ``calls`` en donne le nombre."""
+    if not entries:
+        return None
+    line = _line("tentatives ratées", entries)
+    return line.model_copy(update={"calls": len(entries)})
 
 
 def _grouped(

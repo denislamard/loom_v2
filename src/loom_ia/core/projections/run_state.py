@@ -220,6 +220,9 @@ def apply(state: RunState | None, event: Event) -> RunState:
         case StepCompleted(duration_ms=elapsed):
             # Temps de pilotage cumulé : c'est lui que borne le délai (A6).
             update["active_ms"] = state.active_ms + elapsed
+        case ModelRetried(usage=Usage() as usage, cost_usd=cost):
+            # Tentative ratée mais facturée (J1) : son coût compte, pas comme un appel.
+            update |= {"usage": state.usage + usage, "cost_usd": state.cost_usd + (cost or 0.0)}
         case ModelRetried() | ModelExchanged() | ToolSourceUnavailable() | CircuitOpened():
             pass
         case RunTransitioned(from_state=from_state, to_state=to_state):

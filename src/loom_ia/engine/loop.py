@@ -1798,12 +1798,18 @@ async def _model_step(
             extra={"run_id": state.run_id, "span_id": current.span},
         )
         request = request.model_copy(update={"tool_choice": "none"})
+    # Tentatives ratées mais facturées de cette étape (J1) : ``stepped`` ne les
+    # a pas vues, et un échec de l'étape doit les compter.
+    billed, billed_cost = Usage(), 0.0
     try:
         async with aclosing(chain.run(request, current=adhered)) as outcomes:
             async for outcome in outcomes:
                 if isinstance(outcome, Answered):
                     answered = outcome
                 else:
+                    if isinstance(outcome, ModelRetried) and outcome.usage is not None:
+                        billed += outcome.usage
+                        billed_cost += outcome.cost_usd or 0.0
                     yield current.draft(outcome)
                     emitted += 1
         if answered is None:
@@ -1826,7 +1832,7 @@ async def _model_step(
         )
         yield current.completed(emitted, ok=False)
         yield _transition(stepped, scope, RunStatus.FAILED, failure)
-        yield scope.draft(_failed(stepped, failure, str(exc)))
+        yield scope.draft(_failed(stepped, failure, str(exc), spent=(billed, billed_cost)))
         return
     response = answered.response
     message = response.message

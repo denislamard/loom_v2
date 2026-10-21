@@ -1,6 +1,6 @@
 # loom_v2 — Suivi des tests des fonctions
 
-Agent d'essai : `agent-01` (`/home/denis/temp/agent-01`, loom-ia ≥ 2.0.9, modèle `HAIKU`, outil `loom.fetch_page`).
+Agents d'essai : `agent-01` (`/home/denis/temp/agent-01`, loom-ia ≥ 2.0.9, modèle `HAIKU`, outil `loom.fetch_page`) jusqu'au 18/10 ; `agent_test` les 19/10 (catégories E et F) ; `agent-test` (`/home/denis/temp/agent-test`, modèles `HAIKU` et `OPUS`, outils `loom.fetch_page`, `prix_ttc`, `etiquette_devis`, serveur MCP `notes` (loom-notes), journal JSONL) à partir du 20/10 (catégories G à I). Chaque fiche nomme l'agent et les sessions de ses essais.
 Base : la liste des fonctions de `docs/fonctions.md` (A1…P3), mêmes identifiants.
 
 ## Catégories
@@ -64,9 +64,9 @@ Quand le modèle demande plusieurs outils dans une même réponse, ils s'exécut
 
 Le run s'arrête sur une réponse obtenue, sur `max_iterations` (5 dans agent-01), sur un plafond de budget, sur un rôle terminal ou sur une pause d'approbation. Quand il atteint une limite, une dernière génération **sans outils** force une réponse.
 
-**Testée** : non — en cours : 3 cas sur 6 vus (réponse obtenue, `max_iterations`, réponse forcée) ; restent budget (J4), rôle terminal (C3), pause d'approbation (H4)
+**Testée** : en partie : 5 cas sur 6 vus (réponse obtenue, `max_iterations`, réponse forcée ici ; rôle terminal en C3 ; pause d'approbation en H4) ; reste le plafond de budget (J4)
 
-**Note** : réponse obtenue : A1 à A3. `max_iterations: 1` (17/10, session `session-A4`, question de A2) → 1 `fetch_page`, puis `awaiting_tools → finalizing` (cause `tool.completed`) et un dernier appel avec `tool_choice: none` ; les outils restent déclarés dans la requête (le cache des outils est donc gardé) et la consigne de réponse forcée termine le dernier message, sans être journalisée comme message. Réponse forcée honnête : 3.15.0 tirée de la page d'accueil, et l'agent dit qu'il n'a pas ouvert la page de la version, en donnant son lien. Faits vérifiés dans la page lue. `run.completed.iterations` vaut 2 : la réponse forcée compte comme un appel. 0,00088 $.
+**Note** : réponse obtenue : A1 à A3. `max_iterations: 1` (17/10, session `session-A4`, question de A2) → 1 `fetch_page`, puis `awaiting_tools → finalizing` (cause `tool.completed`) et un dernier appel avec `tool_choice: none` ; les outils restent déclarés dans la requête (le cache des outils est donc gardé) et la consigne de réponse forcée termine le dernier message, sans être journalisée comme message. Réponse forcée honnête : 3.15.0 tirée de la page d'accueil, et l'agent dit qu'il n'a pas ouvert la page de la version, en donnant son lien. Faits vérifiés dans la page lue. `run.completed.iterations` vaut 2 : la réponse forcée compte comme un appel. 0,00088 $. Rôle terminal (C3, `terminal: true` sur `synthese`) : au retour du rôle, `awaiting_tools → completed` (cause `tool.completed`), sans dernier appel à l'orchestrateur. Pause d'approbation (H4, D10) : `approval.requested`, `awaiting_tools → paused`, code de sortie 1, reprise par `approve`/`reject` ou approbateur en ligne.
 
 ### A5 — Annuler un run en cours
 
@@ -772,9 +772,9 @@ Premier token rapide, délais `first_token` et `idle` sur le streaming. Mesurabl
 
 Entrée, sortie, cache (lecture/écriture), raisonnement, relevés sur chaque `model.responded`.
 
-**Testée** : non
+**Testée** : oui (21/10, agent `agent-test`, séries 1 et 2, `session-J1a`, `session-J2b`, `session-J2c`, `session-J2c1`) : appels aboutis ; écart sur l'usage des tentatives coupées, corrigé et revalidé
 
-**Note** :
+**Note** : Run « TTC de 1 000 € HT à 20 %, puis de 700 € HT à 10 % » (2 appels HAIKU, les deux `prix_ttc` dans le même lot, le premier refusé par le contrat ≤ 1000). Chaque `model.responded` porte les 5 compteurs : appel 1 `input 18, output 156, cache_read 2 028, cache_write 0, reasoning 0` ; appel 2 `input 32, output 387, cache_read 2 421, reasoning 259` (le raisonnement est **compris** dans `output_tokens`, Anthropic le facturant comme sortie : pas de double compte) ; facettes `cost_usd`, `tokens` (somme entrée + sortie + cache, 2 202 puis 2 840), `latency_ms`, `stop_reason`, `model`. `run.completed` : somme exacte (`50 / 543 / 4 449 / 0 / 259`). Ergonomie (déjà vue en G1) : la console de `loom run` affiche « tokens : 50/543 » (entrée hors cache), le rapport « 4499/543 » (entrée cache lu compris) — deux lectures différentes du même usage, aucune ne nomme le cache. **Écart** (constaté en I3b, confirmé `session-J2b`, `timeouts: {first_token: 30, idle: 0.001}` le temps du test) : 3 tentatives coupées en plein flux, `run.failed` avec un usage nul et 0,0000 $ ; or la capture brute de chaque tentative (`model.exchanged`) montre le `message_start` d'Anthropic avec l'usage facturé — tentative 1 : `input_tokens 18, cache_creation_input_tokens 93, cache_read_input_tokens 1908, output_tokens 5` ; tentatives 2 et 3 : `18 / 0 / 2001 / 5` — soit ≈ 84 µ$ (plus les quelques tokens de sortie reçus avant la coupure) non comptés, pour un run réussi comparable à ≈ 300 µ$. Cause : l'adaptateur Anthropic garde l'usage du `message_start` pour lui et n'émet `UsageDelta` qu'au `message_stop` ; une tentative coupée (délai, erreur réseau, annulation) ne transmet donc aucun usage, et ni `model.retried` ni le ledger n'en portent. Une tentative ratée suivie d'une réussie sous-compte aussi un run `completed`, et les budgets (J4) en tiennent compte de même. Corrigé le 21/10 (CHANGELOG 2.0.10, « Événements et rapports », ⚠) : l'usage du `message_start` part dès l'ouverture du flux, `model.retried` porte `usage`, `cost_usd` et `final`, les tentatives facturées comptent dans le run, le ledger, les budgets et les rapports (pas comme des appels). Revalidé : chemin normal (`session-J2c`, sans délai) → `18 / 224 / 0 / 2 001`, 363,925 µ$ = `cost_usd` journalisé, pas de double compte ; flux coupés (`session-J2c1`, `idle: 0.001`) → 3 `model.retried`, chacun avec l'usage exact de son `message_start` capturé (`18 / 5 / 2 001 / 0`, 24,31 µ$), le 3ᵉ `final: true` (journalisé désormais) ; `run.failed` = leur somme (`54 / 15 / 6 003`, 72,93 µ$) ; console « tokens : 54/15 · coût : 0.0001 $ » au lieu de 0. `loom report` : « Total 0 appel · 6057/15 tokens · 0,00007 $ », de même par rôle et par modèle, puis « Dont, facturé sans réponse : 3 tentatives ratées · 6057/15 tokens · 0,00007 $ », code 0. Limite : la sortie comptée est celle du `message_start` (5 tokens) ; les quelques tokens de texte reçus avant la coupure ne sont annoncés par Anthropic qu'au `message_delta`, jamais reçu.
 
 ### J2 — Coût calculé par grille tarifaire
 
@@ -782,9 +782,9 @@ Entrée, sortie, cache (lecture/écriture), raisonnement, relevés sur chaque `m
 
 `pricing:` du modèle (agent-01 : input 0.1, output 0.5, cache_read 0.01, cache_write 0.125) appliqué aux tokens.
 
-**Testée** : non
+**Testée** : oui (21/10, agent `agent-test`, séries 1 et 2, `session-J1a`, `session-J2a`)
 
-**Note** :
+**Note** : Grille HAIKU (`input 0.1, output 0.5, cache_read 0.01, cache_write 0.125` $/M). Recalcul à la main : appel 1 = 18×0,1 + 156×0,5 + 2 028×0,01 = 100,08 µ$ → `cost_usd 0.00010008` ; appel 2 = 32×0,1 + 387×0,5 + 2 421×0,01 = 220,91 µ$ → `0.00022091` ; total 0,00032099 $, identique dans `run.completed`, `loom report` (texte « 0,00032 $ », JSON `cost 0.00032099`) et la console (« 0.0003 $ »). Paliers (`session-J2a`, `tiers: [{above: 1000, input: 1.0, output: 5.0}]` sur HAIKU le temps du test) : le seuil porte sur toute l'entrée de l'appel (`prompt_tokens` = entrée + cache lu + cache écrit, ≈ 2 020 ici), le palier s'applique donc ; appel 1 (`18 / 79 / 1 908 / 96`) = 18×1,0 + 79×5,0 + 1 908×0,01 + 96×0,125 = 444,08 µ$ → `0.00044408` ; appel 2 (`32 / 44 / 2 004 / 127`) = 287,915 µ$ → `0.000287915` : entrée et sortie au prix du palier, cache lu et cache écrit au tarif de base (le palier ne les redéfinit pas). Total 0,000732 $ (« 0.0007 $ »), ≈ 2,3 fois la série 1 pour un run comparable.
 
 ### J3 — Ventilation par run, rôle, modèle, session, client
 

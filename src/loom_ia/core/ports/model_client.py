@@ -18,6 +18,7 @@ from loom_ia.core.model.streaming import (
     ModelResponse,
     ResponseAccumulator,
 )
+from loom_ia.core.model.usage import Usage
 
 type ChunkCallback = Callable[[ModelChunk], Awaitable[None]]
 
@@ -46,6 +47,9 @@ class ModelError(Exception):
         # rejeu qui s'arrête à sa première divergence (J6.2b) —, et non par une
         # panne : le moteur le note sans le crier.
         self.by_client = by_client
+        # Ce que le fournisseur a annoncé avoir consommé avant l'échec, quand il
+        # l'a dit (début d'un flux coupé, sortie tronquée) : facturé quand même.
+        self.usage: Usage | None = None
 
     @property
     def retryable(self) -> bool:

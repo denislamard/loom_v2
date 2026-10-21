@@ -9,6 +9,10 @@ usage et son coût. La consommation d'un sous-agent recopiée dans
 le ``tool.completed`` de son appel n'y entre pas : ses appels y sont déjà,
 dans son propre run.
 
+S'y ajoutent les tentatives ratées que le fournisseur a facturées
+(``model.retried`` avec ``usage``, J1) : ``failed``, elles comptent dans
+l'usage et le coût, pas dans le nombre d'appels (``max_calls``).
+
 La ventilation (par run, rôle, modèle, session) et le rapport se calculent
 à partir de ces lignes ; le budget de session (``loom.budget``) en fait la
 somme pour les runs qui précèdent le run en cours.
@@ -18,7 +22,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 
-from loom_ia.core.events import Event, ModelResponded
+from loom_ia.core.events import Event, ModelResponded, ModelRetried
 from loom_ia.core.model import MAIN_ROLE, RunId, SessionId, Spent, TenantId, Usage
 
 
@@ -45,10 +49,12 @@ class LedgerEntry:
     # Appel d'outil servi (rôle délégué, juge d'un rôle).
     call_id: str | None = None
     judge: str | None = None
+    # Tentative ratée, facturée par le fournisseur : pas un appel (J1).
+    failed: bool = False
 
     @property
     def spent(self) -> Spent:
-        return Spent(self.usage, self.cost, 1)
+        return Spent(self.usage, self.cost, 0 if self.failed else 1)
 
     @property
     def model_key(self) -> str:
@@ -57,28 +63,40 @@ class LedgerEntry:
 
 
 def ledger(events: Iterable[Event]) -> tuple[LedgerEntry, ...]:
-    """Appels de modèle d'un ensemble d'événements, dans l'ordre du journal."""
-    return tuple(
-        LedgerEntry(
-            seq=event.seq,
-            ts=event.ts,
-            tenant_id=event.tenant_id,
-            session_id=event.session_id,
-            run_id=event.run_id,
-            root_run_id=event.root_run_id,
-            agent=event.agent or "",
-            role=event.role or MAIN_ROLE,
-            model_id=payload.model_id,
-            model=payload.model,
-            provider=payload.provider,
-            usage=payload.usage,
-            cost=payload.cost_usd,
-            call_id=payload.call_id,
-            judge=payload.judge,
+    """Appels de modèle d'un ensemble d'événements, dans l'ordre du journal.
+
+    Avec les tentatives ratées que le fournisseur a facturées (``failed``).
+    """
+    entries: list[LedgerEntry] = []
+    for event in events:
+        match event.payload:
+            case ModelResponded() as payload:
+                usage, cost, failed = payload.usage, payload.cost_usd, False
+            case ModelRetried(usage=Usage() as usage, cost_usd=cost) as payload:
+                cost, failed = cost or 0.0, True
+            case _:
+                continue
+        entries.append(
+            LedgerEntry(
+                seq=event.seq,
+                ts=event.ts,
+                tenant_id=event.tenant_id,
+                session_id=event.session_id,
+                run_id=event.run_id,
+                root_run_id=event.root_run_id,
+                agent=event.agent or "",
+                role=event.role or MAIN_ROLE,
+                model_id=payload.model_id,
+                model=payload.model,
+                provider=payload.provider,
+                usage=usage,
+                cost=cost,
+                call_id=payload.call_id,
+                judge=payload.judge,
+                failed=failed,
+            )
         )
-        for event in events
-        if isinstance(payload := event.payload, ModelResponded)
-    )
+    return tuple(entries)
 
 
 def spent(events: Iterable[Event]) -> Spent:

@@ -45,6 +45,8 @@ from loom_ia.core.model import (
     ModelSpec,
     ResponseAccumulator,
     StreamReset,
+    Usage,
+    UsageDelta,
 )
 from loom_ia.core.ports import (
     AnsweringClient,
@@ -162,7 +164,12 @@ class ModelCall:
                 yield response
                 return
             delay = self._retry_delay(failure, attempt)
+            billed = _billed(failure)
             if delay is None:
+                if billed is not None:
+                    # La dernière tentative ratée n'est annoncée que si elle a été
+                    # facturée : son usage entre ainsi dans les comptes (J1).
+                    yield self._retried(request, failure, attempt, 0.0, billed, final=True)
                 raise failure
             logger.warning(
                 "Tentative %d/%d du modèle %s ratée (%s) : nouvel essai dans %.1f s",
@@ -172,22 +179,37 @@ class ModelCall:
                 failure.kind,
                 delay,
             )
-            yield ModelRetried(
-                model_id=request.model_id,
-                model=self.spec.id,
-                provider=self.client.provider,
-                attempt=attempt,
-                error_kind=failure.kind,
-                error=failure.message,
-                http_status=failure.http_status,
-                delay_s=delay,
-            )
+            yield self._retried(request, failure, attempt, delay, billed)
             attempt += 1
             if progress.delivered and self.on_chunk is not None:
                 await self.on_chunk(StreamReset(attempt=attempt))
             await self._sleep(delay)
 
     # --- Interne ---------------------------------------------------------
+
+    def _retried(
+        self,
+        request: ModelRequest,
+        failure: ModelError,
+        attempt: int,
+        delay: float,
+        billed: Usage | None,
+        *,
+        final: bool = False,
+    ) -> ModelRetried:
+        return ModelRetried(
+            model_id=request.model_id,
+            model=self.spec.id,
+            provider=self.client.provider,
+            attempt=attempt,
+            error_kind=failure.kind,
+            error=failure.message,
+            http_status=failure.http_status,
+            delay_s=delay,
+            usage=billed,
+            cost_usd=None if billed is None else self.spec.pricing.cost(billed),
+            final=final,
+        )
 
     def _exchanged(
         self, log: ExchangeLog | None, request: ModelRequest, attempt: int
@@ -241,15 +263,52 @@ class ModelCall:
             known = await self.client.answer(request)
             if known is not None:
                 return known
-        timeouts = self.spec.timeouts
         accumulator = ResponseAccumulator()
+        try:
+            await self._stream(sent, accumulator, progress)
+            # Seul le vrai appel est contrôlé : la réponse d'un journal (``answer``)
+            # revient plus haut.
+            if accumulator.stop_reason == "max_tokens":
+                produced = accumulator.usage.output_tokens
+                after = f" après {produced} tokens" if produced else ""
+                raise ModelError(
+                    "truncated",
+                    f"Réponse tronquée : le modèle {self.spec.id} s'est arrêté sur sa limite de "
+                    f"tokens (max_tokens ou fenêtre de contexte){after} ; une sortie coupée "
+                    "n'est pas une réponse. Augmenter max_tokens ou raccourcir la demande.",
+                )
+            require_end(accumulator)
+        except ModelError as error:
+            # Ce que le fournisseur a annoncé avant l'échec lui reste dû (J1).
+            error.usage = accumulator.usage
+            raise
+        return accumulator.result(model_id=request.model_id, provider=self.client.provider)
+
+    async def _stream(
+        self, sent: ModelRequest, accumulator: ResponseAccumulator, progress: _Progress
+    ) -> None:
+        """Lit le flux d'une tentative dans ``accumulator``, sous ses délais.
+
+        Le premier morceau attendu est le premier **contenu** : un ``UsageDelta``
+        (l'entrée annoncée par le fournisseur à l'ouverture du flux) ne compte ni
+        pour lui, ni pour ce qui a été diffusé. Son délai court donc depuis le
+        début de la tentative, quoi qu'il arrive avant.
+        """
+        timeouts = self.spec.timeouts
+        loop = asyncio.get_running_loop()
+        first = timeouts.first_token
+        deadline = None if first is None else loop.time() + first
         total = asyncio.timeout(timeouts.total)
-        waiting = "premier morceau"
+        content = False
         try:
             async with total, aclosing(self.client.stream(sent)) as chunks:
-                limit = timeouts.first_token
                 while True:
-                    gap = asyncio.timeout(limit)
+                    limit = timeouts.idle if content else first
+                    gap = (
+                        asyncio.timeout(limit)
+                        if content or deadline is None
+                        else asyncio.timeout_at(deadline)
+                    )
                     try:
                         async with gap:
                             chunk = await anext(chunks)
@@ -257,30 +316,27 @@ class ModelCall:
                         break
                     except TimeoutError as exc:
                         if gap.expired():
+                            waiting = "nouveau morceau" if content else "premier morceau"
                             raise ModelError(
                                 "transient", f"Délai dépassé : aucun {waiting} en {limit:g} s"
                             ) from exc
                         raise
                     accumulator.add(chunk)
+                    counted = not isinstance(chunk, UsageDelta)
                     if self.on_chunk is not None:
-                        progress.delivered += 1
+                        if counted:
+                            progress.delivered += 1
                         await self.on_chunk(chunk)
-                    limit, waiting = timeouts.idle, "nouveau morceau"
+                    content = content or counted
         except TimeoutError as exc:
             if total.expired():
                 raise ModelError(
                     "transient", f"Délai total dépassé : {timeouts.total:g} s"
                 ) from exc
             raise
-        # Seul le vrai appel est contrôlé : la réponse d'un journal (``answer``) revient plus haut.
-        if accumulator.stop_reason == "max_tokens":
-            produced = accumulator.usage.output_tokens
-            after = f" après {produced} tokens" if produced else ""
-            raise ModelError(
-                "truncated",
-                f"Réponse tronquée : le modèle {self.spec.id} s'est arrêté sur sa limite de "
-                f"tokens (max_tokens ou fenêtre de contexte){after} ; une sortie coupée n'est "
-                "pas une réponse. Augmenter max_tokens ou raccourcir la demande.",
-            )
-        require_end(accumulator)
-        return accumulator.result(model_id=request.model_id, provider=self.client.provider)
+
+
+def _billed(failure: ModelError) -> Usage | None:
+    """Usage annoncé par le fournisseur avant l'échec, ou None s'il n'a rien dit."""
+    usage = failure.usage
+    return usage if usage is not None and usage.total_tokens else None

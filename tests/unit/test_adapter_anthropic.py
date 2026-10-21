@@ -556,6 +556,8 @@ async def test_a_cut_stream_goes_through_the_retry_policy() -> None:
     assert isinstance(retried, ModelRetried)
     assert (retried.error_kind, retried.http_status, retried.attempt) == ("transient", None, 1)
     assert "ReadError" in retried.error
+    # L'entrée annoncée au ``message_start`` est facturée : la tentative ratée la porte (J1).
+    assert retried.usage == Usage(input_tokens=12) and retried.final is False
     assert isinstance(response, ModelResponse) and response.message == Message.assistant("Voilà")
     assert len(server.requests) == 2 and len(waits) == 1
 
@@ -585,7 +587,10 @@ async def test_a_cut_stream_trips_the_breaker_and_falls_back() -> None:
     )
     items = [item async for item in model_chain.run(request())]
 
-    opened, fell, answered = items
+    billed, opened, fell, answered = items
+    # Seule tentative, ratée mais facturée : annoncée avec son usage, sans attente (J1).
+    assert isinstance(billed, ModelRetried)
+    assert (billed.final, billed.delay_s, billed.usage) == (True, 0.0, Usage(input_tokens=12))
     assert isinstance(opened, CircuitOpened) and opened.target == "CLAUDE"
     assert isinstance(fell, ModelFellBack)
     assert (fell.from_model, fell.to_model, fell.reason) == ("CLAUDE", "SECOURS", "transient")

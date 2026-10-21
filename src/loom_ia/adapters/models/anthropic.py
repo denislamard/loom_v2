@@ -486,6 +486,17 @@ def _result_content(output: ToolOutput) -> list[sdk.tool_result_block_param.Cont
 # --- Réponse -------------------------------------------------------------------
 
 
+def _beyond(total: Usage, sent: Usage) -> Usage:
+    """Ce que ``total`` ajoute à ce qui a déjà été transmis (compteurs cumulés)."""
+    return Usage(
+        input_tokens=max(total.input_tokens - sent.input_tokens, 0),
+        output_tokens=max(total.output_tokens - sent.output_tokens, 0),
+        cache_read_tokens=max(total.cache_read_tokens - sent.cache_read_tokens, 0),
+        cache_write_tokens=max(total.cache_write_tokens - sent.cache_write_tokens, 0),
+        reasoning_tokens=max(total.reasoning_tokens - sent.reasoning_tokens, 0),
+    )
+
+
 def _meta(**fields: str) -> dict[str, ProviderMeta]:
     return {PROVIDER: AnthropicMeta.model_validate(fields)}
 
@@ -496,6 +507,8 @@ class StreamParser:
     def __init__(self) -> None:
         self._tools: dict[int, int] = {}
         self._usage: dict[str, int] = {}
+        # Usage déjà transmis en ``UsageDelta`` : celui du ``message_start``.
+        self._sent = Usage()
         self._stop: StopReason | None = None
         self._model: str | None = None
         # ``message_stop`` reçu : le flux est allé jusqu'à sa fin.
@@ -504,9 +517,13 @@ class StreamParser:
     def feed(self, event: sdk.RawMessageStreamEvent) -> list[ModelChunk]:
         match event:
             case sdk.RawMessageStartEvent(message=message):
+                # L'entrée est facturée dès ici : un flux coupé ensuite (délai,
+                # réseau, annulation) la doit quand même. Elle part donc tout de
+                # suite ; le reste suivra au ``message_stop`` (test J1 du 21/10).
                 self._model = message.model
                 self.record_usage(message.usage)
-                return []
+                self._sent = self.usage()
+                return [UsageDelta(usage=self._sent)]
             case sdk.RawContentBlockStartEvent(index=index, content_block=block):
                 return self._block_start(index, block)
             case sdk.RawContentBlockDeltaEvent(index=index, delta=delta):
@@ -523,7 +540,7 @@ class StreamParser:
             case sdk.RawMessageStopEvent():
                 self.stopped = True
                 return [
-                    UsageDelta(usage=self.usage()),
+                    UsageDelta(usage=_beyond(self.usage(), self._sent)),
                     Stopped(reason=self._stop or "end", model_id=self._model),
                 ]
 

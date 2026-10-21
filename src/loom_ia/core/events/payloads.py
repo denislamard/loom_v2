@@ -409,7 +409,16 @@ class ModelResponded(Payload):
 
 
 class ModelRetried(Payload):
-    """Tentative d'appel échouée, suivie d'une nouvelle tentative (#10)."""
+    """Tentative d'appel échouée, suivie d'une nouvelle tentative (#10).
+
+    ``usage`` et ``cost_usd`` : ce que le fournisseur a annoncé avant l'échec
+    (l'entrée d'un flux coupé, une sortie tronquée), qu'il facture quand même.
+    Ils entrent dans le coût du run, le ledger, les budgets et les rapports, sans
+    compter comme un appel (``max_calls``). La dernière tentative ratée, qui
+    n'est suivie de rien, n'est annoncée que si elle a été facturée : ``final``,
+    sans attente. Absents des journaux antérieurs, et pour un fournisseur qui ne
+    dit sa consommation qu'en fin de flux (API compatibles OpenAI).
+    """
 
     category: ClassVar[EventCategory] = "model"
     facet_fields: ClassVar[tuple[str, ...]] = ("model_id", "provider", "error_kind", "attempt")
@@ -433,6 +442,11 @@ class ModelRetried(Payload):
     call_id: str | None = None
     # Juge qui a fait cet appel (#21).
     judge: str | None = None
+    # Consommation facturée de la tentative ratée, quand le fournisseur l'a dite (J1).
+    usage: Usage | None = None
+    cost_usd: NonNegativeFloat | None = None
+    # Dernière tentative : rien ne la suit, l'erreur remonte.
+    final: bool = False
 
     @property
     def event_status(self) -> EventStatus:

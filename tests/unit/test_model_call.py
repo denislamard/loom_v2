@@ -37,8 +37,10 @@ from loom_ia.core.model import (
     message_to_chunks,
 )
 from loom_ia.core.ports import ModelError
+from loom_ia.core.projections import ledger
 from loom_ia.engine import RunContext, begin_run, drive
 from loom_ia.engine.model_call import ModelCall, estimate_tokens
+from loom_ia.usage.report import render, usage_report
 
 REQUEST = ModelRequest(model_id="m-1", messages=(Message.user("Bonjour"),), max_tokens=100)
 ANSWER = Message.assistant("Bonjour à vous")
@@ -418,3 +420,132 @@ async def test_loop_fails_when_the_call_gives_no_response(monkeypatch: pytest.Mo
     state = await drive(ctx, (await begin_run(ctx, "?")).run_id)
     assert state.error_type == "RuntimeError"
     assert state.error == "Appel de modèle terminé sans réponse"
+
+
+# --- Tentatives ratées mais facturées (J1) ------------------------------------------------
+
+BILLED = Usage(input_tokens=1000, cache_read_tokens=500)
+PRICED = {"pricing": {"input": 1.0, "output": 2.0, "cache_read": 0.1}}
+
+
+class BilledModel:
+    """Annonce l'entrée dès l'ouverture du flux, puis suit son plan (comme Anthropic)."""
+
+    provider = "billed"
+
+    def __init__(self, *plans: list[Step]) -> None:
+        self.plans = list(plans)
+        self.calls = 0
+
+    async def aclose(self) -> None:
+        pass
+
+    async def stream(self, request: ModelRequest) -> AsyncGenerator[ModelChunk]:
+        plan = self.plans[self.calls]
+        self.calls += 1
+        yield UsageDelta(usage=BILLED)
+        for step in plan:
+            match step:
+                case Exception():
+                    raise step
+                case float():
+                    await asyncio.sleep(step)
+                case Message():
+                    for chunk in message_to_chunks(step):
+                        yield chunk
+                case _:
+                    raise AssertionError(step)
+
+
+async def test_a_cut_attempt_keeps_what_the_provider_billed() -> None:
+    """Test J1 du 21/10 : l'entrée d'un flux coupé était facturée, mais comptée 0."""
+    recorder = Recorder()
+    model = BilledModel([ModelError("transient", "coupé")], [ANSWER])
+    retried, response = await outcomes(
+        ModelCall(model, spec(**PRICED), on_chunk=recorder.on_chunk, sleep=recorder.sleep)
+    )
+
+    assert isinstance(retried, ModelRetried)
+    assert (retried.usage, retried.final) == (BILLED, False)
+    assert retried.cost_usd == pytest.approx((1000 * 1.0 + 500 * 0.1) / 1_000_000)
+    assert isinstance(response, ModelResponse)
+    # Seule l'annonce de l'entrée était passée : rien à effacer chez qui diffuse.
+    assert not any(isinstance(chunk, StreamReset) for chunk in recorder.chunks)
+
+
+async def test_the_last_failed_attempt_is_announced_only_if_it_was_billed() -> None:
+    items: list[ModelExchanged | ModelRetried | ModelResponse] = []
+    billed = ModelCall(
+        BilledModel([ModelError("transient", "coupé")]), spec(retry={"max_attempts": 1})
+    )
+    with pytest.raises(ModelError, match="coupé"):
+        async for item in billed.run(REQUEST):
+            items.append(item)
+    [last] = items
+    assert isinstance(last, ModelRetried)
+    assert (last.final, last.delay_s, last.usage) == (True, 0.0, BILLED)
+
+    silent = ModelCall(
+        FlakyModel([ModelError("transient", "réseau")]), spec(retry={"max_attempts": 1})
+    )
+    with pytest.raises(ModelError):
+        assert [item async for item in silent.run(REQUEST)] == []
+
+
+async def test_the_announced_input_is_not_the_first_token() -> None:
+    """Le délai du premier morceau attend un contenu, pas l'annonce de l'entrée."""
+    model = BilledModel([0.2, ANSWER])
+    run = call(
+        model,  # pyright: ignore[reportArgumentType]
+        Recorder(),
+        timeouts={"first_token": 0.02, "idle": 1, "total": None},
+        retry={"max_attempts": 1},
+    )
+    with pytest.raises(ModelError, match=r"aucun premier morceau en 0\.02 s") as caught:
+        await outcomes(run)
+    assert caught.value.usage == BILLED
+
+
+async def test_billed_attempts_count_in_the_run_but_not_as_calls() -> None:
+    store = InMemoryEventStore()
+    model = BilledModel(
+        [ModelError("transient", "coupé")],
+        [ANSWER],
+        [ModelError("transient", "coupé")],
+        [ModelError("transient", "encore coupé")],
+    )
+    ctx = RunContext(
+        agent="demo",
+        store=store,
+        model=model,
+        model_spec=spec(retry=RetryPolicy(max_attempts=2, initial_delay=0), **PRICED),
+    )
+    attempt_cost = (1000 * 1.0 + 500 * 0.1) / 1_000_000
+
+    ok = await drive(ctx, (await begin_run(ctx, "Bonjour")).run_id)
+    events = await store.read(ok.context.tenant_id, ok.session_id)
+    [answer] = [e.payload for e in events if isinstance(e.payload, ModelResponded)]
+    assert ok.status is RunStatus.COMPLETED
+    assert ok.model_calls == 1
+    assert ok.usage == BILLED + answer.usage
+    assert ok.cost_usd == pytest.approx(attempt_cost + answer.cost_usd)
+    entries = ledger(events)
+    assert [entry.failed for entry in entries] == [True, False]
+    report = usage_report(events, ok.session_id, ok.run_id)
+    assert report.total.calls == 1 and report.total.cost == pytest.approx(ok.cost_usd)
+    assert report.failed is not None
+    assert (report.failed.calls, report.failed.usage) == (1, BILLED)
+    assert report.failed.cost == pytest.approx(attempt_cost)
+    assert render(report)[-1] == (
+        "  Dont, facturé sans réponse : 1 tentative ratée · 1500/0 tokens · 0,00105 $"
+    )
+
+    failed = await drive(ctx, (await begin_run(ctx, "Encore")).run_id)
+    assert failed.status is RunStatus.FAILED
+    assert (failed.model_calls, failed.usage) == (0, BILLED + BILLED)
+    assert failed.cost_usd == pytest.approx(2 * attempt_cost)
+    events = await store.read(failed.context.tenant_id, failed.session_id)
+    closing = events[-1].payload
+    assert isinstance(closing, RunFailed) and closing.usage == BILLED + BILLED
+    retried = [e.payload for e in events if isinstance(e.payload, ModelRetried)]
+    assert [r.final for r in retried] == [False, True]
