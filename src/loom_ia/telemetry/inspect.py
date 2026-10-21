@@ -328,9 +328,10 @@ def _status(trace: Trace) -> str:
 
 def _tokens(a: Mapping[str, AttributeValue]) -> str:
     """Tokens d'un appel : l'entrée cache comprise, comme l'en-tête — la part du cache dite."""
-    read = int(a.get("loom.usage.cache_read_tokens", 0))
-    written = int(a.get("loom.usage.cache_write_tokens", 0))
-    prompt = int(a.get("gen_ai.usage.input_tokens", 0)) + read + written
+    # ``gen_ai.usage.input_tokens`` compte déjà le cache (conventions GenAI).
+    read = int(a.get("gen_ai.usage.cache_read.input_tokens", 0))
+    written = int(a.get("gen_ai.usage.cache_write.input_tokens", 0))
+    prompt = int(a.get("gen_ai.usage.input_tokens", 0))
     said = f"{prompt} → {a.get('gen_ai.usage.output_tokens', 0)} tokens"
     cached = [f"{read} lus" if read else "", f"{written} écrits" if written else ""]
     if read or written:

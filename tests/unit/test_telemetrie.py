@@ -1117,6 +1117,40 @@ def test_inspect_cuts_a_long_result_and_says_so_unless_whole() -> None:
     assert len(entier) == 1 and entier[0].endswith(long)
 
 
+def test_usage_attributes_follow_the_genai_conventions() -> None:
+    """``gen_ai.usage.input_tokens`` compte le cache, et ``cache_*`` en dit la part.
+
+    Test K4 du 21/10 : l'entrée exportée était hors cache (50 tokens pour un run
+    de 3 900) et le cache portait des noms propres à loom, qu'aucun outil ne lit.
+    """
+    journal = RunJournal()
+    journal.start(QUESTION)
+    journal.model_turn(
+        tool_call_message(("c1", "calculer", {"expr": "1+1"})),
+        usage=Usage(input_tokens=100, cache_read_tokens=900, output_tokens=20),
+    )
+    journal.tool_results({"c1": ToolOutput.text("2")})
+    journal.model_turn(
+        Message.assistant("2."),
+        usage=Usage(input_tokens=50, cache_write_tokens=300, output_tokens=10, reasoning_tokens=4),
+    )
+    journal.complete()
+    events = [d.to_event(i + 1) for i, d in enumerate(journal.take())]
+    spans = run_spans(events)
+    chats = [s.attributes for s in spans if s.kind == "chat"]
+    [run] = [s.attributes for s in spans if s.kind == "run"]
+
+    assert [a["gen_ai.usage.input_tokens"] for a in chats] == [1000, 350]
+    assert [a["gen_ai.usage.cache_read.input_tokens"] for a in chats] == [900, 0]
+    assert [a["gen_ai.usage.cache_write.input_tokens"] for a in chats] == [0, 300]
+    assert run["gen_ai.usage.input_tokens"] == 1350
+    assert run["gen_ai.usage.output_tokens"] == 30
+    assert run["gen_ai.usage.cache_read.input_tokens"] == 900
+    assert run["gen_ai.usage.cache_write.input_tokens"] == 300
+    assert run["loom.usage.reasoning_tokens"] == 4
+    assert not [key for a in [*chats, run] for key in a if key.startswith("loom.usage.cache")]
+
+
 def test_inspect_counts_the_cache_in_each_call_as_in_the_header() -> None:
     """Les tokens d'un appel comptent son entrée en cache : les lignes font l'en-tête."""
     journal = RunJournal()

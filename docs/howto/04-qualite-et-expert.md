@@ -330,9 +330,11 @@ uv run loom inspect 01a1267b-1639-73c5-bfe4-6a953e9ff10e --json | head -48
         "loom.cost_usd": 0.009654,
         "gen_ai.usage.input_tokens": 2033,
         "gen_ai.usage.output_tokens": 237,
-        "loom.usage.cache_read_tokens": 0,
-        "loom.usage.cache_write_tokens": 0,
+        "gen_ai.usage.cache_read.input_tokens": 0,
+        "gen_ai.usage.cache_write.input_tokens": 0,
 ```
+
+Les noms `gen_ai.usage.*` suivent les conventions GenAI d'OpenTelemetry : `input_tokens` compte **toute** l'entrée, cache compris, et les deux attributs `cache_*` en disent la part (ici nulle, le faux modèle n'a pas de cache).
 
 La suite du JSON liste les `spans` (une entrée par span, avec ses attributs `gen_ai.*` et `loom.*`). Enfin, l'arbre abrège les arguments et les résultats longs à une centaine de caractères. `--full` les affiche en entier :
 

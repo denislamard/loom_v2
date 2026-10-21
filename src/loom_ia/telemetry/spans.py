@@ -245,11 +245,20 @@ def _specific(kind: SpanKind, members: Sequence[Event]) -> dict[str, AttributeVa
 
 
 def _usage(usage: Usage) -> dict[str, AttributeValue]:
+    """Consommation, aux noms des conventions GenAI d'OpenTelemetry.
+
+    ``gen_ai.usage.input_tokens`` compte **toute** l'entrée, cache compris
+    (« SHOULD include all types of input tokens, including cached tokens ») ;
+    ``cache_read`` et ``cache_write`` en disent la part, et y sont inclus. Un
+    outil qui suit la convention lit donc l'entrée réelle — au test K4 du
+    21/10, il recevait l'entrée hors cache, 50 tokens pour un run de 3 900.
+    Le raisonnement, sans attribut de la convention, reste un attribut de loom.
+    """
     return {
-        "gen_ai.usage.input_tokens": usage.input_tokens,
+        "gen_ai.usage.input_tokens": usage.prompt_tokens,
         "gen_ai.usage.output_tokens": usage.output_tokens,
-        "loom.usage.cache_read_tokens": usage.cache_read_tokens,
-        "loom.usage.cache_write_tokens": usage.cache_write_tokens,
+        "gen_ai.usage.cache_read.input_tokens": usage.cache_read_tokens,
+        "gen_ai.usage.cache_write.input_tokens": usage.cache_write_tokens,
         "loom.usage.reasoning_tokens": usage.reasoning_tokens,
     }
 
