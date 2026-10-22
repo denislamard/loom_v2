@@ -934,9 +934,9 @@ Quotas de consommation par période et `--rate-limit` par clé d'API (requêtes 
 
 `loom.yaml` + `agents/*.yaml`, validés par Pydantic avec des erreurs qui nomment la clé ; `loom validate [--no-keys]` ; `loom schema` imprime le JSON Schema pour l'éditeur.
 
-**Testée** : non — écart trouvé le 17/10
+**Testée** : en partie (22/10, agent `agent-test`, série 1, étapes 1 à 3) : validation, erreurs nommées, `--no-keys`, `loom schema` conformes ; **écart confirmé** (clé en double acceptée en silence), en attente de décision
 
-**Note** : **clé en double acceptée sans erreur** : PANNE portait deux `retry` dans `loom.yaml` ; `yaml.safe_load` garde la dernière, et ni le chargement ni `loom validate` ne le signalent. Une faute de frappe peut ainsi annuler un réglage en silence. Piste : un chargeur YAML qui refuse les clés en double, en donnant la ligne.
+**Note** : État de référence : `loom validate` → code 0 ; `--no-keys` → « clients de modèle non créés (--no-keys) : clés d'API et SDK non vérifiés », « 2 agent(s) monté(s) sans erreur », code 0 ; `loom schema` → JSON Schema `LoomConfig` sur la sortie standard, 21 clés racine, 98 définitions. Clé inconnue (`max_token` dans HAIKU) → « Configuration : …/loom.yaml: models.0.max_token — Extra inputs are not permitted », code 2 ; type faux (`shutdown_timeout: deux minutes`) → « execution.shutdown_timeout — Input should be a valid number, unable to parse string as a number », code 2. Ergonomie : un modèle est nommé par son indice (`models.0`), pas par son `id` ; le schéma publie `base_dir`, champ que le chargeur calcule lui-même. **Clé en double, 22/10** : deux `logging:` sous `telemetry` (`WARNING` puis `DEBUG`) → `validate` code 0, sans rien dire, et la seconde s'applique (une ligne INFO « Serveur MCP notes connecté » apparaît, invisible en `WARNING`) ; deux `max_iterations` dans `agents/agent.yaml` (5 puis 1) → code 0, sans rien dire. Déjà vu en K4 (deux `capture` : la seconde, `exports: content`, s'appliquait). Constat du 17/10 : **clé en double acceptée sans erreur** : PANNE portait deux `retry` dans `loom.yaml` ; `yaml.safe_load` garde la dernière, et ni le chargement ni `loom validate` ne le signalent. Une faute de frappe peut ainsi annuler un réglage en silence. Piste : un chargeur YAML qui refuse les clés en double, en donnant la ligne.
 
 ### M2 — Construction entièrement en Python
 

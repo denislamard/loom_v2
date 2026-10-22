@@ -389,6 +389,14 @@ def test_a_suite_refuses_what_would_prove_nothing(
     assert message in str(refus.value)
 
 
+def test_a_key_written_twice_in_a_suite_is_refused(labo: Path) -> None:
+    # Test M1 du 22/10 : la seconde valeur l'emportait en silence.
+    path = labo.parent / "suite.yaml"
+    path.write_text("config: loom.yaml\nagent: demo\nagent: autre\ncases: []\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"suite\.yaml: clé 'agent' .*lignes 2 et 3"):
+        load_suite(path)
+
+
 def test_a_replay_pattern_is_relative_to_the_suite(tmp_path: Path) -> None:
     journaux = tmp_path / "journaux"
     (journaux / "vieux").mkdir(parents=True)

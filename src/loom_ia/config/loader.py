@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Lecture de ``loom.yaml`` et des agents (M1, #35).
 
-``safe_load`` puis validation stricte par les modèles Pydantic. Les chemins
-(``agents_dir``, ``prompts_dir``, journal, artefacts, ``cwd`` des serveurs
-MCP, ``schema_file`` des contrats de sortie) sont relatifs au fichier de
-config et deviennent absolus au chargement ; un schéma de sortie donné par
-fichier (JSON ou YAML) est lu et vérifié à ce moment-là.
+``safe_load`` (sans clé en double, ``yaml_source``) puis validation stricte
+par les modèles Pydantic. Les chemins (``agents_dir``, ``prompts_dir``,
+journal, artefacts, ``cwd`` des serveurs MCP, ``schema_file`` des contrats de
+sortie) sont relatifs au fichier de config et deviennent absolus au
+chargement ; un schéma de sortie donné par fichier (JSON ou YAML) est lu et
+vérifié à ce moment-là.
 Un serveur MCP stdio sans ``cwd`` se lance depuis le dossier de la config. Un
 ``system_file`` manquant, un modèle inconnu ou un agent en double arrêtent
 le démarrage.
@@ -22,6 +23,7 @@ from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools, SourceTools, syst
 from loom_ia.config.env_file import ENV_FILE_KEY
 from loom_ia.config.errors import ConfigError, from_validation
 from loom_ia.config.models import PROFILES, LoomConfig, Profile, StorageConfig, TenantSpec
+from loom_ia.config.yaml_source import DuplicateKey, load_yaml
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     McpServerSpec,
@@ -337,7 +339,9 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     except OSError as exc:
         raise ConfigError(f"Fichier illisible : {exc}") from exc
     try:
-        data = cast(object, yaml.safe_load(content))
+        data = load_yaml(content)
+    except DuplicateKey as exc:
+        raise ConfigError(str(exc), source=path) from exc
     except yaml.YAMLError as exc:
         raise ConfigError(f"YAML invalide : {exc}", source=path) from exc
     if data is None:

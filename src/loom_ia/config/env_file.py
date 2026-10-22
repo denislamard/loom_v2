@@ -37,6 +37,7 @@ import yaml
 from dotenv.parser import parse_stream
 
 from loom_ia.config.errors import ConfigError
+from loom_ia.config.yaml_source import load_yaml
 
 # Le fichier cherché à côté de loom.yaml quand rien d'autre n'est désigné.
 DEFAULT_NAME: Final = ".env"
@@ -161,7 +162,7 @@ def declared_env_file(config: Path) -> Path | None:
     illisible rend ``None`` — ``load_config`` le dira, avec ses mots.
     """
     try:
-        data = cast(object, yaml.safe_load(config.read_text(encoding="utf-8")))
+        data = load_yaml(config.read_text(encoding="utf-8"))
     except OSError, UnicodeDecodeError, yaml.YAMLError:
         return None
     if not isinstance(data, dict):

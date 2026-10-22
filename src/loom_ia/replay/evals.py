@@ -68,6 +68,7 @@ from pydantic import (
 from loom_ia.config import ConfigError, LoomConfig
 from loom_ia.config.errors import from_validation
 from loom_ia.config.models import EventsStorage, IdempotencyStorage, StorageConfig
+from loom_ia.config.yaml_source import DuplicateKey, load_yaml
 from loom_ia.core.bounded_regex import PatternError, RegexTimeout, compile_pattern, search
 from loom_ia.core.json_values import same_json
 from loom_ia.core.model import (
@@ -378,9 +379,11 @@ def load_suite(path: Path | str) -> EvalSuite:
     """Lit une suite d'évals ; ``ConfigError`` (fichier nommé) si elle ne tient pas."""
     source = Path(path).resolve()
     try:
-        data = cast(object, yaml.safe_load(source.read_text(encoding="utf-8")))
+        data = load_yaml(source.read_text(encoding="utf-8"))
     except OSError as exc:
         raise ConfigError(f"suite illisible : {exc}", source=source) from exc
+    except DuplicateKey as exc:
+        raise ConfigError(str(exc), source=source) from exc
     except yaml.YAMLError as exc:
         raise ConfigError(f"YAML invalide : {exc}", source=source) from exc
     if not isinstance(data, dict):

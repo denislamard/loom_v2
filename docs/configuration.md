@@ -5,6 +5,7 @@ Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.p
 **Règles générales**
 
 - Une clé inconnue est **refusée** au chargement (`loom validate`, code 2), avec le chemin de la clé.
+- Une clé **écrite deux fois** dans le même objet est refusée de même, avec ses deux lignes : YAML garderait la seconde en silence. Surcharger une clé fusionnée (`<<: *ancre`) reste permis.
 - Les chemins sont relatifs au **dossier de `loom.yaml`** ; un `system_file` est relatif à `prompts_dir`.
 - La config ne porte **jamais un secret** : les clés `*_env` nomment la variable d'environnement qui le contient.
 - « **obligatoire** » dans la colonne *Défaut* : la clé doit être écrite, sinon le chargement s'arrête.

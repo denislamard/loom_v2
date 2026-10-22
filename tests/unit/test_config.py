@@ -316,6 +316,81 @@ def test_unreadable_files(tmp_path: Path) -> None:
         load_config(path)
 
 
+# Test M1 du 22/10 : ``safe_load`` gardait la dernière valeur d'une clé répétée,
+# sans rien dire (deux ``logging``, deux ``max_iterations``).
+DOUBLE_ROOT = """version: 1
+models:
+- {id: FAKE, sdk: fake, model: fake-1}
+telemetry:
+  logging: {level: WARNING}
+  logging: {level: DEBUG}
+"""
+
+
+def test_a_key_written_twice_in_loom_yaml_is_refused(tmp_path: Path) -> None:
+    path = write(tmp_path)
+    path.write_text(DOUBLE_ROOT, encoding="utf-8")
+    with pytest.raises(ConfigError) as refus:
+        load_config(path)
+    assert str(refus.value) == (
+        f"{path}: clé 'logging' donnée deux fois dans le même objet (lignes 5 et 6) : "
+        "la seconde écraserait la première en silence"
+    )
+
+
+def test_a_key_written_twice_in_an_agent_is_refused(tmp_path: Path) -> None:
+    path = write(tmp_path)
+    agent = tmp_path / "agents" / "demo.yaml"
+    agent.write_text(
+        "name: demo\nmax_iterations: 5\nmax_iterations: 1\n"
+        "main: {model: FAKE, system: Tu calcules.}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"demo\.yaml: clé 'max_iterations' .*lignes 2 et 3"):
+        load_config(path)
+
+
+def test_a_key_written_twice_in_a_schema_file_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "objet.yaml").write_text(
+        "type: object\nrequired: [a]\nrequired: [b]\n", encoding="utf-8"
+    )
+    agent = {**AGENT, "output": {"schema_file": "objet.yaml"}}
+    path = write(tmp_path, agents={"demo": agent})
+    with pytest.raises(ConfigError, match=r"objet\.yaml: clé 'required' .*lignes 2 et 3"):
+        load_config(path)
+
+
+def test_a_merge_key_may_be_overridden_and_the_same_key_may_repeat_elsewhere(
+    tmp_path: Path,
+) -> None:
+    path = write(tmp_path)
+    path.write_text(
+        "version: 1\n"
+        "models:\n"
+        "- &base {id: FAKE, sdk: fake, model: fake-1, max_tokens: 100}\n"
+        "- <<: *base\n"
+        "  id: AUTRE\n"
+        "  max_tokens: 200\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    # Surcharger une clé fusionnée n'est pas un doublon ; ``id`` dans deux objets non plus.
+    assert [(m.id, m.model, m.max_tokens) for m in config.models] == [
+        ("FAKE", "fake-1", 100),
+        ("AUTRE", "fake-1", 200),
+    ]
+
+
+def test_the_env_file_probe_leaves_a_double_key_to_the_loader(tmp_path: Path) -> None:
+    from loom_ia.config.env_file import declared_env_file
+
+    path = write(tmp_path)
+    path.write_text(DOUBLE_ROOT, encoding="utf-8")
+    assert declared_env_file(path) is None
+    with pytest.raises(ConfigError, match="deux fois"):
+        load_config(path)
+
+
 def test_empty_agent_file_is_reported(tmp_path: Path) -> None:
     path = write(tmp_path, agents={})
     (tmp_path / "agents" / "vide.yaml").write_text("", encoding="utf-8")

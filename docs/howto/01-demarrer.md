@@ -1127,7 +1127,7 @@ sed -i 's/max_iteration: 5/max_iterations: 5/' agents/devis.yaml
 
 #### À retenir
 
-- **La validation est stricte.** Une clé inconnue est une erreur, pas un avertissement ignoré : une faute de frappe ne passe pas inaperçue.
+- **La validation est stricte.** Une clé inconnue est une erreur, pas un avertissement ignoré : une faute de frappe ne passe pas inaperçue. Une clé écrite deux fois dans le même bloc l'est aussi (« clé 'max_iterations' donnée deux fois dans le même objet (lignes 5 et 6) ») : sans cela, la seconde écraserait la première sans rien dire.
 - **Le message dit le fichier, la clé et la raison.** Les erreurs de référence dressent aussi la liste de ce qui existe (« enregistrés : … », « modèles connus : … »).
 - **Code de retour 2 pour toute erreur de configuration.** Branchez `uv run loom validate` dans votre CI.
 - **`loom validate` monte les agents un par un et s'arrête à la première erreur.** Il ne fait aucun appel de modèle.
