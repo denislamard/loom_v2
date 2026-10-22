@@ -15,7 +15,8 @@ import pytest
 from conftest import ANSWER, MODEL, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import AgentNotAllowed, Loom, UnknownTenant
-from loom_ia.adapters.stores import JsonlEventStore
+from loom_ia.adapters.models import ModelConfigError
+from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.model import DEFAULT_TENANT, SessionId, TenantId
 from loom_ia.runtime import build_agent, load_registry
@@ -309,6 +310,58 @@ def test_the_agent_of_a_tenant_is_mounted_with_its_secrets(demo: ConfigFactory) 
     tenants = Tenants(config, environ={"X": "commun", "DUPONT_X": "à-dupont"})
     assert tenants.get(DUPONT).secrets["X"] == "à-dupont"
     assert tenants.get(MARTIN).secrets["X"] == "commun"
+
+
+# Test L2 du 22/10 : l'adaptateur nommait la variable de la config
+# (« ANTHROPIC_API_KEY est absente ou vide »), posée, au lieu de celle du client.
+REAL = {"id": "VRAI", "sdk": "anthropic", "model": "claude-haiku-5-5", "api_key_env": "CLE"}
+
+
+def mount(config: Path, tenant_id: TenantId, environ: dict[str, str]) -> None:
+    loaded = load_config(config)
+    tenant = Tenants(loaded, environ=environ).get(tenant_id)
+    build_agent(
+        tenant.config, "demo", InMemoryEventStore(), registry=load_registry(loaded), tenant=tenant
+    )
+
+
+def test_a_missing_model_secret_names_the_variable_of_the_tenant(demo: ConfigFactory) -> None:
+    pytest.importorskip("anthropic", reason="extra 'anthropic' absent")
+    config = demo(
+        models=[MODEL, REAL],
+        tenants=[
+            {"id": DUPONT, "models": {"FAKE": "VRAI"}, "secrets": {"CLE": "DUPONT_CLE"}},
+            {"id": MARTIN, "models": {"FAKE": "VRAI"}},
+        ],
+    )
+    said = (
+        f"Client '{DUPONT}' : la variable DUPONT_CLE (redirection de CLE) est absente ou vide"
+        " — modèle 'FAKE' (claude-haiku-5-5 pour ce client)"
+    )
+    with pytest.raises(ModelConfigError) as caught:
+        mount(config, DUPONT, {"CLE": "commune"})
+    assert str(caught.value) == said
+    # Sans redirection, la variable de la config est bien celle qui manque : message inchangé.
+    with pytest.raises(ModelConfigError, match=r"^Modèle 'FAKE' : la variable d'environnement CLE"):
+        mount(config, MARTIN, {})
+
+
+def test_a_missing_mcp_secret_names_the_variable_of_the_tenant(demo: ConfigFactory) -> None:
+    pytest.importorskip("mcp", reason="extra 'mcp' absent")
+    server = {"name": "crm", "transport": "stdio", "command": "true", "env_from": {"T": "JETON"}}
+    config = demo(
+        agents=[demo_agent(tools=[{"python": "calculer"}, {"mcp": "crm"}])],
+        mcp_servers=[server],
+        tenants=[{"id": DUPONT, "secrets": {"JETON": "DUPONT_JETON"}}, {"id": MARTIN}],
+    )
+    with pytest.raises(ConfigError) as caught:
+        mount(config, DUPONT, {"JETON": "commun"})
+    assert str(caught.value) == (
+        f"Agent 'demo' : Client '{DUPONT}' : la variable DUPONT_JETON (redirection de JETON)"
+        " est absente ou vide — serveur MCP 'crm'"
+    )
+    with pytest.raises(ConfigError, match="JETON est absente ou vide"):
+        mount(config, MARTIN, {})
 
 
 # --- Variables des prompts (§6) ------------------------------------------------

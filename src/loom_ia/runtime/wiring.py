@@ -47,7 +47,7 @@ et les referme avec lui.
 
 import logging
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -61,7 +61,7 @@ from loom_ia.adapters.artifacts import (
     SealingArtifactStore,
 )
 from loom_ia.adapters.idempotency import InMemoryIdempotency
-from loom_ia.adapters.models import KEY_VARIABLES, create_model_client
+from loom_ia.adapters.models import KEY_VARIABLES, ModelConfigError, create_model_client
 from loom_ia.adapters.queue import AsyncioTaskQueue, Handler
 from loom_ia.adapters.stores import (
     PLAIN,
@@ -612,6 +612,8 @@ def build_agent(
     variables: Mapping[str, JsonValue] = tenant.variables if tenant is not None else {}
     denied: frozenset[str] = tenant.denied if tenant is not None else frozenset()
     imposed: Mapping[str, Approval] = tenant.approvals if tenant is not None else {}
+    redirects: Mapping[str, str] = tenant.spec.secrets if tenant and tenant.spec else {}
+    mapped: Mapping[str, str] = tenant.spec.models if tenant and tenant.spec else {}
     tools = [_tool(declared, known, config.base_dir) for declared in spec.python_tools]
     roles = [role_definition(role, variables, state=spec.state) for role in spec.roles]
     _check_names(spec, [tool.spec.name for tool in tools])
@@ -634,7 +636,15 @@ def build_agent(
             if models is not None:
                 clients[model_id] = models(spec)
                 return clients[model_id]
-            made = create_model_client(spec, environ=secrets, record=raw is not None)
+            try:
+                made = create_model_client(spec, environ=secrets, record=raw is not None)
+            except ModelConfigError as exc:
+                read = secrets if secrets is not None else os.environ
+                said = _missing_secret(tenant_id, redirects, read, [spec.api_key_env])
+                if said is None:
+                    raise
+                model = f"{spec.model} pour ce client" if model_id in mapped else spec.model
+                raise ModelConfigError(f"{said} — modèle {model_id!r} ({model})") from exc
             clients[model_id] = made if raw is None else Recorded(made, raw)
         return clients[model_id]
 
@@ -715,7 +725,7 @@ def build_agent(
     _check_durable_journal(config, spec, [*tools, *delegated], policies, imposed, tenant)
     _check_shared_idempotency(config, spec, [*tools, *delegated])
     # Les sources et le pool MCP se créent après les contrôles : un montage refusé n'en laisse pas.
-    sources, opened = _mcp_sources(config, spec, secrets, mcp_pool, tenant_id)
+    sources, opened = _mcp_sources(config, spec, secrets, mcp_pool, tenant_id, redirects)
     packaged = _packaged_sources(config, spec, secrets)
     sources = [*sources, *packaged]
     owned = (*opened, *packaged, *owned)
@@ -1579,12 +1589,40 @@ def _has_schema(contract: OutputContract | None) -> bool:
     return contract is not None and contract.json_schema is not None
 
 
+def _missing_secret(
+    tenant_id: TenantId,
+    redirects: Mapping[str, str],
+    secrets: Mapping[str, str],
+    variables: Iterable[str | None],
+) -> str | None:
+    """Le refus d'un secret manquant, redit avec la variable **du client** (L2).
+
+    Un client redirige ``ANTHROPIC_API_KEY`` vers ``DUPONT_ANTHROPIC_KEY`` ;
+    l'adaptateur, qui ne connaît que la config, disait alors « la variable
+    ANTHROPIC_API_KEY est absente ou vide » alors qu'elle est posée — c'est
+    la variable du client qui manque (test L2 du 22/10). Rend ``None`` quand
+    aucune variable redirigée ne manque : le message d'origine dit juste.
+    """
+    missing = [
+        (name, redirects[name])
+        for name in dict.fromkeys(v for v in variables if v is not None)
+        if name in redirects and not secrets.get(name, "").strip()
+    ]
+    if not missing:
+        return None
+    named = ", ".join(f"{target} (redirection de {name})" for name, target in missing)
+    verb = "est absente ou vide" if len(missing) == 1 else "sont absentes ou vides"
+    plural = "la variable" if len(missing) == 1 else "les variables"
+    return f"Client {tenant_id!r} : {plural} {named} {verb}"
+
+
 def _mcp_sources(
     config: LoomConfig,
     spec: AgentSpec,
     environ: Mapping[str, str] | None,
     pool: McpPool | None,
     tenant_id: TenantId = DEFAULT_TENANT,
+    redirects: Mapping[str, str] | None = None,
 ) -> tuple[list[ToolSource], tuple[_Closable, ...]]:
     """Sources d'outils des serveurs MCP de l'agent, et le pool créé pour lui s'il en faut un.
 
@@ -1615,6 +1653,12 @@ def _mcp_sources(
         try:
             factory = session_factory(server, environ=env)
         except McpConfigError as exc:
+            named = [*server.env_from.values(), *server.headers_env.values()]
+            said = _missing_secret(tenant_id, redirects or {}, env, named)
+            if said is not None:
+                raise ConfigError(
+                    f"Agent {spec.name!r} : {said} — serveur MCP {server.name!r}"
+                ) from exc
             raise ConfigError(f"Agent {spec.name!r} : {exc}") from exc
         selection = McpSelection(
             prefix=ref.prefix,
