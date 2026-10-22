@@ -8,9 +8,13 @@ horodatages par clé de comptage, et on jette ce qui est sorti de la fenêtre.
 
 Le même compteur sert deux choses qu'il ne faut pas confondre. Le quota d'un
 **client** (``quotas.runs_per_minute``) est une règle métier : il est vérifié
-à la façade, donc il vaut par les trois accès et par la ligne de commande. Le
-débit d'une **clé d'API** (``rate_limit.per_minute``) protège le serveur : il
-est vérifié par l'accès HTTP, qui répond 429 avec un ``Retry-After``.
+à la façade, donc il vaut par les trois accès — mais **par instance**
+``Loom`` : la fenêtre vit en mémoire, une commande ``loom run`` (un process
+par run) ne l'atteint jamais, et deux workers ou deux ``loom serve`` tiennent
+chacun la leur (test L3 du 22/10). Le débit d'une **clé d'API**
+(``rate_limit.per_minute``) protège le serveur : il est vérifié par l'accès
+HTTP, qui répond 429 avec un ``Retry-After``, et tient lui aussi une fenêtre
+par application.
 """
 
 import time

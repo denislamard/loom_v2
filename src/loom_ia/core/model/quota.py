@@ -8,8 +8,11 @@ et pas le droit de lancer trente runs dans la minute.
 Deux notions distinctes, malgré leur ressemblance :
 
 - ``Quotas`` appartient au **client**, et vaut quel que soit le chemin
-  emprunté — API Python, REST, MCP, ligne de commande. C'est une règle
-  métier : ce que cet artisan a payé le droit de faire.
+  emprunté — API Python, REST, MCP — **dans une même instance** ``Loom`` :
+  sa fenêtre est tenue en mémoire, si bien qu'une commande ``loom run``
+  (un process par run) ne l'atteint jamais, et que N process (workers,
+  ``loom serve``) accordent chacun le quota entier. C'est une règle métier :
+  ce que cet artisan a payé le droit de faire.
 - ``RateLimit`` appartient à une **clé d'API**, et n'a de sens qu'en HTTP :
   c'est la protection du serveur contre un appelant qui s'emballe, et elle
   se répond par un 429 et un ``Retry-After``.
@@ -26,7 +29,8 @@ WINDOW: float = 60.0
 class Quotas(DomainModel):
     """Débit accordé à un client (L3) ; ``None`` : pas de limite."""
 
-    # Runs qu'un client peut lancer par minute, tous accès confondus. Un
+    # Runs qu'un client peut lancer par minute, tous accès confondus, par
+    # instance ``Loom`` (fenêtre en mémoire, voir plus haut). Un
     # sous-run n'en est pas un : il est lancé par son parent, pas par le client.
     runs_per_minute: PositiveInt | None = None
 

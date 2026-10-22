@@ -743,8 +743,12 @@ async def test_a_key_rate_limit_protects_the_server_even_on_a_read(demo: ConfigF
                 assert (await http.get("/v1/agents", headers=chez_bridee)).status_code == 200
             refus = await http.get("/v1/agents", headers=chez_bridee)
             assert refus.status_code == 429
-            assert "requêtes par minute" in refus.json()["detail"]
             assert 1 <= int(refus.headers["Retry-After"]) <= 60
+            # Test L3 du 22/10 : l'attente n'était que dans l'en-tête.
+            assert refus.json()["detail"] == (
+                "Clé 'bridee' : 2 requêtes par minute dépassées, "
+                f"réessayer dans {refus.headers['Retry-After']} s"
+            )
             # Une clé sans limite de débit n'est pas comptée.
             chez_libre = {"Authorization": f"Bearer {libre}"}
             for _ in range(5):

@@ -85,10 +85,12 @@ def throttle(caller: Caller, window: RateWindow) -> None:
     waiting = window.take(f"key:{key.id}", key.rate_limit.per_minute)
     if waiting is None:
         return
+    seconds = max(1, math.ceil(waiting))
     raise HTTPException(
         status.HTTP_429_TOO_MANY_REQUESTS,
-        f"Clé {key.id!r} : {key.rate_limit.per_minute} requêtes par minute dépassé",
-        headers={"Retry-After": str(max(1, math.ceil(waiting)))},
+        f"Clé {key.id!r} : {key.rate_limit.per_minute} requêtes par minute dépassées, "
+        f"réessayer dans {seconds} s",
+        headers={"Retry-After": str(seconds)},
     )
 
 

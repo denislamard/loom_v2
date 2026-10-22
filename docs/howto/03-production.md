@@ -1427,8 +1427,8 @@ run 3 : refusé — Client 'dupont-plomberie' : 2 par minute dépassé, réessay
 
 - Un budget de **client** vit dans la fiche du client (`tenants[].budgets.tenant`) ou dans `budgets.tenant` à la racine pour le client `default`. Il est refusé **avant** le run : le refus ne laisse aucune trace de run dans le journal.
 - En REST, un budget de client épuisé et un quota dépassé se traduisent par un refus `429` accompagné d'un `Retry-After` (constaté au chapitre 22).
-- Le quota `runs_per_minute` compte les runs lancés par le client (un sous-run n'en est pas un), sur une fenêtre glissante d'une minute, et vaut pour tous les accès (Python, REST, MCP, ligne de commande).
-- **Piège 1.** La fenêtre glissante du quota est tenue **en mémoire de l'instance** `Loom`. Une commande `loom run` qui ne vit que le temps d'un run ne peut donc jamais atteindre un quota : lancez trois fois la commande en ligne de commande, les trois passeront. Le quota protège un service qui reste vivant (`loom serve`, un script, un worker) ; avec plusieurs workers, chacun tient sa propre fenêtre.
+- Le quota `runs_per_minute` compte les runs lancés par le client (un sous-run n'en est pas un), sur une fenêtre glissante d'une minute, par tous les accès (Python, REST, MCP) **d'une même instance** : voir le piège 1 pour la ligne de commande et les process multiples.
+- **Piège 1.** La fenêtre glissante du quota est tenue **en mémoire de l'instance** `Loom`. Une commande `loom run` qui ne vit que le temps d'un run ne peut donc jamais atteindre un quota : lancez trois fois la commande en ligne de commande, les trois passeront. Le quota protège un service qui reste vivant (`loom serve`, un script, un worker) ; avec plusieurs workers ou plusieurs `loom serve`, chacun tient sa propre fenêtre, et le client obtient le quota **une fois par process**. Il en va de même du débit d'une clé d'API (`rate_limit`), tenu par l'application REST.
 - **Piège 2.** Écart avec la documentation, version 2.0.0 : quand un budget de client est épuisé, `loom run` affiche une **trace d'erreur Python complète** (`loom_ia.tenancy.usage.BudgetExhausted: …`) et sort en code 1. Le dépôt corrige cela (version 2.0.1 : une ligne claire sur `stderr`, code de sortie 2 pour les refus d'exploitation). Dans un script ou un service, interceptez `BudgetExhausted` et `QuotaExceeded` (`from loom_ia.tenancy import …`).
 
 ---
@@ -5164,7 +5164,7 @@ curl -s -i -H "Authorization: Bearer $M" $B/v1/agents | sed -n '1p;/[Rr]etry-[Aa
 5 : 429
 HTTP/1.1 429 Too Many Requests
 retry-after: 60
-{"detail":"Clé 'app-martin' : 4 requêtes par minute dépassé"}
+{"detail":"Clé 'app-martin' : 4 requêtes par minute dépassées, réessayer dans 60 s"}
 ```
 
 (Attendez une minute après les commandes précédentes avant de lancer cette boucle : chaque requête de Martin compte dans la limite, et les trois précédentes l'auraient déjà entamée. Lors de la première exécution de ce guide, l'approbation tentée par Martin avait d'ailleurs reçu un 429 pour cette raison, avant d'être rejouée une minute plus tard et de recevoir le 404 montré plus haut.)
