@@ -108,6 +108,7 @@ from loom_ia.core.ports import (
     JournalBusy,
     JournalCorrupted,
     Policy,
+    SealBroken,
     SealError,
     SessionRecord,
     SourceContext,
@@ -208,6 +209,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     except StorageNotReady as error:
         # Rien n'a été écrit : la base est à préparer par son administrateur.
         print(f"Stockage : {error!s}", file=sys.stderr)
+        return REFUSED
+    except SealBroken as error:
+        # Octets ou enveloppe altérés : un journal abîmé, comme JournalCorrupted.
+        print(f"Journal scellé illisible : {error!s}", file=sys.stderr)
+        return FAILED
+    except SealError as error:
+        # Une clé absente ou autre (MissingKey) : l'effet voulu d'un effacement de
+        # clé, ou une variable oubliée — un refus, comme le 424 de la REST, pas une
+        # panne ; le message nomme le client et l'empreinte (test P1 du 23/10).
+        print(f"Journal scellé : {error!s}", file=sys.stderr)
         return REFUSED
     except EOFError:
         print(

@@ -13,6 +13,7 @@ et se supprime** quand même ; une charge ne se déplace pas ; une clé ne
 s'emprunte pas d'un client à l'autre.
 """
 
+import asyncio
 import json
 from base64 import b64encode
 from collections.abc import Sequence
@@ -714,6 +715,79 @@ async def test_a_sealed_read_answers_424_and_names_the_key(
             answer = await client.get("/v1/events", params={"session_id": run.run_id})
             assert answer.status_code == 424
             assert "clé" in answer.json()["detail"]
+
+
+def _sealed_run(demo: ConfigFactory, tmp_path: Path) -> tuple[Path, str]:
+    """Une config scellée et un run écrit avec sa clé ; rend la config et le run.
+
+    Synchrone : la ligne de commande ouvre sa propre boucle (``asyncio.run``).
+    """
+    path = demo(
+        storage={
+            "events": {"backend": "jsonl", "path": str(tmp_path / "events")},
+            "encryption": SEAL,
+        }
+    )
+
+    async def run() -> str:
+        async with Loom(load_config(path), environ={KEY_ENV: KEY_A}) as loom:
+            return (await loom.run("demo", QUESTION)).run_id
+
+    return path, asyncio.run(run())
+
+
+@pytest.mark.parametrize("environ", [{}, {KEY_ENV: KEY_B}], ids=["clé effacée", "autre clé"])
+def test_the_command_line_refuses_a_sealed_read_in_one_line(
+    demo: ConfigFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    environ: dict[str, str],
+) -> None:
+    """Test P1 du 23/10 : une clé absente ou autre sortait en trace Python, code 1.
+
+    La REST répondait 424 ; la ligne de commande n'avait pas de branche pour
+    une ``SealError`` : le message, clair, était noyé en bas d'une trace, et le
+    code de sortie disait une panne là où c'est un refus voulu.
+    """
+    from loom_ia.access.cli import main
+
+    path, run_id = _sealed_run(demo, tmp_path)
+    monkeypatch.delenv(KEY_ENV, raising=False)
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
+    capsys.readouterr()
+    code = main(["--config", str(path), "--no-env-file", "sessions", "export", run_id])
+    err = capsys.readouterr().err
+
+    assert code == 2
+    assert "Traceback" not in err
+    assert "Journal scellé : " in err
+    assert "Client 'default'" in err
+
+
+def test_the_command_line_says_a_broken_seal_is_a_failure(
+    demo: ConfigFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Un sceau altéré n'est pas un refus voulu : une ligne, et le code d'un journal abîmé."""
+    from loom_ia.access.cli import main
+
+    path, run_id = _sealed_run(demo, tmp_path)
+    journal = tmp_path / "events" / DEFAULT_TENANT / f"{run_id}.jsonl"
+    rangees = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+    rangees[0] = {**rangees[0], "seq": 99}
+    journal.write_text("".join(json.dumps(r) + "\n" for r in rangees), encoding="utf-8")
+    monkeypatch.setenv(KEY_ENV, KEY_A)
+    capsys.readouterr()
+    code = main(["--config", str(path), "--no-env-file", "sessions", "export", run_id])
+    err = capsys.readouterr().err
+
+    assert code == 1
+    assert "Traceback" not in err
+    assert "Journal scellé illisible : " in err
 
 
 def test_a_config_written_by_hand_reads_back(tmp_path: Path) -> None:
