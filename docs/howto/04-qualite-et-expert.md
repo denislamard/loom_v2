@@ -4115,7 +4115,7 @@ Le texte de la réponse sort sur **stdout** ; `Statut`, `Run` et `En attente` so
 
 ## Annexe B. Routes de l'API REST
 
-Relevées dans `/openapi.json` du serveur (`uv run loom serve`, extra `http`) et confirmées dans le code de l'application. La documentation interactive est servie sur `/docs`. Sans clé d'API valide, toute route répond **401**. La documentation du dépôt annonce 17 routes ; l'OpenAPI en décrit 16.
+Relevées dans `/openapi.json` du serveur (`uv run loom serve`, extra `http`) et confirmées dans le code de l'application. La documentation interactive est servie sur `/docs`. Sans clé d'API valide, toute route répond **401**. L'OpenAPI décrit 17 chemins, soit 18 opérations : `/v1/sessions/{id}` porte `GET` et `DELETE`.
 
 ### Portées des clés
 
@@ -4141,13 +4141,15 @@ Sans `read_content`, les réponses portent `content: false`, `output: null` et `
 | `GET /v1/runs/{run_id}/events` | read | Événements en SSE. Paramètres : `after_seq`, `subruns` |
 | `POST /v1/runs/{run_id}/approve` | approve | Approuve. Corps : `call_id`, `by`, `reason`, `arguments` |
 | `POST /v1/runs/{run_id}/reject` | approve | Refuse. Corps : `call_id`, `by`, `reason` |
-| `POST /v1/runs/{run_id}/cancel` | run | Annule. Corps : `by` |
+| `POST /v1/runs/{run_id}/cancel` | run | Annule. Corps facultatif : `by` |
 | `GET /v1/events` | read | Événements filtrés : `session_id`, `run_id`, `type`, `category`, `status`, `agent`, `role`, `tool_name`, `model_id`, `since`, `until`, `after`, `limit` |
 | `GET /v1/traces/{run_id}` | read | Trace hiérarchique |
 | `GET /v1/sessions` | read | Liste des sessions |
 | `GET /v1/sessions/{id}` | read | Détail d'une session |
 | `DELETE /v1/sessions/{id}` | admin | Supprime une session |
 | `GET /v1/sessions/{id}/events` | read | Journal de la session en JSONL |
+| `GET /v1/sessions/{id}/files` | read | Fichiers de la session |
+| `GET /v1/sessions/{id}/files/{file}` | read_content | Octets d'un fichier de la session |
 | `GET /v1/sessions/{id}/report` | read | Rapport de consommation |
 
 Corps de `POST /v1/agents/{name}/runs` : `message`, `session_id`, `run_id`, `user_id`, `metadata`, `judges`, `background`. La valeur `judges: skip` exige la portée `admin`.
@@ -4348,7 +4350,7 @@ Variable d'environnement de l'exporteur absente : simple WARNING (« ce collecte
 3. Le README parle d'une ligne par appel de modèle et d'outil à INFO ; il y a aussi les lignes `Transition`.
 4. Un run en pause sort avec le code 1.
 5. Le README renvoie à un dossier `examples/` absent de l'archive.
-6. 17 routes annoncées, 16 dans l'OpenAPI.
+6. Relevé en 2.0.0 : 17 routes annoncées, 16 dans l'OpenAPI. Depuis 2.0.10, l'OpenAPI décrit bien les 17 chemins.
 7. Voir ci-dessus pour le profil et le journal non durable.
 8. Un run échoué pour `timeout` est décrit comme « reprenable » (commentaire du code, backlog) ; `loom resume` le rend tel quel, même avec un délai relevé, en 2.0.0 comme avec les sources de la 2.0.1. Il faut lancer un nouveau run (exemple 19.6).
 

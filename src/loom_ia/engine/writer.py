@@ -161,11 +161,15 @@ class RunExists(ValueError):
     """Le run à ouvrir a déjà des événements dans le journal : rien n'a été écrit.
 
     C'est une ``ValueError``, comme l'a toujours été « le run existe déjà ».
+    ``session_id`` nomme la session qui le détient quand ce n'est pas celle
+    demandée : un ``run_id`` choisi par l'appelant est unique chez son client.
     """
 
-    def __init__(self, run_id: RunId) -> None:
-        super().__init__(f"Le run {run_id} existe déjà")
+    def __init__(self, run_id: RunId, session_id: SessionId | None = None) -> None:
+        where = "" if session_id is None else f" dans la session {session_id}"
+        super().__init__(f"Le run {run_id} existe déjà{where}")
         self.run_id = run_id
+        self.session_id = session_id
 
 
 class SessionWriter:

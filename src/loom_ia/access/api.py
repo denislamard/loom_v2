@@ -1437,6 +1437,7 @@ class Loom:
         panne est journalisée (ERROR) et le résultat est celui du run.
         """
         caller, who = await self._admitted(agent, context, tenant)
+        await self._unclaimed(run_id, session_id, who.id)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
         started = await self._start(
             ctx, message, attachments, session_id, caller, run_id, judges, state
@@ -1463,13 +1464,16 @@ class Loom:
         Le run est lancé en tâche de fond ; abandonner l'itération l'annule.
         Son résultat se relit ensuite avec ``result(run_id)``. Avec
         ``subruns``, les événements des sous-runs sont mêlés au flux. Le flux
-        ne montre que le journal de ce run — son client, sa session : un autre
-        run qui aurait choisi le même ``run_id`` n'y paraît pas.
+        ne montre que le journal de ce run — son client, sa session : le run
+        d'un autre client qui aurait choisi le même ``run_id`` n'y paraît pas
+        (dans un même client, ce ``run_id`` pris ailleurs est refusé :
+        ``RunExists``).
         ``judges``, ``approver`` et ``state`` : comme pour ``run``.
 
         Un run arrêté par ``cancel()`` termine le flux proprement, après
         ``run.cancelled`` ; l'arrêt de la tâche qui itère, lui, se propage.
         """
+        chosen = run_id
         run_id = run_id or new_run_id()
         items: asyncio.Queue[StreamItem | None] = asyncio.Queue()
 
@@ -1477,6 +1481,7 @@ class Loom:
             items.put_nowait(chunk)
 
         caller, who = await self._admitted(agent, context, tenant)
+        await self._unclaimed(chosen, session_id, who.id)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
         tree = RunTree(run_id, subruns=subruns)
         summaries = OpeningSummaries(run_id)
@@ -2688,6 +2693,9 @@ class Loom:
         un ``state`` refusé, ``StateRefused`` (voir ``run``).
         """
         caller, who = await self._admitted(agent, context, tenant)
+        if trigger is None:
+            # Une porte cherche ses identifiants de livraison elle-même (``_elsewhere``).
+            await self._unclaimed(run_id, session_id, who.id)
         ctx = self.context(agent, who.id)
         if self._compaction is not None and session_id is not None:
             # Le state se contrôle avant : un run refusé ne compacte pas la session.
@@ -3167,6 +3175,32 @@ class Loom:
         if session_id is None:
             return None
         return await self._writers.open(self._store, tenant_id, session_id)
+
+    async def _unclaimed(
+        self, run_id: RunId | None, session_id: SessionId | None, tenant: TenantId
+    ) -> None:
+        """Refuse un ``run_id`` choisi par l'appelant et déjà pris dans une autre session.
+
+        ``begin_run`` ne regarde que la session du run. Au test N2 du 23/10, un
+        même ``run_id`` imposé en REST dans deux sessions a ouvert deux runs :
+        leurs spans tombaient dans une même trace OTel (son identifiant vient
+        du ``run_id`` et du client) et ``GET /v1/events?run_id=…`` les mêlait.
+        Un identifiant choisi désigne donc un seul run du client ; la même
+        session reste l'affaire de ``begin_run`` (une demande rejouée garde sa
+        réponse). La recherche est indexée en SQLite et en Postgres, et relit
+        les journaux du client en JSONL — seulement quand l'appelant choisit
+        l'identifiant. Deux demandes simultanées peuvent encore passer toutes
+        les deux : le journal n'a pas d'index unique par client.
+        """
+        if run_id is None:
+            return
+        session = session_id or SessionId(run_id)
+        started = await self._store.query(
+            EventQuery(tenant_id=tenant, run_id=run_id, types=("run.started",))
+        )
+        other = next((e for e in started if e.session_id != session), None)
+        if other is not None:
+            raise RunExists(run_id, session_id=other.session_id)
 
     async def _start(
         self,

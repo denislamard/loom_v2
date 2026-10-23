@@ -212,6 +212,21 @@ async def test_the_same_run_id_twice_is_refused(demo: ConfigFactory) -> None:
     assert "existe déjà" in again.json()["detail"]
 
 
+async def test_a_run_id_taken_in_another_session_is_refused(demo: ConfigFactory) -> None:
+    """Un `run_id` choisi désigne un seul run du client (test N2 du 23/10)."""
+    async with serving(demo()) as (_, http):
+        first = {"message": QUESTION, "run_id": "run-unique", "session_id": "s-un"}
+        second = {"message": QUESTION, "run_id": "run-unique", "session_id": "s-deux"}
+        assert (await http.post("/v1/agents/demo/runs", json=first)).status_code == 201
+        again = await http.post("/v1/agents/demo/runs", json=second)
+        background = await http.post("/v1/agents/demo/runs", json={**second, "background": True})
+        other = await http.get("/v1/sessions/s-deux")
+
+    assert again.status_code == background.status_code == 409
+    assert again.json()["detail"] == "Le run run-unique existe déjà dans la session s-un"
+    assert other.status_code == 404
+
+
 async def test_a_run_refused_for_its_state_is_a_422(demo: ConfigFactory) -> None:
     """D13 : une clé ``required`` sans valeur ; la demande ne peut pas ouvrir de run."""
     required = {"client_id": {"schema": {"type": "string"}, "required": True}}
@@ -537,6 +552,22 @@ async def test_a_paused_run_can_be_cancelled_over_rest(
     assert stopped.json() == {"run_id": run_id, "cancelled": True}
     # Un run annulé est terminal : la seconde demande ne trouve plus rien à arrêter.
     assert again.json()["cancelled"] is False
+    assert finished.json()["status"] == "cancelled"
+
+
+async def test_a_cancellation_needs_no_body(atelier: ConfigFactory) -> None:
+    """Le corps de `/cancel` n'a qu'un champ facultatif : il l'est aussi (test N2 du 23/10)."""
+    async with serving(atelier(security=CLES)) as (_, http):
+        entete = {"Authorization": f"Bearer {CLE}"}
+        started = await http.post(
+            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
+        )
+        run_id = started.json()["run_id"]
+        stopped = await http.post(f"/v1/runs/{run_id}/cancel", headers=entete)
+        finished = await http.get(f"/v1/runs/{run_id}", headers=entete)
+
+    assert stopped.status_code == 200
+    assert stopped.json() == {"run_id": run_id, "cancelled": True}
     assert finished.json()["status"] == "cancelled"
 
 

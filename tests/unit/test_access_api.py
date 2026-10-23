@@ -133,18 +133,48 @@ async def test_stream_does_not_mix_two_clients_choosing_the_same_run_id(
     assert {event.tenant_id for event in beta} == {BETA}
 
 
-async def test_stream_does_not_mix_two_sessions_choosing_the_same_run_id(
-    demo: ConfigFactory,
-) -> None:
+async def test_a_run_id_taken_in_another_session_is_refused(demo: ConfigFactory) -> None:
+    """Un ``run_id`` choisi désigne un seul run du client (test N2 du 23/10).
+
+    Deux sessions du même client l'acceptaient : leurs spans tombaient dans
+    une même trace OTel, et une recherche par ``run_id`` mêlait les deux runs.
+    """
     run_id = new_run_id()
     first, second = SessionId("s-1"), SessionId("s-2")
     async with Loom.from_config(demo()) as loom:
-        one, two = await _two_streams(loom, run_id, {"session_id": first}, {"session_id": second})
-        assert one == await loom.events(run_id, session_id=first)
-        assert two == await loom.events(run_id, session_id=second)
+        await loom.run("demo", QUESTION, session_id=first, run_id=run_id)
+        with pytest.raises(RunExists, match=f"{run_id} existe déjà dans la session s-1"):
+            await loom.run("demo", QUESTION, session_id=second, run_id=run_id)
+        with pytest.raises(RunExists, match="dans la session s-1"):
+            await loom.submit("demo", QUESTION, session_id=second, run_id=run_id)
+        with pytest.raises(RunExists, match="dans la session s-1"):
+            async with aclosing(
+                loom.stream("demo", QUESTION, session_id=second, run_id=run_id)
+            ) as items:
+                async for _ in items:
+                    pass
+        # Sans session, le run irait dans celle qui porte son nom : autre session aussi.
+        with pytest.raises(RunExists, match="dans la session s-1"):
+            await loom.run("demo", QUESTION, run_id=run_id)
+        found = await loom.query(
+            EventQuery(tenant_id=DEFAULT_TENANT, run_id=run_id, types=("run.started",))
+        )
 
-    assert {event.session_id for event in one} == {first}
-    assert {event.session_id for event in two} == {second}
+    assert [event.session_id for event in found] == [first]
+
+
+async def test_a_run_id_is_unique_per_tenant_only(demo: ConfigFactory) -> None:
+    """Deux clients ont chacun leur journal : le même ``run_id`` y est permis."""
+    run_id = new_run_id()
+    async with Loom.from_config(demo(tenants=[{"id": ACME}, {"id": BETA}])) as loom:
+        acme = await loom.run(
+            "demo", QUESTION, session_id=SessionId("s-1"), run_id=run_id, tenant=ACME
+        )
+        beta = await loom.run(
+            "demo", QUESTION, session_id=SessionId("s-2"), run_id=run_id, tenant=BETA
+        )
+
+    assert acme.ok and beta.ok
 
 
 async def test_resume_finishes_without_rerunning_the_tool(demo: ConfigFactory) -> None:

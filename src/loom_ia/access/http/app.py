@@ -95,6 +95,7 @@ from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     FastAPI,
     HTTPException,
@@ -706,12 +707,18 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
 
     @router.post("/runs/{run_id}/cancel", tags=["runs"], summary="Arrête un run")
     async def cancel(
-        who: Who, run_id: RunId, body: Cancellation, session_id: SessionId | None = None
+        who: Who,
+        run_id: RunId,
+        # Facultatif : son seul champ l'est aussi. Exigé, un POST sans corps
+        # recevait le 422 anglais de FastAPI (« Field required », test N2 du 23/10).
+        body: Annotated[Cancellation | None, Body()] = None,
+        session_id: SessionId | None = None,
     ) -> Cancelled:
         state = await loom.state(run_id, session_id=session_id, tenant_id=who.tenant)
         require(who, "run", state.agent)
+        by = body.by if body is not None else None
         stopped = await loom.cancel(
-            run_id, session_id=session_id, by=body.by or _signature(who), tenant_id=who.tenant
+            run_id, session_id=session_id, by=by or _signature(who), tenant_id=who.tenant
         )
         return Cancelled(run_id=run_id, cancelled=stopped)
 
