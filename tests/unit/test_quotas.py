@@ -260,20 +260,59 @@ async def test_closing_the_counter_forgets_everything() -> None:
 # --- Réchauffage : le compteur est un cache du journal ------------------------
 
 
-async def test_the_counter_warms_up_from_the_journal_once_per_window(
+async def test_each_check_reads_the_rest_of_the_journal_without_counting_twice(
     demo: ConfigFactory,
 ) -> None:
     store = CountingStore()
     await written(store, spending(DUPONT, 3))
-    tenant = registry(demo, budgets=AFTER_ONE).get(DUPONT)
+    tenant = registry(demo, budgets={"tenant": {"max_tokens_per_day": 10_000}}).get(DUPONT)
+    counter = InMemoryUsageCounter()
+    usage = TenantUsage(counter, store)
+    key = Period.of("day").key
+    await usage.check(tenant)
+    await usage.check(tenant)
+    # Une lecture par contrôle, et ce qui a déjà été lu n'est pas recompté.
+    assert store.queries == 2
+    assert (await counter.consumed(DUPONT, key)).tokens == 300
+
+
+async def test_a_run_written_by_another_process_after_the_warm_up_is_counted(
+    demo: ConfigFactory,
+) -> None:
+    """Test N du 23/10 : deux `loom serve` sur un journal, plafond de 2 615 tokens.
+
+    Réchauffé une seule fois par fenêtre, le compteur d'un process ne voyait
+    ensuite que ses propres runs : celui de l'autre `serve` passait inaperçu,
+    et le client a dépensé 4 184 tokens.
+    """
+    store = InMemoryEventStore()
+    await written(store, spending(DUPONT, 1, tokens=100))
+    tenant = registry(demo, budgets={"tenant": {"max_tokens_per_day": 250}}).get(DUPONT)
     usage = TenantUsage(InMemoryUsageCounter(), store)
-    with pytest.raises(BudgetExhausted):
+    await usage.check(tenant)
+    # Un autre process termine un run : il l'écrit au journal, pas dans ce compteur.
+    await written(store, spending(DUPONT, 2, tokens=100))
+    with pytest.raises(BudgetExhausted, match="300 tokens"):
         await usage.check(tenant)
-    read = store.queries
-    assert read == 1
-    with pytest.raises(BudgetExhausted):
-        await usage.check(tenant)
-    assert store.queries == read
+
+
+async def test_a_run_still_in_progress_is_counted_then_completed(demo: ConfigFactory) -> None:
+    """Un run lu à moitié, puis fini : ses appels s'ajoutent, sans doublon."""
+    store = InMemoryEventStore()
+    journal = RunJournal(tenant_id=DUPONT)
+    journal.start("Où en est mon devis ?")
+    journal.model_turn(Message.assistant("Je cherche."), usage=Usage(input_tokens=100))
+    await written(store, journal)
+    tenant = registry(demo, budgets={"tenant": {"max_tokens_per_day": 10_000}}).get(DUPONT)
+    counter = InMemoryUsageCounter()
+    usage = TenantUsage(counter, store)
+    key = Period.of("day").key
+    await usage.check(tenant)
+    assert (await counter.consumed(DUPONT, key)).tokens == 100
+    journal.model_turn(Message.assistant("Voilà."), usage=Usage(input_tokens=50))
+    await written(store, journal.complete())
+    await usage.check(tenant)
+    assert (await counter.consumed(DUPONT, key)).tokens == 150
 
 
 async def test_a_run_recorded_during_the_warm_up_is_not_counted_twice(
@@ -360,7 +399,8 @@ async def test_concurrent_checks_wait_for_the_warm_up_instead_of_reading_an_empt
     store.release.set()
     results = await asyncio.gather(first, second, return_exceptions=True)
     assert [type(result) for result in results] == [BudgetExhausted, BudgetExhausted]
-    assert store.queries == 1
+    # Le second lit après le premier (la suite du journal), pas pendant.
+    assert store.queries == 2
 
 
 async def test_a_failed_warm_up_refuses_the_run_and_the_next_check_reads_again(

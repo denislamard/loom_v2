@@ -10,14 +10,27 @@ ne fait pas quatre fois par run.
 
 Le compteur est un cache, reconstructible : à la première question posée pour
 un client et une période, ``TenantUsage`` le **réchauffe** en relisant les
-``model.responded`` du journal depuis le début de la fenêtre, puis la vie
-courante l'entretient — un run enregistre ce qu'il a coûté en se terminant.
-Comme ``record`` pose une valeur par run racine au lieu de l'ajouter, les deux
-sources peuvent se chevaucher sans jamais compter deux fois.
+``model.responded`` (et ``model.retried`` facturés) du journal depuis le début
+de la fenêtre ; la vie courante l'entretient — un run enregistre ce qu'il a
+coûté en se terminant. Comme ``record`` pose une valeur par run racine au lieu
+de l'ajouter, les deux sources peuvent se chevaucher sans jamais compter deux
+fois.
 
-Le réchauffage est **atomique** : un seul à la fois par client et par période
-(un verrou par couple, un client lent n'attend pas les autres), et le couple
-n'est tenu pour chaud qu'**une fois la lecture réussie**. Les ``check()``
+**Chaque contrôle relit la suite du journal** (test N du 23/10). Le journal
+est commun à tous les process — un autre ``loom serve``, un worker, ``loom
+run`` — et le compteur ne l'est pas : réchauffé une seule fois par fenêtre,
+celui d'un ``serve`` qui dure ne voyait plus que ses propres runs, et deux
+``serve`` sur un plafond de 2 615 tokens en ont laissé passer 4 184. Avant de
+répondre, ``check`` lit donc ce qui a été écrit depuis sa dernière lecture
+(``_Window`` : les totaux par run tirés du journal, les événements déjà vus,
+et une borne qui recule de ``OVERLAP`` pour rattraper un événement écrit en
+retard) et repose le total de chaque run touché. Reste l'écart des runs
+admis ensemble, avant qu'aucun n'ait consommé : le contrôle a lieu au
+lancement.
+
+La lecture est **atomique** : une seule à la fois par client et par période
+(un verrou par couple, un client lent n'attend pas les autres), et ce qu'elle
+apprend n'est retenu qu'**une fois la lecture réussie**. Les ``check()``
 concurrents attendent donc un compteur rempli, pas un compteur vide ; une
 lecture qui échoue se propage à l'appelant — le run est refusé, rien n'est
 écrit — au lieu de laisser le plafond ouvert, et le contrôle suivant retente.
@@ -31,8 +44,8 @@ dont le compteur, justement, ne retient rien.
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Final
 
 from loom_ia.core.events import Event
@@ -58,6 +71,10 @@ MODEL_RESPONDED: Final = "model.responded"
 MODEL_RETRIED: Final = "model.retried"
 # Événements lus par requête au réchauffage ; la pagination fait le reste.
 PAGE: Final = 5_000
+# Recul de la borne de lecture : un événement daté avant la dernière lecture
+# mais écrit après (un process plus lent, une horloge en retard) est rattrapé ;
+# les événements déjà vus sont écartés par leur identifiant.
+OVERLAP: Final = timedelta(minutes=2)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -112,6 +129,20 @@ class TenantConsumption:
         return None
 
 
+@dataclass(slots=True)
+class _Window:
+    """Ce que ce process a lu du journal pour un client et une période."""
+
+    period: Period
+    # Prochaine lecture à partir de cette date (le début de la fenêtre, puis la
+    # dernière date lue moins ``OVERLAP``).
+    since: datetime
+    # Dépense par run racine, tirée du journal : la somme de ce qui a été lu.
+    totals: dict[RunId, Spent] = field(default_factory=dict[RunId, Spent])
+    # Événements déjà comptés, et leur date : ceux d'avant ``since`` sont oubliés.
+    seen: dict[str, datetime] = field(default_factory=dict[str, datetime])
+
+
 class TenantUsage:
     """Compteur de consommation par client, et contrôle de son budget de période."""
 
@@ -121,10 +152,9 @@ class TenantUsage:
         # Un compteur partagé et durable (J5.3) n'a rien à réchauffer : sa
         # valeur est déjà celle de tout le monde.
         self._warms = warm
-        self._warmed: set[tuple[TenantId, str]] = set()
-        # Un verrou par (client, période) tant que son réchauffage n'a pas
-        # abouti : il est retiré dès que le couple est chaud.
-        self._warming: dict[tuple[TenantId, str], asyncio.Lock] = {}
+        self._windows: dict[tuple[TenantId, str], _Window] = {}
+        # Un verrou par (client, période) : une lecture du journal à la fois.
+        self._reading: dict[tuple[TenantId, str], asyncio.Lock] = {}
 
     async def check(self, tenant: Tenant, now: datetime | None = None) -> None:
         """Lève ``BudgetExhausted`` si le client n'a plus de quoi lancer un run.
@@ -180,17 +210,68 @@ class TenantUsage:
         )
 
     async def _consumed(self, tenant_id: TenantId, period: Period) -> Spent:
-        warm = (tenant_id, period.key)
-        if self._warms and warm not in self._warmed:
+        if self._warms:
+            key = (tenant_id, period.key)
             # Les appels concurrents attendent le premier ; si sa lecture échoue
-            # ou est annulée, le couple reste froid et le suivant la refait.
-            async with self._warming.setdefault(warm, asyncio.Lock()):
-                if warm not in self._warmed:
-                    for run_id, spent in (await self._from_journal(tenant_id, period)).items():
-                        await self._counter.record(tenant_id, period.key, run_id, spent)
-                    self._warmed.add(warm)
-            self._warming.pop(warm, None)
+            # ou est annulée, rien n'en est retenu et le suivant la refait.
+            async with self._reading.setdefault(key, asyncio.Lock()):
+                await self._caught_up(tenant_id, period)
         return await self._counter.consumed(tenant_id, period.key)
+
+    async def _caught_up(self, tenant_id: TenantId, period: Period) -> None:
+        """Lit ce que le journal a reçu depuis la dernière lecture, et le porte au compteur."""
+        key = (tenant_id, period.key)
+        window = self._windows.get(key) or _Window(period=period, since=period.start)
+        fresh = [
+            e for e in await self._read(tenant_id, window.since) if e.event_id not in window.seen
+        ]
+        # Rien n'est retenu avant d'avoir tout lu : une lecture qui échoue laisse
+        # la fenêtre telle qu'elle était.
+        touched: set[RunId] = set()
+        for entry in ledger(fresh):
+            window.totals[entry.root_run_id] = (
+                window.totals.get(entry.root_run_id, Spent()) + entry.spent
+            )
+            touched.add(entry.root_run_id)
+        for event in fresh:
+            window.seen[event.event_id] = event.ts
+        if window.seen:
+            window.since = max(window.since, max(window.seen.values()) - OVERLAP)
+            window.seen = {id_: ts for id_, ts in window.seen.items() if ts >= window.since}
+        self._windows[key] = window
+        self._forget_before(tenant_id, period)
+        for run_id in touched:
+            await self._counter.record(tenant_id, period.key, run_id, window.totals[run_id])
+
+    def _forget_before(self, tenant_id: TenantId, period: Period) -> None:
+        """Oublie les fenêtres de ce client finies avant celle-ci (même genre)."""
+        for key, window in list(self._windows.items()):
+            if (
+                key[0] == tenant_id
+                and window.period.kind == period.kind
+                and window.period.end <= period.start
+            ):
+                del self._windows[key]
+                self._reading.pop(key, None)
+
+    async def _read(self, tenant_id: TenantId, since: datetime) -> list[Event]:
+        """Appels aboutis et tentatives facturées du client depuis ``since``, toutes pages."""
+        events: list[Event] = []
+        after = None
+        while True:
+            page = await self._store.query(
+                EventQuery(
+                    tenant_id=tenant_id,
+                    types=(MODEL_RESPONDED, MODEL_RETRIED),
+                    since=since,
+                    after=after,
+                    limit=PAGE,
+                )
+            )
+            events.extend(page)
+            if len(page) < PAGE:
+                return events
+            after = page[-1].event_id
 
     async def _from_journal(self, tenant_id: TenantId, period: Period) -> dict[RunId, Spent]:
         """Dépense par run racine, lue dans le journal depuis le début de la fenêtre.
@@ -204,21 +285,8 @@ class TenantUsage:
         réduit à ceux de la dernière.
         """
         totals: dict[RunId, Spent] = {}
-        after = None
-        while True:
-            page = await self._store.query(
-                EventQuery(
-                    tenant_id=tenant_id,
-                    types=(MODEL_RESPONDED, MODEL_RETRIED),
-                    since=period.start,
-                    after=after,
-                    limit=PAGE,
-                )
-            )
-            _accumulate(totals, page)
-            if len(page) < PAGE:
-                return totals
-            after = page[-1].event_id
+        _accumulate(totals, await self._read(tenant_id, period.start))
+        return totals
 
 
 def _accumulate(totals: dict[RunId, Spent], events: Sequence[Event]) -> None:

@@ -58,7 +58,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import HOSTILE, HOSTILE_SHOWN, MODEL, PNG, ConfigFactory, demo_agent
+from conftest import ANSWER, HOSTILE, HOSTILE_SHOWN, MODEL, PNG, SCRIPT, ConfigFactory, demo_agent
 from pydantic import JsonValue
 
 from loom_ia.access import Loom
@@ -467,6 +467,62 @@ async def test_same_calls_but_another_ending_diverge(demo: ConfigFactory, tmp_pa
     assert divergence is not None and divergence.kind == "end"
     assert "ne finit pas de la même façon" in divergence.where
     assert "completed au journal, failed au rejeu" in divergence.detail
+
+
+def _failing(*script: dict[str, Any]) -> dict[str, Any]:
+    """Le modèle de la démo, avec un script qui finit en panne."""
+    return {**MODEL, "params": {"script": list(script)}}
+
+
+@pytest.mark.parametrize(
+    ("script", "served"),
+    [
+        # En panne dès le premier appel : aucune réponse au journal.
+        ([{"error": "overloaded"}], 0),
+        # Une réponse, puis la panne au second appel.
+        ([SCRIPT[0], {"error": "auth"}], 1),
+    ],
+)
+async def test_a_run_that_failed_on_a_model_call_replays_identically(
+    demo: ConfigFactory, script: list[dict[str, Any]], served: int
+) -> None:
+    """Test O3 du 23/10 : la panne d'un modèle se resert comme une réponse.
+
+    Le livre ne connaissait que les réponses : l'appel tombé en panne passait
+    pour un appel en trop (« le run d'origine n'a pas fait cet appel »), et un
+    run échoué de cette façon ne se rejouait jamais à l'identique — un cas
+    d'éval ``status: failed`` donnait un journal que la non-régression refusait.
+    """
+    path = demo(
+        storage={"events": {"backend": "jsonl", "path": "data"}}, models=[_failing(*script)]
+    )
+    async with Loom.from_config(path) as loom:
+        result = await loom.run("demo", QUESTION)
+        report = await loom.replay(result.run_id)
+
+    assert result.status is RunStatus.FAILED
+    assert report.divergence is None, report.divergence
+    assert report.identical
+    assert (report.original_end, report.replay_end) == ("failed", "failed")
+    assert report.model_calls == (served, served)
+
+
+async def test_a_completed_run_does_not_get_a_failure_to_serve(
+    demo: ConfigFactory, tmp_path: Path
+) -> None:
+    """Seul un run fini sur une panne de modèle se la voit resservir : un appel en
+    trop dans un run réussi reste une divergence."""
+    jsonl = {"events": {"backend": "jsonl", "path": "data"}}
+    path = demo(storage=jsonl, models=[_failing({"text": ANSWER})])
+    async with Loom.from_config(path) as loom:
+        result = await loom.run("demo", QUESTION)
+    # Aujourd'hui, la même réponse appelle un outil : un second appel de modèle suit.
+    demo(storage=jsonl, models=[_failing({**SCRIPT[0], "text": ANSWER}, {"text": ANSWER})])
+    async with Loom.from_config(path) as loom:
+        report = await loom.replay(result.run_id)
+
+    assert result.status is RunStatus.COMPLETED
+    assert report.divergence is not None
 
 
 def test_nothing_is_served_after_the_first_divergence() -> None:

@@ -1060,9 +1060,9 @@ Rôle inconnu, modèle absent, outil introuvable, juge corrélé, variable de pr
 
 `loom serve --reload` relance le serveur dans un nouveau process quand un fichier de la config change ; rien ne se recharge dans le process vivant. Si la nouvelle config ne se charge pas, l'ancien process continue de servir. Refusé en profil `prod` (code 2).
 
-**Testée** : non
+**Testée** : oui (23/10, script `group_4.sh` sur une copie temporaire d'agent-test — sans `notes`, sans clés, journal à part —, port 8761, commit `24d0516`)
 
-**Note** :
+**Note** : `--profile prod serve --reload` → « loom serve --reload est refusé en profil prod : un service ne se relance pas sur une modification de fichier. », code 2 (précédé de l'avertissement sur le `.env` lu en prod). Démarrage : bandeau, puis « Rechargement : surveille /tmp/… (sauf data/) ». `agents/agent.yaml` modifié (description) → « Rechargement : agents/agent.yaml modifié », nouveau bandeau, « Rechargé : le nouveau process sert ; l'ancien finit ce qu'il a en cours. », `GET /v1/agents` rend la nouvelle description. `loom.yaml` cassé (`models: [ cassé`) → « Config refusée : …/loom.yaml: YAML invalide : … line 77, column 9 », « Rechargement refusé : l'ancien process continue de servir. », l'API répond toujours (ancienne description) ; réparé → rechargé. Module voisin cassé (`tools/utils.py`, `def cassé(:`) → « Config refusée : File …/tools/utils.py, line 43 … SyntaxError », refusé, l'ancien sert ; réparé → rechargé. Un run qui écrit au journal (`data/`) → aucun rechargement (3 avant, 3 après). Rechargement déclenché 0,5 s après le début d'un run synchrone → le run va au bout dans l'ancien process (201 `completed`, réponse entière), puis le nouveau sert. `.env` modifié (ligne de commentaire) → rechargé. Ctrl-C au superviseur → il s'arrête, le port ne répond plus. 5 rechargements, 2 refus, aucun relancement parasite (logs écrits hors du dossier surveillé : un log écrit dedans relancerait le serveur à chaque ligne — non éprouvé, déduit de la règle « tout le dossier de la config, sauf ce que la config écrit »).
 
 ---
 
@@ -1074,9 +1074,9 @@ Rôle inconnu, modèle absent, outil introuvable, juge corrélé, variable de pr
 
 `loom eval <suite.yaml> [--case] [--variant] [--export]` : cas, attendus (dont `expect.state`), variantes de modèle ou de config, rapport comparatif.
 
-**Testée** : non
+**Testée** : oui (23/10, script `group_O.sh` sur une copie temporaire d'agent-test — sans `notes`, sans clés ni approbation imposée, modèle `SIMULE` (`sdk: fake`) ajouté, `etiquette_devis` déclaré `side_effects: irreversible` —, commit `24d0516`)
 
-**Note** :
+**Note** : Suite invalide (cas sans attendu ni critère) → « Configuration : …/invalide.yaml: (racine) — cas 'rien' : aucun attendu — un cas sans contrôle ni critère n'éprouverait rien », code 2 ; `--case inexistant` → « Éval impossible : cas inconnu(s) : inexistant (déclarés : …) », code 2. Suite complète (4 cas × variantes `haiku` et `simule` (`models: {main: SIMULE}`), juge HAIKU avec `tool_results: [prix_ttc]`, `max_cost_usd: 0.10`, `--export`) : `ttc` (`contains 120`, `called prix_ttc {montant_ht: 100}`, `state dernier_ttc = 120`, critère `montant_juste ≥ 0.70`), `state_pose` (`state: {client: Durand}` posé, `contains Durand`, `not_called prix_ttc`, `state` contrôlé dont `dernier_ttc: null` = absent), `etiquette_refusee` (outil à effets de bord refusé, l'appel compte pour `called`) passent dans les deux variantes ; `echec_voulu` tombe comme prévu (haiku : `✗ contient « au revoir »` et le texte du run ; simule : script épuisé → run `failed`, `✗ statut completed (par défaut)`) ; bilan 6/8, 0,000554 $ (runs 0,000357 $, juge 0,000114 + 0,000083 $), verdict « des attendus tombent », code 1 ; 8 journaux exportés `<variante>--<cas>--1.jsonl`. `--case ttc --case state_pose --variant simule` → 2/2, code 0 (runs à 0 $, juge seul payé). `--case ttc --variant haiku --json` → `passed: true`, `checks` détaillés (`text`, `tool`, `state`, `judge` : « note 1.00 — La sortie donne 120 € TTC, soit exactement le montant_ttc renvoyé par l'outil… »), `usage`, `tools[].fate: run`, coûts du run et du juge séparés, code 0. Doublure (`doubles: {etiquette_devis: doubles_g4:etiquette}`, module voisin de la suite) → 1/1, code 0.
 
 ### O2 — Faux modèles et faux outils
 
@@ -1084,9 +1084,9 @@ Rôle inconnu, modèle absent, outil introuvable, juge corrélé, variable de pr
 
 `sdk: fake`, `loom_ia.testing` (`Bench`, faux modèle scripté, doublures d'outils) pour des tests déterministes sans appel réel.
 
-**Testée** : non
+**Testée** : oui (23/10, script `group_O.sh` sur une copie temporaire d'agent-test — sans `notes`, sans clés ni approbation imposée, modèle `SIMULE` (`sdk: fake`) ajouté, `etiquette_devis` déclaré `side_effects: irreversible` —, commit `24d0516`)
 
-**Note** :
+**Note** : **`sdk: fake`** : `SIMULE` scripté par `params.script` avec `with_text` (TTC → appel `prix_ttc` puis texte ; « client » → « Durand » ; « étiquette » → appel puis texte) ; en éval (variante `simule`) il passe 3 cas sur 4, le quatrième tombe sur « Script du modèle 'SIMULE' épuisé : réponse n°1 demandée, 0 prévue(s) avec ces outils » (run `failed`, `model.invalid_request`) ; hors éval, `loom run` avec un agent servi par `SIMULE` (journal en mémoire) → « Le prix TTC de 100 € HT est de 120 € », 2 itérations, `prix_ttc` réellement exécuté, coût 0 (usage estimé : 1320/80 tokens). **Banc** (`Bench(config, models={"HAIKU": ScriptedModel(…)}, tools={"etiquette_devis": faux})`, script Python sans fichier gardé) : run 1 → `completed`, « 60 € », `calls` : `prix_ttc` sort `run`, reçu `{montant_ht: 50}` ; `expect(contains=["60"], called=[…])` → 2 contrôles tenus ; `expect(contains=["999"])` → `AssertionError` « Banc : 1 contrôle(s) tombé(s) sur 1, run … ✗ contient « 999 » … texte : … » ; run 2 → `etiquette_devis` sort `double`, le faux a reçu `D-2026-070` ; script consommé (0 restant) ; `export` → 13 972 octets ; `assert_replays(config, fichier)` → 1 run, identique ; `Bench(config)` sans faux modèle → run `failed`, `model.auth`, « Banc : le modèle HAIKU (anthropic, claude-haiku-5-5) est réel et n'est pas remplacé — le remplacer (models={…}), ou l'appeler pour de vrai (real_models=True) », rien dépensé.
 
 ### O3 — Non-régression depuis des traces enregistrées
 
@@ -1094,9 +1094,9 @@ Rôle inconnu, modèle absent, outil introuvable, juge corrélé, variable de pr
 
 Les journaux JSONL exportés servent de corpus : rejeu exact et jeu en simulé (`tests/regression/`), divergence = échec.
 
-**Testée** : non
+**Testée** : oui (23/10, script `group_O.sh` sur une copie temporaire d'agent-test — sans `notes`, sans clés ni approbation imposée, modèle `SIMULE` (`sdk: fake`) ajouté, `etiquette_devis` déclaré `side_effects: irreversible` —, commit `24d0516`)
 
-**Note** :
+**Note** : Corpus = les 4 journaux `haiku--*.jsonl` exportés par l'éval O1. `loom replay --journal <fichier>` sur chacun → « completed au journal, completed au rejeu », appels de modèle et résultats d'outils tous servis (1 ou 2 appels, 0 ou 1 outil — le refus pour effets de bord compris), « Identique », code 0. Suite de rejeu (`cases: [{name: corpus_haiku, replay: export/haiku--*.jsonl}]`) : variante `meme_config` → 4/4 rejoués à l'identique ; variante `prompt_change` (même config, une phrase ajoutée au prompt système) → 0/4, chacun « appel de modèle n°1 (main au journal) : la requête a changé ; ce qui diffère : le prompt système », et un `WARNING` par run dans les logs ; code 1 ; `--variant meme_config` seule → code 0. Journal tronqué (200 premiers octets) → « Rejeu impossible : Journal …/abime.jsonl, ligne 1 : pas un événement (ligne : Invalid JSON: EOF while parsing a string …) », code 2. Le corpus `tests/regression/` du dépôt tourne dans la suite pytest (vu à chaque correctif). Vu à l'essai à blanc du script (sans vraie clé, non reproduit ici) : un run échoué dès son premier appel de modèle (`model.auth`, aucun `model.responded` au journal) diverge au rejeu exact, « appel de modèle n°1 : le run d'origine n'a pas fait cet appel » — un run raté de cette façon dans un corpus ferait tomber la non-régression. **Écart** : le livre du rejeu ne connaissait que les réponses (`model.responded`) ; l'appel tombé en panne passait pour un appel en trop alors que le rapport disait « failed au journal, failed au rejeu », et le journal d'un cas d'éval `status: failed` faisait tomber la non-régression. Corrigé le 23/10 (CHANGELOG 2.0.10, « Événements et rapports », ⚠) : un run racine arrêté sur une panne de modèle (`run.failed`, `model.*`) se la voit resservir au rejeu exact, une fois ses réponses rejouées (même type, sans délai entre les tentatives) ; un appel en trop dans un run réussi reste une divergence ; variante non concernée ; limite : l'appel en panne n'a pas d'empreinte au journal, une requête changée à cet appel ne se voit pas. Revalidé (dossier `mktemp`, modèle simulé `script: [{error: overloaded}]`) : `loom run` → `failed`, `model.overloaded` après 3 tentatives (0,9 s puis 1,3 s d'attente) ; `sessions export` puis `replay --journal` → 3 tentatives sans attente, « failed au journal, failed au rejeu », « Identique », 1/1, code 0. Ergonomie : au rejeu, les tentatives resservies s'écrivent en `WARNING` (« Tentative 1/3 du modèle M ratée (overloaded) : nouvel essai dans 0.0 s ») comme une vraie panne.
 
 ---
 

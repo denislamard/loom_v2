@@ -321,7 +321,7 @@ Budgets par défaut de tous les agents. Le même bloc sert dans `tenants[].budge
 | `run.max_tokens` | Tokens maximaux d'un run (utile sans tarif). | entier ≥ 0 | `null` | |
 | `run.max_calls` | Appels de modèle d'un run (orchestrateur, rôles, juges ; pas ceux d'un sous-agent). | entier ≥ 0 | `null` | `max_calls: 20` |
 | `session.max_cost` / `max_tokens` | Plafonds d'une session : runs précédents et run en cours. | nombres ≥ 0 | `null` | `session: {max_cost: 5}` |
-| `tenant.max_cost_per_day` / `max_tokens_per_day` | Plafond d'un client sur la journée (UTC) : au-delà, un nouveau run est refusé. | nombres ≥ 0 | `null` | `tenant: {max_cost_per_day: 10}` |
+| `tenant.max_cost_per_day` / `max_tokens_per_day` | Plafond d'un client sur la journée (UTC) : au-delà, un nouveau run est refusé. La dépense est lue dans le journal à chaque lancement, runs des autres process compris ; des runs lancés ensemble passent tous avant d'avoir consommé. | nombres ≥ 0 | `null` | `tenant: {max_cost_per_day: 10}` |
 | `tenant.max_cost_per_month` / `max_tokens_per_month` | Idem sur le mois. | nombres ≥ 0 | `null` | |
 | `on_exceed` | `stop` : `budget.exceeded`, puis réponse forcée sans outils ; `warn` : l'événement seul, le run continue. | `stop`, `warn` | `stop` | `on_exceed: warn` |
 

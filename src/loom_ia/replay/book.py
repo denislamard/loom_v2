@@ -13,7 +13,11 @@ première divergence :
 - un appel d'outil est servi par son ``call_id`` — au rejeu identique, les
   réponses du modèle sont celles du journal, donc ses appels aussi —, et son
   nom et ses arguments doivent être les mêmes ;
-- une demande d'approbation reçoit la décision du journal.
+- une demande d'approbation reçoit la décision du journal ;
+- un run fini sur une **panne de modèle** (``run.failed``, ``model.*``) se
+  la voit resservir : une fois ses réponses toutes rejouées, l'appel suivant
+  lève la même erreur, sans diverger (test O3 du 23/10 — l'appel en panne
+  passait pour un appel en trop, et un tel run ne se rejouait jamais).
 
 Au rejeu identique, après la première divergence, plus rien n'est servi :
 continuer obligerait à deviner quelle réponse enregistrée irait à quelle
@@ -25,7 +29,7 @@ pour de vrai ; un outil s'y retrouve par son nom et ses arguments.
 from collections import deque
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final, Literal
+from typing import Final, Literal, cast, get_args
 
 from pydantic import JsonValue
 
@@ -36,6 +40,7 @@ from loom_ia.core.events import (
     Event,
     ModelFellBack,
     ModelResponded,
+    RunFailed,
     RunStarted,
     ToolCalled,
     ToolCompleted,
@@ -44,6 +49,7 @@ from loom_ia.core.model import (
     ApprovalDecision,
     Approved,
     ModelChunk,
+    ModelErrorKind,
     ModelRequest,
     ModelResponse,
     ModelSpec,
@@ -70,6 +76,8 @@ _PART_LABELS: Final[Mapping[str, str]] = {
     "settings": "les réglages (choix d'outil, plafond de tokens, paramètres, schéma de sortie)",
 }
 STOPPED: Final = "rejeu arrêté : une divergence a été trouvée plus haut"
+# Préfixe du type d'erreur d'un run arrêté par une panne de modèle (``model.overloaded``).
+MODEL_FAILURE: Final = "model."
 
 
 class ReplayError(ValueError):
@@ -130,6 +138,9 @@ class ReplayBook:
     )
     fallbacks: list[ModelFellBack] = field(default_factory=list[ModelFellBack])
     divergence: Divergence | None = None
+    # La panne de modèle sur laquelle le run racine s'est arrêté, s'il s'est
+    # arrêté sur une panne : son type et son message, resservis au rejeu identique.
+    failure: tuple[ModelErrorKind, str] | None = None
     # Variante : sous-runs lus au journal (leur appel servi tel quel) ; leurs
     # propres appels n'ont pas à être refaits.
     read_runs: set[str] = field(default_factory=set[str])
@@ -170,6 +181,8 @@ class ReplayBook:
                     book.fallbacks.append(fell)
                 case RunStarted(parent_run_id=parent) if parent is not None:
                     book._children.setdefault(parent, []).append(event.run_id)
+                case RunFailed() as failed if not book._is_child(event.run_id):
+                    book.failure = _model_failure(failed)
                 case _:
                     pass
         return book
@@ -177,6 +190,9 @@ class ReplayBook:
     @property
     def diverged(self) -> bool:
         return self.divergence is not None
+
+    def _is_child(self, run_id: str) -> bool:
+        return any(run_id in children for children in self._children.values())
 
     @property
     def served_responses(self) -> int:
@@ -236,6 +252,11 @@ class ReplayBook:
         found = self._take(digest)
         if found is not None:
             return found
+        if self.failure is not None and not self.unserved_responses:
+            # Le run d'origine s'est arrêté sur cet appel : la même panne, sans
+            # délai entre les tentatives que le moteur refera (chacune la reçoit).
+            kind, message = self.failure
+            raise ModelError(kind, message, retry_after=0.0, by_client=True)
         self.diverge(self._model_divergence(request, digest, exact=True))
         assert self.divergence is not None
         raise ModelError("invalid_request", f"rejeu : {self.divergence.where}", by_client=True)
@@ -484,3 +505,14 @@ class JournalTools:
     ) -> tuple[ToolOutput, Consumption | None]:
         # Comparé aux arguments écrits : c'est eux que le journal garde.
         return self.book.tool_output(run_id, call_id, name, arguments)
+
+
+_KINDS: Final = frozenset(get_args(ModelErrorKind.__value__))
+
+
+def _model_failure(failed: RunFailed) -> tuple[ModelErrorKind, str] | None:
+    """La panne de modèle d'un ``run.failed`` ; ``None`` si le run s'est arrêté autrement."""
+    kind = failed.error_type.removeprefix(MODEL_FAILURE)
+    if not failed.error_type.startswith(MODEL_FAILURE) or kind not in _KINDS:
+        return None
+    return cast(ModelErrorKind, kind), failed.error
