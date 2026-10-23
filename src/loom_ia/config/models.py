@@ -704,6 +704,11 @@ class HttpServer(DomainModel):
     # Les fichiers y voyagent en base64 dans le JSON (4 octets pour 3), donc environ
     # 3 Mio de fichier brut ; REST accepte jusqu'à ce plafond (défaut 128 Mio).
     max_body_bytes: PositiveInt = 128 * 1024 * 1024
+    # Documentation interactive (``/docs``, ``/redoc``) et schéma (``/openapi.json``) :
+    # ils se lisent **sans clé**, et décrivent toutes les routes. ``null`` (défaut) :
+    # servis, sauf en profil strict (``prod``) ; ``true`` / ``false`` tranchent
+    # (test N2 du 23/10 : ils répondaient 200 sans clé à côté d'une API protégée).
+    docs: bool | None = None
 
     @model_validator(mode="after")
     def _check_base_path(self) -> Self:
@@ -842,6 +847,12 @@ class LoomConfig(DomainModel):
     def strict(self) -> bool:
         """Vrai en profil ``prod`` : ce qui avertit ailleurs y est une erreur."""
         return self.profile == "prod"
+
+    @property
+    def docs_served(self) -> bool:
+        """Vrai si ``/docs``, ``/redoc`` et ``/openapi.json`` sont servis (``server.http.docs``)."""
+        chosen = self.server.http.docs
+        return not self.strict if chosen is None else chosen
 
     @property
     def lax(self) -> bool:

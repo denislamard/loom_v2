@@ -65,6 +65,7 @@ from loom_ia.access.api import (
     UnknownRun,
     UnknownSession,
     check_deletable_id,
+    unpiloted,
 )
 from loom_ia.access.evals import evaluate
 from loom_ia.access.progress import SKIP_REASONS, Progress, describe_compaction, notes
@@ -87,7 +88,7 @@ from loom_ia.config.models import (
     QueueStorage,
 )
 from loom_ia.config.references import resolve
-from loom_ia.core.events import Event, SessionCompacted
+from loom_ia.core.events import BudgetExceeded, Event, SessionCompacted
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     JUDGES_MODES,
@@ -101,6 +102,7 @@ from loom_ia.core.model import (
     StreamReset,
     TenantId,
     TextDelta,
+    Usage,
     finite_json,
     new_run_id,
 )
@@ -148,6 +150,7 @@ from loom_ia.telemetry.logs import printable
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, Tenant, UnknownTenant
 from loom_ia.tools_builtin import is_builtin
 from loom_ia.usage import UsageReport, amount
+from loom_ia.usage import describe as describe_budget
 from loom_ia.usage import render as render_report
 
 PROG: Final = "loom"
@@ -1069,7 +1072,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return REFUSED
     posed = dict(items) or None
 
-    async def go() -> tuple[RunResult, list[SessionCompacted]]:
+    async def go() -> tuple[RunResult, list[SessionCompacted], list[BudgetExceeded]]:
         async with Loom(config) as loom:
             if args.stream:
                 live = _Live()
@@ -1091,7 +1094,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     # Réponse remplacée par une politique après sa diffusion.
                     print(f"[Réponse retenue]\n{_for_stdout(state.output.text)}")
                 # Le résumé de l'ouverture est déjà passé dans le déroulé.
-                return await loom.result(run_id, session_id=session, tenant_id=tenant), []
+                return await loom.result(run_id, session_id=session, tenant_id=tenant), [], []
             result = await loom.run(
                 args.agent,
                 args.message,
@@ -1102,12 +1105,32 @@ def cmd_run(args: argparse.Namespace) -> int:
                 tenant=tenant,
                 state=posed,
             )
-            return result, await _opening_summaries(loom, result, tenant)
+            summaries = await _opening_summaries(loom, result, tenant)
+            return result, summaries, await _budgets_reached(loom, result, tenant)
 
-    result, summaries = asyncio.run(go())
+    result, summaries, budgets = asyncio.run(go())
     return _report(
-        result, as_json=args.json, quiet=args.stream, tenant=_tenant(args), summaries=summaries
+        result,
+        as_json=args.json,
+        quiet=args.stream,
+        tenant=_tenant(args),
+        summaries=summaries,
+        budgets=budgets,
     )
+
+
+async def _budgets_reached(
+    loom: Loom, result: RunResult, tenant: TenantId | None
+) -> list[BudgetExceeded]:
+    """Plafonds atteints pendant le run, lus dans son journal (sous-runs compris).
+
+    Au test J4 du 21/10, ni la console ni le résumé ne disaient qu'un budget
+    avait arrêté le run ou l'avait averti : seul le journal le montrait. Le
+    déroulé ``--stream`` en a déjà une ligne. Lu par la même instance que le
+    run : un journal en mémoire n'existe que dans ce process.
+    """
+    events = await loom.events(result.run_id, session_id=result.session_id, tenant_id=tenant)
+    return [e.payload for e in events if isinstance(e.payload, BudgetExceeded)]
 
 
 async def _opening_summaries(
@@ -1317,12 +1340,15 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     apply_logging(config)
     session = SessionId(args.session) if args.session else None
 
-    async def go() -> Trace:
+    async def go() -> tuple[Trace, bool]:
         async with Loom(config) as loom:
-            return await loom.trace(RunId(args.run_id), session_id=session, tenant_id=_tenant(args))
+            run_id, tenant = RunId(args.run_id), _tenant(args)
+            trace = await loom.trace(run_id, session_id=session, tenant_id=tenant)
+            state = await loom.state(run_id, session_id=session, tenant_id=tenant)
+            return trace, unpiloted(state) and state.parent_run_id is None
 
     try:
-        trace = asyncio.run(go())
+        trace, stalled = asyncio.run(go())
     except UnknownRun:
         where = f" dans la session {args.session}" if args.session else ""
         print(f"Run {args.run_id} introuvable{where}", file=sys.stderr)
@@ -1331,6 +1357,15 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         print(trace.model_dump_json(indent=2))
     else:
         _say("\n".join(render_trace(trace, full=args.full)))
+        if stalled:
+            # Au test H1 du 20/10, rien ne disait qu'un run arrêté en plein vol
+            # était à reprendre, ni comment.
+            where = f" --session {args.session}" if args.session else ""
+            tenant_flag = f" --tenant {args.tenant}" if args.tenant else ""
+            _say(
+                "\nÀ reprendre : personne ne pilote ce run (si aucun worker ne s'en charge) — "
+                f"loom resume {args.run_id}{where}{tenant_flag}"
+            )
     return OK
 
 
@@ -1700,6 +1735,13 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
         _say("Fichiers   :")
         for line in _file_lines(files):
             _say(f"  {line}")
+    tenant_flag = f" --tenant {args.tenant}" if args.tenant else ""
+    stalled = [run for run in info.runs if run.unpiloted and run.parent_run_id is None]
+    if stalled:
+        _say("À reprendre (personne ne pilote ces runs, si aucun worker ne s'en charge) :")
+        for run in stalled:
+            _say(f"  {run.run_id} ({run.status})")
+            _say(f"    loom resume {run.run_id} --session {info.session_id}{tenant_flag}")
     if not info.pending_approvals:
         _say("En attente : rien")
         return OK
@@ -1956,6 +1998,17 @@ def _serve_reloading(config: LoomConfig, args: argparse.Namespace, host: str, po
     )
 
 
+def _cache_said(usage: Usage) -> str:
+    """Le cache, quand il y en a : « tokens : 18/35 » ne compte que l'entrée hors cache.
+
+    Au test J1 du 21/10, la console disait « 50/543 » quand le rapport, cache
+    compris, disait « 4499/543 », sans qu'aucun des deux nomme le cache.
+    """
+    if not (usage.cache_read_tokens or usage.cache_write_tokens):
+        return ""
+    return f" · cache : lu {usage.cache_read_tokens}, écrit {usage.cache_write_tokens}"
+
+
 def serving_banner(
     config: LoomConfig, given: str | None, host: str, port: int, env: EnvFileReport
 ) -> None:
@@ -1968,6 +2021,10 @@ def serving_banner(
     print(f"Profil     : {_profile_line(config, given)}")
     print(f"Env        : {env.describe()}")
     print(f"API REST   : http://{host}:{port}{http.base_path}/v1")
+    if config.docs_served:
+        print(f"Docs       : http://{host}:{port}/docs (sans clé)")
+    else:
+        print("Docs       : non servies (server.http.docs)")
     print(f"Agents     : {_listed(agent.name for agent in config.agents if agent.expose.rest)}")
     if config.server.mcp.http:
         # Même port, même authentification : la clé dit le client à chaque
@@ -2252,6 +2309,7 @@ def _report(
     quiet: bool = False,
     tenant: TenantId | None = None,
     summaries: Sequence[SessionCompacted] = (),
+    budgets: Sequence[BudgetExceeded] = (),
 ) -> int:
     if as_json:
         print(result.model_dump_json(indent=2, exclude_none=True))
@@ -2261,7 +2319,7 @@ def _report(
         usage = result.usage
         _say(
             f"\nStatut     : {result.status} · itérations : {result.iterations} "
-            f"· tokens : {usage.input_tokens}/{usage.output_tokens} "
+            f"· tokens : {usage.input_tokens}/{usage.output_tokens}{_cache_said(usage)} "
             f"· coût : {result.cost_usd:.4f} $",
             file=sys.stderr,
         )
@@ -2269,6 +2327,10 @@ def _report(
         for summary in summaries:
             # Au test F3 du 19/10, rien ne disait que la session avait été résumée.
             _say(f"Compaction : {describe_compaction(summary)}", file=sys.stderr)
+        for hit in budgets:
+            action = "run arrêté" if hit.action == "stop" else "avertissement"
+            said = describe_budget(hit.scope, hit.limit, hit.value, hit.spent)
+            _say(f"Budget     : {said} — {action}", file=sys.stderr)
         for produced in result.produced:
             _say(
                 f"Fichier    : {produced.uri} ({produced.media_type}, {produced.size} octets)",

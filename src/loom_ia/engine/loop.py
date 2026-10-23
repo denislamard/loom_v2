@@ -1081,6 +1081,7 @@ def cancellation(
                 iterations=state.iterations,
                 usage=state.usage,
                 cost_usd=state.cost_usd,
+                withdrawn=tuple(a.call_id for a in state.approvals if a.outcome is None),
             )
         ),
     ]

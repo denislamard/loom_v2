@@ -660,6 +660,30 @@ async def test_a_key_limited_to_agents_cannot_list_sessions(demo: ConfigFactory)
 # --- Document OpenAPI (J5.4a, N2) ---------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("root", "served"),
+    [
+        ({}, True),
+        ({"server": {"http": {"docs": False}}}, False),
+        ({"profile": "prod"}, False),
+        ({"profile": "prod", "server": {"http": {"docs": True}}}, True),
+    ],
+    ids=["défaut", "fermées", "prod", "prod ouvertes"],
+)
+async def test_the_docs_are_served_unless_closed(
+    demo: ConfigFactory, root: dict[str, Any], served: bool
+) -> None:
+    """Test N2 du 23/10 : `/docs` et `/openapi.json` répondaient 200 sans clé à côté d'une
+    API protégée ; ils se ferment en prod, et `server.http.docs` tranche."""
+    async with serving(demo(**root)) as (_, http):
+        codes = {
+            path: (await http.get(path)).status_code
+            for path in ("/docs", "/redoc", "/openapi.json")
+        }
+
+    assert set(codes.values()) == ({200} if served else {404})
+
+
 async def test_the_openapi_document_describes_every_route(demo: ConfigFactory) -> None:
     async with serving(demo(security=SECURITY)) as (_, http):
         document = (await http.get("/openapi.json")).json()

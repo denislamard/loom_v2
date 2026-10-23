@@ -17,7 +17,7 @@ from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.adapters.usage import InMemoryUsageCounter
 from loom_ia.agents import UnknownAgent
 from loom_ia.config import load_config
-from loom_ia.core.events import Event, EventQuery, RunStarted, ToolCalled
+from loom_ia.core.events import Event, EventQuery, RunCancelled, RunStarted, ToolCalled
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     Message,
@@ -220,6 +220,31 @@ async def test_follow_ends_when_the_run_is_cancelled(atelier: ConfigFactory) -> 
             seen = await task
 
     assert kinds(seen)[-1] == "run.cancelled"
+
+
+async def test_a_cancellation_closes_the_approvals_left_open(atelier: ConfigFactory) -> None:
+    """Test N2 du 23/10 : l'annulation d'un run en pause laissait sa demande d'approbation
+    sans clôture dans le journal ; ``run.cancelled`` nomme désormais celles qu'il clôt."""
+    async with Loom.from_config(atelier()) as loom:
+        paused = await loom.run("demo", "Relance.")
+        asked = [a.call_id for a in paused.pending_approvals]
+        assert paused.status is RunStatus.PAUSED and asked
+        assert await loom.cancel(paused.run_id)
+        events = await loom.events(paused.run_id)
+
+    cancelled = next(e.payload for e in events if isinstance(e.payload, RunCancelled))
+    assert list(cancelled.withdrawn) == asked
+
+
+async def test_a_cancellation_without_open_approvals_closes_nothing(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo()) as loom:
+        run_id = await loom.submit("demo", QUESTION)
+        await loom.cancel(run_id)
+        await loom.drain()
+        events = await loom.events(run_id)
+
+    cancelled = [e.payload for e in events if isinstance(e.payload, RunCancelled)]
+    assert all(c.withdrawn == () for c in cancelled)
 
 
 async def test_follow_and_state_refuse_an_unknown_run(demo: ConfigFactory) -> None:

@@ -253,6 +253,8 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
             "type": "array",
             "items": _REFS[(PendingApproval, "serialization")],
         },
+        # Ce que le masquage a retiré (clé sans ``read_content``), par chemin.
+        "redacted": {"type": "array", "items": {"type": "string"}},
         # Fichiers du run : pièces jointes, fichiers produits, déports.
         "artifacts": {
             "type": "array",

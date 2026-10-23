@@ -422,6 +422,32 @@ def _masked_approvals(approvals: tuple[PendingApproval, ...]) -> tuple[PendingAp
     )
 
 
+def _approvals_redacted(approvals: tuple[PendingApproval, ...]) -> list[str]:
+    """Chemins que ``_masked_approvals`` retire de ces demandes, s'ils portaient quelque chose."""
+    removed: list[str] = []
+    if any(a.arguments for a in approvals):
+        removed.append("pending_approvals[].arguments")
+    if any(a.reason for a in approvals):
+        removed.append("pending_approvals[].reason")
+    return removed
+
+
+def unpiloted(state: RunState, now: datetime | None = None) -> bool:
+    """Vrai pour un run ni fini ni en pause que personne ne pilote : à reprendre.
+
+    Un pilote tient une concession qu'il renouvelle ; absente ou échue, plus
+    personne ne fait avancer le run (process arrêté, plantage). Au test H1 du
+    20/10, ni ``sessions show`` ni ``inspect`` ne le disaient, ni ne donnaient
+    la commande, comme ils le font pour une approbation. Un run tout juste mis
+    en file, pas encore pris par un worker, est sans concession lui aussi :
+    d'où « si aucun worker ne s'en charge ».
+    """
+    if state.finished or state.status is RunStatus.PAUSED:
+        return False
+    moment = now or datetime.now(UTC)
+    return state.claim is None or state.claim.lease_until <= moment
+
+
 class RunSummary(DomainModel):
     """Un run de la session, tel que la fiche le montre (F7)."""
 
@@ -433,9 +459,11 @@ class RunSummary(DomainModel):
     iterations: NonNegativeInt = 0
     usage: Usage = Usage()
     cost_usd: float = 0.0
+    # Ni fini ni en pause, et personne ne le pilote (concession absente ou échue).
+    unpiloted: bool = False
 
     @classmethod
-    def of(cls, state: RunState) -> Self:
+    def of(cls, state: RunState, now: datetime | None = None) -> Self:
         return cls(
             run_id=state.run_id,
             agent=state.agent,
@@ -444,6 +472,7 @@ class RunSummary(DomainModel):
             iterations=state.iterations,
             usage=state.usage,
             cost_usd=state.cost_usd,
+            unpiloted=unpiloted(state, now),
         )
 
 
@@ -519,11 +548,18 @@ class SessionInfo(DomainModel):
     # Ce qui attend un humain, tous runs confondus (#17) : sans cela,
     # l'appelant devrait ouvrir chaque run pour savoir ce qu'on lui demande.
     pending_approvals: tuple[PendingApproval, ...] = ()
+    # Ce que le masquage a retiré (clé sans ``read_content``), par chemin :
+    # sans lui, un champ vidé ne se distinguait pas d'un champ vide (test N2
+    # du 23/10). Même règle que pour un événement (``redacted``).
+    redacted: tuple[str, ...] = ()
 
     def masked(self) -> Self:
         """Fiche sans le contenu : les runs et leurs coûts, pas les arguments."""
         return self.model_copy(
-            update={"pending_approvals": _masked_approvals(self.pending_approvals)}
+            update={
+                "pending_approvals": _masked_approvals(self.pending_approvals),
+                "redacted": tuple(_approvals_redacted(self.pending_approvals)),
+            }
         )
 
 
@@ -551,10 +587,14 @@ class SessionFile(DomainModel):
     tool_name: str | None = None
     stored_at: AwareDatetime
     count: PositiveInt = 1
+    # Ce que le masquage a retiré (``name``), pour ne pas le prendre pour un fichier sans nom.
+    redacted: tuple[str, ...] = ()
 
     def masked(self) -> Self:
         """Sans le nom : il peut dire ce que contient le fichier (``facture-Dupont.pdf``)."""
-        return self.model_copy(update={"name": None})
+        return self.model_copy(
+            update={"name": None, "redacted": ("name",) if self.name is not None else ()}
+        )
 
 
 class JudgeVerdict(DomainModel):
@@ -672,6 +712,9 @@ class RunResult(DomainModel):
     # de ses sous-runs comprises : l'appelant n'a pas à savoir qu'un
     # sous-agent existe pour savoir ce qu'on lui demande.
     pending_approvals: tuple[PendingApproval, ...] = ()
+    # Ce que le masquage a retiré, par chemin (``text``, ``artifacts[].name``…) :
+    # un ``text`` vidé ne se distinguait pas d'une réponse vide (test N2 du 23/10).
+    redacted: tuple[str, ...] = ()
 
     def masked(self) -> Self:
         """Résultat sans le contenu, pour une clé qui n'a pas ``read_content``.
@@ -684,9 +727,29 @@ class RunResult(DomainModel):
 
         Le type de l'erreur reste : « pourquoi ça a échoué » n'est pas du
         contenu, et sans lui il n'y aurait plus rien à superviser.
+
+        ``redacted`` nomme ce qui a été retiré, et seulement ce qui avait une
+        valeur : comme pour un événement, une absence n'est pas un vide.
         """
+        removed = [
+            name
+            for name, present in (
+                ("text", bool(self.text)),
+                ("output", self.output is not None),
+                ("error", self.error is not None),
+                ("data", self.data is not None),
+                ("artifacts[].name", any(a.name is not None for a in self.artifacts)),
+                (
+                    "verdicts[].criteria[].reason",
+                    any(c.reason for v in self.verdicts for c in v.criteria),
+                ),
+            )
+            if present
+        ]
+        removed += _approvals_redacted(self.pending_approvals)
         return self.model_copy(
             update={
+                "redacted": tuple(removed),
                 "text": "",
                 "output": None,
                 "error": None,

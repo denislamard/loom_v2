@@ -904,7 +904,7 @@ Convention de nommage : `<catégorie>.<action au passé>`.
 | `session.snapshot` | historique matérialisé, up_to_seq, tokens estimés (voir plus bas) |
 | `session.compacted` | résumé, up_to_seq, tours gardés, tokens avant/après, coût, fidélité (`ok`, `warning`, `skipped`) (voir point 23) |
 | `session.trimmed` | up_to_seq, messages retirés, motif (voir point 23) |
-| `run.cancelled` | motif (`requested`, `parent`), auteur, itérations, usage, coût (voir point 27) |
+| `run.cancelled` | motif (`requested`, `parent`), auteur, itérations, usage, coût, demandes d'approbation encore ouvertes qu'il clôt (`withdrawn`) (voir point 27) |
 | `run.transitioned` avec `to_state=paused`, puis `running` | pause et reprise : il n'y a pas de type `run.paused` ni `run.resumed` |
 | `run.claimed` | worker_id, lease_until (voir point 27) |
 | `run.transitioned` | from, to, step_no, cause (voir point 3) |
@@ -1452,6 +1452,7 @@ FastAPI, dans l'extra `loom-ia[http]` : Pydantic natif, OpenAPI généré (clien
 - **Les trente charges le déclarent, même vide**, et un essai l'exige : c'est ce qui empêche une charge nouvelle de porter du contenu que le masquage ignorerait. Un chemin peut descendre d'un cran (`context.metadata`, `criteria[].reason`), ce qui garde les notes d'un juge en retirant leur prose.
 - **Le masquage rend un dictionnaire, pas un événement** : un champ obligatoire retiré ne repasserait pas la validation, et c'est voulu — un journal masqué n'est pas un journal qu'on peut rejouer. Le journal, lui, garde tout : c'est un réglage d'accès, pas de stockage (§14.2).
 - **Ce qu'une clé lance, elle le reçoit** : la réponse d'un `POST …/runs` n'est jamais masquée. C'est la **relecture** qui demande la portée — `GET /runs/{id}`, le SSE d'un run, l'export JSONL d'une session, la fiche d'une session. Conséquence assumée : une clé qui lance en `background: true` et va chercher son résultat plus tard a besoin de `read_content`.
+- **Ce qui est retiré est nommé** : un résultat, une fiche de session ou un fichier masqués portent `redacted`, la liste des chemins vidés (`text`, `output`, `error`, `data`, `artifacts[].name`, `verdicts[].criteria[].reason`, `pending_approvals[].arguments`, `pending_approvals[].reason`, `name`) — seulement ceux qui avaient une valeur, comme pour un événement masqué. Sans lui, `text: ""` ne se distinguait pas d'une réponse vide (test N2 du 23/10).
 - **Approuver demande de lire.** Les arguments d'une demande en attente sont du contenu : une clé qui a `approve` sans `read_content` trancherait à l'aveugle. `loom keys create` et `loom validate` le disent tous les deux.
 - **`loom keys create`** gagne `--tenant`, `--expires` (une date ISO ou une durée : `90j`, `12h`) et `--rate-limit`, et imprime le bloc YAML complet à coller. Une empreinte qui n'est pas `sha256:` suivi de 64 chiffres hexadécimaux minuscules — le `sha256:…` d'un modèle recopié tel quel, par exemple — est refusée **au chargement**, avec la clé en cause ; sans cela, toute clé inconnue donnait un 500 au lieu d'un 401. **`loom validate`** montre une ligne par clé : client, portées, agents, débit, état de l'expiration.
 - **Portée des accès** : `read_content` et `rate_limit` sont des notions **REST**. Python, la ligne de commande et le MCP en stdio n'ont pas de clé, donc rien n'y est masqué — c'est le serveur MCP en HTTP (5.2b) qui apportera la clé au protocole.

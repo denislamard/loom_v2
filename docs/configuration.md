@@ -399,6 +399,7 @@ security:
 | `http.port` | Port d'écoute (`--port` l'emporte). | 1 à 65535 | `8000` | `port: 8080` |
 | `http.base_path` | Préfixe commun des routes ; commence par `/`. | chemin | `""` | `base_path: /loom` |
 | `http.max_body_bytes` | Plafond d'un corps de requête ; au-delà, 413. Par MCP, le SDK plafonne déjà à 4 Mio. | entier > 0 | `134217728` (128 Mio) | |
+| `http.docs` | Sert `/docs`, `/redoc` et `/openapi.json`, qui se lisent **sans clé** et décrivent toutes les routes. `null` : servis, sauf en profil `prod`. | booléen, `null` | `null` | `http: {docs: false}` |
 | `mcp.http` | Monte le serveur MCP dans l'application REST, sous `<base_path>/mcp` ; exige des clés d'API et l'extra `mcp`. | booléen | `false` | `mcp: {http: true}` |
 | `mcp.file_roots` | Dossiers où un lien `file://` joint à un appel MCP peut être lu. | liste de chemins | `[]` : liens `file://` refusés | `file_roots: [partage/]` |
 | `mcp.allowed_origins` | Origines acceptées par le transport MCP HTTP (protection DNS rebinding) ; une requête sans `Origin` passe. | liste d'origines | `[]` | `allowed_origins: [https://app.exemple.fr]` |

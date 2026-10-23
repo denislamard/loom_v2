@@ -331,12 +331,17 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         if own:
             await loom.aclose()
 
+    documented = loom.config.docs_served
     app = FastAPI(
         title="loom-ia",
         summary="Agents loom exposés en HTTP",
         version=__version__,
         openapi_tags=list(TAGS),
         lifespan=lifespan,
+        # Sans clé, comme toute page publique : fermés en prod, sauf choix contraire.
+        docs_url="/docs" if documented else None,
+        redoc_url="/redoc" if documented else None,
+        openapi_url="/openapi.json" if documented else None,
     )
     app.state.loom = loom
     # Aucun corps n'est lu sans borne : JSON, déclencheurs, MCP, comme les envois de fichiers.

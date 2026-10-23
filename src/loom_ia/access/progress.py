@@ -204,9 +204,9 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
         case RunCancelled(reason="parent") if subrun:
             return f"sous-agent {event.agent} : annulé avec son parent"
         case RunCancelled(by=str() as author):
-            return f"run annulé par {author}"
+            return f"run annulé par {author}{_withdrawn(payload)}"
         case RunCancelled():
-            return "run annulé"
+            return f"run annulé{_withdrawn(payload)}"
         case _:
             return None
 
@@ -266,3 +266,9 @@ def _short(text: str) -> str:
     """Message d'erreur sur une ligne, coupé s'il est long."""
     line = " ".join(text.split())
     return line if len(line) <= ERROR_CHARS else f"{line[: ERROR_CHARS - 1]}…"
+
+
+def _withdrawn(cancelled: RunCancelled) -> str:
+    """Les demandes d'approbation que l'annulation a closes, s'il y en avait."""
+    count = len(cancelled.withdrawn)
+    return f" — {count} demande(s) d'approbation close(s) sans décision" if count else ""

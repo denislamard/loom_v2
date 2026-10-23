@@ -916,3 +916,78 @@ def test_validate_writes_a_client_model_mapping_apart_from_the_fallbacks(
     dupont, martin = out.split("client martin")
     assert "juge output (réponse finale) : modèle OPUS (FAKE pour ce client) → SONNET" in dupont
     assert "juge output (réponse finale) : modèle OPUS → SONNET," in martin
+
+
+def test_the_run_summary_names_the_cache_when_there_is_some() -> None:
+    """Test J1 du 21/10 : « tokens : 50/543 » ne disait pas que 4 449 tokens d'entrée
+    étaient passés par le cache, que le rapport comptait, lui."""
+    from loom_ia.access.cli.main import _cache_said  # pyright: ignore[reportPrivateUsage]
+    from loom_ia.core.model import Usage
+
+    assert _cache_said(Usage(input_tokens=50, output_tokens=543)) == ""
+    with_cache = Usage(
+        input_tokens=50, output_tokens=543, cache_read_tokens=4300, cache_write_tokens=149
+    )
+    assert _cache_said(with_cache) == " · cache : lu 4300, écrit 149"
+
+
+@pytest.mark.parametrize("action", ["stop", "warn"])
+def test_the_run_summary_says_a_budget_was_reached(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], action: str
+) -> None:
+    """Test J4 du 21/10 : un plafond atteint ne se voyait que dans le journal."""
+    path = demo(budgets={"run": {"max_calls": 1}, "on_exceed": action})
+    code = main(["--config", str(path), "run", "demo", QUESTION])
+    err = capsys.readouterr().err
+
+    assert code == 0
+    said = "run arrêté" if action == "stop" else "avertissement"
+    budget_lines = [line for line in err.splitlines() if line.startswith("Budget     : ")]
+    assert len(budget_lines) == 1 and budget_lines[0].endswith(said)
+
+
+def test_the_run_summary_has_no_budget_line_without_a_ceiling_reached(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--config", str(demo()), "run", "demo", QUESTION]) == 0
+    assert "Budget     :" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("claimed", [None, -60, 600], ids=["sans concession", "échue", "vivante"])
+def test_a_run_nobody_pilots_is_said_to_resume(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], claimed: int | None
+) -> None:
+    """Test H1 du 20/10 : un run arrêté en plein vol (process tué) ne se signalait nulle part."""
+    path = demo(storage=JOURNAL)
+    journal = RunJournal(agent="demo", session_id=SessionId("atelier"))
+    journal.start(QUESTION)
+    drafts: list[EventDraft] = list(journal.take())
+    if claimed is not None:
+        until = datetime.now(UTC) + timedelta(seconds=claimed)
+        drafts.append(journal.scope.draft(RunClaimed(worker_id="worker-1", lease_until=until)))
+    store = JsonlEventStore(path.parent / "journaux")
+
+    async def written() -> None:
+        await store.append(drafts, expected_seq=0)
+        await store.aclose()
+
+    asyncio.run(written())
+    hint = f"loom resume {journal.run_id} --session atelier"
+
+    assert main(["--config", str(path), "sessions", "show", "atelier"]) == 0
+    shown = capsys.readouterr().out
+    assert main(["--config", str(path), "inspect", journal.run_id, "--session", "atelier"]) == 0
+    inspected = capsys.readouterr().out
+    piloted = claimed == 600
+    assert (hint in shown) is not piloted
+    assert (hint in inspected) is not piloted
+
+
+def test_a_finished_run_is_not_said_to_resume(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = demo(storage=JOURNAL)
+    assert main(["--config", str(path), "run", "demo", QUESTION, "--session", "atelier"]) == 0
+    capsys.readouterr()
+    assert main(["--config", str(path), "sessions", "show", "atelier"]) == 0
+    assert "loom resume" not in capsys.readouterr().out

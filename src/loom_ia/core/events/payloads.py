@@ -304,6 +304,10 @@ class RunCancelled(Payload):
     iterations: NonNegativeInt = 0
     usage: Usage = Usage()
     cost_usd: NonNegativeFloat = 0.0
+    # Demandes d'approbation encore ouvertes que l'annulation clôt (``call_id``) :
+    # sans elles, un audit qui lit le journal brut voyait une demande jamais
+    # tranchée (test N2 du 23/10). Absent des journaux antérieurs.
+    withdrawn: tuple[str, ...] = ()
 
     @property
     def event_status(self) -> EventStatus:

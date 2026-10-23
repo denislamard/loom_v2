@@ -539,6 +539,53 @@ def test_a_masked_result_keeps_its_scores_and_loses_its_prose() -> None:
     assert masque.artifacts[0].size == 12
     # L'original n'a pas bougé.
     assert result.text.startswith("Bonjour") and result.verdicts[0].criteria[0].reason
+    # Ce qui est parti est nommé : un texte vidé ne passe plus pour une réponse vide
+    # (test N2 du 23/10) ; ce qui n'avait pas de valeur n'est pas cité.
+    assert masque.redacted == (
+        "text",
+        "error",
+        "data",
+        "artifacts[].name",
+        "verdicts[].criteria[].reason",
+    )
+    assert result.redacted == ()
+
+
+def test_an_empty_answer_is_not_said_redacted() -> None:
+    vide = RunResult(
+        run_id=RunId("r1"), session_id=SessionId("s1"), agent="demo", status=RunStatus.COMPLETED
+    )
+    assert vide.masked().redacted == ()
+
+
+def test_a_masked_session_file_and_session_say_what_left() -> None:
+    from datetime import UTC, datetime
+
+    from loom_ia.access.api import SessionFile, SessionInfo
+    from loom_ia.core.model import PendingApproval
+
+    fichier = SessionFile(
+        uri="artifact://default/s1/abc.png",
+        file="abc.png",
+        name="devis-martin.png",
+        media_type="image/png",
+        size=12,
+        origin="tool_output",
+        run_id=RunId("r1"),
+        stored_at=datetime.now(UTC),
+    )
+    assert fichier.masked().name is None
+    assert fichier.masked().redacted == ("name",)
+    attente = PendingApproval(
+        call_id="c1", tool_name="envoyer", arguments={"a": "Mme Martin"}, reason="effets"
+    )
+    fiche = SessionInfo(
+        session_id=SessionId("s1"), updated_at=datetime.now(UTC), pending_approvals=(attente,)
+    )
+    assert fiche.masked().redacted == (
+        "pending_approvals[].arguments",
+        "pending_approvals[].reason",
+    )
 
 
 # --- Ligne de commande --------------------------------------------------------
