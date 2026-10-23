@@ -109,6 +109,7 @@ from fastapi.security import APIKeyHeader, HTTPBearer
 from fastapi.security.http import HTTPAuthorizationCredentials
 from pydantic import AwareDatetime, JsonValue
 from sse_starlette.sse import EventSourceResponse
+from starlette.routing import Route
 
 from loom_ia import __version__
 from loom_ia.access.api import (
@@ -823,7 +824,15 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
 
     app.include_router(router)
     if served is not None:
-        app.mount(f"{http.base_path}{served.path}", served)
+        mounted = f"{http.base_path}{served.path}"
+        app.mount(mounted, served)
+        # Le montage ne sert que `…/mcp/` : sans cette route, `…/mcp`, l'adresse
+        # documentée, recevait un 307 avant toute clé (test N5 du 23/10) — que
+        # tous les clients ne suivent pas sur un POST, qu'un client HTTP suit
+        # sans l'en-tête d'autorisation si l'hôte change, et qui, derrière un
+        # proxy TLS, peut renvoyer en `http://`. Les deux adresses mènent au
+        # même serveur, qui ne regarde pas le chemin.
+        app.router.routes.append(Route(mounted, served, include_in_schema=False))
     return app
 
 

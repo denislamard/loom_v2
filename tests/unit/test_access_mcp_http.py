@@ -98,7 +98,11 @@ async def parle(
 
 
 async def brut(
-    loom: Loom, jeton: str | None = None, *, headers: dict[str, str] | None = None
+    loom: Loom,
+    jeton: str | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+    path: str = "/mcp/",
 ) -> httpx.Response:
     """Une requête d'initialisation crue, pour voir ce que le transport répond."""
     app = create_app(loom)
@@ -124,9 +128,7 @@ async def brut(
             transport=httpx.ASGITransport(app),
             base_url="http://127.0.0.1",
         ) as http:
-            # Directement sur le chemin monté : une redirection ferait perdre
-            # l'en-tête d'autorisation dès que l'hôte change.
-            return await http.post("/mcp/", json=body, headers=entete)
+            return await http.post(path, json=body, headers=entete)
 
 
 def texte(result: Any) -> str:
@@ -157,6 +159,41 @@ async def test_nothing_is_mounted_when_it_is_not_asked(demo: ConfigFactory) -> N
     async with Loom.from_config(demo(security=security)) as loom:
         response = await brut(loom)
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize("path", ["/mcp", "/mcp/"])
+async def test_the_documented_path_answers_without_a_redirect(
+    demo: ConfigFactory, path: str
+) -> None:
+    """`/mcp` répond comme `/mcp/` : ni 307 avant la clé, ni Location à suivre (test N5 du 23/10).
+
+    Le montage seul ne servait que `/mcp/` : un POST sur `/mcp`, l'adresse que
+    donne la documentation, recevait un 307 avant toute authentification — que
+    tous les clients ne suivent pas sur un POST, qu'un client HTTP suit sans
+    l'en-tête d'autorisation dès que l'hôte change, et qui, derrière un proxy
+    TLS, pouvait renvoyer en `http://`.
+    """
+    security, jetons = cles(app={"scopes": ["run", "read"]})
+    async with Loom.from_config(demo(security=security, server=MCP_HTTP)) as loom:
+        refused = await brut(loom, path=path)
+        accepted = await brut(loom, jetons["app"], path=path)
+
+    assert refused.status_code == 401
+    assert "Clé d'API absente" in refused.json()["detail"]
+    assert accepted.status_code == 200
+    assert "location" not in accepted.headers
+
+
+async def test_a_base_path_moves_the_mcp_path_too(demo: ConfigFactory) -> None:
+    security, jetons = cles(app={"scopes": ["run", "read"]})
+    server = {"http": {"base_path": "/loom"}, **MCP_HTTP}
+    async with Loom.from_config(demo(security=security, server=server)) as loom:
+        bare = await brut(loom, jetons["app"], path="/loom/mcp")
+        slashed = await brut(loom, jetons["app"], path="/loom/mcp/")
+        root = await brut(loom, jetons["app"], path="/mcp")
+
+    assert bare.status_code == slashed.status_code == 200
+    assert root.status_code == 404
 
 
 async def test_a_key_is_required(demo: ConfigFactory) -> None:
