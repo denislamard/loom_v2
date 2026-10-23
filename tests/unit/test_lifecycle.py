@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 import yaml
 
-from loom_ia.access.api import Loom
+from loom_ia.access.api import Loom, UnknownSession
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import Event, EventDraft, RunCancelled, RunFailed, ToolCalled
@@ -308,6 +308,20 @@ def test_cancelling_a_running_run_closes_it(patient: ConfigFactory) -> None:
     assert fold(events, cancelled.run_id).status is RunStatus.CANCELLED
 
 
+async def _until_called(loom: Loom, tool: str, *, limit: float = 10.0) -> None:
+    """Attend que le journal de ``SESSION`` porte l'appel de ``tool`` (``tool.called``)."""
+    async with asyncio.timeout(limit):
+        while True:
+            with suppress(UnknownSession):
+                events = await loom.export_session(SESSION)
+                if any(
+                    isinstance(e.payload, ToolCalled) and e.payload.tool_name == tool
+                    for e in events
+                ):
+                    return
+            await asyncio.sleep(0.02)
+
+
 def test_a_cancel_whose_caller_gives_up_still_closes_the_run(patient: ConfigFactory) -> None:
     """L'appelant de ``cancel`` est coupé par son délai pendant l'arrêt : l'arrêt va au bout,
     puis le délai remonte (``TimeoutError``) au lieu d'être avalé."""
@@ -317,7 +331,12 @@ def test_a_cancel_whose_caller_gives_up_still_closes_the_run(patient: ConfigFact
         run_id = new_run_id()
         async with Loom.from_config(path) as loom:
             run = asyncio.create_task(loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id))
-            await asyncio.sleep(0.15)
+            # L'outil doit être en plein effet : une attente fixe (0,15 s) ne suffisait pas
+            # sur la CI du 23/10, où l'arrêt a fini avant le délai, l'outil pas encore lancé.
+            await _until_called(loom, "attendre")
+            # ``tool.called`` est écrit juste avant le lancement : laisser l'outil entrer
+            # dans son attente, d'où l'annulation le fait ranger 0,3 s.
+            await asyncio.sleep(0.1)
             timed_out = False
             try:
                 async with asyncio.timeout(0.05):

@@ -2,7 +2,9 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.10 - non publiée
+## 2.0.11 - non publiée
+
+## 2.0.10 - publiée
 
 ### Événements et rapports
 - **Identifiant du modèle dans la config** (nouveau) : `model.responded`, `model.retried`, `model.exchanged` et `judge.evaluated` portent `model`, l'`id` du modèle dans `models` (`HAIKU`), à côté de `model_id`, son nom chez le fournisseur (`claude-haiku-5-5`), qui ne change pas. Deux déclarations d'un même modèle du fournisseur (un modèle et son secours, deux réglages) se distinguaient seulement par l'adresse appelée et `model.fell_back`. Le champ est une facette (`model`), absente des journaux antérieurs ; `request_hash` ne change pas, le rejeu exact non plus, et une version antérieure relit un journal qui le porte (champ inconnu ignoré depuis 2.0.4).
