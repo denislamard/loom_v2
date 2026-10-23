@@ -1089,7 +1089,7 @@ uv run loom validate; echo "code de retour : $?"
 ```
 
 ```text
-Configuration : /home/denis/mon-agent/loom.yaml: (racine) — Agent 'devis' : modèle 'SIMULÉ' non déclaré (modèles connus : SIMULE, SIMULE_ATELIER)
+Configuration : /home/denis/mon-agent/agents/devis.yaml: Agent 'devis' : modèle 'SIMULÉ' non déclaré (modèles connus : SIMULE, SIMULE_ATELIER)
 code de retour : 2
 ```
 
@@ -1102,7 +1102,7 @@ uv run loom validate
 ```
 
 ```text
-Configuration : Référence 'prix_ht' introuvable : aucun objet de ce nom (enregistrés : chercher_devis, montant_echeance, prix_ttc). Utiliser 'imports' ou un chemin 'module:attr'
+Configuration : Agent 'devis', outil 'prix_ht' : Référence 'prix_ht' introuvable : aucun objet de ce nom (enregistrés : chercher_devis, montant_echeance, prix_ttc). Utiliser 'imports' ou un chemin 'module:attr'
 ```
 
 (Avant ce message, la sortie standard a déjà listé la partie haute du rapport et l'agent `atelier`, qui, lui, se monte : l'erreur arrive en montant `devis`.)
@@ -2151,7 +2151,7 @@ uv run python sans_enregistrement.py 2>&1 | tail -1
 ```
 
 ```text
-loom_ia.config.errors.ConfigError: Référence 'prix_ttc' introuvable : aucun objet de ce nom (enregistrés : aucun). Utiliser 'imports' ou un chemin 'module:attr'
+loom_ia.config.errors.ConfigError: Agent 'devis', outil 'prix_ttc' : Référence 'prix_ttc' introuvable : aucun objet de ce nom (enregistrés : aucun). Utiliser 'imports' ou un chemin 'module:attr'
 ```
 
 (Une longue trace précède cette ligne ; `tail -1` ne garde que l'erreur. Le fichier `sans_enregistrement.py` peut être supprimé ensuite.)

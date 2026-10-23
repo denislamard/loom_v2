@@ -4281,7 +4281,7 @@ Le message vaut pour `pip install 'loom-ia[http]'` comme pour `uv add "loom-ia[h
 | Cause | Message |
 |---|---|
 | Modèle non déclaré | `Agent 'a' : modèle 'INCONNU' non déclaré (modèles connus : M)` |
-| Outil introuvable | `Référence 'absent' introuvable : aucun objet de ce nom (enregistrés : aucun). Utiliser 'imports' ou un chemin 'module:attr'` |
+| Outil introuvable | `Agent 'a', outil 'absent' : Référence 'absent' introuvable : aucun objet de ce nom (enregistrés : aucun). Utiliser 'imports' ou un chemin 'module:attr'` |
 | Clé inconnue | `max_iteration — Extra inputs are not permitted` |
 | Prompt absent | `main.system_file — prompt introuvable : …/prompts/absent.md` |
 | Variable de prompt manquante | `{{ entreprise }} : variable non définie pour le client 'default' (tenants[].variables)` |

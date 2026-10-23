@@ -614,7 +614,7 @@ def build_agent(
     imposed: Mapping[str, Approval] = tenant.approvals if tenant is not None else {}
     redirects: Mapping[str, str] = tenant.spec.secrets if tenant and tenant.spec else {}
     mapped: Mapping[str, str] = tenant.spec.models if tenant and tenant.spec else {}
-    tools = [_tool(declared, known, config.base_dir) for declared in spec.python_tools]
+    tools = [_tool(declared, known, config.base_dir, spec.name) for declared in spec.python_tools]
     roles = [role_definition(role, variables, state=spec.state) for role in spec.roles]
     _check_names(spec, [tool.spec.name for tool in tools])
     _check_state(spec, tools)
@@ -1723,12 +1723,17 @@ def _missing_mcp(reason: str) -> ConfigError:
     )
 
 
-def _tool(declared: PythonTool, registry: Registry, base_dir: Path | None) -> Tool:
-    if is_builtin(declared.python):
-        found: object = _builtin_tool(declared.python)
-    else:
-        found = resolve(declared.python, registry, base_dir=base_dir)
-    tool = found if isinstance(found, Tool) else _from_function(declared, found)
+def _tool(declared: PythonTool, registry: Registry, base_dir: Path | None, agent: str) -> Tool:
+    try:
+        if is_builtin(declared.python):
+            found: object = _builtin_tool(declared.python)
+        else:
+            found = resolve(declared.python, registry, base_dir=base_dir)
+        tool = found if isinstance(found, Tool) else _from_function(declared, found)
+    except ConfigError as exc:
+        # La référence ne dit pas d'où elle vient : l'agent et l'outil, si
+        # (test M5 du 23/10, « Référence 'prix_ht' introuvable » sans plus).
+        raise ConfigError(f"Agent {agent!r}, outil {declared.python!r} : {exc.reason}") from exc
     return configure(
         tool,
         timeout=declared.timeout,

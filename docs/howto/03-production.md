@@ -563,7 +563,7 @@ uv run loom --config loom.capacites.yaml validate
 ```
 
 ```text
-Configuration : /chemin/vers/relance/loom.capacites.yaml: (racine) — Agent 'relance' : il appelle des outils, mais le modèle de secours 'SECOURS' ne sait pas le faire (capabilities.tools: false)
+Configuration : /chemin/vers/relance/agents/relance.yaml: Agent 'relance' : il appelle des outils, mais le modèle de secours 'SECOURS' ne sait pas le faire (capabilities.tools: false)
 ```
 
 La commande sort en code 2 : la configuration est refusée **avant** qu'un seul run ne soit lancé. Supprimez ensuite `loom.capacites.yaml`.

@@ -2915,7 +2915,7 @@ L'orchestrateur répond qu'il n'a pas de photo : le rôle n'était pas dans ses 
 ```console
 $ sed 's/capabilities: {vision: true}/capabilities: {}/' loom.yaml > loom.sans-vision.yaml
 $ uv run loom --config loom.sans-vision.yaml validate | tail -2
-Configuration : /chemin/vers/mon-agent/ch12/loom.sans-vision.yaml: (racine) — Agent 'releve', rôle 'decrire_photo' : il reçoit les pièces jointes, mais le modèle 'VISION' n'a pas la capacité vision (capabilities.vision: true)
+Configuration : /chemin/vers/mon-agent/ch12/agents/releve.yaml: Agent 'releve', rôle 'decrire_photo' : il reçoit les pièces jointes, mais le modèle 'VISION' n'a pas la capacité vision (capabilities.vision: true)
 ```
 
 #### À retenir

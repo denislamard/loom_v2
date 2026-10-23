@@ -250,7 +250,10 @@ def test_a_broken_config_leaves_the_old_process_serving(
 
     rewrite(agent, lambda data: data.update(tools=[{"python": "inexistant"}]))
     server.until(lambda: "Rechargement refusé" in server.said, "pas refusé")
-    assert "Config refusée : Référence 'inexistant' introuvable" in server.said
+    assert (
+        "Config refusée : Agent 'demo', outil 'inexistant' : Référence 'inexistant' introuvable"
+        in server.said
+    )
     assert server.agents() == {"demo": "Répond aux questions de calcul."}
 
     agent.write_text(good.replace("Répond aux questions", "Répond enfin aux questions"))
@@ -380,5 +383,8 @@ def test_a_refused_first_start_exits_with_2(
     server = served(demo(agents=[demo_agent(tools=[{"python": "inexistant"}])]))
     code = server.process.wait(timeout=DELAI)
     assert code == 2
-    assert "Config refusée : Référence 'inexistant' introuvable" in server.said
+    assert (
+        "Config refusée : Agent 'demo', outil 'inexistant' : Référence 'inexistant' introuvable"
+        in server.said
+    )
     assert "Le serveur n'a pas démarré." in server.said

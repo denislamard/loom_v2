@@ -391,6 +391,40 @@ def test_the_env_file_probe_leaves_a_double_key_to_the_loader(tmp_path: Path) ->
         load_config(path)
 
 
+def test_a_broken_reference_is_reported_in_the_file_of_its_agent(tmp_path: Path) -> None:
+    # Test M5 du 23/10 : « loom.yaml: (racine) — Agent 'agent' : modèle 'SONNET'
+    # non déclaré » pour une faute dans agents/agent.yaml.
+    agents = {
+        "demo": AGENT,
+        "zinzin": {**AGENT, "name": "zinzin", "main": {**AGENT["main"], "model": "SONNET"}},
+    }
+    path = write(tmp_path, agents=agents)
+    with pytest.raises(ConfigError) as refus:
+        load_config(path)
+    assert refus.value.source == tmp_path / "agents" / "zinzin.yaml"
+    assert str(refus.value) == (
+        f"{tmp_path / 'agents' / 'zinzin.yaml'}: "
+        "Agent 'zinzin' : modèle 'SONNET' non déclaré (modèles connus : FAKE)"
+    )
+
+
+def test_an_error_no_single_agent_causes_stays_with_loom_yaml(tmp_path: Path) -> None:
+    # Deux fichiers pour un même nom : chacun passe seul, la faute est d'ensemble.
+    path = write(tmp_path, agents={"a": AGENT, "b": AGENT})
+    with pytest.raises(ConfigError, match="Agent déclaré deux fois") as refus:
+        load_config(path)
+    assert refus.value.source == path
+
+
+def test_an_unresolved_tool_names_its_agent_and_tool(tmp_path: Path) -> None:
+    agent = {**AGENT, "tools": [{"python": "prix_ht"}]}
+    config = load_config(write(tmp_path, agents={"demo": agent}))
+    with pytest.raises(
+        ConfigError, match=r"^Agent 'demo', outil 'prix_ht' : Référence 'prix_ht' introuvable"
+    ):
+        build_agent(config, "demo", InMemoryEventStore())
+
+
 def test_empty_agent_file_is_reported(tmp_path: Path) -> None:
     path = write(tmp_path, agents={})
     (tmp_path / "agents" / "vide.yaml").write_text("", encoding="utf-8")

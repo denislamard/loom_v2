@@ -13,6 +13,8 @@ le démarrage.
 """
 
 import os
+import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -33,6 +35,8 @@ from loom_ia.core.model import (
 from loom_ia.core.template import Template, TemplateError
 
 AGENT_SUFFIXES = (".yaml", ".yml")
+# Début du message d'un contrôle qui porte sur un agent (``LoomConfig.check``).
+_AGENT_NAMED: Final = re.compile(r"Agent '([^']+)'")
 # Variable qui l'emporte sur le fichier : ce qu'un conteneur sait poser.
 PROFILE_ENV: Final = "LOOM_PROFILE"
 # Blocs remplacés en entier par une surcharge de profil, jamais fusionnés :
@@ -57,11 +61,16 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
     data = _merged(data, active, source=root)
     draft = _validate(LoomConfig, {**data, "agents": data.get("agents", [])}, source=root)
 
-    agents = [
-        *draft.agents,
-        *_load_agents(base_dir / draft.agents_dir, base_dir / draft.prompts_dir, base_dir),
-    ]
-    config = _validate(LoomConfig, {**data, "agents": agents}, source=root)
+    loaded = _load_agents(base_dir / draft.agents_dir, base_dir / draft.prompts_dir, base_dir)
+    agents = [*draft.agents, *(spec for spec, _ in loaded)]
+    try:
+        config = LoomConfig.model_validate({**data, "agents": agents})
+    except ValidationError as exc:
+        culprit = _culprit(exc, loaded)
+        if culprit is None:
+            raise from_validation(exc, source=root) from exc
+        # Le message nomme déjà l'agent : pas de « (racine) » devant.
+        raise from_validation(exc, source=culprit, root=None) from exc
     servers = tuple(
         server.model_copy(update={"tools": _with_schemas(server.tools, base_dir, source=root)})
         for server in config.mcp_servers
@@ -172,15 +181,42 @@ def _launched_from(server: McpServerSpec, base_dir: Path) -> McpServerSpec:
     return server.model_copy(update={"cwd": cwd})
 
 
-def _load_agents(agents_dir: Path, prompts_dir: Path, base_dir: Path) -> list[AgentSpec]:
+def _load_agents(
+    agents_dir: Path, prompts_dir: Path, base_dir: Path
+) -> list[tuple[AgentSpec, Path]]:
+    """Les agents du dossier, chacun avec le fichier d'où il vient."""
     if not agents_dir.is_dir():
         raise ConfigError(f"Dossier d'agents introuvable : {agents_dir}")
-    agents: list[AgentSpec] = []
+    agents: list[tuple[AgentSpec, Path]] = []
     for file in sorted(f for f in agents_dir.iterdir() if f.suffix in AGENT_SUFFIXES):
         spec = _validate(AgentSpec, _read_yaml(file), source=file)
         spec = _with_prompts(spec, prompts_dir, source=file)
-        agents.append(_with_contracts(spec, base_dir, source=file))
+        agents.append((_with_contracts(spec, base_dir, source=file), file))
     return agents
+
+
+def _culprit(error: ValidationError, loaded: Sequence[tuple[AgentSpec, Path]]) -> Path | None:
+    """Le fichier d'agent que nomme l'erreur de la config entière, s'il est seul (M5).
+
+    Un fichier d'agent est validé seul ; ce qu'il référence ailleurs (un modèle,
+    un serveur MCP, une source, un autre agent, des capacités) ne l'est qu'avec
+    la config entière, et l'erreur était attribuée à la racine de ``loom.yaml``
+    — « (racine) — Agent 'agent' : modèle 'SONNET' non déclaré » pour une faute
+    dans ``agents/agent.yaml`` (test M5 du 23/10). Les contrôles d'un agent
+    commencent tous par « Agent '<nom>' » : quand toutes les erreurs nomment
+    le même agent, et qu'il vient d'un fichier, c'est ce fichier. Sinon (une
+    erreur de la racine, deux agents en cause), ``None`` : ``loom.yaml``.
+    """
+    files = {spec.name: file for spec, file in loaded}
+    named: set[str] = set()
+    for item in error.errors(include_url=False):
+        found = _AGENT_NAMED.match(item["msg"].removeprefix("Value error, "))
+        if found is None or item["loc"]:
+            return None
+        named.add(found.group(1))
+    if len(named) != 1:
+        return None
+    return files.get(named.pop())
 
 
 def _with_contracts(spec: AgentSpec, base_dir: Path, *, source: Path) -> AgentSpec:
