@@ -744,6 +744,62 @@ async def test_the_otel_translation_keeps_ids_parents_and_status() -> None:
     assert span_id("relance-42") == span_id("relance-42") != span_id("relance-43")
 
 
+def _failing(*, transient: int, ok: bool = False) -> Any:
+    """Un exporteur qui logue comme celui du SDK (réessais, puis échec) et rend son verdict."""
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+
+    sdk = logging.getLogger("opentelemetry.exporter.otlp.proto.http.trace_exporter")
+
+    class Panne(SpanExporter):
+        def export(self, spans: Sequence[Any]) -> SpanExportResult:
+            for delay in range(1, transient + 1):
+                sdk.warning(
+                    "Transient error %s encountered while exporting span batch, retrying in %.2fs.",
+                    "Connection refused",
+                    delay,
+                )
+            if ok:
+                return SpanExportResult.SUCCESS
+            sdk.error("Failed to export span batch due to timeout, max retries or shutdown.")
+            return SpanExportResult.FAILURE
+
+    return Panne()
+
+
+@sans_otel
+async def test_an_undelivered_batch_is_said_once_with_its_runs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test K4 du 21/10 : quatre lignes anglaises du SDK, et aucun run nommé."""
+    from loom_ia.adapters.telemetry.otel import OtelSpanSink
+
+    caplog.set_level(logging.DEBUG)
+    sink = OtelSpanSink(_failing(transient=2), name="otel essai", schedule_delay=0.01)
+    sink.export([_span(1, **{"loom.run_id": "run-a"}), _span(2, **{"loom.run_id": "run-b"})])
+    await sink.aclose(5)
+    said = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert [r.getMessage() for r in said] == [
+        "Collecteur otel essai : 2 span(s) non remis (run run-a, run-b) — "
+        "3 essai(s), dernière erreur : Connection refused"
+    ]
+    assert not [r for r in caplog.records if r.name.startswith("opentelemetry")]
+
+
+@sans_otel
+async def test_a_batch_delivered_after_retries_says_them_in_debug_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from loom_ia.adapters.telemetry.otel import OtelSpanSink
+
+    caplog.set_level(logging.DEBUG)
+    sink = OtelSpanSink(_failing(transient=1, ok=True), name="otel essai", schedule_delay=0.01)
+    sink.export([_span(1)])
+    await sink.aclose(5)
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    [debug] = [r for r in caplog.records if "Transient error" in r.getMessage()]
+    assert debug.name == "loom_ia.adapters.telemetry.otel" and debug.levelno == logging.DEBUG
+
+
 def _span(i: int, *, tenant: str = "martin", **attributes: Any) -> SpanRecord:
     """Un span d'outil, avec ce qu'il faut d'attributs."""
     from datetime import UTC, datetime

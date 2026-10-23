@@ -88,6 +88,7 @@ from loom_ia.config.models import (
     QueueStorage,
 )
 from loom_ia.config.references import resolve
+from loom_ia.config.telemetry import CaptureConfig, CaptureOverride
 from loom_ia.core import SETUP, TOLD
 from loom_ia.core.events import BudgetExceeded, Event, SessionCompacted
 from loom_ia.core.model import (
@@ -139,6 +140,7 @@ from loom_ia.runtime import (
     apply_logging,
     create_keyring,
     encryption_warnings,
+    exporter_warnings,
     key_warnings,
     load_registry,
     model_warnings,
@@ -147,7 +149,7 @@ from loom_ia.runtime import (
 )
 from loom_ia.runtime.sources import GROUP as SOURCES_GROUP
 from loom_ia.runtime.sources import PackagedSource, installed
-from loom_ia.telemetry import Trace, render_trace
+from loom_ia.telemetry import BUILTIN_PATTERNS, Trace, render_trace
 from loom_ia.telemetry.logs import printable
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, Tenant, UnknownTenant
 from loom_ia.tools_builtin import is_builtin
@@ -704,7 +706,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 async def _validate(args: argparse.Namespace) -> int:
     config = _config(args)
-    apply_logging(config)
+    # Ce que la commande imprime à sa place n'est pas redit par le log du
+    # montage (lot C du 23/10 : le collecteur non monté se lisait deux fois).
+    printed: set[str] = set()
+    apply_logging(config).addFilter(
+        lambda record: not (getattr(record, SETUP, False) and record.getMessage() in printed)
+    )
     registry = load_registry(config)
     storage = config.storage
     journal = _storage_line(storage.events)
@@ -717,6 +724,7 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Env        : {env.describe()}")
     print(f"Modèles    : {_listed(spec.id for spec in config.models)}")
     for warning in (*key_warnings(config), *model_warnings(config)):
+        printed.add(warning)
         print(f"    {warning}")
     if args.no_keys:
         # Les clients de modèle ne sont pas créés : ce que le montage aurait
@@ -741,12 +749,20 @@ async def _validate(args: argparse.Namespace) -> int:
     print(f"Bus        : {_bus_line(storage.bus)}")
     print(f"Chiffrement: {_sealing_line(config)}")
     for line in _sealing_report(config):
+        printed.add(line)
         print(f"    {line}")
     print(f"Rétention  : {_retention_line(config)}")
+    # Au test K4 du 21/10, rien ne disait ce qui sort du journal : ni le
+    # collecteur, ni la capture, ni les motifs de masquage.
+    print(f"Télémétrie : {_telemetry_line(config)}")
+    for line in _telemetry_details(config):
+        print(f"    {line}")
+    printed.update(exporter_warnings(config))
     if storage.queue.brokered:
         # Le piège de la file servie : tout se met en file, rien ne tourne.
         print("    les tâches de fond attendent un worker : loom worker")
     for warning in storage_warnings(config):
+        printed.add(warning)
         print(f"    {warning}")
     print(f"Clés d'API : {keys or 'aucune (API REST ouverte)'}")
     mcp = config.server.mcp
@@ -852,6 +868,58 @@ def _retention_line(config: LoomConfig) -> str:
     commune = f"sessions effacées après {racine} jour(s)" if racine else "aucune à la racine"
     dit = f"{commune} ; {', '.join(propres)}" if propres else commune
     return f"{dit} — par « loom retention », que la plateforme met à l'heure"
+
+
+def _telemetry_line(config: LoomConfig) -> str:
+    """Logs, capture des exports et échanges bruts : ce que la racine décide."""
+    logs = config.telemetry.logging
+    return f"logs {logs.level.upper()} ({logs.format}) ; {_capture_said(config.telemetry.capture)}"
+
+
+def _capture_said(capture: CaptureConfig) -> str:
+    exports = (
+        "exports avec le contenu, masqué"
+        if capture.exports == "content"
+        else "exports sans contenu (metadata)"
+    )
+    raw = (
+        f"échanges bruts au journal ({_kib(capture.raw_max_bytes)} par corps au plus)"
+        if capture.raw_exchanges
+        else "pas d'échanges bruts"
+    )
+    return f"{exports} ; {raw}"
+
+
+def _kib(size: int) -> str:
+    return f"{size // 1024} Kio" if size % 1024 == 0 else f"{size} octets"
+
+
+def _telemetry_details(config: LoomConfig) -> list[str]:
+    """Une ligne par collecteur, l'état de sa variable d'adresse, puis les motifs de masquage.
+
+    La valeur des variables n'est pas imprimée : l'adresse peut porter un jeton,
+    les en-têtes en portent un. « vide » dit ce que le chargement dit aussi :
+    ce collecteur n'est pas monté.
+    """
+    telemetry = config.telemetry
+    if not telemetry.exporters:
+        return ["collecteur : aucun — rien ne sort du journal que les logs"]
+    lines: list[str] = []
+    for exporter in telemetry.exporters:
+        filled = bool(os.environ.get(exporter.endpoint_env))
+        state = "renseignée" if filled else "vide — non monté, aucune trace n'en partira"
+        said = (
+            f"collecteur {exporter.type} : adresse dans {exporter.endpoint_env} ({state}), "
+            f"{exporter.protocol}, service {exporter.service_name}, délai {exporter.timeout:g} s"
+        )
+        if exporter.headers_env is not None:
+            headers = "renseignée" if os.environ.get(exporter.headers_env) else "vide"
+            said += f", en-têtes dans {exporter.headers_env} ({headers})"
+        lines.append(said)
+    names = [p if isinstance(p, str) else p.name for p in telemetry.redaction.patterns]
+    builtin = [name for name in BUILTIN_PATTERNS if name not in names]
+    lines.append(f"masquage du contenu exporté : {_listed([*builtin, *names])}")
+    return lines
 
 
 def _sealing_line(config: LoomConfig) -> str:
@@ -968,6 +1036,11 @@ def _tenant_lines(tenant: Tenant) -> list[str]:
         events = spec.storage.events
         where = f" ({events.path})" if events.path else ""
         lines.append(f"stockage : {events.backend}{where}")
+    capture = spec.telemetry.capture
+    if capture != CaptureOverride():
+        # Au test K4 du 21/10, « rien de surchargé » pour un client qui surchargeait
+        # sa capture.
+        lines.append(f"capture : {_capture_said(tenant.config.capture_for(tenant.id))}")
     return lines or ["rien de surchargé"]
 
 

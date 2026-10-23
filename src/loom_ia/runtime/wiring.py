@@ -411,10 +411,7 @@ def create_run_exporter(
     for exporter in declared:
         endpoint = variables.get(exporter.endpoint_env, "")
         if not endpoint:
-            warnings.append(
-                f"Télémétrie : la variable {exporter.endpoint_env!r} est vide ou absente — "
-                "ce collecteur n'est pas monté, aucune trace n'en partira"
-            )
+            warnings.append(_unmounted(exporter.endpoint_env))
             continue
         headers = (
             parse_headers(variables.get(exporter.headers_env))
@@ -1172,6 +1169,27 @@ def announce(config: LoomConfig, warnings: Sequence[str], *, refuse: bool | None
         raise ConfigError(f"Profil prod : {said}" if config.strict else said)
     for warning in warnings:
         logger.warning(warning, extra={SETUP: True})
+
+
+def exporter_warnings(config: LoomConfig, environ: Mapping[str, str] | None = None) -> list[str]:
+    """Les collecteurs que leur variable d'adresse, vide, laisse non montés (6.1a).
+
+    Le même texte que ``create_run_exporter`` dit au montage : ``loom validate``
+    l'affiche à sa place.
+    """
+    variables = os.environ if environ is None else environ
+    return [
+        _unmounted(exporter.endpoint_env)
+        for exporter in config.telemetry.exporters
+        if not variables.get(exporter.endpoint_env, "")
+    ]
+
+
+def _unmounted(variable: str) -> str:
+    return (
+        f"Télémétrie : la variable {variable!r} est vide ou absente — "
+        "ce collecteur n'est pas monté, aucune trace n'en partira"
+    )
 
 
 def storage_warnings(config: LoomConfig) -> list[str]:

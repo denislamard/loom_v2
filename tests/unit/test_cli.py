@@ -1085,3 +1085,54 @@ def test_an_undefined_variable_names_the_prompt_file(
     assert main(["--config", str(path), "validate"]) == 2
     err = capsys.readouterr().err
     assert "Agent 'demo', main.system_file (prompts/demo.md) — {{ entreprise }}" in err
+
+
+# --- Lot C du 23/10 : ce qui sort du journal ----------------------------------
+
+
+def test_validate_says_there_is_no_collector(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--config", str(demo()), "validate"]) == 0
+    out = capsys.readouterr().out
+    assert "Télémétrie : logs " in out and "exports sans contenu (metadata)" in out
+    assert "collecteur : aucun — rien ne sort du journal que les logs" in out
+
+
+def test_validate_shows_the_collector_the_capture_and_the_overrides(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test K4 du 21/10 : ni exporteur, ni capture, ni motifs, et « rien de surchargé »."""
+    pytest.importorskip("opentelemetry.sdk")
+    monkeypatch.delenv("LOOM_OTLP_VIDE", raising=False)
+    telemetry = {
+        "logging": {"level": "WARNING"},
+        "capture": {"raw_exchanges": True},
+        "redaction": {"patterns": [{"name": "devis", "regex": r"D-\d+"}]},
+        "exporters": [{"type": "otel", "endpoint_env": "LOOM_OTLP_VIDE"}],
+    }
+    tenants = [
+        {"id": "default"},
+        {"id": "dupont", "telemetry": {"capture": {"exports": "content"}}},
+    ]
+    path = demo(telemetry=telemetry, tenants=tenants)
+    assert main(["--config", str(path), "validate"]) == 0
+    printed = capsys.readouterr()
+    assert (
+        "Télémétrie : logs WARNING (console) ; exports sans contenu (metadata) ; "
+        "échanges bruts au journal (256 Kio par corps au plus)"
+    ) in printed.out
+    assert (
+        "collecteur otel : adresse dans LOOM_OTLP_VIDE (vide — non monté, aucune trace n'en "
+        "partira), http/protobuf, service loom-ia, délai 10 s"
+    ) in printed.out
+    assert "masquage du contenu exporté : secret, email, phone, iban, devis" in printed.out
+    client = printed.out[printed.out.index("client dupont") :]
+    assert "capture : exports avec le contenu, masqué" in client
+    assert "rien de surchargé" not in client
+    # Dit une fois : la ligne de validate, pas aussi le log du montage.
+    assert "LOOM_OTLP_VIDE" not in printed.err
+
+    monkeypatch.setenv("LOOM_OTLP_VIDE", "http://127.0.0.1:9")
+    assert main(["--config", str(path), "validate"]) == 0
+    assert "adresse dans LOOM_OTLP_VIDE (renseignée)" in capsys.readouterr().out

@@ -134,6 +134,18 @@ def test_configure_logging_is_idempotent() -> None:
     assert ROOT.propagate is False
 
 
+def test_the_sdk_logs_take_the_format_and_level_of_loom() -> None:
+    """Test K4 du 21/10 : les lignes du SDK OpenTelemetry sortaient brutes, hors de loom."""
+    stream = io.StringIO()
+    configure_logging(logging.WARNING, stream=stream)
+    sdk = logging.getLogger("opentelemetry.sdk.trace.export")
+    sdk.info("ignoré")
+    sdk.warning("Queue is full, likely spans will be dropped.")
+    assert stream.getvalue().count("WARNING  opentelemetry.sdk.trace.export — Queue is full") == 1
+    assert "ignoré" not in stream.getvalue()
+    assert logging.getLogger("opentelemetry").propagate is False
+
+
 def test_unknown_format_is_rejected() -> None:
     with pytest.raises(ValueError, match="Format de log inconnu"):
         configure_logging(format="xml")  # pyright: ignore[reportArgumentType]

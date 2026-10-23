@@ -29,6 +29,8 @@ type LogFormat = Literal["console", "json"]
 
 CONTEXT_FIELDS: Final = ("run_id", "span_id", "tenant_id")
 ROOT_LOGGER: Final = "loom_ia"
+# Le SDK OpenTelemetry, qui envoie les spans aux collecteurs.
+SDK_LOGGER: Final = "opentelemetry"
 
 # Marqueur posé sur le handler installé par configure_logging, pour le
 # retrouver et le remplacer lors d'un nouvel appel (idempotence).
@@ -108,9 +110,13 @@ def configure_logging(
 ) -> logging.Handler:
     """Affiche les logs de loom-ia sur ``stream`` (stderr par défaut).
 
-    Seul le logger ``loom_ia`` est configuré : le logger racine de
-    l'application n'est pas touché. La propagation est coupée pour éviter
-    les doublons si l'application a aussi configuré le logger racine.
+    Seuls les loggers ``loom_ia`` et ``opentelemetry`` sont configurés : le
+    logger racine de l'application n'est pas touché. Le second est celui du
+    SDK qui envoie les spans aux collecteurs (``telemetry.exporters``) : ses
+    lignes prennent le format et le niveau de loom (au test K4 du 21/10, elles
+    sortaient brutes, hors de ``telemetry.logging``). La propagation est
+    coupée pour éviter les doublons si l'application a aussi configuré le
+    logger racine.
 
     Un nouvel appel remplace le handler installé par l'appel précédent.
     Renvoie le handler installé.
@@ -123,17 +129,16 @@ def configure_logging(
         allowed = ", ".join(get_args(LogFormat.__value__))
         raise ValueError(f"Format de log inconnu : {format!r} (attendu : {allowed})")
 
-    logger = logging.getLogger(ROOT_LOGGER)
-    for existing in list(logger.handlers):
-        if getattr(existing, _HANDLER_MARK, False):
-            logger.removeHandler(existing)
-            existing.close()
-
     handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
     handler.setFormatter(formatters[format]())
     setattr(handler, _HANDLER_MARK, True)
-
-    logger.addHandler(handler)
-    logger.setLevel(level)
-    logger.propagate = False
+    for name in (ROOT_LOGGER, SDK_LOGGER):
+        logger = logging.getLogger(name)
+        for existing in list(logger.handlers):
+            if getattr(existing, _HANDLER_MARK, False):
+                logger.removeHandler(existing)
+                existing.close()
+        logger.addHandler(handler)
+        logger.setLevel(level)
+        logger.propagate = False
     return handler

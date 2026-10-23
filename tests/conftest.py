@@ -54,16 +54,18 @@ def restore_loom_logger() -> Iterator[None]:
     propagation. Un essai qui lance une commande laissait donc ce réglage aux
     suivants, et ``caplog`` ne voyait plus rien : le résultat dépendait de
     l'ordre d'exécution (TST-8). Le rétablissement vaut pour tous les essais.
+    De même pour ``opentelemetry``, que ``configure_logging`` règle aussi (lot C).
     """
-    racine = logging.getLogger("loom_ia")
-    handlers, level, propagate = list(racine.handlers), racine.level, racine.propagate
+    loggers = [logging.getLogger(name) for name in ("loom_ia", "opentelemetry")]
+    states = [(list(lg.handlers), lg.level, lg.propagate) for lg in loggers]
     yield
-    for handler in list(racine.handlers):
-        if handler not in handlers:
-            racine.removeHandler(handler)
-            handler.close()
-    racine.setLevel(level)
-    racine.propagate = propagate
+    for logger, (handlers, level, propagate) in zip(loggers, states, strict=True):
+        for handler in list(logger.handlers):
+            if handler not in handlers:
+                logger.removeHandler(handler)
+                handler.close()
+        logger.setLevel(level)
+        logger.propagate = propagate
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

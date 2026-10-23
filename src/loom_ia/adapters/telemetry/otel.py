@@ -19,12 +19,15 @@ dans le collecteur sous son propre identifiant.
   condensé.
 
 L'envoi est celui du SDK : un ``BatchSpanProcessor`` qui regroupe, envoie
-dans son propre fil et réessaie ; ``aclose`` le vide avant de fermer, dans le
-délai qu'on lui donne. Sa file tient ``MAX_QUEUE`` spans (le défaut du SDK,
-2 048, jetait une rafale de fin de runs) ; ``OTEL_BSP_MAX_QUEUE_SIZE``, s'il
-est posé, garde la main. Une valeur d'attribut plus longue que
-``OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`` caractères (``MAX_VALUE_LENGTH`` sans
-la variable) est coupée, en le disant.
+dans son propre fil et réessaie. Un lot qui ne part pas est dit **une fois**,
+en français, avec les runs qu'il portait et la dernière erreur du SDK
+(``Reported``) ; les lignes que le SDK écrit pendant cet envoi (« Transient
+error … retrying », « Failed to export … ») ne sortent qu'en DEBUG.
+``aclose`` vide la file avant de fermer, dans le délai qu'on lui donne. Sa
+file tient ``MAX_QUEUE`` spans (le défaut du SDK, 2 048, jetait une rafale de
+fin de runs) ; ``OTEL_BSP_MAX_QUEUE_SIZE``, s'il est posé, garde la main.
+Une valeur d'attribut plus longue que ``OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT``
+caractères (``MAX_VALUE_LENGTH`` sans la variable) est coupée, en le disant.
 
 Demande l'extra ``otel`` (``opentelemetry-sdk``, ``opentelemetry-exporter-otlp``).
 """
@@ -44,7 +47,7 @@ from urllib.parse import unquote
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import Event as OtelEvent
 from opentelemetry.sdk.trace import ReadableSpan
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.sdk.util.instrumentation import InstrumentationScope
 from opentelemetry.trace import SpanContext, SpanKind, Status, StatusCode, TraceFlags
 
@@ -148,6 +151,98 @@ def traces_url(endpoint: str) -> str:
     return trimmed if trimmed.endswith(TRACES_PATH) else f"{trimmed}{TRACES_PATH}"
 
 
+# Ce que le SDK logue pendant un envoi, retenu pour être dit une fois (fil par fil :
+# le processeur exporte dans le sien).
+_HELD = threading.local()
+_SDK_EXPORTERS: Final = "opentelemetry.exporter"
+
+
+def _held(record: logging.LogRecord) -> bool:
+    """Filtre des loggers des exporteurs du SDK : retient ce qu'écrit un envoi en cours."""
+    box: list[logging.LogRecord] | None = getattr(_HELD, "box", None)
+    if box is None:
+        return True
+    box.append(record)
+    return False
+
+
+def _hold_sdk_logs() -> None:
+    """Pose ``_held`` sur les loggers des exporteurs du SDK, une fois chacun.
+
+    Un filtre de logger ne voit que ce qui est écrit sur ce logger même : il
+    est posé sur chacun de ceux que les modules d'export ont créés.
+    """
+    for name, found in list(logging.root.manager.loggerDict.items()):
+        if (
+            name.startswith(_SDK_EXPORTERS)
+            and isinstance(found, logging.Logger)
+            and _held not in found.filters
+        ):
+            found.addFilter(_held)
+
+
+class Reported(SpanExporter):
+    """Un exporteur du SDK, dont l'échec se dit une fois, en français, avec ses runs.
+
+    Au test K4 du 21/10, un collecteur arrêté donnait quatre lignes anglaises du
+    SDK (trois « Transient error … retrying », un « Failed to export … ») et
+    rien ne disait quel run n'était pas parti. Les lignes du SDK écrites pendant
+    l'envoi sont retenues ; si le lot part, elles ne sortent qu'en DEBUG,
+    sinon une seule ligne WARNING dit le collecteur, le nombre de spans, les
+    runs et la dernière erreur.
+    """
+
+    def __init__(self, inner: SpanExporter, name: str) -> None:
+        self._inner = inner
+        self._name = name
+        _hold_sdk_logs()
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        box: list[logging.LogRecord] = []
+        _HELD.box = box
+        try:
+            result = self._inner.export(spans)
+        finally:
+            _HELD.box = None
+        if result is SpanExportResult.SUCCESS:
+            for record in box:
+                logger.debug("Collecteur %s : %s", self._name, record.getMessage())
+            return result
+        runs = sorted(
+            {
+                str(span.attributes["loom.run_id"])
+                for span in spans
+                if span.attributes is not None and "loom.run_id" in span.attributes
+            }
+        )
+        logger.warning(
+            "Collecteur %s : %d span(s) non remis (run %s) — %s",
+            self._name,
+            len(spans),
+            ", ".join(runs) or "inconnu",
+            _cause(box),
+        )
+        return result
+
+    def shutdown(self) -> None:
+        self._inner.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        return self._inner.force_flush(timeout_millis)
+
+
+def _cause(records: Sequence[logging.LogRecord]) -> str:
+    """La dernière erreur du SDK : la raison d'un réessai, sinon sa dernière ligne."""
+    retried = [r for r in records if str(r.msg).startswith("Transient error")]
+    if retried and retried[-1].args:
+        args = retried[-1].args
+        reason = args[0] if isinstance(args, tuple) else args
+        return f"{len(retried) + 1} essai(s), dernière erreur : {reason}"
+    if records:
+        return records[-1].getMessage()
+    return "le SDK n'a rien dit de plus"
+
+
 class OtelSpanSink:
     """Un collecteur OTLP, servi par le processeur par lots du SDK."""
 
@@ -165,7 +260,9 @@ class OtelSpanSink:
         # Sans la variable, la file de loom ; avec, celle qu'elle dit (le SDK la lit).
         queue = None if os.environ.get(QUEUE_ENV) else MAX_QUEUE
         self._processor = BatchSpanProcessor(
-            exporter, max_queue_size=queue, schedule_delay_millis=schedule_delay * 1000
+            Reported(exporter, name),
+            max_queue_size=queue,
+            schedule_delay_millis=schedule_delay * 1000,
         )
 
     @classmethod
