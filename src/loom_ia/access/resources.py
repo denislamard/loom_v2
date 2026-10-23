@@ -66,6 +66,10 @@ TEMPLATES: Final[tuple[tuple[str, str, str], ...]] = (
     (
         f"{ARTIFACTS}{{client}}/{{session}}/{{fichier}}",
         "fichier",
-        "Octets d'un fichier du run (pièce jointe, sortie d'outil, déport)",
+        # Un client qui ne connaît que ce gabarit ne devinait pas que l'URI
+        # rendue dans ``artifacts`` (``artifact://…``) se lit telle quelle (G3).
+        "Octets d'un fichier du run (pièce jointe, sortie d'outil, déport). L'URI "
+        "artifact://{client}/{session}/{fichier} qu'un résultat donne dans 'artifacts' "
+        "se lit aussi telle quelle",
     ),
 )

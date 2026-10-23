@@ -67,6 +67,10 @@ class Tenant:
     # Table de ses secrets, telle qu'elle descend aux adaptateurs (L2).
     secrets: Mapping[str, str]
     spec: TenantSpec | None = None
+    # Vrai quand la table vient d'un gestionnaire de secrets passé par
+    # l'application (``Loom(..., secrets=...)``), pas de l'environnement : un
+    # secret absent ne se dit alors pas « variable d'environnement » (M3).
+    provided: bool = False
 
     def allows(self, agent: str) -> bool:
         """Vrai si ce client peut lancer cet agent (L1)."""
@@ -120,6 +124,7 @@ class Tenants:
     ) -> None:
         self._config = config
         self._secrets = secrets if secrets is not None else EnvironmentSecrets(config, environ)
+        self._provided = not isinstance(self._secrets, EnvironmentSecrets)
         self._declared = config.tenant_ids
         self._open = not config.tenants
         self._tenants = {spec.id: self._resolve(spec) for spec in config.tenants}
@@ -155,6 +160,7 @@ class Tenants:
             config=config,
             secrets=self._secrets.secrets(tenant_id),
             spec=spec,
+            provided=self._provided,
         )
 
 

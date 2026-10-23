@@ -68,7 +68,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
     except ValidationError as exc:
         culprit = _culprit(exc, loaded)
         if culprit is None:
-            raise from_validation(exc, source=root) from exc
+            raise from_validation(exc, source=root, data=data) from exc
         # Le message nomme déjà l'agent : pas de « (racine) » devant.
         raise from_validation(exc, source=culprit, root=None) from exc
     servers = tuple(
@@ -258,7 +258,7 @@ def _schema(
     try:
         return OutputContract.model_validate({**fields, "schema": schema})
     except ValidationError as exc:
-        raise from_validation(exc, source=path) from exc
+        raise from_validation(exc, source=path, data=fields) from exc
 
 
 def _with_prompts(spec: AgentSpec, prompts_dir: Path, *, source: Path) -> AgentSpec:
@@ -317,12 +317,21 @@ def _check_variables(config: LoomConfig, *, source: Path) -> None:
     tenants: tuple[TenantSpec | None, ...] = config.tenants or (None,)
     for spec in config.all_agents:
         for label, role in (("main", spec.main), *((f"roles[{r.name}]", r) for r in spec.roles)):
+            # Le prompt par son fichier quand il en vient : au test M7 du 23/10,
+            # « main.system » ne disait pas où corriger.
+            where = f"{label}.system"
+            if role.system_file is not None:
+                written = Path(role.system_file)
+                shown_file = (
+                    written.relative_to(source.parent)
+                    if written.is_relative_to(source.parent)
+                    else written
+                )
+                where = f"{label}.system_file ({shown_file})"
             try:
                 template = Template.parse(system_text(role))
             except TemplateError as exc:
-                raise ConfigError(
-                    f"Agent {spec.name!r}, {label}.system — {exc}", source=source
-                ) from exc
+                raise ConfigError(f"Agent {spec.name!r}, {where} — {exc}", source=source) from exc
             except OSError as exc:
                 raise ConfigError(
                     f"Agent {spec.name!r}, {label}.system_file — prompt illisible : {exc}",
@@ -336,7 +345,7 @@ def _check_variables(config: LoomConfig, *, source: Path) -> None:
                     who = tenant.id if tenant is not None else DEFAULT_TENANT
                     shown = "{{ " + ".".join(path) + " }}"
                     raise ConfigError(
-                        f"Agent {spec.name!r}, {label}.system — {shown} : variable non "
+                        f"Agent {spec.name!r}, {where} — {shown} : variable non "
                         f"définie pour le client {who!r} (tenants[].variables)",
                         source=source,
                     )
@@ -392,4 +401,4 @@ def _validate[T](model: type[T], data: dict[str, Any], *, source: Path) -> T:
     try:
         return cast(T, adapter.model_validate(data))
     except ValidationError as exc:
-        raise from_validation(exc, source=source) from exc
+        raise from_validation(exc, source=source, data=data) from exc

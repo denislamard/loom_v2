@@ -8,6 +8,7 @@ cherchent avant tout, c'est la fuite — un client qui verrait ce qui n'est pas
 démarrage, pas au premier run du client concerné.
 """
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -362,6 +363,60 @@ def test_a_missing_mcp_secret_names_the_variable_of_the_tenant(demo: ConfigFacto
     )
     with pytest.raises(ConfigError, match="JETON est absente ou vide"):
         mount(config, MARTIN, {})
+
+
+class Coffre:
+    """Gestionnaire de secrets de l'application : rien pour ``dupont``."""
+
+    def secrets(self, tenant_id: TenantId) -> Mapping[str, str]:
+        return {} if tenant_id == DUPONT else {"CLE": "k", "JETON": "j"}
+
+
+def mount_vaulted(config: Path, tenant_id: TenantId) -> None:
+    loaded = load_config(config)
+    tenant = Tenants(loaded, secrets=Coffre()).get(tenant_id)
+    assert tenant.provided
+    build_agent(
+        tenant.config, "demo", InMemoryEventStore(), registry=load_registry(loaded), tenant=tenant
+    )
+
+
+def test_a_secret_missing_from_a_manager_is_not_called_an_environment_variable(
+    demo: ConfigFactory,
+) -> None:
+    """Test M3 du 22/10 : le refus parlait de « variable d'environnement »."""
+    pytest.importorskip("anthropic", reason="extra 'anthropic' absent")
+    config = demo(
+        models=[REAL],
+        agents=[demo_agent(main={"model": "VRAI", "system": "x"})],
+        tenants=[{"id": DUPONT}, {"id": MARTIN}],
+    )
+    with pytest.raises(ModelConfigError) as caught:
+        mount_vaulted(config, DUPONT)
+    assert str(caught.value) == (
+        f"Modèle 'VRAI' : le secret CLE est absent ou vide dans le gestionnaire de secrets "
+        f"(client '{DUPONT}')"
+    )
+    mount_vaulted(config, MARTIN)
+    assert not Tenants(load_config(config)).get(MARTIN).provided
+
+
+def test_a_mcp_secret_missing_from_a_manager_is_not_called_an_environment_variable(
+    demo: ConfigFactory,
+) -> None:
+    pytest.importorskip("mcp", reason="extra 'mcp' absent")
+    server = {"name": "crm", "transport": "stdio", "command": "true", "env_from": {"T": "JETON"}}
+    config = demo(
+        agents=[demo_agent(tools=[{"python": "calculer"}, {"mcp": "crm"}])],
+        mcp_servers=[server],
+        tenants=[{"id": DUPONT}, {"id": MARTIN}],
+    )
+    with pytest.raises(ConfigError) as caught:
+        mount_vaulted(config, DUPONT)
+    assert str(caught.value) == (
+        f"Agent 'demo' : le secret JETON est absent ou vide dans le gestionnaire de secrets "
+        f"(client '{DUPONT}') — serveur MCP 'crm'"
+    )
 
 
 # --- Variables des prompts (§6) ------------------------------------------------

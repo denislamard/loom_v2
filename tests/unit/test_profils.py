@@ -18,7 +18,7 @@ from loom_ia.access import Loom
 from loom_ia.access.cli import main
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.loader import PROFILE_ENV, chosen_profile
-from loom_ia.core.model import JudgeWhen
+from loom_ia.core.model import JudgeWhen, TenantId
 from loom_ia.runtime import key_warnings, model_warnings, storage_warnings
 
 CRITERES: list[dict[str, Any]] = [{"name": "fidele", "rule": "Rien d'inventé."}]
@@ -244,6 +244,21 @@ async def test_a_pausing_agent_on_a_volatile_journal_is_tolerated_in_dev(
     # En dev, perdre un run en pause à la fermeture est le prix d'un essai.
     async with Loom.from_config(path, profile="dev") as loom:
         assert loom.context("demo") is not None
+
+
+async def test_the_dev_warning_of_a_volatile_journal_names_each_tenant(
+    atelier: Callable[..., Path], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test M4 du 23/10 : l'avertissement revenait par client monté, sans le nommer."""
+    volatile: dict[str, Any] = {"events": {"backend": "memory"}}
+    path = atelier(storage=volatile, tenants=[{"id": "default"}, {"id": "dupont"}])
+    async with Loom.from_config(path, profile="dev") as loom:
+        for tenant in ("default", "dupont"):
+            loom.context("demo", TenantId(tenant))
+    said = [r.getMessage() for r in caplog.records if "journal durable" in r.getMessage()]
+    assert len(said) == 2
+    assert said[0].startswith("Agent 'demo' (client 'default') : ")
+    assert said[1].startswith("Agent 'demo' (client 'dupont') : ")
 
 
 # --- Un juge qui ne travaille que dans un profil ------------------------------

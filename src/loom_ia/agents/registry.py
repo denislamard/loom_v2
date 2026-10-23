@@ -43,7 +43,10 @@ class AgentRegistry:
         try:
             return self._agents[name]
         except KeyError as exc:
-            raise UnknownAgent(name, self.names) from exc
+            # Les agents internes (``_compaction``) ne se lancent pas : ils ne sont
+            # pas proposés à qui s'est trompé de nom (test N4 du 23/10).
+            declared = [n for n in self.names if not n.startswith("_")]
+            raise UnknownAgent(name, declared) from exc
 
     def exposed(self, access: Access) -> tuple[AgentSpec, ...]:
         """Agents publiés par un point d'accès."""

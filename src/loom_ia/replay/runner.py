@@ -29,6 +29,7 @@ from typing import Final, Literal
 from pydantic import JsonValue, ValidationError
 
 from loom_ia.adapters.stores import InMemoryEventStore
+from loom_ia.core import TOLD
 from loom_ia.core.events import (
     Event,
     EventDraft,
@@ -407,7 +408,7 @@ def _log(report: ReplayReport) -> None:
             "Rejeu du run %s : divergence, %s",
             report.run_id,
             said,
-            extra={"run_id": report.run_id, "tenant_id": report.tenant_id},
+            extra={"run_id": report.run_id, "tenant_id": report.tenant_id, TOLD: True},
         )
     else:
         logger.info(

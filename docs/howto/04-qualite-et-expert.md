@@ -4070,7 +4070,7 @@ Tout ce que ce chapitre a exécuté est volontairement local et simulé. Voici c
 
 ## Annexe A. Référence de la ligne de commande
 
-Relevée avec `uv run loom <commande> --help` (loom-ia 2.0.0). Les options globales se placent **avant** la commande : `uv run loom --config autre.yaml --profile prod run …`.
+Relevée avec `uv run loom <commande> --help` (loom-ia 2.0.0). Les options globales se placent avant la commande (`uv run loom --config autre.yaml --profile prod run …`) ou, depuis 2.0.10, après elle (`uv run loom run … --profile prod`) ; données des deux côtés, celle d'après l'emporte.
 
 | Option globale | Rôle |
 |---|---|
@@ -4109,7 +4109,7 @@ Relevée avec `uv run loom <commande> --help` (loom-ia 2.0.0). Les options globa
 
 ### Flux de sortie de `run`
 
-Le texte de la réponse sort sur **stdout** ; `Statut`, `Run` et `En attente` sortent sur **stderr**. Pour ne garder que la réponse : `uv run loom run … 2>/dev/null`. Avec `--json`, tout est sur stdout.
+Le texte de la réponse sort sur **stdout** (« — » sans réponse, rien pendant une pause) ; `Statut`, `Run`, `En attente` et `Erreur` sortent sur **stderr**, l'erreur d'un run échoué n'étant plus recopiée sur stdout depuis 2.0.10. Pour ne garder que la réponse : `uv run loom run … 2>/dev/null`. Avec `--json`, tout est sur stdout.
 
 ---
 

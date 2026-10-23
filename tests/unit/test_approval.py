@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
@@ -20,6 +21,7 @@ from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
     ApprovalGranted,
+    ApprovalRequested,
     Event,
     EventDraft,
     FacetValue,
@@ -741,6 +743,54 @@ def test_the_cli_refuses_a_stale_approval(
     err = capsys.readouterr().err
     assert err.startswith(f"Demande refusée : Run {run_id} : la demande d'approbation de ")
     assert "ne peut plus être tranchée" in err
+
+
+def test_the_stream_gives_an_approval_deadline_in_local_time(
+    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test H3 du 20/10 : l'échéance d'une approbation se lisait en UTC."""
+    monkeypatch.setenv("TZ", "Pacific/Kiritimati")  # UTC+14 : l'écart ne peut pas passer inaperçu
+    time.tzset()
+    try:
+        path = str(atelier())
+        assert (
+            main(["--config", path, "run", "demo", DEMANDE, "--session", SESSION, "--stream"]) == 1
+        )
+        printed = capsys.readouterr()
+        events = asyncio.run(_exported(path))
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
+    [asked] = [e.payload for e in events if isinstance(e.payload, ApprovalRequested)]
+    assert isinstance(asked.expire_at, datetime)
+    local = asked.expire_at.astimezone(ZoneInfo("Pacific/Kiritimati"))
+    assert f"jusqu'au {local:%d/%m à %H:%M:%S}" in printed.err
+    assert asked.expire_at.isoformat(timespec="seconds") not in printed.err
+    assert "Statut     : paused" in printed.err
+
+
+def test_a_paused_run_prints_nothing_and_resume_says_a_finished_run_is_done(
+    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test A6 du 17/10 : un run clos réaffichait son résultat, en code 1 s'il avait échoué."""
+    path = str(atelier())
+    assert main(["--config", path, "run", "demo", DEMANDE, "--session", SESSION]) == 1
+    # Test H4 du 20/10 : pendant la pause, rien encore à répondre — pas de « — ».
+    assert capsys.readouterr().out == ""
+    run_id = asyncio.run(_exported(path))[0].run_id
+    assert main(["--config", path, "reject", run_id, "--session", SESSION]) == 0
+    capsys.readouterr()
+
+    assert main(["--config", path, "resume", run_id, "--session", SESSION]) == 0
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert printed.err.startswith(f"Rien à reprendre : le run {run_id} est déjà terminé (")
+    assert f"loom inspect {run_id} --session {SESSION}" in printed.err
+
+
+async def _exported(path: str) -> list[Event]:
+    async with Loom.from_config(path) as loom:
+        return list(await loom.export_session(SESSION))
 
 
 # --- Approbateur en ligne -----------------------------------------------------

@@ -207,6 +207,13 @@ def test_tool_data_is_checked_directly() -> None:
     assert missing.problems == ("(racine) : propriété requise absente : numero",)
 
 
+def test_two_missing_properties_are_said_in_one_problem() -> None:
+    """Test E4 du 19/10 : ``required`` lève une erreur par absente, et chacune les nomme toutes."""
+    schema: dict[str, JsonValue] = {"type": "object", "required": ["version", "source"]}
+    missing = check(contract(schema=schema), '{"a": 1}')
+    assert missing.problems == ("(racine) : propriété requise absente : version, source",)
+
+
 def test_the_faulty_value_is_not_written_in_the_problems() -> None:
     schema: dict[str, JsonValue] = {"type": "object", "properties": {"n": {"type": "integer"}}}
     checked = check(contract(schema=schema), '{"n": "sk-SECRET-123"}')

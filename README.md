@@ -1314,7 +1314,7 @@ En stdio, un serveur sert un seul client, choisi avec `--tenant`.
 | `loom storage sql` | Imprimer le SQL du stockage Postgres |
 | `loom schema` | Imprimer le JSON Schema de la configuration |
 
-Les options globales `--config` (par défaut `loom.yaml`) et `--profile` se placent avant la commande.
+Les options globales `--config` (par défaut `loom.yaml`), `--profile`, `--env-file` et `--no-env-file` se placent avant ou après la commande (`loom --profile prod validate` ou `loom validate --profile prod`) ; données des deux côtés, celle d'après l'emporte.
 
 ### Les stockages
 

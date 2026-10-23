@@ -869,7 +869,8 @@ def test_the_cli_refuses_an_exhausted_budget_and_writes_nothing(
     for flags in ([], ["--stream"], ["--json"]):
         assert main([*run, "--run-id", "second", *flags]) == 2
         captured = capsys.readouterr()
-        assert "budget du client atteint pour la journée" in captured.err
+        # Dit une fois : au test J4 du 22/10, un log WARNING le doublait.
+        assert captured.err.count("budget du client atteint pour la journée") == 1
         assert "réessayer dans" in captured.err
         assert captured.out == ""
 

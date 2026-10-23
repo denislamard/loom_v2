@@ -24,6 +24,7 @@ from pydantic import (
     PositiveInt,
     model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 from loom_ia.agents.spec import AGENT_NAME_PATTERN, AgentSpec
 from loom_ia.config.compaction import COMPACTION_AGENT, CompactionConfig, compaction_agent
@@ -810,8 +811,9 @@ class LoomConfig(DomainModel):
         default_factory=dict[Profile, dict[str, JsonValue]]
     )
     # Dossier du fichier de config, posé au chargement : les modules voisins
-    # sont importables et les chemins relatifs s'y rapportent.
-    base_dir: Path | None = None
+    # sont importables et les chemins relatifs s'y rapportent. Hors du schéma
+    # publié (``loom schema``) : on ne l'écrit pas (test M1 du 21/10).
+    base_dir: SkipJsonSchema[Path | None] = None
     # Fichier d'environnement du projet, relatif au dossier de la config : lu
     # par ``loom`` avant la config elle-même (config/env_file.py), au lieu du
     # ``.env`` voisin. À la racine seulement, car il peut donner le profil.

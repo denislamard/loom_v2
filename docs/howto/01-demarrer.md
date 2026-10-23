@@ -289,7 +289,7 @@ Rien à ajouter : on reprend le projet de l'exemple 1.1.
 
 #### Exécution
 
-La réponse de l'agent part sur la **sortie standard**, tout le reste (logs, ligne `Statut`, ligne `Run`) sur la **sortie d'erreur**. Pour ne garder que la réponse :
+La réponse de l'agent part sur la **sortie standard**, tout le reste (logs, ligne `Statut`, ligne `Run`, ligne `Erreur` d'un run échoué) sur la **sortie d'erreur** ; un run sans réponse écrit « — », un run en pause rien. Pour ne garder que la réponse :
 
 ```bash
 uv run loom run devis "Bonjour, ici la Plomberie Dupont." 2>/dev/null

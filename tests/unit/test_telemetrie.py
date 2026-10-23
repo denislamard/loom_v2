@@ -55,6 +55,7 @@ from loom_ia.core import bounded_regex
 from loom_ia.core.events import Event, JudgeEvaluated, ModelResponded, contents, redacted
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    ArtifactRefBlock,
     CriterionScore,
     Message,
     RunId,
@@ -1115,6 +1116,26 @@ def test_inspect_cuts_a_long_result_and_says_so_unless_whole() -> None:
     assert len(coupe) == 1 and coupe[0].endswith("…") and long not in coupe[0]
     assert len(coupe[0].lstrip(" ·")) <= WIDTH
     assert len(entier) == 1 and entier[0].endswith(long)
+
+
+def test_inspect_names_the_file_a_tool_returned_alone() -> None:
+    """Test K1 du 21/10 : un outil qui ne rend qu'un fichier s'affichait « résultat : null »."""
+    devis = ArtifactRefBlock(
+        uri="artifact://default/s/devis.png", media_type="image/png", name="devis.png"
+    )
+    journal = RunJournal()
+    journal.start(QUESTION)
+    journal.model_turn(tool_call_message(("c1", "calculer", {"expr": "1+1"})))
+    journal.tool_results({"c1": ToolOutput(blocks=(devis,))})
+    journal.model_turn(Message.assistant("Voici le devis.")).complete()
+    events = [d.to_event(i + 1) for i, d in enumerate(journal.take())]
+
+    [ligne] = [
+        ligne
+        for ligne in render_trace(run_trace(events, events[0].run_id, content=True))
+        if "résultat" in ligne
+    ]
+    assert ligne.endswith("fichier devis.png (image/png)") and "null" not in ligne
 
 
 def test_usage_attributes_follow_the_genai_conventions() -> None:

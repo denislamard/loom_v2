@@ -991,3 +991,97 @@ def test_a_finished_run_is_not_said_to_resume(
     capsys.readouterr()
     assert main(["--config", str(path), "sessions", "show", "atelier"]) == 0
     assert "loom resume" not in capsys.readouterr().out
+
+
+# --- Lot B du 23/10 : dire une fois, dire où ----------------------------------
+
+
+def test_a_failed_run_says_its_error_once_on_stderr(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test L2 du 22/10 : un 401 se lisait trois fois (log ERROR, « Erreur », stdout)."""
+    panne = {**MODEL, "params": {"script": [{"error": "auth"}]}}
+    path = demo(models=[panne], telemetry={"logging": {"level": "WARNING"}})
+    assert main(["--config", str(path), "run", "demo", QUESTION]) == 1
+    printed = capsys.readouterr()
+    assert printed.out == "—\n"
+    assert printed.err.count("Panne simulée") == 1
+    assert "Erreur     : Panne simulée" in printed.err and "ERROR" not in printed.err
+
+
+def test_global_options_are_read_after_the_subcommand(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test M4 du 23/10 : ``loom validate --profile prod`` était refusé par argparse."""
+    path = demo()
+    monkeypatch.chdir(path.parent.parent)
+    assert main(["validate", "--config", str(path), "--profile", "prod", "--no-env-file"]) == 0
+    out = capsys.readouterr().out
+    assert f"Config     : {path}" in out and "prod (par option)" in out
+    # Avant la sous-commande, comme avant ; après, elle l'emporte.
+    assert main(["--profile", "prod", "--config", str(path), "validate", "--profile", "dev"]) == 0
+    assert "dev (par option)" in capsys.readouterr().out
+    assert main(["--config", str(path), "sessions", "list", "--profile", "dev"]) == 0
+
+
+def test_a_reading_command_does_not_repeat_the_setup_warnings(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tests H7 et K4 : ``sessions show`` répétait les avertissements de montage."""
+    pytest.importorskip("opentelemetry.sdk")
+    monkeypatch.delenv("LOOM_OTLP_VIDE", raising=False)
+    otel = {"exporters": [{"type": "otel", "endpoint_env": "LOOM_OTLP_VIDE"}]}
+    path = str(demo(storage=JOURNAL, telemetry=otel))
+    assert main(["--config", path, "run", "demo", QUESTION, "--session", "s"]) == 0
+    assert "LOOM_OTLP_VIDE" in capsys.readouterr().err
+    for command in (["sessions", "show", "s"], ["sessions", "list"], ["report", "--session", "s"]):
+        assert main(["--config", path, *command]) == 0
+        assert "LOOM_OTLP_VIDE" not in capsys.readouterr().err, command
+
+
+def test_storage_sql_says_when_the_config_declares_no_postgres(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test N4 du 23/10 : le SQL sortait sans dire qu'il n'était pas celui de la config."""
+    assert main(["--config", str(demo(storage=JOURNAL)), "storage", "sql"]) == 0
+    printed = capsys.readouterr()
+    assert printed.err.startswith("Aucun stockage Postgres déclaré")
+    assert "CREATE TABLE" in printed.out
+
+
+def test_an_unknown_agent_does_not_offer_the_internal_ones(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test N4 du 23/10 : « _compaction » était proposé à qui s'était trompé de nom."""
+    models = [MODEL, {**MODEL, "id": "RESUME", "model": "fake-resume"}]
+    path = demo(models=models, sessions={"compaction": {"model": "RESUME"}})
+    assert main(["--config", str(path), "run", "demoo", QUESTION]) == 2
+    err = capsys.readouterr().err
+    assert "demo" in err and "_compaction" not in err
+
+
+def test_a_config_error_names_a_model_by_its_id(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test M1 du 21/10 : « models.0.max_token » obligeait à compter les modèles."""
+    path = demo(models=[MODEL, {**MODEL, "id": "HAIKU", "max_token": 3}])
+    assert main(["--config", str(path), "validate"]) == 2
+    assert "models[HAIKU].max_token — Extra inputs are not permitted" in capsys.readouterr().err
+
+
+def test_the_published_schema_leaves_out_base_dir(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test M1 du 21/10 : ``base_dir``, que le chargeur pose lui-même, était publié."""
+    assert main(["schema"]) == 0
+    assert "base_dir" not in json.loads(capsys.readouterr().out)["properties"]
+
+
+def test_an_undefined_variable_names_the_prompt_file(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test M7 du 23/10 : le refus nommait « main.system », pas le fichier à corriger."""
+    path = demo()
+    (path.parent / "prompts" / "demo.md").write_text("Pour {{ entreprise }}.", encoding="utf-8")
+    # ``demo()`` réécrit le prompt : la config est relue telle quelle.
+    assert main(["--config", str(path), "validate"]) == 2
+    err = capsys.readouterr().err
+    assert "Agent 'demo', main.system_file (prompts/demo.md) — {{ entreprise }}" in err

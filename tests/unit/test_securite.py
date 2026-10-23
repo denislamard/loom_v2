@@ -253,7 +253,7 @@ def test_an_expiry_without_a_timezone_is_refused(demo: ConfigFactory) -> None:
 def test_a_malformed_fingerprint_is_refused_at_load(demo: ConfigFactory, fausse: str) -> None:
     """Sans cela, toute clé inconnue ferait un 500 au lieu d'un 401."""
     security = {"api_keys": [{"id": "app", "hash": fausse}]}
-    with pytest.raises(ConfigError, match=r"security\.api_keys\.0.*64 chiffres hexadécimaux"):
+    with pytest.raises(ConfigError, match=r"security\.api_keys\[app\].*64 chiffres hexadécimaux"):
         load_config(demo(security=security))
 
 

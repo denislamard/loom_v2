@@ -779,6 +779,22 @@ async def test_the_command_says_identical_divergent_or_impossible(
     assert "Rejeu impossible" in capsys.readouterr().err
 
 
+async def test_the_command_says_the_divergence_once(
+    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test K6 du 21/10 : la divergence se lisait deux fois, en log WARNING et au rapport."""
+    path = atelier()
+    [run_id, _] = await deux_runs(path)
+    atelier(system="Autre prompt.")
+    # Les logs au niveau d'un service, où l'avertissement sert l'exploitant.
+    path.write_text(path.read_text(encoding="utf-8").replace("CRITICAL", "WARNING"), "utf-8")
+    assert await _cli(["--config", str(path), "replay", run_id, "--session", SESSION]) == 1
+    printed = capsys.readouterr()
+    said = printed.out + printed.err
+    assert said.count("le prompt système") == 1
+    assert "WARNING" not in said and "Rejeu du run" not in said
+
+
 async def _cli(argv: list[str]) -> int:
     """La commande lance sa propre boucle : on la fait tourner hors de celle de l'essai."""
     return await asyncio.to_thread(main, argv)

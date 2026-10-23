@@ -859,6 +859,8 @@ async def test_a_malformed_after_is_refused_not_an_empty_page(demo: ConfigFactor
         invented = await http.get("/v1/events?after=00000000-0000-7000-8000-000000000000")
 
     assert malformed.status_code == 422 and shouted.status_code == 422
+    # Lot B : le refus parle français, comme celui des autres critères.
+    assert malformed.json()["detail"].startswith("after : identifiant d'événement attendu")
     # Bien formé mais absent du journal : permis, comparé comme un identifiant.
     assert invented.status_code == 200 and len(invented.json()) > 0
 

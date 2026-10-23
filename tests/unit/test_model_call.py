@@ -4,6 +4,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import AsyncGenerator, Callable
 
 import pytest
@@ -455,6 +456,19 @@ class BilledModel:
                         yield chunk
                 case _:
                     raise AssertionError(step)
+
+
+@pytest.mark.parametrize(("by_client", "level"), [(False, logging.WARNING), (True, logging.DEBUG)])
+async def test_a_failure_served_by_the_client_is_not_a_provider_warning(
+    caplog: pytest.LogCaptureFixture, by_client: bool, level: int
+) -> None:
+    """Test O3 du 23/10 : la panne resservie par le rejeu s'écrivait en WARNING."""
+    caplog.set_level(logging.DEBUG, logger="loom_ia")
+    recorder = Recorder()
+    model = BilledModel([ModelError("transient", "coupé", by_client=by_client)], [ANSWER])
+    await outcomes(ModelCall(model, spec(), on_chunk=recorder.on_chunk, sleep=recorder.sleep))
+    [said] = [r for r in caplog.records if r.getMessage().startswith("Tentative 1/")]
+    assert said.levelno == level
 
 
 async def test_a_cut_attempt_keeps_what_the_provider_billed() -> None:

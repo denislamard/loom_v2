@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Final
 
+from loom_ia.core import TOLD
 from loom_ia.core.events import Event
 from loom_ia.core.events.query import EventQuery
 from loom_ia.core.model import (
@@ -172,7 +173,9 @@ class TenantUsage:
                 used = _used(limit, spent)
                 if used >= value:
                     reached = Exceeded(period=period, limit=limit, value=value, spent=used)
-                    logger.warning("Run refusé — client %s : %s", tenant.id, reached)
+                    logger.warning(
+                        "Run refusé — client %s : %s", tenant.id, reached, extra={TOLD: True}
+                    )
                     raise BudgetExhausted(tenant.id, reached, period.resets_in(now))
 
     async def record(

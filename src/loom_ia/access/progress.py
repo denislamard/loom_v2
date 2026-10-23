@@ -172,7 +172,8 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             delai = (
                 ""
                 if payload.expire_at is None
-                else f", jusqu'à {payload.expire_at.isoformat(timespec='seconds')}"
+                # À l'heure de la machine, comme la console (test H3 du 20/10 : en UTC).
+                else f", jusqu'au {payload.expire_at.astimezone().strftime('%d/%m à %H:%M:%S')}"
             )
             return f"approbation demandée : {payload.tool_name} — {payload.reason}{delai}"
         case ApprovalGranted(by=str() as author):

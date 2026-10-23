@@ -281,7 +281,23 @@ def _output(value: JsonValue) -> str:
         if isinstance(blocks, list)
         else []
     )
-    said = " ".join(t for t in texts if t) or _compact(value.get("data"))
+    files = (
+        [
+            f"fichier {block.get('name') or block.get('uri', '?')} ({block.get('media_type', '?')})"
+            for block in blocks
+            if isinstance(block, dict) and block.get("type") == "artifact"
+        ]
+        if isinstance(blocks, list)
+        else []
+    )
+    # Un outil qui ne rend qu'un fichier n'a ni texte ni données : au test K1 du
+    # 21/10, l'étiquette d'un devis s'affichait « résultat : null ».
+    data = value.get("data")
+    said = (
+        " ".join(t for t in texts if t)
+        or (_compact(data) if data is not None or not files else "")
+        or ", ".join(files)
+    )
     return f"(erreur) {said}" if value.get("is_error") else said
 
 

@@ -427,7 +427,7 @@ Portes d'entrée pour un appelant qui ne connaît pas l'API de loom (CRM, planif
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `base_dir` | Dossier de `loom.yaml`, **posé par le chargeur** (une valeur écrite est remplacée). Utile seulement à une config construite en Python. | chemin | posé au chargement | — |
+| `base_dir` | Dossier de `loom.yaml`, **posé par le chargeur** (une valeur écrite est remplacée). Utile seulement à une config construite en Python ; absent du schéma publié (`loom schema`). | chemin | posé au chargement | — |
 
 ---
 

@@ -252,6 +252,9 @@ async def test_the_two_indexes_are_listed_and_the_rest_is_templated(demo: Config
         uri for uri, _, _ in TEMPLATES
     ]
     assert all(template.description for template in gabarits.resourceTemplates)
+    # Test G3 du 21/10 : rien ne disait que l'URI rendue dans ``artifacts`` se lit telle quelle.
+    [fichier] = [t for t in gabarits.resourceTemplates if t.name == "fichier"]
+    assert "artifact://{client}/{session}/{fichier}" in (fichier.description or "")
 
 
 async def test_the_index_of_runs_is_the_page_of_the_python_access(demo: ConfigFactory) -> None:

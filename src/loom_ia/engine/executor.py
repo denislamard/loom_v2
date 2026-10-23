@@ -917,7 +917,10 @@ class ToolExecutor:
                 origin = ref_origin(source, list(error.absolute_path))
                 if origin is not None:
                     said = _from_ref(error, origin, results)
-            lines.append(f"- {location} : {said}")
+            line = f"- {location} : {said}"
+            if line not in lines:
+                # ``required`` : une erreur par propriété absente, qui les nomme toutes.
+                lines.append(line)
         return "\n".join(lines)
 
     async def _execute(

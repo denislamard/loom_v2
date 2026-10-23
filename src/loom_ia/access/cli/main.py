@@ -88,6 +88,7 @@ from loom_ia.config.models import (
     QueueStorage,
 )
 from loom_ia.config.references import resolve
+from loom_ia.core import SETUP, TOLD
 from loom_ia.core.events import BudgetExceeded, Event, SessionCompacted
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -98,6 +99,7 @@ from loom_ia.core.model import (
     Budgets,
     OutputContract,
     RunId,
+    RunStatus,
     SessionId,
     StreamReset,
     TenantId,
@@ -242,31 +244,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=PROG, description="Agents loom en ligne de commande")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument(
-        "--config",
-        type=Path,
-        default=DEFAULT_CONFIG,
-        help=f"fichier de configuration (défaut : {DEFAULT_CONFIG})",
-    )
-    parser.add_argument(
-        "--profile",
-        choices=PROFILES,
-        default=None,
-        help=f"profil actif ; l'emporte sur {PROFILE_ENV} et sur la config",
-    )
-    env = parser.add_mutually_exclusive_group()
-    env.add_argument(
-        "--env-file",
-        type=Path,
-        default=None,
-        help="fichier de variables à lire, au lieu de 'env_file:' de la config "
-        "ou du .env voisin de la config (une variable déjà définie l'emporte)",
-    )
-    env.add_argument(
-        "--no-env-file",
-        action="store_true",
-        help="ne lit aucun fichier de variables",
-    )
+    _global_options(parser)
     commands = parser.add_subparsers(dest="command", required=True)
 
     def tenanted(command: argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -642,7 +620,62 @@ def build_parser() -> argparse.ArgumentParser:
 
     schema = commands.add_parser("schema", help="JSON Schema du fichier de configuration")
     schema.set_defaults(handler=cmd_schema)
+    # Au test M4 du 23/10, ``loom validate --profile prod`` était refusé : les
+    # options globales se lisent aussi après la sous-commande, où elles l'emportent.
+    for command in _subcommands(parser):
+        _global_options(command, after=True)
     return parser
+
+
+def _global_options(parser: argparse.ArgumentParser, *, after: bool = False) -> None:
+    """``--config``, ``--profile``, ``--env-file``, ``--no-env-file``.
+
+    ``after`` : sur une sous-commande, sans valeur par défaut (``SUPPRESS``),
+    pour ne pas effacer celle donnée avant la sous-commande.
+    """
+
+    def default(value: object) -> object:
+        return argparse.SUPPRESS if after else value
+
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=default(DEFAULT_CONFIG),
+        help=f"fichier de configuration (défaut : {DEFAULT_CONFIG})",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=PROFILES,
+        default=default(None),
+        help=f"profil actif ; l'emporte sur {PROFILE_ENV} et sur la config",
+    )
+    env = parser.add_mutually_exclusive_group()
+    env.add_argument(
+        "--env-file",
+        type=Path,
+        default=default(None),
+        help="fichier de variables à lire, au lieu de 'env_file:' de la config "
+        "ou du .env voisin de la config (une variable déjà définie l'emporte)",
+    )
+    env.add_argument(
+        "--no-env-file",
+        action="store_true",
+        default=default(False),
+        help="ne lit aucun fichier de variables",
+    )
+
+
+def _subcommands(parser: argparse.ArgumentParser) -> list[argparse.ArgumentParser]:
+    """Les sous-commandes, à tous les niveaux (``sessions show``, ``keys new``…)."""
+    found: list[argparse.ArgumentParser] = []
+    for action in parser._actions:  # pyright: ignore[reportPrivateUsage]
+        if isinstance(action, argparse._SubParsersAction):  # pyright: ignore[reportPrivateUsage]
+            choices = cast("dict[str, argparse.ArgumentParser]", action.choices)  # pyright: ignore[reportUnknownMemberType]
+            for command in choices.values():
+                if command not in found:
+                    found.append(command)
+                    found.extend(_subcommands(command))
+    return found
 
 
 # --- Commandes ---------------------------------------------------------------
@@ -1054,7 +1087,7 @@ def _contract_line(contract: OutputContract, *, repairs: bool) -> str:
 
 def cmd_run(args: argparse.Namespace) -> int:
     config = _config(args)
-    apply_logging(config)
+    _console(config)
     session = SessionId(args.session) if args.session else None
     tenant = _tenant(args)
     run_id = RunId(args.run_id) if args.run_id else new_run_id()
@@ -1165,7 +1198,7 @@ def _state_item(text: str) -> tuple[str, JsonValue]:
 def cmd_state(args: argparse.Namespace) -> int:
     """State d'une session : ce qui est écrit, sans les valeurs par défaut, en JSON."""
     config = _config(args)
-    apply_logging(config)
+    _reading(config)
     session = SessionId(args.session_id)
 
     async def go() -> dict[str, JsonValue]:
@@ -1183,16 +1216,30 @@ def cmd_state(args: argparse.Namespace) -> int:
 
 def cmd_resume(args: argparse.Namespace) -> int:
     config = _config(args)
-    apply_logging(config)
+    _console(config)
     session = SessionId(args.session) if args.session else None
 
-    async def go() -> RunResult:
+    async def go() -> RunResult | RunStatus:
         async with Loom(config) as loom:
-            return await loom.resume(
-                RunId(args.run_id), session_id=session, tenant_id=_tenant(args)
-            )
+            run_id, tenant = RunId(args.run_id), _tenant(args)
+            state = await loom.state(run_id, session_id=session, tenant_id=tenant)
+            if state.finished:
+                return state.status
+            return await loom.resume(run_id, session_id=session, tenant_id=tenant)
 
-    return _report(asyncio.run(go()), as_json=args.json, tenant=_tenant(args))
+    outcome = asyncio.run(go())
+    if isinstance(outcome, RunStatus):
+        # Au test A6 du 17/10, un run clos réaffichait son résultat, en code 1
+        # s'il avait échoué : rien ne disait qu'il n'y avait rien à reprendre.
+        where = f" --session {args.session}" if args.session else ""
+        tenant_flag = f" --tenant {args.tenant}" if args.tenant else ""
+        print(
+            f"Rien à reprendre : le run {args.run_id} est déjà terminé ({outcome}). "
+            f"Pour le relire : loom inspect {args.run_id}{where}{tenant_flag}",
+            file=sys.stderr,
+        )
+        return OK
+    return _report(outcome, as_json=args.json, tenant=_tenant(args))
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
@@ -1206,7 +1253,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     rend 1.
     """
     config = _config(args)
-    apply_logging(config)
+    _console(config)
     session = SessionId(args.session) if args.session else None
     try:
         if args.journal is None and args.run_id is None:
@@ -1337,7 +1384,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     ``--json`` rend la trace telle que l'API la rend à une clé ``read_content``.
     """
     config = _config(args)
-    apply_logging(config)
+    _reading(config)
     session = SessionId(args.session) if args.session else None
 
     async def go() -> tuple[Trace, bool]:
@@ -1505,7 +1552,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
     dit donc à qui la reprise est confiée et sort en 0, comme avec ``--no-wait``.
     """
     config = _config(args)
-    apply_logging(config)
+    _console(config)
     run_id = RunId(args.run_id)
     session = SessionId(args.session) if args.session else None
     tenant = _tenant(args)
@@ -1585,7 +1632,7 @@ def _json_object(text: str) -> dict[str, JsonValue] | None:
 
 def cmd_report(args: argparse.Namespace) -> int:
     config = _config(args)
-    apply_logging(config)
+    _reading(config)
     if args.period is not None:
         return _cmd_consumption(args, config)
     if args.run_id is None and args.session is None:
@@ -1673,7 +1720,7 @@ def _warn_memory_journal(config: LoomConfig, args: argparse.Namespace) -> None:
 
 def cmd_sessions_list(args: argparse.Namespace) -> int:
     config = _config(args)
-    apply_logging(config)
+    _reading(config)
     _warn_memory_journal(config, args)
 
     async def go() -> list[SessionRecord]:
@@ -1704,7 +1751,7 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
     entière, ``SessionInfo`` tel que l'API le rend.
     """
     config = _config(args)
-    apply_logging(config)
+    _reading(config)
     _warn_memory_journal(config, args)
     session = SessionId(args.session_id)
 
@@ -1777,7 +1824,7 @@ def cmd_sessions_files(args: argparse.Namespace) -> int:
     fichier déjà présent dans le dossier n'est pas écrasé sans ``--force``.
     """
     config = _config(args)
-    apply_logging(config)
+    _reading(config)
     _warn_memory_journal(config, args)
     session = SessionId(args.session_id)
     origins = tuple(args.origin or ())
@@ -1858,7 +1905,7 @@ def _extracted_names(files: Sequence[SessionFile]) -> list[str]:
 
 def cmd_sessions_export(args: argparse.Namespace) -> int:
     config = _config(args)
-    apply_logging(config)
+    _reading(config)
     _warn_memory_journal(config, args)
     session = SessionId(args.session_id)
 
@@ -1882,7 +1929,7 @@ def cmd_sessions_export(args: argparse.Namespace) -> int:
 
 def cmd_sessions_delete(args: argparse.Namespace) -> int:
     config = _config(args)
-    apply_logging(config)
+    _reading(config)
     _warn_memory_journal(config, args)
     session = SessionId(args.session_id)
     # Refusé avant la question : « Supprimer la session  ? » n'a pas de sens.
@@ -1919,7 +1966,7 @@ def cmd_retention(args: argparse.Namespace) -> int:
     question sans personne pour y répondre bloquerait le balayage.
     """
     config = _config(args)
-    apply_logging(config)
+    _reading(config)
 
     async def go() -> RetentionReport:
         async with Loom(config) as loom:
@@ -2212,7 +2259,18 @@ def cmd_storage_sql(args: argparse.Namespace) -> int:
     avec le rôle qui en a le droit (``psql -f``). loom l'applique aussi de
     lui-même à la première ouverture, si le rôle connecté le peut.
     """
-    print(postgres_ddl(_config(args)), end="")
+    config = _config(args)
+    stores = (config.storage.events, config.storage.idempotency)
+    if all(store.backend != "postgres" for store in stores):
+        # Au test N4 du 23/10, le SQL sortait sans rien dire : ce n'est pas celui
+        # de la config, qui ne déclare aucun stockage Postgres.
+        print(
+            "Aucun stockage Postgres déclaré (storage.events, storage.idempotency) : "
+            "voici le SQL complet, avec le rôle par défaut, de quoi préparer une base "
+            "avant de la déclarer.",
+            file=sys.stderr,
+        )
+    print(postgres_ddl(config), end="")
     return OK
 
 
@@ -2315,7 +2373,13 @@ def _report(
         print(result.model_dump_json(indent=2, exclude_none=True))
     else:
         if not quiet:
-            print(_for_stdout(result.text or result.error or "—"))
+            # La sortie standard porte la réponse ; un échec se dit sur stderr, à la
+            # ligne « Erreur » (au test L2 du 22/10, il était aussi recopié ici).
+            if result.text:
+                print(_for_stdout(result.text))
+            elif result.status is not RunStatus.PAUSED:
+                print("—")
+            # En pause, rien encore à répondre : stdout reste vide (test H4 du 20/10).
         usage = result.usage
         _say(
             f"\nStatut     : {result.status} · itérations : {result.iterations} "
@@ -2395,6 +2459,26 @@ def _verdicts(result: RunResult) -> list[str]:
 
 def _listed(names: Iterable[str]) -> str:
     return ", ".join(names) or "aucun"
+
+
+def _console(config: LoomConfig) -> None:
+    """Les logs d'une commande qui rend compte du run : ce qu'elle dit elle-même en est écarté.
+
+    Au test L2 du 22/10, un 401 se lisait trois fois (log ERROR, ligne « Erreur »,
+    sortie standard) ; en J4, le refus d'un client deux fois. Un log marqué
+    ``TOLD`` revient à l'appelant — ici, la commande, qui le dit une fois.
+    """
+    apply_logging(config).addFilter(lambda record: not getattr(record, TOLD, False))
+
+
+def _reading(config: LoomConfig) -> None:
+    """Les logs d'une commande qui ne lance rien : sans les avertissements de montage.
+
+    Ils concernent ce qui tourne (file servie par un courtier, collecteurs) ;
+    au test H7 du 21/10, ``sessions show`` les répétait à chaque appel, en K4
+    aussi. ``validate``, ``run`` et le service les disent toujours.
+    """
+    apply_logging(config).addFilter(lambda record: not getattr(record, SETUP, False))
 
 
 def _say(text: str = "", *, file: TextIO | None = None) -> None:

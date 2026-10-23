@@ -229,6 +229,19 @@ async def test_rejected_calls_are_not_started() -> None:
     assert all(isinstance(e, ToolCompleted) and e.latency_ms == 0 for e in events)
 
 
+async def test_two_missing_arguments_are_said_in_one_line() -> None:
+    """``required`` : une erreur par absente, qui les nomme toutes (test E4 du 19/10)."""
+    schema: dict[str, JsonValue] = {"type": "object", "required": ["a", "b"]}
+    deux = ToolSpec.model_validate(
+        {"name": "deux", "description": "deux", "kind": "python", "input_schema": schema}
+    )
+    events = await collect(ToolExecutor([RecordingTool(deux)]), awaiting(call("c1", "deux")))
+    assert completed(events)["c1"].as_text == (
+        "Arguments non conformes au schéma de l'outil :\n"
+        "- (racine) : propriété requise absente : a, b"
+    )
+
+
 async def test_a_schema_pattern_that_does_not_finish_refuses_the_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

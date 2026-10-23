@@ -101,6 +101,7 @@ from loom_ia.config.models import (
     StorageConfig,
 )
 from loom_ia.config.references import Registry, import_modules, resolve
+from loom_ia.core import SETUP
 from loom_ia.core.closing import Closing
 from loom_ia.core.model import (
     ALLOWED_DECISIONS,
@@ -608,6 +609,7 @@ def build_agent(
     spec = AgentRegistry.from_config(config).get(name)
     known = registry if registry is not None else load_registry(config)
     secrets = tenant.secrets if tenant is not None else environ
+    vaulted = tenant is not None and tenant.provided
     tenant_id = tenant.id if tenant is not None else DEFAULT_TENANT
     variables: Mapping[str, JsonValue] = tenant.variables if tenant is not None else {}
     denied: frozenset[str] = tenant.denied if tenant is not None else frozenset()
@@ -641,6 +643,12 @@ def build_agent(
             except ModelConfigError as exc:
                 read = secrets if secrets is not None else os.environ
                 said = _missing_secret(tenant_id, redirects, read, [spec.api_key_env])
+                if said is None and vaulted and _absent(read, spec.api_key_env):
+                    # Au test M3 du 22/10, un secret absent du gestionnaire se disait
+                    # « variable d'environnement » : il ne vient pas de là.
+                    raise ModelConfigError(
+                        f"Modèle {model_id!r} : {_unprovided(tenant_id, [spec.api_key_env])}"
+                    ) from exc
                 if said is None:
                     raise
                 model = f"{spec.model} pour ce client" if model_id in mapped else spec.model
@@ -725,7 +733,9 @@ def build_agent(
     _check_durable_journal(config, spec, [*tools, *delegated], policies, imposed, tenant)
     _check_shared_idempotency(config, spec, [*tools, *delegated])
     # Les sources et le pool MCP se créent après les contrôles : un montage refusé n'en laisse pas.
-    sources, opened = _mcp_sources(config, spec, secrets, mcp_pool, tenant_id, redirects)
+    sources, opened = _mcp_sources(
+        config, spec, secrets, mcp_pool, tenant_id, redirects, vaulted=vaulted
+    )
     packaged = _packaged_sources(config, spec, secrets)
     sources = [*sources, *packaged]
     owned = (*opened, *packaged, *owned)
@@ -1058,10 +1068,15 @@ def _check_durable_journal(
             whose = (
                 f", celui du client {tenant.id!r}" if tenant is not None and own is not None else ""
             )
+            # Dit une fois par client monté : au test M4 du 23/10, la même ligne
+            # revenait sans dire pour quel client.
+            agent = f"Agent {spec.name!r}" + (
+                f" (client {tenant.id!r})" if tenant is not None else ""
+            )
             announce(
                 config,
                 [
-                    f"Agent {spec.name!r} : {', '.join(causes)} — une approbation exige un "
+                    f"{agent} : {', '.join(causes)} — une approbation exige un "
                     f"journal durable ({' ou '.join(DURABLE_BACKENDS)}), "
                     f"pas {backend!r}{whose} (#28)"
                 ],
@@ -1156,7 +1171,7 @@ def announce(config: LoomConfig, warnings: Sequence[str], *, refuse: bool | None
     if config.strict if refuse is None else refuse:
         raise ConfigError(f"Profil prod : {said}" if config.strict else said)
     for warning in warnings:
-        logger.warning(warning)
+        logger.warning(warning, extra={SETUP: True})
 
 
 def storage_warnings(config: LoomConfig) -> list[str]:
@@ -1589,6 +1604,21 @@ def _has_schema(contract: OutputContract | None) -> bool:
     return contract is not None and contract.json_schema is not None
 
 
+def _absent(secrets: Mapping[str, str], variable: str | None) -> bool:
+    return variable is not None and not secrets.get(variable, "").strip()
+
+
+def _unprovided(tenant_id: TenantId, names: Iterable[str | None]) -> str:
+    """Le refus d'un secret que le gestionnaire de l'application ne rend pas (M3)."""
+    named = [name for name in dict.fromkeys(names) if name is not None]
+    which = (
+        f"le secret {named[0]} est absent ou vide"
+        if len(named) == 1
+        else f"les secrets {', '.join(named)} sont absents ou vides"
+    )
+    return f"{which} dans le gestionnaire de secrets (client {tenant_id!r})"
+
+
 def _missing_secret(
     tenant_id: TenantId,
     redirects: Mapping[str, str],
@@ -1623,6 +1653,7 @@ def _mcp_sources(
     pool: McpPool | None,
     tenant_id: TenantId = DEFAULT_TENANT,
     redirects: Mapping[str, str] | None = None,
+    vaulted: bool = False,
 ) -> tuple[list[ToolSource], tuple[_Closable, ...]]:
     """Sources d'outils des serveurs MCP de l'agent, et le pool créé pour lui s'il en faut un.
 
@@ -1655,6 +1686,9 @@ def _mcp_sources(
         except McpConfigError as exc:
             named = [*server.env_from.values(), *server.headers_env.values()]
             said = _missing_secret(tenant_id, redirects or {}, env, named)
+            if said is None and vaulted:
+                absent = [name for name in named if _absent(env, name)]
+                said = _unprovided(tenant_id, absent) if absent else None
             if said is not None:
                 raise ConfigError(
                     f"Agent {spec.name!r} : {said} — serveur MCP {server.name!r}"

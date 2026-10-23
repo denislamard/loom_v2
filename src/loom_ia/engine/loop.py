@@ -100,6 +100,7 @@ from typing import Final
 
 from pydantic import JsonValue, ValidationError
 
+from loom_ia.core import TOLD
 from loom_ia.core.events import (
     ApprovalExpired,
     ApprovalGranted,
@@ -1829,7 +1830,7 @@ async def _model_step(
             failure,
             exc.message if isinstance(exc, ModelError) else exc,
             exc_info=None if expected else exc,
-            extra={"run_id": state.run_id, "span_id": current.span},
+            extra={"run_id": state.run_id, "span_id": current.span, TOLD: expected},
         )
         yield current.completed(emitted, ok=False)
         yield _transition(stepped, scope, RunStatus.FAILED, failure)

@@ -107,7 +107,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader, HTTPBearer
 from fastapi.security.http import HTTPAuthorizationCredentials
-from pydantic import AwareDatetime, JsonValue
+from pydantic import AwareDatetime, JsonValue, ValidationError
 from sse_starlette.sse import EventSourceResponse
 from starlette.routing import Route
 
@@ -586,29 +586,39 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         model: str | None = None,
         since: AwareDatetime | None = None,
         until: AwareDatetime | None = None,
-        after: Annotated[EventId | None, Query(pattern=EVENT_ID_PATTERN)] = None,
+        # Le motif est contrôlé par ``EventQuery``, dont le refus est en français ;
+        # celui de FastAPI (« String should match pattern … ») ne l'était pas (K5).
+        after: Annotated[
+            EventId | None, Query(json_schema_extra={"pattern": EVENT_ID_PATTERN})
+        ] = None,
         limit: Annotated[int, Query(ge=1, le=EVENTS_MAX)] = EVENTS_LIMIT,
     ) -> Response | list[Event]:
         require(who, "read")
         if agent is not None:
             require(who, "read", agent)
-        query = EventQuery(
-            tenant_id=who.tenant,
-            session_id=session_id,
-            run_id=run_id,
-            types=types,
-            categories=categories,
-            status=statuses,
-            agent=agent,
-            role=role,
-            tool_name=tool_name,
-            model_id=model_id,
-            model=model,
-            since=since,
-            until=until,
-            after=after,
-            limit=limit,
-        )
+        try:
+            query = EventQuery(
+                tenant_id=who.tenant,
+                session_id=session_id,
+                run_id=run_id,
+                types=types,
+                categories=categories,
+                status=statuses,
+                agent=agent,
+                role=role,
+                tool_name=tool_name,
+                model_id=model_id,
+                model=model,
+                since=since,
+                until=until,
+                after=after,
+                limit=limit,
+            )
+        except ValidationError as refused:
+            said = "; ".join(
+                str(error["msg"]).removeprefix("Value error, ") for error in refused.errors()
+            )
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, said) from refused
         events = await loom.query(query)
         for named in dict.fromkeys(event.agent for event in events if event.agent):
             require(who, "read", named)

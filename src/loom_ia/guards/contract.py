@@ -130,7 +130,11 @@ def check(contract: OutputContract, text: str, data: JsonValue = None) -> Checke
                     problems.append(_TOO_NESTED)
             for error in errors:
                 location = ".".join(str(part) for part in error.absolute_path) or "(racine)"
-                problems.append(f"{location} : {schema_problem(error)}")
+                said = f"{location} : {schema_problem(error)}"
+                # ``required`` lève une erreur par propriété absente, et chacune
+                # les nomme toutes : au test E4 du 19/10, la même ligne revenait.
+                if said not in problems:
+                    problems.append(said)
     if contract.must_match is not None:
         try:
             if search(contract.must_match, kept) is None:

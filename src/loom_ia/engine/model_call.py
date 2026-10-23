@@ -171,7 +171,10 @@ class ModelCall:
                     # facturée : son usage entre ainsi dans les comptes (J1).
                     yield self._retried(request, failure, attempt, 0.0, billed, final=True)
                 raise failure
-            logger.warning(
+            # Une panne resservie par le rejeu (``by_client``) n'est pas une panne
+            # du fournisseur : au test O3 du 23/10, elle s'écrivait en WARNING.
+            logger.log(
+                logging.DEBUG if failure.by_client else logging.WARNING,
                 "Tentative %d/%d du modèle %s ratée (%s) : nouvel essai dans %.1f s",
                 attempt,
                 self.spec.retry.max_attempts,
