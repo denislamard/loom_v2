@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pièges et dépannage · loom_v2</title>
+<meta name="description" content="Les pièges rencontrés en suivant la formation loom_v2, classés par thème : le message que vous voyez, sa cause, la solution, et l&#x27;exercice qui en parle.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li class="ici"><a href="pieges.html" aria-current="page">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li class="ici"><a href="pieges.html" aria-current="page">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<h1>Pièges et dépannage</h1>
+<p class="chapeau">Les pièges rencontrés pendant la rédaction de la formation, classés par thème. Pour chacun : ce que vous voyez (le message exact de loom quand il y en a un), pourquoi, quoi faire, et l'exercice qui en parle. Les messages viennent de loom-ia 2.0.11.</p>
+<p>Un réflexe avant tout : <code>loom validate</code>. Il refuse une configuration incohérente avant le moindre run, et son message nomme le fichier et la clé en cause. Codes de sortie de toute la CLI : <strong>0</strong> succès, <strong>1</strong> run qui n'aboutit pas (échec, pause), <strong>2</strong> configuration ou demande refusée.</p>
+<p>Thèmes : <a href="#installation">Installation et YAML</a>, <a href="#configuration">Configuration et validation</a>, <a href="#outils">Outils</a>, <a href="#modeles">Modèles et clés</a>, <a href="#sessions">Sessions et journal</a>, <a href="#mcp">Outils MCP</a>, <a href="#roles">Rôles, sous-agents et vision</a>, <a href="#fiabilite">Contrats, juges et politiques</a>, <a href="#approbations">Approbations, idempotence et reprise</a>, <a href="#couts">Coûts et budgets</a>, <a href="#acces">API REST et serveur MCP</a>, <a href="#automatisation">Déclencheurs, file et bus</a>, <a href="#clients">Clients et données sensibles</a>, <a href="#observabilite">Observabilité et rejeu</a>, <a href="#qualite">Évals et tests</a>, <a href="#sources">Sources d'outils et forge</a>.</p>
+<h2 id="installation">Installation et YAML</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td>uv affiche <code>Failed to hardlink files; falling back to full copy</code></td><td>Le cache de uv et le dossier du projet sont sur deux systèmes de fichiers différents (un disque mémoire, une autre partition) : uv copie les fichiers au lieu de les lier. Sans conséquence pour loom. Pour ne plus le voir : <code>export UV_LINK_MODE=copy</code>, ou travaillez sous un dossier du même disque que <code>~/.cache/uv</code>. Un disque mémoire est vidé au redémarrage : n'y gardez pas le projet de la formation.</td><td><a href="module-01.html#installer">Module 1, 1.1</a></td></tr>
+<tr><td><code>Fichier illisible : … No such file or directory: '…/loom.yaml'</code></td><td>Vous n'êtes pas dans le dossier du projet, ou <code>loom.yaml</code> n'existe pas encore. <code>loom</code> cherche ce fichier dans le dossier courant (ou à l'endroit donné par <code>--config</code>).</td><td><a href="module-01.html#valider">Module 1, 1.3</a></td></tr>
+<tr><td><code>Dossier d'agents introuvable : …/agents</code> ou <code>Agent 'assistant' inconnu (agents : aucun)</code></td><td>Le dossier <code>agents/</code> manque, ou le fichier de l'agent n'y est pas. Chaque fichier <code>.yaml</code> de ce dossier décrit un agent.</td><td><a href="module-01.html#valider">Module 1, 1.3</a></td></tr>
+<tr><td><code>YAML invalide : mapping values are not allowed here</code></td><td>Un texte contient un deux-points suivi d'une espace (« Source : … ») sans être entre guillemets : YAML le prend pour une nouvelle clé. Mettez le texte entre guillemets. Un texte qui contient lui-même des guillemets doubles (du JSON, par exemple) se met entre apostrophes.</td><td><a href="module-01.html#ex-1-8">Module 1, 1.8</a><br><a href="module-07.html#ex-7-2">Module 7, 7.2</a></td></tr>
+<tr><td><code>YAML invalide : … found character '\t' that cannot start any token</code></td><td>Une tabulation sert d'indentation. YAML n'accepte que des espaces : configurez l'éditeur pour remplacer les tabulations.</td><td><a href="module-01.html#valider">Module 1, 1.3</a></td></tr>
+<tr><td>Une expression régulière ne reconnaît plus rien après passage dans le YAML</td><td>Dans un texte entre guillemets doubles, la barre oblique inverse est un caractère d'échappement : <code>\d</code> s'écrit <code>\\d</code>.</td><td><a href="module-07.html#ex-7-2">Module 7, 7.2</a></td></tr>
+<tr><td>Après <code>uv add "loom-ia[openai]"</code>, Claude ne fonctionne plus</td><td>La liste d'extras écrite remplace l'ancienne dans <code>pyproject.toml</code>. Redonnez-la en entier : <code>uv add "loom-ia[anthropic,openai]"</code>.</td><td><a href="module-03.html#ex-3-2">Module 3, 3.2</a></td></tr>
+</tbody></table></div>
+<h2 id="configuration">Configuration et validation</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td><code>main — Field required</code>, <code>main.modle — Extra inputs are not permitted</code></td><td>Une clé manque ou est mal écrite. loom refuse toute clé qu'il ne connaît pas et nomme le fichier et le chemin de la clé.</td><td><a href="module-01.html#valider">Module 1, 1.3</a></td></tr>
+<tr><td><code>modèle 'SIMULE' non déclaré (modèles connus : …)</code></td><td>L'agent cite un modèle par un nom absent de <code>models</code> dans <code>loom.yaml</code>. Les majuscules comptent.</td><td><a href="module-01.html#valider">Module 1, 1.3</a></td></tr>
+<tr><td><code>clé 'max_iterations' donnée deux fois dans le même objet (lignes 3 et 5)</code></td><td>Vous avez ajouté une seconde ligne au lieu de modifier la première. YAML garderait la seconde en silence ; loom refuse et donne les deux numéros de ligne.</td><td><a href="module-02.html#ex-2-6">Module 2, 2.6</a></td></tr>
+<tr><td><code>main.system_file — prompt introuvable : …/prompts/systeme.md</code></td><td>Le nom du fichier de prompt est faux. <code>system_file</code> est relatif au dossier <code>prompts/</code> : on écrit <code>system.md</code>, pas <code>prompts/system.md</code>.</td><td><a href="module-01.html#ex-1-5">Module 1, 1.5</a></td></tr>
+<tr><td><code>{{ entreprise }} : variable non définie pour le client 'default' (tenants[].variables)</code></td><td>Un prompt cite une variable qui n'a pas de valeur pour ce client. Déclarez-la dans <code>tenants[].variables</code>. La même règle vaut pour le prompt d'un rôle.</td><td><a href="module-03.html#ex-3-8">Module 3, 3.8</a><br><a href="module-12.html#ex-12-1">Module 12, 12.1</a></td></tr>
+<tr><td><code>Fichier d'environnement introuvable (env_file) : …</code></td><td><code>env_file:</code> désigne un fichier qui n'existe pas : c'est une erreur (code 2), alors qu'un <code>.env</code> voisin absent est simplement ignoré.</td><td><a href="module-03.html#ex-3-7">Module 3, 3.7</a></td></tr>
+<tr><td>Une variable du <code>.env</code> semble ignorée (« déjà définies, gardées »)</td><td>Une variable déjà définie dans l'environnement, même vide, l'emporte sur le fichier. Vérifiez <code>env | grep NOM</code> et faites <code>unset NOM</code> si besoin.</td><td><a href="module-03.html#ex-3-7">Module 3, 3.7</a></td></tr>
+<tr><td>Ce qui passait en développement est refusé en profil <code>prod</code></td><td>Le profil <code>prod</code> change certains avertissements en erreurs : juge corrélé, juge bloquant échantillonné, budget en dollars sur un modèle sans tarif, modèle officiel sans <code>api_key_env</code>, approbation sans journal durable. Il refuse aussi <code>--judges skip</code> et <code>serve --reload</code>. Corrigez la cause plutôt que de quitter le profil.</td><td><a href="module-03.html#ex-3-9">Module 3, 3.9</a></td></tr>
+</tbody></table></div>
+<h2 id="outils">Outils</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td><code>Référence 'prix_ttc' introuvable : aucun objet de ce nom (enregistrés : aucun). Utiliser 'imports' ou un chemin 'module:attr'</code></td><td>Le module Python qui contient l'outil n'est pas chargé. Ajoutez <code>imports: [outils]</code> dans <code>loom.yaml</code>. Même message pour une politique non importée (<code>imports: [outils, politiques]</code>).</td><td><a href="module-02.html#ex-2-1">Module 2, 2.1</a><br><a href="module-07.html#ex-7-7">Module 7, 7.7</a></td></tr>
+<tr><td><code>Outil 'prix_ttc' : description manquante (docstring vide)</code></td><td>La docstring de la fonction est obligatoire : c'est la description que lit le modèle pour savoir quand appeler l'outil.</td><td><a href="module-02.html#ex-2-1">Module 2, 2.1</a></td></tr>
+<tr><td>Le modèle ne reçoit que <code>Erreur de l'outil chercher_devis : KeyError: 'D-2026-999'</code></td><td>L'outil a laissé passer une exception Python ordinaire. Levez une <code>ToolError</code> avec un message clair (« Devis D-2026-999 introuvable ») : c'est ce message que le modèle lira. Dans tous les cas, l'erreur reste isolée à cet appel et le run continue.</td><td><a href="module-02.html#ex-2-2">Module 2, 2.2</a></td></tr>
+<tr><td>Un outil dépasse son délai, mais <code>loom inspect</code> montre une durée bien plus longue</td><td>Le délai rend la main au modèle, mais une fonction synchrone n'est pas interrompue : elle continue dans son fil d'exécution jusqu'à son retour. Le délai protège de l'attente, pas d'un effet de bord déjà lancé.</td><td><a href="module-02.html#ex-2-3">Module 2, 2.3</a><br><a href="module-08.html#ex-8-7">Module 8, 8.7</a></td></tr>
+<tr><td>Le diagnostic d'arguments refusés est coupé dans <code>loom inspect</code></td><td>Sans option, <code>loom inspect</code> abrège chaque ligne. Ajoutez <code>--full</code> pour lire le diagnostic complet.</td><td><a href="module-02.html#ex-2-4">Module 2, 2.4</a><br><a href="module-06.html#ex-6-2">Module 6, 6.2</a></td></tr>
+<tr><td><code>artifact_read</code> ne trouve plus un fichier mis de côté</td><td>Le nom d'un artefact est l'empreinte de son contenu : si le contenu change, la référence change. Ne recopiez pas une référence en dur ; prenez celle que donne le résultat.</td><td><a href="module-02.html#ex-2-7">Module 2, 2.7</a></td></tr>
+</tbody></table></div>
+<h2 id="modeles">Modèles et clés</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td><code>Modèle 'HAIKU' : le SDK 'anthropic' n'est pas installé (installer l'extra : loom-ia[anthropic])</code></td><td>Chaque fournisseur s'installe à part. <code>uv add "loom-ia[anthropic]"</code> (ou <code>[openai]</code>), en redonnant la liste complète des extras.</td><td><a href="module-01.html#vrai-modele">Module 1, 1.6</a><br><a href="module-03.html#ex-3-2">Module 3, 3.2</a></td></tr>
+<tr><td><code>Modèle 'HAIKU' : la variable d'environnement ANTHROPIC_API_KEY est absente ou vide</code></td><td>La clé n'est pas lue : <code>.env</code> absent, mal placé (il doit être à côté de <code>loom.yaml</code>) ou nom de variable différent de <code>api_key_env</code>. Un modèle cité comme secours (<code>fallbacks</code>) exige aussi sa clé dès <code>loom validate</code>.</td><td><a href="module-01.html#vrai-modele">Module 1, 1.6</a><br><a href="module-09.html#ex-9-2">Module 9, 9.2</a></td></tr>
+<tr><td><code>Error code: 401 … invalid x-api-key (model.auth)</code></td><td>La clé est fausse ou révoquée. L'erreur est définitive : loom ne réessaie pas.</td><td><a href="module-01.html#vrai-modele">Module 1, 1.6</a><br><a href="module-09.html#ex-9-1">Module 9, 9.1</a></td></tr>
+<tr><td>Un juge sur Claude Opus 5.5 échoue à chaque appel (erreur 400 sur <code>tool_choice</code>)</td><td>Ce modèle refuse qu'on lui impose un outil. Déclarez <code>capabilities: {forced_tool_choice: false}</code> sur le modèle.</td><td><a href="module-03.html#ex-3-1">Module 3, 3.1</a></td></tr>
+<tr><td>Un rôle vision est refusé au chargement</td><td>Le modèle du rôle ne déclare pas <code>capabilities: {vision: true}</code>. Pour l'API Anthropic, ajoutez aussi <code>tool_result_media: true</code>.</td><td><a href="module-06.html#ex-6-4">Module 6, 6.4</a></td></tr>
+<tr><td>Le modèle simulé répond à côté de la question</td><td>Un <code>with_text</code> trop large attrape plusieurs scénarios (« TVA » se retrouvait dans « Recalcule … TVA à 10 % »). Choisissez des textes discriminants. Rappel : le modèle simulé ne lit ni la question ni le prompt.</td><td><a href="module-02.html#ex-2-1">Module 2, 2.1</a></td></tr>
+<tr><td>Une panne simulée (<code>error:</code>) ne réussit jamais au deuxième essai</td><td>C'est voulu : une réponse <code>error</code> échoue à chaque tentative. Le retry qui réussit ne s'observe qu'avec un vrai fournisseur.</td><td><a href="module-09.html#ex-9-1">Module 9, 9.1</a></td></tr>
+<tr><td>Le disjoncteur ne semble pas se souvenir d'une commande à l'autre</td><td>Il vit dans la mémoire du process : il ne sert que dans un process qui dure (<code>loom serve</code>, un worker), pas entre deux <code>loom run</code>.</td><td><a href="module-09.html#ex-9-3">Module 9, 9.3</a></td></tr>
+</tbody></table></div>
+<h2 id="sessions">Sessions et journal</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td><code>le paquet 'aiosqlite' n'est pas installé (installer l'extra : loom-ia[sqlite])</code></td><td>Le journal SQLite (ou Postgres, paquet <code>asyncpg</code>) demande son extra : <code>uv add "loom-ia[…,sqlite]"</code>.</td><td><a href="module-04.html#ex-4-6">Module 4, 4.6</a></td></tr>
+<tr><td><code>Journal en mémoire : il ne vit que le temps d'un process ; cette commande ne voit pas les runs des autres commandes loom.</code></td><td>Sans <code>storage.events</code>, le journal est en mémoire : rien ne survit à la commande. Déclarez un journal <code>jsonl</code>, <code>sqlite</code> ou <code>postgres</code>.</td><td><a href="module-01.html#ex-1-7">Module 1, 1.7</a><br><a href="module-04.html#ex-4-6">Module 4, 4.6</a></td></tr>
+<tr><td>Toutes les conversations sont résumées, même courtes</td><td>Le seuil <code>sessions.compaction.over_tokens</code> est trop bas. Gardez-le haut et testez-le sur de vraies conversations.</td><td><a href="module-04.html#ex-4-4">Module 4, 4.4</a></td></tr>
+<tr><td><code>session.compacted</code> signale une « fidélité douteuse »</td><td>Le résumé a perdu des repères (numéros, montants, adresses). Il a été renvoyé une fois à son modèle, puis accepté avec une alerte. Un modèle simulé de résumé avec une seule réplique épuise alors son script : prévoyez une réplique pour la réparation.</td><td><a href="module-04.html#ex-4-4">Module 4, 4.4</a></td></tr>
+<tr><td>Les requêtes d'un modèle vision grossissent à chaque tour</td><td>Par défaut (<code>sessions.media.keep_images: all</code>), un modèle vision revoit toutes les images de la session à chaque appel. <code>last_run</code> les remplace par une mention après leur tour.</td><td><a href="module-04.html#ex-4-5">Module 4, 4.5</a></td></tr>
+<tr><td><code>loom state</code> ne montre pas la valeur par défaut d'une clé</td><td>Le <code>default</code> d'une clé de state est utilisé quand la clé est absente, mais il n'est jamais écrit au journal.</td><td><a href="module-04.html#ex-4-8">Module 4, 4.8</a></td></tr>
+<tr><td><code>Demande refusée : State refusé : client : clé non déclarée dans 'state'</code></td><td><code>--state</code> pose une clé absente de <code>state:</code>, ou une valeur hors de son schéma : le run est refusé avant de commencer (code 2).</td><td><a href="module-04.html#ex-4-8">Module 4, 4.8</a></td></tr>
+</tbody></table></div>
+<h2 id="mcp">Outils MCP</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td><code>Serveur MCP 'catalogue' : 'include' ou 'exclude', pas les deux</code></td><td>Choisissez l'un des deux filtres.</td><td><a href="module-05.html#ex-5-3">Module 5, 5.3</a></td></tr>
+<tr><td>Un prompt cite un outil MCP qui n'existe plus</td><td>Un <code>alias</code> change le préfixe des outils (<code>catalogue__prix_article</code> devient <code>alias__prix_article</code>) : mettez à jour prompts et scripts.</td><td><a href="module-05.html#ex-5-3">Module 5, 5.3</a></td></tr>
+<tr><td>Le serveur MCP ne démarre pas, et le run continue sans ses outils</td><td>Par défaut, un serveur indisponible est signalé (<code>tool.source_unavailable</code>) et ses outils disparaissent pour ce run. Si l'agent ne peut rien faire sans lui, déclarez <code>required: true</code> : le run échoue alors clairement (code 1). Les messages d'erreur du serveur s'affichent dans la console, préfixés par son nom (<code>[catalogue]</code>).</td><td><a href="module-05.html#ex-5-4">Module 5, 5.4</a></td></tr>
+<tr><td>Le modèle ignore les consignes que le serveur MCP déclare</td><td>loom ne transmet pas les « instructions » d'un serveur MCP au modèle : recopiez-les dans le prompt.</td><td><a href="module-05.html#ex-5-6">Module 5, 5.6</a></td></tr>
+<tr><td>Une variable passée à un serveur MCP (<code>env</code>) est refusée ou mal lue</td><td>Une valeur qui ressemble à un nombre ou à un booléen se met entre guillemets : <code>"1"</code>.</td><td><a href="module-05.html#ex-5-6">Module 5, 5.6</a></td></tr>
+<tr><td>loom-notes refuse de s'installer dans le projet</td><td>Ses dépendances entrent en conflit avec celles de loom-ia. Installez-le comme outil à part : <code>uv tool install loom-notes</code>. Sa base Qdrant embarquée n'accepte qu'un process à la fois.</td><td><a href="module-05.html#ex-5-6">Module 5, 5.6</a></td></tr>
+<tr><td>Un outil servi en MCP stdio casse la connexion</td><td>En stdio, la sortie standard porte le protocole MCP : un <code>print</code> dans un outil la corrompt. Écrivez vos traces sur la sortie d'erreur ou dans les logs.</td><td><a href="module-10.html#ex-10-9">Module 10, 10.9</a></td></tr>
+</tbody></table></div>
+<h2 id="roles">Rôles, sous-agents et vision</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td>La réponse du run ne contient pas l'e-mail rédigé par le rôle</td><td>Un rôle rend son résultat à l'orchestrateur, pas à l'utilisateur. Déclarez-le <code>terminal: true</code> pour que sa sortie devienne la réponse, ou laissez l'orchestrateur la recopier. Un rôle terminal empêche en revanche l'orchestrateur d'enchaîner (par exemple sur l'envoi).</td><td><a href="module-06.html#ex-6-1">Module 6, 6.1</a><br><a href="module-06.html#ex-6-3">Module 6, 6.3</a><br><a href="module-08.html#ex-8-1">Module 8, 8.1</a></td></tr>
+<tr><td><code>la référence result:1 (chercher_devis) transmet un objet JSON ; ce champ attend du texte</code></td><td>Un <code>$ref</code> passe le résultat tel quel : le champ qui le reçoit doit avoir le même type (un objet ici). L'appel du rôle est refusé et le run continue sans lui.</td><td><a href="module-06.html#ex-6-2">Module 6, 6.2</a></td></tr>
+<tr><td>Une image est refusée alors que son extension est <code>.png</code></td><td>loom reconnaît une pièce jointe à son contenu, jamais à son nom : un fichier texte renommé est refusé (« format non reconnu »). Seuls jpeg, png, gif et webp sont acceptés.</td><td><a href="module-06.html#ex-6-4">Module 6, 6.4</a></td></tr>
+<tr><td>Une pièce jointe trop lourde, ou trop de fichiers : refus immédiat</td><td><code>execution.attachments.max_bytes</code> et <code>max_files</code> sont contrôlés avant le run : code 2, et rien n'est écrit au journal.</td><td><a href="module-06.html#ex-6-4">Module 6, 6.4</a></td></tr>
+<tr><td><code>budget_share demande un budget du run (max_cost, max_tokens ou max_calls)</code></td><td>La part de budget d'un sous-agent se calcule sur le budget du run parent : déclarez d'abord ce budget.</td><td><a href="module-06.html#ex-6-6">Module 6, 6.6</a></td></tr>
+<tr><td>Un sous-agent apparaît dans l'API REST et en MCP</td><td>Tout agent est publié par défaut. Pour un agent qui ne sert que de sous-agent : <code>expose: {rest: false, mcp: false}</code>.</td><td><a href="module-10.html#ex-10-9">Module 10, 10.9</a></td></tr>
+</tbody></table></div>
+<h2 id="fiabilite">Contrats, juges et politiques</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td><code>main.output — Extra inputs are not permitted</code></td><td>Le contrat et le juge de la réponse finale se déclarent au niveau de l'agent (<code>output:</code>, <code>judge:</code>), pas sous <code>main</code>.</td><td><a href="module-07.html#ex-7-1">Module 7, 7.1</a></td></tr>
+<tr><td>Un rôle refusé par son contrat n'arrête pas le run</td><td>Avec <code>on_failure: fail</code> sur un rôle, c'est l'appel du rôle qui échoue : l'orchestrateur reçoit l'erreur et continue. Pour qu'un échec arrête tout le run, posez le contrat sur la réponse finale (<code>output</code> de l'agent).</td><td><a href="module-07.html#ex-7-3">Module 7, 7.3</a></td></tr>
+<tr><td>Avec <code>--judges skip</code>, un montant inventé passe</td><td>Sauter les juges sert aux essais. Le contrat ne vérifie que la forme ; seul le juge vérifie le fond. <code>--judges skip</code> est refusé en profil <code>prod</code>.</td><td><a href="module-07.html#ex-7-4">Module 7, 7.4</a></td></tr>
+<tr><td><code>… : même modèle que la sortie qu'il évalue (REDACTEUR) : juge corrélé</code></td><td>Un juge sur le même modèle que la sortie jugée a les mêmes angles morts. Avertissement en développement, erreur en profil <code>prod</code> : choisissez un autre modèle. Même règle pour un juge bloquant échantillonné (<code>sample</code> inférieur à 1).</td><td><a href="module-07.html#ex-7-6">Module 7, 7.6</a><br><a href="module-07.html#ex-7-4">Module 7, 7.4</a></td></tr>
+<tr><td><code>un outil Python n'a pas de juge : un juge porte sur la réponse finale (judge: de l'agent) ou sur un rôle (roles[].judge)</code></td><td>Le résultat d'un outil se contrôle par son contrat (<code>output</code>), pas par un juge.</td><td><a href="module-07.html#ex-7-5">Module 7, 7.5</a></td></tr>
+<tr><td><code>loom.require_tool</code> impose l'outil même pour « Bonjour »</td><td>Cette politique s'applique à chaque demande. Limitez-la à ce qui en a besoin, ou acceptez qu'un simple bonjour déclenche une lecture.</td><td><a href="module-07.html#ex-7-7">Module 7, 7.7</a></td></tr>
+<tr><td>La réponse cite une source que l'agent n'a pas pu lire</td><td>Le modèle peut répondre de mémoire en citant une source. Une consigne dans le prompt ne suffit pas : imposez la lecture par une politique (<code>loom.require_tool</code>) et faites vérifier le fond par un juge.</td><td><a href="module-01.html#ex-1-8">Module 1, 1.8</a><br><a href="module-07.html#ex-7-7">Module 7, 7.7</a></td></tr>
+</tbody></table></div>
+<h2 id="approbations">Approbations, idempotence et reprise</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td><code>outil 'envoyer_email' en approval: always — une approbation exige un journal durable (jsonl ou sqlite ou postgres), pas 'memory' (#28)</code></td><td>Un run en pause doit survivre à la commande qui l'a lancé : déclarez un journal sur disque.</td><td><a href="module-08.html#ex-8-1">Module 8, 8.1</a></td></tr>
+<tr><td><code>--arguments</code> fait refuser l'appel</td><td>Les arguments donnés à l'approbation remplacent <em>tous</em> ceux du modèle ; ils ne se fusionnent pas. Donnez l'objet complet.</td><td><a href="module-08.html#ex-8-3">Module 8, 8.3</a></td></tr>
+<tr><td><code>loom approve</code> refuse une demande expirée (code 2)</td><td>Après <code>expires_in</code>, la demande ne peut plus être tranchée. Relancez le run avec <code>loom resume</code> : il se conclut selon <code>on_expiry</code>.</td><td><a href="module-08.html#ex-8-3">Module 8, 8.3</a></td></tr>
+<tr><td><code>ce run est mené ailleurs : réessayer après l'échéance</code></td><td>Juste après un plantage, le run est encore « tenu » par le process mort pendant la durée de sa concession (60 s par défaut). Attendez l'échéance indiquée, puis relancez <code>loom resume</code>.</td><td><a href="module-08.html#ex-8-5">Module 8, 8.5</a></td></tr>
+<tr><td><code>État inconnu : l'exécution de cet outil a été interrompue et il a peut-être produit son effet. Il n'a pas été relancé automatiquement</code></td><td>Un outil à effet de bord interrompu n'est jamais relancé à l'aveugle. Vérifiez à la main (l'e-mail est-il parti ?) avant de le rappeler. Une fenêtre de quelques millisecondes subsiste entre l'effet et sa mémorisation ; un service externe qui accepte une clé d'idempotence la referme.</td><td><a href="module-08.html#ex-8-5">Module 8, 8.5</a></td></tr>
+<tr><td><code>… il leur faut un magasin d'idempotence partagé et durable (sqlite ou postgres ou redis), pas 'journal' (#49)</code></td><td>Une clé d'idempotence métier (qui vaut pour tous les runs) demande <code>storage.idempotency</code> en sqlite, postgres ou redis.</td><td><a href="module-08.html#ex-8-6">Module 8, 8.6</a></td></tr>
+<tr><td>Jean doit approuver deux fois un e-mail qui ne part qu'une fois</td><td>L'approbation passe avant l'idempotence : la seconde demande est posée, puis l'envoi est reconnu comme déjà fait. Prévenez l'approbateur, ou évitez de relancer la même demande.</td><td><a href="module-08.html#ex-8-6">Module 8, 8.6</a></td></tr>
+<tr><td>Le run a échoué sur son délai, et pourtant l'e-mail est parti</td><td>Le <code>timeout</code> du run rend la main, il n'interrompt pas une fonction synchrone en cours. Ne comptez pas sur le délai pour empêcher un effet de bord.</td><td><a href="module-08.html#ex-8-7">Module 8, 8.7</a></td></tr>
+<tr><td>Pas de commande <code>loom</code> pour annuler un run</td><td>L'annulation passe par Python (<code>Loom.cancel()</code>), l'API REST (<code>POST /v1/runs/{id}/cancel</code>) ou l'outil MCP <code>cancel</code>.</td><td><a href="module-08.html#ex-8-8">Module 8, 8.8</a><br><a href="module-10.html#ex-10-7">Module 10, 10.7</a></td></tr>
+<tr><td>Un run approuvé depuis le même programme reste bloqué</td><td>Approuver dès l'événement <code>approval.requested</code>, dans le process qui mène le run, arrive avant la fin de la mise en pause : la décision est écrite, mais la reprise est perdue. Attendez la transition vers <code>paused</code>, ou relancez avec <code>loom resume</code>.</td><td><a href="module-10.html#ex-10-3">Module 10, 10.3</a></td></tr>
+</tbody></table></div>
+<h2 id="couts">Coûts et budgets</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td>Un modèle sans tarif coûte 0 $ (<code>budget en dollars, mais sans tarif pour …</code>)</td><td>Sans <code>pricing</code>, les appels ne coûtent rien pour loom, et un budget en dollars ne les voit pas. Avertissement en développement, erreur en profil <code>prod</code>.</td><td><a href="module-09.html#ex-9-5">Module 9, 9.5</a></td></tr>
+<tr><td>Le coût final dépasse le plafond</td><td>Le budget est vérifié avant chaque appel de l'orchestrateur : le dernier appel autorisé peut faire dépasser le plafond. Prévoyez une marge.</td><td><a href="module-09.html#ex-9-7">Module 9, 9.7</a></td></tr>
+<tr><td>Un plafond quotidien atteint : le run est refusé sans trace</td><td>Le refus intervient avant le run (code 2) : rien n'est écrit au journal.</td><td><a href="module-09.html#ex-9-7">Module 9, 9.7</a></td></tr>
+</tbody></table></div>
+<h2 id="acces">API REST et serveur MCP</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td>La librairie Python ne trouve pas la clé d'API</td><td>Contrairement à la commande <code>loom</code>, la librairie ne lit pas le <code>.env</code>. Appelez <code>load_env_file("loom.yaml")</code> avant <code>Loom.from_config()</code>.</td><td><a href="module-10.html#ex-10-1">Module 10, 10.1</a></td></tr>
+<tr><td><code>GET /v1/runs/{id}</code> répond 404 « Run … inconnu » pour un run qui existe</td><td>Le run appartient à une session nommée. Toutes les routes <code>/v1/runs/{id}…</code> demandent alors <code>?session_id=…</code>. Même règle pour <code>loom inspect</code> et <code>loom replay</code> (<code>--session</code>).</td><td><a href="module-10.html#ex-10-7">Module 10, 10.7</a><br><a href="module-13.html#ex-13-7">Module 13, 13.7</a></td></tr>
+<tr><td>401 ou 403 ?</td><td>401 : pas de clé, ou une clé inconnue. 403 : une clé valide mais sans la portée demandée (<code>{"detail":"Clé sans la portée 'run'"}</code>). La clé n'est affichée qu'une fois, à sa création : la configuration ne garde que son empreinte.</td><td><a href="module-10.html#ex-10-8">Module 10, 10.8</a></td></tr>
+<tr><td>L'agent apparaît en MCP sous le nom « Agent loom assistant »</td><td>L'agent n'a pas de <code>description</code> : c'est elle que lit le client MCP pour choisir l'outil.</td><td><a href="module-10.html#ex-10-9">Module 10, 10.9</a></td></tr>
+<tr><td>Le serveur MCP en HTTP refuse de démarrer</td><td><code>server.mcp.http</code> exige qu'au moins une clé d'API soit déclarée.</td><td><a href="module-10.html#ex-10-9">Module 10, 10.9</a></td></tr>
+<tr><td><code>loom serve --reload</code> refusé</td><td>Le rechargement est réservé au développement : il est refusé en profil <code>prod</code> (code 2). Si la nouvelle configuration est cassée, l'ancien process continue de servir.</td><td><a href="module-10.html#ex-10-10">Module 10, 10.10</a></td></tr>
+<tr><td>Le premier run est lent, les suivants rapides</td><td>Le premier run d'un process paie le montage des agents et le démarrage des serveurs MCP (environ une seconde ici) ; ensuite, quelques millisecondes. Mesurez la latence à chaud.</td><td><a href="module-10.html#ex-10-11">Module 10, 10.11</a></td></tr>
+</tbody></table></div>
+<h2 id="automatisation">Déclencheurs, file et bus</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td>Le run part avec une phrase trouée</td><td>Un champ absent du corps du webhook devient une chaîne vide dans le gabarit, sans erreur. Faites valider la charge par l'émetteur, ou vérifiez le message dans le journal.</td><td><a href="module-11.html#ex-11-1">Module 11, 11.1</a></td></tr>
+<tr><td><code>HTTP/1.1 422</code> sur une livraison</td><td>Le même <code>X-Delivery-Id</code> arrive avec une autre charge : loom refuse plutôt que de déclencher deux actions. Un identifiant de livraison doit être unique par événement. Sans <code>delivery_header</code>, chaque appel ouvre un run.</td><td><a href="module-11.html#ex-11-1">Module 11, 11.1</a></td></tr>
+<tr><td>Le webhook répond 202, mais l'e-mail n'est pas parti</td><td>202 veut dire « pris en charge » : le run tourne, et l'approbation reste due.</td><td><a href="module-11.html#ex-11-1">Module 11, 11.1</a></td></tr>
+<tr><td><code>loom worker</code> refusé (code 2)</td><td>Avec la file <code>asyncio</code>, les tâches tournent dans le process qui les soumet : il n'y a pas de worker. Il faut <code>storage.queue: {backend: rabbitmq, url_env: AMQP_URL}</code> et la variable <code>AMQP_URL</code>.</td><td><a href="module-11.html#ex-11-3">Module 11, 11.3</a><br><a href="module-11.html#ex-11-4">Module 11, 11.4</a></td></tr>
+<tr><td>Le worker s'arrête sur une erreur de connexion</td><td>Le courtier RabbitMQ n'est pas joignable. Démarrez-le avant le worker. Un run plus long que le <code>consumer_timeout</code> de RabbitMQ (30 minutes) est repris par un autre worker.</td><td><a href="module-11.html#ex-11-4">Module 11, 11.4</a></td></tr>
+<tr><td>Avertissement : les process doivent partager le dossier des artefacts</td><td>Avec une file ou un bus partagés entre plusieurs process, le stockage <code>local</code> des fichiers doit être un dossier commun à tous (volume partagé), ou les fichiers ne seront pas trouvés.</td><td><a href="module-11.html#ex-11-4">Module 11, 11.4</a><br><a href="module-11.html#ex-11-5">Module 11, 11.5</a></td></tr>
+<tr><td>Le flux SSE d'un second <code>loom serve</code> reste figé</td><td>Avec le bus <code>memory</code>, les nouvelles ne sortent pas du process qui mène le run. Pour plusieurs process : <code>storage.bus</code> en <code>redis</code> ou <code>postgres</code>.</td><td><a href="module-11.html#ex-11-5">Module 11, 11.5</a></td></tr>
+</tbody></table></div>
+<h2 id="clients">Clients et données sensibles</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td>Le Chauffage Martin obtient un devis de la Plomberie Dupont</td><td>loom isole ce qu'il garde lui-même (journal, fichiers, secrets), pas les données de vos outils. Un outil doit choisir ses données selon <code>ctx.tenant_id</code>.</td><td><a href="module-12.html#ex-12-1">Module 12, 12.1</a><br><a href="module-12.html#ex-12-2">Module 12, 12.2</a></td></tr>
+<tr><td>« de la Chauffage Martin »</td><td>Une variable remplace le texte tel quel : mettez l'article dans la variable (« la Plomberie Dupont »).</td><td><a href="module-12.html#ex-12-1">Module 12, 12.1</a></td></tr>
+<tr><td><code>Client 'martin' non déclaré</code> ou <code>Agent 'traducteur' non ouvert au client 'martin-chauffage'</code></td><td>La liste des clients est fermée, et un client ne voit que les agents qui lui sont ouverts (<code>tenants[].agents</code>).</td><td><a href="module-12.html#ex-12-1">Module 12, 12.1</a><br><a href="module-12.html#ex-12-3">Module 12, 12.3</a></td></tr>
+<tr><td>Le prompt parle d'outils que ce client n'a pas</td><td>Les prompts ne se surchargent pas par client. Écrivez-les pour qu'ils restent justes quand un outil manque, ou passez la consigne par une variable du client.</td><td><a href="module-12.html#ex-12-3">Module 12, 12.3</a></td></tr>
+<tr><td><code>la variable MARTIN_ANTHROPIC_KEY (redirection de ANTHROPIC_API_KEY) est absente ou vide</code></td><td>Le secret propre au client manque. <code>loom validate</code> refuse alors toute la configuration (code 2), même si les autres clients ont leurs clés.</td><td><a href="module-12.html#ex-12-4">Module 12, 12.4</a></td></tr>
+<tr><td>La session d'un autre client répond 404 et non 403</td><td>C'est voulu : loom ne confirme même pas qu'elle existe.</td><td><a href="module-12.html#ex-12-5">Module 12, 12.5</a></td></tr>
+<tr><td>Le quota par minute n'est pas tenu</td><td>Le quota est compté par process : <code>loom run</code> n'est pas limité, et N <code>loom serve</code> accordent N fois le quota. Une requête refusée par le quota compte quand même dans le débit de la clé.</td><td><a href="module-12.html#ex-12-6">Module 12, 12.6</a></td></tr>
+<tr><td><code>Journal scellé : Client 'martin-chauffage' : aucune clé de sceau — le secret 'JOURNAL_KEY' est absent ou vide</code></td><td>Le journal chiffré du client ne peut plus être lu, et ses runs sont refusés : c'est l'effet recherché après l'effacement volontaire d'une clé (effacement cryptographique). Sinon, rendez la clé. La liste des sessions reste visible, car seule la charge des événements est chiffrée. Pour changer de clé : la première de <code>keys</code> chiffre, toutes déchiffrent.</td><td><a href="module-12.html#ex-12-7">Module 12, 12.7</a></td></tr>
+<tr><td><code>loom retention</code> n'a rien effacé</td><td>Rien ne s'efface tout seul : la commande liste, et n'efface qu'avec <code>--yes</code>. Le critère est la dernière écriture de la session ; les approbations en attente partent avec elle.</td><td><a href="module-12.html#ex-12-8">Module 12, 12.8</a></td></tr>
+<tr><td><code>Base Postgres non préparée : le rôle 'loom_service' n'a pas pu poser le schéma de loom</code></td><td>Le rôle de connexion n'a pas le droit de créer les tables et les rôles. Appliquez la sortie de <code>loom storage sql</code> avec un administrateur, puis donnez le rôle applicatif au rôle de connexion (<code>GRANT loom_app TO …</code>). « permission denied to grant role » : le rôle applicatif a été créé par un autre utilisateur ; appliquez le script avec un rôle qui en a le droit.</td><td><a href="module-12.html#ex-12-9">Module 12, 12.9</a></td></tr>
+<tr><td>Un script d'exploitation ne trouve aucune ligne</td><td>Avec l'isolation Postgres, une lecture qui ne pose pas <code>loom.tenant_id</code> ne voit rien : c'est voulu. Un superutilisateur, lui, échappe aux politiques. Testez sauvegarde et restauration avec un rôle d'exploitation dédié.</td><td><a href="module-12.html#ex-12-9">Module 12, 12.9</a></td></tr>
+</tbody></table></div>
+<h2 id="observabilite">Observabilité et rejeu</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td>Aucune trace n'arrive au collecteur OpenTelemetry</td><td>Une variable d'adresse absente ou mal nommée ne fait pas d'erreur : <code>loom validate</code> affiche seulement « vide — non monté, aucune trace n'en partira ». Vérifiez cette ligne au déploiement.</td><td><a href="module-13.html#ex-13-5">Module 13, 13.5</a></td></tr>
+<tr><td>Le texte d'un run est vide en REST</td><td>La clé n'a pas la portée <code>read_content</code> : les contenus sont masqués, et le champ <code>redacted</code> liste ce qui a été retiré.</td><td><a href="module-13.html#ex-13-3">Module 13, 13.3</a></td></tr>
+<tr><td>Un filtre de <code>GET /v1/events</code> ne filtre rien</td><td>Un paramètre inconnu est ignoré sans erreur : le filtre sur l'outil s'appelle <code>tool_name</code>, pas <code>tool</code>. La réponse est un tableau.</td><td><a href="module-13.html#ex-13-4">Module 13, 13.4</a></td></tr>
+<tr><td>Le masquage n'a pas retiré les données du journal</td><td><code>telemetry.redaction</code> masque les exports, pas le journal. Pour protéger le journal : le chiffrement (module 12) et les portées des clés.</td><td><a href="module-13.html#ex-13-5">Module 13, 13.5</a></td></tr>
+<tr><td><code>Rejeu identique : 'models' et 'doubles' ne servent qu'en variante (mode='variant')</code></td><td><code>--model</code> et <code>--double</code> demandent <code>--mode variant</code>.</td><td><a href="module-13.html#ex-13-7">Module 13, 13.7</a></td></tr>
+<tr><td><code>… inachevé (en cours ou en pause) — un rejeu compare un run fini</code></td><td>Concluez d'abord le run (approbation, <code>loom resume</code>), puis rejouez-le.</td><td><a href="module-13.html#ex-13-7">Module 13, 13.7</a></td></tr>
+<tr><td>Un rejeu en variante sort en code 0 alors que l'e-mail ne part plus</td><td>Le rejeu compare, il ne juge pas : il signale les écarts sans échouer. Pour qu'un comportement attendu soit vérifié, écrivez une éval (module 14).</td><td><a href="module-13.html#ex-13-7">Module 13, 13.7</a><br><a href="module-14.html#ex-14-1">Module 14, 14.1</a></td></tr>
+</tbody></table></div>
+<h2 id="qualite">Évals et tests</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td><code>contains</code> échoue alors que le texte semble présent</td><td><code>contains</code> cherche le texte exact ; un vrai modèle écrit parfois « 1 840 € » avec une espace insécable. Utilisez <code>matches</code> avec une expression tolérante.</td><td><a href="module-14.html#ex-14-1">Module 14, 14.1</a></td></tr>
+<tr><td>Un cas d'éval sans attendu est refusé</td><td>Chaque cas doit vérifier quelque chose : un contrôle (<code>contains</code>, <code>called</code>, <code>state</code>…) ou un critère de juge.</td><td><a href="module-14.html#ex-14-1">Module 14, 14.1</a></td></tr>
+<tr><td>Un outil à effet de bord est refusé pendant l'éval</td><td>En éval comme au banc de test, un outil irréversible n'est jamais appelé pour de vrai : donnez-lui une doublure (<code>doubles</code>).</td><td><a href="module-14.html#ex-14-1">Module 14, 14.1</a><br><a href="module-14.html#ex-14-4">Module 14, 14.4</a></td></tr>
+<tr><td><code>Banc : le modèle HAIKU (anthropic, claude-haiku-5-5) est réel et n'est pas remplacé</code></td><td>Le banc refuse d'appeler un vrai modèle sans le dire : remplacez-le (<code>models={…}</code>) ou autorisez l'appel (<code>real_models=True</code>).</td><td><a href="module-14.html#ex-14-4">Module 14, 14.4</a></td></tr>
+<tr><td>pytest ne lance pas les tests <code>async</code></td><td>Ajoutez <code>asyncio_mode = "auto"</code> dans <code>[tool.pytest.ini_options]</code> (ou un décorateur sur chaque test).</td><td><a href="module-14.html#ex-14-4">Module 14, 14.4</a></td></tr>
+<tr><td>Les journaux de référence échouent après une modification voulue</td><td>Changer un prompt, un outil ou le script d'un modèle change les requêtes : les journaux de référence divergent. Régénérez-les avec <code>loom eval … --export</code> après avoir vérifié le nouveau comportement. Un motif <code>replay</code> qui ne trouve aucun fichier met le cas en échec. Ces journaux contiennent tout le run : n'y gardez que des données fictives.</td><td><a href="module-14.html#ex-14-3">Module 14, 14.3</a><br><a href="module-14.html#ex-14-5">Module 14, 14.5</a><br><a href="module-15.html#ex-15-4">Module 15, 15.4</a></td></tr>
+</tbody></table></div>
+<h2 id="sources">Sources d'outils et forge</h2>
+<div class="tableau"><table class="pieges"><thead><tr><th>Ce que vous voyez</th><th>Pourquoi, et quoi faire</th><th>Voir</th></tr></thead><tbody>
+<tr><td><code>Point d'entrée 'calendrier-artisan' absent du groupe loom_ia.tools : aucun paquet installé ne le déclare (installés : calendrier, forge)</code></td><td><code>entry_point</code> doit être le nom déclaré par le paquet dans <code>[project.entry-points."loom_ia.tools"]</code>, pas le nom du paquet.</td><td><a href="module-15.html#ex-15-3">Module 15, 15.3</a></td></tr>
+<tr><td><code>… refusée par sa fabrique — paramètres inconnus : conge (attendus : zone, conges)</code></td><td>Un paramètre de <code>params</code> est mal écrit : la fabrique du paquet donne la liste attendue.</td><td><a href="module-15.html#ex-15-3">Module 15, 15.3</a></td></tr>
+<tr><td>Les erreurs d'un paquet d'outils passent inaperçues</td><td>Un paquet que personne ne référence n'est pas importé, même par <code>loom validate</code>. Référencez la source dans un agent pour la faire charger.</td><td><a href="module-15.html#ex-15-2">Module 15, 15.2</a></td></tr>
+<tr><td>Une source lente ralentit <code>loom validate</code></td><td>La fabrique d'une source est appelée à chaque chargement, une fois par agent et par client : n'y ouvrez ni connexion ni fichier ; faites-le à l'ouverture du run.</td><td><a href="module-15.html#ex-15-1">Module 15, 15.1</a></td></tr>
+<tr><td>Une source indisponible : l'outil est « inconnu »</td><td>Par défaut, le run continue sans ses outils (<code>tool.source_unavailable</code>) et un appel est refusé comme « Outil inconnu ». Avec <code>required: true</code>, le run échoue : « source calendrier requise et indisponible ».</td><td><a href="module-15.html#ex-15-3">Module 15, 15.3</a></td></tr>
+<tr><td><code>'vm_dir' : …/vm.env introuvable — dossier de VM invalide</code></td><td>La source <code>forge</code> vérifie le dossier de la VM dès le chargement : sans VM construite, l'agent qui la référence ne se monte pas (code 2). Gardez-la dans un projet ou un agent à part tant que la VM n'existe pas.</td><td><a href="module-15.html#ex-15-6">Module 15, 15.6</a></td></tr>
+<tr><td><code>make_vm.sh</code> s'arrête sur « /dev/kvm absent » et laisse un dossier vide</td><td>La machine n'a pas la virtualisation matérielle (ou elle est désactivée dans le BIOS). Le script crée le dossier de la VM avant de vérifier : supprimez-le (<code>rmdir</code>) après correction.</td><td><a href="module-15.html#ex-15-5">Module 15, 15.5</a></td></tr>
+<tr><td>L'outil forgé n'apparaît pas sous son nom</td><td>Un outil accepté rejoint le catalogue du client et n'apparaît sous son nom qu'au run suivant ; en attendant, <code>forge__call</code> l'appelle. Le catalogue est séparé par client.</td><td><a href="module-15.html#ex-15-8">Module 15, 15.8</a></td></tr>
+</tbody></table></div>
+
+<nav class="suite" aria-label="Pages voisines"><a class="avant" href="reference.html"><small>Précédent</small>Référence : CLI et configuration</a><a class="apres" href="glossaire.html"><small>Suivant</small>Glossaire</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>

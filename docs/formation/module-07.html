@@ -1,0 +1,2916 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 7 : Fiabilité des sorties · loom_v2</title>
+<meta name="description" content="Module 7 de la formation loom_v2 : exiger une réponse structurée, poser un contrat sur la sortie d&#x27;un rôle ou d&#x27;un outil, laisser le modèle réparer, faire noter la sortie par un juge, choisir ce qui se passe en cas d&#x27;échec, et brancher des politiques en Python aux points d&#x27;accroche de la boucle.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li class="ici"><a href="module-07.html" aria-current="page"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li class="ici"><a href="module-07.html" aria-current="page"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<h1>Module 7 : Fiabilité des sorties</h1>
+<p class="chapeau">Un modèle peut répondre dans le mauvais format, oublier un champ, ou inventer un montant. Le prompt le lui interdit, mais un prompt est une consigne, pas une garantie. Dans ce module, c'est le code qui contrôle : des contrats vérifient la forme, un juge vérifie le fond, et des politiques écrites en Python refusent ce qui ne doit pas arriver.</p>
+
+<dl class="fiche-agent">
+<dt>Agent</dt><dd><code>assistant</code>, dans le dossier <code>plomberie-dupont/</code></dd>
+<dt>Départ</dt><dd>la fin du <a href="module-06.html#bilan">module 6</a> : deux rôles, un sous-agent, le rédacteur est terminal</dd>
+<dt>Arrivée</dt><dd><span class="version">v0.7</span> : l'e-mail du rédacteur est contrôlé dans sa forme (contrat) et dans son fond (juge) ; une politique refuse les taux de TVA qui n'existent pas</dd>
+<dt>Fonctions</dt><dd><a class="fn" href="matrice.html#A7">A7</a><a class="fn" href="matrice.html#E1">E1</a><a class="fn" href="matrice.html#E2">E2</a><a class="fn" href="matrice.html#E3">E3</a><a class="fn" href="matrice.html#E4">E4</a><a class="fn" href="matrice.html#E5">E5</a><a class="fn" href="matrice.html#E6">E6</a><a class="fn" href="matrice.html#E7">E7</a></dd>
+</dl>
+
+<details class="depart"><summary>Point de départ : les fichiers au début du module</summary>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        # Relance d'un devis : retrouver le devis, puis confier la rédaction au rôle
+        - with_text: Relance
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance
+          text: Le projet d'e-mail de relance pour Mme Martin est prêt.
+        # Photo jointe : le rôle vision n'est proposé que s'il y a une image
+        - with_text: photo
+          with_tool: decrire_photo
+          text: Je fais décrire la photo.
+          tool_calls:
+            - name: decrire_photo
+              arguments: {consigne: "Décris l'appareil et son état."}
+        - with_text: photo
+          with_tool: decrire_photo
+          text: "D'après la photo : un chauffe-eau électrique mural, avec des traces de rouille au raccord d'eau froide. Je vous conseille de prévoir son remplacement."
+        - with_text: photo
+          without_tool: decrire_photo
+          text: Je ne vois pas de photo jointe à votre message. Pouvez-vous l'ajouter ?
+        # Traduction confiée au sous-agent traducteur
+        - with_text: anglais
+          text: Je confie la traduction au traducteur.
+          tool_calls:
+            - name: traduire
+              arguments:
+                message: "Bonjour Madame Martin, votre devis D-2026-042 est toujours valable. Cordialement, Jean Dupont."
+        - with_text: anglais
+          text: "Voici la traduction : « Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont. »"
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    params:
+      script:
+        - text: |-
+            Objet : Votre devis D-2026-042
+
+            Bonjour Madame Martin,
+
+            Je me permets de revenir vers vous au sujet de notre devis D-2026-042
+            pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le
+            3 septembre. Avez-vous pu en prendre connaissance ?
+
+            Je reste à votre disposition pour toute question.
+
+            Cordialement,
+            Jean Dupont, Plomberie Dupont
+
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<figure class="code"><figcaption>agents/traducteur.yaml</figcaption>
+<pre><code>name: traducteur
+description: Traduit un texte en anglais, fidèlement, sans rien ajouter.
+
+max_iterations: 1
+
+main:
+  model: TRADUCTEUR
+  system: Tu traduis en anglais le texte reçu, fidèlement, sans rien ajouter ni retirer.</code></pre></figure>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la {{ entreprise }}, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.
+Pour le prix ou le stock d'un article chez le fournisseur, utilise les outils
+du catalogue (catalogue__rechercher_article, catalogue__prix_article…).
+Pour relancer un devis, retrouve-le avec `chercher_devis`, puis confie la
+rédaction de l'e-mail au rôle `rediger_relance`.
+Si le client joint une photo, demande sa description au rôle `decrire_photo`.
+Pour un client anglophone, confie la traduction à l'outil `traduire`.</code></pre></figure>
+<figure class="code"><figcaption>prompts/rediger_relance.md</figcaption>
+<pre><code>Tu rédiges les e-mails de relance de la Plomberie Dupont, pour des devis
+restés sans réponse.
+Écris un e-mail court et poli : une ligne « Objet : … », puis le message,
+signé « Jean Dupont, Plomberie Dupont ».
+N'utilise que les informations reçues : n'invente aucun montant, date ou délai.</code></pre></figure>
+<figure class="code"><figcaption>outils.py</figcaption>
+<pre><code>import struct
+import zlib
+
+from loom_ia.core.ports import ToolError
+from loom_ia.tools import Image, tool
+
+# Le carnet de devis de l'entreprise. Plus tard, ce sera une base de données ou un CRM.
+DEVIS = {
+    "D-2026-042": {
+        "client": "Mme Martin",
+        "email": "martin@example.fr",
+        "objet": "Remplacement du chauffe-eau",
+        "montant_ht": 1533.33,
+        "taux_tva": 20,
+        "montant_ttc": 1840.00,
+        "date": "2026-09-03",
+        "statut": "envoyé",
+    },
+    "D-2026-050": {
+        "client": "M. Bernard",
+        "email": "bernard@example.fr",
+        "objet": "Détartrage de la chaudière",
+        "montant_ht": 150.00,
+        "taux_tva": 10,
+        "montant_ttc": 165.00,
+        "date": "2026-09-20",
+        "statut": "accepté",
+    },
+}
+
+
+@tool
+def prix_ttc(montant_ht: float, taux_tva: float = 20.0) -&gt; dict[str, float]:
+    """Calcule la TVA et le montant TTC à partir d'un montant HT. Le taux est en pourcentage."""
+    tva = round(montant_ht * taux_tva / 100, 2)
+    return {"montant_ht": montant_ht, "tva": tva, "montant_ttc": round(montant_ht + tva, 2)}
+
+
+@tool
+def chercher_devis(numero: str) -&gt; dict[str, str | float]:
+    """Retrouve un devis par son numéro (par exemple D-2026-042) : client, objet, montants, date, statut."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}. Numéros connus : {', '.join(DEVIS)}")
+    return {"numero": numero, **devis}
+
+
+# Couleur de l'étiquette selon le statut du devis.
+COULEURS = {"envoyé": (230, 140, 30), "accepté": (40, 150, 80)}
+
+
+@tool
+def etiquette_devis(numero: str) -&gt; Image:
+    """Fabrique l'étiquette de couleur d'un devis (orange : envoyé, vert : accepté), en image PNG."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}.")
+    couleur = COULEURS.get(str(devis["statut"]), (120, 120, 120))
+    return Image(png_uni(160, 60, couleur), name=f"etiquette-{numero}.png")
+
+
+def png_uni(largeur: int, hauteur: int, rgb: tuple[int, int, int]) -&gt; bytes:
+    """Une image PNG d'une seule couleur, écrite sans bibliothèque d'image."""
+    ligne = b"\x00" + bytes(rgb) * largeur
+    brut = zlib.compress(ligne * hauteur)
+
+    def bloc(nature: bytes, donnees: bytes) -&gt; bytes:
+        crc = zlib.crc32(nature + donnees)
+        return struct.pack("&gt;I", len(donnees)) + nature + donnees + struct.pack("&gt;I", crc)
+
+    entete = struct.pack("&gt;IIBBBBB", largeur, hauteur, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + bloc(b"IHDR", entete) + bloc(b"IDAT", brut) + bloc(b"IEND", b"")</code></pre></figure>
+<figure class="code"><figcaption>serveurs/catalogue.py</figcaption>
+<pre><code>"""Serveur MCP du catalogue d'un fournisseur de plomberie (données fictives)."""
+
+import sys
+
+from mcp.server.fastmcp import FastMCP
+
+serveur = FastMCP("catalogue", host="127.0.0.1", port=8765, log_level="WARNING")
+
+ARTICLES = {
+    "CE-THERMO-200": {"nom": "Chauffe-eau thermodynamique 200 L", "prix_ht": 1290.00, "stock": 3},
+    "CE-ELEC-150": {"nom": "Chauffe-eau électrique 150 L", "prix_ht": 389.00, "stock": 0},
+    "GS-34": {"nom": "Groupe de sécurité 3/4", "prix_ht": 24.90, "stock": 25},
+}
+
+
+def article(reference: str) -&gt; dict:
+    if reference not in ARTICLES:
+        raise ValueError(f"Référence inconnue : {reference}")
+    return ARTICLES[reference]
+
+
+@serveur.tool()
+def rechercher_article(texte: str) -&gt; list[dict]:
+    """Cherche des articles du catalogue dont le nom contient ce texte."""
+    texte = texte.lower()
+    return [
+        {"reference": ref, "nom": a["nom"]}
+        for ref, a in ARTICLES.items()
+        if texte in a["nom"].lower()
+    ]
+
+
+@serveur.tool()
+def prix_article(reference: str) -&gt; dict:
+    """Donne le prix public HT d'un article, par sa référence."""
+    return {"reference": reference, "prix_ht": article(reference)["prix_ht"]}
+
+
+@serveur.tool()
+def stock_article(reference: str) -&gt; dict:
+    """Donne le nombre d'exemplaires en stock d'un article, par sa référence."""
+    return {"reference": reference, "stock": article(reference)["stock"]}
+
+
+if __name__ == "__main__":
+    serveur.run(transport="streamable-http" if "--http" in sys.argv else "stdio")</code></pre></figure>
+<figure class="code"><figcaption>.gitignore</figcaption>
+<pre><code>.env
+data/
+__pycache__/</code></pre></figure>
+<p>Extras installés : <code>anthropic</code>, <code>openai</code>, <code>sqlite</code>, <code>postgres</code>, <code>mcp</code>.</p>
+<p>Et <code>pyproject.toml</code>, écrit par uv, qui dit quels extras de loom-ia sont installés (pour repartir de ce point : <code>uv sync</code>) :</p>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+    "loom-ia[anthropic,mcp,openai,postgres,sqlite]&gt;=2.0.11",
+]</code></pre></figure>
+</details>
+
+<p>Deux mots reviennent dans tout le module. Un <strong>contrat</strong> vérifie la <em>forme</em> d'une sortie : est-ce du JSON, avec les bons champs, la bonne longueur ? C'est du code, sans modèle. Un <strong>juge</strong> vérifie le <em>fond</em> : un second modèle lit la sortie et la note selon des critères que vous écrivez.</p>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-7-1">
+<h3><span class="exo-num">7.1</span> Une réponse finale structurée</h3>
+<p class="fns"><a class="fn" href="matrice.html#A7">A7</a><a class="fn" href="matrice.html#E2">E2</a></p>
+
+<h4>Pourquoi</h4>
+<p>Le logiciel de Jean veut afficher la fiche d'un devis. Il lui faut un objet JSON avec des champs précis, pas une phrase.</p>
+
+<h4>Mise en place</h4>
+<p>La clé <code>output</code>, au niveau de l'agent (pas sous <code>main</code>), pose un <strong>contrat</strong> sur la réponse finale du run :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+<span class="aj"> </span><span class="aj">output:</span><span class="aj">  schema:</span><span class="aj">    type: object</span><span class="aj">    properties:</span><span class="aj">      numero: {type: string}</span><span class="aj">      client: {type: string}</span><span class="aj">      montant_ttc: {type: number}</span><span class="aj">      statut: {type: string}</span><span class="aj">    required: [numero, client, montant_ttc, statut]</span><span class="aj">    additionalProperties: false</span>
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>output:</code></td><td>Le contrat de la réponse finale. La même clé, sur un rôle ou un outil, pose un contrat sur leur sortie (exercices 7.2 et 7.5).</td></tr>
+<tr><td><code>schema:</code></td><td>La réponse doit être un JSON conforme à ce schéma (JSON Schema, comme <code>input_schema</code> au module 6). Ici, un objet avec quatre champs obligatoires, et aucun autre (<code>additionalProperties: false</code>).</td></tr>
+</tbody>
+</table></div>
+<p>Pour voir le contrat travailler, le script de <code>SIMULE</code> gagne une scène où l'orchestrateur répond d'abord par une phrase, puis par le JSON demandé :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+<span class="aj">        # Fiche d'un devis en JSON (réponse finale structurée)</span><span class="aj">        - with_text: Fiche</span><span class="aj">          text: Je retrouve le devis.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: chercher_devis</span><span class="aj">              arguments: {numero: D-2026-042}</span><span class="aj">        - with_text: Fiche</span><span class="aj">          text: Le devis D-2026-042 de Mme Martin s'élève à 1 840 € TTC ; il est envoyé.</span><span class="aj">        - with_text: Fiche</span><span class="aj">          text: '{"numero": "D-2026-042", "client": "Mme Martin", "montant_ttc": 1840.0, "statut": "envoyé"}'</span>        # Relance d'un devis : retrouver le devis, puis confier la rédaction au rôle
+        - with_text: Relance
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance
+          text: Le projet d'e-mail de relance pour Mme Martin est prêt.
+        # Photo jointe : le rôle vision n'est proposé que s'il y a une image
+        - with_text: photo
+          with_tool: decrire_photo
+          text: Je fais décrire la photo.
+          tool_calls:
+            - name: decrire_photo
+              arguments: {consigne: "Décris l'appareil et son état."}
+        - with_text: photo
+          with_tool: decrire_photo
+          text: "D'après la photo : un chauffe-eau électrique mural, avec des traces de rouille au raccord d'eau froide. Je vous conseille de prévoir son remplacement."
+        - with_text: photo
+          without_tool: decrire_photo
+          text: Je ne vois pas de photo jointe à votre message. Pouvez-vous l'ajouter ?
+        # Traduction confiée au sous-agent traducteur
+        - with_text: anglais
+          text: Je confie la traduction au traducteur.
+          tool_calls:
+            - name: traduire
+              arguments:
+                message: "Bonjour Madame Martin, votre devis D-2026-042 est toujours valable. Cordialement, Jean Dupont."
+        - with_text: anglais
+          text: "Voici la traduction : « Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont. »"
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    params:
+      script:
+        - text: |-
+            Objet : Votre devis D-2026-042
+
+            Bonjour Madame Martin,
+
+            Je me permets de revenir vers vous au sujet de notre devis D-2026-042
+            pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le
+            3 septembre. Avez-vous pu en prendre connaissance ?
+
+            Je reste à votre disposition pour toute question.
+
+            Cordialement,
+            Jean Dupont, Plomberie Dupont
+
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Fiche du devis D-2026-042, en JSON." --session fiche
+{"numero": "D-2026-042", "client": "Mme Martin", "montant_ttc": 1840.0, "statut": "envoyé"}
+
+Statut     : completed · itérations : 3 · tokens : 5721/161 · coût : 0.0000 $
+Run        : 01a16e2b-ba8c-77e2-ab6b-4acd7620b982
+<span class="p">$ </span>loom inspect 01a16e2b-ba8c-77e2-ab6b-4acd7620b982 --session fiche
+Run        : 01a16e2b-ba8c-77e2-ab6b-4acd7620b982 (agent assistant, client default)
+Session    : fiche
+Statut     : completed, 3 itération(s)
+Usage      : 5721 → 161 tokens, 0.000000 $, 23 ms de pilotage
+
+run assistant — completed, 1.2 s, 0.000000 $
+  · contrôle contract : failed → retry
+  · politique loom.contract (on_output) : retry
+  · contrôle contract : passed
+  étape 1
+    modèle SIMULE (fake-1) (main) — 2 ms, 1644 → 67 tokens, 0.000000 $
+      · répond    : Je retrouve le devis.
+      · appelle   : chercher_devis({"numero": "D-2026-042"})
+  étape 2
+    outil chercher_devis — 3 ms
+      · arguments : {"numero": "D-2026-042"}
+      · résultat  : {"numero": "D-2026-042", "client": "Mme Martin", "email": "martin@example.fr", "objet": "Remplace…
+  étape 3
+    modèle SIMULE (fake-1) (main) — 1 ms, 1912 → 43 tokens, 0.000000 $
+      · répond    : Le devis D-2026-042 de Mme Martin s'élève à 1 840 € TTC ; il est envoyé.
+  étape 4
+    modèle SIMULE (fake-1) (main) — 1 ms, 2165 → 51 tokens, 0.000000 $
+      · répond    : {"numero": "D-2026-042", "client": "Mme Martin", "montant_ttc": 1840.0, "statut": "envoyé"}
+
+Réponse finale :
+  {"numero": "D-2026-042", "client": "Mme Martin", "montant_ttc": 1840.0, "statut": "envoyé"}
+Bilan      : 3 appel(s) de modèle, 1 appel(s) d'outil</code></pre>
+<p>Chaque contrôle laisse un événement <code>guard.checked</code> au journal :</p>
+<pre><code><span class="p">$ </span>jq -c 'select(.type=="guard.checked") | .payload | {guard, target, outcome, reason, attempt, resolution}' data/default/fiche.jsonl
+{"guard":"contract","target":"output","outcome":"failed","reason":"ce n'est pas un JSON valide (Expecting value, ligne 1, colonne 1)","attempt":1,"resolution":"retry"}
+{"guard":"contract","target":"output","outcome":"passed","reason":"","attempt":2,"resolution":null}</code></pre>
+<p>Pour un programme, l'option <code>--json</code> (vue au module 2) donne l'objet validé dans le champ <code>data</code> :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Fiche du devis D-2026-042, en JSON." --session fiche-json --json | jq '{status, text, data, unverified}'
+{
+  "status": "completed",
+  "text": "{\"numero\": \"D-2026-042\", \"client\": \"Mme Martin\", \"montant_ttc\": 1840.0, \"statut\": \"envoyé\"}",
+  "data": {
+    "numero": "D-2026-042",
+    "client": "Mme Martin",
+    "montant_ttc": 1840.0,
+    "statut": "envoyé"
+  },
+  "unverified": false
+}</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li><strong>La réparation.</strong> La première réponse, une phrase, n'est pas du JSON : le contrat échoue (<code>failed</code>, avec la raison). loom ne l'accepte pas : il renvoie la sortie fautive au modèle qui l'a écrite, avec le diagnostic, et lui demande de corriger. C'est l'étape 4 de l'arbre. La seconde réponse passe (<code>passed</code>, tentative 2).</li>
+<li><code>text</code> garde la réponse en texte ; <code>data</code> contient l'objet, déjà décodé et vérifié. C'est <code>data</code> qu'un programme doit lire.</li>
+<li>Avec un modèle qui accepte un schéma de sortie (capacité <code>native_json</code>, module 6), loom lui transmet le schéma pour une réponse sans outils, et la réparation devient rare.</li>
+</ul>
+<p>Retirez le bloc <code>output</code> de l'agent avant la suite : il s'appliquerait à toutes les réponses, une relance comme un bonjour.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-7-2">
+<h3><span class="exo-num">7.2</span> Un contrat sur la sortie du rédacteur</h3>
+<p class="fns"><a class="fn" href="matrice.html#E1">E1</a><a class="fn" href="matrice.html#E2">E2</a><a class="fn" href="matrice.html#E5">E5</a></p>
+
+<h4>Pourquoi</h4>
+<p>Au module 8, l'agent enverra l'e-mail du rédacteur. Il lui faudra un objet et un corps séparés, et un e-mail qui cite bien le numéro du devis, sans faire trois pages.</p>
+
+<h4>Mise en place</h4>
+<p>Le rédacteur doit maintenant répondre en JSON. On le lui dit dans son prompt :</p>
+<figure class="code"><figcaption>prompts/rediger_relance.md</figcaption>
+<pre><code>Tu rédiges les e-mails de relance de la Plomberie Dupont, pour des devis
+restés sans réponse.
+<span class="aj">Écris un e-mail court et poli, signé « Jean Dupont, Plomberie Dupont ».</span>N'utilise que les informations reçues : n'invente aucun montant, date ou délai.
+<span class="aj">Réponds uniquement par un objet JSON : {"objet": "…", "corps": "…"}.</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes modifiées</p>
+<p>Et on pose un contrat sur la sortie du rôle :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+<span class="aj">    output:</span><span class="aj">      schema:</span><span class="aj">        type: object</span><span class="aj">        properties:</span><span class="aj">          objet: {type: string, minLength: 5}</span><span class="aj">          corps: {type: string, minLength: 20}</span><span class="aj">        required: [objet, corps]</span><span class="aj">        additionalProperties: false</span><span class="aj">      must_match: "D-\\d{4}-\\d{3}"</span><span class="aj">      max_chars: 1200</span><span class="aj">      repair: {max_attempts: 1}</span><span class="aj">      on_failure: fail</span>
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>output:</code> (sous le rôle)</td><td>Le contrat de la sortie du rôle.</td></tr>
+<tr><td><code>schema:</code></td><td>Un objet avec <code>objet</code> (5 caractères au moins) et <code>corps</code> (20 au moins), et rien d'autre.</td></tr>
+<tr><td><code>must_match: "D-\\d{4}-\\d{3}"</code></td><td>Une expression régulière qui doit se trouver dans la sortie : ici, un numéro de devis. Dans un texte YAML entre guillemets, la barre oblique inverse s'écrit deux fois. Son contraire, <code>must_not_match</code>, interdit un motif.</td></tr>
+<tr><td><code>max_chars: 1200</code></td><td>La longueur maximale de la sortie. Il n'existe pas de longueur minimale : le schéma s'en charge (<code>minLength</code>).</td></tr>
+<tr><td><code>repair: {max_attempts: 1}</code></td><td>Le nombre de réparations demandées au modèle du rôle quand la sortie échoue. Par défaut : 1.</td></tr>
+<tr><td><code>on_failure: fail</code></td><td>Ce qui se passe si la sortie échoue encore après les réparations (exercice 7.3).</td></tr>
+</tbody>
+</table></div>
+<p>Une sortie vide est toujours refusée, même sans contrat. Dans <code>loom.yaml</code>, le rédacteur simulé répond maintenant en JSON :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        # Relance d'un devis : retrouver le devis, puis confier la rédaction au rôle
+        - with_text: Relance
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance
+          text: Le projet d'e-mail de relance pour Mme Martin est prêt.
+        # Photo jointe : le rôle vision n'est proposé que s'il y a une image
+        - with_text: photo
+          with_tool: decrire_photo
+          text: Je fais décrire la photo.
+          tool_calls:
+            - name: decrire_photo
+              arguments: {consigne: "Décris l'appareil et son état."}
+        - with_text: photo
+          with_tool: decrire_photo
+          text: "D'après la photo : un chauffe-eau électrique mural, avec des traces de rouille au raccord d'eau froide. Je vous conseille de prévoir son remplacement."
+        - with_text: photo
+          without_tool: decrire_photo
+          text: Je ne vois pas de photo jointe à votre message. Pouvez-vous l'ajouter ?
+        # Traduction confiée au sous-agent traducteur
+        - with_text: anglais
+          text: Je confie la traduction au traducteur.
+          tool_calls:
+            - name: traduire
+              arguments:
+                message: "Bonjour Madame Martin, votre devis D-2026-042 est toujours valable. Cordialement, Jean Dupont."
+        - with_text: anglais
+          text: "Voici la traduction : « Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont. »"
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    params:
+      script:
+<span class="aj">        # e-mail conforme</span><span class="aj">        - text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'</span>
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p class="legende-aj"><span></span>lignes modifiées</p>
+<p>La réponse est écrite entre apostrophes, parce qu'elle contient des guillemets ; <code>\n</code>, dans le JSON, est un saut de ligne.</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate
+…
+      politique loom.contract : after_tool
+      contrat (rôle rediger_relance) : schéma (requis : objet, corps), must_match D-\d{4}-\d{3}, max_chars 1200 ; réparations 1, échec → fail
+    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
+    traducteur : modèle TRADUCTEUR, 0 outil(s) Python
+
+2 agent(s) monté(s) sans erreur.
+<span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session contrat
+{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}
+
+Statut     : completed · itérations : 2 · tokens : 3754/253 · coût : 0.0000 $
+Run        : 01a16e2b-e93d-724b-8145-6baa92a690da
+<span class="p">$ </span>jq -c 'select(.type=="guard.checked") | .payload | {guard, target, outcome, reason, attempt, resolution}' data/default/contrat.jsonl
+{"guard":"contract","target":"role:rediger_relance","outcome":"passed","reason":"","attempt":1,"resolution":null}</code></pre>
+<p><code>loom validate</code> résume le contrat. Le contrôle porte sur <code>role:rediger_relance</code> et il passe. Le rôle étant terminal, la réponse du run est le JSON du rédacteur, tel quel ; avec <code>--json</code>, un programme le reçoit décodé dans <code>data</code> :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session contrat-json --json | jq '{status, data}'
+{
+  "status": "completed",
+  "data": {
+    "objet": "Votre devis D-2026-042",
+    "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"
+  }
+}</code></pre>
+
+<h4>La réparation par le modèle du rôle</h4>
+<p>Simulons un rédacteur distrait, qui oublie l'objet la première fois :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        # Relance d'un devis : retrouver le devis, puis confier la rédaction au rôle
+        - with_text: Relance
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance
+          text: Le projet d'e-mail de relance pour Mme Martin est prêt.
+        # Photo jointe : le rôle vision n'est proposé que s'il y a une image
+        - with_text: photo
+          with_tool: decrire_photo
+          text: Je fais décrire la photo.
+          tool_calls:
+            - name: decrire_photo
+              arguments: {consigne: "Décris l'appareil et son état."}
+        - with_text: photo
+          with_tool: decrire_photo
+          text: "D'après la photo : un chauffe-eau électrique mural, avec des traces de rouille au raccord d'eau froide. Je vous conseille de prévoir son remplacement."
+        - with_text: photo
+          without_tool: decrire_photo
+          text: Je ne vois pas de photo jointe à votre message. Pouvez-vous l'ajouter ?
+        # Traduction confiée au sous-agent traducteur
+        - with_text: anglais
+          text: Je confie la traduction au traducteur.
+          tool_calls:
+            - name: traduire
+              arguments:
+                message: "Bonjour Madame Martin, votre devis D-2026-042 est toujours valable. Cordialement, Jean Dupont."
+        - with_text: anglais
+          text: "Voici la traduction : « Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont. »"
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    params:
+      script:
+<span class="aj">        # oubli : pas d'objet</span><span class="aj">        - text: '{"corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'</span>        # e-mail conforme
+        - text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<pre><code><span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session contrat-repare
+{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}
+
+Statut     : completed · itérations : 2 · tokens : 4560/358 · coût : 0.0000 $
+Run        : 01a16e2c-015d-7709-8b7c-993abd0c8335
+<span class="p">$ </span>jq -c 'select(.type=="guard.checked") | .payload | {guard, target, outcome, reason, attempt, resolution}' data/default/contrat-repare.jsonl
+{"guard":"contract","target":"role:rediger_relance","outcome":"failed","reason":"(racine) : propriété requise absente : objet","attempt":1,"resolution":"retry"}
+{"guard":"contract","target":"role:rediger_relance","outcome":"passed","reason":"","attempt":2,"resolution":null}
+<span class="p">$ </span>loom inspect 01a16e2c-015d-7709-8b7c-993abd0c8335 --session contrat-repare
+…
+  étape 4
+    rôle rediger_relance — 22 ms
+      · arguments : {"ton": "cordial"}
+      · contrôle contract : failed → retry
+      · politique loom.contract (after_tool) : retry
+      · contrôle contract : passed
+      · politique loom.contract (after_tool) : replace
+      · résultat  : {"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir …
+      appels du rôle rediger_relance
+        modèle REDACTEUR (fake-redacteur) (rediger_relance) — 1 ms, 451 → 105 tokens, 0.000000 $
+          · répond    : {"corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D…
+        modèle REDACTEUR (fake-redacteur) (rediger_relance) — 1 ms, 723 → 114 tokens, 0.000000 $
+          · répond    : {"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir …</code></pre>
+<p>Le contrôle échoue (« propriété requise absente : objet »), loom renvoie la sortie et le diagnostic au modèle <code>REDACTEUR</code>, qui répond une seconde fois : deux appels du rôle sous l'étape 4, et l'orchestrateur ne voit que la version conforme.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-7-3">
+<h3><span class="exo-num">7.3</span> Quand la réparation ne suffit pas</h3>
+<p class="fns"><a class="fn" href="matrice.html#E4">E4</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un modèle peut échouer deux fois de suite. Il faut décider à l'avance de ce qui se passe : tout arrêter, laisser passer en le signalant, ou remplacer par un texte sûr.</p>
+
+<h4>Mise en place</h4>
+<p>Le rédacteur simulé oublie l'objet à chaque fois :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        # Relance d'un devis : retrouver le devis, puis confier la rédaction au rôle
+        - with_text: Relance
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance
+          text: Le projet d'e-mail de relance pour Mme Martin est prêt.
+        # Photo jointe : le rôle vision n'est proposé que s'il y a une image
+        - with_text: photo
+          with_tool: decrire_photo
+          text: Je fais décrire la photo.
+          tool_calls:
+            - name: decrire_photo
+              arguments: {consigne: "Décris l'appareil et son état."}
+        - with_text: photo
+          with_tool: decrire_photo
+          text: "D'après la photo : un chauffe-eau électrique mural, avec des traces de rouille au raccord d'eau froide. Je vous conseille de prévoir son remplacement."
+        - with_text: photo
+          without_tool: decrire_photo
+          text: Je ne vois pas de photo jointe à votre message. Pouvez-vous l'ajouter ?
+        # Traduction confiée au sous-agent traducteur
+        - with_text: anglais
+          text: Je confie la traduction au traducteur.
+          tool_calls:
+            - name: traduire
+              arguments:
+                message: "Bonjour Madame Martin, votre devis D-2026-042 est toujours valable. Cordialement, Jean Dupont."
+        - with_text: anglais
+          text: "Voici la traduction : « Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont. »"
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    params:
+      script:
+<span class="aj">        # oubli : pas d'objet</span><span class="aj">        - text: '{"corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'</span><span class="aj">        # oubli : pas d'objet</span><span class="aj">        - text: '{"corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'</span>
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées ou modifiées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>on_failure: fail</code></td><td>La sortie est refusée. Pour la réponse finale, le run échoue. Pour un rôle ou un outil, l'appel échoue et l'orchestrateur en est informé.</td></tr>
+<tr><td><code>on_failure: unverified</code></td><td>La sortie est gardée, marquée « non vérifiée ».</td></tr>
+<tr><td><code>on_failure: fallback</code></td><td>La sortie est remplacée par <code>fallback_message</code>, obligatoire dans ce cas.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<p><strong>Avec <code>fail</code></strong> (le contrat de 7.2, inchangé) :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session echec
+Le projet d'e-mail de relance pour Mme Martin est prêt.
+
+Statut     : completed · itérations : 3 · tokens : 6603/388 · coût : 0.0000 $
+Run        : 01a16e2c-14d7-77b3-9d7a-ed53f43d32a7
+<span class="p">$ </span>loom inspect 01a16e2c-14d7-77b3-9d7a-ed53f43d32a7 --session echec --full
+…
+  étape 4
+    rôle rediger_relance — 13 ms (erreur)
+      · arguments : {"ton": "cordial"}
+      · contrôle contract : failed → retry
+      · politique loom.contract (after_tool) : retry
+      · contrôle contract : failed → fail
+      · politique loom.contract (after_tool) : replace
+      · résultat  : (erreur) Sortie du rôle rediger_relance refusée par son contrat de sortie après 1 réparation par son modèle (une règle de la configuration, pas une panne) :
+                    - (racine) : propriété requise absente : objet
+                    La même demande serait très probablement refusée de la même façon : ne rappelle pas ce rôle à l'identique. Dis à l'utilisateur que cette sortie n'a pas pu être validée.
+      appels du rôle rediger_relance
+…</code></pre>
+<p>Le rôle échoue, et l'orchestrateur reçoit un message clair : la sortie a été refusée par une règle de la configuration, il ne doit pas rappeler le rôle à l'identique et doit le dire à l'utilisateur. Le run, lui, continue.</p>
+
+<div class="encadre piege"><p class="encadre-titre">Piège : un rôle refusé n'arrête pas le run</p>
+<p>Le statut est <code>completed</code> et la réponse dit « Le projet d'e-mail de relance pour Mme Martin est prêt. » : c'est la réplique suivante du script simulé, qui ne lit pas le refus. Un vrai modèle dirait que l'e-mail n'a pas pu être validé. Pour qu'un échec arrête tout le run, posez le contrat sur la réponse finale (<code>output</code> de l'agent, exercice 7.1), ou vérifiez dans le journal (<code>guard.checked</code>, résolution <code>fail</code>).</p></div>
+
+<p><strong>Avec <code>unverified</code></strong>, seule la dernière ligne du contrat change dans l'agent :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+<span class="aj">      on_failure: unverified</span>
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>ligne modifiée</p>
+<pre><code><span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session non-verifie
+{"corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}
+
+Statut     : completed · itérations : 2 · tokens : 4541/349 · coût : 0.0000 $
+Run        : 01a16e2c-2804-74b0-bf0f-2ec262b8255d
+Vérifiée   : non (gardée malgré son contrat ou son juge)</code></pre>
+<p>L'e-mail sans objet est gardé, et le bilan le signale : <code>Vérifiée : non</code>. En JSON, le résultat porte <code>"unverified": true</code>.</p>
+
+<p><strong>Avec <code>fallback</code></strong> :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+<span class="aj">      on_failure: fallback</span><span class="aj">      fallback_message: &gt;-</span><span class="aj">        Le rédacteur n'a pas pu produire un e-mail conforme. Relance à</span><span class="aj">        rédiger à la main.</span>
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>lignes modifiées</p>
+<pre><code><span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session repli
+Le rédacteur n'a pas pu produire un e-mail conforme. Relance à rédiger à la main.
+
+Statut     : completed · itérations : 2 · tokens : 4541/349 · coût : 0.0000 $
+Run        : 01a16e2c-32af-7298-81e7-04d228a95718
+Repli      : oui (réponse remplacée par le message de repli de son contrat ou de son juge)</code></pre>
+<p>La sortie est remplacée par le message de repli, et le bilan le dit : <code>Repli : oui</code>. En JSON, <code>"fallback": true</code>.</p>
+<p>Avant la suite, remettez <code>on_failure: fail</code> dans l'agent.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-7-4">
+<h3><span class="exo-num">7.4</span> Un juge pour le fond</h3>
+<p class="fns"><a class="fn" href="matrice.html#E3">E3</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un e-mail bien formé peut annoncer 2 100 € au lieu de 1 840 €. Un contrat ne le voit pas : le JSON est valide, le numéro est là. Il faut un relecteur qui compare l'e-mail au devis.</p>
+
+<h4>Mise en place</h4>
+<p>Un <strong>juge</strong> est un modèle qui note une sortie, critère par critère, de 0 à 1. Il répond en appelant un outil interne, <code>verdict</code>, avec un score et une raison pour chaque critère. Le juge se déclare par la clé <code>judge</code>, sur un rôle ou au niveau de l'agent pour la réponse finale :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+      on_failure: fail
+<span class="aj">    judge:</span><span class="aj">      model: JUGE</span><span class="aj">      context: [user_input, {tool_results: [chercher_devis]}]</span><span class="aj">      criteria:</span><span class="aj">        - name: fidele</span><span class="aj">          rule: &gt;-</span><span class="aj">            Chaque montant, date et numéro de l'e-mail figure dans le devis :</span><span class="aj">            rien n'est inventé.</span><span class="aj">        - name: ton</span><span class="aj">          rule: Le ton de l'e-mail est celui demandé dans la demande de l'artisan.</span><span class="aj">          min_score: 0.6</span><span class="aj">          blocking: false</span><span class="aj">      repair: {max_attempts: 1}</span><span class="aj">      on_failure: fail</span>
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>judge:</code></td><td>Le juge de la sortie du rôle. Il passe après le contrat.</td></tr>
+<tr><td><code>model: JUGE</code></td><td>Le modèle du juge. Il doit savoir appeler des outils, puisqu'il rend son verdict par un outil.</td></tr>
+<tr><td><code>context:</code></td><td>Ce que voit le juge en plus de la sortie : ici la demande de Jean et le devis. Sans le devis, il ne pourrait pas vérifier les montants. Le state de session y est refusé.</td></tr>
+<tr><td><code>criteria:</code></td><td>Les critères notés. Chacun a un <code>name</code> et une <code>rule</code>, la règle donnée au juge telle quelle.</td></tr>
+<tr><td><code>min_score: 0.6</code></td><td>Le seuil de réussite du critère. Par défaut : 0,8.</td></tr>
+<tr><td><code>blocking: false</code></td><td>Sous son seuil, le critère est seulement signalé. Par défaut (<code>true</code>), il fait refuser la sortie, qui est renvoyée à son auteur pour réparation, puis suit <code>on_failure</code>.</td></tr>
+<tr><td><code>repair</code>, <code>on_failure</code></td><td>Comme pour un contrat.</td></tr>
+</tbody>
+</table></div>
+<p><code>&gt;-</code> écrit un texte long sur plusieurs lignes, réunies en une seule. Dans <code>loom.yaml</code>, le rédacteur simulé invente 2 100 € la première fois, et un modèle simulé <code>JUGE</code> répond selon le montant qu'il lit :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        # Relance d'un devis : retrouver le devis, puis confier la rédaction au rôle
+        - with_text: Relance
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance
+          text: Le projet d'e-mail de relance pour Mme Martin est prêt.
+        # Photo jointe : le rôle vision n'est proposé que s'il y a une image
+        - with_text: photo
+          with_tool: decrire_photo
+          text: Je fais décrire la photo.
+          tool_calls:
+            - name: decrire_photo
+              arguments: {consigne: "Décris l'appareil et son état."}
+        - with_text: photo
+          with_tool: decrire_photo
+          text: "D'après la photo : un chauffe-eau électrique mural, avec des traces de rouille au raccord d'eau froide. Je vous conseille de prévoir son remplacement."
+        - with_text: photo
+          without_tool: decrire_photo
+          text: Je ne vois pas de photo jointe à votre message. Pouvez-vous l'ajouter ?
+        # Traduction confiée au sous-agent traducteur
+        - with_text: anglais
+          text: Je confie la traduction au traducteur.
+          tool_calls:
+            - name: traduire
+              arguments:
+                message: "Bonjour Madame Martin, votre devis D-2026-042 est toujours valable. Cordialement, Jean Dupont."
+        - with_text: anglais
+          text: "Voici la traduction : « Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont. »"
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    params:
+      script:
+<span class="aj">        # montant inventé : 2 100 € au lieu de 1 840 €</span><span class="aj">        - text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (2 100 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'</span>        # e-mail conforme
+        - text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+<span class="aj"> </span><span class="aj">  - id: JUGE</span><span class="aj">    sdk: fake</span><span class="aj">    model: fake-juge</span><span class="aj">    params:</span><span class="aj">      script:</span><span class="aj">        # Le juge répond selon le texte qu'il lit</span><span class="aj">        - with_text: 2 100 €</span><span class="aj">          tool_calls:</span><span class="aj">            - name: verdict</span><span class="aj">              arguments:</span><span class="aj">                criteria:</span><span class="aj">                  - {name: fidele, score: 0.1, reason: "Le montant de 2 100 € ne figure pas dans le devis (1 840 € TTC)."}</span><span class="aj">                  - {name: ton, score: 0.9, reason: Ton cordial.}</span><span class="aj">        - with_text: 1 840 €</span><span class="aj">          tool_calls:</span><span class="aj">            - name: verdict</span><span class="aj">              arguments:</span><span class="aj">                criteria:</span><span class="aj">                  - {name: fidele, score: 1.0, reason: "Numéro, montant et date conformes au devis."}</span><span class="aj">                  - {name: ton, score: 0.9, reason: Ton cordial.}</span>
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées ou modifiées</p>
+<p>Le verdict simulé s'écrit comme un appel d'outil : <code>name: verdict</code>, avec pour chaque critère son nom, son score et sa raison.</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session juge
+{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}
+
+Statut     : completed · itérations : 2 · tokens : 5978/520 · coût : 0.0000 $
+Run        : 01a16e2c-4c81-7096-a344-8f431fb53db4
+Juge       : rediger_relance (rôle rediger_relance, appel 1), tentative 1 — refusée : fidele 0,10 (seuil 0,80), ton 0,90
+Juge       : rediger_relance (rôle rediger_relance, appel 1), tentative 2 — acceptée : fidele 1,00, ton 0,90
+<span class="p">$ </span>loom inspect 01a16e2c-4c81-7096-a344-8f431fb53db4 --session juge
+…
+  étape 4
+    rôle rediger_relance — 27 ms
+      · arguments : {"ton": "cordial"}
+      · contrôle contract : passed
+      · politique loom.contract (after_tool) : replace
+      · verdict rediger_relance : fidele 0.10, ton 0.90 — refusé (essai 1)
+      · contrôle judge : failed → retry
+      · politique loom.judge.rediger_relance (after_tool) : retry
+      · contrôle contract : passed
+      · politique loom.contract (after_tool) : replace
+      · verdict rediger_relance : fidele 1.00, ton 0.90 — accepté (essai 2)
+      · contrôle judge : passed
+      · résultat  : {"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir …
+      appels du rôle rediger_relance
+        modèle REDACTEUR (fake-redacteur) (rediger_relance) — 1 ms, 460 → 114 tokens, 0.000000 $
+          · répond    : {"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir …
+        modèle REDACTEUR (fake-redacteur) (rediger_relance) — 1 ms, 668 → 114 tokens, 0.000000 $
+          · répond    : {"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir …
+      juge rediger_relance
+        modèle JUGE (fake-juge) (judge:rediger_relance) — 1 ms, 732 → 79 tokens, 0.000000 $
+          · appelle   : verdict({"criteria": [{"name": "fidele", "score": 0.1, "reason": "Le montant de 2 100 € ne figure…
+      juge rediger_relance
+        modèle JUGE (fake-juge) (judge:rediger_relance) — 1 ms, 732 → 74 tokens, 0.000000 $
+          · appelle   : verdict({"criteria": [{"name": "fidele", "score": 1.0, "reason": "Numéro, montant et date conform…
+<span class="p">$ </span>jq -c 'select(.type=="judge.evaluated") | .payload | {judge, attempt, passed, blocked, criteria: [.criteria[] | {name, score, min_score, blocking}]}' data/default/juge.jsonl
+{"judge":"rediger_relance","attempt":1,"passed":false,"blocked":true,"criteria":[{"name":"fidele","score":0.1,"min_score":0.8,"blocking":true},{"name":"ton","score":0.9,"min_score":0.6,"blocking":false}]}
+{"judge":"rediger_relance","attempt":2,"passed":true,"blocked":false,"criteria":[{"name":"fidele","score":1.0,"min_score":0.8,"blocking":true},{"name":"ton","score":0.9,"min_score":0.6,"blocking":false}]}</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Le bilan de <code>loom run</code> montre chaque jugement : la première version est refusée (<code>fidele 0,10</code>, sous le seuil de 0,80), la seconde acceptée.</li>
+<li>Le refus du juge déclenche la même réparation qu'un contrat : la sortie et les raisons du juge reviennent au rédacteur, qui corrige. L'orchestrateur ne voit que la version acceptée.</li>
+<li>Chaque verdict est un événement <code>judge.evaluated</code>, avec les scores et les seuils.</li>
+</ul>
+
+<h4>Choisir quand juger</h4>
+<p>Un juge coûte un appel de modèle. L'option <code>--judges</code> de <code>loom run</code> décide, pour un run, si les juges tournent :</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>--judges auto</code></td><td>Le défaut : chaque juge suit sa clé <code>when</code> (ci-dessous).</td></tr>
+<tr><td><code>--judges force</code></td><td>Tous les juges tournent.</td></tr>
+<tr><td><code>--judges skip</code></td><td>Aucun juge ne tourne. Refusé en profil <code>prod</code> (module 3).</td></tr>
+</tbody>
+</table></div>
+<pre><code><span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session juge-saute --judges skip
+{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (2 100 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}
+
+Statut     : completed · itérations : 2 · tokens : 3846/253 · coût : 0.0000 $
+Run        : 01a16e2c-5f60-7636-8c71-bf3cad06d315
+Juge       : rediger_relance (rôle rediger_relance) — non jugée : sauté à la demande de l'appelant (judges: skip)</code></pre>
+<div class="encadre piege"><p class="encadre-titre">Piège : sans juge, le montant inventé passe</p>
+<p>Avec <code>--judges skip</code>, le contrat passe (le JSON est valide) et l'e-mail à 2 100 € sort tel quel. Ne sautez les juges que pour un essai.</p></div>
+
+<p>La clé <code>when</code> d'un juge règle les runs où il travaille. <code>when: {sample: 0.5}</code> ne juge qu'environ un run sur deux, tiré au sort par run :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+      on_failure: fail
+    judge:
+      model: JUGE
+      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: &gt;-
+            Chaque montant, date et numéro de l'e-mail figure dans le devis :
+            rien n'est inventé.
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé dans la demande de l'artisan.
+          min_score: 0.6
+          blocking: false
+<span class="aj">      when: {sample: 0.5}</span>      repair: {max_attempts: 1}
+      on_failure: fail
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<pre><code><span class="p">$ </span>loom validate
+…
+Config     : loom.yaml
+Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
+Env        : aucun (/home/jean/plomberie-dupont/.env)
+Modèles    : SIMULE, REDACTEUR, JUGE, VISION, TRADUCTEUR, HAIKU, OPUS
+Agents     : assistant, traducteur
+Outils     : chercher_devis, etiquette_devis, prix_ttc
+Fournis    : loom.fetch_page
+Paquets    : forge (loom-ia 2.0.11) (groupe loom_ia.tools)
+Journal    : jsonl (/home/jean/plomberie-dupont/data)
+Artefacts  : local (/home/jean/plomberie-dupont/data/.artifacts)
+Idempotence: journal
+File       : asyncio
+Bus        : memory (les nouvelles ne sortent pas de ce process)
+Chiffrement: aucun (contenus en clair au repos)
+Rétention  : aucune (rien ne s'efface)
+Télémétrie : logs WARNING (console) ; exports sans contenu (metadata) ; pas d'échanges bruts
+    collecteur : aucun — rien ne sort du journal que les logs
+Clés d'API : aucune (API REST ouverte)
+Clients    : default
+
+  client default
+    variables : entreprise
+(heure) WARNING  loom_ia.runtime.wiring — Client 'default', agent 'assistant', juge 'rediger_relance' : bloquant, mais ne juge qu'une partie des runs (sample 0.5)
+    assistant : modèle SIMULE, 4 outil(s) Python, rôle rediger_relance (REDACTEUR), rôle decrire_photo (VISION), sous-agent traduire (traducteur)
+      politique loom.contract : after_tool
+      politique loom.judge.rediger_relance : after_tool
+      contrat (rôle rediger_relance) : schéma (requis : objet, corps), must_match D-\d{4}-\d{3}, max_chars 1200 ; réparations 1, échec → fail
+      juge rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s), sample 0.5
+    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
+    traducteur : modèle TRADUCTEUR, 0 outil(s) Python
+
+2 agent(s) monté(s) sans erreur.</code></pre>
+<p>loom avertit : un juge <strong>bloquant</strong> qui ne juge qu'une partie des runs laisse passer les autres sans contrôle. En profil <code>prod</code>, cet avertissement devient une erreur. Quatre runs, puis un run forcé :</p>
+<pre><code><span class="p">$ </span>for i in 1 2 3 4; do loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session echantillon-$i 2&gt;&amp;1 | grep '^Juge' | head -1; done
+Juge       : rediger_relance (rôle rediger_relance, appel 1), tentative 1 — refusée : fidele 0,10 (seuil 0,80), ton 0,90
+Juge       : rediger_relance (rôle rediger_relance, appel 1), tentative 1 — refusée : fidele 0,10 (seuil 0,80), ton 0,90
+Juge       : rediger_relance (rôle rediger_relance, appel 1), tentative 1 — refusée : fidele 0,10 (seuil 0,80), ton 0,90
+Juge       : rediger_relance (rôle rediger_relance, appel 1), tentative 1 — refusée : fidele 0,10 (seuil 0,80), ton 0,90
+<span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session echantillon-force --judges force 2&gt;&amp;1 | grep '^Juge'
+Juge       : rediger_relance (rôle rediger_relance, appel 1), tentative 1 — refusée : fidele 0,10 (seuil 0,80), ton 0,90
+Juge       : rediger_relance (rôle rediger_relance, appel 1), tentative 2 — acceptée : fidele 1,00, ton 0,90</code></pre>
+<p>Le tirage dépend de l'identifiant du run : chez vous, les runs jugés ne seront pas les mêmes. Les autres clés de <code>when</code> : <code>condition</code> (une fonction Python qui décide), <code>tenants</code> (les clients jugés, module 12), <code>profiles</code> (les profils où le juge travaille). Retirez la ligne <code>when</code> avant la suite.</p>
+
+<div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
+<p>Un vrai juge lit l'e-mail et le devis, et note selon vos règles écrites. Choisissez un modèle différent de celui qui rédige, par exemple <code>OPUS</code> pour juger <code>HAIKU</code> (<a href="module-01.html#vrai-modele">rappel</a>), en gardant <code>forced_tool_choice: false</code> sur <code>OPUS</code> : sans elle, le juge échoue à chaque appel.</p></div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-7-5">
+<h3><span class="exo-num">7.5</span> Contrats et juges ailleurs : outil, réponse finale</h3>
+<p class="fns"><a class="fn" href="matrice.html#E5">E5</a></p>
+
+<h4>Pourquoi</h4>
+<p>Le calcul de prix est fait par un outil : c'est sûr. Mais Jean veut un garde-fou : au-delà de 50 000 € TTC, pas de chiffrage automatique.</p>
+
+<h4>Mise en place</h4>
+<p>Le même bloc <code>output</code> se pose sur un outil, dans la liste <code>tools</code> de l'agent :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+<span class="aj">    output:</span><span class="aj">      schema:</span><span class="aj">        type: object</span><span class="aj">        properties:</span><span class="aj">          montant_ttc: {type: number, maximum: 50000}</span><span class="aj">        required: [montant_ttc]</span>  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+      on_failure: fail
+    judge:
+      model: JUGE
+      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: &gt;-
+            Chaque montant, date et numéro de l'e-mail figure dans le devis :
+            rien n'est inventé.
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé dans la demande de l'artisan.
+          min_score: 0.6
+          blocking: false
+      repair: {max_attempts: 1}
+      on_failure: fail
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<p><code>maximum: 50000</code> est une règle du JSON Schema : la valeur doit être inférieure ou égale à 50 000. Le script de <code>SIMULE</code> gagne une scène qui demande ce calcul :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+<span class="aj">        # Un montant hors du plafond du contrat de prix_ttc</span><span class="aj">        - with_text: 80 000</span><span class="aj">          text: Je calcule le prix TTC.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: prix_ttc</span><span class="aj">              arguments: {montant_ht: 80000}</span><span class="aj">        - with_text: 80 000</span><span class="aj">          text: Je ne peux pas chiffrer ce montant automatiquement ; il dépasse le plafond prévu. Vérifiez-le avec Jean.</span>        # Relance d'un devis : retrouver le devis, puis confier la rédaction au rôle
+        - with_text: Relance
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance
+          text: Le projet d'e-mail de relance pour Mme Martin est prêt.
+        # Photo jointe : le rôle vision n'est proposé que s'il y a une image
+        - with_text: photo
+          with_tool: decrire_photo
+          text: Je fais décrire la photo.
+          tool_calls:
+            - name: decrire_photo
+              arguments: {consigne: "Décris l'appareil et son état."}
+        - with_text: photo
+          with_tool: decrire_photo
+          text: "D'après la photo : un chauffe-eau électrique mural, avec des traces de rouille au raccord d'eau froide. Je vous conseille de prévoir son remplacement."
+        - with_text: photo
+          without_tool: decrire_photo
+          text: Je ne vois pas de photo jointe à votre message. Pouvez-vous l'ajouter ?
+        # Traduction confiée au sous-agent traducteur
+        - with_text: anglais
+          text: Je confie la traduction au traducteur.
+          tool_calls:
+            - name: traduire
+              arguments:
+                message: "Bonjour Madame Martin, votre devis D-2026-042 est toujours valable. Cordialement, Jean Dupont."
+        - with_text: anglais
+          text: "Voici la traduction : « Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont. »"
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    params:
+      script:
+        # montant inventé : 2 100 € au lieu de 1 840 €
+        - text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (2 100 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+        # e-mail conforme
+        - text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+
+  - id: JUGE
+    sdk: fake
+    model: fake-juge
+    params:
+      script:
+        # Le juge répond selon le texte qu'il lit
+        - with_text: 2 100 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 0.1, reason: "Le montant de 2 100 € ne figure pas dans le devis (1 840 € TTC)."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+        - with_text: 1 840 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Numéro, montant et date conformes au devis."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'contrat|juge'
+      contrat (rôle rediger_relance) : schéma (requis : objet, corps), must_match D-\d{4}-\d{3}, max_chars 1200 ; réparations 1, échec → fail
+      contrat (outil prix_ttc) : schéma (requis : montant_ttc) ; échec → fail
+      juge rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s)
+<span class="p">$ </span>loom run assistant "Quel est le prix TTC de 80 000 € HT ?" --session plafond
+Je ne peux pas chiffrer ce montant automatiquement ; il dépasse le plafond prévu. Vérifiez-le avec Jean.
+
+Statut     : completed · itérations : 2 · tokens : 3451/116 · coût : 0.0000 $
+Run        : 01a16e2c-c77e-7514-af48-739a2f7ae0dc
+<span class="p">$ </span>loom inspect 01a16e2c-c77e-7514-af48-739a2f7ae0dc --session plafond --full
+…
+  étape 2
+    outil prix_ttc — 7 ms (erreur)
+      · arguments : {"montant_ht": 80000}
+      · contrôle contract : failed → fail
+      · politique loom.contract (after_tool) : replace
+      · résultat  : (erreur) Résultat de prix_ttc refusé par son contrat de sortie (une règle de la configuration, pas une panne) :
+                    - montant_ttc : doit être inférieur ou égal à 50000
+                    Le même appel avec les mêmes arguments sera refusé de la même façon : ne le refais pas à l'identique. Dis à l'utilisateur que ce résultat n'a pas pu être validé.
+  étape 3
+…</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Un outil ne se répare pas : un résultat refusé par son contrat revient directement à l'orchestrateur, en erreur, avec la règle enfreinte.</li>
+<li>Les contrats se posent sur la réponse finale (<code>output</code> de l'agent), sur un rôle et sur un outil (Python, MCP ou de source, par ses surcharges). Les juges, sur la réponse finale (<code>judge</code> de l'agent) et sur un rôle.</li>
+<li>Un outil n'a pas de juge : la configuration est refusée.</li>
+</ul>
+<pre><code><span class="p">$ </span>loom validate
+…
+Configuration : /home/jean/plomberie-dupont/agents/assistant.yaml: tools.2.python — un outil Python n'a pas de juge : un juge porte sur la réponse finale (judge: de l'agent) ou sur un rôle (roles[].judge) ; le résultat d'un outil se contrôle par son contrat (output:)</code></pre>
+<p>Ce refus apparaît si l'on ajoute un bloc <code>judge</code> sous <code>- python: chercher_devis</code>. La référence d'un sous-agent n'accepte pas de juge non plus. Gardez le contrat de <code>prix_ttc</code> si vous le souhaitez ; le bilan du module repart sans lui.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-7-6">
+<h3><span class="exo-num">7.6</span> Un juge qui se juge lui-même</h3>
+<p class="fns"><a class="fn" href="matrice.html#E6">E6</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un juge servi par le même modèle que la sortie qu'il note a les mêmes angles morts : s'il a inventé le montant en rédigeant, il risque de le trouver juste en relisant. loom le signale.</p>
+
+<h4>Mise en place</h4>
+<p>Donnez au juge le modèle du rédacteur :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+      on_failure: fail
+    judge:
+<span class="aj">      model: REDACTEUR</span>      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: &gt;-
+            Chaque montant, date et numéro de l'e-mail figure dans le devis :
+            rien n'est inventé.
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé dans la demande de l'artisan.
+          min_score: 0.6
+          blocking: false
+      repair: {max_attempts: 1}
+      on_failure: fail
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>ligne modifiée</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate 2&gt;&amp;1 | grep -E 'WARNING|juge rediger|monté'
+Télémétrie : logs WARNING (console) ; exports sans contenu (metadata) ; pas d'échanges bruts
+(heure) WARNING  loom_ia.runtime.wiring — Client 'default', agent 'assistant', juge 'rediger_relance' : même modèle que la sortie qu'il évalue (REDACTEUR) : juge corrélé
+      juge rediger_relance (rôle rediger_relance) : modèle REDACTEUR, 2 critère(s)
+2 agent(s) monté(s) sans erreur.
+<span class="p">$ </span>loom validate --profile prod 2&gt;&amp;1 | tail -1
+Configuration : Profil prod : Client 'default', agent 'assistant', juge 'rediger_relance' : même modèle que la sortie qu'il évalue (REDACTEUR) : juge corrélé
+<span class="p">$ </span>echo $?
+2</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Un juge <strong>corrélé</strong> (même modèle, ou un modèle de secours commun) donne un avertissement au chargement, et une erreur en profil <code>prod</code> : la configuration ne démarre pas.</li>
+<li>Même règle pour le juge bloquant échantillonné vu en 7.4. Le profil <code>prod</code> transforme ces avertissements en refus, pour qu'une configuration douteuse ne parte pas en production par inattention.</li>
+</ul>
+<p>Remettez <code>model: JUGE</code>.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-7-7">
+<h3><span class="exo-num">7.7</span> Des politiques aux points d'accroche</h3>
+<p class="fns"><a class="fn" href="matrice.html#E7">E7</a></p>
+
+<h4>Pourquoi</h4>
+<p>Certaines règles ne sont ni une forme ni un jugement, mais une décision métier : un taux de TVA de 7 % n'existe pas en France, le calcul doit être refusé. Et au module 1, l'agent citait impots.gouv.fr sans avoir lu la page : on veut l'obliger à appeler un outil.</p>
+
+<h4>Ce qu'est une politique</h4>
+<p>Une <strong>politique</strong> est une fonction Python que loom appelle à un point précis de la boucle, et qui rend une <strong>décision</strong>. Il y a cinq points d'accroche :</p>
+<div class="tableau"><table>
+<thead><tr><th>Point</th><th>Quand</th><th>Décisions possibles, en plus de laisser passer</th></tr></thead>
+<tbody>
+<tr><td><code>before_model</code></td><td>avant chaque appel de l'orchestrateur</td><td>remplacer la requête, arrêter, échouer</td></tr>
+<tr><td><code>after_model</code></td><td>après sa réponse</td><td>demander une nouvelle réponse, arrêter, échouer</td></tr>
+<tr><td><code>before_tool</code></td><td>avant chaque appel d'outil</td><td>remplacer les arguments, refuser l'appel, mettre en pause (module 8), échouer</td></tr>
+<tr><td><code>after_tool</code></td><td>après le résultat d'un outil</td><td>remplacer le résultat, demander une réparation, échouer</td></tr>
+<tr><td><code>on_output</code></td><td>sur la réponse finale</td><td>remplacer la réponse, demander une réparation, échouer</td></tr>
+</tbody>
+</table></div>
+<p>Les décisions sont des objets Python : <code>CONTINUE</code> (laisser passer), <code>Replace</code>, <code>Retry</code>, <code>Deny</code>, <code>Pause</code>, <code>Stop</code>, <code>Fail</code>, tous dans <code>loom_ia.policies</code>. Les contrats et les juges sont d'ailleurs des politiques fournies par loom : <code>loom validate</code> les liste déjà (<code>politique loom.contract : after_tool</code>).</p>
+
+<h4>Mise en place</h4>
+<p>Écrivez la politique dans un nouveau fichier, à côté de <code>outils.py</code> :</p>
+<figure class="code"><figcaption>politiques.py</figcaption>
+<pre><code>from loom_ia.policies import CONTINUE, BeforeTool, Decision, Deny, policy
+
+# Les taux de TVA en vigueur en France pour les travaux.
+TAUX_FRANCAIS = {5.5, 10.0, 20.0}
+
+
+@policy(points=["before_tool"], decisions=["deny"])
+def taux_tva_valide(sujet: BeforeTool) -&gt; Decision:
+    """Refuse un calcul de prix avec un taux de TVA qui n'existe pas en France."""
+    if sujet.call.name != "prix_ttc":
+        return CONTINUE
+    taux = float(str(sujet.arguments.get("taux_tva", 20.0)))
+    if taux not in TAUX_FRANCAIS:
+        return Deny(
+            f"Le taux de TVA de {taux:g} % n'existe pas en France "
+            "(taux possibles : 5,5 %, 10 % et 20 %)."
+        )
+    return CONTINUE</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>@policy(points=[…], decisions=[…])</code></td><td>Déclare la fonction comme politique : les points où elle sait s'appliquer, et les décisions qu'elle peut rendre. Une décision non permise à un point est refusée au démarrage.</td></tr>
+<tr><td><code>sujet: BeforeTool</code></td><td>Ce qui se passe au point d'accroche : ici l'appel en attente (<code>sujet.call.name</code>), ses arguments (<code>sujet.arguments</code>), l'état du run. Chaque point a son type : <code>BeforeModel</code>, <code>AfterTool</code>, <code>OnOutput</code>…</td></tr>
+<tr><td><code>return CONTINUE</code></td><td>Laisser passer.</td></tr>
+<tr><td><code>return Deny("…")</code></td><td>Refuser l'appel : l'outil ne s'exécute pas, et le motif revient au modèle comme résultat d'erreur.</td></tr>
+</tbody>
+</table></div>
+<p>Branchez-la sur l'agent, par une liste <code>policies</code> :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+      on_failure: fail
+    judge:
+      model: JUGE
+      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: &gt;-
+            Chaque montant, date et numéro de l'e-mail figure dans le devis :
+            rien n'est inventé.
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé dans la demande de l'artisan.
+          min_score: 0.6
+          blocking: false
+      repair: {max_attempts: 1}
+      on_failure: fail
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+<span class="aj">policies:</span><span class="aj">  - hook: taux_tva_valide</span><span class="aj"> </span>state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>policies:</code></td><td>Les politiques de l'agent, exécutées dans l'ordre de la liste à chaque point.</td></tr>
+<tr><td><code>hook: taux_tva_valide</code></td><td>La politique, par son nom. D'autres clés existent : <code>points</code> (la brancher sur une partie de ses points seulement), <code>params</code> (des paramètres qu'elle reçoit dans son contexte), <code>timeout</code> (5 s par défaut), <code>on_error</code> (<code>block</code> ou <code>allow</code> si elle plante), <code>max_attempts</code> (réparations qu'elle peut demander).</td></tr>
+</tbody>
+</table></div>
+<p>Comme un outil, une politique n'est connue que si son module est importé. Sans cela :</p>
+<pre><code><span class="p">$ </span>loom validate 2&gt;&amp;1 | tail -1
+Configuration : Référence 'taux_tva_valide' introuvable : aucun objet de ce nom (enregistrés : chercher_devis, etiquette_devis, prix_ttc). Utiliser 'imports' ou un chemin 'module:attr'</code></pre>
+<p>On ajoute donc <code>politiques</code> à la liste <code>imports</code> de <code>loom.yaml</code>, avec une scène qui demande un taux de 7 % :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+<span class="aj">imports: [outils, politiques]</span>
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+<span class="aj">        # Un taux de TVA qui n'existe pas en France</span><span class="aj">        - with_text: 7 %</span><span class="aj">          text: Je calcule le prix TTC.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: prix_ttc</span><span class="aj">              arguments: {montant_ht: 1000, taux_tva: 7}</span><span class="aj">        - with_text: 7 %</span><span class="aj">          text: Le taux de 7 % n'existe pas en France ; les taux possibles sont 5,5 %, 10 % et 20 %. Lequel s'applique ?</span>        # Relance d'un devis : retrouver le devis, puis confier la rédaction au rôle
+        - with_text: Relance
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance
+          text: Le projet d'e-mail de relance pour Mme Martin est prêt.
+        # Photo jointe : le rôle vision n'est proposé que s'il y a une image
+        - with_text: photo
+          with_tool: decrire_photo
+          text: Je fais décrire la photo.
+          tool_calls:
+            - name: decrire_photo
+              arguments: {consigne: "Décris l'appareil et son état."}
+        - with_text: photo
+          with_tool: decrire_photo
+          text: "D'après la photo : un chauffe-eau électrique mural, avec des traces de rouille au raccord d'eau froide. Je vous conseille de prévoir son remplacement."
+        - with_text: photo
+          without_tool: decrire_photo
+          text: Je ne vois pas de photo jointe à votre message. Pouvez-vous l'ajouter ?
+        # Traduction confiée au sous-agent traducteur
+        - with_text: anglais
+          text: Je confie la traduction au traducteur.
+          tool_calls:
+            - name: traduire
+              arguments:
+                message: "Bonjour Madame Martin, votre devis D-2026-042 est toujours valable. Cordialement, Jean Dupont."
+        - with_text: anglais
+          text: "Voici la traduction : « Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont. »"
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    params:
+      script:
+        # montant inventé : 2 100 € au lieu de 1 840 €
+        - text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (2 100 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+        # e-mail conforme
+        - text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+
+  - id: JUGE
+    sdk: fake
+    model: fake-juge
+    params:
+      script:
+        # Le juge répond selon le texte qu'il lit
+        - with_text: 2 100 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 0.1, reason: "Le montant de 2 100 € ne figure pas dans le devis (1 840 € TTC)."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+        - with_text: 1 840 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Numéro, montant et date conformes au devis."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées ou modifiées</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Politiques|politique|monté'
+Politiques : taux_tva_valide
+      politique loom.contract : after_tool
+      politique loom.judge.rediger_relance : after_tool
+      politique taux_tva_valide : before_tool
+2 agent(s) monté(s) sans erreur.
+<span class="p">$ </span>loom run assistant "Quel est le prix TTC de 1 000 € HT avec une TVA à 7 % ?" --session taux
+Le taux de 7 % n'existe pas en France ; les taux possibles sont 5,5 %, 10 % et 20 %. Lequel s'applique ?
+
+Statut     : completed · itérations : 2 · tokens : 3415/119 · coût : 0.0000 $
+Run        : 01a16e2d-0e8a-768f-aa36-0dbebe699bbe
+<span class="p">$ </span>loom inspect 01a16e2d-0e8a-768f-aa36-0dbebe699bbe --session taux --full
+…
+  étape 2
+    appel prix_ttc — refusé avant exécution
+      · politique taux_tva_valide (before_tool) : deny
+      · résultat  : (erreur) Appel refusé (taux_tva_valide) : Le taux de TVA de 7 % n'existe pas en France (taux possibles : 5,5 %, 10 % et 20 %).
+  étape 3
+…
+<span class="p">$ </span>jq -c 'select(.type=="policy.decided") | .payload | {policy, point, decision, reason}' data/default/taux.jsonl
+{"policy":"taux_tva_valide","point":"before_tool","decision":"deny","reason":"Le taux de TVA de 7 % n'existe pas en France (taux possibles : 5,5 %, 10 % et 20 %)."}</code></pre>
+<p>L'appel est refusé avant exécution, et la décision est écrite au journal (<code>policy.decided</code>). Le modèle reçoit le motif et peut demander le bon taux à Jean.</p>
+
+<h4>Une politique fournie : <code>loom.require_tool</code></h4>
+<p>Revenons au piège du module 1 : l'agent citait une source qu'il n'avait pas lue. loom fournit une politique, <code>loom.require_tool</code>, qui <strong>impose un appel d'outil</strong> tant que le run n'en a fait aucun : avant l'appel du modèle, elle remplace la requête par une requête où l'appel d'un outil est obligatoire. Ajoutez-la à l'agent, et la scène TVA au script :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+      on_failure: fail
+    judge:
+      model: JUGE
+      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: &gt;-
+            Chaque montant, date et numéro de l'e-mail figure dans le devis :
+            rien n'est inventé.
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé dans la demande de l'artisan.
+          min_score: 0.6
+          blocking: false
+      repair: {max_attempts: 1}
+      on_failure: fail
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+policies:
+  - hook: taux_tva_valide
+<span class="aj">  - hook: loom.require_tool</span>
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils, politiques]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+<span class="aj">        # Question de TVA : la politique loom.require_tool impose un outil</span><span class="aj">        - with_text: TVA</span><span class="aj">          text: Je consulte la fiche des impôts.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: fetch_page</span><span class="aj">              arguments:</span><span class="aj">                url: https://www.impots.gouv.fr/professionnel/questions/quel-taux-de-tva-appliquer-pour-les-travaux-realises-dans-les-logements</span><span class="aj">        - with_text: TVA</span><span class="aj">          text: "D'après la fiche des impôts, un chauffe-eau thermodynamique relève du taux de 5,5 %. Source : impots.gouv.fr."</span>        # Un taux de TVA qui n'existe pas en France
+        - with_text: 7 %
+          text: Je calcule le prix TTC.
+          tool_calls:
+            - name: prix_ttc
+              arguments: {montant_ht: 1000, taux_tva: 7}
+        - with_text: 7 %
+          text: Le taux de 7 % n'existe pas en France ; les taux possibles sont 5,5 %, 10 % et 20 %. Lequel s'applique ?
+        # Relance d'un devis : retrouver le devis, puis confier la rédaction au rôle
+        - with_text: Relance
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance
+          text: Le projet d'e-mail de relance pour Mme Martin est prêt.
+        # Photo jointe : le rôle vision n'est proposé que s'il y a une image
+        - with_text: photo
+          with_tool: decrire_photo
+          text: Je fais décrire la photo.
+          tool_calls:
+            - name: decrire_photo
+              arguments: {consigne: "Décris l'appareil et son état."}
+        - with_text: photo
+          with_tool: decrire_photo
+          text: "D'après la photo : un chauffe-eau électrique mural, avec des traces de rouille au raccord d'eau froide. Je vous conseille de prévoir son remplacement."
+        - with_text: photo
+          without_tool: decrire_photo
+          text: Je ne vois pas de photo jointe à votre message. Pouvez-vous l'ajouter ?
+        # Traduction confiée au sous-agent traducteur
+        - with_text: anglais
+          text: Je confie la traduction au traducteur.
+          tool_calls:
+            - name: traduire
+              arguments:
+                message: "Bonjour Madame Martin, votre devis D-2026-042 est toujours valable. Cordialement, Jean Dupont."
+        - with_text: anglais
+          text: "Voici la traduction : « Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont. »"
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    params:
+      script:
+        # montant inventé : 2 100 € au lieu de 1 840 €
+        - text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (2 100 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+        # e-mail conforme
+        - text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+
+  - id: JUGE
+    sdk: fake
+    model: fake-juge
+    params:
+      script:
+        # Le juge répond selon le texte qu'il lit
+        - with_text: 2 100 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 0.1, reason: "Le montant de 2 100 € ne figure pas dans le devis (1 840 € TTC)."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+        - with_text: 1 840 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Numéro, montant et date conformes au devis."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+<span class="aj">  capture: {raw_exchanges: true}</span>
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<p>La capture des échanges bruts est réactivée, pour voir la requête envoyée au modèle.</p>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'politique|monté'
+      politique loom.contract : after_tool
+      politique loom.judge.rediger_relance : after_tool
+      politique taux_tva_valide : before_tool
+      politique loom.require_tool : before_model
+2 agent(s) monté(s) sans erreur.
+<span class="p">$ </span>loom run assistant "Quel taux de TVA pour remplacer un chauffe-eau thermodynamique dans un logement de 15 ans ?" --session tva-imposee
+D'après la fiche des impôts, un chauffe-eau thermodynamique relève du taux de 5,5 %. Source : impots.gouv.fr.
+
+Statut     : completed · itérations : 2 · tokens : 3636/148 · coût : 0.0000 $
+Run        : 01a16e2d-2fd7-759a-9bf5-b809c12436a4
+<span class="p">$ </span>jq -c 'select(.type=="policy.decided") | .payload | {policy, point, decision, reason}' data/default/tva-imposee.jsonl
+{"policy":"loom.require_tool","point":"before_model","decision":"replace","reason":"aucun outil appelé dans le run : appel d'outil imposé"}
+<span class="p">$ </span>jq -c 'select(.type=="model.exchanged") | {role, tool_choice: (.payload.request_body | fromjson | .tool_choice)}' data/default/tva-imposee.jsonl
+{"role":"main","tool_choice":"required"}
+{"role":"main","tool_choice":"auto"}</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Le premier appel de l'orchestrateur part avec <code>tool_choice: required</code> : le modèle est <strong>obligé</strong> d'appeler un outil. Une fois un outil appelé, la politique laisse passer (<code>auto</code>).</li>
+<li>C'est la différence entre une consigne et du code : le prompt demandait de lire la page, la politique l'impose.</li>
+<li>Elle n'impose pas que la lecture réussisse. Pour vérifier qu'une réponse s'appuie sur ce qui a été lu, ajoutez un juge sur la réponse finale avec <code>context: [{tool_results: [fetch_page]}]</code>.</li>
+<li>On ne la garde pas sur l'assistant : elle forcerait aussi un outil pour un simple « Bonjour ». Elle convient à un agent dont chaque demande exige une source.</li>
+</ul>
+
+<div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
+<p><code>loom.require_tool</code> exige un modèle qui accepte l'outil imposé : elle est refusée au chargement sur un modèle déclaré <code>forced_tool_choice: false</code>, comme <code>OPUS</code>. Avec <code>HAIKU</code>, elle s'applique telle quelle.</p></div>
+</section>
+
+<h2 id="bilan">Bilan du module</h2>
+<p>L'agent est en <strong>v0.7</strong>. On garde ce qui sert la suite : le contrat et le juge sur <code>rediger_relance</code>, et la politique <code>taux_tva_valide</code>. On retire le reste : le contrat de la réponse finale, celui de <code>prix_ttc</code>, <code>loom.require_tool</code> et la capture des échanges bruts. Le rédacteur simulé ne garde que sa version conforme, et le script de <code>SIMULE</code> la relance, la photo, la traduction et le taux de 7 %.</p>
+<figure class="code"><figcaption>plomberie-dupont/</figcaption>
+<pre><code>plomberie-dupont/
+├── loom.yaml              sept modèles (dont REDACTEUR et JUGE), le catalogue MCP, le journal
+├── outils.py              prix_ttc, chercher_devis, etiquette_devis
+├── politiques.py          taux_tva_valide
+├── serveurs/
+│   └── catalogue.py
+├── agents/
+│   ├── assistant.yaml     rôles, contrat et juge du rédacteur, sous-agent, politique, state
+│   └── traducteur.yaml
+├── prompts/
+│   ├── system.md
+│   └── rediger_relance.md le rédacteur répond en JSON
+└── data/</code></pre></figure>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils, politiques]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        # Un taux de TVA qui n'existe pas en France
+        - with_text: 7 %
+          text: Je calcule le prix TTC.
+          tool_calls:
+            - name: prix_ttc
+              arguments: {montant_ht: 1000, taux_tva: 7}
+        - with_text: 7 %
+          text: Le taux de 7 % n'existe pas en France ; les taux possibles sont 5,5 %, 10 % et 20 %. Lequel s'applique ?
+        # Relance d'un devis : retrouver le devis, puis confier la rédaction au rôle
+        - with_text: Relance
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance
+          text: Le projet d'e-mail de relance pour Mme Martin est prêt.
+        # Photo jointe : le rôle vision n'est proposé que s'il y a une image
+        - with_text: photo
+          with_tool: decrire_photo
+          text: Je fais décrire la photo.
+          tool_calls:
+            - name: decrire_photo
+              arguments: {consigne: "Décris l'appareil et son état."}
+        - with_text: photo
+          with_tool: decrire_photo
+          text: "D'après la photo : un chauffe-eau électrique mural, avec des traces de rouille au raccord d'eau froide. Je vous conseille de prévoir son remplacement."
+        - with_text: photo
+          without_tool: decrire_photo
+          text: Je ne vois pas de photo jointe à votre message. Pouvez-vous l'ajouter ?
+        # Traduction confiée au sous-agent traducteur
+        - with_text: anglais
+          text: Je confie la traduction au traducteur.
+          tool_calls:
+            - name: traduire
+              arguments:
+                message: "Bonjour Madame Martin, votre devis D-2026-042 est toujours valable. Cordialement, Jean Dupont."
+        - with_text: anglais
+          text: "Voici la traduction : « Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont. »"
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    params:
+      script:
+        # e-mail conforme
+        - text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+
+  - id: JUGE
+    sdk: fake
+    model: fake-juge
+    params:
+      script:
+        # Le juge répond selon le texte qu'il lit
+        - with_text: 2 100 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 0.1, reason: "Le montant de 2 100 € ne figure pas dans le devis (1 840 € TTC)."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+        - with_text: 1 840 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Numéro, montant et date conformes au devis."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    terminal: true
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+      on_failure: fail
+    judge:
+      model: JUGE
+      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: &gt;-
+            Chaque montant, date et numéro de l'e-mail figure dans le devis :
+            rien n'est inventé.
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé dans la demande de l'artisan.
+          min_score: 0.6
+          blocking: false
+      repair: {max_attempts: 1}
+      on_failure: fail
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+policies:
+  - hook: taux_tva_valide
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<pre><code><span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session fin
+{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}
+
+Statut     : completed · itérations : 2 · tokens : 4619/327 · coût : 0.0000 $
+Run        : 01a16e2d-4d0a-72f0-aafe-28ab045aaa57
+Juge       : rediger_relance (rôle rediger_relance, appel 1), tentative 1 — acceptée : fidele 1,00, ton 0,90</code></pre>
+<p>L'e-mail est contrôlé, mais il reste un projet : personne ne l'envoie. Au module 8, l'agent l'envoie lui-même, mais seulement après l'accord de Jean, une seule fois, et même si le serveur redémarre entre-temps.</p>
+
+<nav class="suite" aria-label="Pages voisines"><a class="avant" href="module-06.html"><small>Précédent</small>Module 6 : Rôles, sous-agents et vision</a><a class="apres" href="module-08.html"><small>Suivant</small>Module 8 : Actions sensibles et exécution durable</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>

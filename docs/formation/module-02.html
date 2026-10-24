@@ -1,0 +1,869 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 2 : Outils Python · loom_v2</title>
+<meta name="description" content="Module 2 de la formation loom_v2 : écrire des outils Python, comprendre leur contrat, leurs réglages et leurs erreurs, appeler plusieurs outils à la fois, borner la boucle, mettre de côté un gros résultat et rendre une image.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li class="ici"><a href="module-02.html" aria-current="page"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li class="ici"><a href="module-02.html" aria-current="page"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<h1>Module 2 : Outils Python</h1>
+<p class="chapeau">L'assistant lit des pages web, mais il compte encore de tête et ne connaît aucun devis. Dans ce module, vous lui écrivez vos propres outils en Python : un calcul de prix TTC, la recherche d'un devis, une étiquette en image. Vous verrez comment loom les décrit au modèle, ce qu'il fait quand un outil échoue ou se trompe d'arguments, et comment il range les gros résultats et les fichiers.</p>
+
+<dl class="fiche-agent">
+<dt>Agent</dt><dd><code>assistant</code>, dans le dossier <code>plomberie-dupont/</code></dd>
+<dt>Départ</dt><dd>la fin du <a href="module-01.html#bilan">module 1</a> : un outil fourni, <code>loom.fetch_page</code></dd>
+<dt>Arrivée</dt><dd><span class="version">v0.2</span> : calcule un TTC, retrouve un devis, fabrique une étiquette, et s'arrête à 5 tours</dd>
+<dt>Fonctions</dt><dd><a class="fn" href="matrice.html#D2">D2</a><a class="fn" href="matrice.html#D1">D1</a><a class="fn" href="matrice.html#D5">D5</a><a class="fn" href="matrice.html#D4">D4</a><a class="fn" href="matrice.html#A3">A3</a><a class="fn" href="matrice.html#A4">A4</a><a class="fn" href="matrice.html#D6">D6</a><a class="fn" href="matrice.html#G2">G2</a><a class="fn" href="matrice.html#D8">D8</a><a class="fn" href="matrice.html#G3">G3</a></dd>
+</dl>
+
+<details class="depart"><summary>Point de départ : les fichiers au début du module</summary>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Bonjour
+          text: Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
+        - with_text: TVA
+          text: Je consulte la fiche des impôts.
+          tool_calls:
+            - name: fetch_page
+              arguments:
+                url: https://www.impots.gouv.fr/professionnel/questions/quel-taux-de-tva-appliquer-pour-les-travaux-realises-dans-les-logements
+        - with_text: TVA
+          text: "Un chauffe-eau thermodynamique dans un logement de plus de deux ans relève du taux de 5,5 %. Source : impots.gouv.fr."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+main:
+  model: SIMULE
+  system_file: system.md
+
+tools:
+  - python: loom.fetch_page</code></pre></figure>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la Plomberie Dupont, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.</code></pre></figure>
+<figure class="code"><figcaption>.gitignore</figcaption>
+<pre><code>.env
+data/</code></pre></figure>
+<p>Et <code>pyproject.toml</code>, écrit par uv, qui dit quels extras de loom-ia sont installés (pour repartir de ce point : <code>uv sync</code>) :</p>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+    "loom-ia[anthropic]&gt;=2.0.11",
+]</code></pre></figure>
+</details>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-2-1">
+<h3><span class="exo-num">2.1</span> Écrire un premier outil Python</h3>
+<p class="fns"><a class="fn" href="matrice.html#D2">D2</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un modèle de langage calcule mal : il peut se tromper d'un euro sur une TVA, ou inventer un arrondi. Jean veut que les montants viennent d'un calcul exact. La règle de loom : <strong>le modèle propose, le code calcule</strong>. Le calcul devient un outil, une fonction Python que le modèle demande et que loom exécute.</p>
+
+<h4>Mise en place</h4>
+<p><strong>1. Écrire l'outil.</strong> Créez le fichier <code>outils.py</code> à la racine du projet, à côté de <code>loom.yaml</code> :</p>
+<figure class="code"><figcaption>outils.py</figcaption>
+<pre><code>from loom_ia.tools import tool
+
+
+@tool
+def prix_ttc(montant_ht: float, taux_tva: float = 20.0) -&gt; dict[str, float]:
+    """Calcule la TVA et le montant TTC à partir d'un montant HT. Le taux est en pourcentage."""
+    tva = round(montant_ht * taux_tva / 100, 2)
+    return {"montant_ht": montant_ht, "tva": tva, "montant_ttc": round(montant_ht + tva, 2)}</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>from loom_ia.tools import tool</code></td><td>Importe le décorateur <code>tool</code>, fourni par loom.</td></tr>
+<tr><td><code>@tool</code></td><td>Transforme la fonction qui suit en outil que l'agent peut appeler. Son nom (<code>prix_ttc</code>) devient le nom de l'outil.</td></tr>
+<tr><td><code>montant_ht: float, taux_tva: float = 20.0</code></td><td>Les paramètres et leur type. loom en tire le <strong>schéma</strong> de l'outil : la liste des arguments, leur type, ceux qui sont obligatoires. <code>taux_tva</code> a une valeur par défaut, il est donc facultatif.</td></tr>
+<tr><td><code>"""Calcule la TVA…"""</code></td><td>La docstring devient la <strong>description</strong> que lit le modèle pour savoir quand appeler l'outil. Elle est obligatoire : sans elle, loom refuse l'outil.</td></tr>
+<tr><td><code>return {…}</code></td><td>Le résultat. Un dictionnaire est transmis au modèle en JSON ; un texte (<code>str</code>) serait transmis tel quel.</td></tr>
+</tbody>
+</table></div>
+
+<p>Pour voir le schéma que loom a tiré de la signature, demandez-le à Python :</p>
+<pre><code><span class="p">$ </span>python -c "
+import json
+from outils import prix_ttc
+print(json.dumps(prix_ttc.spec.input_schema, ensure_ascii=False, indent=2))"
+{
+  "additionalProperties": false,
+  "properties": {
+    "montant_ht": {
+      "title": "Montant Ht",
+      "type": "number"
+    },
+    "taux_tva": {
+      "default": 20.0,
+      "title": "Taux Tva",
+      "type": "number"
+    }
+  },
+  "required": [
+    "montant_ht"
+  ],
+  "type": "object"
+}</code></pre>
+<p>C'est ce schéma, avec le nom et la description, que le modèle reçoit. <code>"required": ["montant_ht"]</code> : le montant HT est obligatoire. <code>"additionalProperties": false</code> : aucun autre argument n'est accepté.</p>
+
+<p><strong>2. Charger le fichier et préparer le modèle simulé.</strong> Deux changements dans <code>loom.yaml</code> : la clé <code>imports</code> dit à loom de charger <code>outils.py</code> au démarrage, et le script du modèle simulé est remplacé par celui de ce module. Ce script contient d'avance un scénario par exercice ; chaque exercice dira lequel il utilise.</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+<span class="aj">imports: [outils]</span>
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+<span class="aj">        # 2.1 : calculer un prix TTC</span><span class="aj">        - with_text: 1 250 € HT</span><span class="aj">          text: Je calcule le prix TTC.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: prix_ttc</span><span class="aj">              arguments: {montant_ht: 1250, taux_tva: 10}</span><span class="aj">        - with_text: 1 250 € HT</span><span class="aj">          text: Pour 1 250 € HT avec une TVA à 10 %, le client paiera 1 375 € TTC.</span><span class="aj">        # 2.2 : retrouver un devis, puis un devis qui n'existe pas</span><span class="aj">        - with_text: Où en est le devis D-2026-042</span><span class="aj">          text: Je cherche le devis.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: chercher_devis</span><span class="aj">              arguments: {numero: D-2026-042}</span><span class="aj">        - with_text: Où en est le devis D-2026-042</span><span class="aj">          text: Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.</span><span class="aj">        - with_text: D-2026-999</span><span class="aj">          text: Je cherche le devis.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: chercher_devis</span><span class="aj">              arguments: {numero: D-2026-999}</span><span class="aj">        - with_text: D-2026-999</span><span class="aj">          text: Je ne trouve aucun devis D-2026-999. Les devis connus sont D-2026-042 et D-2026-050.</span><span class="aj">        # 2.3 : une page web trop lente</span><span class="aj">        - with_text: taux de TVA</span><span class="aj">          text: Je consulte la fiche des impôts.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: fetch_page</span><span class="aj">              arguments:</span><span class="aj">                url: https://www.impots.gouv.fr/professionnel/questions/quel-taux-de-tva-appliquer-pour-les-travaux-realises-dans-les-logements</span><span class="aj">        - with_text: taux de TVA</span><span class="aj">          text: Je n'ai pas pu lire la fiche des impôts à temps. Je ne vous donne donc pas de taux ; réessayez dans un instant.</span><span class="aj">        # 2.4 : des arguments refusés, puis corrigés</span><span class="aj">        - with_text: mille deux cents</span><span class="aj">          text: Je calcule.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: prix_ttc</span><span class="aj">              arguments: {montant_ht: mille deux cents}</span><span class="aj">        - with_text: mille deux cents</span><span class="aj">          text: Je corrige le montant.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: prix_ttc</span><span class="aj">              arguments: {montant_ht: 1200}</span><span class="aj">        - with_text: mille deux cents</span><span class="aj">          text: Pour 1 200 € HT avec une TVA à 20 %, le client paiera 1 440 € TTC.</span><span class="aj">        # 2.5 : deux outils dans le même tour</span><span class="aj">        - with_text: et le D-2026-050</span><span class="aj">          text: Je regarde les deux devis.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: chercher_devis</span><span class="aj">              arguments: {numero: D-2026-042}</span><span class="aj">            - name: chercher_devis</span><span class="aj">              arguments: {numero: D-2026-050}</span><span class="aj">        - with_text: et le D-2026-050</span><span class="aj">          text: Le D-2026-042 (Mme Martin) attend une réponse ; le D-2026-050 (M. Bernard) est accepté.</span><span class="aj">        # 2.6 : deux étapes d'outils, pour tester la borne</span><span class="aj">        - with_text: Recalcule</span><span class="aj">          text: Je cherche le devis.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: chercher_devis</span><span class="aj">              arguments: {numero: D-2026-042}</span><span class="aj">        - with_text: Recalcule</span><span class="aj">          text: Je recalcule avec une TVA à 10 %.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: prix_ttc</span><span class="aj">              arguments: {montant_ht: 1533.33, taux_tva: 10}</span><span class="aj">          forced: Le devis D-2026-042 est à 1 533,33 € HT. Je n'ai pas eu le temps de recalculer le TTC à 10 % ; demandez-le-moi à nouveau.</span><span class="aj">        - with_text: Recalcule</span><span class="aj">          text: À 10 %, le devis D-2026-042 passerait à 1 686,66 € TTC.</span><span class="aj">        # 2.7 : lire un résultat déporté</span><span class="aj">        - with_text: Détaille le devis D-2026-042</span><span class="aj">          text: Je cherche le devis.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: chercher_devis</span><span class="aj">              arguments: {numero: D-2026-042}</span><span class="aj">        - with_text: Détaille le devis D-2026-042</span><span class="aj">          text: Le résultat a été mis de côté ; je le lis.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: artifact_read</span><span class="aj">              arguments: {ref: "artifact://default/devis-deporte/c05201e7dda3b99a2bcacb20145df68e8be2f20a7323e8bc033880541ac3b557.json"}</span><span class="aj">        - with_text: Détaille le devis D-2026-042</span><span class="aj">          text: "Devis D-2026-042 : Mme Martin, remplacement du chauffe-eau, 1 533,33 € HT, TVA 20 %, 1 840 € TTC, envoyé le 3 septembre 2026."</span><span class="aj">        # 2.8 : une image</span><span class="aj">        - with_text: étiquette</span><span class="aj">          text: Je fabrique l'étiquette.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: etiquette_devis</span><span class="aj">              arguments: {numero: D-2026-042}</span><span class="aj">        - with_text: étiquette</span><span class="aj">          text: Voici l'étiquette du devis D-2026-042 (orange, car il est envoyé et sans réponse).</span>
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées ou remplacées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>imports: [outils]</code></td><td>Les modules Python à charger au démarrage. <code>outils</code> désigne le fichier <code>outils.py</code>, à côté de <code>loom.yaml</code>. En le chargeant, loom enregistre les fonctions marquées <code>@tool</code>.</td></tr>
+<tr><td><code># 2.1 : …</code></td><td>Un commentaire : YAML ignore tout ce qui suit <code>#</code>. Il sert ici à repérer les scénarios.</td></tr>
+<tr><td><code>tool_calls:</code></td><td>Vu au module 1 : les outils que le modèle simulé demande, avec leurs arguments. Ici, <code>prix_ttc</code> avec <code>montant_ht: 1250</code> et <code>taux_tva: 10</code>.</td></tr>
+</tbody>
+</table></div>
+
+<p><strong>3. Donner l'outil à l'agent</strong>, dans sa liste <code>tools</code> :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+main:
+  model: SIMULE
+  system_file: system.md
+
+tools:
+  - python: loom.fetch_page
+<span class="aj">  - python: prix_ttc</span></code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<p><code>- python: prix_ttc</code> désigne l'outil par son nom. Sans <code>imports</code>, on peut aussi écrire le chemin complet, <code>- python: outils:prix_ttc</code> (module, deux-points, fonction).</p>
+
+<p><strong>4. Dire au modèle de s'en servir</strong>, dans le prompt :</p>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la Plomberie Dupont, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+<span class="aj">Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer</span><span class="aj">toi-même, et reprends les montants qu'il renvoie.</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Outils|Fournis|assistant :'
+Outils     : prix_ttc
+Fournis    : loom.fetch_page
+  assistant : modèle SIMULE, 2 outil(s) Python</code></pre>
+<p><code>Outils</code> liste vos outils, ceux de <code>imports</code> ; <code>Fournis</code>, ceux livrés avec loom. L'agent en utilise deux.</p>
+<pre><code><span class="p">$ </span>loom run assistant "Quel prix TTC pour 1 250 € HT de travaux de rénovation, avec une TVA à 10 % ?" --session prix-1250
+Pour 1 250 € HT avec une TVA à 10 %, le client paiera 1 375 € TTC.
+
+Statut     : completed · itérations : 2 · tokens : 2612/109 · coût : 0.0000 $
+Run        : 01a16dee-3134-7743-b493-c45ccc04e1f8
+<span class="p">$ </span>loom inspect 01a16dee-3134-7743-b493-c45ccc04e1f8 --session prix-1250
+…
+run assistant — completed, 32 ms, 0.000000 $
+  étape 1
+    modèle SIMULE (fake-1) (main) — 1 ms, 1223 → 68 tokens, 0.000000 $
+      · répond    : Je calcule le prix TTC.
+      · appelle   : prix_ttc({"montant_ht": 1250, "taux_tva": 10})
+  étape 2
+    outil prix_ttc — 2 ms
+      · arguments : {"montant_ht": 1250, "taux_tva": 10}
+      · résultat  : {"montant_ht": 1250.0, "tva": 125.0, "montant_ttc": 1375.0}
+  étape 3
+    modèle SIMULE (fake-1) (main) — 1 ms, 1389 → 41 tokens, 0.000000 $
+      · répond    : Pour 1 250 € HT avec une TVA à 10 %, le client paiera 1 375 € TTC.
+…
+Bilan      : 2 appel(s) de modèle, 1 appel(s) d'outil</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<p>À l'étape 2, c'est votre fonction Python qui a tourné, avec les arguments demandés par le modèle. Le résultat (<code>"montant_ttc": 1375.0</code>) est revenu au modèle, qui l'a repris dans sa réponse. Le calcul ne dépend plus du modèle.</p>
+<p>En chargeant <code>outils.py</code>, Python a créé un dossier <code>__pycache__/</code> : c'est son cache, recréé au besoin. Ajoutez-le au <code>.gitignore</code> :</p>
+<figure class="code"><figcaption>.gitignore</figcaption>
+<pre><code>.env
+data/
+<span class="aj">__pycache__/</span></code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+
+<div class="encadre piege"><p class="encadre-titre">Piège : l'outil introuvable</p>
+<p>Si vous oubliez <code>imports: [outils]</code>, loom ne connaît pas <code>prix_ttc</code> et refuse la configuration :</p>
+<pre><code>Configuration : Agent 'assistant', outil 'prix_ttc' : Référence 'prix_ttc' introuvable : aucun objet de ce nom (enregistrés : aucun). Utiliser 'imports' ou un chemin 'module:attr'</code></pre>
+<p>Et une fonction sans docstring est refusée aussi : <code>Outil 'prix_ttc' : description manquante (docstring vide)</code>.</p></div>
+
+<div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
+<p>Avec <code>HAIKU</code> (<a href="module-01.html#vrai-modele">rappel</a>), c'est le modèle qui lit la question, choisit <code>prix_ttc</code> d'après sa description et en déduit les arguments. Soignez donc la docstring : c'est elle qui lui dit quand appeler l'outil.</p></div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-2-2">
+<h3><span class="exo-num">2.2</span> Un outil qui lit des données, et ses erreurs</h3>
+<p class="fns"><a class="fn" href="matrice.html#D2">D2</a><a class="fn" href="matrice.html#D5">D5</a></p>
+
+<h4>Pourquoi</h4>
+<p>Pour parler d'un devis, l'agent doit le retrouver. Il lui faut un outil qui lise le carnet de devis de l'entreprise, et qui dise clairement quand un numéro n'existe pas.</p>
+
+<h4>Mise en place</h4>
+<p>Ajoutez à <code>outils.py</code> le carnet de devis et l'outil <code>chercher_devis</code> :</p>
+<figure class="code"><figcaption>outils.py</figcaption>
+<pre><code><span class="aj">from loom_ia.core.ports import ToolError</span>from loom_ia.tools import tool
+<span class="aj"> </span><span class="aj"># Le carnet de devis de l'entreprise. Plus tard, ce sera une base de données ou un CRM.</span><span class="aj">DEVIS = {</span><span class="aj">    "D-2026-042": {</span><span class="aj">        "client": "Mme Martin",</span><span class="aj">        "email": "martin@example.fr",</span><span class="aj">        "objet": "Remplacement du chauffe-eau",</span><span class="aj">        "montant_ht": 1533.33,</span><span class="aj">        "taux_tva": 20,</span><span class="aj">        "montant_ttc": 1840.00,</span><span class="aj">        "date": "2026-09-03",</span><span class="aj">        "statut": "envoyé",</span><span class="aj">    },</span><span class="aj">    "D-2026-050": {</span><span class="aj">        "client": "M. Bernard",</span><span class="aj">        "email": "bernard@example.fr",</span><span class="aj">        "objet": "Détartrage de la chaudière",</span><span class="aj">        "montant_ht": 150.00,</span><span class="aj">        "taux_tva": 10,</span><span class="aj">        "montant_ttc": 165.00,</span><span class="aj">        "date": "2026-09-20",</span><span class="aj">        "statut": "accepté",</span><span class="aj">    },</span><span class="aj">}</span>
+
+@tool
+def prix_ttc(montant_ht: float, taux_tva: float = 20.0) -&gt; dict[str, float]:
+    """Calcule la TVA et le montant TTC à partir d'un montant HT. Le taux est en pourcentage."""
+    tva = round(montant_ht * taux_tva / 100, 2)
+    return {"montant_ht": montant_ht, "tva": tva, "montant_ttc": round(montant_ht + tva, 2)}
+
+<span class="aj"> </span><span class="aj">@tool</span><span class="aj">def chercher_devis(numero: str) -&gt; dict[str, str | float]:</span><span class="aj">    """Retrouve un devis par son numéro (par exemple D-2026-042) : client, objet, montants, date, statut."""</span><span class="aj">    devis = DEVIS.get(numero)</span><span class="aj">    if devis is None:</span><span class="aj">        raise ToolError(f"Aucun devis {numero}. Numéros connus : {', '.join(DEVIS)}")</span><span class="aj">    return {"numero": numero, **devis}</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>DEVIS = {…}</code></td><td>Le carnet de devis, un simple dictionnaire Python. Dans un vrai projet, l'outil interrogerait une base de données ou un logiciel de gestion ; pour loom, rien ne change.</td></tr>
+<tr><td><code>from loom_ia.core.ports import ToolError</code></td><td>L'exception à lever quand l'outil ne peut pas répondre. Son message est fait pour le modèle : il lui explique quoi corriger.</td></tr>
+<tr><td><code>raise ToolError(…)</code></td><td>Le numéro est inconnu : l'outil le dit, en donnant les numéros qui existent.</td></tr>
+</tbody>
+</table></div>
+<p>Ajoutez l'outil à l'agent et une consigne au prompt :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+main:
+  model: SIMULE
+  system_file: system.md
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+<span class="aj">  - python: chercher_devis</span></code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la Plomberie Dupont, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+<span class="aj">Pour une question sur un devis, appelle l'outil `chercher_devis` avec son</span><span class="aj">numéro.</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<p>Les scénarios utilisés sont ceux marqués <code># 2.2</code> dans le script.</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Où en est le devis D-2026-042 ?" --session devis-042
+Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
+
+Statut     : completed · itérations : 2 · tokens : 2848/126 · coût : 0.0000 $
+Run        : 01a16dee-3f77-724d-bdad-b9fa3325d904</code></pre>
+<p>Et avec un numéro qui n'existe pas :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Et le devis D-2026-999 ?" --session devis-999
+Je ne trouve aucun devis D-2026-999. Les devis connus sont D-2026-042 et D-2026-050.
+
+Statut     : completed · itérations : 2 · tokens : 2758/112 · coût : 0.0000 $
+Run        : 01a16dee-48a0-74d3-9612-71f32c4ae8c8
+<span class="p">$ </span>loom inspect 01a16dee-48a0-74d3-9612-71f32c4ae8c8 --session devis-999
+…
+  étape 2
+    outil chercher_devis — 2 ms (erreur)
+      · arguments : {"numero": "D-2026-999"}
+      · résultat  : (erreur) Aucun devis D-2026-999. Numéros connus : D-2026-042, D-2026-050
+  étape 3
+    modèle SIMULE (fake-1) (main) — 2 ms, 1456 → 46 tokens, 0.000000 $
+      · répond    : Je ne trouve aucun devis D-2026-999. Les devis connus sont D-2026-042 et D-2026-050.
+…</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Une erreur d'outil n'arrête pas le run : elle devient un <strong>résultat d'erreur</strong>, que le modèle reçoit comme n'importe quel résultat. Il peut alors corriger son appel ou expliquer le problème. Le run se termine normalement (<code>completed</code>).</li>
+<li>Avec <code>ToolError</code>, c'est vous qui choisissez le message. Une autre exception (une erreur de programmation, par exemple) est rattrapée aussi, mais le modèle ne reçoit que son type et son texte bruts. Avec <code>devis = DEVIS[numero]</code> à la place du test, l'inspection afficherait : <code>(erreur) Erreur de l'outil chercher_devis : KeyError: 'D-2026-999'</code>.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-2-3">
+<h3><span class="exo-num">2.3</span> Le contrat d'un outil et ses réglages</h3>
+<p class="fns"><a class="fn" href="matrice.html#D1">D1</a><a class="fn" href="matrice.html#D5">D5</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un outil peut être lent : une page web qui ne répond pas, un logiciel distant en panne. Jean ne veut pas que l'agent attende indéfiniment. Chaque outil a donc un délai, réglable sans toucher à son code.</p>
+
+<h4>Ce qu'il faut comprendre d'abord</h4>
+<p>Pour loom, tout outil, qu'il vienne de votre code, d'un paquet ou d'un serveur extérieur (module 5), suit le même <strong>contrat</strong> :</p>
+<div class="tableau"><table>
+<tbody>
+<tr><td><strong>Nom</strong></td><td>Ce que le modèle demande : <code>prix_ttc</code>.</td></tr>
+<tr><td><strong>Description</strong></td><td>Ce qui dit au modèle quand l'utiliser : la docstring.</td></tr>
+<tr><td><strong>Schéma d'entrée</strong></td><td>Les arguments attendus, tirés de la signature.</td></tr>
+<tr><td><strong>Capacités</strong></td><td>Ce que loom doit savoir pour l'exécuter sans risque : son délai, la taille au-delà de laquelle son résultat est mis de côté, s'il agit sur le monde extérieur, s'il faut l'accord d'un humain…</td></tr>
+</tbody>
+</table></div>
+<p>Les capacités ont une valeur par défaut, que l'outil peut fixer lui-même (<code>@tool(timeout=10)</code>) et que l'agent peut <strong>surcharger</strong> dans sa liste <code>tools</code>. Les surcharges possibles :</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>timeout</code></td><td>Délai d'exécution, en secondes. Par défaut 30 s ; <code>loom.fetch_page</code> fixe lui-même 45 s.</td></tr>
+<tr><td><code>offload_over</code></td><td>Taille, en caractères, au-delà de laquelle le résultat est mis de côté (exercice 2.7).</td></tr>
+<tr><td><code>side_effects</code>, <code>approval</code>, <code>idempotent</code></td><td>Les outils qui agissent sur le monde extérieur, et l'accord humain : module 8.</td></tr>
+<tr><td><code>output</code></td><td>Un contrôle de ce que l'outil rend : module 7.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Mise en place</h4>
+<p>Pour voir un délai tomber, donnez à <code>fetch_page</code> un délai impossible à tenir, un centième de seconde :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+main:
+  model: SIMULE
+  system_file: system.md
+
+tools:
+  - python: loom.fetch_page
+<span class="aj">    timeout: 0.01</span>  - python: prix_ttc
+  - python: chercher_devis</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<p>La ligne <code>timeout</code> est décalée sous <code>- python: loom.fetch_page</code> : elle règle cet outil-là, et lui seul. Le scénario utilisé est celui marqué <code># 2.3</code>.</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Quel taux de TVA pour remplacer un chauffe-eau thermodynamique ?" --session tva-delai
+Je n'ai pas pu lire la fiche des impôts à temps. Je ne vous donne donc pas de taux ; réessayez dans un instant.
+
+Statut     : completed · itérations : 2 · tokens : 2802/149 · coût : 0.0000 $
+Run        : 01a16dee-52f4-7779-8eab-2a679f3de663
+<span class="p">$ </span>loom inspect 01a16dee-52f4-7779-8eab-2a679f3de663 --session tva-delai
+…
+  étape 2
+    outil fetch_page — 267 ms (erreur)
+      · arguments : {"url": "https://www.impots.gouv.fr/professionnel/questions/quel-taux-de-tva-appliquer-pour-les-t…
+      · résultat  : (erreur) Délai dépassé : pas de réponse en 0.01 s.
+…</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li>Un délai dépassé est une erreur d'outil comme une autre : le modèle la reçoit, le run continue.</li>
+<li>La durée affichée (ici 267 ms) peut dépasser le délai : c'est le temps que l'outil a mis à rendre la main après l'interruption. Une fonction Python ordinaire (non <code>async</code>) tourne à part : loom n'attend plus son résultat, mais il ne peut pas l'arrêter en plein calcul.</li>
+<li><strong>Retirez la ligne <code>timeout: 0.01</code></strong> avant la suite.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-2-4">
+<h3><span class="exo-num">2.4</span> Des arguments refusés avant l'exécution</h3>
+<p class="fns"><a class="fn" href="matrice.html#D4">D4</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un modèle peut se tromper d'arguments, par exemple écrire un montant en toutes lettres. Votre fonction ne doit jamais recevoir n'importe quoi.</p>
+
+<h4>Mise en place</h4>
+<p>Rien à changer : <code>agents/assistant.yaml</code> est revenu à l'état de l'exercice 2.2 (sans <code>timeout</code>). Le scénario <code># 2.4</code> fait appeler <code>prix_ttc</code> avec <code>montant_ht: mille deux cents</code>, du texte au lieu d'un nombre, puis corrige.</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Quel prix TTC pour mille deux cents euros HT ?" --session prix-mille
+Pour 1 200 € HT avec une TVA à 20 %, le client paiera 1 440 € TTC.
+
+Statut     : completed · itérations : 3 · tokens : 4410/170 · coût : 0.0000 $
+Run        : 01a16dee-5dfc-766c-ad33-6caf9f56590b
+<span class="p">$ </span>loom inspect 01a16dee-5dfc-766c-ad33-6caf9f56590b --session prix-mille --full
+…
+run assistant — completed, 46 ms, 0.000000 $
+  étape 1
+    modèle SIMULE (fake-1) (main) — 2 ms, 1308 → 65 tokens, 0.000000 $
+      · répond    : Je calcule.
+      · appelle   : prix_ttc({"montant_ht": "mille deux cents"})
+  étape 2
+    appel prix_ttc — refusé avant exécution
+      · résultat  : (erreur) Arguments non conformes au schéma de l'outil :
+                    - montant_ht : doit être un nombre (reçu : du texte)
+  étape 3
+    modèle SIMULE (fake-1) (main) — 2 ms, 1470 → 64 tokens, 0.000000 $
+      · répond    : Je corrige le montant.
+      · appelle   : prix_ttc({"montant_ht": 1200})
+  étape 4
+    outil prix_ttc — 2 ms
+      · arguments : {"montant_ht": 1200}
+      · résultat  : {"montant_ht": 1200.0, "tva": 240.0, "montant_ttc": 1440.0}
+  étape 5
+    modèle SIMULE (fake-1) (main) — 1 ms, 1632 → 41 tokens, 0.000000 $
+      · répond    : Pour 1 200 € HT avec une TVA à 20 %, le client paiera 1 440 € TTC.
+…
+Bilan      : 3 appel(s) de modèle, 2 appel(s) d'outil dont 1 refusé(s) avant exécution</code></pre>
+<p>L'option <code>--full</code> de <code>loom inspect</code> affiche les textes en entier, sans les couper.</p>
+
+<h4>Ce qu'il faut comprendre</h4>
+<p>loom compare les arguments au schéma de l'outil <strong>avant</strong> de l'exécuter. Ici, l'appel est <code>refusé avant exécution</code> : <code>prix_ttc</code> n'a jamais tourné. Le diagnostic part au modèle, qui corrige au tour suivant. Votre fonction peut donc compter sur des arguments du bon type.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-2-5">
+<h3><span class="exo-num">2.5</span> Plusieurs outils dans le même tour</h3>
+<p class="fns"><a class="fn" href="matrice.html#A3">A3</a></p>
+
+<h4>Pourquoi</h4>
+<p>Jean demande où en sont deux devis. Les chercher l'un après l'autre ferait attendre deux fois.</p>
+
+<h4>Mise en place</h4>
+<p>Rien à changer. Dans le scénario <code># 2.5</code>, la première réponse du modèle simulé contient <strong>deux</strong> appels dans sa liste <code>tool_calls</code> : un modèle peut demander plusieurs outils d'un coup.</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Où en est le D-2026-042, et le D-2026-050 ?" --session deux-devis
+Le D-2026-042 (Mme Martin) attend une réponse ; le D-2026-050 (M. Bernard) est accepté.
+
+Statut     : completed · itérations : 2 · tokens : 3063/151 · coût : 0.0000 $
+Run        : 01a16dee-689c-7094-812a-b224b53ed6d7
+<span class="p">$ </span>loom inspect 01a16dee-689c-7094-812a-b224b53ed6d7 --session deux-devis
+…
+  étape 1
+    modèle SIMULE (fake-1) (main) — 1 ms, 1307 → 104 tokens, 0.000000 $
+      · répond    : Je regarde les deux devis.
+      · appelle   : chercher_devis({"numero": "D-2026-042"})
+      · appelle   : chercher_devis({"numero": "D-2026-050"})
+  étape 2
+    outil chercher_devis — 7 ms
+      · arguments : {"numero": "D-2026-042"}
+      · résultat  : {"numero": "D-2026-042", "client": "Mme Martin", "email": "martin@example.fr", "objet": "Remplace…
+    outil chercher_devis — 4 ms
+      · arguments : {"numero": "D-2026-050"}
+      · résultat  : {"numero": "D-2026-050", "client": "M. Bernard", "email": "bernard@example.fr", "objet": "Détartr…
+…</code></pre>
+<p>Le journal donne l'heure de chaque événement. Avec l'outil <code>jq</code> (à installer avec le gestionnaire de paquets de votre système s'il manque), on peut afficher le début et la fin de chaque appel :</p>
+<pre><code><span class="p">$ </span>jq -r 'select(.type | startswith("tool.")) | [.ts[11:23], .type, .payload.call_id] | @tsv' data/default/deux-devis.jsonl
+12:41:43.405	tool.called	fake_0_0
+12:41:43.406	tool.called	fake_0_1
+12:41:43.410	tool.completed	fake_0_1
+12:41:43.412	tool.completed	fake_0_0</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Les deux appels sont dans la <strong>même étape</strong> : loom les exécute ensemble, en un <strong>lot</strong>. Les deux débuts (<code>tool.called</code>) précèdent les deux fins (<code>tool.completed</code>), et le second a même fini le premier.</li>
+<li>Chaque appel a son identifiant (<code>call_id</code>). Quel que soit l'ordre d'arrivée, les résultats repartent au modèle dans l'ordre des appels.</li>
+<li>Deux itérations seulement : un tour pour demander, un tour pour répondre.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-2-6">
+<h3><span class="exo-num">2.6</span> Borner la boucle</h3>
+<p class="fns"><a class="fn" href="matrice.html#A4">A4</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un agent peut enchaîner les outils longtemps, et chaque appel au modèle coûte. Il faut une limite au nombre de tours.</p>
+
+<h4>Mise en place</h4>
+<p>Ajoutez <code>max_iterations</code> à l'agent, avec une valeur volontairement trop basse :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+<span class="aj">max_iterations: 1</span>
+main:
+  model: SIMULE
+  system_file: system.md
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>max_iterations: 1</code></td><td>Le nombre maximal d'appels au modèle qui peuvent demander des outils. Sans cette clé, la limite est de 10.</td></tr>
+</tbody>
+</table></div>
+<p>Le scénario <code># 2.6</code> a besoin de deux tours d'outils : chercher le devis, puis recalculer le prix. Sa deuxième réponse porte une clé nouvelle, <code>forced</code> :</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>forced: …</code></td><td>Pour le modèle simulé : le texte qu'il rend si loom lui interdit d'appeler des outils. Un vrai modèle, lui, rédige une réponse de lui-même.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Recalcule le devis D-2026-042 à 10 %." --session borne
+Le devis D-2026-042 est à 1 533,33 € HT. Je n'ai pas eu le temps de recalculer le TTC à 10 % ; demandez-le-moi à nouveau.
+
+Statut     : completed · itérations : 2 · tokens : 2917/121 · coût : 0.0000 $
+Run        : 01a16dee-725e-77a6-8e3a-61a9c47515c0
+<span class="p">$ </span>jq -r 'select(.type=="run.transitioned") | "\(.payload.from_state) → \(.payload.to_state) (\(.payload.cause_type))"' data/default/borne.jsonl
+ready_for_model → awaiting_tools (model.responded)
+awaiting_tools → finalizing (tool.completed)
+finalizing → completed (model.responded)</code></pre>
+<p>La commande <code>jq</code> affiche les changements d'état du run, écrits dans le journal (événements <code>run.transitioned</code>).</p>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Après le premier outil, la limite est atteinte. Au lieu de revenir à <code>ready_for_model</code> (prêt pour un nouvel appel), le run passe à <code>finalizing</code> : loom fait un dernier appel au modèle en lui <strong>interdisant les outils</strong>, et lui demande de répondre avec ce qu'il a déjà.</li>
+<li>C'est la <strong>réponse forcée</strong> : l'agent dit ce qu'il a fait et ce qui reste à faire, au lieu de s'arrêter sans rien dire. Elle compte comme une itération de plus : 2 au total.</li>
+</ul>
+<p>Passez maintenant <code>max_iterations</code> à 5, la valeur que garde la suite de la formation, et relancez :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Recalcule le devis D-2026-042 à 10 %." --session sans-borne
+À 10 %, le devis D-2026-042 passerait à 1 686,66 € TTC.
+
+Statut     : completed · itérations : 3 · tokens : 4566/176 · coût : 0.0000 $
+Run        : 01a16dee-7d26-76c7-a297-1e9f4f1a0388</code></pre>
+
+<div class="encadre piege"><p class="encadre-titre">Piège : une clé écrite deux fois</p>
+<p>Si vous ajoutez une seconde ligne <code>max_iterations</code> au lieu de modifier la première, loom refuse le fichier plutôt que de garder l'une des deux en silence :</p>
+<pre><code>Configuration : /home/jean/plomberie-dupont/agents/assistant.yaml: clé 'max_iterations' donnée deux fois dans le même objet (lignes 3 et 5) : la seconde écraserait la première en silence</code></pre></div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-2-7">
+<h3><span class="exo-num">2.7</span> Mettre de côté un gros résultat</h3>
+<p class="fns"><a class="fn" href="matrice.html#D6">D6</a><a class="fn" href="matrice.html#G2">G2</a></p>
+
+<h4>Pourquoi</h4>
+<p>Une page web peut faire des dizaines de milliers de caractères. Tout envoyer au modèle à chaque tour coûte cher et noie l'essentiel. loom met donc de côté les gros résultats : le modèle reçoit un <strong>aperçu</strong> et une référence, et lit la suite s'il en a besoin.</p>
+
+<h4>Mise en place</h4>
+<p>Le seuil se règle par outil avec <code>offload_over</code>, en caractères. Par défaut, il est de 50 000 caractères (20 000 pour <code>loom.fetch_page</code>). Un devis est bien plus court : pour l'exercice, on abaisse le seuil de <code>chercher_devis</code> à 100 caractères.</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+<span class="aj">    offload_over: 100</span></code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<p>Le scénario <code># 2.7</code> fait chercher le devis, puis lire le résultat mis de côté avec <code>artifact_read</code>, un outil que loom ajoute de lui-même après un premier déport.</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Détaille le devis D-2026-042." --session devis-deporte
+Devis D-2026-042 : Mme Martin, remplacement du chauffe-eau, 1 533,33 € HT, TVA 20 %, 1 840 € TTC, envoyé le 3 septembre 2026.
+
+Statut     : completed · itérations : 3 · tokens : 5018/216 · coût : 0.0000 $
+Run        : 01a16dee-8270-7010-91e2-e7e5f9269822
+<span class="p">$ </span>loom inspect 01a16dee-8270-7010-91e2-e7e5f9269822 --session devis-deporte --full
+…
+  étape 2
+    outil chercher_devis — 9 ms
+      · arguments : {"numero": "D-2026-042"}
+      · fichier rangé : artifact://default/devis-deporte/c05201e7dda3b99a2bcacb20145df68e8be2f20a7323e8bc033880541ac3b557.json
+      · résultat  : Objet JSON, 9 clé(s) :
+                    - numero : "D-2026-042"
+                    - client : "Mme Martin"
+                    - email : "martin@example.fr"
+                    - objet : "Remplacement du chauffe-eau"
+                    - montant_ht : 1533.33
+                    - taux_tva : 20
+                    - montant_ttc : 1840.0
+                    - date : "2026-09-03"
+                    - statut : "envoyé"
+
+                    [Résultat déporté : 222 caractères (JSON), seul l'aperçu ci-dessus est montré. Pour lire la suite : outil artifact_read avec ref="artifact://default/devis-deporte/c05201e7dda3b99a2bcacb20145df68e8be2f20a7323e8bc033880541ac3b557.json", offset et limit en caractères.]
+  étape 3
+    modèle SIMULE (fake-1) (main) — 2 ms, 1737 → 94 tokens, 0.000000 $
+      · répond    : Le résultat a été mis de côté ; je le lis.
+      · appelle   : artifact_read({"ref": "artifact://default/devis-deporte/c05201e7dda3b99a2bcacb20145df68e8be2f20a7323e8bc033880541ac3b557.json"})
+  étape 4
+    outil artifact_read — 3 ms
+      · arguments : {"ref": "artifact://default/devis-deporte/c05201e7dda3b99a2bcacb20145df68e8be2f20a7323e8bc033880541ac3b557.json"}
+      · résultat  : [Caractères 0 à 222 sur 222 ; fin du contenu]
+                    {"numero": "D-2026-042", "client": "Mme Martin", "email": "martin@example.fr", "objet": "Remplacement du chauffe-eau", "montant_ht": 1533.33, "taux_tva": 20, "montant_ttc": 1840.0, "date": "2026-09-03", "statut": "envoyé"}
+…</code></pre>
+<p>Le résultat complet est rangé dans un fichier, hors du journal. <code>loom sessions files</code> liste les fichiers d'une session :</p>
+<pre><code><span class="p">$ </span>loom sessions files devis-deporte
+chercher_devis.json  (application/json, 223 octets, offload, outil chercher_devis)  c05201e7dda3b99a2bcacb20145df68e8be2f20a7323e8bc033880541ac3b557.json
+<span class="p">$ </span>find data/.artifacts -type f
+data/.artifacts/default/devis-deporte/c05201e7dda3b99a2bcacb20145df68e8be2f20a7323e8bc033880541ac3b557.json</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Le résultat dépasse 100 caractères : il est <strong>déporté</strong>. Le modèle reçoit un aperçu (pour un JSON, ses clés et le début de leurs valeurs ; pour un texte, ses 2 000 premiers caractères) et une note qui donne la référence <code>artifact://…</code> et la marche à suivre.</li>
+<li>Le modèle lit la suite avec <code>artifact_read</code>, par morceaux (<code>offset</code>, <code>limit</code>). Cet outil n'est proposé qu'après un premier déport.</li>
+<li>Les fichiers vivent dans le <strong>stockage d'artefacts</strong>, séparé du journal, qui n'en garde que la référence. Avec un journal JSONL dans <code>data/</code>, ce stockage est par défaut le dossier <code>data/.artifacts/</code>, rangé par client puis par session. Le nom du fichier est l'empreinte de son contenu.</li>
+<li>Le script du modèle simulé contient la référence en dur, car elle est connue d'avance : la même session et le même contenu donnent la même empreinte. Un vrai modèle la recopie depuis la note. Si vous avez modifié le carnet de devis, l'empreinte change, et <code>artifact_read</code> répond que la référence est inconnue en donnant la bonne.</li>
+<li><strong>Retirez la ligne <code>offload_over: 100</code></strong> avant la suite.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-2-8">
+<h3><span class="exo-num">2.8</span> Rendre une image</h3>
+<p class="fns"><a class="fn" href="matrice.html#D8">D8</a><a class="fn" href="matrice.html#G3">G3</a><a class="fn" href="matrice.html#G2">G2</a></p>
+
+<h4>Pourquoi</h4>
+<p>Jean colle sur chaque dossier papier une étiquette de couleur : orange pour un devis envoyé, vert pour un devis accepté. Il voudrait que l'agent la fabrique. Un outil peut rendre autre chose que du texte : ici, une image.</p>
+
+<h4>Mise en place</h4>
+<p>Ajoutez l'outil <code>etiquette_devis</code> à la fin de <code>outils.py</code>. La petite fonction <code>png_uni</code> fabrique une image d'une seule couleur sans bibliothèque d'image ; inutile d'en comprendre le détail.</p>
+<figure class="code"><figcaption>outils.py</figcaption>
+<pre><code><span class="aj">import struct</span><span class="aj">import zlib</span><span class="aj"> </span>from loom_ia.core.ports import ToolError
+<span class="aj">from loom_ia.tools import Image, tool</span>
+# Le carnet de devis de l'entreprise. Plus tard, ce sera une base de données ou un CRM.
+DEVIS = {
+    "D-2026-042": {
+        "client": "Mme Martin",
+        "email": "martin@example.fr",
+        "objet": "Remplacement du chauffe-eau",
+        "montant_ht": 1533.33,
+        "taux_tva": 20,
+        "montant_ttc": 1840.00,
+        "date": "2026-09-03",
+        "statut": "envoyé",
+    },
+    "D-2026-050": {
+        "client": "M. Bernard",
+        "email": "bernard@example.fr",
+        "objet": "Détartrage de la chaudière",
+        "montant_ht": 150.00,
+        "taux_tva": 10,
+        "montant_ttc": 165.00,
+        "date": "2026-09-20",
+        "statut": "accepté",
+    },
+}
+
+
+@tool
+def prix_ttc(montant_ht: float, taux_tva: float = 20.0) -&gt; dict[str, float]:
+    """Calcule la TVA et le montant TTC à partir d'un montant HT. Le taux est en pourcentage."""
+    tva = round(montant_ht * taux_tva / 100, 2)
+    return {"montant_ht": montant_ht, "tva": tva, "montant_ttc": round(montant_ht + tva, 2)}
+
+
+@tool
+def chercher_devis(numero: str) -&gt; dict[str, str | float]:
+    """Retrouve un devis par son numéro (par exemple D-2026-042) : client, objet, montants, date, statut."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}. Numéros connus : {', '.join(DEVIS)}")
+    return {"numero": numero, **devis}
+
+<span class="aj"> </span><span class="aj"># Couleur de l'étiquette selon le statut du devis.</span><span class="aj">COULEURS = {"envoyé": (230, 140, 30), "accepté": (40, 150, 80)}</span><span class="aj"> </span><span class="aj"> </span><span class="aj">@tool</span><span class="aj">def etiquette_devis(numero: str) -&gt; Image:</span><span class="aj">    """Fabrique l'étiquette de couleur d'un devis (orange : envoyé, vert : accepté), en image PNG."""</span><span class="aj">    devis = DEVIS.get(numero)</span><span class="aj">    if devis is None:</span><span class="aj">        raise ToolError(f"Aucun devis {numero}.")</span><span class="aj">    couleur = COULEURS.get(str(devis["statut"]), (120, 120, 120))</span><span class="aj">    return Image(png_uni(160, 60, couleur), name=f"etiquette-{numero}.png")</span><span class="aj"> </span><span class="aj"> </span><span class="aj">def png_uni(largeur: int, hauteur: int, rgb: tuple[int, int, int]) -&gt; bytes:</span><span class="aj">    """Une image PNG d'une seule couleur, écrite sans bibliothèque d'image."""</span><span class="aj">    ligne = b"\x00" + bytes(rgb) * largeur</span><span class="aj">    brut = zlib.compress(ligne * hauteur)</span><span class="aj"> </span><span class="aj">    def bloc(nature: bytes, donnees: bytes) -&gt; bytes:</span><span class="aj">        crc = zlib.crc32(nature + donnees)</span><span class="aj">        return struct.pack("&gt;I", len(donnees)) + nature + donnees + struct.pack("&gt;I", crc)</span><span class="aj"> </span><span class="aj">    entete = struct.pack("&gt;IIBBBBB", largeur, hauteur, 8, 2, 0, 0, 0)</span><span class="aj">    return b"\x89PNG\r\n\x1a\n" + bloc(b"IHDR", entete) + bloc(b"IDAT", brut) + bloc(b"IEND", b"")</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées ou modifiées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>from loom_ia.tools import Image, tool</code></td><td>Importe aussi <code>Image</code>, le type d'un résultat image.</td></tr>
+<tr><td><code>-&gt; Image</code></td><td>L'outil rend une image.</td></tr>
+<tr><td><code>Image(données, name=…)</code></td><td>Les octets de l'image (PNG, JPEG, GIF ou WebP, reconnu d'après son contenu) et le nom du fichier.</td></tr>
+</tbody>
+</table></div>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+<span class="aj">  - python: etiquette_devis</span></code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Outils|assistant :'
+Outils     : chercher_devis, etiquette_devis, prix_ttc
+  assistant : modèle SIMULE, 4 outil(s) Python
+<span class="p">$ </span>loom run assistant "Fais-moi l'étiquette du devis D-2026-042." --session etiquette
+Voici l'étiquette du devis D-2026-042 (orange, car il est envoyé et sans réponse).
+
+Statut     : completed · itérations : 2 · tokens : 2940/113 · coût : 0.0000 $
+Run        : 01a16dee-9655-74df-aba1-f9021048c5e3
+Fichier    : artifact://default/etiquette/5fa4ecaeaedb4bac4b6db229f776ceb9082d028bb4893725c394f00ace001a25.png (image/png, 224 octets)
+<span class="p">$ </span>loom inspect 01a16dee-9655-74df-aba1-f9021048c5e3 --session etiquette
+…
+  étape 2
+    outil etiquette_devis — 8 ms
+      · arguments : {"numero": "D-2026-042"}
+      · fichier rangé : artifact://default/etiquette/5fa4ecaeaedb4bac4b6db229f776ceb9082d028bb4893725c394f00ace001a25.png
+      · résultat  : fichier etiquette-D-2026-042.png (image/png)
+…</code></pre>
+<p>Le bilan du run a une ligne de plus, <code>Fichier</code> : l'image produite. Pour la récupérer sous son vrai nom, <code>loom sessions files</code> avec l'option <code>--out</code> l'écrit dans un dossier :</p>
+<pre><code><span class="p">$ </span>loom sessions files etiquette
+etiquette-D-2026-042.png  (image/png, 224 octets, tool_output, outil etiquette_devis)  5fa4ecaeaedb4bac4b6db229f776ceb9082d028bb4893725c394f00ace001a25.png
+<span class="p">$ </span>loom sessions files etiquette --out etiquettes
+1 fichier(s) écrit(s) dans etiquettes
+<span class="p">$ </span>ls etiquettes
+etiquette-D-2026-042.png</code></pre>
+<p>Ouvrez <code>etiquettes/etiquette-D-2026-042.png</code> : un rectangle orange. Pour un programme, l'option <code>--json</code> de <code>loom run</code> donne la liste des fichiers produits dans le champ <code>artifacts</code> (ici filtré avec <code>jq</code>) :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Fais-moi l'étiquette du devis D-2026-042." --session etiquette --json | jq '{status, artifacts}'
+{
+  "status": "completed",
+  "artifacts": [
+    {
+      "uri": "artifact://default/etiquette/5fa4ecaeaedb4bac4b6db229f776ceb9082d028bb4893725c394f00ace001a25.png",
+      "media_type": "image/png",
+      "size": 224,
+      "name": "etiquette-D-2026-042.png",
+      "origin": "tool_output",
+      "call_id": "fake_0_0"
+    }
+  ]
+}</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Selon ce qu'il renvoie, un outil produit un résultat différent : un <code>str</code> donne du texte, un dictionnaire ou une liste du JSON, une <code>Image</code> un fichier. (Pour mêler plusieurs blocs, texte, données et fichiers, dans un même résultat, un outil peut aussi construire lui-même un <code>ToolOutput</code>, la forme que loom donne à tout résultat.)</li>
+<li>Une image n'entre pas dans le journal : elle est rangée dans le stockage d'artefacts, comme le résultat déporté de l'exercice 2.7, et le journal garde sa référence. Le champ <code>origin</code> dit d'où vient un fichier : <code>tool_output</code> pour un outil, <code>offload</code> pour un résultat déporté.</li>
+<li>Le modèle reçoit une référence à l'image. Un modèle capable de voir les images (capacité <code>vision</code>, module 6) peut en recevoir le contenu.</li>
+<li>Le dossier <code>etiquettes/</code> n'est qu'une copie de travail : supprimez-le ou ajoutez-le à <code>.gitignore</code>.</li>
+</ul>
+</section>
+
+<h2 id="bilan">Bilan du module</h2>
+<p>L'agent est en <strong>v0.2</strong>. Il a quatre outils, dont trois écrits par vous, et il s'arrête au plus tard après 5 tours d'outils. Le projet :</p>
+<figure class="code"><figcaption>plomberie-dupont/</figcaption>
+<pre><code>plomberie-dupont/
+├── loom.yaml            imports, modèles (script du module 2), journal, logs
+├── outils.py            prix_ttc, chercher_devis, etiquette_devis
+├── agents/
+│   └── assistant.yaml   max_iterations, modèle, prompt, quatre outils
+├── prompts/
+│   └── system.md        le prompt système
+└── data/                le journal, et data/.artifacts/ pour les fichiers</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis</code></pre></figure>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la Plomberie Dupont, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.</code></pre></figure>
+<p><code>loom.yaml</code> est celui de l'exercice 2.1, et <code>outils.py</code> celui de l'exercice 2.8. Au module 3, vous verrez les modèles de plus près : plusieurs fournisseurs, leurs réglages, et la configuration selon l'environnement.</p>
+
+<nav class="suite" aria-label="Pages voisines"><a class="avant" href="module-01.html"><small>Précédent</small>Module 1 : Les bases de l&#x27;agent</a><a class="apres" href="module-03.html"><small>Suivant</small>Module 3 : Modèles et configuration</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>

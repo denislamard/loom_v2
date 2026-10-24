@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installation et premier run · loom_v2</title>
+<meta name="description" content="De zéro au premier run : installer loom-ia depuis PyPI, sans dépendance supplémentaire, puis créer pas à pas les deux fichiers qui font tourner un agent en ligne de commande.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+<li class="ici"><a href="installation.html" aria-current="page">Installation et premier run</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><span class="a-venir"><span class="num">2.</span>Outils Python <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">3.</span>Modèles et configuration <em>(à venir)</em></span></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><span class="a-venir"><span class="num">4.</span>Conversations, mémoire et state <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">5.</span>Outils MCP et mémoire long terme <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">6.</span>Rôles, sous-agents et vision <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">7.</span>Fiabilité des sorties <em>(à venir)</em></span></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><span class="a-venir"><span class="num">8.</span>Actions sensibles et exécution durable <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">9.</span>Résilience et coûts <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">11.</span>Automatiser : webhooks, workers, bus <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">12.</span>Plusieurs clients et données sensibles <em>(à venir)</em></span></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><span class="a-venir"><span class="num">13.</span>Observabilité et rejeu <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">14.</span>Qualité : évals et non-régression <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge <em>(à venir)</em></span></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><span class="a-venir">Référence : CLI et configuration <em>(à venir)</em></span></li>
+<li><span class="a-venir">Pièges et dépannage <em>(à venir)</em></span></li>
+<li><span class="a-venir">Glossaire <em>(à venir)</em></span></li>
+<li><span class="a-venir">Matrice des fonctions <em>(à venir)</em></span></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+<li class="ici"><a href="installation.html" aria-current="page">Installation et premier run</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><span class="a-venir"><span class="num">2.</span>Outils Python <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">3.</span>Modèles et configuration <em>(à venir)</em></span></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><span class="a-venir"><span class="num">4.</span>Conversations, mémoire et state <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">5.</span>Outils MCP et mémoire long terme <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">6.</span>Rôles, sous-agents et vision <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">7.</span>Fiabilité des sorties <em>(à venir)</em></span></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><span class="a-venir"><span class="num">8.</span>Actions sensibles et exécution durable <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">9.</span>Résilience et coûts <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">11.</span>Automatiser : webhooks, workers, bus <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">12.</span>Plusieurs clients et données sensibles <em>(à venir)</em></span></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><span class="a-venir"><span class="num">13.</span>Observabilité et rejeu <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">14.</span>Qualité : évals et non-régression <em>(à venir)</em></span></li>
+<li><span class="a-venir"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge <em>(à venir)</em></span></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><span class="a-venir">Référence : CLI et configuration <em>(à venir)</em></span></li>
+<li><span class="a-venir">Pièges et dépannage <em>(à venir)</em></span></li>
+<li><span class="a-venir">Glossaire <em>(à venir)</em></span></li>
+<li><span class="a-venir">Matrice des fonctions <em>(à venir)</em></span></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<h1>Installation et premier run</h1>
+<p class="chapeau">Vous partez de rien : pas de projet, pas de configuration. Vous installez le paquet loom-ia, seul, puis vous avancez commande par commande jusqu'à faire répondre un premier agent. Quand loom refuse une commande, son message dit ce qui manque : c'est lui qui vous guide.</p>
+
+<h2 id="prerequis">Ce qu'il vous faut</h2>
+<ul>
+<li>Un terminal sous <strong>Linux</strong>.</li>
+<li><strong>uv</strong>, l'outil qui installe Python et les paquets d'un projet. Si vous ne l'avez pas, l'étape 1 l'installe.</li>
+</ul>
+<p>Pas besoin d'installer Python vous-même, ni d'avoir une clé d'API : le premier agent tourne sur un modèle simulé, fourni avec loom.</p>
+
+<!-- ===================================================================== -->
+<section class="exo" id="etape-1">
+<h3><span class="exo-num">1</span> Installer uv</h3>
+<pre><code><span class="p">$ </span>curl -LsSf https://astral.sh/uv/install.sh | sh</code></pre>
+<p>Fermez puis rouvrez le terminal, et vérifiez :</p>
+<pre><code><span class="p">$ </span>uv --version</code></pre>
+<p>Si uv était déjà installé, passez à l'étape suivante.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="etape-2">
+<h3><span class="exo-num">2</span> Créer le dossier du projet</h3>
+<p>Toute la formation se passe dans un seul dossier, <code>plomberie-dupont</code> : c'est le projet de l'assistant que vous allez construire pour une entreprise de plomberie.</p>
+<pre><code><span class="p">$ </span>uv init --bare --python 3.14 plomberie-dupont
+Initialized project `plomberie-dupont` at `/home/jean/plomberie-dupont`
+<span class="p">$ </span>cd plomberie-dupont
+<span class="p">$ </span>ls
+pyproject.toml</code></pre>
+<p>uv a créé le dossier et un fichier <code>pyproject.toml</code>, qui tiendra la liste des paquets du projet. Pour l'instant, elle est vide. <code>--python 3.14</code> indique la version de Python voulue : loom-ia demande Python 3.14 ou plus récent, et uv le téléchargera s'il ne le trouve pas sur la machine.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="etape-3">
+<h3><span class="exo-num">3</span> Installer loom-ia</h3>
+<p>Le paquet s'appelle <code>loom-ia</code> sur PyPI. On l'installe seul, sans option :</p>
+<pre><code><span class="p">$ </span>uv add loom-ia
+Using CPython 3.14.6
+Creating virtual environment at: .venv
+Resolved 22 packages in 625ms
+Installed 20 packages in 57ms
+ …
+ + loom-ia==2.0.11
+ + pydantic==2.14.1
+ + pyyaml==6.0.3
+ …
+<span class="p">$ </span>ls -A
+.venv  pyproject.toml  uv.lock</code></pre>
+<ul>
+<li><code>.venv/</code> est l'environnement Python du projet : Python 3.14, loom-ia et les quelques paquets dont il dépend. Rien n'est installé ailleurs sur votre machine.</li>
+<li><code>pyproject.toml</code> contient maintenant la ligne <code>"loom-ia&gt;=2.0.11"</code>, et <code>uv.lock</code> note les versions exactes installées.</li>
+</ul>
+<p>Ce paquet de base suffit pour tout ce module. Plus tard, vous lui ajouterez des options, appelées « extras », pour brancher Claude, une base de données ou un serveur web. Chacune viendra au moment où vous en aurez besoin.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="etape-4">
+<h3><span class="exo-num">4</span> Activer l'environnement et trouver la commande <code>loom</code></h3>
+<p>loom-ia a installé une commande, <code>loom</code>, dans l'environnement du projet. Pour pouvoir la taper directement, activez cet environnement :</p>
+<pre><code><span class="p">$ </span>source .venv/bin/activate
+<span class="p">$ </span>loom --version
+loom 2.0.11</code></pre>
+<p>L'activation vaut pour le terminal ouvert. Dans un nouveau terminal, revenez dans le dossier du projet et relancez <code>source .venv/bin/activate</code>. Toutes les commandes de la formation supposent l'environnement activé. (Sans l'activer, on peut aussi préfixer chaque commande par <code>uv run</code> : <code>uv run loom --version</code>.)</p>
+
+<p>Voyons ce que sait faire cette commande :</p>
+<pre><code><span class="p">$ </span>loom --help
+usage: loom [-h] [--version] [--config CONFIG] [--profile {dev,prod}]
+            [--env-file ENV_FILE | --no-env-file]
+            {validate,run,state,resume,replay,inspect,eval,approve,reject,serve,mcp,keys,report,sessions,worker,retention,storage,schema} ...
+
+Agents loom en ligne de commande
+
+positional arguments:
+  {validate,run,state,resume,replay,inspect,eval,approve,reject,serve,mcp,keys,report,sessions,worker,retention,storage,schema}
+    validate            vérifie la config et monte les agents
+    run                 lance un run et attend sa fin
+    …</code></pre>
+<p>Beaucoup de commandes. Pour commencer, deux suffisent : <code>loom run</code>, qui lance un agent, et <code>loom validate</code>, qui vérifie la configuration.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="etape-5">
+<h3><span class="exo-num">5</span> Essayer de lancer un agent</h3>
+<p>On voudrait un agent nommé <code>assistant</code>, à qui l'on dit bonjour. <code>loom run</code> prend le nom de l'agent, puis la demande entre guillemets :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Bonjour, qui es-tu ?"
+Configuration : Fichier illisible : [Errno 2] No such file or directory: '/home/jean/plomberie-dupont/loom.yaml'</code></pre>
+<p>Refusé, et c'est normal : nous n'avons encore rien décrit. loom cherche dans le dossier courant un fichier de configuration, <code>loom.yaml</code>, qui n'existe pas.</p>
+<p>loom n'invente rien : un agent n'existe que si vous l'avez décrit dans des fichiers. Il en faut deux, que l'on va créer l'un après l'autre :</p>
+<figure class="code"><figcaption>ce que vous allez construire</figcaption>
+<pre><code>plomberie-dupont/
+├── loom.yaml            les modèles disponibles
+└── agents/
+    └── assistant.yaml   l'agent : quel modèle il utilise, quelles consignes il suit</code></pre></figure>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="etape-6">
+<h3><span class="exo-num">6</span> Créer <code>loom.yaml</code> : le modèle</h3>
+<p>Un agent a besoin d'un <strong>modèle</strong> de langage (un LLM, comme Claude ou GPT) pour comprendre la demande et répondre. loom ne contient aucun LLM : il se branche sur ceux des fournisseurs. Mais pour apprendre, il fournit un <strong>modèle simulé</strong>, qui répond sans compte, sans clé et sans réseau. C'est lui que l'on déclare.</p>
+
+<p>Créez le fichier <code>loom.yaml</code> avec votre éditeur de texte, ou directement dans le terminal en copiant ce bloc entier :</p>
+<pre><code><span class="p">$ </span>cat &gt; loom.yaml &lt;&lt;'EOF'
+version: 1
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+EOF</code></pre>
+
+<p>Le fichier est écrit en YAML : chaque ligne est une clé, deux-points, une valeur ; les espaces en début de ligne indiquent ce qui est rangé dans quoi ; un tiret commence un élément de liste.</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>version: 1</code></td><td>La version du format de configuration. Toujours 1, et obligatoire.</td></tr>
+<tr><td><code>models:</code></td><td>La liste des modèles que vos agents pourront utiliser. Ici, un seul.</td></tr>
+<tr><td><code>- id: SIMULE</code></td><td>Le nom que <em>vous</em> donnez à ce modèle. Les agents le désigneront par ce nom.</td></tr>
+<tr><td><code>sdk: fake</code></td><td>Le type de modèle. <code>fake</code> est le modèle simulé de loom ; plus tard vous utiliserez <code>anthropic</code> pour Claude.</td></tr>
+<tr><td><code>model: fake-1</code></td><td>Le nom du modèle chez le fournisseur. Pour le modèle simulé, n'importe quel nom convient.</td></tr>
+</tbody>
+</table></div>
+
+<p>Vérifiez la configuration :</p>
+<pre><code><span class="p">$ </span>loom validate
+Configuration : Dossier d'agents introuvable : /home/jean/plomberie-dupont/agents</code></pre>
+<p>Le fichier est accepté, et loom passe à la suite : il cherche les agents dans un dossier <code>agents/</code>, qui n'existe pas encore.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="etape-7">
+<h3><span class="exo-num">7</span> Créer le dossier des agents</h3>
+<pre><code><span class="p">$ </span>mkdir agents
+<span class="p">$ </span>loom validate
+…
+0 agent(s) monté(s) sans erreur.
+<span class="p">$ </span>loom run assistant "Bonjour, qui es-tu ?"
+Agent 'assistant' inconnu (agents : aucun)</code></pre>
+<p>La configuration est valide, mais le dossier est vide : loom ne connaît aucun agent. Chaque fichier <code>.yaml</code> de ce dossier décrit un agent ; il reste à écrire celui de l'assistant.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="etape-8">
+<h3><span class="exo-num">8</span> Créer <code>agents/assistant.yaml</code> : l'agent</h3>
+<pre><code><span class="p">$ </span>cat &gt; agents/assistant.yaml &lt;&lt;'EOF'
+name: assistant
+
+main:
+  model: SIMULE
+  system: Tu es l'assistant de la Plomberie Dupont. Tu réponds en français.
+EOF</code></pre>
+
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>name: assistant</code></td><td>Le nom de l'agent : celui que vous tapez après <code>loom run</code>.</td></tr>
+<tr><td><code>main:</code></td><td>Le modèle principal de l'agent, celui qui lit la demande et répond. loom l'appelle l'<strong>orchestrateur</strong>, parce que c'est lui qui décidera plus tard d'utiliser des outils. Les deux lignes suivantes, décalées de deux espaces, le décrivent.</td></tr>
+<tr><td><code>model: SIMULE</code></td><td>Le modèle à utiliser, désigné par le nom donné dans <code>loom.yaml</code>.</td></tr>
+<tr><td><code>system: …</code></td><td>Le <strong>prompt système</strong> : les consignes données au modèle, qui lui disent qui il est et comment répondre.</td></tr>
+</tbody>
+</table></div>
+
+<pre><code><span class="p">$ </span>loom validate
+Config     : loom.yaml
+Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
+Env        : aucun (/home/jean/plomberie-dupont/.env)
+Modèles    : SIMULE
+Agents     : assistant
+Outils     : aucun
+Paquets    : forge (loom-ia 2.0.11) (groupe loom_ia.tools)
+Journal    : memory
+Artefacts  : memory
+Idempotence: journal
+File       : asyncio
+Bus        : memory (les nouvelles ne sortent pas de ce process)
+Chiffrement: aucun (contenus en clair au repos)
+Rétention  : aucune (rien ne s'efface)
+Télémétrie : logs INFO (console) ; exports sans contenu (metadata) ; pas d'échanges bruts
+    collecteur : aucun — rien ne sort du journal que les logs
+Clés d'API : aucune (API REST ouverte)
+  assistant : modèle SIMULE, 0 outil(s) Python
+
+<span class="s">1 agent(s) monté(s) sans erreur.</span></code></pre>
+<p>Cette fois, loom affiche ce qu'il a compris. Pour l'instant, regardez trois lignes : <code>Modèles : SIMULE</code>, <code>Agents : assistant</code>, et la dernière, qui dit que l'agent est prêt. Les autres décrivent des fonctions de loom que vous n'avez pas configurées ; elles gardent leur réglage par défaut, et la formation les présente une à une.</p>
+
+<div class="encadre piege"><p class="encadre-titre">Si loom refuse le fichier</p>
+<p>Le message nomme le fichier et la clé en cause. Les causes les plus courantes :</p>
+<ul>
+<li><code>main — Field required</code> : la clé <code>main</code> manque, ou elle est mal écrite.</li>
+<li><code>modèle 'SIMULE' non déclaré</code> : le nom cité dans l'agent n'est pas celui de <code>loom.yaml</code>. Les majuscules comptent.</li>
+<li><code>YAML invalide</code> : souvent une indentation décalée, ou une tabulation au lieu d'espaces.</li>
+</ul></div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="etape-9">
+<h3><span class="exo-num">9</span> Le premier run</h3>
+<pre><code><span class="p">$ </span>loom run assistant "Bonjour, qui es-tu ?"
+2026-10-24 09:29:23 INFO     loom_ia.engine.loop — Modèle SIMULE (rôle main) : 0.00 s, 109 tokens, 0.00000 $ […]
+2026-10-24 09:29:23 INFO     loom_ia.engine.loop — Transition ready_for_model → completed (agent assistant) […]
+Écho : Bonjour, qui es-tu ?
+
+Statut     : completed · itérations : 1 · tokens : 77/32 · coût : 0.0000 $
+Run        : 01a16cd0-7595-70ae-af87-81374451caeb</code></pre>
+<p>L'agent a tourné. Un <strong>run</strong>, c'est une exécution de l'agent pour une demande. Ce que vous voyez, de haut en bas :</p>
+<ul>
+<li><strong>Deux lignes <code>INFO</code></strong> : loom raconte ce qu'il fait. Il a appelé le modèle <code>SIMULE</code> en tant que <code>main</code>, puis le run est passé à l'état <code>completed</code>, terminé.</li>
+<li><strong><code>Écho : Bonjour, qui es-tu ?</code></strong> : la réponse de l'agent. Le modèle simulé ne réfléchit pas : tant qu'on ne lui a pas écrit de réponse, il renvoie la demande.</li>
+<li><strong>Le bilan</strong> : le statut, le nombre d'appels au modèle (<code>itérations</code>), les tokens consommés (en entrée et en sortie), le coût, nul ici, et l'identifiant du run.</li>
+</ul>
+</section>
+
+<h2 id="recap">Récapitulatif</h2>
+<p>Pour faire tourner un agent, il a fallu :</p>
+<ol>
+<li>installer le paquet <code>loom-ia</code> dans un projet uv et activer son environnement ;</li>
+<li>déclarer un modèle dans <code>loom.yaml</code> ;</li>
+<li>décrire l'agent dans un fichier du dossier <code>agents/</code> ;</li>
+<li>lancer <code>loom run &lt;agent&gt; "&lt;demande&gt;"</code>.</li>
+</ol>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+main:
+  model: SIMULE
+  system: Tu es l'assistant de la Plomberie Dupont. Tu réponds en français.</code></pre></figure>
+<p>Le <a href="module-01.html">module 1</a> part de ces deux fichiers. Il fait vraiment parler l'agent, le branche sur Claude, garde la trace de ses runs et lui donne un premier outil.</p>
+
+<nav class="suite" aria-label="Pages voisines"><a class="avant" href="index.html"><small>Précédent</small>Accueil</a><a class="apres" href="module-01.html"><small>Suivant</small>Module 1 : Les bases de l&#x27;agent</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>

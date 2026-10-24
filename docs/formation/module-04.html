@@ -1,0 +1,1248 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 4 : Conversations, mémoire et state · loom_v2</title>
+<meta name="description" content="Module 4 de la formation loom_v2 : tenir une conversation sur plusieurs runs, voir l&#x27;historique renvoyé au modèle, résumer une session longue, alléger l&#x27;historique, choisir où vit le journal, gérer les sessions (RGPD) et garder un state de session.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li class="ici"><a href="module-04.html" aria-current="page"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li class="ici"><a href="module-04.html" aria-current="page"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<h1>Module 4 : Conversations, mémoire et state</h1>
+<p class="chapeau">Jusqu'ici, chaque run repartait de zéro : l'agent oubliait tout entre deux questions. Ce module lui donne la mémoire d'une conversation. Vous verrez ce que loom renvoie au modèle d'un run à l'autre, comment il résume une conversation devenue trop longue, où il range ce journal (fichiers, SQLite, Postgres), comment on supprime les données d'un client, et comment l'agent garde en tête le devis dont on parle.</p>
+
+<dl class="fiche-agent">
+<dt>Agent</dt><dd><code>assistant</code>, dans le dossier <code>plomberie-dupont/</code></dd>
+<dt>Départ</dt><dd>la fin du <a href="module-03.html#bilan">module 3</a> : trois modèles, quatre outils, une variable de prompt</dd>
+<dt>Arrivée</dt><dd><span class="version">v0.4</span> : se souvient du chantier d'un run à l'autre et retient le devis en cours dans son state</dd>
+<dt>Fonctions</dt><dd><a class="fn" href="matrice.html#F1">F1</a><a class="fn" href="matrice.html#F2">F2</a><a class="fn" href="matrice.html#F3">F3</a><a class="fn" href="matrice.html#F4">F4</a><a class="fn" href="matrice.html#F5">F5</a><a class="fn" href="matrice.html#F7">F7</a><a class="fn" href="matrice.html#F8">F8</a></dd>
+</dl>
+
+<details class="depart"><summary>Point de départ : les fichiers au début du module</summary>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Bonjour
+          text: Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
+        - with_text: D-2026-042
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: D-2026-042
+          text: Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis</code></pre></figure>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la {{ entreprise }}, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.</code></pre></figure>
+<figure class="code"><figcaption>outils.py</figcaption>
+<pre><code>import struct
+import zlib
+
+from loom_ia.core.ports import ToolError
+from loom_ia.tools import Image, tool
+
+# Le carnet de devis de l'entreprise. Plus tard, ce sera une base de données ou un CRM.
+DEVIS = {
+    "D-2026-042": {
+        "client": "Mme Martin",
+        "email": "martin@example.fr",
+        "objet": "Remplacement du chauffe-eau",
+        "montant_ht": 1533.33,
+        "taux_tva": 20,
+        "montant_ttc": 1840.00,
+        "date": "2026-09-03",
+        "statut": "envoyé",
+    },
+    "D-2026-050": {
+        "client": "M. Bernard",
+        "email": "bernard@example.fr",
+        "objet": "Détartrage de la chaudière",
+        "montant_ht": 150.00,
+        "taux_tva": 10,
+        "montant_ttc": 165.00,
+        "date": "2026-09-20",
+        "statut": "accepté",
+    },
+}
+
+
+@tool
+def prix_ttc(montant_ht: float, taux_tva: float = 20.0) -&gt; dict[str, float]:
+    """Calcule la TVA et le montant TTC à partir d'un montant HT. Le taux est en pourcentage."""
+    tva = round(montant_ht * taux_tva / 100, 2)
+    return {"montant_ht": montant_ht, "tva": tva, "montant_ttc": round(montant_ht + tva, 2)}
+
+
+@tool
+def chercher_devis(numero: str) -&gt; dict[str, str | float]:
+    """Retrouve un devis par son numéro (par exemple D-2026-042) : client, objet, montants, date, statut."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}. Numéros connus : {', '.join(DEVIS)}")
+    return {"numero": numero, **devis}
+
+
+# Couleur de l'étiquette selon le statut du devis.
+COULEURS = {"envoyé": (230, 140, 30), "accepté": (40, 150, 80)}
+
+
+@tool
+def etiquette_devis(numero: str) -&gt; Image:
+    """Fabrique l'étiquette de couleur d'un devis (orange : envoyé, vert : accepté), en image PNG."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}.")
+    couleur = COULEURS.get(str(devis["statut"]), (120, 120, 120))
+    return Image(png_uni(160, 60, couleur), name=f"etiquette-{numero}.png")
+
+
+def png_uni(largeur: int, hauteur: int, rgb: tuple[int, int, int]) -&gt; bytes:
+    """Une image PNG d'une seule couleur, écrite sans bibliothèque d'image."""
+    ligne = b"\x00" + bytes(rgb) * largeur
+    brut = zlib.compress(ligne * hauteur)
+
+    def bloc(nature: bytes, donnees: bytes) -&gt; bytes:
+        crc = zlib.crc32(nature + donnees)
+        return struct.pack("&gt;I", len(donnees)) + nature + donnees + struct.pack("&gt;I", crc)
+
+    entete = struct.pack("&gt;IIBBBBB", largeur, hauteur, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + bloc(b"IHDR", entete) + bloc(b"IDAT", brut) + bloc(b"IEND", b"")</code></pre></figure>
+<figure class="code"><figcaption>.gitignore</figcaption>
+<pre><code>.env
+data/
+__pycache__/</code></pre></figure>
+<p>Le projet a les extras <code>anthropic</code> et <code>openai</code> (<code>pyproject.toml</code> : <code>"loom-ia[anthropic,openai]&gt;=2.0.11"</code>).</p>
+<p>Et <code>pyproject.toml</code>, écrit par uv, qui dit quels extras de loom-ia sont installés (pour repartir de ce point : <code>uv sync</code>) :</p>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+    "loom-ia[anthropic,openai]&gt;=2.0.11",
+]</code></pre></figure>
+</details>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-4-1">
+<h3><span class="exo-num">4.1</span> Deux questions, deux runs : l'agent oublie</h3>
+<p class="fns"><a class="fn" href="matrice.html#F1">F1</a></p>
+
+<h4>Pourquoi</h4>
+<p>Jean demande une relance pour le devis D-2026-042, puis, juste après : « Et quel était le montant ? ». Pour lui, c'est la même conversation. Pour loom, pour l'instant, ce sont deux runs sans rapport.</p>
+
+<h4>Mise en place</h4>
+<p>Pour ce module, remplacez le script du modèle simulé par celui-ci, et remettez <code>raw_exchanges</code>, vu au module 3 : il garde au journal chaque requête envoyée au modèle, et c'est elle qui montre ce que le modèle « se rappelle ».</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+<span class="aj">        - with_text: Relance le devis</span>          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+<span class="aj">        - with_text: Relance le devis</span><span class="aj">          text: "Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »"</span><span class="aj">        - with_text: quel était le montant</span><span class="aj">          text: Le devis D-2026-042 s'élève à 1 840 € TTC.</span>
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+<span class="aj">  capture: {raw_exchanges: true}</span>
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées ou modifiées</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Relance le devis D-2026-042"
+Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »
+
+Statut     : completed · itérations : 2 · tokens : 1574/148 · coût : 0.0000 $
+Run        : 01a16e05-9679-74dc-be0e-622355edd9b2
+<span class="p">$ </span>loom run assistant "Et quel était le montant ?"
+Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+Statut     : completed · itérations : 1 · tokens : 667/35 · coût : 0.0000 $
+Run        : 01a16e05-9c64-74a8-b1d8-51b93513ac50
+<span class="p">$ </span>ls data/default/
+01a16e05-9679-74dc-be0e-622355edd9b2.jsonl
+01a16e05-9c64-74a8-b1d8-51b93513ac50.jsonl</code></pre>
+<p>Deux runs, deux fichiers de journal : sans indication, chaque run est sa propre <strong>session</strong>, nommée comme le run. Regardez ce que le second run a envoyé au modèle. Deux commandes : la première extrait du journal la dernière requête envoyée (événement <code>model.exchanged</code>) et l'écrit dans <code>requete.json</code> ; la seconde liste ses messages, avec le rôle de chacun et le type de ses blocs.</p>
+<pre><code><span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/01a16e05-9c64-74a8-b1d8-51b93513ac50.jsonl | tail -1 &gt; requete.json
+<span class="p">$ </span>jq -r '.messages[] | "\(.role) : \([.blocks[].type] | join(", "))"' requete.json
+user : text</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>La requête ne contient qu'un message : la question. Rien de la relance demandée juste avant. Un vrai modèle ne pourrait pas savoir de quel devis on parle.</li>
+<li>Le modèle simulé répond quand même « 1 840 € TTC » : il récite son script, sans rien lire. C'est la requête, pas sa réponse, qui dit ce que le modèle a reçu.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-4-2">
+<h3><span class="exo-num">4.2</span> Une conversation : <code>--session</code></h3>
+<p class="fns"><a class="fn" href="matrice.html#F1">F1</a></p>
+
+<h4>Pourquoi</h4>
+<p>Pour que le second run reprenne la conversation, il faut dire à loom que les deux runs vont ensemble.</p>
+
+<h4>Exécution</h4>
+<p>L'option <code>--session</code>, vue au module 1 pour nommer un run, sert à cela : tous les runs qui portent le même nom de session écrivent dans le même journal, et chacun relit ce qui précède.</p>
+<pre><code><span class="p">$ </span>loom run assistant "Relance le devis D-2026-042" --session chantier-martin
+Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »
+
+Statut     : completed · itérations : 2 · tokens : 1574/148 · coût : 0.0000 $
+Run        : 01a16e05-a160-72fc-a843-bf076a2f3b56
+<span class="p">$ </span>loom run assistant "Et quel était le montant ?" --session chantier-martin
+Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+Statut     : completed · itérations : 1 · tokens : 1020/35 · coût : 0.0000 $
+Run        : 01a16e05-a6dc-7337-84ec-19c0b96b291c
+<span class="p">$ </span>ls data/default/
+01a16e05-9679-74dc-be0e-622355edd9b2.jsonl
+01a16e05-9c64-74a8-b1d8-51b93513ac50.jsonl
+chantier-martin.jsonl
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/chantier-martin.jsonl | tail -1 &gt; requete.json
+<span class="p">$ </span>jq -r '.messages[] | "\(.role) : \([.blocks[].type] | join(", "))"' requete.json
+user : text
+assistant : text, tool_call
+tool : tool_result
+assistant : text
+user : text</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Les deux runs sont dans un seul fichier, <code>chantier-martin.jsonl</code>.</li>
+<li>La requête du second run contient maintenant toute la conversation : la demande de relance (<code>user</code>), la réponse du modèle avec son appel d'outil (<code>assistant : text, tool_call</code>), le résultat de <code>chercher_devis</code> (<code>tool</code>), la relance rédigée, puis la nouvelle question. Un vrai modèle y trouve le devis et son montant.</li>
+<li>Les tokens d'entrée passent de 667 à 1 020 : se souvenir a un coût, puisque tout l'historique repart à chaque appel. L'exercice 4.4 montre comment loom le contient.</li>
+</ul>
+<div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
+<p>Avec <code>HAIKU</code> (<a href="module-01.html#vrai-modele">rappel</a>), faites la même chose sans <code>--session</code> : Claude répond qu'il ne sait pas de quel devis vous parlez. Avec <code>--session</code>, il retrouve 1 840 € TTC dans le résultat de l'outil. Le cache de prompt (module 3) prend ici tout son sens : l'historique déjà envoyé est relu depuis le cache.</p></div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-4-3">
+<h3><span class="exo-num">4.3</span> D'où vient l'historique : le journal</h3>
+<p class="fns"><a class="fn" href="matrice.html#F2">F2</a></p>
+
+<h4>Pourquoi</h4>
+<p>loom ne garde pas « la conversation » à part : il la reconstruit à partir du journal. Comprendre ce mécanisme explique la suite du module, et pourquoi un run peut reprendre après un plantage (module 8).</p>
+
+<h4>Exécution</h4>
+<p>Chaque ligne du journal est un <strong>événement</strong>, numéroté dans l'ordre (<code>seq</code>). Listons-les :</p>
+<pre><code><span class="p">$ </span>jq -r '"\(.seq) \(.type)"' data/default/chantier-martin.jsonl
+1 run.started
+2 message.user
+3 run.claimed
+4 step.started
+5 model.exchanged
+6 model.responded
+7 step.completed
+8 run.transitioned
+9 step.started
+10 tool.called
+11 tool.completed
+12 step.completed
+13 run.transitioned
+14 step.started
+15 model.exchanged
+16 model.responded
+17 step.completed
+18 run.transitioned
+19 run.completed
+20 run.started
+21 message.user
+22 run.claimed
+23 step.started
+24 model.exchanged
+25 model.responded
+26 step.completed
+27 run.transitioned
+28 run.completed</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Le premier run va de 1 (<code>run.started</code>) à 19 (<code>run.completed</code>), le second de 20 à 28. On y retrouve le message de l'utilisateur (<code>message.user</code>), chaque réponse du modèle (<code>model.responded</code>), l'appel et le résultat de l'outil (<code>tool.called</code>, <code>tool.completed</code>).</li>
+<li>Pour construire la requête d'un run, loom relit ces événements et en tire la liste de messages vue en 4.2. On dit que l'historique est une <strong>projection</strong> du journal. Il est structuré : un appel d'outil reste un appel d'outil, un résultat reste un résultat, rien n'est aplati en texte. Ce format est le même quel que soit le fournisseur ; l'adaptateur le traduit au moment de l'appel (module 3).</li>
+</ul>
+
+<h4>Les snapshots</h4>
+<p>Relire tout le journal à chaque run coûterait de plus en plus cher. loom écrit donc de temps en temps un <strong>snapshot</strong> : l'historique déjà calculé, rangé dans le journal. Le run suivant part du snapshot et ne relit que ce qui suit. Par défaut, un snapshot est écrit tous les 50 événements. Pour le voir apparaître, réglez ce seuil à 20, dans un nouveau bloc <code>sessions</code> :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Relance le devis
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance le devis
+          text: "Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »"
+        - with_text: quel était le montant
+          text: Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+  capture: {raw_exchanges: true}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont
+<span class="aj"> </span><span class="aj">sessions:</span><span class="aj">  snapshot_every: 20</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>sessions:</code></td><td>Les réglages de la vie d'une session : snapshots, résumés, images, state.</td></tr>
+<tr><td><code>snapshot_every: 20</code></td><td>Nombre d'événements après lequel un snapshot est écrit. Défaut : 50.</td></tr>
+</tbody>
+</table></div>
+<pre><code><span class="p">$ </span>loom run assistant "Et quel était le montant ?" --session chantier-martin
+Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+Statut     : completed · itérations : 1 · tokens : 1087/35 · coût : 0.0000 $
+Run        : 01a16e05-ac8d-7372-9a9c-1f4664226fe8
+<span class="p">$ </span>jq -r '"\(.seq) \(.type)"' data/default/chantier-martin.jsonl | tail -11
+28 run.completed
+29 run.started
+30 message.user
+31 run.claimed
+32 step.started
+33 model.exchanged
+34 model.responded
+35 step.completed
+36 run.transitioned
+37 run.completed
+38 session.snapshot
+<span class="p">$ </span>jq -c 'select(.type=="session.snapshot") | {seq, up_to_seq: .payload.up_to_seq, messages: (.payload.messages|length), tokens: .payload.tokens}' data/default/chantier-martin.jsonl
+{"seq":38,"up_to_seq":37,"messages":8,"tokens":485}</code></pre>
+<p>Le snapshot (événement 38) couvre les événements jusqu'au 37 : 8 messages, environ 485 tokens. C'est une simple accélération : sans lui, loom obtiendrait exactement le même historique, plus lentement.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-4-4">
+<h3><span class="exo-num">4.4</span> Résumer une conversation trop longue : la compaction</h3>
+<p class="fns"><a class="fn" href="matrice.html#F3">F3</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un chantier peut durer des semaines. À force, l'historique dépasserait la fenêtre du modèle (module 3), et chaque appel coûterait de plus en plus cher. La <strong>compaction</strong> remplace la partie ancienne de la conversation par un résumé, écrit par un modèle dédié, en général moins cher.</p>
+
+<h4>Mise en place</h4>
+<p>Le résumé est écrit par un modèle. Pour l'exercice, on déclare un second modèle simulé, <code>RESUME</code>, dont le script contient le résumé. On règle la compaction avec un seuil volontairement très bas, 300 tokens, pour la déclencher tout de suite :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Relance le devis
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance le devis
+          text: "Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »"
+        - with_text: quel était le montant
+          text: Le devis D-2026-042 s'élève à 1 840 € TTC.
+<span class="aj"> </span><span class="aj">  - id: RESUME</span><span class="aj">    sdk: fake</span><span class="aj">    model: fake-resume</span><span class="aj">    params:</span><span class="aj">      script:</span><span class="aj">        - text: "Jean Dupont a demandé une relance du devis D-2026-042 de Mme Martin (martin@example.fr) : remplacement du chauffe-eau, 1 533,33 € HT, TVA 20 %, 1 840 € TTC, envoyé le 3 septembre 2026, statut envoyé. L'agent a rédigé la relance, puis a rappelé que le montant est de 1 840 € TTC."</span>
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+  capture: {raw_exchanges: true}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont
+
+sessions:
+  snapshot_every: 20
+<span class="aj">  compaction:</span><span class="aj">    model: RESUME</span><span class="aj">    over_tokens: 300</span><span class="aj">    keep_last: 1</span><span class="aj">    blocking: true</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>- id: RESUME</code> …</td><td>Un second modèle simulé, qui ne sert qu'aux résumés. Son nom chez le « fournisseur », <code>fake-resume</code>, est libre.</td></tr>
+<tr><td><code>compaction:</code></td><td>Active la compaction. Sans ce bloc, une session n'est jamais résumée.</td></tr>
+<tr><td><code>model: RESUME</code></td><td>Le modèle qui écrit les résumés. En production, un modèle léger comme <code>HAIKU</code>.</td></tr>
+<tr><td><code>over_tokens: 300</code></td><td>Taille de l'historique (estimée : caractères divisés par 4) au-delà de laquelle un résumé est fait. Défaut : 12 000.</td></tr>
+<tr><td><code>keep_last: 1</code></td><td>Nombre de tours (de runs) les plus récents gardés intacts, sans résumé. Défaut : 6.</td></tr>
+<tr><td><code>blocking: true</code></td><td>Le résumé se fait à l'ouverture du run suivant, qui l'attend. Avec <code>false</code> (défaut), il se fait en tâche de fond après le run : bien pour un serveur, pas pour <code>loom run</code>, qui se ferme aussitôt.</td></tr>
+</tbody>
+</table></div>
+<p>loom monte pour cela un agent interne, <code>_compaction</code>, avec un prompt fourni (on peut le remplacer par <code>system_file</code>) :</p>
+<pre><code><span class="p">$ </span>loom validate | tail -5
+    assistant : modèle SIMULE, 4 outil(s) Python
+    _compaction : modèle RESUME, 0 outil(s) Python
+      politique loom.fidelity : on_output
+
+1 agent(s) monté(s) sans erreur.</code></pre>
+
+<h4>Exécution</h4>
+<p>La session <code>chantier-martin</code> dépasse déjà 300 tokens (485 selon le snapshot). Le run suivant déclenche donc un résumé :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Et quel était le montant ?" --session chantier-martin
+Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+Statut     : completed · itérations : 1 · tokens : 842/35 · coût : 0.0000 $
+Run        : 01a16e05-b5e6-75c0-b35b-dd5a7a202e13
+Compaction : 419 → 93 tokens estimés (jusqu'à l'événement 28, 1 tour(s) gardé(s), fidélité vérifiée)
+<span class="p">$ </span>jq -c 'select(.type=="session.compacted") | .payload | del(.summary)' data/default/chantier-martin.jsonl
+{"type":"session.compacted","up_to_seq":28,"kept":1,"tokens_before":419,"tokens_after":93,"cost_usd":0.0,"fidelity":"ok"}
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged" and .agent=="assistant") | .payload.request_body' data/default/chantier-martin.jsonl | tail -1 &gt; requete.json
+<span class="p">$ </span>jq -r '.messages[] | "\(.role) : \([.blocks[].type] | join(", "))"' requete.json
+user : text
+user : text
+assistant : text
+user : text
+<span class="p">$ </span>jq -r '.messages[0].blocks[0].text' requete.json
+[Résumé des échanges précédents de cette conversation.]
+
+Jean Dupont a demandé une relance du devis D-2026-042 de Mme Martin (martin@example.fr) : remplacement du chauffe-eau, 1 533,33 € HT, TVA 20 %, 1 840 € TTC, envoyé le 3 septembre 2026, statut envoyé. L'agent a rédigé la relance, puis a rappelé que le montant est de 1 840 € TTC.
+<span class="p">$ </span>loom sessions show chantier-martin
+Session    : chantier-martin · 59 événements · 2026-10-24 15:07
+Runs       :
+  01a16e05-a160-72fc-a843-bf076a2f3b56  assistant    completed         2 itération(s)  0.0000 $
+  01a16e05-a6dc-7337-84ec-19c0b96b291c  assistant    completed         1 itération(s)  0.0000 $
+  01a16e05-ac8d-7372-9a9c-1f4664226fe8  assistant    completed         1 itération(s)  0.0000 $
+  01a16e05-b630-705c-8ea8-43a90489df34  _compaction  completed         1 itération(s)  0.0000 $
+  01a16e05-b5e6-75c0-b35b-dd5a7a202e13  assistant    completed         1 itération(s)  0.0000 $
+En attente : rien</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>La ligne <code>Compaction</code> du bilan : l'historique ancien (jusqu'à l'événement 28, soit les deux premiers runs) est passé de 419 à 93 tokens estimés. Le dernier tour est gardé intact (<code>keep_last: 1</code>).</li>
+<li>La requête commence maintenant par le résumé, présenté comme tel au modèle, suivi du dernier tour gardé, puis de la nouvelle question.</li>
+<li>Rien n'est effacé : le journal garde tous les anciens événements. La compaction ajoute un marqueur, <code>session.compacted</code>, et l'historique repart du résumé pour tout ce qui précède.</li>
+<li><code>loom sessions show</code> (vu en 4.7) montre le run de l'agent <code>_compaction</code> au milieu de la session.</li>
+<li><strong>Le contrôle de fidélité</strong> : loom vérifie que les repères du passage résumé (numéros, montants, dates, adresses e-mail) se retrouvent dans le résumé. Ici, il est passé : <code>fidélité vérifiée</code>.</li>
+</ul>
+
+<div class="encadre piege"><p class="encadre-titre">Piège : un résumé qui perd les montants</p>
+<p>Remplacez le résumé de <code>RESUME</code> par un texte vague, deux fois (une pour le premier essai, une pour la réparation) :</p>
+<pre><code>        - text: "Jean Dupont a demandé une relance pour Mme Martin, et l'agent l'a rédigée."
+        - text: "Jean Dupont a demandé une relance pour Mme Martin, et l'agent l'a rédigée."</code></pre>
+<p>Sur une nouvelle session de trois runs, le résumé est refusé une première fois et renvoyé à son modèle, puis accepté avec une alerte :</p>
+<pre><code>Compaction : 352 → 42 tokens estimés (jusqu'à l'événement 19, 1 tour(s) gardé(s), fidélité douteuse)
+<span class="p">$ </span>jq -c 'select(.type=="guard.checked") | .payload | {outcome, resolution, attempt, reason}' data/default/essai-resume.jsonl
+{"outcome":"failed","resolution":"retry","attempt":1,"reason":"repères absents du résumé : D-2026-042, 2026, 042, martin@example.fr, 1533,33, 1840"}
+{"outcome":"failed","resolution":"unverified","attempt":2,"reason":"repères absents du résumé : D-2026-042, 2026, 042, martin@example.fr, 1533,33, 1840"}</code></pre>
+<p>Le résumé est gardé mais marqué <code>fidélité douteuse</code> : la suite de la conversation a perdu le numéro du devis et son montant. Avec un vrai modèle, gardez le contrôle activé (<code>fidelity_check: true</code>, la valeur par défaut) et surveillez ces alertes.</p></div>
+
+<p><strong>Avant la suite, retirez le modèle <code>RESUME</code> et le bloc <code>compaction</code></strong> : avec un seuil de 300 tokens, chaque conversation des exercices suivants serait résumée. Le fichier redevient celui de l'exercice 4.3.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-4-5">
+<h3><span class="exo-num">4.5</span> Ce qui est retiré de l'historique</h3>
+<p class="fns"><a class="fn" href="matrice.html#F4">F4</a></p>
+
+<h4>Pourquoi</h4>
+<p>Tout ne mérite pas d'être renvoyé à chaque appel. Deux choses sont allégées : le <strong>raisonnement</strong> du modèle (sa réflexion avant de répondre, que Claude produit avec le mode <em>thinking</em>) et les <strong>images</strong>, lourdes.</p>
+
+<h4>Mise en place</h4>
+<p>Repartez du fichier de l'exercice 4.3 et ajoutez une scène : Jean demande l'étiquette du devis (l'outil <code>etiquette_devis</code> du module 2 rend une image). La première réponse du modèle simulé porte un raisonnement, grâce à la clé <code>reasoning</code> :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Relance le devis
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance le devis
+          text: "Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »"
+<span class="aj">        - with_text: étiquette</span><span class="aj">          reasoning: Jean veut l'étiquette ; l'outil etiquette_devis la fabrique.</span><span class="aj">          text: Je fabrique l'étiquette.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: etiquette_devis</span><span class="aj">              arguments: {numero: D-2026-042}</span><span class="aj">        - with_text: étiquette</span><span class="aj">          text: Voici l'étiquette orange du devis D-2026-042 (envoyé).</span>        - with_text: quel était le montant
+          text: Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+  capture: {raw_exchanges: true}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont
+
+sessions:
+  snapshot_every: 20</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>reasoning: …</code></td><td>Pour le modèle simulé : un raisonnement joint à la réponse, comme celui d'un modèle qui « réfléchit ».</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution : le raisonnement</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Fais l'étiquette du devis D-2026-042" --session etiquette
+Voici l'étiquette orange du devis D-2026-042 (envoyé).
+
+Statut     : completed · itérations : 2 · tokens : 1717/143 · coût : 0.0000 $
+Run        : 01a16e05-cf3b-7729-905e-9fe907f3c910
+Fichier    : artifact://default/etiquette/5fa4ecaeaedb4bac4b6db229f776ceb9082d028bb4893725c394f00ace001a25.png (image/png, 224 octets)
+<span class="p">$ </span>loom run assistant "Et quel était le montant ?" --session etiquette
+Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+Statut     : completed · itérations : 1 · tokens : 1003/35 · coût : 0.0000 $
+Run        : 01a16e05-d4dc-703e-a3c5-c303251b05c6</code></pre>
+<p>Comparez deux requêtes : la deuxième du premier run (après l'outil), puis celle du second run.</p>
+<pre><code><span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/etiquette.jsonl | sed -n 2p &gt; requete.json
+<span class="p">$ </span>jq -r '.messages[] | "\(.role) : \([.blocks[].type] | join(", "))"' requete.json
+user : text
+assistant : reasoning, text, tool_call
+tool : tool_result
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/etiquette.jsonl | tail -1 &gt; requete.json
+<span class="p">$ </span>jq -r '.messages[] | "\(.role) : \([.blocks[].type] | join(", "))"' requete.json
+user : text
+assistant : text, tool_call
+tool : tool_result
+assistant : text
+user : text</code></pre>
+<p>Pendant le premier run, le raisonnement est renvoyé au modèle, qui en a besoin pour enchaîner après l'outil. Au run suivant, il a disparu de l'historique : il a servi, il ne sert plus. Le journal, lui, le garde.</p>
+
+<h4>Exécution : les images</h4>
+<p>Le modèle simulé ne « voit » pas les images : il ne reçoit qu'une mention. Pour observer ce que deviennent les images, déclarez-le capable de vision, le temps de l'exercice :</p>
+<figure class="code"><figcaption>loom.yaml (début du fichier ; la suite ne change pas)</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+<span class="aj">    capabilities: {vision: true}</span>    params:
+      script:
+        …</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<p> <code>capabilities</code> décrit ce que sait faire un modèle (module 3) ; <code>vision: true</code> dit qu'il reçoit les images.</p>
+<pre><code><span class="p">$ </span>loom run assistant "Fais l'étiquette du devis D-2026-042" --session etiquette-vision
+Voici l'étiquette orange du devis D-2026-042 (envoyé).
+
+Statut     : completed · itérations : 2 · tokens : 1860/143 · coût : 0.0000 $
+Run        : 01a16e05-da44-716b-906e-28954aac5ca8
+Fichier    : artifact://default/etiquette-vision/5fa4ecaeaedb4bac4b6db229f776ceb9082d028bb4893725c394f00ace001a25.png (image/png, 224 octets)
+<span class="p">$ </span>loom run assistant "Et quel était le montant ?" --session etiquette-vision
+Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+Statut     : completed · itérations : 1 · tokens : 1146/35 · coût : 0.0000 $
+Run        : 01a16e05-dfbd-7173-aa18-28b4f1daa482
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/etiquette-vision.jsonl | tail -1 &gt; requete.json
+<span class="p">$ </span>jq -r '.messages[] | "\(.role) : \([.blocks[].type] | join(", "))"' requete.json
+user : text
+assistant : text, tool_call
+tool : tool_result
+user : text, inline_data
+assistant : text
+user : text</code></pre>
+<p>Au second run, l'image du premier run est renvoyée (<code>inline_data</code> : les octets de l'image). C'est le réglage par défaut : un modèle capable de vision revoit toutes les images de la session à chaque appel. Pratique s'il doit y revenir, coûteux sinon. Le réglage <code>media</code> change cela :</p>
+<figure class="code"><figcaption>loom.yaml (fin du fichier ; le début ne change pas)</figcaption>
+<pre><code>sessions:
+  snapshot_every: 20
+<span class="aj">  media: {keep_images: last_run}</span></code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>media: {keep_images: last_run}</code></td><td>Les images des runs précédents sont remplacées par une note ; seules celles du run en cours partent. Défaut : <code>all</code>.</td></tr>
+</tbody>
+</table></div>
+<pre><code><span class="p">$ </span>loom run assistant "Fais l'étiquette du devis D-2026-042" --session etiquette-allegee
+Voici l'étiquette orange du devis D-2026-042 (envoyé).
+
+Statut     : completed · itérations : 2 · tokens : 1860/143 · coût : 0.0000 $
+Run        : 01a16e05-e5cd-7022-add0-091f6af49b07
+Fichier    : artifact://default/etiquette-allegee/5fa4ecaeaedb4bac4b6db229f776ceb9082d028bb4893725c394f00ace001a25.png (image/png, 224 octets)
+<span class="p">$ </span>loom run assistant "Et quel était le montant ?" --session etiquette-allegee
+Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+Statut     : completed · itérations : 1 · tokens : 1049/35 · coût : 0.0000 $
+Run        : 01a16e05-ea77-7598-91fb-521056786e96
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/etiquette-allegee.jsonl | tail -1 &gt; requete.json
+<span class="p">$ </span>jq -r '.messages[] | "\(.role) : \([.blocks[].type] | join(", "))"' requete.json
+user : text
+assistant : text, tool_call
+tool : tool_result
+assistant : text
+user : text
+<span class="p">$ </span>jq -r '.messages[2].blocks[0].output.blocks[0].text' requete.json
+[Note du système : ce résultat contenait l'image etiquette-D-2026-042.png (image/png, 224 octets). Elle a été retirée de l'historique après ce tour pour alléger les requêtes ; si tu l'as décrite à ce tour-là, ta description venait de l'image elle-même et reste valable.]</code></pre>
+<p>Plus d'image dans la requête, mais une note qui dit au modèle ce qu'il y avait. Dans le journal, enfin, une image n'est jamais copiée : il ne garde qu'une référence vers le fichier, rangé à part (module 2) :</p>
+<pre><code><span class="p">$ </span>jq -c 'select(.type=="tool.completed") | .payload.output.blocks' data/default/etiquette-allegee.jsonl
+[{"cache_breakpoint":false,"provider_meta":{},"type":"artifact","uri":"artifact://default/etiquette-allegee/5fa4ecaeaedb4bac4b6db229f776ceb9082d028bb4893725c394f00ace001a25.png","media_type":"image/png","size":224,"name":"etiquette-D-2026-042.png"}]</code></pre>
+
+<h4>À retenir</h4>
+<p>Retirez <code>capabilities: {vision: true}</code> et la ligne <code>media</code> : le fichier redevient celui du début de l'exercice. Le module 6 donnera à l'agent un vrai rôle capable de vision.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-4-6">
+<h3><span class="exo-num">4.6</span> Où vit le journal : mémoire, fichiers, SQLite, Postgres</h3>
+<p class="fns"><a class="fn" href="matrice.html#F5">F5</a></p>
+
+<h4>Pourquoi</h4>
+<p>Le journal est la mémoire de l'agent : conversations, résultats, coûts. Des fichiers JSONL suffisent sur un poste. Pour un service, on veut une base de données. loom en propose quatre, sans rien changer aux agents : c'est le rôle de <code>storage.events</code>.</p>
+<div class="tableau"><table>
+<thead><tr><th>backend</th><th>Où</th><th>Pour quoi</th></tr></thead>
+<tbody>
+<tr><td><code>memory</code></td><td>en mémoire, perdu à la fin de la commande</td><td>tests, scripts jetables (c'est le défaut sans <code>storage</code>)</td></tr>
+<tr><td><code>jsonl</code></td><td>un fichier par session dans un dossier</td><td>un poste, un petit service</td></tr>
+<tr><td><code>sqlite</code></td><td>une base SQLite, un seul fichier</td><td>un service sur une seule machine</td></tr>
+<tr><td><code>postgres</code></td><td>un serveur PostgreSQL</td><td>un service avec plusieurs process ou plusieurs machines</td></tr>
+</tbody>
+</table></div>
+
+<h4>Le journal en mémoire</h4>
+<p>Changez temporairement la ligne <code>events</code> :</p>
+<figure class="code"><figcaption>loom.yaml (bloc storage)</figcaption>
+<pre><code>storage:
+<span class="aj">  events: {backend: memory}</span></code></pre></figure>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Journal|Artefacts'
+Journal    : memory
+Artefacts  : memory
+<span class="p">$ </span>loom run assistant "Et quel était le montant ?" --session en-memoire
+Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+Statut     : completed · itérations : 1 · tokens : 742/35 · coût : 0.0000 $
+Run        : 01a16e05-f497-76d1-85be-011a28b3b6f5
+<span class="p">$ </span>loom sessions list
+Journal en mémoire : il ne vit que le temps d'un process ; cette commande ne voit pas les runs des autres commandes loom.
+Aucune session.</code></pre>
+<p>Le run a tourné, mais <code>loom sessions list</code> (une autre commande, donc un autre process) ne le voit pas : le journal en mémoire est mort avec la commande <code>loom run</code>. loom le dit en tête de sortie.</p>
+
+<h4>Retour aux fichiers JSONL</h4>
+<p>Remettez <code>events: {backend: jsonl, path: data}</code> : toutes les sessions des exercices précédents réapparaissent.</p>
+<pre><code><span class="p">$ </span>loom sessions list
+etiquette-allegee            30 événements   2026-10-24 15:07
+etiquette-vision             30 événements   2026-10-24 15:07
+etiquette                    30 événements   2026-10-24 15:07
+essai-resume                 57 événements   2026-10-24 15:07
+chantier-martin              59 événements   2026-10-24 15:07
+01a16e05-9c64-74a8-b1d8-51b93513ac50      9 événements   2026-10-24 15:07
+01a16e05-9679-74dc-be0e-622355edd9b2     19 événements   2026-10-24 15:07</code></pre>
+
+<h4>SQLite</h4>
+<figure class="code"><figcaption>loom.yaml (bloc storage)</figcaption>
+<pre><code>storage:
+<span class="aj">  events: {backend: sqlite, path: data/journal.db}</span></code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>backend: sqlite</code></td><td>Le journal dans une base SQLite.</td></tr>
+<tr><td><code>path: data/journal.db</code></td><td>Le fichier de la base, créé au premier run.</td></tr>
+</tbody>
+</table></div>
+<pre><code><span class="p">$ </span>loom validate | tail -1
+Configuration : Journal 'sqlite' : le paquet 'aiosqlite' n'est pas installé (installer l'extra : loom-ia[sqlite])</code></pre>
+<p>SQLite demande un paquet en plus, l'extra <code>sqlite</code>. Comme au module 3, redonnez la liste complète des extras à <code>uv add</code>, pour ne perdre aucun de ceux déjà installés :</p>
+<pre><code><span class="p">$ </span>uv add "loom-ia[anthropic,openai,sqlite]"
+…
+ + aiosqlite==0.22.1
+<span class="p">$ </span>loom validate | grep -E 'Journal|Artefacts'
+Journal    : sqlite (/home/jean/plomberie-dupont/data/journal.db)
+Artefacts  : local (/home/jean/plomberie-dupont/data/.artifacts)
+<span class="p">$ </span>loom run assistant "Relance le devis D-2026-042" --session base-sqlite
+Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »
+
+Statut     : completed · itérations : 2 · tokens : 1725/148 · coût : 0.0000 $
+Run        : 01a16e06-0ac8-774c-a003-ac1073cfe184
+<span class="p">$ </span>loom sessions list
+base-sqlite                  19 événements   2026-10-24 15:07
+<span class="p">$ </span>ls data
+default
+journal.db</code></pre>
+<p>Une nouvelle base, donc une seule session : celles des fichiers JSONL ne sont pas recopiées. Les fichiers (les images, par exemple) restent rangés dans <code>data/.artifacts</code>, à côté de la base.</p>
+
+<h4>PostgreSQL</h4>
+<p>Il faut un serveur PostgreSQL. Le plus simple, sur votre poste, est un conteneur Docker :</p>
+<pre><code><span class="p">$ </span>docker run -d --name loom-pg -e POSTGRES_PASSWORD=admin -p 15432:5432 postgres:16</code></pre>
+<p>Créez ensuite un utilisateur et une base pour loom (l'outil <code>psql</code> est le client en ligne de commande de PostgreSQL) :</p>
+<pre><code><span class="p">$ </span>psql -h 127.0.0.1 -p 15432 -U postgres -c "create role loom_login login createrole password 'mot-de-passe'" -c "create database loom owner loom_login"
+CREATE ROLE
+CREATE DATABASE</code></pre>
+<p>L'utilisateur <code>loom_login</code> a le droit de créer des rôles (<code>createrole</code>) : au premier run, loom préparera lui-même sa table et le rôle sous lequel il travaille. Le module 12 montre comment confier cette préparation à un administrateur et isoler les clients en base.</p>
+<p>Dans la configuration, l'adresse de connexion (le <strong>DSN</strong>) contient un mot de passe : c'est un secret. Comme la clé d'API, on n'écrit que le nom de la variable qui la contient :</p>
+<figure class="code"><figcaption>loom.yaml (bloc storage)</figcaption>
+<pre><code>storage:
+<span class="aj">  events: {backend: postgres, dsn_env: LOOM_DSN}</span><span class="aj">  artifacts: {backend: local, path: data/fichiers}</span></code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>backend: postgres</code></td><td>Le journal dans PostgreSQL.</td></tr>
+<tr><td><code>dsn_env: LOOM_DSN</code></td><td>La variable d'environnement qui contient l'adresse de connexion.</td></tr>
+<tr><td><code>artifacts:</code></td><td>Où ranger les fichiers (images, gros résultats). Avec SQLite ou JSONL, ils vont par défaut à côté du journal ; avec Postgres, il faut le dire.</td></tr>
+<tr><td><code>{backend: local, path: data/fichiers}</code></td><td>Dans un dossier local, <code>data/fichiers</code>.</td></tr>
+</tbody>
+</table></div>
+<figure class="code"><figcaption>.env</figcaption>
+<pre><code>LOOM_DSN=postgresql://loom_login:mot-de-passe@127.0.0.1:15432/loom</code></pre></figure>
+<pre><code><span class="p">$ </span>loom validate | tail -1
+Configuration : Journal 'postgres' : le paquet 'asyncpg' n'est pas installé (installer l'extra : loom-ia[postgres])
+<span class="p">$ </span>uv add "loom-ia[anthropic,openai,sqlite,postgres]"
+…
+<span class="p">$ </span>loom validate | grep -E 'Env|Journal|Artefacts|monté'
+Env        : /home/jean/plomberie-dupont/.env (par défaut) — lues : LOOM_DSN
+Journal    : postgres (DSN dans LOOM_DSN : renseignée, rôle : loom_app)
+Artefacts  : local (/home/jean/plomberie-dupont/data/fichiers)
+1 agent(s) monté(s) sans erreur.
+<span class="p">$ </span>loom run assistant "Relance le devis D-2026-042" --session base-postgres
+Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »
+
+Statut     : completed · itérations : 2 · tokens : 1725/148 · coût : 0.0000 $
+Run        : 01a16e06-2055-7199-b33f-55136d42de19
+<span class="p">$ </span>loom sessions list
+base-postgres                19 événements   2026-10-24 15:07</code></pre>
+<p>Dans la base, loom a créé deux tables : <code>loom_events</code>, le journal, et <code>loom_schema</code>, qui note la version de son schéma. Il travaille sous un rôle sans connexion directe, <code>loom_app</code>, créé au passage :</p>
+<pre><code><span class="p">$ </span>psql -h 127.0.0.1 -p 15432 -U postgres loom -c '\dt' -c 'select session_id, count(*) from loom_events group by session_id' -c '\du'
+             List of relations
+ Schema |    Name     | Type  |   Owner    
+--------+-------------+-------+------------
+ public | loom_events | table | loom_login
+ public | loom_schema | table | loom_login
+(2 rows)
+
+  session_id   | count 
+---------------+-------
+ base-postgres |    19
+(1 row)
+
+                              List of roles
+ Role name  |                         Attributes                         
+------------+------------------------------------------------------------
+ loom_app   | Cannot login
+ loom_login | Create role
+ postgres   | Superuser, Create role, Create DB, Replication, Bypass RLS</code></pre>
+<p>Pour voir ce que loom pose dans la base, sans rien exécuter, <code>loom storage sql</code> imprime le SQL complet (table, index, rôle, politiques). On le remet à un administrateur quand l'utilisateur de loom n'a pas le droit de créer des rôles :</p>
+<pre><code><span class="p">$ </span>loom storage sql | head -12
+DO $$ BEGIN
+    CREATE ROLE loom_app NOLOGIN;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+GRANT loom_app TO CURRENT_USER;
+CREATE TABLE IF NOT EXISTS loom_events (
+    tenant_id   text        NOT NULL,
+    session_id  text        NOT NULL,
+    seq         bigint      NOT NULL,
+    event_id    text        NOT NULL,
+    ts          timestamptz NOT NULL,
+    run_id      text        NOT NULL,
+…</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li>Changer de backend ne change rien aux agents : seule la ligne <code>storage.events</code> change. Mais les données ne sont pas migrées d'un backend à l'autre.</li>
+<li>Pour la suite de la formation, <strong>revenez au JSONL</strong> : remettez <code>events: {backend: jsonl, path: data}</code>, retirez la ligne <code>artifacts</code> et supprimez le fichier <code>.env</code> qui ne contenait que <code>LOOM_DSN</code> (gardez-y votre clé d'Anthropic si vous en avez une). Les extras <code>sqlite</code> et <code>postgres</code> peuvent rester installés.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-4-7">
+<h3><span class="exo-num">4.7</span> Lister, exporter, supprimer une session</h3>
+<p class="fns"><a class="fn" href="matrice.html#F7">F7</a></p>
+
+<h4>Pourquoi</h4>
+<p>Le journal contient des données personnelles : noms, adresses e-mail, montants. Le RGPD donne à chacun le droit d'obtenir une copie de ses données et d'en demander l'effacement. Mme Martin pourrait le demander à Jean. La commande <code>loom sessions</code> regroupe ce qu'il faut.</p>
+
+<h4>Exécution</h4>
+<p><code>list</code> montre les sessions, la plus récente d'abord ; <code>show</code> la fiche d'une session, avec ses runs :</p>
+<pre><code><span class="p">$ </span>loom sessions list
+etiquette-allegee            30 événements   2026-10-24 15:07
+etiquette-vision             30 événements   2026-10-24 15:07
+etiquette                    30 événements   2026-10-24 15:07
+essai-resume                 57 événements   2026-10-24 15:07
+chantier-martin              59 événements   2026-10-24 15:07
+01a16e05-9c64-74a8-b1d8-51b93513ac50      9 événements   2026-10-24 15:07
+01a16e05-9679-74dc-be0e-622355edd9b2     19 événements   2026-10-24 15:07
+<span class="p">$ </span>loom sessions show chantier-martin
+Session    : chantier-martin · 59 événements · 2026-10-24 15:07
+Runs       :
+  01a16e05-a160-72fc-a843-bf076a2f3b56  assistant    completed         2 itération(s)  0.0000 $
+  01a16e05-a6dc-7337-84ec-19c0b96b291c  assistant    completed         1 itération(s)  0.0000 $
+  01a16e05-ac8d-7372-9a9c-1f4664226fe8  assistant    completed         1 itération(s)  0.0000 $
+  01a16e05-b630-705c-8ea8-43a90489df34  _compaction  completed         1 itération(s)  0.0000 $
+  01a16e05-b5e6-75c0-b35b-dd5a7a202e13  assistant    completed         1 itération(s)  0.0000 $
+En attente : rien</code></pre>
+<p><code>export</code> écrit tous les événements d'une session dans un fichier JSONL : c'est la copie à remettre. <code>files</code> liste les fichiers d'une session (avec <code>--out DOSSIER</code>, il les écrit sous leur vrai nom) :</p>
+<pre><code><span class="p">$ </span>loom sessions export chantier-martin --out chantier-martin.jsonl
+59 événements écrits dans chantier-martin.jsonl
+<span class="p">$ </span>loom sessions files etiquette
+etiquette-D-2026-042.png  (image/png, 224 octets, tool_output, outil etiquette_devis)  5fa4ecaeaedb4bac4b6db229f776ceb9082d028bb4893725c394f00ace001a25.png</code></pre>
+<p><code>delete</code> supprime une session entière : son journal, ses fichiers et ses clés d'idempotence (module 8). Il demande confirmation ; seule la réponse <code>o</code> supprime :</p>
+<pre><code><span class="p">$ </span>loom sessions delete etiquette
+Supprimer définitivement la session etiquette (journal, fichiers et clés d'idempotence) ? [o/N] Rien n'a été supprimé. <span class="c">(réponse : n, ou Entrée)</span>
+<span class="p">$ </span>echo $?
+2
+<span class="p">$ </span>loom sessions delete etiquette
+Supprimer définitivement la session etiquette (journal, fichiers et clés d'idempotence) ? [o/N] Session etiquette supprimée : 30 événement(s), 1 fichier(s), 0 clé(s). <span class="c">(réponse : o)</span>
+<span class="p">$ </span>loom sessions show etiquette
+Session etiquette inconnue</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li>La suppression est définitive. Dans un script, <code>--yes</code> évite la question.</li>
+<li>Toutes ces commandes acceptent <code>--tenant</code> pour agir au nom d'un autre client (module 12). La même gestion existe en Python et en REST (module 10).</li>
+<li>Pour effacer automatiquement les sessions dormantes depuis longtemps, il y a <code>loom retention</code> (module 12).</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-4-8">
+<h3><span class="exo-num">4.8</span> Le state de session : ce que l'agent doit garder en tête</h3>
+<p class="fns"><a class="fn" href="matrice.html#F8">F8</a></p>
+
+<h4>Pourquoi</h4>
+<p>Jean demande une relance du devis D-2026-042, puis : « Refais-la, plus ferme. » La seconde demande ne cite plus aucun devis. L'historique le contient, mais un résumé (4.4) pourrait le perdre, et rien n'oblige le modèle à le retrouver. Le <strong>state</strong> de session règle cela : quelques valeurs typées, déclarées clé par clé, que la session garde d'un run à l'autre et que la compaction ne touche pas.</p>
+
+<h4>Mise en place</h4>
+<p>Le state se déclare dans le fichier de l'agent. Deux clés : le devis en cours, posé automatiquement par l'outil <code>chercher_devis</code>, et le ton des relances, choisi par Jean. On demande aussi que l'orchestrateur reçoive ce state :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+<span class="aj">  context: [session_state]</span>
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+<span class="aj"> </span><span class="aj">state:</span><span class="aj">  devis_courant:</span><span class="aj">    schema: {type: string}</span><span class="aj">    description: Numéro du devis dont parle la conversation</span><span class="aj">    from:</span><span class="aj">      - tool: chercher_devis</span><span class="aj">        path: /numero</span><span class="aj">  ton:</span><span class="aj">    schema: {enum: [cordial, ferme]}</span><span class="aj">    description: Ton des relances</span><span class="aj">    default: cordial</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>context: [session_state]</code></td><td>Le contexte donné à l'orchestrateur en plus de la conversation : ici, le state de la session.</td></tr>
+<tr><td><code>state:</code></td><td>Les clés du state. Une clé non déclarée est refusée.</td></tr>
+<tr><td><code>devis_courant:</code></td><td>Le nom de la clé (lettres, chiffres, <code>_</code>).</td></tr>
+<tr><td><code>schema: {type: string}</code></td><td>La forme de la valeur, en JSON Schema : ici, du texte. Une valeur qui ne la respecte pas est refusée.</td></tr>
+<tr><td><code>description:</code></td><td>Ce que désigne la clé ; le modèle la reçoit avec la valeur.</td></tr>
+<tr><td><code>from:</code></td><td>Les outils dont un résultat réussi pose la clé.</td></tr>
+<tr><td><code>- tool: chercher_devis</code></td><td>L'outil.</td></tr>
+<tr><td><code>path: /numero</code></td><td>Où prendre la valeur dans le résultat (un pointeur JSON : <code>/numero</code> est le champ <code>numero</code>). Si le champ manque, l'écriture est refusée et le modèle le sait (<code>on_missing: refuse</code>, par défaut ; <code>ignore</code> pour ne rien faire).</td></tr>
+<tr><td><code>schema: {enum: [cordial, ferme]}</code></td><td>Une valeur parmi une liste.</td></tr>
+<tr><td><code>default: cordial</code></td><td>La valeur lue tant que personne n'en a posé. Elle n'est jamais écrite dans le state.</td></tr>
+</tbody>
+</table></div>
+<p>Il existe aussi <code>required: true</code> : le run est refusé tant que la clé n'a pas de valeur (utile pour une signature que l'application doit fournir). Une valeur fait au plus 1 Kio, et tout le state 4 Kio (réglables par <code>sessions.state.max_value_bytes</code> et <code>max_total_bytes</code>) : le state reste petit, car il part avec chaque appel.</p>
+<p>Ajoutez au script du modèle simulé la réponse à « Refais-la » :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Relance le devis
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance le devis
+          text: "Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »"
+        - with_text: étiquette
+          reasoning: Jean veut l'étiquette ; l'outil etiquette_devis la fabrique.
+          text: Je fabrique l'étiquette.
+          tool_calls:
+            - name: etiquette_devis
+              arguments: {numero: D-2026-042}
+        - with_text: étiquette
+          text: Voici l'étiquette orange du devis D-2026-042 (envoyé).
+<span class="aj">        - with_text: Refais-la</span><span class="aj">          text: "Voici une relance plus ferme pour le devis D-2026-042 : « Madame, sans réponse de votre part à notre devis du 3 septembre 2026, nous vous remercions de nous indiquer sous huit jours si vous souhaitez le remplacement de votre chauffe-eau. »"</span>        - with_text: quel était le montant
+          text: Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+  capture: {raw_exchanges: true}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont
+
+sessions:
+  snapshot_every: 20</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Relance le devis D-2026-042" --session relance-martin
+Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »
+
+Statut     : completed · itérations : 2 · tokens : 2120/148 · coût : 0.0000 $
+Run        : 01a16e06-56f3-777d-a038-13c9e88bd159
+<span class="p">$ </span>loom state relance-martin
+{
+  "devis_courant": "D-2026-042"
+}</code></pre>
+<p><code>loom state</code> affiche le state d'une session : <code>devis_courant</code> a été posé par le résultat de <code>chercher_devis</code>. <code>ton</code> n'y est pas : sa valeur par défaut est lue, jamais écrite. Pour la seconde demande, Jean choisit le ton avec l'option <code>--state CLE=VALEUR</code> :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Refais-la, plus ferme" --session relance-martin --state ton=ferme
+Voici une relance plus ferme pour le devis D-2026-042 : « Madame, sans réponse de votre part à notre devis du 3 septembre 2026, nous vous remercions de nous indiquer sous huit jours si vous souhaitez le remplacement de votre chauffe-eau. »
+
+Statut     : completed · itérations : 1 · tokens : 1296/85 · coût : 0.0000 $
+Run        : 01a16e06-5fb4-708d-8857-58d082ec8f95
+<span class="p">$ </span>loom state relance-martin
+{
+  "devis_courant": "D-2026-042",
+  "ton": "ferme"
+}</code></pre>
+<p>Voici ce que l'orchestrateur a reçu, à la fin de la dernière requête :</p>
+<pre><code><span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/relance-martin.jsonl | tail -1 &gt; requete.json
+<span class="p">$ </span>jq -r '.messages[-1].blocks[-1].text' requete.json
+&lt;session_state&gt;
+{"devis_courant":"D-2026-042","ton":"ferme"}
+&lt;/session_state&gt;</code></pre>
+<p>loom refuse ce qui ne respecte pas la déclaration, avant d'ouvrir le run (code 2) :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Bonjour" --session relance-martin --state client=Martin
+Demande refusée : State refusé : client : clé non déclarée dans 'state'
+<span class="p">$ </span>loom run assistant "Bonjour" --session relance-martin --state ton=agressif
+Demande refusée : State refusé : ton : ne suit pas son schéma — doit valoir l'une des valeurs ['cordial', 'ferme']</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Le state est ajouté à la fin du dernier message de la requête, à chaque appel. Placé là, il peut changer sans invalider le cache de l'historique qui le précède.</li>
+<li>Il est mis à jour pendant le run : la première requête du premier run ne contenait que <code>{"ton":"cordial"}</code> ; la deuxième, après l'appel à <code>chercher_devis</code>, contenait déjà <code>"devis_courant":"D-2026-042"</code>.</li>
+<li>Chaque écriture est dans le journal : dans le résultat de l'outil (<code>tool.completed</code>) et dans l'ouverture du run pour <code>--state</code>. Une reprise ou un rejeu retrouve donc le même state.</li>
+</ul>
+<div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
+<p>Avec <code>HAIKU</code>, la seconde demande « Refais-la, plus ferme » suffit : Claude lit dans le state le devis en cours et le ton demandé, même si la conversation a été résumée entre-temps.</p></div>
+</section>
+
+<h2 id="bilan">Bilan du module</h2>
+<p>L'agent est en <strong>v0.4</strong> : il tient une conversation et garde le devis en cours dans son state. Pour la suite, on ne garde que ce qui sert : le journal JSONL, le state et son contexte. La compaction, les snapshots fréquents et <code>raw_exchanges</code> étaient des réglages d'exercice : on les retire. En production, activez la compaction avec un modèle léger, par exemple <code>model: HAIKU</code> et les seuils par défaut.</p>
+<figure class="code"><figcaption>plomberie-dupont/</figcaption>
+<pre><code>plomberie-dupont/
+├── loom.yaml            trois modèles, journal JSONL
+├── outils.py            prix_ttc, chercher_devis, etiquette_devis
+├── agents/
+│   └── assistant.yaml   l'agent, son state (devis_courant, ton)
+├── prompts/
+│   └── system.md
+└── data/                le journal des sessions</code></pre></figure>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Relance le devis
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance le devis
+          text: "Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »"
+        - with_text: étiquette
+          reasoning: Jean veut l'étiquette ; l'outil etiquette_devis la fabrique.
+          text: Je fabrique l'étiquette.
+          tool_calls:
+            - name: etiquette_devis
+              arguments: {numero: D-2026-042}
+        - with_text: étiquette
+          text: Voici l'étiquette orange du devis D-2026-042 (envoyé).
+        - with_text: Refais-la
+          text: "Voici une relance plus ferme pour le devis D-2026-042 : « Madame, sans réponse de votre part à notre devis du 3 septembre 2026, nous vous remercions de nous indiquer sous huit jours si vous souhaitez le remplacement de votre chauffe-eau. »"
+        - with_text: quel était le montant
+          text: Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p>(les lignes <code>raw_exchanges</code> et le bloc <code>sessions</code> sont retirées par rapport à l'exercice 4.8)</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p><code>prompts/system.md</code> et <code>outils.py</code> n'ont pas changé. Le paquet a maintenant les extras <code>anthropic</code>, <code>openai</code>, <code>postgres</code> et <code>sqlite</code>. Vous pouvez supprimer <code>requete.json</code> et <code>chantier-martin.jsonl</code>, fichiers d'exercice.</p>
+<p>Au module 5, l'agent utilisera des outils qui ne sont pas écrits en Python dans le projet : ceux d'un serveur MCP, dont une mémoire qui dure au-delà d'une conversation.</p>
+
+<nav class="suite" aria-label="Pages voisines"><a class="avant" href="module-03.html"><small>Précédent</small>Module 3 : Modèles et configuration</a><a class="apres" href="module-05.html"><small>Suivant</small>Module 5 : Outils MCP et mémoire long terme</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>

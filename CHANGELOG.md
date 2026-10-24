@@ -2,7 +2,7 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.11 - non publiée
+## 2.0.12 - non publiée
 
 ## 2.0.10 - publiée
 

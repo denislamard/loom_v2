@@ -1,0 +1,1877 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 10 : Ouvrir l&#x27;agent : Python, REST, MCP · loom_v2</title>
+<meta name="description" content="Module 10 de la formation loom_v2 : piloter l&#x27;agent depuis un script Python, suivre ses runs en direct, le construire sans fichier, l&#x27;ouvrir en API REST protégée par des clés, le publier comme serveur MCP pour Claude, recharger le serveur en développement et mesurer sa latence.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li class="ici"><a href="module-10.html" aria-current="page"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li class="ici"><a href="module-10.html" aria-current="page"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<h1>Module 10 : Ouvrir l'agent : Python, REST, MCP</h1>
+<p class="chapeau">Jusqu'ici, Jean parlait à son assistant depuis un terminal. Mais il veut l'utiliser depuis son téléphone, et le brancher sur Claude. Dans ce module, l'agent sort du terminal : un script Python le pilote, une API web le sert à une application, un serveur MCP en fait un outil pour Claude.</p>
+
+<dl class="fiche-agent">
+<dt>Agent</dt><dd><code>assistant</code>, dans le dossier <code>plomberie-dupont/</code></dd>
+<dt>Départ</dt><dd>la fin du <a href="module-09.html#bilan">module 9</a> : l'agent relance après accord, tient malgré les pannes, sous budget</dd>
+<dt>Arrivée</dt><dd><span class="version">v1.0</span> : l'agent est appelé par un script, par une application (API REST protégée par une clé) ou par Claude (serveur MCP)</dd>
+<dt>Fonctions</dt><dd><a class="fn" href="matrice.html#N1">N1</a><a class="fn" href="matrice.html#B8">B8</a><a class="fn" href="matrice.html#I1">I1</a><a class="fn" href="matrice.html#H5">H5</a><a class="fn" href="matrice.html#A8">A8</a><a class="fn" href="matrice.html#M2">M2</a><a class="fn" href="matrice.html#N2">N2</a><a class="fn" href="matrice.html#I2">I2</a><a class="fn" href="matrice.html#N3">N3</a><a class="fn" href="matrice.html#N5">N5</a><a class="fn" href="matrice.html#N6">N6</a><a class="fn" href="matrice.html#I3">I3</a></dd>
+</dl>
+
+<details class="depart"><summary>Point de départ : les fichiers au début du module</summary>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils, politiques]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        # Une question simple : le montant d'un devis
+        - with_text: montant
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: montant
+          text: Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).
+        # Relance de Mme Martin : retrouver le devis, faire rédiger, envoyer
+        - with_text: Relance Mme Martin
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance Mme Martin
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance Mme Martin
+          text: J'envoie l'e-mail à Mme Martin.
+          forced: "Je m'arrête là : l'e-mail à Mme Martin est rédigé, mais pas envoyé."
+          tool_calls:
+            - name: envoyer_email
+              arguments:
+                destinataire: martin@example.fr
+                objet: Votre devis D-2026-042
+                corps: "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"
+        - with_text: Relance Mme Martin
+          text: L'e-mail de relance est parti chez Mme Martin.
+        # Relance de M. Bernard : même chemin, mais l'envoi ne sera pas accordé
+        - with_text: Relance M. Bernard
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-050}
+        - with_text: Relance M. Bernard
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance M. Bernard
+          text: J'envoie l'e-mail à M. Bernard.
+          tool_calls:
+            - name: envoyer_email
+              arguments:
+                destinataire: bernard@example.fr
+                objet: Votre devis D-2026-050
+                corps: "Bonjour Monsieur Bernard,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-050 pour le détartrage de votre chaudière (165 € TTC), envoyé le 20 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"
+        - with_text: Relance M. Bernard
+          text: "L'e-mail à M. Bernard n'est pas parti : l'envoi n'a pas été accordé."
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    pricing: {input: 1, output: 5}
+    params:
+      script:
+        - with_text: D-2026-042
+          text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+        - with_text: D-2026-050
+          text: '{"objet": "Votre devis D-2026-050", "corps": "Bonjour Monsieur Bernard,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-050 pour le détartrage de votre chaudière (165 € TTC), envoyé le 20 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+
+  - id: JUGE
+    sdk: fake
+    model: fake-juge
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        # Le juge répond selon le texte qu'il lit
+        - with_text: 2 100 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 0.1, reason: "Le montant de 2 100 € ne figure pas dans le devis (1 840 € TTC)."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+        - with_text: 165 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Numéro, montant et date conformes au devis."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+        - with_text: 1 840 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Numéro, montant et date conformes au devis."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    pricing: {input: 1, output: 5}
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    pricing: {input: 1, output: 5}
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    pricing: {input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125}
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+  idempotency: {backend: sqlite, path: data/idempotence.db}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+budget:
+  run: {max_cost: 0.10}
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - python: envoyer_email
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+      on_failure: fail
+    judge:
+      model: JUGE
+      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: &gt;-
+            Chaque montant, date et numéro de l'e-mail figure dans le devis :
+            rien n'est inventé.
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé dans la demande de l'artisan.
+          min_score: 0.6
+          blocking: false
+      repair: {max_attempts: 1}
+      on_failure: fail
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+policies:
+  - hook: taux_tva_valide
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<figure class="code"><figcaption>agents/traducteur.yaml</figcaption>
+<pre><code>name: traducteur
+description: Traduit un texte en anglais, fidèlement, sans rien ajouter.
+
+max_iterations: 1
+
+main:
+  model: TRADUCTEUR
+  system: Tu traduis en anglais le texte reçu, fidèlement, sans rien ajouter ni retirer.</code></pre></figure>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la {{ entreprise }}, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.
+Pour le prix ou le stock d'un article chez le fournisseur, utilise les outils
+du catalogue (catalogue__rechercher_article, catalogue__prix_article…).
+Pour relancer un devis, retrouve-le avec `chercher_devis`, confie la
+rédaction de l'e-mail au rôle `rediger_relance`, puis envoie l'e-mail au
+client avec l'outil `envoyer_email`.
+Si le client joint une photo, demande sa description au rôle `decrire_photo`.
+Pour un client anglophone, confie la traduction à l'outil `traduire`.</code></pre></figure>
+<figure class="code"><figcaption>prompts/rediger_relance.md</figcaption>
+<pre><code>Tu rédiges les e-mails de relance de la Plomberie Dupont, pour des devis
+restés sans réponse.
+Écris un e-mail court et poli, signé « Jean Dupont, Plomberie Dupont ».
+N'utilise que les informations reçues : n'invente aucun montant, date ou délai.
+Réponds uniquement par un objet JSON : {"objet": "…", "corps": "…"}.</code></pre></figure>
+<figure class="code"><figcaption>outils.py</figcaption>
+<pre><code>import json
+import struct
+import time
+import zlib
+from datetime import datetime
+from pathlib import Path
+
+from loom_ia.core.ports import ToolError
+from loom_ia.tools import Image, idempotent, tool
+
+# Le carnet de devis de l'entreprise. Plus tard, ce sera une base de données ou un CRM.
+DEVIS = {
+    "D-2026-042": {
+        "client": "Mme Martin",
+        "email": "martin@example.fr",
+        "objet": "Remplacement du chauffe-eau",
+        "montant_ht": 1533.33,
+        "taux_tva": 20,
+        "montant_ttc": 1840.00,
+        "date": "2026-09-03",
+        "statut": "envoyé",
+    },
+    "D-2026-050": {
+        "client": "M. Bernard",
+        "email": "bernard@example.fr",
+        "objet": "Détartrage de la chaudière",
+        "montant_ht": 150.00,
+        "taux_tva": 10,
+        "montant_ttc": 165.00,
+        "date": "2026-09-20",
+        "statut": "accepté",
+    },
+}
+
+
+@tool
+def prix_ttc(montant_ht: float, taux_tva: float = 20.0) -&gt; dict[str, float]:
+    """Calcule la TVA et le montant TTC à partir d'un montant HT. Le taux est en pourcentage."""
+    tva = round(montant_ht * taux_tva / 100, 2)
+    return {"montant_ht": montant_ht, "tva": tva, "montant_ttc": round(montant_ht + tva, 2)}
+
+
+@tool
+def chercher_devis(numero: str) -&gt; dict[str, str | float]:
+    """Retrouve un devis par son numéro (par exemple D-2026-042) : client, objet, montants, date, statut."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}. Numéros connus : {', '.join(DEVIS)}")
+    return {"numero": numero, **devis}
+
+
+# Couleur de l'étiquette selon le statut du devis.
+COULEURS = {"envoyé": (230, 140, 30), "accepté": (40, 150, 80)}
+
+
+@tool
+def etiquette_devis(numero: str) -&gt; Image:
+    """Fabrique l'étiquette de couleur d'un devis (orange : envoyé, vert : accepté), en image PNG."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}.")
+    couleur = COULEURS.get(str(devis["statut"]), (120, 120, 120))
+    return Image(png_uni(160, 60, couleur), name=f"etiquette-{numero}.png")
+
+
+def png_uni(largeur: int, hauteur: int, rgb: tuple[int, int, int]) -&gt; bytes:
+    """Une image PNG d'une seule couleur, écrite sans bibliothèque d'image."""
+    ligne = b"\x00" + bytes(rgb) * largeur
+    brut = zlib.compress(ligne * hauteur)
+
+    def bloc(nature: bytes, donnees: bytes) -&gt; bytes:
+        crc = zlib.crc32(nature + donnees)
+        return struct.pack("&gt;I", len(donnees)) + nature + donnees + struct.pack("&gt;I", crc)
+
+    entete = struct.pack("&gt;IIBBBBB", largeur, hauteur, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + bloc(b"IHDR", entete) + bloc(b"IDAT", brut) + bloc(b"IEND", b"")
+
+
+# Le dossier où arrivent les e-mails « envoyés ». En production, ce serait un serveur d'e-mail.
+BOITE_ENVOI = Path(__file__).parent / "boite-envoi"
+
+
+# Clé métier : un même e-mail (destinataire et objet) ne part qu'une fois, quel que soit le run.
+@idempotent(key=lambda a: f"email:{a['destinataire']}:{a['objet']}")
+@tool(side_effects="irreversible", approval="always")
+def envoyer_email(destinataire: str, objet: str, corps: str) -&gt; str:
+    """Envoie un e-mail à un client. L'envoi est définitif : il ne peut pas être annulé."""
+    time.sleep(2)  # un vrai envoi prend un peu de temps
+    BOITE_ENVOI.mkdir(exist_ok=True)
+    fichier = BOITE_ENVOI / f"{datetime.now():%Y%m%d-%H%M%S-%f}.json"
+    message = {"a": destinataire, "objet": objet, "corps": corps}
+    fichier.write_text(json.dumps(message, ensure_ascii=False, indent=2), encoding="utf-8")
+    return f"E-mail envoyé à {destinataire} (objet : {objet})."</code></pre></figure>
+<figure class="code"><figcaption>politiques.py</figcaption>
+<pre><code>from loom_ia.policies import CONTINUE, BeforeTool, Decision, Deny, policy
+
+# Les taux de TVA en vigueur en France pour les travaux.
+TAUX_FRANCAIS = {5.5, 10.0, 20.0}
+
+
+@policy(points=["before_tool"], decisions=["deny"])
+def taux_tva_valide(sujet: BeforeTool) -&gt; Decision:
+    """Refuse un calcul de prix avec un taux de TVA qui n'existe pas en France."""
+    if sujet.call.name != "prix_ttc":
+        return CONTINUE
+    taux = float(str(sujet.arguments.get("taux_tva", 20.0)))
+    if taux not in TAUX_FRANCAIS:
+        return Deny(
+            f"Le taux de TVA de {taux:g} % n'existe pas en France "
+            "(taux possibles : 5,5 %, 10 % et 20 %)."
+        )
+    return CONTINUE</code></pre></figure>
+<figure class="code"><figcaption>etat.py</figcaption>
+<pre><code>import asyncio
+import sys
+
+from loom_ia.access import Loom
+
+
+async def main(run_id: str, session: str) -&gt; None:
+    async with Loom.from_config("loom.yaml") as loom:
+        etat = await loom.state(run_id, session_id=session)
+    print("Statut      :", etat.status)
+    print("Étape       :", etat.step)
+    print("Itérations  :", etat.iterations)
+    print("Messages    :", len(etat.messages))
+    print("Tokens      :", etat.usage.input_tokens, "en entrée,", etat.usage.output_tokens, "en sortie")
+    for demande in etat.approvals:
+        print("En attente  :", demande.tool_name, "pour", demande.arguments["destinataire"])
+
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))</code></pre></figure>
+<figure class="code"><figcaption>annuler.py</figcaption>
+<pre><code>import asyncio
+import sys
+
+from loom_ia.access import Loom
+
+
+async def main(run_id: str, session: str) -&gt; None:
+    async with Loom.from_config("loom.yaml") as loom:
+        annule = await loom.cancel(run_id, session_id=session, by="jean")
+    print("Annulé :", annule)
+
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))</code></pre></figure>
+<figure class="code"><figcaption>serveurs/catalogue.py</figcaption>
+<pre><code>"""Serveur MCP du catalogue d'un fournisseur de plomberie (données fictives)."""
+
+import sys
+
+from mcp.server.fastmcp import FastMCP
+
+serveur = FastMCP("catalogue", host="127.0.0.1", port=8765, log_level="WARNING")
+
+ARTICLES = {
+    "CE-THERMO-200": {"nom": "Chauffe-eau thermodynamique 200 L", "prix_ht": 1290.00, "stock": 3},
+    "CE-ELEC-150": {"nom": "Chauffe-eau électrique 150 L", "prix_ht": 389.00, "stock": 0},
+    "GS-34": {"nom": "Groupe de sécurité 3/4", "prix_ht": 24.90, "stock": 25},
+}
+
+
+def article(reference: str) -&gt; dict:
+    if reference not in ARTICLES:
+        raise ValueError(f"Référence inconnue : {reference}")
+    return ARTICLES[reference]
+
+
+@serveur.tool()
+def rechercher_article(texte: str) -&gt; list[dict]:
+    """Cherche des articles du catalogue dont le nom contient ce texte."""
+    texte = texte.lower()
+    return [
+        {"reference": ref, "nom": a["nom"]}
+        for ref, a in ARTICLES.items()
+        if texte in a["nom"].lower()
+    ]
+
+
+@serveur.tool()
+def prix_article(reference: str) -&gt; dict:
+    """Donne le prix public HT d'un article, par sa référence."""
+    return {"reference": reference, "prix_ht": article(reference)["prix_ht"]}
+
+
+@serveur.tool()
+def stock_article(reference: str) -&gt; dict:
+    """Donne le nombre d'exemplaires en stock d'un article, par sa référence."""
+    return {"reference": reference, "stock": article(reference)["stock"]}
+
+
+if __name__ == "__main__":
+    serveur.run(transport="streamable-http" if "--http" in sys.argv else "stdio")</code></pre></figure>
+<figure class="code"><figcaption>.gitignore</figcaption>
+<pre><code>.env
+data/
+__pycache__/
+boite-envoi/</code></pre></figure>
+<p>Extras installés : <code>anthropic</code>, <code>openai</code>, <code>sqlite</code>, <code>postgres</code>, <code>mcp</code>.</p>
+<p>Et <code>pyproject.toml</code>, écrit par uv, qui dit quels extras de loom-ia sont installés (pour repartir de ce point : <code>uv sync</code>) :</p>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+    "loom-ia[anthropic,mcp,openai,postgres,sqlite]&gt;=2.0.11",
+]</code></pre></figure>
+</details>
+
+<p>Ce module a trois parties. D'abord la <strong>librairie Python</strong> (exercices 10.1 à 10.5) : la commande <code>loom</code> que vous utilisez depuis le module 1 n'est qu'une façade, et tout ce qu'elle fait, un script Python peut le faire. Ensuite l'<strong>API REST</strong> (10.6 à 10.8), pour une application web ou mobile. Enfin le <strong>serveur MCP</strong> (10.9), pour Claude, et deux réglages de service : le rechargement (10.10) et la latence (10.11).</p>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-10-1">
+<h3><span class="exo-num">10.1</span> Un premier script Python</h3>
+<p class="fns"><a class="fn" href="matrice.html#N1">N1</a></p>
+
+<h4>Pourquoi</h4>
+<p>L'application de Jean est écrite en Python. Plutôt que de lancer la commande <code>loom</code> et de lire sa sortie, elle veut appeler l'agent directement et recevoir un résultat qu'elle peut manipuler : le statut, le texte, le coût.</p>
+
+<h4>Mise en place</h4>
+<p>Créez <code>question.py</code> à la racine du projet :</p>
+<figure class="code"><figcaption>question.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        resultat = await loom.run(
+            "assistant",
+            "Quel est le montant du devis D-2026-042 ?",
+            session_id="depuis-python",
+        )
+    print("Statut  :", resultat.status)
+    print("Réponse :", resultat.text)
+    print("Coût    :", round(resultat.cost_usd, 4), "$")
+    print("Run     :", resultat.run_id)
+
+
+asyncio.run(main())</code></pre></figure>
+
+<p>La librairie de loom est <strong>asynchrone</strong> : ses fonctions s'écrivent avec <code>async def</code> et s'appellent avec <code>await</code>. Cela permet à un même programme de mener plusieurs runs ou requêtes à la fois. Il suffit de retenir la forme : tout le travail se fait dans une fonction <code>async def main()</code>, que la dernière ligne lance.</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>from loom_ia.access import Loom</code></td><td>La classe qui représente une instance de loom : la même que celle qui tourne derrière la commande <code>loom</code>. Le paquet s'installe sous le nom <code>loom-ia</code> mais s'importe sous le nom <code>loom_ia</code>.</td></tr>
+<tr><td><code>load_env_file("loom.yaml")</code></td><td>Lit le fichier <code>.env</code> voisin de <code>loom.yaml</code>, avec les mêmes règles que la commande (module 3). <strong>La librairie ne le fait pas d'elle-même</strong> : sans cette ligne, un modèle réel ne trouverait pas sa clé.</td></tr>
+<tr><td><code>async with Loom.from_config("loom.yaml") as loom:</code></td><td>Charge la configuration et ouvre l'instance. À la sortie du bloc, loom s'arrête proprement : il attend les tâches en cours et ferme les serveurs MCP qu'il a lancés (c'est <code>loom.aclose()</code>, appelée pour vous).</td></tr>
+<tr><td><code>await loom.run("assistant", "…", session_id=…)</code></td><td>Lance un run et <em>attend sa fin</em>, comme <code>loom run</code>. Mêmes paramètres que les options de la commande : <code>session_id</code>, <code>run_id</code>, <code>state</code>, <code>judges</code>, <code>tenant</code>, pièces jointes…</td></tr>
+<tr><td><code>resultat.status</code>, <code>.text</code>, <code>.cost_usd</code>, <code>.run_id</code></td><td>Le résultat du run (un <code>RunResult</code>) : statut, texte de la réponse, coût, identifiant. Il porte aussi <code>usage</code>, <code>data</code> (sortie structurée, module 7), <code>pending_approvals</code> (module 8), <code>report</code> (module 9)…</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>python question.py
+Statut  : completed
+Réponse : Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).
+Coût    : 0.0135 $
+Run     : 01a16e62-f59b-73d8-bbcb-896a76ed4c26</code></pre>
+<p>La commande <code>python</code> est celle de l'environnement du projet, puisqu'il est activé : c'est là que loom-ia est installé.</p>
+
+<h4>À retenir</h4>
+<p>Chaque commande de la CLI a son équivalent dans la librairie. Les principales :</p>
+<div class="tableau"><table>
+<thead><tr><th>Méthode de <code>Loom</code></th><th>Ce qu'elle fait</th><th>Commande</th></tr></thead>
+<tbody>
+<tr><td><code>run(agent, message)</code></td><td>Lance un run et attend sa fin.</td><td><code>loom run</code></td></tr>
+<tr><td><code>stream(agent, message)</code></td><td>Lance un run et donne son déroulé au fil de l'eau (10.2).</td><td><code>loom run --stream</code></td></tr>
+<tr><td><code>submit(agent, message)</code></td><td>Lance un run en arrière-plan et rend tout de suite son identifiant (10.3).</td><td>—</td></tr>
+<tr><td><code>follow(run_id)</code>, <code>result(run_id)</code></td><td>Suit les événements d'un run, lit son résultat.</td><td><code>loom inspect</code></td></tr>
+<tr><td><code>approve(run_id)</code>, <code>reject(run_id)</code></td><td>Tranche une approbation (module 8).</td><td><code>loom approve</code>, <code>loom reject</code></td></tr>
+<tr><td><code>resume(run_id)</code>, <code>cancel(run_id)</code></td><td>Reprend un run interrompu, annule un run (module 8).</td><td><code>loom resume</code>, —</td></tr>
+<tr><td><code>state(run_id)</code>, <code>session_state(session)</code></td><td>L'état d'un run, le state d'une session (modules 8 et 4).</td><td><code>loom state</code></td></tr>
+<tr><td><code>report(run_id)</code></td><td>La consommation (module 9).</td><td><code>loom report</code></td></tr>
+<tr><td><code>sessions()</code>, <code>export_session()</code>, <code>delete_session()</code></td><td>Gestion des sessions (module 4).</td><td><code>loom sessions</code></td></tr>
+</tbody>
+</table></div>
+<p>Les scripts <code>etat.py</code> et <code>annuler.py</code> du module 8 utilisaient déjà cette librairie, avec <code>state</code> et <code>cancel</code>.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-10-2">
+<h3><span class="exo-num">10.2</span> Voir la réponse arriver : streaming et événements</h3>
+<p class="fns"><a class="fn" href="matrice.html#B8">B8</a><a class="fn" href="matrice.html#I1">I1</a></p>
+
+<h4>Pourquoi</h4>
+<p>Sur un téléphone, attendre en silence la fin d'un run paraît long. Mieux vaut afficher la réponse au fur et à mesure qu'elle s'écrit, et montrer ce que fait l'agent (« je retrouve le devis… »).</p>
+
+<h4>Exécution</h4>
+<p>En ligne de commande, l'option <code>--stream</code> de <code>loom run</code> affiche le texte au fil de l'eau, avec chaque appel d'outil :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Quel est le montant du devis D-2026-042 ?" --session flux-cli --stream
+Je retrouve le devis.
+· chercher_devis(numero='D-2026-042')
+· chercher_devis : fait
+Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).
+
+Statut     : completed · itérations : 2 · tokens : 3986/106 · coût : 0.0135 $
+Run        : 01a16e62-ff3d-7140-b05f-933903b15718</code></pre>
+
+<p>Dans un script, c'est <code>loom.stream()</code>. Créez <code>flux.py</code> :</p>
+<figure class="code"><figcaption>flux.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+from loom_ia.core.events import Event
+from loom_ia.core.model import TextDelta
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        async for element in loom.stream(
+            "assistant",
+            "Quel est le montant du devis D-2026-042 ?",
+            session_id="flux-python",
+        ):
+            if isinstance(element, TextDelta):
+                print(f"  texte     : {element.text!r}")
+            elif isinstance(element, Event):
+                print(f"{element.seq:&gt;3} {element.type:&lt;18} catégorie : {element.category}")
+
+
+asyncio.run(main())</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>async for element in loom.stream(…)</code></td><td>Lance le run et donne, l'un après l'autre, des éléments de deux sortes, jusqu'à la fin du run.</td></tr>
+<tr><td><code>TextDelta</code></td><td>Un morceau du texte que le modèle est en train d'écrire (<code>element.text</code>).</td></tr>
+<tr><td><code>Event</code></td><td>Un événement du journal, au moment où il est écrit : <code>element.seq</code> (son numéro dans la session), <code>element.type</code>, <code>element.category</code>, et son contenu dans <code>element.payload</code>.</td></tr>
+</tbody>
+</table></div>
+<pre><code><span class="p">$ </span>python flux.py
+  1 run.started        catégorie : run
+  2 message.user       catégorie : message
+  3 run.claimed        catégorie : run
+  4 step.started       catégorie : run
+  texte     : 'Je retro'
+  texte     : 'uve le d'
+  texte     : 'evis.'
+  5 model.responded    catégorie : model
+  6 step.completed     catégorie : run
+  7 run.transitioned   catégorie : run
+  8 step.started       catégorie : run
+  9 tool.called        catégorie : tool
+ 10 tool.completed     catégorie : tool
+ 11 step.completed     catégorie : run
+ 12 run.transitioned   catégorie : run
+ 13 step.started       catégorie : run
+  texte     : 'Le devis'
+  texte     : ' D-2026-'
+  texte     : "042 s'él"
+  texte     : 'ève à 1 '
+  texte     : '840 € TT'
+  texte     : 'C (1 533'
+  texte     : ',33 € HT'
+  texte     : ').'
+ 14 model.responded    catégorie : model
+ 15 step.completed     catégorie : run
+ 16 run.transitioned   catégorie : run
+ 17 run.completed      catégorie : run</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Les morceaux de texte arrivent <em>avant</em> l'événement <code>model.responded</code>, qui clôt la réponse du modèle : c'est tout l'intérêt du streaming. Le modèle simulé découpe son texte en morceaux de 8 caractères ; un vrai modèle les envoie au rythme où il les écrit.</li>
+<li>Les événements sont <strong>typés</strong> : chacun a un type (<code>run.started</code>, <code>tool.called</code>…), une catégorie (<code>run</code>, <code>message</code>, <code>model</code>, <code>tool</code>, et aussi <code>guard</code>, <code>policy</code>, <code>approval</code>…), un statut et un contenu dont la forme dépend du type. Ce sont exactement les lignes du journal <code>data/default/flux-python.jsonl</code>.</li>
+<li>Une interface choisit ce qu'elle montre : le texte, un indicateur « appel d'outil en cours » sur <code>tool.called</code>, un bouton sur <code>approval.requested</code>.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-10-3">
+<h3><span class="exo-num">10.3</span> Un run en arrière-plan, suivi puis approuvé</h3>
+<p class="fns"><a class="fn" href="matrice.html#H5">H5</a><a class="fn" href="matrice.html#N1">N1</a></p>
+
+<h4>Pourquoi</h4>
+<p>Une relance s'arrête sur l'approbation de l'envoi, et peut attendre des heures que Jean la valide. L'application ne peut pas rester bloquée sur <code>run()</code> pendant ce temps : elle lance le run en arrière-plan, suit son déroulé, et propose l'approbation quand le run s'arrête.</p>
+
+<h4>Mise en place</h4>
+<figure class="code"><figcaption>arriere_plan.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+
+SESSION = "relance-python"
+
+
+def en_pause(evenement) -&gt; bool:
+    return evenement.type == "run.transitioned" and evenement.payload.to_state == "paused"
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        run_id = await loom.submit(
+            "assistant",
+            "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial.",
+            session_id=SESSION,
+        )
+        print("Run lancé :", run_id)
+
+        # 1. Suivre le run jusqu'à sa pause
+        dernier = 0
+        async for evenement in loom.follow(run_id, session_id=SESSION, subruns=False):
+            dernier = evenement.seq
+            if evenement.type in ("tool.called", "approval.requested"):
+                print(f"{evenement.seq:&gt;3} {evenement.type}")
+            if en_pause(evenement):
+                print(f"{evenement.seq:&gt;3} en pause")
+                break
+
+        # 2. Accorder l'envoi
+        appels = await loom.approve(run_id, session_id=SESSION, by="jean")
+        print("    accordé :", appels)
+
+        # 3. Suivre la suite jusqu'à la fin du run
+        async for evenement in loom.follow(run_id, session_id=SESSION, after_seq=dernier, subruns=False):
+            if evenement.type in ("approval.granted", "tool.called", "tool.completed", "run.completed"):
+                print(f"{evenement.seq:&gt;3} {evenement.type}")
+
+        resultat = await loom.result(run_id, session_id=SESSION)
+        print("Statut  :", resultat.status)
+        print("Réponse :", resultat.text)
+
+
+asyncio.run(main())</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>await loom.submit(…)</code></td><td>Met le run en file et rend tout de suite son identifiant. Le run tourne en tâche de fond, dans ce même process.</td></tr>
+<tr><td><code>loom.follow(run_id, session_id=…)</code></td><td>Donne les événements déjà écrits du run, puis les suivants à mesure qu'ils arrivent. L'itération s'arrête d'elle-même à la clôture du run (terminé, échoué, annulé), pas à une pause.</td></tr>
+<tr><td><code>subruns=False</code></td><td>Sans les événements des sous-runs (le sous-agent <code>traduire</code>, module 6).</td></tr>
+<tr><td><code>evenement.payload.to_state == "paused"</code></td><td>Le contenu de l'événement <code>run.transitioned</code> : l'état dans lequel le run vient de passer. <code>paused</code> : il attend une décision.</td></tr>
+<tr><td><code>break</code></td><td>On sort de la boucle : le run est en pause, il n'écrira rien de plus tant que personne n'a tranché.</td></tr>
+<tr><td><code>after_seq=dernier</code></td><td>Le second <code>follow</code> ne redonne que les événements écrits après le numéro <code>dernier</code>.</td></tr>
+<tr><td><code>await loom.result(…)</code></td><td>Le résultat d'un run, relu dans le journal.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>python arriere_plan.py
+Run lancé : 01a16e63-1743-7366-a6ac-077d44f5f774
+  9 tool.called
+ 18 tool.called
+ 33 approval.requested
+ 35 en pause
+    accordé : ('fake_2_0',)
+ 37 approval.granted
+ 41 tool.called
+ 42 tool.completed
+ 49 run.completed
+Statut  : completed
+Réponse : L'e-mail de relance est parti chez Mme Martin.
+<span class="p">$ </span>ls boite-envoi
+20261024-164912-976920.json</code></pre>
+<p>Les deux premiers <code>tool.called</code> sont <code>chercher_devis</code> et le rôle <code>rediger_relance</code> ; le troisième, après l'accord, est l'envoi.</p>
+
+<div class="encadre piege"><p class="encadre-titre">Piège : approuver trop tôt</p>
+<p>Pourquoi attendre la transition vers <code>paused</code> au lieu d'approuver dès l'événement <code>approval.requested</code> ? Parce qu'à ce moment-là, le run n'a pas fini de se mettre en pause : la tâche qui le mène écrit encore deux événements. Une approbation donnée dans cet intervalle, depuis le même process, est bien écrite au journal, mais la reprise du run n'est pas relancée : le run reste arrêté juste après l'accord. Attendez <code>paused</code>, ou relancez le run avec <code>loom resume</code> s'il est resté bloqué. Depuis une autre application (l'API REST de l'exercice 10.7, un humain qui clique), le délai est toujours suffisant.</p></div>
+
+<h4>À retenir</h4>
+<p>Pour décider dans le code sans passer par la pause, il existe aussi l'<strong>approbateur en ligne</strong> : une fonction que loom appelle au moment de la demande. C'est l'exercice suivant.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-10-4">
+<h3><span class="exo-num">10.4</span> Qui demande ? Le contexte de l'appelant</h3>
+<p class="fns"><a class="fn" href="matrice.html#A8">A8</a></p>
+
+<h4>Pourquoi</h4>
+<p>Quand l'application lance une relance, elle sait qui est connecté (Jean, ou sa secrétaire) et d'où vient la demande (le téléphone, le site). Cette information doit suivre le run : dans le journal, pour l'audit, et jusqu'à l'outil d'envoi, qui doit noter qui a demandé l'e-mail.</p>
+
+<h4>Mise en place</h4>
+<p>Un outil Python reçoit le contexte de l'appel s'il déclare un paramètre annoté <code>ToolContext</code>. Ce paramètre n'apparaît pas dans le schéma vu par le modèle : c'est loom qui le remplit. Dans <code>outils.py</code>, <code>envoyer_email</code> note l'appelant dans le message envoyé :</p>
+<figure class="code"><figcaption>outils.py</figcaption>
+<pre><code>import json
+import struct
+import time
+import zlib
+from datetime import datetime
+from pathlib import Path
+
+<span class="aj">from loom_ia.core.ports import ToolContext, ToolError</span>from loom_ia.tools import Image, idempotent, tool
+
+# Le carnet de devis de l'entreprise. Plus tard, ce sera une base de données ou un CRM.
+DEVIS = {
+    "D-2026-042": {
+        "client": "Mme Martin",
+        "email": "martin@example.fr",
+        "objet": "Remplacement du chauffe-eau",
+        "montant_ht": 1533.33,
+        "taux_tva": 20,
+        "montant_ttc": 1840.00,
+        "date": "2026-09-03",
+        "statut": "envoyé",
+    },
+    "D-2026-050": {
+        "client": "M. Bernard",
+        "email": "bernard@example.fr",
+        "objet": "Détartrage de la chaudière",
+        "montant_ht": 150.00,
+        "taux_tva": 10,
+        "montant_ttc": 165.00,
+        "date": "2026-09-20",
+        "statut": "accepté",
+    },
+}
+
+
+@tool
+def prix_ttc(montant_ht: float, taux_tva: float = 20.0) -&gt; dict[str, float]:
+    """Calcule la TVA et le montant TTC à partir d'un montant HT. Le taux est en pourcentage."""
+    tva = round(montant_ht * taux_tva / 100, 2)
+    return {"montant_ht": montant_ht, "tva": tva, "montant_ttc": round(montant_ht + tva, 2)}
+
+
+@tool
+def chercher_devis(numero: str) -&gt; dict[str, str | float]:
+    """Retrouve un devis par son numéro (par exemple D-2026-042) : client, objet, montants, date, statut."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}. Numéros connus : {', '.join(DEVIS)}")
+    return {"numero": numero, **devis}
+
+
+# Couleur de l'étiquette selon le statut du devis.
+COULEURS = {"envoyé": (230, 140, 30), "accepté": (40, 150, 80)}
+
+
+@tool
+def etiquette_devis(numero: str) -&gt; Image:
+    """Fabrique l'étiquette de couleur d'un devis (orange : envoyé, vert : accepté), en image PNG."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}.")
+    couleur = COULEURS.get(str(devis["statut"]), (120, 120, 120))
+    return Image(png_uni(160, 60, couleur), name=f"etiquette-{numero}.png")
+
+
+def png_uni(largeur: int, hauteur: int, rgb: tuple[int, int, int]) -&gt; bytes:
+    """Une image PNG d'une seule couleur, écrite sans bibliothèque d'image."""
+    ligne = b"\x00" + bytes(rgb) * largeur
+    brut = zlib.compress(ligne * hauteur)
+
+    def bloc(nature: bytes, donnees: bytes) -&gt; bytes:
+        crc = zlib.crc32(nature + donnees)
+        return struct.pack("&gt;I", len(donnees)) + nature + donnees + struct.pack("&gt;I", crc)
+
+    entete = struct.pack("&gt;IIBBBBB", largeur, hauteur, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + bloc(b"IHDR", entete) + bloc(b"IDAT", brut) + bloc(b"IEND", b"")
+
+
+# Le dossier où arrivent les e-mails « envoyés ». En production, ce serait un serveur d'e-mail.
+BOITE_ENVOI = Path(__file__).parent / "boite-envoi"
+
+
+# Clé métier : un même e-mail (destinataire et objet) ne part qu'une fois, quel que soit le run.
+@idempotent(key=lambda a: f"email:{a['destinataire']}:{a['objet']}")
+@tool(side_effects="irreversible", approval="always")
+<span class="aj">def envoyer_email(destinataire: str, objet: str, corps: str, ctx: ToolContext) -&gt; str:</span>    """Envoie un e-mail à un client. L'envoi est définitif : il ne peut pas être annulé."""
+    time.sleep(2)  # un vrai envoi prend un peu de temps
+    BOITE_ENVOI.mkdir(exist_ok=True)
+    fichier = BOITE_ENVOI / f"{datetime.now():%Y%m%d-%H%M%S-%f}.json"
+    message = {"a": destinataire, "objet": objet, "corps": corps}
+<span class="aj">    # Qui a demandé l'envoi, et depuis où : transmis par l'application qui a lancé le run.</span><span class="aj">    message["demande_par"] = ctx.caller.user_id</span><span class="aj">    message["canal"] = ctx.caller.metadata.get("canal")</span>    fichier.write_text(json.dumps(message, ensure_ascii=False, indent=2), encoding="utf-8")
+    return f"E-mail envoyé à {destinataire} (objet : {objet})."</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées ou modifiées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>ctx: ToolContext</code></td><td>Le contexte de l'appel : <code>ctx.tenant_id</code> (le client), <code>ctx.session_id</code>, <code>ctx.run_id</code>, <code>ctx.agent</code>, <code>ctx.state</code> (le state de session) et <code>ctx.caller</code>, l'appelant.</td></tr>
+<tr><td><code>ctx.caller.user_id</code></td><td>L'identifiant de l'utilisateur, donné par l'application à l'ouverture du run. <code>None</code> s'il n'a pas été donné.</td></tr>
+<tr><td><code>ctx.caller.metadata</code></td><td>Un dictionnaire libre, donné lui aussi par l'application : ici le canal.</td></tr>
+</tbody>
+</table></div>
+
+<p>Pour ce module, le script de <code>SIMULE</code> change sur un point : la relance de M. Bernard sera accordée cette fois, et sa dernière réponse le dit. Seul ce bloc du script change ; le reste de <code>loom.yaml</code> est celui du point de départ :</p>
+<figure class="code"><figcaption>loom.yaml (le bloc de la relance de M. Bernard)</figcaption>
+<pre><code><span class="aj">        # Relance de M. Bernard : même chemin que pour Mme Martin</span>        - with_text: Relance M. Bernard
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-050}
+        - with_text: Relance M. Bernard
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance M. Bernard
+          text: J'envoie l'e-mail à M. Bernard.
+          tool_calls:
+            - name: envoyer_email
+              arguments:
+                destinataire: bernard@example.fr
+                objet: Votre devis D-2026-050
+                corps: "Bonjour Monsieur Bernard,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-050 pour le détartrage de votre chaudière (165 € TTC), envoyé le 20 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"
+        - with_text: Relance M. Bernard
+<span class="aj">          text: L'e-mail de relance est parti chez M. Bernard.</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes modifiées</p>
+
+<p>Le script <code>appelant.py</code> donne le contexte au run et décide lui-même de l'approbation :</p>
+<figure class="code"><figcaption>appelant.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+from loom_ia.core.model import Approved, CallerContext, PendingApproval
+
+
+async def accorder(demande: PendingApproval) -&gt; Approved:
+    """Appelée par loom quand un outil demande une approbation."""
+    print("Approbation demandée :", demande.tool_name, "pour", demande.arguments["destinataire"])
+    return Approved(by="jean", reason="relu sur le téléphone")
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    appelant = CallerContext(user_id="jean", metadata={"canal": "appli-mobile"})
+    async with Loom.from_config("loom.yaml") as loom:
+        resultat = await loom.run(
+            "assistant",
+            "Relance M. Bernard pour le devis D-2026-050.",
+            session_id="relance-bernard",
+            context=appelant,
+            approver=accorder,
+        )
+    print("Statut  :", resultat.status)
+    print("Réponse :", resultat.text)
+
+
+asyncio.run(main())</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>CallerContext(user_id=…, metadata=…)</code></td><td>Le contexte de l'appelant. Il a aussi un champ <code>tenant_id</code> (le client, module 12), <code>default</code> par défaut.</td></tr>
+<tr><td><code>context=appelant</code></td><td>Donne ce contexte au run. Il est écrit dans l'événement <code>run.started</code> et transmis à chaque outil.</td></tr>
+<tr><td><code>approver=accorder</code></td><td>L'<strong>approbateur en ligne</strong> : une fonction <code>async</code> appelée à chaque demande d'approbation. Elle reçoit la demande (<code>PendingApproval</code> : outil, arguments, motif) et rend une décision : <code>Approved(by, reason)</code>, éventuellement avec d'autres <code>arguments</code>, ou <code>Rejected(reason, by)</code>. Le run ne passe pas par l'état <code>paused</code>.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>python appelant.py
+Approbation demandée : envoyer_email pour bernard@example.fr
+Statut  : completed
+Réponse : L'e-mail de relance est parti chez M. Bernard.
+<span class="p">$ </span>cat "$(ls -t boite-envoi/*.json | head -1)"
+{
+  "a": "bernard@example.fr",
+  "objet": "Votre devis D-2026-050",
+  "corps": "Bonjour Monsieur Bernard,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-050 pour le détartrage de votre chaudière (165 € TTC), envoyé le 20 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont",
+  "demande_par": "jean",
+  "canal": "appli-mobile"
+}
+<span class="p">$ </span>jq -c 'select(.type=="run.started") | .payload.context' data/default/relance-bernard.jsonl
+{"tenant_id":"default","user_id":"jean","metadata":{"canal":"appli-mobile"}}
+<span class="p">$ </span>jq -c 'select(.type=="approval.granted") | .payload | {tool_name, by, reason}' data/default/relance-bernard.jsonl
+{"tool_name":"envoyer_email","by":"jean","reason":"relu sur le téléphone"}</code></pre>
+<p>(<code>ls -t … | head -1</code> donne le fichier le plus récent du dossier.) Le même run lancé par la CLI, qui n'a pas d'option pour l'utilisateur, garde un contexte vide :</p>
+<pre><code><span class="p">$ </span>jq -c 'select(.type=="run.started") | .payload.context' data/default/flux-cli.jsonl
+{"tenant_id":"default","user_id":null,"metadata":{}}</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li>Le contexte de l'appelant se donne par la librairie (<code>context=</code>) ou par l'API REST (champs <code>user_id</code> et <code>metadata</code>, exercice 10.6). La CLI ne le propose pas.</li>
+<li>Il va au journal et aux outils, pas au modèle : pour qu'un rôle le voie, il faut le déclarer dans son <code>context</code> (<code>caller_context</code>, module 6).</li>
+<li>L'approbation reste écrite au journal comme une décision ordinaire, avec son auteur et son motif : un approbateur en ligne n'échappe pas à l'audit.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-10-5">
+<h3><span class="exo-num">10.5</span> Construire l'agent sans fichier</h3>
+<p class="fns"><a class="fn" href="matrice.html#M2">M2</a></p>
+
+<h4>Pourquoi</h4>
+<p>Parfois, aucun fichier YAML n'est souhaitable : un test qui monte un agent jetable, une application qui compose ses agents d'après ses propres réglages. Les fichiers YAML ne sont qu'une façon d'écrire des objets Python : on peut les construire directement.</p>
+
+<h4>Mise en place</h4>
+<p>Le script <code>sans_fichier.py</code> construit une configuration complète, avec un petit agent <code>calcul</code> qui se sert de l'outil <code>prix_ttc</code> :</p>
+<figure class="code"><figcaption>sans_fichier.py</figcaption>
+<pre><code>import asyncio
+from pathlib import Path
+
+from loom_ia.access import Loom
+from loom_ia.agents import AgentSpec, MainRole, PythonTool
+from loom_ia.config import LoomConfig
+from loom_ia.config.models import EventsStorage, StorageConfig
+from loom_ia.core.model import ModelSpec
+
+from outils import prix_ttc
+
+# Les réponses du modèle simulé : appeler prix_ttc, puis répondre.
+SCRIPT = [
+    {"text": "Je calcule.", "tool_calls": [{"name": "prix_ttc", "arguments": {"montant_ht": 1250, "taux_tva": 10}}]},
+    {"text": "1 250 € HT avec une TVA à 10 % font 1 375 € TTC."},
+]
+
+config = LoomConfig(
+    version=1,
+    models=(ModelSpec(id="SIMULE", sdk="fake", model="fake-1", params={"script": SCRIPT}),),
+    storage=StorageConfig(events=EventsStorage(backend="jsonl", path=Path("data"))),
+    agents=(
+        AgentSpec(
+            name="calcul",
+            main=MainRole(model="SIMULE", system="Tu calcules des prix TTC avec l'outil prix_ttc."),
+            tools=(PythonTool(python="prix_ttc"),),
+        ),
+    ),
+)
+
+
+async def main() -&gt; None:
+    async with Loom(config) as loom:
+        loom.register("prix_ttc", prix_ttc)
+        resultat = await loom.run("calcul", "Quel prix TTC pour 1 250 € HT à 10 % ?", session_id="sans-fichier")
+    print(resultat.status, ":", resultat.text)
+
+
+asyncio.run(main())</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>LoomConfig</code></td><td>Ce que décrit <code>loom.yaml</code> : mêmes champs, mêmes noms (<code>version</code>, <code>models</code>, <code>storage</code>…). Le champ <code>agents</code> permet d'y mettre les agents directement.</td></tr>
+<tr><td><code>ModelSpec</code></td><td>Un modèle de la liste <code>models</code>.</td></tr>
+<tr><td><code>StorageConfig</code>, <code>EventsStorage</code></td><td>Le bloc <code>storage</code> et son journal. Sans lui, le journal serait en mémoire et disparaîtrait avec le process.</td></tr>
+<tr><td><code>AgentSpec</code>, <code>MainRole</code>, <code>PythonTool</code></td><td>Ce que décrit un fichier d'agent : l'agent, son orchestrateur <code>main</code>, un outil <code>- python: …</code>.</td></tr>
+<tr><td><code>Loom(config)</code></td><td>Ouvre une instance à partir de cet objet, au lieu de <code>Loom.from_config(chemin)</code>.</td></tr>
+<tr><td><code>loom.register("prix_ttc", prix_ttc)</code></td><td>Sans fichier, pas de <code>imports:</code> : on enregistre l'outil sous son nom, avant le premier run.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>python sans_fichier.py
+completed : 1 250 € HT avec une TVA à 10 % font 1 375 € TTC.</code></pre>
+<p>Sans la ligne <code>loom.register(…)</code>, l'agent ne peut pas être monté. Le message, en dernière ligne d'une longue trace Python, est celui d'un <code>imports</code> oublié (module 2) :</p>
+<pre><code>loom_ia.config.errors.ConfigError: Agent 'calcul', outil 'prix_ttc' : Référence 'prix_ttc' introuvable : aucun objet de ce nom (enregistrés : aucun). Utiliser 'imports' ou un chemin 'module:attr'</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li>YAML et Python sont deux écritures de la même configuration, validée de la même façon.</li>
+<li>Le YAML vaut mieux dès qu'une autre personne que le développeur touche à l'agent (un prompt, un modèle) : il se relit et se valide à part (<code>loom validate</code>). Le code convient aux tests et aux agents composés à la volée.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-10-6">
+<h3><span class="exo-num">10.6</span> Ouvrir l'API REST</h3>
+<p class="fns"><a class="fn" href="matrice.html#N2">N2</a></p>
+
+<h4>Pourquoi</h4>
+<p>L'application mobile de Jean n'est pas écrite en Python : elle parle HTTP. <code>loom serve</code> publie les agents sous forme d'une <strong>API REST</strong> : des adresses web (des <em>routes</em>) auxquelles on envoie des requêtes, et qui répondent en JSON.</p>
+
+<h4>Mise en place</h4>
+<p>Le serveur web demande l'extra <code>http</code>. Comme au module 3, redonnez la liste complète des extras :</p>
+<pre><code><span class="p">$ </span>uv add "loom-ia[anthropic,http,mcp,openai,postgres,sqlite]"
+Installed 3 packages in 7ms
+ + annotated-doc==0.0.5
+ + fastapi==0.162.0
+ + watchfiles==1.3.0</code></pre>
+
+<h4>Exécution</h4>
+<p>Le serveur occupe le terminal tant qu'il tourne. Lancez-le dans un premier terminal :</p>
+<pre><code><span class="p">$ </span>loom serve
+Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
+Env        : aucun (/home/jean/plomberie-dupont/.env)
+API REST   : http://127.0.0.1:8000/v1
+Docs       : http://127.0.0.1:8000/docs (sans clé)
+Agents     : assistant, traducteur
+(heure) WARNING  loom_ia.runtime.wiring — API REST sans clé déclarée alors que la config nomme des clients (default) : tout passera par 'default', puisque c'est la clé qui dit au nom de qui elle agit</code></pre>
+<p>Il écoute sur <code>http://127.0.0.1:8000</code>, c'est-à-dire sur votre machine seulement. L'avertissement rappelle que l'API est ouverte à qui la contacte : l'exercice 10.8 y met des clés. Dans un second terminal (environnement activé, dans le dossier du projet), interrogez-la avec <code>curl</code>, l'outil en ligne de commande qui envoie des requêtes HTTP, et <code>jq</code> pour mettre le JSON en forme :</p>
+<pre><code><span class="p">$ </span>curl -s http://127.0.0.1:8000/v1/agents | jq .
+[
+  {
+    "name": "assistant",
+    "description": ""
+  },
+  {
+    "name": "traducteur",
+    "description": "Traduit un texte en anglais, fidèlement, sans rien ajouter."
+  }
+]</code></pre>
+<p>Deux défauts sautent aux yeux. L'assistant n'a pas de description : une application (ou Claude, à l'exercice 10.9) ne saurait pas à quoi il sert. Et le traducteur est publié, alors que c'est un sous-agent qui ne doit servir qu'à l'assistant. On corrige les deux fichiers d'agent :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+<span class="aj">description: &gt;-</span><span class="aj">  Assistant de la Plomberie Dupont : répond aux questions sur les devis et</span><span class="aj">  les prix, et relance les clients par e-mail après accord de l'artisan.</span>
+max_iterations: 5
+
+budget:
+  run: {max_cost: 0.10}
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - python: envoyer_email
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+      on_failure: fail
+    judge:
+      model: JUGE
+      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: &gt;-
+            Chaque montant, date et numéro de l'e-mail figure dans le devis :
+            rien n'est inventé.
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé dans la demande de l'artisan.
+          min_score: 0.6
+          blocking: false
+      repair: {max_attempts: 1}
+      on_failure: fail
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+policies:
+  - hook: taux_tva_valide
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<figure class="code"><figcaption>agents/traducteur.yaml</figcaption>
+<pre><code>name: traducteur
+description: Traduit un texte en anglais, fidèlement, sans rien ajouter.
+
+max_iterations: 1
+
+<span class="aj">expose: {rest: false, mcp: false}</span><span class="aj"> </span>main:
+  model: TRADUCTEUR
+  system: Tu traduis en anglais le texte reçu, fidèlement, sans rien ajouter ni retirer.</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>description: &gt;-</code></td><td>La description de l'agent, que l'API et le serveur MCP publient. <code>&gt;-</code> permet d'écrire un long texte sur plusieurs lignes, qui seront réunies en une seule.</td></tr>
+<tr><td><code>expose: {rest: false, mcp: false}</code></td><td>Où l'agent est publié : dans l'API REST, dans le serveur MCP. Les deux valent <code>true</code> par défaut. Un agent non publié reste utilisable comme sous-agent.</td></tr>
+</tbody>
+</table></div>
+<p>Arrêtez le serveur (<kbd>Ctrl</kbd>+<kbd>C</kbd> dans son terminal), relancez <code>loom serve</code>, puis :</p>
+<pre><code><span class="p">$ </span>curl -s http://127.0.0.1:8000/v1/agents | jq .
+[
+  {
+    "name": "assistant",
+    "description": "Assistant de la Plomberie Dupont : répond aux questions sur les devis et les prix, et relance les clients par e-mail après accord de l'artisan."
+  }
+]</code></pre>
+<p>Lancer un run, c'est envoyer un <code>POST</code> sur la route de l'agent, avec la demande en JSON :</p>
+<pre><code><span class="p">$ </span>curl -s -X POST http://127.0.0.1:8000/v1/agents/assistant/runs \
+    -H 'Content-Type: application/json' \
+    -d '{"message":"Quel est le montant du devis D-2026-042 ?","session_id":"rest-montant"}' \
+    | jq '{run_id, session_id, status, text, iterations, cost_usd}'
+{
+  "run_id": "01a16e63-8192-7720-9d64-abf9f7f58044",
+  "session_id": "rest-montant",
+  "status": "completed",
+  "text": "Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).",
+  "iterations": 2,
+  "cost_usd": 0.013512
+}</code></pre>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>-X POST</code></td><td>La méthode HTTP : <code>POST</code> pour créer (ici, un run), <code>GET</code> (par défaut) pour lire.</td></tr>
+<tr><td><code>-H 'Content-Type: application/json'</code></td><td>Un en-tête : le corps de la requête est du JSON.</td></tr>
+<tr><td><code>-d '{…}'</code></td><td>Le corps : <code>message</code> (obligatoire), et au choix <code>session_id</code>, <code>run_id</code>, <code>user_id</code> et <code>metadata</code> (le contexte de l'appelant, 10.4), <code>judges</code>, <code>background</code> (10.7).</td></tr>
+<tr><td><code>\</code> en fin de ligne</td><td>La commande continue à la ligne suivante.</td></tr>
+</tbody>
+</table></div>
+<p>La requête attend la fin du run et rend le même résultat qu'en Python ; <code>jq</code> n'en garde ici que six champs. Le résultat complet a tous ceux-ci :</p>
+<pre><code>agent, artifacts, cost_usd, data, error, error_type, fallback, iterations, output, pending_approvals, redacted, report, run_id, session_id, skipped_judges, status, text, unverified, usage, verdicts</code></pre>
+<p>Une erreur est un code HTTP ordinaire, avec un message lisible :</p>
+<pre><code><span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/v1/agents/plombier/runs -H 'Content-Type: application/json' -d '{"message":"Bonjour"}'
+HTTP/1.1 404 Not Found
+{"detail":"Agent 'plombier' inconnu (agents : assistant)"}</code></pre>
+<p>(<code>-i</code> affiche aussi la ligne de statut de la réponse ; les en-têtes sont omis ici.)</p>
+
+<p>Ouvrez enfin <code>http://127.0.0.1:8000/docs</code> dans un navigateur : c'est la documentation interactive de l'API, générée par le serveur. Chaque route y est décrite, avec ses paramètres, et un bouton « Try it out » l'essaie. Les principales :</p>
+<div class="tableau"><table>
+<thead><tr><th>Route</th><th>Rôle</th></tr></thead>
+<tbody>
+<tr><td><code>GET /v1/agents</code></td><td>Les agents publiés</td></tr>
+<tr><td><code>POST /v1/agents/{nom}/runs</code></td><td>Lancer un run (JSON, ou formulaire multipart pour joindre des images)</td></tr>
+<tr><td><code>GET /v1/runs</code>, <code>GET /v1/runs/{id}</code></td><td>Lister les runs, lire le statut et le résultat d'un run</td></tr>
+<tr><td><code>GET /v1/runs/{id}/events</code></td><td>Suivre les événements d'un run en direct (10.7)</td></tr>
+<tr><td><code>POST /v1/runs/{id}/approve</code>, <code>/reject</code>, <code>/cancel</code></td><td>Approuver, refuser, annuler (10.7)</td></tr>
+<tr><td><code>GET /v1/sessions</code>, <code>GET</code> ou <code>DELETE /v1/sessions/{id}</code></td><td>Les sessions, la fiche d'une session, son effacement</td></tr>
+<tr><td><code>GET /v1/sessions/{id}/events</code>, <code>/report</code>, <code>/files</code></td><td>Le journal d'une session, sa consommation, ses fichiers</td></tr>
+<tr><td><code>GET /v1/events</code>, <code>GET /v1/traces/{run_id}</code></td><td>Recherche dans le journal, trace d'un run (module 13)</td></tr>
+<tr><td><code>POST /v1/hooks/{nom}</code></td><td>Webhook entrant (module 11)</td></tr>
+</tbody>
+</table></div>
+<p>Le document brut, au format OpenAPI, est à <code>/openapi.json</code> : un développeur s'en sert pour générer un client dans le langage de l'application (Dart pour une application Flutter, par exemple).</p>
+
+<h4>À retenir</h4>
+<ul>
+<li>L'adresse et le port se règlent dans <code>loom.yaml</code> (<code>server: {http: {host: …, port: …}}</code>) ou par les options <code>--host</code> et <code>--port</code> de <code>loom serve</code>. Par défaut : <code>127.0.0.1</code> et <code>8000</code>.</li>
+<li>Un run lancé par l'API est écrit dans le même journal : <code>loom inspect &lt;run&gt; --session rest-montant</code> le relit.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-10-7">
+<h3><span class="exo-num">10.7</span> Un run en arrière-plan par l'API, suivi en direct</h3>
+<p class="fns"><a class="fn" href="matrice.html#H5">H5</a><a class="fn" href="matrice.html#I2">I2</a></p>
+
+<h4>Pourquoi</h4>
+<p>Une requête HTTP ne peut pas rester ouverte des heures en attendant l'accord de Jean. L'application lance donc la relance en arrière-plan, suit son déroulé, et affiche un bouton « Approuver » quand le run s'arrête.</p>
+
+<h4>Exécution</h4>
+<p>Le serveur de l'exercice précédent tourne toujours. Avec <code>"background": true</code>, la réponse arrive tout de suite, avec le code <code>202 Accepted</code> et l'identifiant du run :</p>
+<pre><code><span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/v1/agents/assistant/runs \
+    -H 'Content-Type: application/json' \
+    -d '{"message":"Relance Mme Martin pour le devis D-2026-042, sur un ton cordial.","session_id":"rest-martin","background":true}'
+HTTP/1.1 202 Accepted
+{"run_id":"01a16e63-853a-76ac-a64a-a38e61344ff2","session_id":"rest-martin","status":"ready_for_model"}</code></pre>
+<p>Gardez l'identifiant dans une variable du terminal, puis lisez le statut du run :</p>
+<pre><code><span class="p">$ </span>R=01a16e63-853a-76ac-a64a-a38e61344ff2
+<span class="p">$ </span>curl -s -i http://127.0.0.1:8000/v1/runs/$R
+HTTP/1.1 404 Not Found
+{"detail":"Run 01a16e63-853a-76ac-a64a-a38e61344ff2 inconnu"}</code></pre>
+<div class="encadre piege"><p class="encadre-titre">Piège : le run « inconnu »</p>
+<p>Le run existe bien. Mais il appartient à la session nommée <code>rest-martin</code>, et loom range les runs par session : sans le nom de la session, il le cherche dans une session qui porterait son propre identifiant. Pour un run de session nommée, toutes les routes <code>/v1/runs/{id}…</code> veulent aussi <code>?session_id=…</code>.</p></div>
+<pre><code><span class="p">$ </span>curl -s "http://127.0.0.1:8000/v1/runs/$R?session_id=rest-martin" | jq '{status, pending: [.pending_approvals[] | {call_id, tool_name, reason}]}'
+{
+  "status": "paused",
+  "pending": [
+    {
+      "call_id": "fake_2_0",
+      "tool_name": "envoyer_email",
+      "reason": "outil déclaré à approbation obligatoire (effets : irreversible)"
+    }
+  ]
+}</code></pre>
+<p>Le run est en pause, sur l'envoi de l'e-mail. Pour suivre un run en direct, l'API utilise <strong>SSE</strong> (<em>Server-Sent Events</em>) : une connexion HTTP qui reste ouverte et sur laquelle le serveur pousse les événements, un par un. Chacun arrive en quelques lignes, dont <code>id:</code> (son numéro) et <code>event:</code> (son type). Le filtre ci-dessous n'en garde que ces deux lignes, sans les événements de fonctionnement interne :</p>
+<pre><code><span class="p">$ </span>curl -s -N --max-time 2 "http://127.0.0.1:8000/v1/runs/$R/events?session_id=rest-martin" \
+    | grep -E "^(id|event):" | paste - - | grep -vE "step\.|transitioned|claimed"
+id: 1
+	event: run.started
+id: 2
+	event: message.user
+id: 5
+	event: model.responded
+id: 9
+	event: tool.called
+id: 10
+	event: tool.completed
+id: 14
+	event: model.responded
+id: 18
+	event: tool.called
+id: 19
+	event: model.responded
+id: 20
+	event: guard.checked
+id: 21
+	event: policy.decided
+id: 22
+	event: model.responded
+id: 23
+	event: judge.evaluated
+id: 24
+	event: guard.checked
+id: 25
+	event: tool.completed
+id: 29
+	event: model.responded
+id: 33
+	event: approval.requested</code></pre>
+<p><code>-N</code> affiche les données dès leur arrivée ; <code>--max-time 2</code> coupe la connexion au bout de 2 secondes, car le flux reste ouvert tant que le run n'est pas clos, et un run en pause ne l'est pas. Après une coupure (un téléphone qui perd le réseau), le client rouvre le flux en disant où il en était, avec <code>after_seq</code> (ou l'en-tête <code>Last-Event-ID</code>) : il ne reçoit que la suite.</p>
+<pre><code><span class="p">$ </span>curl -s -N --max-time 2 "http://127.0.0.1:8000/v1/runs/$R/events?session_id=rest-martin&amp;after_seq=33" \
+    | grep -E "^(id|event):" | paste - -
+id: 34
+	event: step.completed
+id: 35
+	event: run.transitioned
+id: 36
+	event: run.claimed</code></pre>
+<p>Jean approuve, depuis l'application :</p>
+<pre><code><span class="p">$ </span>curl -s -X POST "http://127.0.0.1:8000/v1/runs/$R/approve?session_id=rest-martin" \
+    -H 'Content-Type: application/json' -d '{"by":"jean"}'
+{"run_id":"01a16e63-853a-76ac-a64a-a38e61344ff2","calls":["fake_2_0"]}
+<span class="p">$ </span>curl -s "http://127.0.0.1:8000/v1/runs/$R?session_id=rest-martin" | jq '{status, text}'
+{
+  "status": "completed",
+  "text": "L'e-mail de relance est parti chez Mme Martin."
+}
+<span class="p">$ </span>ls boite-envoi
+20261024-164912-976920.json
+20261024-164917-949352.json</code></pre>
+<p>Le corps de <code>approve</code> accepte <code>by</code> (qui décide), <code>call_id</code> (un appel précis ; sans lui, tout ce qui attend), <code>reason</code> et <code>arguments</code> (pour corriger l'appel, comme <code>loom approve --arguments</code> au module 8). <code>reject</code> prend <code>by</code>, <code>call_id</code> et <code>reason</code>.</p>
+<p>La boîte d'envoi ne contient pourtant pas de nouveau fichier : celui de Mme Martin date de l'exercice 10.3, l'autre est celui de M. Bernard (10.4). L'e-mail avait déjà été envoyé, et la clé d'idempotence métier du module 8 l'a empêché de repartir. Le journal le dit :</p>
+<pre><code><span class="p">$ </span>jq -c 'select(.type=="idempotency.reused") | .payload | del(.type)' data/default/rest-martin.jsonl
+{"key":"default:envoyer_email:email:martin@example.fr:Votre devis D-2026-042","call_id":"fake_2_0","tool_name":"envoyer_email"}</code></pre>
+
+<p>Enfin, annuler un run. On lance une relance de M. Bernard, qui s'arrête elle aussi sur l'envoi, et on l'annule pendant sa pause :</p>
+<pre><code><span class="p">$ </span>curl -s -X POST http://127.0.0.1:8000/v1/agents/assistant/runs -H 'Content-Type: application/json' \
+    -d '{"message":"Relance M. Bernard pour le devis D-2026-050.","session_id":"rest-annule","background":true}'
+{"run_id":"01a16e63-b8e0-710a-8514-d37fed35f9b9","session_id":"rest-annule","status":"ready_for_model"}
+<span class="p">$ </span>A=01a16e63-b8e0-710a-8514-d37fed35f9b9
+<span class="p">$ </span>curl -s -X POST "http://127.0.0.1:8000/v1/runs/$A/cancel?session_id=rest-annule" \
+    -H 'Content-Type: application/json' -d '{"by":"jean"}'
+{"run_id":"01a16e63-b8e0-710a-8514-d37fed35f9b9","cancelled":true}
+<span class="p">$ </span>curl -s "http://127.0.0.1:8000/v1/runs/$A?session_id=rest-annule" | jq -c '{status}'
+{"status":"cancelled"}</code></pre>
+<p>C'est la route qui manquait à la CLI au module 8. Le corps est facultatif ; sans <code>by</code>, c'est le nom de la clé d'API (exercice 10.8) qui signe l'annulation au journal. Annuler un run déjà terminé ne fait rien : <code>"cancelled": false</code>.</p>
+
+<h4>À retenir</h4>
+<ul>
+<li>Le schéma d'une application : <code>POST … "background": true</code> → 202 et un identifiant ; ouvrir le flux SSE ; à l'événement <code>approval.requested</code>, afficher le bouton ; <code>POST …/approve</code> ou <code>…/reject</code> ; le flux se ferme à la clôture du run.</li>
+<li>Gardez toujours l'identifiant de session à côté de celui du run.</li>
+</ul>
+<p>Arrêtez le serveur avant l'exercice suivant.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-10-8">
+<h3><span class="exo-num">10.8</span> Protéger l'API par des clés</h3>
+<p class="fns"><a class="fn" href="matrice.html#N3">N3</a></p>
+
+<h4>Pourquoi</h4>
+<p>Une API ouverte accepte les requêtes de n'importe qui peut la joindre. Avant de la sortir de sa machine, Jean veut qu'elle exige une <strong>clé d'API</strong> : une chaîne secrète, que l'application envoie avec chaque requête, et qui dit ce qu'elle a le droit de faire.</p>
+
+<h4>Mise en place</h4>
+<p><code>loom keys create</code> fabrique une clé. On en crée deux : celle de l'application, qui peut tout faire sauf administrer, et une clé de consultation, qui ne peut que lire :</p>
+<pre><code><span class="p">$ </span>loom keys create app-dupont --scope run --scope read --scope read_content --scope approve
+Clé        : lk_l8dMJTafbBDywRn4EdLbhwqRiE_Dar3hGRuW7LgLT-M
+Elle n'est affichée qu'ici : la config ne garde que son empreinte.
+
+À ajouter dans la configuration :
+
+security:
+  api_keys:
+    - id: app-dupont
+      hash: sha256:8888b3fe3d3cfd7010fadc382e200a773d04c0f89734634e2ecd9cb63f60a854
+      scopes: [run, read, read_content, approve]
+<span class="p">$ </span>loom keys create lecture --scope read
+Clé        : lk_1bAK2_yEKsywcV4J04x8UnXiwyXbSd7a3TYOHMNqmao
+Elle n'est affichée qu'ici : la config ne garde que son empreinte.
+
+À ajouter dans la configuration :
+
+security:
+  api_keys:
+    - id: lecture
+      hash: sha256:5d9bb7982bb15bb097a77dd34c0d141b9af11fee5ec2fb7c8107a774a7a45ab1
+      scopes: [read]</code></pre>
+<p>La clé (<code>lk_…</code>) n'est affichée qu'une fois : notez-la dans un endroit sûr, hors du dépôt (gestionnaire de mots de passe, configuration de l'application). La configuration n'en garde que l'<strong>empreinte</strong> (<code>sha256:…</code>), dont on ne peut pas retrouver la clé : un <code>loom.yaml</code> lu par quelqu'un d'autre ne livre aucune clé. Vos clés et vos empreintes seront différentes de celles-ci.</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>app-dupont</code></td><td>Le nom de la clé dans la configuration et dans le journal (c'est lui qui apparaît comme auteur d'une action).</td></tr>
+<tr><td><code>--scope</code></td><td>Une portée, c'est-à-dire un droit. Répétable ; par défaut <code>run</code> et <code>read</code>.</td></tr>
+<tr><td><code>run</code></td><td>Lancer un run, l'annuler, appeler un webhook.</td></tr>
+<tr><td><code>read</code></td><td>Lire les agents, les runs, les sessions, les traces, les rapports, mais sans les contenus (textes, arguments), qui sont masqués.</td></tr>
+<tr><td><code>read_content</code></td><td>Lire aussi les contenus.</td></tr>
+<tr><td><code>approve</code></td><td>Approuver ou refuser.</td></tr>
+<tr><td><code>admin</code></td><td>Effacer une session (RGPD).</td></tr>
+<tr><td><code>--agent</code>, <code>--tenant</code>, <code>--expires</code>, <code>--rate-limit</code></td><td>Limiter la clé à certains agents, la rattacher à un client (module 12), lui donner une date de fin (<code>2027-01-01</code> ou <code>90j</code>), limiter son débit en requêtes par minute (module 12).</td></tr>
+</tbody>
+</table></div>
+<p>On déclare les deux clés à la fin de <code>loom.yaml</code>. Seule la fin du fichier change ; le début est celui de l'exercice 10.4 :</p>
+<figure class="code"><figcaption>loom.yaml (fin du fichier)</figcaption>
+<pre><code>    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+  idempotency: {backend: sqlite, path: data/idempotence.db}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont
+<span class="aj"> </span><span class="aj">security:</span><span class="aj">  api_keys:</span><span class="aj">    - id: app-dupont</span><span class="aj">      hash: sha256:8888b3fe3d3cfd7010fadc382e200a773d04c0f89734634e2ecd9cb63f60a854</span><span class="aj">      scopes: [run, read, read_content, approve]</span><span class="aj">    - id: lecture</span><span class="aj">      hash: sha256:5d9bb7982bb15bb097a77dd34c0d141b9af11fee5ec2fb7c8107a774a7a45ab1</span><span class="aj">      scopes: [read]</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>security:</code></td><td>Les réglages de sécurité de l'accès.</td></tr>
+<tr><td><code>api_keys:</code></td><td>Les clés acceptées : pour chacune, son nom (<code>id</code>), son empreinte (<code>hash</code>) et ses portées (<code>scopes</code>), recopiés de la sortie de <code>loom keys create</code>.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Clés|monté'
+Clés d'API : app-dupont, lecture
+2 agent(s) monté(s) sans erreur.</code></pre>
+<p>Relancez <code>loom serve</code> dans le premier terminal. Dans le second, gardez les clés dans des variables (en remplaçant par les vôtres) :</p>
+<pre><code><span class="p">$ </span>CLE=lk_l8dMJTafbBDywRn4EdLbhwqRiE_Dar3hGRuW7LgLT-M
+<span class="p">$ </span>LECTURE=lk_1bAK2_yEKsywcV4J04x8UnXiwyXbSd7a3TYOHMNqmao</code></pre>
+<p>Sans clé, l'API refuse tout (code 401) :</p>
+<pre><code><span class="p">$ </span>curl -s -i http://127.0.0.1:8000/v1/agents
+HTTP/1.1 401 Unauthorized
+{"detail":"Clé d'API absente : en-tête 'Authorization: Bearer …' ou 'X-API-Key'"}</code></pre>
+<p>La clé se donne dans l'en-tête <code>Authorization: Bearer &lt;clé&gt;</code> (ou <code>X-API-Key: &lt;clé&gt;</code>). La clé de consultation lit, mais ne lance pas de run (code 403) :</p>
+<pre><code><span class="p">$ </span>curl -s -H "Authorization: Bearer $LECTURE" http://127.0.0.1:8000/v1/agents | jq -c '.[].name'
+"assistant"
+<span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/v1/agents/assistant/runs \
+    -H "Authorization: Bearer $LECTURE" -H 'Content-Type: application/json' \
+    -d '{"message":"Quel est le montant du devis D-2026-042 ?"}'
+HTTP/1.1 403 Forbidden
+{"detail":"Clé sans la portée 'run'"}</code></pre>
+<p>La clé de l'application peut lancer le run :</p>
+<pre><code><span class="p">$ </span>curl -s -X POST http://127.0.0.1:8000/v1/agents/assistant/runs \
+    -H "Authorization: Bearer $CLE" -H 'Content-Type: application/json' \
+    -d '{"message":"Quel est le montant du devis D-2026-042 ?","session_id":"rest-cle"}' | jq -c '{status, text}'
+{"status":"completed","text":"Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT)."}</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li>401 : pas de clé, ou une clé inconnue. 403 : une clé valide, mais sans la portée demandée.</li>
+<li>Avec des clés déclarées, l'avertissement « API REST sans clé déclarée » de l'exercice 10.6 disparaît. En profil <code>prod</code> (module 3), une API sans clé est une erreur.</li>
+<li>La documentation <code>/docs</code> reste lisible sans clé en développement ; le profil <code>prod</code> la ferme.</li>
+<li>Pour retirer une clé, on retire son bloc de <code>loom.yaml</code> et on relance le serveur.</li>
+</ul>
+<p>Arrêtez le serveur avant l'exercice suivant.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-10-9">
+<h3><span class="exo-num">10.9</span> L'agent dans Claude : le serveur MCP</h3>
+<p class="fns"><a class="fn" href="matrice.html#N5">N5</a></p>
+
+<h4>Pourquoi</h4>
+<p>Au module 5, l'agent utilisait un serveur MCP comme source d'outils. Ici c'est l'inverse : <strong>l'agent devient un outil MCP</strong>, que Claude Desktop, Claude Code ou tout autre client MCP peut appeler. Jean demande à Claude « Quel est le montant du devis D-2026-042 ? », et c'est son assistant, avec ses règles, son journal et son budget, qui répond.</p>
+
+<h4>Mise en place</h4>
+<p><code>loom mcp</code> est un serveur MCP en <strong>stdio</strong> : c'est le client qui le lance, et ils se parlent par l'entrée et la sortie standard du process (module 5). Pour voir ce qu'il publie, écrivons un petit client MCP en Python, avec le SDK <code>mcp</code> (installé avec l'extra <code>mcp</code>) :</p>
+<figure class="code"><figcaption>client_mcp.py</figcaption>
+<pre><code>import asyncio
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+# Le client lance lui-même « loom mcp » et lui parle par l'entrée et la sortie standard.
+SERVEUR = StdioServerParameters(command="loom", args=["mcp"])
+
+
+async def main() -&gt; None:
+    async with stdio_client(SERVEUR) as (lecture, ecriture):
+        async with ClientSession(lecture, ecriture) as session:
+            await session.initialize()
+
+            outils = await session.list_tools()
+            for outil in outils.tools:
+                print(f"outil   : {outil.name:&lt;10} {outil.description}")
+
+            reponse = await session.call_tool(
+                "assistant",
+                {"message": "Quel est le montant du devis D-2026-042 ?", "session_id": "depuis-mcp"},
+            )
+            print("réponse :", reponse.content[0].text)
+            print("statut  :", reponse.structuredContent["status"])
+
+
+asyncio.run(main())</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>StdioServerParameters(command="loom", args=["mcp"])</code></td><td>La commande que le client lance : <code>loom mcp</code>, dans le dossier courant, où elle trouve <code>loom.yaml</code>.</td></tr>
+<tr><td><code>session.list_tools()</code></td><td>Les outils publiés : un par agent publié, plus trois outils de contrôle.</td></tr>
+<tr><td><code>session.call_tool("assistant", {…})</code></td><td>Appelle l'agent comme un outil : <code>message</code>, et au choix <code>session_id</code> et <code>attachments</code>.</td></tr>
+<tr><td><code>reponse.structuredContent</code></td><td>Le résultat structuré : les mêmes champs que la réponse REST.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>python client_mcp.py
+outil   : assistant  Assistant de la Plomberie Dupont : répond aux questions sur les devis et les prix, et relance les clients par e-mail après accord de l'artisan.
+outil   : run_status Statut et réponse d'un run déjà lancé
+outil   : run_report Consommation d'un run et de ses sous-runs, ou de toute une session : appels, tokens et coût, par run, par rôle et par modèle
+outil   : cancel     Arrête un run en cours ; faux s'il était déjà terminé
+réponse : Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).
+statut  : completed</code></pre>
+<ul>
+<li>L'outil <code>assistant</code> porte la description ajoutée à l'exercice 10.6 : c'est elle qui permet à Claude de savoir quand l'appeler. Sans elle, il ne lirait que « Agent loom assistant ». Le traducteur n'apparaît pas, grâce à <code>expose</code>.</li>
+<li><code>run_status</code> relit un run, <code>run_report</code> donne sa consommation, <code>cancel</code> l'arrête. Il n'y a pas d'outil d'approbation, et c'est voulu : sinon le modèle qui appelle l'agent pourrait valider lui-même l'envoi qu'il vient de demander. Une approbation se tranche dans le formulaire que le client MCP montre à l'humain, s'il sait le faire (on parle d'<em>elicitation</em>), sinon par la CLI ou l'API REST.</li>
+<li>Le serveur publie aussi des <strong>ressources</strong> en lecture : <code>loom://runs</code>, <code>loom://sessions</code>, et des gabarits comme <code>loom://runs/{run_id}</code> ou <code>loom://artifacts/{client}/{session}/{fichier}</code>.</li>
+</ul>
+
+<h4>Brancher Claude Code et Claude Desktop</h4>
+<p>Ces deux configurations n'ont pas été exécutées pendant la rédaction (pas de Claude Desktop dans l'environnement de travail) ; la commande qu'elles lancent, <code>loom mcp</code>, est celle qui vient de tourner. Pour <strong>Claude Code</strong>, on déclare la commande à lancer ; <code>uv --directory</code> la lance dans le dossier du projet, avec son environnement :</p>
+<pre><code><span class="p">$ </span>claude mcp add plomberie -- uv --directory /home/jean/plomberie-dupont run loom mcp</code></pre>
+<p>Pour <strong>Claude Desktop</strong>, dans son fichier de configuration des serveurs MCP (Réglages, Développeur, Modifier la configuration) :</p>
+<figure class="code"><figcaption>claude_desktop_config.json</figcaption>
+<pre><code>{
+  "mcpServers": {
+    "plomberie": {
+      "command": "uv",
+      "args": ["--directory", "/home/jean/plomberie-dupont", "run", "loom", "mcp"]
+    }
+  }
+}</code></pre></figure>
+<p>Après redémarrage, l'outil <code>assistant</code> apparaît dans Claude. Avec un modèle réel, sa clé doit être dans le <code>.env</code> du projet : Claude Desktop ne transmet pas l'environnement de votre terminal, mais <code>loom</code> lit le <code>.env</code> voisin de <code>loom.yaml</code>, d'où qu'on le lance.</p>
+
+<h4>Le serveur MCP en HTTP</h4>
+<p>Un serveur stdio ne sert que celui qui le lance, sur sa machine. Pour un client distant, le serveur MCP se monte dans <code>loom serve</code>, sous <code>/mcp</code>, protégé par les clés de l'exercice 10.8. On l'active à la fin de <code>loom.yaml</code> :</p>
+<figure class="code"><figcaption>loom.yaml (fin du fichier)</figcaption>
+<pre><code>    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+  idempotency: {backend: sqlite, path: data/idempotence.db}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont
+
+security:
+  api_keys:
+    - id: app-dupont
+      hash: sha256:8888b3fe3d3cfd7010fadc382e200a773d04c0f89734634e2ecd9cb63f60a854
+      scopes: [run, read, read_content, approve]
+    - id: lecture
+      hash: sha256:5d9bb7982bb15bb097a77dd34c0d141b9af11fee5ec2fb7c8107a774a7a45ab1
+      scopes: [read]
+<span class="aj"> </span><span class="aj">server:</span><span class="aj">  mcp: {http: true}</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>server:</code></td><td>Les réglages des serveurs : <code>http</code> (adresse et port de l'API) et <code>mcp</code>.</td></tr>
+<tr><td><code>mcp: {http: true}</code></td><td>Monte le serveur MCP dans l'API REST. Il exige au moins une clé dans <code>security.api_keys</code>, sinon la configuration est refusée.</td></tr>
+</tbody>
+</table></div>
+<pre><code><span class="p">$ </span>loom serve
+Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
+Env        : aucun (/home/jean/plomberie-dupont/.env)
+API REST   : http://127.0.0.1:8000/v1
+Docs       : http://127.0.0.1:8000/docs (sans clé)
+Agents     : assistant
+MCP HTTP   : http://127.0.0.1:8000/mcp
+Outils MCP : assistant
+Ressources : loom://runs, loom://sessions, et 6 gabarits</code></pre>
+<p>Le client HTTP passe la clé dans l'en-tête <code>Authorization</code>, comme <code>curl</code> :</p>
+<figure class="code"><figcaption>client_mcp_http.py</figcaption>
+<pre><code>import asyncio
+import os
+
+import httpx
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+
+URL = "http://127.0.0.1:8000/mcp/"
+CLE = os.environ["CLE"]  # la clé d'API, lue dans une variable d'environnement
+
+
+async def main() -&gt; None:
+    avec_cle = httpx.AsyncClient(headers={"Authorization": f"Bearer {CLE}"})
+    async with streamable_http_client(URL, http_client=avec_cle) as (lecture, ecriture, _):
+        async with ClientSession(lecture, ecriture) as session:
+            await session.initialize()
+            outils = await session.list_tools()
+            print("outils  :", [outil.name for outil in outils.tools])
+            reponse = await session.call_tool(
+                "assistant",
+                {"message": "Quel est le montant du devis D-2026-042 ?", "session_id": "mcp-http"},
+            )
+            print("réponse :", reponse.content[0].text)
+
+
+asyncio.run(main())</code></pre></figure>
+<pre><code><span class="p">$ </span>CLE=$CLE python client_mcp_http.py
+outils  : ['assistant', 'run_status', 'run_report', 'cancel']
+réponse : Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).
+<span class="p">$ </span>curl -s -i -X POST http://127.0.0.1:8000/mcp/
+HTTP/1.1 401 Unauthorized
+{"detail":"Clé d'API absente : en-tête 'Authorization: Bearer …' ou 'X-API-Key'"}</code></pre>
+<p>(<code>CLE=$CLE python …</code> transmet la variable du terminal au script, qui la lit avec <code>os.environ</code>.) Pour Claude Code : <code>claude mcp add --transport http plomberie-http http://127.0.0.1:8000/mcp/ --header "Authorization: Bearer lk_…"</code>.</p>
+
+<h4>À retenir</h4>
+<ul>
+<li>En stdio, le serveur agit au nom d'un seul client loom (<code>loom mcp --tenant …</code>, module 12) ; en HTTP, c'est la clé qui le dit.</li>
+<li>N'ajoutez jamais de <code>print</code> dans un outil Python servi en stdio : la sortie standard porte le protocole MCP, un texte en trop le corromprait.</li>
+</ul>
+<p>Arrêtez le serveur avant l'exercice suivant.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-10-10">
+<h3><span class="exo-num">10.10</span> Recharger le serveur en développement</h3>
+<p class="fns"><a class="fn" href="matrice.html#N6">N6</a></p>
+
+<h4>Pourquoi</h4>
+<p>Pendant qu'il retouche ses prompts, Jean n'a pas envie d'arrêter et de relancer le serveur à chaque modification.</p>
+
+<h4>Exécution</h4>
+<p>Avec <code>--reload</code>, le serveur surveille les fichiers du projet. Lancez-le, puis, dans le second terminal, ajoutez une ligne au prompt, cassez <code>agents/assistant.yaml</code> en lui ajoutant une ligne invalide (<code>cassé: [</code>), et réparez-le :</p>
+<pre><code><span class="p">$ </span>loom serve --reload
+Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
+Env        : aucun (/home/jean/plomberie-dupont/.env)
+API REST   : http://127.0.0.1:8000/v1
+Docs       : http://127.0.0.1:8000/docs (sans clé)
+Agents     : assistant
+MCP HTTP   : http://127.0.0.1:8000/mcp
+Outils MCP : assistant
+Ressources : loom://runs, loom://sessions, et 6 gabarits
+Rechargement : surveille /home/jean/plomberie-dupont (sauf data/)
+Rechargement : prompts/system.md modifié
+Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
+Env        : aucun (/home/jean/plomberie-dupont/.env)
+API REST   : http://127.0.0.1:8000/v1
+Docs       : http://127.0.0.1:8000/docs (sans clé)
+Agents     : assistant
+MCP HTTP   : http://127.0.0.1:8000/mcp
+Outils MCP : assistant
+Ressources : loom://runs, loom://sessions, et 6 gabarits
+Rechargé : le nouveau process sert ; l'ancien finit ce qu'il a en cours.
+Rechargement : agents/assistant.yaml modifié
+Config refusée : /home/jean/plomberie-dupont/agents/assistant.yaml: YAML invalide : while parsing a flow node
+expected the node content, but found '&lt;stream end&gt;'
+  in "&lt;unicode string&gt;", line 97, column 1:
+    
+    ^
+Rechargement refusé : l'ancien process continue de servir.
+Rechargement : agents/assistant.yaml modifié
+Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
+Env        : aucun (/home/jean/plomberie-dupont/.env)
+API REST   : http://127.0.0.1:8000/v1
+Docs       : http://127.0.0.1:8000/docs (sans clé)
+Agents     : assistant
+MCP HTTP   : http://127.0.0.1:8000/mcp
+Outils MCP : assistant
+Ressources : loom://runs, loom://sessions, et 6 gabarits
+Rechargé : le nouveau process sert ; l'ancien finit ce qu'il a en cours.</code></pre>
+<ul>
+<li>À chaque modification, un <strong>nouveau process</strong> charge la configuration. S'il y parvient, il prend le relais (« Rechargé ») et l'ancien finit ce qu'il avait en cours ; rien n'est rechargé à chaud dans un process qui tourne.</li>
+<li>Une configuration cassée est refusée, et l'<strong>ancien process continue de servir</strong> : l'API ne s'arrête pas pendant que vous corrigez.</li>
+<li>Le dossier <code>data/</code> (le journal) n'est pas surveillé.</li>
+</ul>
+<p>Retirez ensuite la ligne ajoutée au prompt. En production, un service ne doit pas changer parce qu'un fichier a bougé : le profil <code>prod</code> refuse l'option.</p>
+<pre><code><span class="p">$ </span>loom serve --reload --profile prod
+loom serve --reload est refusé en profil prod : un service ne se relance pas sur une modification de fichier.
+<span class="p">$ </span>echo $?
+2</code></pre>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-10-11">
+<h3><span class="exo-num">10.11</span> La latence, pour une interface vocale</h3>
+<p class="fns"><a class="fn" href="matrice.html#I3">I3</a></p>
+
+<h4>Pourquoi</h4>
+<p>Jean envisage un assistant au téléphone : le client parle, la voix est transcrite en texte, l'agent répond, et sa réponse est lue par une voix de synthèse. Au téléphone, un silence de deux secondes paraît une éternité. Ce qui compte n'est pas la durée totale du run, mais le délai avant le <strong>premier morceau de texte</strong>, que la synthèse vocale peut commencer à lire.</p>
+
+<h4>Mise en place</h4>
+<p>Le script <code>latence.py</code> mesure, pour deux runs de suite dans le même process, le délai avant le premier morceau de texte et la durée totale :</p>
+<figure class="code"><figcaption>latence.py</figcaption>
+<pre><code>import asyncio
+import time
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+from loom_ia.core.model import TextDelta
+
+
+async def mesurer(loom: Loom, etiquette: str) -&gt; None:
+    debut = time.perf_counter()
+    premier = None
+    async for element in loom.stream("assistant", "Quel est le montant du devis D-2026-042 ?"):
+        if isinstance(element, TextDelta) and premier is None:
+            premier = time.perf_counter() - debut
+    total = time.perf_counter() - debut
+    print(f"{etiquette} : premier texte à {premier * 1000:.0f} ms, run complet en {total * 1000:.0f} ms")
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        await mesurer(loom, "1er run (à froid)")
+        await mesurer(loom, "2e run (à chaud) ")
+
+
+asyncio.run(main())</code></pre></figure>
+<p><code>time.perf_counter()</code> est un chronomètre précis de la bibliothèque standard de Python.</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>python latence.py
+1er run (à froid) : premier texte à 938 ms, run complet en 979 ms
+2e run (à chaud)  : premier texte à 21 ms, run complet en 47 ms</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Le premier run paie la mise en route : loom monte l'agent et lance le serveur MCP <code>catalogue</code>. Le second, dans le même process, ne paie que le travail. Un service vocal garde donc un process qui tourne (<code>loom serve</code>, ou une instance <code>Loom</code> ouverte une fois pour toutes), au lieu de lancer une commande par appel.</li>
+<li>Avec le modèle simulé, le reste ne mesure que loom lui-même : quelques dizaines de millisecondes. Avec un vrai modèle, le délai avant le premier morceau dépend surtout du fournisseur et du modèle : un modèle léger comme Haiku répond plus vite qu'Opus.</li>
+<li>Les délais du flux se règlent par modèle, avec le bloc <code>timeouts</code> (présenté au module 9) : <code>first_token</code>, l'attente maximale du premier morceau, et <code>idle</code>, l'attente maximale entre deux morceaux (60 secondes chacun par défaut). Pour la voix, on les abaisse, et l'on prévoit un modèle de secours (<code>fallbacks</code>, module 9) : mieux vaut basculer vite que de laisser le client dans le silence.</li>
+</ul>
+<figure class="code"><figcaption>exemple de réglage pour la voix (non ajouté au projet)</figcaption>
+<pre><code>  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    timeouts: {first_token: 3, idle: 2}</code></pre></figure>
+
+<div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
+<p>Avec <code>model: HAIKU</code> (<a href="module-01.html#vrai-modele">rappel</a>), <code>latence.py</code> mesure le vrai délai de premier morceau du fournisseur. Si ce délai dépasse <code>first_token</code>, l'appel est interrompu et compté comme une erreur passagère : il est réessayé, puis passé au modèle de secours s'il y en a un (module 9).</p></div>
+</section>
+
+<h2 id="bilan">Bilan du module</h2>
+<p>L'agent est en <strong>v1.0</strong> : un script, une application ou Claude peuvent l'appeler. Le projet :</p>
+<figure class="code"><figcaption>plomberie-dupont/</figcaption>
+<pre><code>plomberie-dupont/
+├── loom.yaml            + la clé d'API app-dupont, le serveur MCP en HTTP
+├── outils.py            envoyer_email note qui a demandé l'envoi
+├── politiques.py
+├── agents/
+│   ├── assistant.yaml   + sa description
+│   └── traducteur.yaml  non publié (expose)
+├── prompts/
+├── serveurs/
+│   └── catalogue.py
+├── etat.py, annuler.py                     (module 8)
+├── question.py, flux.py, arriere_plan.py,  les scripts de ce module
+│   appelant.py, sans_fichier.py, latence.py,
+│   client_mcp.py, client_mcp_http.py
+├── boite-envoi/
+└── data/</code></pre></figure>
+<p>La clé <code>lecture</code> a servi à la démonstration des portées : retirez-la de <code>loom.yaml</code>. Seule <code>app-dupont</code> reste déclarée, et le module suivant s'en sert. Voici la fin de <code>loom.yaml</code> à la fin du module :</p>
+<figure class="code"><figcaption>loom.yaml (fin du fichier)</figcaption>
+<pre><code>  idempotency: {backend: sqlite, path: data/idempotence.db}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont
+
+security:
+  api_keys:
+    - id: app-dupont
+      hash: sha256:8888b3fe3d3cfd7010fadc382e200a773d04c0f89734634e2ecd9cb63f60a854
+      scopes: [run, read, read_content, approve]
+
+server:
+  mcp: {http: true}</code></pre></figure>
+<p>Extras installés : <code>anthropic</code>, <code>http</code>, <code>mcp</code>, <code>openai</code>, <code>postgres</code>, <code>sqlite</code>.</p>
+<p>Au module 11, l'agent n'attend plus qu'on lui parle : un CRM le déclenche par un webhook, des workers mènent ses runs, et un bus relie les process entre eux.</p>
+
+<nav class="suite" aria-label="Pages voisines"><a class="avant" href="module-09.html"><small>Précédent</small>Module 9 : Résilience et coûts</a><a class="apres" href="module-11.html"><small>Suivant</small>Module 11 : Automatiser : webhooks, workers, bus</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>

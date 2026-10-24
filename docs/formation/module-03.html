@@ -1,0 +1,1252 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 3 : Modèles et configuration · loom_v2</title>
+<meta name="description" content="Module 3 de la formation loom_v2 : déclarer plusieurs modèles et fournisseurs, voir ce que loom leur envoie, régler le cache, les appels et la fenêtre de contexte, gérer les secrets et le .env, les variables de prompt, les profils dev/prod et les contrôles de cohérence.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li class="ici"><a href="module-03.html" aria-current="page"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li class="ici"><a href="module-03.html" aria-current="page"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<h1>Module 3 : Modèles et configuration</h1>
+<p class="chapeau">Jusqu'ici, l'agent tourne sur le modèle simulé, et Claude Haiku attend dans <code>loom.yaml</code>. Ce module regarde les modèles de plus près : comment en déclarer plusieurs, chez plusieurs fournisseurs, ce que loom leur envoie vraiment, comment régler chaque appel. Puis il fait le tour de la configuration : les secrets et le fichier <code>.env</code>, les variables dans les prompts, les profils de développement et de production, et les contrôles que loom fait au chargement.</p>
+
+<dl class="fiche-agent">
+<dt>Agent</dt><dd><code>assistant</code>, dans le dossier <code>plomberie-dupont/</code></dd>
+<dt>Départ</dt><dd>la fin du <a href="module-02.html#bilan">module 2</a> : quatre outils, deux modèles déclarés</dd>
+<dt>Arrivée</dt><dd><span class="version">v0.3</span> : trois modèles (dont Claude Opus), le cache de prompt, un prompt qui cite le nom de l'entreprise par une variable</dd>
+<dt>Fonctions</dt><dd><a class="fn" href="matrice.html#B1">B1</a><a class="fn" href="matrice.html#B2">B2</a><a class="fn" href="matrice.html#B5">B5</a><a class="fn" href="matrice.html#B6">B6</a><a class="fn" href="matrice.html#B7">B7</a><a class="fn" href="matrice.html#M3">M3</a><a class="fn" href="matrice.html#M6">M6</a><a class="fn" href="matrice.html#M7">M7</a><a class="fn" href="matrice.html#M4">M4</a><a class="fn" href="matrice.html#M5">M5</a></dd>
+</dl>
+
+<details class="depart"><summary>Point de départ : les fichiers au début du module</summary>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        # 2.1 : calculer un prix TTC
+        - with_text: 1 250 € HT
+          text: Je calcule le prix TTC.
+          tool_calls:
+            - name: prix_ttc
+              arguments: {montant_ht: 1250, taux_tva: 10}
+        - with_text: 1 250 € HT
+          text: Pour 1 250 € HT avec une TVA à 10 %, le client paiera 1 375 € TTC.
+        # 2.2 : retrouver un devis, puis un devis qui n'existe pas
+        - with_text: Où en est le devis D-2026-042
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Où en est le devis D-2026-042
+          text: Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
+        - with_text: D-2026-999
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-999}
+        - with_text: D-2026-999
+          text: Je ne trouve aucun devis D-2026-999. Les devis connus sont D-2026-042 et D-2026-050.
+        # 2.3 : une page web trop lente
+        - with_text: taux de TVA
+          text: Je consulte la fiche des impôts.
+          tool_calls:
+            - name: fetch_page
+              arguments:
+                url: https://www.impots.gouv.fr/professionnel/questions/quel-taux-de-tva-appliquer-pour-les-travaux-realises-dans-les-logements
+        - with_text: taux de TVA
+          text: Je n'ai pas pu lire la fiche des impôts à temps. Je ne vous donne donc pas de taux ; réessayez dans un instant.
+        # 2.4 : des arguments refusés, puis corrigés
+        - with_text: mille deux cents
+          text: Je calcule.
+          tool_calls:
+            - name: prix_ttc
+              arguments: {montant_ht: mille deux cents}
+        - with_text: mille deux cents
+          text: Je corrige le montant.
+          tool_calls:
+            - name: prix_ttc
+              arguments: {montant_ht: 1200}
+        - with_text: mille deux cents
+          text: Pour 1 200 € HT avec une TVA à 20 %, le client paiera 1 440 € TTC.
+        # 2.5 : deux outils dans le même tour
+        - with_text: et le D-2026-050
+          text: Je regarde les deux devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+            - name: chercher_devis
+              arguments: {numero: D-2026-050}
+        - with_text: et le D-2026-050
+          text: Le D-2026-042 (Mme Martin) attend une réponse ; le D-2026-050 (M. Bernard) est accepté.
+        # 2.6 : deux étapes d'outils, pour tester la borne
+        - with_text: Recalcule
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Recalcule
+          text: Je recalcule avec une TVA à 10 %.
+          tool_calls:
+            - name: prix_ttc
+              arguments: {montant_ht: 1533.33, taux_tva: 10}
+          forced: Le devis D-2026-042 est à 1 533,33 € HT. Je n'ai pas eu le temps de recalculer le TTC à 10 % ; demandez-le-moi à nouveau.
+        - with_text: Recalcule
+          text: À 10 %, le devis D-2026-042 passerait à 1 686,66 € TTC.
+        # 2.7 : lire un résultat déporté
+        - with_text: Détaille le devis D-2026-042
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Détaille le devis D-2026-042
+          text: Le résultat a été mis de côté ; je le lis.
+          tool_calls:
+            - name: artifact_read
+              arguments: {ref: "artifact://default/devis-deporte/c05201e7dda3b99a2bcacb20145df68e8be2f20a7323e8bc033880541ac3b557.json"}
+        - with_text: Détaille le devis D-2026-042
+          text: "Devis D-2026-042 : Mme Martin, remplacement du chauffe-eau, 1 533,33 € HT, TVA 20 %, 1 840 € TTC, envoyé le 3 septembre 2026."
+        # 2.8 : une image
+        - with_text: étiquette
+          text: Je fabrique l'étiquette.
+          tool_calls:
+            - name: etiquette_devis
+              arguments: {numero: D-2026-042}
+        - with_text: étiquette
+          text: Voici l'étiquette du devis D-2026-042 (orange, car il est envoyé et sans réponse).
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}</code></pre></figure>
+<figure class="code"><figcaption>outils.py</figcaption>
+<pre><code>import struct
+import zlib
+
+from loom_ia.core.ports import ToolError
+from loom_ia.tools import Image, tool
+
+# Le carnet de devis de l'entreprise. Plus tard, ce sera une base de données ou un CRM.
+DEVIS = {
+    "D-2026-042": {
+        "client": "Mme Martin",
+        "email": "martin@example.fr",
+        "objet": "Remplacement du chauffe-eau",
+        "montant_ht": 1533.33,
+        "taux_tva": 20,
+        "montant_ttc": 1840.00,
+        "date": "2026-09-03",
+        "statut": "envoyé",
+    },
+    "D-2026-050": {
+        "client": "M. Bernard",
+        "email": "bernard@example.fr",
+        "objet": "Détartrage de la chaudière",
+        "montant_ht": 150.00,
+        "taux_tva": 10,
+        "montant_ttc": 165.00,
+        "date": "2026-09-20",
+        "statut": "accepté",
+    },
+}
+
+
+@tool
+def prix_ttc(montant_ht: float, taux_tva: float = 20.0) -&gt; dict[str, float]:
+    """Calcule la TVA et le montant TTC à partir d'un montant HT. Le taux est en pourcentage."""
+    tva = round(montant_ht * taux_tva / 100, 2)
+    return {"montant_ht": montant_ht, "tva": tva, "montant_ttc": round(montant_ht + tva, 2)}
+
+
+@tool
+def chercher_devis(numero: str) -&gt; dict[str, str | float]:
+    """Retrouve un devis par son numéro (par exemple D-2026-042) : client, objet, montants, date, statut."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}. Numéros connus : {', '.join(DEVIS)}")
+    return {"numero": numero, **devis}
+
+
+# Couleur de l'étiquette selon le statut du devis.
+COULEURS = {"envoyé": (230, 140, 30), "accepté": (40, 150, 80)}
+
+
+@tool
+def etiquette_devis(numero: str) -&gt; Image:
+    """Fabrique l'étiquette de couleur d'un devis (orange : envoyé, vert : accepté), en image PNG."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}.")
+    couleur = COULEURS.get(str(devis["statut"]), (120, 120, 120))
+    return Image(png_uni(160, 60, couleur), name=f"etiquette-{numero}.png")
+
+
+def png_uni(largeur: int, hauteur: int, rgb: tuple[int, int, int]) -&gt; bytes:
+    """Une image PNG d'une seule couleur, écrite sans bibliothèque d'image."""
+    ligne = b"\x00" + bytes(rgb) * largeur
+    brut = zlib.compress(ligne * hauteur)
+
+    def bloc(nature: bytes, donnees: bytes) -&gt; bytes:
+        crc = zlib.crc32(nature + donnees)
+        return struct.pack("&gt;I", len(donnees)) + nature + donnees + struct.pack("&gt;I", crc)
+
+    entete = struct.pack("&gt;IIBBBBB", largeur, hauteur, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + bloc(b"IHDR", entete) + bloc(b"IDAT", brut) + bloc(b"IEND", b"")</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis</code></pre></figure>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la Plomberie Dupont, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.</code></pre></figure>
+<figure class="code"><figcaption>.gitignore</figcaption>
+<pre><code>.env
+data/
+__pycache__/</code></pre></figure>
+<p>Et <code>pyproject.toml</code>, écrit par uv, qui dit quels extras de loom-ia sont installés (pour repartir de ce point : <code>uv sync</code>) :</p>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+    "loom-ia[anthropic]&gt;=2.0.11",
+]</code></pre></figure>
+</details>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-3-1">
+<h3><span class="exo-num">3.1</span> Déclarer un deuxième modèle Claude</h3>
+<p class="fns"><a class="fn" href="matrice.html#B1">B1</a></p>
+
+<h4>Pourquoi</h4>
+<p>Tous les modèles ne se valent pas. Claude Haiku est rapide et peu cher ; Claude Opus raisonne mieux mais coûte plus. Jean voudra le premier pour les questions simples, le second pour les tâches délicates. Les deux se déclarent côte à côte dans <code>loom.yaml</code>.</p>
+
+<h4>Mise en place</h4>
+<p>Deux changements dans <code>loom.yaml</code>. D'abord, ce module n'a besoin que de deux scénarios du modèle simulé : son script est remplacé par une version courte. Ensuite, on ajoute Claude Opus :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+<span class="aj">        - with_text: Bonjour</span><span class="aj">          text: Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?</span><span class="aj">        - with_text: D-2026-042</span><span class="aj">          text: Je cherche le devis.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: chercher_devis</span><span class="aj">              arguments: {numero: D-2026-042}</span><span class="aj">        - with_text: D-2026-042</span><span class="aj">          text: Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.</span>
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+
+<span class="aj">  - id: OPUS</span><span class="aj">    sdk: anthropic</span><span class="aj">    model: claude-opus-5-5</span><span class="aj">    api_key_env: ANTHROPIC_API_KEY</span><span class="aj">    capabilities: {forced_tool_choice: false}</span>
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées ou remplacées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>id: OPUS</code></td><td>Le nom que vous donnez au modèle dans la configuration.</td></tr>
+<tr><td><code>model: claude-opus-5-5</code></td><td>Le modèle chez Anthropic.</td></tr>
+<tr><td><code>api_key_env: ANTHROPIC_API_KEY</code></td><td>La même variable que pour Haiku : une seule clé Anthropic sert pour tous ses modèles.</td></tr>
+<tr><td><code>capabilities: {…}</code></td><td>Ce que le modèle sait faire, ou ne sait pas faire. loom en tient compte pour construire ses requêtes.</td></tr>
+<tr><td><code>forced_tool_choice: false</code></td><td>Claude Opus 5.5 refuse qu'on lui <em>impose</em> l'appel d'un outil (erreur 400). loom s'en sert dans deux cas vus plus loin, les juges et une politique qui exige un outil (module 7) : ce réglage lui dit de s'en passer avec ce modèle.</td></tr>
+</tbody>
+</table></div>
+<p>Les autres capacités, avec leur valeur par défaut, sont décrites dans <code>docs/configuration.md</code> du dépôt. Celles que vous rencontrerez : <code>vision</code> (le modèle voit les images, module 6) et <code>context_window</code> (la taille de sa fenêtre, exercice 3.6).</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Modèles|monté'
+Modèles    : SIMULE, HAIKU, OPUS
+1 agent(s) monté(s) sans erreur.</code></pre>
+<p>Déclarer un modèle ne l'utilise pas : l'agent reste sur <code>SIMULE</code>. C'est la ligne <code>model:</code> de l'agent qui choisit (<a href="module-01.html#vrai-modele">rappel</a>).</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-3-2">
+<h3><span class="exo-num">3.2</span> Un modèle d'un autre fournisseur, ou local</h3>
+<p class="fns"><a class="fn" href="matrice.html#B1">B1</a></p>
+
+<h4>Pourquoi</h4>
+<p>loom n'est pas lié à Anthropic. Il parle aussi à OpenAI et à tous les services qui imitent son API : Together, Mistral, et surtout les modèles que l'on fait tourner sur sa propre machine avec Ollama ou vLLM. Pour des données sensibles, un modèle local évite d'envoyer quoi que ce soit à l'extérieur.</p>
+
+<h4>Mise en place</h4>
+<p>On déclare un modèle servi par Ollama sur la machine. Il n'est pas nécessaire qu'Ollama soit installé pour suivre l'exercice.</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Bonjour
+          text: Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
+        - with_text: D-2026-042
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: D-2026-042
+          text: Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+<span class="aj">  - id: LOCAL</span><span class="aj">    sdk: openai</span><span class="aj">    base_url: http://localhost:11434/v1</span><span class="aj">    model: qwen3:8b</span><span class="aj">    params: {temperature: 0.2}</span><span class="aj"> </span>storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>sdk: openai</code></td><td>Le modèle parle le protocole d'OpenAI (son API « Chat Completions »). Avec <code>api: responses</code>, loom utiliserait l'autre API d'OpenAI, « Responses ».</td></tr>
+<tr><td><code>base_url: http://localhost:11434/v1</code></td><td>L'adresse du service. Sans elle, loom appelle OpenAI. Ici, c'est l'adresse par défaut d'Ollama sur la machine.</td></tr>
+<tr><td><code>model: qwen3:8b</code></td><td>Le nom du modèle tel que le service le connaît.</td></tr>
+<tr><td><code>params: {temperature: 0.2}</code></td><td>Des réglages transmis tels quels au fournisseur (exercice 3.5).</td></tr>
+</tbody>
+</table></div>
+<p>Pas de <code>api_key_env</code> : un service local ne demande pas de clé.</p>
+
+<pre><code><span class="p">$ </span>loom validate
+…
+Demande refusée : Modèle 'LOCAL' : le SDK 'openai' n'est pas installé (installer l'extra : loom-ia[openai])</code></pre>
+<p>Comme pour Anthropic au module 1, chaque fournisseur s'installe à part, sous forme d'extra. Donnez à <code>uv add</code> la liste complète des extras voulus, pour garder celui d'Anthropic :</p>
+<pre><code><span class="p">$ </span>uv add "loom-ia[anthropic,openai]"
+Resolved 28 packages in 23ms
+Installed 1 package in 24ms
+ + openai==3.37.0
+<span class="p">$ </span>grep loom-ia pyproject.toml
+    "loom-ia[anthropic,openai]&gt;=2.0.11",
+<span class="p">$ </span>loom validate | grep -E 'Modèles|monté'
+Modèles    : SIMULE, HAIKU, OPUS, LOCAL
+1 agent(s) monté(s) sans erreur.</code></pre>
+
+<h4>Exécution</h4>
+<p>Passez l'agent sur <code>LOCAL</code> (ligne <code>model: LOCAL</code> dans <code>agents/assistant.yaml</code>) et lancez-le. Sans Ollama démarré, voici ce qui se passe :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Bonjour, qui es-tu ?" --session essai-local
+2026-10-24 14:51:52 WARNING  loom_ia.engine.model_call — Tentative 1/3 du modèle LOCAL ratée (transient) : nouvel essai dans 0.6 s
+2026-10-24 14:51:52 WARNING  loom_ia.engine.model_call — Tentative 2/3 du modèle LOCAL ratée (transient) : nouvel essai dans 1.4 s
+—
+
+Statut     : failed · itérations : 0 · tokens : 0/0 · coût : 0.0000 $
+Run        : 01a16df7-ae79-7048-afb5-9814a3e6a0f9
+Erreur     : Connection error. (model.transient)</code></pre>
+<p>Personne ne répond à l'adresse : loom considère l'erreur comme passagère (<code>transient</code>), réessaie deux fois en espaçant les tentatives, puis abandonne. Le module 9 montre comment régler ces nouvelles tentatives et basculer sur un modèle de secours.</p>
+
+<div class="encadre reel"><p class="encadre-titre">Avec Ollama</p>
+<p>Si Ollama tourne sur votre machine (<code>ollama pull qwen3:8b</code>, puis <code>ollama serve</code>), le même run reçoit une vraie réponse du modèle local, sans clé et sans réseau extérieur.</p></div>
+
+<p><strong>Remettez <code>model: SIMULE</code></strong> dans l'agent avant la suite.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-3-3">
+<h3><span class="exo-num">3.3</span> Voir ce que loom envoie au modèle</h3>
+<p class="fns"><a class="fn" href="matrice.html#B2">B2</a></p>
+
+<h4>Pourquoi</h4>
+<p>Anthropic et OpenAI n'attendent pas les messages sous la même forme. Pourtant, Jean peut passer d'un modèle à l'autre en changeant une ligne. Comment ? loom garde les messages sous une forme <strong>neutre</strong>, et ne les traduit dans le format du fournisseur qu'au moment de l'appel. Pour le voir, on demande à loom de garder les requêtes telles qu'il les envoie.</p>
+
+<h4>Mise en place</h4>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Bonjour
+          text: Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
+        - with_text: D-2026-042
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: D-2026-042
+          text: Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+  - id: LOCAL
+    sdk: openai
+    base_url: http://localhost:11434/v1
+    model: qwen3:8b
+    params: {temperature: 0.2}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+<span class="aj">  capture: {raw_exchanges: true}</span></code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>capture: {raw_exchanges: true}</code></td><td>Garde au journal chaque requête envoyée au modèle et sa réponse, telles quelles (événement <code>model.exchanged</code>). Les clés d'API y sont masquées. C'est un outil de mise au point : le journal grossit vite.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<p><strong>1. Le format neutre.</strong> Avec le modèle simulé, regardez le message de l'utilisateur tel que le journal le garde, puis la requête transmise au modèle :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Bonjour, qui es-tu ?" --session format-neutre
+Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
+
+Statut     : completed · itérations : 1 · tokens : 645/44 · coût : 0.0000 $
+Run        : 01a16df7-c5f9-7376-aafa-17886d55a597
+<span class="p">$ </span>jq -c 'select(.type=="message.user") | .payload.message' data/default/format-neutre.jsonl
+{"role":"user","blocks":[{"cache_breakpoint":false,"provider_meta":{},"type":"text","text":"Bonjour, qui es-tu ?"}]}
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/format-neutre.jsonl | jq '{model_id, messages}'
+{
+  "model_id": "fake-1",
+  "messages": [
+    {
+      "role": "user",
+      "blocks": [
+        {
+          "cache_breakpoint": false,
+          "provider_meta": {},
+          "type": "text",
+          "text": "Bonjour, qui es-tu ?"
+        }
+      ]
+    }
+  ]
+}</code></pre>
+<p>Le message est une suite de <strong>blocs</strong> typés (ici un bloc <code>text</code>). Les images, les appels d'outils et leurs résultats, le raisonnement d'un modèle sont d'autres types de blocs. Le modèle simulé n'a pas de format propre : il reçoit cette forme neutre.</p>
+
+<p><strong>2. Le format d'Anthropic.</strong> Passez l'agent sur <code>HAIKU</code>. Pas besoin d'une vraie clé : avec une clé bidon, donnée pour cette seule commande, la requête part, Anthropic la refuse, et le journal la garde quand même.</p>
+<pre><code><span class="p">$ </span>ANTHROPIC_API_KEY=cle-bidon loom run assistant "Bonjour, qui es-tu ?" --session format-anthropic
+—
+
+Statut     : failed · itérations : 0 · tokens : 0/0 · coût : 0.0000 $
+Run        : 01a16df7-ca41-768c-adcb-af8f9b83e7b7
+Erreur     : Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'invalid x-api-key'}, 'request_id': 'req_011CgM6MigpYDRDRsLdj911f'} (model.auth)
+<span class="p">$ </span>jq -c 'select(.type=="model.exchanged") | .payload | {url, status_code}' data/default/format-anthropic.jsonl
+{"url":"https://api.anthropic.com/v1/messages","status_code":401}
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/format-anthropic.jsonl | jq '{model, max_tokens, system, messages, outils: [.tools[].name]}'
+{
+  "model": "claude-haiku-5-5",
+  "max_tokens": 4096,
+  "system": "Tu es l'assistant de la Plomberie Dupont, une entreprise de plomberie et de\nchauffage. Tu réponds en français, en deux ou trois phrases.\nN'invente jamais un taux, un montant ni une date.\nPour une question de TVA, lis la page officielle avec l'outil `fetch_page`\net cite ta source.\nPour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer\ntoi-même, et reprends les montants qu'il renvoie.\nPour une question sur un devis, appelle l'outil `chercher_devis` avec son\nnuméro.\n",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Bonjour, qui es-tu ?"
+        }
+      ]
+    }
+  ],
+  "outils": [
+    "fetch_page",
+    "prix_ttc",
+    "chercher_devis",
+    "etiquette_devis"
+  ]
+}
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_headers["x-api-key"]' data/default/format-anthropic.jsonl
+[retiré]</code></pre>
+<p>Écrire <code>VARIABLE=valeur</code> devant une commande ne vaut que pour cette commande. Si votre <code>.env</code> contient une vraie clé, elle reste intacte, et vous pouvez aussi faire l'exercice avec elle : la requête est la même, et Claude répond.</p>
+
+<p><strong>3. Le format d'OpenAI.</strong> Passez l'agent sur <code>LOCAL</code>, relancez la même demande (elle échoue faute d'Ollama, mais la requête est gardée), et regardez-la :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Bonjour, qui es-tu ?" --session format-openai
+<span class="c">(échec de connexion, comme à l'exercice 3.2)</span>
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/format-openai.jsonl | head -1 | jq '{model, temperature, messages, outils: [.tools[].function.name]}'
+{
+  "model": "qwen3:8b",
+  "temperature": 0.2,
+  "messages": [
+    {
+      "role": "system",
+      "content": "Tu es l'assistant de la Plomberie Dupont, une entreprise de plomberie et de\nchauffage. Tu réponds en français, en deux ou trois phrases.\nN'invente jamais un taux, un montant ni une date.\nPour une question de TVA, lis la page officielle avec l'outil `fetch_page`\net cite ta source.\nPour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer\ntoi-même, et reprends les montants qu'il renvoie.\nPour une question sur un devis, appelle l'outil `chercher_devis` avec son\nnuméro.\n"
+    },
+    {
+      "role": "user",
+      "content": "Bonjour, qui es-tu ?"
+    }
+  ],
+  "outils": [
+    "fetch_page",
+    "prix_ttc",
+    "chercher_devis",
+    "etiquette_devis"
+  ]
+}</code></pre>
+<p>(Le <code>head -1</code> ne garde que la première tentative : les trois sont identiques.)</p>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>La même demande, le même prompt, les mêmes outils, et trois formes différentes. Pour Anthropic, le prompt système est un champ à part (<code>system</code>) et le message une liste de blocs. Pour OpenAI, le prompt système devient un message de rôle <code>system</code>, et le texte une simple chaîne.</li>
+<li>Le journal, lui, garde toujours la forme neutre. C'est pourquoi une conversation commencée avec un modèle peut continuer avec un autre, et pourquoi un run se rejoue avec un autre modèle (module 13).</li>
+<li>Seul le code qui parle à un fournisseur, son <strong>adaptateur</strong>, connaît son format. Ajouter un fournisseur ne change rien au reste de loom.</li>
+</ul>
+<p><strong>Remettez <code>model: SIMULE</code></strong> dans l'agent avant la suite. Gardez <code>raw_exchanges</code> pour les exercices suivants.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-3-4">
+<h3><span class="exo-num">3.4</span> Le cache de prompt</h3>
+<p class="fns"><a class="fn" href="matrice.html#B5">B5</a></p>
+
+<h4>Pourquoi</h4>
+<p>À chaque tour, l'agent renvoie au modèle le même prompt système, les mêmes outils et toute la conversation. Anthropic peut garder ce début de requête en <strong>cache</strong> : relu plutôt que retraité, il coûte environ dix fois moins cher et répond plus vite. Encore faut-il marquer dans la requête jusqu'où mettre en cache.</p>
+
+<h4>Mise en place</h4>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Bonjour
+          text: Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
+        - with_text: D-2026-042
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: D-2026-042
+          text: Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+<span class="aj">    max_tokens: 4096</span><span class="aj">    cache: {system: true, tools: true, messages: true}</span>
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+  - id: LOCAL
+    sdk: openai
+    base_url: http://localhost:11434/v1
+    model: qwen3:8b
+    params: {temperature: 0.2}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+  capture: {raw_exchanges: true}</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>max_tokens: 4096</code></td><td>Le nombre maximal de tokens que le modèle peut écrire dans une réponse. Anthropic l'exige ; sans cette ligne, loom envoie 4096 (exercice 3.5).</td></tr>
+<tr><td><code>cache: {system: true, tools: true, messages: true}</code></td><td>Pose un point de cache sur le prompt système, sur le dernier outil, et sur le dernier message de la conversation. Réservé à <code>sdk: anthropic</code> : loom le refuse pour OpenAI.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<p>Agent sur <code>HAIKU</code>, avec la clé bidon :</p>
+<pre><code><span class="p">$ </span>ANTHROPIC_API_KEY=cle-bidon loom run assistant "Bonjour, qui es-tu ?" --session cache
+<span class="c">(refus 401, comme à l'exercice 3.3)</span>
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/cache.jsonl | jq '{max_tokens, system, messages, dernier_outil: .tools[-1] | {name, cache_control}}'
+{
+  "max_tokens": 4096,
+  "system": [
+    {
+      "type": "text",
+      "text": "Tu es l'assistant de la Plomberie Dupont, une entreprise de plomberie et de\nchauffage. Tu réponds en français, en deux ou trois phrases.\nN'invente jamais un taux, un montant ni une date.\nPour une question de TVA, lis la page officielle avec l'outil `fetch_page`\net cite ta source.\nPour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer\ntoi-même, et reprends les montants qu'il renvoie.\nPour une question sur un devis, appelle l'outil `chercher_devis` avec son\nnuméro.\n",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Bonjour, qui es-tu ?",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    }
+  ],
+  "dernier_outil": {
+    "name": "etiquette_devis",
+    "cache_control": {
+      "type": "ephemeral"
+    }
+  }
+}</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<p>Les trois marques <code>cache_control</code> sont les points de cache. Tout ce qui les précède peut être relu depuis le cache d'Anthropic au tour suivant. C'est l'adaptateur Anthropic qui les pose ; le modèle simulé et OpenAI n'en reçoivent pas.</p>
+
+<div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
+<p>L'effet du cache ne se voit qu'avec une vraie clé. Dans le bilan d'un run et dans <code>loom inspect</code>, les tokens se répartissent alors entre l'entrée normale, l'écriture en cache (<code>cache_write</code>, au premier appel) et la lecture en cache (<code>cache_read</code>, aux appels suivants). Un prompt trop court pour le minimum du modèle n'est simplement pas mis en cache, sans erreur.</p></div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-3-5">
+<h3><span class="exo-num">3.5</span> Régler chaque appel</h3>
+<p class="fns"><a class="fn" href="matrice.html#B6">B6</a></p>
+
+<h4>Pourquoi</h4>
+<p>Une réponse de l'assistant tient en trois phrases : inutile de lui laisser 4 096 tokens. Les réglages d'appel se fixent sur le modèle, et chaque agent peut les ajuster pour lui-même.</p>
+
+<h4>Mise en place</h4>
+<p>Trois niveaux :</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>max_tokens</code> (modèle)</td><td>Dans <code>loom.yaml</code>, la longueur maximale d'une réponse, pour tous les agents qui utilisent ce modèle (exercice 3.4).</td></tr>
+<tr><td><code>params</code> (modèle)</td><td>Dans <code>loom.yaml</code>, des réglages transmis <strong>tels quels</strong> au fournisseur, qui seul juge ce qu'il accepte : <code>temperature</code>, <code>thinking</code>… Vous l'avez vu sur <code>LOCAL</code> : <code>"temperature": 0.2</code> figure dans sa requête (exercice 3.3).</td></tr>
+<tr><td><code>llm</code> (agent)</td><td>Dans le fichier de l'agent, sous <code>main</code> : ses propres <code>max_tokens</code> et <code>params</code>, qui remplacent ceux du modèle pour lui seul.</td></tr>
+</tbody>
+</table></div>
+<p>Réduisez la longueur des réponses de l'assistant, sur <code>HAIKU</code> :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: HAIKU
+  system_file: system.md
+<span class="aj">  llm:</span><span class="aj">    max_tokens: 1000</span>
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées (et le modèle passé sur <code>HAIKU</code>)</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>ANTHROPIC_API_KEY=cle-bidon loom run assistant "Bonjour, qui es-tu ?" --session reglages
+<span class="c">(refus 401)</span>
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/reglages.jsonl | jq '{model, max_tokens}'
+{
+  "model": "claude-haiku-5-5",
+  "max_tokens": 1000
+}</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li>Les clés de <code>llm.params</code> se fusionnent une à une sur celles de <code>params</code> du modèle. Une clé qui contient elle-même un bloc (comme <code>thinking</code>) est remplacée en entier, pas mélangée.</li>
+<li>loom ne vérifie pas le contenu de <code>params</code> : c'est le fournisseur qui refuse ce qu'il ne connaît pas. Les modèles Claude 5.5, par exemple, refusent <code>temperature</code> (erreur 400).</li>
+<li>Le module 6 reprend <code>llm</code> pour les rôles, des modèles secondaires de l'agent.</li>
+<li><strong>Retirez le bloc <code>llm</code> et remettez <code>model: SIMULE</code></strong> avant la suite.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-3-6">
+<h3><span class="exo-num">3.6</span> La fenêtre de contexte</h3>
+<p class="fns"><a class="fn" href="matrice.html#B7">B7</a></p>
+
+<h4>Pourquoi</h4>
+<p>Chaque modèle a une <strong>fenêtre de contexte</strong> : la taille maximale d'une requête, réponse comprise, en tokens. Une conversation qui grossit finit par la dépasser, et le fournisseur refuse alors la requête. loom peut vérifier la taille <em>avant</em> d'envoyer.</p>
+
+<h4>Mise en place</h4>
+<p>On donne au modèle simulé une fenêtre minuscule, 600 tokens :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+<span class="aj">    capabilities: {context_window: 600}</span>    params:
+      script:
+        - with_text: Bonjour
+          text: Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
+        - with_text: D-2026-042
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: D-2026-042
+          text: Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+  - id: LOCAL
+    sdk: openai
+    base_url: http://localhost:11434/v1
+    model: qwen3:8b
+    params: {temperature: 0.2}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+  capture: {raw_exchanges: true}</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>context_window: 600</code></td><td>La fenêtre du modèle, en tokens. Sans elle, loom ne vérifie rien. Pour Claude, elle se compte en centaines de milliers de tokens (par exemple <code>context_window: 200000</code>).</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom run assistant "Où en est le devis D-2026-042 ?" --session fenetre
+—
+
+Statut     : failed · itérations : 1 · tokens : 648/66 · coût : 0.0000 $
+Run        : 01a16df8-07c6-70a5-b31f-88080ff3bcb5
+Erreur     : Requête estimée à 801 tokens, plus 0 en sortie : dépasse la fenêtre de 600 tokens du modèle SIMULE (model.context_overflow)</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>Le premier appel passe. Il demande <code>chercher_devis</code>, dont le résultat s'ajoute à la conversation. Le deuxième appel ferait alors 801 tokens : loom le refuse <strong>avant</strong> de l'envoyer, et le run échoue avec <code>model.context_overflow</code>.</li>
+<li>loom estime la taille à environ un token pour quatre caractères, et ajoute le <code>max_tokens</code> du modèle (« en sortie »), puisque la réponse doit aussi tenir dans la fenêtre. Le modèle simulé n'a pas de <code>max_tokens</code>, d'où le « plus 0 ».</li>
+<li>Dans une longue conversation, ce n'est pas la seule protection : le module 4 montre comment loom résume les anciens échanges pour rester dans la fenêtre.</li>
+<li><strong>Retirez la ligne <code>capabilities</code></strong> du modèle simulé avant la suite.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-3-7">
+<h3><span class="exo-num">3.7</span> Les secrets et le fichier <code>.env</code></h3>
+<p class="fns"><a class="fn" href="matrice.html#M3">M3</a><a class="fn" href="matrice.html#M6">M6</a></p>
+
+<h4>Pourquoi</h4>
+<p>Une clé d'API dans un fichier de configuration finit toujours dans git, dans une sauvegarde ou dans une capture d'écran. Avec loom, la configuration ne contient <strong>jamais</strong> de secret : seulement le nom de la variable d'environnement qui le porte. Reste à savoir d'où viennent ces variables.</p>
+
+<h4>Ce qu'il faut comprendre d'abord</h4>
+<p>Toutes les clés de configuration qui finissent par <code>_env</code> désignent une variable d'environnement : <code>api_key_env</code> pour la clé d'un modèle, et d'autres plus loin pour l'adresse d'une base de données ou d'un service. Au démarrage, la commande <code>loom</code> peut charger ces variables depuis un fichier. Elle en choisit un seul, dans cet ordre :</p>
+<div class="tableau"><table>
+<thead><tr><th>Ordre</th><th>Fichier lu</th><th>Ligne <code>Env</code> de <code>loom validate</code></th></tr></thead>
+<tbody>
+<tr><td>1</td><td>l'option <code>--env-file FICHIER</code></td><td><code>(par option)</code></td></tr>
+<tr><td>2</td><td>la clé <code>env_file:</code> de <code>loom.yaml</code></td><td><code>(par config)</code></td></tr>
+<tr><td>3</td><td>le fichier <code>.env</code> à côté de <code>loom.yaml</code>, s'il existe</td><td><code>(par défaut)</code></td></tr>
+</tbody>
+</table></div>
+<p>L'option <code>--no-env-file</code> n'en lit aucun.</p>
+
+<h4>Exécution</h4>
+<p><strong>Le <code>.env</code> voisin</strong>, celui du module 1 :</p>
+<pre><code><span class="p">$ </span>loom validate | grep Env
+Env        : /home/jean/plomberie-dupont/.env (par défaut) — lues : ANTHROPIC_API_KEY</code></pre>
+<p><strong>Un autre fichier, donné par l'option.</strong> Créez un fichier de test dans un dossier <code>secrets/</code> :</p>
+<pre><code><span class="p">$ </span>mkdir secrets
+<span class="p">$ </span>printf 'ANTHROPIC_API_KEY=clé-de-test\nOPENAI_API_KEY=autre-clé\n' &gt; secrets/test.env
+<span class="p">$ </span>loom validate --env-file secrets/test.env | grep Env
+Env        : /home/jean/plomberie-dupont/secrets/test.env (par option) — lues : ANTHROPIC_API_KEY, OPENAI_API_KEY</code></pre>
+<p><strong>Un fichier désigné dans la configuration</strong>, avec la clé <code>env_file</code>, en tête de <code>loom.yaml</code> :</p>
+<figure class="code"><figcaption>loom.yaml (début)</figcaption>
+<pre><code>version: 1
+
+<span class="aj">env_file: secrets/test.env</span>
+imports: [outils]
+<span class="c">… la suite du fichier, inchangée …</span></code></pre></figure>
+<pre><code><span class="p">$ </span>loom validate | grep Env
+Env        : /home/jean/plomberie-dupont/secrets/test.env (par config) — lues : ANTHROPIC_API_KEY, OPENAI_API_KEY</code></pre>
+<p>Le chemin est relatif au dossier de <code>loom.yaml</code>. Si le fichier n'existe pas, loom s'arrête (code 2) : <code>Configuration : Fichier d'environnement introuvable (env_file) : /home/jean/plomberie-dupont/secrets/absent.env</code>. <strong>Retirez la ligne <code>env_file</code></strong> et le dossier <code>secrets/</code> après l'essai.</p>
+<p><strong>Une variable déjà définie l'emporte</strong> sur le fichier :</p>
+<pre><code><span class="p">$ </span>ANTHROPIC_API_KEY=clé-exportée loom validate | grep Env
+Env        : /home/jean/plomberie-dupont/.env (par défaut) — déjà définies, gardées : ANTHROPIC_API_KEY
+<span class="p">$ </span>loom validate --no-env-file | grep Env
+Env        : non lu (--no-env-file)</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li>Une variable déjà présente dans l'environnement (un <code>export</code> dans le terminal, la configuration d'un service), même vide, n'est jamais remplacée par le fichier. C'est ce qui permet, en production, de fournir les secrets autrement.</li>
+<li>loom affiche les <strong>noms</strong> des variables lues, jamais leurs valeurs, ni ici, ni dans les logs, ni dans les erreurs.</li>
+<li>Le fichier est lu tel quel : <code>B=${A}</code> donne la valeur littérale <code>${A}</code>, sans remplacement.</li>
+<li>Ces règles valent pour la commande <code>loom</code>. Une application Python qui utilise loom comme librairie ne lit aucun fichier d'elle-même : elle appelle <code>load_env_file()</code>, ou fournit ses secrets par un <code>SecretProvider</code>, qui peut les tirer d'un coffre-fort de secrets. Les deux sont vus au module 10.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-3-8">
+<h3><span class="exo-num">3.8</span> Des variables dans le prompt</h3>
+<p class="fns"><a class="fn" href="matrice.html#M7">M7</a></p>
+
+<h4>Pourquoi</h4>
+<p>Le nom « Plomberie Dupont » est écrit en dur dans le prompt. Quand le même agent servira une autre entreprise (module 12), il faudra un autre prompt… ou une <strong>variable</strong>. loom remplace <code>{{ nom }}</code> par sa valeur au moment de construire la requête.</p>
+
+<h4>Mise en place</h4>
+<p>Remplacez le nom de l'entreprise par une variable :</p>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code><span class="aj">Tu es l'assistant de la {{ entreprise }}, une entreprise de plomberie et de</span>chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.</code></pre></figure>
+<p class="legende-aj"><span></span>ligne modifiée</p>
+<pre><code><span class="p">$ </span>loom validate
+…
+Configuration : /home/jean/plomberie-dupont/loom.yaml: Agent 'assistant', main.system_file (prompts/system.md) — {{ entreprise }} : variable non définie pour le client 'default' (tenants[].variables)</code></pre>
+<p>loom refuse un prompt qui cite une variable sans valeur, dès le chargement. Le message dit où la déclarer : dans <code>tenants[].variables</code>. Un <strong>client</strong> (<em>tenant</em>) est une entreprise servie par loom. Il y en a toujours au moins un, <code>default</code>, celui qu'on voit dans les chemins <code>data/default/</code> depuis le module 1. On lui donne sa valeur :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Bonjour
+          text: Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
+        - with_text: D-2026-042
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: D-2026-042
+          text: Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+  - id: LOCAL
+    sdk: openai
+    base_url: http://localhost:11434/v1
+    model: qwen3:8b
+    params: {temperature: 0.2}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+  capture: {raw_exchanges: true}
+
+<span class="aj">tenants:</span><span class="aj">  - id: default</span><span class="aj">    variables:</span><span class="aj">      entreprise: Plomberie Dupont</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>tenants:</code></td><td>La liste des clients et de ce qui leur est propre. Le module 12 l'utilise pour un second client.</td></tr>
+<tr><td><code>- id: default</code></td><td>Le client par défaut.</td></tr>
+<tr><td><code>variables:</code></td><td>Les valeurs des variables citées par les prompts, pour ce client.</td></tr>
+<tr><td><code>entreprise: Plomberie Dupont</code></td><td>La valeur de <code>{{ entreprise }}</code>.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Clients|client|variables|assistant :|monté'
+Clients    : default
+  client default
+    variables : entreprise
+    assistant : modèle SIMULE, 4 outil(s) Python
+1 agent(s) monté(s) sans erreur.
+<span class="p">$ </span>loom run assistant "Bonjour, qui es-tu ?" --session variables
+Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
+
+Statut     : completed · itérations : 1 · tokens : 645/44 · coût : 0.0000 $
+Run        : 01a16df8-26c3-70bb-b64c-ab7102f5ee28
+<span class="p">$ </span>jq -r 'select(.type=="model.exchanged") | .payload.request_body' data/default/variables.jsonl | jq -r .system
+Tu es l'assistant de la Plomberie Dupont, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<p>Le prompt reçu par le modèle contient « Plomberie Dupont » : la variable a été remplacée. Le fichier <code>system.md</code>, lui, ne change pas. Les prompts sont communs à tous les clients ; seules les valeurs de leurs variables leur sont propres. La logique de l'agent reste ainsi à un seul endroit.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-3-9">
+<h3><span class="exo-num">3.9</span> Profils de développement et de production</h3>
+<p class="fns"><a class="fn" href="matrice.html#M4">M4</a></p>
+
+<h4>Pourquoi</h4>
+<p>Sur son poste, Jean veut des logs bavards et des règles souples. Sur le serveur, il veut l'inverse : des logs au format JSON pour un outil de supervision, et aucune approximation tolérée. Plutôt que deux fichiers de configuration, loom propose des <strong>profils</strong>.</p>
+
+<h4>Mise en place</h4>
+<p>Ajoutez à la fin de <code>loom.yaml</code> :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Bonjour
+          text: Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
+        - with_text: D-2026-042
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: D-2026-042
+          text: Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+  - id: LOCAL
+    sdk: openai
+    base_url: http://localhost:11434/v1
+    model: qwen3:8b
+    params: {temperature: 0.2}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+  capture: {raw_exchanges: true}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont
+
+<span class="aj">profile: dev</span><span class="aj"> </span><span class="aj">profiles:</span><span class="aj">  dev:</span><span class="aj">    telemetry: {logging: {level: INFO}}</span><span class="aj">  prod:</span><span class="aj">    telemetry: {logging: {level: WARNING, format: json}}</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>profile: dev</code></td><td>Le profil actif : <code>dev</code> ou <code>prod</code>. L'option <code>--profile</code>, puis la variable <code>LOOM_PROFILE</code>, l'emportent sur cette ligne.</td></tr>
+<tr><td><code>profiles:</code></td><td>Ce que chaque profil modifie dans <code>loom.yaml</code>. Les blocs se fusionnent avec la configuration (une liste, elle, est remplacée en entier).</td></tr>
+<tr><td><code>dev: telemetry: …</code></td><td>En développement, les logs reviennent au niveau <code>INFO</code>.</td></tr>
+<tr><td><code>prod: telemetry: …</code></td><td>En production, seulement les avertissements, au format JSON.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Profil|Télémétrie'
+Profil     : dev (par config) — assoupli ; surcharges : dev, prod
+Télémétrie : logs INFO (console) ; exports sans contenu (metadata) ; échanges bruts au journal (256 Kio par corps au plus)
+<span class="p">$ </span>loom --profile prod validate | grep -E 'Profil|Télémétrie|Avert'
+Avertissement : variables lues dans /home/jean/plomberie-dupont/.env (ANTHROPIC_API_KEY) — en prod, préférer l'environnement du service
+Profil     : prod (par option) — les avertissements sont des erreurs ; surcharges : dev, prod
+Télémétrie : logs WARNING (json) ; exports sans contenu (metadata) ; échanges bruts au journal (256 Kio par corps au plus)
+<span class="p">$ </span>LOOM_PROFILE=prod loom validate | grep -E 'Profil'
+Avertissement : variables lues dans /home/jean/plomberie-dupont/.env (ANTHROPIC_API_KEY) — en prod, préférer l'environnement du service
+Profil     : prod (par LOOM_PROFILE) — les avertissements sont des erreurs ; surcharges : dev, prod</code></pre>
+<p>Les options générales comme <code>--profile</code> ou <code>--env-file</code> s'écrivent avant ou après la commande (<code>loom --profile prod validate</code> ou <code>loom validate --profile prod</code>).</p>
+
+<p><strong>Ce que la production durcit.</strong> En <code>prod</code>, les avertissements deviennent des erreurs, et certains assouplissements sont interdits. Par exemple, l'option <code>--judges skip</code> de <code>loom run</code>, qui saute les juges (module 7), est refusée :</p>
+<pre><code><span class="p">$ </span>loom --profile prod run assistant "Où en est le devis D-2026-042 ?" --judges skip
+Avertissement : variables lues dans /home/jean/plomberie-dupont/.env (ANTHROPIC_API_KEY) — en prod, préférer l'environnement du service
+Configuration : Profil prod : judges='skip' retire un contrôle et n'y est pas permis
+<span class="p">$ </span>echo $?
+2</code></pre>
+<p>Autre exemple : retirez la ligne <code>api_key_env</code> du modèle <code>OPUS</code>, et passez <code>profile: prod</code> dans le fichier. En <code>dev</code>, loom avertit ; en <code>prod</code>, il refuse :</p>
+<pre><code><span class="p">$ </span>loom --profile dev validate | grep -E "Profil|OPUS|monté"
+Profil     : dev (par option) — assoupli ; surcharges : dev, prod
+    Modèle 'OPUS' : sdk anthropic vers l'API officielle sans api_key_env — aucune clé d'API n'est envoyée, chaque appel sera refusé (401) ; déclarer api_key_env: ANTHROPIC_API_KEY
+1 agent(s) monté(s) sans erreur.
+<span class="p">$ </span>loom validate
+…
+Configuration : Profil prod : Modèle 'OPUS' : sdk anthropic vers l'API officielle sans api_key_env — aucune clé d'API n'est envoyée, chaque appel sera refusé (401) ; déclarer api_key_env: ANTHROPIC_API_KEY
+<span class="p">$ </span>echo $?
+2</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li><code>dev</code> <strong>assouplit</strong> (certains refus deviennent des avertissements, vous en croiserez au module 8) ; <code>prod</code> <strong>durcit</strong> : tout avertissement arrête le chargement, et les raccourcis de développement sont refusés (<code>--judges skip</code>, le rechargement automatique du serveur du module 10).</li>
+<li>Sans profil, loom ne durcit ni n'assouplit rien.</li>
+<li>Un profil ne peut pas changer de fichier <code>.env</code> : <code>env_file</code> est refusé dans <code>profiles</code>.</li>
+<li><strong>Remettez <code>api_key_env</code> sur <code>OPUS</code>, puis retirez <code>profile</code> et <code>profiles</code></strong> : la suite de la formation s'en passe.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-3-10">
+<h3><span class="exo-num">3.10</span> Les contrôles de cohérence</h3>
+<p class="fns"><a class="fn" href="matrice.html#M5">M5</a></p>
+
+<h4>Pourquoi</h4>
+<p>Une erreur de configuration découverte au milieu d'un run, chez un client, coûte cher. loom vérifie donc la cohérence de toute la configuration <strong>au chargement</strong>, avant le moindre appel, et refuse de démarrer si quelque chose cloche.</p>
+
+<h4>Exécution</h4>
+<p>Un agent qui cite un modèle inconnu (<code>model: SONNET</code>) :</p>
+<pre><code><span class="p">$ </span>loom validate
+…
+Configuration : /home/jean/plomberie-dupont/agents/assistant.yaml: Agent 'assistant' : modèle 'SONNET' non déclaré (modèles connus : SIMULE, HAIKU, OPUS, LOCAL)
+<span class="p">$ </span>echo $?
+2</code></pre>
+<p>Une clé inconnue dans <code>loom.yaml</code> (<code>chemin</code> au lieu de <code>path</code>) :</p>
+<pre><code><span class="p">$ </span>loom validate
+…
+Configuration : /home/jean/plomberie-dupont/loom.yaml: storage.events.chemin — Extra inputs are not permitted</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<p>Vous avez déjà croisé plusieurs de ces contrôles. Les voici réunis :</p>
+<div class="tableau"><table>
+<thead><tr><th>Ce qui est refusé</th><th>Début du message</th><th>Vu</th></tr></thead>
+<tbody>
+<tr><td>Une clé inconnue ou mal écrite</td><td><code>… — Extra inputs are not permitted</code></td><td>ici, module 1</td></tr>
+<tr><td>Une clé obligatoire absente</td><td><code>… — Field required</code></td><td>module 1</td></tr>
+<tr><td>Une clé écrite deux fois</td><td><code>clé '…' donnée deux fois dans le même objet</code></td><td>module 2</td></tr>
+<tr><td>Un modèle non déclaré</td><td><code>modèle '…' non déclaré</code></td><td>ici</td></tr>
+<tr><td>Un outil introuvable</td><td><code>Référence '…' introuvable</code></td><td>module 2</td></tr>
+<tr><td>Un prompt introuvable</td><td><code>prompt introuvable</code></td><td>module 1</td></tr>
+<tr><td>Une variable de prompt sans valeur</td><td><code>variable non définie pour le client</code></td><td>exercice 3.8</td></tr>
+<tr><td>Un extra manquant</td><td><code>le SDK '…' n'est pas installé</code></td><td>exercice 3.2</td></tr>
+<tr><td>Un fichier <code>env_file</code> absent</td><td><code>Fichier d'environnement introuvable</code></td><td>exercice 3.7</td></tr>
+</tbody>
+</table></div>
+<p>D'autres contrôles viendront avec les fonctions qu'ils protègent : un juge qui utilise le modèle qu'il juge (module 7), une approbation sans journal durable (module 8), un budget en dollars sur un modèle sans tarif (module 9). Toutes ces erreurs donnent le code de sortie <strong>2</strong>, et nomment le fichier et la clé en cause.</p>
+<p><strong>Corrigez les deux erreurs</strong> (<code>model: SIMULE</code>, <code>path: data</code>) et retirez le modèle <code>LOCAL</code> et la ligne <code>capture</code> : la suite de la formation ne s'en sert plus.</p>
+</section>
+
+<h2 id="bilan">Bilan du module</h2>
+<p>L'agent est en <strong>v0.3</strong>. Il peut tourner sur trois vrais modèles déclarés, dont Haiku avec son cache de prompt, et son prompt cite le nom de l'entreprise par une variable. Les fichiers qui ont changé :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Bonjour
+          text: Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
+        - with_text: D-2026-042
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: D-2026-042
+          text: Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la {{ entreprise }}, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.</code></pre></figure>
+<p><code>agents/assistant.yaml</code> et <code>outils.py</code> sont ceux du module 2. Le paquet a maintenant deux extras, <code>anthropic</code> et <code>openai</code>. Vérification finale :</p>
+<pre><code><span class="p">$ </span>loom validate | tail -4
+    variables : entreprise
+    assistant : modèle SIMULE, 4 outil(s) Python
+
+1 agent(s) monté(s) sans erreur.
+<span class="p">$ </span>loom run assistant "Où en est le devis D-2026-042 ?" --session fin-module-3
+Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
+
+Statut     : completed · itérations : 2 · tokens : 1536/126 · coût : 0.0000 $
+Run        : 01a16df8-5464-75af-8d4b-8ffcefce3759</code></pre>
+<p>Au module 4, l'agent apprend à tenir une conversation : se souvenir de ce qui a été dit, résumer quand ça devient long, et garder sous la main le devis dont on parle.</p>
+
+<nav class="suite" aria-label="Pages voisines"><a class="avant" href="module-02.html"><small>Précédent</small>Module 2 : Outils Python</a><a class="apres" href="module-04.html"><small>Suivant</small>Module 4 : Conversations, mémoire et state</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>

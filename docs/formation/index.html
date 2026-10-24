@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Formation loom_v2</title>
+<meta name="description" content="Formation pas à pas à loom_v2 (loom-ia) : construire un agent IA fiable pour un artisan, du premier run au service multi-clients.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li class="ici"><a href="index.html" aria-current="page">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li class="ici"><a href="index.html" aria-current="page">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<header class="une">
+<h1>Construire un agent qui travaille pour de vrai</h1>
+<p class="chapeau">Une formation à loom_v2 en quinze modules. Vous suivez un seul agent, l'assistant de la Plomberie Dupont, et vous lui ajoutez une capacité par module : d'abord répondre, puis calculer, se souvenir, rédiger, demander la permission, survivre à une panne, servir plusieurs entreprises et se faire évaluer.</p>
+
+<div class="metier" aria-label="Évolution de l'agent au fil des modules">
+<ol>
+<li class="palier"><span class="niv">Découverte</span><b>v0.1</b><a href="module-01.html">Se présente, lit une page web</a></li>
+<li><b>v0.2</b><a href="module-02.html">Calcule un TTC, retrouve un devis</a></li>
+<li><b>v0.3</b><a href="module-03.html">Le bon modèle pour chaque tâche</a></li>
+<li class="palier"><span class="niv">Maîtrise</span><b>v0.4</b><a href="module-04.html">Se souvient du chantier</a></li>
+<li><b>v0.5</b><a href="module-05.html">Consulte le catalogue, retient des notes</a></li>
+<li><b>v0.6</b><a href="module-06.html">Délègue la rédaction, regarde une photo</a></li>
+<li><b>v0.7</b><a href="module-07.html">Écrit sous contrôle</a></li>
+<li class="palier"><span class="niv">Production</span><b>v0.8</b><a href="module-08.html">Demande avant d'envoyer, n'envoie qu'une fois</a></li>
+<li><b>v0.9</b><a href="module-09.html">Tient malgré les pannes, sous budget</a></li>
+<li><b>v1.0</b><a href="module-10.html">Appelé par une appli ou par Claude</a></li>
+<li><b>v1.1</b><a href="module-11.html">Déclenché par le CRM</a></li>
+<li><b>v1.2</b><a href="module-12.html">Sert aussi le Chauffage Martin</a></li>
+<li class="palier"><span class="niv">Expert</span><b>v1.3</b><a href="module-13.html">Observé et rejoué</a></li>
+<li><b>v1.4</b><a href="module-14.html">Évalué à chaque changement</a></li>
+<li><b>v2.0</b><a href="module-15.html">Outils fournis par un paquet, atelier forge</a></li>
+</ol>
+</div>
+</header>
+
+<h2 id="loom">Ce qu'est loom_v2</h2>
+
+<p>loom_v2 est un moteur d'agents IA écrit en Python asynchrone, publié sur PyPI sous le nom <code>loom-ia</code>. Vous décrivez un agent en YAML ou en Python : le modèle qui le pilote, les outils qu'il peut appeler, les règles qu'il doit respecter. loom fait tourner la boucle et écrit tout ce qui se passe dans un journal.</p>
+
+<p>Faire tourner un agent dans un notebook prend un après-midi. Le confier à un plombier qui s'en servira tous les jours est une autre affaire : l'agent ne doit pas inventer de montant, ne doit rien envoyer sans permission, doit survivre à un redémarrage du serveur, et on doit pouvoir comprendre après coup pourquoi il a répondu ce qu'il a répondu. loom prend en charge cette partie. Le métier (les outils, les prompts, les règles de votre activité) reste chez vous.</p>
+
+<div class="principes">
+<div>
+<h3>Le journal fait foi</h3>
+<p>Chaque message, appel de modèle, appel d'outil, décision et coût est écrit au moment où il se produit. L'état du run, l'historique, les coûts et les traces s'en déduisent. D'où la reprise après plantage, la pause de plusieurs heures et le rejeu à l'identique.</p>
+</div>
+<div>
+<h3>Le code décide, le modèle propose</h3>
+<p>Budgets, contrôles de sortie, approbations humaines et juges sont du code déterministe branché à des points précis de la boucle. Un modèle ne peut pas sauter une validation, et il ne fait pas les calculs : un outil s'en charge.</p>
+</div>
+<div>
+<h3>Chaque tâche au bon modèle</h3>
+<p>L'orchestrateur confie une tâche délimitée (rédiger un e-mail, décrire une photo) à un modèle moins cher, qui ne reçoit que ce dont il a besoin. Le modèle cher réfléchit, il ne recopie pas un devis.</p>
+</div>
+</div>
+
+<h3>Trois façons de s'en servir</h3>
+<div class="tableau"><table>
+<thead><tr><th>Accès</th><th>Pour qui</th><th>Ce qu'il apporte</th></tr></thead>
+<tbody>
+<tr><td>Librairie Python</td><td>Votre application Python</td><td>Vos outils, le déroulé en direct, la validation humaine dans le code</td></tr>
+<tr><td>API REST</td><td>Une appli mobile, un front, un autre service</td><td>Runs synchrones ou en arrière-plan, flux SSE, approbations, lecture des sessions et des traces</td></tr>
+<tr><td>Serveur MCP</td><td>Claude Desktop, Claude Code, un autre agent</td><td>Chaque agent devient un outil MCP</td></tr>
+</tbody>
+</table></div>
+<p>La commande <code>loom</code> complète le tout : lancer un run, le suivre, l'inspecter, le rejouer, valider une configuration. Les trois accès partagent la même configuration et le même moteur : un agent interrogé par Python, par REST ou par MCP laisse la même suite d'événements dans le journal.</p>
+
+<h3>Ce que loom ne fait pas</h3>
+<ul>
+<li><strong>Pas d'interface graphique.</strong> Il fournit de quoi en construire une : traces en arbre, API de lecture, schéma d'événements versionné.</li>
+<li><strong>Pas de logique métier.</strong> Elle reste dans vos outils, vos prompts et vos règles.</li>
+<li><strong>Pas de framework multi-agents.</strong> La délégation est hiérarchique : l'orchestrateur confie des tâches à des rôles et à des sous-agents, qui lui rendent un résultat.</li>
+</ul>
+
+<h2 id="usages">Ce que vous pourrez en faire</h2>
+<p>À la fin de la formation, vous saurez monter ce genre de service, tous tirés des exemples du dépôt :</p>
+<ul>
+<li><strong>Relancer un devis resté sans réponse</strong> : l'agent retrouve le devis, fait rédiger l'e-mail par un modèle léger sous contrat et sous juge, attend votre accord, et ne l'envoie qu'une fois, même si le serveur redémarre entre-temps.</li>
+<li><strong>Un assistant qui regarde une photo</strong> : un rôle « vision » décrit la chaudière photographiée, et il n'est proposé au modèle que quand une image est jointe.</li>
+<li><strong>Un même service pour plusieurs entreprises</strong> : chacune a ses modèles, son budget, ses secrets, son journal (chiffré au besoin) et sa clé d'API.</li>
+<li><strong>Un agent dans Claude Desktop ou Claude Code</strong> : <code>loom mcp</code> publie chaque agent comme un outil, avec ses règles et ses contrôles.</li>
+<li><strong>Changer de modèle sans rien casser</strong> : rejouer des runs réels avec un autre modèle, sans réexécuter les outils à effet de bord, puis comparer.</li>
+<li><strong>Un agent qui fabrique ses outils</strong> : il écrit une fonction et ses exemples, qui s'exécutent dans une microVM Firecracker avant d'entrer dans son catalogue.</li>
+</ul>
+
+<h2 id="fil-rouge">Le fil rouge : l'assistant de la Plomberie Dupont</h2>
+
+<p>Jean Dupont dirige une petite entreprise de plomberie et de chauffage. Début septembre, il a envoyé à Mme Martin le devis <strong>D-2026-042</strong> : remplacement d'un chauffe-eau, 1 840 € TTC. Pas de nouvelles depuis. Il veut un assistant qui l'aide sur ses devis sans jamais se tromper de montant, et qui finisse par relancer ses clients à sa place, sur sa validation.</p>
+
+<p>La formation construit cet agent, nommé <code>assistant</code>, dans un seul projet : <code>plomberie-dupont/</code>. Chaque module part de l'état laissé par le précédent et y ajoute une capacité. La frise en haut de cette page montre les étapes ; chaque module commence par une fiche qui dit d'où part l'agent et où il arrive. Au module 12, un second client entre en scène, le <strong>Chauffage Martin</strong>, servi par la même instance.</p>
+
+<h3>Ce fil couvre-t-il toutes les fonctions ?</h3>
+<p>Oui. Les 100 fonctions recensées dans <code>docs/fonctions.md</code> (codes A1 à P3) ont chacune leur place dans le parcours, et la <a href="matrice.html">matrice des fonctions</a> dit laquelle est traitée où. Le métier de l'artisan donne un besoin concret à presque toutes. Une dizaine sont de l'infrastructure pure (schéma d'événements, logs techniques, bus entre process, rechargement du serveur, isolation en base Postgres) : le fil rouge leur sert de décor, au moment où l'agent passe en production.</p>
+<p>Quelques fonctions demandent une ressource en plus de Python : un serveur Postgres, Redis ou RabbitMQ (un conteneur Docker suffit), le serveur MCP loom-notes, un collecteur OpenTelemetry, ou KVM pour la sandbox. Le sommaire le signale module par module, et ces exercices sont regroupés pour qu'on puisse les sauter sans perdre le fil.</p>
+
+<h2 id="sommaire">Sommaire</h2>
+
+
+<p class="sommaire-niveau">Niveau 1 : découverte <small>un agent, des outils, des modèles</small></p>
+<ol class="sommaire">
+<li><span class="n">1</span><div class="t"><a href="module-01.html">Les bases de l'agent</a><p>Installer loom-ia avec uv, écrire les deux fichiers d'un agent, le lancer en ligne de commande, le brancher sur un vrai modèle, garder une trace de ses runs, lui donner un premier outil.</p><a class="fn" href="matrice.html#M1">M1</a><a class="fn" href="matrice.html#A1">A1</a><a class="fn" href="matrice.html#K1">K1</a><a class="fn" href="matrice.html#D13">D13</a><a class="fn" href="matrice.html#A2">A2</a></div><span class="v">v0.1</span></li>
+<li><span class="n">2</span><div class="t"><a href="module-02.html">Outils Python</a><p>Écrire un outil avec <code>@tool</code>, arguments refusés, délais, plusieurs outils dans un même tour, borner la boucle, gros résultats, résultats riches.</p><a class="fn" href="matrice.html#D1">D1</a><a class="fn" href="matrice.html#D2">D2</a><a class="fn" href="matrice.html#D4">D4</a><a class="fn" href="matrice.html#D5">D5</a><a class="fn" href="matrice.html#A3">A3</a><a class="fn" href="matrice.html#A4">A4</a><a class="fn" href="matrice.html#D6">D6</a><a class="fn" href="matrice.html#D8">D8</a><a class="fn" href="matrice.html#G2">G2</a><a class="fn" href="matrice.html#G3">G3</a></div><span class="v">v0.2</span></li>
+<li><span class="n">3</span><div class="t"><a href="module-03.html">Modèles et configuration</a><p>Plusieurs fournisseurs, format neutre, cache de prompt, réglages par appel, fenêtre de contexte, secrets et fichier <code>.env</code>, variables de prompt, profils, contrôles de cohérence.</p><a class="fn" href="matrice.html#B1">B1</a><a class="fn" href="matrice.html#B2">B2</a><a class="fn" href="matrice.html#B5">B5</a><a class="fn" href="matrice.html#B6">B6</a><a class="fn" href="matrice.html#B7">B7</a><a class="fn" href="matrice.html#M3">M3</a><a class="fn" href="matrice.html#M6">M6</a><a class="fn" href="matrice.html#M7">M7</a><a class="fn" href="matrice.html#M4">M4</a><a class="fn" href="matrice.html#M5">M5</a></div><span class="v">v0.3</span></li>
+</ol>
+
+<p class="sommaire-niveau">Niveau 2 : maîtrise <small>un agent qui se comporte comme prévu</small></p>
+<ol class="sommaire">
+<li><span class="n">4</span><div class="t"><a href="module-04.html">Conversations, mémoire et state</a><p>Sessions, historique structuré, compaction, nettoyage, backends de journal, gestion RGPD, state de session.</p><a class="fn" href="matrice.html#F1">F1</a><a class="fn" href="matrice.html#F2">F2</a><a class="fn" href="matrice.html#F3">F3</a><a class="fn" href="matrice.html#F4">F4</a><a class="fn" href="matrice.html#F5">F5</a><a class="fn" href="matrice.html#F7">F7</a><a class="fn" href="matrice.html#F8">F8</a></div><span class="v">v0.4</span></li>
+<li><span class="n">5</span><div class="t"><a href="module-05.html">Outils MCP et mémoire long terme</a><p>Brancher un serveur MCP, préfixes, filtres, reconnexion ; une mémoire RAG avec loom-notes.</p><a class="fn" href="matrice.html#D3">D3</a><a class="fn" href="matrice.html#F6">F6</a><p class="req">Demande loom-notes pour la mémoire long terme.</p></div><span class="v">v0.5</span></li>
+<li><span class="n">6</span><div class="t"><a href="module-06.html">Rôles, sous-agents et vision</a><p>Déléguer la rédaction à un rôle léger, rôle terminal, rôle vision, sous-agent complet, plusieurs agents dans une instance.</p><a class="fn" href="matrice.html#C1">C1</a><a class="fn" href="matrice.html#C2">C2</a><a class="fn" href="matrice.html#C3">C3</a><a class="fn" href="matrice.html#C4">C4</a><a class="fn" href="matrice.html#C5">C5</a><a class="fn" href="matrice.html#C6">C6</a><a class="fn" href="matrice.html#A9">A9</a><a class="fn" href="matrice.html#B9">B9</a><a class="fn" href="matrice.html#G1">G1</a></div><span class="v">v0.6</span></li>
+<li><span class="n">7</span><div class="t"><a href="module-07.html">Fiabilité des sorties</a><p>Sortie structurée, contrats, réparation, juges, politique d'échec, politiques aux points d'accroche.</p><a class="fn" href="matrice.html#A7">A7</a><a class="fn" href="matrice.html#E1">E1</a><a class="fn" href="matrice.html#E2">E2</a><a class="fn" href="matrice.html#E3">E3</a><a class="fn" href="matrice.html#E4">E4</a><a class="fn" href="matrice.html#E5">E5</a><a class="fn" href="matrice.html#E6">E6</a><a class="fn" href="matrice.html#E7">E7</a></div><span class="v">v0.7</span></li>
+</ol>
+
+<p class="sommaire-niveau">Niveau 3 : production <small>un agent qui tient dans la vraie vie</small></p>
+<ol class="sommaire">
+<li><span class="n">8</span><div class="t"><a href="module-08.html">Actions sensibles et exécution durable</a><p>Approbation humaine, idempotence, état sérialisable, reprise après plantage, annulation et délai global.</p><a class="fn" href="matrice.html#D10">D10</a><a class="fn" href="matrice.html#D11">D11</a><a class="fn" href="matrice.html#H1">H1</a><a class="fn" href="matrice.html#H2">H2</a><a class="fn" href="matrice.html#H3">H3</a><a class="fn" href="matrice.html#H4">H4</a><a class="fn" href="matrice.html#A5">A5</a><a class="fn" href="matrice.html#A6">A6</a></div><span class="v">v0.8</span></li>
+<li><span class="n">9</span><div class="t"><a href="module-09.html">Résilience et coûts</a><p>Retry et délais, modèle de secours et disjoncteur, tokens, grille tarifaire, ventilation, plafonds, rapports.</p><a class="fn" href="matrice.html#B3">B3</a><a class="fn" href="matrice.html#B4">B4</a><a class="fn" href="matrice.html#J1">J1</a><a class="fn" href="matrice.html#J2">J2</a><a class="fn" href="matrice.html#J3">J3</a><a class="fn" href="matrice.html#J4">J4</a><a class="fn" href="matrice.html#J5">J5</a></div><span class="v">v0.9</span></li>
+<li><span class="n">10</span><div class="t"><a href="module-10.html">Ouvrir l'agent : Python, REST, MCP</a><p>La librairie et la construction en code, l'API REST et ses clés, le serveur MCP, les runs en arrière-plan, le streaming et le flux d'événements.</p><a class="fn" href="matrice.html#N1">N1</a><a class="fn" href="matrice.html#M2">M2</a><a class="fn" href="matrice.html#N2">N2</a><a class="fn" href="matrice.html#N3">N3</a><a class="fn" href="matrice.html#N5">N5</a><a class="fn" href="matrice.html#N6">N6</a><a class="fn" href="matrice.html#A8">A8</a><a class="fn" href="matrice.html#H5">H5</a><a class="fn" href="matrice.html#B8">B8</a><a class="fn" href="matrice.html#I1">I1</a><a class="fn" href="matrice.html#I2">I2</a><a class="fn" href="matrice.html#I3">I3</a></div><span class="v">v1.0</span></li>
+<li><span class="n">11</span><div class="t"><a href="module-11.html">Automatiser : webhooks, workers, bus</a><p>Un CRM qui déclenche une relance, une file de tâches et ses workers, un bus d'événements entre process.</p><a class="fn" href="matrice.html#H6">H6</a><a class="fn" href="matrice.html#H7">H7</a><a class="fn" href="matrice.html#I4">I4</a><p class="req">Demande RabbitMQ et Postgres ou Redis pour les exercices multi-process.</p></div><span class="v">v1.1</span></li>
+<li><span class="n">12</span><div class="t"><a href="module-12.html">Plusieurs clients et données sensibles</a><p>Espaces isolés, secrets et quotas par client, outils filtrés, chiffrement, rétention, isolation en base.</p><a class="fn" href="matrice.html#L1">L1</a><a class="fn" href="matrice.html#L2">L2</a><a class="fn" href="matrice.html#L3">L3</a><a class="fn" href="matrice.html#D7">D7</a><a class="fn" href="matrice.html#P1">P1</a><a class="fn" href="matrice.html#P2">P2</a><a class="fn" href="matrice.html#P3">P3</a><p class="req">Demande Postgres pour l'isolation en base.</p></div><span class="v">v1.2</span></li>
+</ol>
+
+<p class="sommaire-niveau">Niveau 4 : expert <small>un agent qu'on comprend, qu'on teste, qu'on étend</small></p>
+<ol class="sommaire">
+<li><span class="n">13</span><div class="t"><a href="module-13.html">Observabilité et rejeu</a><p>Trace hiérarchique, schéma d'événements, capture et masquage, exports JSONL et OpenTelemetry, API de lecture, rejeu, logs techniques.</p><a class="fn" href="matrice.html#K1">K1</a><a class="fn" href="matrice.html#K2">K2</a><a class="fn" href="matrice.html#K3">K3</a><a class="fn" href="matrice.html#K4">K4</a><a class="fn" href="matrice.html#K5">K5</a><a class="fn" href="matrice.html#K6">K6</a><a class="fn" href="matrice.html#K7">K7</a><p class="req">Un collecteur OpenTelemetry (Jaeger) pour l'export OTLP, facultatif.</p></div><span class="v">v1.3</span></li>
+<li><span class="n">14</span><div class="t"><a href="module-14.html">Qualité : évals et non-régression</a><p>Suites d'évals et variantes, faux modèles et doublures d'outils, corpus de non-régression tiré du journal.</p><a class="fn" href="matrice.html#O1">O1</a><a class="fn" href="matrice.html#O2">O2</a><a class="fn" href="matrice.html#O3">O3</a></div><span class="v">v1.4</span></li>
+<li><span class="n">15</span><div class="t"><a href="module-15.html">Sources d'outils et sandbox forge</a><p>Une source d'outils fournie par un paquet (un calendrier des jours ouvrés), puis un atelier qui forge ses outils dans une microVM Firecracker.</p><a class="fn" href="matrice.html#D12">D12</a><a class="fn" href="matrice.html#D9">D9</a><p class="req">Demande Linux avec KVM et l'image construite par <code>make_vm.sh</code>.</p></div><span class="v">v2.0</span></li>
+</ol>
+
+<p>Annexes : <a href="reference.html">référence de la CLI et des clés de configuration</a>, <a href="pieges.html">pièges et dépannage</a>, <a href="glossaire.html">glossaire</a>, <a href="matrice.html">matrice des fonctions</a>.</p>
+
+<h2 id="lire">Comment lire un module</h2>
+<p>Chaque module s'ouvre sur la fiche de l'agent : d'où il part, où il arrive. Viennent ensuite des exercices courts, du plus simple au plus complexe, chacun ajoutant peu de chose à la configuration. Ils suivent le même plan :</p>
+<div class="tableau"><table>
+<tbody>
+<tr><td><strong>Pourquoi</strong></td><td>Le besoin concret, vu par l'artisan.</td></tr>
+<tr><td><strong>Mise en place</strong></td><td>Ce qu'il faut écrire ou modifier.</td></tr>
+<tr><td><strong>Exécution</strong></td><td>La commande et sa sortie.</td></tr>
+<tr><td><strong>Ce qu'il faut comprendre</strong> / <strong>À retenir</strong></td><td>L'explication, et le piège courant quand il y en a un.</td></tr>
+</tbody>
+</table></div>
+<p>Les pastilles comme <a class="fn" href="matrice.html#A1">A1</a> donnent le code de la fonction travaillée et renvoient à la matrice. Deux encadrés reviennent :</p>
+<div class="encadre piege"><p class="encadre-titre">Piège</p><p>Un comportement surprenant, et comment l'éviter.</p></div>
+<div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p><p>Ce qui change quand l'exercice tourne avec Claude au lieu du modèle simulé. La façon de basculer est expliquée une seule fois, dans <a href="module-01.html#vrai-modele">le module 1</a>.</p></div>
+
+<h3>Conventions</h3>
+<ul>
+<li><strong>Version.</strong> Tout est écrit pour <code>loom-ia</code> 2.0.11 et suivantes, sur Linux avec Python 3.14.</li>
+<li><strong>Sorties réelles.</strong> Les sorties reproduites viennent d'exécutions réelles. Les identifiants de run (<code>01a1…</code>), les durées et les chemins changeront chez vous.</li>
+<li><strong>Modèle simulé par défaut.</strong> Les exercices tournent sur un modèle scripté (<code>sdk: fake</code>), sans clé ni réseau, ce qui rend les sorties reproductibles.</li>
+<li><strong>Tout passe par uv</strong>, installé au module 1. Les commandes <code>loom …</code> se lancent depuis le dossier du projet, où <code>loom</code> cherche <code>loom.yaml</code>, avec l'environnement du projet activé (<code>source .venv/bin/activate</code>).</li>
+</ul>
+
+<nav class="suite" aria-label="Pages voisines"><a class="apres" href="module-01.html"><small>Suivant</small>Module 1 : Les bases de l&#x27;agent</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>

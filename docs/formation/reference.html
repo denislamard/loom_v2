@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Référence : CLI et configuration · loom_v2</title>
+<meta name="description" content="Référence de loom-ia 2.0.11 : toutes les commandes et options de la CLI loom, et toutes les clés de loom.yaml et des fichiers d&#x27;agent, avec leur rôle, leurs valeurs et leur défaut.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li class="ici"><a href="reference.html" aria-current="page">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li class="ici"><a href="reference.html" aria-current="page">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<h1>Référence : CLI et configuration</h1>
+<p class="chapeau">Cette annexe rassemble tout ce que la formation présente au fil des modules : les commandes de <code>loom</code> et les clés de configuration. Elle sert à retrouver une option ou une valeur par défaut. Pour comprendre à quoi sert une fonction, suivez le lien vers le module qui l'explique.</p>
+
+<p>Relevé sur <strong>loom-ia 2.0.11</strong> : aide de chaque commande (<code>loom &lt;commande&gt; --help</code>) et schémas publiés (<code>loom schema</code> pour <code>loom.yaml</code>, <code>agent_json_schema()</code> pour les fichiers d'agent).</p>
+
+<ul>
+<li><a href="#cli">La commande <code>loom</code></a> : options communes, codes de sortie, puis chaque commande.</li>
+<li><a href="#loom-yaml">Le fichier <code>loom.yaml</code></a>, rubrique par rubrique.</li>
+<li><a href="#agent-yaml">Le fichier d'agent</a> (<code>agents/*.yaml</code>).</li>
+<li><a href="#blocs">Les blocs partagés</a> : contrat de sortie, surcharges d'outil, réglages <code>llm</code>, budgets.</li>
+</ul>
+
+<!-- ===================================================================== -->
+<h2 id="cli">La commande <code>loom</code></h2>
+
+<p>Forme générale : <code>loom &lt;commande&gt; [options] [arguments]</code>. La commande cherche <code>loom.yaml</code> dans le dossier courant. Sans commande, <code>loom</code> affiche son usage et s'arrête en erreur.</p>
+
+<h3 id="cli-communes">Options communes à toutes les commandes</h3>
+<p>Elles s'écrivent avant ou après le nom de la commande : <code>loom --profile dev validate</code> et <code>loom validate --profile dev</code> sont équivalents.</p>
+<div class="tableau"><table>
+<thead><tr><th>Option</th><th>Effet</th><th>Vue au</th></tr></thead>
+<tbody>
+<tr><td><code>--config FICHIER</code></td><td>Fichier de configuration à lire. Défaut : <code>loom.yaml</code> du dossier courant.</td><td>—</td></tr>
+<tr><td><code>--profile dev|prod</code></td><td>Profil actif. L'emporte sur la variable <code>LOOM_PROFILE</code> et sur la clé <code>profile</code>.</td><td><a href="module-03.html#ex-3-9">module 3</a></td></tr>
+<tr><td><code>--env-file FICHIER</code></td><td>Fichier de variables à lire, à la place de <code>env_file:</code> ou du <code>.env</code> voisin de la config. Une variable déjà définie dans l'environnement l'emporte.</td><td><a href="module-03.html#ex-3-7">module 3</a></td></tr>
+<tr><td><code>--no-env-file</code></td><td>Ne lit aucun fichier de variables.</td><td><a href="module-03.html#ex-3-7">module 3</a></td></tr>
+<tr><td><code>-h</code>, <code>--help</code></td><td>Aide de la commande.</td><td>—</td></tr>
+<tr><td><code>--version</code></td><td>Version installée (seulement avant toute commande : <code>loom --version</code>).</td><td><a href="module-01.html#installer">module 1</a></td></tr>
+</tbody>
+</table></div>
+<p>Beaucoup de commandes acceptent aussi <code>--tenant CLIENT</code> (le client au nom duquel agir ; défaut : celui de la config, sinon <code>default</code>, voir le <a href="module-12.html#ex-12-1">module 12</a>), <code>--session SESSION</code> (le journal où chercher le run) et <code>--json</code> (le résultat en JSON, pour un programme).</p>
+
+<h3 id="cli-codes">Codes de sortie</h3>
+<div class="tableau"><table>
+<thead><tr><th>Code</th><th>Signification</th></tr></thead>
+<tbody>
+<tr><td><code>0</code></td><td>Succès : run terminé (<code>completed</code>), configuration valide, commande menée à bien.</td></tr>
+<tr><td><code>1</code></td><td>Le run n'a pas abouti : échec (<code>failed</code>), pause en attente d'approbation (<code>paused</code>), annulation.</td></tr>
+<tr><td><code>2</code></td><td>Refus avant d'agir : configuration invalide, argument manquant ou faux, demande refusée (state invalide, approbation périmée, plafond atteint…).</td></tr>
+</tbody>
+</table></div>
+<p>Cas particuliers : <code>loom replay</code> rend 1 quand le rejeu exact diverge, ou quand une variante ne va pas au bout ; un journal abîmé rend 1.</p>
+
+<h3 id="cli-validate"><code>loom validate</code></h3>
+<p>Charge la configuration, vérifie sa cohérence, monte les agents et affiche ce qu'il a compris. N'appelle aucun modèle. Vu au <a href="module-01.html#valider">module 1</a>.</p>
+<pre><code>loom validate [--no-keys]</code></pre>
+<div class="tableau"><table><tbody>
+<tr><td><code>--no-keys</code>, <code>--sans-cles</code></td><td>Monte les agents sans créer leurs clients de modèle : une clé d'API ou un SDK absents ne font pas échouer.</td></tr>
+</tbody></table></div>
+
+<h3 id="cli-run"><code>loom run</code></h3>
+<p>Lance un run de l'agent et attend sa fin. La réponse sort sur la sortie standard, le bilan sur la sortie d'erreur. Vu au <a href="module-01.html#premier-run">module 1</a>.</p>
+<pre><code>loom run AGENT "MESSAGE" [options]</code></pre>
+<div class="tableau"><table>
+<thead><tr><th>Option</th><th>Effet</th><th>Vue au</th></tr></thead>
+<tbody>
+<tr><td><code>--session SESSION</code></td><td>Journal auquel rattacher le run ; le run suivant de la même session reprend la conversation.</td><td><a href="module-01.html#ex-1-7">module 1</a>, <a href="module-04.html#ex-4-2">module 4</a></td></tr>
+<tr><td><code>--stream</code></td><td>Affiche la réponse au fil de l'eau, appels d'outils compris.</td><td><a href="module-10.html#ex-10-2">module 10</a></td></tr>
+<tr><td><code>--json</code></td><td>Tout le résultat en JSON sur la sortie standard.</td><td><a href="module-07.html#ex-7-1">module 7</a></td></tr>
+<tr><td><code>--attach FICHIER</code></td><td>Image jointe à la demande (répétable).</td><td><a href="module-06.html#ex-6-4">module 6</a></td></tr>
+<tr><td><code>--judges auto|force|skip</code></td><td>Juges : selon leur <code>when</code>, tous, ou aucun (<code>skip</code> refusé en profil <code>prod</code>).</td><td><a href="module-07.html#ex-7-4">module 7</a></td></tr>
+<tr><td><code>--state CLE=VALEUR</code></td><td>Valeur du state de session posée à l'ouverture (répétable) ; la valeur est lue en JSON (<code>3</code>, <code>true</code>, <code>null</code> qui efface, <code>"texte"</code>), sinon telle quelle.</td><td><a href="module-04.html#ex-4-8">module 4</a></td></tr>
+<tr><td><code>--tenant CLIENT</code></td><td>Client au nom duquel agir.</td><td><a href="module-12.html#ex-12-1">module 12</a></td></tr>
+<tr><td><code>--run-id ID</code></td><td>Identifiant choisi pour le run, à la place de celui que loom génère.</td><td>—</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="cli-inspect"><code>loom inspect</code></h3>
+<p>Relit un run dans le journal et l'affiche en arbre : étapes, appels de modèle et d'outils, sous-runs, réponse et bilan. Vu au <a href="module-01.html#ex-1-7">module 1</a>.</p>
+<pre><code>loom inspect RUN_ID [--session SESSION] [--tenant CLIENT] [--full] [--json]</code></pre>
+<div class="tableau"><table><tbody>
+<tr><td><code>--full</code></td><td>Arguments et résultats en entier, sans coupe.</td></tr>
+<tr><td><code>--json</code></td><td>La trace en JSON, la même que <code>GET /v1/traces/{run_id}</code>.</td></tr>
+</tbody></table></div>
+
+<h3 id="cli-state"><code>loom state</code></h3>
+<p>Affiche le state d'une session : ce que l'application et les outils y ont écrit. Vu au <a href="module-04.html#ex-4-8">module 4</a>.</p>
+<pre><code>loom state SESSION_ID [--tenant CLIENT]</code></pre>
+
+<h3 id="cli-resume"><code>loom resume</code></h3>
+<p>Reprend un run interrompu (plantage, pause tranchée, demande expirée) là où il en était. Sur un run déjà clos, dit qu'il n'y a rien à reprendre. Vu au <a href="module-08.html#ex-8-5">module 8</a>.</p>
+<pre><code>loom resume RUN_ID [--session SESSION] [--tenant CLIENT] [--json]</code></pre>
+
+<h3 id="cli-approve"><code>loom approve</code> et <code>loom reject</code></h3>
+<p>Accordent ou refusent un appel d'outil qu'un run en pause attend, puis pilotent la reprise du run. Vus au <a href="module-08.html#ex-8-2">module 8</a>.</p>
+<pre><code>loom approve RUN_ID [--call CALL_ID] [--by NOM] [--reason MOTIF] [--arguments JSON] [--session SESSION] [--no-wait] [--json]
+loom reject  RUN_ID [--call CALL_ID] [--by NOM] [--reason MOTIF] [--session SESSION] [--no-wait] [--json]</code></pre>
+<div class="tableau"><table><tbody>
+<tr><td><code>--call CALL_ID</code></td><td>Appel visé ; sans lui, tout ce que le run attend est tranché.</td></tr>
+<tr><td><code>--by NOM</code></td><td>Qui tranche : inscrit au journal, c'est la trace d'audit.</td></tr>
+<tr><td><code>--reason MOTIF</code></td><td>Motif de la décision, transmis au modèle en cas de refus.</td></tr>
+<tr><td><code>--arguments JSON</code></td><td>(<code>approve</code> seulement) Arguments corrigés de l'appel, en objet JSON complet ; demande <code>--call</code>.</td></tr>
+<tr><td><code>--no-wait</code></td><td>Écrit la décision et sort, sans piloter la reprise.</td></tr>
+</tbody></table></div>
+
+<h3 id="cli-report"><code>loom report</code></h3>
+<p>Consommation (tokens, coût) d'un run, d'une session, ou d'un client sur la journée ou le mois. Vu au <a href="module-09.html#ex-9-6">module 9</a>.</p>
+<pre><code>loom report [RUN_ID] [--session SESSION] [--period day|month] [--tenant CLIENT] [--json]</code></pre>
+<div class="tableau"><table><tbody>
+<tr><td><code>RUN_ID</code></td><td>Le run à détailler ; avec <code>--session</code> seule, toute la session.</td></tr>
+<tr><td><code>--period day|month</code></td><td>Consommation du client sur la journée ou le mois en cours. <code>--periode</code>, <code>jour</code> et <code>mois</code> restent compris.</td></tr>
+</tbody></table></div>
+
+<h3 id="cli-sessions"><code>loom sessions</code></h3>
+<p>Gère les journaux de session : lister, consulter, récupérer les fichiers, exporter, supprimer (droit à l'effacement). Vu au <a href="module-04.html#ex-4-7">module 4</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Sous-commande</th><th>Effet</th><th>Options</th></tr></thead>
+<tbody>
+<tr><td><code>loom sessions list</code></td><td>Sessions du journal, la plus récente d'abord.</td><td><code>--tenant</code>, <code>--json</code></td></tr>
+<tr><td><code>loom sessions show SESSION_ID</code></td><td>Fiche d'une session : ses runs, et les approbations en attente avec la commande prête à lancer.</td><td><code>--tenant</code>, <code>--json</code></td></tr>
+<tr><td><code>loom sessions files SESSION_ID</code></td><td>Fichiers d'une session (pièces jointes, fichiers rendus par les outils, résultats déportés).</td><td><code>--origin attachment|tool_output|offload</code> (répétable), <code>--out DOSSIER</code> (les écrit sous leur vrai nom), <code>--force</code>, <code>--tenant</code>, <code>--json</code></td></tr>
+<tr><td><code>loom sessions export SESSION_ID</code></td><td>Écrit les événements de la session en JSONL.</td><td><code>--out FICHIER</code> (défaut : sortie standard), <code>--tenant</code></td></tr>
+<tr><td><code>loom sessions delete SESSION_ID</code></td><td>Supprime la session : journal, fichiers et clés d'idempotence. Demande confirmation.</td><td><code>--yes</code> (sans confirmation), <code>--tenant</code></td></tr>
+</tbody>
+</table></div>
+<p>Les fichiers d'une session sont aussi présentés au <a href="module-02.html#ex-2-8">module 2</a>.</p>
+
+<h3 id="cli-serve"><code>loom serve</code></h3>
+<p>Sert l'API REST (extra <code>http</code>), et le serveur MCP en HTTP si <code>server.mcp.http</code> est activé. Vu au <a href="module-10.html#ex-10-6">module 10</a>.</p>
+<pre><code>loom serve [--host HOTE] [--port PORT] [--reload]</code></pre>
+<div class="tableau"><table><tbody>
+<tr><td><code>--host</code>, <code>--port</code></td><td>Adresse et port d'écoute ; l'emportent sur <code>server.http</code>. Défaut : <code>127.0.0.1:8000</code>.</td></tr>
+<tr><td><code>--reload</code></td><td>Relance le serveur quand un fichier de la config change (développement ; refusé en profil <code>prod</code>). Une config cassée est refusée et l'ancien process continue de servir. Vu au <a href="module-10.html#ex-10-10">module 10</a>.</td></tr>
+</tbody></table></div>
+
+<h3 id="cli-mcp"><code>loom mcp</code></h3>
+<p>Sert les agents en MCP sur l'entrée et la sortie standard (stdio) : chaque agent publié devient un outil, accompagné de <code>run_status</code>, <code>run_report</code> et <code>cancel</code>. C'est la commande que lancent Claude Desktop ou Claude Code. Vu au <a href="module-10.html#ex-10-9">module 10</a>.</p>
+<pre><code>loom mcp [--tenant CLIENT]</code></pre>
+
+<h3 id="cli-keys"><code>loom keys create</code></h3>
+<p>Fabrique une clé d'API et son empreinte. La clé n'est affichée qu'une fois ; la configuration (<code>security.api_keys</code>) ne garde que l'empreinte. Vu au <a href="module-10.html#ex-10-8">module 10</a>.</p>
+<pre><code>loom keys create ID [--scope PORTEE]... [--agent AGENT]... [--tenant CLIENT] [--expires QUAND] [--rate-limit N]</code></pre>
+<div class="tableau"><table><tbody>
+<tr><td><code>ID</code></td><td>Nom de la clé dans la configuration.</td></tr>
+<tr><td><code>--scope</code></td><td>Portée accordée, répétable : <code>run</code>, <code>read</code>, <code>read_content</code>, <code>approve</code>, <code>admin</code>. Défaut : <code>run</code> et <code>read</code>.</td></tr>
+<tr><td><code>--agent</code></td><td>Agent autorisé, répétable. Défaut : tous.</td></tr>
+<tr><td><code>--tenant</code></td><td>Client au nom duquel la clé agit. Défaut : <code>default</code>.</td></tr>
+<tr><td><code>--expires</code></td><td>Fin de validité : une date (<code>2027-01-01</code>) ou une durée (<code>90j</code>, <code>12h</code>).</td></tr>
+<tr><td><code>--rate-limit N</code></td><td>Requêtes par minute accordées à cette clé. Défaut : aucune limite.</td></tr>
+</tbody></table></div>
+
+<h3 id="cli-worker"><code>loom worker</code></h3>
+<p>Consomme la file des tâches de fond (runs soumis, reprises, résumés de compaction). Exige une file partagée (<code>storage.queue.backend: rabbitmq</code>) ; refusé avec la file <code>asyncio</code>. Vu au <a href="module-11.html#ex-11-4">module 11</a>.</p>
+<pre><code>loom worker [--jobs N]</code></pre>
+<div class="tableau"><table><tbody>
+<tr><td><code>--jobs N</code></td><td>Tâches menées de front. Défaut : 1.</td></tr>
+</tbody></table></div>
+
+<h3 id="cli-replay"><code>loom replay</code></h3>
+<p>Rejoue un run fini, à l'identique sans appeler de modèle, ou en variante (autre modèle, doublure d'outil), et dit où il s'écarte. Les outils à effet de bord ne sont jamais réexécutés. Présenté au <a href="module-13.html#ex-13-6">module 13</a>.</p>
+<pre><code>loom replay [RUN_ID] [--session SESSION] [--journal FICHIER] [--mode exact|variant] [--model ETAPE=MODELE] [--double OUTIL=REF] [--export FICHIER] [--json]</code></pre>
+<div class="tableau"><table><tbody>
+<tr><td><code>--journal FICHIER</code></td><td>Rejoue depuis un journal JSONL exporté, hors du journal de la config ; sans <code>RUN_ID</code>, chacun de ses runs finis.</td></tr>
+<tr><td><code>--mode exact|variant</code></td><td><code>exact</code> : tout vient du journal. <code>variant</code> : ce que le journal ne connaît pas part pour de vrai, et les deux runs sont comparés.</td></tr>
+<tr><td><code>--model ETAPE=MODELE</code></td><td>Variante : autre modèle déclaré pour une étape (<code>main</code>, un rôle, <code>judge:&lt;nom&gt;</code>).</td></tr>
+<tr><td><code>--double OUTIL=REF</code></td><td>Variante : doublure d'un outil (nom enregistré ou <code>module:fonction</code>), appelée à la place d'un appel absent du journal.</td></tr>
+<tr><td><code>--export FICHIER</code></td><td>Garde le journal du rejeu en JSONL ; rien n'est écrit dans le journal de la config.</td></tr>
+</tbody></table></div>
+
+<h3 id="cli-eval"><code>loom eval</code></h3>
+<p>Joue une suite d'évals : des cas et leurs attendus, pour chaque variante, en mémoire ; les outils à effets de bord sont doublés ou refusés. Présenté au <a href="module-14.html#ex-14-1">module 14</a>.</p>
+<pre><code>loom eval SUITE.yaml [--case NOM]... [--variant NOM]... [--export DOSSIER] [--json]</code></pre>
+<div class="tableau"><table><tbody>
+<tr><td><code>--case</code>, <code>--variant</code></td><td>Ne joue que ce cas, ou cette variante (répétables).</td></tr>
+<tr><td><code>--export DOSSIER</code></td><td>Garde le journal de chaque run, un JSONL par run (<code>&lt;variante&gt;--&lt;cas&gt;--&lt;n&gt;.jsonl</code>).</td></tr>
+</tbody></table></div>
+
+<h3 id="cli-retention"><code>loom retention</code></h3>
+<p>Liste les sessions dormantes au-delà de la borne déclarée (<code>storage.retention.events_days</code>) et ne les efface qu'avec <code>--yes</code>. Rien ne s'efface tout seul. Présenté au <a href="module-12.html#ex-12-8">module 12</a>.</p>
+<pre><code>loom retention [--tenant CLIENT] [--yes] [--json]</code></pre>
+<div class="tableau"><table><tbody>
+<tr><td><code>--tenant</code></td><td>Un seul client. Défaut : tous les clients déclarés.</td></tr>
+<tr><td><code>--yes</code></td><td>Supprime pour de bon ; sans cette option, rien n'est touché.</td></tr>
+</tbody></table></div>
+
+<h3 id="cli-storage"><code>loom storage sql</code></h3>
+<p>Imprime le SQL à appliquer pour le stockage Postgres déclaré : tables, rôle applicatif, politiques par client. Vu au <a href="module-04.html#ex-4-6">module 4</a>, et au <a href="module-12.html#ex-12-9">module 12</a> pour l'isolation des clients.</p>
+<pre><code>loom storage sql</code></pre>
+
+<h3 id="cli-schema"><code>loom schema</code></h3>
+<p>Imprime le JSON Schema de <code>loom.yaml</code>, pour la complétion et les erreurs en direct dans un éditeur (première ligne du fichier : <code># yaml-language-server: $schema=./loom.schema.json</code>). Le schéma des fichiers d'agent s'obtient en Python avec <code>loom_ia.config.agent_json_schema()</code>.</p>
+<pre><code>loom schema &gt; loom.schema.json</code></pre>
+
+<!-- ===================================================================== -->
+<h2 id="loom-yaml">Le fichier <code>loom.yaml</code></h2>
+
+<p>Règles générales, valables pour tous les fichiers de configuration :</p>
+<ul>
+<li>une clé inconnue est refusée au chargement, avec son chemin (code 2) ; une clé écrite deux fois aussi, avec ses deux lignes ;</li>
+<li>les chemins sont relatifs au dossier de <code>loom.yaml</code> ; un <code>system_file</code> est relatif à <code>prompts_dir</code> ;</li>
+<li>la configuration ne contient jamais un secret : les clés en <code>_env</code> donnent le <em>nom</em> de la variable d'environnement qui le porte ;</li>
+<li>dans la colonne « Défaut », <strong>obligatoire</strong> veut dire que la clé doit être écrite, et <code>null</code> que la fonction reste inactive tant que la clé n'est pas donnée.</li>
+</ul>
+
+<h3 id="cfg-racine">Clés de premier niveau</h3>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>version</code></td><td>Version du format de configuration.</td><td><code>1</code></td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>profile</code></td><td>Profil actif. <code>prod</code> durcit (avertissements changés en erreurs, <code>serve --reload</code> et <code>--judges skip</code> refusés) ; <code>dev</code> assouplit certains refus. <code>--profile</code> puis <code>LOOM_PROFILE</code> l'emportent. <a href="module-03.html#ex-3-9">Module 3</a>.</td><td><code>dev</code>, <code>prod</code></td><td><code>null</code></td></tr>
+<tr><td><code>profiles</code></td><td>Surcharges partielles de <code>loom.yaml</code> appliquées quand le profil est actif. Les objets fusionnent, les listes sont remplacées ; <code>env_file</code> y est refusé.</td><td><code>{dev: {…}, prod: {…}}</code></td><td><code>{}</code></td></tr>
+<tr><td><code>env_file</code></td><td>Fichier de variables lu par la commande <code>loom</code> avant la config. Absent : erreur. <a href="module-03.html#ex-3-7">Module 3</a>.</td><td>chemin</td><td><code>null</code> : le <code>.env</code> voisin, s'il existe</td></tr>
+<tr><td><code>imports</code></td><td>Modules Python importés au démarrage, qui enregistrent outils et politiques. <a href="module-02.html#ex-2-1">Module 2</a>.</td><td>liste de noms de modules</td><td><code>[]</code></td></tr>
+<tr><td><code>agents_dir</code></td><td>Dossier dont chaque <code>*.yaml</code> est un agent. Absent : erreur.</td><td>chemin</td><td><code>agents</code></td></tr>
+<tr><td><code>prompts_dir</code></td><td>Dossier des <code>system_file</code>.</td><td>chemin</td><td><code>prompts</code></td></tr>
+<tr><td><code>agents</code></td><td>Agents écrits directement dans <code>loom.yaml</code>, même schéma qu'un fichier d'agent ; leur <code>system_file</code> n'est pas rapporté à <code>prompts_dir</code>, préférer <code>system</code>.</td><td>liste d'agents</td><td><code>[]</code></td></tr>
+<tr><td><code>models</code>, <code>mcp_servers</code>, <code>tool_sources</code>, <code>storage</code>, <code>sessions</code>, <code>execution</code>, <code>budgets</code>, <code>telemetry</code>, <code>tenants</code>, <code>security</code>, <code>server</code>, <code>triggers</code></td><td colspan="3">Détaillées dans les sections suivantes.</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="cfg-models"><code>models</code> : les modèles</h3>
+<p>Liste des modèles ; chacun est cité par son <code>id</code> (orchestrateur, rôles, juges, secours, compaction). <a href="module-01.html#fichiers">Module 1</a>, <a href="module-03.html#ex-3-1">module 3</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>Nom du modèle dans la config ; unique.</td><td>texte</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>sdk</code></td><td>Adaptateur : Claude, OpenAI et compatibles, ou modèle simulé.</td><td><code>anthropic</code>, <code>openai</code>, <code>fake</code></td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>api</code></td><td>API OpenAI utilisée ; refusé hors <code>sdk: openai</code>.</td><td><code>chat</code>, <code>responses</code></td><td><code>chat</code></td></tr>
+<tr><td><code>model</code></td><td>Nom du modèle chez le fournisseur.</td><td>texte</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>base_url</code></td><td>Point d'accès d'un fournisseur compatible (Ollama, vLLM, Together…).</td><td>URL</td><td>adresse officielle</td></tr>
+<tr><td><code>api_key_env</code></td><td>Variable qui porte la clé d'API.</td><td>nom de variable</td><td><code>null</code> : aucune clé envoyée</td></tr>
+<tr><td><code>max_tokens</code></td><td>Plafond de sortie par appel.</td><td>entier &gt; 0</td><td><code>null</code> (4096 chez Anthropic)</td></tr>
+<tr><td><code>params</code></td><td>Paramètres transmis tels quels au fournisseur (<code>temperature</code>, <code>thinking</code>…) ; pour <code>sdk: fake</code>, le <code>script</code>.</td><td>objet</td><td><code>{}</code></td></tr>
+<tr><td><code>timeouts.first_token</code> / <code>idle</code> / <code>total</code></td><td>Délais : avant le premier morceau, entre deux morceaux, pour l'appel entier (s). <a href="module-09.html#ex-9-1">Module 9</a>, <a href="module-10.html#ex-10-11">module 10</a>.</td><td>nombre &gt; 0, <code>null</code></td><td><code>60</code> / <code>60</code> / <code>300</code></td></tr>
+<tr><td><code>retry.max_attempts</code></td><td>Tentatives au total sur une erreur passagère, la première comprise.</td><td>entier &gt; 0</td><td><code>3</code></td></tr>
+<tr><td><code>retry.initial_delay</code> / <code>multiplier</code> / <code>max_delay</code></td><td>Attente avant la 2<sup>e</sup> tentative, facteur entre deux attentes, plafond d'une attente (s).</td><td>nombres</td><td><code>1.0</code> / <code>2.0</code> / <code>30.0</code></td></tr>
+<tr><td><code>capabilities.tools</code></td><td>Le modèle sait appeler des outils.</td><td>booléen</td><td><code>true</code></td></tr>
+<tr><td><code>capabilities.thinking</code></td><td>Il produit un raisonnement.</td><td>booléen</td><td><code>false</code></td></tr>
+<tr><td><code>capabilities.native_json</code></td><td>Il accepte un schéma de sortie natif.</td><td>booléen</td><td><code>false</code></td></tr>
+<tr><td><code>capabilities.forced_tool_choice</code></td><td>Il accepte qu'on lui impose un appel d'outil ; <code>false</code> pour Claude Opus 5.5 et Fable 5.1.</td><td>booléen</td><td><code>true</code></td></tr>
+<tr><td><code>capabilities.streaming</code></td><td><code>false</code> : appel non streamé, rejoué en un seul morceau.</td><td>booléen</td><td><code>true</code></td></tr>
+<tr><td><code>capabilities.context_window</code></td><td>Fenêtre en tokens, vérifiée avant l'appel. <a href="module-03.html#ex-3-6">Module 3</a>.</td><td>entier &gt; 0</td><td><code>null</code></td></tr>
+<tr><td><code>capabilities.vision</code></td><td>Il reçoit les images. <a href="module-06.html#ex-6-4">Module 6</a>.</td><td>booléen</td><td><code>false</code></td></tr>
+<tr><td><code>capabilities.image_input</code> / <code>image_formats</code> / <code>max_image_bytes</code></td><td>Formes d'envoi d'image (seul <code>base64</code> est utilisé), formats acceptés, taille maximale.</td><td><code>base64</code>, <code>url</code>, <code>file_id</code> / <code>jpeg</code>, <code>png</code>, <code>gif</code>, <code>webp</code> / octets</td><td><code>[base64]</code> / les quatre / <code>null</code></td></tr>
+<tr><td><code>capabilities.tool_result_media</code></td><td>Il accepte des images dans un résultat d'outil ; à déclarer pour l'API Anthropic avec <code>vision</code>.</td><td>booléen</td><td><code>false</code></td></tr>
+<tr><td><code>pricing.input</code> / <code>output</code> / <code>cache_read</code> / <code>cache_write</code></td><td>Tarif en dollars par million de tokens. <a href="module-09.html#ex-9-5">Module 9</a>.</td><td>nombres ≥ 0</td><td><code>0.0</code></td></tr>
+<tr><td><code>pricing.tiers</code></td><td>Paliers : au-delà de <code>above</code> tokens d'entrée par appel, ces prix s'appliquent à tout l'appel.</td><td>liste de <code>{above, input, output, cache_read, cache_write}</code></td><td><code>[]</code></td></tr>
+<tr><td><code>circuit_breaker.failures</code> / <code>cooldown</code></td><td>Disjoncteur : échecs de suite avant d'écarter le modèle, durée d'écart (s) ; <code>circuit_breaker: null</code> le retire. <a href="module-09.html#ex-9-3">Module 9</a>.</td><td>entier / nombre</td><td><code>5</code> / <code>60</code></td></tr>
+<tr><td><code>cache.system</code> / <code>tools</code> / <code>messages</code></td><td>Points de cache de prompt Anthropic ; refusé avec <code>sdk: openai</code>. <a href="module-03.html#ex-3-4">Module 3</a>.</td><td>booléens</td><td><code>false</code></td></tr>
+<tr><td><code>cache.ttl</code></td><td>Durée de vie d'une entrée de cache.</td><td><code>5m</code>, <code>1h</code></td><td><code>5m</code></td></tr>
+</tbody>
+</table></div>
+<p>Script du modèle simulé (<code>params.script</code>) : chaque réponse peut porter <code>text</code>, <code>tool_calls</code> (<code>[{name, arguments}]</code>), <code>reasoning</code>, les conditions <code>with_text</code> / <code>without_text</code> / <code>with_tool</code> / <code>without_tool</code>, <code>forced</code> (texte rendu quand les outils sont interdits) et <code>error</code> (panne simulée). Sans script, le modèle répond « Écho : » suivi de la demande.</p>
+
+<h3 id="cfg-mcp"><code>mcp_servers</code> : serveurs MCP</h3>
+<p>Déclarés une fois, branchés dans un agent par <code>- mcp: &lt;name&gt;</code> ; leurs outils sont préfixés <code>&lt;name&gt;__</code>. <a href="module-05.html#ex-5-2">Module 5</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td>Nom et préfixe des outils ; unique, sans <code>__</code>, 40 caractères au plus.</td><td>lettres, chiffres, <code>-</code>, <code>_</code></td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>transport</code></td><td>Mode de connexion.</td><td><code>stdio</code>, <code>http</code></td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>command</code> / <code>args</code></td><td>Programme lancé et ses arguments (stdio).</td><td>texte / liste</td><td><code>null</code> / <code>[]</code></td></tr>
+<tr><td><code>env</code></td><td>Variables passées en clair au programme (stdio).</td><td><code>{VAR: valeur}</code></td><td><code>{}</code></td></tr>
+<tr><td><code>env_from</code></td><td>Variables du serveur lues dans l'environnement de loom (stdio).</td><td><code>{VAR_SERVEUR: VAR_LOOM}</code></td><td><code>{}</code></td></tr>
+<tr><td><code>cwd</code></td><td>Dossier de lancement (stdio).</td><td>chemin</td><td>dossier de <code>loom.yaml</code></td></tr>
+<tr><td><code>url</code></td><td>Point d'accès (http).</td><td>URL</td><td><code>null</code></td></tr>
+<tr><td><code>headers_env</code></td><td>En-têtes HTTP lus dans l'environnement (http).</td><td><code>{En-tête: VARIABLE}</code></td><td><code>{}</code></td></tr>
+<tr><td><code>scope</code></td><td>Portée de la connexion : une pour le process, une par client, ou une par run. <a href="module-05.html#ex-5-5">Module 5</a>.</td><td><code>shared</code>, <code>tenant</code>, <code>run</code></td><td><code>shared</code></td></tr>
+<tr><td><code>connect_timeout</code></td><td>Délai d'établissement de la connexion (s).</td><td>nombre &gt; 0</td><td><code>10</code></td></tr>
+<tr><td><code>idle_timeout</code></td><td>Portée <code>shared</code> : fermeture après ce délai sans usage (s) ; <code>null</code> : jamais.</td><td>nombre &gt; 0, <code>null</code></td><td><code>300</code></td></tr>
+<tr><td><code>tools</code></td><td>Surcharges par outil (nom court) : voir <a href="#bloc-surcharges">surcharges d'outil</a>.</td><td><code>{outil: {…}}</code></td><td><code>{}</code></td></tr>
+<tr><td><code>circuit_breaker</code></td><td>Connexions ratées de suite avant de déclarer le serveur indisponible, et durée d'écart ; <code>null</code> le retire.</td><td><code>{failures, cooldown}</code></td><td><code>{failures: 5, cooldown: 60}</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="cfg-sources"><code>tool_sources</code> : sources d'outils fournies par un paquet</h3>
+<p>Point d'entrée du groupe <code>loom_ia.tools</code> d'un paquet installé, branché par <code>- source: &lt;name&gt;</code>. Exemple fourni : <code>forge</code>, la sandbox Firecracker. Présenté au <a href="module-15.html#ex-15-1">module 15</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td>Nom dans la config et préfixe des outils ; unique, distinct des serveurs MCP.</td><td>comme <code>mcp_servers.name</code></td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>entry_point</code></td><td>Point d'entrée du paquet ; le paquet n'est importé que si un agent cite la source.</td><td>nom</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>params</code></td><td>Réglages remis à la fabrique du paquet, qui les vérifie.</td><td>objet</td><td><code>{}</code></td></tr>
+<tr><td><code>tools</code></td><td>Surcharges par outil.</td><td><code>{outil: {…}}</code></td><td><code>{}</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="cfg-storage"><code>storage</code> : journal, fichiers, idempotence, file, bus, chiffrement, rétention</h3>
+<p>Le même bloc sert dans <code>tenants[].storage</code> (stockage propre à un client), sans <code>encryption</code> ni <code>idempotency</code>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>events.backend</code></td><td>Où vit le journal. <code>memory</code> : perdu à la fin du process, sans reprise ni approbation durables. <a href="module-04.html#ex-4-6">Module 4</a>.</td><td><code>memory</code>, <code>jsonl</code>, <code>sqlite</code>, <code>postgres</code></td><td><code>memory</code></td></tr>
+<tr><td><code>events.path</code></td><td>Dossier (<code>jsonl</code>) ou fichier (<code>sqlite</code>) du journal.</td><td>chemin</td><td><code>null</code></td></tr>
+<tr><td><code>events.dsn_env</code></td><td>Variable du DSN (<code>postgres</code>).</td><td>nom de variable</td><td><code>null</code></td></tr>
+<tr><td><code>events.role</code></td><td>Rôle applicatif pris par chaque connexion (<code>postgres</code>) ; <code>null</code> s'en passe.</td><td>texte, <code>null</code></td><td><code>loom_app</code></td></tr>
+<tr><td><code>events.pool.min_size</code> / <code>max_size</code> / <code>command_timeout</code> / <code>lock_timeout</code> / <code>acquire_timeout</code></td><td>Pool de connexions Postgres : tailles et délais (s).</td><td>entiers / nombres</td><td><code>1</code> / <code>10</code> / <code>60</code> / <code>10</code> / <code>30</code></td></tr>
+<tr><td><code>artifacts.backend</code></td><td>Stockage des fichiers hors du journal. Obligatoire avec un journal <code>postgres</code>. <a href="module-02.html#ex-2-7">Module 2</a>.</td><td><code>local</code>, <code>memory</code></td><td><code>null</code> : suit le journal (<code>&lt;journal&gt;/.artifacts</code>)</td></tr>
+<tr><td><code>artifacts.path</code></td><td>Dossier du stockage <code>local</code>.</td><td>chemin</td><td><code>null</code></td></tr>
+<tr><td><code>idempotency.backend</code></td><td>Magasin des clés d'idempotence ; une clé métier exige <code>sqlite</code>, <code>postgres</code> ou <code>redis</code>. <a href="module-08.html#ex-8-6">Module 8</a>.</td><td><code>journal</code>, <code>memory</code>, <code>sqlite</code>, <code>postgres</code>, <code>redis</code></td><td><code>journal</code></td></tr>
+<tr><td><code>idempotency.path</code> / <code>dsn_env</code> / <code>url_env</code> / <code>role</code> / <code>pool</code></td><td>Fichier SQLite, variable du DSN Postgres, variable de l'URL Redis, rôle et pool Postgres.</td><td></td><td><code>null</code> ; rôle <code>loom_app</code></td></tr>
+<tr><td><code>queue.backend</code></td><td>File des tâches de fond : dans le process (<code>asyncio</code>) ou dans des workers (<code>rabbitmq</code>). <a href="module-11.html#ex-11-3">Module 11</a>.</td><td><code>asyncio</code>, <code>rabbitmq</code></td><td><code>asyncio</code></td></tr>
+<tr><td><code>queue.url_env</code></td><td>Variable de l'URL du courtier (<code>rabbitmq</code>).</td><td>nom de variable</td><td><code>null</code></td></tr>
+<tr><td><code>queue.max_running</code></td><td>Tâches menées de front (<code>asyncio</code>).</td><td>entier &gt; 0</td><td><code>16</code></td></tr>
+<tr><td><code>bus.backend</code></td><td>Nouvelles d'écriture entre process (suivi SSE d'un run mené ailleurs). <a href="module-11.html#ex-11-5">Module 11</a>.</td><td><code>memory</code>, <code>postgres</code>, <code>redis</code></td><td><code>memory</code></td></tr>
+<tr><td><code>bus.dsn_env</code> / <code>url_env</code></td><td>Variable du DSN Postgres, de l'URL Redis.</td><td>nom de variable</td><td><code>null</code></td></tr>
+<tr><td><code>encryption.keys</code></td><td>Chiffrement au repos (extra <code>crypto</code>) : <em>noms</em> de secrets ; le premier chiffre, tous déchiffrent. Refusé avec un journal <code>memory</code>. Présenté au <a href="module-12.html#ex-12-7">module 12</a>.</td><td>liste de noms</td><td><code>encryption: null</code> : en clair</td></tr>
+<tr><td><code>retention.events_days</code></td><td>Jours sans écriture au-delà desquels <code>loom retention --yes</code> efface une session. Présenté au <a href="module-12.html#ex-12-8">module 12</a>.</td><td>entier &gt; 0, <code>null</code></td><td><code>null</code> : rien n'est effacé</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="cfg-sessions"><code>sessions</code> : historique, compaction, images, state</h3>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>snapshot_every</code></td><td>Événements entre deux snapshots de l'historique. <a href="module-04.html#ex-4-3">Module 4</a>.</td><td>entier &gt; 0</td><td><code>50</code></td></tr>
+<tr><td><code>compaction.model</code></td><td>Modèle du résumé automatique. <a href="module-04.html#ex-4-4">Module 4</a>.</td><td>id de modèle</td><td><strong>obligatoire</strong> dans le bloc ; <code>compaction: null</code> par défaut</td></tr>
+<tr><td><code>compaction.over_tokens</code> / <code>hard_tokens</code></td><td>Taille d'historique au-delà de laquelle un résumé est dû, puis devient bloquant.</td><td>entiers &gt; 0</td><td><code>12000</code> / <code>150000</code></td></tr>
+<tr><td><code>compaction.keep_last</code></td><td>Tours laissés intacts en fin d'historique.</td><td>entier ≥ 0</td><td><code>6</code></td></tr>
+<tr><td><code>compaction.fidelity_check</code></td><td>Contrôle que les repères (références, nombres, e-mails) sont dans le résumé.</td><td>booléen</td><td><code>true</code></td></tr>
+<tr><td><code>compaction.blocking</code></td><td><code>true</code> : le résumé se fait à l'ouverture du run suivant, qui l'attend.</td><td>booléen</td><td><code>false</code></td></tr>
+<tr><td><code>compaction.system_file</code></td><td>Prompt du résumé à la place du prompt interne.</td><td>chemin</td><td><code>null</code></td></tr>
+<tr><td><code>media.keep_images</code></td><td>Images des tours précédents : renvoyées à chaque appel (<code>all</code>) ou remplacées par une mention (<code>last_run</code>). <a href="module-04.html#ex-4-5">Module 4</a>.</td><td><code>all</code>, <code>last_run</code></td><td><code>all</code></td></tr>
+<tr><td><code>state.max_value_bytes</code> / <code>max_total_bytes</code></td><td>Taille maximale d'une valeur du state, et de tout le state d'une session. <a href="module-04.html#ex-4-8">Module 4</a>.</td><td>entiers &gt; 0</td><td><code>1024</code> / <code>4096</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="cfg-execution"><code>execution</code> : outils, pièces jointes, arrêt, concession</h3>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>tools.timeout</code></td><td>Délai par défaut d'un outil (s). <a href="module-02.html#ex-2-3">Module 2</a>.</td><td>nombre &gt; 0, <code>null</code></td><td><code>30</code></td></tr>
+<tr><td><code>tools.validate_arguments</code></td><td>Contrôle des arguments par le schéma de l'outil. <a href="module-02.html#ex-2-4">Module 2</a>.</td><td>booléen</td><td><code>true</code></td></tr>
+<tr><td><code>tools.offload_over</code></td><td>Taille d'un résultat (caractères) au-delà de laquelle il est mis de côté. <a href="module-02.html#ex-2-7">Module 2</a>.</td><td>entier &gt; 0, <code>null</code></td><td><code>50000</code></td></tr>
+<tr><td><code>attachments.max_bytes</code> / <code>max_files</code> / <code>types</code></td><td>Taille, nombre et types des pièces jointes d'un run ; images seulement. <a href="module-06.html#ex-6-4">Module 6</a>.</td><td>octets / entier / <code>image/jpeg</code>, <code>image/png</code>, <code>image/gif</code>, <code>image/webp</code></td><td>5 Mio / <code>10</code> / les quatre</td></tr>
+<tr><td><code>shutdown_timeout</code></td><td>Délai laissé aux tâches de fond à la fermeture (s).</td><td>nombre &gt; 0</td><td><code>30</code></td></tr>
+<tr><td><code>lease</code></td><td>Durée de la concession qu'un process prend sur le run qu'il mène (s) ; passée, un autre peut le reprendre. <a href="module-08.html#ex-8-5">Module 8</a>.</td><td>nombre &gt; 0</td><td><code>60</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="cfg-budgets"><code>budgets</code> : budgets par défaut</h3>
+<p>Budgets de tous les agents ; le même bloc sert dans <code>tenants[].budgets</code> et dans le <code>budget</code> d'un agent, qui surchargent clé par clé. Voir le <a href="#bloc-budgets">bloc budgets</a> et le <a href="module-09.html#ex-9-7">module 9</a>.</p>
+
+<h3 id="cfg-telemetry"><code>telemetry</code> : logs, capture, masquage, collecteurs</h3>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>logging.level</code></td><td>Niveau des logs techniques, distincts du journal. <a href="module-01.html#ex-1-7">Module 1</a>.</td><td><code>DEBUG</code>, <code>INFO</code>, <code>WARNING</code>, <code>ERROR</code>…</td><td><code>INFO</code></td></tr>
+<tr><td><code>logging.format</code></td><td>Format des logs.</td><td><code>console</code>, <code>json</code></td><td><code>console</code></td></tr>
+<tr><td><code>capture.exports</code></td><td>Ce qui part vers les collecteurs : l'enveloppe seule, ou aussi le contenu masqué. Le journal garde tout.</td><td><code>metadata</code>, <code>content</code></td><td><code>metadata</code></td></tr>
+<tr><td><code>capture.raw_exchanges</code></td><td>Garde au journal chaque échange HTTP avec le fournisseur (<code>model.exchanged</code>). <a href="module-03.html#ex-3-3">Module 3</a>.</td><td>booléen</td><td><code>false</code></td></tr>
+<tr><td><code>capture.raw_max_bytes</code></td><td>Taille maximale de chaque corps brut gardé.</td><td>entier &gt; 0</td><td><code>262144</code> (256 Kio)</td></tr>
+<tr><td><code>redaction.patterns</code></td><td>Motifs masqués dans le contenu exporté ; les quatre fournis s'appliquent toujours. Présenté au <a href="module-13.html#ex-13-5">module 13</a>.</td><td><code>secret</code>, <code>email</code>, <code>phone</code>, <code>iban</code>, ou <code>{name, regex}</code></td><td>les quatre</td></tr>
+<tr><td><code>exporters[].type</code></td><td>Collecteur (extra <code>otel</code>). Présenté au <a href="module-13.html#ex-13-5">module 13</a>.</td><td><code>otel</code></td><td><strong>obligatoire</strong> ; <code>exporters: []</code> par défaut</td></tr>
+<tr><td><code>exporters[].endpoint_env</code> / <code>protocol</code> / <code>headers_env</code> / <code>service_name</code> / <code>timeout</code></td><td>Variable de l'adresse OTLP, protocole, variable des en-têtes, nom du service, délai d'envoi (s).</td><td>— / <code>http/protobuf</code>, <code>grpc</code> / — / texte / nombre</td><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code> / <code>http/protobuf</code> / <code>null</code> / <code>loom-ia</code> / <code>10</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="cfg-tenants"><code>tenants</code> : les clients</h3>
+<p>Sans cette liste, seul le client <code>default</code> existe ; avec elle, la liste est fermée et un client inconnu est refusé. Un client partage agents, prompts et outils et ne surcharge que ce qui suit. <a href="module-03.html#ex-3-8">Module 3</a> (variables), <a href="module-12.html#ex-12-1">module 12</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>Identifiant du client (<code>--tenant</code>, clé d'API).</td><td>texte</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>agents</code></td><td>Agents que ce client peut lancer.</td><td>liste</td><td><code>[]</code> : tous</td></tr>
+<tr><td><code>tools_deny</code></td><td>Outils retirés à ce client, sous le nom vu par le modèle.</td><td>liste</td><td><code>[]</code></td></tr>
+<tr><td><code>models</code></td><td>Remplacement de modèles partout (orchestrateur, rôles, juges, secours, compaction).</td><td><code>{id_config: id_client}</code></td><td><code>{}</code></td></tr>
+<tr><td><code>approvals</code></td><td>Approbation imposée par outil.</td><td><code>{outil: never|always|policy}</code></td><td><code>{}</code></td></tr>
+<tr><td><code>secrets</code></td><td>Redirection des noms de secrets vers les variables de ce client.</td><td><code>{nom: VARIABLE}</code></td><td><code>{}</code></td></tr>
+<tr><td><code>variables</code></td><td>Valeurs des <code>{{ variables }}</code> des prompts ; une variable citée et absente arrête le chargement.</td><td><code>{nom: valeur}</code></td><td><code>{}</code></td></tr>
+<tr><td><code>budgets</code></td><td>Budgets du client, sur ceux de la racine.</td><td>bloc budgets</td><td><code>null</code></td></tr>
+<tr><td><code>quotas.runs_per_minute</code></td><td>Runs par minute, tous accès confondus, par instance.</td><td>entier &gt; 0</td><td><code>null</code></td></tr>
+<tr><td><code>storage</code></td><td>Stockage propre au client ; doit déclarer <code>events</code>.</td><td>bloc storage</td><td><code>null</code> : celui de la racine</td></tr>
+<tr><td><code>retention.events_days</code></td><td>Rétention propre ; <code>null</code> explicite annule celle de la racine.</td><td>entier &gt; 0, <code>null</code></td><td>celle de la racine</td></tr>
+<tr><td><code>telemetry.capture.exports</code> / <code>raw_exchanges</code> / <code>raw_max_bytes</code></td><td>Capture propre au client.</td><td>comme <code>telemetry.capture</code></td><td>celle de la racine</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="cfg-security"><code>security</code> : clés d'API</h3>
+<p>Clés de l'API REST et du serveur MCP HTTP ; sans clé valide, 401. <a href="module-10.html#ex-10-8">Module 10</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>api_keys[].id</code></td><td>Nom de la clé ; unique.</td><td>texte</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>api_keys[].hash</code></td><td>Empreinte donnée par <code>loom keys create</code>, jamais la clé.</td><td><code>sha256:</code> + 64 hexadécimaux</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>api_keys[].tenant</code></td><td>Client au nom duquel la clé agit.</td><td>id de client</td><td><code>default</code></td></tr>
+<tr><td><code>api_keys[].scopes</code></td><td>Droits : lancer (runs, annulation, webhooks), lire, lire le contenu, approuver, administrer.</td><td><code>run</code>, <code>read</code>, <code>read_content</code>, <code>approve</code>, <code>admin</code></td><td><code>[run, read]</code></td></tr>
+<tr><td><code>api_keys[].agents</code></td><td>Agents accessibles.</td><td>liste</td><td><code>[]</code> : tous</td></tr>
+<tr><td><code>api_keys[].rate_limit.per_minute</code></td><td>Requêtes par minute ; au-delà, 429.</td><td>entier &gt; 0</td><td>aucune limite</td></tr>
+<tr><td><code>api_keys[].expires</code></td><td>Fin de validité.</td><td>date-heure avec fuseau</td><td><code>null</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="cfg-server"><code>server</code> : serveurs HTTP et MCP</h3>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>http.host</code> / <code>port</code></td><td>Adresse et port de <code>loom serve</code> (<code>--host</code> et <code>--port</code> l'emportent).</td><td>adresse / 1 à 65535</td><td><code>127.0.0.1</code> / <code>8000</code></td></tr>
+<tr><td><code>http.base_path</code></td><td>Préfixe commun des routes.</td><td>chemin commençant par <code>/</code></td><td><code>""</code></td></tr>
+<tr><td><code>http.max_body_bytes</code></td><td>Taille maximale d'un corps de requête ; au-delà, 413.</td><td>entier &gt; 0</td><td>128 Mio</td></tr>
+<tr><td><code>http.docs</code></td><td>Sert <code>/docs</code>, <code>/redoc</code> et <code>/openapi.json</code> (lisibles sans clé).</td><td>booléen, <code>null</code></td><td><code>null</code> : servis, sauf en <code>prod</code></td></tr>
+<tr><td><code>mcp.http</code></td><td>Monte le serveur MCP sous <code>&lt;base_path&gt;/mcp</code> ; exige des clés d'API et l'extra <code>mcp</code>. <a href="module-10.html#ex-10-9">Module 10</a>.</td><td>booléen</td><td><code>false</code></td></tr>
+<tr><td><code>mcp.file_roots</code></td><td>Dossiers où un lien <code>file://</code> joint à un appel MCP peut être lu.</td><td>liste de chemins</td><td><code>[]</code></td></tr>
+<tr><td><code>mcp.allowed_origins</code> / <code>allowed_hosts</code></td><td>Origines et hôtes acceptés par le transport MCP HTTP.</td><td>listes</td><td><code>[]</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="cfg-triggers"><code>triggers</code> : portes d'entrée (webhooks)</h3>
+<p><code>POST /v1/hooks/&lt;name&gt;</code>, avec une clé d'API qui donne le client. <a href="module-11.html#ex-11-1">Module 11</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td>Dernier segment de la route ; unique.</td><td><code>^[a-z0-9][a-z0-9_-]{0,63}$</code></td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>agent</code></td><td>Agent lancé.</td><td>nom d'agent</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>message</code></td><td>Gabarit du message, rendu sur <code>{payload, trigger, delivery}</code> ; une variable absente donne une chaîne vide.</td><td>gabarit <code>{{ }}</code></td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>session</code></td><td>Gabarit de la session, pour regrouper les livraisons d'un même sujet.</td><td>gabarit</td><td><code>null</code> : une session par run</td></tr>
+<tr><td><code>delivery_header</code></td><td>En-tête porteur de l'identifiant de livraison, qui devient le <code>run_id</code> : une livraison en double retrouve son run.</td><td>nom d'en-tête</td><td><code>null</code></td></tr>
+</tbody>
+</table></div>
+
+<!-- ===================================================================== -->
+<h2 id="agent-yaml">Le fichier d'agent</h2>
+<p>Un fichier par agent dans <code>agents_dir</code>, ou un élément de <code>agents:</code> dans <code>loom.yaml</code>.</p>
+
+<h3 id="ag-general">Identité, limites, publication</h3>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td>Nom de l'agent : <code>loom run &lt;name&gt;</code>, route REST, outil MCP ; unique. <a href="module-01.html#fichiers">Module 1</a>.</td><td><code>^[A-Za-z0-9_-]{1,64}$</code>, pas <code>_compaction</code></td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>description</code></td><td>Description de l'agent (liste des agents, outil MCP, sous-agent).</td><td>texte</td><td><code>""</code></td></tr>
+<tr><td><code>expose.rest</code> / <code>expose.mcp</code></td><td>Publie l'agent par l'API REST, comme outil MCP.</td><td>booléens</td><td><code>true</code></td></tr>
+<tr><td><code>max_iterations</code></td><td>Tours de boucle au plus ; atteint, une réponse forcée sans outils clôt le run. <a href="module-02.html#ex-2-6">Module 2</a>.</td><td>entier &gt; 0</td><td><code>10</code></td></tr>
+<tr><td><code>timeout</code></td><td>Durée maximale d'un run (s), en temps de pilotage cumulé ; dépassée, le run échoue et ne se reprend pas. <a href="module-08.html#ex-8-7">Module 8</a>.</td><td>nombre &gt; 0</td><td><code>null</code></td></tr>
+<tr><td><code>max_depth</code></td><td>Profondeur à laquelle un run de cet agent peut encore appeler ses sous-agents. <a href="module-06.html#ex-6-6">Module 6</a>.</td><td>entier &gt; 0</td><td><code>1</code></td></tr>
+<tr><td><code>stream_output</code></td><td>Diffusion de la réponse finale : au fil de l'eau, ou en un bloc après ses contrôles.</td><td><code>live</code>, <code>after_guards</code></td><td><code>after_guards</code> si la réponse est contrôlée, sinon <code>live</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="ag-main"><code>main</code> : l'orchestrateur</h3>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>model</code></td><td>Modèle de l'orchestrateur. <a href="module-01.html#fichiers">Module 1</a>.</td><td>id de modèle</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>system</code></td><td>Prompt système en ligne ; exclusif de <code>system_file</code>.</td><td>texte</td><td><code>""</code></td></tr>
+<tr><td><code>system_file</code></td><td>Prompt système dans un fichier de <code>prompts_dir</code>. <a href="module-01.html#ex-1-5">Module 1</a>.</td><td>chemin</td><td><code>null</code></td></tr>
+<tr><td><code>fallbacks</code></td><td>Modèles de secours, dans l'ordre. <a href="module-09.html#ex-9-2">Module 9</a>.</td><td>liste d'ids</td><td><code>[]</code></td></tr>
+<tr><td><code>llm</code></td><td>Réglages d'appel : voir <a href="#bloc-llm">réglages <code>llm</code></a>.</td><td>objet</td><td><code>{}</code></td></tr>
+<tr><td><code>context</code></td><td>Ajoute le state de session, entier ou certaines clés, en fin de requête. <a href="module-04.html#ex-4-8">Module 4</a>.</td><td><code>[session_state]</code> ou <code>[{session_state: [clés]}]</code></td><td><code>[]</code></td></tr>
+</tbody>
+</table></div>
+<p>Le contrat et le juge de la réponse finale se déclarent au niveau de l'agent (<code>output</code>, <code>judge</code>), pas dans <code>main</code>.</p>
+
+<h3 id="ag-tools"><code>tools</code> : outils</h3>
+<p>Trois formes : <code>- python: …</code>, <code>- mcp: …</code>, <code>- source: …</code>. <a href="module-01.html#ex-1-8">Module 1</a>, <a href="module-02.html#ex-2-1">module 2</a>, <a href="module-05.html#ex-5-2">module 5</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>python</code></td><td>Outil Python : nom enregistré par un module de <code>imports</code>, chemin <code>module:attr</code>, ou outil fourni <code>loom.&lt;outil&gt;</code>.</td><td>texte</td><td>—</td></tr>
+<tr><td><code>timeout</code>, <code>side_effects</code>, <code>approval</code>, <code>idempotent</code>, <code>offload_over</code>, <code>output</code></td><td>Surcharges de l'outil Python pour cet agent : voir <a href="#bloc-surcharges">surcharges d'outil</a>.</td><td></td><td>celles de l'outil</td></tr>
+<tr><td><code>mcp</code> / <code>source</code></td><td>Serveur de <code>mcp_servers</code> ou source de <code>tool_sources</code> dont les outils sont exposés.</td><td>nom déclaré</td><td>—</td></tr>
+<tr><td><code>alias</code></td><td>Préfixe plus court que le nom (<code>alias__outil</code>).</td><td>texte, 40 caractères</td><td><code>null</code></td></tr>
+<tr><td><code>include</code> / <code>exclude</code></td><td>Seuls ces outils, ou tous sauf ceux-ci (noms courts) ; exclusifs. <a href="module-05.html#ex-5-3">Module 5</a>.</td><td>listes</td><td><code>null</code></td></tr>
+<tr><td><code>required</code></td><td>Sans ce serveur ou cette source, le run échoue au lieu de continuer sans ses outils. <a href="module-05.html#ex-5-4">Module 5</a>.</td><td>booléen</td><td><code>false</code></td></tr>
+<tr><td><code>tools</code></td><td>Surcharges par outil (MCP ou source) pour cet agent.</td><td><code>{outil: {…}}</code></td><td><code>{}</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="ag-roles"><code>roles</code> : rôles délégués</h3>
+<p>Appelés par l'orchestrateur comme des outils ; ils ne reçoivent que leurs arguments et le contexte déclaré. <a href="module-06.html#ex-6-1">Module 6</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td>Nom de l'outil vu par l'orchestrateur ; <code>main</code> réservé.</td><td><code>^[A-Za-z0-9_-]{1,64}$</code></td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>description</code></td><td>Ce que l'orchestrateur lit du rôle.</td><td>texte non vide</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>model</code>, <code>fallbacks</code>, <code>system</code>, <code>system_file</code>, <code>llm</code></td><td>Comme dans <code>main</code> ; un rôle vision exige un modèle <code>vision</code>.</td><td></td><td><code>model</code> <strong>obligatoire</strong></td></tr>
+<tr><td><code>input_schema</code></td><td>Schéma JSON des arguments (<code>type: object</code>).</td><td>JSON Schema</td><td>objet sans propriété</td></tr>
+<tr><td><code>input_template</code></td><td>Construction du message du rôle avec <code>{{ args.&lt;arg&gt; }}</code> et <code>{{ context.&lt;élément&gt; }}</code>.</td><td>gabarit</td><td><code>null</code></td></tr>
+<tr><td><code>context</code></td><td>Contexte ajouté : la demande, le contexte appelant, les pièces jointes (rôle vision), le résumé de session, le state, des résultats d'outils, les derniers tours.</td><td><code>user_input</code>, <code>caller_context</code>, <code>attachments</code>, <code>session_summary</code>, <code>session_state</code>, <code>{tool_results: [outils], scope: run|session}</code>, <code>{last_turns: N}</code>, <code>{session_state: [clés]}</code></td><td><code>[]</code></td></tr>
+<tr><td><code>terminal</code></td><td>La sortie du rôle devient la réponse finale. <a href="module-06.html#ex-6-3">Module 6</a>.</td><td>booléen</td><td><code>false</code></td></tr>
+<tr><td><code>timeout</code></td><td>Délai de l'appel (s).</td><td>nombre &gt; 0</td><td><code>null</code></td></tr>
+<tr><td><code>output</code> / <code>judge</code></td><td>Contrat et juge de la sortie du rôle. <a href="module-07.html#ex-7-2">Module 7</a>.</td><td>blocs</td><td><code>null</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="ag-subagents"><code>subagents</code> : sous-agents</h3>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>agent</code></td><td>Agent de la config appelé comme un outil (argument unique <code>message</code>), dans un run enfant. <a href="module-06.html#ex-6-6">Module 6</a>.</td><td>nom d'agent</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>name</code></td><td>Nom de l'outil vu par l'orchestrateur.</td><td><code>^[A-Za-z0-9_-]{1,64}$</code></td><td>le nom de l'agent</td></tr>
+<tr><td><code>description</code></td><td>Description de l'outil.</td><td>texte</td><td>celle de l'agent (l'une des deux exigée)</td></tr>
+<tr><td><code>budget_share</code></td><td>Part du budget restant du run parent ; exige un budget de run.</td><td>]0, 1]</td><td><code>null</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="ag-controle">Contrôles : <code>output</code>, <code>judge</code>, <code>policies</code></h3>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>output</code></td><td>Contrat de la réponse finale : voir <a href="#bloc-output">contrat de sortie</a>. <a href="module-07.html#ex-7-1">Module 7</a>.</td><td>bloc</td><td><code>null</code></td></tr>
+<tr><td><code>judge.model</code> / <code>fallbacks</code></td><td>Modèle du juge (sait appeler des outils) et ses secours. <a href="module-07.html#ex-7-4">Module 7</a>.</td><td>ids</td><td><code>model</code> <strong>obligatoire</strong></td></tr>
+<tr><td><code>judge.name</code></td><td>Nom au journal (<code>judge:&lt;nom&gt;</code>).</td><td>texte</td><td><code>output</code>, ou le nom du rôle</td></tr>
+<tr><td><code>judge.criteria[].name</code> / <code>rule</code> / <code>min_score</code> / <code>blocking</code></td><td>Critère : nom, règle donnée au juge, seuil de 0 à 1, bloquant ou seulement signalé.</td><td>— / texte / 0 à 1 / booléen</td><td><strong>obligatoires</strong> / / <code>0.8</code> / <code>true</code></td></tr>
+<tr><td><code>judge.context</code></td><td>Ce que voit le juge en plus de la sortie (pas <code>session_state</code>).</td><td><code>user_input</code>, <code>caller_context</code>, <code>attachments</code>, <code>session_summary</code>, <code>{tool_results: […]}</code>, <code>{last_turns: N}</code></td><td><code>[]</code></td></tr>
+<tr><td><code>judge.when.sample</code> / <code>condition</code> / <code>tenants</code> / <code>profiles</code></td><td>Part des runs jugés, prédicat Python, clients et profils concernés.</td><td>0 à 1 / <code>module:attr</code> / listes</td><td><code>1.0</code> / <code>null</code></td></tr>
+<tr><td><code>judge.repair</code>, <code>on_failure</code>, <code>fallback_message</code></td><td>Comme dans le <a href="#bloc-output">contrat de sortie</a>.</td><td></td><td><code>max_attempts: 1</code>, <code>fail</code></td></tr>
+<tr><td><code>judge.llm</code> / <code>timeout</code></td><td>Réglages d'appel et délai du juge.</td><td></td><td><code>{}</code> / <code>null</code></td></tr>
+<tr><td><code>judge.on_error</code></td><td>Erreur du juge : faire échouer le run ou laisser passer.</td><td><code>block</code>, <code>allow</code></td><td><code>block</code></td></tr>
+<tr><td><code>policies[].hook</code></td><td>Politique : nom enregistré, <code>module:attr</code>, ou fournie (<code>loom.require_tool</code>). <a href="module-07.html#ex-7-7">Module 7</a>.</td><td>texte</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>policies[].name</code> / <code>points</code> / <code>params</code></td><td>Nom au journal, points de branchement, paramètres.</td><td>— / <code>before_model</code>, <code>after_model</code>, <code>before_tool</code>, <code>after_tool</code>, <code>on_output</code> / objet</td><td>celui de la politique / tous ceux qu'elle déclare / <code>{}</code></td></tr>
+<tr><td><code>policies[].timeout</code> / <code>on_error</code> / <code>max_attempts</code></td><td>Délai (s), comportement sur erreur, réparations qu'elle peut demander.</td><td>nombre / <code>block</code>, <code>allow</code> / entier</td><td><code>5</code> / <code>block</code> / <code>1</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="ag-approval"><code>approval</code> et <code>budget</code></h3>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>approval.expires_in</code></td><td>Délai laissé à l'approbateur (s) ; <code>null</code> : sans fin. <a href="module-08.html#ex-8-3">Module 8</a>.</td><td>nombre &gt; 0, <code>null</code></td><td><code>86400</code> (24 h)</td></tr>
+<tr><td><code>approval.on_expiry</code></td><td>Sort d'une demande périmée : refus de l'appel ou échec du run.</td><td><code>deny</code>, <code>fail</code></td><td><code>deny</code></td></tr>
+<tr><td><code>approval.scope</code></td><td>Portée exigée de la clé d'API qui approuve (REST).</td><td>nom de portée</td><td><code>approve</code></td></tr>
+<tr><td><code>budget</code></td><td>Budgets de l'agent, sur ceux de la racine : voir le <a href="#bloc-budgets">bloc budgets</a>.</td><td>bloc</td><td><code>null</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="ag-state"><code>state</code> : clés du state de session</h3>
+<p>Valeurs typées gardées d'un run à l'autre, que la compaction ne touche pas. <a href="module-04.html#ex-4-8">Module 4</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>&lt;clé&gt;</code></td><td>Nom de la clé ; une clé non déclarée est refusée.</td><td><code>^[A-Za-z_][A-Za-z0-9_]{0,63}$</code></td><td>—</td></tr>
+<tr><td><code>&lt;clé&gt;.schema</code></td><td>JSON Schema de la valeur.</td><td>JSON Schema</td><td><strong>obligatoire</strong></td></tr>
+<tr><td><code>&lt;clé&gt;.description</code></td><td>Ce que la clé désigne.</td><td>texte</td><td><code>""</code></td></tr>
+<tr><td><code>&lt;clé&gt;.required</code></td><td>Run refusé tant que la clé n'a pas de valeur ; exclusif de <code>default</code>.</td><td>booléen</td><td><code>false</code></td></tr>
+<tr><td><code>&lt;clé&gt;.default</code></td><td>Valeur lue quand la clé est absente, jamais écrite.</td><td>valeur JSON</td><td><code>null</code></td></tr>
+<tr><td><code>&lt;clé&gt;.from[].tool</code></td><td>Outil dont un résultat réussi pose la clé.</td><td>nom d'outil</td><td><strong>obligatoire</strong> dans <code>from</code></td></tr>
+<tr><td><code>&lt;clé&gt;.from[].path</code> / <code>value</code></td><td>Pointeur JSON dans le résultat, ou valeur fixe ; exclusifs.</td><td>pointeur (<code>/numero</code>) / valeur JSON</td><td>l'un des deux obligatoire</td></tr>
+<tr><td><code>&lt;clé&gt;.from[].on_missing</code></td><td><code>path</code> absent : écriture refusée et dite au modèle, ou ignorée.</td><td><code>refuse</code>, <code>ignore</code></td><td><code>refuse</code></td></tr>
+</tbody>
+</table></div>
+
+<!-- ===================================================================== -->
+<h2 id="blocs">Les blocs partagés</h2>
+
+<h3 id="bloc-output">Contrat de sortie (<code>output</code>)</h3>
+<p>Sert dans <code>output</code> (agent), <code>roles[].output</code>, <code>tools[].output</code> et les surcharges d'outil. Une sortie est toujours exigée non vide. <a href="module-07.html#ex-7-2">Module 7</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>schema</code> / <code>schema_file</code></td><td>La sortie doit être un JSON conforme à ce schéma, écrit en ligne ou dans un fichier ; exclusifs.</td><td>JSON Schema / chemin</td><td><code>null</code></td></tr>
+<tr><td><code>must_match</code> / <code>must_not_match</code></td><td>Motif qui doit se trouver dans la sortie, motif interdit (moteur <code>regex</code>, avec délai).</td><td>expression régulière</td><td><code>null</code></td></tr>
+<tr><td><code>max_chars</code></td><td>Longueur maximale.</td><td>entier &gt; 0</td><td><code>null</code></td></tr>
+<tr><td><code>normalize</code></td><td>Normalisation avant contrôle (blocs de code retirés, JSON extrait, espaces nettoyés).</td><td>booléen</td><td><code>true</code></td></tr>
+<tr><td><code>repair.max_attempts</code></td><td>Réparations demandées à l'auteur (un outil ne se répare pas).</td><td>entier ≥ 0</td><td><code>1</code></td></tr>
+<tr><td><code>repair.tools</code></td><td>Outils de l'orchestrateur pendant la réparation.</td><td><code>auto</code>, <code>none</code>, <code>allowed</code></td><td><code>auto</code></td></tr>
+<tr><td><code>on_failure</code></td><td>Après les réparations : échec, sortie gardée marquée non vérifiée, ou remplacée.</td><td><code>fail</code>, <code>unverified</code>, <code>fallback</code></td><td><code>fail</code></td></tr>
+<tr><td><code>fallback_message</code></td><td>Sortie de remplacement ; obligatoire avec <code>fallback</code>.</td><td>texte</td><td><code>null</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="bloc-surcharges">Surcharges d'outil (<code>tools</code>)</h3>
+<p>Sert dans <code>mcp_servers[].tools</code>, <code>tool_sources[].tools</code>, <code>tools[].tools</code> d'un agent (qui l'emporte), et directement sur une entrée <code>- python:</code>. Une clé absente garde la déclaration de l'outil. <a href="module-02.html#ex-2-3">Module 2</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>description</code></td><td>Ce que le modèle lit de l'outil (pas sur une entrée <code>- python:</code>).</td><td>texte</td><td>celle de l'outil</td></tr>
+<tr><td><code>side_effects</code></td><td>Nature de ses effets ; un outil sans effet ou idempotent est relancé sans risque à la reprise.</td><td><code>none</code>, <code>reversible</code>, <code>irreversible</code></td><td>celle de l'outil, sinon <code>none</code></td></tr>
+<tr><td><code>approval</code></td><td>Approbation : jamais, toujours (pause du run), ou selon une politique. <a href="module-08.html#ex-8-1">Module 8</a>.</td><td><code>never</code>, <code>always</code>, <code>policy</code></td><td>celle de l'outil, sinon <code>never</code></td></tr>
+<tr><td><code>idempotent</code></td><td>L'outil reçoit une clé d'idempotence ; un appel déjà fait n'est pas refait.</td><td>booléen</td><td>celle de l'outil, sinon <code>false</code></td></tr>
+<tr><td><code>timeout</code></td><td>Délai de l'outil (s).</td><td>nombre &gt; 0</td><td>celui de l'outil, sinon <code>execution.tools.timeout</code></td></tr>
+<tr><td><code>offload_over</code></td><td>Seuil de mise de côté du résultat (caractères).</td><td>entier &gt; 0</td><td>celui de l'outil, sinon <code>execution.tools.offload_over</code></td></tr>
+<tr><td><code>output</code></td><td>Contrat du résultat ; un résultat non conforme revient à l'orchestrateur en erreur.</td><td>bloc</td><td><code>null</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="bloc-llm">Réglages <code>llm</code></h3>
+<p>Sert dans <code>main.llm</code>, <code>roles[].llm</code> et <code>judge.llm</code>. <a href="module-03.html#ex-3-5">Module 3</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>max_tokens</code></td><td>Remplace <code>max_tokens</code> du modèle pour cet appel.</td><td>entier &gt; 0</td><td><code>null</code></td></tr>
+<tr><td><code>params</code></td><td>Fusionnés clé par clé sur <code>params</code> du modèle, pour chaque modèle de la chaîne, secours compris : n'y mettre que ce que tous acceptent.</td><td>objet</td><td><code>{}</code></td></tr>
+</tbody>
+</table></div>
+
+<h3 id="bloc-budgets">Budgets</h3>
+<p>Sert dans <code>budgets</code> (racine), <code>tenants[].budgets</code> et <code>budget</code> (agent), qui surchargent clé par clé. Vérifiés avant chaque appel de l'orchestrateur ; les plafonds par client, à l'ouverture du run. <a href="module-09.html#ex-9-7">Module 9</a>.</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Rôle</th><th>Valeurs</th><th>Défaut</th></tr></thead>
+<tbody>
+<tr><td><code>run.max_cost</code> / <code>max_tokens</code> / <code>max_calls</code></td><td>Coût ($), tokens et appels de modèle maximaux d'un run.</td><td>nombres ≥ 0</td><td><code>null</code></td></tr>
+<tr><td><code>session.max_cost</code> / <code>max_tokens</code></td><td>Plafonds d'une session, run en cours compris.</td><td>nombres ≥ 0</td><td><code>null</code></td></tr>
+<tr><td><code>tenant.max_cost_per_day</code> / <code>max_tokens_per_day</code></td><td>Plafond d'un client sur la journée (UTC) : au-delà, un nouveau run est refusé.</td><td>nombres ≥ 0</td><td><code>null</code></td></tr>
+<tr><td><code>tenant.max_cost_per_month</code> / <code>max_tokens_per_month</code></td><td>Idem sur le mois.</td><td>nombres ≥ 0</td><td><code>null</code></td></tr>
+<tr><td><code>on_exceed</code></td><td><code>stop</code> : <code>budget.exceeded</code> puis réponse forcée sans outils ; <code>warn</code> : l'événement seul.</td><td><code>stop</code>, <code>warn</code></td><td><code>stop</code></td></tr>
+</tbody>
+</table></div>
+
+<nav class="suite" aria-label="Pages voisines"><a class="avant" href="module-15.html"><small>Précédent</small>Module 15 : Sources d&#x27;outils et sandbox forge</a><a class="apres" href="pieges.html"><small>Suivant</small>Pièges et dépannage</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,2500 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 15 : Sources d&#x27;outils et sandbox forge · loom_v2</title>
+<meta name="description" content="Module 15 de la formation loom_v2 : écrire une source d&#x27;outils dans un paquet Python et la brancher sur l&#x27;assistant, puis configurer la source forge, où l&#x27;agent écrit ses propres outils et les exécute dans une microVM Firecracker ; bilan de la formation.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li class="ici"><a href="module-15.html" aria-current="page"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li class="ici"><a href="module-15.html" aria-current="page"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<h1>Module 15 : Sources d'outils et sandbox forge</h1>
+<p class="chapeau">Jusqu'ici, un outil était une fonction du projet (module 2) ou un serveur MCP (module 5). Il existe une troisième voie : une <strong>source d'outils</strong>, un paquet Python installé qui fournit ses outils à chaque run. Jean l'utilise pour partager un calendrier des jours ouvrés entre ses projets. Loom livre aussi sa propre source, <code>forge</code> : l'agent y écrit lui-même un petit outil, que loom exécute dans une machine virtuelle isolée, jamais sur le serveur de Jean.</p>
+
+<dl class="fiche-agent">
+<dt>Agent</dt><dd><code>assistant</code>, dans le dossier <code>plomberie-dupont/</code>, et un agent <code>atelier</code> dans le sous-projet <code>atelier/</code></dd>
+<dt>Départ</dt><dd>la fin du <a href="module-14.html#bilan">module 14</a> : l'agent a une suite d'évaluations, des tests pytest et des journaux de référence</dd>
+<dt>Arrivée</dt><dd><span class="version">v2.0</span> : l'assistant consulte le calendrier de l'entreprise, fourni par un paquet ; l'atelier est prêt à forger des outils dès qu'une VM est disponible</dd>
+<dt>Fonctions</dt><dd><a class="fn" href="matrice.html#D12">D12</a><a class="fn" href="matrice.html#D9">D9</a></dd>
+</dl>
+
+<details class="depart"><summary>Point de départ : les fichiers au début du module</summary>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils, politiques]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        # Une question simple : le montant d'un devis
+        - with_text: montant
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: montant
+          text: Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).
+        # Relance de Mme Martin : retrouver le devis, faire rédiger, envoyer
+        - with_text: Relance Mme Martin
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance Mme Martin
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance Mme Martin
+          text: J'envoie l'e-mail à Mme Martin.
+          forced: "Je m'arrête là : l'e-mail à Mme Martin est rédigé, mais pas envoyé."
+          tool_calls:
+            - name: envoyer_email
+              arguments:
+                destinataire: martin@example.fr
+                objet: Votre devis D-2026-042
+                corps: "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"
+        - with_text: Relance Mme Martin
+          text: L'e-mail de relance est parti chez Mme Martin.
+        # Relance de M. Bernard : même chemin que pour Mme Martin
+        - with_text: Relance M. Bernard
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-050}
+        - with_text: Relance M. Bernard
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance M. Bernard
+          text: J'envoie l'e-mail à M. Bernard.
+          tool_calls:
+            - name: envoyer_email
+              arguments:
+                destinataire: bernard@example.fr
+                objet: Votre devis D-2026-050
+                corps: "Bonjour Monsieur Bernard,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-050 pour le détartrage de votre chaudière (165 € TTC), envoyé le 20 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"
+        - with_text: Relance M. Bernard
+          text: L'e-mail de relance est parti chez M. Bernard.
+
+  # Le modèle simulé du Chauffage Martin : il joue les scènes de ce client.
+  - id: SIMULE_MARTIN
+    sdk: fake
+    model: fake-martin
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        - with_text: M-2026-017
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: M-2026-017}
+        - with_text: M-2026-017
+          text: Le devis M-2026-017 s'élève à 189 € TTC (171,82 € HT).
+        - with_text: D-2026-042
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: D-2026-042
+          text: Je ne trouve pas de devis D-2026-042 au Chauffage Martin.
+
+  # Deux orchestrateurs d'essai, pour comparer des variantes (modules 13 et 14)
+  - id: SIMULE_BREF
+    sdk: fake
+    model: fake-bref
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        - with_text: Relance Mme Martin
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance Mme Martin
+          text: J'envoie une relance brève.
+          tool_calls:
+            - name: envoyer_email
+              arguments:
+                destinataire: martin@example.fr
+                objet: Votre devis D-2026-042
+                corps: "Bonjour Madame Martin, avez-vous pu regarder notre devis D-2026-042 ? Jean Dupont"
+        - with_text: Relance Mme Martin
+          text: Relance brève envoyée à Mme Martin.
+
+  - id: SIMULE_OUBLIEUR
+    sdk: fake
+    model: fake-oublieur
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        - with_text: Relance Mme Martin
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance Mme Martin
+          text: Le devis D-2026-042 de Mme Martin est toujours en attente depuis le 3 septembre.
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    pricing: {input: 1, output: 5}
+    params:
+      script:
+        - with_text: D-2026-042
+          text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+        - with_text: D-2026-050
+          text: '{"objet": "Votre devis D-2026-050", "corps": "Bonjour Monsieur Bernard,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-050 pour le détartrage de votre chaudière (165 € TTC), envoyé le 20 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+
+  - id: JUGE
+    sdk: fake
+    model: fake-juge
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        # Le juge répond selon le texte qu'il lit
+        - with_text: 2 100 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 0.1, reason: "Le montant de 2 100 € ne figure pas dans le devis (1 840 € TTC)."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+        - with_text: 165 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Numéro, montant et date conformes au devis."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+        - with_text: 1 840 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Numéro, montant et date conformes au devis."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+
+  # Le juge des évaluations (module 14) : il note la réponse finale d'un run.
+  - id: JUGE_EVAL
+    sdk: fake
+    model: fake-juge-eval
+    pricing: {input: 1, output: 5}
+    params:
+      script:
+        - with_text: est parti chez
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: confirme, score: 1.0, reason: "La réponse confirme l'envoi et nomme la cliente."}
+        - with_text: Relance brève envoyée
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: confirme, score: 0.9, reason: "La réponse confirme l'envoi."}
+        - with_text: toujours en attente
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: confirme, score: 0.1, reason: "La réponse ne parle d'aucun envoi."}
+
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    pricing: {input: 1, output: 5}
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    pricing: {input: 1, output: 5}
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    pricing: {input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125}
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+  idempotency: {backend: sqlite, path: data/idempotence.db}
+  retention: {events_days: 365}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: la Plomberie Dupont
+      signature: Jean Dupont, Plomberie Dupont
+  - id: martin-chauffage
+    variables:
+      entreprise: Chauffage Martin
+      signature: Paul Martin, Chauffage Martin
+    models:
+      SIMULE: SIMULE_MARTIN
+    quotas:
+      runs_per_minute: 2
+    retention: {events_days: null}
+    agents: [assistant]
+    tools_deny:
+      - catalogue__rechercher_article
+      - catalogue__prix_article
+      - catalogue__stock_article
+      - traduire
+
+security:
+  api_keys:
+    - id: app-martin
+      hash: sha256:a6f53eb35aa119e3d51310ac7316564db661d58075c859975f2f208d622f9510
+      tenant: martin-chauffage
+      scopes: [run, read, read_content]
+      rate_limit: {per_minute: 3}
+    - id: app-dupont
+      hash: sha256:8888b3fe3d3cfd7010fadc382e200a773d04c0f89734634e2ecd9cb63f60a854
+      scopes: [run, read, read_content, approve]
+    - id: lecture-dupont
+      hash: sha256:7bd8c52cfc7666305c7fe50c972a1b019dd85afb8906946fd0d0166ba6a073ef
+      scopes: [read]
+    - id: crm
+      hash: sha256:1140119cfef0082aef0f5b7bd331d2e168cf3a37e026252dc631b534af1e5afb
+      scopes: [run]
+      agents: [assistant]
+
+server:
+  mcp: {http: true}
+
+triggers:
+  - name: devis-a-relancer
+    agent: assistant
+    message: "Relance {{ payload.client }} pour le devis {{ payload.numero }}, sur un ton cordial."
+    session: "devis-{{ payload.numero }}"
+    delivery_header: X-Delivery-Id</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+description: &gt;-
+  Assistant de la Plomberie Dupont : répond aux questions sur les devis et
+  les prix, et relance les clients par e-mail après accord de l'artisan.
+
+max_iterations: 5
+
+budget:
+  run: {max_cost: 0.10}
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - python: envoyer_email
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+      on_failure: fail
+    judge:
+      model: JUGE
+      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: &gt;-
+            Chaque montant, date et numéro de l'e-mail figure dans le devis :
+            rien n'est inventé.
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé dans la demande de l'artisan.
+          min_score: 0.6
+          blocking: false
+      repair: {max_attempts: 1}
+      on_failure: fail
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+policies:
+  - hook: taux_tva_valide
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<figure class="code"><figcaption>agents/traducteur.yaml</figcaption>
+<pre><code>name: traducteur
+description: Traduit un texte en anglais, fidèlement, sans rien ajouter.
+
+max_iterations: 1
+
+expose: {rest: false, mcp: false}
+
+main:
+  model: TRADUCTEUR
+  system: Tu traduis en anglais le texte reçu, fidèlement, sans rien ajouter ni retirer.</code></pre></figure>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de {{ entreprise }}, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.
+Pour le prix ou le stock d'un article chez le fournisseur, utilise les outils
+du catalogue (catalogue__rechercher_article, catalogue__prix_article…).
+Pour relancer un devis, retrouve-le avec `chercher_devis`, confie la
+rédaction de l'e-mail au rôle `rediger_relance`, puis envoie l'e-mail au
+client avec l'outil `envoyer_email`.
+Si le client joint une photo, demande sa description au rôle `decrire_photo`.
+Pour un client anglophone, confie la traduction à l'outil `traduire`.</code></pre></figure>
+<figure class="code"><figcaption>prompts/rediger_relance.md</figcaption>
+<pre><code>Tu rédiges les e-mails de relance de {{ entreprise }}, pour des devis
+restés sans réponse.
+Écris un e-mail court et poli, signé « {{ signature }} ».
+N'utilise que les informations reçues : n'invente aucun montant, date ou délai.
+Réponds uniquement par un objet JSON : {"objet": "…", "corps": "…"}.</code></pre></figure>
+<figure class="code"><figcaption>outils.py</figcaption>
+<pre><code>import json
+import struct
+import time
+import zlib
+from datetime import datetime
+from pathlib import Path
+
+from loom_ia.core.ports import ToolContext, ToolError
+from loom_ia.tools import Image, idempotent, tool
+
+# Le carnet de devis de chaque client. Plus tard, ce sera sa base de données ou son CRM.
+CARNETS = {
+    "default": {  # la Plomberie Dupont
+        "D-2026-042": {
+            "client": "Mme Martin",
+            "email": "martin@example.fr",
+            "objet": "Remplacement du chauffe-eau",
+            "montant_ht": 1533.33,
+            "taux_tva": 20,
+            "montant_ttc": 1840.00,
+            "date": "2026-09-03",
+            "statut": "envoyé",
+        },
+        "D-2026-050": {
+            "client": "M. Bernard",
+            "email": "bernard@example.fr",
+            "objet": "Détartrage de la chaudière",
+            "montant_ht": 150.00,
+            "taux_tva": 10,
+            "montant_ttc": 165.00,
+            "date": "2026-09-20",
+            "statut": "accepté",
+        },
+    },
+    "martin-chauffage": {
+        "M-2026-017": {
+            "client": "Mme Petit",
+            "email": "petit@example.fr",
+            "objet": "Entretien annuel de la chaudière",
+            "montant_ht": 171.82,
+            "taux_tva": 10,
+            "montant_ttc": 189.00,
+            "date": "2026-09-15",
+            "statut": "envoyé",
+        },
+    },
+}
+
+
+def carnet(ctx: ToolContext) -&gt; dict[str, dict[str, str | float]]:
+    """Le carnet du client pour qui l'outil travaille (vide pour un client inconnu)."""
+    return CARNETS.get(ctx.tenant_id, {})
+
+
+@tool
+def prix_ttc(montant_ht: float, taux_tva: float = 20.0) -&gt; dict[str, float]:
+    """Calcule la TVA et le montant TTC à partir d'un montant HT. Le taux est en pourcentage."""
+    tva = round(montant_ht * taux_tva / 100, 2)
+    return {"montant_ht": montant_ht, "tva": tva, "montant_ttc": round(montant_ht + tva, 2)}
+
+
+@tool
+def chercher_devis(numero: str, ctx: ToolContext) -&gt; dict[str, str | float]:
+    """Retrouve un devis par son numéro (par exemple D-2026-042) : client, objet, montants, date, statut."""
+    devis = carnet(ctx).get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}. Numéros connus : {', '.join(carnet(ctx))}")
+    return {"numero": numero, **devis}
+
+
+# Couleur de l'étiquette selon le statut du devis.
+COULEURS = {"envoyé": (230, 140, 30), "accepté": (40, 150, 80)}
+
+
+@tool
+def etiquette_devis(numero: str, ctx: ToolContext) -&gt; Image:
+    """Fabrique l'étiquette de couleur d'un devis (orange : envoyé, vert : accepté), en image PNG."""
+    devis = carnet(ctx).get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}.")
+    couleur = COULEURS.get(str(devis["statut"]), (120, 120, 120))
+    return Image(png_uni(160, 60, couleur), name=f"etiquette-{numero}.png")
+
+
+def png_uni(largeur: int, hauteur: int, rgb: tuple[int, int, int]) -&gt; bytes:
+    """Une image PNG d'une seule couleur, écrite sans bibliothèque d'image."""
+    ligne = b"\x00" + bytes(rgb) * largeur
+    brut = zlib.compress(ligne * hauteur)
+
+    def bloc(nature: bytes, donnees: bytes) -&gt; bytes:
+        crc = zlib.crc32(nature + donnees)
+        return struct.pack("&gt;I", len(donnees)) + nature + donnees + struct.pack("&gt;I", crc)
+
+    entete = struct.pack("&gt;IIBBBBB", largeur, hauteur, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + bloc(b"IHDR", entete) + bloc(b"IDAT", brut) + bloc(b"IEND", b"")
+
+
+# Le dossier où arrivent les e-mails « envoyés ». En production, ce serait un serveur d'e-mail.
+BOITE_ENVOI = Path(__file__).parent / "boite-envoi"
+
+
+# Clé métier : un même e-mail (destinataire et objet) ne part qu'une fois, quel que soit le run.
+@idempotent(key=lambda a: f"email:{a['destinataire']}:{a['objet']}")
+@tool(side_effects="irreversible", approval="always")
+def envoyer_email(destinataire: str, objet: str, corps: str, ctx: ToolContext) -&gt; str:
+    """Envoie un e-mail à un client. L'envoi est définitif : il ne peut pas être annulé."""
+    time.sleep(2)  # un vrai envoi prend un peu de temps
+    BOITE_ENVOI.mkdir(exist_ok=True)
+    fichier = BOITE_ENVOI / f"{datetime.now():%Y%m%d-%H%M%S-%f}.json"
+    message = {"a": destinataire, "objet": objet, "corps": corps}
+    # Qui a demandé l'envoi, et depuis où : transmis par l'application qui a lancé le run.
+    message["demande_par"] = ctx.caller.user_id
+    message["canal"] = ctx.caller.metadata.get("canal")
+    fichier.write_text(json.dumps(message, ensure_ascii=False, indent=2), encoding="utf-8")
+    return f"E-mail envoyé à {destinataire} (objet : {objet})."
+
+
+def faux_envoi(destinataire: str, objet: str, corps: str) -&gt; str:
+    """Doublure d'envoyer_email pour les rejeux et les tests : n'envoie rien."""
+    return f"E-mail envoyé à {destinataire} (objet : {objet})."</code></pre></figure>
+<figure class="code"><figcaption>politiques.py</figcaption>
+<pre><code>from loom_ia.policies import CONTINUE, BeforeTool, Decision, Deny, policy
+
+# Les taux de TVA en vigueur en France pour les travaux.
+TAUX_FRANCAIS = {5.5, 10.0, 20.0}
+
+
+@policy(points=["before_tool"], decisions=["deny"])
+def taux_tva_valide(sujet: BeforeTool) -&gt; Decision:
+    """Refuse un calcul de prix avec un taux de TVA qui n'existe pas en France."""
+    if sujet.call.name != "prix_ttc":
+        return CONTINUE
+    taux = float(str(sujet.arguments.get("taux_tva", 20.0)))
+    if taux not in TAUX_FRANCAIS:
+        return Deny(
+            f"Le taux de TVA de {taux:g} % n'existe pas en France "
+            "(taux possibles : 5,5 %, 10 % et 20 %)."
+        )
+    return CONTINUE</code></pre></figure>
+<figure class="code"><figcaption>serveurs/catalogue.py</figcaption>
+<pre><code>"""Serveur MCP du catalogue d'un fournisseur de plomberie (données fictives)."""
+
+import sys
+
+from mcp.server.fastmcp import FastMCP
+
+serveur = FastMCP("catalogue", host="127.0.0.1", port=8765, log_level="WARNING")
+
+ARTICLES = {
+    "CE-THERMO-200": {"nom": "Chauffe-eau thermodynamique 200 L", "prix_ht": 1290.00, "stock": 3},
+    "CE-ELEC-150": {"nom": "Chauffe-eau électrique 150 L", "prix_ht": 389.00, "stock": 0},
+    "GS-34": {"nom": "Groupe de sécurité 3/4", "prix_ht": 24.90, "stock": 25},
+}
+
+
+def article(reference: str) -&gt; dict:
+    if reference not in ARTICLES:
+        raise ValueError(f"Référence inconnue : {reference}")
+    return ARTICLES[reference]
+
+
+@serveur.tool()
+def rechercher_article(texte: str) -&gt; list[dict]:
+    """Cherche des articles du catalogue dont le nom contient ce texte."""
+    texte = texte.lower()
+    return [
+        {"reference": ref, "nom": a["nom"]}
+        for ref, a in ARTICLES.items()
+        if texte in a["nom"].lower()
+    ]
+
+
+@serveur.tool()
+def prix_article(reference: str) -&gt; dict:
+    """Donne le prix public HT d'un article, par sa référence."""
+    return {"reference": reference, "prix_ht": article(reference)["prix_ht"]}
+
+
+@serveur.tool()
+def stock_article(reference: str) -&gt; dict:
+    """Donne le nombre d'exemplaires en stock d'un article, par sa référence."""
+    return {"reference": reference, "stock": article(reference)["stock"]}
+
+
+if __name__ == "__main__":
+    serveur.run(transport="streamable-http" if "--http" in sys.argv else "stdio")</code></pre></figure>
+<figure class="code"><figcaption>evals/relance.yaml</figcaption>
+<pre><code>version: 1
+name: relance
+agent: assistant
+
+doubles:
+  envoyer_email: outils:faux_envoi
+
+cases:
+  - name: relance-martin
+    input: Relance Mme Martin pour le devis D-2026-042, sur un ton cordial.
+    expect:
+      contains: [Mme Martin]
+      called:
+        - chercher_devis
+        - rediger_relance
+        - {name: envoyer_email, arguments: {destinataire: martin@example.fr}}
+      state: {devis_courant: D-2026-042}
+
+  - name: montant
+    input: Quel est le montant du devis D-2026-042 ?
+    expect:
+      contains: ["1 840 €"]
+      called: [chercher_devis]
+      not_called: [envoyer_email]</code></pre></figure>
+<figure class="code"><figcaption>evals/comparaison.yaml</figcaption>
+<pre><code>version: 1
+name: comparaison
+agent: assistant
+repeat: 2
+max_cost_usd: 1.00
+
+doubles:
+  envoyer_email: outils:faux_envoi
+
+judge:
+  model: JUGE_EVAL
+  criteria:
+    - name: confirme
+      rule: La réponse dit clairement à l'artisan que la relance est partie, et chez qui.
+
+variants:
+  - {name: actuel}
+  - {name: bref, models: {main: SIMULE_BREF}}
+  - {name: oublieur, models: {main: SIMULE_OUBLIEUR}}
+
+cases:
+  - name: relance-martin
+    input: Relance Mme Martin pour le devis D-2026-042, sur un ton cordial.
+    expect:
+      called:
+        - chercher_devis
+        - rediger_relance
+        - {name: envoyer_email, arguments: {destinataire: martin@example.fr}}</code></pre></figure>
+<figure class="code"><figcaption>evals/non-regression.yaml</figcaption>
+<pre><code>version: 1
+name: non-regression
+agent: assistant
+
+cases:
+  - name: journaux-de-reference
+    replay: journaux/*.jsonl</code></pre></figure>
+<figure class="code"><figcaption>evaluer.py</figcaption>
+<pre><code>"""Joue une suite d'évaluations depuis Python, par exemple avant un déploiement."""
+
+import asyncio
+import sys
+
+from loom_ia.access import Loom
+
+
+async def main(suite: str) -&gt; int:
+    async with Loom.from_config("loom.yaml") as loom:
+        rapport = await loom.evaluate(suite)
+        for nom in rapport.variants:
+            bilan = rapport.summary(nom)
+            print(f"{nom:&lt;10} {bilan.passed_cases}/{len(bilan.cases)} cas, {bilan.cost_usd:.4f} $")
+        print("tout passe :", rapport.passed)
+        return 0 if rapport.passed else 1
+
+
+sys.exit(asyncio.run(main(sys.argv[1])))</code></pre></figure>
+<figure class="code"><figcaption>tests/test_relance.py</figcaption>
+<pre><code>"""Tests de l'agent assistant : le banc monte l'agent sans réseau, sans clé, sans rien envoyer."""
+
+import pytest
+
+from loom_ia.core.model import Message
+from loom_ia.testing import Bench, ScriptedModel, tool_call_message
+from outils import faux_envoi
+
+RELANCE = "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial."
+EMAIL = {
+    "destinataire": "martin@example.fr",
+    "objet": "Votre devis D-2026-042",
+    "corps": "Bonjour Madame Martin, où en êtes-vous de notre devis D-2026-042 ? Jean Dupont",
+}
+
+
+async def test_la_relance_du_scenario_de_la_config() -&gt; None:
+    async with Bench("loom.yaml", tools={"envoyer_email": faux_envoi}) as banc:
+        resultat = await banc.run("assistant", RELANCE)
+        banc.expect(
+            resultat,
+            status="completed",
+            contains=["Mme Martin"],
+            called=["chercher_devis", "rediger_relance", "envoyer_email"],
+        )
+
+
+async def test_l_email_part_avec_les_bons_arguments() -&gt; None:
+    orchestrateur = ScriptedModel(
+        tool_call_message(("c1", "chercher_devis", {"numero": "D-2026-042"})),
+        tool_call_message(("c2", "envoyer_email", EMAIL)),
+        Message.assistant("La relance est partie chez Mme Martin."),
+    )
+    async with Bench(
+        "loom.yaml", models={"SIMULE": orchestrateur}, tools={"envoyer_email": faux_envoi}
+    ) as banc:
+        resultat = await banc.run("assistant", RELANCE)
+        banc.expect(resultat, called=[{"name": "envoyer_email", "arguments": EMAIL}])
+        assert len(banc.calls("envoyer_email")) == 1
+
+
+async def test_un_orchestrateur_qui_oublie_l_envoi_est_vu() -&gt; None:
+    oublieux = ScriptedModel(
+        tool_call_message(("c1", "chercher_devis", {"numero": "D-2026-042"})),
+        Message.assistant("Le devis D-2026-042 est en attente."),
+    )
+    async with Bench("loom.yaml", models={"SIMULE": oublieux}) as banc:
+        resultat = await banc.run("assistant", RELANCE)
+        with pytest.raises(AssertionError, match="envoyer_email"):
+            banc.expect(resultat, called=["envoyer_email"])</code></pre></figure>
+<figure class="code"><figcaption>tests/test_securite.py</figcaption>
+<pre><code>"""Les garde-fous du banc : rien ne part pour de vrai, aucun vrai modèle n'est appelé."""
+
+from pathlib import Path
+
+from loom_ia.agents import AgentSpec, MainRole
+from loom_ia.config import LoomConfig
+from loom_ia.core.model import Message, ModelSpec
+from loom_ia.testing import Bench, ScriptedModel, tool_call_message
+
+RELANCE = "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial."
+EMAIL = {
+    "destinataire": "martin@example.fr",
+    "objet": "Votre devis D-2026-042",
+    "corps": "Bonjour Madame Martin, où en êtes-vous de notre devis D-2026-042 ? Jean Dupont",
+}
+
+
+def emails_dans_la_boite() -&gt; int:
+    boite = Path("boite-envoi")
+    return len(list(boite.iterdir())) if boite.exists() else 0
+
+
+async def test_sans_doublure_l_email_ne_part_jamais() -&gt; None:
+    avant = emails_dans_la_boite()
+    orchestrateur = ScriptedModel(
+        tool_call_message(("c1", "envoyer_email", EMAIL)),
+        Message.assistant("La relance est partie."),
+    )
+    async with Bench("loom.yaml", models={"SIMULE": orchestrateur}) as banc:
+        await banc.run("assistant", RELANCE)
+        [appel] = banc.calls("envoyer_email")
+        assert appel.fate == "refused"
+    assert emails_dans_la_boite() == avant
+
+
+async def test_un_vrai_modele_n_est_jamais_appele() -&gt; None:
+    config = LoomConfig(
+        version=1,
+        models=(ModelSpec(id="HAIKU", sdk="anthropic", model="claude-haiku-5-5"),),
+        agents=(AgentSpec(name="reel", main=MainRole(model="HAIKU", system="Tu réponds.")),),
+    )
+    async with Bench(config) as banc:
+        resultat = await banc.run("reel", "Bonjour")
+        assert resultat.status == "failed"
+        assert "n'est pas remplacé" in (resultat.error or "")</code></pre></figure>
+<figure class="code"><figcaption>tests/test_non_regression.py</figcaption>
+<pre><code>"""Non-régression : des runs de référence doivent se rejouer à l'identique."""
+
+from pathlib import Path
+
+from loom_ia.testing import Bench, assert_replays
+from outils import faux_envoi
+
+RELANCE = "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial."
+
+
+async def test_les_runs_de_reference_se_rejouent() -&gt; None:
+    journaux = sorted(Path("evals/journaux").glob("*.jsonl"))
+    assert journaux, "aucun journal de référence dans evals/journaux/"
+    await assert_replays("loom.yaml", *journaux)
+
+
+async def test_le_journal_du_banc_devient_une_reference(tmp_path: Path) -&gt; None:
+    async with Bench("loom.yaml", tools={"envoyer_email": faux_envoi}) as banc:
+        resultat = await banc.run("assistant", RELANCE)
+        journal = await banc.export(resultat, tmp_path / "relance-042.jsonl")
+    await assert_replays("loom.yaml", journal)</code></pre></figure>
+<figure class="code"><figcaption>tournee.sh</figcaption>
+<pre><code>#!/bin/bash
+# La tournée du matin : demande la relance du devis D-2026-050 par la porte du CRM.
+# L'identifiant de livraison porte la date du jour : lancée deux fois le même jour,
+# la tournée ne produit qu'un run.
+curl -s -X POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer \
+  -H "Authorization: Bearer $LOOM_CRM_CLE" \
+  -H 'Content-Type: application/json' \
+  -H "X-Delivery-Id: tournee-$(date +%F)" \
+  -d '{"numero":"D-2026-050","client":"M. Bernard"}'
+echo</code></pre></figure>
+<figure class="code"><figcaption>etat.py</figcaption>
+<pre><code>import asyncio
+import sys
+
+from loom_ia.access import Loom
+
+
+async def main(run_id: str, session: str) -&gt; None:
+    async with Loom.from_config("loom.yaml") as loom:
+        etat = await loom.state(run_id, session_id=session)
+    print("Statut      :", etat.status)
+    print("Étape       :", etat.step)
+    print("Itérations  :", etat.iterations)
+    print("Messages    :", len(etat.messages))
+    print("Tokens      :", etat.usage.input_tokens, "en entrée,", etat.usage.output_tokens, "en sortie")
+    for demande in etat.approvals:
+        print("En attente  :", demande.tool_name, "pour", demande.arguments["destinataire"])
+
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))</code></pre></figure>
+<figure class="code"><figcaption>annuler.py</figcaption>
+<pre><code>import asyncio
+import sys
+
+from loom_ia.access import Loom
+
+
+async def main(run_id: str, session: str) -&gt; None:
+    async with Loom.from_config("loom.yaml") as loom:
+        annule = await loom.cancel(run_id, session_id=session, by="jean")
+    print("Annulé :", annule)
+
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))</code></pre></figure>
+<figure class="code"><figcaption>question.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        resultat = await loom.run(
+            "assistant",
+            "Quel est le montant du devis D-2026-042 ?",
+            session_id="depuis-python",
+        )
+    print("Statut  :", resultat.status)
+    print("Réponse :", resultat.text)
+    print("Coût    :", round(resultat.cost_usd, 4), "$")
+    print("Run     :", resultat.run_id)
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>flux.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+from loom_ia.core.events import Event
+from loom_ia.core.model import TextDelta
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        async for element in loom.stream(
+            "assistant",
+            "Quel est le montant du devis D-2026-042 ?",
+            session_id="flux-python",
+        ):
+            if isinstance(element, TextDelta):
+                print(f"  texte     : {element.text!r}")
+            elif isinstance(element, Event):
+                print(f"{element.seq:&gt;3} {element.type:&lt;18} catégorie : {element.category}")
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>arriere_plan.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+
+SESSION = "relance-python"
+
+
+def en_pause(evenement) -&gt; bool:
+    return evenement.type == "run.transitioned" and evenement.payload.to_state == "paused"
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        run_id = await loom.submit(
+            "assistant",
+            "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial.",
+            session_id=SESSION,
+        )
+        print("Run lancé :", run_id)
+
+        # 1. Suivre le run jusqu'à sa pause
+        dernier = 0
+        async for evenement in loom.follow(run_id, session_id=SESSION, subruns=False):
+            dernier = evenement.seq
+            if evenement.type in ("tool.called", "approval.requested"):
+                print(f"{evenement.seq:&gt;3} {evenement.type}")
+            if en_pause(evenement):
+                print(f"{evenement.seq:&gt;3} en pause")
+                break
+
+        # 2. Accorder l'envoi
+        appels = await loom.approve(run_id, session_id=SESSION, by="jean")
+        print("    accordé :", appels)
+
+        # 3. Suivre la suite jusqu'à la fin du run
+        async for evenement in loom.follow(run_id, session_id=SESSION, after_seq=dernier, subruns=False):
+            if evenement.type in ("approval.granted", "tool.called", "tool.completed", "run.completed"):
+                print(f"{evenement.seq:&gt;3} {evenement.type}")
+
+        resultat = await loom.result(run_id, session_id=SESSION)
+        print("Statut  :", resultat.status)
+        print("Réponse :", resultat.text)
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>appelant.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+from loom_ia.core.model import Approved, CallerContext, PendingApproval
+
+
+async def accorder(demande: PendingApproval) -&gt; Approved:
+    """Appelée par loom quand un outil demande une approbation."""
+    print("Approbation demandée :", demande.tool_name, "pour", demande.arguments["destinataire"])
+    return Approved(by="jean", reason="relu sur le téléphone")
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    appelant = CallerContext(user_id="jean", metadata={"canal": "appli-mobile"})
+    async with Loom.from_config("loom.yaml") as loom:
+        resultat = await loom.run(
+            "assistant",
+            "Relance M. Bernard pour le devis D-2026-050.",
+            session_id="relance-bernard",
+            context=appelant,
+            approver=accorder,
+        )
+    print("Statut  :", resultat.status)
+    print("Réponse :", resultat.text)
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>sans_fichier.py</figcaption>
+<pre><code>import asyncio
+from pathlib import Path
+
+from loom_ia.access import Loom
+from loom_ia.agents import AgentSpec, MainRole, PythonTool
+from loom_ia.config import LoomConfig
+from loom_ia.config.models import EventsStorage, StorageConfig
+from loom_ia.core.model import ModelSpec
+
+from outils import prix_ttc
+
+# Les réponses du modèle simulé : appeler prix_ttc, puis répondre.
+SCRIPT = [
+    {"text": "Je calcule.", "tool_calls": [{"name": "prix_ttc", "arguments": {"montant_ht": 1250, "taux_tva": 10}}]},
+    {"text": "1 250 € HT avec une TVA à 10 % font 1 375 € TTC."},
+]
+
+config = LoomConfig(
+    version=1,
+    models=(ModelSpec(id="SIMULE", sdk="fake", model="fake-1", params={"script": SCRIPT}),),
+    storage=StorageConfig(events=EventsStorage(backend="jsonl", path=Path("data"))),
+    agents=(
+        AgentSpec(
+            name="calcul",
+            main=MainRole(model="SIMULE", system="Tu calcules des prix TTC avec l'outil prix_ttc."),
+            tools=(PythonTool(python="prix_ttc"),),
+        ),
+    ),
+)
+
+
+async def main() -&gt; None:
+    async with Loom(config) as loom:
+        loom.register("prix_ttc", prix_ttc)
+        resultat = await loom.run("calcul", "Quel prix TTC pour 1 250 € HT à 10 % ?", session_id="sans-fichier")
+    print(resultat.status, ":", resultat.text)
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>latence.py</figcaption>
+<pre><code>import asyncio
+import time
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+from loom_ia.core.model import TextDelta
+
+
+async def mesurer(loom: Loom, etiquette: str) -&gt; None:
+    debut = time.perf_counter()
+    premier = None
+    async for element in loom.stream("assistant", "Quel est le montant du devis D-2026-042 ?"):
+        if isinstance(element, TextDelta) and premier is None:
+            premier = time.perf_counter() - debut
+    total = time.perf_counter() - debut
+    print(f"{etiquette} : premier texte à {premier * 1000:.0f} ms, run complet en {total * 1000:.0f} ms")
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        await mesurer(loom, "1er run (à froid)")
+        await mesurer(loom, "2e run (à chaud) ")
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>client_mcp.py</figcaption>
+<pre><code>import asyncio
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+# Le client lance lui-même « loom mcp » et lui parle par l'entrée et la sortie standard.
+SERVEUR = StdioServerParameters(command="loom", args=["mcp"])
+
+
+async def main() -&gt; None:
+    async with stdio_client(SERVEUR) as (lecture, ecriture):
+        async with ClientSession(lecture, ecriture) as session:
+            await session.initialize()
+
+            outils = await session.list_tools()
+            for outil in outils.tools:
+                print(f"outil   : {outil.name:&lt;10} {outil.description}")
+
+            reponse = await session.call_tool(
+                "assistant",
+                {"message": "Quel est le montant du devis D-2026-042 ?", "session_id": "depuis-mcp"},
+            )
+            print("réponse :", reponse.content[0].text)
+            print("statut  :", reponse.structuredContent["status"])
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>client_mcp_http.py</figcaption>
+<pre><code>import asyncio
+import os
+
+import httpx
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+
+URL = "http://127.0.0.1:8000/mcp/"
+CLE = os.environ["CLE"]  # la clé d'API, lue dans une variable d'environnement
+
+
+async def main() -&gt; None:
+    avec_cle = httpx.AsyncClient(headers={"Authorization": f"Bearer {CLE}"})
+    async with streamable_http_client(URL, http_client=avec_cle) as (lecture, ecriture, _):
+        async with ClientSession(lecture, ecriture) as session:
+            await session.initialize()
+            outils = await session.list_tools()
+            print("outils  :", [outil.name for outil in outils.tools])
+            reponse = await session.call_tool(
+                "assistant",
+                {"message": "Quel est le montant du devis D-2026-042 ?", "session_id": "mcp-http"},
+            )
+            print("réponse :", reponse.content[0].text)
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>schema_evenements.py</figcaption>
+<pre><code>"""Le contrat des événements : version du schéma, champs de l'enveloppe, types."""
+
+from loom_ia.core.events import DURABLE_PAYLOADS, SCHEMA_VERSION, event_json_schema
+
+print("version du schéma :", SCHEMA_VERSION)
+schema = event_json_schema()
+print("champs de l'enveloppe :", ", ".join(schema["properties"]))
+print(f"\n{len(DURABLE_PAYLOADS)} types d'événements :")
+for charge in DURABLE_PAYLOADS:
+    print(f"  {charge.model_fields['type'].default:&lt;24} catégorie {charge.category}")</code></pre></figure>
+<figure class="code"><figcaption>lire_journal.py</figcaption>
+<pre><code>"""Relit le journal depuis Python : les derniers runs, la trace d'un run, une recherche."""
+
+import asyncio
+import sys
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+from loom_ia.core.events import EventQuery
+from loom_ia.core.model import RunId, SessionId
+
+
+async def main(run_id: str, session_id: str) -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        # 1. Les trois derniers runs terminés de l'agent
+        page = await loom.runs(agent="assistant", status=["completed"], limit=3)
+        for run in page.runs:
+            print(f"{run.run_id}  {run.session_id:&lt;14} {run.iterations} itér.  {run.cost_usd:.4f} $")
+
+        # 2. La trace d'un run : ses spans, du run aux appels
+        trace = await loom.trace(RunId(run_id), session_id=SessionId(session_id))
+        print(f"\n{trace.agent} : {trace.status}, {len(trace.spans)} spans")
+        for span in trace.spans[:6]:
+            print(f"  {span.kind:&lt;5} {span.name}")
+
+        # 3. Une recherche dans tout le journal du client : les e-mails envoyés
+        requete = EventQuery(
+            tenant_id=loom.tenant().id, types=("tool.completed",), tool_name="envoyer_email"
+        )
+        envois = await loom.query(requete)
+        print(f"\ne-mails envoyés au journal : {len(envois)}")
+
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))</code></pre></figure>
+<figure class="code"><figcaption>lire_trace_mcp.py</figcaption>
+<pre><code>"""Lit la trace d'un run par une ressource MCP de loom."""
+
+import asyncio
+import json
+import shutil
+import sys
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+
+async def main(run_id: str, session_id: str) -&gt; None:
+    serveur = StdioServerParameters(command=shutil.which("loom") or "loom", args=["mcp"])
+    async with stdio_client(serveur) as (lecture, ecriture):
+        async with ClientSession(lecture, ecriture) as session:
+            await session.initialize()
+            gabarits = await session.list_resource_templates()
+            for gabarit in gabarits.resourceTemplates:
+                print("gabarit :", gabarit.uriTemplate)
+            lu = await session.read_resource(f"loom://traces/{run_id}?session_id={session_id}")
+            trace = json.loads(lu.contents[0].text)
+            print(f"\n{trace['agent']} : {trace['status']}, {len(trace['spans'])} spans")
+
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))</code></pre></figure>
+<figure class="code"><figcaption>collecteur.py</figcaption>
+<pre><code>"""Mini collecteur OTLP/HTTP : reçoit les spans de loom et les affiche.
+
+    python collecteur.py 4318
+"""
+
+import gzip
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+    ExportTraceServiceRequest,
+    ExportTraceServiceResponse,
+)
+
+# Attributs affichés ; les identifiants et les empreintes sont laissés de côté.
+CLES = {
+    "gen_ai.request.model",
+    "gen_ai.tool.name",
+    "gen_ai.usage.input_tokens",
+    "gen_ai.usage.output_tokens",
+    "loom.cost_usd",
+}
+
+
+def valeur(v) -&gt; str:
+    return str(getattr(v, v.WhichOneof("value")))
+
+
+class Collecteur(BaseHTTPRequestHandler):
+    def do_POST(self) -&gt; None:
+        corps = self.rfile.read(int(self.headers["Content-Length"]))
+        if self.headers.get("Content-Encoding") == "gzip":
+            corps = gzip.decompress(corps)
+        requete = ExportTraceServiceRequest.FromString(corps)
+        for ressource in requete.resource_spans:
+            service = {a.key: valeur(a.value) for a in ressource.resource.attributes}
+            print(f"== lot reçu de {service.get('service.name')}", flush=True)
+            for portee in ressource.scope_spans:
+                for span in portee.spans:
+                    attributs = {a.key: valeur(a.value) for a in span.attributes}
+                    retenus = {k: v for k, v in attributs.items() if k in CLES}
+                    print(f"span {span.name} {retenus or ''}", flush=True)
+                    for evenement in span.events:
+                        contenu = {
+                            a.key: valeur(a.value)
+                            for a in evenement.attributes
+                            if a.key.startswith("loom.content")
+                        }
+                        if contenu:
+                            print(f"    {evenement.name} {contenu}", flush=True)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-protobuf")
+        self.end_headers()
+        self.wfile.write(ExportTraceServiceResponse().SerializeToString())
+
+    def log_message(self, *args) -&gt; None:
+        pass
+
+
+if __name__ == "__main__":
+    port = int(sys.argv[1])
+    print(f"collecteur OTLP sur 127.0.0.1:{port}", flush=True)
+    ThreadingHTTPServer(("127.0.0.1", port), Collecteur).serve_forever()</code></pre></figure>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+    "loom-ia[anthropic,crypto,http,mcp,openai,otel,postgres,rabbitmq,redis,sqlite]&gt;=2.0.11",
+]
+
+[dependency-groups]
+dev = [
+    "pytest&gt;=9.1.1",
+    "pytest-asyncio&gt;=1.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]</code></pre></figure>
+<figure class="code"><figcaption>.gitignore</figcaption>
+<pre><code>.env
+data/
+__pycache__/
+boite-envoi/</code></pre></figure>
+<p>Le dossier contient aussi les deux journaux de référence (<code>evals/journaux/</code>) et les deux journaux exportés au module 13.</p>
+</details>
+
+<div class="encadre reel"><p class="encadre-titre">Ce qui a tourné pendant la rédaction</p>
+<p>Les exercices 15.1 à 15.4 ont tourné en entier. Pour la sandbox (15.5 à 15.7), tout a tourné sauf ce qui demande une machine virtuelle : la machine de rédaction n'a pas KVM. Vous verrez donc les vrais messages d'une VM absente. L'exercice 15.8 décrit ce que donne une vraie VM, d'après les essais de loom sur une machine équipée, et le signale.</p></div>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-15-1">
+<h3><span class="exo-num">15.1</span> Écrire une source d'outils dans un paquet</h3>
+<p class="fns"><a class="fn" href="matrice.html#D12">D12</a></p>
+
+<h4>Pourquoi</h4>
+<p>Jean veut que l'assistant sache si un jour est ouvré avant de proposer une date de relance : pas de relance un dimanche, un jour férié ou pendant la fermeture de fin d'année. Il aura besoin du même calendrier dans d'autres projets (le planning des chantiers, les rendez-vous). Copier un outil dans chaque projet, c'est le corriger partout le jour où il change. Il en fait un <strong>paquet</strong> Python, <code>calendrier-artisan</code>, installé là où il sert.</p>
+
+<h4>Mise en place</h4>
+<p>Le paquet est un projet à part, à côté de <code>plomberie-dupont/</code>. Placez-vous dans le dossier parent et créez-le avec <code>uv init --lib</code> :</p>
+<pre><code><span class="p">$ </span>cd ..
+<span class="p">$ </span>uv init --lib --python 3.14 calendrier-artisan
+Initialized project `calendrier-artisan` at `/home/jean/calendrier-artisan`
+<span class="p">$ </span>ls -A calendrier-artisan calendrier-artisan/src/calendrier_artisan
+calendrier-artisan:
+.git
+.gitignore
+.python-version
+README.md
+pyproject.toml
+src
+
+calendrier-artisan/src/calendrier_artisan:
+__init__.py
+py.typed</code></pre>
+<p><code>--lib</code> prépare une <strong>bibliothèque</strong> (un paquet que d'autres projets installent), avec son code dans <code>src/calendrier_artisan/</code>. uv a aussi créé un dépôt Git et un <code>.gitignore</code>. Remplacez le <code>pyproject.toml</code> du paquet (gardez vos propres <code>authors</code>, que uv a remplis d'après votre identité Git) :</p>
+<figure class="code"><figcaption>calendrier-artisan/pyproject.toml</figcaption>
+<pre><code>[project]
+name = "calendrier-artisan"
+version = "0.1.0"
+description = "Source d'outils loom : les jours ouvrés d'un artisan (week-ends, jours fériés, congés)."
+readme = "README.md"
+authors = [
+    { name = "Jean Dupont", email = "jean@plomberie-dupont.example" }
+]
+requires-python = "&gt;=3.14"
+dependencies = [
+    "loom-ia&gt;=2.0.11",
+]
+
+[project.entry-points."loom_ia.tools"]
+calendrier = "calendrier_artisan:fabrique"
+
+[build-system]
+requires = ["uv_build&gt;=0.11.32,&lt;0.12.0"]
+build-backend = "uv_build"</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>dependencies = ["loom-ia&gt;=2.0.11"]</code></td><td>Le paquet importe loom (<code>@tool</code>, les types d'une source).</td></tr>
+<tr><td><code>[project.entry-points."loom_ia.tools"]</code></td><td>Un <strong>point d'entrée</strong> : une annonce que le paquet fait à l'installation, dans le groupe <code>loom_ia.tools</code>. C'est là que loom cherche les sources.</td></tr>
+<tr><td><code>calendrier = "calendrier_artisan:fabrique"</code></td><td>Le nom du point d'entrée (<code>calendrier</code>), et ce qu'il désigne : la fonction <code>fabrique</code> du module <code>calendrier_artisan</code>.</td></tr>
+</tbody>
+</table></div>
+<p>Remplacez ensuite <code>src/calendrier_artisan/__init__.py</code> :</p>
+<figure class="code"><figcaption>calendrier-artisan/src/calendrier_artisan/__init__.py</figcaption>
+<pre><code>"""Source d'outils loom : les jours ouvrés d'un artisan (week-ends, jours fériés, congés)."""
+
+import json
+import os
+import sys
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import asynccontextmanager
+from datetime import date, timedelta
+from pathlib import Path
+
+from pydantic import JsonValue
+
+from loom_ia.core.ports import SourceContext, SourceUnavailable, Tool
+from loom_ia.tools import tool
+
+ZONES = ("metropole", "alsace-moselle")
+
+
+def _dire(message: str) -&gt; None:
+    # Trace de démonstration, si CALENDRIER_TRACES est définie : quand loom appelle-t-il la source ?
+    if os.environ.get("CALENDRIER_TRACES"):
+        print(f"[calendrier] {message}", file=sys.stderr)
+
+
+def paques(annee: int) -&gt; date:
+    """Le dimanche de Pâques d'une année (calendrier grégorien)."""
+    a = annee % 19
+    b, c = divmod(annee, 100)
+    d, e = divmod(b, 4)
+    g = (8 * b + 13) // 25
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mois, jour = divmod(h + l - 7 * m + 114, 31)
+    return date(annee, mois, jour + 1)
+
+
+def feries(annee: int, zone: str) -&gt; dict[date, str]:
+    """Les jours fériés d'une année, avec leur nom."""
+    p = paques(annee)
+    jours = {
+        date(annee, 1, 1): "Jour de l'an",
+        p + timedelta(days=1): "Lundi de Pâques",
+        date(annee, 5, 1): "Fête du travail",
+        date(annee, 5, 8): "Victoire 1945",
+        p + timedelta(days=39): "Ascension",
+        p + timedelta(days=50): "Lundi de Pentecôte",
+        date(annee, 7, 14): "Fête nationale",
+        date(annee, 8, 15): "Assomption",
+        date(annee, 11, 1): "Toussaint",
+        date(annee, 11, 11): "Armistice",
+        date(annee, 12, 25): "Noël",
+    }
+    if zone == "alsace-moselle":
+        jours[p - timedelta(days=2)] = "Vendredi saint"
+        jours[date(annee, 12, 26)] = "Saint-Étienne"
+    return dict(sorted(jours.items()))
+
+
+class Calendrier:
+    """La source : elle fournit ses outils au début de chaque run."""
+
+    name = "calendrier"
+    required = False
+
+    def __init__(self, zone: str, conges: Path | None) -&gt; None:
+        self.zone = zone
+        self.conges = conges
+
+    def _lire_conges(self) -&gt; list[tuple[date, date]]:
+        if self.conges is None:
+            return []
+        try:
+            periodes = json.loads(self.conges.read_text(encoding="utf-8"))
+            return [(date.fromisoformat(p["du"]), date.fromisoformat(p["au"])) for p in periodes]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise SourceUnavailable(self.name, f"congés illisibles ({exc})") from exc
+
+    @asynccontextmanager
+    async def open(self, context: SourceContext) -&gt; AsyncGenerator[Sequence[Tool]]:
+        _dire(f"ouverture pour le run {context.run_id[:8]} (client {context.tenant_id})")
+        conges = self._lire_conges()  # relu à chaque run : une modification compte tout de suite
+        zone = self.zone
+
+        def motif(jour: date) -&gt; str | None:
+            if jour.weekday() &gt;= 5:
+                return "week-end"
+            if nom := feries(jour.year, zone).get(jour):
+                return f"férié : {nom}"
+            if any(du &lt;= jour &lt;= au for du, au in conges):
+                return "congés de l'entreprise"
+            return None
+
+        @tool
+        def jour_ouvre(jour: str) -&gt; dict[str, str | bool]:
+            """Dit si une date (AAAA-MM-JJ) est un jour ouvré ; sinon, pourquoi, et le prochain."""
+            demande = date.fromisoformat(jour)
+            pourquoi = motif(demande)
+            if pourquoi is None:
+                return {"jour": jour, "ouvre": True}
+            suivant = demande + timedelta(days=1)
+            while motif(suivant) is not None:
+                suivant += timedelta(days=1)
+            return {
+                "jour": jour,
+                "ouvre": False,
+                "motif": pourquoi,
+                "prochain_jour_ouvre": suivant.isoformat(),
+            }
+
+        @tool
+        def jours_feries(annee: int) -&gt; list[dict[str, str]]:
+            """Liste les jours fériés d'une année, dans la zone de l'entreprise."""
+            return [{"jour": j.isoformat(), "nom": n} for j, n in feries(annee, zone).items()]
+
+        try:
+            yield [jour_ouvre, jours_feries]
+        finally:
+            _dire(f"fermeture du run {context.run_id[:8]}")
+
+    async def aclose(self) -&gt; None:
+        _dire("source fermée avec l'instance")
+
+
+def fabrique(
+    *,
+    name: str,
+    params: Mapping[str, JsonValue],
+    secrets: Mapping[str, str],
+    base_dir: Path,
+) -&gt; Calendrier:
+    """Point d'entrée `calendrier` : vérifie les paramètres et rend la source, sans rien lire."""
+    inconnus = sorted(set(params) - {"zone", "conges"})
+    if inconnus:
+        raise ValueError(f"paramètres inconnus : {', '.join(inconnus)} (attendus : zone, conges)")
+    zone = params.get("zone", "metropole")
+    if zone not in ZONES:
+        raise ValueError(f"zone {zone!r} inconnue (zones : {', '.join(ZONES)})")
+    conges = params.get("conges")
+    if conges is not None and not isinstance(conges, str):
+        raise ValueError("'conges' : le chemin d'un fichier JSON")
+    _dire(f"fabrique pour {name!r}")
+    return Calendrier(str(zone), base_dir / conges if conges else None)</code></pre></figure>
+<p>Le haut du fichier est du Python ordinaire : la date de Pâques, et les jours fériés qui en dépendent. Le contrat avec loom tient en trois pièces.</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>fabrique(*, name, params, secrets, base_dir)</code></td><td>La <strong>fabrique</strong>, désignée par le point d'entrée. loom l'appelle quand il monte un agent qui utilise la source, avec des arguments nommés : <code>name</code> (le nom de la source dans la configuration), <code>params</code> (ses paramètres, tels quels), <code>secrets</code> (les secrets du client, module 12) et <code>base_dir</code> (le dossier de la configuration, pour les chemins relatifs). Elle <strong>vérifie</strong> ses paramètres et rend la source, sans rien lire ni ouvrir. Une <code>ValueError</code> levée ici refuse la configuration, avec son message.</td></tr>
+<tr><td><code>class Calendrier</code></td><td>La <strong>source</strong> : un <code>name</code>, un booléen <code>required</code> (c'est la configuration qui décide, voir 15.3) et une méthode <code>open(context)</code>.</td></tr>
+<tr><td><code>open(context)</code></td><td>Un gestionnaire de contexte asynchrone, ouvert <strong>au début de chaque run</strong>. Il reçoit le run (<code>context.tenant_id</code>, <code>session_id</code>, <code>run_id</code>, <code>agent</code>) et rend la liste des outils du run (<code>yield</code>). Ce qui suit le <code>yield</code> s'exécute à la fin du run.</td></tr>
+<tr><td><code>SourceUnavailable(source, message)</code></td><td>L'exception à lever dans <code>open()</code> quand la source ne peut pas fournir ses outils : ici, un fichier de congés illisible.</td></tr>
+<tr><td><code>aclose()</code></td><td>Facultative : appelée quand l'instance loom se ferme.</td></tr>
+<tr><td><code>@tool</code></td><td>Les outils sont ceux du module 2. Définis dans <code>open()</code>, ils utilisent ce que <code>open()</code> a préparé pour ce run (la zone, les congés relus). Ils portent leur nom court : loom les préfixera.</td></tr>
+</tbody>
+</table></div>
+<p>La fonction <code>_dire</code> écrit sur la sortie d'erreur quand la variable <code>CALENDRIER_TRACES</code> est définie : elle servira à voir quand loom appelle chaque pièce.</p>
+<p>Revenez dans le projet et installez le paquet :</p>
+<pre><code><span class="p">$ </span>cd plomberie-dupont
+<span class="p">$ </span>uv add --editable ../calendrier-artisan
+Resolved 79 packages in 189ms
+   Building calendrier-artisan @ file:///home/jean/calendrier-artisan
+      Built calendrier-artisan @ file:///home/jean/calendrier-artisan
+Prepared 1 package in 14ms
+Installed 1 package in 2ms
+ + calendrier-artisan==0.1.0 (from file:///home/jean/calendrier-artisan)</code></pre>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+<span class="aj">    "calendrier-artisan",</span>    "loom-ia[anthropic,crypto,http,mcp,openai,otel,postgres,rabbitmq,redis,sqlite]&gt;=2.0.11",
+]
+
+[dependency-groups]
+dev = [
+    "pytest&gt;=9.1.1",
+    "pytest-asyncio&gt;=1.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+<span class="aj"> </span><span class="aj">[tool.uv.sources]</span><span class="aj">calendrier-artisan = { path = "../calendrier-artisan", editable = true }</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées par <code>uv add</code></p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>--editable</code></td><td>Installe le paquet <strong>en place</strong> : une modification de <code>calendrier-artisan/src/…</code> compte au run suivant, sans réinstaller. Sans cette option, uv en installerait une copie figée.</td></tr>
+<tr><td><code>[tool.uv.sources]</code></td><td>Dit à uv où trouver <code>calendrier-artisan</code> : dans le dossier voisin. Quand le paquet sera publié (sur PyPI ou un dépôt privé), cette ligne disparaîtra.</td></tr>
+</tbody>
+</table></div>
+
+<h4>À retenir</h4>
+<ul>
+<li>Une source, c'est un paquet installé dans l'environnement du projet, qui annonce un point d'entrée du groupe <code>loom_ia.tools</code>. Le projet n'importe rien lui-même.</li>
+<li>La fabrique ne travaille pas : elle est appelée à chaque chargement de la configuration, y compris par <code>loom validate</code>. Le travail (lire un fichier, ouvrir une connexion) se fait dans <code>open()</code>, à chaque run.</li>
+<li>Un secret (clé d'API, mot de passe) ne s'écrit jamais dans <code>params</code> : la fabrique reçoit les secrets du client dans <code>secrets</code>.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-15-2">
+<h3><span class="exo-num">15.2</span> Brancher la source sur l'assistant</h3>
+<p class="fns"><a class="fn" href="matrice.html#D12">D12</a></p>
+
+<h4>Pourquoi</h4>
+<p>Le paquet est installé, mais aucun agent ne s'en sert. Il faut le déclarer dans la configuration, puis le donner à l'assistant.</p>
+
+<h4>Mise en place</h4>
+<p>Déclarez la source dans <code>loom.yaml</code>, juste avant <code>storage</code> :</p>
+<figure class="code"><figcaption>loom.yaml (la source)</figcaption>
+<pre><code><span class="aj">tool_sources:</span><span class="aj">  - name: calendrier</span><span class="aj">    entry_point: calendrier</span><span class="aj">    params: {zone: metropole, conges: conges.json}</span><span class="aj"> </span>storage:</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>tool_sources:</code></td><td>Les sources d'outils de la configuration.</td></tr>
+<tr><td><code>name: calendrier</code></td><td>Le nom de la source dans cette configuration. Il préfixe ses outils : <code>calendrier__jour_ouvre</code>. Unique, et distinct des noms de serveurs MCP.</td></tr>
+<tr><td><code>entry_point: calendrier</code></td><td>Le point d'entrée annoncé par le paquet.</td></tr>
+<tr><td><code>params: {…}</code></td><td>Ce que la fabrique reçoit, tel quel : ici la zone (<code>metropole</code> ou <code>alsace-moselle</code>, qui a deux jours fériés de plus) et le fichier des congés, relatif au dossier de <code>loom.yaml</code>.</td></tr>
+</tbody>
+</table></div>
+<p>Une source déclarée accepte aussi <code>tools:</code>, des surcharges par outil (description, approbation…), comme un serveur MCP (module 5) ; l'exercice 15.7 s'en sert.</p>
+<p>Créez le fichier des congés de l'entreprise :</p>
+<figure class="code"><figcaption>conges.json</figcaption>
+<pre><code>[
+  {"du": "2026-12-21", "au": "2027-01-03"}
+]</code></pre></figure>
+<p>Donnez la source à l'assistant :</p>
+<figure class="code"><figcaption>agents/assistant.yaml (seule la liste <code>tools</code> change ; le reste du fichier est celui du point de départ)</figcaption>
+<pre><code>tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - python: envoyer_email
+  - mcp: catalogue
+<span class="aj">  - source: calendrier</span></code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<p>Enfin, pour ce module, ajoutez au script du modèle <code>SIMULE</code> une scène où l'orchestrateur consulte le calendrier, à la suite de la relance de M. Bernard :</p>
+<figure class="code"><figcaption>loom.yaml (le script de SIMULE)</figcaption>
+<pre><code>          text: L'e-mail de relance est parti chez M. Bernard.
+<span class="aj">        # Un jour ouvré ? Le calendrier de l'entreprise (module 15)</span><span class="aj">        - with_text: jour ouvré</span><span class="aj">          text: Je consulte le calendrier de l'entreprise.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: calendrier__jour_ouvre</span><span class="aj">              arguments: {jour: "2026-11-11"}</span><span class="aj">        - with_text: jour ouvré</span><span class="aj">          text: "Non : le 11 novembre 2026 est férié (Armistice). La relance pourra partir le jeudi 12 novembre."</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+
+<h4>Exécution</h4>
+<p>Validez la configuration, avec les traces de la source :</p>
+<pre><code><span class="p">$ </span>CALENDRIER_TRACES=1 loom validate
+Source     : calendrier → point d'entrée calendrier
+Paquets    : calendrier (calendrier-artisan 0.1.0, utilisé), forge (loom-ia 2.0.11) (groupe loom_ia.tools)
+…
+  client default
+    variables : entreprise, signature
+[calendrier] fabrique pour 'calendrier'
+    assistant : modèle SIMULE, 5 outil(s) Python, rôle rediger_relance (REDACTEUR), rôle decrire_photo (VISION), sous-agent traduire (traducteur)
+…
+[calendrier] ouverture pour le run validate (client default)
+    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
+    source calendrier : calendrier__jour_ouvre, calendrier__jours_feries
+[calendrier] fermeture du run validate
+    traducteur : modèle TRADUCTEUR, 0 outil(s) Python
+…
+  client martin-chauffage
+…
+[calendrier] fabrique pour 'calendrier'
+…
+[calendrier] ouverture pour le run validate (client default)
+    MCP : aucun
+    source calendrier : calendrier__jour_ouvre, calendrier__jours_feries
+[calendrier] fermeture du run validate
+[calendrier] source fermée avec l'instance
+[calendrier] source fermée avec l'instance
+
+3 agent(s) monté(s) sans erreur.</code></pre>
+<ul>
+<li><code>Paquets</code> liste tous les paquets de l'environnement qui annoncent le groupe <code>loom_ia.tools</code> : le vôtre (« utilisé », puisqu'un agent le référence) et <code>forge</code>, livré avec loom.</li>
+<li><code>source calendrier : calendrier__jour_ouvre, calendrier__jours_feries</code> : les noms que verra le modèle, <code>&lt;source&gt;__&lt;outil&gt;</code>.</li>
+<li>Les lignes <code>[calendrier]</code> montrent le cycle de vie : la fabrique est appelée une fois par agent et par client (deux fois ici, Dupont et Martin), <code>open()</code> pour un run d'essai que <code>validate</code> nomme <code>validate</code>, puis <code>aclose()</code>.</li>
+</ul>
+<p>Posez la question à l'assistant :</p>
+<pre><code><span class="p">$ </span>CALENDRIER_TRACES=1 loom run assistant "Le 11 novembre 2026 est-il un jour ouvré ? Je voudrais relancer Mme Martin ce jour-là." --session calendrier
+[calendrier] fabrique pour 'calendrier'
+[calendrier] ouverture pour le run 01a16ebe (client default)
+[calendrier] fermeture du run 01a16ebe
+[calendrier] source fermée avec l'instance
+Non : le 11 novembre 2026 est férié (Armistice). La relance pourra partir le jeudi 12 novembre.
+
+Statut     : completed · itérations : 2 · tokens : 4353/122 · coût : 0.0149 $
+Run        : 01a16ebe-cba8-76b7-b625-7bb52749ba4c
+<span class="p">$ </span>loom inspect 01a16ebe-cba8-76b7-b625-7bb52749ba4c --session calendrier --full
+Run        : 01a16ebe-cba8-76b7-b625-7bb52749ba4c (agent assistant, client default)
+Session    : calendrier
+Statut     : completed, 2 itération(s)
+Usage      : 4353 → 122 tokens, 0.014889 $, 16 ms de pilotage
+
+run assistant — completed, 713 ms, 0.014889 $
+  étape 1
+    modèle SIMULE (fake-1) (main) — 2 ms, 2070 → 73 tokens, 0.007305 $
+      · répond    : Je consulte le calendrier de l'entreprise.
+      · appelle   : calendrier__jour_ouvre({"jour": "2026-11-11"})
+  étape 2
+    outil calendrier__jour_ouvre — 2 ms
+      · arguments : {"jour": "2026-11-11"}
+      · résultat  : {"jour": "2026-11-11", "ouvre": false, "motif": "férié : Armistice", "prochain_jour_ouvre": "2026-11-12"}
+  étape 3
+    modèle SIMULE (fake-1) (main) — 1 ms, 2283 → 49 tokens, 0.007584 $
+      · répond    : Non : le 11 novembre 2026 est férié (Armistice). La relance pourra partir le jeudi 12 novembre.
+
+Réponse finale :
+  Non : le 11 novembre 2026 est férié (Armistice). La relance pourra partir le jeudi 12 novembre.
+Bilan      : 2 appel(s) de modèle, 1 appel(s) d'outil</code></pre>
+<p>L'outil du paquet a calculé que le 11 novembre est férié, et que le prochain jour ouvré est le 12. Un outil de source se présente dans la trace comme n'importe quel autre.</p>
+<p>Lancez maintenant un agent qui n'utilise pas la source :</p>
+<pre><code><span class="p">$ </span>CALENDRIER_TRACES=1 loom run traducteur "Bonjour, votre devis est toujours valable."
+Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont.
+
+Statut     : completed · itérations : 1 · tokens : 114/45 · coût : 0.0003 $
+Run        : 01a16ebe-dcdb-725e-9c39-6ceab76e4b32</code></pre>
+<p>Aucune ligne <code>[calendrier]</code> : quand l'agent lancé n'utilise pas la source, son paquet n'est même pas importé.</p>
+<p>Et pour le second client, le Chauffage Martin :</p>
+<pre><code><span class="p">$ </span>CALENDRIER_TRACES=1 loom run assistant --tenant martin-chauffage "Combien coûte le devis M-2026-017 ?"
+[calendrier] fabrique pour 'calendrier'
+[calendrier] ouverture pour le run 01a16ebe (client martin-chauffage)
+[calendrier] fermeture du run 01a16ebe
+[calendrier] source fermée avec l'instance
+Le devis M-2026-017 s'élève à 189 € TTC (171,82 € HT).
+
+Statut     : completed · itérations : 2 · tokens : 2843/105 · coût : 0.0101 $
+Run        : 01a16ebe-e3b5-74b7-ad5a-d052e9a73277</code></pre>
+<p>La source est ouverte pour le run de ce client (<code>context.tenant_id</code> vaut <code>martin-chauffage</code>) : un outil qui dépend du client, comme le carnet de devis du module 12, le lit ici. Seul <code>loom validate</code> fait exception : son run d'essai se présente comme le client <code>default</code>, même dans la partie du Chauffage Martin (ligne « ouverture pour le run validate (client default) » plus haut).</p>
+
+<h4>À retenir</h4>
+<ul>
+<li>Trois conditions pour qu'un agent reçoive les outils d'une source : le paquet est installé dans l'environnement du projet, la source est déclarée dans <code>tool_sources</code>, et l'agent la référence dans <code>tools</code> (<code>- source: calendrier</code>).</li>
+<li>La source est ouverte à chaque run : le fichier des congés est relu à chaque fois. Une modification compte au run suivant, même pour un <code>loom serve</code> qui tourne depuis des jours.</li>
+</ul>
+<div class="encadre piege"><p class="encadre-titre">Piège : un paquet installé mais non référencé</p>
+<p>Un paquet que personne ne référence n'est pas importé, donc ses erreurs (une faute de frappe, une dépendance manquante) passent inaperçues, même à <code>loom validate</code>. Référencez la source dans un agent, même minimal, pour que <code>validate</code> la charge.</p></div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-15-3">
+<h3><span class="exo-num">15.3</span> Quand la source fait défaut</h3>
+<p class="fns"><a class="fn" href="matrice.html#D12">D12</a></p>
+
+<h4>Pourquoi</h4>
+<p>Une source peut manquer de deux façons : la configuration est fausse (avant tout run), ou la source ne peut pas fournir ses outils au moment d'un run. Jean veut reconnaître les deux, et décider si l'assistant peut se passer du calendrier.</p>
+
+<h4>Mise en place</h4>
+<p>Deux erreurs de configuration, dans des copies de <code>loom.yaml</code>. Un point d'entrée que personne n'annonce :</p>
+<pre><code><span class="p">$ </span>sed 's/entry_point: calendrier/entry_point: calendrier-artisan/' loom.yaml &gt; loom-essai.yaml
+<span class="p">$ </span>loom --config loom-essai.yaml validate
+…
+Configuration : Point d'entrée 'calendrier-artisan' absent du groupe loom_ia.tools : aucun paquet installé ne le déclare (installés : calendrier, forge)</code></pre>
+<p>Un paramètre que la fabrique ne connaît pas :</p>
+<pre><code><span class="p">$ </span>sed 's/conges: conges.json/conge: conges.json/' loom.yaml &gt; loom-essai.yaml
+<span class="p">$ </span>loom --config loom-essai.yaml validate
+…
+Configuration : Agent 'assistant', source 'calendrier' (calendrier-artisan 0.1.0, calendrier_artisan:fabrique) : refusée par sa fabrique — paramètres inconnus : conge (attendus : zone, conges)
+<span class="p">$ </span>rm loom-essai.yaml</code></pre>
+<p>Les deux sortent en code 2 : la configuration est en cause, aucun run n'a lieu. Le second message est celui de <em>votre</em> fabrique, précédé de l'agent, de la source, du paquet et de sa version.</p>
+
+<h4>Exécution</h4>
+<p>Maintenant, une source qui ne peut pas s'ouvrir : déplacez le fichier des congés, et reposez la question.</p>
+<pre><code><span class="p">$ </span>mv conges.json conges.json.bak
+<span class="p">$ </span>loom run assistant "Le 11 novembre 2026 est-il un jour ouvré ? Je voudrais relancer Mme Martin ce jour-là." --session calendrier-2
+(heure) WARNING  loom_ia.engine.executor — Source d'outils calendrier indisponible : congés illisibles ([Errno 2] No such file or directory: '/home/jean/plomberie-dupont/conges.json') [run_id=01a16ebe-fb32-774a-b4b8-0af79bf6caa7]
+Non : le 11 novembre 2026 est férié (Armistice). La relance pourra partir le jeudi 12 novembre.
+
+Statut     : completed · itérations : 2 · tokens : 4082/122 · coût : 0.0141 $
+Run        : 01a16ebe-fb32-774a-b4b8-0af79bf6caa7
+<span class="p">$ </span>loom inspect 01a16ebe-fb32-774a-b4b8-0af79bf6caa7 --session calendrier-2 --full
+Run        : 01a16ebe-fb32-774a-b4b8-0af79bf6caa7 (agent assistant, client default)
+Session    : calendrier-2
+Statut     : completed, 2 itération(s)
+Usage      : 4082 → 122 tokens, 0.014076 $, 13 ms de pilotage
+
+run assistant — completed, 725 ms, 0.014076 $
+  · tool.source_unavailable (warning)
+  étape 1
+    modèle SIMULE (fake-1) (main) — 2 ms, 1938 → 73 tokens, 0.006909 $
+      · répond    : Je consulte le calendrier de l'entreprise.
+      · appelle   : calendrier__jour_ouvre({"jour": "2026-11-11"})
+  étape 2
+    appel calendrier__jour_ouvre — refusé avant exécution
+      · résultat  : (erreur) Outil inconnu : 'calendrier__jour_ouvre'. Outils disponibles : fetch_page, prix_ttc, chercher_devis, etiquette_devis, envoyer_email, rediger_relance, traduire, catalogue__…
+  étape 3
+    modèle SIMULE (fake-1) (main) — 1 ms, 2144 → 49 tokens, 0.007167 $
+      · répond    : Non : le 11 novembre 2026 est férié (Armistice). La relance pourra partir le jeudi 12 novembre.
+
+Réponse finale :
+  Non : le 11 novembre 2026 est férié (Armistice). La relance pourra partir le jeudi 12 novembre.
+Bilan      : 2 appel(s) de modèle, 1 appel(s) d'outil dont 1 refusé(s) avant exécution</code></pre>
+<p>Comme pour un serveur MCP (<a href="module-05.html#ex-5-4">module 5</a>), une source indisponible ne bloque pas l'agent par défaut : <code>open()</code> a levé <code>SourceUnavailable</code>, loom l'a signalé (avertissement, événement <code>tool.source_unavailable</code>) et le run a continué sans les outils du calendrier. L'appel du modèle est refusé avant exécution. (Le modèle simulé répond ensuite son texte prévu ; un vrai modèle dirait qu'il n'a pas pu consulter le calendrier.)</p>
+<p>Si l'assistant ne doit jamais proposer de date sans le calendrier, déclarez la source <strong>requise</strong>, pour cet agent :</p>
+<figure class="code"><figcaption>agents/assistant.yaml (seule la liste <code>tools</code> change ; le reste du fichier est celui du point de départ)</figcaption>
+<pre><code>  - mcp: catalogue
+  - source: calendrier
+<span class="aj">    required: true</span></code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<pre><code><span class="p">$ </span>loom run assistant "Le 11 novembre 2026 est-il un jour ouvré ? Je voudrais relancer Mme Martin ce jour-là." --session calendrier-3
+(heure) WARNING  loom_ia.engine.executor — Source d'outils calendrier indisponible : congés illisibles ([Errno 2] No such file or directory: '/home/jean/plomberie-dupont/conges.json') [run_id=01a16ebf-0c05-7093-a3f2-598ac791004c]
+—
+
+Statut     : failed · itérations : 0 · tokens : 0/0 · coût : 0.0000 $
+Run        : 01a16ebf-0c05-7093-a3f2-598ac791004c
+Erreur     : source calendrier requise et indisponible : congés illisibles ([Errno 2] No such file or directory: '/home/jean/plomberie-dupont/conges.json') (tool.source_unavailable)</code></pre>
+<p>Le run échoue avant le premier appel de modèle, avec la cause. Remettez le fichier en place et retirez la ligne <code>required: true</code> :</p>
+<pre><code><span class="p">$ </span>mv conges.json.bak conges.json</code></pre>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>required: true</code></td><td>Sans cette source, le run échoue au lieu de continuer sans ses outils. Défaut : <code>false</code>.</td></tr>
+</tbody>
+</table></div>
+<p>La référence d'une source accepte les mêmes réglages que celle d'un serveur MCP (<a href="module-05.html#ex-5-3">module 5</a>) : <code>alias</code> (un autre préfixe : <code>alias: agenda</code> donne <code>agenda__jour_ouvre</code>), <code>include</code> ou <code>exclude</code> (noms courts), et <code>tools</code> (surcharges pour cet agent, qui l'emportent sur celles de <code>tool_sources</code>).</p>
+
+<h4>À retenir</h4>
+<ul>
+<li>Configuration fausse : code 2 à <code>validate</code> comme au run, rien au journal. Source indisponible : un événement au journal, puis le run continue, ou échoue si la source est requise.</li>
+<li>Dans <code>open()</code>, levez <code>SourceUnavailable</code> avec un message qui dit la cause : c'est lui qu'on lit dans le log, dans <code>inspect</code> et dans l'erreur du run.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-15-4">
+<h3><span class="exo-num">15.4</span> Un changement voulu : régénérer les références</h3>
+<p class="fns"><a class="fn" href="matrice.html#D12">D12</a></p>
+
+<h4>Pourquoi</h4>
+<p>Au module 14, Jean a mis en place un filet : toute modification visible de l'agent est détectée. Il vient d'en faire une, volontairement. Le filet doit le voir, puis être remis à jour.</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>pytest -q --tb=no
+F......                                                                  [100%]
+=========================== short test summary info ============================
+FAILED tests/test_non_regression.py::test_les_runs_de_reference_se_rejouent
+1 failed, 6 passed in 8.82s
+<span class="p">$ </span>loom eval evals/non-regression.yaml
+(heure) WARNING  loom_ia.replay.runner — Rejeu du run 01a16eaa-772f-7133-b27d-6ffa9a205821 : divergence, appel de modèle n°1 (main au journal) : la requête a changé — ce …
+(heure) WARNING  loom_ia.replay.runner — Rejeu du run 01a16eaa-7b79-752b-b042-9acda8fa44d2 : divergence, appel de modèle n°1 (main au journal) : la requête a changé — ce …
+Suite      : non-regression — agent assistant, 1 cas, 1 variante(s), 1 répétition(s) par cas
+
+Variante base (config de base) — 0/1 cas réussi(s), 0.000000 $ de runs, 0.000000 $ de juge
+  ÉCHEC    journaux-de-reference (0/2 run(s) rejoué(s) à l'identique)
+      journaux/actuel--relance-martin--1.jsonl, run 01a16eaa-772f-7133-b27d-6ffa9a205821 :
+        ✗ se rejoue à l'identique — appel de modèle n°1 (main au journal) : la requête a changé ; ce qui diffère : les outils proposés, les réglages (choix d'outil, plafo…
+      journaux/actuel--relance-martin--2.jsonl, run 01a16eaa-7b79-752b-b042-9acda8fa44d2 :
+        ✗ se rejoue à l'identique — appel de modèle n°1 (main au journal) : la requête a changé ; ce qui diffère : les outils proposés, les réglages (choix d'outil, plafo…
+
+Bilan      : 0/2 run(s) réussi(s), 0.000000 $ dépensé(s)
+Verdict    : des attendus tombent, ou des runs n'ont pas été joués</code></pre>
+<p>Le test de non-régression tombe, et dit pourquoi : depuis la référence, l'orchestrateur reçoit d'autres outils (ceux du calendrier) et d'autres réglages (le script de <code>SIMULE</code> a deux répliques de plus). Les six autres tests passent : le comportement de la relance n'a pas changé.</p>
+<p>Ce changement est voulu. Après avoir vérifié le comportement (c'est ce que font les autres tests et la suite <code>comparaison</code>), régénérez les journaux de référence, comme au <a href="module-14.html#ex-14-3">module 14</a> :</p>
+<pre><code><span class="p">$ </span>loom eval evals/comparaison.yaml --variant actuel --export evals/journaux
+Suite      : comparaison — agent assistant, 1 cas, 1 variante(s), 2 répétition(s) par cas
+Juge       : JUGE_EVAL
+Plafond    : 1.0000 $
+
+Variante actuel (config de base) — 1/1 cas réussi(s), 0.079016 $ de runs, 0.001740 $ de juge
+  ok       relance-martin (2/2)
+
+Bilan      : 2/2 run(s) réussi(s), 0.080756 $ dépensé(s)
+Verdict    : tout passe
+<span class="p">$ </span>pytest -q
+.......                                                                  [100%]
+7 passed in 8.26s</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li>Ajouter une source change ce que voit l'orchestrateur : les journaux de référence de l'agent ne se rejouent plus. C'est attendu.</li>
+<li>Régénérez les références dans le même commit que le changement qui les justifie : la revue de code voit les deux ensemble.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-15-5">
+<h3><span class="exo-num">15.5</span> Préparer la sandbox : KVM et <code>make_vm.sh</code></h3>
+<p class="fns"><a class="fn" href="matrice.html#D9">D9</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un chantier de rénovation énergétique mélange deux taux de TVA : 5,5 % sur une partie des travaux, 20 % sur le reste. L'assistant n'a pas d'outil pour ça. Jean aimerait qu'un agent <strong>écrive lui-même</strong> la petite fonction qui manque, la vérifie sur des exemples et la garde pour la prochaine fois, sans que du code écrit par un modèle tourne jamais sur son serveur.</p>
+<p>C'est le rôle de la source <code>forge</code>, livrée avec loom. L'agent <strong>forge</strong> un outil : un nom, une description, un schéma d'entrée, le code d'un module Python qui définit une fonction du même nom, et des exemples. L'hôte vérifie la forme du code, puis l'envoie à <strong>execd</strong>, un service qui tourne dans une <strong>microVM Firecracker</strong> : une machine virtuelle minimale, sans réseau, qui démarre en moins de deux secondes. execd exécute chaque exemple sous limites de ressources ; si tous donnent le résultat attendu, l'outil est rangé dans un catalogue, et l'agent peut l'appeler. La VM ne garde rien : chaque appel transporte son code.</p>
+
+<h4>Mise en place</h4>
+<p><strong>Les prérequis.</strong> Firecracker demande Linux (x86_64 ou aarch64) avec la virtualisation matérielle, exposée par le fichier spécial <code>/dev/kvm</code>, des droits <code>sudo</code> pour construire l'image, et quatre outils :</p>
+<pre><code><span class="p">$ </span>ls -l /dev/kvm
+ls: cannot access '/dev/kvm': No such file or directory
+<span class="p">$ </span>sudo apt install -y curl jq squashfs-tools e2fsprogs</code></pre>
+<p>Sur la machine de rédaction, <code>/dev/kvm</code> n'existe pas. Chez vous, s'il est absent, la virtualisation est désactivée dans le BIOS, ou votre machine est elle-même une VM (chez un hébergeur, il faut une offre avec <em>virtualisation imbriquée</em>). S'il existe mais que vous n'avez pas le droit d'y écrire : <code>sudo usermod -aG kvm $USER</code>, puis reconnectez-vous.</p>
+<p><strong>Le script de construction.</strong> Il n'est pas dans le paquet PyPI, mais dans le dépôt de loom. Récupérez seulement son dossier <code>firecracker/</code>, dans la version de votre loom, à côté de vos projets :</p>
+<pre><code><span class="p">$ </span>cd ..
+<span class="p">$ </span>git -c advice.detachedHead=false clone --depth 1 --branch v2.0.11 --filter=blob:none --sparse https://github.com/denislamard/loom_v2
+Cloning into 'loom_v2'...
+<span class="p">$ </span>cd loom_v2
+<span class="p">$ </span>git sparse-checkout set firecracker
+<span class="p">$ </span>ls firecracker firecracker/service
+firecracker:
+jailer-run.sh
+make_vm.sh
+service
+
+firecracker/service:
+devclient.py
+execd.py
+limits.py
+protocol.py
+runner.py
+session.py</code></pre>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>make_vm.sh</code></td><td>Construit le dossier d'une VM.</td></tr>
+<tr><td><code>service/</code></td><td>Le service execd, que le script installe dans l'image.</td></tr>
+<tr><td><code>jailer-run.sh</code></td><td>Lance la VM sous <code>jailer</code>, l'outil de Firecracker qui l'enferme (le processus de la VM ne tourne alors jamais en root). Pour la production.</td></tr>
+</tbody>
+</table></div>
+<pre><code><span class="p">$ </span>cd firecracker
+<span class="p">$ </span>./make_vm.sh --help
+Usage : ./make_vm.sh &lt;dossier-vm&gt; [options]
+
+  &lt;dossier-vm&gt;        nom simple  -&gt; ./vms/&lt;nom&gt;/
+                      chemin      -&gt; utilisé tel quel
+
+Options
+  --vcpu N            nombre de vCPU
+  --mem MIB           mémoire en MiB
+  --cid N             CID vsock de l'invité (auto-attribué à la création)
+  --rootfs-size TAILLE  taille de rootfs.ext4        (ex: 4G)
+  --data-size TAILLE    taille de data.ext4          (ex: 4G)
+  --data-label NOM      label ext4 du volume /data
+  --execd DIR         source du service d'exécution -&gt; /opt/execd
+                      (défaut : ./service si présent ; chemin mémorisé et
+                       recopié à chaque reconstruction)
+  --execd-port N      port vsock d'écoute de execd (défaut 5100)
+  --no-execd          désactive le service et retire /opt/execd de l'arbre
+  --reset-data        recrée data.ext4 (DESTRUCTIF : efface l'état invité)
+  --reset-tree        re-clone rootfs-tree depuis le cache (DESTRUCTIF :
+                      efface les injections faites dans cette VM)
+  --slim              supprime rootfs-tree après construction de l'image
+  --cache DIR         emplacement du cache partagé
+  -h, --help          cette aide
+
+Exemples
+  ./make_vm.sh agent-01
+  ./make_vm.sh agent-02 --vcpu 4 --mem 4096 --rootfs-size 4G
+  ./make_vm.sh agent-01 --execd ../autre-service
+  ./make_vm.sh agent-01 --slim</code></pre>
+
+<h4>Exécution</h4>
+<p>Construisez la VM de la Plomberie Dupont dans <code>~/vms/dupont-forge</code>, hors du projet (son dossier peut peser un gigaoctet) :</p>
+<pre><code><span class="p">$ </span>./make_vm.sh ~/vms/dupont-forge --execd ./service
+==&gt; Vérification des pré-requis
+[x] /dev/kvm absent — virtualisation matérielle désactivée ?</code></pre>
+<p>C'est ce que donne une machine sans KVM : le script s'arrête à la vérification des prérequis (code 1). Il a pourtant déjà créé le dossier de la VM, vide :</p>
+<pre><code><span class="p">$ </span>ls -A ~/vms/dupont-forge
+<span class="p">$ </span>rmdir ~/vms/dupont-forge
+<span class="p">$ </span>cd ../../plomberie-dupont</code></pre>
+<div class="encadre reel"><p class="encadre-titre">Non exécuté pendant la rédaction : la construction</p>
+<p>Sur une machine avec KVM, d'après le script du dépôt (version 2.0.11), <code>make_vm.sh</code> demande votre mot de passe <code>sudo</code> une fois, puis télécharge dans un cache partagé (<code>firecracker/cache/</code>) le binaire Firecracker, un noyau Linux et un système Ubuntu 24.04, publiés par le projet Firecracker. Il construit l'image disque de la VM et un volume de données monté sur <code>/data</code> (sans droit d'exécution), crée l'utilisateur non privilégié <code>sandbox</code> sous lequel execd lance le code reçu, et installe execd dans <code>/opt/execd</code>. Le dossier produit contient notamment <code>vm.env</code> (les paramètres de la VM), <code>run.sh</code> (qui la lance) et les images disque. Relancer le script ne retélécharge rien ; <code>--slim</code> supprime l'arbre de construction pour alléger le dossier.</p></div>
+
+<h4>À retenir</h4>
+<ul>
+<li>loom démarre la VM tout seul, au premier appel qui exécute du code, et l'arrête avec l'instance. <code>loom validate</code> et le rejeu ne la démarrent jamais. Le démarrage est attendu 60 secondes au plus.</li>
+<li>Le code forgé n'a ni réseau ni bibliothèque tierce : la bibliothèque standard de Python seulement.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-15-6">
+<h3><span class="exo-num">15.6</span> L'atelier : la source <code>forge</code> dans un projet à part</h3>
+<p class="fns"><a class="fn" href="matrice.html#D9">D9</a></p>
+
+<h4>Pourquoi</h4>
+<p>Jean ne veut pas donner <code>forge</code> à l'assistant qui relance ses clients : un agent qui écrit du code est un outil d'atelier, qu'il veut garder à part et surveiller. Et il y a une raison technique, que l'encadré ci-dessous montre.</p>
+<div class="encadre piege"><p class="encadre-titre">Piège : <code>forge</code> sans VM dans la configuration du projet</p>
+<p>La fabrique de <code>forge</code> vérifie que le dossier de VM existe. Déclarée dans <code>loom.yaml</code> et référencée par l'assistant sur une machine sans VM, elle refuse le montage de l'assistant : <code>loom run assistant</code> et <code>loom validate</code> sortent en code 2, avec le message que vous verrez plus bas (« dossier de VM invalide »). D'où un sous-projet à part, avec sa propre configuration.</p></div>
+
+<h4>Mise en place</h4>
+<p>Créez le sous-projet <code>atelier/</code> dans <code>plomberie-dupont/</code> :</p>
+<pre><code><span class="p">$ </span>mkdir -p atelier/agents atelier/catalogue/default/tva_mixte</code></pre>
+<figure class="code"><figcaption>atelier/loom.yaml</figcaption>
+<pre><code>version: 1
+
+agents_dir: agents/
+
+models:
+  - id: SIMULE_ATELIER
+    sdk: fake
+    model: fake-atelier
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        # Appeler un outil du catalogue
+        - with_text: TVA mixte
+          text: J'appelle l'outil tva_mixte du catalogue.
+          tool_calls:
+            - name: forge__tva_mixte
+              arguments: {ht_55: 1000, ht_20: 500}
+        - with_text: TVA mixte
+          text: Le calcul n'a pas pu être fait.
+        # Forger un nouvel outil
+        - with_text: acompte
+          text: Je forge un outil de calcul d'acompte.
+          tool_calls:
+            - name: forge__forge
+              arguments:
+                name: acompte
+                description: Calcule l'acompte à verser sur un montant TTC, selon un pourcentage.
+                input_schema:
+                  type: object
+                  properties:
+                    montant_ttc: {type: number}
+                    pourcentage: {type: number}
+                  required: [montant_ttc, pourcentage]
+                code: |
+                  def acompte(montant_ttc, pourcentage):
+                      return round(montant_ttc * pourcentage / 100, 2)
+                examples:
+                  - arguments: {montant_ttc: 1840, pourcentage: 30}
+                    expected: 552.0
+        - with_text: acompte
+          text: L'outil acompte n'a pas été créé.
+
+tool_sources:
+  - name: forge
+    entry_point: forge
+    params:
+      vm_dir: vm
+      catalog_dir: catalogue
+      limits: {wall_ms: 5000}
+
+telemetry:
+  logging: {level: WARNING}
+
+storage:
+  events: {backend: jsonl, path: data}</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>entry_point: forge</code></td><td>Le point d'entrée livré avec loom (la ligne <code>Paquets</code> de <code>validate</code> le liste depuis le début de la formation).</td></tr>
+<tr><td><code>vm_dir: vm</code></td><td>Le dossier de la VM, celui que produit <code>make_vm.sh</code> (relatif au dossier de la configuration ; <code>~</code> est accepté).</td></tr>
+<tr><td><code>catalog_dir: catalogue</code></td><td>Le catalogue des outils forgés. Chaque outil y est rangé par client : <code>catalogue/&lt;client&gt;/&lt;outil&gt;/</code>, avec <code>&lt;outil&gt;.py</code> et <code>outil.json</code>.</td></tr>
+<tr><td><code>limits: {wall_ms: 5000}</code></td><td>Les limites de chaque exécution dans la VM ; ici, 5 secondes de temps réel au plus. Voir le tableau de l'exercice 15.8.</td></tr>
+</tbody>
+</table></div>
+<p>Le script de <code>SIMULE_ATELIER</code> joue deux scènes : appeler un outil du catalogue, et forger un nouvel outil (exercice 15.7). L'agent :</p>
+<figure class="code"><figcaption>atelier/agents/atelier.yaml</figcaption>
+<pre><code>name: atelier
+description: Forge de petits outils de calcul pour l'artisan, exécutés dans une VM isolée.
+
+main:
+  model: SIMULE_ATELIER
+  system: &gt;-
+    Tu forges des outils de calcul avec forge, chacun avec des exemples justes,
+    puis tu les appelles avec call ou par leur nom.
+
+max_iterations: 4
+
+tools:
+  - source: forge</code></pre></figure>
+<p>La source fournit à chaque run :</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>forge__forge</code></td><td>Forge (ou remplace) un outil. Les contrôles de l'hôte d'abord, puis chaque exemple est exécuté dans la VM et comparé au résultat attendu. Au premier écart, l'outil est refusé et le modèle apprend pourquoi ; accepté, il est écrit dans le catalogue.</td></tr>
+<tr><td><code>forge__call</code></td><td>Appelle un outil du catalogue par son nom, avec ses arguments. Il voit le catalogue au moment de l'appel, donc aussi un outil forgé plus tôt dans le run.</td></tr>
+<tr><td><code>forge__&lt;outil&gt;</code></td><td>Chaque outil du catalogue du client, lu à l'ouverture du run : un outil forgé pendant un run n'apparaît sous son nom qu'au run suivant.</td></tr>
+</tbody>
+</table></div>
+<p>Rangez dans le catalogue du client <code>default</code> un outil déjà forgé, la TVA mixte :</p>
+<figure class="code"><figcaption>atelier/catalogue/default/tva_mixte/tva_mixte.py</figcaption>
+<pre><code>def tva_mixte(ht_55, ht_20):
+    tva = round(ht_55 * 5.5 / 100 + ht_20 * 20 / 100, 2)
+    return {"tva": tva, "ttc": round(ht_55 + ht_20 + tva, 2)}</code></pre></figure>
+<figure class="code"><figcaption>atelier/catalogue/default/tva_mixte/outil.json</figcaption>
+<pre><code>{
+  "description": "TVA et TTC d'un chantier dont une part est à 5,5 % (ht_55) et le reste à 20 % (ht_20).",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "ht_55": {"type": "number"},
+      "ht_20": {"type": "number"}
+    },
+    "required": ["ht_55", "ht_20"]
+  },
+  "examples": [
+    {"arguments": {"ht_55": 1000, "ht_20": 500}, "expected": {"tva": 155.0, "ttc": 1655.0}}
+  ],
+  "forged_by": "atelier",
+  "forged_at": "2026-10-20T09:00:00Z"
+}</code></pre></figure>
+
+<h4>Exécution</h4>
+<p>Sans dossier de VM, la configuration est refusée :</p>
+<pre><code><span class="p">$ </span>loom --config atelier/loom.yaml validate
+…
+Configuration : Agent 'atelier', source 'forge' (loom-ia 2.0.11, loom_ia.adapters.firecracker.forge:forge_source) : refusée par sa fabrique — 'vm_dir' : /home/jean/plomberie-dupont/atelier/vm/vm.env introuvable — dossier de VM invalide</code></pre>
+<p>La fabrique lit le fichier <code>vm.env</code> du dossier de VM, et ses six variables : le nom de la VM, son identifiant vsock (le canal entre l'hôte et la VM), les chemins de ses deux sockets, le port d'execd et l'origine d'execd. Pour essayer la configuration sans VM, créez un dossier factice avec un <code>vm.env</code> seulement. La validation n'exécute rien, elle suffit donc :</p>
+<pre><code><span class="p">$ </span>mkdir atelier/vm</code></pre>
+<figure class="code"><figcaption>atelier/vm/vm.env (factice, pour cet essai)</figcaption>
+<pre><code>VM_NAME="dupont-forge"
+GUEST_CID="3"
+API_SOCK="/tmp/dupont-forge/fc.sock"
+VSOCK_UDS="/tmp/dupont-forge/v.sock"
+EXECD_PORT="5100"
+EXECD_SRC="service"</code></pre></figure>
+<pre><code><span class="p">$ </span>loom --config atelier/loom.yaml validate
+…
+  atelier : modèle SIMULE_ATELIER, 0 outil(s) Python
+    source forge : forge__forge, forge__call, forge__tva_mixte
+
+1 agent(s) monté(s) sans erreur.</code></pre>
+<p>L'agent voit trois outils : les deux de la source, et <code>forge__tva_mixte</code>, lu dans le catalogue. Demandez le calcul :</p>
+<pre><code><span class="p">$ </span>loom --config atelier/loom.yaml run atelier "Calcule la TVA mixte : 1000 € HT à 5,5 % et 500 € HT à 20 %." --session tva-mixte
+(heure) WARNING  loom_ia.adapters.firecracker.forge — Source forge : VM ou execd indisponible — [Errno 2] No such file or directory: '/home/jean/plomberie-dupont/atelier/vm/run.sh'
+Le calcul n'a pas pu être fait.
+
+Statut     : completed · itérations : 2 · tokens : 1808/106 · coût : 0.0070 $
+Run        : 01a16ebf-934d-756f-b78b-aa409a4d4669
+<span class="p">$ </span>loom --config atelier/loom.yaml inspect 01a16ebf-934d-756f-b78b-aa409a4d4669 --session tva-mixte --full
+Run        : 01a16ebf-934d-756f-b78b-aa409a4d4669 (agent atelier, client default)
+Session    : tva-mixte
+Statut     : completed, 2 itération(s)
+Usage      : 1808 → 106 tokens, 0.007014 $, 15 ms de pilotage
+
+run atelier — completed, 44 ms, 0.007014 $
+  étape 1
+    modèle SIMULE_ATELIER (fake-atelier) (main) — 1 ms, 809 → 73 tokens, 0.003522 $
+      · répond    : J'appelle l'outil tva_mixte du catalogue.
+      · appelle   : forge__tva_mixte({"ht_55": 1000, "ht_20": 500})
+  étape 2
+    outil forge__tva_mixte — 3 ms (erreur)
+      · arguments : {"ht_55": 1000, "ht_20": 500}
+      · résultat  : (erreur) VM indisponible : FileNotFoundError: [Errno 2] No such file or directory: '/home/jean/plomberie-dupont/atelier/vm/run.sh'
+  étape 3
+    modèle SIMULE_ATELIER (fake-atelier) (main) — 1 ms, 999 → 33 tokens, 0.003492 $
+      · répond    : Le calcul n'a pas pu être fait.
+
+Réponse finale :
+  Le calcul n'a pas pu être fait.
+Bilan      : 2 appel(s) de modèle, 1 appel(s) d'outil</code></pre>
+<p>Pour exécuter l'outil, loom a voulu démarrer la VM par son <code>run.sh</code>, absent du dossier factice. L'appel finit en erreur, que le modèle reçoit ; le run, lui, se termine normalement. Avec une vraie VM, le résultat serait <code>{"tva": 155.0, "ttc": 1655.0}</code>, l'exemple du catalogue.</p>
+
+<h4>À retenir</h4>
+<ul>
+<li>Un sous-projet, c'est un dossier avec son <code>loom.yaml</code>, désigné par <code>--config</code>. Il partage l'environnement Python du projet, mais pas sa configuration ni son journal (<code>atelier/data/</code>, ignoré par Git grâce à la ligne <code>data/</code> du <code>.gitignore</code>).</li>
+<li>Le catalogue contient du code écrit par un modèle. Versionnez-le avec Git et relisez chaque outil avant de vous y fier.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-15-7">
+<h3><span class="exo-num">15.7</span> Garder la main : approbation, contrôles de l'hôte, rejeu</h3>
+<p class="fns"><a class="fn" href="matrice.html#D9">D9</a></p>
+
+<h4>Pourquoi</h4>
+<p>Même dans une VM isolée, Jean veut voir chaque outil avant qu'il entre au catalogue. Et il veut savoir ce que l'hôte vérifie de lui-même, avant d'envoyer quoi que ce soit à la VM.</p>
+
+<h4>Mise en place</h4>
+<p>Une source déclarée accepte des surcharges par outil (<code>tools:</code>). Demandez une approbation pour chaque forge, comme pour l'envoi d'un e-mail au <a href="module-08.html#ex-8-1">module 8</a> :</p>
+<figure class="code"><figcaption>atelier/loom.yaml (la source)</figcaption>
+<pre><code>tool_sources:
+  - name: forge
+    entry_point: forge
+    params:
+      vm_dir: vm
+      catalog_dir: catalogue
+      limits: {wall_ms: 5000}
+<span class="aj">    tools:</span><span class="aj">      forge: {approval: always}</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>tools: {forge: {approval: always}}</code></td><td>L'outil <code>forge</code> de la source (nom court) demande toujours une approbation. <code>call</code> et les outils du catalogue n'en demandent pas.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom --config atelier/loom.yaml run atelier "Forge un outil qui calcule l'acompte de 30 % d'un devis." --session acompte
+
+Statut     : paused · itérations : 1 · tokens : 808/175 · coût : 0.0050 $
+Run        : 01a16ebf-9c6c-7507-97a1-bdd7770da9d1
+En attente : forge__forge (fake_0_0) — loom approve 01a16ebf-9c6c-7507-97a1-bdd7770da9d1 --call fake_0_0 --session acompte
+<span class="p">$ </span>loom --config atelier/loom.yaml inspect 01a16ebf-9c6c-7507-97a1-bdd7770da9d1 --session acompte --full
+Run        : 01a16ebf-9c6c-7507-97a1-bdd7770da9d1 (agent atelier, client default)
+Session    : acompte
+Statut     : paused, 1 itération(s) — run inachevé : durées provisoires
+Usage      : 808 → 175 tokens, 0.005049 $, 11 ms de pilotage
+
+run atelier — inachevé, 35 ms (ouvert)
+  étape 1
+    modèle SIMULE_ATELIER (fake-atelier) (main) — 2 ms, 808 → 175 tokens, 0.005049 $
+      · répond    : Je forge un outil de calcul d'acompte.
+      · appelle   : forge__forge({"name": "acompte", "description": "Calcule l'acompte à verser sur un montant TTC, selon un pourcentage.", "input_schema": {"type": "obje…
+  étape 2
+    approbation pour forge__forge — en attente
+
+Bilan      : 1 appel(s) de modèle, 0 appel(s) d'outil, 1 approbation(s)</code></pre>
+<p>Le run attend. <code>inspect --full</code> montre tout ce que l'agent veut forger : le nom, le schéma, le code et l'exemple (la ligne est coupée ici). Jean préfère relire le code à tête reposée et refuse :</p>
+<pre><code><span class="p">$ </span>loom --config atelier/loom.yaml reject 01a16ebf-9c6c-7507-97a1-bdd7770da9d1 --call fake_0_0 --session acompte --by "Jean Dupont" --reason "je relirai le code avant"
+Refusé : fake_0_0
+L'outil acompte n'a pas été créé.
+
+Statut     : completed · itérations : 2 · tokens : 1916/208 · coût : 0.0089 $
+Run        : 01a16ebf-9c6c-7507-97a1-bdd7770da9d1
+<span class="p">$ </span>loom --config atelier/loom.yaml inspect 01a16ebf-9c6c-7507-97a1-bdd7770da9d1 --session acompte --full
+  étape 2
+    approbation pour forge__forge — refusée par Jean Dupont
+  étape 3
+    appel forge__forge — refusé avant exécution
+      · résultat  : (erreur) Appel à forge__forge refusé à l'approbation par Jean Dupont (motif : je relirai le code avant). C'est une décision, pas une panne : ne refais…
+  étape 4
+    modèle SIMULE_ATELIER (fake-atelier) (main) — 1 ms, 1108 → 33 tokens, 0.003819 $
+      · répond    : L'outil acompte n'a pas été créé.</code></pre>
+<p>Le modèle apprend qui a refusé, pourquoi, et qu'il ne doit pas réessayer. Rien n'a été envoyé à la VM. La même demande, cette fois accordée :</p>
+<pre><code><span class="p">$ </span>loom --config atelier/loom.yaml run atelier "Forge un outil qui calcule l'acompte de 30 % d'un devis." --session acompte-2
+
+Statut     : paused · itérations : 1 · tokens : 808/175 · coût : 0.0050 $
+Run        : 01a16ebf-ae3d-7148-9c79-4e84de1891aa
+En attente : forge__forge (fake_0_0) — loom approve 01a16ebf-ae3d-7148-9c79-4e84de1891aa --call fake_0_0 --session acompte-2
+<span class="p">$ </span>loom --config atelier/loom.yaml approve 01a16ebf-ae3d-7148-9c79-4e84de1891aa --call fake_0_0 --session acompte-2 --by "Jean Dupont"
+(heure) WARNING  loom_ia.adapters.firecracker.forge — Source forge : VM ou execd indisponible — [Errno 2] No such file or directory: '/home/jean/plomberie-dupont/atelier/vm/run.sh'
+Accordé : fake_0_0
+L'outil acompte n'a pas été créé.
+
+Statut     : completed · itérations : 2 · tokens : 1908/208 · coût : 0.0088 $
+Run        : 01a16ebf-ae3d-7148-9c79-4e84de1891aa
+<span class="p">$ </span>loom --config atelier/loom.yaml inspect 01a16ebf-ae3d-7148-9c79-4e84de1891aa --session acompte-2 --full
+  étape 2
+    approbation pour forge__forge — accordée par Jean Dupont
+  étape 3
+    outil forge__forge — 5 ms (erreur)
+      · arguments : {"name": "acompte", "description": "Calcule l'acompte à verser sur un montant TTC, selon un pourcentage.", "input_schema": {"type": "object", "propert…
+      · résultat  : (erreur) VM indisponible : FileNotFoundError: [Errno 2] No such file or directory: '/home/jean/plomberie-dupont/atelier/vm/run.sh'
+  étape 4
+    modèle SIMULE_ATELIER (fake-atelier) (main) — 1 ms, 1100 → 33 tokens, 0.003795 $
+      · répond    : L'outil acompte n'a pas été créé.
+<span class="p">$ </span>ls atelier/catalogue/default
+tva_mixte</code></pre>
+<p>Les contrôles de l'hôte sont passés (sinon l'erreur le dirait), puis il a fallu la VM pour jouer l'exemple : sans elle, l'outil n'entre pas au catalogue.</p>
+<p><strong>Le rejeu.</strong> Un run de l'atelier se rejoue à l'identique comme un autre (<a href="module-13.html#ex-13-6">module 13</a>), <strong>sans démarrer la VM</strong> : les résultats des outils sont lus dans le journal.</p>
+<pre><code><span class="p">$ </span>loom --config atelier/loom.yaml replay 01a16ebf-ae3d-7148-9c79-4e84de1891aa --session acompte-2
+Run        : 01a16ebf-ae3d-7148-9c79-4e84de1891aa (agent atelier, client default)
+Session    : acompte-2
+Issue      : completed au journal, completed au rejeu
+Modèles    : 2 appel(s) au journal, 2 servi(s) au rejeu
+Outils     : 1 résultat(s) au journal (rôles à part), 1 servi(s) au rejeu
+Identique  : le run se rejoue tel qu'il a été, appel par appel.</code></pre>
+<p><strong>Les contrôles de l'hôte.</strong> Avant d'envoyer un outil à la VM, l'hôte lit son code sans l'exécuter. Ces contrôles sont dans la fonction <code>check_forged</code> de loom, que vous pouvez appeler vous-même, sans VM :</p>
+<figure class="code"><figcaption>atelier/controles_forge.py</figcaption>
+<pre><code>"""Les contrôles que l'hôte fait sur un outil forgé, avant d'envoyer quoi que ce soit à la VM.
+
+Ils ne demandent ni KVM ni VM : seule l'exécution des exemples en demande une.
+"""
+
+from loom_ia.adapters.firecracker.forge import check_forged
+from loom_ia.core.ports import ToolError
+
+SCHEMA = {
+    "type": "object",
+    "properties": {"ht_55": {"type": "number"}, "ht_20": {"type": "number"}},
+    "required": ["ht_55", "ht_20"],
+}
+EXEMPLES = [{"arguments": {"ht_55": 1000, "ht_20": 500}, "expected": {"tva": 155.0, "ttc": 1655.0}}]
+BON = '''
+def tva_mixte(ht_55, ht_20):
+    tva = round(ht_55 * 5.5 / 100 + ht_20 * 20 / 100, 2)
+    return {"tva": tva, "ttc": round(ht_55 + ht_20 + tva, 2)}
+'''
+ESSAIS = {
+    "code correct": ("tva_mixte", BON, EXEMPLES),
+    "fonction mal nommée": ("tva_mixte", BON.replace("def tva_mixte", "def calcul"), EXEMPLES),
+    "paramètre manquant": ("tva_mixte", BON.replace("ht_55, ht_20)", "ht_55)"), EXEMPLES),
+    "syntaxe cassée": ("tva_mixte", "def tva_mixte(ht_55, ht_20)\n    return 0", EXEMPLES),
+    "nom réservé": ("call", BON.replace("tva_mixte", "call"), EXEMPLES),
+    "module standard": ("json", BON.replace("tva_mixte", "json"), EXEMPLES),
+    "sans exemple": ("tva_mixte", BON, []),
+}
+
+for libelle, (nom, code, exemples) in ESSAIS.items():
+    try:
+        paires = check_forged(nom, SCHEMA, code, exemples)
+        print(f"{libelle:&lt;20} accepté ({len(paires)} exemple(s) à jouer dans la VM)")
+    except ToolError as erreur:
+        print(f"{libelle:&lt;20} refusé : {erreur.message}")</code></pre></figure>
+<pre><code><span class="p">$ </span>python atelier/controles_forge.py
+code correct         accepté (1 exemple(s) à jouer dans la VM)
+fonction mal nommée  refusé : code : pas de fonction tva_mixte() au premier niveau du module
+paramètre manquant   refusé : code : tva_mixte() ne reçoit pas ht_20, que input_schema propose
+syntaxe cassée       refusé : code : erreur de syntaxe ligne 1 — expected ':'
+nom réservé          refusé : name 'call' : nom réservé
+module standard      refusé : name 'json' : c'est un module de la bibliothèque standard, que le module de l'outil masquerait ; choisis un autre nom
+sans exemple         refusé : examples : de 1 à 10 exemples attendus, 0 reçu(s)</code></pre>
+<p>Chaque motif de refus est celui que reçoit le modèle quand il forge : il peut corriger et recommencer. Le code accepté n'est pas encore jugé : seule l'exécution des exemples dans la VM dit s'il calcule juste.</p>
+
+<h4>À retenir</h4>
+<ul>
+<li>Ce que l'hôte refuse n'atteint jamais la VM : une fonction qui ne porte pas le nom de l'outil, un paramètre du schéma que la fonction ne reçoit pas, une erreur de syntaxe, un nom réservé (<code>forge</code>, <code>call</code>), un nom de module de la bibliothèque standard, aucun exemple ou plus de dix.</li>
+<li><code>input_schema</code> et <code>examples</code> peuvent aussi arriver en <strong>texte JSON</strong> : certains fournisseurs de modèles déforment les objets libres d'un appel d'outil, alors qu'une chaîne arrive intacte.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-15-8">
+<h3><span class="exo-num">15.8</span> Avec une vraie VM (non exécuté ici)</h3>
+<p class="fns"><a class="fn" href="matrice.html#D9">D9</a></p>
+
+<h4>Pourquoi</h4>
+<p>Sur une machine avec KVM, l'atelier fait le travail pour de bon. Cet exercice dit quoi changer, et ce que vous verrez.</p>
+
+<h4>Mise en place</h4>
+<p>Une fois <code>make_vm.sh</code> passé jusqu'au bout (15.5), faites pointer l'atelier sur la vraie VM et supprimez le dossier factice :</p>
+<figure class="code"><figcaption>atelier/loom.yaml (la source)</figcaption>
+<pre><code>tool_sources:
+  - name: forge
+    entry_point: forge
+    params:
+<span class="aj">      vm_dir: ~/vms/dupont-forge</span>      catalog_dir: catalogue
+      limits: {wall_ms: 5000}
+    tools:
+      forge: {approval: always}</code></pre></figure>
+<p class="legende-aj"><span></span>ligne modifiée</p>
+<pre><code><span class="p">$ </span>rm -r atelier/vm
+<span class="p">$ </span>loom --config atelier/loom.yaml validate
+…
+Configuration : Agent 'atelier', source 'forge' (loom-ia 2.0.11, loom_ia.adapters.firecracker.forge:forge_source) : refusée par sa fabrique — 'vm_dir' : /home/jean/vms/dupont-forge/vm.env introuvable — dossier de VM invalide</code></pre>
+<p>Sur la machine de rédaction, sans VM, c'est ce refus que l'on obtient : c'est l'état final du projet ici. Avec la VM construite, <code>validate</code> liste les trois outils de l'atelier.</p>
+<p>Les limites, à régler dans <code>limits</code> : la VM applique une valeur par défaut quand on ne demande rien, et ramène toute demande à son plafond (d'après le service execd du dépôt, version 2.0.11).</p>
+<div class="tableau"><table>
+<thead><tr><th>Clé</th><th>Ce qu'elle borne</th><th>Défaut</th><th>Plafond</th></tr></thead>
+<tbody>
+<tr><td><code>wall_ms</code></td><td>Durée réelle de l'exécution (ms)</td><td>30 000</td><td>300 000</td></tr>
+<tr><td><code>cpu_ms</code></td><td>Temps de calcul (ms)</td><td>30 000</td><td>300 000</td></tr>
+<tr><td><code>mem_bytes</code></td><td>Mémoire (octets ; 128 Mio au moins)</td><td>512 Mio</td><td>768 Mio</td></tr>
+<tr><td><code>fsize_bytes</code></td><td>Taille d'un fichier écrit (octets)</td><td>256 Mio</td><td>1 Gio</td></tr>
+<tr><td><code>nofile</code></td><td>Fichiers ouverts</td><td>256</td><td>1 024</td></tr>
+<tr><td><code>nproc</code></td><td>Processus</td><td>64</td><td>256</td></tr>
+<tr><td><code>out_files</code></td><td>Fichiers produits</td><td>128</td><td>512</td></tr>
+</tbody>
+</table></div>
+<p>Ce que le modèle voit de la sortie standard et de la sortie d'erreur est borné à 4 000 caractères chacune (le début et la fin).</p>
+
+<h4>Exécution</h4>
+<div class="encadre reel"><p class="encadre-titre">Relevé lors des essais de loom, non rejoué pendant la rédaction</p>
+<p>Ces résultats viennent des essais de recette de loom (<code>docs/loom_testing.md</code> du dépôt, fiche D9, 19 octobre 2026), sur une machine avec KVM, avec un vrai modèle (Claude Haiku) et <code>limits: {wall_ms: 9000}</code>. Ce sont des constats résumés, pas des sorties copiées.</p>
+<ul>
+<li>Première forge d'un run : <code>forge__forge</code> démarre la VM, exécute les deux exemples de l'outil <code>carre</code> (3 → 9, -4 → 16) et l'accepte en 1,8 s, démarrage compris. <code>forge__call</code> rend ensuite 144 en 115 ms : la VM est déjà démarrée. Le catalogue contient <code>catalogue/default/carre/</code>, avec <code>carre.py</code> et <code>outil.json</code>. La VM est arrêtée à la fin du processus.</li>
+<li>Au run suivant, <code>forge__carre</code> est un outil à part entière, appelé directement (49, en 1,6 s démarrage compris).</li>
+<li>Un exemple faux : « Outil double refusé — exemple 1 {"n": 3} : attendu 7, obtenu 6 », et rien au catalogue.</li>
+<li>Un code qui veut le réseau : erreur <code>Temporary failure in name resolution</code>, avec la trace Python ; l'outil est refusé.</li>
+<li>Un calcul trop long, appelé par <code>forge__call</code> : « Échec dans la VM (timeout) : depassement de wall_ms (9000 ms) {"limit": "wall_ms", "elapsed_ms": 9021} ». Le run se termine, la VM survit, et l'outil suivant fonctionne.</li>
+<li>Un autre client (<code>dupont</code>) ne voit que <code>forge__forge</code> et <code>forge__call</code> : son catalogue, <code>catalogue/dupont/</code>, est vide.</li>
+</ul></div>
+
+<h4>À retenir</h4>
+<ul>
+<li>Le catalogue est rangé par client : un outil forgé pour la Plomberie Dupont n'existe pas pour le Chauffage Martin.</li>
+<li>Pour la production : lancez la VM sous <code>jailer</code> (<code>jailer-run.sh</code>), gardez l'approbation sur <code>forge</code>, versionnez le catalogue, et faites relire chaque outil avant de le promouvoir.</li>
+</ul>
+</section>
+
+<h2 id="bilan">Bilan du module</h2>
+<p>L'agent est en <strong>v2.0</strong>. L'assistant consulte le calendrier de l'entreprise, fourni par un paquet que d'autres projets peuvent installer. L'atelier a sa configuration, son catalogue et son approbation ; il ne lui manque qu'une VM.</p>
+<figure class="code"><figcaption>dans le dossier parent</figcaption>
+<pre><code>calendrier-artisan/          le paquet de la source calendrier
+├── pyproject.toml           + le point d'entrée loom_ia.tools
+└── src/calendrier_artisan/__init__.py
+loom_v2/firecracker/         make_vm.sh, service/, jailer-run.sh (dépôt, v2.0.11)
+plomberie-dupont/
+├── loom.yaml                + tool_sources: calendrier ; + la scène « jour ouvré » de SIMULE
+├── agents/assistant.yaml    + - source: calendrier
+├── conges.json              les congés de l'entreprise
+├── pyproject.toml           + calendrier-artisan (éditable)
+├── evals/journaux/          régénérés
+├── atelier/
+│   ├── loom.yaml            la source forge (vm_dir ~/vms/dupont-forge, approbation de forge)
+│   ├── agents/atelier.yaml
+│   ├── catalogue/default/tva_mixte/
+│   └── controles_forge.py
+└── … les fichiers du module 14</code></pre></figure>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+    "calendrier-artisan",
+    "loom-ia[anthropic,crypto,http,mcp,openai,otel,postgres,rabbitmq,redis,sqlite]&gt;=2.0.11",
+]
+
+[dependency-groups]
+dev = [
+    "pytest&gt;=9.1.1",
+    "pytest-asyncio&gt;=1.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.uv.sources]
+calendrier-artisan = { path = "../calendrier-artisan", editable = true }</code></pre></figure>
+<figure class="code"><figcaption>atelier/loom.yaml</figcaption>
+<pre><code>version: 1
+
+agents_dir: agents/
+
+models:
+  - id: SIMULE_ATELIER
+    sdk: fake
+    model: fake-atelier
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        # Appeler un outil du catalogue
+        - with_text: TVA mixte
+          text: J'appelle l'outil tva_mixte du catalogue.
+          tool_calls:
+            - name: forge__tva_mixte
+              arguments: {ht_55: 1000, ht_20: 500}
+        - with_text: TVA mixte
+          text: Le calcul n'a pas pu être fait.
+        # Forger un nouvel outil
+        - with_text: acompte
+          text: Je forge un outil de calcul d'acompte.
+          tool_calls:
+            - name: forge__forge
+              arguments:
+                name: acompte
+                description: Calcule l'acompte à verser sur un montant TTC, selon un pourcentage.
+                input_schema:
+                  type: object
+                  properties:
+                    montant_ttc: {type: number}
+                    pourcentage: {type: number}
+                  required: [montant_ttc, pourcentage]
+                code: |
+                  def acompte(montant_ttc, pourcentage):
+                      return round(montant_ttc * pourcentage / 100, 2)
+                examples:
+                  - arguments: {montant_ttc: 1840, pourcentage: 30}
+                    expected: 552.0
+        - with_text: acompte
+          text: L'outil acompte n'a pas été créé.
+
+tool_sources:
+  - name: forge
+    entry_point: forge
+    params:
+      vm_dir: ~/vms/dupont-forge
+      catalog_dir: catalogue
+      limits: {wall_ms: 5000}
+    tools:
+      forge: {approval: always}
+
+telemetry:
+  logging: {level: WARNING}
+
+storage:
+  events: {backend: jsonl, path: data}</code></pre></figure>
+<p>Le fichier <code>loom.yaml</code> du projet est celui de l'exercice 15.2, et <code>agents/assistant.yaml</code> aussi (sans <code>required</code>).</p>
+
+<h2 id="fin-formation">Bilan de la formation</h2>
+<p>Parti d'un dossier vide et d'un modèle simulé, l'assistant de la Plomberie Dupont est devenu, module après module, un agent complet :</p>
+<div class="tableau"><table>
+<thead><tr><th>Modules</th><th>Ce que l'agent a appris</th></tr></thead>
+<tbody>
+<tr><td><a href="module-01.html">1</a> à <a href="module-03.html">3</a></td><td>Tourner, avec ses outils Python et plusieurs modèles, sans clé puis avec.</td></tr>
+<tr><td><a href="module-04.html">4</a> et <a href="module-05.html">5</a></td><td>Se souvenir d'une conversation et de son state, et utiliser des outils MCP.</td></tr>
+<tr><td><a href="module-06.html">6</a> et <a href="module-07.html">7</a></td><td>Déléguer à des rôles et à un sous-agent, et livrer des sorties vérifiées par contrat et par juge.</td></tr>
+<tr><td><a href="module-08.html">8</a> et <a href="module-09.html">9</a></td><td>Demander l'accord de l'artisan, reprendre après une panne sans envoyer deux fois, tenir un budget.</td></tr>
+<tr><td><a href="module-10.html">10</a> et <a href="module-11.html">11</a></td><td>S'ouvrir à d'autres programmes (Python, REST, MCP) et se déclencher tout seul.</td></tr>
+<tr><td><a href="module-12.html">12</a></td><td>Servir plusieurs clients sans mélanger leurs données.</td></tr>
+<tr><td><a href="module-13.html">13</a> et <a href="module-14.html">14</a></td><td>Être observé, rejoué, évalué et protégé contre les régressions.</td></tr>
+<tr><td>15</td><td>Recevoir des outils d'un paquet, et en forger dans une VM isolée.</td></tr>
+</tbody>
+</table></div>
+<p>Toutes les fonctions de loom ont été vues au moins une fois ; la <a href="matrice.html">matrice des fonctions</a> dit où retrouver chacune, et l'<a href="reference.html">annexe de référence</a> rassemble les commandes et les clés de configuration.</p>
+<h3>Pour aller plus loin</h3>
+<ul>
+<li><strong>Passer aux vrais modèles.</strong> Chaque module a un encadré « Variante vrai modèle » (<a href="module-01.html#vrai-modele">rappel</a>). Rejouez vos suites d'évaluations avec de vrais modèles et <code>repeat</code> avant de changer de modèle en production (<a href="module-14.html#ex-14-2">module 14</a>).</li>
+<li><strong>Publier la source.</strong> <code>uv build</code> dans <code>calendrier-artisan/</code> produit un paquet installable ; publié sur un dépôt privé, il remplace la ligne <code>[tool.uv.sources]</code> de chaque projet.</li>
+<li><strong>Construire la VM.</strong> Sur une machine avec KVM, terminez l'exercice 15.8, puis faites forger un outil à l'atelier avec un vrai modèle, approbation comprise.</li>
+<li><strong>Lire la documentation du dépôt.</strong> <code>docs/configuration.md</code> décrit chaque clé de configuration ; les guides <code>docs/howto/</code> reprennent ces fonctions sous d'autres angles.</li>
+</ul>
+
+<nav class="suite" aria-label="Pages voisines"><a class="avant" href="module-14.html"><small>Précédent</small>Module 14 : Qualité : évals et non-régression</a><a class="apres" href="reference.html"><small>Suivant</small>Référence : CLI et configuration</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>

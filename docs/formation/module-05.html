@@ -1,0 +1,1099 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 5 : Outils MCP et mémoire long terme · loom_v2</title>
+<meta name="description" content="Module 5 de la formation loom_v2 : comprendre MCP, écrire un petit serveur MCP en Python, le brancher sur l&#x27;agent en stdio puis en HTTP, choisir ses outils, gérer son indisponibilité, et donner à l&#x27;agent une mémoire long terme avec loom-notes.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li class="ici"><a href="module-05.html" aria-current="page"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li class="ici"><a href="module-05.html" aria-current="page"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li><a href="module-14.html"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<h1>Module 5 : Outils MCP et mémoire long terme</h1>
+<p class="chapeau">Jusqu'ici, les outils de l'agent étaient écrits en Python dans le projet, ou livrés avec loom. Beaucoup d'outils existent déjà ailleurs, sous forme de serveurs MCP : un catalogue de fournisseur, un CRM, un agenda, une mémoire. Ce module vous fait écrire un petit serveur MCP, le brancher sur l'agent, puis donner à l'agent une mémoire qui dure au-delà d'une conversation.</p>
+
+<dl class="fiche-agent">
+<dt>Agent</dt><dd><code>assistant</code>, dans le dossier <code>plomberie-dupont/</code></dd>
+<dt>Départ</dt><dd>la fin du <a href="module-04.html#bilan">module 4</a> : quatre outils Python, un state de session</dd>
+<dt>Arrivée</dt><dd><span class="version">v0.5</span> : consulte le catalogue du fournisseur par MCP ; sait retenir des notes d'une fois sur l'autre</dd>
+<dt>Fonctions</dt><dd><a class="fn" href="matrice.html#D3">D3</a><a class="fn" href="matrice.html#F6">F6</a></dd>
+</dl>
+
+<details class="depart"><summary>Point de départ : les fichiers au début du module</summary>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: Relance le devis
+          text: Je cherche le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance le devis
+          text: "Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »"
+        - with_text: étiquette
+          reasoning: Jean veut l'étiquette ; l'outil etiquette_devis la fabrique.
+          text: Je fabrique l'étiquette.
+          tool_calls:
+            - name: etiquette_devis
+              arguments: {numero: D-2026-042}
+        - with_text: étiquette
+          text: Voici l'étiquette orange du devis D-2026-042 (envoyé).
+        - with_text: Refais-la
+          text: "Voici une relance plus ferme pour le devis D-2026-042 : « Madame, sans réponse de votre part à notre devis du 3 septembre 2026, nous vous remercions de nous indiquer sous huit jours si vous souhaitez le remplacement de votre chauffe-eau. »"
+        - with_text: quel était le montant
+          text: Le devis D-2026-042 s'élève à 1 840 € TTC.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la {{ entreprise }}, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.</code></pre></figure>
+<figure class="code"><figcaption>outils.py</figcaption>
+<pre><code>import struct
+import zlib
+
+from loom_ia.core.ports import ToolError
+from loom_ia.tools import Image, tool
+
+# Le carnet de devis de l'entreprise. Plus tard, ce sera une base de données ou un CRM.
+DEVIS = {
+    "D-2026-042": {
+        "client": "Mme Martin",
+        "email": "martin@example.fr",
+        "objet": "Remplacement du chauffe-eau",
+        "montant_ht": 1533.33,
+        "taux_tva": 20,
+        "montant_ttc": 1840.00,
+        "date": "2026-09-03",
+        "statut": "envoyé",
+    },
+    "D-2026-050": {
+        "client": "M. Bernard",
+        "email": "bernard@example.fr",
+        "objet": "Détartrage de la chaudière",
+        "montant_ht": 150.00,
+        "taux_tva": 10,
+        "montant_ttc": 165.00,
+        "date": "2026-09-20",
+        "statut": "accepté",
+    },
+}
+
+
+@tool
+def prix_ttc(montant_ht: float, taux_tva: float = 20.0) -&gt; dict[str, float]:
+    """Calcule la TVA et le montant TTC à partir d'un montant HT. Le taux est en pourcentage."""
+    tva = round(montant_ht * taux_tva / 100, 2)
+    return {"montant_ht": montant_ht, "tva": tva, "montant_ttc": round(montant_ht + tva, 2)}
+
+
+@tool
+def chercher_devis(numero: str) -&gt; dict[str, str | float]:
+    """Retrouve un devis par son numéro (par exemple D-2026-042) : client, objet, montants, date, statut."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}. Numéros connus : {', '.join(DEVIS)}")
+    return {"numero": numero, **devis}
+
+
+# Couleur de l'étiquette selon le statut du devis.
+COULEURS = {"envoyé": (230, 140, 30), "accepté": (40, 150, 80)}
+
+
+@tool
+def etiquette_devis(numero: str) -&gt; Image:
+    """Fabrique l'étiquette de couleur d'un devis (orange : envoyé, vert : accepté), en image PNG."""
+    devis = DEVIS.get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}.")
+    couleur = COULEURS.get(str(devis["statut"]), (120, 120, 120))
+    return Image(png_uni(160, 60, couleur), name=f"etiquette-{numero}.png")
+
+
+def png_uni(largeur: int, hauteur: int, rgb: tuple[int, int, int]) -&gt; bytes:
+    """Une image PNG d'une seule couleur, écrite sans bibliothèque d'image."""
+    ligne = b"\x00" + bytes(rgb) * largeur
+    brut = zlib.compress(ligne * hauteur)
+
+    def bloc(nature: bytes, donnees: bytes) -&gt; bytes:
+        crc = zlib.crc32(nature + donnees)
+        return struct.pack("&gt;I", len(donnees)) + nature + donnees + struct.pack("&gt;I", crc)
+
+    entete = struct.pack("&gt;IIBBBBB", largeur, hauteur, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + bloc(b"IHDR", entete) + bloc(b"IDAT", brut) + bloc(b"IEND", b"")</code></pre></figure>
+<figure class="code"><figcaption>.gitignore</figcaption>
+<pre><code>.env
+data/
+__pycache__/</code></pre></figure>
+<p>Extras installés : <code>anthropic</code>, <code>openai</code>, <code>sqlite</code>, <code>postgres</code>.</p>
+<p>Et <code>pyproject.toml</code>, écrit par uv, qui dit quels extras de loom-ia sont installés (pour repartir de ce point : <code>uv sync</code>) :</p>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+    "loom-ia[anthropic,openai,postgres,sqlite]&gt;=2.0.11",
+]</code></pre></figure>
+</details>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-5-1">
+<h3><span class="exo-num">5.1</span> MCP en deux mots, et un premier serveur</h3>
+<p class="fns"><a class="fn" href="matrice.html#D3">D3</a></p>
+
+<h4>Pourquoi</h4>
+<p>Jean veut que l'assistant puisse donner le prix d'un chauffe-eau chez son fournisseur. Le fournisseur pourrait publier son catalogue sous forme de serveur MCP : n'importe quel agent pourrait alors l'interroger, sans que chacun réécrive l'outil.</p>
+
+<h4>Ce qu'est MCP</h4>
+<p><strong>MCP</strong> (Model Context Protocol) est un protocole standard entre une application IA et un programme qui lui propose des outils. Le programme s'appelle un <strong>serveur MCP</strong> ; l'application est le <strong>client</strong>. Claude Desktop, Claude Code et loom sont des clients MCP. Un outil publié par un serveur MCP sert donc partout.</p>
+<p>Concrètement, loom :</p>
+<ol>
+<li>lance le serveur (ou s'y connecte s'il tourne déjà) ;</li>
+<li>lui demande la liste de ses outils, avec leur description et leurs arguments ;</li>
+<li>les propose au modèle, comme ses outils Python ;</li>
+<li>quand le modèle en appelle un, transmet l'appel au serveur et rend le résultat au modèle.</li>
+</ol>
+<p>Le serveur et loom se parlent de deux façons, appelées <strong>transports</strong> : <code>stdio</code>, où loom lance le serveur comme un sous-programme et lui parle par son entrée et sa sortie standard ; <code>http</code>, où le serveur tourne de son côté, éventuellement sur une autre machine, et loom s'y connecte par une adresse web.</p>
+
+<h4>Mise en place</h4>
+<p>Pour écrire un serveur et pour que loom parle MCP, il faut le SDK MCP, fourni par l'extra <code>mcp</code>. Redonnez la liste complète des extras :</p>
+<pre><code><span class="p">$ </span>uv add "loom-ia[anthropic,openai,sqlite,postgres,mcp]"
+Resolved 46 packages in 116ms
+Installed 15 packages in 23ms
+ + mcp==1.30.0
+…</code></pre>
+<p>Écrivez le serveur du catalogue, avec des données fictives, dans un dossier <code>serveurs/</code> :</p>
+<pre><code><span class="p">$ </span>mkdir serveurs</code></pre>
+<figure class="code"><figcaption>serveurs/catalogue.py</figcaption>
+<pre><code>"""Serveur MCP du catalogue d'un fournisseur de plomberie (données fictives)."""
+
+import sys
+
+from mcp.server.fastmcp import FastMCP
+
+serveur = FastMCP("catalogue", host="127.0.0.1", port=8765, log_level="WARNING")
+
+ARTICLES = {
+    "CE-THERMO-200": {"nom": "Chauffe-eau thermodynamique 200 L", "prix_ht": 1290.00, "stock": 3},
+    "CE-ELEC-150": {"nom": "Chauffe-eau électrique 150 L", "prix_ht": 389.00, "stock": 0},
+    "GS-34": {"nom": "Groupe de sécurité 3/4", "prix_ht": 24.90, "stock": 25},
+}
+
+
+def article(reference: str) -&gt; dict:
+    if reference not in ARTICLES:
+        raise ValueError(f"Référence inconnue : {reference}")
+    return ARTICLES[reference]
+
+
+@serveur.tool()
+def rechercher_article(texte: str) -&gt; list[dict]:
+    """Cherche des articles du catalogue dont le nom contient ce texte."""
+    texte = texte.lower()
+    return [
+        {"reference": ref, "nom": a["nom"]}
+        for ref, a in ARTICLES.items()
+        if texte in a["nom"].lower()
+    ]
+
+
+@serveur.tool()
+def prix_article(reference: str) -&gt; dict:
+    """Donne le prix public HT d'un article, par sa référence."""
+    return {"reference": reference, "prix_ht": article(reference)["prix_ht"]}
+
+
+@serveur.tool()
+def stock_article(reference: str) -&gt; dict:
+    """Donne le nombre d'exemplaires en stock d'un article, par sa référence."""
+    return {"reference": reference, "stock": article(reference)["stock"]}
+
+
+if __name__ == "__main__":
+    serveur.run(transport="streamable-http" if "--http" in sys.argv else "stdio")</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>FastMCP("catalogue", …)</code></td><td>Le serveur, avec son nom. <code>host</code> et <code>port</code> ne servent qu'en HTTP (exercice 5.5). <code>log_level="WARNING"</code> le rend discret.</td></tr>
+<tr><td><code>@serveur.tool()</code></td><td>Publie la fonction comme outil MCP. Comme <code>@tool</code> dans loom (module 2), la signature donne le schéma des arguments et la docstring la description lue par le modèle.</td></tr>
+<tr><td><code>raise ValueError(…)</code></td><td>Une erreur dans un outil revient au client comme un résultat d'erreur.</td></tr>
+<tr><td><code>serveur.run(…)</code></td><td>Démarre le serveur : en <code>stdio</code> par défaut, en HTTP avec l'option <code>--http</code>.</td></tr>
+</tbody>
+</table></div>
+<p>Vous ne lancez pas ce serveur vous-même : en <code>stdio</code>, c'est loom qui le démarre à chaque commande, et l'arrête à la fin.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-5-2">
+<h3><span class="exo-num">5.2</span> Brancher le serveur sur l'agent</h3>
+<p class="fns"><a class="fn" href="matrice.html#D3">D3</a></p>
+
+<h4>Mise en place</h4>
+<p>Comme un modèle, un serveur MCP se déclare une fois dans <code>loom.yaml</code>, puis les agents qui en ont besoin le citent. Le script du modèle simulé est remplacé, pour ce module, par des scènes qui appellent le catalogue :</p>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+<span class="aj">        - with_text: chauffe-eau thermodynamique</span><span class="aj">          text: Je cherche l'article dans le catalogue du fournisseur.</span>          tool_calls:
+<span class="aj">            - name: catalogue__rechercher_article</span><span class="aj">              arguments: {texte: thermodynamique}</span><span class="aj">        - with_text: chauffe-eau thermodynamique</span><span class="aj">          text: Je regarde son prix et son stock.</span>          tool_calls:
+<span class="aj">            - name: catalogue__prix_article</span><span class="aj">              arguments: {reference: CE-THERMO-200}</span><span class="aj">            - name: catalogue__stock_article</span><span class="aj">              arguments: {reference: CE-THERMO-200}</span><span class="aj">        - with_text: chauffe-eau thermodynamique</span><span class="aj">          text: Le chauffe-eau thermodynamique 200 L (référence CE-THERMO-200) coûte 1 290 € HT chez le fournisseur, et il en reste 3 en stock.</span><span class="aj">        - with_text: CE-XYZ</span><span class="aj">          text: Je regarde le prix.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: catalogue__prix_article</span><span class="aj">              arguments: {reference: CE-XYZ}</span><span class="aj">        - with_text: CE-XYZ</span><span class="aj">          text: Le fournisseur ne connaît pas la référence CE-XYZ. Vérifiez-la sur votre bon de commande.</span>
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+<span class="aj">mcp_servers:</span><span class="aj">  - name: catalogue</span><span class="aj">    transport: stdio</span><span class="aj">    command: python</span><span class="aj">    args: [serveurs/catalogue.py]</span><span class="aj"> </span>storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées ou modifiées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>mcp_servers:</code></td><td>La liste des serveurs MCP utilisables par les agents.</td></tr>
+<tr><td><code>name: catalogue</code></td><td>Le nom du serveur dans la configuration. Il sert aussi de préfixe à ses outils.</td></tr>
+<tr><td><code>transport: stdio</code></td><td>loom lance le serveur et lui parle par son entrée et sa sortie standard.</td></tr>
+<tr><td><code>command: python</code></td><td>Le programme à lancer. C'est le Python de l'environnement activé (avec <code>uv run loom</code>, celui du projet aussi).</td></tr>
+<tr><td><code>args: [serveurs/catalogue.py]</code></td><td>Ses arguments. Le programme est lancé depuis le dossier de <code>loom.yaml</code> (réglable par <code>cwd</code>).</td></tr>
+</tbody>
+</table></div>
+<p>Dans l'agent, une ligne ajoute tous les outils du serveur :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+<span class="aj">  - mcp: catalogue</span>
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<p>Et une consigne dans le prompt :</p>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la {{ entreprise }}, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.
+<span class="aj">Pour le prix ou le stock d'un article chez le fournisseur, utilise les outils</span><span class="aj">du catalogue (catalogue__rechercher_article, catalogue__prix_article…).</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | tail -6
+  client default
+    variables : entreprise
+    assistant : modèle SIMULE, 4 outil(s) Python
+    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
+
+1 agent(s) monté(s) sans erreur.</code></pre>
+<p>Pour lister les outils, <code>loom validate</code> a lancé le serveur et lui a demandé ce qu'il propose : trois outils, préfixés par le nom du serveur, <code>catalogue__</code>. Le préfixe évite les collisions : deux serveurs peuvent avoir chacun un outil <code>rechercher</code>.</p>
+<pre><code><span class="p">$ </span>loom run assistant "Quel est le prix du chauffe-eau thermodynamique chez le fournisseur ?" --session catalogue
+Le chauffe-eau thermodynamique 200 L (référence CE-THERMO-200) coûte 1 290 € HT chez le fournisseur, et il en reste 3 en stock.
+
+Statut     : completed · itérations : 3 · tokens : 4029/251 · coût : 0.0000 $
+Run        : 01a16e0f-ae86-75bb-8d5c-3170d12c1c64
+<span class="p">$ </span>loom inspect 01a16e0f-ae86-75bb-8d5c-3170d12c1c64 --session catalogue
+Run        : 01a16e0f-ae86-75bb-8d5c-3170d12c1c64 (agent assistant, client default)
+Session    : catalogue
+Statut     : completed, 3 itération(s)
+Usage      : 4029 → 251 tokens, 0.000000 $, 42 ms de pilotage
+
+run assistant — completed, 889 ms, 0.000000 $
+  étape 1
+    modèle SIMULE (fake-1) (main) — 1 ms, 1117 → 80 tokens, 0.000000 $
+      · répond    : Je cherche l'article dans le catalogue du fournisseur.
+      · appelle   : catalogue__rechercher_article({"texte": "thermodynamique"})
+  étape 2
+    outil catalogue__rechercher_article — 10 ms
+      · arguments : {"texte": "thermodynamique"}
+      · résultat  : { "reference": "CE-THERMO-200", "nom": "Chauffe-eau thermodynamique 200 L" }
+  étape 3
+    modèle SIMULE (fake-1) (main) — 2 ms, 1312 → 114 tokens, 0.000000 $
+      · répond    : Je regarde son prix et son stock.
+      · appelle   : catalogue__prix_article({"reference": "CE-THERMO-200"})
+      · appelle   : catalogue__stock_article({"reference": "CE-THERMO-200"})
+  étape 4
+    outil catalogue__prix_article — 7 ms
+      · arguments : {"reference": "CE-THERMO-200"}
+      · résultat  : { "reference": "CE-THERMO-200", "prix_ht": 1290.0 }
+    outil catalogue__stock_article — 8 ms
+      · arguments : {"reference": "CE-THERMO-200"}
+      · résultat  : { "reference": "CE-THERMO-200", "stock": 3 }
+  étape 5
+    modèle SIMULE (fake-1) (main) — 1 ms, 1600 → 57 tokens, 0.000000 $
+      · répond    : Le chauffe-eau thermodynamique 200 L (référence CE-THERMO-200) coûte 1 290 € HT chez le fournisse…
+
+Réponse finale :
+  Le chauffe-eau thermodynamique 200 L (référence CE-THERMO-200) coûte 1 290 € HT chez le fournisseur, et il en reste 3 en stock.
+Bilan      : 3 appel(s) de modèle, 3 appel(s) d'outil</code></pre>
+<p>Pour le modèle et dans le journal, un outil MCP est un outil comme un autre : appelé, exécuté (ici deux dans le même lot, à l'étape 4), et son résultat revient au modèle. Une erreur du serveur revient aussi au modèle, comme pour un outil Python :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Quel est le prix de l'article CE-XYZ ?" --session catalogue-erreur
+Le fournisseur ne connaît pas la référence CE-XYZ. Vérifiez-la sur votre bon de commande.
+
+Statut     : completed · itérations : 2 · tokens : 2374/115 · coût : 0.0000 $
+Run        : 01a16e0f-bfe5-7485-8a92-6c7f35abd208
+<span class="p">$ </span>loom inspect 01a16e0f-bfe5-7485-8a92-6c7f35abd208 --session catalogue-erreur | sed -n 6,14p
+run assistant — completed, 713 ms, 0.000000 $
+  étape 1
+    modèle SIMULE (fake-1) (main) — 3 ms, 1109 → 68 tokens, 0.000000 $
+      · répond    : Je regarde le prix.
+      · appelle   : catalogue__prix_article({"reference": "CE-XYZ"})
+  étape 2
+    outil catalogue__prix_article — 6 ms (erreur)
+      · arguments : {"reference": "CE-XYZ"}
+      · résultat  : (erreur) Error executing tool prix_article: Référence inconnue : CE-XYZ</code></pre>
+
+<h4>À retenir</h4>
+<p>Ce que le serveur écrit sur sa sortie d'erreur (ses messages, ses plantages) est recopié dans la console de loom, préfixé par son nom entre crochets, par exemple <code>[catalogue]</code>. C'est la première chose à regarder quand un serveur ne démarre pas (exercice 5.4).</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-5-3">
+<h3><span class="exo-num">5.3</span> Choisir les outils exposés : <code>include</code>, <code>exclude</code>, <code>alias</code></h3>
+<p class="fns"><a class="fn" href="matrice.html#D3">D3</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un serveur MCP peut proposer des dizaines d'outils, dont certains n'ont rien à faire dans les mains de cet agent. Chaque outil proposé occupe aussi de la place dans chaque requête. On choisit donc ce que l'agent voit.</p>
+
+<h4>Mise en place et exécution</h4>
+<p>Ces réglages se mettent sous la ligne <code>- mcp: catalogue</code> de l'agent. Essayez-les un par un :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+<span class="aj">    include: [rechercher_article, prix_article]</span>
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<pre><code><span class="p">$ </span>loom validate | grep MCP
+    MCP : catalogue__rechercher_article, catalogue__prix_article</code></pre>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+<span class="aj">    exclude: [stock_article]</span>
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<pre><code><span class="p">$ </span>loom validate | grep MCP
+    MCP : catalogue__rechercher_article, catalogue__prix_article</code></pre>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+<span class="aj">    alias: fournisseur</span>
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<pre><code><span class="p">$ </span>loom validate | grep MCP
+    MCP : fournisseur__rechercher_article, fournisseur__prix_article, fournisseur__stock_article</code></pre>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>include: […]</code></td><td>Seuls ces outils sont proposés (noms courts, sans préfixe).</td></tr>
+<tr><td><code>exclude: […]</code></td><td>Ces outils sont retirés ; les autres sont proposés.</td></tr>
+<tr><td><code>alias: fournisseur</code></td><td>Un autre préfixe que le nom du serveur. Utile pour un nom plus parlant pour le modèle, ou pour brancher deux fois le même serveur avec des réglages différents.</td></tr>
+</tbody>
+</table></div>
+<div class="encadre piege"><p class="encadre-titre">Piège : <code>include</code> et <code>exclude</code> ensemble</p>
+<p>C'est l'un ou l'autre :</p>
+<pre><code>Configuration : /home/jean/plomberie-dupont/agents/assistant.yaml: tools.4.mcp — Serveur MCP 'catalogue' : 'include' ou 'exclude', pas les deux</code></pre>
+<p>Et avec un <code>alias</code>, les noms d'outils changent : un script ou un prompt qui cite <code>catalogue__prix_article</code> ne correspond plus.</p></div>
+<p>Remettez la ligne <code>- mcp: catalogue</code> seule avant la suite.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-5-4">
+<h3><span class="exo-num">5.4</span> Quand le serveur ne répond pas : <code>required</code></h3>
+<p class="fns"><a class="fn" href="matrice.html#D3">D3</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un serveur MCP est un autre programme : il peut planter, ne pas démarrer, être injoignable. Faut-il que l'agent continue sans ses outils, ou qu'il s'arrête ? Cela dépend de l'outil, et c'est vous qui le dites.</p>
+
+<h4>Mise en place</h4>
+<p>Simulez une panne avec une faute dans le nom du fichier du serveur :</p>
+<figure class="code"><figcaption>loom.yaml (seul le bloc <code>mcp_servers</code> change ; le reste est celui de l'exercice 5.2)</figcaption>
+<pre><code>mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+<span class="aj">    args: [serveurs/catalog.py]</span></code></pre></figure>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | tail -4
+[catalogue] python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory
+2026-10-24 15:18:22 WARNING  loom_ia.engine.executor — Source d'outils catalogue indisponible : le serveur s'est arrêté ou a refusé l'ouverture (Connection closed) ; fin de son stderr : python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory [run_id=validate]
+    MCP : aucun
+    MCP catalogue indisponible : le serveur s'est arrêté ou a refusé l'ouverture (Connection closed) ; fin de son stderr : python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory
+
+1 agent(s) monté(s) sans erreur.
+<span class="p">$ </span>loom run assistant "Quel est le prix du chauffe-eau thermodynamique chez le fournisseur ?" --session sans-catalogue
+[catalogue] python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory
+2026-10-24 15:18:24 WARNING  loom_ia.engine.executor — Source d'outils catalogue indisponible : le serveur s'est arrêté ou a refusé l'ouverture (Connection closed) ; fin de son stderr : python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory [run_id=01a16e0f-fbef-76e9-a69a-c35d1e675b53]
+Le chauffe-eau thermodynamique 200 L (référence CE-THERMO-200) coûte 1 290 € HT chez le fournisseur, et il en reste 3 en stock.
+
+Statut     : completed · itérations : 3 · tokens : 3502/251 · coût : 0.0000 $
+Run        : 01a16e0f-fbef-76e9-a69a-c35d1e675b53
+<span class="p">$ </span>loom inspect 01a16e0f-fbef-76e9-a69a-c35d1e675b53 --session sans-catalogue | sed -n 6,14p
+run assistant — completed, 128 ms, 0.000000 $
+  · tool.source_unavailable (warning)
+  étape 1
+    modèle SIMULE (fake-1) (main) — 2 ms, 940 → 80 tokens, 0.000000 $
+      · répond    : Je cherche l'article dans le catalogue du fournisseur.
+      · appelle   : catalogue__rechercher_article({"texte": "thermodynamique"})
+  étape 2
+    appel catalogue__rechercher_article — refusé avant exécution
+      · résultat  : (erreur) Outil inconnu : 'catalogue__rechercher_article'. Outils disponibles : fetch_page, prix_t…</code></pre>
+<p>Par défaut, un serveur indisponible ne bloque pas l'agent : loom le signale (événement <code>tool.source_unavailable</code>, et la fin du stderr du serveur, qui donne la cause), puis le run continue sans ses outils. Si le modèle en appelle un quand même, l'appel est refusé avant exécution, avec la liste des outils disponibles. (Le modèle simulé répond ensuite son texte prévu ; un vrai modèle dirait qu'il n'a pas pu consulter le catalogue.)</p>
+<p>Si l'agent ne peut rien faire d'utile sans ce serveur, déclarez-le <strong>requis</strong> :</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+<span class="aj">    required: true</span>
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<pre><code><span class="p">$ </span>loom run assistant "Quel est le prix du chauffe-eau thermodynamique chez le fournisseur ?" --session catalogue-requis
+[catalogue] python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory
+2026-10-24 15:18:27 WARNING  loom_ia.engine.executor — Source d'outils catalogue indisponible : le serveur s'est arrêté ou a refusé l'ouverture (Connection closed) ; fin de son stderr : python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory [run_id=01a16e10-095f-71c4-9200-44d063b9da23]
+—
+
+Statut     : failed · itérations : 0 · tokens : 0/0 · coût : 0.0000 $
+Run        : 01a16e10-095f-71c4-9200-44d063b9da23
+Erreur     : source catalogue requise et indisponible : le serveur s'est arrêté ou a refusé l'ouverture (Connection closed) ; fin de son stderr : python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory (tool.source_unavailable)
+<span class="p">$ </span>echo $?
+1</code></pre>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>required: true</code></td><td>Sans ce serveur, le run échoue au lieu de continuer sans ses outils. Défaut : <code>false</code>.</td></tr>
+</tbody>
+</table></div>
+<p>Corrigez le nom du fichier et retirez <code>required</code> avant la suite.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-5-5">
+<h3><span class="exo-num">5.5</span> Un serveur en HTTP, et la vie d'une connexion</h3>
+<p class="fns"><a class="fn" href="matrice.html#D3">D3</a></p>
+
+<h4>Pourquoi</h4>
+<p>Un vrai fournisseur ne vous donnerait pas son code à lancer : il ferait tourner son serveur chez lui et vous donnerait une adresse. C'est le transport <code>http</code>.</p>
+
+<h4>Mise en place</h4>
+<p>Lancez le serveur du catalogue en HTTP dans un second terminal (il reste au premier plan ; Ctrl+C l'arrête) :</p>
+<pre><code><span class="p">$ </span>python serveurs/catalogue.py --http</code></pre>
+<p>Il écoute sur <code>http://127.0.0.1:8765/mcp</code>. Dans <code>loom.yaml</code>, le serveur change de transport :</p>
+<figure class="code"><figcaption>loom.yaml (seul le bloc <code>mcp_servers</code> change ; le reste est celui de l'exercice 5.2)</figcaption>
+<pre><code>mcp_servers:
+  - name: catalogue
+<span class="aj">    transport: http</span><span class="aj">    url: http://127.0.0.1:8765/mcp</span></code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>transport: http</code></td><td>loom se connecte à un serveur qui tourne déjà.</td></tr>
+<tr><td><code>url:</code></td><td>Son adresse. <code>command</code> et <code>args</code> n'ont plus de sens et sont refusés.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | grep MCP
+    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
+<span class="p">$ </span>loom run assistant "Quel est le prix du chauffe-eau thermodynamique chez le fournisseur ?" --session catalogue-http
+Le chauffe-eau thermodynamique 200 L (référence CE-THERMO-200) coûte 1 290 € HT chez le fournisseur, et il en reste 3 en stock.
+
+Statut     : completed · itérations : 3 · tokens : 4029/251 · coût : 0.0000 $
+Run        : 01a16e10-2300-70c1-a635-287e782867f0</code></pre>
+<p>Même résultat qu'en <code>stdio</code> : pour l'agent, seul le chemin change. Un serveur HTTP protégé demande en général un jeton : on le passe par <code>headers_env</code>, qui nomme la variable d'environnement contenant l'en-tête (<code>headers_env: {Authorization: CATALOGUE_JETON}</code>), jamais le jeton lui-même.</p>
+<p>Arrêtez le serveur HTTP (Ctrl+C) et remettez la déclaration <code>stdio</code> de l'exercice 5.2 : c'est elle que garde la suite de la formation.</p>
+
+<h4>La vie d'une connexion</h4>
+<p>Quelques réglages du serveur dans <code>mcp_servers</code> décident quand loom ouvre et ferme la connexion :</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>scope: shared</code></td><td>Défaut. Une connexion pour tout le process loom, partagée par les runs. Fermée après <code>idle_timeout</code> secondes sans usage (300 par défaut).</td></tr>
+<tr><td><code>scope: tenant</code></td><td>Une connexion par client, chacune avec les secrets de son client (module 12). C'est ce qui isole les données de deux entreprises dans un même serveur lancé deux fois.</td></tr>
+<tr><td><code>scope: run</code></td><td>Une connexion ouverte au début du run et fermée à sa fin : rien ne passe d'un run à l'autre.</td></tr>
+<tr><td><code>connect_timeout</code></td><td>Délai pour établir la connexion (10 s par défaut). À augmenter pour un serveur lent à démarrer.</td></tr>
+<tr><td><code>env</code>, <code>env_from</code></td><td>Variables passées au serveur <code>stdio</code> : en clair (<code>env</code>), ou recopiées d'une variable de loom (<code>env_from</code>), pour un secret. loom ne lui transmet que celles-là et quelques variables de base.</td></tr>
+</tbody>
+</table></div>
+<p>Avec <code>loom run</code>, chaque commande est un process court : la connexion vit le temps de la commande, quelle que soit la portée. Les portées comptent pour un process qui dure, comme le serveur <code>loom serve</code> (module 10). Là, loom vérifie la santé d'une connexion avant de s'en servir : si le serveur MCP est mort entre deux runs, il est relancé (ou rejoint) automatiquement au run suivant. C'est la <strong>reconnexion</strong>.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-5-6">
+<h3><span class="exo-num">5.6</span> Une mémoire long terme : loom-notes</h3>
+<p class="fns"><a class="fn" href="matrice.html#F6">F6</a></p>
+
+<h4>Pourquoi</h4>
+<p>Jean dit à l'assistant : « Mme Martin préfère qu'on l'appelle le matin. » La semaine suivante, dans une autre conversation, l'assistant ne s'en souvient pas : une session (module 4) n'est pas une mémoire. Il faut un carnet de notes durable, où l'agent cherche librement, mais où il n'écrit qu'avec l'accord de Jean.</p>
+<p><strong>loom-notes</strong> est un serveur MCP de mémoire, publié sur PyPI : on y range des textes, des pages web ou des fichiers, et l'agent les retrouve par une recherche par le sens (on parle de <strong>RAG</strong> : l'agent retrouve des documents avant de répondre). Il se branche comme le catalogue.</p>
+
+<h4>Mise en place : installer loom-notes</h4>
+<p>loom-notes ne s'ajoute pas aux dépendances du projet : ses propres dépendances entrent en conflit avec celles de loom-ia. On l'installe à part, comme un outil isolé, avec <code>uv tool install</code>. En usage réel, il lui faut ses modèles d'intelligence artificielle (l'extra <code>models</code>, qui tire PyTorch et télécharge environ 5 Go au premier usage) :</p>
+<pre><code><span class="p">$ </span>uv tool install "loom-notes[models]"</code></pre>
+<p>Pour la formation, la version sans modèles suffit : loom-notes propose des <strong>modèles factices</strong> (variable <code>LOOM_NOTES_FAKE_MODELS</code>), qui permettent d'écrire, de lire et de chercher sans rien télécharger. La recherche n'y est pas « par le sens », mais le branchement, les écritures et les approbations sont réels.</p>
+<pre><code><span class="p">$ </span>uv tool install loom-notes
+…
+Installed 2 executables: loom-notes, loom-notes-mcp
+<span class="p">$ </span>which loom-notes-mcp
+/home/jean/.local/bin/loom-notes-mcp</code></pre>
+<p>Le serveur s'appelle <code>loom-notes-mcp</code>. Ses neuf outils : quatre lectures (<code>search</code>, <code>get</code>, <code>list_docs</code>, <code>projects</code>) et cinq écritures (<code>add_text</code>, <code>add_url</code>, <code>add_file</code>, <code>update</code>, <code>delete</code>).</p>
+
+<h4>Mise en place : la configuration</h4>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: chauffe-eau thermodynamique
+          text: Je cherche l'article dans le catalogue du fournisseur.
+          tool_calls:
+            - name: catalogue__rechercher_article
+              arguments: {texte: thermodynamique}
+        - with_text: chauffe-eau thermodynamique
+          text: Je regarde son prix et son stock.
+          tool_calls:
+            - name: catalogue__prix_article
+              arguments: {reference: CE-THERMO-200}
+            - name: catalogue__stock_article
+              arguments: {reference: CE-THERMO-200}
+        - with_text: chauffe-eau thermodynamique
+          text: Le chauffe-eau thermodynamique 200 L (référence CE-THERMO-200) coûte 1 290 € HT chez le fournisseur, et il en reste 3 en stock.
+<span class="aj">        - with_text: Mémorise</span><span class="aj">          text: J'enregistre la note dans la mémoire.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: memoire__add_text</span><span class="aj">              arguments:</span><span class="aj">                text: Mme Martin préfère être contactée le matin, avant 10 h.</span><span class="aj">                title: Préférence de contact de Mme Martin</span><span class="aj">                project: clients</span><span class="aj">        - with_text: Mémorise</span><span class="aj">          text: C'est noté dans la mémoire de l'entreprise.</span><span class="aj">        - with_text: appeler Mme Martin</span><span class="aj">          text: Je consulte la mémoire.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: memoire__search</span><span class="aj">              arguments: {query: "Mme Martin contact"}</span><span class="aj">        - with_text: appeler Mme Martin</span><span class="aj">          text: D'après la mémoire de l'entreprise, Mme Martin préfère être contactée le matin, avant 10 h.</span>        - with_text: CE-XYZ
+          text: Je regarde le prix.
+          tool_calls:
+            - name: catalogue__prix_article
+              arguments: {reference: CE-XYZ}
+        - with_text: CE-XYZ
+          text: Le fournisseur ne connaît pas la référence CE-XYZ. Vérifiez-la sur votre bon de commande.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+<span class="aj">  - name: memoire</span><span class="aj">    transport: stdio</span><span class="aj">    command: loom-notes-mcp</span><span class="aj">    env:</span><span class="aj">      LOOM_NOTES_DATA_DIR: memoire</span><span class="aj">      LOOM_NOTES_FAKE_MODELS: "1"</span><span class="aj">      LOOM_NOTES_WARMUP_ON_START: "false"</span><span class="aj">      FASTMCP_LOG_LEVEL: WARNING</span><span class="aj">    tools:</span><span class="aj">      add_text: {approval: always}</span><span class="aj">      add_url: {approval: always}</span><span class="aj">      add_file: {approval: always}</span><span class="aj">      update: {approval: always}</span><span class="aj">      delete: {approval: always}</span>
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>command: loom-notes-mcp</code></td><td>Le programme installé par <code>uv tool install</code> (dans <code>~/.local/bin</code>).</td></tr>
+<tr><td><code>env:</code></td><td>Les variables passées au serveur.</td></tr>
+<tr><td><code>LOOM_NOTES_DATA_DIR: memoire</code></td><td>Le dossier de ses données, ici <code>memoire/</code> dans le projet.</td></tr>
+<tr><td><code>LOOM_NOTES_FAKE_MODELS: "1"</code></td><td>Les modèles factices. À retirer avec les vrais modèles installés.</td></tr>
+<tr><td><code>LOOM_NOTES_WARMUP_ON_START: "false"</code></td><td>Ne pas précharger les modèles au démarrage (inutile avec des modèles factices).</td></tr>
+<tr><td><code>FASTMCP_LOG_LEVEL: WARNING</code></td><td>Rend le serveur discret dans la console.</td></tr>
+<tr><td><code>tools:</code></td><td>Des <strong>surcharges par outil</strong>, pour tous les agents qui utilisent ce serveur (noms courts, sans préfixe). Ce sont les mêmes que pour un outil Python (module 2).</td></tr>
+<tr><td><code>add_text: {approval: always}</code></td><td>Chaque appel à cet outil attend l'accord d'un humain avant de s'exécuter. Les cinq écritures sont ainsi protégées ; les lectures passent librement.</td></tr>
+</tbody>
+</table></div>
+<p>Les valeurs de <code>env</code> sont entre guillemets quand elles ressemblent à un nombre ou à un booléen : une variable d'environnement est toujours du texte.</p>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+<span class="aj">  - mcp: memoire</span>
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<p class="legende-aj"><span></span>ligne ajoutée</p>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la {{ entreprise }}, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.
+Pour le prix ou le stock d'un article chez le fournisseur, utilise les outils
+du catalogue (catalogue__rechercher_article, catalogue__prix_article…).
+<span class="aj">Avant de répondre sur un client, consulte la mémoire de l'entreprise</span><span class="aj">(memoire__search). N'y écris que si Jean te le demande dans son message.</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<p>loom-notes donne ces consignes au client dans ses « instructions » MCP, mais loom ne les transmet pas au modèle : recopiez dans le prompt celles qui comptent. Enfin, ajoutez <code>memoire/</code> au <code>.gitignore</code>.</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom validate | tail -4
+    assistant : modèle SIMULE, 4 outil(s) Python
+    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article, memoire__search, memoire__get, memoire__list_docs, memoire__projects, memoire__add_text, memoire__add_url, memoire__add_file, memoire__update, memoire__delete
+
+1 agent(s) monté(s) sans erreur.
+<span class="p">$ </span>loom run assistant "Mémorise que Mme Martin préfère être contactée le matin, avant 10 h." --session note-martin
+
+Statut     : paused · itérations : 1 · tokens : 2490/99 · coût : 0.0000 $
+Run        : 01a16e10-4523-718a-9336-a5d4f824d27c
+En attente : memoire__add_text (fake_0_0) — loom approve 01a16e10-4523-718a-9336-a5d4f824d27c --call fake_0_0 --session note-martin</code></pre>
+<p>Le run s'est arrêté en <code>paused</code> (code de sortie 1) : l'appel à <code>memoire__add_text</code> attend l'accord. La dernière ligne donne la commande à lancer pour l'accorder. Le module 8 détaille ces approbations (refuser, corriger les arguments, expiration) ; ici, Jean accepte :</p>
+<pre><code><span class="p">$ </span>loom approve 01a16e10-4523-718a-9336-a5d4f824d27c --call fake_0_0 --session note-martin
+Accordé : fake_0_0
+C'est noté dans la mémoire de l'entreprise.
+
+Statut     : completed · itérations : 2 · tokens : 5236/135 · coût : 0.0000 $
+Run        : 01a16e10-4523-718a-9336-a5d4f824d27c</code></pre>
+<p>La note est écrite. La semaine suivante, dans une autre session :</p>
+<pre><code><span class="p">$ </span>loom run assistant "Quand peut-on appeler Mme Martin ?" --session question-martin
+D'après la mémoire de l'entreprise, Mme Martin préfère être contactée le matin, avant 10 h.
+
+Statut     : completed · itérations : 2 · tokens : 5279/117 · coût : 0.0000 $
+Run        : 01a16e10-769a-72fb-98c9-2aa940b398a6
+<span class="p">$ </span>loom inspect 01a16e10-769a-72fb-98c9-2aa940b398a6 --session question-martin --full | sed -n 6,14p
+run assistant — completed, 3.3 s, 0.000000 $
+  étape 1
+    modèle SIMULE (fake-1) (main) — 3 ms, 2482 → 69 tokens, 0.000000 $
+      · répond    : Je consulte la mémoire.
+      · appelle   : memoire__search({"query": "Mme Martin contact"})
+  étape 2
+    outil memoire__search — 18 ms
+      · arguments : {"query": "Mme Martin contact"}
+      · résultat  : [{"doc_id":"13bdf3ef-d86a-41c7-984d-096e8ba5fd3b","title":"Préférence de contact de Mme Martin","project":"clients","score":1.0,"snippet":"Mme Martin préfère être contactée le matin, avant 10 h.","truncated":false,"heading_path":"Préférence de contact de Mme Martin","source":null,"added_at":"2026-10-24T13:18:52.799177+00:00"}]</code></pre>
+
+<h4>Ce qu'il faut comprendre</h4>
+<ul>
+<li>La note a traversé les sessions : elle vit dans la mémoire, pas dans le journal d'une conversation.</li>
+<li>Le contrôle des écritures est du code : sans l'accord de Jean, rien n'est écrit, quoi que le modèle décide.</li>
+<li>Avec les vrais modèles, <code>search</code> retrouve aussi une note formulée autrement (« joindre la cliente avant midi ») ; les modèles factices ne le font pas.</li>
+</ul>
+<div class="encadre piege"><p class="encadre-titre">Piège : un seul process à la fois</p>
+<p>Sans autre réglage, loom-notes range sa base (Qdrant) dans son dossier de données, et un seul process peut l'ouvrir. Deux commandes <code>loom</code> lancées en même temps sur le même dossier se gênent. Pour un usage partagé (Claude Desktop, un serveur), le README de loom-notes explique comment lancer Qdrant à part (variable <code>LOOM_NOTES_QDRANT_URL</code>). Pour deux entreprises, donnez à chacune son dossier et <code>scope: tenant</code> (module 12).</p></div>
+<div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
+<p>Avec <code>HAIKU</code>, Claude décide seul de chercher dans la mémoire avant de répondre sur un client, et n'appelle <code>add_text</code> que quand Jean le demande, comme le dit le prompt. Si une écriture est refusée, il reçoit le refus et le dit.</p></div>
+</section>
+
+<h2 id="bilan">Bilan du module</h2>
+<p>L'agent est en <strong>v0.5</strong> : il consulte le catalogue du fournisseur par MCP. Pour la suite, on garde le serveur du catalogue, en <code>stdio</code>, et on retire la mémoire loom-notes, qui demande une installation à part : remettez <code>loom.yaml</code>, l'agent et le prompt de l'exercice 5.2. Si vous voulez garder la mémoire, laissez sa configuration : la suite fonctionne aussi avec elle.</p>
+<figure class="code"><figcaption>plomberie-dupont/</figcaption>
+<pre><code>plomberie-dupont/
+├── loom.yaml            trois modèles, le serveur MCP catalogue, journal JSONL
+├── outils.py
+├── serveurs/
+│   └── catalogue.py     le serveur MCP du fournisseur
+├── agents/
+│   └── assistant.yaml   quatre outils Python et ceux du catalogue
+├── prompts/
+│   └── system.md
+└── data/</code></pre></figure>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - with_text: chauffe-eau thermodynamique
+          text: Je cherche l'article dans le catalogue du fournisseur.
+          tool_calls:
+            - name: catalogue__rechercher_article
+              arguments: {texte: thermodynamique}
+        - with_text: chauffe-eau thermodynamique
+          text: Je regarde son prix et son stock.
+          tool_calls:
+            - name: catalogue__prix_article
+              arguments: {reference: CE-THERMO-200}
+            - name: catalogue__stock_article
+              arguments: {reference: CE-THERMO-200}
+        - with_text: chauffe-eau thermodynamique
+          text: Le chauffe-eau thermodynamique 200 L (référence CE-THERMO-200) coûte 1 290 € HT chez le fournisseur, et il en reste 3 en stock.
+        - with_text: CE-XYZ
+          text: Je regarde le prix.
+          tool_calls:
+            - name: catalogue__prix_article
+              arguments: {reference: CE-XYZ}
+        - with_text: CE-XYZ
+          text: Le fournisseur ne connaît pas la référence CE-XYZ. Vérifiez-la sur votre bon de commande.
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: Plomberie Dupont</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+
+max_iterations: 5
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - mcp: catalogue
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de la {{ entreprise }}, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.
+Pour le prix ou le stock d'un article chez le fournisseur, utilise les outils
+du catalogue (catalogue__rechercher_article, catalogue__prix_article…).</code></pre></figure>
+<p>Le paquet a maintenant les extras <code>anthropic</code>, <code>mcp</code>, <code>openai</code>, <code>postgres</code> et <code>sqlite</code>. Au module 6, l'agent apprend à déléguer : la rédaction des relances à un modèle plus léger, la lecture d'une photo à un modèle qui voit.</p>
+
+<nav class="suite" aria-label="Pages voisines"><a class="avant" href="module-04.html"><small>Précédent</small>Module 4 : Conversations, mémoire et state</a><a class="apres" href="module-06.html"><small>Suivant</small>Module 6 : Rôles, sous-agents et vision</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>

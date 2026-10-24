@@ -1,0 +1,1771 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 14 : Qualité : évals et non-régression · loom_v2</title>
+<meta name="description" content="Module 14 de la formation loom_v2 : écrire une suite d&#x27;évaluations (cas, attendus, variantes, juge), tester l&#x27;agent avec pytest et le banc de loom (faux modèles, doublures d&#x27;outils), et protéger chaque modification par des journaux de référence rejoués à l&#x27;identique.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="saut" href="#contenu">Aller au contenu</a>
+<div class="ossature">
+<nav class="fil" aria-label="Plan de la formation">
+<a class="fil-titre" href="index.html">Formation loom_v2</a>
+<p class="fil-sous">loom-ia 2.0.11 et suivantes</p>
+<div class="fil-ouvert">
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li class="ici"><a href="module-14.html" aria-current="page"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</div>
+<details class="fil-replie">
+<summary>Plan de la formation</summary>
+<ol class="annexes">
+<li><a href="index.html">Accueil</a></li>
+</ol>
+<p class="fil-groupe">Niveau 1 : découverte</p><ol class="trame">
+<li><a href="module-01.html"><span class="num">1.</span>Les bases de l&#x27;agent</a></li>
+<li><a href="module-02.html"><span class="num">2.</span>Outils Python</a></li>
+<li><a href="module-03.html"><span class="num">3.</span>Modèles et configuration</a></li>
+</ol>
+<p class="fil-groupe">Niveau 2 : maîtrise</p><ol class="trame">
+<li><a href="module-04.html"><span class="num">4.</span>Conversations, mémoire et state</a></li>
+<li><a href="module-05.html"><span class="num">5.</span>Outils MCP et mémoire long terme</a></li>
+<li><a href="module-06.html"><span class="num">6.</span>Rôles, sous-agents et vision</a></li>
+<li><a href="module-07.html"><span class="num">7.</span>Fiabilité des sorties</a></li>
+</ol>
+<p class="fil-groupe">Niveau 3 : production</p><ol class="trame">
+<li><a href="module-08.html"><span class="num">8.</span>Actions sensibles et exécution durable</a></li>
+<li><a href="module-09.html"><span class="num">9.</span>Résilience et coûts</a></li>
+<li><a href="module-10.html"><span class="num">10.</span>Ouvrir l&#x27;agent : Python, REST, MCP</a></li>
+<li><a href="module-11.html"><span class="num">11.</span>Automatiser : webhooks, workers, bus</a></li>
+<li><a href="module-12.html"><span class="num">12.</span>Plusieurs clients et données sensibles</a></li>
+</ol>
+<p class="fil-groupe">Niveau 4 : expert</p><ol class="trame">
+<li><a href="module-13.html"><span class="num">13.</span>Observabilité et rejeu</a></li>
+<li class="ici"><a href="module-14.html" aria-current="page"><span class="num">14.</span>Qualité : évals et non-régression</a></li>
+<li><a href="module-15.html"><span class="num">15.</span>Sources d&#x27;outils et sandbox forge</a></li>
+</ol>
+<p class="fil-groupe">Annexes</p><ol class="annexes">
+<li><a href="reference.html">Référence : CLI et configuration</a></li>
+<li><a href="pieges.html">Pièges et dépannage</a></li>
+<li><a href="glossaire.html">Glossaire</a></li>
+<li><a href="matrice.html">Matrice des fonctions</a></li>
+</ol>
+</details>
+</nav>
+<main id="contenu">
+<div class="page">
+<h1>Module 14 : Qualité : évals et non-régression</h1>
+<p class="chapeau">À chaque retouche du prompt ou de la configuration, Jean se pose les mêmes questions : l'agent cherche-t-il toujours le devis avant d'écrire ? L'e-mail part-il au bon client ? Rien d'autre n'a-t-il bougé ? Ce module écrit ces questions une fois pour toutes, sous trois formes : une suite d'évaluations, des tests pytest et des journaux de référence. Toutes trois tournent en quelques secondes, sans clé, sans réseau et sans envoyer un seul e-mail.</p>
+
+<dl class="fiche-agent">
+<dt>Agent</dt><dd><code>assistant</code>, dans le dossier <code>plomberie-dupont/</code></dd>
+<dt>Départ</dt><dd>la fin du <a href="module-13.html#bilan">module 13</a> : l'agent est observé, ses runs se rejouent, deux orchestrateurs d'essai et une doublure d'envoi sont prêts</dd>
+<dt>Arrivée</dt><dd><span class="version">v1.4</span> : l'agent a une suite d'évaluations, des tests pytest et des journaux de référence ; toute modification visible est détectée</dd>
+<dt>Fonctions</dt><dd><a class="fn" href="matrice.html#O1">O1</a><a class="fn" href="matrice.html#O2">O2</a><a class="fn" href="matrice.html#O3">O3</a></dd>
+</dl>
+
+<details class="depart"><summary>Point de départ : les fichiers au début du module</summary>
+<figure class="code"><figcaption>loom.yaml</figcaption>
+<pre><code>version: 1
+
+imports: [outils, politiques]
+
+models:
+  - id: SIMULE
+    sdk: fake
+    model: fake-1
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        # Une question simple : le montant d'un devis
+        - with_text: montant
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: montant
+          text: Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).
+        # Relance de Mme Martin : retrouver le devis, faire rédiger, envoyer
+        - with_text: Relance Mme Martin
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance Mme Martin
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance Mme Martin
+          text: J'envoie l'e-mail à Mme Martin.
+          forced: "Je m'arrête là : l'e-mail à Mme Martin est rédigé, mais pas envoyé."
+          tool_calls:
+            - name: envoyer_email
+              arguments:
+                destinataire: martin@example.fr
+                objet: Votre devis D-2026-042
+                corps: "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"
+        - with_text: Relance Mme Martin
+          text: L'e-mail de relance est parti chez Mme Martin.
+        # Relance de M. Bernard : même chemin que pour Mme Martin
+        - with_text: Relance M. Bernard
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-050}
+        - with_text: Relance M. Bernard
+          text: Je confie la rédaction de l'e-mail au rédacteur.
+          tool_calls:
+            - name: rediger_relance
+              arguments: {ton: cordial}
+        - with_text: Relance M. Bernard
+          text: J'envoie l'e-mail à M. Bernard.
+          tool_calls:
+            - name: envoyer_email
+              arguments:
+                destinataire: bernard@example.fr
+                objet: Votre devis D-2026-050
+                corps: "Bonjour Monsieur Bernard,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-050 pour le détartrage de votre chaudière (165 € TTC), envoyé le 20 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"
+        - with_text: Relance M. Bernard
+          text: L'e-mail de relance est parti chez M. Bernard.
+
+  # Le modèle simulé du Chauffage Martin : il joue les scènes de ce client.
+  - id: SIMULE_MARTIN
+    sdk: fake
+    model: fake-martin
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        - with_text: M-2026-017
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: M-2026-017}
+        - with_text: M-2026-017
+          text: Le devis M-2026-017 s'élève à 189 € TTC (171,82 € HT).
+        - with_text: D-2026-042
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: D-2026-042
+          text: Je ne trouve pas de devis D-2026-042 au Chauffage Martin.
+
+  # Deux orchestrateurs d'essai, pour comparer des variantes (modules 13 et 14)
+  - id: SIMULE_BREF
+    sdk: fake
+    model: fake-bref
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        - with_text: Relance Mme Martin
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance Mme Martin
+          text: J'envoie une relance brève.
+          tool_calls:
+            - name: envoyer_email
+              arguments:
+                destinataire: martin@example.fr
+                objet: Votre devis D-2026-042
+                corps: "Bonjour Madame Martin, avez-vous pu regarder notre devis D-2026-042 ? Jean Dupont"
+        - with_text: Relance Mme Martin
+          text: Relance brève envoyée à Mme Martin.
+
+  - id: SIMULE_OUBLIEUR
+    sdk: fake
+    model: fake-oublieur
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        - with_text: Relance Mme Martin
+          text: Je retrouve le devis.
+          tool_calls:
+            - name: chercher_devis
+              arguments: {numero: D-2026-042}
+        - with_text: Relance Mme Martin
+          text: Le devis D-2026-042 de Mme Martin est toujours en attente depuis le 3 septembre.
+
+  - id: REDACTEUR
+    sdk: fake
+    model: fake-redacteur
+    pricing: {input: 1, output: 5}
+    params:
+      script:
+        - with_text: D-2026-042
+          text: '{"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+        - with_text: D-2026-050
+          text: '{"objet": "Votre devis D-2026-050", "corps": "Bonjour Monsieur Bernard,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-050 pour le détartrage de votre chaudière (165 € TTC), envoyé le 20 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}'
+
+  - id: JUGE
+    sdk: fake
+    model: fake-juge
+    pricing: {input: 3, output: 15}
+    params:
+      script:
+        # Le juge répond selon le texte qu'il lit
+        - with_text: 2 100 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 0.1, reason: "Le montant de 2 100 € ne figure pas dans le devis (1 840 € TTC)."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+        - with_text: 165 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Numéro, montant et date conformes au devis."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+        - with_text: 1 840 €
+          tool_calls:
+            - name: verdict
+              arguments:
+                criteria:
+                  - {name: fidele, score: 1.0, reason: "Numéro, montant et date conformes au devis."}
+                  - {name: ton, score: 0.9, reason: Ton cordial.}
+
+  - id: VISION
+    sdk: fake
+    model: fake-vision
+    pricing: {input: 1, output: 5}
+    capabilities: {vision: true}
+    params:
+      script:
+        - text: Chauffe-eau électrique mural, cuve blanche d'environ 150 litres, traces de rouille au raccord d'arrivée d'eau froide.
+
+  - id: TRADUCTEUR
+    sdk: fake
+    model: fake-traducteur
+    pricing: {input: 1, output: 5}
+    params:
+      script:
+        - text: "Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont."
+
+  - id: HAIKU
+    sdk: anthropic
+    model: claude-haiku-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    pricing: {input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125}
+    max_tokens: 4096
+    cache: {system: true, tools: true, messages: true}
+
+  - id: OPUS
+    sdk: anthropic
+    model: claude-opus-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    capabilities: {forced_tool_choice: false}
+
+mcp_servers:
+  - name: catalogue
+    transport: stdio
+    command: python
+    args: [serveurs/catalogue.py]
+
+storage:
+  events: {backend: jsonl, path: data}
+  idempotency: {backend: sqlite, path: data/idempotence.db}
+  retention: {events_days: 365}
+
+telemetry:
+  logging: {level: WARNING}
+
+tenants:
+  - id: default
+    variables:
+      entreprise: la Plomberie Dupont
+      signature: Jean Dupont, Plomberie Dupont
+  - id: martin-chauffage
+    variables:
+      entreprise: Chauffage Martin
+      signature: Paul Martin, Chauffage Martin
+    models:
+      SIMULE: SIMULE_MARTIN
+    quotas:
+      runs_per_minute: 2
+    retention: {events_days: null}
+    agents: [assistant]
+    tools_deny:
+      - catalogue__rechercher_article
+      - catalogue__prix_article
+      - catalogue__stock_article
+      - traduire
+
+security:
+  api_keys:
+    - id: app-martin
+      hash: sha256:a6f53eb35aa119e3d51310ac7316564db661d58075c859975f2f208d622f9510
+      tenant: martin-chauffage
+      scopes: [run, read, read_content]
+      rate_limit: {per_minute: 3}
+    - id: app-dupont
+      hash: sha256:8888b3fe3d3cfd7010fadc382e200a773d04c0f89734634e2ecd9cb63f60a854
+      scopes: [run, read, read_content, approve]
+    - id: lecture-dupont
+      hash: sha256:7bd8c52cfc7666305c7fe50c972a1b019dd85afb8906946fd0d0166ba6a073ef
+      scopes: [read]
+    - id: crm
+      hash: sha256:1140119cfef0082aef0f5b7bd331d2e168cf3a37e026252dc631b534af1e5afb
+      scopes: [run]
+      agents: [assistant]
+
+server:
+  mcp: {http: true}
+
+triggers:
+  - name: devis-a-relancer
+    agent: assistant
+    message: "Relance {{ payload.client }} pour le devis {{ payload.numero }}, sur un ton cordial."
+    session: "devis-{{ payload.numero }}"
+    delivery_header: X-Delivery-Id</code></pre></figure>
+<figure class="code"><figcaption>agents/assistant.yaml</figcaption>
+<pre><code>name: assistant
+description: &gt;-
+  Assistant de la Plomberie Dupont : répond aux questions sur les devis et
+  les prix, et relance les clients par e-mail après accord de l'artisan.
+
+max_iterations: 5
+
+budget:
+  run: {max_cost: 0.10}
+
+main:
+  model: SIMULE
+  system_file: system.md
+  context: [session_state]
+
+tools:
+  - python: loom.fetch_page
+  - python: prix_ttc
+  - python: chercher_devis
+  - python: etiquette_devis
+  - python: envoyer_email
+  - mcp: catalogue
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis resté sans réponse.
+    model: REDACTEUR
+    system_file: rediger_relance.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial ou ferme."}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    input_template: |-
+      Demande de l'artisan : {{ context.user_input }}
+      Devis : {{ context.tool_results.chercher_devis }}
+      Ton : {{ args.ton }}
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      must_match: "D-\\d{4}-\\d{3}"
+      max_chars: 1200
+      repair: {max_attempts: 1}
+      on_failure: fail
+    judge:
+      model: JUGE
+      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: &gt;-
+            Chaque montant, date et numéro de l'e-mail figure dans le devis :
+            rien n'est inventé.
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé dans la demande de l'artisan.
+          min_score: 0.6
+          blocking: false
+      repair: {max_attempts: 1}
+      on_failure: fail
+
+  - name: decrire_photo
+    description: Décrit ce que montre la photo jointe à la demande.
+    model: VISION
+    system: Tu décris précisément des installations de plomberie et de chauffage à partir de photos.
+    input_schema:
+      type: object
+      properties:
+        consigne: {type: string, description: "Ce qu'il faut regarder sur la photo."}
+      required: [consigne]
+    context: [attachments]
+
+subagents:
+  - agent: traducteur
+    name: traduire
+    description: Traduit en anglais un texte destiné à un client anglophone.
+
+policies:
+  - hook: taux_tva_valide
+
+state:
+  devis_courant:
+    schema: {type: string}
+    description: Numéro du devis dont parle la conversation
+    from:
+      - tool: chercher_devis
+        path: /numero
+  ton:
+    schema: {enum: [cordial, ferme]}
+    description: Ton des relances
+    default: cordial</code></pre></figure>
+<figure class="code"><figcaption>agents/traducteur.yaml</figcaption>
+<pre><code>name: traducteur
+description: Traduit un texte en anglais, fidèlement, sans rien ajouter.
+
+max_iterations: 1
+
+expose: {rest: false, mcp: false}
+
+main:
+  model: TRADUCTEUR
+  system: Tu traduis en anglais le texte reçu, fidèlement, sans rien ajouter ni retirer.</code></pre></figure>
+<figure class="code"><figcaption>prompts/system.md</figcaption>
+<pre><code>Tu es l'assistant de {{ entreprise }}, une entreprise de plomberie et de
+chauffage. Tu réponds en français, en deux ou trois phrases.
+N'invente jamais un taux, un montant ni une date.
+Pour une question de TVA, lis la page officielle avec l'outil `fetch_page`
+et cite ta source.
+Pour tout calcul de prix, appelle l'outil `prix_ttc` au lieu de calculer
+toi-même, et reprends les montants qu'il renvoie.
+Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
+numéro.
+Pour le prix ou le stock d'un article chez le fournisseur, utilise les outils
+du catalogue (catalogue__rechercher_article, catalogue__prix_article…).
+Pour relancer un devis, retrouve-le avec `chercher_devis`, confie la
+rédaction de l'e-mail au rôle `rediger_relance`, puis envoie l'e-mail au
+client avec l'outil `envoyer_email`.
+Si le client joint une photo, demande sa description au rôle `decrire_photo`.
+Pour un client anglophone, confie la traduction à l'outil `traduire`.</code></pre></figure>
+<figure class="code"><figcaption>prompts/rediger_relance.md</figcaption>
+<pre><code>Tu rédiges les e-mails de relance de {{ entreprise }}, pour des devis
+restés sans réponse.
+Écris un e-mail court et poli, signé « {{ signature }} ».
+N'utilise que les informations reçues : n'invente aucun montant, date ou délai.
+Réponds uniquement par un objet JSON : {"objet": "…", "corps": "…"}.</code></pre></figure>
+<figure class="code"><figcaption>outils.py</figcaption>
+<pre><code>import json
+import struct
+import time
+import zlib
+from datetime import datetime
+from pathlib import Path
+
+from loom_ia.core.ports import ToolContext, ToolError
+from loom_ia.tools import Image, idempotent, tool
+
+# Le carnet de devis de chaque client. Plus tard, ce sera sa base de données ou son CRM.
+CARNETS = {
+    "default": {  # la Plomberie Dupont
+        "D-2026-042": {
+            "client": "Mme Martin",
+            "email": "martin@example.fr",
+            "objet": "Remplacement du chauffe-eau",
+            "montant_ht": 1533.33,
+            "taux_tva": 20,
+            "montant_ttc": 1840.00,
+            "date": "2026-09-03",
+            "statut": "envoyé",
+        },
+        "D-2026-050": {
+            "client": "M. Bernard",
+            "email": "bernard@example.fr",
+            "objet": "Détartrage de la chaudière",
+            "montant_ht": 150.00,
+            "taux_tva": 10,
+            "montant_ttc": 165.00,
+            "date": "2026-09-20",
+            "statut": "accepté",
+        },
+    },
+    "martin-chauffage": {
+        "M-2026-017": {
+            "client": "Mme Petit",
+            "email": "petit@example.fr",
+            "objet": "Entretien annuel de la chaudière",
+            "montant_ht": 171.82,
+            "taux_tva": 10,
+            "montant_ttc": 189.00,
+            "date": "2026-09-15",
+            "statut": "envoyé",
+        },
+    },
+}
+
+
+def carnet(ctx: ToolContext) -&gt; dict[str, dict[str, str | float]]:
+    """Le carnet du client pour qui l'outil travaille (vide pour un client inconnu)."""
+    return CARNETS.get(ctx.tenant_id, {})
+
+
+@tool
+def prix_ttc(montant_ht: float, taux_tva: float = 20.0) -&gt; dict[str, float]:
+    """Calcule la TVA et le montant TTC à partir d'un montant HT. Le taux est en pourcentage."""
+    tva = round(montant_ht * taux_tva / 100, 2)
+    return {"montant_ht": montant_ht, "tva": tva, "montant_ttc": round(montant_ht + tva, 2)}
+
+
+@tool
+def chercher_devis(numero: str, ctx: ToolContext) -&gt; dict[str, str | float]:
+    """Retrouve un devis par son numéro (par exemple D-2026-042) : client, objet, montants, date, statut."""
+    devis = carnet(ctx).get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}. Numéros connus : {', '.join(carnet(ctx))}")
+    return {"numero": numero, **devis}
+
+
+# Couleur de l'étiquette selon le statut du devis.
+COULEURS = {"envoyé": (230, 140, 30), "accepté": (40, 150, 80)}
+
+
+@tool
+def etiquette_devis(numero: str, ctx: ToolContext) -&gt; Image:
+    """Fabrique l'étiquette de couleur d'un devis (orange : envoyé, vert : accepté), en image PNG."""
+    devis = carnet(ctx).get(numero)
+    if devis is None:
+        raise ToolError(f"Aucun devis {numero}.")
+    couleur = COULEURS.get(str(devis["statut"]), (120, 120, 120))
+    return Image(png_uni(160, 60, couleur), name=f"etiquette-{numero}.png")
+
+
+def png_uni(largeur: int, hauteur: int, rgb: tuple[int, int, int]) -&gt; bytes:
+    """Une image PNG d'une seule couleur, écrite sans bibliothèque d'image."""
+    ligne = b"\x00" + bytes(rgb) * largeur
+    brut = zlib.compress(ligne * hauteur)
+
+    def bloc(nature: bytes, donnees: bytes) -&gt; bytes:
+        crc = zlib.crc32(nature + donnees)
+        return struct.pack("&gt;I", len(donnees)) + nature + donnees + struct.pack("&gt;I", crc)
+
+    entete = struct.pack("&gt;IIBBBBB", largeur, hauteur, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + bloc(b"IHDR", entete) + bloc(b"IDAT", brut) + bloc(b"IEND", b"")
+
+
+# Le dossier où arrivent les e-mails « envoyés ». En production, ce serait un serveur d'e-mail.
+BOITE_ENVOI = Path(__file__).parent / "boite-envoi"
+
+
+# Clé métier : un même e-mail (destinataire et objet) ne part qu'une fois, quel que soit le run.
+@idempotent(key=lambda a: f"email:{a['destinataire']}:{a['objet']}")
+@tool(side_effects="irreversible", approval="always")
+def envoyer_email(destinataire: str, objet: str, corps: str, ctx: ToolContext) -&gt; str:
+    """Envoie un e-mail à un client. L'envoi est définitif : il ne peut pas être annulé."""
+    time.sleep(2)  # un vrai envoi prend un peu de temps
+    BOITE_ENVOI.mkdir(exist_ok=True)
+    fichier = BOITE_ENVOI / f"{datetime.now():%Y%m%d-%H%M%S-%f}.json"
+    message = {"a": destinataire, "objet": objet, "corps": corps}
+    # Qui a demandé l'envoi, et depuis où : transmis par l'application qui a lancé le run.
+    message["demande_par"] = ctx.caller.user_id
+    message["canal"] = ctx.caller.metadata.get("canal")
+    fichier.write_text(json.dumps(message, ensure_ascii=False, indent=2), encoding="utf-8")
+    return f"E-mail envoyé à {destinataire} (objet : {objet})."
+
+
+def faux_envoi(destinataire: str, objet: str, corps: str) -&gt; str:
+    """Doublure d'envoyer_email pour les rejeux et les tests : n'envoie rien."""
+    return f"E-mail envoyé à {destinataire} (objet : {objet})."</code></pre></figure>
+<figure class="code"><figcaption>politiques.py</figcaption>
+<pre><code>from loom_ia.policies import CONTINUE, BeforeTool, Decision, Deny, policy
+
+# Les taux de TVA en vigueur en France pour les travaux.
+TAUX_FRANCAIS = {5.5, 10.0, 20.0}
+
+
+@policy(points=["before_tool"], decisions=["deny"])
+def taux_tva_valide(sujet: BeforeTool) -&gt; Decision:
+    """Refuse un calcul de prix avec un taux de TVA qui n'existe pas en France."""
+    if sujet.call.name != "prix_ttc":
+        return CONTINUE
+    taux = float(str(sujet.arguments.get("taux_tva", 20.0)))
+    if taux not in TAUX_FRANCAIS:
+        return Deny(
+            f"Le taux de TVA de {taux:g} % n'existe pas en France "
+            "(taux possibles : 5,5 %, 10 % et 20 %)."
+        )
+    return CONTINUE</code></pre></figure>
+<figure class="code"><figcaption>serveurs/catalogue.py</figcaption>
+<pre><code>"""Serveur MCP du catalogue d'un fournisseur de plomberie (données fictives)."""
+
+import sys
+
+from mcp.server.fastmcp import FastMCP
+
+serveur = FastMCP("catalogue", host="127.0.0.1", port=8765, log_level="WARNING")
+
+ARTICLES = {
+    "CE-THERMO-200": {"nom": "Chauffe-eau thermodynamique 200 L", "prix_ht": 1290.00, "stock": 3},
+    "CE-ELEC-150": {"nom": "Chauffe-eau électrique 150 L", "prix_ht": 389.00, "stock": 0},
+    "GS-34": {"nom": "Groupe de sécurité 3/4", "prix_ht": 24.90, "stock": 25},
+}
+
+
+def article(reference: str) -&gt; dict:
+    if reference not in ARTICLES:
+        raise ValueError(f"Référence inconnue : {reference}")
+    return ARTICLES[reference]
+
+
+@serveur.tool()
+def rechercher_article(texte: str) -&gt; list[dict]:
+    """Cherche des articles du catalogue dont le nom contient ce texte."""
+    texte = texte.lower()
+    return [
+        {"reference": ref, "nom": a["nom"]}
+        for ref, a in ARTICLES.items()
+        if texte in a["nom"].lower()
+    ]
+
+
+@serveur.tool()
+def prix_article(reference: str) -&gt; dict:
+    """Donne le prix public HT d'un article, par sa référence."""
+    return {"reference": reference, "prix_ht": article(reference)["prix_ht"]}
+
+
+@serveur.tool()
+def stock_article(reference: str) -&gt; dict:
+    """Donne le nombre d'exemplaires en stock d'un article, par sa référence."""
+    return {"reference": reference, "stock": article(reference)["stock"]}
+
+
+if __name__ == "__main__":
+    serveur.run(transport="streamable-http" if "--http" in sys.argv else "stdio")</code></pre></figure>
+<figure class="code"><figcaption>tournee.sh</figcaption>
+<pre><code>#!/bin/bash
+# La tournée du matin : demande la relance du devis D-2026-050 par la porte du CRM.
+# L'identifiant de livraison porte la date du jour : lancée deux fois le même jour,
+# la tournée ne produit qu'un run.
+curl -s -X POST http://127.0.0.1:8000/v1/hooks/devis-a-relancer \
+  -H "Authorization: Bearer $LOOM_CRM_CLE" \
+  -H 'Content-Type: application/json' \
+  -H "X-Delivery-Id: tournee-$(date +%F)" \
+  -d '{"numero":"D-2026-050","client":"M. Bernard"}'
+echo</code></pre></figure>
+<figure class="code"><figcaption>etat.py</figcaption>
+<pre><code>import asyncio
+import sys
+
+from loom_ia.access import Loom
+
+
+async def main(run_id: str, session: str) -&gt; None:
+    async with Loom.from_config("loom.yaml") as loom:
+        etat = await loom.state(run_id, session_id=session)
+    print("Statut      :", etat.status)
+    print("Étape       :", etat.step)
+    print("Itérations  :", etat.iterations)
+    print("Messages    :", len(etat.messages))
+    print("Tokens      :", etat.usage.input_tokens, "en entrée,", etat.usage.output_tokens, "en sortie")
+    for demande in etat.approvals:
+        print("En attente  :", demande.tool_name, "pour", demande.arguments["destinataire"])
+
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))</code></pre></figure>
+<figure class="code"><figcaption>annuler.py</figcaption>
+<pre><code>import asyncio
+import sys
+
+from loom_ia.access import Loom
+
+
+async def main(run_id: str, session: str) -&gt; None:
+    async with Loom.from_config("loom.yaml") as loom:
+        annule = await loom.cancel(run_id, session_id=session, by="jean")
+    print("Annulé :", annule)
+
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))</code></pre></figure>
+<figure class="code"><figcaption>question.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        resultat = await loom.run(
+            "assistant",
+            "Quel est le montant du devis D-2026-042 ?",
+            session_id="depuis-python",
+        )
+    print("Statut  :", resultat.status)
+    print("Réponse :", resultat.text)
+    print("Coût    :", round(resultat.cost_usd, 4), "$")
+    print("Run     :", resultat.run_id)
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>flux.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+from loom_ia.core.events import Event
+from loom_ia.core.model import TextDelta
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        async for element in loom.stream(
+            "assistant",
+            "Quel est le montant du devis D-2026-042 ?",
+            session_id="flux-python",
+        ):
+            if isinstance(element, TextDelta):
+                print(f"  texte     : {element.text!r}")
+            elif isinstance(element, Event):
+                print(f"{element.seq:&gt;3} {element.type:&lt;18} catégorie : {element.category}")
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>arriere_plan.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+
+SESSION = "relance-python"
+
+
+def en_pause(evenement) -&gt; bool:
+    return evenement.type == "run.transitioned" and evenement.payload.to_state == "paused"
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        run_id = await loom.submit(
+            "assistant",
+            "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial.",
+            session_id=SESSION,
+        )
+        print("Run lancé :", run_id)
+
+        # 1. Suivre le run jusqu'à sa pause
+        dernier = 0
+        async for evenement in loom.follow(run_id, session_id=SESSION, subruns=False):
+            dernier = evenement.seq
+            if evenement.type in ("tool.called", "approval.requested"):
+                print(f"{evenement.seq:&gt;3} {evenement.type}")
+            if en_pause(evenement):
+                print(f"{evenement.seq:&gt;3} en pause")
+                break
+
+        # 2. Accorder l'envoi
+        appels = await loom.approve(run_id, session_id=SESSION, by="jean")
+        print("    accordé :", appels)
+
+        # 3. Suivre la suite jusqu'à la fin du run
+        async for evenement in loom.follow(run_id, session_id=SESSION, after_seq=dernier, subruns=False):
+            if evenement.type in ("approval.granted", "tool.called", "tool.completed", "run.completed"):
+                print(f"{evenement.seq:&gt;3} {evenement.type}")
+
+        resultat = await loom.result(run_id, session_id=SESSION)
+        print("Statut  :", resultat.status)
+        print("Réponse :", resultat.text)
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>appelant.py</figcaption>
+<pre><code>import asyncio
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+from loom_ia.core.model import Approved, CallerContext, PendingApproval
+
+
+async def accorder(demande: PendingApproval) -&gt; Approved:
+    """Appelée par loom quand un outil demande une approbation."""
+    print("Approbation demandée :", demande.tool_name, "pour", demande.arguments["destinataire"])
+    return Approved(by="jean", reason="relu sur le téléphone")
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    appelant = CallerContext(user_id="jean", metadata={"canal": "appli-mobile"})
+    async with Loom.from_config("loom.yaml") as loom:
+        resultat = await loom.run(
+            "assistant",
+            "Relance M. Bernard pour le devis D-2026-050.",
+            session_id="relance-bernard",
+            context=appelant,
+            approver=accorder,
+        )
+    print("Statut  :", resultat.status)
+    print("Réponse :", resultat.text)
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>sans_fichier.py</figcaption>
+<pre><code>import asyncio
+from pathlib import Path
+
+from loom_ia.access import Loom
+from loom_ia.agents import AgentSpec, MainRole, PythonTool
+from loom_ia.config import LoomConfig
+from loom_ia.config.models import EventsStorage, StorageConfig
+from loom_ia.core.model import ModelSpec
+
+from outils import prix_ttc
+
+# Les réponses du modèle simulé : appeler prix_ttc, puis répondre.
+SCRIPT = [
+    {"text": "Je calcule.", "tool_calls": [{"name": "prix_ttc", "arguments": {"montant_ht": 1250, "taux_tva": 10}}]},
+    {"text": "1 250 € HT avec une TVA à 10 % font 1 375 € TTC."},
+]
+
+config = LoomConfig(
+    version=1,
+    models=(ModelSpec(id="SIMULE", sdk="fake", model="fake-1", params={"script": SCRIPT}),),
+    storage=StorageConfig(events=EventsStorage(backend="jsonl", path=Path("data"))),
+    agents=(
+        AgentSpec(
+            name="calcul",
+            main=MainRole(model="SIMULE", system="Tu calcules des prix TTC avec l'outil prix_ttc."),
+            tools=(PythonTool(python="prix_ttc"),),
+        ),
+    ),
+)
+
+
+async def main() -&gt; None:
+    async with Loom(config) as loom:
+        loom.register("prix_ttc", prix_ttc)
+        resultat = await loom.run("calcul", "Quel prix TTC pour 1 250 € HT à 10 % ?", session_id="sans-fichier")
+    print(resultat.status, ":", resultat.text)
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>latence.py</figcaption>
+<pre><code>import asyncio
+import time
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+from loom_ia.core.model import TextDelta
+
+
+async def mesurer(loom: Loom, etiquette: str) -&gt; None:
+    debut = time.perf_counter()
+    premier = None
+    async for element in loom.stream("assistant", "Quel est le montant du devis D-2026-042 ?"):
+        if isinstance(element, TextDelta) and premier is None:
+            premier = time.perf_counter() - debut
+    total = time.perf_counter() - debut
+    print(f"{etiquette} : premier texte à {premier * 1000:.0f} ms, run complet en {total * 1000:.0f} ms")
+
+
+async def main() -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        await mesurer(loom, "1er run (à froid)")
+        await mesurer(loom, "2e run (à chaud) ")
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>client_mcp.py</figcaption>
+<pre><code>import asyncio
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+# Le client lance lui-même « loom mcp » et lui parle par l'entrée et la sortie standard.
+SERVEUR = StdioServerParameters(command="loom", args=["mcp"])
+
+
+async def main() -&gt; None:
+    async with stdio_client(SERVEUR) as (lecture, ecriture):
+        async with ClientSession(lecture, ecriture) as session:
+            await session.initialize()
+
+            outils = await session.list_tools()
+            for outil in outils.tools:
+                print(f"outil   : {outil.name:&lt;10} {outil.description}")
+
+            reponse = await session.call_tool(
+                "assistant",
+                {"message": "Quel est le montant du devis D-2026-042 ?", "session_id": "depuis-mcp"},
+            )
+            print("réponse :", reponse.content[0].text)
+            print("statut  :", reponse.structuredContent["status"])
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>client_mcp_http.py</figcaption>
+<pre><code>import asyncio
+import os
+
+import httpx
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+
+URL = "http://127.0.0.1:8000/mcp/"
+CLE = os.environ["CLE"]  # la clé d'API, lue dans une variable d'environnement
+
+
+async def main() -&gt; None:
+    avec_cle = httpx.AsyncClient(headers={"Authorization": f"Bearer {CLE}"})
+    async with streamable_http_client(URL, http_client=avec_cle) as (lecture, ecriture, _):
+        async with ClientSession(lecture, ecriture) as session:
+            await session.initialize()
+            outils = await session.list_tools()
+            print("outils  :", [outil.name for outil in outils.tools])
+            reponse = await session.call_tool(
+                "assistant",
+                {"message": "Quel est le montant du devis D-2026-042 ?", "session_id": "mcp-http"},
+            )
+            print("réponse :", reponse.content[0].text)
+
+
+asyncio.run(main())</code></pre></figure>
+<figure class="code"><figcaption>schema_evenements.py</figcaption>
+<pre><code>"""Le contrat des événements : version du schéma, champs de l'enveloppe, types."""
+
+from loom_ia.core.events import DURABLE_PAYLOADS, SCHEMA_VERSION, event_json_schema
+
+print("version du schéma :", SCHEMA_VERSION)
+schema = event_json_schema()
+print("champs de l'enveloppe :", ", ".join(schema["properties"]))
+print(f"\n{len(DURABLE_PAYLOADS)} types d'événements :")
+for charge in DURABLE_PAYLOADS:
+    print(f"  {charge.model_fields['type'].default:&lt;24} catégorie {charge.category}")</code></pre></figure>
+<figure class="code"><figcaption>lire_journal.py</figcaption>
+<pre><code>"""Relit le journal depuis Python : les derniers runs, la trace d'un run, une recherche."""
+
+import asyncio
+import sys
+
+from loom_ia.access import Loom
+from loom_ia.config import load_env_file
+from loom_ia.core.events import EventQuery
+from loom_ia.core.model import RunId, SessionId
+
+
+async def main(run_id: str, session_id: str) -&gt; None:
+    load_env_file("loom.yaml")
+    async with Loom.from_config("loom.yaml") as loom:
+        # 1. Les trois derniers runs terminés de l'agent
+        page = await loom.runs(agent="assistant", status=["completed"], limit=3)
+        for run in page.runs:
+            print(f"{run.run_id}  {run.session_id:&lt;14} {run.iterations} itér.  {run.cost_usd:.4f} $")
+
+        # 2. La trace d'un run : ses spans, du run aux appels
+        trace = await loom.trace(RunId(run_id), session_id=SessionId(session_id))
+        print(f"\n{trace.agent} : {trace.status}, {len(trace.spans)} spans")
+        for span in trace.spans[:6]:
+            print(f"  {span.kind:&lt;5} {span.name}")
+
+        # 3. Une recherche dans tout le journal du client : les e-mails envoyés
+        requete = EventQuery(
+            tenant_id=loom.tenant().id, types=("tool.completed",), tool_name="envoyer_email"
+        )
+        envois = await loom.query(requete)
+        print(f"\ne-mails envoyés au journal : {len(envois)}")
+
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))</code></pre></figure>
+<figure class="code"><figcaption>lire_trace_mcp.py</figcaption>
+<pre><code>"""Lit la trace d'un run par une ressource MCP de loom."""
+
+import asyncio
+import json
+import shutil
+import sys
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+
+async def main(run_id: str, session_id: str) -&gt; None:
+    serveur = StdioServerParameters(command=shutil.which("loom") or "loom", args=["mcp"])
+    async with stdio_client(serveur) as (lecture, ecriture):
+        async with ClientSession(lecture, ecriture) as session:
+            await session.initialize()
+            gabarits = await session.list_resource_templates()
+            for gabarit in gabarits.resourceTemplates:
+                print("gabarit :", gabarit.uriTemplate)
+            lu = await session.read_resource(f"loom://traces/{run_id}?session_id={session_id}")
+            trace = json.loads(lu.contents[0].text)
+            print(f"\n{trace['agent']} : {trace['status']}, {len(trace['spans'])} spans")
+
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))</code></pre></figure>
+<figure class="code"><figcaption>collecteur.py</figcaption>
+<pre><code>"""Mini collecteur OTLP/HTTP : reçoit les spans de loom et les affiche.
+
+    python collecteur.py 4318
+"""
+
+import gzip
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+    ExportTraceServiceRequest,
+    ExportTraceServiceResponse,
+)
+
+# Attributs affichés ; les identifiants et les empreintes sont laissés de côté.
+CLES = {
+    "gen_ai.request.model",
+    "gen_ai.tool.name",
+    "gen_ai.usage.input_tokens",
+    "gen_ai.usage.output_tokens",
+    "loom.cost_usd",
+}
+
+
+def valeur(v) -&gt; str:
+    return str(getattr(v, v.WhichOneof("value")))
+
+
+class Collecteur(BaseHTTPRequestHandler):
+    def do_POST(self) -&gt; None:
+        corps = self.rfile.read(int(self.headers["Content-Length"]))
+        if self.headers.get("Content-Encoding") == "gzip":
+            corps = gzip.decompress(corps)
+        requete = ExportTraceServiceRequest.FromString(corps)
+        for ressource in requete.resource_spans:
+            service = {a.key: valeur(a.value) for a in ressource.resource.attributes}
+            print(f"== lot reçu de {service.get('service.name')}", flush=True)
+            for portee in ressource.scope_spans:
+                for span in portee.spans:
+                    attributs = {a.key: valeur(a.value) for a in span.attributes}
+                    retenus = {k: v for k, v in attributs.items() if k in CLES}
+                    print(f"span {span.name} {retenus or ''}", flush=True)
+                    for evenement in span.events:
+                        contenu = {
+                            a.key: valeur(a.value)
+                            for a in evenement.attributes
+                            if a.key.startswith("loom.content")
+                        }
+                        if contenu:
+                            print(f"    {evenement.name} {contenu}", flush=True)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-protobuf")
+        self.end_headers()
+        self.wfile.write(ExportTraceServiceResponse().SerializeToString())
+
+    def log_message(self, *args) -&gt; None:
+        pass
+
+
+if __name__ == "__main__":
+    port = int(sys.argv[1])
+    print(f"collecteur OTLP sur 127.0.0.1:{port}", flush=True)
+    ThreadingHTTPServer(("127.0.0.1", port), Collecteur).serve_forever()</code></pre></figure>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+    "loom-ia[anthropic,crypto,http,mcp,openai,otel,postgres,rabbitmq,redis,sqlite]&gt;=2.0.11",
+]</code></pre></figure>
+<figure class="code"><figcaption>.gitignore</figcaption>
+<pre><code>.env
+data/
+__pycache__/
+boite-envoi/</code></pre></figure>
+<p>Le dossier contient aussi les deux journaux exportés au module 13 (<code>trace-martin.jsonl</code>, <code>variante-bref.jsonl</code>).</p>
+</details>
+
+<p>Trois outils, trois questions. Une <strong>évaluation</strong> (14.1 à 14.3) dit si l'agent fait ce qu'on attend de lui, éventuellement en comparant plusieurs configurations. Un <strong>test pytest</strong> (14.4) garde la même discipline dans le code du projet, avec des réponses de modèle imposées. Un <strong>journal de référence</strong> (14.3 et 14.5) dit si quoi que ce soit a changé par rapport à un run que vous avez validé.</p>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-14-1">
+<h3><span class="exo-num">14.1</span> Une première suite d'évaluations</h3>
+<p class="fns"><a class="fn" href="matrice.html#O1">O1</a></p>
+
+<h4>Pourquoi</h4>
+<p>Après chaque modification, Jean relance l'agent à la main et relit. C'est long, et il oublie toujours de vérifier quelque chose. Il veut écrire ses attentes une fois, et les faire vérifier par une commande.</p>
+
+<h4>Mise en place</h4>
+<p>Une suite d'évaluations est un fichier YAML qui liste des <strong>cas</strong> : une demande, et ce qu'on attend du run qu'elle lance. Créez un dossier <code>evals/</code> et la première suite :</p>
+<pre><code><span class="p">$ </span>mkdir evals</code></pre>
+<figure class="code"><figcaption>evals/relance.yaml</figcaption>
+<pre><code>version: 1
+name: relance
+agent: assistant
+
+doubles:
+  envoyer_email: outils:faux_envoi
+
+cases:
+  - name: relance-martin
+    input: Relance Mme Martin pour le devis D-2026-042, sur un ton cordial.
+    expect:
+      contains: [Mme Martin]
+      called:
+        - chercher_devis
+        - rediger_relance
+        - {name: envoyer_email, arguments: {destinataire: martin@example.fr}}
+      state: {devis_courant: D-2026-042}
+
+  - name: montant
+    input: Quel est le montant du devis D-2026-042 ?
+    expect:
+      contains: ["1 840 €"]
+      called: [chercher_devis]
+      not_called: [envoyer_email]</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>version: 1</code>, <code>name</code></td><td>La version du format et le nom de la suite, affiché dans le rapport.</td></tr>
+<tr><td><code>agent: assistant</code></td><td>L'agent évalué. La configuration est celle de <code>loom.yaml</code> (une suite peut en désigner une autre avec <code>config:</code>).</td></tr>
+<tr><td><code>doubles:</code></td><td>Les doublures des outils à effets de bord, en <code>module:fonction</code>. <strong>Un outil à effets de bord n'est jamais exécuté pendant une évaluation</strong> : sa doublure répond à sa place, et sans doublure le modèle reçoit une erreur. Les autres outils (<code>chercher_devis</code>) s'exécutent normalement.</td></tr>
+<tr><td><code>cases:</code></td><td>Les cas, chacun avec un <code>name</code>, une demande (<code>input</code>) et des attendus (<code>expect</code>).</td></tr>
+<tr><td><code>contains: […]</code></td><td>Des textes qui doivent figurer dans la réponse finale (<code>not_contains</code> : qui ne doivent pas y figurer).</td></tr>
+<tr><td><code>called: […]</code></td><td>Des outils qui doivent avoir été appelés. Un nom seul suffit ; avec <code>arguments</code>, l'appel doit avoir reçu au moins ces arguments.</td></tr>
+<tr><td><code>not_called: […]</code></td><td>Des outils qui ne doivent jamais être appelés : une question de montant ne doit pas envoyer d'e-mail.</td></tr>
+<tr><td><code>state: {…}</code></td><td>Les clés du state de la session après le run (module 4) : ici, le devis courant doit être D-2026-042.</td></tr>
+</tbody>
+</table></div>
+<p>Autres attendus possibles : <code>status</code> (par défaut, le run doit finir <code>completed</code>), <code>matches</code> (des expressions régulières), <code>fields</code> (des champs d'une sortie structurée, module 7, par chemin pointé : <code>objet</code>, <code>lignes.0.total</code>).</p>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom eval evals/relance.yaml
+Suite      : relance — agent assistant, 2 cas, 1 variante(s), 1 répétition(s) par cas
+
+Variante base (config de base) — 2/2 cas réussi(s), 0.050551 $ de runs, 0.000000 $ de juge
+  ok       relance-martin (1/1)
+  ok       montant (1/1)
+
+Bilan      : 2/2 run(s) réussi(s), 0.050551 $ dépensé(s)
+Verdict    : tout passe</code></pre>
+<p>Les deux cas passent. Le code de sortie est 0. Rien n'a été écrit dans <code>data/</code>, et la boîte d'envoi n'a pas bougé : une évaluation monte l'agent <strong>à part</strong> : son journal vit dans un dossier temporaire effacé à la fin, les quotas et plafonds de période des clients ne la voient pas, et la doublure a répondu à la place de l'envoi.</p>
+<p>Pour voir un échec, faites une copie cassée de la suite : un autre destinataire attendu et un autre montant.</p>
+<pre><code><span class="p">$ </span>sed -e 's/destinataire: martin@example.fr/destinataire: bernard@example.fr/' -e 's/"1 840 €"/"2 100 €"/' evals/relance.yaml &gt; evals/relance-casse.yaml
+<span class="p">$ </span>loom eval evals/relance-casse.yaml
+Suite      : relance — agent assistant, 2 cas, 1 variante(s), 1 répétition(s) par cas
+
+Variante base (config de base) — 0/2 cas réussi(s), 0.050551 $ de runs, 0.000000 $ de juge
+  ÉCHEC    relance-martin (0/1)
+      essai 1 : run 01a16eaa-3484-7717-9e33-578157370f5b, completed
+        ✗ appelle envoyer_email avec {"destinataire": "bernard@example.fr"} — arguments reçus : {"destinataire": "martin@example.fr", "objet": "Votre devis D-20…
+  ÉCHEC    montant (0/1)
+      essai 1 : run 01a16eaa-37d5-70dc-9f06-d0faf25c4940, completed
+        ✗ contient « 2 100 € »
+        texte :
+          Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).
+
+Bilan      : 0/2 run(s) réussi(s), 0.050551 $ dépensé(s)
+Verdict    : des attendus tombent, ou des runs n'ont pas été joués
+<span class="p">$ </span>rm evals/relance-casse.yaml</code></pre>
+<p>(La ligne des arguments reçus est coupée ici, au « … ».) Chaque contrôle qui tombe est nommé, avec ce qui a été observé à la place : les arguments réellement reçus par l'outil, le texte de la réponse. Le code de sortie est 1.</p>
+<p>Pour ne jouer qu'un cas, <code>--case</code> (répétable) :</p>
+<pre><code><span class="p">$ </span>loom eval evals/relance.yaml --case montant
+Suite      : relance — agent assistant, 1 cas, 1 variante(s), 1 répétition(s) par cas
+
+Variante base (config de base) — 1/1 cas réussi(s), 0.013512 $ de runs, 0.000000 $ de juge
+  ok       montant (1/1)
+
+Bilan      : 1/1 run(s) réussi(s), 0.013512 $ dépensé(s)
+Verdict    : tout passe</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li>Un cas sans attendu est refusé : il ne prouverait rien. Un cas peut aussi fixer son client (<code>tenant</code>) et poser un state d'ouverture (<code>state</code>), comme <code>--state</code> au module 4.</li>
+<li><code>--json</code> donne le rapport complet pour un programme.</li>
+</ul>
+<div class="encadre piege"><p class="encadre-titre">Piège : un texte exact</p>
+<p><code>contains</code> cherche le texte tel quel. Un vrai modèle écrit parfois « 1 840 € » avec une espace insécable, que <code>"1 840 €"</code> ne reconnaît pas. Pour tolérer les deux : <code>matches: ["1.840"]</code>.</p></div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-14-2">
+<h3><span class="exo-num">14.2</span> Comparer des variantes, avec un juge</h3>
+<p class="fns"><a class="fn" href="matrice.html#O1">O1</a></p>
+
+<h4>Pourquoi</h4>
+<p>Au module 13, le rejeu en variante a montré ce que feraient <code>SIMULE_BREF</code> et <code>SIMULE_OUBLIEUR</code>, mais il sortait en code 0 même quand l'e-mail ne partait pas. Jean veut un verdict : quelle configuration peut remplacer l'actuelle sans dégrader la relance ?</p>
+
+<h4>Mise en place</h4>
+<p>Certaines qualités ne se vérifient pas par un contrôle de texte : « la réponse dit-elle clairement à l'artisan que la relance est partie ? ». C'est le travail d'un <strong>juge d'évaluation</strong>, un modèle qui note la réponse finale de chaque run selon des critères écrits. Il ressemble au juge du module 7, mais il juge <em>après</em> le run, sans le modifier. On lui donne un modèle simulé, inséré avant <code>VISION</code> dans la liste <code>models</code> :</p>
+<figure class="code"><figcaption>loom.yaml (le juge des évaluations)</figcaption>
+<pre><code><span class="aj">  # Le juge des évaluations (module 14) : il note la réponse finale d'un run.</span><span class="aj">  - id: JUGE_EVAL</span><span class="aj">    sdk: fake</span><span class="aj">    model: fake-juge-eval</span><span class="aj">    pricing: {input: 1, output: 5}</span><span class="aj">    params:</span><span class="aj">      script:</span><span class="aj">        - with_text: est parti chez</span><span class="aj">          tool_calls:</span><span class="aj">            - name: verdict</span><span class="aj">              arguments:</span><span class="aj">                criteria:</span><span class="aj">                  - {name: confirme, score: 1.0, reason: "La réponse confirme l'envoi et nomme la cliente."}</span><span class="aj">        - with_text: Relance brève envoyée</span><span class="aj">          tool_calls:</span><span class="aj">            - name: verdict</span><span class="aj">              arguments:</span><span class="aj">                criteria:</span><span class="aj">                  - {name: confirme, score: 0.9, reason: "La réponse confirme l'envoi."}</span><span class="aj">        - with_text: toujours en attente</span><span class="aj">          tool_calls:</span><span class="aj">            - name: verdict</span><span class="aj">              arguments:</span><span class="aj">                criteria:</span><span class="aj">                  - {name: confirme, score: 0.1, reason: "La réponse ne parle d'aucun envoi."}</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<p>Comme les autres modèles simulés, ce juge ne comprend rien : il répond selon le texte qu'il lit (<code>with_text</code>). Il rend l'exemple reproductible ; avec un vrai juge, c'est la règle écrite qui ferait le travail.</p>
+<p>La suite de comparaison :</p>
+<figure class="code"><figcaption>evals/comparaison.yaml</figcaption>
+<pre><code>version: 1
+name: comparaison
+agent: assistant
+repeat: 2
+max_cost_usd: 1.00
+
+doubles:
+  envoyer_email: outils:faux_envoi
+
+judge:
+  model: JUGE_EVAL
+  criteria:
+    - name: confirme
+      rule: La réponse dit clairement à l'artisan que la relance est partie, et chez qui.
+
+variants:
+  - {name: actuel}
+  - {name: bref, models: {main: SIMULE_BREF}}
+  - {name: oublieur, models: {main: SIMULE_OUBLIEUR}}
+
+cases:
+  - name: relance-martin
+    input: Relance Mme Martin pour le devis D-2026-042, sur un ton cordial.
+    expect:
+      called:
+        - chercher_devis
+        - rediger_relance
+        - {name: envoyer_email, arguments: {destinataire: martin@example.fr}}</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>repeat: 2</code></td><td>Chaque cas est joué deux fois par variante, et ne réussit que si toutes les répétitions passent. Avec un vrai modèle, qui ne répond pas deux fois pareil, c'est ce qui distingue un succès de hasard d'un comportement fiable.</td></tr>
+<tr><td><code>max_cost_usd: 1.00</code></td><td>Le plafond de dépense de la suite. Une fois atteint, les runs suivants ne partent pas, et le rapport le dit.</td></tr>
+<tr><td><code>judge:</code></td><td>Le juge d'évaluation : son modèle et ses critères (<code>name</code>, <code>rule</code>, et <code>min_score</code>, 0,8 par défaut). Avec <code>tool_results: [chercher_devis]</code>, il lirait aussi les résultats de cet outil. Un cas peut ajouter ses propres <code>criteria</code>.</td></tr>
+<tr><td><code>variants:</code></td><td>Les façons de jouer chaque cas. <code>actuel</code> ne change rien ; <code>bref</code> et <code>oublieur</code> remplacent le modèle de l'étape <code>main</code>. Une variante peut aussi changer le modèle d'un rôle (<code>models: {rediger_relance: …}</code>) ou d'un juge (<code>judge:&lt;nom&gt;</code>), ou désigner un autre fichier de configuration (<code>config:</code>).</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom eval evals/comparaison.yaml
+Suite      : comparaison — agent assistant, 1 cas, 3 variante(s), 2 répétition(s) par cas
+Juge       : JUGE_EVAL
+Plafond    : 1.0000 $
+
+Variante actuel (config de base) — 1/1 cas réussi(s), 0.074078 $ de runs, 0.001740 $ de juge
+  ok       relance-martin (2/2)
+
+Variante bref (main=SIMULE_BREF) — 0/1 cas réussi(s), 0.036858 $ de runs, 0.001684 $ de juge
+  ÉCHEC    relance-martin (0/2)
+      essai 1 : run 01a16eaa-5037-7488-9207-d8ccce21033e, completed
+        ✗ appelle rediger_relance — appels : chercher_devis, envoyer_email
+      essai 2 : run 01a16eaa-5319-77a8-8d30-6313f771d38b, completed
+        ✗ appelle rediger_relance — appels : chercher_devis, envoyer_email
+
+Variante oublieur (main=SIMULE_OUBLIEUR) — 0/1 cas réussi(s), 0.021780 $ de runs, 0.001718 $ de juge
+  ÉCHEC    relance-martin (0/2)
+      essai 1 : run 01a16eaa-54a4-754e-91d2-9800560607f4, completed
+        ✗ appelle rediger_relance — appels : chercher_devis
+        ✗ appelle envoyer_email avec {"destinataire": "martin@example.fr"} — appels : chercher_devis
+        ✗ juge : confirme ≥ 0.80 — note 0.10 — La réponse ne parle d'aucun envoi.
+      essai 2 : run 01a16eaa-58be-751b-a29b-223fef3ccdfc, completed
+        ✗ appelle rediger_relance — appels : chercher_devis
+        ✗ appelle envoyer_email avec {"destinataire": "martin@example.fr"} — appels : chercher_devis
+        ✗ juge : confirme ≥ 0.80 — note 0.10 — La réponse ne parle d'aucun envoi.
+
+Bilan      : 2/6 run(s) réussi(s), 0.137858 $ dépensé(s)
+Verdict    : des attendus tombent, ou des runs n'ont pas été joués</code></pre>
+<ul>
+<li><code>actuel</code> passe ses deux répétitions.</li>
+<li><code>bref</code> est écartée par un contrôle déterministe : elle envoie l'e-mail sans le faire rédiger par <code>rediger_relance</code>, donc sans son contrat ni son juge (module 7). Le juge d'évaluation, lui, l'aurait laissée passer (note 0,9).</li>
+<li><code>oublieur</code> est écartée deux fois : l'e-mail n'est jamais envoyé, et le juge note 0,1 une réponse qui ne parle d'aucun envoi. C'est exactement ce que le rejeu en variante du module 13 laissait passer.</li>
+</ul>
+<p>Le même verdict en Python, par exemple pour bloquer un déploiement :</p>
+<figure class="code"><figcaption>evaluer.py</figcaption>
+<pre><code>"""Joue une suite d'évaluations depuis Python, par exemple avant un déploiement."""
+
+import asyncio
+import sys
+
+from loom_ia.access import Loom
+
+
+async def main(suite: str) -&gt; int:
+    async with Loom.from_config("loom.yaml") as loom:
+        rapport = await loom.evaluate(suite)
+        for nom in rapport.variants:
+            bilan = rapport.summary(nom)
+            print(f"{nom:&lt;10} {bilan.passed_cases}/{len(bilan.cases)} cas, {bilan.cost_usd:.4f} $")
+        print("tout passe :", rapport.passed)
+        return 0 if rapport.passed else 1
+
+
+sys.exit(asyncio.run(main(sys.argv[1])))</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>loom.evaluate(suite)</code></td><td>Joue la suite et rend le rapport.</td></tr>
+<tr><td><code>rapport.summary(nom)</code></td><td>Le bilan d'une variante : cas réussis, coût.</td></tr>
+<tr><td><code>rapport.passed</code></td><td>Vrai si tout passe.</td></tr>
+</tbody>
+</table></div>
+<pre><code><span class="p">$ </span>python evaluer.py evals/comparaison.yaml
+actuel     1/1 cas, 0.0741 $
+bref       0/1 cas, 0.0369 $
+oublieur   0/1 cas, 0.0218 $
+tout passe : False</code></pre>
+
+<h4>À retenir</h4>
+<ul>
+<li>Mettez d'abord les contrôles déterministes (<code>called</code>, <code>contains</code>…) : ils sont gratuits et sûrs. Le juge sert pour ce qu'ils ne savent pas dire, au prix d'un appel de modèle par run, compté à part (« de juge »).</li>
+<li>Le code de sortie de <code>loom eval</code> est 1 dès qu'un attendu tombe : branchez-le tel quel sur votre intégration continue.</li>
+</ul>
+<div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
+<p>Une évaluation sur modèles simulés vérifie votre configuration, vos outils et vos attendus, pas la qualité d'un vrai modèle. Avant de conclure sur un changement de modèle, rejouez la suite avec de vrais modèles (une variante <code>models: {main: HAIKU}</code>, <a href="module-01.html#vrai-modele">rappel</a>), un juge réel, et <code>repeat</code> à 3 ou plus. Surveillez « $ dépensé(s) » et gardez <code>max_cost_usd</code>.</p></div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-14-3">
+<h3><span class="exo-num">14.3</span> Garder des runs de référence et les rejouer</h3>
+<p class="fns"><a class="fn" href="matrice.html#O3">O3</a></p>
+
+<h4>Pourquoi</h4>
+<p>Les cas précédents font tourner l'agent à chaque fois. Or Jean a aussi des runs dont il est content, comme la relance de Mme Martin. Il voudrait les garder tels quels, et être prévenu dès qu'une modification ne les reproduit plus, sans payer un seul appel de modèle.</p>
+
+<h4>Mise en place</h4>
+<p><code>--export DOSSIER</code> écrit le journal de chaque run d'une évaluation, un fichier par variante, cas et répétition (<code>&lt;variante&gt;--&lt;cas&gt;--&lt;n&gt;.jsonl</code>). Gardez la variante qui vous convient :</p>
+<pre><code><span class="p">$ </span>loom eval evals/comparaison.yaml --variant actuel --export evals/journaux &amp;&amp; ls evals/journaux
+Suite      : comparaison — agent assistant, 1 cas, 1 variante(s), 2 répétition(s) par cas
+Juge       : JUGE_EVAL
+Plafond    : 1.0000 $
+
+Variante actuel (config de base) — 1/1 cas réussi(s), 0.074078 $ de runs, 0.001740 $ de juge
+  ok       relance-martin (2/2)
+
+Bilan      : 2/2 run(s) réussi(s), 0.075818 $ dépensé(s)
+Verdict    : tout passe
+actuel--relance-martin--1.jsonl
+actuel--relance-martin--2.jsonl</code></pre>
+<p>Une suite de <strong>non-régression</strong> rejoue ces journaux. Un cas de type <code>replay</code> n'a ni demande, ni attendus, ni juge : il passe si chaque run de chaque journal se rejoue à l'identique (module 13).</p>
+<figure class="code"><figcaption>evals/non-regression.yaml</figcaption>
+<pre><code>version: 1
+name: non-regression
+agent: assistant
+
+cases:
+  - name: journaux-de-reference
+    replay: journaux/*.jsonl</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>replay: journaux/*.jsonl</code></td><td>Le motif des journaux à rejouer, relatif au fichier de la suite. Un motif qui ne trouve aucun fichier fait tomber le cas : un dossier vidé par erreur ne passe pas pour un succès.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>loom eval evals/non-regression.yaml
+Suite      : non-regression — agent assistant, 1 cas, 1 variante(s), 1 répétition(s) par cas
+
+Variante base (config de base) — 1/1 cas réussi(s), 0.000000 $ de runs, 0.000000 $ de juge
+  ok       journaux-de-reference (2/2 run(s) rejoué(s) à l'identique)
+
+Bilan      : 2/2 run(s) réussi(s), 0.000000 $ dépensé(s)
+Verdict    : tout passe</code></pre>
+<p>Les deux runs se rejouent à l'identique, sans appeler personne : 0 $. Ajoutez maintenant la consigne du module 13 au prompt, et relancez :</p>
+<pre><code><span class="p">$ </span>printf "Signe toujours tes réponses « L'assistant de {{ entreprise }} ».\n" &gt;&gt; prompts/system.md
+<span class="p">$ </span>loom eval evals/non-regression.yaml
+(heure) WARNING  loom_ia.replay.runner — Rejeu du run 01a16eaa-772f-7133-b27d-6ffa9a205821 : divergence, appel de modèle n°1 (main au journal) : la requête a changé — ce qui diffère : le prompt système [run_id=01a16eaa-772f-7133-b27d-6ffa9a205821 tenant_id=default]
+(heure) WARNING  loom_ia.replay.runner — Rejeu du run 01a16eaa-7b79-752b-b042-9acda8fa44d2 : divergence, appel de modèle n°1 (main au journal) : la requête a changé — ce qui diffère : le prompt système [run_id=01a16eaa-7b79-752b-b042-9acda8fa44d2 tenant_id=default]
+Suite      : non-regression — agent assistant, 1 cas, 1 variante(s), 1 répétition(s) par cas
+
+Variante base (config de base) — 0/1 cas réussi(s), 0.000000 $ de runs, 0.000000 $ de juge
+  ÉCHEC    journaux-de-reference (0/2 run(s) rejoué(s) à l'identique)
+      journaux/actuel--relance-martin--1.jsonl, run 01a16eaa-772f-7133-b27d-6ffa9a205821 :
+        ✗ se rejoue à l'identique — appel de modèle n°1 (main au journal) : la requête a changé ; ce qui diffère : le prompt système
+      journaux/actuel--relance-martin--2.jsonl, run 01a16eaa-7b79-752b-b042-9acda8fa44d2 :
+        ✗ se rejoue à l'identique — appel de modèle n°1 (main au journal) : la requête a changé ; ce qui diffère : le prompt système
+
+Bilan      : 0/2 run(s) réussi(s), 0.000000 $ dépensé(s)
+Verdict    : des attendus tombent, ou des runs n'ont pas été joués
+<span class="p">$ </span>sed -i '$d' prompts/system.md</code></pre>
+<p>Les avertissements du début viennent du moteur de rejeu ; le rapport suit. Chaque journal en écart est nommé, avec l'appel où la requête a changé et la partie qui diffère.</p>
+
+<h4>À retenir</h4>
+<ul>
+<li>C'est le filet de sécurité le moins cher : aucun modèle, aucun outil, aucune dépense. Il voit tout changement de prompt, d'outils proposés, de modèle ou de réglages.</li>
+<li>Il ne dit pas qu'un changement est mauvais, seulement qu'il est visible. Quand le changement est voulu, régénérez les journaux (<code>loom eval … --export</code>), après avoir vérifié le comportement par une évaluation à variantes.</li>
+<li>Un cas <code>replay</code> peut cohabiter avec des cas ordinaires dans la même suite.</li>
+</ul>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-14-4">
+<h3><span class="exo-num">14.4</span> Tester l'agent avec pytest et le banc</h3>
+<p class="fns"><a class="fn" href="matrice.html#O2">O2</a></p>
+
+<h4>Pourquoi</h4>
+<p>Une évaluation joue le scénario du modèle simulé de <code>loom.yaml</code>. Jean veut aussi tester des comportements que ce scénario ne contient pas, par exemple un orchestrateur qui oublie l'envoi, et les faire tourner avec le reste de ses tests Python, à chaque modification du code.</p>
+
+<h4>Mise en place</h4>
+<p><strong>pytest</strong> est l'outil de test le plus répandu en Python, et <strong>pytest-asyncio</strong> lui permet d'exécuter des tests <code>async</code>. On les ajoute comme dépendances de développement (<code>--dev</code>) : elles servent à tester le projet, pas à le faire tourner.</p>
+<pre><code><span class="p">$ </span>uv add --dev pytest pytest-asyncio
+ + pytest==9.1.1
+ + pytest-asyncio==1.4.0</code></pre>
+<p>Ajoutez la configuration de pytest à la fin de <code>pyproject.toml</code> :</p>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+    "loom-ia[anthropic,crypto,http,mcp,openai,otel,postgres,rabbitmq,redis,sqlite]&gt;=2.0.11",
+]
+<span class="aj"> </span><span class="aj">[dependency-groups]</span><span class="aj">dev = [</span><span class="aj">    "pytest&gt;=9.1.1",</span><span class="aj">    "pytest-asyncio&gt;=1.4.0",</span><span class="aj">]</span><span class="aj"> </span><span class="aj">[tool.pytest.ini_options]</span><span class="aj">asyncio_mode = "auto"</span><span class="aj">testpaths = ["tests"]</span><span class="aj">pythonpath = ["."]</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées (le groupe <code>dev</code> est écrit par <code>uv add --dev</code>)</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>asyncio_mode = "auto"</code></td><td>Exécuter les tests <code>async def</code> sans décorer chacun.</td></tr>
+<tr><td><code>testpaths = ["tests"]</code></td><td>Chercher les tests dans le dossier <code>tests/</code>.</td></tr>
+<tr><td><code>pythonpath = ["."]</code></td><td>Permettre aux tests d'importer <code>outils.py</code>, à la racine du projet.</td></tr>
+</tbody>
+</table></div>
+<p>Le module <code>loom_ia.testing</code> fournit un <strong>banc</strong> (<code>Bench</code>) : il monte l'agent de la configuration, à part du journal, avec des modèles et des outils remplacés. Créez <code>tests/test_relance.py</code> :</p>
+<pre><code><span class="p">$ </span>mkdir tests</code></pre>
+<figure class="code"><figcaption>tests/test_relance.py</figcaption>
+<pre><code>"""Tests de l'agent assistant : le banc monte l'agent sans réseau, sans clé, sans rien envoyer."""
+
+import pytest
+
+from loom_ia.core.model import Message
+from loom_ia.testing import Bench, ScriptedModel, tool_call_message
+from outils import faux_envoi
+
+RELANCE = "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial."
+EMAIL = {
+    "destinataire": "martin@example.fr",
+    "objet": "Votre devis D-2026-042",
+    "corps": "Bonjour Madame Martin, où en êtes-vous de notre devis D-2026-042 ? Jean Dupont",
+}
+
+
+async def test_la_relance_du_scenario_de_la_config() -&gt; None:
+    async with Bench("loom.yaml", tools={"envoyer_email": faux_envoi}) as banc:
+        resultat = await banc.run("assistant", RELANCE)
+        banc.expect(
+            resultat,
+            status="completed",
+            contains=["Mme Martin"],
+            called=["chercher_devis", "rediger_relance", "envoyer_email"],
+        )
+
+
+async def test_l_email_part_avec_les_bons_arguments() -&gt; None:
+    orchestrateur = ScriptedModel(
+        tool_call_message(("c1", "chercher_devis", {"numero": "D-2026-042"})),
+        tool_call_message(("c2", "envoyer_email", EMAIL)),
+        Message.assistant("La relance est partie chez Mme Martin."),
+    )
+    async with Bench(
+        "loom.yaml", models={"SIMULE": orchestrateur}, tools={"envoyer_email": faux_envoi}
+    ) as banc:
+        resultat = await banc.run("assistant", RELANCE)
+        banc.expect(resultat, called=[{"name": "envoyer_email", "arguments": EMAIL}])
+        assert len(banc.calls("envoyer_email")) == 1
+
+
+async def test_un_orchestrateur_qui_oublie_l_envoi_est_vu() -&gt; None:
+    oublieux = ScriptedModel(
+        tool_call_message(("c1", "chercher_devis", {"numero": "D-2026-042"})),
+        Message.assistant("Le devis D-2026-042 est en attente."),
+    )
+    async with Bench("loom.yaml", models={"SIMULE": oublieux}) as banc:
+        resultat = await banc.run("assistant", RELANCE)
+        with pytest.raises(AssertionError, match="envoyer_email"):
+            banc.expect(resultat, called=["envoyer_email"])</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>Bench("loom.yaml", …)</code></td><td>Le banc, sur la configuration du projet (ou un objet <code>LoomConfig</code> construit en Python, module 10).</td></tr>
+<tr><td><code>tools={"envoyer_email": faux_envoi}</code></td><td>Remplace un outil par sa doublure. Avec une doublure, l'approbation est accordée d'office, puisque rien ne part.</td></tr>
+<tr><td><code>models={"SIMULE": …}</code></td><td>Remplace le modèle déclaré sous cet identifiant.</td></tr>
+<tr><td><code>ScriptedModel(…)</code></td><td>Un faux modèle écrit en Python, qui rend ses réponses dans l'ordre : <code>tool_call_message((id, outil, arguments))</code> pour demander un outil, <code>Message.assistant(texte)</code> pour répondre.</td></tr>
+<tr><td><code>banc.run(agent, demande)</code></td><td>Joue le run.</td></tr>
+<tr><td><code>banc.expect(resultat, …)</code></td><td>Les mêmes contrôles qu'une évaluation (<code>status</code>, <code>contains</code>, <code>called</code>, <code>not_called</code>…). Lève une <code>AssertionError</code> qui dit ce qui est tombé.</td></tr>
+<tr><td><code>banc.calls("outil")</code></td><td>Les appels d'un outil : arguments, sort, résultat.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>pytest -v
+============================= test session starts ==============================
+platform linux -- Python 3.14.6, pytest-9.1.1, pluggy-1.7.0 -- /home/jean/plomberie-dupont/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/jean/plomberie-dupont
+configfile: pyproject.toml
+testpaths: tests
+plugins: asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 3 items
+
+tests/test_relance.py::test_la_relance_du_scenario_de_la_config PASSED   [ 33%]
+tests/test_relance.py::test_l_email_part_avec_les_bons_arguments PASSED  [ 66%]
+tests/test_relance.py::test_un_orchestrateur_qui_oublie_l_envoi_est_vu PASSED [100%]
+
+============================== 3 passed in 4.34s ===============================</code></pre>
+<p>Le premier test joue le scénario de <code>loom.yaml</code>. Les deux suivants imposent le comportement de l'orchestrateur, ce qui permet de tester un cas absent du scénario : le troisième vérifie qu'un orchestrateur oublieux est bien <em>vu</em>.</p>
+<p>Voici ce que dit le banc quand un contrôle tombe. Ce test-ci est faux exprès : il attend un montant dans la réponse et un appel de <code>prix_ttc</code>.</p>
+<figure class="code"><figcaption>tests/test_echec.py (à supprimer ensuite)</figcaption>
+<pre><code>"""Un test faux exprès, pour voir ce que dit le banc quand un contrôle tombe."""
+
+from loom_ia.testing import Bench
+from outils import faux_envoi
+
+
+async def test_la_relance_cite_le_montant() -&gt; None:
+    async with Bench("loom.yaml", tools={"envoyer_email": faux_envoi}) as banc:
+        resultat = await banc.run("assistant", "Relance Mme Martin pour le devis D-2026-042.")
+        banc.expect(resultat, contains=["1 840 €"], called=["prix_ttc"])</code></pre></figure>
+<pre><code><span class="p">$ </span>pytest -q --tb=line tests/test_echec.py
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   AssertionError: Banc : 2 contrôle(s) tombé(s) sur 2, run 01a16eaa-b4e5-701a-8c47-e026a2bb11bb (completed)
+      ✗ contient « 1 840 € »
+      ✗ appelle prix_ttc — appels : chercher_devis, rediger_relance, envoyer_email
+      texte :
+        L'e-mail de relance est parti chez Mme Martin.
+/home/jean/plomberie-dupont/.venv/lib/python3.14/site-packages/loom_ia/testing/bench.py:264: AssertionError: Banc : 2 contrôle(s) tombé(s) sur 2, run …
+=========================== short test summary info ============================
+FAILED tests/test_echec.py::test_la_relance_cite_le_montant - AssertionError:...
+1 failed in 1.98s
+<span class="p">$ </span>rm tests/test_echec.py</code></pre>
+
+<p>Le banc a deux garde-fous qui le rendent sûr : un outil à effets de bord sans doublure n'est jamais exécuté, et un vrai modèle qui n'a pas été remplacé est refusé. Deux tests le vérifient :</p>
+<figure class="code"><figcaption>tests/test_securite.py</figcaption>
+<pre><code>"""Les garde-fous du banc : rien ne part pour de vrai, aucun vrai modèle n'est appelé."""
+
+from pathlib import Path
+
+from loom_ia.agents import AgentSpec, MainRole
+from loom_ia.config import LoomConfig
+from loom_ia.core.model import Message, ModelSpec
+from loom_ia.testing import Bench, ScriptedModel, tool_call_message
+
+RELANCE = "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial."
+EMAIL = {
+    "destinataire": "martin@example.fr",
+    "objet": "Votre devis D-2026-042",
+    "corps": "Bonjour Madame Martin, où en êtes-vous de notre devis D-2026-042 ? Jean Dupont",
+}
+
+
+def emails_dans_la_boite() -&gt; int:
+    boite = Path("boite-envoi")
+    return len(list(boite.iterdir())) if boite.exists() else 0
+
+
+async def test_sans_doublure_l_email_ne_part_jamais() -&gt; None:
+    avant = emails_dans_la_boite()
+    orchestrateur = ScriptedModel(
+        tool_call_message(("c1", "envoyer_email", EMAIL)),
+        Message.assistant("La relance est partie."),
+    )
+    async with Bench("loom.yaml", models={"SIMULE": orchestrateur}) as banc:
+        await banc.run("assistant", RELANCE)
+        [appel] = banc.calls("envoyer_email")
+        assert appel.fate == "refused"
+    assert emails_dans_la_boite() == avant
+
+
+async def test_un_vrai_modele_n_est_jamais_appele() -&gt; None:
+    config = LoomConfig(
+        version=1,
+        models=(ModelSpec(id="HAIKU", sdk="anthropic", model="claude-haiku-5-5"),),
+        agents=(AgentSpec(name="reel", main=MainRole(model="HAIKU", system="Tu réponds.")),),
+    )
+    async with Bench(config) as banc:
+        resultat = await banc.run("reel", "Bonjour")
+        assert resultat.status == "failed"
+        assert "n'est pas remplacé" in (resultat.error or "")</code></pre></figure>
+<pre><code><span class="p">$ </span>pytest -v tests/test_securite.py
+============================= test session starts ==============================
+platform linux -- Python 3.14.6, pytest-9.1.1, pluggy-1.7.0 -- /home/jean/plomberie-dupont/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/jean/plomberie-dupont
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 2 items
+
+tests/test_securite.py::test_sans_doublure_l_email_ne_part_jamais PASSED [ 50%]
+tests/test_securite.py::test_un_vrai_modele_n_est_jamais_appele PASSED   [100%]
+
+============================== 2 passed in 2.33s ===============================</code></pre>
+<ul>
+<li>Sans doublure, l'appel de <code>envoyer_email</code> reçoit le sort <code>refused</code>, et rien n'arrive dans la boîte d'envoi.</li>
+<li>Le second test construit une configuration en Python, avec un agent sur <code>HAIKU</code>. Le run échoue avec le message « Banc : le modèle HAIKU (anthropic, claude-haiku-5-5) est réel et n'est pas remplacé — le remplacer (models={…}), ou l'appeler pour de vrai (real_models=True) ».</li>
+</ul>
+
+<h4>À retenir</h4>
+<ul>
+<li>Un <code>ScriptedModel</code>, comme <code>sdk: fake</code>, ne lit pas le prompt : les tests vérifient vos outils, vos politiques et votre configuration, pas la qualité du prompt.</li>
+<li><code>Bench(…, real_models=True)</code> appelle les vrais modèles : réservez-le à un test d'intégration lancé à la main, avec la clé. <code>register={…}</code> rend référençable un objet que la configuration ne trouverait pas dans ses <code>imports</code>.</li>
+</ul>
+<div class="encadre piege"><p class="encadre-titre">Piège : sans <code>asyncio_mode = "auto"</code></p>
+<p>Sans ce réglage (ou un décorateur <code>@pytest.mark.asyncio</code> sur chaque test), pytest ne sait pas exécuter les tests <code>async def</code>, et la suite ne teste rien de ce que vous croyez.</p></div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="exo" id="ex-14-5">
+<h3><span class="exo-num">14.5</span> Les journaux de référence dans pytest</h3>
+<p class="fns"><a class="fn" href="matrice.html#O3">O3</a></p>
+
+<h4>Pourquoi</h4>
+<p>Jean veut que <code>pytest</code> fasse tout en une commande : les tests du banc <em>et</em> le rejeu des runs de référence. Un seul feu, vert ou rouge, à chaque modification.</p>
+
+<h4>Mise en place</h4>
+<figure class="code"><figcaption>tests/test_non_regression.py</figcaption>
+<pre><code>"""Non-régression : des runs de référence doivent se rejouer à l'identique."""
+
+from pathlib import Path
+
+from loom_ia.testing import Bench, assert_replays
+from outils import faux_envoi
+
+RELANCE = "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial."
+
+
+async def test_les_runs_de_reference_se_rejouent() -&gt; None:
+    journaux = sorted(Path("evals/journaux").glob("*.jsonl"))
+    assert journaux, "aucun journal de référence dans evals/journaux/"
+    await assert_replays("loom.yaml", *journaux)
+
+
+async def test_le_journal_du_banc_devient_une_reference(tmp_path: Path) -&gt; None:
+    async with Bench("loom.yaml", tools={"envoyer_email": faux_envoi}) as banc:
+        resultat = await banc.run("assistant", RELANCE)
+        journal = await banc.export(resultat, tmp_path / "relance-042.jsonl")
+    await assert_replays("loom.yaml", journal)</code></pre></figure>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>assert_replays(config, *journaux)</code></td><td>Rejoue chaque run fini de chaque journal, et lève une <code>AssertionError</code> au premier écart, avec le journal, le run et la partie de la requête qui a changé.</td></tr>
+<tr><td><code>banc.export(resultat, chemin)</code></td><td>Écrit le journal d'un run du banc dans un fichier : une deuxième façon de fabriquer une référence.</td></tr>
+</tbody>
+</table></div>
+
+<h4>Exécution</h4>
+<pre><code><span class="p">$ </span>pytest -v
+============================= test session starts ==============================
+platform linux -- Python 3.14.6, pytest-9.1.1, pluggy-1.7.0 -- /home/jean/plomberie-dupont/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/jean/plomberie-dupont
+configfile: pyproject.toml
+testpaths: tests
+plugins: asyncio-1.4.0, anyio-4.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 7 items
+
+tests/test_non_regression.py::test_les_runs_de_reference_se_rejouent PASSED [ 14%]
+tests/test_non_regression.py::test_le_journal_du_banc_devient_une_reference PASSED [ 28%]
+tests/test_relance.py::test_la_relance_du_scenario_de_la_config PASSED   [ 42%]
+tests/test_relance.py::test_l_email_part_avec_les_bons_arguments PASSED  [ 57%]
+tests/test_relance.py::test_un_orchestrateur_qui_oublie_l_envoi_est_vu PASSED [ 71%]
+tests/test_securite.py::test_sans_doublure_l_email_ne_part_jamais PASSED [ 85%]
+tests/test_securite.py::test_un_vrai_modele_n_est_jamais_appele PASSED   [100%]
+
+============================== 7 passed in 8.97s ===============================</code></pre>
+<p>Avec la consigne de trop dans le prompt :</p>
+<pre><code><span class="p">$ </span>printf "Signe toujours tes réponses « L'assistant de {{ entreprise }} ».\n" &gt;&gt; prompts/system.md
+<span class="p">$ </span>pytest -q --tb=short tests/test_non_regression.py
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+____________________ test_les_runs_de_reference_se_rejouent ____________________
+tests/test_non_regression.py:14: in test_les_runs_de_reference_se_rejouent
+    await assert_replays("loom.yaml", *journaux)
+.venv/lib/python3.14/site-packages/loom_ia/testing/replays.py:61: in assert_replays
+    raise AssertionError(
+E   AssertionError: Rejeu : 2 écart(s) sur 2 journal(aux)
+E     evals/journaux/actuel--relance-martin--1.jsonl, run 01a16eaa-772f-7133-b27d-6ffa9a205821 : appel de modèle n°1 (main au journal) : la requête a changé ; ce qui diffère : le prompt système
+E     evals/journaux/actuel--relance-martin--2.jsonl, run 01a16eaa-7b79-752b-b042-9acda8fa44d2 : appel de modèle n°1 (main au journal) : la requête a changé ; ce qui diffère : le prompt système
+------------------------------ Captured log call -------------------------------
+WARNING  loom_ia.replay.runner:runner.py:407 Rejeu du run 01a16eaa-772f-7133-b27d-6ffa9a205821 : divergence, appel de modèle n°1 (main au journal) : la requête a changé — ce qui diffère : le prompt système
+WARNING  loom_ia.replay.runner:runner.py:407 Rejeu du run 01a16eaa-7b79-752b-b042-9acda8fa44d2 : divergence, appel de modèle n°1 (main au journal) : la requête a changé — ce qui diffère : le prompt système
+=========================== short test summary info ============================
+FAILED tests/test_non_regression.py::test_les_runs_de_reference_se_rejouent
+1 failed, 1 passed in 4.15s
+<span class="p">$ </span>sed -i '$d' prompts/system.md
+<span class="p">$ </span>pytest -q
+.......                                                                  [100%]
+7 passed in 8.56s</code></pre>
+<p>Le premier test tombe et dit pourquoi. Le second passe toujours : il fabrique sa référence avec le prompt du moment.</p>
+
+<h4>À retenir</h4>
+<ul>
+<li>Trois sources de journaux de référence : <code>loom eval … --export</code> (runs d'une évaluation), <code>banc.export()</code> (runs d'un test), <code>loom sessions export</code> (runs réels, module 13).</li>
+<li>Pour l'intégration continue : <code>uv run pytest</code> et <code>uv run loom eval evals/relance.yaml</code> sortent en code non nul au premier écart.</li>
+</ul>
+<div class="encadre piege"><p class="encadre-titre">Piège : des données personnelles dans le dépôt</p>
+<p>Un journal de référence contient tout le run : la demande, l'e-mail, le nom et l'adresse de la cliente. Il est destiné à être versionné avec le code. N'y gardez que des cas fictifs, ou exportés d'un environnement de test, jamais les données d'un vrai client.</p></div>
+</section>
+
+<h2 id="bilan">Bilan du module</h2>
+<p>L'agent est en <strong>v1.4</strong> : toute modification visible du prompt, des outils, des modèles ou des réglages est détectée en quelques secondes, et une comparaison de configurations donne un verdict.</p>
+<figure class="code"><figcaption>plomberie-dupont/</figcaption>
+<pre><code>plomberie-dupont/
+├── loom.yaml            + le juge des évaluations JUGE_EVAL
+├── pyproject.toml       + pytest, pytest-asyncio (dev) et la configuration de pytest
+├── evaluer.py           la suite d'évaluations en Python
+├── evals/
+│   ├── relance.yaml         deux cas et leurs attendus
+│   ├── comparaison.yaml     trois variantes, un juge
+│   ├── non-regression.yaml  le rejeu des journaux de référence
+│   └── journaux/            deux runs de référence
+├── tests/
+│   ├── test_relance.py
+│   ├── test_securite.py
+│   └── test_non_regression.py
+└── … les fichiers du module 13</code></pre></figure>
+<figure class="code"><figcaption>pyproject.toml</figcaption>
+<pre><code>[project]
+name = "plomberie-dupont"
+version = "0.1.0"
+requires-python = "&gt;=3.14"
+dependencies = [
+    "loom-ia[anthropic,crypto,http,mcp,openai,otel,postgres,rabbitmq,redis,sqlite]&gt;=2.0.11",
+]
+
+[dependency-groups]
+dev = [
+    "pytest&gt;=9.1.1",
+    "pytest-asyncio&gt;=1.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]</code></pre></figure>
+<p>Le fichier <code>loom.yaml</code> est celui de l'exercice 14.2. Au dernier module, l'agent reçoit des outils venus d'un paquet, puis apprend à fabriquer les siens, dans une machine virtuelle isolée.</p>
+
+<nav class="suite" aria-label="Pages voisines"><a class="avant" href="module-13.html"><small>Précédent</small>Module 13 : Observabilité et rejeu</a><a class="apres" href="module-15.html"><small>Suivant</small>Module 15 : Sources d&#x27;outils et sandbox forge</a></nav>
+<p class="pied">Formation loom_v2 · App-Novative · contenu sous licence Apache-2.0, comme loom-ia.</p>
+</div>
+</main>
+</div>
+</body>
+</html>
