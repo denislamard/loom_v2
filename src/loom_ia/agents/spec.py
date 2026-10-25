@@ -17,14 +17,18 @@ peut porter, chacune avec son schéma, et les outils dont un résultat la pose
 son ``input_template``). Un juge ne reçoit pas le state dans cette version (D11).
 """
 
+import operator
 import re
+from collections.abc import Callable
+from functools import reduce
 from pathlib import Path
-from typing import Annotated, Final, Literal, Self, cast
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, Self, cast
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
 from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
 from pydantic import (
+    BaseModel,
     ConfigDict,
     Discriminator,
     Field,
@@ -32,8 +36,10 @@ from pydantic import (
     PositiveFloat,
     PositiveInt,
     Tag,
+    create_model,
     model_validator,
 )
+from pydantic import ValidationError as ModelValidationError
 
 from loom_ia.core.bounded_regex import RegexTimeout, bounded_validator, check_schema
 from loom_ia.core.model import (
@@ -60,6 +66,7 @@ from loom_ia.core.model import (
     finite_json,
 )
 from loom_ia.core.template import Template, TemplateError
+from loom_ia.tools_builtin import BUILTIN_TOOLS, Builtin, is_builtin, parameterized_builtins
 
 AGENT_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 
@@ -509,14 +516,25 @@ def _only_session_state(data: object) -> None:
             )
 
 
+# Outils fournis à paramètres : leur référence a son propre modèle (plus bas).
+# Seuls les modules légers de leurs paramètres sont importés ici.
+_PARAMETERIZED: Final = parameterized_builtins()
+# Pour l'éditeur : une référence à paramètres relève de son propre modèle.
+_NOT_PARAMETERIZED: Final[dict[str, JsonValue] | None] = (
+    {"not": {"enum": list[JsonValue](sorted(_PARAMETERIZED))}} if _PARAMETERIZED else None
+)
+
+
 class PythonTool(DomainModel):
     """Outil Python référencé par un nom enregistré, un chemin ``module:attr``, ou
     ``loom.<outil>`` pour un outil fourni par loom-ia (``loom_ia.tools_builtin``).
 
-    Les champs renseignés ici remplacent ce que l'outil déclare lui-même.
+    Les champs renseignés ici remplacent ce que l'outil déclare lui-même. Un outil
+    fourni à paramètres (``loom.local_files``) a son propre modèle, qui ajoute ses
+    paramètres à ces réglages communs ; les autres n'acceptent rien de plus.
     """
 
-    python: str = Field(min_length=1)
+    python: str = Field(min_length=1, json_schema_extra=_NOT_PARAMETERIZED)
     timeout: PositiveFloat | None = None
     side_effects: SideEffects | None = None
     approval: Approval | None = None
@@ -532,6 +550,110 @@ class PythonTool(DomainModel):
     def _no_judge(cls, data: object) -> object:
         _reject_judge(data, "un outil Python")
         return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _builtin_without_params(cls, data: object) -> object:
+        """Une clé de plus sur un outil fourni sans paramètres : le dire tel quel.
+
+        Sans ce contrôle, elle tombait sous « Extra inputs are not permitted »,
+        qui ne dit pas que l'outil n'a pas de paramètres.
+        """
+        if cls is not PythonTool or not isinstance(data, dict):
+            return data
+        fields = cast(dict[object, object], data)
+        reference = fields.get("python")
+        if not isinstance(reference, str) or not is_builtin(reference):
+            return fields
+        if reference in _PARAMETERIZED:
+            # Construite en Python, la référence passerait le chargement sans ses
+            # paramètres, et n'échouerait qu'au montage.
+            model, _ = _PARAMETERIZED[reference]
+            raise ValueError(
+                f"{reference} a ses paramètres ({', '.join(model.model_fields)}) : sa référence "
+                f"a son propre modèle — la donner en dict dans les outils d'un agent, ou "
+                f"construire BUILTIN_REFERENCES[{reference!r}]"
+            )
+        # ``judge`` a son propre message (``_no_judge``).
+        extra = sorted(str(key) for key in fields if key not in cls.model_fields and key != "judge")
+        if not extra:
+            return fields
+        if reference not in BUILTIN_TOOLS:
+            known = ", ".join(BUILTIN_TOOLS) or "aucun"
+            raise ValueError(f"Outil fourni {reference!r} inconnu (fournis : {known})")
+        raise ValueError(f"{reference} n'accepte aucun paramètre ({', '.join(extra)})")
+
+
+def _builtin_reference(reference: str, params: type[BaseModel], entry: Builtin) -> type[PythonTool]:
+    """Le modèle de la référence d'un outil fourni à paramètres.
+
+    Ses paramètres s'ajoutent aux réglages communs, comme clés directes de la
+    référence, et sont validés au chargement par le modèle que déclare l'outil.
+    Un paramètre au nom d'un réglage commun est une faute du catalogue : elle
+    est levée ici, à l'import, et non chez l'utilisateur.
+    """
+    common = set(PythonTool.model_fields)
+    clash = sorted(common & set(params.model_fields))
+    if clash:
+        raise TypeError(f"{reference} : paramètre au nom d'un réglage commun : {', '.join(clash)}")
+    stray = sorted(set(entry.refused) - common)
+    if stray:
+        raise TypeError(f"{reference} : réglage refusé inconnu : {', '.join(stray)}")
+    names = tuple(params.model_fields)
+
+    def check(self: PythonTool) -> PythonTool:
+        given = [name for name in entry.refused if getattr(self, name) is not None]
+        if given:
+            raise ValueError(
+                f"{reference} : {', '.join(given)} ne se règle pas sur cet outil — "
+                f"{entry.refused_because}"
+            )
+        # Les contrôles du modèle entier (noms uniques…), que les champs seuls ne font pas.
+        try:
+            params.model_validate({name: getattr(self, name) for name in names})
+        except ModelValidationError as exc:
+            raise ValueError(_validation_said(exc)) from None
+        return self
+
+    fields: dict[str, Any] = {
+        name: (info.annotation, info) for name, info in params.model_fields.items()
+    }
+    validators = cast(
+        dict[str, Callable[..., Any]], {"_builtin_params": model_validator(mode="after")(check)}
+    )
+    built: type[PythonTool] = create_model(
+        f"Builtin_{reference.removeprefix(RESERVED_PREFIX)}",
+        __base__=PythonTool,
+        __doc__=f"Outil fourni ``{reference}``, avec ses paramètres.",
+        __module__=__name__,
+        __validators__=validators,
+        python=(cast(Any, Literal)[reference], ...),
+        **fields,
+    )
+    return built
+
+
+def _validation_said(error: ModelValidationError) -> str:
+    lines: list[str] = []
+    for item in error.errors(include_url=False):
+        location = ".".join(str(part) for part in item["loc"])
+        message = item["msg"].removeprefix("Value error, ")
+        lines.append(f"{location} — {message}" if location else message)
+    return " ; ".join(lines)
+
+
+# Référence ``loom.<outil>`` → modèle de sa référence, pour les outils à paramètres.
+BUILTIN_REFERENCES: Final[dict[str, type[PythonTool]]] = {
+    reference: _builtin_reference(reference, model, entry)
+    for reference, (model, entry) in _PARAMETERIZED.items()
+}
+
+
+def builtin_settings(declared: PythonTool, params: type[BaseModel]) -> dict[str, object]:
+    """Les paramètres d'une référence d'outil fourni, à valider par le modèle de l'outil."""
+    return {
+        name: getattr(declared, name) for name in params.model_fields if hasattr(declared, name)
+    }
 
 
 class McpTools(DomainModel):
@@ -643,10 +765,18 @@ def _tool_kind(value: object) -> str:
         return "mcp"
     if isinstance(value, SourceTools):
         return "source"
+    if isinstance(value, PythonTool):
+        # Une référence déjà construite garde son modèle.
+        built = BUILTIN_REFERENCES.get(value.python)
+        return value.python if built is not None and isinstance(value, built) else "python"
     if isinstance(value, dict) and "mcp" in value:
         return "mcp"
     if isinstance(value, dict) and "source" in value:
         return "source"
+    if isinstance(value, dict):
+        reference = cast(dict[object, object], value).get("python")
+        if isinstance(reference, str) and reference in BUILTIN_REFERENCES:
+            return reference
     return "python"
 
 
@@ -680,12 +810,22 @@ class PolicyRef(DomainModel):
         return self
 
 
-type ToolRef = Annotated[
-    Annotated[PythonTool, Tag("python")]
-    | Annotated[McpTools, Tag("mcp")]
-    | Annotated[SourceTools, Tag("source")],
-    Discriminator(_tool_kind),
-]
+if TYPE_CHECKING:
+    type ToolRef = PythonTool | McpTools | SourceTools
+else:
+    # Une variante par outil fourni à paramètres, sous la balise de sa référence.
+    ToolRef = Annotated[
+        reduce(
+            operator.or_,
+            (
+                Annotated[PythonTool, Tag("python")],
+                *(Annotated[model, Tag(ref)] for ref, model in BUILTIN_REFERENCES.items()),
+                Annotated[McpTools, Tag("mcp")],
+                Annotated[SourceTools, Tag("source")],
+            ),
+        ),
+        Discriminator(_tool_kind),
+    ]
 
 
 # Nom d'une clé du state : un identifiant, que les templates citent tel quel.

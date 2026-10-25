@@ -36,6 +36,8 @@ from loom_ia.core.ports.policy import Policy
 from loom_ia.core.ports.queue import Job, JobKind, JobState, ServedQueue, TaskQueue
 from loom_ia.core.ports.secrets import SecretProvider
 from loom_ia.core.ports.tool import (
+    AssessedTool,
+    CallAssessment,
     ReuseNote,
     SourceContext,
     SourceUnavailable,
@@ -45,7 +47,9 @@ from loom_ia.core.ports.tool import (
     ToolSource,
     ToolSourceFactory,
     UnknownEffect,
+    assessed,
     idempotency_key,
+    strictest_side_effects,
 )
 from loom_ia.core.ports.usage_counter import UsageCounter
 
@@ -54,7 +58,9 @@ __all__ = [
     "AnsweringClient",
     "ArtifactNotFound",
     "ArtifactStore",
+    "AssessedTool",
     "BusUnavailable",
+    "CallAssessment",
     "ChunkCallback",
     "Cipher",
     "EventBus",
@@ -93,6 +99,7 @@ __all__ = [
     "UnknownEffect",
     "UnusableId",
     "UsageCounter",
+    "assessed",
     "complete",
     "exchange_log",
     "idempotency_key",
@@ -100,4 +107,5 @@ __all__ = [
     "recording",
     "require_end",
     "stopped_by_client",
+    "strictest_side_effects",
 ]

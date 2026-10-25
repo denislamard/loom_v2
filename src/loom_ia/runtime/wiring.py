@@ -45,15 +45,16 @@ appels. Sans ``agents``, l'agent monte lui-même ses sous-agents à la demande,
 et les referme avec lui.
 """
 
+import importlib.util
 import logging
 import os
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Final, Protocol, cast
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from loom_ia.adapters.artifacts import (
     InMemoryArtifactStore,
@@ -85,12 +86,14 @@ from loom_ia.agents.spec import (
     StateKey,
     SubAgentRef,
     ToolResultsContext,
+    builtin_settings,
     system_text,
 )
 from loom_ia.agents.spec import ContextItem as DeclaredContext
 from loom_ia.agents.spec import RoleContextItem as DeclaredRoleContext
 from loom_ia.config.compaction import COMPACTION_AGENT
-from loom_ia.config.errors import ConfigError
+from loom_ia.config.env_file import DEFAULT_NAME as ENV_FILE_DEFAULT
+from loom_ia.config.errors import ConfigError, from_validation
 from loom_ia.config.models import (
     DURABLE_BACKENDS,
     SHARED_IDEMPOTENCY,
@@ -117,6 +120,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import (
     ArtifactStore,
+    AssessedTool,
     ChunkCallback,
     EventBus,
     EventStore,
@@ -169,7 +173,14 @@ from loom_ia.runtime.sources import PackagedSource, described, source_factory
 from loom_ia.telemetry import RunExporter, SpanSink, configure_logging
 from loom_ia.tenancy import EnvironmentSecrets, Tenant
 from loom_ia.tools import ConfiguredTool, FunctionTool, IdempotentTool, configure
-from loom_ia.tools_builtin import BUILTIN_TOOLS, builtin_tool, is_builtin
+from loom_ia.tools_builtin import (
+    BUILTIN_TOOLS,
+    BuiltinContext,
+    Protected,
+    builtin_params,
+    builtin_tool,
+    is_builtin,
+)
 from loom_ia.usage import BudgetGuard
 
 if TYPE_CHECKING:
@@ -613,7 +624,11 @@ def build_agent(
     imposed: Mapping[str, Approval] = tenant.approvals if tenant is not None else {}
     redirects: Mapping[str, str] = tenant.spec.secrets if tenant and tenant.spec else {}
     mapped: Mapping[str, str] = tenant.spec.models if tenant and tenant.spec else {}
-    tools = [_tool(declared, known, config.base_dir, spec.name) for declared in spec.python_tools]
+    provided_context = BuiltinContext(base_dir=config.base_dir, protected=_protected_paths(config))
+    tools = [
+        _tool(declared, known, config.base_dir, spec.name, provided=provided_context)
+        for declared in spec.python_tools
+    ]
     roles = [role_definition(role, variables, state=spec.state) for role in spec.roles]
     _check_names(spec, [tool.spec.name for tool in tools])
     _check_state(spec, tools)
@@ -1055,8 +1070,20 @@ def _check_durable_journal(
             if name not in obligatoires
         ]
         pausing = sorted({b.name for b in policies.bound if "pause" in b.policy.decisions})
+        # Un outil qui évalue ses appels n'en approuve que certains : le dire.
+        by_call = {
+            t.spec.name for t in tools if _assesses_approval(t) and t.spec.name not in forced
+        }
         causes = [
-            *(f"outil {name!r} en approval: always" for name in obligatoires),
+            *(
+                f"outil {name!r} "
+                + (
+                    "dont certains appels attendent une approbation"
+                    if name in by_call
+                    else "en approval: always"
+                )
+                for name in obligatoires
+            ),
             *(f"politique {name!r} qui peut rendre Pause" for name in pausing),
         ]
         if causes:
@@ -1079,6 +1106,13 @@ def _check_durable_journal(
                 ],
                 refuse=not config.lax,
             )
+
+
+def _assesses_approval(tool: object) -> bool:
+    """Vrai si l'outil décide de l'approbation appel par appel, sans que la config l'ait fixée."""
+    if isinstance(tool, ConfiguredTool):
+        return "approval" not in tool.fixed and _assesses_approval(tool.tool)
+    return isinstance(tool, AssessedTool)
 
 
 def _sources_asking_approval(
@@ -1775,10 +1809,17 @@ def _missing_mcp(reason: str) -> ConfigError:
     )
 
 
-def _tool(declared: PythonTool, registry: Registry, base_dir: Path | None, agent: str) -> Tool:
+def _tool(
+    declared: PythonTool,
+    registry: Registry,
+    base_dir: Path | None,
+    agent: str,
+    *,
+    provided: BuiltinContext | None = None,
+) -> Tool:
     try:
         if is_builtin(declared.python):
-            found: object = _builtin_tool(declared.python)
+            found: object = _builtin_tool(declared, provided or BuiltinContext(base_dir=base_dir))
         else:
             found = resolve(declared.python, registry, base_dir=base_dir)
         tool = found if isinstance(found, Tool) else _from_function(declared, found)
@@ -1797,16 +1838,159 @@ def _tool(declared: PythonTool, registry: Registry, base_dir: Path | None, agent
     )
 
 
-def _builtin_tool(reference: str) -> Tool:
-    """Outil fourni par loom-ia (préfixe ``loom.``) : son module n'est importé qu'ici."""
+def _builtin_tool(declared: PythonTool, context: BuiltinContext) -> Tool:
+    """Outil fourni par loom-ia (préfixe ``loom.``) : son module n'est importé qu'ici.
+
+    Un outil à paramètres reçoit ceux de sa référence, validés par son modèle,
+    et le contexte du montage : le dossier de la config et les chemins de loom
+    qu'il ne doit pas exposer.
+    """
+    reference = declared.python
     try:
-        return builtin_tool(reference)
+        model = builtin_params(reference)
+        params = None
+        if model is not None:
+            try:
+                params = model.model_validate(builtin_settings(declared, model))
+            except ValidationError as exc:
+                # Le nom de l'agent et de l'outil est ajouté par ``_tool``.
+                said = from_validation(exc, root=None).reason.replace("\n", " ; ")
+                raise ConfigError(said) from None
+        return builtin_tool(reference, params, context=context)
     except KeyError:
         provided = ", ".join(BUILTIN_TOOLS) or "aucun"
         raise ConfigError(f"Outil fourni {reference!r} inconnu (fournis : {provided})") from None
     except ImportError as exc:
         missing = exc.name or str(exc)
         raise ConfigError(f"Outil fourni {reference!r} : dépendance {missing!r} absente") from exc
+    except ValueError as exc:
+        # La fabrique refuse ses paramètres : un dossier absent, un chemin protégé…
+        raise ConfigError(str(exc)) from exc
+
+
+def _protected_paths(config: LoomConfig) -> tuple[Protected, ...]:
+    """Ce qu'un outil fourni ne doit jamais exposer au modèle.
+
+    La config et ce qui la compose (agents, prompts), le code que loom charge
+    ou lance depuis son dossier (modules, serveurs MCP), le fichier
+    d'environnement, et le stockage de la racine et de **tous** les clients :
+    un modèle qui y accéderait lirait des secrets ou les journaux d'un autre
+    client, ou réécrirait le code qui le fait tourner.
+    """
+    found: list[Protected] = []
+    base = config.base_dir
+    names = _code_names(config)
+    if base is not None:
+        # Le dossier de la config : on peut en exposer un sous-dossier, pas lui.
+        found.append(Protected(base, "le dossier de la config"))
+        found.append(Protected(base / ENV_FILE_DEFAULT, "le fichier d'environnement"))
+        for top in sorted(names):
+            found.append(Protected(base / f"{top}.py", f"le module Python {top!r}"))
+            found.append(Protected(base / top, f"le module Python {top!r}", subtree=True))
+        found += _code_beside(base)
+    found += _code_found(names)
+    found += _mcp_code(config, base)
+    if config.env_file is not None:
+        found.append(Protected(config.env_file, "le fichier d'environnement"))
+    found.append(Protected(config.agents_dir, "le dossier des agents", subtree=True))
+    found.append(Protected(config.prompts_dir, "le dossier des prompts", subtree=True))
+    storages = [config.storage]
+    storages += [spec.storage for spec in config.tenants if spec.storage is not None]
+    for storage in storages:
+        events = storage.events
+        if events.path is not None:
+            found.append(Protected(events.path, "le journal", subtree=events.backend == "jsonl"))
+        if storage.artifacts_path is not None:
+            found.append(
+                Protected(storage.artifacts_path, "le dossier des artefacts", subtree=True)
+            )
+        if storage.idempotency.path is not None:
+            found.append(Protected(storage.idempotency.path, "le magasin d'idempotence"))
+    return tuple(found)
+
+
+# Ce qu'un serveur MCP exécute : un script, pas une donnée qu'il sert.
+_SCRIPT_SUFFIXES: Final = frozenset(
+    {".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".sh", ".bash", ".rb", ".pl", ".php"}
+)
+
+
+def _code_names(config: LoomConfig) -> set[str]:
+    """Premiers noms des modules que charge la config : ``imports``, références ``module:attr``."""
+    names = {name.split(".")[0] for name in config.imports}
+    for agent in config.agents:
+        references = [tool.python for tool in agent.python_tools]
+        references += [policy.hook for policy in agent.policies]
+        references += [judge.when.condition or "" for _, _, judge in agent.judges]
+        names |= {ref.partition(":")[0].split(".")[0] for ref in references if ":" in ref}
+    return {name for name in names if name}
+
+
+def _code_found(names: set[str]) -> list[Protected]:
+    """Où Python trouve ces modules : un paquet installé ailleurs (``src/``) compte aussi.
+
+    ``find_spec`` d'un nom de premier niveau cherche sans rien exécuter.
+    """
+    found: list[Protected] = []
+    for name in sorted(names):
+        try:
+            spec = importlib.util.find_spec(name)
+        except ImportError, ValueError:
+            continue
+        if spec is None:
+            continue
+        what = f"le module Python {name!r}"
+        if spec.origin is not None and spec.has_location:
+            found.append(Protected(Path(spec.origin), what))
+        for location in spec.submodule_search_locations or ():
+            found.append(Protected(Path(location), what, subtree=True))
+    return found
+
+
+def _code_beside(base: Path) -> list[Protected]:
+    """Le code posé à côté de la config, même sans référence : module ou dossier de modules."""
+    found: list[Protected] = []
+    try:
+        entries = sorted(base.iterdir())
+    except OSError:
+        return found
+    for entry in entries:
+        if entry.name.startswith("."):
+            continue
+        if entry.suffix == ".py" and entry.is_file():
+            found.append(Protected(entry, f"le module Python {entry.stem!r}"))
+        elif entry.is_dir() and any(entry.glob("*.py")):
+            found.append(Protected(entry, f"du code Python ({entry.name}/)", subtree=True))
+    return found
+
+
+def _mcp_code(config: LoomConfig, base: Path | None) -> list[Protected]:
+    """Le code que lance un serveur MCP stdio : ses scripts, et son dossier s'il est à côté.
+
+    Seuls comptent les **scripts** que nomment sa commande et ses arguments, et
+    leur dossier : un argument qui est un dossier (la racine d'un serveur
+    filesystem, un dépôt git) ou un fichier de données (une base SQLite) est ce
+    que le serveur sert, pas son code. Son dossier de lancement compte s'il est
+    un sous-dossier de celui de la config.
+    """
+    found: list[Protected] = []
+    for server in config.mcp_servers:
+        if server.transport != "stdio" or server.cwd is None:
+            continue
+        cwd = server.cwd.resolve()
+        what = f"le code du serveur MCP {server.name!r}"
+        if base is not None and cwd != base.resolve() and cwd.is_relative_to(base.resolve()):
+            found.append(Protected(cwd, what, subtree=True))
+        for token in (server.command or "", *server.args):
+            if not token or token.startswith("-"):
+                continue
+            path = (cwd / token).resolve()
+            if path.suffix.lower() not in _SCRIPT_SUFFIXES or not path.is_file():
+                continue
+            found.append(Protected(path, what))
+            if path.parent != cwd and (base is None or path.parent != base.resolve()):
+                found.append(Protected(path.parent, what, subtree=True))
+    return found
 
 
 def _from_function(declared: PythonTool, found: object) -> Tool:

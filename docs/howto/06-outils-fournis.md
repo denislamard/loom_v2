@@ -6,7 +6,7 @@
 >
 > **Navigation** : précédent : [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md) (vous êtes ici)
 
-Jusqu'ici, un outil était écrit par vous (chapitre 2), servi par un serveur MCP (chapitre 13) ou par un paquet installé (chapitre 29). loom-ia fournit aussi quelques outils prêts à l'emploi. Aucun n'est actif d'office : un agent n'a que les outils que liste son `tools:`, et il active un outil fourni en le nommant `loom.<outil>`. Le premier est `loom.fetch_page`, qui lit une page web publique ; depuis 2.0.13, `loom.current_datetime` donne la date et l'heure.
+Jusqu'ici, un outil était écrit par vous (chapitre 2), servi par un serveur MCP (chapitre 13) ou par un paquet installé (chapitre 29). loom-ia fournit aussi quelques outils prêts à l'emploi. Aucun n'est actif d'office : un agent n'a que les outils que liste son `tools:`, et il active un outil fourni en le nommant `loom.<outil>`. Le premier est `loom.fetch_page`, qui lit une page web publique ; depuis 2.0.13, `loom.current_datetime` donne la date et l'heure, et `loom.local_files` lit et écrit des fichiers dans des dossiers que vous lui désignez.
 
 Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom inspect`), 9 (validation humaine), 26 (rejeu) et 27 (évaluations) lus.
 
@@ -23,6 +23,7 @@ Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom 
   - [Exemple 32.5 : tester sans réseau](#exemple-325--tester-sans-réseau)
   - [Ce que `fetch_page` ne fait pas](#ce-que-fetch_page-ne-fait-pas)
   - [`loom.current_datetime` : la date et l'heure](#loomcurrent_datetime--la-date-et-lheure)
+  - [`loom.local_files` : des fichiers dans des dossiers permis](#loomlocal_files--des-fichiers-dans-des-dossiers-permis)
 - [Pour aller plus loin](#pour-aller-plus-loin)
 
 ---
@@ -578,12 +579,76 @@ Avec `part: date`, `time` disparaît ; avec `part: time`, `date` et `weekday`. `
 
 Un fuseau inconnu (`Mars/Olympus`, une chaîne vide) est un résultat en erreur, « Fuseau horaire inconnu », que le modèle peut corriger : le run continue. L'outil n'a pas d'effet de bord (`side_effects: none`). Comme tout résultat d'outil, l'heure lue va au journal : un run rejoué (chapitre 26) rend l'heure de l'original, pas celle du rejeu.
 
+### `loom.local_files` : des fichiers dans des dossiers permis
+
+Jean Dupont veut que son assistant range ses comptes rendus de chantier dans un dossier de travail, relise ses devis, mais ne touche jamais à son dossier clients sans son accord. `loom.local_files` lit, liste, écrit et supprime des fichiers texte, et seulement dans les dossiers que la référence de l'agent déclare, chacun avec ses droits :
+
+```yaml
+tools:
+- python: loom.local_files
+  folders:
+  - name: work                       # dossier de travail : rien ne bloque
+    path: /home/jean/chantiers/brouillons
+    rights: { read: never, write: never, overwrite: never, delete: never }
+  - name: clients                    # écrire demande l'accord de Jean
+    path: /home/jean/clients
+    rights: { read: never, write: always }
+  - name: devis                      # forme courte : approbations par défaut
+    path: devis
+    rights: [ read ]
+```
+
+C'est le premier outil fourni à **paramètres** : `folders` se donne sur la référence, à côté des réglages communs (`timeout`, `offload_over`, `output`), et `loom validate` le vérifie au chargement. Un chemin relatif se rapporte au dossier du `loom.yaml` ; ni `~` ni `$HOME` ne sont interprétés.
+
+#### Les droits, et l'approbation de chacun
+
+`rights` est une table **droit → approbation**. Un droit présent est accordé ; sa valeur dit si chaque appel qui l'exerce attend un humain (`always`) ou non (`never`) :
+
+| Droit | Permet | Approbation par défaut (forme courte) |
+|---|---|---|
+| `read` | lister un dossier, lire un fichier | `never` |
+| `write` | créer un fichier, et ses sous-dossiers | `never` |
+| `overwrite` | remplacer un fichier existant ; exige `write` | `always` |
+| `delete` | supprimer un fichier, jamais un dossier | `always` |
+
+En liste (`rights: [ read, write ]`), chaque droit prend son approbation par défaut : un dossier déclaré sans y penser reste prudent, et on ne relâche que là où c'est voulu, comme `work` ci-dessus.
+
+L'approbation se décide **appel par appel** : dans la même étape, lire `clients/c1.txt` part tout de suite, et écrire `clients/c2.txt` met le run en pause (chapitre 9). L'approbateur lit le motif : « écrire clients/c2.txt : le dossier clients demande une approbation pour write (effets : reversible) ». Une approbation imposée par un client (`tenants[].approvals: { local_files: always }`) garde le dernier mot. `approval`, `side_effects` et `idempotent` ne se règlent pas sur la référence : les droits les expriment déjà.
+
+Une approbation suppose un journal durable : sur un journal `memory`, le montage refuse « outil 'local_files' dont certains appels attendent une approbation » (en profil `dev`, il avertit seulement).
+
+#### Ce que voit le modèle
+
+Un seul outil, `local_files`, avec `action` (`list`, `read`, `write`, `delete`), `path`, `content` pour `write`, et `overwrite`. Il désigne un fichier par `<dossier>/<chemin>` : `work/2026/cr-chantier-12.md`. Sa description liste les dossiers, leurs droits et ceux qui attendent un humain, **jamais leur chemin réel**, qui ne paraît pas non plus dans ses messages d'erreur.
+
+Un appel refusé est un résultat en erreur, que le modèle peut corriger : le run continue. Sont refusés un chemin absolu, `..`, un dossier inconnu, un droit absent, un fichier ou un dossier caché (nom qui commence par `.`, comme `.env` ou `.git`), un fichier qui n'est pas du texte UTF-8, plus de 1 Mo lu ou écrit par appel. Un listage rend au plus 500 entrées, sans les fichiers cachés.
+
+Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, et jamais s'il est en lecture seule. Écrire le contenu qu'il a déjà ne change rien et réussit : relancée après une interruption, une écriture ne casse donc pas sur « existe déjà ». L'écriture est atomique (fichier temporaire, puis mise en place) ; une création sans `overwrite` est exclusive, si bien que deux appels d'une même étape vers un même nouveau fichier ne s'écrasent pas : le second reçoit « existe déjà ». Un fichier remplacé garde ses permissions.
+
+#### Dossiers imbriqués et liens symboliques
+
+C'est le dossier déclaré **le plus profond** qui décide. Déclarez `archives` en lecture seule à l'intérieur de `work`, et `work/archives/vieux.txt` ne s'écrit ni ne se supprime, quel que soit le nom par lequel on y passe.
+
+Les liens symboliques sont suivis, à condition de rester dans leur dossier déclaré ; un listage tait ceux qui en sortent, et supprimer un lien supprime le lien, pas ce qu'il désigne. Un lien qui mène hors des dossiers permis, ou dans un autre dossier déclaré, qui a ses propres droits, est refusé : « passe par un lien vers le dossier clients… ; y accéder par « clients/… » ». Ainsi ce qui décide d'un appel, droits et approbation, ne dépend que de ses arguments et de la config : l'évaluation et l'exécution ne peuvent pas diverger.
+
+#### Ce que loom ne laisse jamais exposer
+
+Le montage refuse un dossier qui exposerait loom lui-même : le dossier de la config ou un dossier qui le contient, le dossier des agents ou des prompts, le code que loom charge ou lance (modules de `imports` et des références `module:attr`, où que Python les trouve, `src/` compris ; fichiers `.py` et dossiers qui en contiennent, à la racine du dossier de la config ; scripts des serveurs MCP, mais pas le dossier qu'un serveur sert), le fichier d'environnement, le journal, les artefacts et le magasin d'idempotence, ceux de la racine comme ceux de **chaque** client. Un modèle qui y accéderait lirait vos clés d'API ou les journaux d'un autre client, ou réécrirait le code qui le fait tourner. Un sous-dossier du dossier de la config qui ne contient rien de tout cela (`output/`) reste permis.
+
+#### À savoir
+
+- **Rien n'est oublié.** Ce qui est lu ou écrit va au journal, dans `tool.called` et `tool.completed` : la rétention et le chiffrement du journal (chapitre 24) s'y appliquent.
+- **Contenu non fiable.** Un fichier, comme une page lue par `fetch_page`, peut contenir des instructions adressées au modèle. Sur un agent qui lit des contenus venus d'ailleurs, gardez `delete` et `overwrite` sous approbation.
+- **Une course reste possible.** Entre le contrôle d'un chemin et l'accès, un autre programme qui remplacerait un dossier par un lien pourrait faire sortir l'accès du dossier. Qu'aucun autre programme n'écrive de liens dans les dossiers exposés.
+- **Rejeu et évaluations.** Un appel absent du journal ne part jamais, lecture comprise : l'appel y est jugé avant que ses références ne soient résolues, et rien ne garantit qu'une lecture le reste. Pour évaluer un agent qui lit des fichiers, donnez une doublure à `local_files` (chapitres 26 et 27).
+- **Un fichier d'environnement donné par `--env-file`** n'est pas connu de la config : s'il n'est pas caché (`.env`), ne le placez pas dans un dossier exposé.
+
 ---
 
 ## Pour aller plus loin
 
 - **La référence** : `docs/tools-builtin-analyse.md` — l'analyse, les décisions et l'organisation du dossier `src/loom_ia/tools_builtin/` ; `docs/fonctions.md`, point 50 (formes de référence) et point 44 (dépendances du noyau).
-- **Ajouter un outil fourni**, pour qui contribue à loom-ia : un module par outil dans `src/loom_ia/tools_builtin/`, une ligne au catalogue `BUILTIN_TOOLS`, et ses tests. `tests/unit/test_tools_builtin.py` vérifie que chaque entrée du catalogue est un outil, nommé comme sa référence sans le préfixe.
+- **Ajouter un outil fourni**, pour qui contribue à loom-ia : un module par outil dans `src/loom_ia/tools_builtin/`, une ligne au catalogue `BUILTIN_TOOLS`, et ses tests. `tests/unit/test_tools_builtin.py` vérifie que chaque entrée du catalogue est un outil, nommé comme sa référence sans le préfixe. Un outil à paramètres déclare au catalogue un `Builtin` : le modèle Pydantic de ses paramètres, dans un module léger (`local_files_params.py`), et sa fabrique ; il ajoute aussi ses paramètres d'essai à `SAMPLE_PARAMS`. Un outil dont l'approbation ou les effets dépendent de l'appel implémente `assess_call` (`loom_ia.core.ports.CallAssessment`).
 - **La limite du proxy** : backlog #023.
 
 Navigation : [01-demarrer.md](01-demarrer.md) · [02-maitriser.md](02-maitriser.md) · [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md)

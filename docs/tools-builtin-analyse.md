@@ -116,7 +116,7 @@ Non couverts par ces essais :
 
 - **L1 — Le proxy sortant est ignoré.** `fetch_page` passe son propre transport, et httpx2 ne lit alors ni `HTTP_PROXY` ni `HTTPS_PROXY` (`allow_env_proxies = trust_env and transport is None`). Là où la sortie doit passer par un proxy, l'outil ne joint rien. Un proxy rendrait d'ailleurs inutile le contrôle des adresses, puisque ce serait lui qui résoudrait le nom. Suivi : backlog #023.
 - **L2 — Ce qui n'est pas lu.** Ni JavaScript, ni PDF, ni image, ni page derrière une connexion à un compte.
-- **L3 — Pas de paramètres propres.** La forme `python:` n'accepte que les réglages existants. Il n'y a ni domaines autorisés, ni taille maximale réglable par agent, ni secret. Ça suffit pour `fetch_page` ; un futur outil qui aura besoin d'une clé (`search`) demandera une décision (D4).
+- **L3 — Pas de paramètres propres.** La forme `python:` n'accepte que les réglages existants. Il n'y a ni domaines autorisés, ni taille maximale réglable par agent, ni secret. Ça suffit pour `fetch_page` ; un futur outil qui aura besoin d'une clé (`search`) demandera une décision (D4). *Levée en 2.0.13 pour les paramètres (D4, `loom.local_files`) ; un secret reste à prévoir.*
 - **L4 — Contenu non fiable.** Le texte d'une page peut contenir des instructions adressées au modèle. La documentation doit recommander deux choses : ne pas activer `fetch_page` sur un agent qui a des outils `irreversible` sans `approval`, et s'appuyer sur les approbations imposées par client.
 - **L5 — Ce que garde le journal.** Le texte lu va dans `tool.completed`. Au-delà de 20 000 caractères, il part dans le stockage d'artefacts, et `artifact_read` apparaît dans le run (comportement existant). Sans stockage d'artefacts, il est seulement tronqué. La rétention et le chiffrement s'appliquent. Une page peut contenir des données personnelles.
 
@@ -254,7 +254,7 @@ src/loom_ia/tools_builtin/
 | D1 | **Une dépendance du noyau** (option b), et non un extra : `"httpx2>=2.13.0,<3"`, plancher égal à la version que la CI éprouve. Le message « dépendance '…' absente » ne nomme donc pas d'extra ; le test du wheel de la CI active `loom.fetch_page` et échoue si le wheel n'apporte plus `httpx2` | Étape 3 |
 | D2 | **2.0.7**, la version non publiée déjà ouverte | Étape 5 (`CHANGELOG.md`) |
 | D3 | **Une ligne `Fournis    : …`**, alignée sur les autres libellés (11 caractères), affichée seulement si un agent active un outil fourni | Étape 4 |
-| D4 | Ouverte : à trancher avec `search` | — |
+| D4 | **Tranchée le 25/10, avec `loom.local_files`** : des paramètres sur la référence, en clés directes (`folders:` sous `- python: loom.local_files`). Le catalogue déclare le modèle Pydantic des paramètres (`Builtin.params`, module léger) et une fabrique (`Builtin.target`) ; la référence est validée au chargement, et `loom schema` la décrit. Un paramètre ne prend pas le nom d'un réglage commun ; un outil peut refuser des réglages communs (`Builtin.refused`). Un secret (le cas `search`) reste à ajouter au contexte de la fabrique | 2.0.13 |
 | D5 | **Refuser**, dans `Registry` : `Loom.register()`, `Bench(register=…)` et un `Registry({...})` construit à la main | Étape 4 |
 | D6 | Ouverte : après la publication | — |
 

@@ -95,7 +95,7 @@ from loom_ia.core.model import (
     Usage,
 )
 from loom_ia.core.model.base import DomainModel
-from loom_ia.core.ports import ModelClient, ModelError
+from loom_ia.core.ports import ModelClient, ModelError, strictest_side_effects
 from loom_ia.engine import (
     Answered,
     AnyTool,
@@ -485,14 +485,16 @@ class EvalTools:
         key = (run_id, call.call_id)
         fate = self.fates.get(key)
         if fate is None:
+            # Jugé avant les références et les politiques : l'évaluation ne fait que durcir.
+            effects = strictest_side_effects(tool, call.arguments)
             if call.name in self.doubles:
                 fate = "double"
-            elif tool.spec.side_effects != "none":
+            elif effects != "none":
                 fate = "refused"
             else:
                 fate = "run"
             self.fates[key] = fate
-            self._effects[key] = tool.spec.side_effects
+            self._effects[key] = effects
         return fate != "run"
 
     def from_journal(self, run_id: RunId, call_id: str) -> bool:

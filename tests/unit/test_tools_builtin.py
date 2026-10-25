@@ -7,25 +7,41 @@ de montage s'appuient sur un outil fourni d'essai, ajouté au catalogue le temps
 d'un test ; ``test_catalogue_is_consistent`` éprouve, lui, le vrai catalogue.
 """
 
+import subprocess
 import sys
 import types
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 from conftest import MODEL, ConfigFactory, demo_agent
+from pydantic import BaseModel
 
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
-from loom_ia.config import ConfigError, load_config
+from loom_ia.agents.spec import (
+    BUILTIN_REFERENCES,
+    PythonTool,
+    _builtin_reference,  # pyright: ignore[reportPrivateUsage]
+)
+from loom_ia.config import ConfigError, agent_json_schema, load_config
 from loom_ia.config.references import Registry
 from loom_ia.core.events import ToolCompleted
 from loom_ia.core.model import DEFAULT_TENANT, RESERVED_PREFIX
 from loom_ia.engine import begin_run, drive
 from loom_ia.runtime import Agent, build_agent
 from loom_ia.tools import tool
-from loom_ia.tools_builtin import BUILTIN_TOOLS, builtin_tool, is_builtin
+from loom_ia.tools_builtin import (
+    BUILTIN_TOOLS,
+    Builtin,
+    BuiltinContext,
+    builtin_params,
+    builtin_tool,
+    is_builtin,
+    parameterized_builtins,
+)
 
 # Module d'essai des outils fournis : jamais sur disque, posé dans sys.modules.
 PROVIDED = "loom_essai_fourni"
@@ -243,10 +259,117 @@ async def test_register_refuses_a_loom_name(demo: ConfigFactory) -> None:
 # --- Catalogue ----------------------------------------------------------------------
 
 
-def test_catalogue_is_consistent() -> None:
+# Paramètres d'essai de chaque outil fourni qui en a : un nouvel outil à paramètres
+# doit en ajouter ici, sinon ``test_catalogue_is_consistent`` échoue.
+SAMPLE_PARAMS: dict[str, Callable[[Path], dict[str, Any]]] = {
+    "loom.local_files": lambda folder: {
+        "folders": [{"name": "essai", "path": str(folder), "rights": ["read"]}]
+    },
+}
+
+
+def test_catalogue_is_consistent(tmp_path: Path) -> None:
     """Chaque entrée : préfixe ``loom.``, module importable, un outil, nommé sans le préfixe."""
     for reference in BUILTIN_TOOLS:
         assert is_builtin(reference), reference
-        found = builtin_tool(reference)
+        model = builtin_params(reference)
+        if model is None:
+            found = builtin_tool(reference)
+        else:
+            assert reference in SAMPLE_PARAMS, f"{reference} : paramètres d'essai manquants"
+            params = model.model_validate(SAMPLE_PARAMS[reference](tmp_path))
+            found = builtin_tool(reference, params, context=BuiltinContext(base_dir=tmp_path))
         assert found.spec.name == reference.removeprefix(RESERVED_PREFIX), reference
         assert found.spec.description, reference
+
+
+def test_parameters_never_take_the_name_of_a_common_setting() -> None:
+    """Un paramètre au nom d'un réglage commun rendrait la clé ambiguë : le catalogue l'interdit."""
+    common = set(PythonTool.model_fields)
+    for reference, (model, entry) in parameterized_builtins().items():
+        assert not common & set(model.model_fields), reference
+        assert set(entry.refused) <= common, reference
+        assert BUILTIN_REFERENCES[reference].model_fields.keys() >= model.model_fields.keys()
+
+
+def test_a_parameter_named_like_a_common_setting_is_refused_at_import() -> None:
+    class Fautif(BaseModel):
+        timeout: int = 0
+
+    with pytest.raises(TypeError, match="paramètre au nom d'un réglage commun : timeout"):
+        _builtin_reference("loom.fautif", Fautif, Builtin(target="x:y", params="x:Fautif"))
+
+
+def test_validating_a_config_imports_only_the_parameter_modules() -> None:
+    """Valider une référence à paramètres n'importe pas l'outil, ni ses dépendances."""
+    code = (
+        "import sys\n"
+        "from loom_ia.agents.spec import AgentSpec\n"
+        "AgentSpec.model_validate({'name': 'a', 'main': {'model': 'M', 'system': 'x'}, "
+        "'tools': [{'python': 'loom.local_files', 'folders': "
+        "[{'name': 'w', 'path': '/tmp', 'rights': ['read']}]}]})\n"
+        "print('loom_ia.tools_builtin.local_files' in sys.modules, "
+        "'loom_ia.tools_builtin.fetch_page' in sys.modules)\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
+    )
+    assert done.stdout.split() == ["False", "False"]
+
+
+# --- Paramètres sur la référence ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("tool_ref", "message"),
+    [
+        (
+            {"python": "loom.fetch_page", "folders": []},
+            r"loom\.fetch_page n'accepte aucun paramètre \(folders\)",
+        ),
+        (
+            {"python": "loom.current_datetime", "domains": ["a"], "timeout": 3},
+            r"loom\.current_datetime n'accepte aucun paramètre \(domains\)",
+        ),
+        ({"python": "loom.nope", "folders": []}, r"Outil fourni 'loom\.nope' inconnu"),
+        ({"python": "loom.local_files"}, r"folders — Field required"),
+        (
+            {
+                "python": "loom.local_files",
+                "domains": ["a"],
+                "folders": [{"name": "w", "path": "/tmp", "rights": ["read"]}],
+            },
+            r"domains — Extra inputs are not permitted",
+        ),
+        (
+            {
+                "python": "loom.local_files",
+                "approval": "never",
+                "folders": [{"name": "w", "path": "/tmp", "rights": ["read"]}],
+            },
+            r"approval ne se règle pas sur cet outil — les droits de chaque dossier",
+        ),
+    ],
+)
+def test_parameters_are_checked_when_the_config_loads(
+    demo: ConfigFactory, tool_ref: dict[str, Any], message: str
+) -> None:
+    """Chaque outil n'accepte que ses propres paramètres, et dès ``load_config``."""
+    with pytest.raises(ConfigError, match=message):
+        load_config(demo(agents=[demo_agent(tools=[tool_ref])]))
+
+
+def test_own_tools_still_refuse_unknown_keys(demo: ConfigFactory) -> None:
+    with pytest.raises(ConfigError, match=r"folders — Extra inputs are not permitted"):
+        load_config(demo(agents=[demo_agent(tools=[{"python": "calculer", "folders": []}])]))
+
+
+def test_the_schema_describes_the_parameters() -> None:
+    """``loom schema`` : la référence à paramètres a son modèle ; ``PythonTool`` l'exclut."""
+    schema = agent_json_schema()
+    built = schema["$defs"]["Builtin_local_files"]
+    assert built["properties"]["python"]["const"] == "loom.local_files"
+    assert "folders" in built["required"]
+    assert schema["$defs"]["PythonTool"]["properties"]["python"]["not"] == {
+        "enum": ["loom.local_files"]
+    }

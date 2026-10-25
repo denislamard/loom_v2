@@ -95,6 +95,7 @@ from loom_ia.core.model import (
     DEFAULT_TENANT,
     JUDGES_MODES,
     MCP_PREFIX_SEPARATOR,
+    RESERVED_PREFIX,
     Attachment,
     BudgetPeriod,
     Budgets,
@@ -152,7 +153,8 @@ from loom_ia.runtime.sources import PackagedSource, installed
 from loom_ia.telemetry import BUILTIN_PATTERNS, Trace, render_trace
 from loom_ia.telemetry.logs import printable
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, Tenant, UnknownTenant
-from loom_ia.tools_builtin import is_builtin
+from loom_ia.tools import ConfiguredTool
+from loom_ia.tools_builtin import ShowsSettings, is_builtin
 from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import describe as describe_budget
 from loom_ia.usage import render as render_report
@@ -1076,6 +1078,15 @@ async def _show_agent(loom: Loom, tenant_id: TenantId, spec: AgentSpec, *, inden
     )
     for bound in context.policies.bound:
         print(f"{indent}    politique {bound.name} : {', '.join(sorted(bound.points))}")
+    for declared in spec.python_tools:
+        if not is_builtin(declared.python):
+            continue
+        name = declared.python.removeprefix(RESERVED_PREFIX)
+        mounted = context.tools.get(name)
+        shown = mounted.tool if isinstance(mounted, ConfiguredTool) else mounted
+        if isinstance(shown, ShowsSettings):
+            for line in shown.settings_lines():
+                print(f"{indent}    outil {name} : {line}")
     for target, contract, repairs in _contracts(spec):
         print(f"{indent}    contrat ({target}) : {_contract_line(contract, repairs=repairs)}")
     budgets = config.budget_of(spec.name)

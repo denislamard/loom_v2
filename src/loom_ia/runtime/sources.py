@@ -32,6 +32,7 @@ from loom_ia.config import ConfigError
 from loom_ia.core.model import MCP_PREFIX_SEPARATOR, TOOL_NAME_PATTERN, ToolOverrides
 from loom_ia.core.ports import SourceContext, Tool, ToolSource, ToolSourceFactory
 from loom_ia.tools import ConfiguredTool
+from loom_ia.tools.configured import ASSESSED
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +180,15 @@ class PackagedSource:
                 .overridden(self.declared.get(short))
                 .overridden(self.chosen.get(short))
             )
-            tools.append(ConfiguredTool(tool=tool, spec=spec))
+            # Ce que la config fixe l'emporte sur l'évaluation par appel de l'outil.
+            fixed = frozenset(
+                field
+                for overrides in (self.declared.get(short), self.chosen.get(short))
+                if overrides is not None
+                for field in ASSESSED
+                if getattr(overrides, field) is not None
+            )
+            tools.append(ConfiguredTool(tool=tool, spec=spec, fixed=fixed))
         return tools
 
     def _warn_unknown(self, names: set[str]) -> None:

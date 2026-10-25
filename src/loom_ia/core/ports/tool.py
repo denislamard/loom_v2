@@ -19,14 +19,14 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import JsonValue
 
 from loom_ia.core.model.content import ToolOutput
 from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import RunId, SessionId, TenantId
-from loom_ia.core.model.tooling import ToolSpec
+from loom_ia.core.model.tooling import SideEffects, ToolSpec
 from loom_ia.core.ports.idempotency import IdempotencyStore
 
 
@@ -103,6 +103,93 @@ class Tool(Protocol):
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
         """Exécute l'appel ; les arguments ont déjà été validés par le schéma."""
         ...
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CallAssessment:
+    """Ce qu'un appel précis demande, décidé par son outil d'après ses arguments.
+
+    Un outil dont les effets dépendent de l'appel — lire ou supprimer, dans un
+    dossier ou dans un autre — le dit appel par appel, plutôt qu'une
+    déclaration fixe qui vaudrait pour le pire des cas. Pour cet appel, le
+    moteur s'en sert à la place de ``spec.approval``, ``spec.side_effects`` et
+    ``spec.idempotent`` pour approuver et pour reprendre un appel interrompu.
+    Au rejeu et en évaluation, où l'appel est jugé avant que ses références et
+    les politiques ne fixent ses arguments, elle ne peut que durcir la
+    déclaration (``strictest_side_effects``).
+
+    La décision ne dépend que des arguments et de la configuration de
+    l'outil : elle est la même à chaque reprise, et au rejeu. Les effets sont
+    toujours à dire : ils décident si l'appel peut être refait.
+    """
+
+    side_effects: SideEffects
+    approval: Literal["never", "always"] = "never"
+    idempotent: bool = False
+    # Motif montré à l'approbateur quand ``approval`` vaut ``always``.
+    reason: str | None = None
+
+    @property
+    def safe_to_retry(self) -> bool:
+        """Vrai si refaire l'appel après une interruption est sans risque (#18)."""
+        return self.side_effects == "none" or self.idempotent
+
+
+@runtime_checkable
+class AssessedTool(Protocol):
+    """Outil qui évalue chacun de ses appels ; c'est facultatif.
+
+    Un outil qui n'a pas ``assess_call`` garde sa déclaration fixe (``spec``)
+    pour tous ses appels, et rien ne change pour lui. Celui qui l'a déclare
+    quand même dans ``spec`` le pire de ses appels : c'est ce que voient ce qui
+    ne regarde pas l'appel lui-même — la garde du journal durable, les
+    politiques ``before_tool``, le rejeu et les évaluations.
+    """
+
+    def assess_call(self, arguments: Mapping[str, JsonValue]) -> CallAssessment | None:
+        """L'évaluation de cet appel ; ``None`` : la déclaration fixe vaut."""
+        ...
+
+
+class _Declared(Protocol):
+    @property
+    def spec(self) -> ToolSpec: ...
+
+
+_SEVERITY: dict[SideEffects, int] = {"none": 0, "reversible": 1, "irreversible": 2}
+
+
+def strictest_side_effects(tool: _Declared, arguments: Mapping[str, JsonValue]) -> SideEffects:
+    """Les effets de l'appel, l'évaluation ne pouvant que durcir la déclaration.
+
+    Pour qui juge un appel avant que ses références ne soient résolues et que
+    les politiques ne remplacent ses arguments (rejeu, évaluations) : les
+    arguments vus ne sont pas forcément ceux qui partiront.
+    """
+    declared = tool.spec.side_effects
+    found = assessed(tool, arguments)
+    if found is None or _SEVERITY[found.side_effects] <= _SEVERITY[declared]:
+        return declared
+    return found.side_effects
+
+
+def assessed(tool: object, arguments: Mapping[str, JsonValue]) -> CallAssessment | None:
+    """L'évaluation d'un appel par son outil, ou ``None`` s'il n'en fait pas.
+
+    Une évaluation qui échoue vaut la plus prudente — approbation exigée, effet
+    irréversible : un défaut de l'outil ne doit pas laisser passer un appel
+    qu'il aurait retenu.
+    """
+    if not isinstance(tool, AssessedTool):
+        return None
+    try:
+        return tool.assess_call(arguments)
+    except Exception as exc:
+        return CallAssessment(
+            approval="always",
+            side_effects="irreversible",
+            reason=f"évaluation de l'appel impossible ({type(exc).__name__}: {exc})",
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

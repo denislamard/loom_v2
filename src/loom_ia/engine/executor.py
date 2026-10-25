@@ -119,6 +119,7 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.ports import (
     ArtifactStore,
+    CallAssessment,
     ChunkCallback,
     IdempotencyStore,
     SourceContext,
@@ -128,6 +129,7 @@ from loom_ia.core.ports import (
     ToolError,
     ToolSource,
     UnknownEffect,
+    assessed,
 )
 from loom_ia.core.projections import state_of_run
 from loom_ia.core.schema_errors import schema_problem
@@ -624,6 +626,14 @@ class ToolExecutor:
             if not isinstance(prepared, _Ready):
                 yield _completed(call, ToolOutput.error(prepared), started=None)
                 continue
+            # Un appel repris a été lancé avec ces arguments-là, remplacés par une
+            # politique le cas échéant (``_before_tool``) : ce sont eux qui disent
+            # si son effet a pu se produire, donc s'il peut repartir.
+            launched_with = (
+                call.replaced_arguments
+                if call.started and call.replaced_arguments is not None
+                else prepared.arguments
+            )
             # Approbation déjà tranchée : on applique la décision, on ne la
             # redemande pas — même si une politique la redemanderait.
             settled = state.approval(call.call_id)
@@ -644,13 +654,16 @@ class ToolExecutor:
                 # inconnu : la règle de reprise s'applique, comme sans accord
                 # (#18). Un accord encore intact, lui, répond à un état inconnu
                 # si l'appel est déjà parti (il a été demandé après coup).
-                if not settled.launched or prepared.tool.spec.safe_to_retry:
+                if not settled.launched or (
+                    _retry_safe(prepared.tool, launched_with)
+                    and _retry_safe(prepared.tool, prepared.arguments)
+                ):
                     ready.append(replace(prepared, approved=call.started and not settled.launched))
                     continue
             # Reprise d'un appel dont l'effet est peut-être produit (#18) :
             # il n'est pas relancé de lui-même. L'outil dit ce qu'il advient
             # — le modèle est prévenu, ou un humain tranche.
-            unknown = call.started and not prepared.tool.spec.safe_to_retry
+            unknown = call.started and not _retry_safe(prepared.tool, launched_with)
             if unknown and prepared.tool.spec.on_unknown == "error":
                 yield _completed(call, ToolOutput.error(UNKNOWN_STATE), started=None)
                 continue
@@ -674,7 +687,11 @@ class ToolExecutor:
                 (UNKNOWN_STATE, None)
                 if unknown
                 else _asks_approval(
-                    prepared.tool.spec, verdict, self.imposed, state.context.tenant_id
+                    prepared.tool.spec,
+                    verdict,
+                    self.imposed,
+                    state.context.tenant_id,
+                    assessment=assessed(prepared.tool, prepared.arguments),
                 )
             )
             if asked is None:
@@ -1285,11 +1302,19 @@ async def _delegated(
     return output, consumption, exchange
 
 
+def _retry_safe(tool: AnyTool, arguments: Mapping[str, JsonValue]) -> bool:
+    """Vrai si refaire cet appel est sans risque : l'évaluation de l'appel, sinon la déclaration."""
+    assessment = assessed(tool, arguments)
+    return tool.spec.safe_to_retry if assessment is None else assessment.safe_to_retry
+
+
 def _asks_approval(
     spec: ToolSpec,
     verdict: Verdict,
     imposed: Mapping[str, Approval] | None = None,
     tenant: str | None = None,
+    *,
+    assessment: CallAssessment | None = None,
 ) -> tuple[str, str | None] | None:
     """Motif et politique de l'approbation à demander, ou None s'il n'y en a pas.
 
@@ -1302,17 +1327,25 @@ def _asks_approval(
     Le motif dit laquelle des deux premières s'applique : un approbateur qui lit
     « outil déclaré à approbation obligatoire » pour un outil qui ne l'est pas
     cherche la raison au mauvais endroit (test D7 du 18/10).
+
+    Un outil qui évalue ses appels (``assessment``) remplace sa déclaration
+    pour cet appel : c'est lui qui dit s'il faut approuver, et pourquoi. La
+    consigne de l'appelant garde le dernier mot.
     """
+    effects = spec.side_effects if assessment is None else assessment.side_effects
     if (forced := (imposed or {}).get(spec.name)) is not None:
         if forced == "always":
             who = f"le client {tenant}" if tenant else "l'appelant"
             return (
-                f"approbation imposée par la configuration pour {who} "
-                f"(effets : {spec.side_effects})",
+                f"approbation imposée par la configuration pour {who} (effets : {effects})",
                 None,
             )
+    elif assessment is not None:
+        if assessment.approval == "always":
+            said = assessment.reason or "approbation exigée par l'outil pour cet appel"
+            return f"{said} (effets : {effects})", None
     elif spec.approval == "always":
-        return f"outil déclaré à approbation obligatoire (effets : {spec.side_effects})", None
+        return f"outil déclaré à approbation obligatoire (effets : {effects})", None
     if isinstance(verdict.decision, Pause):
         return verdict.decision.reason, verdict.by
     return None

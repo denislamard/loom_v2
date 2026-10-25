@@ -49,7 +49,7 @@ from loom_ia.core.model import (
     RunId,
     ToolOutput,
 )
-from loom_ia.core.ports import AnsweringClient, ModelClient, ModelError
+from loom_ia.core.ports import AnsweringClient, ModelClient, ModelError, strictest_side_effects
 from loom_ia.engine import AnyTool, Consumption
 from loom_ia.replay.book import (
     Divergence,
@@ -213,12 +213,14 @@ class VariantTools:
         record = self.book.match_tool(call.name, call.arguments)
         if record is not None:
             return _Decision("journal", record)
+        # Jugé avant les références et les politiques : l'évaluation ne fait que durcir.
+        effects = strictest_side_effects(tool, call.arguments)
         fate: ToolFate
         if call.name in self.doubles:
             fate = "double"
         elif tool.spec.kind == "agent":
             fate = "relaunched"
-        elif tool.spec.side_effects != "none":
+        elif effects != "none":
             fate = "refused"
         else:
             fate = "run"
@@ -226,10 +228,10 @@ class VariantTools:
             Divergence(
                 kind="tool",
                 where=f"appel d'outil {call.name} : absent du journal sous ces arguments",
-                detail=_FATES[fate] + (f" ({tool.spec.side_effects})" if fate == "refused" else ""),
+                detail=_FATES[fate] + (f" ({effects})" if fate == "refused" else ""),
             )
         )
-        return _Decision(fate, effects=tool.spec.side_effects)
+        return _Decision(fate, effects=effects)
 
 
 async def doubled(double: Double, name: str, arguments: Mapping[str, JsonValue]) -> ToolOutput:
