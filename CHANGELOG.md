@@ -7,6 +7,12 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 ### Ligne de commande
 - **`loom run -q/--quiet`** (nouveau) : n'affiche que la réponse et tait le bilan sur stderr (`Statut`, `Run`, `Compaction`, `Budget`, `Fichier`, `Juge`, `Vérifiée`, `Repli`), sauf les lignes `En attente` et `Erreur`, qui disent ce qu'il reste à faire ; le code de sortie ne change pas, `--json` garde la priorité et les logs suivent leur propre niveau.
 
+### Outils fournis
+- **`loom.current_datetime`** (nouveau) : la date et/ou l'heure actuelles, pour un agent dont la réponse dépend du jour (une échéance, « demain », un délai). `part` choisit ce qui est rendu (`date`, `time`, `both` par défaut) ; `timezone`, un nom IANA, vaut `Europe/Paris` par défaut. Le résultat porte `timezone` et `utc_offset`, puis `date` (ISO) et `weekday` (en français), et/ou `time` (`HH:MM:SS`). Un fuseau inconnu est un résultat en erreur : le run continue. Déclarations : `side_effects: none`. Le rejeu rend l'heure lue au journal, pas celle du moment.
+
+### Documentation
+- Guide, chapitre 32 : `loom.current_datetime` ; `fonctions.md`, D13 et plan des fichiers.
+
 ## 2.0.12 - publiée
 
 ### Documentation

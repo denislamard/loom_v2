@@ -6,7 +6,7 @@
 >
 > **Navigation** : précédent : [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md) (vous êtes ici)
 
-Jusqu'ici, un outil était écrit par vous (chapitre 2), servi par un serveur MCP (chapitre 13) ou par un paquet installé (chapitre 29). loom-ia fournit aussi quelques outils prêts à l'emploi. Aucun n'est actif d'office : un agent n'a que les outils que liste son `tools:`, et il active un outil fourni en le nommant `loom.<outil>`. Le premier est `loom.fetch_page`, qui lit une page web publique.
+Jusqu'ici, un outil était écrit par vous (chapitre 2), servi par un serveur MCP (chapitre 13) ou par un paquet installé (chapitre 29). loom-ia fournit aussi quelques outils prêts à l'emploi. Aucun n'est actif d'office : un agent n'a que les outils que liste son `tools:`, et il active un outil fourni en le nommant `loom.<outil>`. Le premier est `loom.fetch_page`, qui lit une page web publique ; depuis 2.0.13, `loom.current_datetime` donne la date et l'heure.
 
 Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom inspect`), 9 (validation humaine), 26 (rejeu) et 27 (évaluations) lus.
 
@@ -22,6 +22,7 @@ Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom 
   - [Exemple 32.4 : les adresses que `fetch_page` refuse](#exemple-324--les-adresses-que-fetch_page-refuse)
   - [Exemple 32.5 : tester sans réseau](#exemple-325--tester-sans-réseau)
   - [Ce que `fetch_page` ne fait pas](#ce-que-fetch_page-ne-fait-pas)
+  - [`loom.current_datetime` : la date et l'heure](#loomcurrent_datetime--la-date-et-lheure)
 - [Pour aller plus loin](#pour-aller-plus-loin)
 
 ---
@@ -550,6 +551,32 @@ Identique  : le run se rejoue tel qu'il a été, appel par appel.
 - **Pas de proxy sortant.** `fetch_page` se connecte lui-même aux adresses qu'il a vérifiées, et ignore `HTTP_PROXY` et `HTTPS_PROXY`. Là où la sortie vers Internet doit passer par un proxy, il ne joint rien. Un proxy rendrait d'ailleurs le contrôle des adresses inutile, puisque ce serait lui qui résoudrait le nom (backlog #023).
 - **Pas de réglage propre.** La taille maximale (5 Mo) et les ports (80 et 443) sont fixes, et l'outil ne se limite pas à certains domaines ; seuls les réglages communs à tout outil (exemple 32.2) se changent.
 - **Rien n'est oublié.** Le texte lu va au journal, dans le `tool.completed`. Au-delà de 20 000 caractères, il est rangé dans le stockage d'artefacts : le modèle en reçoit un aperçu, et `artifact_read` pour lire la suite (chapitre 18). Une page peut contenir des données personnelles : la rétention et le chiffrement du journal (chapitre 24) s'y appliquent comme au reste.
+
+### `loom.current_datetime` : la date et l'heure
+
+Un modèle ne connaît pas la date du jour : sans outil, « relancez-le dans trois jours » ou « l'échéance est-elle passée ? » reposent sur une date qu'il devine. `loom.current_datetime` la lui donne, et s'active comme `fetch_page` :
+
+```yaml
+tools:
+- python: loom.current_datetime
+```
+
+Le modèle le voit sous le nom `current_datetime`, avec deux paramètres, tous deux facultatifs :
+
+| Paramètre | Valeurs | Par défaut |
+|---|---|---|
+| `part` | `date`, `time` ou `both` | `both` |
+| `timezone` | un nom de fuseau IANA (`Europe/Paris`, `America/Montreal`, `UTC`…) | `Europe/Paris` |
+
+Le résultat est un objet JSON. Le dimanche 25 octobre 2026 à 10:43:02 UTC, sans paramètre :
+
+```json
+{"timezone": "Europe/Paris", "utc_offset": "+01:00", "date": "2026-10-25", "weekday": "dimanche", "time": "11:43:02"}
+```
+
+Avec `part: date`, `time` disparaît ; avec `part: time`, `date` et `weekday`. `weekday` évite au modèle de déduire le jour de la semaine d'une date, ce qu'il réussit mal ; `utc_offset` montre le passage à l'heure d'hiver ou d'été. La date suit le fuseau : au même instant, `Pacific/Kiritimati` (UTC+14) rend lundi 26.
+
+Un fuseau inconnu (`Mars/Olympus`, une chaîne vide) est un résultat en erreur, « Fuseau horaire inconnu », que le modèle peut corriger : le run continue. L'outil n'a pas d'effet de bord (`side_effects: none`). Comme tout résultat d'outil, l'heure lue va au journal : un run rejoué (chapitre 26) rend l'heure de l'original, pas celle du rejeu.
 
 ---
 

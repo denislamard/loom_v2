@@ -49,7 +49,7 @@
 - **D10** `[V2]` Outils sensibles marqués « approbation requise ».
 - **D11** `[V2]` Idempotence des outils à effet de bord lors d'une reprise.
 - **D12** `[V2]` Sources d'outils fournies par un paquet installé (`tool_sources`, point d'entrée du groupe `loom_ia.tools`), branchées par un agent (`- source: <nom>`). Réalisé en 6.4b.
-- **D13** `[V2]` Outils fournis par loom-ia, inactifs par défaut, activés par un agent (`- python: loom.<outil>`) ; premier outil : `loom.fetch_page`, lecture d'une page web publique. Réalisé en 2.0.7 (point 50).
+- **D13** `[V2]` Outils fournis par loom-ia, inactifs par défaut, activés par un agent (`- python: loom.<outil>`) ; premier outil : `loom.fetch_page`, lecture d'une page web publique. Réalisé en 2.0.7 (point 50). `loom.current_datetime`, la date et/ou l'heure dans un fuseau horaire, en 2.0.13.
 
 ## E. Fiabilité des sorties
 
@@ -1543,7 +1543,7 @@ src/loom_ia/
   guards/  usage/  sessions/  artifacts/  agents/
   runtime/  telemetry/  replay/  tenancy/  config/
   tools/         python  configured  idempotent
-  tools_builtin/ fetch_page (outils fournis, loom.<outil>)
+  tools_builtin/ fetch_page, current_datetime (outils fournis, loom.<outil>)
   adapters/
     models/      anthropic  openai_chat  openai_responses
     stores/      memory  jsonl  sqlite  postgres

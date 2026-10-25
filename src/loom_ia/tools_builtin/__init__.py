@@ -19,6 +19,7 @@ from loom_ia.core.ports import Tool
 
 # Référence ``loom.<outil>`` → ``module:attr`` de l'outil.
 BUILTIN_TOOLS: Final[Mapping[str, str]] = {
+    "loom.current_datetime": "loom_ia.tools_builtin.current_datetime:current_datetime",
     "loom.fetch_page": "loom_ia.tools_builtin.fetch_page:fetch_page",
 }
 
