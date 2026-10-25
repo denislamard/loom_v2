@@ -138,6 +138,45 @@ def test_run_quiet_prints_only_the_answer(
     assert "Statut" not in captured.err and "Run        :" not in captured.err
 
 
+TOTAL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"total": {"type": "integer"}},
+    "required": ["total"],
+    "additionalProperties": False,
+}
+
+
+def _answering(demo: ConfigFactory, text: str, **agent: Any) -> Path:
+    """Config dont l'agent répond ``text`` d'un coup, sans outil."""
+    model = {**MODEL, "params": {"script": [{"text": text}]}}
+    return demo(models=[model], agents=[demo_agent(**agent)])
+
+
+def test_run_onlydata_prints_the_data_alone(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _answering(demo, 'Voici : ```json\n{"total": 87}\n```', output={"schema": TOTAL_SCHEMA})
+    assert main(["--config", str(path), "run", "demo", QUESTION, "--json", "--onlydata"]) == 0
+    out = capsys.readouterr().out
+    assert out == '{\n  "total": 87\n}\n'
+
+
+def test_run_onlydata_without_data_leaves_stdout_empty(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Sans contrat, pas de ``data`` : rien à analyser, et le script le sait par le code."""
+    path = _answering(demo, ANSWER)
+    assert main(["--config", str(path), "run", "demo", QUESTION, "--json", "--onlydata"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Pas de data : la réponse n'a pas de contrat de sortie avec schéma" in captured.err
+
+
+def test_run_onlydata_needs_json(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--config", str(demo()), "run", "demo", QUESTION, "--onlydata"]) == 2
+    assert "--onlydata ne s'emploie qu'avec --json" in capsys.readouterr().err
+
+
 def test_run_in_json_gives_the_whole_result(
     demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
 ) -> None:

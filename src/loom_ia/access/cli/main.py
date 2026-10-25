@@ -281,6 +281,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="n'affiche que la réponse : le bilan se tait, sauf une erreur ou une approbation "
         "en attente",
     )
+    run.add_argument(
+        "--onlydata",
+        action="store_true",
+        help="avec --json : n'affiche que data, la réponse validée par le schéma du contrat "
+        "de sortie ; sans data, rien sur stdout et le code 1",
+    )
     run.add_argument("--session", type=str, default=None, help="journal auquel rattacher le run")
     run.add_argument("--run-id", type=str, default=None, help="identifiant choisi pour le run")
     run.add_argument(
@@ -1166,6 +1172,9 @@ def _contract_line(contract: OutputContract, *, repairs: bool) -> str:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    if args.onlydata and not args.json:
+        print("--onlydata ne s'emploie qu'avec --json", file=sys.stderr)
+        return REFUSED
     config = _config(args)
     _console(config)
     session = SessionId(args.session) if args.session else None
@@ -1227,6 +1236,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         as_json=args.json,
         quiet=args.stream,
         brief=args.quiet,
+        only_data=args.onlydata,
         tenant=_tenant(args),
         summaries=summaries,
         budgets=budgets,
@@ -2447,6 +2457,7 @@ def _report(
     as_json: bool = False,
     quiet: bool = False,
     brief: bool = False,
+    only_data: bool = False,
     tenant: TenantId | None = None,
     summaries: Sequence[SessionCompacted] = (),
     budgets: Sequence[BudgetExceeded] = (),
@@ -2455,8 +2466,10 @@ def _report(
 
     ``quiet`` tait la réponse (déjà diffusée par ``--stream``) ; ``brief``
     (``-q``) tait le bilan, sauf ce qui demande d'agir : une approbation en
-    attente, une erreur.
+    attente, une erreur. ``only_data`` (``--json --onlydata``) ne rend que ``data``.
     """
+    if as_json and only_data:
+        return _only_data(result)
     if as_json:
         print(result.model_dump_json(indent=2, exclude_none=True))
     else:
@@ -2513,6 +2526,33 @@ def _report(
         if result.error:
             _say(f"Erreur     : {result.error} ({result.error_type})", file=sys.stderr)
     return OK if result.ok else FAILED
+
+
+def _only_data(result: RunResult) -> int:
+    """``data`` seul sur stdout ; sans lui, stdout reste vide et stderr dit pourquoi.
+
+    Un script qui lit la sortie n'a ainsi que la donnée à analyser : un run en
+    échec ou sans contrat ne lui donne pas un ``null`` qu'il prendrait pour une
+    réponse.
+    """
+    if result.data is not None:
+        print(json.dumps(result.data, indent=2, ensure_ascii=False))
+        return OK if result.ok else FAILED
+    if result.error:
+        why = f"run {result.status} — {result.error} ({result.error_type})"
+    elif result.pending_approvals:
+        calls = ", ".join(
+            f"{asked.tool_name} ({asked.call_id})" for asked in result.pending_approvals
+        )
+        why = f"run en pause, en attente d'approbation : {calls}"
+    elif result.unverified:
+        why = "réponse non vérifiée, gardée malgré son contrat ou son juge"
+    elif result.fallback:
+        why = "réponse remplacée par le message de repli"
+    else:
+        why = "la réponse n'a pas de contrat de sortie avec schéma (output.schema de l'agent)"
+    _say(f"Pas de data : {why} · run {result.run_id}", file=sys.stderr)
+    return FAILED
 
 
 def _verdicts(result: RunResult) -> list[str]:
