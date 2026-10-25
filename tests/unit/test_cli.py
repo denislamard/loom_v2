@@ -127,6 +127,17 @@ def test_run_prints_the_answer(demo: ConfigFactory, capsys: pytest.CaptureFixtur
     assert "Statut     : completed" in captured.err
 
 
+@pytest.mark.parametrize("flag", ["-q", "--quiet"])
+def test_run_quiet_prints_only_the_answer(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str], flag: str
+) -> None:
+    assert main(["--config", str(demo()), "run", "demo", QUESTION, flag]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == ANSWER
+    # Les logs suivent leur propre niveau ; seul le bilan se tait.
+    assert "Statut" not in captured.err and "Run        :" not in captured.err
+
+
 def test_run_in_json_gives_the_whole_result(
     demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -548,6 +559,16 @@ def test_run_says_what_a_paused_run_is_waiting_for(
     assert main(["--config", str(atelier()), "run", "demo", "Relance."]) == 1
     erreur = capsys.readouterr().err
     assert "Statut     : paused" in erreur
+    assert "En attente : envoyer_email" in erreur and "loom approve" in erreur
+
+
+def test_run_quiet_still_says_what_a_paused_run_is_waiting_for(
+    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``-q`` tait le bilan, pas ce qu'il reste à faire pour que le run aboutisse."""
+    assert main(["--config", str(atelier()), "run", "demo", "Relance.", "-q"]) == 1
+    erreur = capsys.readouterr().err
+    assert "Statut" not in erreur and "Run        :" not in erreur
     assert "En attente : envoyer_email" in erreur and "loom approve" in erreur
 
 

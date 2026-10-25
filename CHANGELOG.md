@@ -2,7 +2,12 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.12 - non publiée
+## 2.0.13 - publiée
+
+### Ligne de commande
+- **`loom run -q/--quiet`** (nouveau) : n'affiche que la réponse et tait le bilan sur stderr (`Statut`, `Run`, `Compaction`, `Budget`, `Fichier`, `Juge`, `Vérifiée`, `Repli`), sauf les lignes `En attente` et `Erreur`, qui disent ce qu'il reste à faire ; le code de sortie ne change pas, `--json` garde la priorité et les logs suivent leur propre niveau.
+
+## 2.0.12 - publiée
 
 ### Documentation
 - README réécrit et allégé : il présente Loom-IA, montre un premier agent et garde les tables de référence (CLI, API Python, routes REST, stockages), tandis que le tutoriel et le détail des fonctions renvoient désormais à la formation publiée sur https://denislamard.github.io/docs_loom_v2/.

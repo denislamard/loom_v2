@@ -274,6 +274,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("message")
     run.add_argument("--stream", action="store_true", help="affiche la réponse au fil de l'eau")
     run.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
+    run.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="n'affiche que la réponse : le bilan se tait, sauf une erreur ou une approbation "
+        "en attente",
+    )
     run.add_argument("--session", type=str, default=None, help="journal auquel rattacher le run")
     run.add_argument("--run-id", type=str, default=None, help="identifiant choisi pour le run")
     run.add_argument(
@@ -1219,6 +1226,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         result,
         as_json=args.json,
         quiet=args.stream,
+        brief=args.quiet,
         tenant=_tenant(args),
         summaries=summaries,
         budgets=budgets,
@@ -2438,10 +2446,17 @@ def _report(
     *,
     as_json: bool = False,
     quiet: bool = False,
+    brief: bool = False,
     tenant: TenantId | None = None,
     summaries: Sequence[SessionCompacted] = (),
     budgets: Sequence[BudgetExceeded] = (),
 ) -> int:
+    """Rend le run : la réponse sur stdout, le bilan sur stderr.
+
+    ``quiet`` tait la réponse (déjà diffusée par ``--stream``) ; ``brief``
+    (``-q``) tait le bilan, sauf ce qui demande d'agir : une approbation en
+    attente, une erreur.
+    """
     if as_json:
         print(result.model_dump_json(indent=2, exclude_none=True))
     else:
@@ -2453,28 +2468,29 @@ def _report(
             elif result.status is not RunStatus.PAUSED:
                 print("—")
             # En pause, rien encore à répondre : stdout reste vide (test H4 du 20/10).
-        usage = result.usage
-        _say(
-            f"\nStatut     : {result.status} · itérations : {result.iterations} "
-            f"· tokens : {usage.input_tokens}/{usage.output_tokens}{_cache_said(usage)} "
-            f"· coût : {result.cost_usd:.4f} $",
-            file=sys.stderr,
-        )
-        _say(f"Run        : {result.run_id}", file=sys.stderr)
-        for summary in summaries:
-            # Au test F3 du 19/10, rien ne disait que la session avait été résumée.
-            _say(f"Compaction : {describe_compaction(summary)}", file=sys.stderr)
-        for hit in budgets:
-            action = "run arrêté" if hit.action == "stop" else "avertissement"
-            said = describe_budget(hit.scope, hit.limit, hit.value, hit.spent)
-            _say(f"Budget     : {said} — {action}", file=sys.stderr)
-        for produced in result.produced:
+        if not brief:
+            usage = result.usage
             _say(
-                f"Fichier    : {produced.uri} ({produced.media_type}, {produced.size} octets)",
+                f"\nStatut     : {result.status} · itérations : {result.iterations} "
+                f"· tokens : {usage.input_tokens}/{usage.output_tokens}{_cache_said(usage)} "
+                f"· coût : {result.cost_usd:.4f} $",
                 file=sys.stderr,
             )
-        for line in _verdicts(result):
-            _say(f"Juge       : {line}", file=sys.stderr)
+            _say(f"Run        : {result.run_id}", file=sys.stderr)
+            for summary in summaries:
+                # Au test F3 du 19/10, rien ne disait que la session avait été résumée.
+                _say(f"Compaction : {describe_compaction(summary)}", file=sys.stderr)
+            for hit in budgets:
+                action = "run arrêté" if hit.action == "stop" else "avertissement"
+                said = describe_budget(hit.scope, hit.limit, hit.value, hit.spent)
+                _say(f"Budget     : {said} — {action}", file=sys.stderr)
+            for produced in result.produced:
+                _say(
+                    f"Fichier    : {produced.uri} ({produced.media_type}, {produced.size} octets)",
+                    file=sys.stderr,
+                )
+            for line in _verdicts(result):
+                _say(f"Juge       : {line}", file=sys.stderr)
         # La commande se copie telle quelle : sans la session ni le client, elle
         # chercherait le run dans un journal qui n'est pas le sien (18/10).
         where = "" if result.session_id == result.run_id else f" --session {result.session_id}"
@@ -2486,9 +2502,9 @@ def _report(
                 f"loom approve {result.run_id} --call {asked.call_id}{where}",
                 file=sys.stderr,
             )
-        if result.unverified:
+        if result.unverified and not brief:
             _say("Vérifiée   : non (gardée malgré son contrat ou son juge)", file=sys.stderr)
-        if result.fallback:
+        if result.fallback and not brief:
             _say(
                 "Repli      : oui (réponse remplacée par le message de repli de son contrat "
                 "ou de son juge)",
