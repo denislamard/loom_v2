@@ -285,6 +285,29 @@ def test_an_approver_can_correct_the_arguments(atelier: ConfigFactory) -> None:
     assert "compta@example.com" in resultat
 
 
+def test_a_deferred_approval_sends_what_the_approver_saw(atelier: ConfigFactory) -> None:
+    """La politique redirige l'envoi, l'approbateur l'accorde plus tard : c'est la compta qui
+    le reçoit. Avant la correction, l'envoi partait au destinataire d'origine du modèle."""
+
+    async def go() -> tuple[dict[str, Any], str]:
+        async with Loom.from_config(atelier(policies=[{"hook": "corrige_destinataire"}])) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            [demande] = run.pending_approvals
+            assert await loom.approve(run.run_id, by="denis", session_id=SESSION)
+            await loom.drain()
+            events = await loom.export_session(SESSION)
+        fini = next(
+            e
+            for e in events
+            if e.type == "tool.completed" and e.facets.get("tool_name") == "envoyer_email"
+        )
+        return dict(demande.arguments), _text(fini)
+
+    vu, resultat = asyncio.run(go())
+    assert vu == {"destinataire": "compta@example.com"}
+    assert resultat == "envoyé à compta@example.com"
+
+
 def test_evals_read_the_arguments_the_approver_corrected(atelier: ConfigFactory) -> None:
     """Ce que l'outil a reçu, pour une éval, c'est la correction de l'approbateur.
 

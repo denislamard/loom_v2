@@ -20,6 +20,7 @@ from loom_ia.core.events import (
     ApprovalGranted,
     ApprovalRequested,
     DurablePayload,
+    PolicyDecided,
     ToolCalled,
     ToolCompleted,
 )
@@ -28,6 +29,7 @@ from loom_ia.core.model import (
     AfterTool,
     Approved,
     Approver,
+    BeforeTool,
     CallerContext,
     Decision,
     JsonBlock,
@@ -592,6 +594,85 @@ async def test_an_approved_call_that_was_launched_can_ask_a_human_again() -> Non
     assert [e.resumed for e in events if isinstance(e, ToolCalled)] == [True]
     assert len(virer.calls) == 1
     assert virer.calls[0][1].replay_unknown is True
+
+
+# --- Ce qui part après une approbation différée ------------------------------------
+# L'approbateur accorde ce que la demande lui a montré : les arguments remplacés par
+# les politiques ``before_tool``, ou ceux qu'il corrige. Pas ceux d'origine du modèle.
+
+
+def replaced(call_id: str, x: int) -> DurablePayload:
+    return PolicyDecided(
+        policy="redirige",
+        point="before_tool",
+        decision="replace",
+        call_id=call_id,
+        arguments={"x": x},
+        reason="redirigé",
+    )
+
+
+def asked_for(call_id: str, name: str, x: int, reason: str = "à approuver") -> DurablePayload:
+    return ApprovalRequested(call_id=call_id, tool_name=name, arguments={"x": x}, reason=reason)
+
+
+async def test_a_deferred_approval_runs_the_arguments_a_policy_replaced() -> None:
+    virer = RecordingTool(spec("virer", side_effects="irreversible", approval="always"))
+    state = journaled(
+        "c1", "virer", replaced("c1", 5), asked_for("c1", "virer", 5), granted("c1", "virer")
+    )
+    events = await collect(ToolExecutor([virer]), state)
+    assert not completed(events)["c1"].is_error
+    assert [arguments for arguments, _ in virer.calls] == [{"x": 5}]
+
+
+async def test_a_deferred_correction_wins_over_the_policy() -> None:
+    virer = RecordingTool(spec("virer", side_effects="irreversible", approval="always"))
+    corrected = ApprovalGranted(call_id="c1", tool_name="virer", by="denis", arguments={"x": 7})
+    state = journaled("c1", "virer", replaced("c1", 5), asked_for("c1", "virer", 5), corrected)
+    await collect(ToolExecutor([virer]), state)
+    assert [arguments for arguments, _ in virer.calls] == [{"x": 7}]
+
+
+async def test_a_second_approval_after_an_unknown_effect_relaunches_what_was_launched() -> None:
+    virer = RecordingTool(
+        spec("virer", side_effects="irreversible", approval="always", on_unknown="pause")
+    )
+    state = journaled(
+        "c1",
+        "virer",
+        replaced("c1", 5),
+        asked_for("c1", "virer", 5),
+        granted("c1", "virer"),
+        launched("c1", "virer"),
+        asked_for("c1", "virer", 5, UNKNOWN_STATE),
+        granted("c1", "virer"),
+    )
+    events = await collect(ToolExecutor([virer]), state)
+    assert [e.resumed for e in events if isinstance(e, ToolCalled)] == [True]
+    assert [arguments for arguments, _ in virer.calls] == [{"x": 5}]
+
+
+async def test_an_online_approval_runs_the_arguments_a_policy_replaced() -> None:
+    """L'approbateur en ligne tranche après la politique : c'était déjà le cas."""
+
+    @policy(points=["before_tool"], decisions=["replace"])
+    def redirige(subject: BeforeTool) -> Decision:
+        return Replace({"x": 5}, reason="redirigé")
+
+    virer = RecordingTool(spec("virer", side_effects="irreversible", approval="always"))
+    bound = Policies([BoundPolicy(policy=redirige, name=redirige.name, points=redirige.points)])
+
+    async def approver(pending: PendingApproval) -> Approved:
+        assert pending.arguments == {"x": 5}
+        return Approved(by="humain")
+
+    batch = awaiting(call("c1", "virer", x=3))
+    events = [
+        e async for e in ToolExecutor([virer]).run_batch(batch, policies=bound, approver=approver)
+    ]
+    assert not completed(events)["c1"].is_error
+    assert [arguments for arguments, _ in virer.calls] == [{"x": 5}]
 
 
 async def test_an_approval_asked_after_the_launch_is_spent_by_the_next_one() -> None:

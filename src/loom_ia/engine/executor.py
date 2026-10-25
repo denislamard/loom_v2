@@ -648,7 +648,12 @@ class ToolExecutor:
                     if problem is not None:
                         yield _completed(call, ToolOutput.error(problem), started=None)
                         continue
-                    prepared = replace(prepared, arguments=outcome.arguments)
+                # Ce qui part est ce qui a été accordé : les arguments de la demande
+                # — références résolues, remplacés par les politiques ``before_tool`` —,
+                # ou ceux que l'approbateur a corrigés. Pas ceux d'origine du modèle,
+                # que ``_prepare`` vient de relire : l'approbateur ne les a pas vus.
+                approved = outcome.arguments if outcome.arguments is not None else settled.arguments
+                prepared = replace(prepared, arguments=approved)
                 # Un accord vaut pour un seul lancement. S'il a déjà servi, et
                 # que l'outil n'est pas sûr à relancer, l'effet est d'état
                 # inconnu : la règle de reprise s'applique, comme sans accord

@@ -111,9 +111,12 @@ def call(call_id: str, name: str, *, started: bool = False, **arguments: JsonVal
 
 def _granted(state: RunState, call_id: str, tool_name: str, by: str = "l'artisan") -> RunState:
     """Le même état, avec l'approbation de cet appel déjà accordée au journal."""
+    pending = state.pending(call_id)
     asked = PendingApproval(
         call_id=call_id,
         tool_name=tool_name,
+        # Comme l'écrit l'exécuteur : la demande porte les arguments de l'appel.
+        arguments=dict(pending.arguments) if pending is not None else {},
         reason="État inconnu",
         outcome=ApprovalOutcome(verdict="granted", by=by),
     )
@@ -1920,7 +1923,10 @@ async def test_an_approval_asked_after_the_launch_takes_the_stale_reservation_ba
     state = awaiting(call("c1", "envoyer", started=True, devis="D-1"))
     state = _after(
         state,
-        ApprovalRequested(call_id="c1", tool_name="envoyer", reason=UNKNOWN_EFFECT),
+        # Comme l'écrit l'exécuteur : la demande porte les arguments de l'appel.
+        ApprovalRequested(
+            call_id="c1", tool_name="envoyer", arguments={"devis": "D-1"}, reason=UNKNOWN_EFFECT
+        ),
         ApprovalGranted(call_id="c1", tool_name="envoyer", by="l'artisan"),
     )
     executor = ToolExecutor([outil], idempotency=store)  # pyright: ignore[reportArgumentType]
