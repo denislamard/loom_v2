@@ -91,7 +91,7 @@
 <dl class="fiche-agent">
 <dt>Agent</dt><dd><code>assistant</code>, dans le dossier <code>plomberie-dupont/</code></dd>
 <dt>Départ</dt><dd>la fin du <a href="module-03.html#bilan">module 3</a> : trois modèles, quatre outils, une variable de prompt</dd>
-<dt>Arrivée</dt><dd><span class="version">v0.4</span> : se souvient du chantier d'un run à l'autre et retient le devis en cours dans son state</dd>
+<dt>Arrivée</dt><dd>se souvient du chantier d'un run à l'autre et retient le devis en cours dans son state</dd>
 <dt>Fonctions</dt><dd><a class="fn" href="matrice.html#F1">F1</a><a class="fn" href="matrice.html#F2">F2</a><a class="fn" href="matrice.html#F3">F3</a><a class="fn" href="matrice.html#F4">F4</a><a class="fn" href="matrice.html#F5">F5</a><a class="fn" href="matrice.html#F7">F7</a><a class="fn" href="matrice.html#F8">F8</a></dd>
 </dl>
 
@@ -1144,7 +1144,7 @@ Demande refusée : State refusé : ton : ne suit pas son schéma — doit valoir
 </section>
 
 <h2 id="bilan">Bilan du module</h2>
-<p>L'agent est en <strong>v0.4</strong> : il tient une conversation et garde le devis en cours dans son state. Pour la suite, on ne garde que ce qui sert : le journal JSONL, le state et son contexte. La compaction, les snapshots fréquents et <code>raw_exchanges</code> étaient des réglages d'exercice : on les retire. En production, activez la compaction avec un modèle léger, par exemple <code>model: HAIKU</code> et les seuils par défaut.</p>
+<p>L'agent tient une conversation et garde le devis en cours dans son state. Pour la suite, on ne garde que ce qui sert : le journal JSONL, le state et son contexte. La compaction, les snapshots fréquents et <code>raw_exchanges</code> étaient des réglages d'exercice : on les retire. En production, activez la compaction avec un modèle léger, par exemple <code>model: HAIKU</code> et les seuils par défaut.</p>
 <figure class="code"><figcaption>plomberie-dupont/</figcaption>
 <pre><code>plomberie-dupont/
 ├── loom.yaml            trois modèles, journal JSONL

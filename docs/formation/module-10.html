@@ -91,7 +91,7 @@
 <dl class="fiche-agent">
 <dt>Agent</dt><dd><code>assistant</code>, dans le dossier <code>plomberie-dupont/</code></dd>
 <dt>Départ</dt><dd>la fin du <a href="module-09.html#bilan">module 9</a> : l'agent relance après accord, tient malgré les pannes, sous budget</dd>
-<dt>Arrivée</dt><dd><span class="version">v1.0</span> : l'agent est appelé par un script, par une application (API REST protégée par une clé) ou par Claude (serveur MCP)</dd>
+<dt>Arrivée</dt><dd>l'agent est appelé par un script, par une application (API REST protégée par une clé) ou par Claude (serveur MCP)</dd>
 <dt>Fonctions</dt><dd><a class="fn" href="matrice.html#N1">N1</a><a class="fn" href="matrice.html#B8">B8</a><a class="fn" href="matrice.html#I1">I1</a><a class="fn" href="matrice.html#H5">H5</a><a class="fn" href="matrice.html#A8">A8</a><a class="fn" href="matrice.html#M2">M2</a><a class="fn" href="matrice.html#N2">N2</a><a class="fn" href="matrice.html#I2">I2</a><a class="fn" href="matrice.html#N3">N3</a><a class="fn" href="matrice.html#N5">N5</a><a class="fn" href="matrice.html#N6">N6</a><a class="fn" href="matrice.html#I3">I3</a></dd>
 </dl>
 
@@ -1827,7 +1827,7 @@ asyncio.run(main())</code></pre></figure>
 </section>
 
 <h2 id="bilan">Bilan du module</h2>
-<p>L'agent est en <strong>v1.0</strong> : un script, une application ou Claude peuvent l'appeler. Le projet :</p>
+<p>Un script, une application ou Claude peuvent maintenant appeler l'agent. Le projet :</p>
 <figure class="code"><figcaption>plomberie-dupont/</figcaption>
 <pre><code>plomberie-dupont/
 ├── loom.yaml            + la clé d'API app-dupont, le serveur MCP en HTTP

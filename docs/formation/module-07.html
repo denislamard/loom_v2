@@ -91,7 +91,7 @@
 <dl class="fiche-agent">
 <dt>Agent</dt><dd><code>assistant</code>, dans le dossier <code>plomberie-dupont/</code></dd>
 <dt>Départ</dt><dd>la fin du <a href="module-06.html#bilan">module 6</a> : deux rôles, un sous-agent, le rédacteur est terminal</dd>
-<dt>Arrivée</dt><dd><span class="version">v0.7</span> : l'e-mail du rédacteur est contrôlé dans sa forme (contrat) et dans son fond (juge) ; une politique refuse les taux de TVA qui n'existent pas</dd>
+<dt>Arrivée</dt><dd>l'e-mail du rédacteur est contrôlé dans sa forme (contrat) et dans son fond (juge) ; une politique refuse les taux de TVA qui n'existent pas</dd>
 <dt>Fonctions</dt><dd><a class="fn" href="matrice.html#A7">A7</a><a class="fn" href="matrice.html#E1">E1</a><a class="fn" href="matrice.html#E2">E2</a><a class="fn" href="matrice.html#E3">E3</a><a class="fn" href="matrice.html#E4">E4</a><a class="fn" href="matrice.html#E5">E5</a><a class="fn" href="matrice.html#E6">E6</a><a class="fn" href="matrice.html#E7">E7</a></dd>
 </dl>
 
@@ -2666,7 +2666,7 @@ Run        : 01a16e2d-2fd7-759a-9bf5-b809c12436a4
 </section>
 
 <h2 id="bilan">Bilan du module</h2>
-<p>L'agent est en <strong>v0.7</strong>. On garde ce qui sert la suite : le contrat et le juge sur <code>rediger_relance</code>, et la politique <code>taux_tva_valide</code>. On retire le reste : le contrat de la réponse finale, celui de <code>prix_ttc</code>, <code>loom.require_tool</code> et la capture des échanges bruts. Le rédacteur simulé ne garde que sa version conforme, et le script de <code>SIMULE</code> la relance, la photo, la traduction et le taux de 7 %.</p>
+<p>On garde ce qui sert la suite : le contrat et le juge sur <code>rediger_relance</code>, et la politique <code>taux_tva_valide</code>. On retire le reste : le contrat de la réponse finale, celui de <code>prix_ttc</code>, <code>loom.require_tool</code> et la capture des échanges bruts. Le rédacteur simulé ne garde que sa version conforme, et le script de <code>SIMULE</code> la relance, la photo, la traduction et le taux de 7 %.</p>
 <figure class="code"><figcaption>plomberie-dupont/</figcaption>
 <pre><code>plomberie-dupont/
 ├── loom.yaml              sept modèles (dont REDACTEUR et JUGE), le catalogue MCP, le journal

@@ -4,6 +4,9 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.12 - non publiée
 
+### Documentation
+- README réécrit et allégé : il présente Loom-IA, montre un premier agent et garde les tables de référence (CLI, API Python, routes REST, stockages), tandis que le tutoriel et le détail des fonctions renvoient désormais à la formation publiée sur https://denislamard.github.io/docs_loom_v2/.
+
 ## 2.0.10 - publiée
 
 ### Événements et rapports
