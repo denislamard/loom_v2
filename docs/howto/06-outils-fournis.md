@@ -6,7 +6,7 @@
 >
 > **Navigation** : précédent : [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md) (vous êtes ici)
 
-Jusqu'ici, un outil était écrit par vous (chapitre 2), servi par un serveur MCP (chapitre 13) ou par un paquet installé (chapitre 29). loom-ia fournit aussi quelques outils prêts à l'emploi. Aucun n'est actif d'office : un agent n'a que les outils que liste son `tools:`, et il active un outil fourni en le nommant `loom.<outil>`. Le premier est `loom.fetch_page`, qui lit une page web publique ; depuis 2.0.13, `loom.current_datetime` donne la date et l'heure, `loom.local_files` lit et écrit des fichiers dans des dossiers que vous lui désignez, et `loom.excel` écrit des classeurs Excel mis en forme.
+Jusqu'ici, un outil était écrit par vous (chapitre 2), servi par un serveur MCP (chapitre 13) ou par un paquet installé (chapitre 29). loom-ia fournit aussi quelques outils prêts à l'emploi. Aucun n'est actif d'office : un agent n'a que les outils que liste son `tools:`, et il active un outil fourni en le nommant `loom.<outil>`. Le premier est `loom.fetch_page`, qui lit une page web publique ; depuis 2.0.13, `loom.current_datetime` donne la date et l'heure, `loom.local_files` lit et écrit des fichiers dans des dossiers que vous lui désignez, et `loom.excel` écrit des classeurs Excel mis en forme ; depuis 2.0.14, `loom.sql` lit et modifie des bases SQLite ou Postgres, table par table.
 
 Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom inspect`), 9 (validation humaine), 26 (rejeu) et 27 (évaluations) lus.
 
@@ -25,6 +25,7 @@ Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom 
   - [`loom.current_datetime` : la date et l'heure](#loomcurrent_datetime--la-date-et-lheure)
   - [`loom.local_files` : des fichiers dans des dossiers permis](#loomlocal_files--des-fichiers-dans-des-dossiers-permis)
   - [`loom.excel` : des classeurs Excel mis en forme](#loomexcel--des-classeurs-excel-mis-en-forme)
+  - [`loom.sql` : des bases SQLite et Postgres, avec des droits par table](#loomsql--des-bases-sqlite-et-postgres-avec-des-droits-par-table)
 - [Pour aller plus loin](#pour-aller-plus-loin)
 
 ---
@@ -786,12 +787,261 @@ Le fichier livré reste celui de l'outil, sans valeurs calculées : LibreOffice 
 - **Bornes** : 50 onglets, 200 colonnes, 100 000 lignes lues par fichier source de 20 Mo au plus, 50 Mo écrits.
 - **Rejeu** : comme pour `local_files`, le rejeu sert le résultat du journal et ne réécrit pas le fichier.
 
+### `loom.sql` : des bases SQLite et Postgres, avec des droits par table
+
+Jean Dupont tient ses clients, ses devis et ses relances dans une petite base. Il veut que son assistant y retrouve les devis à relancer et note les relances, sans jamais toucher à la structure de la base, ni à la table des factures, et sans changer un devis sans son accord. `loom.sql` donne à l'agent l'accès aux tables que sa référence déclare, chacune avec ses droits. Le modèle écrit lui-même ses requêtes ; l'outil n'admet que `SELECT`, `INSERT`, `UPDATE` et `DELETE`, jamais de DDL (`CREATE`, `ALTER`, `DROP`…).
+
+Les sorties de cette section sont réelles : loom-ia 2.0.14 avant sa publication, SQLite 3.53, modèle simulé (`sdk: fake`) ; Postgres 16 pour la partie Postgres.
+
+L'outil s'appuie sur sqlglot, qui analyse chaque instruction, et sur asyncpg pour Postgres ; les deux viennent de l'extra `sql`. SQLite ne demande rien de plus.
+
+```bash
+uv add 'loom-ia[sql]'
+```
+
+Sans lui, le montage le dit, dès `loom validate` :
+
+```text
+Configuration : Agent 'assistant', outil 'loom.sql' : Outil fourni 'loom.sql' : dépendance 'sqlglot' absente (installer l'extra : loom-ia[sql])
+```
+
+```yaml
+tools:
+- python: loom.sql
+  databases:
+  - name: crm                        # ce que voit le modèle
+    sqlite:
+      path: donnees/crm.db           # absolu, ou relatif au loom.yaml ; jamais créé
+    tables:
+      devis: { select: never, update: always }
+      clients: [ select ]
+      relances: [ select, insert ]   # forme courte : approbations par défaut
+    describe:                        # facultatif : repris dans la description de l'outil
+      devis.statut: "envoye | relance | accepte | refuse"
+```
+
+La table `factures` n'est pas déclarée : pour l'agent, elle n'existe pas. Il ne la voit ni dans la description de l'outil, ni dans le schéma, et toute requête qui la cite est refusée.
+
+#### Les droits, et l'approbation de chacun
+
+`tables` donne, pour chaque table ou vue, une table **droit → approbation**, comme les dossiers de `loom.local_files` :
+
+| Droit | Permet | Approbation par défaut (forme courte) |
+|---|---|---|
+| `select` | lire la table | `never` |
+| `insert` | y ajouter des lignes | `never` |
+| `update` | modifier des lignes ; exige `select` | `always` |
+| `delete` | supprimer des lignes ; exige `select` | `always` |
+
+`update` et `delete` exigent `select`, car la base lit les colonnes de leur `WHERE`. L'approbation se décide **appel par appel**, sur les droits que l'appel exerce : lire `devis` part tout de suite, le modifier met le run en pause (chapitre 9). Comme pour `local_files`, `approval`, `side_effects` et `idempotent` ne se règlent pas sur la référence, et une approbation suppose un journal durable.
+
+#### Les paramètres
+
+| Paramètre | Rôle | Par défaut |
+|---|---|---|
+| `databases[].name` | nom de la base pour le modèle | — (obligatoire) |
+| `databases[].sqlite.path` | le fichier SQLite ; il doit exister | — |
+| `databases[].postgres.dsn_env` | la variable d'environnement qui porte le DSN | — |
+| `databases[].postgres.schema` | le schéma des tables, posé en `search_path` | `public` |
+| `databases[].tables` | tables permises et leurs droits | — (obligatoire) |
+| `databases[].describe` | ce que la description dit d'une table (`devis`) ou d'une colonne (`devis.statut`) | rien |
+| `databases[].functions` | fonctions inconnues de l'outil, permises quand même | aucune |
+| `databases[].statement_timeout` | délai d'une instruction, en secondes, côté base (300 au plus) | `10` |
+| `databases[].max_rows` | lignes rendues au modèle par une lecture (1 000 au plus) | `200` |
+| `databases[].max_affected_rows` | lignes qu'un `execute` peut modifier en tout | `100` |
+| `databases[].allow_full_table` | permettre `UPDATE` et `DELETE` sans `WHERE` | `false` |
+| `timezone` | fuseau IANA des dates-heures rendues au modèle | `Europe/Paris` |
+
+Une base est `sqlite` ou `postgres`, jamais les deux. Le montage refuse un fichier SQLite absent, et un fichier qui est le journal de loom, son magasin d'idempotence, ou qui est sous un dossier protégé (artefacts, agents, prompts).
+
+`loom validate` montre chaque base, ses tables et leurs droits, sans jamais se connecter :
+
+```text
+Fournis    : loom.sql
+  assistant : modèle SIMULE, 1 outil(s) Python
+    outil sql : crm → sqlite, /…/donnees/crm.db : devis select, update (approbation) ; clients select ; relances select, insert
+    outil sql : crm : 200 lignes lues, 100 modifiées au plus ; 10 s par instruction
+    outil sql : fuseau : Europe/Paris
+
+1 agent(s) monté(s) sans erreur.
+```
+
+#### Ce que le modèle envoie et reçoit
+
+Un seul outil, `sql`, avec trois actions :
+
+- **`schema`** rend la structure des tables permises, en DDL : colonnes, types, clés, contraintes, commentaires, et les droits de chacune. Le modèle la lit avant d'écrire du SQL ; `tables` en restreint la liste.
+- **`query`** exécute une lecture, dans `sql`, avec ses valeurs dans `params`. Il rend `columns`, `rows` (une liste par ligne), `row_count` et `truncated`.
+- **`execute`** applique jusqu'à 20 `INSERT`, `UPDATE` ou `DELETE` (`statements`, chacun avec `sql` et `params`), **ensemble ou pas du tout**. Il rend, pour chacun, `affected_rows`, et les lignes de `RETURNING` s'il y en a.
+
+Les valeurs se passent toujours en paramètres `$1`, `$2`…, jamais collées dans le SQL, pour SQLite comme pour Postgres. Une table se nomme sans schéma devant (`devis`, pas `public.devis`).
+
+Le run de l'exemple relance un devis. Le modèle lit d'abord le schéma. Voici ce que l'outil lui rend, `factures` absente :
+
+```sql
+-- Base « crm » (sqlite) : tables permises et leurs droits.
+
+-- droits : SELECT, UPDATE (approbation humaine)
+-- devis.statut : envoye | relance | accepte | refuse
+CREATE TABLE devis (
+  id INTEGER PRIMARY KEY,
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  statut TEXT NOT NULL CHECK (statut IN ('envoye', 'relance', 'accepte', 'refuse')),
+  montant_ht REAL NOT NULL,      -- en euros HT
+  envoye_le TEXT NOT NULL        -- AAAA-MM-JJ
+);
+
+-- droits : SELECT
+CREATE TABLE clients (
+  id INTEGER PRIMARY KEY,
+  nom TEXT NOT NULL,             -- raison sociale
+  telephone TEXT
+);
+
+-- droits : SELECT, INSERT
+CREATE TABLE relances (id INTEGER PRIMARY KEY, devis_id INTEGER NOT NULL, canal TEXT NOT NULL, le TEXT NOT NULL);
+```
+
+Le modèle se trompe ensuite de colonne (`d.montant`). L'erreur lui propose la bonne, et il corrige à l'étape suivante :
+
+```text
+  étape 4
+    outil sql — 6 ms (erreur)
+      · arguments : {"action": "query", "database": "crm", "sql": "SELECT d.id, c.nom, d.montant FROM devis d JOIN cl…
+      · résultat  : (erreur) Erreur SQLite : no such column: d.montant. Colonne « montant » inconnue — colonnes proch…
+```
+
+Le résultat complet, au journal : `Erreur SQLite : no such column: d.montant. Colonne « montant » inconnue — colonnes proches dans devis : montant_ht.` La lecture corrigée rend :
+
+```json
+{"database": "crm", "columns": ["id", "nom", "montant_ht"],
+ "rows": [[1, "Plomberie Durand", 1250.5]], "row_count": 1, "truncated": false}
+```
+
+Le modèle note alors la relance : un `UPDATE` de `devis` et un `INSERT` dans `relances`, dans le même `execute`. `update` sur `devis` attend un humain : le run se met en pause, et la base n'a pas bougé.
+
+```text
+Statut     : paused · itérations : 4 · tokens : 6319/410 · coût : 0.0000 $
+Run        : 01a17900-0000-7000-8000-000000000032
+En attente : sql (fake_3_0) — loom approve 01a17900-0000-7000-8000-000000000032 --call fake_3_0
+```
+
+L'approbateur lit le motif, qui nomme les droits exercés : « crm : update sur devis, insert sur relances — approbation demandée pour update sur devis (effets : irreversible) ». Une fois l'appel accordé, les deux instructions passent ensemble :
+
+```bash
+uv run loom approve 01a17900-0000-7000-8000-000000000032 --call fake_3_0
+```
+
+```text
+Accordé : fake_3_0
+Le devis 1 de Plomberie Durand (1 250,50 € HT) est passé en relance, et la relance par e-mail est notée.
+
+Statut     : completed · itérations : 5 · tokens : 8513/461 · coût : 0.0000 $
+Run        : 01a17900-0000-7000-8000-000000000032
+```
+
+`loom replay` rejoue ce run « Identique » : les résultats viennent du journal, et la base n'est pas retouchée.
+
+Les valeurs rendues au modèle sont du JSON. Un `numeric` Postgres arrive en texte exact (`"1250.50"`), une date-heure avec fuseau en ISO 8601 dans le fuseau de l'outil (`"2026-10-01T09:30:00+02:00"`), un `jsonb` décodé, une durée en ISO 8601 (`"P1DT2H30M"`). Un binaire n'est jamais rendu (`"<bytes: 12>"`), et un texte de plus de 1 000 caractères est coupé. Côté Postgres, les paramètres sont convertis d'après les types de la requête : `"2026-10-15"` devient une `date`, `[1, 2]` un tableau pour `ANY($1)`, `{"canal": "email"}` un `jsonb`.
+
+#### Ce que l'outil refuse
+
+Chaque instruction est analysée avant de partir. Un refus est un résultat en erreur : le modèle corrige, et le run continue.
+
+| Faute | Message (extrait) |
+|---|---|
+| DDL, commande | `Instruction DROP interdite. Autorisé : INSERT, UPDATE, DELETE (execute).` (idem pour `TRUNCATE`, `MERGE`, `LOCK`, `SET`, `COPY`, `CALL`, `EXPLAIN`, `BEGIN`, `PRAGMA`, `ATTACH`) |
+| Deux instructions dans une entrée | `Une seule instruction par entrée (2 données).` |
+| Écriture dans `query` | `UPDATE écrit : passer par execute ; query ne fait que lire.` |
+| `SELECT … INTO`, `FOR UPDATE` | `SELECT … INTO crée une table : interdit.` |
+| Table non déclarée | `Table « factures » non autorisée. Tables de la base : devis, clients, relances.` |
+| Nom qualifié | `Nom qualifié « public.devis » interdit : écrire « devis ».` |
+| Droit absent | `DELETE non autorisé sur « clients » (droits : select).` |
+| Sans `WHERE` | `UPDATE sans WHERE refusé : il toucherait toute la table « devis » ; ajouter une condition.` |
+| Fonction qui agit hors de la requête | `Fonction pg_sleep interdite : elle agit hors de la requête.` |
+| Fonction inconnue de l'outil | `Fonction age non permise : inconnue de l'analyse. Si elle ne modifie rien, la base peut la permettre (functions) ; sinon s'en passer.` |
+| Paramètres | `Paramètres à écrire $1, $2… (ni « ? » ni « :nom »).` |
+| Trop de lignes modifiées | `2 lignes modifiées, au-delà de 1 : rien n'est enregistré (transaction annulée). Restreindre le WHERE, ou procéder par lots.` (ici avec `max_affected_rows: 1`) |
+| Instruction trop longue | `Instruction arrêtée après 10 s (délai de la base).` |
+
+Les fonctions courantes (`date_trunc`, `to_char`, `coalesce`, `string_agg`, `now`, `generate_series`…) sont reconnues. Quelques fonctions inoffensives ne le sont pas (`age`, `clock_timestamp`, `jsonb_build_object`) : listez-les dans `functions` pour les permettre. Celles qui agissent hors de la requête (`pg_sleep`, `pg_terminate_backend`, `set_config`, `nextval`, `dblink`, `lo_import`, `pg_read_file`…) restent refusées, même listées.
+
+#### La base fait foi
+
+L'analyse refuse tôt, avec des messages que le modèle sait lire, mais ce n'est pas elle qui protège la base : c'est la base elle-même.
+
+- **SQLite** n'a pas de rôles. L'outil pose sur chaque connexion un **authorizer**, que SQLite consulte à la préparation de chaque instruction, triggers et vues compris. Il n'accorde que ce que la config accorde : lire une table non déclarée, `ATTACH`, `PRAGMA` ou une instruction DDL y échouent, même si l'analyse les laissait passer. La base s'ouvre en lecture seule pour une lecture, et l'outil n'en crée jamais. Les triggers de la base, que l'agent ne peut pas créer, gardent leurs accès.
+- **Postgres** : c'est le **rôle** du DSN. Donnez à l'agent un rôle à lui, avec les seuls droits de la config (voir ci-dessous). Les lectures passent dans une transaction en lecture seule, et chaque instruction est préparée : le serveur refuse d'en recevoir deux à la fois.
+
+#### Postgres : un rôle dédié
+
+Le DSN ne se met jamais dans la config : elle nomme la variable qui le porte, comme `api_key_env` pour un modèle.
+
+```yaml
+  - name: crm
+    postgres:
+      dsn_env: CRM_DATABASE_URL      # postgresql://agent_crm:…@db/crm
+      schema: public
+    tables:
+      devis: { select: never, update: always }
+      clients: [ select ]
+      relances: [ select, insert ]
+```
+
+La variable est vérifiée au montage : sans elle, `loom validate` le dit (« base 'crm' : la variable CRM_DATABASE_URL (dsn_env) est absente ou vide »). Un rejeu sur une autre machine doit donc la définir aussi, mais sa valeur ne sert pas : un rejeu ne se connecte pas. Le DSN du stockage de loom (journal, idempotence, bus) est refusé, par son nom comme par sa valeur. `loom validate` montre la variable, jamais le DSN :
+
+```text
+    outil sql : crm → postgres, CRM_DATABASE_URL, schéma public : devis select, update (approbation) ; clients select ; relances select, insert
+```
+
+Le rôle se crée avec les droits de la config, table par table :
+
+```sql
+CREATE ROLE agent_crm LOGIN PASSWORD '…' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+GRANT USAGE ON SCHEMA public TO agent_crm;
+GRANT SELECT, UPDATE ON devis TO agent_crm;
+GRANT SELECT ON clients TO agent_crm;
+GRANT SELECT, INSERT ON relances TO agent_crm;
+GRANT USAGE ON SEQUENCE relances_id_seq TO agent_crm;   -- un INSERT sur une colonne serial
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;              -- déjà le cas depuis Postgres 15
+```
+
+Au premier appel, l'outil contrôle ce rôle :
+
+- un superutilisateur, ou un rôle `BYPASSRLS`, est refusé : « Base crm : le rôle postgres est superutilisateur — il passe outre tout droit, loom.sql le refuse. Donner un rôle dédié, aux droits de la config. » ;
+- un droit que la config accorde et que la base refuse fait échouer chaque appel, jusqu'au `GRANT` : « Base crm : droits accordés par la config mais refusés par la base au rôle agent_crm : clients INSERT. Les donner (GRANT), ou les retirer de la config. » ;
+- un droit que la base accorde en plus de la config (`DELETE`, `TRUNCATE`, une table non déclarée, `CREATE` sur le schéma, les tables temporaires) est dit une fois, en avertissement dans les logs : « le rôle agent_crm peut plus que la config — devis DELETE, devis TRUNCATE, audit (non déclarée). La défense ne repose alors que sur l'analyse de l'outil : retirer ces droits (REVOKE). »
+
+Les connexions vivent dans un pool, ouvert au premier appel et fermé avec l'agent. Le délai d'une instruction (`statement_timeout`) est posé à chaque transaction ; quand le délai de l'outil arrive avant, la requête est annulée sur le serveur.
+
+#### Plusieurs clients, plusieurs bases
+
+Avec des clients (chapitre 22), chacun peut avoir sa base : un client redirige la variable du DSN vers la sienne.
+
+```yaml
+tenants:
+  - id: dupont
+    secrets: { CRM_DATABASE_URL: DUPONT_CRM_DATABASE_URL }
+```
+
+La table des secrets de chaque client contient la variable que nomme `dsn_env`, comme une clé d'API.
+
+#### À savoir
+
+- **Ce qui est lu part chez le fournisseur du modèle.** Toute ligne que le rôle peut lire, y compris le détail d'une erreur Postgres (« Failing row contains (…) »), peut arriver dans un appel au modèle, et va au journal. La barrière, pour le RGPD, c'est la liste des tables et les droits du rôle : ne déclarez que ce que l'agent doit voir.
+- **Contenu non fiable.** Une ligne de la base peut contenir des instructions adressées au modèle. Gardez `update` et `delete` sous approbation sur un agent qui lit des données saisies par d'autres.
+- **L'analyse ne prouve pas la justesse.** Un `WHERE` trop large passe ; `max_affected_rows` borne alors les dégâts : au-delà, rien n'est enregistré.
+- **Une écriture interrompue** (arrêt du process au milieu d'un `execute`) a peut-être été validée : à la reprise, le run se met en pause, et un humain vérifie avant de la refaire.
+- **`loom validate` ne se connecte pas.** Un `GRANT` manquant ne se voit qu'au premier appel, où le message le nomme.
+- **Rejeu et évaluations.** Le rejeu sert les résultats du journal et ne touche pas la base. En variante, une lecture nouvelle s'exécute pour de vrai, sur la base du moment ; une écriture nouvelle jamais.
+- **Hors de portée de l'outil** : `MERGE`, `EXPLAIN`, une transaction sur plusieurs appels, le masquage de colonnes, MySQL. SQLite garde ses réglages : `foreign_keys` reste coupé si la base ne l'active pas.
+
 ---
 
 ## Pour aller plus loin
 
-- **La référence** : `docs/tools-builtin-analyse.md` — l'analyse, les décisions et l'organisation du dossier `src/loom_ia/tools_builtin/` ; `docs/outil-excel-loom_v2.md` et `docs/outil-excel-analyse.md` pour `loom.excel` ; `docs/fonctions.md`, point 50 (formes de référence) et point 44 (dépendances du noyau).
-- **Ajouter un outil fourni**, pour qui contribue à loom-ia : un module par outil dans `src/loom_ia/tools_builtin/`, une ligne au catalogue `BUILTIN_TOOLS`, et ses tests. `tests/unit/test_tools_builtin.py` vérifie que chaque entrée du catalogue est un outil, nommé comme sa référence sans le préfixe. Un outil à paramètres déclare au catalogue un `Builtin` : le modèle Pydantic de ses paramètres, dans un module léger (`local_files_params.py`), et sa fabrique ; il ajoute aussi ses paramètres d'essai à `SAMPLE_PARAMS`. Un outil dont l'approbation ou les effets dépendent de l'appel implémente `assess_call` (`loom_ia.core.ports.CallAssessment`). Un outil qui lit ou écrit dans des dossiers déclarés s'appuie sur `tools_builtin/_folders.py`, comme `local_files` et `excel`. Un outil dont les dépendances viennent d'un extra le déclare au catalogue (`Builtin.extra`), et ses tests sautent sans lui (`importorskip`, raison « extra '…' absent »).
+- **La référence** : `docs/tools-builtin-analyse.md` — l'analyse, les décisions et l'organisation du dossier `src/loom_ia/tools_builtin/` ; `docs/outil-excel-loom_v2.md` et `docs/outil-excel-analyse.md` pour `loom.excel` ; `docs/sql_builtin_tool.md` pour `loom.sql` ; `docs/fonctions.md`, point 50 (formes de référence) et point 44 (dépendances du noyau).
+- **Ajouter un outil fourni**, pour qui contribue à loom-ia : un module par outil dans `src/loom_ia/tools_builtin/`, une ligne au catalogue `BUILTIN_TOOLS`, et ses tests. `tests/unit/test_tools_builtin.py` vérifie que chaque entrée du catalogue est un outil, nommé comme sa référence sans le préfixe. Un outil à paramètres déclare au catalogue un `Builtin` : le modèle Pydantic de ses paramètres, dans un module léger (`local_files_params.py`), et sa fabrique ; il ajoute aussi ses paramètres d'essai à `SAMPLE_PARAMS`. Un outil dont l'approbation ou les effets dépendent de l'appel implémente `assess_call` (`loom_ia.core.ports.CallAssessment`). Un outil qui lit ou écrit dans des dossiers déclarés s'appuie sur `tools_builtin/_folders.py`, comme `local_files` et `excel`. Un outil dont les dépendances viennent d'un extra le déclare au catalogue (`Builtin.extra`), et ses tests sautent sans lui (`importorskip`, raison « extra '…' absent »). Un outil qui lit des secrets les nomme dans ses paramètres (`secret_names()`, protocole `NamesSecrets`) : la table de chaque client les contient, et sa fabrique la reçoit (`BuiltinContext.secrets`). Un outil qui ouvre des connexions a un `aclose` : l'agent le ferme avec lui.
 - **La limite du proxy** : backlog #023.
 
 Navigation : [01-demarrer.md](01-demarrer.md) · [02-maitriser.md](02-maitriser.md) · [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md)

@@ -20,6 +20,8 @@ Une faille confirmée est corrigée dans une version publiée, puis décrite dan
   entre clients (`tenant`) ;
 - le journal et les fichiers chiffrés : lecture d'un contenu sans la clé du client ;
 - la sandbox Firecracker (`firecracker/`) : sortie de la VM ou lecture d'une autre session ;
+- l'outil fourni `loom.sql` : une instruction, une table ou un droit hors de ce que la config
+  déclare, qui passerait l'analyse de l'outil ou les droits de la base ;
 - toute fuite de secret dans les logs, le journal ou les messages d'erreur.
 
 Une clé d'API de fournisseur de modèles reste à la charge de celui qui l'utilise : ne la

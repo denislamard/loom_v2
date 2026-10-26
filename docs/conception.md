@@ -1712,6 +1712,7 @@ src/loom_ia/
 | `redis` | `redis` |
 | `otel` | `opentelemetry-sdk` et un exporteur |
 | `office` | `openpyxl` (outil fourni `loom.excel`) |
+| `sql` | `sqlglot`, `asyncpg` (outil fourni `loom.sql`) |
 | `all` | Tous les extras |
 
 Les extras `firestore` et `gcs` ne sont pas réalisés.
