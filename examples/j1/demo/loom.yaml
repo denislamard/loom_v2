@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=./loom.schema.json
+# Configuration de l'agent demo du jalon J1.
+# Le modèle est simulé (sdk: fake) : aucune clé ni réseau.
+version: 1
+
+imports: [outils]                 # module voisin de ce fichier
+agents_dir: agents/
+prompts_dir: prompts/
+
+models:
+  - id: FAKE
+    sdk: fake
+    model: fake-1
+    params:
+      script:
+        - text: Je calcule.
+          tool_calls:
+            - name: calculer
+              arguments: {expr: "12*7+3"}
+        - text: 12 fois 7, plus 3, font 87.
+
+storage:
+  events: {backend: jsonl, path: data}   # ignoré par git
+
+execution:
+  tools: {timeout: 10, validate_arguments: true}
+
+telemetry:
+  logging: {level: WARNING, format: console}

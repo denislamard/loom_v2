@@ -1,0 +1,14 @@
+name: verificateur
+description: Vérifie des dates et des calculs en les refaisant avec ses propres outils (modèle simulé).
+expose: {rest: false, mcp: false}   # appelé seulement comme sous-agent
+
+main:
+  model: FAKE_CHECK
+  system_file: verificateur.md
+
+max_iterations: 3
+
+tools:
+  - mcp: time
+  - mcp: math
+    include: [calculer]

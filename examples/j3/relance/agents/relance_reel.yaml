@@ -1,0 +1,77 @@
+name: relance_reel
+description: Relance un client au sujet d'un devis en attente (vrais modèles).
+expose: {rest: true, mcp: true}
+
+main:
+  model: M3_MAIN
+  system_file: relance.md
+
+max_iterations: 6
+
+tools:
+  - python: chercher_devis
+    side_effects: none
+    idempotent: true
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis, prêt à envoyer.
+    model: GLM_FLASH
+    system_file: rediger.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial, ferme, bref…"}
+        consignes: {type: string, description: Corrections demandées après un refus, s'il y en a}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    input_template: |-
+      Demande : {{ context.user_input }}
+
+      Devis :
+      {{ context.tool_results.chercher_devis }}
+
+      Ton souhaité : {{ args.ton }}
+      Consignes : {{ args.consignes }}
+    llm: {max_tokens: 2000, params: {temperature: 0.3}}
+    terminal: true
+    # Contrat de sortie (phase 3.2) : un JSON {objet, corps}. Normalisé d'abord
+    # (bloc de code, texte autour) ; sinon le modèle du rôle répare une fois ;
+    # sinon l'orchestrateur reçoit une erreur avec le diagnostic.
+    output:
+      schema:
+        type: object
+        properties:
+          objet: {type: string, minLength: 5}
+          corps: {type: string, minLength: 20}
+        required: [objet, corps]
+        additionalProperties: false
+      repair: {max_attempts: 1}
+      on_failure: fail
+    # Juge (phase 3.3), après le contrat : la relance ne doit rien inventer. Il
+    # voit la demande, le devis et les arguments du rôle ; un refus est réparé
+    # une fois par le rôle lui-même, puis l'orchestrateur reçoit une erreur.
+    judge:
+      model: HAIKU
+      context: [user_input, {tool_results: [chercher_devis]}]
+      criteria:
+        - name: fidele
+          rule: >-
+            Chaque montant, date, délai et engagement de l'e-mail figure dans le
+            devis ou dans la demande : rien d'inventé (réduction, délai
+            d'intervention, garantie…).
+        - name: ton
+          rule: Le ton de l'e-mail est celui demandé (argument ton).
+          min_score: 0.6
+          blocking: false
+      repair: {max_attempts: 1}
+      on_failure: fail
+
+# Politiques (phase 3.1), dans l'ordre d'exécution à chaque point.
+policies:
+  - hook: loom.require_tool          # un premier appel d'outil est imposé (backlog #012)
+  - hook: numero_devis               # before_tool : numéro normalisé, ou appel refusé
+  - hook: plafond_appels             # before_model : arrêt au-delà de max_appels
+    params: {max_appels: 6}
+  - hook: cite_le_devis              # on_output : la relance doit citer le numéro
+    max_attempts: 2

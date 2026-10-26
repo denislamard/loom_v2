@@ -231,7 +231,7 @@ firecracker/vms/
 .DS_Store
 
 
-examples/*
+examples/*.zip
 examples.OLD/*
 
 # Verrous de LibreOffice (fichier ouvert) et sorties des sessions Claude

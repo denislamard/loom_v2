@@ -1,0 +1,15 @@
+name: demo
+description: Répond aux questions de calcul.
+expose: {rest: true, mcp: true}
+
+main:
+  model: FAKE
+  system_file: demo.md            # relatif à prompts_dir
+
+max_iterations: 5
+
+tools:
+  - python: calculer              # nom enregistré par imports
+    side_effects: none
+    idempotent: true
+    timeout: 5

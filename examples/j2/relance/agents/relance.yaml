@@ -1,0 +1,35 @@
+name: relance
+description: Relance un client au sujet d'un devis en attente (modèles simulés).
+expose: {rest: true, mcp: true}
+
+main:
+  model: FAKE_MAIN
+  system_file: relance.md
+
+max_iterations: 5
+
+tools:
+  - python: chercher_devis
+    side_effects: none
+    idempotent: true
+
+roles:
+  - name: rediger_relance
+    description: Rédige l'e-mail de relance d'un devis, prêt à envoyer.
+    model: FAKE_ROLE
+    system_file: rediger.md
+    input_schema:
+      type: object
+      properties:
+        ton: {type: string, description: "Ton de l'e-mail : cordial, ferme, bref…"}
+      required: [ton]
+    context: [user_input, {tool_results: [chercher_devis]}]
+    input_template: |-
+      Demande : {{ context.user_input }}
+
+      Devis :
+      {{ context.tool_results.chercher_devis }}
+
+      Ton souhaité : {{ args.ton }}
+    llm: {max_tokens: 800, params: {temperature: 0.3}}
+    terminal: true

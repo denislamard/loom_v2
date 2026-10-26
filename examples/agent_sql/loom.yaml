@@ -1,0 +1,21 @@
+version: 1
+
+agents_dir: agents/
+prompts_dir: prompts/
+
+models:
+- id: HAIKU
+  sdk: anthropic
+  model: claude-haiku-5-5
+  api_key_env: ANTHROPIC_API_KEY
+  max_tokens: 8192
+  pricing: { input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125, tiers: [ { above: 1000, input: 1.0, output: 5.0 } ] }
+  cache: { system: true, tools: true, messages: true }
+
+telemetry:
+  logging: { level: WARNING }
+  capture: { raw_exchanges: true }    # garder les échanges bruts au journal, pour dépouiller les essais
+
+storage:
+  events: { backend: jsonl, path: data/journal }
+
