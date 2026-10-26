@@ -280,11 +280,11 @@ def build(params: BaseModel, context: BuiltinContext) -> SqlTool:
         if spec.sqlite is not None:
             backend = SqliteDatabase(spec, _sqlite_path(spec, context), catalog, zone)
         else:
-            # Lot 2 : le DSN est vérifié, mais la connexion Postgres n'arrive qu'au lot 3.
-            _dsn(spec, secrets, context)
-            raise ValueError(
-                f"base {spec.name!r} : Postgres n'est pas encore pris en charge par loom.sql"
-            )
+            # Le DSN est vérifié d'abord ; asyncpg n'est importé que pour une base Postgres.
+            dsn = _dsn(spec, secrets, context)
+            from loom_ia.tools_builtin.sql.postgres import PostgresDatabase
+
+            backend = PostgresDatabase(spec, dsn, catalog, zone)
         databases.append(Database(spec, catalog, backend, SchemaCache(backend.introspect)))
     return SqlTool(databases, zone)
 

@@ -3,7 +3,9 @@
 
 L'analyse est éprouvée seule (``analyze``), puis à travers l'outil sur une base
 SQLite temporaire ; l'authorizer l'est aussi seul, comme si l'analyse avait
-laissé passer l'instruction : c'est lui qui fait foi.
+laissé passer l'instruction : c'est lui qui fait foi. Postgres a sa suite
+d'intégration (``tests/integration/test_sql_postgres.py``) ; ici, ce qui se juge
+sans serveur : le DSN, le contrôle du rôle, la conversion des paramètres.
 """
 
 import asyncio
@@ -225,6 +227,17 @@ def postgres(**changes: Any) -> dict[str, Any]:
         "tables": {"devis": ["select"]},
         **changes,
     }
+
+
+def test_the_dsn_comes_from_the_secrets_and_is_never_shown() -> None:
+    model = SqlParams.model_validate({"databases": [postgres()]})
+    secret = "postgresql://agent:motdepasse@db/crm"
+    with pytest.raises(ValueError, match="la variable CRM_DSN \\(dsn_env\\) est absente ou vide"):
+        build(model, BuiltinContext(secrets={}))
+    tool = build(model, BuiltinContext(secrets={"CRM_DSN": secret}))
+    shown = "\n".join([tool.spec.description, *tool.settings_lines()])
+    assert "motdepasse" not in shown
+    assert "pg → postgres, CRM_DSN, schéma public : devis select" in shown
 
 
 def test_the_storage_dsn_is_refused() -> None:
@@ -990,3 +1003,118 @@ def test_schema_is_built_from_catalog_rows_when_the_base_keeps_no_ddl() -> None:
     assert hint == "Colonne « montant » inconnue — colonnes proches dans devis : montant_ht."
     assert close_columns('column "zzz" does not exist', [devis], ["devis"]) is None
     assert close_columns("syntax error", [devis], ["devis"]) is None
+
+
+# --- Postgres sans serveur : le contrôle du rôle, les paramètres ----------------------
+
+
+async def test_a_superuser_role_is_refused() -> None:
+    """Le contrôle du rôle, sans base : un superutilisateur ou un BYPASSRLS est refusé."""
+    pytest.importorskip("asyncpg", reason="extra 'sql' absent")
+    from zoneinfo import ZoneInfo
+
+    from loom_ia.tools_builtin.sql.postgres import PostgresDatabase
+
+    spec = DatabaseSpec.model_validate(postgres())
+
+    class Role:
+        def __init__(self, **flags: bool) -> None:
+            self.flags = flags
+
+        async def fetchrow(self, *_: object) -> dict[str, object]:
+            return {"name": "agent", "temp": False, **self.flags}
+
+        async def fetchval(self, *_: object) -> object:
+            return 1
+
+        async def fetch(self, *_: object) -> list[object]:
+            return []
+
+    for flags, said in (
+        ({"rolsuper": True, "rolbypassrls": False}, "est superutilisateur"),
+        ({"rolsuper": False, "rolbypassrls": True}, "est BYPASSRLS"),
+    ):
+        database = PostgresDatabase(spec, "postgresql://x", Catalog.of(spec), ZoneInfo("UTC"))
+        with pytest.raises(ToolError, match=f"le rôle agent {said} — il passe outre tout droit"):
+            await database._check(Role(**flags))  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+
+
+def test_postgres_parameters_follow_the_declared_types() -> None:
+    from datetime import date, datetime, time, timedelta
+    from decimal import Decimal
+    from zoneinfo import ZoneInfo
+
+    pytest.importorskip("asyncpg", reason="extra 'sql' absent")
+    from asyncpg.types import Type
+
+    from loom_ia.tools_builtin.sql.postgres import convert
+
+    def typed(name: str, kind: str = "scalar") -> Type:
+        return Type(oid=0, name=name, kind=kind, schema="pg_catalog")
+
+    paris = ZoneInfo("Europe/Paris")
+    given: list[Any] = [
+        "42",
+        3.0,
+        "2.5",
+        "12.30",
+        "non",
+        7,
+        "2026-10-01T09:30:00+00:00",
+        "2026-10-01T09:30:00",
+        "10:15",
+        "PT1H30M",
+        "brouillon",
+        ["1", 2],
+        None,
+    ]
+    names = [
+        "int4",
+        "int8",
+        "float8",
+        "numeric",
+        "bool",
+        "text",
+        "timestamp",
+        "timestamptz",
+        "time",
+        "interval",
+        "statut",
+        "_int4",
+        "date",
+    ]
+    types = [
+        typed(n, "enum" if n == "statut" else "array" if n == "_int4" else "scalar") for n in names
+    ]
+    assert convert(given, types, paris) == [
+        42,
+        3,
+        2.5,
+        Decimal("12.30"),
+        False,
+        "7",
+        datetime(2026, 10, 1, 11, 30),
+        datetime(2026, 10, 1, 9, 30, tzinfo=paris),
+        time(10, 15),
+        timedelta(hours=1, minutes=30),
+        "brouillon",
+        [1, 2],
+        None,
+    ]
+    assert convert(["2026-10-01"], [typed("date")], paris) == [date(2026, 10, 1)]
+    with pytest.raises(ToolError, match="2 paramètre\\(s\\) attendu\\(s\\), 1 donné"):
+        convert([1], [typed("int4"), typed("int4")], paris)
+    faults: list[tuple[Any, str, str]] = [
+        (True, "float8", "n'est pas un nombre"),
+        (False, "numeric", "n'est pas un nombre"),
+        ("peut-être", "bool", "n'est pas un booléen"),
+        (True, "text", "un texte est attendu"),
+        ([1], "int4", "une valeur simple est attendue"),
+        (12, "date", "un texte ISO 8601 est attendu"),
+        ("P", "interval", "une durée ISO 8601"),
+        ("192.168.0.1", "inet", r"le caster en texte dans le SQL \(\$n::text::inet\)"),
+        (b"x".decode(), "bytea", "le caster en texte"),
+    ]
+    for value, name, said in faults:
+        with pytest.raises(ToolError, match=f"Paramètre \\$1 : .*{said}"):
+            convert([value], [typed(name)], paris)
