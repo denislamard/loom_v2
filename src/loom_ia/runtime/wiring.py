@@ -625,11 +625,18 @@ def build_agent(
     imposed: Mapping[str, Approval] = tenant.approvals if tenant is not None else {}
     redirects: Mapping[str, str] = tenant.spec.secrets if tenant and tenant.spec else {}
     mapped: Mapping[str, str] = tenant.spec.models if tenant and tenant.spec else {}
-    provided_context = BuiltinContext(base_dir=config.base_dir, protected=_protected_paths(config))
+    provided_context = BuiltinContext(
+        base_dir=config.base_dir,
+        protected=_protected_paths(config),
+        secrets=secrets,
+        protected_dsns=_protected_dsns(config),
+    )
     tools = [
         _tool(declared, known, config.base_dir, spec.name, provided=provided_context)
         for declared in spec.python_tools
     ]
+    # Un outil fourni qui ouvre des connexions (loom.sql) les ferme avec l'agent.
+    closing = _builtin_closables(spec.python_tools, tools)
     roles = [role_definition(role, variables, state=spec.state) for role in spec.roles]
     _check_names(spec, [tool.spec.name for tool in tools])
     _check_state(spec, tools)
@@ -751,7 +758,7 @@ def build_agent(
     )
     packaged = _packaged_sources(config, spec, secrets)
     sources = [*sources, *packaged]
-    owned = (*opened, *packaged, *owned)
+    owned = (*opened, *packaged, *closing, *owned)
     execution = config.execution.tools
     llm = spec.main.llm
     context = RunContext(
@@ -1871,6 +1878,36 @@ def _builtin_tool(declared: PythonTool, context: BuiltinContext) -> Tool:
     except ValueError as exc:
         # La fabrique refuse ses paramètres : un dossier absent, un chemin protégé…
         raise ConfigError(str(exc)) from exc
+
+
+def _builtin_closables(
+    declared: Sequence[PythonTool], tools: Sequence[Tool]
+) -> tuple[_Closable, ...]:
+    """Les outils fournis qui ont un ``aclose`` : ceux qu'un agent ferme avec lui.
+
+    Seulement les outils fournis : un outil à soi qui aurait un ``aclose`` n'était
+    pas fermé par loom jusqu'ici, et ne l'est toujours pas.
+    """
+    found: list[_Closable] = []
+    for reference, tool in zip(declared, tools, strict=True):
+        if not is_builtin(reference.python):
+            continue
+        inner = tool.tool if isinstance(tool, ConfiguredTool) else tool
+        closer = getattr(inner, "aclose", None)
+        if callable(closer):
+            found.append(cast(_Closable, inner))
+    return tuple(found)
+
+
+def _protected_dsns(config: LoomConfig) -> tuple[str, ...]:
+    """Les variables des DSN du stockage de loom, à la racine et pour chaque client."""
+    names: list[str] = []
+    storages = [config.storage, *(t.storage for t in config.tenants if t.storage is not None)]
+    for storage in storages:
+        for env in (storage.events.dsn_env, storage.idempotency.dsn_env, storage.bus.dsn_env):
+            if env is not None and env not in names:
+                names.append(env)
+    return tuple(names)
 
 
 def _protected_paths(config: LoomConfig) -> tuple[Protected, ...]:

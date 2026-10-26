@@ -1,6 +1,6 @@
 [project]
 name = "loom-ia"
-version = "2.0.13"
+version = "2.0.14"
 description = "Moteur d'agents IA en Python asynchrone : rôles délégués à des modèles, outils Python et MCP, runs journalisés, rejouables et reprenables, en librairie Python, API REST ou serveur MCP."
 readme = "README.md"
 authors = [
@@ -91,6 +91,14 @@ office = [
 postgres = [
     "asyncpg>=0.31.0",
 ]
+# tools_builtin/sql (outil fourni loom.sql) analyse chaque instruction avec sqlglot et
+# parle à Postgres par asyncpg (SQLite : la bibliothèque standard) ; son module ne les
+# importe qu'au montage d'un agent qui l'active. sqlglot change d'API d'une majeure à
+# l'autre : la borne haute suit celle qu'éprouvent les tests de l'analyse.
+sql = [
+    "asyncpg>=0.31.0",
+    "sqlglot>=30.24.0,<31",
+]
 rabbitmq = [
     "aio-pika>=10.0.1,<11",
 ]
@@ -102,7 +110,7 @@ otel = [
     "opentelemetry-sdk>=1.44.0,<2",
 ]
 all = [
-    "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,rabbitmq,redis,otel,crypto,office]",
+    "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,rabbitmq,redis,otel,crypto,office,sql]",
 ]
 
 [project.urls]

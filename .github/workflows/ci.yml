@@ -82,7 +82,7 @@ jobs:
 
         import loom_ia  # noqa: F401
 
-        extras = ["anthropic", "openai", "fastapi", "mcp", "openpyxl"]
+        extras = ["anthropic", "openai", "fastapi", "mcp", "openpyxl", "sqlglot", "asyncpg"]
         installes = [m for m in extras if importlib.util.find_spec(m) is not None]
         if installes:
             raise SystemExit(f"Modules d'extras installés sans être demandés : {installes}")

@@ -16,7 +16,8 @@ redirection est là pour empêcher.
 
 Quand la config déclare des clients, la table d'un client ne contient que ce
 que la configuration **nomme** — ``api_key_env`` des modèles, ``env_from`` et
-``headers_env`` des serveurs MCP, secrets de ``storage.encryption`` — et les
+``headers_env`` des serveurs MCP, secrets de ``storage.encryption``, ``dsn_env``
+des bases de ``loom.sql`` — et les
 noms que les clients redirigent (celui qui ne redirige pas l'un d'eux lit la
 variable commune du même nom) : pas le reste de l'environnement, où dupont
 verrait ``MARTIN_CRM_TOKEN``. Elle est figée et en lecture seule, car elle
@@ -29,8 +30,10 @@ import os
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
+from loom_ia.agents.spec import builtin_settings
 from loom_ia.config.models import LoomConfig
 from loom_ia.core.model import TenantId
+from loom_ia.tools_builtin import NamesSecrets, builtin_params, is_builtin
 
 
 class EnvironmentSecrets:
@@ -76,3 +79,25 @@ def _named(config: LoomConfig) -> Iterator[str]:
         yield from config.storage.encryption.keys
     for tenant in config.tenants:
         yield from tenant.secrets
+    yield from _builtin_secrets(config)
+
+
+def _builtin_secrets(config: LoomConfig) -> Iterator[str]:
+    """Les variables que nomment les paramètres des outils fournis (``dsn_env`` de loom.sql).
+
+    Un modèle de paramètres qui lit des secrets le dit par ``secret_names()`` ;
+    seuls les modules légers des paramètres sont importés ici.
+    """
+    for agent in config.all_agents:
+        for declared in agent.python_tools:
+            if not is_builtin(declared.python):
+                continue
+            try:
+                model = builtin_params(declared.python)
+            except KeyError, ImportError:
+                continue
+            if model is None:
+                continue
+            params = model.model_validate(builtin_settings(declared, model))
+            if isinstance(params, NamesSecrets):
+                yield from params.secret_names()

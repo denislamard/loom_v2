@@ -29,9 +29,10 @@ from loom_ia.agents.spec import (
 from loom_ia.config import ConfigError, agent_json_schema, load_config
 from loom_ia.config.references import Registry
 from loom_ia.core.events import ToolCompleted
-from loom_ia.core.model import DEFAULT_TENANT, RESERVED_PREFIX
+from loom_ia.core.model import DEFAULT_TENANT, RESERVED_PREFIX, TenantId
 from loom_ia.engine import begin_run, drive
 from loom_ia.runtime import Agent, build_agent
+from loom_ia.tenancy import EnvironmentSecrets
 from loom_ia.tools import tool
 from loom_ia.tools_builtin import (
     BUILTIN_TOOLS,
@@ -269,7 +270,23 @@ SAMPLE_PARAMS: dict[str, Callable[[Path], dict[str, Any]]] = {
     "loom.excel": lambda folder: {
         "folders": [{"name": "essai", "path": str(folder), "rights": ["write"]}]
     },
+    "loom.sql": lambda folder: {
+        "databases": [
+            {
+                "name": "essai",
+                "sqlite": {"path": str(_sqlite_file(folder))},
+                "tables": {"devis": ["select"]},
+            }
+        ]
+    },
 }
+
+
+def _sqlite_file(folder: Path) -> Path:
+    """Une base SQLite vide : ``loom.sql`` refuse un fichier absent."""
+    path = folder / "essai.db"
+    path.touch()
+    return path
 
 
 def test_catalogue_is_consistent(tmp_path: Path) -> None:
@@ -319,15 +336,19 @@ def test_validating_a_config_imports_only_the_parameter_modules() -> None:
         "AgentSpec.model_validate({'name': 'a', 'main': {'model': 'M', 'system': 'x'}, "
         "'tools': [{'python': 'loom.local_files', 'folders': "
         "[{'name': 'w', 'path': '/tmp', 'rights': ['read']}]}, {'python': 'loom.excel', "
-        "'folders': [{'name': 'w', 'path': '/tmp', 'rights': ['write']}], 'recalc': True}]})\n"
+        "'folders': [{'name': 'w', 'path': '/tmp', 'rights': ['write']}], 'recalc': True}, "
+        "{'python': 'loom.sql', 'databases': [{'name': 'b', 'postgres': {'dsn_env': 'B'}, "
+        "'tables': {'t': ['select']}}]}]})\n"
         "print('loom_ia.tools_builtin.local_files' in sys.modules, "
         "'loom_ia.tools_builtin.fetch_page' in sys.modules, "
-        "'loom_ia.tools_builtin.excel' in sys.modules, 'openpyxl' in sys.modules)\n"
+        "'loom_ia.tools_builtin.excel' in sys.modules, 'openpyxl' in sys.modules, "
+        "'loom_ia.tools_builtin.sql' in sys.modules, 'sqlglot' in sys.modules, "
+        "'asyncpg' in sys.modules)\n"
     )
     done = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
     )
-    assert done.stdout.split() == ["False", "False", "False", "False"]
+    assert done.stdout.split() == ["False"] * 7
 
 
 # --- Paramètres sur la référence ----------------------------------------------------
@@ -384,6 +405,106 @@ def test_the_schema_describes_the_parameters() -> None:
     assert built["properties"]["python"]["const"] == "loom.local_files"
     assert "folders" in built["required"]
     assert schema["$defs"]["PythonTool"]["properties"]["python"]["not"] == {
-        "enum": ["loom.excel", "loom.local_files"]
+        "enum": ["loom.excel", "loom.local_files", "loom.sql"]
     }
     assert "folders" in schema["$defs"]["Builtin_excel"]["required"]
+    assert "databases" in schema["$defs"]["Builtin_sql"]["required"]
+
+
+# --- Ce que reçoit la fabrique, ce que l'agent ferme, ce que lit un client (loom.sql) --
+
+
+class Ouvert:
+    """Outil fourni d'essai qui tient une ressource, refermée avec l'agent."""
+
+    def __init__(self) -> None:
+        self.closed = 0
+        self.spec = lire.spec.model_copy(update={"name": "ouvert"})
+
+    async def invoke(self, arguments: dict[str, Any], context: Any) -> Any:
+        return await lire.invoke({"url": "x"}, context)
+
+    async def aclose(self) -> None:
+        self.closed += 1
+
+
+SQL_REFERENCE: dict[str, Any] = {
+    "python": "loom.sql",
+    "databases": [{"name": "crm", "postgres": {"dsn_env": "CRM_DSN"}, "tables": {"t": ["select"]}}],
+}
+
+
+@pytest.fixture
+def opened(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Ouvert, BuiltinContext | None]]:
+    """``loom.sql`` monté par une fabrique d'essai : l'outil rendu, et le contexte reçu."""
+    made: list[tuple[Ouvert, BuiltinContext | None]] = []
+
+    def fake(
+        reference: str, params: BaseModel | None = None, *, context: BuiltinContext | None = None
+    ) -> Ouvert:
+        tool = Ouvert()
+        made.append((tool, context))
+        return tool
+
+    monkeypatch.setattr("loom_ia.runtime.wiring.builtin_tool", fake)
+    return made
+
+
+def test_the_factory_receives_the_secrets_and_the_storage_dsns(
+    demo: ConfigFactory, opened: list[tuple[Ouvert, BuiltinContext | None]]
+) -> None:
+    storage = {
+        "events": {"backend": "jsonl", "path": "journal"},
+        "idempotency": {"backend": "postgres", "dsn_env": "LOOM_IDEMPOTENCE_DSN"},
+        "bus": {"backend": "postgres", "dsn_env": "LOOM_BUS_DSN"},
+    }
+    path = demo(agents=[demo_agent(tools=[SQL_REFERENCE])], storage=storage)
+    secrets = {"CRM_DSN": "postgresql://crm"}
+    build_agent(load_config(path), "demo", InMemoryEventStore(), environ=secrets)
+    ((_, context),) = opened
+    assert context is not None
+    assert context.secrets == secrets
+    assert context.protected_dsns == ("LOOM_IDEMPOTENCE_DSN", "LOOM_BUS_DSN")
+
+
+async def test_an_agent_closes_the_builtin_tools_it_opened(
+    demo: ConfigFactory, opened: list[tuple[Ouvert, BuiltinContext | None]]
+) -> None:
+    """Fermé avec l'agent, même enveloppé par un réglage commun (``timeout``)."""
+    path = demo(agents=[demo_agent(tools=[{**SQL_REFERENCE, "timeout": 5}])])
+    agent = build_agent(load_config(path), "demo", InMemoryEventStore())
+    ((tool, _),) = opened
+    assert (agent.context.tools.specs[0].timeout, tool.closed) == (5, 0)
+    await agent.aclose()
+    assert tool.closed == 1
+
+
+async def test_an_own_tool_with_aclose_is_still_not_closed(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un outil à soi qui a un ``aclose`` n'était pas fermé par loom : il ne l'est toujours pas."""
+    own = Ouvert()
+    module = types.ModuleType("loom_essai_maison")
+    vars(module).update(ouvert=own)
+    monkeypatch.setitem(sys.modules, "loom_essai_maison", module)
+    path = demo(agents=[demo_agent(tools=[{"python": "loom_essai_maison:ouvert"}])])
+    agent = build_agent(load_config(path), "demo", InMemoryEventStore())
+    await agent.aclose()
+    assert own.closed == 0
+
+
+def test_a_builtin_secret_is_in_each_tenant_table(demo: ConfigFactory) -> None:
+    """Le ``dsn_env`` de loom.sql est nommé par la config : chaque client le lit."""
+    reference = SQL_REFERENCE
+    environ = {"CRM_DSN": "postgresql://commun", "DUPONT_CRM_DSN": "postgresql://dupont", "X": "y"}
+    path = demo(
+        agents=[demo_agent(tools=[reference])],
+        tenants=[{"id": "dupont", "secrets": {"CRM_DSN": "DUPONT_CRM_DSN"}}, {"id": "martin"}],
+    )
+    secrets = EnvironmentSecrets(load_config(path), environ)
+    assert dict(secrets.secrets(TenantId("dupont"))) == {"CRM_DSN": "postgresql://dupont"}
+    assert dict(secrets.secrets(TenantId("martin"))) == {"CRM_DSN": "postgresql://commun"}
+    # Sans redirection, la variable n'est nommée que par loom.sql : elle y est quand même.
+    alone = demo(agents=[demo_agent(tools=[reference])], tenants=[{"id": "dupont"}])
+    table = EnvironmentSecrets(load_config(alone), environ).secrets(TenantId("dupont"))
+    assert dict(table) == {"CRM_DSN": "postgresql://commun"}

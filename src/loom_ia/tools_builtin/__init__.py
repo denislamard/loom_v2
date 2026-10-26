@@ -69,6 +69,12 @@ class BuiltinContext:
     base_dir: Path | None = None
     # Config, fichier d'environnement, prompts, stockage… du client monté.
     protected: tuple[Protected, ...] = ()
+    # Table des secrets du client pour qui l'agent est monté, en lecture seule —
+    # celle que reçoivent les fabriques de ``tool_sources`` ; ``None`` : l'environnement.
+    secrets: Mapping[str, str] | None = None
+    # Variables des DSN du stockage de loom (journal, idempotence) : une base
+    # qu'un outil fourni expose ne doit pas être celle-là.
+    protected_dsns: tuple[str, ...] = ()
 
 
 @runtime_checkable
@@ -76,6 +82,18 @@ class ShowsSettings(Protocol):
     """Outil fourni qui dit ses réglages à ``loom validate``, une ligne par réglage."""
 
     def settings_lines(self) -> tuple[str, ...]: ...
+
+
+@runtime_checkable
+class NamesSecrets(Protocol):
+    """Paramètres d'un outil fourni qui lisent des secrets (``dsn_env``…).
+
+    Un client peut rediriger ces noms vers ses variables (``secrets``), et sa
+    table de secrets les contient : sans cela, elle ne garderait que ce que
+    ``loom.yaml`` nomme.
+    """
+
+    def secret_names(self) -> tuple[str, ...]: ...
 
 
 class BuiltinFactory(Protocol):
@@ -100,6 +118,13 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         refused=("approval", "side_effects", "idempotent"),
         refused_because="les droits de chaque dossier les expriment (rights)",
         extra="office",
+    ),
+    "loom.sql": Builtin(
+        target="loom_ia.tools_builtin.sql:build",
+        params="loom_ia.tools_builtin.sql_params:SqlParams",
+        refused=("approval", "side_effects", "idempotent"),
+        refused_because="les droits de chaque table les expriment (tables)",
+        extra="sql",
     ),
 }
 

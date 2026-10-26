@@ -2,6 +2,8 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.0.14 - non publiée
+
 ## 2.0.13 - publiée
 
 ### Ligne de commande
