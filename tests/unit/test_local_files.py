@@ -16,7 +16,7 @@ import pytest
 from conftest import MODEL, ConfigFactory, demo_agent
 from pydantic import JsonValue
 
-import loom_ia.tools_builtin.local_files as local_files_module
+import loom_ia.tools_builtin._folders as folders_module
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
@@ -404,7 +404,7 @@ def test_an_interrupted_creation_leaves_nothing(
 
     monkeypatch.setattr(os, "fsync", full)
     with pytest.raises(OSError, match="No space left"):
-        local_files_module._write_new(tmp_path / "n.txt", b"contenu")  # pyright: ignore[reportPrivateUsage]
+        folders_module.write_new(tmp_path / "n.txt", b"contenu")
     assert not (tmp_path / "n.txt").exists()
 
 

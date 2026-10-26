@@ -1711,6 +1711,7 @@ src/loom_ia/
 | `rabbitmq` | `aio-pika` |
 | `redis` | `redis` |
 | `otel` | `opentelemetry-sdk` et un exporteur |
+| `office` | `openpyxl` (outil fourni `loom.excel`) |
 | `all` | Tous les extras |
 
 Les extras `firestore` et `gcs` ne sont pas réalisés.

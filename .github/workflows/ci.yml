@@ -82,7 +82,7 @@ jobs:
 
         import loom_ia  # noqa: F401
 
-        extras = ["anthropic", "openai", "fastapi", "mcp"]
+        extras = ["anthropic", "openai", "fastapi", "mcp", "openpyxl"]
         installes = [m for m in extras if importlib.util.find_spec(m) is not None]
         if installes:
             raise SystemExit(f"Modules d'extras installés sans être demandés : {installes}")
@@ -156,6 +156,13 @@ jobs:
 
     - name: Installer le projet (tous les extras)
       run: uv sync --locked --all-extras
+
+    # LibreOffice sans interface : le recalcul de loom.excel (`recalc: true`) est
+    # éprouvé ici, et `--require-services` fait échouer son essai s'il manque.
+    - name: Installer LibreOffice (recalcul de loom.excel)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends libreoffice-calc-nogui
 
     # `--require-services` : une variable absente ou un extra manquant devient
     # un échec au lieu d'un saut. Sans lui, un conteneur tombé ou une variable
@@ -244,6 +251,13 @@ jobs:
 
     - name: Versions installées
       run: uv pip list
+
+    # LibreOffice sans interface : le recalcul de loom.excel (`recalc: true`) est
+    # éprouvé ici, et `--require-services` fait échouer son essai s'il manque.
+    - name: Installer LibreOffice (recalcul de loom.excel)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends libreoffice-calc-nogui
 
     - name: Tests
       run: .venv/bin/python -m pytest --require-services

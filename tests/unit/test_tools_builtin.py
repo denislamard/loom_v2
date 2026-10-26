@@ -37,6 +37,7 @@ from loom_ia.tools_builtin import (
     BUILTIN_TOOLS,
     Builtin,
     BuiltinContext,
+    builtin_entry,
     builtin_params,
     builtin_tool,
     is_builtin,
@@ -265,6 +266,9 @@ SAMPLE_PARAMS: dict[str, Callable[[Path], dict[str, Any]]] = {
     "loom.local_files": lambda folder: {
         "folders": [{"name": "essai", "path": str(folder), "rights": ["read"]}]
     },
+    "loom.excel": lambda folder: {
+        "folders": [{"name": "essai", "path": str(folder), "rights": ["write"]}]
+    },
 }
 
 
@@ -278,7 +282,14 @@ def test_catalogue_is_consistent(tmp_path: Path) -> None:
         else:
             assert reference in SAMPLE_PARAMS, f"{reference} : paramètres d'essai manquants"
             params = model.model_validate(SAMPLE_PARAMS[reference](tmp_path))
-            found = builtin_tool(reference, params, context=BuiltinContext(base_dir=tmp_path))
+            try:
+                found = builtin_tool(reference, params, context=BuiltinContext(base_dir=tmp_path))
+            except ImportError:
+                # Ses dépendances viennent d'un extra absent (job « noyau seul ») :
+                # le message du montage le dit (test_excel).
+                if builtin_entry(reference).extra is None:
+                    raise
+                continue
         assert found.spec.name == reference.removeprefix(RESERVED_PREFIX), reference
         assert found.spec.description, reference
 
@@ -307,14 +318,16 @@ def test_validating_a_config_imports_only_the_parameter_modules() -> None:
         "from loom_ia.agents.spec import AgentSpec\n"
         "AgentSpec.model_validate({'name': 'a', 'main': {'model': 'M', 'system': 'x'}, "
         "'tools': [{'python': 'loom.local_files', 'folders': "
-        "[{'name': 'w', 'path': '/tmp', 'rights': ['read']}]}]})\n"
+        "[{'name': 'w', 'path': '/tmp', 'rights': ['read']}]}, {'python': 'loom.excel', "
+        "'folders': [{'name': 'w', 'path': '/tmp', 'rights': ['write']}], 'recalc': True}]})\n"
         "print('loom_ia.tools_builtin.local_files' in sys.modules, "
-        "'loom_ia.tools_builtin.fetch_page' in sys.modules)\n"
+        "'loom_ia.tools_builtin.fetch_page' in sys.modules, "
+        "'loom_ia.tools_builtin.excel' in sys.modules, 'openpyxl' in sys.modules)\n"
     )
     done = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
     )
-    assert done.stdout.split() == ["False", "False"]
+    assert done.stdout.split() == ["False", "False", "False", "False"]
 
 
 # --- Paramètres sur la référence ----------------------------------------------------
@@ -371,5 +384,6 @@ def test_the_schema_describes_the_parameters() -> None:
     assert built["properties"]["python"]["const"] == "loom.local_files"
     assert "folders" in built["required"]
     assert schema["$defs"]["PythonTool"]["properties"]["python"]["not"] == {
-        "enum": ["loom.local_files"]
+        "enum": ["loom.excel", "loom.local_files"]
     }
+    assert "folders" in schema["$defs"]["Builtin_excel"]["required"]

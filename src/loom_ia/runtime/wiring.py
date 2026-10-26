@@ -177,6 +177,7 @@ from loom_ia.tools_builtin import (
     BUILTIN_TOOLS,
     BuiltinContext,
     Protected,
+    builtin_entry,
     builtin_params,
     builtin_tool,
     is_builtin,
@@ -1862,7 +1863,11 @@ def _builtin_tool(declared: PythonTool, context: BuiltinContext) -> Tool:
         raise ConfigError(f"Outil fourni {reference!r} inconnu (fournis : {provided})") from None
     except ImportError as exc:
         missing = exc.name or str(exc)
-        raise ConfigError(f"Outil fourni {reference!r} : dépendance {missing!r} absente") from exc
+        extra = builtin_entry(reference).extra
+        hint = f" (installer l'extra : loom-ia[{extra}])" if extra else ""
+        raise ConfigError(
+            f"Outil fourni {reference!r} : dépendance {missing!r} absente{hint}"
+        ) from exc
     except ValueError as exc:
         # La fabrique refuse ses paramètres : un dossier absent, un chemin protégé…
         raise ConfigError(str(exc)) from exc

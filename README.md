@@ -65,6 +65,7 @@ Le paquet s'appelle `loom-ia`. Il s'importe sous le nom `loom_ia` et installe la
 | `rabbitmq` | La file de tâches RabbitMQ et `loom worker` |
 | `otel` | L'export des traces vers OpenTelemetry |
 | `crypto` | Le chiffrement du journal et des fichiers, client par client |
+| `office` | L'outil fourni `loom.excel`, qui écrit des classeurs Excel |
 | `all` | Tous les extras |
 
 Si votre configuration réclame un extra qui n'est pas installé, Loom-IA refuse de la charger et vous dit lequel ajouter.

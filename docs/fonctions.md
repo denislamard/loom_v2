@@ -49,7 +49,7 @@
 - **D10** `[V2]` Outils sensibles marqués « approbation requise ».
 - **D11** `[V2]` Idempotence des outils à effet de bord lors d'une reprise.
 - **D12** `[V2]` Sources d'outils fournies par un paquet installé (`tool_sources`, point d'entrée du groupe `loom_ia.tools`), branchées par un agent (`- source: <nom>`). Réalisé en 6.4b.
-- **D13** `[V2]` Outils fournis par loom-ia, inactifs par défaut, activés par un agent (`- python: loom.<outil>`) ; premier outil : `loom.fetch_page`, lecture d'une page web publique. Réalisé en 2.0.7 (point 50). `loom.current_datetime`, la date et/ou l'heure dans un fuseau horaire, en 2.0.13 ; `loom.local_files`, des fichiers texte dans des dossiers permis, avec ses droits et l'approbation de chaque droit, en 2.0.13 — premier outil fourni à paramètres, et premier à évaluer chacun de ses appels (`assess_call`).
+- **D13** `[V2]` Outils fournis par loom-ia, inactifs par défaut, activés par un agent (`- python: loom.<outil>`) ; premier outil : `loom.fetch_page`, lecture d'une page web publique. Réalisé en 2.0.7 (point 50). `loom.current_datetime`, la date et/ou l'heure dans un fuseau horaire, en 2.0.13 ; `loom.local_files`, des fichiers texte dans des dossiers permis, avec ses droits et l'approbation de chaque droit, en 2.0.13 — premier outil fourni à paramètres, et premier à évaluer chacun de ses appels (`assess_call`). `loom.excel`, un classeur Excel mis en forme d'après une description sémantique (types de colonne, rôles, formules ; le style est celui de l'outil), dans des dossiers déclarés comme ceux de `local_files`, avec recalcul LibreOffice optionnel, en 2.0.13 — premier outil fourni dont les dépendances viennent d'un extra (`office`) ; analyse : `docs/outil-excel-analyse.md`.
 
 ## E. Fiabilité des sorties
 
@@ -1543,7 +1543,8 @@ src/loom_ia/
   guards/  usage/  sessions/  artifacts/  agents/
   runtime/  telemetry/  replay/  tenancy/  config/
   tools/         python  configured  idempotent
-  tools_builtin/ fetch_page, current_datetime, local_files (outils fournis, loom.<outil>)
+  tools_builtin/ fetch_page, current_datetime, local_files, excel/ (outils fournis, loom.<outil>)
+                 _folders (dossiers permis, partagés par local_files et excel)
   adapters/
     models/      anthropic  openai_chat  openai_responses
     stores/      memory  jsonl  sqlite  postgres
@@ -1571,6 +1572,7 @@ src/loom_ia/
 | `redis` | `redis` | `bus/redis` |
 | `otel` | `opentelemetry-sdk` et un exporteur | `adapters/telemetry/otel` |
 | `crypto` | `cryptography` | `adapters/crypto` |
+| `office` | `openpyxl` | `tools_builtin/excel` (outil fourni `loom.excel`) |
 | `all` | Tous les extras ci-dessus | — |
 
 - **Outils de dev** (pytest, ruff, pyright, import-linter) : dans `[dependency-groups]` (uv), pas dans les extras.
@@ -1749,7 +1751,7 @@ Le schéma complet est dans `conception.md` (§17).
 
 **Décisions :**
 
-1. **Références vers du code Python** (outils, hooks, conditions) : un nom enregistré en code (`@loom.tool`) ou un chemin d'import `module:attr` ; le nom enregistré est essayé d'abord. `imports:` liste les modules chargés au démarrage. Les modules voisins du fichier de config sont importables (son dossier est ajouté à `sys.path` le temps du chargement). Deux configs d'un même process ont chacune les leurs, même sous un même nom : un module voisin que loom a importé pour une autre config est retiré de `sys.modules` et réimporté depuis le dossier de celle qu'on charge ; ce que la première en a déjà pris reste à elle ; un module que loom n'a pas importé comme voisin (installé, de la bibliothèque standard, importé par l'application) n'est jamais touché (6.3c, décision du 06/10). Une troisième forme, pour les outils seulement : `loom.<outil>` désigne un outil fourni par loom-ia (`loom_ia.tools_builtin`, catalogue `BUILTIN_TOOLS`), dont le module n'est importé qu'à la première référence ; aucun n'est actif d'office, et le modèle le voit sous son nom sans le préfixe (`fetch_page`). Un outil fourni peut avoir des paramètres (`folders` pour `loom.local_files`), donnés comme clés directes de la référence et validés au chargement par le modèle que déclare son entrée au catalogue (`Builtin.params`) ; les autres n'acceptent aucune clé de plus (2.0.13, D4). `loom.x:y`, avec un `:`, reste un chemin d'import. Le préfixe `loom.` est réservé : aucun nom enregistré ne le porte, `register()` le refuse (2.0.7, décisions des 15 et 16/10, `docs/tools-builtin-analyse.md`).
+1. **Références vers du code Python** (outils, hooks, conditions) : un nom enregistré en code (`@loom.tool`) ou un chemin d'import `module:attr` ; le nom enregistré est essayé d'abord. `imports:` liste les modules chargés au démarrage. Les modules voisins du fichier de config sont importables (son dossier est ajouté à `sys.path` le temps du chargement). Deux configs d'un même process ont chacune les leurs, même sous un même nom : un module voisin que loom a importé pour une autre config est retiré de `sys.modules` et réimporté depuis le dossier de celle qu'on charge ; ce que la première en a déjà pris reste à elle ; un module que loom n'a pas importé comme voisin (installé, de la bibliothèque standard, importé par l'application) n'est jamais touché (6.3c, décision du 06/10). Une troisième forme, pour les outils seulement : `loom.<outil>` désigne un outil fourni par loom-ia (`loom_ia.tools_builtin`, catalogue `BUILTIN_TOOLS`), dont le module n'est importé qu'à la première référence ; aucun n'est actif d'office, et le modèle le voit sous son nom sans le préfixe (`fetch_page`). Un outil fourni peut avoir des paramètres (`folders` pour `loom.local_files` et `loom.excel`), donnés comme clés directes de la référence et validés au chargement par le modèle que déclare son entrée au catalogue (`Builtin.params`) ; les autres n'acceptent aucune clé de plus (2.0.13, D4). Une entrée peut nommer l'extra qui apporte les dépendances de l'outil (`Builtin.extra`) : sans lui, le montage le dit (« dépendance 'openpyxl' absente (installer l'extra : loom-ia[office]) »). `loom.x:y`, avec un `:`, reste un chemin d'import. Le préfixe `loom.` est réservé : aucun nom enregistré ne le porte, `register()` le refuse (2.0.7, décisions des 15 et 16/10, `docs/tools-builtin-analyse.md`).
 2. **Variables dans les prompts et les templates :** `{{ var }}`, avec un moteur interne minimal (sans Jinja) ; une variable inconnue est une erreur.
 3. **Profils :** fusion profonde des objets, remplacement des listes ; `params` et `llm` sont remplacés en bloc.
 4. **Annotations MCP** (`readOnlyHint`, `destructiveHint`, `idempotentHint`) : valeurs par défaut de `side_effects` et `idempotent`, surchargeables par la config.

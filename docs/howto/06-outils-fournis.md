@@ -6,7 +6,7 @@
 >
 > **Navigation** : précédent : [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md) (vous êtes ici)
 
-Jusqu'ici, un outil était écrit par vous (chapitre 2), servi par un serveur MCP (chapitre 13) ou par un paquet installé (chapitre 29). loom-ia fournit aussi quelques outils prêts à l'emploi. Aucun n'est actif d'office : un agent n'a que les outils que liste son `tools:`, et il active un outil fourni en le nommant `loom.<outil>`. Le premier est `loom.fetch_page`, qui lit une page web publique ; depuis 2.0.13, `loom.current_datetime` donne la date et l'heure, et `loom.local_files` lit et écrit des fichiers dans des dossiers que vous lui désignez.
+Jusqu'ici, un outil était écrit par vous (chapitre 2), servi par un serveur MCP (chapitre 13) ou par un paquet installé (chapitre 29). loom-ia fournit aussi quelques outils prêts à l'emploi. Aucun n'est actif d'office : un agent n'a que les outils que liste son `tools:`, et il active un outil fourni en le nommant `loom.<outil>`. Le premier est `loom.fetch_page`, qui lit une page web publique ; depuis 2.0.13, `loom.current_datetime` donne la date et l'heure, `loom.local_files` lit et écrit des fichiers dans des dossiers que vous lui désignez, et `loom.excel` écrit des classeurs Excel mis en forme.
 
 Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom inspect`), 9 (validation humaine), 26 (rejeu) et 27 (évaluations) lus.
 
@@ -24,6 +24,7 @@ Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom 
   - [Ce que `fetch_page` ne fait pas](#ce-que-fetch_page-ne-fait-pas)
   - [`loom.current_datetime` : la date et l'heure](#loomcurrent_datetime--la-date-et-lheure)
   - [`loom.local_files` : des fichiers dans des dossiers permis](#loomlocal_files--des-fichiers-dans-des-dossiers-permis)
+  - [`loom.excel` : des classeurs Excel mis en forme](#loomexcel--des-classeurs-excel-mis-en-forme)
 - [Pour aller plus loin](#pour-aller-plus-loin)
 
 ---
@@ -643,12 +644,154 @@ Le montage refuse un dossier qui exposerait loom lui-même : le dossier de la co
 - **Rejeu et évaluations.** Un appel absent du journal ne part jamais, lecture comprise : l'appel y est jugé avant que ses références ne soient résolues, et rien ne garantit qu'une lecture le reste. Pour évaluer un agent qui lit des fichiers, donnez une doublure à `local_files` (chapitres 26 et 27).
 - **Un fichier d'environnement donné par `--env-file`** n'est pas connu de la config : s'il n'est pas caché (`.env`), ne le placez pas dans un dossier exposé.
 
+### `loom.excel` : des classeurs Excel mis en forme
+
+Jean Dupont veut que son assistant lui prépare chaque mois un classeur de suivi des devis : la liste exportée de son logiciel, un total, quelques indicateurs, et ses hypothèses (taux de conversion, TVA) bien visibles. `loom.excel` écrit ce classeur. Le modèle dit **ce que sont** les données — des onglets, des colonnes typées, le rôle de certaines lignes, des formules — et jamais à quoi elles ressemblent : la police, les couleurs, les formats de nombre, les largeurs, les volets gelés et le filtre sont ceux de l'outil, les mêmes d'un run à l'autre.
+
+L'outil s'appuie sur openpyxl, qui vient de l'extra `office` :
+
+```bash
+uv add 'loom-ia[office]'
+```
+
+Sans lui, le montage le dit, dès `loom validate` :
+
+```text
+Configuration : Agent 'assistant', outil 'loom.excel' : Outil fourni 'loom.excel' : dépendance 'openpyxl' absente (installer l'extra : loom-ia[office])
+```
+
+```yaml
+tools:
+- python: loom.excel
+  folders:
+  - name: donnees                    # les exports CSV / JSON à lire
+    path: donnees
+    rights: [ read ]
+  - name: sortie                     # où écrire les classeurs
+    path: sortie
+    rights: [ write ]
+  timezone: Europe/Paris             # par défaut : le fuseau des dates-heures écrites
+  recalc: true                       # facultatif : vérifier les formules avec LibreOffice
+```
+
+Les dossiers ont la forme et les règles de `loom.local_files` (droits, approbation de chacun, dossier le plus profond qui décide, liens qui sortent refusés, rien de loom exposé), sauf `delete`, refusé : l'outil ne supprime rien. Il faut au moins un dossier avec `write`. Un classeur existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut.
+
+| Paramètre | Rôle | Par défaut |
+|---|---|---|
+| `folders` | dossiers permis et leurs droits (`read`, `write`, `overwrite`) | — (obligatoire) |
+| `timezone` | fuseau IANA où passe une date-heure qui en porte un ; Excel ne connaît pas les fuseaux | `Europe/Paris` |
+| `recalc` | recalculer les formules avec LibreOffice avant d'écrire | `false` |
+| `soffice` | chemin de LibreOffice, avec `recalc` | `soffice`, cherché dans le `PATH` |
+| `recalc_timeout` | délai du recalcul, en secondes, avec `recalc` | `60` |
+
+`loom validate` montre les dossiers, le fuseau et le recalcul :
+
+```text
+Fournis    : loom.excel
+  assistant : modèle SIMULE, 1 outil(s) Python
+    outil excel : donnees → /…/donnees : read
+    outil excel : sortie → /…/sortie : write
+    outil excel : fuseau : Europe/Paris
+    outil excel : recalcul : /usr/bin/soffice (au plus 60 s)
+1 agent(s) monté(s) sans erreur.
+```
+
+#### Ce que le modèle envoie
+
+Un appel décrit le classeur entier. Celui-ci, tiré d'un run réel (modèle simulé, LibreOffice 24.2), fait trois onglets :
+
+```json
+{"path": "sortie/relances-octobre.xlsx",
+ "sheets": [
+  {"name": "Hypothèses",
+   "columns": [{"header": "Paramètre"}, {"header": "Valeur", "type": "pourcentage"}],
+   "rows": [
+     {"cells": ["Taux de conversion visé", 0.15], "role": "hypothese",
+      "note": "Source : objectif fixé par l'artisan"},
+     {"cells": ["TVA", 0.2], "role": "hypothese", "note": "Source : taux normal, art. 278 CGI"}]},
+  {"name": "Suivi",
+   "columns": [{"header": "Client"}, {"header": "Date devis", "type": "date"},
+               {"header": "Montant HT", "type": "montant_eur"},
+               {"header": "Relances", "type": "entier"}, {"header": "Statut"}],
+   "data": {"path": "donnees/devis.csv"},
+   "totals": {"Montant HT": "somme", "Relances": "somme"}},
+  {"name": "Synthèse",
+   "columns": [{"header": "Indicateur"}, {"header": "Valeur", "type": "montant_eur"}],
+   "rows": [
+     {"cells": ["Montant HT en attente", "=SUMIF(Suivi!E2:E5,\"En attente\",Suivi!C2:C5)"]},
+     {"cells": ["Montant TTC en attente", "=B2*(1+'Hypothèses'!$B$3)"]},
+     {"cells": ["CA HT espéré", "=B2*'Hypothèses'!$B$2"], "role": "total"},
+     {"cells": ["Objectif HT du mois", null], "role": "saisie"}]}]}
+```
+
+- **Types de colonne** : `texte` (par défaut), `entier`, `decimal`, `montant_eur`, `montant_keur` (valeur déjà en k€), `pourcentage` (une fraction : 0.15 pour 15 %), `date`, `date_heure`, `annee` (stockée en texte, sans séparateur de milliers), `booleen` (« Oui » / « Non »).
+- **Rôles**, sur une ligne (`role`) ou une cellule (`{"value": …, "role": …, "note": …}`) : `saisie` (à remplir par l'utilisateur, bleu sur jaune pâle), `hypothese` (paramètre cité par les formules, bleu sur jaune, avec sa source en `note`, obligatoire), `total` (gras, bordure haute), `note` (italique gris). Dans une ligne `saisie` ou `hypothese`, un texte non vide est un libellé et reste noir.
+- **Formules** : une valeur qui commence par `=`. En anglais, arguments séparés par `,` ; une formule qui cite un autre onglet s'affiche en vert.
+- **Données** : `rows` pour un petit tableau (200 lignes au plus), `data` pour un fichier `.csv` ou `.json` d'un dossier qui a le droit `read`. Le CSV peut venir d'un logiciel français : `;` comme séparateur, `1 250,50`, `02/10/2026`. `totals` ajoute une ligne de total, `=SUM(…)` générée par l'outil.
+
+Le classeur produit : en-têtes en gras sur fond bleu-gris, volets gelés sous l'en-tête, filtre sur les données, montants au format `#,##0.00 "€"`, dates centrées au format court de la langue du lecteur (`02/10/2026` dans un Excel français), textes légèrement en retrait pour ne pas coller aux nombres voisins, hypothèses en bleu sur jaune avec leur source en commentaire, et une légende sous chaque tableau qui a des cellules à saisir ou des hypothèses. La ligne de total porte « Total » dans la première colonne de texte sans agrégat. À l'impression et à l'export PDF, chaque onglet tient sur une page de large, en paysage s'il est large.
+
+Les montants et pourcentages affichent déjà leur unité : un en-tête « Montant HT » suffit, « Montant HT (€) » la répéterait. La description de l'outil le dit au modèle ; l'unité n'a sa place dans l'en-tête que si le format ne la montre pas (« Surface (m²) »).
+
+#### Ce que le modèle reçoit
+
+Un résumé, jamais le contenu du classeur :
+
+```json
+{"path": "sortie/relances-octobre.xlsx", "bytes": 8718, "written": true, "replaced": false,
+ "sha256": "a32fd00740c241d174a198037cd25d0abe5157379dbb5b8318792a9923fa3137",
+ "sheets": [{"name": "Hypothèses", "rows": 2, "formulas": 0},
+            {"name": "Suivi", "rows": 4, "formulas": 2},
+            {"name": "Synthèse", "rows": 4, "formulas": 3}],
+ "warnings": [], "recalc": {"formulas": 5, "errors": 0}}
+```
+
+Deux appels identiques donnent le même fichier, octet pour octet : les dates du classeur et de l'archive sont fixées. Un appel interrompu puis repris retrouve donc son fichier et répond `"written": false`, sans rien réécrire ; le `sha256` permet de vérifier un fichier contre le journal.
+
+#### Ce que l'outil refuse
+
+Avant d'écrire, l'outil valide toute la description, sans LibreOffice : noms d'onglets (31 caractères, ni `[ ] : * ? / \`, pas de doublon), valeurs (`'demain' n'est pas un(e) date`), hypothèse sans source, et formules. Une formule écrite avec une fonction française, un `;`, un onglet inconnu ou mal quoté (`'Mes Hypothèses'!B2`), une fonction à débordement (`XLOOKUP`, `FILTER`…) ou une fonction hors de la liste permise est refusée, avec le correctif. Les fautes sont dites ensemble, et le modèle corrige en un appel. Dans ce run, le modèle écrit d'abord `=SOMME(B2;B3)` :
+
+```text
+    outil excel — 4 ms (erreur)
+      · résultat  : (erreur) Classeur refusé : - Calcul!B4 : séparateur « ; » dans '=SOMME(B2;B3)' — les formules s'é…
+```
+
+Le résultat complet, au journal :
+
+```text
+Classeur refusé :
+- Calcul!B4 : séparateur « ; » dans '=SOMME(B2;B3)' — les formules s'écrivent en anglais, arguments séparés par « , »
+- Calcul!B4 : fonction française SOMME dans '=SOMME(B2;B3)' — écrire SUM
+```
+
+Il renvoie `=SUM(B2:B3)` à l'étape suivante, et le classeur est écrit. Deux points ne sont qu'avertis, dans `warnings` : un pourcentage plus grand que 1 (« 15 affiché 1500% — un pourcentage se donne en fraction »), et un nombre écrit dans une formule (« constante 1.05 dans '=B5*1.05' — une hypothèse se met dans sa propre cellule »).
+
+#### Le recalcul
+
+La validation dit qu'une formule est bien écrite, pas qu'elle s'évalue : `=1/A2` passe, et donne `#DIV/0!` si `A2` est vide. Avec `recalc: true`, LibreOffice recalcule une **copie** du classeur avant l'écriture ; une seule formule en erreur fait échouer l'appel, et rien n'est écrit :
+
+```text
+Recalcul : 1 formule(s) en erreur sur 2 — #DIV/0! : R!B2. Le classeur n'est pas écrit ; corriger ces formules (IFERROR pour un dénominateur qui peut être nul).
+```
+
+Le fichier livré reste celui de l'outil, sans valeurs calculées : LibreOffice réécrirait ses formats. Excel recalcule tout à l'ouverture. Comptez une à deux secondes de plus par appel ; plusieurs recalculs peuvent tourner en même temps. LibreOffice n'est demandé qu'avec `recalc` : s'il est introuvable, le montage refuse l'agent.
+
+#### À savoir
+
+- **Ni graphiques, ni mise en forme conditionnelle, ni tableaux croisés, ni listes déroulantes, ni macros** ; et l'outil n'édite pas un classeur existant, il en écrit un.
+- **Le style ne se règle pas** : c'est ce qui rend les classeurs constants d'un run à l'autre.
+- **Un recalcul sans erreur ne prouve pas la justesse** : une plage décalée d'une ligne donne un classeur propre aux chiffres faux. Faites relire les formules importantes.
+- **Un outil qui relit le fichier** en ne prenant que les valeurs (pandas…) trouve des cellules vides à la place des formules, puisqu'elles n'ont pas de valeur calculée.
+- **Bornes** : 50 onglets, 200 colonnes, 100 000 lignes lues par fichier source de 20 Mo au plus, 50 Mo écrits.
+- **Rejeu** : comme pour `local_files`, le rejeu sert le résultat du journal et ne réécrit pas le fichier.
+
 ---
 
 ## Pour aller plus loin
 
-- **La référence** : `docs/tools-builtin-analyse.md` — l'analyse, les décisions et l'organisation du dossier `src/loom_ia/tools_builtin/` ; `docs/fonctions.md`, point 50 (formes de référence) et point 44 (dépendances du noyau).
-- **Ajouter un outil fourni**, pour qui contribue à loom-ia : un module par outil dans `src/loom_ia/tools_builtin/`, une ligne au catalogue `BUILTIN_TOOLS`, et ses tests. `tests/unit/test_tools_builtin.py` vérifie que chaque entrée du catalogue est un outil, nommé comme sa référence sans le préfixe. Un outil à paramètres déclare au catalogue un `Builtin` : le modèle Pydantic de ses paramètres, dans un module léger (`local_files_params.py`), et sa fabrique ; il ajoute aussi ses paramètres d'essai à `SAMPLE_PARAMS`. Un outil dont l'approbation ou les effets dépendent de l'appel implémente `assess_call` (`loom_ia.core.ports.CallAssessment`).
+- **La référence** : `docs/tools-builtin-analyse.md` — l'analyse, les décisions et l'organisation du dossier `src/loom_ia/tools_builtin/` ; `docs/outil-excel-loom_v2.md` et `docs/outil-excel-analyse.md` pour `loom.excel` ; `docs/fonctions.md`, point 50 (formes de référence) et point 44 (dépendances du noyau).
+- **Ajouter un outil fourni**, pour qui contribue à loom-ia : un module par outil dans `src/loom_ia/tools_builtin/`, une ligne au catalogue `BUILTIN_TOOLS`, et ses tests. `tests/unit/test_tools_builtin.py` vérifie que chaque entrée du catalogue est un outil, nommé comme sa référence sans le préfixe. Un outil à paramètres déclare au catalogue un `Builtin` : le modèle Pydantic de ses paramètres, dans un module léger (`local_files_params.py`), et sa fabrique ; il ajoute aussi ses paramètres d'essai à `SAMPLE_PARAMS`. Un outil dont l'approbation ou les effets dépendent de l'appel implémente `assess_call` (`loom_ia.core.ports.CallAssessment`). Un outil qui lit ou écrit dans des dossiers déclarés s'appuie sur `tools_builtin/_folders.py`, comme `local_files` et `excel`. Un outil dont les dépendances viennent d'un extra le déclare au catalogue (`Builtin.extra`), et ses tests sautent sans lui (`importorskip`, raison « extra '…' absent »).
 - **La limite du proxy** : backlog #023.
 
 Navigation : [01-demarrer.md](01-demarrer.md) · [02-maitriser.md](02-maitriser.md) · [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md)

@@ -83,6 +83,11 @@ sqlite = [
 crypto = [
     "cryptography>=50.0.1",
 ]
+# tools_builtin/excel.py (outil fourni loom.excel) écrit les classeurs avec openpyxl ;
+# son module ne l'importe qu'au montage d'un agent qui l'active.
+office = [
+    "openpyxl>=3.1.5,<4",
+]
 postgres = [
     "asyncpg>=0.31.0",
 ]
@@ -97,7 +102,7 @@ otel = [
     "opentelemetry-sdk>=1.44.0,<2",
 ]
 all = [
-    "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,rabbitmq,redis,otel,crypto]",
+    "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,rabbitmq,redis,otel,crypto,office]",
 ]
 
 [project.urls]
@@ -126,6 +131,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.16.8",
     "types-jsonschema>=4.26.0.20260518",
+    "types-openpyxl>=3.1.5.20261017",
     "types-pyyaml>=6.0.12.20260906",
     "types-regex>=2025.7.34.20250809",
 ]

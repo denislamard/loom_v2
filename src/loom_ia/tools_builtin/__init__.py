@@ -43,6 +43,9 @@ class Builtin:
     # finiraient par se contredire.
     refused: tuple[str, ...] = ()
     refused_because: str = ""
+    # L'extra de loom-ia qui apporte ses dépendances, s'il en faut un : le dire
+    # quand le montage échoue faute d'elles.
+    extra: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +93,13 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         params="loom_ia.tools_builtin.local_files_params:LocalFilesParams",
         refused=("approval", "side_effects", "idempotent"),
         refused_because="les droits de chaque dossier les expriment (rights)",
+    ),
+    "loom.excel": Builtin(
+        target="loom_ia.tools_builtin.excel:build",
+        params="loom_ia.tools_builtin.excel_params:ExcelParams",
+        refused=("approval", "side_effects", "idempotent"),
+        refused_because="les droits de chaque dossier les expriment (rights)",
+        extra="office",
     ),
 }
 

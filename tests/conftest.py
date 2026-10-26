@@ -22,6 +22,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 from collections.abc import Callable, Coroutine, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from importlib.util import find_spec
@@ -125,6 +126,15 @@ def pytest_runtest_makereport(
     report = yield
     _required(report, item.config)
     return report
+
+
+@pytest.fixture
+def soffice(request: pytest.FixtureRequest) -> str:
+    """L'exécutable de LibreOffice, pour le recalcul de ``loom.excel`` ; saute l'essai sans lui."""
+    found = shutil.which("soffice")
+    if found is None:
+        _absent(request, "LibreOffice absent : pas de recalcul pour cet essai")
+    return found
 
 
 @pytest.fixture
