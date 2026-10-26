@@ -230,8 +230,9 @@ firecracker/vms/
 # macOS
 .DS_Store
 
-examples/agents/*
-examples/*.zip
+
+examples/*
+examples.OLD/*
 
 # Verrous de LibreOffice (fichier ouvert) et sorties des sessions Claude
 .~lock.*#
