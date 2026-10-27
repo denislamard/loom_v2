@@ -688,7 +688,7 @@ Configuration : Agent 'assistant', outil 'loom.excel' : Outil fourni 'loom.excel
 tools:
 - python: loom.excel
   folders:
-  - name: donnees                    # les exports CSV / JSON à lire
+  - name: donnees                    # les exports CSV / JSON / XLSX à lire
     path: donnees
     rights: [ read ]
   - name: sortie                     # où écrire les classeurs
@@ -698,7 +698,7 @@ tools:
   recalc: true                       # facultatif : vérifier les formules avec LibreOffice
 ```
 
-Les dossiers ont la forme et les règles de `loom.local_files` (droits, approbation de chacun, dossier le plus profond qui décide, liens qui sortent refusés, rien de loom exposé), sauf `delete`, refusé : l'outil ne supprime rien. Il faut au moins un dossier avec `write`. Un classeur existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut.
+Les dossiers ont la forme et les règles de `loom.local_files` (droits, approbation de chacun, dossier le plus profond qui décide, liens qui sortent refusés, rien de loom exposé), sauf `delete`, refusé : l'outil ne supprime rien. Un dossier avec `write` permet d'écrire, un dossier avec `read` de lire des classeurs et des sources ; un agent qui n'a que des dossiers `read` ne fait que lire : sa description ne porte alors que la lecture, et l'outil se déclare sans effet. Un classeur existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut.
 
 | Paramètre | Rôle | Par défaut |
 |---|---|---|
@@ -708,7 +708,7 @@ Les dossiers ont la forme et les règles de `loom.local_files` (droits, approbat
 | `soffice` | chemin de LibreOffice, avec `recalc` | `soffice`, cherché dans le `PATH` |
 | `recalc_timeout` | délai du recalcul, en secondes, avec `recalc` | `60` |
 
-`loom validate` montre les dossiers, le fuseau et le recalcul :
+`loom validate` montre les dossiers, le fuseau, le recalcul et la lecture :
 
 ```text
 Fournis    : loom.excel
@@ -719,6 +719,7 @@ Fournis    : loom.excel
     outil excel :   write : accordé, sans approbation
     outil excel : fuseau : Europe/Paris
     outil excel : recalcul : /usr/bin/soffice (au plus 60 s)
+    outil excel : lecture des classeurs : oui
 1 agent(s) monté(s) sans erreur.
 ```
 
@@ -753,7 +754,7 @@ Un appel décrit le classeur entier. Celui-ci, tiré d'un run réel (modèle sim
 - **Types de colonne** : `texte` (par défaut), `entier`, `decimal`, `montant_eur`, `montant_keur` (valeur déjà en k€), `pourcentage` (une fraction : 0.15 pour 15 %), `date`, `date_heure`, `annee` (stockée en texte, sans séparateur de milliers), `booleen` (« Oui » / « Non »).
 - **Rôles**, sur une ligne (`role`) ou une cellule (`{"value": …, "role": …, "note": …}`) : `saisie` (à remplir par l'utilisateur, bleu sur jaune pâle), `hypothese` (paramètre cité par les formules, bleu sur jaune, avec sa source en `note`, obligatoire), `total` (gras, bordure haute), `note` (italique gris). Dans une ligne `saisie` ou `hypothese`, un texte non vide est un libellé et reste noir.
 - **Formules** : une valeur qui commence par `=`. En anglais, arguments séparés par `,` ; une formule qui cite un autre onglet s'affiche en vert.
-- **Données** : `rows` pour un petit tableau (200 lignes au plus), `data` pour un fichier `.csv` ou `.json` d'un dossier qui a le droit `read`. Le CSV peut venir d'un logiciel français : `;` comme séparateur, `1 250,50`, `02/10/2026`. `totals` ajoute une ligne de total, `=SUM(…)` générée par l'outil.
+- **Données** : `rows` pour un petit tableau (200 lignes au plus), `data` pour un fichier `.csv`, `.json` ou `.xlsx` d'un dossier qui a le droit `read` (`{"path": "donnees/export.xlsx", "sheet": "Devis"}` : l'onglet, le premier par défaut ; ses en-têtes en ligne 1). Le CSV peut venir d'un logiciel français : `;` comme séparateur, `1 250,50`, `02/10/2026`. `totals` ajoute une ligne de total, `=SUM(…)` générée par l'outil.
 
 Le classeur produit : en-têtes en gras sur fond bleu-gris, volets gelés sous l'en-tête, filtre sur les données, montants au format `#,##0.00 "€"`, dates centrées au format court de la langue du lecteur (`02/10/2026` dans un Excel français), textes légèrement en retrait pour ne pas coller aux nombres voisins, hypothèses en bleu sur jaune avec leur source en commentaire, et une légende sous chaque tableau qui a des cellules à saisir ou des hypothèses. La ligne de total porte « Total » dans la première colonne de texte sans agrégat. À l'impression et à l'export PDF, chaque onglet tient sur une page de large, en paysage s'il est large.
 
@@ -805,12 +806,62 @@ Le fichier livré reste celui de l'outil, sans valeurs calculées : LibreOffice 
 
 #### À savoir
 
-- **Ni graphiques, ni mise en forme conditionnelle, ni tableaux croisés, ni listes déroulantes, ni macros** ; et l'outil n'édite pas un classeur existant, il en écrit un.
+- **Ni graphiques, ni mise en forme conditionnelle, ni tableaux croisés, ni listes déroulantes, ni macros** ; et l'outil n'édite pas un classeur existant : il le lit (`action: read`), et en écrit un autre.
 - **Le style ne se règle pas** : c'est ce qui rend les classeurs constants d'un run à l'autre.
 - **Un recalcul sans erreur ne prouve pas la justesse** : une plage décalée d'une ligne donne un classeur propre aux chiffres faux. Faites relire les formules importantes.
 - **Un outil qui relit le fichier** en ne prenant que les valeurs (pandas…) trouve des cellules vides à la place des formules, puisqu'elles n'ont pas de valeur calculée.
 - **Bornes** : 50 onglets, 200 colonnes, 100 000 lignes lues par fichier source de 20 Mo au plus, 50 Mo écrits.
 - **Rejeu** : comme pour `local_files`, le rejeu sert le résultat du journal et ne réécrit pas le fichier.
+
+#### Lire un classeur
+
+Avec `"action": "read"`, l'outil lit un `.xlsx` ou un `.xlsm` d'un dossier qui a le droit `read` : un export déposé par la personne, ou le classeur que l'agent vient d'écrire, pour le vérifier. Sans `action`, l'appel écrit, comme avant. Les exemples ci-dessous sont tirés d'un appel réel sur `devis-octobre.xlsx` : un onglet `Devis` avec une colonne TTC en formules, et un onglet masqué.
+
+**Sans `sheet`, la liste des onglets** : leur état, la dimension que le fichier annonce, et leurs cinq premières lignes (20 colonnes et 100 caractères par cellule au plus).
+
+```json
+{"action": "read", "path": "donnees/devis-octobre.xlsx"}
+```
+
+```json
+{"path": "donnees/devis-octobre.xlsx",
+ "sheets": [{"name": "Devis", "state": "visible", "dimension": "A1:F4",
+             "preview": [["Numéro", "Client", "Date", "Montant HT", "Statut", "TTC"],
+                         ["Q-2026-0141", "C-024, Élodie Marty", "2026-10-02", 1250.5, "En attente", null], …]},
+            {"name": "Notes", "state": "hidden", "dimension": "A1:A1", "preview": [["interne"]]}],
+ "chartsheets": []}
+```
+
+**Avec `sheet`, les cellules**, depuis A1 ou depuis `range` (`A1:F50`, `A:C`, `2:10`), 200 lignes au plus par défaut (`max_rows`, jusqu'à 1 000) :
+
+```json
+{"action": "read", "path": "donnees/devis-octobre.xlsx", "sheet": "Devis"}
+```
+
+```json
+{"path": "donnees/devis-octobre.xlsx", "sheet": "Devis", "start": "A1",
+ "rows": [["Numéro", "Client", "Date", "Montant HT", "Statut", "TTC"],
+          ["Q-2026-0141", "C-024, Élodie Marty", "2026-10-02", 1250.5, "En attente", null], …],
+ "row_count": 4, "truncated": false,
+ "formulas": {"F2": "=D2*1.2", "F3": "=D3*1.2", "F4": "=D4*1.2"},
+ "notes": ["3 formule(s) sans valeur calculée : le classeur n'a pas été recalculé depuis son écriture (Excel le fera à l'ouverture)."]}
+```
+
+- **Valeurs** : en JSON ; dates en ISO (`2026-10-02`, ou `2026-10-01T09:30:00` avec une heure), heure `13:00:00`, durée `2:30:00`, erreur Excel en texte (`#DIV/0!`), texte coupé à 1 000 caractères. `start` est l'adresse de la première cellule rendue ; les lignes sont de même largeur.
+- **Formules** : à part, par adresse, avec la valeur que le classeur a gardée en cache. Un classeur écrit par openpyxl, donc par `excel` lui-même, n'en a pas : la valeur est `null`, et une note le dit.
+- **Coupe** : à `max_rows` lignes, ou avant la ligne qui ferait dépasser 40 000 caractères, sous le seuil de déport ; une première ligne plus longue que cela est rendue seule, entière. Le résultat donne alors `"truncated": true` et `"next_start"`, l'adresse où reprendre avec `range`. Au-delà de 200 colonnes, une note le dit aussi.
+- **Onglet masqué** : lu, avec `"state": "hidden"`. Un masquage n'est pas une protection.
+
+**Ce que la lecture refuse**, avec un message qui dit quoi faire :
+- un `.xls`, `.xlsb` ou `.ods` (« l'enregistrer en .xlsx depuis Excel ou LibreOffice ») ; un fichier vide, renommé ou protégé par mot de passe ;
+- un classeur de plus de 200 Mo une fois décompressé, ou de plus de 10 000 fichiers ;
+- un membre de plus de 20 Mo décompressés qu'openpyxl lirait en entier avant de rendre la main : textes partagés, styles, ou feuille qui n'annonce pas sa dimension (« l'exporter en CSV, ou l'enregistrer depuis Excel ou LibreOffice ») ; une feuille qui annonce sa dimension est lue au fil de l'eau, et n'a que la borne des 200 Mo ;
+- l'amplification d'entités XML et les entités externes (une entité interne simple est développée) ;
+- un onglet absent ou graphique ; une cellule corrompue (« classeur illisible ») ; une lecture de plus de 20 s. Comme source `data:`, un onglet dont une formule n'a pas de valeur en cache est refusé, plutôt que lu comme une cellule vide.
+
+**Sécurité** : la lecture n'ouvre le classeur qu'en lecture seule, après avoir contrôlé le zip. Elle demande un parseur XML qui refuse l'amplification d'entités : expat 2.4 ou plus pour les feuilles et, si lxml est installé (openpyxl s'en sert pour `workbook.xml` et les styles), lxml 5.0 et libxml2 2.11. Sinon, `loom validate` affiche `lecture des classeurs : non (…)`, et la lecture est refusée ; avec un lxml trop ancien, `OPENPYXL_LXML=False` rend la main à expat.
+
+**Coût** : l'ouverture d'un classeur n'est pas interruptible. Au pire admis (un membre de 20 Mo lu en entier), elle prend de l'ordre de 5 s et 350 Mo, deux fois si la plage a des formules ; une feuille de 100 000 lignes se lit en 3 s pour 200 lignes, 13 s pour ses dernières lignes.
 
 #### Un skill pour bien s'en servir
 

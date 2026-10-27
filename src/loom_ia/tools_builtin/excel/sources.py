@@ -12,16 +12,24 @@ from loom_ia.tools_builtin.excel.arguments import RowSpec, Scalar, SheetSpec
 # --- Sources de données ----------------------------------------------------------------
 
 
-def read_rows(data: bytes, suffix: str, sheet: SheetSpec, where: str) -> list[RowSpec]:
-    """Les lignes d'un CSV ou d'un JSON, dans l'ordre des colonnes de l'onglet."""
+def read_rows(
+    data: bytes, suffix: str, sheet: SheetSpec, where: str, tab: str | None = None
+) -> list[RowSpec]:
+    """Les lignes d'un CSV, d'un JSON ou d'un onglet .xlsx, dans l'ordre des colonnes."""
     headers = [column.header for column in sheet.columns]
     match suffix:
         case ".csv":
             records = _csv_records(data, where)
         case ".json":
             records = _json_records(data, where)
+        case ".xlsx" | ".xlsm":
+            # Import tardif : la lecture n'ouvre openpyxl que pour un classeur.
+            from loom_ia.tools_builtin.excel.reader import records as xlsx_records
+
+            records = cast(list[dict[str, Scalar]], xlsx_records(data, where, tab))
         case _:
-            raise ToolError(f"{where} : seuls les fichiers .csv et .json sont lus.")
+            raise ToolError(f"{where} : seuls les fichiers .csv, .json et .xlsx sont lus.")
+
     if not records:
         return []
     present: set[str] = set()

@@ -23,6 +23,9 @@ MAX_SOURCE_BYTES: Final = 20_000_000
 MAX_OUTPUT_BYTES: Final = 50_000_000
 MAX_WARNINGS: Final = 20
 MAX_ERRORS_SAID: Final = 10
+# Lecture : lignes rendues par appel, par défaut et au plus.
+READ_ROWS: Final = 200
+MAX_READ_ROWS: Final = 1_000
 # Excel : 1 048 576 lignes, 16 384 colonnes (XFD).
 MAX_SHEET_ROWS: Final = 1_048_576
 MAX_SHEET_COLUMNS: Final = 16_384
@@ -83,10 +86,20 @@ class DataSource(_Model):
     path: Annotated[
         str,
         Field(
-            description="Un .csv (en-têtes en 1re ligne, « , » ou « ; ») ou un .json (liste "
-            "d'objets dont les clés sont les en-têtes)."
+            description="Un .csv (en-têtes en 1re ligne, « , » ou « ; »), un .json (liste "
+            "d'objets dont les clés sont les en-têtes) ou un .xlsx (en-têtes en ligne 1)."
         ),
     ]
+    sheet: Annotated[
+        str | None, Field(description="Pour un .xlsx : l'onglet lu ; le premier si absent.")
+    ] = None
+
+    @model_validator(mode="after")
+    def _sheet_of_a_workbook(self) -> Self:
+        # Avant toute lecture : la faute se dit sans ouvrir le fichier.
+        if self.sheet is not None and not self.path.lower().endswith((".xlsx", ".xlsm")):
+            raise ValueError(f"{self.path} : 'sheet' ne sert qu'à un .xlsx")
+        return self
 
 
 class SheetSpec(_Model):
@@ -105,15 +118,102 @@ class SheetSpec(_Model):
 
 
 class ExcelArguments(_Model):
+    """Une écriture : le classeur et ses onglets."""
+
     path: Annotated[str, Field(description="« <dossier>/<chemin>.xlsx »")]
     sheets: Annotated[list[SheetSpec], Field(min_length=1, max_length=MAX_SHEETS)]
     overwrite: bool = False
 
 
-def parse(arguments: Mapping[str, JsonValue]) -> ExcelArguments:
+class ReadArguments(_Model):
+    """Une lecture : sans onglet, la liste des onglets ; avec, ses cellules."""
+
+    path: str
+    sheet: str | None = None
+    range: str | None = None
+    max_rows: int = READ_ROWS
+
+
+type Action = Literal["write", "read"]
+_FOR: Final[dict[str, Action]] = {
+    "sheets": "write",
+    "overwrite": "write",
+    "sheet": "read",
+    "range": "read",
+    "max_rows": "read",
+}
+
+
+class ExcelCall(_Model):
+    """Ce que voit le modèle : une écriture (par défaut) ou une lecture, à plat."""
+
+    action: Annotated[
+        Action,
+        Field(
+            description="write (par défaut) : écrire un classeur ; read : lire un classeur "
+            "existant (droit read)."
+        ),
+    ] = "write"
+    path: Annotated[str, Field(description="« <dossier>/<chemin>.xlsx »")]
+    sheets: Annotated[
+        list[SheetSpec] | None,
+        Field(min_length=1, max_length=MAX_SHEETS, description="Pour write : les onglets."),
+    ] = None
+    overwrite: Annotated[
+        bool | None, Field(description="Pour write : remplacer un classeur existant.")
+    ] = None
+    sheet: Annotated[
+        str | None,
+        Field(description="Pour read : l'onglet ; sans lui, la liste des onglets et leur début."),
+    ] = None
+    range: Annotated[
+        str | None,
+        Field(description="Pour read avec sheet : la plage (A1:F50, A:C, 2:10) ; depuis A1 sinon."),
+    ] = None
+    max_rows: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=MAX_READ_ROWS,
+            description=f"Pour read : lignes rendues au plus ({READ_ROWS} par défaut).",
+        ),
+    ] = None
+
+    @model_validator(mode="after")
+    def _fields_of_the_action(self) -> Self:
+        stray = sorted(
+            name
+            for name, action in _FOR.items()
+            # « overwrite: false » sur une lecture ne dit rien : pas une faute.
+            if action != self.action and getattr(self, name) not in (None, False)
+        )
+        if stray:
+            raise ValueError(f"{', '.join(stray)} ne sert pas à {self.action}")
+        if self.action == "write" and self.sheets is None:
+            raise ValueError("write attend 'sheets', les onglets à écrire")
+        if self.range is not None and self.sheet is None:
+            raise ValueError("'range' demande 'sheet'")
+        return self
+
+    def request(self) -> ExcelArguments | ReadArguments:
+        if self.action == "read":
+            return ReadArguments(
+                path=self.path,
+                sheet=self.sheet,
+                range=self.range,
+                max_rows=self.max_rows or READ_ROWS,
+            )
+        return ExcelArguments(
+            path=self.path,
+            sheets=cast(list[SheetSpec], self.sheets),
+            overwrite=bool(self.overwrite),
+        )
+
+
+def parse(arguments: Mapping[str, JsonValue]) -> ExcelArguments | ReadArguments:
     """Les arguments validés ; ``ToolError`` qui dit chaque champ fautif (10 au plus)."""
     try:
-        return ExcelArguments.model_validate(dict(arguments))
+        return ExcelCall.model_validate(dict(arguments)).request()
     except ValidationError as exc:
         lines = ["Arguments invalides :"]
         for item in exc.errors(include_url=False)[:MAX_ERRORS_SAID]:
@@ -124,7 +224,7 @@ def parse(arguments: Mapping[str, JsonValue]) -> ExcelArguments:
 
 def input_schema() -> dict[str, JsonValue]:
     """Le schéma des arguments, sans les titres que Pydantic ajoute à chaque champ."""
-    return cast(dict[str, JsonValue], _untitled(ExcelArguments.model_json_schema()))
+    return cast(dict[str, JsonValue], _untitled(ExcelCall.model_json_schema()))
 
 
 def _untitled(node: object, *, names: bool = False) -> object:

@@ -2,6 +2,20 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.0.15 - non publiée
+
+### Outils fournis builtin tools
+- **`loom.excel` lit les classeurs** (nouveau) : `"action": "read"` lit un `.xlsx` ou un `.xlsm` d'un dossier qui a le droit `read` ; sans `action`, l'appel écrit, comme avant. Sans `sheet`, la liste des onglets (état, dimension annoncée, cinq premières lignes) ; avec `sheet`, les cellules depuis A1 ou depuis `range` (`A1:F50`, `A:C`, `2:10` ; une plage à l'envers est remise dans l'ordre), 200 lignes par défaut (`max_rows`, jusqu'à 1 000), coupées avant la ligne qui ferait dépasser 40 000 caractères (une première ligne plus longue est rendue seule). Valeurs en JSON (dates en ISO, heure, durée, erreur Excel en texte, texte coupé à 1 000 caractères ; dans l'aperçu, 20 colonnes et 100 caractères par cellule), `start`, formules à part par adresse (`formulas`), `truncated` et `next_start` pour reprendre, notes (formules sans valeur calculée, coupe, colonnes au-delà de 200, onglet masqué dit par `state`). Une lecture n'a pas d'effet (`assess_call` : `none`) et n'attend un humain que si le dossier le demande pour `read`. Une clé qui ne sert pas à l'action est refusée en le disant (`sheet ne sert pas à write`).
+  Un onglet `.xlsx` sert aussi de source : `data: {path: donnees/export.xlsx, sheet: Devis}` (le premier onglet par défaut, en-têtes en ligne 1) ; ses valeurs passent entières ; une formule sans valeur en cache et des en-têtes en double y sont refusés.
+  Sécurité : openpyxl en lecture seule seulement (le mode normal chargeait tout : plus de 120 s pour un fichier de 762 Ko) ; avant lui, le zip est contrôlé (200 Mo au plus une fois décompressé, 10 000 membres, et 20 Mo pour tout membre qu'openpyxl lirait en entier à l'ouverture : textes partagés, styles, feuille sans dimension ; reconnu par le parseur, quel que soit son nom) ; la dimension annoncée n'est pas crue (elle tronquait la lecture) ; la lecture s'arrête d'elle-même après 20 s, le fil d'exécution ne s'annulant pas ; toute faute du fichier devient une erreur pour le modèle (« classeur illisible ») ; au montage, la lecture est refusée si expat est antérieur à 2.4, ou, avec lxml, si lxml est antérieur à 5.0 ou libxml2 à 2.11 (`loom validate` : `lecture des classeurs : non (…)`). Formats `.xls`, `.xlsb`, `.ods` refusés avec la marche à suivre. Analyse, mesures et décisions : `docs/outil-excel-lecture-analyse.md`.
+- ⚠ **Le droit `read` des dossiers de `loom.excel` donne à lire les classeurs** : jusqu'ici il ne servait qu'aux sources `data:` (CSV, JSON), dont le contenu n'était jamais rendu au modèle. Désormais, tout `.xlsx` d'un dossier `read` peut être lu par le modèle, onglets masqués compris.
+- ⚠ **Le schéma de `excel` change** pour tous les agents qui l'ont : clé `action`, clés de lecture, `sheets` n'est plus requis par le schéma (une écriture sans `sheets` est refusée à l'exécution). Environ 400 tokens de plus par appel de modèle ; un run fait avant la mise à jour ne se rejoue plus à l'identique (« ce qui diffère : les outils proposés »). Ce qui vise l'outil par son nom (`tenants[].approvals`, `tools_deny`, politiques `before_tool`) vise aussi les lectures. En rejeu en variante, une lecture n'est jamais exécutée quand l'outil peut aussi écrire : il reste déclaré au pire de ses appels.
+- **`loom.excel` sans dossier `write`** : un agent qui n'a que des dossiers `read` ne fait que lire ; sa description ne porte que la lecture, et l'outil se déclare sans effet (`side_effects: none`), si bien que ses lectures se rejouent en variante. `loom validate` ajoute la ligne `lecture des classeurs : oui | aucun dossier read | non (…)`.
+- **`loom.local_files` sur un `.xlsx`** : le refus « n'est pas un fichier texte UTF-8 » renvoie vers `excel` (`action=read`).
+
+### Documentation
+- Guide, chapitre 32 : « Lire un classeur », dans `loom.excel` ; `fonctions.md` (D13) ; `outil-excel-analyse.md` (D-E réalisée) ; `outil-excel-lecture-analyse.md` (analyse d'impact, mesures, décisions).
+
 ## 2.0.14 - publiée
 
 ### Outils fournis builtin tools

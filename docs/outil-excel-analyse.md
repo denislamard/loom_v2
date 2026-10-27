@@ -290,7 +290,7 @@ Six mutations ont été essayées. **La première passait en silence** : remettr
 | D-B | Clés en anglais, vocabulaire en français | Comme le prototype |
 | D-C | Dates fixées au 01/01/2000, `sha256` du fichier | Comme le prototype |
 | D-D | Style figé dans le code | Comme le prototype |
-| D-E | Outil de lecture plus tard | — |
+| D-E | Outil de lecture plus tard | — ; réalisée en 2.0.15 (`action: read`), voir `docs/outil-excel-lecture-analyse.md` |
 | D-F | Recalcul en erreur : l'appel échoue, rien n'est écrit ; le fichier livré reste celui d'openpyxl | Comme le prototype |
 | D-G | **Un paramètre `timezone`**, nom IANA, `Europe/Paris` par défaut, vérifié au chargement (« fuseau inconnu ») ; affiché par `loom validate` et dit dans la description | Nouveau |
 | D-H | Schéma allégé : titres de Pydantic retirés, descriptions de champs réduites à ce que la description ne dit pas | Description + schéma : 1 747 + 2 722 caractères, contre 1 472 + 3 672 (−13 %) |

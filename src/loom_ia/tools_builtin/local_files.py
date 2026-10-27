@@ -247,7 +247,12 @@ def _read(target: Path, located: Located) -> dict[str, JsonValue]:
     try:
         content = data.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise ToolError(f"{located.address} n'est pas un fichier texte UTF-8.") from exc
+        hint = (
+            " ; un classeur se lit avec l'outil excel (action=read), s'il est accordé"
+            if located.address.lower().endswith((".xlsx", ".xlsm"))
+            else ""
+        )
+        raise ToolError(f"{located.address} n'est pas un fichier texte UTF-8{hint}.") from exc
     return {"path": located.address, "content": content, "size": len(data)}
 
 

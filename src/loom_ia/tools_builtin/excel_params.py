@@ -88,8 +88,6 @@ def _folders(folders: tuple[FolderSpec, ...]) -> tuple[FolderSpec, ...]:
     deleting = [folder.name for folder in folders if "delete" in folder.rights]
     if deleting:
         raise _refused_delete(deleting)
-    if not any("write" in folder.rights for folder in folders):
-        raise ValueError("au moins un dossier avec le droit 'write' est attendu : où écrire")
     return folders
 
 

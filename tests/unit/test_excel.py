@@ -148,6 +148,7 @@ def test_settings_lines_for_validate(tool: ExcelTool, disk: Path) -> None:
         "  write : accordé, avec approbation",
         "fuseau : Europe/Paris",
         "recalcul : non",
+        "lecture des classeurs : oui",
     )
 
 
@@ -187,10 +188,6 @@ def test_the_schema_has_no_titles(tool: ExcelTool) -> None:
         (
             {"folders": [{"name": "s", "path": "s", "rights": {"write": "never"}}]},
             "dossier 's' : 'rights' en table droit → approbation n'est plus accepté",
-        ),
-        (
-            {"folders": [{"name": "s", "path": "s", "rights": ["read"]}]},
-            "au moins un dossier avec le droit 'write'",
         ),
         ({"folders": []}, "au moins un dossier est attendu"),
         (
@@ -468,7 +465,7 @@ async def test_reads_json_and_says_missing_columns(tool: ExcelTool, disk: Path) 
 @pytest.mark.parametrize(
     ("data", "suffix", "said"),
     [
-        (b"x", ".xls", "seuls les fichiers .csv et .json sont lus"),
+        (b"x", ".xls", "seuls les fichiers .csv, .json et .xlsx sont lus"),
         (b"\xff\xfe", ".csv", "n'est pas un fichier texte UTF-8"),
         (b"Client\n" + b'"' + b"x" * 200_000 + b'"\n', ".csv", "CSV illisible"),
         (b"{", ".json", "JSON illisible"),
@@ -548,7 +545,7 @@ async def test_the_timezone_is_a_parameter(disk: Path) -> None:
     # Sans fuseau, l'heure est prise telle quelle.
     assert str(cell(disk / "sortie/t.xlsx", "T", "A3").value) == "2026-10-25 09:00:00"
     assert "en heure de America/New_York" in tool.spec.description
-    assert tool.settings_lines()[-2] == "fuseau : America/New_York"
+    assert tool.settings_lines()[-3] == "fuseau : America/New_York"
 
 
 async def test_a_percent_given_as_a_whole_number_warns(tool: ExcelTool) -> None:
@@ -730,7 +727,7 @@ async def test_recalc_timeout_and_failure(disk: Path, monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(recalc_module.subprocess, "run", slow)
     await refused(tool, "Recalcul interrompu après 5 s", path="sortie/r.xlsx", sheets=[sheet])
-    assert tool.settings_lines()[-1] == f"recalcul : {fake} (au plus 5 s)"
+    assert tool.settings_lines()[-2] == f"recalcul : {fake} (au plus 5 s)"
 
 
 # --- Montage par la config, run, validate ----------------------------------------------
