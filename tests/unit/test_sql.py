@@ -9,12 +9,14 @@ sans serveur : le DSN, le contrôle du rôle, la conversion des paramètres.
 """
 
 import asyncio
+import re
 import sqlite3
 import sys
 from pathlib import Path
 from typing import Any, Final
 
 import pytest
+import yaml
 
 pytest.importorskip("sqlglot", reason="extra 'sql' absent")
 
@@ -23,7 +25,7 @@ from pydantic import ValidationError
 
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
-from loom_ia.config import ConfigError, load_config
+from loom_ia.config import ConfigError, agent_json_schema, load_config
 from loom_ia.core.events import ToolCompleted
 from loom_ia.core.model import DEFAULT_TENANT, RunId, RunStatus, SessionId
 from loom_ia.core.ports import ToolContext, ToolError
@@ -71,7 +73,7 @@ INSERT INTO devis (client_id, statut, montant) VALUES (1, 'envoye', 1250.5), (2,
 TABLES: Final = {
     "devis": ["select", "insert", "update"],
     "clients": ["select"],
-    "relances": {"select": "never", "insert": "never", "delete": "never"},
+    "relances": {"rights": ["select", "insert", "delete"], "approval": {"delete": "never"}},
     "v_devis": ["select"],
 }
 
@@ -139,7 +141,7 @@ def test_short_form_takes_the_default_approvals() -> None:
     spec = DatabaseSpec.model_validate(
         database(tables={"devis": ["select", "insert", "update", "delete"]})
     )
-    assert spec.tables["devis"] == {
+    assert spec.tables["devis"].rights == {
         "select": "never",
         "insert": "never",
         "update": "always",
@@ -151,7 +153,7 @@ def test_short_form_takes_the_default_approvals() -> None:
     ("changes", "said"),
     [
         ({"tables": {"devis": ["update"]}}, "update exige 'select'"),
-        ({"tables": {"devis": {"delete": "never"}}}, "delete exige 'select'"),
+        ({"tables": {"devis": {"rights": ["delete"]}}}, "delete exige 'select'"),
         ({"tables": {}}, "'tables' ne peut pas être vide"),
         ({"tables": {"devis": []}}, "aucun droit donné"),
         ({"tables": {"devis": ["select", "select"]}}, "droit donné deux fois : select"),
@@ -170,6 +172,127 @@ def test_short_form_takes_the_default_approvals() -> None:
 def test_database_faults(changes: dict[str, Any], said: str) -> None:
     with pytest.raises(ValidationError, match=said):
         DatabaseSpec.model_validate(database(**changes))
+
+
+@pytest.mark.parametrize(
+    ("table", "internal"),
+    [
+        (["select", "update"], {"select": "never", "update": "always"}),
+        ({"rights": ["select", "update"]}, {"select": "never", "update": "always"}),
+        (
+            {"rights": ["select", "update"], "approval": {"update": "never"}},
+            {"select": "never", "update": "never"},
+        ),
+        (
+            {"rights": ["select", "insert"], "approval": {"insert": "always"}},
+            {"select": "never", "insert": "always"},
+        ),
+        ({"rights": ["select"], "approval": {}}, {"select": "never"}),
+        ({"rights": ["select"], "approval": None}, {"select": "never"}),
+        # L'ordre des droits, quel que soit celui de la config.
+        (
+            ["delete", "update", "insert", "select"],
+            {"select": "never", "insert": "never", "update": "always", "delete": "always"},
+        ),
+    ],
+)
+def test_a_table_resolves_to_its_internal_rights(table: object, internal: dict[str, str]) -> None:
+    found = DatabaseSpec.model_validate(database(tables={"devis": table})).tables["devis"]
+    assert found.rights == internal
+    assert list(found.rights) == list(internal)
+
+
+@pytest.mark.parametrize(
+    ("table", "said"),
+    [
+        (
+            {"rights": ["select"], "approval": {"update": "always"}},
+            "base 'crm', table 'devis' : approval 'update' porte sur un droit non accordé — "
+            "l'ajouter à 'rights', ou le retirer d'approval",
+        ),
+        (
+            {"rights": ["select"], "approval": {"select": "ask"}},
+            "base 'crm', table 'devis' : approval 'select' vaut 'ask' — attendu : never (sans "
+            "approbation) ou always (approbation humaine)",
+        ),
+        (
+            {"rights": ["select"], "approval": {"drop": "never"}},
+            "base 'crm', table 'devis' : approval 'drop' — droit inconnu (droits : select, "
+            "insert, update, delete)",
+        ),
+        ({"approval": {"select": "never"}}, "base 'crm', table 'devis' : 'rights' manquant"),
+        ({}, "base 'crm', table 'devis' : aucun droit donné"),
+        ({"rights": []}, "base 'crm', table 'devis' : aucun droit donné"),
+        (
+            {"rights": ["select"], "columns": ["statut"]},
+            "columns\n  Extra inputs are not permitted",
+        ),
+        ("select", "base 'crm', table 'devis' : 'rights' attend une liste de droits"),
+        (
+            ["select", "insert", "select"],
+            "base 'crm', table 'devis' : droit donné deux fois : select",
+        ),
+    ],
+)
+def test_a_table_refused(table: object, said: str) -> None:
+    with pytest.raises(ValidationError, match=re.escape(said)):
+        DatabaseSpec.model_validate(database(tables={"devis": table}))
+
+
+@pytest.mark.parametrize(
+    ("table", "written"),
+    [
+        (
+            {"select": "never", "update": "never"},
+            "{ rights: [select, update], approval: { update: never } }",
+        ),
+        ({"update": "always", "select": "never"}, "[select, update]"),
+        (
+            {"select": "always", "insert": "never", "delete": "never"},
+            "{ rights: [select, insert, delete], approval: { select: always, delete: never } }",
+        ),
+    ],
+)
+def test_the_old_table_is_refused_with_what_to_write(table: dict[str, str], written: str) -> None:
+    """L'ancienne table droit → approbation : refusée, avec l'écriture équivalente."""
+    with pytest.raises(ValidationError) as raised:
+        DatabaseSpec.model_validate(database(tables={"devis": table}))
+    assert (
+        "base 'crm', table 'devis' : la table droit → approbation n'est plus acceptée (never "
+        "voulait dire « sans approbation », pas « refusé ») — écrire " + written
+    ) in str(raised.value)
+    # L'écriture proposée, recopiée telle quelle, donne ce que l'ancienne table voulait dire.
+    again = DatabaseSpec.model_validate(database(tables={"devis": yaml.safe_load(written)}))
+    assert again.tables["devis"].rights == table
+
+
+def test_the_old_table_is_refused_when_the_config_loads(demo: ConfigFactory, base: Path) -> None:
+    databases = [crm(base, tables={"devis": {"select": "never", "update": "always"}})]
+    with pytest.raises(ConfigError) as raised:
+        load_config(demo(agents=[sql_agent(databases=databases)]))
+    assert ("base 'crm', table 'devis' : la table droit → approbation n'est plus acceptée") in str(
+        raised.value
+    )
+    assert "écrire [select, update]" in str(raised.value)
+
+
+def test_approval_on_the_reference_says_where_it_goes(demo: ConfigFactory, base: Path) -> None:
+    with pytest.raises(ConfigError, match=re.escape("par table (tables.<table>.approval)")):
+        load_config(demo(agents=[sql_agent(approval="never", databases=[crm(base)])]))
+
+
+def test_the_schema_shows_a_table_as_a_list_or_an_object() -> None:
+    """``loom schema`` : la liste, ou ``{rights, approval}`` ; plus d'ancienne table."""
+    schema = agent_json_schema()
+    tables = schema["$defs"]["DatabaseSpec"]["properties"]["tables"]
+    (table,) = tables["patternProperties"].values()
+    short, full = table["anyOf"]
+    assert "approval" in table["description"]
+    assert short["type"] == "array"
+    assert full["required"] == ["rights"]
+    assert full["additionalProperties"] is False
+    assert set(full["properties"]) == {"rights", "approval"}
+    assert full["properties"]["approval"]["additionalProperties"] == {"enum": ["never", "always"]}
 
 
 def test_params_faults() -> None:
@@ -256,9 +379,13 @@ def test_declarations_are_the_worst_case(tmp_path: Path, base: Path) -> None:
 
     assert spec({"devis": ["select"]}) == ("none", "never", "error")
     assert spec({"devis": ["select", "insert"]}) == ("reversible", "never", "pause")
-    assert spec({"devis": {"select": "always"}}) == ("none", "always", "error")
+    assert spec({"devis": {"rights": ["select"], "approval": {"select": "always"}}}) == (
+        "none",
+        "always",
+        "error",
+    )
     assert spec({"devis": ["select", "update"]}) == ("irreversible", "always", "pause")
-    assert spec({"devis": {"select": "never", "delete": "never"}}) == (
+    assert spec({"devis": {"rights": ["select", "delete"], "approval": {"delete": "never"}}}) == (
         "irreversible",
         "never",
         "pause",
@@ -746,8 +873,8 @@ def test_the_authorizer_lets_through_what_the_config_grants(base: Path) -> None:
 
 def test_assess_follows_the_rights_exercised(tmp_path: Path, base: Path) -> None:
     tables = {
-        "devis": {"select": "never", "update": "always"},
-        "clients": {"select": "always"},
+        "devis": ["select", "update"],
+        "clients": {"rights": ["select"], "approval": {"select": "always"}},
         "relances": ["select", "insert"],
     }
     tool = make(tmp_path, crm(base, tables=tables))

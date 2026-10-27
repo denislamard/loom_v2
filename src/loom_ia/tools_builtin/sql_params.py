@@ -10,9 +10,11 @@ référence au chargement, sans importer l'outil, ni sqlglot, ni asyncpg.
       - name: crm
         postgres: { dsn_env: CRM_DATABASE_URL, schema: public }
         tables:
-          devis:    { select: never, update: always }
           clients:  [ select ]
-          relances: [ select, insert ]     # forme courte : approbations par défaut
+          relances: [ select, insert ]     # approbations par défaut
+          devis:                           # modifier sans validation : dit explicitement
+            rights: [ select, update ]
+            approval: { update: never }
         describe:
           devis.statut: "brouillon | envoye | relance | accepte | refuse"
       - name: stock
@@ -20,12 +22,14 @@ référence au chargement, sans importer l'outil, ni sqlglot, ni asyncpg.
         tables:
           articles: [ select ]
 
-``tables`` donne, pour chaque table (ou vue), une table **droit →
-approbation**, comme les dossiers de ``loom.local_files`` : un droit présent
-est accordé, et sa valeur dit si chaque appel qui l'exerce attend un humain.
-En liste, ``select`` et ``insert`` sont à ``never``, ``update`` et ``delete``
-à ``always``. ``update`` et ``delete`` exigent ``select`` : la base lit les
-colonnes de leur ``WHERE``.
+``tables`` donne, pour chaque table (ou vue), la liste de ses droits
+**accordés** ; un droit absent est refusé. Chaque droit prend son approbation
+par défaut : ``select`` et ``insert`` à ``never``, ``update`` et ``delete`` à
+``always``. Pour en changer, la table s'écrit en objet, ``{rights: […],
+approval: {droit: never | always}}``, comme les dossiers de
+``loom.local_files``. ``update`` et ``delete`` exigent ``select`` : la base lit
+les colonnes de leur ``WHERE``. ``DatabaseSpec`` garde la forme que lit
+l'outil : pour chaque table, un ``TableSpec`` et sa table droit → approbation.
 
 Le DSN d'une base Postgres ne vient jamais de la config : elle nomme la
 variable qui le porte (``dsn_env``), comme ``api_key_env`` pour un modèle.
@@ -39,13 +43,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import (
     AfterValidator,
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
     PositiveFloat,
     WithJsonSchema,
     model_validator,
 )
+
+from loom_ia.tools_builtin._rights import resolve
 
 type SqlRight = Literal["select", "insert", "update", "delete"]
 type RightApproval = Literal["never", "always"]
@@ -70,45 +75,83 @@ DEFAULT_MAX_AFFECTED_ROWS: Final = 100
 MAX_ROWS_CEILING: Final = 1000
 
 
-def _short_form(value: object) -> object:
-    """Une liste de droits devient la table, chacun avec son approbation par défaut."""
-    if not isinstance(value, list | tuple):
-        return value
-    given = [str(item) for item in cast("list[object] | tuple[object, ...]", value)]
-    doubles = sorted({right for right in given if given.count(right) > 1})
-    if doubles:
-        raise ValueError(f"droit donné deux fois : {', '.join(doubles)}")
-    # Un droit inconnu garde une valeur quelconque : la clé échoue ensuite, nommée.
-    return {right: DEFAULT_APPROVAL.get(cast(SqlRight, right), "never") for right in given}
-
-
-_RIGHTS_SCHEMA: Final = {
+_RIGHTS_LIST: Final = {
+    "type": "array",
+    "items": {"enum": list(SQL_RIGHTS)},
+    "uniqueItems": True,
+    "minItems": 1,
+}
+_TABLE_SCHEMA: Final = {
     "description": (
-        "Droits accordés sur la table : table droit → approbation (never ou always), "
-        "ou liste de droits avec leur approbation par défaut (select et insert : never ; "
-        "update et delete : always)."
+        "Droits accordés sur la table ; un droit absent est refusé. En liste, chacun prend "
+        "son approbation par défaut (select et insert : never ; update et delete : always). "
+        "En objet, 'approval' la règle droit par droit."
     ),
     "anyOf": [
+        _RIGHTS_LIST,
         {
             "type": "object",
-            "propertyNames": {"enum": list(SQL_RIGHTS)},
-            "additionalProperties": {"enum": ["never", "always"]},
-            "minProperties": 1,
-        },
-        {
-            "type": "array",
-            "items": {"enum": list(SQL_RIGHTS)},
-            "uniqueItems": True,
-            "minItems": 1,
+            "properties": {
+                "rights": _RIGHTS_LIST,
+                "approval": {
+                    "description": (
+                        "Approbation de chaque droit accordé : never (l'appel passe) ou "
+                        "always (validation humaine) ; un droit absent garde son défaut."
+                    ),
+                    "type": "object",
+                    "propertyNames": {"enum": list(SQL_RIGHTS)},
+                    "additionalProperties": {"enum": ["never", "always"]},
+                },
+            },
+            "required": ["rights"],
+            "additionalProperties": False,
         },
     ],
 }
 
-type TableRights = Annotated[
-    dict[SqlRight, RightApproval],
-    BeforeValidator(_short_form),
-    WithJsonSchema(_RIGHTS_SCHEMA),
-]
+
+class TableSpec(BaseModel):
+    """Une table permise, telle que l'outil la lit : sa table droit → approbation.
+
+    La config l'écrit en liste ou en ``{rights, approval}`` ; ``DatabaseSpec``
+    la ramène à cette forme (``_table``), et nomme la base et la table dans ses
+    messages.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rights: dict[SqlRight, RightApproval]
+
+
+def _table(value: object, *, where: str) -> object:
+    """Une table de la config, en entrée de ``TableSpec`` : ``{"rights": <table interne>}``."""
+    if not isinstance(value, Mapping):
+        # Une liste ; ou autre chose, que ``resolve`` refuse en le disant.
+        rights = resolve(
+            value, None, known=SQL_RIGHTS, defaults=DEFAULT_APPROVAL, where=where, form="table"
+        )
+        return {"rights": rights}
+    fields = dict(cast(Mapping[str, object], value))
+    if not fields:
+        # « aucun droit donné », dit par le contrôle de la base.
+        return {"rights": {}}
+    if "rights" not in fields:
+        if "approval" in fields:
+            raise ValueError(f"{where} : 'rights' manquant")
+        # L'ancienne table droit → approbation : ``resolve`` la refuse, avec quoi écrire.
+        resolve(
+            fields, None, known=SQL_RIGHTS, defaults=DEFAULT_APPROVAL, where=where, form="table"
+        )
+    approval = fields.pop("approval", None)
+    fields["rights"] = resolve(
+        fields["rights"],
+        approval,
+        known=SQL_RIGHTS,
+        defaults=DEFAULT_APPROVAL,
+        where=where,
+        form="table",
+    )
+    return fields
 
 
 class PostgresSpec(BaseModel):
@@ -148,7 +191,10 @@ class DatabaseSpec(BaseModel):
     name: str = Field(pattern=DATABASE_NAME_PATTERN)
     postgres: PostgresSpec | None = None
     sqlite: SqliteSpec | None = None
-    tables: dict[Annotated[str, Field(pattern=IDENTIFIER_PATTERN)], TableRights]
+    tables: dict[
+        Annotated[str, Field(pattern=IDENTIFIER_PATTERN)],
+        Annotated[TableSpec, WithJsonSchema(_TABLE_SCHEMA)],
+    ]
     # Ce que la description de l'outil dit d'une table (« devis ») ou d'une colonne
     # (« devis.statut ») : le sens métier, les valeurs permises…
     describe: dict[str, Annotated[str, Field(min_length=1, max_length=500)]] = Field(
@@ -166,13 +212,30 @@ class DatabaseSpec(BaseModel):
     # UPDATE et DELETE sans WHERE : refusés, sauf si l'on veut vraiment les permettre.
     allow_full_table: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_tables(cls, data: object) -> object:
+        """Chaque table ramenée à sa forme interne, ses refus nommant la base et la table."""
+        if not isinstance(data, dict):
+            return data
+        fields = dict(cast(dict[str, object], data))
+        tables = fields.get("tables")
+        if isinstance(tables, Mapping):
+            name = fields.get("name")
+            fields["tables"] = {
+                table: _table(value, where=f"base {name!r}, table {table!r}")
+                for table, value in cast(Mapping[object, object], tables).items()
+            }
+        return fields
+
     @model_validator(mode="after")
     def _check(self) -> Self:
         if (self.postgres is None) == (self.sqlite is None):
             raise ValueError(f"base {self.name!r} : donner 'postgres' ou 'sqlite', et un seul")
         if not self.tables:
             raise ValueError(f"base {self.name!r} : 'tables' ne peut pas être vide")
-        for table, rights in self.tables.items():
+        for table, spec in self.tables.items():
+            rights = spec.rights
             if not rights:
                 raise ValueError(f"base {self.name!r}, table {table!r} : aucun droit donné")
             needing = [right for right in ("update", "delete") if right in rights]
@@ -208,7 +271,7 @@ class DatabaseSpec(BaseModel):
     @property
     def writes(self) -> bool:
         """Vrai si une table au moins accorde une écriture."""
-        return any(set(rights) - {"select"} for rights in self.tables.values())
+        return any(set(table.rights) - {"select"} for table in self.tables.values())
 
 
 def _databases(databases: tuple[DatabaseSpec, ...]) -> tuple[DatabaseSpec, ...]:

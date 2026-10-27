@@ -121,7 +121,7 @@ class Catalog:
     def of(cls, spec: DatabaseSpec) -> Catalog:
         return cls(
             dialect=spec.dialect,
-            rights=dict(spec.tables),
+            rights={table: dict(found.rights) for table, found in spec.tables.items()},
             functions=frozenset(name.lower() for name in spec.functions),
             allow_full_table=spec.allow_full_table,
         )

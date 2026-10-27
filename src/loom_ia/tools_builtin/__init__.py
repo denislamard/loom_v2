@@ -129,7 +129,10 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         target="loom_ia.tools_builtin.sql:build",
         params="loom_ia.tools_builtin.sql_params:SqlParams",
         refused=("approval", "side_effects", "idempotent"),
-        refused_because="les droits de chaque table les expriment (tables)",
+        refused_because=(
+            "les droits de chaque table les expriment (tables), et l'approbation se règle "
+            "par table (tables.<table>.approval)"
+        ),
         extra="sql",
     ),
 }

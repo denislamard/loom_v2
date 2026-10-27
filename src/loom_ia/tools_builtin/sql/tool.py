@@ -56,11 +56,11 @@ class Database:
         return self.spec.name
 
     def asking(self, table: str) -> list[SqlRight]:
-        return [r for r in SQL_RIGHTS if self.spec.tables[table].get(r) == "always"]
+        return [r for r in SQL_RIGHTS if self.spec.tables[table].rights.get(r) == "always"]
 
     def granted(self, table: str) -> str:
         """« select, update (approbation) »."""
-        rights = self.spec.tables[table]
+        rights = self.spec.tables[table].rights
         return ", ".join(
             f"{right}{' (approbation)' if rights[right] == 'always' else ''}"
             for right in SQL_RIGHTS
@@ -76,7 +76,9 @@ class SqlTool:
             raise ValueError("au moins une base est attendue")
         self._databases = {database.name: database for database in databases}
         self._zone = zone
-        rights = {right for db in databases for table in db.spec.tables.values() for right in table}
+        rights = {
+            right for db in databases for table in db.spec.tables.values() for right in table.rights
+        }
         effects: SideEffects = (
             "irreversible"
             if rights & {"update", "delete"}
@@ -143,7 +145,7 @@ class SqlTool:
         asking = [
             f"{right} sur {table}"
             for table, right in exercised
-            if database.spec.tables[table].get(right) == "always"
+            if database.spec.tables[table].rights.get(right) == "always"
         ]
         if not asking:
             return CallAssessment(side_effects=effects)
@@ -215,7 +217,7 @@ class SqlTool:
                 named.append(declared or name)
         return render(
             tables,
-            database.spec.tables,
+            database.catalog.rights,
             database.spec.describe,
             database=database.name,
             dialect=database.spec.dialect,
