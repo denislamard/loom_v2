@@ -591,11 +591,13 @@ tools:
   folders:
   - name: work                       # dossier de travail : rien ne bloque
     path: /home/jean/chantiers/brouillons
-    rights: { read: never, write: never, overwrite: never, delete: never }
+    rights: [ read, write, overwrite, delete ]
+    approval: { overwrite: never, delete: never }
   - name: clients                    # écrire demande l'accord de Jean
     path: /home/jean/clients
-    rights: { read: never, write: always }
-  - name: devis                      # forme courte : approbations par défaut
+    rights: [ read, write ]
+    approval: { write: always }
+  - name: devis                      # lecture seule, approbation par défaut
     path: devis
     rights: [ read ]
 ```
@@ -604,20 +606,41 @@ C'est le premier outil fourni à **paramètres** : `folders` se donne sur la ré
 
 #### Les droits, et l'approbation de chacun
 
-`rights` est une table **droit → approbation**. Un droit présent est accordé ; sa valeur dit si chaque appel qui l'exerce attend un humain (`always`) ou non (`never`) :
+`rights` liste les droits **accordés** sur le dossier ; un droit absent est refusé. Chaque droit accordé a son approbation : `never`, l'appel passe ; `always`, il attend un humain. Sans `approval`, chacun prend son approbation par défaut :
 
-| Droit | Permet | Approbation par défaut (forme courte) |
+| Droit | Permet | Approbation par défaut |
 |---|---|---|
 | `read` | lister un dossier, lire un fichier | `never` |
 | `write` | créer un fichier, et ses sous-dossiers | `never` |
 | `overwrite` | remplacer un fichier existant ; exige `write` | `always` |
 | `delete` | supprimer un fichier, jamais un dossier | `always` |
 
-En liste (`rights: [ read, write ]`), chaque droit prend son approbation par défaut : un dossier déclaré sans y penser reste prudent, et on ne relâche que là où c'est voulu, comme `work` ci-dessus.
+`approval`, facultatif, change l'approbation des seuls droits qu'il nomme : un dossier déclaré sans y penser reste prudent, et on ne relâche que là où c'est voulu, comme `work` ci-dessus, ou on resserre, comme `clients`. Il ne nomme qu'un droit accordé : `approval: { delete: never }` sans `delete` dans `rights` est refusé au chargement.
 
-L'approbation se décide **appel par appel** : dans la même étape, lire `clients/c1.txt` part tout de suite, et écrire `clients/c2.txt` met le run en pause (chapitre 9). L'approbateur lit le motif : « écrire clients/c2.txt : le dossier clients demande une approbation pour write (effets : reversible) ». Une approbation imposée par un client (`tenants[].approvals: { local_files: always }`) garde le dernier mot. `approval`, `side_effects` et `idempotent` ne se règlent pas sur la référence : les droits les expriment déjà.
+> **`never` veut dire « sans approbation », jamais « interdit ».** Pour interdire un droit, ne le mettez pas dans `rights`. Jusqu'à la 2.0.13, `rights` s'écrivait aussi en table droit → approbation : `rights: { delete: never }` se lisait « suppression interdite », et l'accordait sans rien demander. Cette écriture est refusée depuis la 2.0.14, et le message donne l'écriture équivalente, à recopier : « dossier 'work' : 'rights' en table droit → approbation n'est plus accepté (never voulait dire « sans approbation », pas « refusé ») — écrire rights: [read, write, overwrite, delete] et approval: { overwrite: never, delete: never } ».
+
+L'approbation se décide **appel par appel** : dans la même étape, lire `clients/c1.txt` part tout de suite, et écrire `clients/c2.txt` met le run en pause (chapitre 9). L'approbateur lit le motif : « écrire clients/c2.txt : le dossier clients demande une approbation pour write (effets : reversible) ». Une approbation imposée par un client (`tenants[].approvals: { local_files: always }`) garde le dernier mot. `approval`, `side_effects` et `idempotent` ne se règlent pas sur la référence : les droits les expriment déjà, et l'approbation se règle par dossier (`folders[].approval`).
 
 Une approbation suppose un journal durable : sur un journal `memory`, le montage refuse « outil 'local_files' dont certains appels attendent une approbation » (en profil `dev`, il avertit seulement).
+
+`loom validate` montre chaque dossier, puis chacun de ses droits accordés et son approbation. Un droit refusé n'est pas listé ; un droit qui détruit ce qui existe (`overwrite`, `delete`) et passe sans approbation est signalé :
+
+```text
+Fournis    : loom.local_files
+  assistant : modèle SIMULE, 1 outil(s) Python
+    outil local_files : work → /home/jean/chantiers/brouillons
+    outil local_files :   read : accordé, sans approbation
+    outil local_files :   write : accordé, sans approbation
+    outil local_files :   overwrite : accordé, sans approbation (destructif)
+    outil local_files :   delete : accordé, sans approbation (destructif)
+    outil local_files : clients → /home/jean/clients
+    outil local_files :   read : accordé, sans approbation
+    outil local_files :   write : accordé, avec approbation
+    outil local_files : devis → /…/devis
+    outil local_files :   read : accordé, sans approbation
+
+1 agent(s) monté(s) sans erreur.
+```
 
 #### Ce que voit le modèle
 
@@ -679,7 +702,7 @@ Les dossiers ont la forme et les règles de `loom.local_files` (droits, approbat
 
 | Paramètre | Rôle | Par défaut |
 |---|---|---|
-| `folders` | dossiers permis et leurs droits (`read`, `write`, `overwrite`) | — (obligatoire) |
+| `folders` | dossiers permis, leurs droits (`read`, `write`, `overwrite`) et leur `approval` | — (obligatoire) |
 | `timezone` | fuseau IANA où passe une date-heure qui en porte un ; Excel ne connaît pas les fuseaux | `Europe/Paris` |
 | `recalc` | recalculer les formules avec LibreOffice avant d'écrire | `false` |
 | `soffice` | chemin de LibreOffice, avec `recalc` | `soffice`, cherché dans le `PATH` |
@@ -690,8 +713,10 @@ Les dossiers ont la forme et les règles de `loom.local_files` (droits, approbat
 ```text
 Fournis    : loom.excel
   assistant : modèle SIMULE, 1 outil(s) Python
-    outil excel : donnees → /…/donnees : read
-    outil excel : sortie → /…/sortie : write
+    outil excel : donnees → /…/donnees
+    outil excel :   read : accordé, sans approbation
+    outil excel : sortie → /…/sortie
+    outil excel :   write : accordé, sans approbation
     outil excel : fuseau : Europe/Paris
     outil excel : recalcul : /usr/bin/soffice (au plus 60 s)
 1 agent(s) monté(s) sans erreur.
@@ -813,9 +838,9 @@ tools:
     sqlite:
       path: donnees/crm.db           # absolu, ou relatif au loom.yaml ; jamais créé
     tables:
-      devis: { select: never, update: always }
+      devis: [ select, update ]      # update : approbation par défaut
       clients: [ select ]
-      relances: [ select, insert ]   # forme courte : approbations par défaut
+      relances: [ select, insert ]
     describe:                        # facultatif : repris dans la description de l'outil
       devis.statut: "envoye | relance | accepte | refuse"
 ```
@@ -824,16 +849,27 @@ La table `factures` n'est pas déclarée : pour l'agent, elle n'existe pas. Il n
 
 #### Les droits, et l'approbation de chacun
 
-`tables` donne, pour chaque table ou vue, une table **droit → approbation**, comme les dossiers de `loom.local_files` :
+`tables` donne, pour chaque table ou vue, la liste de ses droits **accordés** ; un droit absent est refusé. Chaque droit prend son approbation par défaut :
 
-| Droit | Permet | Approbation par défaut (forme courte) |
+| Droit | Permet | Approbation par défaut |
 |---|---|---|
 | `select` | lire la table | `never` |
 | `insert` | y ajouter des lignes | `never` |
 | `update` | modifier des lignes ; exige `select` | `always` |
 | `delete` | supprimer des lignes ; exige `select` | `always` |
 
-`update` et `delete` exigent `select`, car la base lit les colonnes de leur `WHERE`. L'approbation se décide **appel par appel**, sur les droits que l'appel exerce : lire `devis` part tout de suite, le modifier met le run en pause (chapitre 9). Comme pour `local_files`, `approval`, `side_effects` et `idempotent` ne se règlent pas sur la référence, et une approbation suppose un journal durable.
+`update` et `delete` exigent `select`, car la base lit les colonnes de leur `WHERE`. L'approbation se décide **appel par appel**, sur les droits que l'appel exerce : lire `devis` part tout de suite, le modifier met le run en pause (chapitre 9).
+
+Pour changer l'approbation d'un droit, la table s'écrit en objet, avec `rights` et `approval`, comme un dossier de `local_files` :
+
+```yaml
+    tables:
+      documents:                     # modifier sans validation : dit explicitement
+        rights: [ select, update ]
+        approval: { update: never }
+```
+
+Là aussi, `never` veut dire « sans approbation », jamais « interdit » : un droit interdit est un droit absent de `rights`. L'ancienne écriture, `devis: { select: never, update: always }`, est refusée, avec l'écriture équivalente dans le message (« … — écrire [select, update] »). Comme pour `local_files`, `approval`, `side_effects` et `idempotent` ne se règlent pas sur la référence (l'approbation se règle par table), et une approbation suppose un journal durable.
 
 #### Les paramètres
 
@@ -854,12 +890,17 @@ La table `factures` n'est pas déclarée : pour l'agent, elle n'existe pas. Il n
 
 Une base est `sqlite` ou `postgres`, jamais les deux. Le montage refuse un fichier SQLite absent, et un fichier qui est le journal de loom, son magasin d'idempotence, ou qui est sous un dossier protégé (artefacts, agents, prompts).
 
-`loom validate` montre chaque base, ses tables et leurs droits, sans jamais se connecter :
+`loom validate` montre chaque base, puis chaque droit accordé, table par table, avec son approbation, sans jamais se connecter. Comme pour les dossiers, un `update` ou un `delete` qui passe sans approbation est signalé « (destructif) » :
 
 ```text
 Fournis    : loom.sql
   assistant : modèle SIMULE, 1 outil(s) Python
-    outil sql : crm → sqlite, /…/donnees/crm.db : devis select, update (approbation) ; clients select ; relances select, insert
+    outil sql : crm → sqlite, /…/donnees/crm.db
+    outil sql :   devis.select : accordé, sans approbation
+    outil sql :   devis.update : accordé, avec approbation
+    outil sql :   clients.select : accordé, sans approbation
+    outil sql :   relances.select : accordé, sans approbation
+    outil sql :   relances.insert : accordé, sans approbation
     outil sql : crm : 200 lignes lues, 100 modifiées au plus ; 10 s par instruction
     outil sql : fuseau : Europe/Paris
 
@@ -983,7 +1024,7 @@ Le DSN ne se met jamais dans la config : elle nomme la variable qui le porte, co
       dsn_env: CRM_DATABASE_URL      # postgresql://agent_crm:…@db/crm
       schema: public
     tables:
-      devis: { select: never, update: always }
+      devis: [ select, update ]
       clients: [ select ]
       relances: [ select, insert ]
 ```
@@ -991,7 +1032,9 @@ Le DSN ne se met jamais dans la config : elle nomme la variable qui le porte, co
 La variable est vérifiée au montage : sans elle, `loom validate` le dit (« base 'crm' : la variable CRM_DATABASE_URL (dsn_env) est absente ou vide »). Un rejeu sur une autre machine doit donc la définir aussi, mais sa valeur ne sert pas : un rejeu ne se connecte pas. Le DSN du stockage de loom (journal, idempotence, bus) est refusé, par son nom comme par sa valeur. `loom validate` montre la variable, jamais le DSN :
 
 ```text
-    outil sql : crm → postgres, CRM_DATABASE_URL, schéma public : devis select, update (approbation) ; clients select ; relances select, insert
+    outil sql : crm → postgres, CRM_DATABASE_URL, schéma public
+    outil sql :   devis.select : accordé, sans approbation
+    …
 ```
 
 Le rôle se crée avec les droits de la config, table par table :

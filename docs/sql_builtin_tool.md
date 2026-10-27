@@ -85,7 +85,7 @@ Les recommandations du cadrage, toutes appliquées par le prototype :
 | D-2 | Extra **`sql`** = `sqlglot>=30.24.0,<31` et `asyncpg>=0.31.0` ; SQLite par la bibliothèque standard |
 | D-3 | sqlglot est obligatoire : `assess_call` juge un appel sans toucher à la base |
 | D-4 | `query` : une lecture ; `execute` : `INSERT`, `UPDATE` ou `DELETE` à la racine ; `MERGE` refusé dans ce lot |
-| D-5 | Droits **comme `local_files`** : table droit → approbation, ou liste. Défauts : `select` et `insert` à `never`, `update` et `delete` à `always`. `update` et `delete` exigent `select` |
+| D-5 | Droits **comme `local_files`** : la liste des droits accordés, ou `{rights, approval}` pour changer une approbation. Défauts : `select` et `insert` à `never`, `update` et `delete` à `always`. `update` et `delete` exigent `select`. *Révisée le 27/10/2026* : la table droit → approbation d'origine est refusée, voir `docs/rights_approval.md` |
 | D-6 | Tables sans schéma devant ; un `schema` déclaré par base Postgres, posé en `search_path` |
 | D-7 | Une fonction inconnue de sqlglot est refusée, sauf si elle est listée dans `functions:` ; celles de `FORBIDDEN` le sont toujours |
 | D-8 | `UPDATE` et `DELETE` sans `WHERE` refusés ; `allow_full_table: true` pour les permettre |
@@ -118,9 +118,9 @@ tools:
       dsn_env: CRM_DATABASE_URL       # jamais le DSN en clair
       schema: public                  # par défaut
     tables:
-      devis:    { select: never, update: always }
+      devis:    [select, update]      # update : approbation par défaut
       clients:  [select]
-      relances: [select, insert]      # forme courte : approbations par défaut
+      relances: [select, insert]
     describe:                         # facultatif, dans la description de l'outil
       devis: "Devis envoyés aux clients"
       devis.statut: "brouillon | envoye | relance"

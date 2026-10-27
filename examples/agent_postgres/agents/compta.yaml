@@ -14,9 +14,6 @@ subagents:
 tools:
 - python: loom.current_datetime
 - python: loom.fetch_page
-- python: loom.local_files
-  folders:
-  - { name: work, path: workspace, rights: { read: never, write: never, overwrite: never, delete: never } }
 - python: loom.sql
   databases:
   - name: crm
@@ -24,7 +21,7 @@ tools:
     tables:
       customers: [ select ]
       products: [ select ]
-      documents: { select: never, update: always }
+      documents: [ select, update ]
     describe:
       customers: "Clients : code C-NNN, identité, coordonnées (email, téléphone, adresse)"
       documents: "Devis (type quote, Q-AAAA-NNNN) et factures (type invoice, INV-AAAA-NNNN) ; customer_id → customers.id"
