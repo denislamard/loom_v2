@@ -7,6 +7,10 @@ main:
 
 max_iterations: 10
 
+subagents:
+- agent: analyste
+  description: Pour tout chiffre agrégé (total, somme, moyenne, répartition, classement, part). Donne-lui la question complète, la période et la définition voulue.
+
 tools:
 - python: loom.current_datetime
 - python: loom.fetch_page
@@ -21,17 +25,12 @@ tools:
       customers: [ select ]
       products: [ select ]
       documents: { select: never, update: always }
-      document_lines: [ select ]
-      v_document_totals: [ select ]
     describe:
       customers: "Clients : code C-NNN, identité, coordonnées (email, téléphone, adresse)"
       documents: "Devis (type quote, Q-AAAA-NNNN) et factures (type invoice, INV-AAAA-NNNN) ; customer_id → customers.id"
       documents.status: "devis : draft | sent | accepted | rejected | expired ; facture : draft | issued | paid | overdue | cancelled (paid exige paid_at)"
-      document_lines: "Lignes d'un document ; montants en centimes (*_cents), vat_rate_bp et discount_bp en points de base (2000 = 20 %)"
-      v_document_totals: "Totaux de chaque document (id = documents.id), en centimes : total_excl_vat_cents (HT), total_vat_cents (TVA) ; TTC = leur somme"
 - python: loom.excel
   folders:
   - name: out
-    path: out
+    path: workspace
     rights: [ write ]
-

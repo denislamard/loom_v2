@@ -1,0 +1,22 @@
+name: analyste
+description: Calcule les chiffres demandés sur la base crm (totaux, sommes, moyennes, répartitions, classements) et les rend avec les requêtes utilisées.
+expose: { rest: false, mcp: false }
+
+main:
+  model: SONNET
+  system_file: analyste.md
+
+max_iterations: 8
+
+tools:
+- python: loom.current_datetime
+- python: loom.sql
+  databases:
+  - name: crm
+    sqlite: { path: data/db/clients.db }
+    tables:
+      customers: [ select ]
+      products: [ select ]
+      documents: [ select ]
+      document_lines: [ select ]
+      v_document_totals: [ select ]

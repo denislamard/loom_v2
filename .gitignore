@@ -230,7 +230,7 @@ firecracker/vms/
 # macOS
 .DS_Store
 
-
+examples/*.xlsx
 examples/*.zip
 examples.OLD/*
 
