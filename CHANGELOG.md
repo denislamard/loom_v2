@@ -2,7 +2,7 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.14 - non publiée
+## 2.0.14 - publiée
 
 ### Outils fournis builtin tools
 - ⚠ **Droits et approbation séparés** (`loom.local_files`, `loom.excel`, `loom.sql`) : `rights` liste les droits accordés, et la nouvelle clé `approval`, facultative, règle l'approbation de chacun (`never` : l'appel passe ; `always` : validation humaine) ; un droit qu'elle ne nomme pas garde son défaut.
