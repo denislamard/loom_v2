@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Outil local_files : lire, lister, écrire et supprimer des fichiers texte dans des dossiers.
+"""Outil local_files : lire, lister, écrire et supprimer des fichiers dans des dossiers.
 
 Les dossiers, leurs droits et l'approbation de chaque droit viennent de la
 config (``local_files_params``). Le modèle désigne un fichier par
@@ -10,6 +10,11 @@ Les règles des dossiers — chemin tel qu'écrit pour juger droits et
 approbation, chemin résolu qui doit rester dans son dossier, écriture
 atomique — sont dans ``_folders``, partagé avec ``loom.excel`` ; sa
 docstring dit aussi la course connue.
+
+``write`` écrit du texte (``content``), ou copie un fichier que l'agent a vu
+passer (``file``) : une pièce jointe, un fichier rendu par un outil — un
+outil forgé, un sous-agent. Le fichier est relu dans le stockage d'artefacts
+par son nom, parmi ceux de la conversation seulement (``ToolContext.files``).
 """
 
 import asyncio
@@ -27,11 +32,21 @@ from loom_ia.tools_builtin._folders import TEMP_PREFIX, Folder, Folders, Located
 from loom_ia.tools_builtin.local_files_params import LocalFilesParams, Right
 
 # TEMP_PREFIX, préfixe des fichiers temporaires d'une écriture, reste importable d'ici.
-__all__ = ["MAX_READ_BYTES", "MAX_WRITE_BYTES", "NAME", "TEMP_PREFIX", "LocalFilesTool", "build"]
+__all__ = [
+    "MAX_COPY_BYTES",
+    "MAX_READ_BYTES",
+    "MAX_WRITE_BYTES",
+    "NAME",
+    "TEMP_PREFIX",
+    "LocalFilesTool",
+    "build",
+]
 NAME: Final = "local_files"
 MAX_READ_BYTES: Final = 1_000_000
 MAX_WRITE_BYTES: Final = 1_000_000
 MAX_ENTRIES: Final = 500
+# Copie d'un fichier de la conversation (write avec file) : binaire permis.
+MAX_COPY_BYTES: Final = 16 << 20
 
 type Action = Literal["list", "read", "write", "delete"]
 
@@ -64,6 +79,13 @@ class _Arguments(BaseModel):
     ]
     content: Annotated[
         str | None, Field(description="Texte à écrire, en UTF-8 ; pour write seulement.")
+    ] = None
+    file: Annotated[
+        str | None,
+        Field(
+            description="Pour write, à la place de content : nom d'un fichier de la "
+            "conversation (joint, ou rendu par un outil), copié tel quel."
+        ),
     ] = None
     overwrite: Annotated[
         bool,
@@ -158,6 +180,10 @@ class LocalFilesTool:
         request = _parse(arguments)
         located = self._locate(request)
         self._check_rights(request, located)
+        if request.file is not None:
+            data = await _copied(request.file, context)
+            result = await asyncio.to_thread(self._copy, data, located, request.overwrite)
+            return to_output(result)
         # Lire et écrire sur le disque bloque : hors de la boucle asyncio.
         result = await asyncio.to_thread(self._perform, request, located)
         return to_output(result)
@@ -169,15 +195,27 @@ class LocalFilesTool:
         return self._space.locate(request.path, folder_allowed=request.action == "list")
 
     def _check_rights(self, request: _Arguments, located: Located) -> None:
-        if request.action == "write" and request.content is None:
-            raise ToolError("write attend 'content', le texte à écrire.")
+        if request.action == "write" and (request.content is None) == (request.file is None):
+            raise ToolError(
+                "write attend 'content', le texte à écrire, ou 'file', un fichier de la "
+                "conversation à copier — l'un des deux."
+            )
         if request.action != "write" and request.content is not None:
             raise ToolError("'content' ne sert qu'à write.")
+        if request.action != "write" and request.file is not None:
+            raise ToolError("'file' ne sert qu'à write.")
         if request.action != "write" and request.overwrite:
             raise ToolError("'overwrite' ne sert qu'à write.")
         Folders.require(located, _needs(request))
 
     # --- Opérations ---------------------------------------------------------------
+
+    def _copy(self, data: bytes, located: Located, overwrite: bool) -> dict[str, JsonValue]:
+        try:
+            return write_bytes(self._space.resolved(located), located, data, overwrite)
+        except OSError as exc:
+            reason = exc.strerror or type(exc).__name__
+            raise ToolError(f"{located.address} : {reason}.") from exc
 
     def _perform(self, request: _Arguments, located: Located) -> dict[str, JsonValue]:
         try:
@@ -268,6 +306,21 @@ def _written(target: Path, located: Located, content: str, overwrite: bool) -> d
     return write_bytes(target, located, data, overwrite)
 
 
+async def _copied(name: str, context: ToolContext) -> bytes:
+    """Octets d'un fichier de la conversation, désigné par son nom."""
+    files = context.files
+    if files is None:
+        raise ToolError("Aucun fichier de la conversation n'est lisible ici (pas de stockage).")
+    found = files.find(name)
+    if found is None:
+        known = ", ".join(files.names()) or "aucun"
+        raise ToolError(f"Fichier {name!r} inconnu ; fichiers de la conversation : {known}.")
+    try:
+        return await files.read(found, max_bytes=MAX_COPY_BYTES)
+    except (ValueError, LookupError) as exc:
+        raise ToolError(f"{exc}.") from exc
+
+
 def _deleted(target: Path, located: Located) -> dict[str, JsonValue]:
     if target == located.folder.root or target.is_dir():
         raise ToolError(f"{located.address} est un dossier : delete ne supprime que des fichiers.")
@@ -290,7 +343,7 @@ def _parse(arguments: Mapping[str, JsonValue]) -> _Arguments:
 
 def _description(space: Folders) -> str:
     lines = [
-        "Lit, liste, écrit et supprime des fichiers texte (UTF-8) dans des dossiers permis. "
+        "Lit, liste, écrit et supprime des fichiers dans des dossiers permis. "
         "Un fichier se désigne par « <dossier>/<chemin> », jamais par un chemin absolu.",
         "Dossiers et droits :",
         *space.described(),
@@ -298,10 +351,13 @@ def _description(space: Folders) -> str:
     lines.append(
         "Actions : list (contenu d'un dossier) et read (lire un fichier) demandent read ; "
         "write écrit 'content' et crée les sous-dossiers au besoin (droit write) — un fichier "
-        "existant n'est remplacé qu'avec overwrite=true (droit overwrite) ; delete supprime un "
-        "fichier, jamais un dossier (droit delete). Les fichiers et dossiers cachés (nom qui "
-        f"commence par « . ») sont inaccessibles. Au plus {MAX_READ_BYTES} octets lus ou écrits "
-        "par appel."
+        "existant n'est remplacé qu'avec overwrite=true (droit overwrite) ; avec 'file' au lieu "
+        "de 'content', write copie un fichier de la conversation (joint, ou rendu par un outil), "
+        "désigné par son nom, binaire compris (un fichier rendu par un outil se copie au tour "
+        "suivant, pas dans le même lot d'appels) ; delete supprime un fichier, jamais un dossier "
+        "(droit delete). Les fichiers et dossiers cachés (nom qui commence par « . ») sont "
+        f"inaccessibles. read ne lit que du texte UTF-8. Au plus {MAX_READ_BYTES} octets lus ou "
+        f"écrits par appel, {MAX_COPY_BYTES} pour une copie."
     )
     return "\n".join(lines)
 

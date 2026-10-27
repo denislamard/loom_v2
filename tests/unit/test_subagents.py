@@ -28,6 +28,7 @@ from loom_ia.core.events import (
 )
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    ArtifactRefBlock,
     Message,
     ModelRequest,
     ModelSpec,
@@ -236,6 +237,42 @@ async def test_files_produced_by_a_child_are_in_the_root_result(store: EventStor
     # Ce qu'elle liste est ce que l'appel a rendu au parent.
     [completed] = payloads(events, ToolCompleted, state.run_id)
     assert tuple(a.uri for a in result.artifacts) == completed.output.artifacts
+    # Et le parent le voit : le fichier suit la réponse de l'enfant.
+    assert completed.output.as_text == "Voilà."
+    [ref] = [b for b in completed.output.blocks if isinstance(b, ArtifactRefBlock)]
+    assert (ref.uri, ref.name, ref.media_type) == (
+        completed.output.artifacts[0],
+        "chantier.png",
+        "image/png",
+    )
+
+
+async def test_a_child_that_only_produced_files_has_answered(store: EventStore) -> None:
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+
+    @tool
+    def photographier() -> Image:
+        """Photographie le chantier."""
+        return Image(png, name="chantier.png")
+
+    main_model = ScriptedModel(
+        tool_call_message(("c1", "verifier", {"message": "Photographie."})),
+        Message.assistant("Photo prise."),
+    )
+    child_model = ScriptedModel(
+        tool_call_message(("k1", "photographier", {})), Message.assistant(" ")
+    )
+    child = replace(
+        child_context(store, child_model, photographier),
+        tools=ToolExecutor([calculer, photographier], artifacts=InMemoryArtifactStore()),
+    )
+    ctx = parent_context(store, main_model, verifier({"verificateur": child}))
+    state = await drive(ctx, (await begin_run(ctx, "Fais photographier.")).run_id)
+    [completed] = payloads(await session(store, state), ToolCompleted, state.run_id)
+    assert not completed.output.is_error
+    assert [b.name for b in completed.output.blocks if isinstance(b, ArtifactRefBlock)] == [
+        "chantier.png"
+    ]
 
 
 async def test_failed_child_becomes_an_error_result(store: EventStore) -> None:

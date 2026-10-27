@@ -8,8 +8,9 @@ selon les capacités du modèle :
 - **image, modèle avec ``vision``** : les octets, lus dans le stockage
   d'artefacts (``InlineDataBlock``, envoyé en base64 par l'adaptateur), après
   contrôle du format (``image_formats``) et de la taille
-  (``max_image_bytes``) ; un format ou une taille refusés donnent une erreur
-  explicite avant l'appel ;
+  (``max_image_bytes``) ; une pièce jointe au format ou à la taille refusés
+  donne une erreur explicite avant l'appel, une image rendue par un outil une
+  mention (voir plus bas) ;
 - **sinon** (modèle sans vision, fichier qui n'est pas une image) : une
   mention textuelle, qui dit au modèle qu'un fichier existe sans le lui
   montrer.
@@ -17,6 +18,11 @@ selon les capacités du modèle :
 Une image renvoyée par un outil reste dans son résultat si le modèle
 l'accepte là (``tool_result_media``) ; sinon, le résultat la mentionne et
 elle part dans un message utilisateur placé après les résultats du tour.
+Une image renvoyée par un outil que le modèle refuse (format, taille)
+devient une mention qui dit pourquoi : l'outil n'a pas choisi le modèle, et
+une erreur ferait échouer le run à chaque appel suivant, puisque l'image
+reste dans l'historique. Une pièce jointe refusée, elle, reste une erreur :
+celui qui l'a jointe peut en joindre une autre.
 
 Images des tours précédents (F4, ``sessions.media.keep_images``) : par
 défaut (``all``), toutes sont résolues comme celles du run, à chaque appel.
@@ -34,6 +40,7 @@ from typing import Final
 from loom_ia.core.model import (
     IMAGE_TYPES,
     MOVED_IMAGES,
+    ArtifactLocation,
     ArtifactRefBlock,
     ContentBlock,
     InlineDataBlock,
@@ -133,12 +140,15 @@ class MediaResolver:
     async def _output_block(self, block: OutputBlock, moved: list[ContentBlock]) -> OutputBlock:
         if not isinstance(block, ArtifactRefBlock):
             return block
-        if self.sees(block) and not self.spec.capabilities.tool_result_media:
-            moved.append(await self._resolved(block, "renvoyée"))
+        resolved = await self._resolved(block, "renvoyée", refused_as_text=True)
+        if isinstance(resolved, InlineDataBlock) and not self.spec.capabilities.tool_result_media:
+            moved.append(resolved)
             return TextBlock(text=f"[image {describe(block)} : dans le message qui suit]")
-        return await self._resolved(block, "renvoyée")
+        return resolved
 
-    async def _resolved(self, block: ArtifactRefBlock, verb: str) -> TextBlock | InlineDataBlock:
+    async def _resolved(
+        self, block: ArtifactRefBlock, verb: str, *, refused_as_text: bool = False
+    ) -> TextBlock | InlineDataBlock:
         if not self.sees(block):
             if is_image(block.media_type):
                 return TextBlock(
@@ -149,20 +159,31 @@ class MediaResolver:
         label = describe(block)
         image_format = IMAGE_TYPES[block.media_type]
         if image_format not in capabilities.image_formats:
-            raise ModelError(
-                "invalid_request",
-                f"Image {label} : format {image_format} refusé par le modèle {self.spec.id} "
-                f"(formats acceptés : {', '.join(capabilities.image_formats)})",
+            reason = (
+                f"format {image_format} refusé par le modèle {self.spec.id} "
+                f"(formats acceptés : {', '.join(capabilities.image_formats)})"
             )
-        data = await self._load(block, label)
+            return self._refused(label, verb, reason, refused_as_text)
         limit = capabilities.max_image_bytes
-        if limit is not None and len(data) > limit:
-            raise ModelError(
-                "invalid_request",
-                f"Image {label} : {len(data)} octets, au-delà des {limit} acceptés "
-                f"par le modèle {self.spec.id}",
+        if limit is not None and block.size is not None and block.size > limit:
+            # La taille connue suffit : l'image n'est pas lue pour rien.
+            reason = (
+                f"{block.size} octets, au-delà des {limit} acceptés par le modèle {self.spec.id}"
             )
+            return self._refused(label, verb, reason, refused_as_text)
+        data = await self._load(block, label)
+        if limit is not None and len(data) > limit:
+            reason = (
+                f"{len(data)} octets, au-delà des {limit} acceptés par le modèle {self.spec.id}"
+            )
+            return self._refused(label, verb, reason, refused_as_text)
         return InlineDataBlock(media_type=block.media_type, data=data, name=block.name)
+
+    @staticmethod
+    def _refused(label: str, verb: str, reason: str, as_text: bool) -> TextBlock:
+        if as_text:
+            return TextBlock(text=f"[image {verb} {label} : non envoyée au modèle, {reason}]")
+        raise ModelError("invalid_request", f"Image {label} : {reason}")
 
     async def _load(self, block: ArtifactRefBlock, label: str) -> bytes:
         if self.store is None:
@@ -209,6 +230,64 @@ def _without_images(message: Message) -> Message:
             case _:
                 blocks.append(block)
     return message.model_copy(update={"blocks": tuple(blocks)})
+
+
+class ConversationFiles:
+    """Les fichiers d'une conversation, pour les outils (``SeenFiles``).
+
+    Ce sont les références que portent ses messages : pièces jointes, et
+    fichiers rendus par les outils, ceux d'un sous-agent compris. Un outil ne
+    relit que ceux-là : nommer un fichier d'une autre session, ou deviner un
+    condensé, ne mène à rien. Une référence d'un autre client ou d'une autre
+    session (un message construit par l'application, par exemple) est ignorée.
+    """
+
+    def __init__(
+        self, messages: Sequence[Message], store: ArtifactStore, *, tenant: str, session: str
+    ) -> None:
+        self._messages = messages
+        self._store = store
+        self._place = (tenant, session)
+        self._found: list[ArtifactRefBlock] | None = None
+
+    def _all(self) -> list[ArtifactRefBlock]:
+        if self._found is None:
+            self._found = [
+                ref
+                for message in self._messages
+                for ref in _refs(message.blocks)
+                if self._here(ref.uri)
+            ]
+        return self._found
+
+    def _here(self, uri: str) -> bool:
+        try:
+            location = ArtifactLocation.parse(uri)
+        except ValueError:
+            return False
+        return (location.tenant, location.session) == self._place
+
+    def find(self, name: str) -> ArtifactRefBlock | None:
+        """Le plus récent du nom donné ; à défaut, celui dont c'est le nom dans le stockage."""
+        found = self._all()
+        named = [ref for ref in found if ref.name == name]
+        if named:
+            return named[-1]
+        return next((ref for ref in reversed(found) if ref.uri.rsplit("/", 1)[-1] == name), None)
+
+    def names(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(ref.name or ref.uri.rsplit("/", 1)[-1] for ref in self._all()))
+
+    async def read(self, file: ArtifactRefBlock, *, max_bytes: int) -> bytes:
+        if file.size is not None and file.size > max_bytes:
+            raise ValueError(f"{describe(file)} : au-delà de {size_label(max_bytes)}")
+        try:
+            data = await self._store.get(file.uri)
+        except ArtifactNotFound as exc:
+            raise LookupError(f"{describe(file)} : absent du stockage") from exc
+        if len(data) > max_bytes:
+            raise ValueError(f"{describe(file)} : au-delà de {size_label(max_bytes)}")
+        return data
 
 
 def _refs(blocks: Sequence[ContentBlock] | Sequence[OutputBlock]) -> list[ArtifactRefBlock]:

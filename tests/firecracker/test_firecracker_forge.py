@@ -9,6 +9,7 @@ démarre la « VM » au premier appel et l'arrête avec l'instance.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import uuid
@@ -23,26 +24,43 @@ import yaml
 from jsonschema import Draft202012Validator, ValidationError
 from jsonschema.validators import validator_for
 
+import loom_ia.adapters.firecracker.forge as forge_module
 from loom_ia.access import Loom
 from loom_ia.adapters.firecracker.forge import (
     CALL,
+    DEFAULT_FILES,
     FORGE,
     MANIFEST,
     SHOWN,
     Catalog,
+    FilePolicy,
     Forged,
     ForgeSource,
     Jobs,
     check_forged,
     forge_source,
 )
-from loom_ia.adapters.firecracker.session import ExecdError, Execution, Hello, Output, Session
+from loom_ia.adapters.firecracker.session import (
+    ExecdError,
+    Execution,
+    Hello,
+    Output,
+    ProtocolError,
+    Session,
+)
 from loom_ia.adapters.firecracker.vm import VmError
 from loom_ia.config import load_config
 from loom_ia.core import bounded_regex
 from loom_ia.core.events import ToolCompleted
 from loom_ia.core.json_values import same_json
-from loom_ia.core.model import RunId, RunStatus, SessionId, TenantId
+from loom_ia.core.model import (
+    ArtifactRefBlock,
+    InlineDataBlock,
+    RunId,
+    RunStatus,
+    SessionId,
+    TenantId,
+)
 from loom_ia.core.ports import SourceContext, Tool, ToolContext, ToolError
 
 type MakeVm = Callable[..., Path]
@@ -102,8 +120,15 @@ HELLO = Hello(
 class FakeJobs:
     """Une session qui n'exécute rien : ``answer`` rend le compte rendu de chaque appel."""
 
-    def __init__(self, answer: Callable[[str, Mapping[str, object]], Execution]) -> None:
+    def __init__(
+        self,
+        answer: Callable[[str, Mapping[str, object]], Execution],
+        files: Mapping[str, bytes] | None = None,
+    ) -> None:
         self.answer = answer
+        # Contenu de out/ que get_file rend, et les chemins demandés.
+        self.files = dict(files or {})
+        self.gets: list[str] = []
         self.puts: list[tuple[str, bytes]] = []
         self.calls: list[tuple[str, dict[str, object], Mapping[str, int] | None]] = []
         self.closed = False
@@ -124,6 +149,15 @@ class FakeJobs:
         self.calls.append((entrypoint, dict(args or {}), limits))
         return self.answer(entrypoint, args or {})
 
+    async def get_file(self, path: str, *, max_bytes: int) -> bytes:
+        self.gets.append(path)
+        if path not in self.files:
+            raise ExecdError("not_found", "fichier absent de out/")
+        data = self.files[path]
+        if len(data) > max_bytes:
+            raise ValueError(f"{path} dépasse {max_bytes} octets")
+        return data
+
     async def close(self) -> None:
         self.closed = True
 
@@ -139,16 +173,18 @@ class FakeRunner:
         self,
         answer: Callable[[str, Mapping[str, object]], Execution] | None = None,
         fail: Exception | None = None,
+        files: Mapping[str, bytes] | None = None,
     ) -> None:
         self.answer = answer or fourteen
         self.fail = fail
+        self.files = files
         self.opened: list[FakeJobs] = []
         self.closed = 0
 
     async def session(self) -> Jobs:
         if self.fail is not None:
             raise self.fail
-        jobs = FakeJobs(self.answer)
+        jobs = FakeJobs(self.answer, self.files)
         self.opened.append(jobs)
         return jobs
 
@@ -173,10 +209,17 @@ class UdsRunner:
 
 
 def make_source(
-    tmp_path: Path, runner: Any, limits: Mapping[str, int] | None = None
+    tmp_path: Path,
+    runner: Any,
+    limits: Mapping[str, int] | None = None,
+    files: FilePolicy | None = DEFAULT_FILES,
 ) -> ForgeSource:
     return ForgeSource(
-        name="forge", catalog=Catalog(tmp_path / "catalogue"), runner=runner, limits=limits or {}
+        name="forge",
+        catalog=Catalog(tmp_path / "catalogue"),
+        runner=runner,
+        limits=limits or {},
+        files=files,
     )
 
 
@@ -656,7 +699,7 @@ async def test_what_the_model_sees_is_bounded(tmp_path: Path) -> None:
         stdout_truncated=True,
         outputs=(Output("graphe.png", 2048, "0" * 64),),
     )
-    source = make_source(tmp_path, FakeRunner(lambda _e, _a: answer))
+    source = make_source(tmp_path, FakeRunner(lambda _e, _a: answer), files=None)
     Catalog(tmp_path / "catalogue").save("default", forged())
     async with source.open(source_context()) as tools:
         out = await by_name(tools)["carres"].invoke({"n": 1}, tool_context())
@@ -665,7 +708,7 @@ async def test_what_the_model_sees_is_bounded(tmp_path: Path) -> None:
     assert "[… 500 caractères omis …]" in text
     assert len(text) < SHOWN + 300
     assert "stderr :\nattention" in text
-    assert "fichiers produits, non rapatriés : graphe.png (2048 o)" in text
+    assert "fichiers non rapatriés :\n- graphe.png (2048 o) : rapatriement désactivé" in text
     assert out.data == [1, 2]
 
 
@@ -678,8 +721,9 @@ def test_loom_waits_as_long_as_execd(tmp_path: Path) -> None:
             return {tool.spec.name: tool.spec.timeout for tool in tools}
 
     timeouts = asyncio.run(specs())
-    # Boot (60 s), le job (10 s + 5), la marge (30 s) ; dix exemples pour forge.
-    assert timeouts == {FORGE: 240.0, CALL: 105.0, "carres": 105.0}
+    # Boot (60 s), le job (10 s + 5), la marge (30 s) ; dix exemples pour forge,
+    # sans rapatriement ; 30 s de transfert pour les autres.
+    assert timeouts == {FORGE: 240.0, CALL: 135.0, "carres": 135.0}
 
 
 # ---------------------------------------------------------------------- #
@@ -874,3 +918,460 @@ async def test_validate_and_replay_start_no_vm(
     assert report.identical, report.divergence
     assert report.tool_calls == (2, 2)
     assert not vm.is_running()
+
+
+# ---------------------------------------------------------------------- #
+# Fichiers de out/ : rapatriés, bornés, contrôlés
+# ---------------------------------------------------------------------- #
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 24
+SVG = b'<svg xmlns="http://www.w3.org/2000/svg"/>'
+
+
+def produced(files: Mapping[str, bytes], skipped: tuple[str, ...] = ()) -> Execution:
+    """Le compte rendu d'un job qui a écrit ces fichiers dans out/."""
+    return Execution(
+        ok=True,
+        result="fait",
+        outputs=tuple(
+            Output(path, len(data), hashlib.sha256(data).hexdigest())
+            for path, data in files.items()
+        ),
+        outputs_skipped=skipped,
+    )
+
+
+async def call_producing(
+    tmp_path: Path,
+    files: Mapping[str, bytes],
+    *,
+    served: Mapping[str, bytes] | None = None,
+    policy: FilePolicy | None = DEFAULT_FILES,
+    skipped: tuple[str, ...] = (),
+) -> tuple[Any, FakeJobs]:
+    """Appelle ``carres`` dont le job annonce ``files`` ; get_file sert ``served``."""
+    answer = produced(files, skipped)
+    runner = FakeRunner(lambda _e, _a: answer, files=served if served is not None else files)
+    source = make_source(tmp_path, runner, files=policy)
+    Catalog(tmp_path / "catalogue").save("default", forged())
+    async with source.open(source_context()) as tools:
+        out = await by_name(tools)["carres"].invoke({"n": 1}, tool_context())
+    return out, runner.opened[0]
+
+
+def inline(out: Any) -> list[InlineDataBlock]:
+    return [b for b in out.blocks if isinstance(b, InlineDataBlock)]
+
+
+async def test_files_of_out_come_back_as_data_blocks(tmp_path: Path) -> None:
+    files = {"graphe.svg": SVG, "tableau.csv": b"a;b\n1;2\n", "img/vrai.bin": PNG}
+    out, jobs = await call_producing(tmp_path, files)
+    assert not out.is_error
+    assert out.as_text == '"fait"'
+    # Dans l'ordre des chemins, quel que soit celui du manifeste.
+    assert [(b.name, b.media_type, b.data) for b in inline(out)] == [
+        ("graphe.svg", "image/svg+xml", SVG),
+        # La signature l'emporte sur le nom.
+        ("img/vrai.bin", "image/png", PNG),
+        ("tableau.csv", "text/csv", b"a;b\n1;2\n"),
+    ]
+    assert jobs.gets == sorted(files)
+    assert out.data == "fait"
+
+
+async def test_a_name_of_image_that_the_bytes_deny_is_not_an_image(tmp_path: Path) -> None:
+    out, _ = await call_producing(tmp_path, {"graphe.png": b"pas une image"})
+    [block] = inline(out)
+    assert block.media_type == "application/octet-stream"
+
+
+async def test_bounds_are_applied_before_any_transfer(tmp_path: Path) -> None:
+    policy = FilePolicy(max_files=2, max_file_bytes=10, max_total_bytes=15)
+    files = {
+        "a.txt": b"x" * 8,
+        "a-gros.txt": b"x" * 11,
+        "b.txt": b"y" * 8,
+        "c.txt": b"z",
+        "d": b"w",
+    }
+    out, jobs = await call_producing(tmp_path, files, policy=policy)
+    assert [b.name for b in inline(out)] == ["a.txt", "c.txt"]
+    assert jobs.gets == ["a.txt", "c.txt"]
+    text = out.as_text
+    assert "- a-gros.txt (11 o) : au-delà de " in text
+    assert "- b.txt (8 o) : au-delà de " in text and "par appel" in text
+    assert "- d (1 o) : au-delà de 2 fichiers par appel" in text
+
+
+async def test_a_file_changed_since_the_manifest_is_left_out(tmp_path: Path) -> None:
+    files = {"a.txt": b"avant", "b.txt": b"court", "c.txt": b"bon"}
+    served = {"a.txt": b"apres", "b.txt": b"plus long", "c.txt": b"bon"}
+    out, _ = await call_producing(tmp_path, files, served=served)
+    assert [b.name for b in inline(out)] == ["c.txt"]
+    assert "- a.txt (5 o) : a changé depuis la fin du job" in out.as_text
+    assert "- b.txt (5 o) : a changé depuis la fin du job" in out.as_text
+
+
+async def test_a_refusal_of_execd_leaves_that_file_only(tmp_path: Path) -> None:
+    out, _ = await call_producing(tmp_path, {"a.txt": b"a", "b.txt": b"b"}, served={"b.txt": b"b"})
+    assert [b.name for b in inline(out)] == ["b.txt"]
+    assert "- a.txt (1 o) : fichier absent de out/" in out.as_text
+
+
+async def test_a_broken_session_stops_the_transfer_but_keeps_the_result(tmp_path: Path) -> None:
+    files = {"a.txt": b"a", "b.txt": b"b", "c.txt": b"c"}
+
+    class Breaking(FakeJobs):
+        async def get_file(self, path: str, *, max_bytes: int) -> bytes:
+            if path == "b.txt":
+                raise ProtocolError("connexion perdue")
+            return await super().get_file(path, max_bytes=max_bytes)
+
+    answer = produced(files)
+    runner = FakeRunner(lambda _e, _a: answer, files=files)
+    runner.session = lambda: _ready(Breaking(runner.answer, files))  # type: ignore[method-assign]
+    source = make_source(tmp_path, runner)
+    Catalog(tmp_path / "catalogue").save("default", forged())
+    async with source.open(source_context()) as tools:
+        out = await by_name(tools)["carres"].invoke({"n": 1}, tool_context())
+    assert not out.is_error and out.data == "fait"
+    assert [b.name for b in inline(out)] == ["a.txt"]
+    assert "- b.txt (1 o) : transfert interrompu\n- c.txt (1 o) : transfert interrompu" in (
+        out.as_text
+    )
+
+
+async def _ready(jobs: FakeJobs) -> FakeJobs:
+    return jobs
+
+
+async def test_a_hostile_manifest_is_deduplicated_and_its_names_cleaned(tmp_path: Path) -> None:
+    data = b"abc"
+    entry = Output("x\nfaux.txt", 3, hashlib.sha256(data).hexdigest())
+    long = Output("n" * 300, 3, hashlib.sha256(data).hexdigest())
+    answer = Execution(ok=True, result=1, outputs=(entry, entry, long))
+    runner = FakeRunner(lambda _e, _a: answer, files={"x\nfaux.txt": data, "n" * 300: data})
+    source = make_source(tmp_path, runner)
+    Catalog(tmp_path / "catalogue").save("default", forged())
+    async with source.open(source_context()) as tools:
+        out = await by_name(tools)["carres"].invoke({"n": 1}, tool_context())
+    names = [b.name or "" for b in inline(out)]
+    assert names[1] == "x?faux.txt"
+    assert len(names) == 2 and len(names[0]) == 200 and names[0].endswith("…")
+    assert "- x?faux.txt (3 o) : en double dans le manifeste" in out.as_text
+    assert runner.opened[0].gets == ["n" * 300, "x\nfaux.txt"]
+
+
+async def test_the_list_of_files_left_is_bounded(tmp_path: Path) -> None:
+    files = {f"f{n:03}.txt": b"x" for n in range(40)}
+    out, _ = await call_producing(tmp_path, files, policy=FilePolicy(max_files=5))
+    assert len(inline(out)) == 5
+    text = out.as_text
+    assert text.count("\n- ") == 21
+    assert text.endswith("- … et 15 autre(s)")
+
+
+async def test_the_transfer_has_its_own_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(forge_module, "FETCH_BUDGET", 0.2)
+    files = {"a.txt": b"a", "b.txt": b"b", "c.txt": b"c"}
+
+    class Slow(FakeJobs):
+        async def get_file(self, path: str, *, max_bytes: int) -> bytes:
+            if path == "b.txt":
+                await asyncio.sleep(5)
+            return await super().get_file(path, max_bytes=max_bytes)
+
+    answer = produced(files)
+    runner = FakeRunner(lambda _e, _a: answer, files=files)
+    runner.session = lambda: _ready(Slow(runner.answer, files))  # type: ignore[method-assign]
+    source = make_source(tmp_path, runner)
+    Catalog(tmp_path / "catalogue").save("default", forged())
+    async with source.open(source_context()) as tools:
+        out = await by_name(tools)["carres"].invoke({"n": 1}, tool_context())
+    assert not out.is_error and [b.name for b in inline(out)] == ["a.txt"]
+    assert "- b.txt (1 o) : délai de rapatriement dépassé" in out.as_text
+    assert "- c.txt (1 o) : délai de rapatriement dépassé" in out.as_text
+
+
+async def test_links_and_special_files_are_said(tmp_path: Path) -> None:
+    out, _ = await call_producing(tmp_path, {}, skipped=("lien",))
+    assert "- lien : lien ou fichier spécial, ignoré" in out.as_text
+
+
+async def test_examples_and_failures_fetch_nothing(tmp_path: Path) -> None:
+    files = {"a.txt": b"a"}
+    ok = produced(files)
+    runner = FakeRunner(
+        lambda _e, a: replace(ok, result=14) if a.get("n") == 3 else ok, files=files
+    )
+    source = make_source(tmp_path, runner)
+    async with source.open(source_context()) as tools:
+        out = await by_name(tools)[FORGE].invoke(forging(), tool_context())
+    assert not out.is_error, out.as_text
+    assert runner.opened[0].gets == []
+
+    failed = Execution(ok=False, error=ExecdError("exception", "non"), outputs=ok.outputs)
+    runner = FakeRunner(lambda _e, _a: failed, files=files)
+    source = make_source(tmp_path, runner)
+    async with source.open(source_context()) as tools:
+        out = await by_name(tools)["carres"].invoke({"n": 1}, tool_context())
+    assert out.is_error and runner.opened[0].gets == []
+
+
+async def test_the_forge_description_says_where_files_go_only_when_fetched(tmp_path: Path) -> None:
+    for policy, said in ((DEFAULT_FILES, True), (None, False)):
+        source = make_source(tmp_path, FakeRunner(), files=policy)
+        async with source.open(source_context()) as tools:
+            description = by_name(tools)[FORGE].spec.description
+        assert ("OUT_DIR" in description) is said
+
+
+@pytest.mark.parametrize(
+    ("files", "said"),
+    [
+        ([1], "'files' : un objet"),
+        ({"max": 1}, "'files.max' inconnue"),
+        ({"max_files": 0}, "entier positif"),
+        ({"max_file_bytes": (64 << 20) + 1}, "octets au plus"),
+        ({"max_file_bytes": 10, "max_total_bytes": 5}, "au moins max_file_bytes"),
+        ({"max_files": 513}, "512 au plus"),
+        ({"max_total_bytes": (256 << 20) + 1}, "octets au plus"),
+    ],
+)
+def test_the_factory_checks_files(make_vm: MakeVm, files: Any, said: str) -> None:
+    vm_dir = make_vm()
+    params = {"vm_dir": str(vm_dir), "catalog_dir": "c", "files": files}
+    with pytest.raises(ValueError, match=said):
+        forge_source(name="forge", params=params, secrets={}, base_dir=vm_dir.parent)
+
+
+def test_the_factory_reads_files(make_vm: MakeVm) -> None:
+    vm_dir = make_vm()
+
+    def policy(files: Any) -> FilePolicy | None:
+        params: dict[str, Any] = {"vm_dir": str(vm_dir), "catalog_dir": "c"}
+        if files is not ...:
+            params["files"] = files
+        return forge_source(name="f", params=params, secrets={}, base_dir=vm_dir.parent).files
+
+    assert policy(...) == DEFAULT_FILES
+    assert policy(False) is None
+    assert policy({"max_files": 3}) == FilePolicy(max_files=3)
+
+
+# Avec execd : écrit pour de bon dans out/, rapatrié par file.get.
+
+WRITER = (
+    "import os, time\n"
+    "def ecrit(nom, attente=0):\n"
+    "    time.sleep(attente)\n"
+    "    with open(os.path.join(os.environ['OUT_DIR'], nom), 'w') as f:\n"
+    "        f.write('<svg>' + nom + '</svg>')\n"
+    "    return nom\n"
+)
+WRITER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"nom": {"type": "string"}, "attente": {"type": "number"}},
+    "required": ["nom"],
+}
+
+
+def writing(**changed: Any) -> dict[str, Any]:
+    return forging(
+        name="ecrit",
+        description="Écrit un SVG.",
+        input_schema=WRITER_SCHEMA,
+        code=WRITER,
+        examples=[{"arguments": {"nom": "x.svg"}, "expected": "x.svg"}],
+        **changed,
+    )
+
+
+async def test_a_file_written_in_the_vm_comes_back(tmp_path: Path, execd: Path) -> None:
+    source = make_source(tmp_path, UdsRunner(execd), {"wall_ms": 5000})
+    async with source.open(source_context()) as tools:
+        assert not (await by_name(tools)[FORGE].invoke(writing(), tool_context())).is_error
+        out = await by_name(tools)[CALL].invoke(
+            {"name": "ecrit", "arguments": {"nom": "graphe.svg"}}, tool_context()
+        )
+    assert out.as_text == '"graphe.svg"'
+    [block] = inline(out)
+    assert (block.name, block.media_type, block.data) == (
+        "graphe.svg",
+        "image/svg+xml",
+        b"<svg>graphe.svg</svg>",
+    )
+
+
+async def test_parallel_calls_each_get_their_own_files(tmp_path: Path, execd: Path) -> None:
+    # Sans le verrou tenu jusqu'au transfert, le second job viderait out/
+    # avant que le premier ait été rapatrié.
+    source = make_source(tmp_path, UdsRunner(execd), {"wall_ms": 5000})
+    async with source.open(source_context()) as tools:
+        assert not (await by_name(tools)[FORGE].invoke(writing(), tool_context())).is_error
+        outs = await asyncio.gather(
+            *(
+                by_name(tools)[CALL].invoke(
+                    {"name": "ecrit", "arguments": {"nom": f"{n}.svg", "attente": 0.2}},
+                    tool_context(),
+                )
+                for n in range(3)
+            )
+        )
+    assert [[b.name for b in inline(out)] for out in outs] == [["0.svg"], ["1.svg"], ["2.svg"]]
+
+
+async def test_a_symlink_in_out_is_not_followed(tmp_path: Path, execd: Path) -> None:
+    code = (
+        "import os\n"
+        "def lien(n):\n"
+        "    os.symlink('/etc/passwd', os.path.join(os.environ['OUT_DIR'], 'lien'))\n"
+        "    return n\n"
+    )
+    arguments = forging(name="lien", code=code, examples=[{"arguments": {"n": 1}, "expected": 1}])
+    source = make_source(tmp_path, UdsRunner(execd), {"wall_ms": 5000})
+    async with source.open(source_context()) as tools:
+        assert not (await by_name(tools)[FORGE].invoke(arguments, tool_context())).is_error
+        out = await by_name(tools)[CALL].invoke(
+            {"name": "lien", "arguments": {"n": 2}}, tool_context()
+        )
+    assert inline(out) == []
+    assert "- lien : lien ou fichier spécial, ignoré" in out.as_text
+
+
+# Monté par loom : le fichier va au stockage d'artefacts, le journal en garde l'URI.
+
+FILE_SCRIPT: list[dict[str, Any]] = [
+    {
+        "with_text": "Dessine",
+        "text": "Je forge.",
+        "tool_calls": [{"name": "forge__forge", "arguments": writing()}],
+    },
+    {
+        "with_text": "Dessine",
+        "text": "Je l'appelle.",
+        "tool_calls": [
+            {"name": "forge__call", "arguments": {"name": "ecrit", "arguments": {"nom": "g.svg"}}}
+        ],
+    },
+    {"with_text": "Dessine", "text": "Fait."},
+]
+
+
+async def test_loom_stores_the_file_and_journals_its_uri(
+    tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAUX_EXECD", str(execd))
+    path = config_file(tmp_path / "config", make_vm())
+    config = yaml.safe_load(path.read_text())
+    config["models"][0]["params"]["script"] = FILE_SCRIPT
+    path.write_text(yaml.safe_dump(config, allow_unicode=True))
+    async with Loom(load_config(path)) as loom:
+        run = await loom.run("atelier", "Dessine un graphe.")
+        assert run.status == RunStatus.COMPLETED
+        events = await loom.events(run.run_id)
+        [described] = await loom.session_files(run.session_id)
+        _, data = await loom.session_file(run.session_id, described.file)
+    called = next(
+        e.payload
+        for e in events
+        if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "forge__call"
+    )
+    [ref] = [b for b in called.output.blocks if isinstance(b, ArtifactRefBlock)]
+    assert called.output.artifacts == (ref.uri,)
+    assert (ref.name, ref.media_type, ref.size) == ("g.svg", "image/svg+xml", 16)
+    assert (described.uri, described.origin, described.tool_name) == (
+        ref.uri,
+        "tool_output",
+        "forge__call",
+    )
+    assert data == b"<svg>g.svg</svg>"
+    # Le journal ne porte que la référence, jamais les octets.
+    journal = "".join(p.read_text() for p in (tmp_path / "config" / "data").rglob("*.jsonl"))
+    assert "<svg>g.svg</svg>" not in journal
+    async with Loom(load_config(path)) as loom:
+        report = await loom.replay(run.run_id)
+    assert report.identical, report.divergence
+
+
+async def test_a_forged_file_goes_from_the_vm_to_a_folder_through_a_subagent(
+    tmp_path: Path, make_vm: MakeVm, execd: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La forme de l'agent de Denis : un chef, un forgeron en sous-agent, un dossier de rendu.
+
+    Le forgeron forge et appelle ; son fichier remonte au chef, qui le copie
+    dans le dossier sans jamais en avoir lu les octets.
+    """
+    monkeypatch.setenv("FAUX_EXECD", str(execd))
+    base = tmp_path / "config"
+    (base / "agents").mkdir(parents=True)
+    (base / "rendu").mkdir()
+    chef_script = [
+        {"tool_calls": [{"name": "forgeron", "arguments": {"message": "Dessine g.svg"}}]},
+        {
+            "tool_calls": [
+                {
+                    "name": "local_files",
+                    "arguments": {"action": "write", "path": "rendu/g.svg", "file": "g.svg"},
+                }
+            ]
+        },
+        {"text": "Livré dans rendu/g.svg."},
+    ]
+    config = {
+        "version": 1,
+        "models": [
+            {"id": "CHEF", "sdk": "fake", "model": "chef-1", "params": {"script": chef_script}},
+            {"id": "FORGE", "sdk": "fake", "model": "forge-1", "params": {"script": FILE_SCRIPT}},
+        ],
+        "storage": {"events": {"backend": "jsonl", "path": "data"}},
+        "tool_sources": [
+            {
+                "name": "forge",
+                "entry_point": "forge",
+                "params": {
+                    "vm_dir": str(make_vm()),
+                    "catalog_dir": "catalogue",
+                    "limits": {"wall_ms": 5000},
+                },
+            }
+        ],
+    }
+    chef = {
+        "name": "chef",
+        "main": {"model": "CHEF", "system": "Tu livres."},
+        "max_iterations": 5,
+        "tools": [
+            {
+                "python": "loom.local_files",
+                "folders": [{"name": "rendu", "path": "rendu", "rights": ["read", "write"]}],
+            }
+        ],
+        "subagents": [{"agent": "forgeron", "name": "forgeron"}],
+    }
+    forgeron = {
+        "name": "forgeron",
+        "description": "Forge des outils.",
+        "expose": {"rest": False, "mcp": False},
+        "main": {"model": "FORGE", "system": "Tu forges."},
+        "max_iterations": 5,
+        "tools": [{"source": "forge"}],
+    }
+    (base / "loom.yaml").write_text(yaml.safe_dump(config, allow_unicode=True))
+    for agent in (chef, forgeron):
+        (base / "agents" / f"{agent['name']}.yaml").write_text(
+            yaml.safe_dump(agent, allow_unicode=True)
+        )
+    async with Loom(load_config(base / "loom.yaml")) as loom:
+        run = await loom.run("chef", "Dessine un graphe et range-le.")
+        events = await loom.events(run.run_id)
+    assert run.status == RunStatus.COMPLETED, run
+    assert (base / "rendu" / "g.svg").read_bytes() == b"<svg>g.svg</svg>"
+    delegated = next(
+        e.payload
+        for e in events
+        if isinstance(e.payload, ToolCompleted) and e.payload.tool_name == "forgeron"
+    )
+    assert [b.name for b in delegated.output.blocks if isinstance(b, ArtifactRefBlock)] == ["g.svg"]

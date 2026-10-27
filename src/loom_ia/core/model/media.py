@@ -93,6 +93,32 @@ def extension(media_type: str) -> str:
     return _EXTENSIONS.get(media_type.split(";", 1)[0].strip().lower(), "bin")
 
 
+# Type d'un nom de fichier, d'après son extension : la table ci-dessus lue à
+# l'envers (le premier type d'une extension l'emporte), et quelques variantes.
+_BY_EXTENSION: Final[Mapping[str, str]] = {
+    **{ext: media for media, ext in reversed(_EXTENSIONS.items())},
+    "jpeg": "image/jpeg",
+    "htm": "text/html",
+}
+OCTETS: Final = "application/octet-stream"
+
+
+def media_type_of(name: str, data: bytes) -> str:
+    """Type d'un fichier produit par du code qu'on ne connaît pas.
+
+    La signature d'une image l'emporte sur le nom. Un nom d'image que la
+    signature ne confirme pas donne ``application/octet-stream`` : sinon, un
+    « graphe.png » qui n'en est pas un partirait comme image vers un modèle
+    qui les voit, et le fournisseur refuserait la requête. Hors images, le
+    type vient de l'extension (table de loom, pas celle du système : le même
+    fichier a le même type partout).
+    """
+    if (sniffed := sniff(data)) is not None:
+        return sniffed
+    media = _BY_EXTENSION.get(Path(name).suffix.removeprefix(".").lower(), OCTETS)
+    return OCTETS if is_image(media) else media
+
+
 def _component(value: str) -> str:
     """Segment d'URI et de chemin sûr : encodé, jamais « . » ni « .. »."""
     encoded = quote(value, safe="-_")

@@ -144,7 +144,7 @@ from loom_ia.engine.delegated import (
 )
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.idempotency import JournalIdempotency
-from loom_ia.engine.media import size_label
+from loom_ia.engine.media import ConversationFiles, size_label
 from loom_ia.engine.offload import (
     DEFAULT_OFFLOAD_OVER,
     ArtifactReadTool,
@@ -975,6 +975,16 @@ class ToolExecutor:
             ),
             # Une copie par appel : un outil qui modifierait une valeur ne touche pas les autres.
             state=MappingProxyType(deepcopy(dict(view.session_state))),
+            files=(
+                ConversationFiles(
+                    (*view.session, *view.state.messages),
+                    self.artifacts,
+                    tenant=state.context.tenant_id,
+                    session=state.session_id,
+                )
+                if self.artifacts is not None
+                else None
+            ),
         )
         started = time.perf_counter()
         consumption: Consumption | None = None

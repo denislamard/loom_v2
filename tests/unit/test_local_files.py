@@ -10,6 +10,7 @@ import os
 import re
 import stat
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -20,16 +21,30 @@ from pydantic import JsonValue, ValidationError
 
 import loom_ia.tools_builtin._folders as folders_module
 from loom_ia.access.cli import main
+from loom_ia.adapters.artifacts import InMemoryArtifactStore
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, agent_json_schema, load_config
 from loom_ia.core.events import ToolCompleted
-from loom_ia.core.model import DEFAULT_TENANT, RunId, RunStatus, SessionId, TenantId
+from loom_ia.core.model import (
+    DEFAULT_TENANT,
+    ArtifactRefBlock,
+    Message,
+    RunId,
+    RunStatus,
+    SessionId,
+    TenantId,
+    ToolOutput,
+    ToolResultBlock,
+    artifact_uri,
+)
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
 from loom_ia.engine import begin_run, drive
+from loom_ia.engine.media import ConversationFiles
 from loom_ia.runtime import build_agent
 from loom_ia.tenancy import Tenants
 from loom_ia.tools_builtin import BuiltinContext, Protected
 from loom_ia.tools_builtin.local_files import (
+    MAX_COPY_BYTES,
     MAX_READ_BYTES,
     TEMP_PREFIX,
     LocalFilesTool,
@@ -926,3 +941,152 @@ def test_the_schema_shows_rights_as_a_list_and_approval() -> None:
         "enum": ["read", "write", "overwrite", "delete"]
     }
     assert "approval" not in spec["required"]
+
+
+# --- Copie d'un fichier de la conversation (write avec file) ------------------
+
+
+async def seen(*files: tuple[str, bytes, str]) -> ConversationFiles:
+    """Une conversation dont un résultat d'outil porte ces fichiers (nom, octets, type)."""
+    store = InMemoryArtifactStore()
+    refs: list[ArtifactRefBlock] = []
+    for name, data, media in files:
+        uri = artifact_uri("default", "s", data, media)
+        await store.put(uri, data)
+        refs.append(ArtifactRefBlock(uri=uri, media_type=media, size=len(data), name=name))
+    message = Message(
+        role="tool", blocks=(ToolResultBlock(call_id="k1", output=ToolOutput(blocks=tuple(refs))),)
+    )
+    return ConversationFiles((message,), store, tenant="default", session="s")
+
+
+def with_files(conversation: ConversationFiles | None) -> ToolContext:
+    return replace(CONTEXT, files=conversation)
+
+
+PNG_BYTES: Final = b"\x89PNG\r\n\x1a\n" + b"\0" * 24
+
+
+async def test_write_copies_a_file_of_the_conversation(files: LocalFilesTool, disk: Path) -> None:
+    conversation = await seen(
+        ("g.svg", b"<svg>ancien</svg>", "image/svg+xml"),
+        ("photo.png", PNG_BYTES, "image/png"),
+        ("g.svg", b"<svg>dernier</svg>", "image/svg+xml"),
+    )
+    out = await files.invoke(
+        {"action": "write", "path": "work/rendu/g.svg", "file": "g.svg"}, with_files(conversation)
+    )
+    assert not out.is_error
+    # Le plus récent du nom ; binaire compris.
+    assert (disk / "work/rendu/g.svg").read_bytes() == b"<svg>dernier</svg>"
+    await files.invoke(
+        {"action": "write", "path": "work/p.png", "file": "photo.png"}, with_files(conversation)
+    )
+    assert (disk / "work/p.png").read_bytes() == PNG_BYTES
+    # Le nom dans le stockage désigne aussi le fichier.
+    stored = conversation.find("photo.png")
+    assert stored is not None
+    await files.invoke(
+        {"action": "write", "path": "work/q.png", "file": stored.uri.rsplit("/", 1)[-1]},
+        with_files(conversation),
+    )
+    assert (disk / "work/q.png").read_bytes() == PNG_BYTES
+
+
+@pytest.mark.parametrize(
+    ("arguments", "said"),
+    [
+        ({"action": "write", "path": "work/x"}, "l'un des deux"),
+        ({"action": "write", "path": "work/x", "content": "a", "file": "g.svg"}, "l'un des deux"),
+        (
+            {"action": "read", "path": "work/sub/a.txt", "file": "g.svg"},
+            "'file' ne sert qu'à write",
+        ),
+        (
+            {"action": "write", "path": "work/x", "file": "autre.svg"},
+            "inconnu ; fichiers de la conversation : g.svg",
+        ),
+        ({"action": "write", "path": "archives/x", "file": "g.svg"}, "write"),
+        ({"action": "write", "path": "work/sub/a.txt", "file": "g.svg"}, "existe"),
+    ],
+)
+async def test_a_copy_is_refused_like_a_write(
+    files: LocalFilesTool, arguments: dict[str, JsonValue], said: str
+) -> None:
+    conversation = await seen(("g.svg", b"<svg/>", "image/svg+xml"))
+    with pytest.raises(ToolError, match=said):
+        await files.invoke(arguments, with_files(conversation))
+
+
+async def test_a_copy_needs_the_conversation_files(files: LocalFilesTool) -> None:
+    with pytest.raises(ToolError, match="pas de stockage"):
+        await files.invoke({"action": "write", "path": "work/x", "file": "g.svg"}, CONTEXT)
+
+
+async def test_a_copy_is_bounded_and_a_missing_file_is_said(files: LocalFilesTool) -> None:
+    store = InMemoryArtifactStore()
+    big = ArtifactRefBlock(
+        uri="artifact://default/s/aa.bin",
+        media_type="application/octet-stream",
+        size=MAX_COPY_BYTES + 1,
+        name="gros.bin",
+    )
+    gone = ArtifactRefBlock(
+        uri="artifact://default/s/bb.txt", media_type="text/plain", size=3, name="parti.txt"
+    )
+    message = Message(
+        role="tool", blocks=(ToolResultBlock(call_id="k", output=ToolOutput(blocks=(big, gone))),)
+    )
+    conversation = ConversationFiles((message,), store, tenant="default", session="s")
+    with pytest.raises(ToolError, match="au-delà de 16,0 Mo"):
+        await files.invoke(
+            {"action": "write", "path": "work/x", "file": "gros.bin"}, with_files(conversation)
+        )
+    with pytest.raises(ToolError, match="absent du stockage"):
+        await files.invoke(
+            {"action": "write", "path": "work/x", "file": "parti.txt"}, with_files(conversation)
+        )
+
+
+async def test_a_reference_of_another_session_or_client_is_not_a_file_of_the_conversation(
+    files: LocalFilesTool,
+) -> None:
+    store = InMemoryArtifactStore()
+    refs: list[ArtifactRefBlock] = []
+    for tenant, session, name in (("autre", "s", "a.txt"), ("default", "x", "b.txt")):
+        uri = artifact_uri(tenant, session, name.encode(), "text/plain")
+        await store.put(uri, name.encode())
+        refs.append(ArtifactRefBlock(uri=uri, media_type="text/plain", size=5, name=name))
+    message = Message(role="user", blocks=tuple(refs))
+    conversation = ConversationFiles((message,), store, tenant="default", session="s")
+    assert conversation.names() == ()
+    with pytest.raises(ToolError, match="inconnu ; fichiers de la conversation : aucun"):
+        await files.invoke(
+            {"action": "write", "path": "work/x", "file": "a.txt"}, with_files(conversation)
+        )
+
+
+def test_a_copy_is_assessed_like_a_write(files: LocalFilesTool) -> None:
+    copy = {"action": "write", "path": "clients/g.svg", "file": "g.svg"}
+    assessed = files.assess_call(copy)
+    assert (assessed.approval, assessed.side_effects, assessed.idempotent) == (
+        "always",
+        "reversible",
+        True,
+    )
+    assert "écrire clients/g.svg" in (assessed.reason or "")
+    replaced = files.assess_call({**copy, "path": "work/g.svg", "overwrite": True})
+    assert (replaced.approval, replaced.side_effects) == ("never", "irreversible")
+
+
+async def test_a_copy_done_again_after_a_resume_writes_nothing(
+    files: LocalFilesTool, disk: Path
+) -> None:
+    conversation = await seen(("g.svg", b"<svg/>", "image/svg+xml"))
+    arguments: dict[str, JsonValue] = {"action": "write", "path": "work/g.svg", "file": "g.svg"}
+    first = await files.invoke(arguments, with_files(conversation))
+    again = await files.invoke(arguments, with_files(conversation))
+    assert (first.data, again.data) == (
+        {"path": "work/g.svg", "bytes": 6, "written": True, "replaced": False},
+        {"path": "work/g.svg", "bytes": 6, "written": False},
+    )

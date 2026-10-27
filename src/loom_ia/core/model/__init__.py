@@ -84,6 +84,7 @@ from loom_ia.core.model.media import (
     artifact_uri,
     extension,
     is_image,
+    media_type_of,
     sniff,
 )
 from loom_ia.core.model.messages import (
@@ -381,6 +382,7 @@ __all__ = [
     "is_image",
     "is_session_state",
     "is_system_note",
+    "media_type_of",
     "message_to_chunks",
     "new_event_id",
     "new_id",

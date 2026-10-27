@@ -650,6 +650,16 @@ Un appel refusé est un résultat en erreur, que le modèle peut corriger : le r
 
 Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, et jamais s'il est en lecture seule. Écrire le contenu qu'il a déjà ne change rien et réussit : relancée après une interruption, une écriture ne casse donc pas sur « existe déjà ». L'écriture est atomique (fichier temporaire, puis mise en place) ; une création sans `overwrite` est exclusive, si bien que deux appels d'une même étape vers un même nouveau fichier ne s'écrasent pas : le second reçoit « existe déjà ». Un fichier remplacé garde ses permissions.
 
+#### Copier un fichier de la conversation
+
+Depuis 2.0.15, `write` peut copier, au lieu d'écrire `content`, un fichier que l'agent a vu passer : une pièce jointe, une image rendue par un outil Python, un fichier produit par un outil forgé dans la VM, ou par un sous-agent. Il le désigne par son nom, celui que montre la mention `[fichier graphe.svg (image/svg+xml, 8 Ko)]` :
+
+```json
+{"action": "write", "path": "work/rendus/graphe.svg", "file": "graphe.svg"}
+```
+
+Les octets ne passent pas par le modèle : loom les relit dans le stockage d'artefacts et les écrit tels quels, binaire compris, 16 Mo au plus. Le reste est celui de `write` : mêmes droits, même approbation (un dossier sensible se règle par `approval: { write: always }`), écriture atomique, `overwrite` pour remplacer, et une copie refaite après une reprise qui ne change rien. Un nom porté par plusieurs fichiers désigne le plus récent ; le nom dans le stockage (`<sha256>.svg`) désigne aussi un fichier. Seuls les fichiers de la conversation de l'agent sont visibles, jamais ceux d'une autre session ou d'un autre client, et un fichier rendu par un outil se copie au tour suivant, pas dans le même lot d'appels. Sans stockage d'artefacts, la copie est refusée. `read` reste limité au texte UTF-8.
+
 #### Dossiers imbriqués et liens symboliques
 
 C'est le dossier déclaré **le plus profond** qui décide. Déclarez `archives` en lecture seule à l'intérieur de `work`, et `work/archives/vieux.txt` ne s'écrit ni ne se supprime, quel que soit le nom par lequel on y passe.

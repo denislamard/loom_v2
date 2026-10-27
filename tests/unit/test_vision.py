@@ -178,6 +178,42 @@ async def test_tool_images_follow_the_results_when_needed() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("capabilities", "reason"),
+    [
+        ({"image_formats": ("jpeg",)}, "format png refusé par le modèle VISION"),
+        ({"max_image_bytes": 10}, "32 octets, au-delà des 10 acceptés par le modèle VISION"),
+    ],
+)
+async def test_tool_images_the_model_refuses_become_mentions(
+    capabilities: dict[str, Any], reason: str
+) -> None:
+    # Le run ne doit pas échouer à cause d'une image qu'un outil a produite :
+    # elle reste dans l'historique, et chaque appel suivant échouerait aussi.
+    files = InMemoryArtifactStore()
+    image = await stored(files)
+    messages = (
+        Message.user("Trace."),
+        tool_call_message(("c1", "tracer", {})),
+        Message(
+            role="tool", blocks=(ToolResultBlock(call_id="c1", output=ToolOutput(blocks=(image,))),)
+        ),
+    )
+    spec = VISION.model_copy(
+        update={"capabilities": ModelCapabilities(vision=True, **capabilities)}
+    )
+    resolved = await MediaResolver(spec, files).resolve(
+        ModelRequest(model_id="m", messages=messages)
+    )
+    assert len(resolved.messages) == 3
+    result = resolved.messages[2].blocks[0]
+    assert isinstance(result, ToolResultBlock)
+    [mention] = result.output.blocks
+    assert isinstance(mention, TextBlock)
+    assert mention.text.startswith("[image renvoyée photo.png (image/png, 32 octets) : non envoyée")
+    assert reason in mention.text
+
+
 # --- Pièces jointes d'un run ---------------------------------------------------
 
 

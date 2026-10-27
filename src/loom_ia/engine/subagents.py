@@ -201,12 +201,22 @@ def _output(name: str, final: RunState) -> ToolOutput:
         case RunStatus.COMPLETED if final.output is not None:
             blocks = tuple(_shown(block) for block in final.output.blocks)
             kept: tuple[OutputBlock, ...] = tuple(b for b in blocks if b is not None)
+            produced = [a for a in final.artifacts if a.origin == "tool_output"]
+            # Les fichiers produits par les outils de l'enfant suivent sa réponse :
+            # sans eux, le parent n'apprendrait leur existence que si l'enfant les
+            # nommait, et ne pourrait ni les voir ni les livrer.
+            shown = {b.uri for b in kept if isinstance(b, ArtifactRefBlock)}
+            files = tuple(
+                ArtifactRefBlock(uri=a.uri, media_type=a.media_type, size=a.size, name=a.name)
+                for a in produced
+                if a.uri not in shown
+            )
             output = ToolOutput(
-                blocks=kept,
-                artifacts=tuple(a.uri for a in final.artifacts if a.origin == "tool_output"),
+                blocks=(*kept, *files),
+                artifacts=tuple(a.uri for a in produced),
             )
             if not output.as_text.strip() and not any(
-                isinstance(b, ArtifactRefBlock) for b in kept
+                isinstance(b, ArtifactRefBlock) for b in output.blocks
             ):
                 return ToolOutput.error(f"Le sous-agent {name} n'a rien répondu.")
             return output

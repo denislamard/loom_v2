@@ -23,7 +23,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import JsonValue
 
-from loom_ia.core.model.content import ToolOutput
+from loom_ia.core.model.content import ArtifactRefBlock, ToolOutput
 from loom_ia.core.model.context import CallerContext
 from loom_ia.core.model.ids import RunId, SessionId, TenantId
 from loom_ia.core.model.tooling import SideEffects, ToolSpec
@@ -37,6 +37,26 @@ def idempotency_key(run_id: RunId, call_id: str) -> str:
 
 # Signalement d'un effet déjà mémorisé, avec la clé sous laquelle il l'est.
 type ReuseNote = Callable[[str], None]
+
+
+class SeenFiles(Protocol):
+    """Les fichiers que l'agent a vus passer : pièces jointes, fichiers rendus par ses outils.
+
+    C'est tout ce qu'un outil peut en relire : un fichier se désigne par le
+    nom sous lequel le modèle l'a vu, jamais par une URI qu'on devinerait.
+    """
+
+    def find(self, name: str) -> ArtifactRefBlock | None:
+        """Le dernier fichier de ce nom (nom donné, ou nom dans le stockage)."""
+        ...
+
+    def names(self) -> tuple[str, ...]:
+        """Les noms des fichiers vus, sans doublon, pour dire ce qui existe."""
+        ...
+
+    async def read(self, file: ArtifactRefBlock, *, max_bytes: int) -> bytes:
+        """Ses octets ; ``ValueError`` au-delà de ``max_bytes``, ``LookupError`` s'il manque."""
+        ...
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -65,6 +85,9 @@ class ToolContext:
     # clés que l'agent déclare, valeurs par défaut comprises. Ce qu'un voisin
     # du même lot écrit n'y est pas encore. Vide hors moteur, et dans un sous-run.
     state: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
+    # Fichiers de la conversation, en lecture (``SeenFiles``). Absent hors
+    # moteur, et sans stockage d'artefacts.
+    files: SeenFiles | None = field(default=None, compare=False)
 
     @property
     def idempotency_key(self) -> str:

@@ -15,6 +15,7 @@ le code.
           vm_dir: ~/temp          # dossier de VM construit par make_vm.sh
           catalog_dir: outils     # catalogue, relatif au dossier de la config
           limits: {wall_ms: 10000}
+          files: {max_files: 10}  # fichiers de out/ rapatriés ; false : aucun
 
 La source fournit à chaque run :
 
@@ -45,6 +46,15 @@ d'événements, pour les exemples comme pour chaque appel : ses motifs
 (``pattern``, ``patternProperties``…) s'exécutent avec un délai
 (``core.bounded_regex``). Un motif trop coûteux refuse l'outil ou l'appel ; il
 ne gèle pas l'hôte.
+
+Fichiers produits : ce qu'un outil forgé écrit dans ``out/`` est rapatrié à
+la fin de l'appel, dans la même prise de la session (un autre appel du run
+viderait ``out/``), puis rendu en blocs de données que le moteur range dans
+le stockage d'artefacts : le modèle n'en voit qu'une mention (ou l'image,
+s'il les voit), le journal l'URI. Chaque fichier est borné en nombre et en
+taille avant transfert, d'après le manifeste d'execd, puis contrôlé à
+l'arrivée (taille et sha256) : un fichier qui a changé entre-temps est
+écarté, pas rendu à moitié. Les exemples de ``forge`` ne rapatrient rien.
 """
 
 import ast
@@ -58,6 +68,7 @@ import os
 import re
 import shutil
 import sys
+import unicodedata
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -80,7 +91,14 @@ from loom_ia.adapters.firecracker.session import (
 from loom_ia.adapters.firecracker.vm import Vm, VmError
 from loom_ia.core.bounded_regex import RegexTimeout, bounded_validator, check_schema
 from loom_ia.core.json_values import same_json
-from loom_ia.core.model import TextBlock, ToolOutput, ToolSpec
+from loom_ia.core.model import (
+    InlineDataBlock,
+    OutputBlock,
+    TextBlock,
+    ToolOutput,
+    ToolSpec,
+    media_type_of,
+)
 from loom_ia.core.ports import SourceContext, SourceUnavailable, Tool, ToolContext, ToolError
 
 __all__ = [
@@ -88,6 +106,7 @@ __all__ = [
     "FORGE",
     "MANIFEST",
     "Catalog",
+    "FilePolicy",
     "ForgeSource",
     "Forged",
     "Jobs",
@@ -127,6 +146,18 @@ LIMIT_KEYS: Final = (
 DEFAULT_WALL_MS: Final = 30_000
 # Attente du boot de la VM et d'execd, au premier appel d'un run (secondes).
 BOOT_WAIT: Final = 60.0
+# Rapatriement des fichiers de out/ : plafond d'un fichier (params ``files``),
+# et temps laissé au transfert dans le délai de l'outil (secondes).
+MAX_FILE_CEILING: Final = 64 << 20
+MAX_TOTAL_CEILING: Final = 256 << 20
+# out_files : ce qu'execd accepte au plus dans out/ (son plafond).
+MAX_FILES_CEILING: Final = 512
+FETCH_WAIT: Final = 30.0
+# Échéance du transfert lui-même, prise dans FETCH_WAIT (le reste : marge).
+FETCH_BUDGET: Final = 25.0
+# Nom de fichier montré, et lignes « non rapatriés » montrées au plus.
+MAX_NAME: Final = 200
+SHOWN_LEFT: Final = 20
 
 _ERRORS: Final = (VmError, ProtocolError, ExecdError, TimeoutError, OSError)
 # Les champs de ``forge`` admis aussi en texte JSON.
@@ -158,6 +189,8 @@ class Jobs(Protocol):
         env: Mapping[str, str] | None = None,
         wait: float | None = None,
     ) -> Execution: ...
+
+    async def get_file(self, path: str, *, max_bytes: int) -> bytes: ...
 
     async def close(self) -> None: ...
 
@@ -202,12 +235,104 @@ class VmRunner:
             self.started = False
 
 
+@dataclass(frozen=True, slots=True)
+class FilePolicy:
+    """Ce qu'un appel rapatrie de ``out/`` (params ``files``)."""
+
+    max_files: int = 10
+    max_file_bytes: int = 16 << 20
+    max_total_bytes: int = 32 << 20
+
+
+DEFAULT_FILES: Final = FilePolicy()
+
+
+@dataclass(frozen=True, slots=True)
+class _Fetched:
+    """Fichiers rapatriés d'une exécution, et ceux laissés dans la VM, avec la raison."""
+
+    blocks: tuple[InlineDataBlock, ...] = ()
+    left: tuple[str, ...] = ()
+
+
+async def _fetch(jobs: Jobs, execution: Execution, policy: FilePolicy) -> _Fetched:
+    """Rapatrie les fichiers du manifeste, dans ses bornes ; jamais un fichier altéré.
+
+    Le manifeste vient de l'invité : il est trié (l'ordre d'``os.walk`` entre
+    sous-dossiers n'est pas garanti), dédoublonné, et ses noms nettoyés avant
+    d'être montrés. Le transfert a son échéance, prise dans le délai de
+    l'outil : passée, la session est fermée et le reste listé, le résultat du
+    job gardé.
+    """
+    blocks: list[InlineDataBlock] = []
+    left: list[str] = []
+    total = 0
+    deadline = asyncio.get_running_loop().time() + FETCH_BUDGET
+    seen: set[str] = set()
+    outputs = sorted(execution.outputs, key=lambda o: o.path)
+    for index, output in enumerate(outputs):
+        label = f"{_shown(output.path)} ({output.size} o)"
+        if output.path in seen:
+            left.append(f"{label} : en double dans le manifeste")
+            continue
+        seen.add(output.path)
+        if len(blocks) >= policy.max_files:
+            left.append(f"{label} : au-delà de {policy.max_files} fichiers par appel")
+            continue
+        if output.size > policy.max_file_bytes:
+            left.append(f"{label} : au-delà de {_megas(policy.max_file_bytes)} par fichier")
+            continue
+        if total + output.size > policy.max_total_bytes:
+            left.append(f"{label} : au-delà de {_megas(policy.max_total_bytes)} par appel")
+            continue
+        try:
+            # Borné par la taille annoncée : un fichier qui grossit est refusé
+            # en route, sans tout lire.
+            async with asyncio.timeout_at(deadline):
+                data = await jobs.get_file(output.path, max_bytes=output.size)
+        except ValueError:
+            left.append(f"{label} : a changé depuis la fin du job")
+            continue
+        except ExecdError as exc:
+            left.append(f"{label} : {exc.message}")
+            continue
+        except (ProtocolError, TimeoutError, OSError) as exc:
+            # La session est fermée (Session ferme sur délai ou annulation) :
+            # rien d'autre ne viendra.
+            late = asyncio.get_running_loop().time() >= deadline
+            reason = "délai de rapatriement dépassé" if late else "transfert interrompu"
+            logger.warning("Source forge : rapatriement arrêté (%s) — %s", reason, exc)
+            left += [f"{_shown(o.path)} ({o.size} o) : {reason}" for o in outputs[index:]]
+            break
+        if len(data) != output.size or hashlib.sha256(data).hexdigest() != output.sha256:
+            left.append(f"{label} : a changé depuis la fin du job")
+            continue
+        total += len(data)
+        name = _shown(output.path)
+        blocks.append(InlineDataBlock(media_type=media_type_of(name, data), data=data, name=name))
+    left += [
+        f"{_shown(path)} : lien ou fichier spécial, ignoré" for path in execution.outputs_skipped
+    ]
+    return _Fetched(tuple(blocks), tuple(left))
+
+
+def _shown(path: str) -> str:
+    """Un chemin de l'invité tel qu'on peut le montrer : sans caractère de contrôle, borné."""
+    clean = "".join("?" if unicodedata.category(c).startswith("C") else c for c in path)
+    return clean if len(clean) <= MAX_NAME else f"{clean[: MAX_NAME - 1]}…"
+
+
+def _megas(size: int) -> str:
+    return f"{size / (1 << 20):g} Mo".replace(".", ",")
+
+
 @dataclass(slots=True)
 class _Run:
     """Ce que les outils d'un run partagent : sa session, ouverte au premier appel."""
 
     runner: Runner
     limits: Mapping[str, int]
+    files: FilePolicy | None = None
     jobs: Jobs | None = None
     # Empreinte du code déposé par module, pour ne le renvoyer qu'au changement.
     loaded: dict[str, str] = field(default_factory=dict[str, str])
@@ -215,8 +340,21 @@ class _Run:
 
     async def execute(self, name: str, code: str, arguments: Mapping[str, object]) -> Execution:
         """Dépose le module si besoin, puis appelle ``name:name`` avec ces arguments."""
-        # Dépôt et appel d'un seul tenant : deux appels parallèles du run ne
-        # s'intercalent pas (execd n'en exécute qu'un à la fois de toute façon).
+        execution, _ = await self._execute(name, code, arguments, fetch=False)
+        return execution
+
+    async def produce(
+        self, name: str, code: str, arguments: Mapping[str, object]
+    ) -> tuple[Execution, _Fetched]:
+        """Comme ``execute``, puis rapatrie ce que le job a écrit dans ``out/``."""
+        return await self._execute(name, code, arguments, fetch=True)
+
+    async def _execute(
+        self, name: str, code: str, arguments: Mapping[str, object], *, fetch: bool
+    ) -> tuple[Execution, _Fetched]:
+        # Dépôt, appel et rapatriement d'un seul tenant : deux appels parallèles
+        # du run ne s'intercalent pas (execd n'en exécute qu'un à la fois de
+        # toute façon), et le job suivant ne vide pas out/ avant le transfert.
         async with self.lock:
             if self.jobs is None or self.jobs.closed:
                 jobs = await self.runner.session()
@@ -233,9 +371,14 @@ class _Run:
             if self.loaded.get(name) != digest:
                 await self.jobs.put_code(f"{name}.py", code.encode())
                 self.loaded[name] = digest
-            return await self.jobs.exec(
+            execution = await self.jobs.exec(
                 f"{name}:{name}", args=dict(arguments), limits=self.limits or None
             )
+            if not fetch or not execution.ok:
+                return execution, _Fetched()
+            if self.files is None:
+                return execution, _Fetched(left=_kept_in_vm(execution))
+            return execution, await _fetch(self.jobs, execution, self.files)
 
     async def close(self) -> None:
         if self.jobs is not None:
@@ -528,7 +671,7 @@ def _bounded(text: str, limit: int = SHOWN) -> str:
     return f"{text[:half]}\n[… {len(text) - 2 * half} caractères omis …]\n{text[-half:]}"
 
 
-def _streams(execution: Execution) -> str:
+def _streams(execution: Execution, *, files: bool = True) -> str:
     parts: list[str] = []
     for label, text, cut in (
         ("stdout", execution.stdout, execution.stdout_truncated),
@@ -537,10 +680,14 @@ def _streams(execution: Execution) -> str:
         if text:
             said = " (tronqué par la VM)" if cut else ""
             parts.append(f"{label}{said} :\n{_bounded(text)}")
-    if execution.outputs:
-        files = ", ".join(f"{o.path} ({o.size} o)" for o in execution.outputs)
-        parts.append(f"fichiers produits, non rapatriés : {files}")
+    if files and execution.outputs:
+        said = ", ".join(f"{o.path} ({o.size} o)" for o in execution.outputs)
+        parts.append(f"fichiers produits, non rapatriés : {said}")
     return "\n\n".join(parts)
+
+
+def _kept_in_vm(execution: Execution) -> tuple[str, ...]:
+    return tuple(f"{o.path} ({o.size} o) : rapatriement désactivé" for o in execution.outputs)
 
 
 def _failure(execution: Execution) -> str:
@@ -562,13 +709,21 @@ def _failure(execution: Execution) -> str:
     return "\n".join(lines)
 
 
-def _output(execution: Execution) -> ToolOutput:
+def _output(execution: Execution, fetched: _Fetched) -> ToolOutput:
     if not execution.ok:
         return ToolOutput.error(_failure(execution))
-    value = json.dumps(execution.result, ensure_ascii=False)
-    streams = _streams(execution)
-    text = f"{value}\n\n{streams}" if streams else value
-    return ToolOutput(blocks=(TextBlock(text=text),), data=cast(JsonValue, execution.result))
+    parts = [json.dumps(execution.result, ensure_ascii=False)]
+    if streams := _streams(execution, files=False):
+        parts.append(streams)
+    if fetched.left:
+        lines = [f"- {line}" for line in fetched.left[:SHOWN_LEFT]]
+        if (more := len(fetched.left) - SHOWN_LEFT) > 0:
+            lines.append(f"- … et {more} autre(s)")
+        parts.append("fichiers non rapatriés :\n" + "\n".join(lines))
+    # Les fichiers rapatriés suivent le texte : le moteur les range et les
+    # remplace par leur mention (nom, type, taille).
+    blocks: tuple[OutputBlock, ...] = (TextBlock(text="\n\n".join(parts)), *fetched.blocks)
+    return ToolOutput(blocks=blocks, data=cast(JsonValue, execution.result))
 
 
 def _unavailable(exc: BaseException) -> ToolOutput:
@@ -581,14 +736,14 @@ def _unavailable(exc: BaseException) -> ToolOutput:
 # ---------------------------------------------------------------------- #
 
 
-def _timeout(limits: Mapping[str, int], jobs: int = 1) -> float:
+def _timeout(limits: Mapping[str, int], jobs: int = 1, *, fetch: bool = False) -> float:
     """Délai de loom pour un outil qui lance ``jobs`` exécutions, boot compris.
 
     Sans lui, loom couperait au bout de son délai par défaut, avant qu'execd
-    ait rendu son verdict.
+    ait rendu son verdict. ``fetch`` : le rapatriement de out/ en plus.
     """
     wall = limits.get("wall_ms", DEFAULT_WALL_MS) / 1000
-    return BOOT_WAIT + jobs * (wall + 5) + EXEC_MARGIN
+    return BOOT_WAIT + jobs * (wall + 5) + EXEC_MARGIN + (FETCH_WAIT if fetch else 0.0)
 
 
 FORGE_DESCRIPTION: Final = (
@@ -600,6 +755,19 @@ FORGE_DESCRIPTION: Final = (
     "valeur rendue. Un outil du même nom est remplacé. L'outil forgé s'appelle "
     "aussitôt par `call`, et apparaît comme outil à part entière au run suivant."
 )
+
+
+def _files_hint(files: FilePolicy) -> str:
+    """Ce que la description de ``forge`` dit des fichiers, quand ils sont rapatriés."""
+    return (
+        " Un fichier (image, PDF, CSV…) s'écrit dans le dossier "
+        "`os.environ['OUT_DIR']` : à chaque appel de l'outil (pas pendant les exemples), "
+        f"ce qui s'y trouve est rapatrié et rendu comme fichier, {files.max_files} au plus, "
+        f"{_megas(files.max_file_bytes)} chacun ; la valeur rendue reste courte "
+        "(n'y recopie pas le contenu du fichier). Les exemples vérifient alors "
+        "cette valeur, par exemple le nom du fichier ou un décompte."
+    )
+
 
 CALL_DESCRIPTION: Final = (
     "Appelle un outil forgé par son nom (`name`), avec ses arguments (`arguments`, "
@@ -703,7 +871,7 @@ class _CallTool:
         except RegexTimeout as exc:
             raise ToolError(f"arguments refusés par le schéma de {name} : {exc}") from None
         try:
-            return _output(await self.run.execute(name, forged.code, given))
+            return _output(*await self.run.produce(name, forged.code, given))
         except _ERRORS as exc:
             return _unavailable(exc)
 
@@ -716,15 +884,15 @@ class _ForgedTool:
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
         try:
-            return _output(await self.run.execute(self.forged.name, self.forged.code, arguments))
+            return _output(*await self.run.produce(self.forged.name, self.forged.code, arguments))
         except _ERRORS as exc:
             return _unavailable(exc)
 
 
-def _forge_spec(limits: Mapping[str, int]) -> ToolSpec:
+def _forge_spec(limits: Mapping[str, int], files: FilePolicy | None) -> ToolSpec:
     return ToolSpec(
         name=FORGE,
-        description=FORGE_DESCRIPTION,
+        description=FORGE_DESCRIPTION + (_files_hint(files) if files is not None else ""),
         input_schema={
             "type": "object",
             "properties": {
@@ -776,7 +944,7 @@ def _call_spec(limits: Mapping[str, int]) -> ToolSpec:
             "required": ["name", "arguments"],
         },
         kind="python",
-        timeout=_timeout(limits),
+        timeout=_timeout(limits, fetch=True),
     )
 
 
@@ -786,7 +954,7 @@ def _forged_spec(forged: Forged, limits: Mapping[str, int]) -> ToolSpec:
         description=forged.description,
         input_schema=forged.input_schema,
         kind="python",
-        timeout=_timeout(limits),
+        timeout=_timeout(limits, fetch=True),
     )
 
 
@@ -822,13 +990,20 @@ class ForgeSource:
     """
 
     def __init__(
-        self, *, name: str, catalog: Catalog, runner: Runner, limits: Mapping[str, int]
+        self,
+        *,
+        name: str,
+        catalog: Catalog,
+        runner: Runner,
+        limits: Mapping[str, int],
+        files: FilePolicy | None = DEFAULT_FILES,
     ) -> None:
         self.name = name
         self.required = False
         self.catalog = catalog
         self.runner = runner
         self.limits = dict(limits)
+        self.files = files
 
     def __repr__(self) -> str:
         return f"ForgeSource({self.name!r}, catalogue {self.catalog.root})"
@@ -844,9 +1019,9 @@ class ForgeSource:
         started = _run_start(str(context.run_id))
         if started is not None:
             catalog = [f for f in catalog if (at := _moment(f.forged_at)) is None or at < started]
-        run = _Run(self.runner, self.limits)
+        run = _Run(self.runner, self.limits, self.files)
         tools: list[Tool] = [
-            _ForgeTool(self.catalog, run, _forge_spec(self.limits)),
+            _ForgeTool(self.catalog, run, _forge_spec(self.limits, self.files)),
             _CallTool(self.catalog, run, _call_spec(self.limits)),
             *(_ForgedTool(forged, run, _forged_spec(forged, self.limits)) for forged in catalog),
         ]
@@ -883,6 +1058,34 @@ def _limits(value: JsonValue) -> dict[str, int]:
     return limits
 
 
+def _files(value: JsonValue) -> FilePolicy | None:
+    """``files`` : absent, les bornes par défaut ; ``false``, rien n'est rapatrié."""
+    if value is None or value is True:
+        return DEFAULT_FILES
+    if value is False:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("'files' : un objet (max_files, max_file_bytes, max_total_bytes) ou false")
+    known = ("max_files", "max_file_bytes", "max_total_bytes")
+    found: dict[str, int] = {}
+    for key, raw in value.items():
+        if key not in known:
+            raise ValueError(f"'files.{key}' inconnue ; connues : {', '.join(known)}")
+        if not isinstance(raw, int) or isinstance(raw, bool) or raw <= 0:
+            raise ValueError(f"'files.{key}' : un entier positif est attendu")
+        found[key] = raw
+    policy = FilePolicy(**found)
+    if policy.max_files > MAX_FILES_CEILING:
+        raise ValueError(f"'files.max_files' : {MAX_FILES_CEILING} au plus (plafond d'execd)")
+    if policy.max_file_bytes > MAX_FILE_CEILING:
+        raise ValueError(f"'files.max_file_bytes' : {MAX_FILE_CEILING} octets au plus")
+    if policy.max_total_bytes > MAX_TOTAL_CEILING:
+        raise ValueError(f"'files.max_total_bytes' : {MAX_TOTAL_CEILING} octets au plus")
+    if policy.max_total_bytes < policy.max_file_bytes:
+        raise ValueError("'files.max_total_bytes' doit valoir au moins max_file_bytes")
+    return policy
+
+
 def forge_source(
     *,
     name: str,
@@ -891,9 +1094,11 @@ def forge_source(
     base_dir: Path,
 ) -> ForgeSource:
     """La fabrique du point d'entrée ``forge`` : vérifie ``params``, ne démarre rien."""
-    unknown = sorted(set(params) - {"vm_dir", "catalog_dir", "limits"})
+    unknown = sorted(set(params) - {"vm_dir", "catalog_dir", "limits", "files"})
     if unknown:
-        raise ValueError(f"params inconnus : {', '.join(unknown)} (vm_dir, catalog_dir, limits)")
+        raise ValueError(
+            f"params inconnus : {', '.join(unknown)} (vm_dir, catalog_dir, limits, files)"
+        )
     vm_dir = _folder(params, "vm_dir", base_dir)
     catalog_dir = _folder(params, "catalog_dir", base_dir)
     if catalog_dir.exists() and not catalog_dir.is_dir():
@@ -907,4 +1112,5 @@ def forge_source(
         catalog=Catalog(catalog_dir),
         runner=VmRunner(vm),
         limits=_limits(params.get("limits")),
+        files=_files(params.get("files")),
     )
