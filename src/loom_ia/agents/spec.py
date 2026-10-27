@@ -61,8 +61,10 @@ from loom_ia.core.model import (
     OutputContract,
     RepairSettings,
     SideEffects,
+    SkillText,
     StreamOutput,
     ToolOverrides,
+    exclusive_skill,
     finite_json,
 )
 from loom_ia.core.template import Template, TemplateError
@@ -535,6 +537,9 @@ class PythonTool(DomainModel):
     """
 
     python: str = Field(min_length=1, json_schema_extra=_NOT_PARAMETERIZED)
+    # Ce que le modèle lit de l'outil, à la place de ce que l'outil en dit
+    # (comme ``description`` des surcharges MCP et de paquet).
+    description: str | None = Field(default=None, min_length=1)
     timeout: PositiveFloat | None = None
     side_effects: SideEffects | None = None
     approval: Approval | None = None
@@ -544,12 +549,21 @@ class PythonTool(DomainModel):
     # Contrat de sortie (E5) : sans réparation, un résultat non conforme revient
     # à l'orchestrateur en erreur.
     output: OutputContract | None = None
+    # Mode d'emploi ajouté à la description de l'outil : en ligne, ou fichier
+    # relatif à ``prompts_dir``, lu au chargement et rangé dans ``skill``.
+    skill: SkillText | None = None
+    skill_file: Path | None = None
 
     @model_validator(mode="before")
     @classmethod
     def _no_judge(cls, data: object) -> object:
         _reject_judge(data, "un outil Python")
         return data
+
+    @model_validator(mode="after")
+    def _one_skill(self) -> Self:
+        exclusive_skill(self.skill, self.skill_file, f"Outil {self.python!r} : ")
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -607,6 +621,12 @@ def _builtin_reference(reference: str, params: type[BaseModel], entry: Builtin) 
             raise ValueError(
                 f"{reference} : {', '.join(given)} ne se règle pas sur cet outil — "
                 f"{entry.refused_because}"
+            )
+        if entry.own_description and self.description is not None:
+            raise ValueError(
+                f"{reference} : description ne se règle pas sur cet outil — elle est tirée "
+                "de ses paramètres (dossiers, droits, tables), que le modèle doit connaître ; "
+                "ajouter du texte avec skill"
             )
         # Les contrôles du modèle entier (noms uniques…), que les champs seuls ne font pas.
         try:

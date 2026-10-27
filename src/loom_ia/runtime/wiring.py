@@ -108,9 +108,11 @@ from loom_ia.core import SETUP
 from loom_ia.core.closing import Closing
 from loom_ia.core.model import (
     ALLOWED_DECISIONS,
+    CHARS_PER_TOKEN,
     DEFAULT_TENANT,
     MCP_PREFIX_SEPARATOR,
     RESERVED_PREFIX,
+    SKILL_WARN_CHARS,
     Approval,
     ModelSpec,
     OutputContract,
@@ -172,7 +174,7 @@ from loom_ia.policies import BUILTIN_POLICIES
 from loom_ia.runtime.sources import PackagedSource, described, source_factory
 from loom_ia.telemetry import RunExporter, SpanSink, configure_logging
 from loom_ia.tenancy import EnvironmentSecrets, Tenant
-from loom_ia.tools import ConfiguredTool, FunctionTool, IdempotentTool, configure
+from loom_ia.tools import ConfiguredTool, FunctionTool, IdempotentTool, configure, innermost
 from loom_ia.tools_builtin import (
     BUILTIN_TOOLS,
     BuiltinContext,
@@ -631,6 +633,7 @@ def build_agent(
         secrets=secrets,
         protected_dsns=_protected_dsns(config),
     )
+    _check_skills_read(config, spec)
     tools = [
         _tool(declared, known, config.base_dir, spec.name, provided=provided_context)
         for declared in spec.python_tools
@@ -698,6 +701,8 @@ def build_agent(
     announce(config, warnings)
     # Un double référencement peut être voulu : il avertit, en prod comme ailleurs.
     announce(config, overlap_warnings(spec), refuse=False)
+    # Un skill long coûte à chaque appel : un conseil, jamais un refus, même en prod.
+    announce(config, skill_warnings(config, spec), refuse=False)
     budgets = config.budget_of(spec.name)
     shared = any(
         ref.agent == spec.name and ref.budget_share is not None
@@ -1416,6 +1421,79 @@ def judge_warnings(
     return warnings
 
 
+def _source_refs(
+    config: LoomConfig, spec: AgentSpec
+) -> list[tuple[McpTools | SourceTools, Mapping[str, ToolOverrides]]]:
+    """Chaque référence MCP ou de paquet de l'agent, avec les surcharges de son serveur."""
+    return [
+        *((ref, config.mcp_server(ref.mcp).tools) for ref in spec.mcp_tools),
+        *((ref, config.tool_source(ref.source).tools) for ref in spec.source_tools),
+    ]
+
+
+def declared_skills(config: LoomConfig, spec: AgentSpec) -> list[tuple[str, str]]:
+    """Le skill de chaque outil MCP ou de paquet que l'agent expose, sous le nom que voit le modèle.
+
+    Sans connexion : les outils d'un serveur ne sont connus qu'à son ouverture.
+    On lit ce que la config déclare, comme ``_sources_asking_approval`` : la
+    surcharge de l'agent l'emporte sur celle du serveur ou de la source, et un
+    outil qu'``include`` ou ``exclude`` écarte ne compte pas.
+    """
+    found: list[tuple[str, str]] = []
+    for ref, declared in _source_refs(config, spec):
+        named = [*declared, *(short for short in ref.tools if short not in declared)]
+        for short in named:
+            skill = next(
+                (
+                    overrides.skill
+                    for overrides in (ref.tools.get(short), declared.get(short))
+                    if overrides is not None and overrides.skill is not None
+                ),
+                None,
+            )
+            if skill is not None and _selects(ref, short):
+                found.append((f"{ref.prefix}{MCP_PREFIX_SEPARATOR}{short}", skill))
+    return found
+
+
+def _check_skills_read(config: LoomConfig, spec: AgentSpec) -> None:
+    """Un ``skill_file`` que le chargement n'a pas lu arrête le montage.
+
+    Une config construite en Python ne passe pas par ``load_config`` : sans ce
+    contrôle, un outil MCP ne le dirait qu'à l'ouverture de son serveur, en plein run.
+    """
+    unread = sorted(
+        {
+            f"{ref.prefix}{MCP_PREFIX_SEPARATOR}{short} ({overrides.skill_file})"
+            for ref, declared in _source_refs(config, spec)
+            for short, overrides in (*declared.items(), *ref.tools.items())
+            if overrides.skill_file is not None
+        }
+    )
+    if unread:
+        raise ConfigError(
+            f"Agent {spec.name!r} : skill_file non lu — outil {', '.join(unread)} ; "
+            "un skill se lit au chargement (load_config)"
+        )
+
+
+def skill_warnings(config: LoomConfig, spec: AgentSpec) -> list[str]:
+    """Les skills plus longs que ``SKILL_WARN_CHARS`` : ils partent à chaque appel de modèle."""
+    sized = [
+        (tool.python.removeprefix(RESERVED_PREFIX), tool.skill)
+        for tool in spec.python_tools
+        if tool.skill
+    ]
+    sized += declared_skills(config, spec)
+    return [
+        f"Agent {spec.name!r}, outil {name!r} : skill de {len(text)} caractères (environ "
+        f"{len(text) // CHARS_PER_TOKEN} tokens), envoyé avec chaque appel de modèle de "
+        f"l'agent — au-delà de {SKILL_WARN_CHARS}, le raccourcir"
+        for name, text in sized
+        if len(text) > SKILL_WARN_CHARS
+    ]
+
+
 def overlap_warnings(spec: AgentSpec) -> list[str]:
     """Un serveur MCP ou une source référencés deux fois, et qui peuvent exposer les mêmes outils.
 
@@ -1647,9 +1725,7 @@ def _check_state(spec: AgentSpec, tools: Sequence[Tool]) -> None:
 
 def _returns_data(tool: Tool) -> bool:
     """Faux si l'outil est une fonction dont la signature exclut toute donnée."""
-    inner = tool
-    while isinstance(inner, ConfiguredTool):
-        inner = inner.tool
+    inner = innermost(tool)
     if isinstance(inner, FunctionTool | IdempotentTool):
         return inner.returns_data
     return True
@@ -1825,6 +1901,12 @@ def _tool(
     *,
     provided: BuiltinContext | None = None,
 ) -> Tool:
+    if declared.skill_file is not None:
+        # Une spec construite en Python n'est pas passée par le chargement.
+        raise ConfigError(
+            f"Agent {agent!r}, outil {declared.python!r} : skill_file {declared.skill_file} "
+            "non lu — un skill se lit au chargement (load_config)"
+        )
     try:
         if is_builtin(declared.python):
             found: object = _builtin_tool(declared, provided or BuiltinContext(base_dir=base_dir))
@@ -1837,12 +1919,14 @@ def _tool(
         raise ConfigError(f"Agent {agent!r}, outil {declared.python!r} : {exc.reason}") from exc
     return configure(
         tool,
+        description=declared.description,
         timeout=declared.timeout,
         side_effects=declared.side_effects,
         approval=declared.approval,
         idempotent=declared.idempotent,
         offload_over=declared.offload_over,
         output=declared.output,
+        skill=declared.skill,
     )
 
 
@@ -1892,7 +1976,7 @@ def _builtin_closables(
     for reference, tool in zip(declared, tools, strict=True):
         if not is_builtin(reference.python):
             continue
-        inner = tool.tool if isinstance(tool, ConfiguredTool) else tool
+        inner = innermost(tool)
         closer = getattr(inner, "aclose", None)
         if callable(closer):
             found.append(cast(_Closable, inner))

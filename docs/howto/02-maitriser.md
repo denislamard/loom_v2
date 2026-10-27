@@ -3501,7 +3501,7 @@ Run        : mcp-3
 - Ordre de priorité des surcharges, de la plus faible à la plus forte : annotations du serveur, puis `tools:` du serveur dans `loom.yaml`, puis `tools:` de l'usage dans l'agent.
 - Piège : « irréversible » ne signifie pas « validation obligatoire » pour un outil MCP. Si l'action est dangereuse, écrivez `approval: always` : le journal doit alors être durable (chapitre 9).
 - `alias: d` renomme le préfixe : `d__chercher_devis` au lieu de `devis__chercher_devis`. Pensez-y dans vos scripts de test.
-- Les surcharges portent sur les propriétés d'un outil : `side_effects`, `approval`, `idempotent`, `on_unknown`, `timeout`, `offload_over` (les mêmes que pour `@tool`).
+- Les surcharges portent sur les propriétés d'un outil : `side_effects`, `approval`, `idempotent`, `on_unknown`, `timeout`, `offload_over` (les mêmes que pour `@tool`), et sur ce qu'en lit le modèle : `description` la remplace, `skill` ou `skill_file` y ajoute un mode d'emploi.
 
 ### 13.3 Quand le serveur est absent
 

@@ -278,7 +278,7 @@ Run        : 32-2-validation
 
 #### À retenir
 
-- Les réglages d'un outil Python valent pour un outil fourni : `timeout`, `approval`, `side_effects`, `idempotent`, `offload_over` (chapitre 18) et `output` (chapitre 11). Ceux de l'agent l'emportent sur ce que l'outil déclare : `side_effects: none`, `timeout` 45 s, `offload_over` 20 000 caractères pour `fetch_page`.
+- Les réglages d'un outil Python valent pour un outil fourni : `timeout`, `approval`, `side_effects`, `idempotent`, `offload_over` (chapitre 18), `output` (chapitre 11), `description` et `skill` (exemple dans la section `loom.excel`). `description` est refusée sur `local_files`, `excel` et `sql`, dont la description dit les dossiers, les droits ou les tables : un `skill` y ajoute du texte sans rien cacher. Ceux de l'agent l'emportent sur ce que l'outil déclare : `side_effects: none`, `timeout` 45 s, `offload_over` 20 000 caractères pour `fetch_page`.
 - Pour un client (chapitre 22), `tools_deny` et `approvals` désignent l'outil par le nom que voit le modèle : `tools_deny: [fetch_page]`, `approvals: {fetch_page: always}`.
 - Remettez `agents/assistant.yaml` tel qu'à l'exemple 32.1 avant de continuer.
 
@@ -811,6 +811,35 @@ Le fichier livré reste celui de l'outil, sans valeurs calculées : LibreOffice 
 - **Un outil qui relit le fichier** en ne prenant que les valeurs (pandas…) trouve des cellules vides à la place des formules, puisqu'elles n'ont pas de valeur calculée.
 - **Bornes** : 50 onglets, 200 colonnes, 100 000 lignes lues par fichier source de 20 Mo au plus, 50 Mo écrits.
 - **Rejeu** : comme pour `local_files`, le rejeu sert le résultat du journal et ne réécrit pas le fichier.
+
+#### Un skill pour bien s'en servir
+
+La description de `excel` dit son vocabulaire ; elle ne dit pas quand s'en servir, ni comment choisir entre ses formes. À qui demande un bon d'intervention, un agent Haiku peut rendre un tableau « Champ | Valeur », les dates en texte, les champs à remplir sans le rôle `saisie`. Un **skill** ajoute ce mode d'emploi à la suite de la description de l'outil :
+
+```yaml
+- python: loom.excel
+  skill_file: excel.md            # relatif à prompts_dir, et dans ce dossier
+  folders:
+  - name: workspace
+    path: workspace
+    rights: [ write ]
+```
+
+Et `prompts/excel.md` :
+
+```markdown
+- `excel` écrit des tableaux. Une fiche (bon, compte rendu) n'est pas un tableau Champ | Valeur :
+  dis-le à la personne au lieu de la forcer.
+- Chaque colonne a son type : `date_heure` pour une date et une heure, `montant_eur` pour un montant.
+- Une cellule à remplir à la main a le rôle `saisie`.
+```
+
+`loom validate` montre la ligne `outil excel : skill, 298 caractères (environ 74 tokens)`.
+
+- **Un skill n'ajoute pas de moyens à l'outil** : il améliore l'usage du vocabulaire (types, rôles, onglets), pas la mise en forme, qui reste celle de l'outil.
+- **Il part avec chaque appel de modèle de l'agent**, que l'outil serve ou non ; le cache de prompt en absorbe l'essentiel, mais le modifier invalide le cache de l'agent, et un run fait avant ne se rejoue plus à l'identique (« ce qui diffère : les outils proposés »). Au-delà de 8 000 caractères, le montage avertit.
+- **Le même réglage vaut pour tout outil** : un outil à soi (`skill:` en ligne), un outil MCP ou de paquet (`tools: {chercher: {skill_file: crm.md}}`, chapitre 13).
+- **Pas de `{{ variables }}`** : un skill est commun à tous les clients, et n'est pas rendu ; un `{{` est refusé au chargement.
 
 ### `loom.sql` : des bases SQLite et Postgres, avec des droits par table
 

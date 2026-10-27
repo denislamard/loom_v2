@@ -18,7 +18,14 @@ from typing import Final
 
 from pydantic import JsonValue
 
-from loom_ia.core.model import Approval, OutputContract, SideEffects, ToolOutput, ToolSpec
+from loom_ia.core.model import (
+    Approval,
+    OutputContract,
+    SideEffects,
+    ToolOutput,
+    ToolSpec,
+    checked_skill,
+)
 from loom_ia.core.ports import CallAssessment, Tool, ToolContext, assessed
 
 # Déclarations qu'une évaluation par appel peut donner, et que la config peut fixer.
@@ -62,24 +69,38 @@ class ConfiguredTool:
         )
 
 
+def innermost(tool: object) -> object:
+    """L'outil sous toutes ses enveloppes de config : ce qu'il sait faire d'autre (``aclose``…)."""
+    while isinstance(tool, ConfiguredTool):
+        tool = tool.tool
+    return tool
+
+
 def configure(
     tool: Tool,
     *,
+    description: str | None = None,
     timeout: float | None = None,
     side_effects: SideEffects | None = None,
     approval: Approval | None = None,
     idempotent: bool | None = None,
     offload_over: int | None = None,
     output: OutputContract | None = None,
+    skill: str | None = None,
 ) -> Tool:
     """Applique les valeurs données ; ``None`` garde ce que l'outil déclare."""
+    if skill is not None:
+        # ``model_copy`` ne valide rien : le contrôle se fait là où le skill sert.
+        skill = checked_skill(skill)
     changes = {
+        "description": description,
         "timeout": timeout,
         "side_effects": side_effects,
         "approval": approval,
         "idempotent": idempotent,
         "offload_over": offload_over,
         "output": output,
+        "skill": skill,
     }
     applied = {key: value for key, value in changes.items() if value is not None}
     if not applied:

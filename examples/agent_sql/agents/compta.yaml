@@ -14,6 +14,12 @@ subagents:
 tools:
 - python: loom.current_datetime
 - python: loom.fetch_page
+- python: loom.local_files
+  folders:
+  - name: workspace
+    path: workspace
+    rights: [ read, write, overwrite, delete ]
+    approval: { overwrite: never, delete: never }
 - python: loom.sql
   databases:
   - name: crm

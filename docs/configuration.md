@@ -6,7 +6,7 @@ Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.p
 
 - Une clé inconnue est **refusée** au chargement (`loom validate`, code 2), avec le chemin de la clé.
 - Une clé **écrite deux fois** dans le même objet est refusée de même, avec ses deux lignes : YAML garderait la seconde en silence. Surcharger une clé fusionnée (`<<: *ancre`) reste permis.
-- Les chemins sont relatifs au **dossier de `loom.yaml`** ; un `system_file` est relatif à `prompts_dir`.
+- Les chemins sont relatifs au **dossier de `loom.yaml`** ; un `system_file` ou un `skill_file` est relatif à `prompts_dir`, et doit rester dans ce dossier.
 - La config ne porte **jamais un secret** : les clés `*_env` nomment la variable d'environnement qui le contient.
 - « **obligatoire** » dans la colonne *Défaut* : la clé doit être écrite, sinon le chargement s'arrête.
 - `null` dans la colonne *Défaut* : la fonction est inactive tant que la clé n'est pas donnée.
@@ -114,7 +114,7 @@ profiles:
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `prompts_dir` | Base des `system_file` (`main`, rôles, compaction). Un prompt introuvable arrête le chargement. | chemin | `prompts` | `prompts_dir: prompts/` |
+| `prompts_dir` | Base des `system_file` (`main`, rôles, compaction) et des `skill_file` des outils. Un prompt introuvable arrête le chargement, comme un fichier qui en sort (`..`, chemin absolu, lien symbolique) : ce dossier est fermé aux outils fournis, un autre ne l'est pas forcément. | chemin | `prompts` | `prompts_dir: prompts/` |
 
 ## `models`
 
@@ -293,7 +293,7 @@ storage:
 | `compaction.keep_last` | Tours (runs) laissés intacts en fin d'historique. | entier ≥ 0 | `6` | `keep_last: 2` |
 | `compaction.fidelity_check` | Contrôle que les repères du segment (références, e-mails, nombres) sont dans le résumé. | booléen | `true` | |
 | `compaction.blocking` | `true` : le résumé dû se fait à l'ouverture du run suivant, qui l'attend (adapté à `loom run`) ; `false` : tâche de fond après le run. | booléen | `false` | `blocking: true` |
-| `compaction.system_file` | Prompt du résumé à la place du prompt interne, relatif à `prompts_dir`. | chemin | `null` : prompt interne | `system_file: resume.md` |
+| `compaction.system_file` | Prompt du résumé à la place du prompt interne, relatif à `prompts_dir` et contenu dans ce dossier. | chemin | `null` : prompt interne | `system_file: resume.md` |
 | `media.keep_images` | Images des tours précédents dans les requêtes. `all` : un modèle vision revoit toutes les images de la session à chaque appel (coût, et relecture du stockage : une image disparue fait échouer le run). `last_run` : remplacées par une mention (« [Note du système : ce message contenait l'image photo.jpg (image/jpeg, 165 Ko), jointe par l'utilisateur. Elle a été retirée de l'historique après ce tour pour alléger les requêtes ; si tu l'as décrite à ce tour-là, ta description venait de l'image elle-même et reste valable.] », « ce résultat contenait… » pour une image rendue par un outil) ; seules celles du run en cours partent en octets, et une image disparue ne gêne plus. **Limite** : pour une image rendue par un outil, le modèle peut ensuite désavouer la description qu'il en avait faite (« ma description était inventée », Haiku, tests du 20/10) ; une pièce jointe se passe bien. Le journal ne garde que des références dans les deux cas. | `all`, `last_run` | `all` | `media: {keep_images: last_run}` |
 | `state.max_value_bytes` | Taille maximale d'une valeur du state (JSON compact) ; au plus `max_total_bytes`. | entier > 0 | `1024` | `state: {max_value_bytes: 2048}` |
 | `state.max_total_bytes` | Taille maximale de tout le state d'une session. | entier > 0 | `4096` | |
@@ -421,7 +421,7 @@ Portes d'entrée pour un appelant qui ne connaît pas l'API de loom (CRM, planif
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `agents` | Agents écrits directement dans `loom.yaml`, avec le même schéma qu'un [`agent.yaml`](#fichier-agentyaml) ; ajoutés à ceux d'`agents_dir`. Noms uniques ; `_compaction` réservé. Leur `system_file` n'est pas rapporté à `prompts_dir` : y préférer `system`. | liste d'agents | `[]` | `agents: [{name: echo, main: {model: SIMULE}}]` |
+| `agents` | Agents écrits directement dans `loom.yaml`, avec le même schéma qu'un [`agent.yaml`](#fichier-agentyaml) ; ajoutés à ceux d'`agents_dir`. Noms uniques ; `_compaction` réservé. Leurs `system_file`, `skill_file` et `schema_file` se lisent comme ceux d'un fichier d'agent. | liste d'agents | `[]` | `agents: [{name: echo, main: {model: SIMULE}}]` |
 
 ## `base_dir`
 
@@ -474,7 +474,7 @@ L'orchestrateur, qui mène le run.
 | `model` | Modèle de l'orchestrateur (`id` de `models`) ; doit savoir appeler des outils si l'agent en a. | id de modèle | **obligatoire** | `model: HAIKU` |
 | `fallbacks` | Modèles de secours, dans l'ordre, si le modèle est en panne ou écarté par son disjoncteur ; sans doublon. | liste d'ids | `[]` | `fallbacks: [SONNET]` |
 | `system` | Prompt système en ligne ; peut citer des `{{ variables }}` (définies par `tenants[].variables`). Exclusif de `system_file`. | texte | `""` | `system: Tu réponds en français.` |
-| `system_file` | Prompt système dans un fichier, relatif à `prompts_dir`, relu à chaque montage. | chemin | `null` | `system_file: system.md` |
+| `system_file` | Prompt système dans un fichier, relatif à `prompts_dir` et contenu dans ce dossier, relu à chaque montage. | chemin | `null` | `system_file: system.md` |
 | `llm` | Réglages d'appel propres : voir [réglages `llm`](#bloc-réglages-llm). | objet | `{}` | `llm: {max_tokens: 2048}` |
 | `context` | Ce que l'orchestrateur reçoit en fin de requête en plus de ses messages : le state de session, entier ou certaines clés. Seul `session_state` est accepté. | `[session_state]` ou `[{session_state: [clés]}]` | `[]` : requête inchangée | `context: [session_state]` |
 
@@ -556,6 +556,9 @@ Liste d'outils, sous trois formes, dans l'ordre de déclaration.
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
 | `python` | Outil : nom enregistré (module de `imports`), chemin `module:attr`, ou outil fourni `loom.<outil>` (vu par le modèle sans le préfixe). Unique dans l'agent. | texte | **obligatoire** | `python: loom.fetch_page` |
+| `description` | Ce que le modèle lit de l'outil, à la place de ce que l'outil en dit. Refusée sur `loom.local_files`, `loom.excel` et `loom.sql`, dont la description dit les dossiers, les droits ou les tables : y ajouter du texte avec `skill`. | texte non vide | celle de l'outil | `description: Donne l'heure de Paris.` |
+| `skill` | Mode d'emploi ajouté **à la suite** de la description : quand se servir de l'outil, comment choisir entre ses options. Part avec chaque appel de modèle de l'agent ; au-delà de 8 000 caractères, un avertissement. Pas de `{{ variables }}`. Exclusif de `skill_file`. | texte non vide | `null` | `skill: Une liste par onglet.` |
+| `skill_file` | Le même dans un fichier, relatif à `prompts_dir` et contenu dans ce dossier, lu au chargement. | chemin | `null` | `skill_file: excel.md` |
 | `timeout` | Délai de l'outil (s). | nombre > 0 | celui de l'outil, sinon `execution.tools.timeout` | `timeout: 60` |
 | `side_effects` | Nature de ses effets ; un outil sans effet ou idempotent est relancé sans risque à la reprise. | `none`, `reversible`, `irreversible` | celui de l'outil, sinon `none` | `side_effects: irreversible` |
 | `approval` | Approbation : jamais, toujours (pause du run), ou selon une politique. | `never`, `always`, `policy` | celui de l'outil, sinon `never` | `approval: always` |
@@ -704,6 +707,7 @@ Sert dans `mcp_servers[].tools`, `tool_sources[].tools` et `tools[].tools` (réf
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
 | `description` | Ce que le modèle lit de l'outil, à la place de ce que l'outil en dit. | texte non vide | celle de l'outil | `description: Cherche un client par nom.` |
+| `skill` / `skill_file` | Mode d'emploi ajouté à la suite de la description, comme pour un outil Python. Celui de l'agent remplace celui du serveur ou de la source. | texte / chemin | `null` | `skill_file: crm.md` |
 | `side_effects` | Comme pour un outil Python ; pour MCP, les annotations `readOnlyHint` / `destructiveHint` donnent la valeur de départ. | `none`, `reversible`, `irreversible` | celle de l'outil | |
 | `approval` | Comme pour un outil Python. | `never`, `always`, `policy` | celle de l'outil | `approval: always` |
 | `idempotent` | Comme pour un outil Python ; pour MCP, `idempotentHint` donne la valeur de départ. | booléen | celle de l'outil | |

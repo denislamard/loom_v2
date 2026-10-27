@@ -9,7 +9,9 @@ chargement ; un schéma de sortie donné par fichier (JSON ou YAML) est lu et
 vérifié à ce moment-là.
 Un serveur MCP stdio sans ``cwd`` se lance depuis le dossier de la config. Un
 ``system_file`` manquant, un modèle inconnu ou un agent en double arrêtent
-le démarrage.
+le démarrage. Un ``system_file`` ou un ``skill_file`` doit rester dans
+``prompts_dir`` : ailleurs, un dossier ouvert à un outil laisserait l'agent
+réécrire son propre prompt.
 """
 
 import os
@@ -21,7 +23,7 @@ from typing import Any, Final, cast
 import yaml
 from pydantic import ValidationError
 
-from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools, SourceTools, system_text
+from loom_ia.agents.spec import AgentSpec, BaseRole, McpTools, PythonTool, SourceTools, system_text
 from loom_ia.config.env_file import ENV_FILE_KEY
 from loom_ia.config.errors import ConfigError, from_validation
 from loom_ia.config.models import PROFILES, LoomConfig, Profile, StorageConfig, TenantSpec
@@ -31,6 +33,7 @@ from loom_ia.core.model import (
     McpServerSpec,
     OutputContract,
     ToolOverrides,
+    checked_skill,
 )
 from loom_ia.core.template import Template, TemplateError
 
@@ -61,8 +64,11 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
     data = _merged(data, active, source=root)
     draft = _validate(LoomConfig, {**data, "agents": data.get("agents", [])}, source=root)
 
-    loaded = _load_agents(base_dir / draft.agents_dir, base_dir / draft.prompts_dir, base_dir)
-    agents = [*draft.agents, *(spec for spec, _ in loaded)]
+    prompts_dir = base_dir / draft.prompts_dir
+    loaded = _load_agents(base_dir / draft.agents_dir, prompts_dir, base_dir)
+    # Les agents écrits dans loom.yaml suivent les mêmes règles que ceux d'agents_dir.
+    inline = [_prepared(spec, prompts_dir, base_dir, source=root) for spec in draft.agents]
+    agents = [*inline, *(spec for spec, _ in loaded)]
     try:
         config = LoomConfig.model_validate({**data, "agents": agents})
     except ValidationError as exc:
@@ -72,11 +78,29 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
         # Le message nomme déjà l'agent : pas de « (racine) » devant.
         raise from_validation(exc, source=culprit, root=None) from exc
     servers = tuple(
-        server.model_copy(update={"tools": _with_schemas(server.tools, base_dir, source=root)})
+        server.model_copy(
+            update={
+                "tools": _with_skills(
+                    _with_schemas(server.tools, base_dir, source=root),
+                    prompts_dir,
+                    f"mcp_servers[{server.name}]",
+                    source=root,
+                )
+            }
+        )
         for server in config.mcp_servers
     )
     sources = tuple(
-        declared.model_copy(update={"tools": _with_schemas(declared.tools, base_dir, source=root)})
+        declared.model_copy(
+            update={
+                "tools": _with_skills(
+                    _with_schemas(declared.tools, base_dir, source=root),
+                    prompts_dir,
+                    f"tool_sources[{declared.name}]",
+                    source=root,
+                )
+            }
+        )
         for declared in config.tool_sources
     )
     loaded = config.model_copy(
@@ -190,9 +214,15 @@ def _load_agents(
     agents: list[tuple[AgentSpec, Path]] = []
     for file in sorted(f for f in agents_dir.iterdir() if f.suffix in AGENT_SUFFIXES):
         spec = _validate(AgentSpec, _read_yaml(file), source=file)
-        spec = _with_prompts(spec, prompts_dir, source=file)
-        agents.append((_with_contracts(spec, base_dir, source=file), file))
+        agents.append((_prepared(spec, prompts_dir, base_dir, source=file), file))
     return agents
+
+
+def _prepared(spec: AgentSpec, prompts_dir: Path, base_dir: Path, *, source: Path) -> AgentSpec:
+    """Prompts, skills et schémas de sortie d'un agent, lus et vérifiés."""
+    spec = _with_prompts(spec, prompts_dir, source=source)
+    spec = _with_tool_skills(spec, prompts_dir, source=source)
+    return _with_contracts(spec, base_dir, source=source)
 
 
 def _culprit(error: ValidationError, loaded: Sequence[tuple[AgentSpec, Path]]) -> Path | None:
@@ -270,17 +300,98 @@ def _with_prompts(spec: AgentSpec, prompts_dir: Path, *, source: Path) -> AgentS
     return spec.model_copy(update={"main": main, "roles": roles})
 
 
+def _within_prompts(prompts_dir: Path, written: Path, label: str, *, source: Path) -> Path:
+    """Le fichier d'un prompt ou d'un skill, qui doit rester dans ``prompts_dir``.
+
+    Le chemin est comparé une fois résolu (``..``, chemin absolu, lien
+    symbolique) : ``prompts_dir`` est protégé de tout outil fourni
+    (``_protected_paths``), un dossier ouvert à ``loom.local_files`` ne l'est pas.
+    """
+    path = prompts_dir / written
+    if not path.resolve().is_relative_to(prompts_dir.resolve()):
+        raise ConfigError(
+            f"{label} — le fichier doit être dans le dossier des prompts ({prompts_dir}) : {path}",
+            source=source,
+        )
+    return path
+
+
+def _hint(prompts_dir: Path, written: Path) -> str:
+    """Un chemin qui recommence par le dossier des prompts : il est déjà relatif à lui."""
+    parts = written.parts
+    if parts and parts[0] == prompts_dir.name:
+        return f" — le chemin est relatif à prompts_dir : écrire {Path(*parts[1:])}"
+    return ""
+
+
 def _with_prompt[R: BaseRole](role: R, prompts_dir: Path, label: str, *, source: Path) -> R:
     if role.system_file is None:
         return role
-    prompt = prompts_dir / role.system_file
+    prompt = _within_prompts(prompts_dir, role.system_file, f"{label}.system_file", source=source)
     if not prompt.is_file():
-        raise ConfigError(f"{label}.system_file — prompt introuvable : {prompt}", source=source)
+        raise ConfigError(
+            f"{label}.system_file — prompt introuvable : {prompt}"
+            f"{_hint(prompts_dir, role.system_file)}",
+            source=source,
+        )
     try:
         prompt.read_text(encoding="utf-8")
     except OSError as exc:
         raise ConfigError(f"{label}.system_file — prompt illisible : {exc}", source=source) from exc
     return role.model_copy(update={"system_file": prompt})
+
+
+def _with_tool_skills(spec: AgentSpec, prompts_dir: Path, *, source: Path) -> AgentSpec:
+    """Skills d'outils donnés par fichier, lus : outils Python, références MCP et de paquet."""
+    tools = tuple(
+        tool.model_copy(
+            update={"tools": _with_skills(tool.tools, prompts_dir, _ref_label(tool), source=source)}
+        )
+        if isinstance(tool, McpTools | SourceTools)
+        else _skill_read(tool, prompts_dir, f"tools[{tool.python}]", source=source)
+        for tool in spec.tools
+    )
+    return spec.model_copy(update={"tools": tools})
+
+
+def _ref_label(ref: McpTools | SourceTools) -> str:
+    return f"tools[mcp {ref.mcp}]" if isinstance(ref, McpTools) else f"tools[source {ref.source}]"
+
+
+def _with_skills(
+    overrides: dict[str, ToolOverrides], prompts_dir: Path, label: str, *, source: Path
+) -> dict[str, ToolOverrides]:
+    return {
+        name: _skill_read(override, prompts_dir, f"{label}.tools[{name}]", source=source)
+        for name, override in overrides.items()
+    }
+
+
+def _skill_read[T: (PythonTool, ToolOverrides)](
+    declared: T, prompts_dir: Path, label: str, *, source: Path
+) -> T:
+    """Le skill lu depuis son fichier et rangé dans ``skill`` ; ``skill_file`` n'est plus gardé.
+
+    Lu une fois, au chargement, comme ``schema_file`` : une faute se voit dès
+    ``loom validate``. Les mêmes règles que pour un skill en ligne s'appliquent
+    (``checked_skill``).
+    """
+    if declared.skill_file is None:
+        return declared
+    where = f"{label}.skill_file"
+    path = _within_prompts(prompts_dir, declared.skill_file, where, source=source)
+    if not path.is_file():
+        raise ConfigError(
+            f"{where} — skill introuvable : {path}{_hint(prompts_dir, declared.skill_file)}",
+            source=source,
+        )
+    try:
+        text = checked_skill(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigError(f"{where} — skill illisible : {exc}", source=source) from exc
+    except ValueError as exc:
+        raise ConfigError(f"{where} — {exc} : {path}", source=source) from exc
+    return declared.model_copy(update={"skill": text, "skill_file": None})
 
 
 def _absolute_sessions(config: LoomConfig, prompts_dir: Path, *, source: Path) -> object:
@@ -289,11 +400,10 @@ def _absolute_sessions(config: LoomConfig, prompts_dir: Path, *, source: Path) -
     compaction = sessions.compaction
     if compaction is None or compaction.system_file is None:
         return sessions
-    prompt = prompts_dir / compaction.system_file
+    label = "sessions.compaction.system_file"
+    prompt = _within_prompts(prompts_dir, compaction.system_file, label, source=source)
     if not prompt.is_file():
-        raise ConfigError(
-            f"sessions.compaction.system_file — prompt introuvable : {prompt}", source=source
-        )
+        raise ConfigError(f"{label} — prompt introuvable : {prompt}", source=source)
     return sessions.model_copy(
         update={"compaction": compaction.model_copy(update={"system_file": prompt})}
     )

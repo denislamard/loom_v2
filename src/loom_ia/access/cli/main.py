@@ -92,6 +92,7 @@ from loom_ia.config.telemetry import CaptureConfig, CaptureOverride
 from loom_ia.core import SETUP, TOLD
 from loom_ia.core.events import BudgetExceeded, Event, SessionCompacted
 from loom_ia.core.model import (
+    CHARS_PER_TOKEN,
     DEFAULT_TENANT,
     JUDGES_MODES,
     MCP_PREFIX_SEPARATOR,
@@ -140,6 +141,7 @@ from loom_ia.replay import (
 from loom_ia.runtime import (
     apply_logging,
     create_keyring,
+    declared_skills,
     encryption_warnings,
     exporter_warnings,
     key_warnings,
@@ -153,7 +155,7 @@ from loom_ia.runtime.sources import PackagedSource, installed
 from loom_ia.telemetry import BUILTIN_PATTERNS, Trace, render_trace
 from loom_ia.telemetry.logs import printable
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, Tenant, UnknownTenant
-from loom_ia.tools import ConfiguredTool
+from loom_ia.tools import innermost
 from loom_ia.tools_builtin import ShowsSettings, is_builtin
 from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import describe as describe_budget
@@ -1082,11 +1084,16 @@ async def _show_agent(loom: Loom, tenant_id: TenantId, spec: AgentSpec, *, inden
         if not is_builtin(declared.python):
             continue
         name = declared.python.removeprefix(RESERVED_PREFIX)
-        mounted = context.tools.get(name)
-        shown = mounted.tool if isinstance(mounted, ConfiguredTool) else mounted
+        shown = innermost(context.tools.get(name))
         if isinstance(shown, ShowsSettings):
             for line in shown.settings_lines():
                 print(f"{indent}    outil {name} : {line}")
+    for name in context.tools.names:
+        mounted = context.tools.get(name)
+        if mounted is not None and mounted.spec.skill:
+            print(f"{indent}    outil {name} : skill, {_skill_size(mounted.spec.skill)}")
+    for name, skill in declared_skills(config, spec):
+        print(f"{indent}    outil {name} : skill, {_skill_size(skill)}")
     for target, contract, repairs in _contracts(spec):
         print(f"{indent}    contrat ({target}) : {_contract_line(contract, repairs=repairs)}")
     budgets = config.budget_of(spec.name)
@@ -1142,6 +1149,11 @@ def _contracts(spec: AgentSpec) -> list[tuple[str, OutputContract, bool]]:
 
 # Longueur montrée d'un message de repli : le contrat se lit d'une ligne.
 _FALLBACK_SHOWN: Final = 40
+
+
+def _skill_size(text: str) -> str:
+    """Ce que coûte un skill : il part avec chaque appel de modèle de l'agent."""
+    return f"{len(text)} caractères (environ {len(text) // CHARS_PER_TOKEN} tokens)"
 
 
 def _contract_line(contract: OutputContract, *, repairs: bool) -> str:

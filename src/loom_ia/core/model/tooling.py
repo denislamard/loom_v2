@@ -7,9 +7,10 @@ le moteur doit savoir pour exécuter l'outil sans risque.
 
 import json
 from datetime import datetime
-from typing import Final, Literal
+from pathlib import Path
+from typing import Annotated, Final, Literal, Self
 
-from pydantic import Field, JsonValue, PositiveFloat, PositiveInt
+from pydantic import AfterValidator, Field, JsonValue, PositiveFloat, PositiveInt, model_validator
 
 from loom_ia.core.model.base import DomainModel
 from loom_ia.core.model.contract import OutputContract
@@ -26,8 +27,40 @@ TOOL_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 # Nom du rôle orchestrateur (C6) : réservé, porté par ses événements de modèle.
 MAIN_ROLE: Final = "main"
 
+# Entre la description d'un outil et le skill que la config lui ajoute.
+SKILL_SEPARATOR: Final = "\n\n"
+# Au-delà, ``loom validate`` et le montage avertissent : un skill part avec
+# chaque appel de modèle de l'agent, que l'outil serve ou non.
+SKILL_WARN_CHARS: Final = 8_000
+
 # Mention ajoutée à la description d'un outil terminal (#13).
 TERMINAL_HINT: Final = "À appeler seul : sa sortie est la réponse finale, transmise telle quelle."
+
+
+def checked_skill(text: str) -> str:
+    """Le skill tel qu'il partira : sans espaces autour, non vide, sans ``{{ }}``.
+
+    Un skill appartient à la configuration, comme un prompt (§6), mais il
+    n'est pas rendu avec les variables des clients : un ``{{ entreprise }}``
+    partirait tel quel vers le modèle. Il est donc refusé.
+    """
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("skill vide")
+    if "{{" in stripped:
+        raise ValueError(
+            "les variables {{ }} ne sont pas rendues dans un skill — écrire le texte voulu"
+        )
+    return stripped
+
+
+type SkillText = Annotated[str, AfterValidator(checked_skill)]
+
+
+def exclusive_skill(skill: str | None, skill_file: Path | None, owner: str = "") -> None:
+    """``skill`` et ``skill_file`` s'excluent, comme ``system`` et ``system_file``."""
+    if skill is not None and skill_file is not None:
+        raise ValueError(f"{owner}'skill' et 'skill_file' ne peuvent pas être donnés ensemble")
 
 
 def _empty_object_schema() -> dict[str, JsonValue]:
@@ -137,6 +170,19 @@ class ToolOverrides(DomainModel):
     offload_over: PositiveInt | None = None
     # Contrat de sortie propre à cet outil (E5).
     output: OutputContract | None = None
+    # Mode d'emploi ajouté à la description : en ligne, ou fichier relatif à
+    # ``prompts_dir``, que le chargement lit et range dans ``skill``.
+    skill: SkillText | None = None
+    skill_file: Path | None = None
+
+    @model_validator(mode="after")
+    def _one_skill(self) -> Self:
+        exclusive_skill(self.skill, self.skill_file)
+        return self
+
+
+# Champs de ``ToolOverrides`` qui ne se recopient pas sur ``ToolSpec``.
+_NOT_COPIED: Final = frozenset({"skill_file"})
 
 
 class ToolSpec(ToolDefinition):
@@ -162,6 +208,9 @@ class ToolSpec(ToolDefinition):
     business_key: bool = False
     # Contrat de sortie (E5) : contrôlé après chaque appel ; un rôle se répare, un outil non.
     output: OutputContract | None = None
+    # Mode d'emploi donné par la config, ajouté à la description vue par le
+    # modèle ; ``description`` reste celle de l'outil.
+    skill: SkillText | None = None
 
     @property
     def safe_to_retry(self) -> bool:
@@ -173,16 +222,30 @@ class ToolSpec(ToolDefinition):
         if overrides is None:
             return self
         # Valeurs prises telles quelles (pas de dump) : le contrat reste un modèle.
+        if overrides.skill_file is not None:
+            # Seul le chargement lit le fichier. Recopié tel quel, le champ
+            # serait posé sur la spec sans y exister, et le skill perdu sans un mot.
+            raise ValueError(
+                f"skill_file {overrides.skill_file} non lu : un skill se lit au chargement "
+                "(load_config)"
+            )
         changes = {
             name: value
             for name in type(overrides).model_fields
-            if (value := getattr(overrides, name)) is not None
+            if name not in _NOT_COPIED and (value := getattr(overrides, name)) is not None
         }
+        if overrides.skill is not None:
+            # ``model_copy`` ne valide rien : le contrôle se fait là où le skill sert.
+            changes["skill"] = checked_skill(overrides.skill)
         return self.model_copy(update=changes) if changes else self
 
     def definition(self) -> ToolDefinition:
-        """Ce que voit le modèle ; un outil terminal le dit dans sa description."""
+        """Ce que voit le modèle : la description, le skill, puis la mention d'un outil terminal."""
         description = self.description
+        if self.skill:
+            description = (
+                f"{description}{SKILL_SEPARATOR}{self.skill}" if description else self.skill
+            )
         if self.terminal:
             description = f"{description}\n\n{TERMINAL_HINT}" if description else TERMINAL_HINT
         return ToolDefinition(

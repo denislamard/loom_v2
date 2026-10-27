@@ -43,6 +43,10 @@ class Builtin:
     # finiraient par se contredire.
     refused: tuple[str, ...] = ()
     refused_because: str = ""
+    # Vrai si l'outil tire sa description de ses paramètres (dossiers, droits,
+    # tables) : ``description`` l'effacerait, et le modèle ne saurait plus où
+    # agir. Du texte s'ajoute avec ``skill``.
+    own_description: bool = False
     # L'extra de loom-ia qui apporte ses dépendances, s'il en faut un : le dire
     # quand le montage échoue faute d'elles.
     extra: str | None = None
@@ -114,6 +118,7 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
             "les droits de chaque dossier les expriment (folders[].rights), et "
             "l'approbation se règle par dossier (folders[].approval)"
         ),
+        own_description=True,
     ),
     "loom.excel": Builtin(
         target="loom_ia.tools_builtin.excel:build",
@@ -124,6 +129,7 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
             "l'approbation se règle par dossier (folders[].approval)"
         ),
         extra="office",
+        own_description=True,
     ),
     "loom.sql": Builtin(
         target="loom_ia.tools_builtin.sql:build",
@@ -134,6 +140,7 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
             "par table (tables.<table>.approval)"
         ),
         extra="sql",
+        own_description=True,
     ),
 }
 
