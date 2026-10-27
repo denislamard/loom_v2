@@ -66,7 +66,7 @@ def tool(disk: Path) -> ExcelTool:
         disk,
         {"name": "donnees", "path": "donnees", "rights": ["read"]},
         {"name": "sortie", "path": "sortie", "rights": ["write", "overwrite"]},
-        {"name": "valide", "path": "valide", "rights": {"write": "always"}},
+        {"name": "valide", "path": "valide", "rights": ["write"], "approval": {"write": "always"}},
     )
 
 
@@ -161,6 +161,24 @@ def test_the_schema_has_no_titles(tool: ExcelTool) -> None:
         (
             {"folders": [{"name": "s", "path": "s", "rights": ["write", "delete"]}]},
             "le droit 'delete' ne sert pas à loom.excel",
+        ),
+        # delete dans approval : refusé pour excel, et non « l'ajouter à rights ».
+        (
+            {
+                "folders": [
+                    {
+                        "name": "s",
+                        "path": "s",
+                        "rights": ["write"],
+                        "approval": {"delete": "always"},
+                    }
+                ]
+            },
+            "dossier s : le droit 'delete' ne sert pas à loom.excel",
+        ),
+        (
+            {"folders": [{"name": "s", "path": "s", "rights": {"write": "never"}}]},
+            "dossier 's' : 'rights' en table droit → approbation n'est plus accepté",
         ),
         (
             {"folders": [{"name": "s", "path": "s", "rights": ["read"]}]},
@@ -382,7 +400,7 @@ def test_assess_asks_only_where_the_folder_asks(tool: ExcelTool, disk: Path) -> 
     )
     guarded = make(
         disk,
-        {"name": "donnees", "path": "donnees", "rights": {"read": "always"}},
+        {"name": "donnees", "path": "donnees", "rights": ["read"], "approval": {"read": "always"}},
         {"name": "sortie", "path": "sortie", "rights": ["write"]},
     )
     source = {**SUIVI, "rows": None, "data": {"path": "donnees/devis.csv"}}
@@ -714,6 +732,15 @@ def excel_agent(**reference: Any) -> dict[str, Any]:
     return demo_agent(tools=[{"python": "loom.excel", **reference}])
 
 
+def test_delete_in_approval_is_refused_when_the_config_loads(demo: ConfigFactory) -> None:
+    """Par la référence de l'agent aussi, avant les règles communes des dossiers."""
+    folders = [{"name": "s", "path": "/tmp", "rights": ["write"], "approval": {"delete": "never"}}]
+    with pytest.raises(
+        ConfigError, match=r"dossier s : le droit 'delete' ne sert pas à loom\.excel"
+    ):
+        load_config(demo(agents=[excel_agent(folders=folders)]))
+
+
 def test_mounted_from_the_config(demo: ConfigFactory, tmp_path: Path) -> None:
     (tmp_path / "sortie").mkdir()
     folders = [{"name": "sortie", "path": "sortie", "rights": ["write"]}]
@@ -785,7 +812,9 @@ def test_validate_shows_the_folders_and_the_recalc(
     demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "sortie").mkdir()
-    folders = [{"name": "sortie", "path": "sortie", "rights": {"write": "always"}}]
+    folders = [
+        {"name": "sortie", "path": "sortie", "rights": ["write"], "approval": {"write": "always"}}
+    ]
     path = demo(agents=[excel_agent(folders=folders)], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out

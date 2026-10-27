@@ -1,0 +1,36 @@
+name: compta
+description: Secrétariat et comptabilité de l'entreprise — devis, factures, impayés et relances, dans la base crm.
+
+main:
+  model: HAIKU
+  system_file: compta.md
+
+max_iterations: 10
+
+subagents:
+- agent: analyste
+  description: Pour tout chiffre agrégé (total, somme, moyenne, répartition, classement, part). Donne-lui la question complète, la période et la définition voulue.
+
+tools:
+- python: loom.current_datetime
+- python: loom.fetch_page
+- python: loom.local_files
+  folders:
+  - { name: work, path: workspace, rights: { read: never, write: never, overwrite: never, delete: never } }
+- python: loom.sql
+  databases:
+  - name: crm
+    postgres: { dsn_env: LOOM_DATA_DSN_COMPTA }
+    tables:
+      customers: [ select ]
+      products: [ select ]
+      documents: { select: never, update: always }
+    describe:
+      customers: "Clients : code C-NNN, identité, coordonnées (email, téléphone, adresse)"
+      documents: "Devis (type quote, Q-AAAA-NNNN) et factures (type invoice, INV-AAAA-NNNN) ; customer_id → customers.id"
+      documents.status: "devis : draft | sent | accepted | rejected | expired ; facture : draft | issued | paid | overdue | cancelled (paid exige paid_at)"
+- python: loom.excel
+  folders:
+  - name: out
+    path: workspace
+    rights: [ write ]

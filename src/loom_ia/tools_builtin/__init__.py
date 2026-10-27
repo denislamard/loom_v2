@@ -110,13 +110,19 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         target="loom_ia.tools_builtin.local_files:build",
         params="loom_ia.tools_builtin.local_files_params:LocalFilesParams",
         refused=("approval", "side_effects", "idempotent"),
-        refused_because="les droits de chaque dossier les expriment (rights)",
+        refused_because=(
+            "les droits de chaque dossier les expriment (folders[].rights), et "
+            "l'approbation se règle par dossier (folders[].approval)"
+        ),
     ),
     "loom.excel": Builtin(
         target="loom_ia.tools_builtin.excel:build",
         params="loom_ia.tools_builtin.excel_params:ExcelParams",
         refused=("approval", "side_effects", "idempotent"),
-        refused_because="les droits de chaque dossier les expriment (rights)",
+        refused_because=(
+            "les droits de chaque dossier les expriment (folders[].rights), et "
+            "l'approbation se règle par dossier (folders[].approval)"
+        ),
         extra="office",
     ),
     "loom.sql": Builtin(

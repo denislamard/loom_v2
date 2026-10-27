@@ -8,30 +8,34 @@ référence au chargement, sans importer l'outil.
       folders:
       - name: work
         path: /home/denis/temp/test
-        rights: { read: never, write: never, overwrite: never, delete: never }
+        rights: [ read, write, overwrite, delete ]
+        approval: { overwrite: never, delete: never }   # rien ne bloque
       - name: devis
         path: devis
-        rights: [ read, write ]        # forme courte : approbations par défaut
+        rights: [ read, write ]        # approbations par défaut
 
-``rights`` est une table **droit → approbation** : un droit présent est
-accordé, et sa valeur dit si chaque appel qui l'exerce attend un humain. En
-liste, chaque droit prend son approbation par défaut : ``read`` et ``write``
-à ``never``, ``overwrite`` et ``delete`` à ``always``.
+``rights`` liste les droits **accordés** ; un droit absent est refusé.
+``approval``, facultatif, dit lesquels attendent un humain : ``never`` (l'appel
+passe) ou ``always`` (validation humaine). Un droit qui n'y figure pas garde son
+approbation par défaut : ``read`` et ``write`` à ``never``, ``overwrite`` et
+``delete`` à ``always``. Le modèle garde la forme que lit l'outil, ``rights``
+en table droit → approbation (``_rights``).
 """
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Final, Literal, Self, cast
+from typing import Annotated, Any, Final, Literal, Self, cast
 
 from pydantic import (
     AfterValidator,
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
     WithJsonSchema,
     model_validator,
 )
+
+from loom_ia.tools_builtin._rights import resolve
 
 type Right = Literal["read", "write", "overwrite", "delete"]
 type RightApproval = Literal["never", "always"]
@@ -47,45 +51,39 @@ DEFAULT_APPROVAL: Final[Mapping[Right, RightApproval]] = {
 FOLDER_NAME_PATTERN: Final = r"^[a-z0-9][a-z0-9_-]{0,31}$"
 
 
-def _short_form(value: object) -> object:
-    """Une liste de droits devient la table, chacun avec son approbation par défaut."""
-    if not isinstance(value, list | tuple):
-        return value
-    given = [str(item) for item in cast("list[object] | tuple[object, ...]", value)]
-    doubles = sorted({right for right in given if given.count(right) > 1})
-    if doubles:
-        raise ValueError(f"droit donné deux fois : {', '.join(doubles)}")
-    # Un droit inconnu garde une valeur quelconque : la clé échoue ensuite, nommée.
-    return {right: DEFAULT_APPROVAL.get(cast(Right, right), "never") for right in given}
-
-
 _RIGHTS_SCHEMA: Final = {
     "description": (
-        "Droits accordés sur le dossier : table droit → approbation (never ou always), "
-        "ou liste de droits avec leur approbation par défaut (read et write : never ; "
-        "overwrite et delete : always)."
+        "Droits accordés sur le dossier ; un droit absent est refusé. Leur approbation "
+        "se règle dans 'approval' (par défaut, read et write : never ; overwrite et "
+        "delete : always)."
     ),
-    "anyOf": [
-        {
-            "type": "object",
-            "propertyNames": {"enum": list(RIGHTS)},
-            "additionalProperties": {"enum": ["never", "always"]},
-            "minProperties": 1,
-        },
-        {
-            "type": "array",
-            "items": {"enum": list(RIGHTS)},
-            "uniqueItems": True,
-            "minItems": 1,
-        },
-    ],
+    "type": "array",
+    "items": {"enum": list(RIGHTS)},
+    "uniqueItems": True,
+    "minItems": 1,
 }
+_APPROVAL_SCHEMA: Final = {
+    "description": (
+        "Approbation de chaque droit accordé : never (l'appel passe) ou always "
+        "(validation humaine) ; un droit absent garde son défaut."
+    ),
+    "type": "object",
+    "propertyNames": {"enum": list(RIGHTS)},
+    "additionalProperties": {"enum": ["never", "always"]},
+}
+
+
+def _with_approval(schema: dict[str, Any]) -> None:
+    # ``approval`` n'est pas un champ : la normalisation le consomme. Le schéma
+    # le montre quand même, sans quoi un éditeur le refuserait.
+    properties = cast(dict[str, Any], schema.setdefault("properties", {}))
+    properties["approval"] = _APPROVAL_SCHEMA
 
 
 class FolderSpec(BaseModel):
     """Un dossier permis : son nom pour le modèle, son chemin, ses droits."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", json_schema_extra=_with_approval)
 
     # Ce que voit le modèle : il désigne un fichier par « <name>/<chemin> », et
     # le chemin réel ne lui est jamais montré.
@@ -93,11 +91,26 @@ class FolderSpec(BaseModel):
     # Absolu, ou relatif au dossier du fichier de config. Ni « ~ » ni variable
     # (« $HOME ») : la config n'interprète rien.
     path: Path
-    rights: Annotated[
-        dict[Right, RightApproval],
-        BeforeValidator(_short_form),
-        WithJsonSchema(_RIGHTS_SCHEMA),
-    ]
+    # En entrée, une liste et ``approval`` ; ici, la table droit → approbation.
+    rights: Annotated[dict[Right, RightApproval], WithJsonSchema(_RIGHTS_SCHEMA)]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        fields = dict(cast(dict[str, object], data))
+        approval = fields.pop("approval", None)
+        if "rights" in fields:
+            fields["rights"] = resolve(
+                fields["rights"],
+                approval,
+                known=RIGHTS,
+                defaults=DEFAULT_APPROVAL,
+                where=f"dossier {fields.get('name')!r}",
+                form="folder",
+            )
+        return fields
 
     @model_validator(mode="after")
     def _check(self) -> Self:

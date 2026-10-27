@@ -7,19 +7,21 @@ passent par ``invoke`` et ``assess_call``, les deux chemins du moteur.
 
 import asyncio
 import os
+import re
 import stat
 import sys
 from pathlib import Path
 from typing import Any, Final
 
 import pytest
+import yaml
 from conftest import MODEL, ConfigFactory, demo_agent
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 import loom_ia.tools_builtin._folders as folders_module
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
-from loom_ia.config import ConfigError, load_config
+from loom_ia.config import ConfigError, agent_json_schema, load_config
 from loom_ia.core.events import ToolCompleted
 from loom_ia.core.model import DEFAULT_TENANT, RunId, RunStatus, SessionId, TenantId
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
@@ -33,7 +35,7 @@ from loom_ia.tools_builtin.local_files import (
     LocalFilesTool,
     build,
 )
-from loom_ia.tools_builtin.local_files_params import LocalFilesParams
+from loom_ia.tools_builtin.local_files_params import FolderSpec, LocalFilesParams
 
 CONTEXT: Final = ToolContext(
     tenant_id=DEFAULT_TENANT,
@@ -42,7 +44,11 @@ CONTEXT: Final = ToolContext(
     call_id="c1",
     agent="demo",
 )
-ALL: Final = {"read": "never", "write": "never", "overwrite": "never", "delete": "never"}
+# Tous les droits, sans aucune approbation.
+ALL: Final = {
+    "rights": ["read", "write", "overwrite", "delete"],
+    "approval": {"overwrite": "never", "delete": "never"},
+}
 
 
 def make(tmp_path: Path, *folders: dict[str, Any], **context: Any) -> LocalFilesTool:
@@ -67,9 +73,14 @@ def disk(tmp_path: Path) -> Path:
 def files(disk: Path) -> LocalFilesTool:
     return make(
         disk,
-        {"name": "work", "path": "work", "rights": ALL},
+        {"name": "work", "path": "work", **ALL},
         {"name": "archives", "path": "work/archives", "rights": ["read"]},
-        {"name": "clients", "path": "clients", "rights": {"read": "never", "write": "always"}},
+        {
+            "name": "clients",
+            "path": "clients",
+            "rights": ["read", "write"],
+            "approval": {"write": "always"},
+        },
     )
 
 
@@ -664,7 +675,14 @@ def test_validate_shows_the_folders(
     demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "espace").mkdir()
-    folders = [{"name": "espace", "path": "espace", "rights": {"read": "never", "write": "always"}}]
+    folders = [
+        {
+            "name": "espace",
+            "path": "espace",
+            "rights": ["read", "write"],
+            "approval": {"write": "always"},
+        }
+    ]
     path = demo(agents=[files_agent(timeout=5, folders=folders)], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
@@ -730,3 +748,159 @@ def test_a_package_found_elsewhere_is_protected(
     path = demo(agents=[demo_agent(tools=tools)], storage=JSONL)
     with pytest.raises(ConfigError, match="le module Python 'monpaquet_essai'"):
         build_agent(load_config(path), "demo", InMemoryEventStore())
+
+
+# --- Paramètres : rights (accordés) et approval (qui attend un humain) -----------------
+
+
+def folder(**fields: Any) -> FolderSpec:
+    return FolderSpec.model_validate({"name": "work", "path": "work", **fields})
+
+
+@pytest.mark.parametrize(
+    ("fields", "internal"),
+    [
+        # Liste seule : chaque droit prend son approbation par défaut.
+        (
+            {"rights": ["read", "write", "overwrite", "delete"]},
+            {"read": "never", "write": "never", "overwrite": "always", "delete": "always"},
+        ),
+        ({"rights": ["read"]}, {"read": "never"}),
+        # approval partiel : seuls les droits donnés changent.
+        (
+            {"rights": ["read", "write", "delete"], "approval": {"delete": "never"}},
+            {"read": "never", "write": "never", "delete": "never"},
+        ),
+        (
+            {"rights": ["read", "write"], "approval": {"write": "always"}},
+            {"read": "never", "write": "always"},
+        ),
+        # Redire le défaut ne change rien.
+        (
+            {"rights": ["read", "delete"], "approval": {"delete": "always"}},
+            {"read": "never", "delete": "always"},
+        ),
+        # approval vide, ou sans valeur (clé YAML vide) : comme absent.
+        ({"rights": ["read", "write"], "approval": {}}, {"read": "never", "write": "never"}),
+        ({"rights": ["read", "write"], "approval": None}, {"read": "never", "write": "never"}),
+    ],
+)
+def test_rights_and_approval_resolve_to_the_internal_table(
+    fields: dict[str, Any], internal: dict[str, str]
+) -> None:
+    assert folder(**fields).rights == internal
+
+
+def test_the_internal_table_follows_the_order_of_the_rights() -> None:
+    """Quel que soit l'ordre de la config : read, write, overwrite, delete."""
+    found = folder(rights=["delete", "overwrite", "read", "write"], approval={"read": "always"})
+    assert list(found.rights) == ["read", "write", "overwrite", "delete"]
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        (
+            {"rights": ["read", "write"], "approval": {"delete": "never"}},
+            "dossier 'work' : approval 'delete' porte sur un droit non accordé — l'ajouter à "
+            "'rights', ou le retirer d'approval",
+        ),
+        (
+            {"rights": ["read", "write"], "approval": {"write": "yes"}},
+            "dossier 'work' : approval 'write' vaut 'yes' — attendu : never (sans approbation) "
+            "ou always (approbation humaine)",
+        ),
+        # « yes » sans guillemets : un booléen en YAML.
+        ({"rights": ["write"], "approval": {"write": True}}, "approval 'write' vaut True"),
+        # policy est une approbation d'outil, pas d'un droit.
+        ({"rights": ["write"], "approval": {"write": "policy"}}, "approval 'write' vaut 'policy'"),
+        (
+            {"rights": ["read"], "approval": {"remove": "never"}},
+            "dossier 'work' : approval 'remove' — droit inconnu (droits : read, write, "
+            "overwrite, delete)",
+        ),
+        (
+            {"rights": ["read"], "approval": ["read"]},
+            "dossier 'work' : 'approval' attend une table droit → never ou always",
+        ),
+        ({"rights": "read"}, "dossier 'work' : 'rights' attend une liste de droits"),
+        ({"rights": []}, "dossier 'work' : 'rights' ne peut pas être vide"),
+        ({"rights": {}}, "dossier 'work' : 'rights' ne peut pas être vide"),
+        ({"rights": ["read", "write", "read"]}, "dossier 'work' : droit donné deux fois : read"),
+        (
+            {"rights": ["read", "remove"]},
+            "Input should be 'read', 'write', 'overwrite' or 'delete'",
+        ),
+        ({"rights": ["read", "overwrite"]}, "'overwrite' (remplacer un fichier) exige 'write'"),
+        ({"approval": {"read": "never"}}, "rights\n  Field required"),
+    ],
+)
+def test_rights_and_approval_refused(fields: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValidationError, match=re.escape(message)):
+        folder(**fields)
+
+
+@pytest.mark.parametrize(
+    ("table", "written"),
+    [
+        (
+            {"read": "never", "write": "never", "overwrite": "never", "delete": "never"},
+            "rights: [read, write, overwrite, delete] et approval: { overwrite: never, "
+            "delete: never }",
+        ),
+        (
+            {"write": "always", "read": "never"},
+            "rights: [read, write] et approval: { write: always }",
+        ),
+        ({"read": "never"}, "rights: [read]"),
+        ({"read": "never", "delete": "always"}, "rights: [read, delete]"),
+    ],
+)
+def test_the_old_table_is_refused_with_what_to_write(table: dict[str, str], written: str) -> None:
+    """L'ancienne table droit → approbation : refusée, avec l'écriture équivalente."""
+    with pytest.raises(ValidationError) as raised:
+        folder(rights=table)
+    said = str(raised.value)
+    assert (
+        "dossier 'work' : 'rights' en table droit → approbation n'est plus accepté (never "
+        "voulait dire « sans approbation », pas « refusé ») — écrire " + written
+    ) in said
+    # L'écriture proposée, recopiée telle quelle, donne ce que l'ancienne table voulait dire.
+    rights = yaml.safe_load(written.split("rights: ")[1].split(" et ")[0])
+    approval = yaml.safe_load(written.split("approval: ")[1]) if " et " in written else None
+    assert folder(rights=rights, approval=approval).rights == table
+
+
+def test_the_old_table_with_approval_is_refused_as_well() -> None:
+    with pytest.raises(ValidationError, match="'rights' en table droit → approbation n'est plus"):
+        folder(rights={"read": "never"}, approval={})
+
+
+def test_the_old_table_is_refused_when_the_config_loads(demo: ConfigFactory) -> None:
+    folders = [{"name": "work", "path": "/tmp", "rights": {"read": "never", "delete": "never"}}]
+    with pytest.raises(ConfigError) as raised:
+        load_config(demo(agents=[files_agent(folders=folders)]))
+    assert (
+        "folders.0 — dossier 'work' : 'rights' en table droit → approbation n'est plus accepté"
+    ) in str(raised.value)
+    assert "écrire rights: [read, delete] et approval: { delete: never }" in str(raised.value)
+
+
+def test_approval_on_the_reference_says_where_it_goes(demo: ConfigFactory) -> None:
+    folders = [{"name": "w", "path": "/tmp", "rights": ["read"]}]
+    with pytest.raises(ConfigError, match=r"par dossier \(folders\[\]\.approval\)"):
+        load_config(demo(agents=[files_agent(approval="always", folders=folders)]))
+
+
+def test_the_schema_shows_rights_as_a_list_and_approval() -> None:
+    """``loom schema`` : une liste pour rights, et approval, que l'éditeur ne refuse pas."""
+    schema = agent_json_schema()
+    spec = schema["$defs"]["FolderSpec"]
+    assert spec["additionalProperties"] is False
+    assert spec["properties"]["rights"]["type"] == "array"
+    assert "anyOf" not in spec["properties"]["rights"]
+    assert spec["properties"]["approval"]["additionalProperties"] == {"enum": ["never", "always"]}
+    assert spec["properties"]["approval"]["propertyNames"] == {
+        "enum": ["read", "write", "overwrite", "delete"]
+    }
+    assert "approval" not in spec["required"]

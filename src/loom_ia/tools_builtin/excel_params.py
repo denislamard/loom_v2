@@ -13,23 +13,69 @@ openpyxl.
       - name: sortie
         path: sortie
         rights: [ write, overwrite ]   # remplacer un classeur : approbation par défaut
+      - name: brouillons
+        path: brouillons
+        rights: [ write, overwrite ]
+        approval: { overwrite: never } # remplacer sans validation : dit explicitement
       timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
       recalc: true                     # vérifier les formules avec LibreOffice
 
 Les dossiers suivent la forme de ``loom.local_files`` (``name``, ``path``,
-``rights``) ; le droit ``delete`` n'a pas de sens ici et est refusé.
+``rights``, ``approval``) ; le droit ``delete`` n'a pas de sens ici et est refusé.
 """
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Annotated, Final, Self
+from typing import Annotated, Final, Self, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PositiveFloat, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PositiveFloat,
+    model_validator,
+)
 
 from loom_ia.tools_builtin.local_files_params import FolderSpec
 
 DEFAULT_RECALC_TIMEOUT: Final = 60.0
 DEFAULT_TIMEZONE: Final = "Europe/Paris"
+
+
+def _refused_delete(names: Sequence[str]) -> ValueError:
+    return ValueError(
+        f"dossier {', '.join(names)} : le droit 'delete' ne sert pas à loom.excel, "
+        "qui ne supprime rien (droits permis : read, write, overwrite)"
+    )
+
+
+def _no_delete(value: object) -> object:
+    """``delete`` dans ``rights`` ou ``approval`` : refusé avant les règles communes.
+
+    Sinon, ``approval: { delete: … }`` sans ``delete`` accordé ferait conseiller
+    de l'ajouter à ``rights``, où il est refusé.
+    """
+    if not isinstance(value, list | tuple):
+        return value
+    items = cast("Sequence[object]", value)
+    deleting: list[str] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        folder = cast(Mapping[str, object], item)
+        rights, approval = folder.get("rights"), folder.get("approval")
+        listed = isinstance(rights, list | tuple) and "delete" in cast("Sequence[object]", rights)
+        approved = isinstance(approval, Mapping) and "delete" in cast(
+            Mapping[str, object], approval
+        )
+        if listed or approved:
+            deleting.append(str(folder.get("name")))
+    if deleting:
+        raise _refused_delete(deleting)
+    return items
 
 
 def _folders(folders: tuple[FolderSpec, ...]) -> tuple[FolderSpec, ...]:
@@ -41,10 +87,7 @@ def _folders(folders: tuple[FolderSpec, ...]) -> tuple[FolderSpec, ...]:
         raise ValueError(f"nom de dossier donné deux fois : {', '.join(doubles)}")
     deleting = [folder.name for folder in folders if "delete" in folder.rights]
     if deleting:
-        raise ValueError(
-            f"dossier {', '.join(deleting)} : le droit 'delete' ne sert pas à loom.excel, "
-            "qui ne supprime rien (droits permis : read, write, overwrite)"
-        )
+        raise _refused_delete(deleting)
     if not any("write" in folder.rights for folder in folders):
         raise ValueError("au moins un dossier avec le droit 'write' est attendu : où écrire")
     return folders
@@ -57,6 +100,7 @@ class ExcelParams(BaseModel):
 
     folders: Annotated[
         tuple[FolderSpec, ...],
+        BeforeValidator(_no_delete),
         AfterValidator(_folders),
         Field(json_schema_extra={"minItems": 1}),
     ]

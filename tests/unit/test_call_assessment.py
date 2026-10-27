@@ -47,7 +47,11 @@ DELETE = CallAssessment(
     approval="always", side_effects="irreversible", reason="suppression : à approuver"
 )
 READ = CallAssessment(side_effects="none")
-ALL_NEVER: Final = {"read": "never", "write": "never", "overwrite": "never", "delete": "never"}
+# Tous les droits, sans aucune approbation.
+ALL_NEVER: Final = {
+    "rights": ["read", "write", "overwrite", "delete"],
+    "approval": {"overwrite": "never", "delete": "never"},
+}
 
 
 def spec(name: str = "fichiers", **options: object) -> ToolSpec:
@@ -253,7 +257,7 @@ def test_in_an_eval_a_local_files_call_never_runs(tmp_path: Path) -> None:
     """Même un chemin qui n'est qu'une référence, en objet ou en chaîne, résolue plus tard."""
     (tmp_path / "work").mkdir()
     params = LocalFilesParams.model_validate(
-        {"folders": [{"name": "work", "path": "work", "rights": ALL_NEVER}]}
+        {"folders": [{"name": "work", "path": "work", **ALL_NEVER}]}
     )
     files = build(params, BuiltinContext(base_dir=tmp_path))
     tools = EvalTools()
