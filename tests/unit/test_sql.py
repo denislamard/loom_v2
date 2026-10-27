@@ -328,7 +328,10 @@ def test_the_sqlite_file_must_exist(tmp_path: Path) -> None:
 
 def test_a_relative_path_is_from_the_config(tmp_path: Path, base: Path) -> None:
     tool = make(tmp_path, database(sqlite={"path": base.name}))
-    assert tool.settings_lines()[0].startswith(f"crm → sqlite, {base} : devis select")
+    assert tool.settings_lines()[:2] == (
+        f"crm → sqlite, {base}",
+        "  devis.select : accordé, sans approbation",
+    )
 
 
 def test_loom_own_files_are_refused(tmp_path: Path, base: Path) -> None:
@@ -360,7 +363,7 @@ def test_the_dsn_comes_from_the_secrets_and_is_never_shown() -> None:
     tool = build(model, BuiltinContext(secrets={"CRM_DSN": secret}))
     shown = "\n".join([tool.spec.description, *tool.settings_lines()])
     assert "motdepasse" not in shown
-    assert "pg → postgres, CRM_DSN, schéma public : devis select" in shown
+    assert "pg → postgres, CRM_DSN, schéma public\n  devis.select : accordé" in shown
 
 
 def test_the_storage_dsn_is_refused() -> None:
@@ -403,6 +406,14 @@ def test_description_and_settings(tool: SqlTool) -> None:
     assert "en heure de Europe/Paris" in description
     assert "title" not in str(tool.spec.input_schema)
     assert tool.settings_lines()[1:] == (
+        "  devis.select : accordé, sans approbation",
+        "  devis.insert : accordé, sans approbation",
+        "  devis.update : accordé, avec approbation",
+        "  clients.select : accordé, sans approbation",
+        "  relances.select : accordé, sans approbation",
+        "  relances.insert : accordé, sans approbation",
+        "  relances.delete : accordé, sans approbation (destructif)",
+        "  v_devis.select : accordé, sans approbation",
         "crm : 200 lignes lues, 100 modifiées au plus ; 10 s par instruction",
         "fuseau : Europe/Paris",
     )
@@ -1090,9 +1101,16 @@ def test_validate_shows_the_databases(
     out = capsys.readouterr().out
     assert "Fournis    : loom.sql\n" in out
     assert (
-        f"    outil sql : crm → sqlite, {base} : clients select ; devis select, insert, update "
-        "(approbation) ; " in out
-    )
+        f"    outil sql : crm → sqlite, {base}\n"
+        "    outil sql :   clients.select : accordé, sans approbation\n"
+        "    outil sql :   devis.select : accordé, sans approbation\n"
+        "    outil sql :   devis.insert : accordé, sans approbation\n"
+        "    outil sql :   devis.update : accordé, avec approbation\n"
+        "    outil sql :   relances.select : accordé, sans approbation\n"
+        "    outil sql :   relances.insert : accordé, sans approbation\n"
+        "    outil sql :   relances.delete : accordé, sans approbation (destructif)\n"
+    ) in out
+    assert "    outil sql : crm : 200 lignes lues, 100 modifiées au plus" in out
     assert "    outil sql : fuseau : Europe/Paris\n" in out
 
 

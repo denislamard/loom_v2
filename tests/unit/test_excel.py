@@ -138,9 +138,17 @@ def test_the_spec_names_the_folders_and_the_vocabulary(tool: ExcelTool) -> None:
 
 
 def test_settings_lines_for_validate(tool: ExcelTool, disk: Path) -> None:
-    lines = tool.settings_lines()
-    assert lines[0] == f"donnees → {disk / 'donnees'} : read"
-    assert lines[-2:] == ("fuseau : Europe/Paris", "recalcul : non")
+    assert tool.settings_lines() == (
+        f"donnees → {disk / 'donnees'}",
+        "  read : accordé, sans approbation",
+        f"sortie → {disk / 'sortie'}",
+        "  write : accordé, sans approbation",
+        "  overwrite : accordé, avec approbation",
+        f"valide → {disk / 'valide'}",
+        "  write : accordé, avec approbation",
+        "fuseau : Europe/Paris",
+        "recalcul : non",
+    )
 
 
 def test_the_schema_has_no_titles(tool: ExcelTool) -> None:
@@ -819,5 +827,8 @@ def test_validate_shows_the_folders_and_the_recalc(
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
     assert "Fournis    : loom.excel\n" in out
-    assert f"    outil excel : sortie → {(tmp_path / 'sortie').resolve()} : write ; " in out
+    assert (
+        f"    outil excel : sortie → {(tmp_path / 'sortie').resolve()}\n"
+        "    outil excel :   write : accordé, avec approbation\n"
+    ) in out
     assert "    outil excel : recalcul : non\n" in out

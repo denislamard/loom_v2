@@ -14,6 +14,7 @@ from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
 from loom_ia.tools import to_output
 from loom_ia.tools_builtin import BuiltinContext, Protected
+from loom_ia.tools_builtin._rights import granted_line
 from loom_ia.tools_builtin.sql.analysis import Analysis, Catalog, analyze
 from loom_ia.tools_builtin.sql.arguments import (
     MAX_STATEMENTS,
@@ -25,7 +26,13 @@ from loom_ia.tools_builtin.sql.arguments import (
 )
 from loom_ia.tools_builtin.sql.schema import SchemaCache, TableInfo, close_columns, render
 from loom_ia.tools_builtin.sql.sqlite import SqliteDatabase
-from loom_ia.tools_builtin.sql_params import SQL_RIGHTS, DatabaseSpec, SqlParams, SqlRight
+from loom_ia.tools_builtin.sql_params import (
+    DESTRUCTIVE,
+    SQL_RIGHTS,
+    DatabaseSpec,
+    SqlParams,
+    SqlRight,
+)
 
 
 class Backend(Protocol):
@@ -106,11 +113,20 @@ class SqlTool:
         return self._spec
 
     def settings_lines(self) -> tuple[str, ...]:
-        """Une ligne par base, puis les limites et le fuseau, pour ``loom validate``."""
+        """Pour ``loom validate`` : chaque base, une ligne par droit accordé, ses limites.
+
+        Puis le fuseau. Un droit refusé n'est pas listé. ``granted()``, que lit le
+        modèle, reste à part.
+        """
         lines: list[str] = []
         for db in self._databases.values():
-            tables = " ; ".join(f"{t} {db.granted(t)}" for t in db.spec.tables)
-            lines.append(f"{db.name} → {db.backend.location()} : {tables}")
+            lines.append(f"{db.name} → {db.backend.location()}")
+            lines.extend(
+                f"  {table}." + granted_line(right, approval, destructive=right in DESTRUCTIVE)
+                for table, spec in db.spec.tables.items()
+                for right in SQL_RIGHTS
+                if (approval := spec.rights.get(right)) is not None
+            )
             lines.append(
                 f"{db.name} : {db.spec.max_rows} lignes lues, {db.spec.max_affected_rows} "
                 f"modifiées au plus ; {db.spec.statement_timeout:g} s par instruction"

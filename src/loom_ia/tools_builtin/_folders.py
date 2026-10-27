@@ -37,7 +37,9 @@ from pydantic import JsonValue
 
 from loom_ia.core.ports import ToolError
 from loom_ia.tools_builtin import BuiltinContext, Protected
+from loom_ia.tools_builtin._rights import granted_line
 from loom_ia.tools_builtin.local_files_params import (
+    DESTRUCTIVE,
     RIGHTS,
     FolderSpec,
     Right,
@@ -90,12 +92,18 @@ class Folders:
         self._deepest = sorted(folders, key=lambda f: len(f.root.parts), reverse=True)
 
     def settings_lines(self) -> tuple[str, ...]:
-        """Une ligne par dossier, pour ``loom validate``."""
+        """Pour ``loom validate`` : chaque dossier, puis une ligne par droit accordé.
+
+        Un droit refusé n'est pas listé. ``granted()``, que lit le modèle, reste à part.
+        """
         lines: list[str] = []
         for folder in self.folders:
-            asking = folder.asking()
-            approval = f" ; approbation : {', '.join(asking)}" if asking else ""
-            lines.append(f"{folder.name} → {folder.root} : {folder.granted()}{approval}")
+            lines.append(f"{folder.name} → {folder.root}")
+            lines.extend(
+                "  " + granted_line(right, approval, destructive=right in DESTRUCTIVE)
+                for right in RIGHTS
+                if (approval := folder.rights.get(right)) is not None
+            )
         return tuple(lines)
 
     def described(self) -> list[str]:

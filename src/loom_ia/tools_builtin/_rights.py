@@ -29,6 +29,17 @@ type Form = Literal["folder", "table"]
 APPROVALS: Final[tuple[RightApproval, ...]] = ("never", "always")
 
 
+def granted_line(right: str, approval: RightApproval, *, destructive: bool) -> str:
+    """« write : accordé, avec approbation », pour ``loom validate``.
+
+    Un droit destructif qui passe sans approbation le dit : le choix est
+    légitime, mais il doit se voir.
+    """
+    said = "avec approbation" if approval == "always" else "sans approbation"
+    flag = " (destructif)" if destructive and approval == "never" else ""
+    return f"{right} : accordé, {said}{flag}"
+
+
 def resolve[R: str](
     rights: object,
     approval: object,

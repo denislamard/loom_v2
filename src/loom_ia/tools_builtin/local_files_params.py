@@ -48,6 +48,8 @@ DEFAULT_APPROVAL: Final[Mapping[Right, RightApproval]] = {
     "overwrite": "always",
     "delete": "always",
 }
+# Ceux qui détruisent ce qui existe : ``loom validate`` signale ceux qui passent sans approbation.
+DESTRUCTIVE: Final[frozenset[Right]] = frozenset({"overwrite", "delete"})
 FOLDER_NAME_PATTERN: Final = r"^[a-z0-9][a-z0-9_-]{0,31}$"
 
 

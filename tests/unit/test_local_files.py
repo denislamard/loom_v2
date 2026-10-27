@@ -115,10 +115,31 @@ def test_a_read_only_tool_declares_no_effect(disk: Path) -> None:
 
 
 def test_settings_lines_for_validate(files: LocalFilesTool, disk: Path) -> None:
+    """Chaque dossier, puis une ligne par droit accordé ; un destructif sans approbation se voit."""
     assert files.settings_lines() == (
-        f"work → {disk / 'work'} : read, write, overwrite, delete",
-        f"archives → {disk / 'work/archives'} : read",
-        f"clients → {disk / 'clients'} : read, write ; approbation : write",
+        f"work → {disk / 'work'}",
+        "  read : accordé, sans approbation",
+        "  write : accordé, sans approbation",
+        "  overwrite : accordé, sans approbation (destructif)",
+        "  delete : accordé, sans approbation (destructif)",
+        f"archives → {disk / 'work/archives'}",
+        "  read : accordé, sans approbation",
+        f"clients → {disk / 'clients'}",
+        "  read : accordé, sans approbation",
+        "  write : accordé, avec approbation",
+    )
+
+
+def test_a_destructive_right_under_approval_is_not_flagged(disk: Path) -> None:
+    tool = make(disk, {"name": "work", "path": "work", "rights": ["read", "write", "delete"]})
+    assert tool.settings_lines()[1:] == (
+        "  read : accordé, sans approbation",
+        "  write : accordé, sans approbation",
+        "  delete : accordé, avec approbation",
+    )
+    # La description que lit le modèle ne change pas.
+    assert "- work : read, write, delete (attend une approbation humaine : delete)" in (
+        tool.spec.description
     )
 
 
@@ -688,9 +709,10 @@ def test_validate_shows_the_folders(
     out = capsys.readouterr().out
     assert "Fournis    : loom.local_files\n" in out
     assert (
-        f"    outil local_files : espace → {(tmp_path / 'espace').resolve()} : read, write ; "
-        "approbation : write\n" in out
-    )
+        f"    outil local_files : espace → {(tmp_path / 'espace').resolve()}\n"
+        "    outil local_files :   read : accordé, sans approbation\n"
+        "    outil local_files :   write : accordé, avec approbation\n"
+    ) in out
 
 
 def test_an_approval_on_a_memory_journal_says_which_calls(

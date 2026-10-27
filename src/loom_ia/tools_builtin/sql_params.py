@@ -63,6 +63,8 @@ DEFAULT_APPROVAL: Final[Mapping[SqlRight, RightApproval]] = {
     "update": "always",
     "delete": "always",
 }
+# Ceux qui détruisent ce qui existe : ``loom validate`` signale ceux qui passent sans approbation.
+DESTRUCTIVE: Final[frozenset[SqlRight]] = frozenset({"update", "delete"})
 DATABASE_NAME_PATTERN: Final = r"^[a-z0-9][a-z0-9_-]{0,31}$"
 # Un identifiant SQL simple : lettres, chiffres, « _ », « $ ». Une majuscule veut
 # dire un nom créé entre guillemets (« "Devis" ») : il se compare tel quel.
