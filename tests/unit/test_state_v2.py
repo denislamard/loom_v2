@@ -194,8 +194,31 @@ def test_a_source_rule_keeps_its_writers() -> None:
 # --- E3 : un chemin dans le résultat de loom.sql --------------------------------------
 
 
+# Un outil Python nommé ``sql`` qui rend ``{columns, rows}`` comme ``loom.sql``, sur
+# SQLite (bibliothèque standard) : les essais de ``loom.state`` tournent aussi sans
+# l'extra ``sql`` (job « noyau seul » du CI). Seul l'essai E3 vise ``loom.sql`` lui-même.
+OUTILS_SQL = """
+import sqlite3
+from pathlib import Path
+
+from loom_ia.tools import tool
+
+
+@tool
+def sql(action: str, database: str, sql: str) -> dict[str, object]:
+    \"\"\"Lit la base crm (SELECT seulement).\"\"\"
+    with sqlite3.connect(Path(__file__).parent / "crm.db") as conn:
+        cursor = conn.execute(sql)
+        columns = [d[0] for d in cursor.description]
+        rows = [list(r) for r in cursor.fetchall()]
+    return {"database": database, "columns": columns, "rows": rows, "truncated": False}
+"""
+IMPORTS = ["outils_acces", "outils_sql"]
+
+
 @pytest.fixture
 def crm(tmp_path: Path) -> Path:
+    (tmp_path / "outils_sql.py").write_text(OUTILS_SQL, encoding="utf-8")
     path = tmp_path / "crm.db"
     with sqlite3.connect(path) as conn:
         conn.executescript(
@@ -218,6 +241,7 @@ def sql_tool(base: Path) -> dict[str, Any]:
 async def test_a_path_in_a_sql_result_is_warned_at_mount(
     demo: ConfigFactory, crm: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    pytest.importorskip("sqlglot", reason="extra 'sql' absent")
     state = {
         "client": {
             "schema": TEXT,
@@ -441,7 +465,7 @@ MODEL_STATE: dict[str, Any] = {
 def state_agent(base: Path, **changes: Any) -> dict[str, Any]:
     agent: dict[str, Any] = {
         "main": {"model": "FAKE", "system_file": "demo.md", "context": ["session_state"]},
-        "tools": [sql_tool(base), {"python": "loom.state"}],
+        "tools": [{"python": "sql"}, {"python": "loom.state"}],
         "state": MODEL_STATE,
         "max_iterations": 6,
     }
@@ -457,7 +481,7 @@ async def test_the_model_poses_and_clears_from_results(demo: ConfigFactory, crm:
     from loom_ia.core.model import SessionId
 
     session = SessionId("s1")
-    path = demo(agents=[state_agent(crm)], models=model(SCRIPT))
+    path = demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(SCRIPT))
     async with Loom.from_config(path) as loom:
         first = await loom.run("demo", "Fiche", session_id=session, state={"signature": "L"})
         after_first = await loom.session_state(session)
@@ -494,7 +518,7 @@ async def test_the_application_cannot_pose_a_model_key(demo: ConfigFactory, crm:
     from loom_ia.access.api import Loom
     from loom_ia.core.model import SessionId
 
-    path = demo(agents=[state_agent(crm)], models=model(SCRIPT))
+    path = demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(SCRIPT))
     async with Loom.from_config(path) as loom:
         with pytest.raises(ValueError, match="client : l'application ne l'écrit pas"):
             await loom.run("demo", "Fiche", session_id=SessionId("s2"), state={"client": {"id": 1}})
@@ -504,7 +528,7 @@ async def test_the_system_prompt_asks_the_model_to_keep_its_keys(
     demo: ConfigFactory, crm: Path
 ) -> None:
     agent = build_agent(
-        load_config(demo(agents=[state_agent(crm)], models=model(SCRIPT))),
+        load_config(demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(SCRIPT))),
         "demo",
         InMemoryEventStore(),
     )
@@ -543,7 +567,7 @@ def test_an_agent_without_model_keys_keeps_its_hint() -> None:
 async def test_references_are_shown_with_loom_state(demo: ConfigFactory, crm: Path) -> None:
     """E4 : sans rôle ni sous-agent, ``loom.state`` suffit à montrer ``[result:N]``."""
     agent = build_agent(
-        load_config(demo(agents=[state_agent(crm)], models=model(SCRIPT))),
+        load_config(demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(SCRIPT))),
         "demo",
         InMemoryEventStore(),
     )
@@ -551,7 +575,7 @@ async def test_references_are_shown_with_loom_state(demo: ConfigFactory, crm: Pa
     view = tools.view(awaiting("sql"))
     assert tools.shows_refs(view)
     plain = build_agent(
-        load_config(demo(agents=[demo_agent(tools=[sql_tool(crm)])])),
+        load_config(demo(imports=IMPORTS, agents=[demo_agent(tools=[{"python": "sql"}])])),
         "demo",
         InMemoryEventStore(),
     )
@@ -586,7 +610,9 @@ def test_model_keys_need_the_tool_and_must_be_shown(
     from loom_ia.config import ConfigError
 
     with pytest.raises(ConfigError, match=said):
-        load_config(demo(agents=[state_agent(crm, **changes)], models=model(SCRIPT)))
+        load_config(
+            demo(imports=IMPORTS, agents=[state_agent(crm, **changes)], models=model(SCRIPT))
+        )
 
 
 def test_loom_state_without_model_keys_is_refused(demo: ConfigFactory, crm: Path) -> None:
@@ -850,7 +876,9 @@ def test_clears_names_keys_the_model_may_erase(
         "ville": {"schema": TEXT},
     }
     with pytest.raises(ConfigError, match=said):
-        load_config(demo(agents=[state_agent(crm, state=state)], models=model(SCRIPT)))
+        load_config(
+            demo(imports=IMPORTS, agents=[state_agent(crm, state=state)], models=model(SCRIPT))
+        )
 
 
 def test_clears_goes_with_extract() -> None:
@@ -876,7 +904,7 @@ async def test_the_engine_hands_a_ref_to_loom_state_untouched(
         ),
         {"with_text": "Ref", "text": "Posé."},
     ]
-    path = demo(agents=[state_agent(crm)], models=model(script))
+    path = demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(script))
     async with Loom.from_config(path) as loom:
         result = await loom.run("demo", "Ref", session_id=Sid("r1"))
         state = await loom.session_state(Sid("r1"))
@@ -903,7 +931,7 @@ async def test_an_answer_written_with_state_ends_the_run_and_replays(
             "tool_calls": [{"name": "state", "arguments": {"set": "client", "result": "result:1"}}],
         },
     ]
-    path = demo(agents=[state_agent(crm)], models=model(script))
+    path = demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(script))
     async with Loom.from_config(path) as loom:
         result = await loom.run("demo", "Réponds", session_id=Sid("m1"))
         state = await loom.session_state(Sid("m1"))
