@@ -137,6 +137,7 @@ from loom_ia.core.ports import (
     Tool,
     ToolSource,
 )
+from loom_ia.core.state_extract import Extraction, ModelKey
 from loom_ia.core.template import Template
 from loom_ia.engine import (
     AgentResolver,
@@ -632,6 +633,8 @@ def build_agent(
         protected=_protected_paths(config),
         secrets=secrets,
         protected_dsns=_protected_dsns(config),
+        state_keys=model_keys(spec),
+        state_max_value_bytes=config.sessions.state.max_value_bytes,
     )
     _check_skills_read(config, spec)
     tools = [
@@ -789,7 +792,7 @@ def build_agent(
             idempotency=idempotency,
             denied=denied,
             imposed=imposed,
-            state_rules=state_rules(config, spec),
+            state_rules=state_rules(config, spec, model_tool=_model_tool(spec, tools)),
         ),
         system=system_prompt(spec, variables),
         max_iterations=spec.max_iterations,
@@ -896,8 +899,41 @@ def build_policies(
     return Policies(bound)
 
 
-def state_rules(config: LoomConfig, spec: AgentSpec) -> StateRules:
-    """Clés du state que déclare l'agent, telles que le moteur les applique, et leurs limites."""
+def model_keys(spec: AgentSpec) -> tuple[ModelKey, ...]:
+    """Clés du state que le modèle tient à jour (``writers: [model]``), pour ``loom.state``."""
+    return tuple(
+        ModelKey(
+            name=name,
+            description=key.description,
+            schema=key.json_schema,
+            extraction=Extraction(
+                value=key.extract.value,
+                fields=dict(key.extract.fields),
+                columns=dict(key.extract.columns),
+                label=key.extract.label,
+            ),
+            required=key.required,
+        )
+        for name, key in spec.state.items()
+        if "model" in key.writers and key.extract is not None
+    )
+
+
+def _model_tool(spec: AgentSpec, tools: Sequence[Tool]) -> str | None:
+    """Nom sous lequel ``loom.state`` est monté : ses écritures sont celles du modèle (B4)."""
+    for declared, tool in zip(spec.python_tools, tools, strict=True):
+        if declared.python == "loom.state":
+            return tool.spec.name
+    return None
+
+
+def state_rules(
+    config: LoomConfig, spec: AgentSpec, *, model_tool: str | None = None
+) -> StateRules:
+    """Clés du state que déclare l'agent, telles que le moteur les applique, et leurs limites.
+
+    ``model_tool`` : le nom sous lequel ``loom.state`` est monté (S1, B4).
+    """
     limits = config.sessions.state
     return StateRules(
         {
@@ -912,11 +948,13 @@ def state_rules(config: LoomConfig, spec: AgentSpec) -> StateRules:
                 },
                 required=key.required,
                 default=key.default,
+                writers=frozenset(key.writers),
             )
             for name, key in spec.state.items()
         },
         max_value_bytes=limits.max_value_bytes,
         max_total_bytes=limits.max_total_bytes,
+        model_tool=model_tool,
     )
 
 
@@ -1686,6 +1724,11 @@ def _check_state(spec: AgentSpec, tools: Sequence[Tool]) -> None:
     préfixe est accepté ici.
     """
     python = {tool.spec.name: tool for tool in tools}
+    # Outil fourni derrière chaque nom monté (``loom.sql``…), pour l'avertissement E3.
+    provided = {
+        tool.spec.name: declared.python
+        for declared, tool in zip(spec.python_tools, tools, strict=True)
+    }
     roles = {role.name: role for role in spec.roles}
     subagents = {ref.tool_name for ref in spec.subagents}
     prefixed = (*spec.mcp_tools, *spec.source_tools)
@@ -1700,6 +1743,16 @@ def _check_state(spec: AgentSpec, tools: Sequence[Tool]) -> None:
                         f"{label} : l'outil {name!r} ne rend pas de données (sa signature "
                         "annonce str, None ou Image) : 'path' impossible, donner une 'value' "
                         "ou un contrat de sortie avec schéma"
+                    )
+                if wants_data and provided.get(name) == "loom.sql":
+                    # E3 : le modèle choisit les colonnes et leur ordre à chaque requête,
+                    # un chemin ne désigne pas toujours la même valeur.
+                    logger.warning(
+                        "%s : 'path' dans le résultat de %r (loom.sql) — les colonnes et leur "
+                        "ordre changent à chaque requête, le chemin ne désignera pas toujours "
+                        "la même valeur ; préférer loom.state (writers: [model])",
+                        label,
+                        name,
                     )
             elif name in roles:
                 if wants_data and not _has_schema(roles[name].output):

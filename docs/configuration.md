@@ -556,7 +556,7 @@ Liste d'outils, sous trois formes, dans l'ordre de déclaration.
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
 | `python` | Outil : nom enregistré (module de `imports`), chemin `module:attr`, ou outil fourni `loom.<outil>` (vu par le modèle sans le préfixe). Unique dans l'agent. | texte | **obligatoire** | `python: loom.fetch_page` |
-| `description` | Ce que le modèle lit de l'outil, à la place de ce que l'outil en dit. Refusée sur `loom.local_files`, `loom.excel` et `loom.sql`, dont la description dit les dossiers, les droits ou les tables : y ajouter du texte avec `skill`. | texte non vide | celle de l'outil | `description: Donne l'heure de Paris.` |
+| `description` | Ce que le modèle lit de l'outil, à la place de ce que l'outil en dit. Refusée sur `loom.local_files`, `loom.excel`, `loom.sql` et `loom.state`, dont la description dit les dossiers, les droits, les tables ou les clés : y ajouter du texte avec `skill`. | texte non vide | celle de l'outil | `description: Donne l'heure de Paris.` |
 | `skill` | Mode d'emploi ajouté **à la suite** de la description : quand se servir de l'outil, comment choisir entre ses options. Part avec chaque appel de modèle de l'agent ; au-delà de 8 000 caractères, un avertissement. Pas de `{{ variables }}`. Exclusif de `skill_file`. | texte non vide | `null` | `skill: Une liste par onglet.` |
 | `skill_file` | Le même dans un fichier, relatif à `prompts_dir` et contenu dans ce dossier, lu au chargement. | chemin | `null` | `skill_file: excel.md` |
 | `timeout` | Délai de l'outil (s). | nombre > 0 | celui de l'outil, sinon `execution.tools.timeout` | `timeout: 60` |
@@ -646,16 +646,22 @@ roles:
 
 ## `state`
 
-Clés du state de session : des valeurs typées que la session garde d'un run à l'autre, que la compaction ne touche pas. Posées par l'application (`loom run --state CLE=VALEUR`, `Loom.run(state=…)`) ou par le résultat d'un outil ; relues par `loom state <session>`.
+Clés du state de session : des valeurs typées que la session garde d'un run à l'autre, que la compaction ne touche pas. Posées par l'application (`loom run --state CLE=VALEUR`, `Loom.run(state=…)`), par le résultat d'un outil, ou par le modèle avec l'outil fourni `loom.state` (state v2) ; relues par `loom state <session>`. Qui peut écrire chaque clé : `writers`.
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
 | `<clé>` | Nom de la clé, cité tel quel par les gabarits. Une clé non déclarée est refusée. | `^[A-Za-z_][A-Za-z0-9_]{0,63}$` | — | `devis_courant:` |
 | `<clé>.schema` | JSON Schema de la valeur ; une écriture qui ne le tient pas est refusée. | JSON Schema | **obligatoire** | `schema: {type: string}` |
 | `<clé>.description` | Ce que la clé désigne, donné avec sa valeur à qui la reçoit. | texte | `""` | `description: Numéro du devis en cours` |
-| `<clé>.required` | Run refusé à l'ouverture tant que la clé n'a pas de valeur (CLI : code 2 ; REST : 422). Exclusif de `default`. | booléen | `false` | `required: true` |
+| `<clé>.required` | Run refusé à l'ouverture tant que la clé n'a pas de valeur (CLI : code 2 ; REST : 422). Ni un outil ni le modèle ne l'effacent (écriture refusée). Exclusif de `default`. | booléen | `false` | `required: true` |
 | `<clé>.default` | Valeur lue quand la clé est absente, jamais écrite ; doit tenir le schéma et les limites. | valeur JSON | `null` : pas de valeur par défaut | `default: cordial` |
-| `<clé>.from` | Outils dont un résultat réussi pose la clé ; un outil cité une fois par clé. | liste | `[]` : seule l'application l'écrit | voir ci-dessous |
+| `<clé>.writers` | Qui peut demander une écriture : l'application à l'ouverture d'un run (`app`), un outil — sources `from`, ou `ToolOutput.state` de n'importe quel outil — (`tools`), le modèle avec `loom.state` (`model`). Une écriture d'un autre écrivain est refusée : run refusé pour l'application, écriture refusée et dite au modèle pour un outil. `from` exige `tools` ; `model` exige `extract`, l'outil `loom.state` et la clé montrée dans `main.context`. | liste de `app`, `tools`, `model` | `[app, tools]` | `writers: [app]` |
+| `<clé>.extract` | Ce que `loom.state` tire du résultat que le modèle désigne ; exigé avec `model` dans `writers`, refusé sans. Une seule règle parmi `value`, `fields`, `columns`. | objet | `null` | voir ci-dessous |
+| `<clé>.extract.value` | La valeur d'une colonne, sur une ligne. | nom de colonne | | `value: code` |
+| `<clé>.extract.fields` | Un objet : chaque champ pris dans une colonne d'une ligne (champ ← colonne). | table | | `fields: {id: id, code: code}` |
+| `<clé>.extract.columns` | Un objet : chaque champ reçoit la liste d'une colonne sur toutes les lignes. Refusé sur un résultat tronqué (`truncated: true`). | table | | `columns: {ids: id}` |
+| `<clé>.extract.label` | Champ qui reçoit le libellé donné par le modèle (`label`) ; avec `fields` ou `columns`. | nom de champ | `null` | `label: libelle` |
+| `<clé>.from` | Outils dont un résultat réussi pose la clé ; un outil cité une fois par clé. Exige `tools` dans `writers`. Avec `path` sur `loom.sql`, `loom validate` avertit : préférer `loom.state`. | liste | `[]` | voir ci-dessous |
 | `<clé>.from[].tool` | Outil de l'agent (Python, rôle, sous-agent, ou outil préfixé MCP/source). | nom d'outil | **obligatoire** | `tool: chercher_devis` |
 | `<clé>.from[].path` | Pointeur JSON (RFC 6901) dans les données du résultat ; `""` prend tout. Exclusif de `value`. | pointeur JSON | l'un de `path` / `value` est **obligatoire** | `path: /numero` |
 | `<clé>.from[].value` | Valeur fixe posée à chaque résultat réussi ; `null` efface la clé. | valeur JSON | | `value: en_cours` |
@@ -676,6 +682,33 @@ state:
 main:
   model: HAIKU
   system_file: relance.md
+  context: [session_state]
+```
+
+Le modèle tient lui-même des clés (state v2) : il désigne un résultat d'outil du run, loom en tire la valeur.
+
+```yaml
+tools:
+  - python: loom.sql
+    databases: [...]
+  - python: loom.state
+state:
+  client:
+    description: Client dont parle la conversation.
+    schema: {type: object, properties: {id: {type: integer}, code: {type: string}}, required: [id, code]}
+    writers: [model]
+    extract: {fields: {id: id, code: code}}
+  selection:
+    description: Liste de travail en cours.
+    schema: {type: object, properties: {ids: {type: array, maxItems: 100}, libelle: {type: string}}}
+    writers: [model]
+    extract: {columns: {ids: id}, label: libelle}
+  utilisateur:
+    schema: {type: object}
+    writers: [app]
+main:
+  model: HAIKU
+  system_file: secretariat.md
   context: [session_state]
 ```
 

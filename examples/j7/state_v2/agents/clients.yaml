@@ -1,0 +1,48 @@
+name: clients
+description: >-
+  Retrouve des clients ; le modèle tient lui-même le state de la session
+  (client courant, liste de travail) avec loom.state (modèle simulé).
+
+main:
+  model: FAKE_MAIN
+  system_file: clients.md
+  # Le state de la session, en dernier message de chaque requête : le modèle
+  # doit voir les clés qu'il écrit.
+  context: [session_state]
+
+max_iterations: 6
+
+state:
+  client:
+    description: Client dont parle la conversation.
+    schema:
+      type: object
+      properties:
+        id: {type: integer}
+        code: {type: string, pattern: "^C-[0-9]{3,}$"}
+      required: [id, code]
+      additionalProperties: false
+    # Le modèle désigne un résultat ; loom en tire ces champs (champ ← colonne).
+    writers: [model]
+    extract: {fields: {id: id, code: code}}
+  selection:
+    description: Liste de travail en cours (ids de clients), avec son libellé.
+    schema:
+      type: object
+      properties:
+        ids: {type: array, items: {type: integer}, maxItems: 100}
+        libelle: {type: string, maxLength: 120}
+      required: [ids]
+    writers: [model]
+    extract: {columns: {ids: id}, label: libelle}
+  signature:
+    description: Nom de l'entreprise, posé par l'application.
+    schema: {type: string, minLength: 1, maxLength: 80}
+    # Réservée à l'application : ni un outil ni le modèle ne l'écrivent.
+    writers: [app]
+
+tools:
+  - python: chercher_clients
+    side_effects: none
+    idempotent: true
+  - python: loom.state

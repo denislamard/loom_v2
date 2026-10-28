@@ -1,6 +1,6 @@
 # State de session et contexte de l'orchestrateur
 
-> Statut : **réalisé en 2.0.6**. Ce document décrit ce que fait loom. La proposition d'origine — un événement `state.set` et des `writers` — a été remplacée par l'**option C** après l'analyse du 14/10 (`state-et-context-analyse.md`), qui garde le raisonnement, les preuves et le plan de non-régression. Voir aussi `fonctions.md` (F8, point 51), `conception.md` (§9.5, §9.6, §11.2, §14.3, §17.4, §18), l'exemple `examples/j7/` et le guide `howto/05-state-de-session.md`.
+> Statut : **réalisé en 2.0.6**, complété en **2.0.15 par le state v2** (§4.5 : le modèle tient lui-même des clés avec `loom.state` ; `writers` dit qui écrit chaque clé ; analyse : `state_v2_analyse.md`). Ce document décrit ce que fait loom. La proposition d'origine — un événement `state.set` et des `writers` — a été remplacée par l'**option C** après l'analyse du 14/10 (`state-et-context-analyse.md`), qui garde le raisonnement, les preuves et le plan de non-régression. Voir aussi `fonctions.md` (F8, point 51), `conception.md` (§9.5, §9.6, §11.2, §14.3, §17.4, §18), l'exemple `examples/j7/` et le guide `howto/05-state-de-session.md`.
 
 ## 1. Le problème
 
@@ -66,7 +66,10 @@ Règles contrôlées au chargement :
 - **`schema`** : un JSON Schema valide, appliqué avec le moteur borné des contrats de sortie (un motif qui ne finit pas est arrêté).
 - **`description`** : ce que la clé désigne, donné avec sa valeur à qui la reçoit.
 - **`from`** : les outils dont un résultat réussi pose la clé (D12), chacun cité une fois, avec un `path` (pointeur JSON, RFC 6901, dans les **données** du résultat ; `""` les prend entières) ou une `value` fixe (`null` efface la clé). L'outil est un outil de l'agent : Python, rôle, sous-agent, ou un préfixe MCP ou de source (connu seulement au début du run). `path` exige des données : il est refusé pour un outil Python dont la signature annonce `str`, `None` ou `Image` et qui n'a pas de contrat de sortie à schéma, pour un rôle sans contrat de sortie à schéma, et pour un sous-agent. Avec un `path`, `on_missing` dit ce que fait un résultat où le chemin ne mène à rien : `refuse` (défaut) en fait une écriture refusée (§4.3), signe qu'un outil dédié a changé la forme de ses données ; `ignore` ne pose rien et ne dit rien au modèle, pour un outil générique — une requête SQL, par exemple — dont la plupart des résultats ne parlent pas de la clé : `{tool: requete_sql, path: /rows/0/code, on_missing: ignore}`.
-- **`required`** et **`default`** s'excluent (D13). `default` et chaque `value` doivent tenir le schéma et les limites.
+  Sur `loom.sql`, un `path` ne désigne pas toujours la même valeur (le modèle choisit les colonnes et leur ordre) : le montage et `loom validate` avertissent, et renvoient vers `loom.state` (§4.5).
+- **`writers`** (state v2, S1) : qui peut demander une écriture — `app` (l'application, §4.1), `tools` (un outil : ses sources `from`, ou `ToolOutput.state` de n'importe quel outil, §4.2), `model` (le modèle, avec `loom.state`, §4.5). Défaut `[app, tools]`, le comportement d'avant. `from` exige `tools`. Une écriture d'un autre écrivain est refusée : l'application voit son run refusé (`StateRefused`), un outil ou le modèle une écriture refusée (§4.3).
+- **`extract`** (state v2) : ce que `loom.state` tire du résultat que le modèle désigne ; exigé avec `model` dans `writers`, refusé sans (§4.5).
+- **`required`** et **`default`** s'excluent (D13). `default` et chaque `value` doivent tenir le schéma et les limites. Une clé `required` ne s'efface ni par un outil ni par le modèle (E2, §4.3) ; une source `from` dont la `value` est `null` y est refusée au chargement.
 - **Limites** (D7), à la racine : `sessions.state.max_value_bytes` (1 024 par défaut) et `max_total_bytes` (4 096), en octets de JSON compact. Les valeurs par défaut d'un agent doivent tenir ensemble dans la seconde.
 - **`main.context`** n'accepte que `session_state` (la demande, l'historique et les pièces jointes sont déjà dans les messages), entier ou limité à des clés déclarées : `[{session_state: [devis_courant, ton]}]`.
 
@@ -82,7 +85,7 @@ Ce qui est posé va dans le `run.started` du run, avant la demande.
 
 ### 4.2 Un outil
 
-La valeur se déclare dans la config, l'outil n'a pas à changer : `chercher_devis` rend le devis entier, et `from: [{tool: chercher_devis, path: /numero}]` en tire le numéro. Un outil peut aussi écrire lui-même — `ToolOutput(..., state={"cle": valeur})`, pour une règle qui dépend du contexte — ; sur une même clé, sa valeur l'emporte sur celle de `from` (D12).
+La valeur se déclare dans la config, l'outil n'a pas à changer : `chercher_devis` rend le devis entier, et `from: [{tool: chercher_devis, path: /numero}]` en tire le numéro. Un outil peut aussi écrire lui-même — `ToolOutput(..., state={"cle": valeur})`, pour une règle qui dépend du contexte — ; sur une même clé, sa valeur l'emporte sur celle de `from` (D12). Cela vaut pour **tout** outil, cité ou non dans un `from`, tant que la clé a `tools` dans ses `writers` (E1) : une clé réservée s'écrit `writers: [app]`.
 
 Les écritures se posent sur le résultat **réussi** d'un appel, après les politiques `after_tool` (un résultat remplacé pose d'après le nouveau ; refusé, il ne pose rien) et **avant** ses fichiers et son déport : un résultat déporté garde son state. Un résultat en erreur ne pose rien. Les écritures sont rangées dans `tool.completed`, mais retirées du résultat que lit le modèle.
 
@@ -98,9 +101,51 @@ Le motif nomme la clé et le problème, sans recopier la valeur, qui peut porter
 
 Un chemin absent d'une source en `on_missing: ignore` n'est pas un refus : rien n'est posé, le modèle ne lit rien, et le log n'en a qu'un message de débogage. Le chemin présent, la valeur suit les mêmes contrôles qu'ailleurs.
 
+Deux refus s'ajoutent en 2.0.15 : un écrivain absent des `writers` de la clé (« un outil ne l'écrit pas (writers : app) »), et l'effacement d'une clé `required` (« clé obligatoire : seule l'application la remplace, rien ne l'efface ») — sans lui, la session serait bloquée : chaque run suivant refusé, y compris en REST et en MCP, qui ne posent pas de state (E2).
+
 ### 4.4 Deux écritures d'une même clé dans un lot (D9)
 
 Les appels d'un lot tournent en parallèle et finissent dans un ordre qui change d'une exécution à l'autre — et au rejeu, où leurs résultats sont instantanés. C'est donc **l'ordre des appels** dans la réponse du modèle qui décide : le dernier appelé l'emporte, quel que soit celui qui a fini le dernier.
+
+### 4.5 Le modèle : `loom.state` (state v2)
+
+Un outil générique — `loom.sql` — ne se prête pas à `from` : ses colonnes et leur ordre changent à chaque requête. Et seul le modèle sait de quoi parle la conversation. L'outil fourni `loom.state` le laisse **désigner** un résultat ; loom en **tire** la valeur selon la règle déclarée sur la clé. Le modèle ne transmet aucune donnée : il ne peut ni mal recopier un identifiant, ni en inventer un.
+
+```yaml
+tools:
+  - python: loom.sql
+    databases: [...]
+  - python: loom.state
+state:
+  client:
+    description: Client dont parle la conversation.
+    schema: {type: object, properties: {id: {type: integer}, code: {type: string}}, required: [id, code]}
+    writers: [model]
+    extract: {fields: {id: id, code: code}}        # champ ← colonne, sur une ligne
+  selection:
+    description: Liste de travail en cours.
+    schema: {type: object, properties: {ids: {type: array, maxItems: 100}, libelle: {type: string}}}
+    writers: [model]
+    extract: {columns: {ids: id}, label: libelle}  # une colonne sur toutes les lignes
+main:
+  context: [session_state]
+```
+
+Ce que le modèle envoie :
+
+```json
+{"set": "client", "result": "result:3", "row": 0}
+{"set": "selection", "result": "result:5", "label": "factures en retard au 28/10"}
+{"clear": "client"}
+```
+
+- **`result`** : la référence que le modèle lit en tête de chaque résultat (`[result:3]`), en texte — jamais un `$ref`, que le modèle pourrait remplacer par des données écrites à la main. L'outil relit lui-même le résultat (`ToolContext.results`) : seuls ceux du run, obtenus avant le tour en cours. Les références sont montrées dès que l'agent a `loom.state`, même sans rôle ni sous-agent (E4).
+- **`extract`** : `value` (une colonne d'une ligne), `fields` (un objet, champ ← colonne d'une ligne) ou `columns` (un objet, champ ← liste d'une colonne sur toutes les lignes) ; `label` ajoute le libellé du modèle, avec `fields` ou `columns`. Formes lues : tableau `{columns, rows}` (`loom.sql`), liste d'objets, objet seul. Sans `row`, une règle à une ligne exige un résultat d'une ligne exactement. `columns` refuse un résultat tronqué (`truncated: true`), qui donnerait une liste incomplète.
+- **Refus** : clé inconnue, référence introuvable ou en erreur, ligne absente, colonne absente ou en double, schéma, taille de la valeur, effacement d'une clé `required`, sous-run — un **résultat en erreur** qui dit quoi corriger (S4 : l'outil n'a pas d'autre effet que l'écriture). La taille totale du state, qui dépend des voisins du lot, reste contrôlée par le moteur comme pour tout outil (D7, D8).
+- **Ce qu'en lit le modèle** : `{"set": "client", "value": {...}, "from": "result:3"}` ; sa consigne système gagne une ligne, seulement pour un agent qui a une clé `model` : « Tiens toi-même à jour client, selection avec l'outil state : le state doit toujours dire de quoi parle la conversation. » Les agents sans clé `model` gardent des requêtes identiques à l'octet.
+- **Contrôles au chargement** : `model` dans `writers` exige `extract`, l'outil `loom.state`, et la clé montrée dans `main.context` (le modèle doit voir ce qu'il écrit) ; `loom.state` sans clé `model` est refusé. `loom validate` montre la règle de chaque clé (« outil state : client : une ligne, colonnes id, code »).
+- **Coût** : poser une clé est un appel d'outil, donc un appel de modèle de plus ; la description de l'outil demande de l'appeler dans le même lot que l'appel suivant quand il y en a un. Relever `max_iterations` d'un agent qui tient plusieurs clés.
+- **Exemple et corpus** : `examples/j7/state_v2/`, `tests/regression/j7_state_v2/`.
 
 ## 5. Lire
 
@@ -174,6 +219,14 @@ Snapshots, compaction et coupes de l'historique ne changent rien au state : la p
 | D11 | Pas de state pour les juges dans cette version, refusé au chargement |
 | D12 | `from:` (`path` ou `value`) dans la config ; `ToolOutput.state` de l'outil en secours, prioritaire sur une même clé |
 | D13 | `required` refuse l'ouverture ; `default` se lit sans s'écrire ; exclusifs |
+| S1 | `writers` par clé (`app`, `tools`, `model`), défaut `[app, tools]` (2.0.15) |
+| S2 | `loom.state` désigne un résultat par sa référence en texte, lu par `ToolContext.results` |
+| S3 | La règle d'extraction se déclare sur la clé (`extract`) |
+| S4 | Un refus de `loom.state` est un résultat en erreur |
+| S5 | Ni un outil ni le modèle n'effacent une clé `required` |
+| S6 | Consigne système inchangée sans clé `model` |
+| S7 | `columns` refusé sur un résultat tronqué ; une ligne d'un résultat tronqué acceptée |
+| S8 | Application et modèle sur une même clé : la dernière écriture gagne |
 
 ## 9. Sur agent_01 (essai à faire)
 
@@ -201,3 +254,6 @@ Ce que l'essai réel doit montrer : `get_client` ne change pas ; « donne-moi so
 - Le rejeu identique ne recalcule pas les sources `from` : un changement de ces seules sources ne le fait pas diverger. Les évals le voient (`expect.state`).
 - En variante, un résultat d'un autre run de l'arbre, déporté, ne donne pas de données à un `path:` (backlog #022).
 - L'effet du bloc de fin de requête sur un modèle à raisonnement n'est pas encore mesuré en réel.
+- `loom.state` ne lit que les résultats du run en cours : une clé se pose dans le run qui trouve, pas d'après une recherche d'un run précédent.
+- Pas d'ajout à une liste : une écriture remplace la valeur (une liste « derniers fichiers » n'a pas encore de forme).
+- Une valeur écrite avant `writers` par un écrivain désormais interdit reste dans le state : la projection ne refait pas les contrôles d'écriture.

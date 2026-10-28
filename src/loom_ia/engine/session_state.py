@@ -53,6 +53,11 @@ from loom_ia.engine.roles import tagged
 
 logger = logging.getLogger(__name__)
 
+# Qui peut demander une écriture (state v2, S1) : l'application à l'ouverture d'un
+# run, un outil (sources ``from`` ou ``ToolOutput.state``), le modèle (``loom.state``).
+type StateWriter = Literal["app", "tools", "model"]
+DEFAULT_WRITERS: Final = frozenset[StateWriter]({"app", "tools"})
+
 # Tailles par défaut (D7), en octets de JSON compact : celles de ``sessions.state``.
 DEFAULT_MAX_VALUE_BYTES: Final = 1024
 DEFAULT_MAX_TOTAL_BYTES: Final = 4096
@@ -84,7 +89,9 @@ class StateSourceRule:
 class StateKeyRule:
     """Une clé déclarée : son schéma, ce qu'elle désigne, ses sources par outil, son défaut.
 
-    ``required`` : un run racine ne s'ouvre pas tant qu'elle n'a pas de valeur (D13).
+    ``required`` : un run racine ne s'ouvre pas tant qu'elle n'a pas de valeur (D13) ;
+    ni un outil ni le modèle ne peuvent l'effacer (E2). ``writers`` : qui peut
+    demander une écriture (S1) ; par défaut l'application et les outils.
     """
 
     schema: Mapping[str, JsonValue]
@@ -92,6 +99,7 @@ class StateKeyRule:
     sources: Mapping[str, StateSourceRule] = field(default_factory=dict[str, StateSourceRule])
     required: bool = False
     default: JsonValue = None
+    writers: frozenset[StateWriter] = DEFAULT_WRITERS
 
 
 class StateRefused(ValueError):
@@ -118,8 +126,12 @@ class StateRules:
         *,
         max_value_bytes: int = DEFAULT_MAX_VALUE_BYTES,
         max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
+        model_tool: str | None = None,
     ) -> None:
         self.keys: dict[str, StateKeyRule] = dict(keys or {})
+        # Nom sous lequel ``loom.state`` est monté : ses écritures sont celles du
+        # modèle (S1, B4). Le moteur ne connaît pas l'outil, le montage le lui nomme.
+        self.model_tool = model_tool
         self.max_value_bytes = max_value_bytes
         self.max_total_bytes = max_total_bytes
         self._validators: dict[str, Validator] = {
@@ -181,6 +193,10 @@ class StateRules:
         problems: list[str] = []
         accepted: dict[str, JsonValue] = {}
         for name, value in posed.items():
+            rule = self.keys.get(name)
+            if rule is not None and "app" not in rule.writers:
+                problems.append(f"{name} : l'application ne l'écrit pas ({_writers(rule)})")
+                continue
             problem = self._problem(name, value)
             if problem is None:
                 accepted[name] = value
@@ -219,6 +235,14 @@ class StateRules:
         for name in self.shown(keys):
             description = self.keys[name].description
             lines.append(f"- {name} : {description}" if description else f"- {name}")
+        kept = [name for name in self.shown(keys) if "model" in self.keys[name].writers]
+        if kept and self.model_tool is not None:
+            # Ajouté seulement avec une clé tenue par le modèle : la consigne des
+            # agents d'avant ne change pas d'un octet (B2).
+            lines.append(
+                f"Tiens toi-même à jour {', '.join(kept)} avec l'outil {self.model_tool} : "
+                "le state doit toujours dire de quoi parle la conversation."
+            )
         return "\n".join(lines)
 
     def posed(
@@ -254,9 +278,10 @@ class StateRules:
             else:
                 refused.append(f"{name} non posé : chemin {source.path!r} absent du résultat")
         given |= output.state
+        writer: StateWriter = "model" if tool == self.model_tool else "tools"
         accepted: dict[str, JsonValue] = {}
         for name, value in given.items():
-            problem = self._problem(name, value)
+            problem = self._forbidden(name, value, writer) or self._problem(name, value)
             if problem is None:
                 accepted[name] = value
             else:
@@ -283,6 +308,21 @@ class StateRules:
         for line in refused:
             logger.warning("State : outil %s, %s", tool, line)
         return output.model_copy(update={"state": accepted, "state_refused": tuple(refused)})
+
+    def _forbidden(self, name: str, value: JsonValue, writer: StateWriter) -> str | None:
+        """Pourquoi cet écrivain ne peut pas poser cette valeur (S1, E2), ou None.
+
+        Une clé non déclarée est laissée à ``_problem``, qui le dit.
+        """
+        rule = self.keys.get(name)
+        if rule is None:
+            return None
+        if writer not in rule.writers:
+            who = "le modèle" if writer == "model" else "un outil"
+            return f"{who} ne l'écrit pas ({_writers(rule)})"
+        if value is None and rule.required:
+            return "clé obligatoire : seule l'application la remplace, rien ne l'efface"
+        return None
 
     def _problem(self, name: str, value: JsonValue) -> str | None:
         """Pourquoi cette valeur ne peut pas être posée sous cette clé, ou None."""
@@ -388,6 +428,12 @@ def _merged(
         else:
             result[name] = value
     return result
+
+
+def _writers(rule: StateKeyRule) -> str:
+    """Les écrivains permis d'une clé, pour un motif de refus."""
+    order = ("app", "tools", "model")
+    return "writers : " + ", ".join(w for w in order if w in rule.writers)
 
 
 def _said(error: ValidationError) -> str:

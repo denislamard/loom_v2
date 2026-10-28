@@ -19,7 +19,8 @@ et le diff des journaux se relit avant de les committer.
 Les six configs se rejouent dans le même processus, chacune avec son module
 ``outils`` : loom réimporte les modules voisins de chaque config (#50, 6.3c).
 Celle de J7 a un state de session : chaque cas pose le sien à l'ouverture de
-son run, et son journal se rejoue avec lui.
+son run, et son journal se rejoue avec lui. Celle de ``j7_state_v2`` y ajoute un
+state que le modèle tient lui-même (``loom.state``).
 """
 
 from pathlib import Path
@@ -53,6 +54,7 @@ def test_the_corpus_covers_the_examples() -> None:
         "j4/relance",
         "j5/relance",
         "j7/relance",
+        "j7_state_v2/clients",
     ]
 
 

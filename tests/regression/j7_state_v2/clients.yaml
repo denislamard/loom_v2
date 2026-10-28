@@ -1,0 +1,45 @@
+# Corpus de non-régression du state v2 : l'agent clients de examples/j7/state_v2,
+# dont le modèle tient lui-même le state avec loom.state (writers: [model],
+# extract:). Modèle simulé. Chaque journal de journaux/ doit se rejouer à
+# l'identique (tests/regression/test_regression.py), state compris ; la suite est
+# aussi jouée, et ses `expect.state` contrôlent ce que chaque run laisse.
+# Réenregistrer, après un changement voulu, et relire le diff :
+#   uv run loom eval tests/regression/j7_state_v2/clients.yaml --export tests/regression/j7_state_v2/journaux/
+config: ../../../examples/j7/state_v2/loom.yaml
+agent: clients
+cases:
+  # Un seul client : le modèle désigne le résultat, loom en tire id et code.
+  - name: fiche
+    input: Montre la fiche de Dupuy.
+    state: {signature: Plomberie Lamard}
+    expect:
+      status: completed
+      called: [{name: chercher_clients, arguments: {nom: Dupuy}}, state]
+      state:
+        client: {id: 8, code: C-008}
+        signature: Plomberie Lamard
+  # Deux homonymes : sans ligne, le refus le dit ; la bonne ligne est posée.
+  - name: homonymes
+    input: Trouve Renard de Longvic.
+    state: {signature: Plomberie Lamard}
+    expect:
+      status: completed
+      contains: [C-261]
+      state: {client: {id: 261, code: C-261}}
+  # Une liste : la colonne id de toutes les lignes, et le libellé du modèle.
+  - name: liste
+    input: Liste les clients de Dijon.
+    state: {signature: Plomberie Lamard}
+    expect:
+      status: completed
+      state:
+        selection: {ids: [2, 312], libelle: clients de Dijon}
+        client: null
+  # Un résultat qui n'existe pas : rien n'est posé.
+  - name: invente
+    input: Invente un client.
+    state: {signature: Plomberie Lamard}
+    expect:
+      status: completed
+      called: [state]
+      state: {client: null, selection: null}

@@ -30,6 +30,7 @@ from loom_ia.config import ConfigError, agent_json_schema, load_config
 from loom_ia.config.references import Registry
 from loom_ia.core.events import ToolCompleted
 from loom_ia.core.model import DEFAULT_TENANT, RESERVED_PREFIX, TenantId
+from loom_ia.core.state_extract import Extraction, ModelKey
 from loom_ia.engine import begin_run, drive
 from loom_ia.runtime import Agent, build_agent
 from loom_ia.tenancy import EnvironmentSecrets
@@ -264,6 +265,7 @@ async def test_register_refuses_a_loom_name(demo: ConfigFactory) -> None:
 # Paramètres d'essai de chaque outil fourni qui en a : un nouvel outil à paramètres
 # doit en ajouter ici, sinon ``test_catalogue_is_consistent`` échoue.
 SAMPLE_PARAMS: dict[str, Callable[[Path], dict[str, Any]]] = {
+    "loom.state": lambda _: {},
     "loom.local_files": lambda folder: {
         "folders": [{"name": "essai", "path": str(folder), "rights": ["read"]}]
     },
@@ -289,6 +291,17 @@ def _sqlite_file(folder: Path) -> Path:
     return path
 
 
+# Une clé tenue par le modèle : ``loom.state`` n'a rien à écrire sans elle.
+SAMPLE_STATE_KEYS = (
+    ModelKey(
+        name="client",
+        description="Client.",
+        schema={"type": "string"},
+        extraction=Extraction(value="code"),
+    ),
+)
+
+
 def test_catalogue_is_consistent(tmp_path: Path) -> None:
     """Chaque entrée : préfixe ``loom.``, module importable, un outil, nommé sans le préfixe."""
     for reference in BUILTIN_TOOLS:
@@ -300,7 +313,8 @@ def test_catalogue_is_consistent(tmp_path: Path) -> None:
             assert reference in SAMPLE_PARAMS, f"{reference} : paramètres d'essai manquants"
             params = model.model_validate(SAMPLE_PARAMS[reference](tmp_path))
             try:
-                found = builtin_tool(reference, params, context=BuiltinContext(base_dir=tmp_path))
+                context = BuiltinContext(base_dir=tmp_path, state_keys=SAMPLE_STATE_KEYS)
+                found = builtin_tool(reference, params, context=context)
             except ImportError:
                 # Ses dépendances viennent d'un extra absent (job « noyau seul ») :
                 # le message du montage le dit (test_excel).
@@ -405,7 +419,7 @@ def test_the_schema_describes_the_parameters() -> None:
     assert built["properties"]["python"]["const"] == "loom.local_files"
     assert "folders" in built["required"]
     assert schema["$defs"]["PythonTool"]["properties"]["python"]["not"] == {
-        "enum": ["loom.excel", "loom.local_files", "loom.sql"]
+        "enum": ["loom.excel", "loom.local_files", "loom.sql", "loom.state"]
     }
     assert "folders" in schema["$defs"]["Builtin_excel"]["required"]
     assert "databases" in schema["$defs"]["Builtin_sql"]["required"]

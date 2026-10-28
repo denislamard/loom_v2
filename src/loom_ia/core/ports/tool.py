@@ -59,6 +59,18 @@ class SeenFiles(Protocol):
         ...
 
 
+class RunResults(Protocol):
+    """Les résultats d'outils du run en cours, en lecture (state v2, ``loom.state``).
+
+    Un résultat se désigne par la référence que le modèle voit en tête de chacun
+    (``result:3``) : seuls ceux du run, obtenus avant le tour en cours.
+    """
+
+    async def read(self, ref: str) -> JsonValue:
+        """Ses données (``data``), sinon son texte ; ``ToolError`` qui dit pourquoi sinon."""
+        ...
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ToolContext:
     """Ce qu'un outil sait de l'appel en cours."""
@@ -88,6 +100,11 @@ class ToolContext:
     # Fichiers de la conversation, en lecture (``SeenFiles``). Absent hors
     # moteur, et sans stockage d'artefacts.
     files: SeenFiles | None = field(default=None, compare=False)
+    # Résultats du run, en lecture (``RunResults``). Absent hors moteur.
+    results: RunResults | None = field(default=None, compare=False)
+    # Vrai si le run tient le state de la session : un run racine ordinaire d'un
+    # agent qui en déclare un (D3). Faux dans un sous-run et hors moteur.
+    keeps_state: bool = False
 
     @property
     def idempotency_key(self) -> str:

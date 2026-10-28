@@ -1,0 +1,56 @@
+# Configuration de l'exemple du state v2 : le modèle tient lui-même le state
+# de la session, avec l'outil fourni loom.state.
+#
+#   - le modèle désigne un résultat d'outil par sa référence (result:N) ;
+#   - loom en tire la valeur selon `extract:`, déclaré sur la clé : le modèle
+#     ne recopie aucune donnée, il ne peut pas en inventer ;
+#   - `writers` dit qui peut écrire chaque clé (app, tools, model).
+# Les clés : agents/clients.yaml. Analyse : docs/state_v2_analyse.md.
+#
+# Modèle simulé (sdk: fake), sans clé ni réseau.
+version: 1
+
+imports: [outils]                 # module voisin de ce fichier
+agents_dir: agents/
+prompts_dir: prompts/
+
+models:
+  - id: FAKE_MAIN
+    sdk: fake
+    model: fake-main
+    params:
+      script:
+        # Une fiche : un seul client, la ligne n'a pas à être précisée.
+        - with_text: Dupuy
+          tool_calls: [{name: chercher_clients, arguments: {nom: Dupuy}}]
+        - with_text: Dupuy
+          tool_calls: [{name: state, arguments: {set: client, result: "result:1"}}]
+        - with_text: Dupuy
+          text: Patrick Dupuy, client C-008.
+        # Deux homonymes : sans ligne, refus qui le dit ; puis la bonne ligne.
+        - with_text: Renard de Longvic
+          tool_calls: [{name: chercher_clients, arguments: {nom: Renard}}]
+        - with_text: Renard de Longvic
+          tool_calls: [{name: state, arguments: {set: client, result: "result:1"}}]
+        - with_text: Renard de Longvic
+          tool_calls: [{name: state, arguments: {set: client, result: "result:1", row: 0}}]
+        - with_text: Renard de Longvic
+          text: Le client Renard de Longvic est C-261.
+        # Une liste : la sélection et son libellé, posés avec la recherche suivante.
+        - with_text: Dijon
+          tool_calls: [{name: chercher_clients, arguments: {ville: Dijon}}]
+        - with_text: Dijon
+          tool_calls: [{name: state, arguments: {set: selection, result: "result:1", label: clients de Dijon}}]
+        - with_text: Dijon
+          text: Deux clients à Dijon.
+        # Un résultat qui n'existe pas : rien n'est posé.
+        - with_text: Invente
+          tool_calls: [{name: state, arguments: {set: client, result: "result:4"}}]
+        - with_text: Invente
+          text: Je n'ai aucun résultat à poser.
+
+storage:
+  events: {backend: jsonl, path: data}   # ignoré par git
+
+telemetry:
+  logging: {level: WARNING, format: console}

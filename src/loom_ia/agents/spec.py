@@ -625,8 +625,8 @@ def _builtin_reference(reference: str, params: type[BaseModel], entry: Builtin) 
         if entry.own_description and self.description is not None:
             raise ValueError(
                 f"{reference} : description ne se règle pas sur cet outil — elle est tirée "
-                "de ses paramètres (dossiers, droits, tables), que le modèle doit connaître ; "
-                "ajouter du texte avec skill"
+                "de ses paramètres (dossiers, droits, tables, clés du state), que le modèle "
+                "doit connaître ; ajouter du texte avec skill"
             )
         # Les contrôles du modèle entier (noms uniques…), que les champs seuls ne font pas.
         try:
@@ -853,6 +853,11 @@ STATE_KEY_PATTERN: Final = r"^[A-Za-z_][A-Za-z0-9_]{0,63}$"
 # Pointeur JSON (RFC 6901) : vide, ou des segments « /… » où « ~ » s'écrit
 # « ~0 » et « / » s'écrit « ~1 ».
 _JSON_POINTER: Final = re.compile(r"(?:/(?:[^~/]|~[01])*)*")
+# Qui peut demander une écriture d'une clé (state v2, S1) : l'application à
+# l'ouverture d'un run, un outil (``from`` ou ``ToolOutput.state``), le modèle
+# (``loom.state``). Par défaut, l'application et les outils.
+type StateWriter = Literal["app", "tools", "model"]
+DEFAULT_STATE_WRITERS: Final[tuple[StateWriter, ...]] = ("app", "tools")
 
 
 class StateSource(DomainModel):
@@ -892,6 +897,35 @@ class StateSource(DomainModel):
         return self
 
 
+class StateExtract(DomainModel):
+    """Ce que ``loom.state`` tire du résultat que le modèle désigne (state v2, S3).
+
+    Exactement une règle : ``value`` (la colonne d'une ligne), ``fields`` (un
+    objet, champ ← colonne d'une ligne) ou ``columns`` (un objet, champ ← liste
+    d'une colonne sur toutes les lignes). ``label`` : le champ qui reçoit le
+    libellé donné par le modèle, avec ``fields`` ou ``columns``.
+    """
+
+    value: str | None = Field(default=None, min_length=1)
+    fields: dict[str, str] = Field(default_factory=dict[str, str])
+    columns: dict[str, str] = Field(default_factory=dict[str, str])
+    label: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        given = [n for n in ("value", "fields", "columns") if getattr(self, n)]
+        if len(given) != 1:
+            raise ValueError("extract : 'value', 'fields' ou 'columns', une seule des trois")
+        if self.label is not None and self.value is not None:
+            raise ValueError("extract : 'label' va avec 'fields' ou 'columns', pas avec 'value'")
+        named = {**self.fields, **self.columns}
+        if self.label is not None and self.label in named:
+            raise ValueError(f"extract : le champ {self.label!r} est à la fois label et colonne")
+        if any(not field or not column for field, column in named.items()):
+            raise ValueError("extract : un champ et une colonne non vides")
+        return self
+
+
 class StateKey(DomainModel):
     """Clé du state de la session (D6) : son schéma, ce qu'elle désigne, ce qui la pose."""
 
@@ -902,9 +936,15 @@ class StateKey(DomainModel):
     json_schema: dict[str, JsonValue] = Field(alias="schema")
     # Ce que la clé désigne : donné avec sa valeur à qui la reçoit.
     description: str = ""
-    # Outils dont un résultat réussi pose la clé (D12) ; sans source, seule
-    # l'application l'écrit.
+    # Outils dont un résultat réussi pose la clé (D12). Qui peut l'écrire, avec
+    # ou sans source, c'est ``writers`` : avec ``tools``, tout outil peut aussi
+    # la poser par ``ToolOutput.state`` (E1).
     sources: tuple[StateSource, ...] = Field(default=(), alias="from")
+    # Qui peut demander une écriture (S1) : ``app``, ``tools``, ``model``.
+    writers: tuple[StateWriter, ...] = Field(default=DEFAULT_STATE_WRITERS, min_length=1)
+    # Ce que ``loom.state`` tire du résultat que le modèle désigne : exigé avec
+    # ``model`` dans ``writers``, refusé sans.
+    extract: StateExtract | None = None
     # Run refusé à l'ouverture si la clé manque au state de la session (D13).
     required: bool = False
     # Valeur lue quand la clé est absente ; elle n'est jamais écrite (D13).
@@ -924,6 +964,22 @@ class StateKey(DomainModel):
         validator = bounded_validator(self.json_schema)
         if self.default is not None:
             _conforms(validator, self.default, "default")
+        if len(set(self.writers)) != len(self.writers):
+            raise ValueError("writers : écrivain cité deux fois")
+        if ("model" in self.writers) != (self.extract is not None):
+            raise ValueError(
+                "'model' dans writers et 'extract' vont ensemble : le modèle désigne un "
+                "résultat, extract dit ce qu'on en tire"
+            )
+        if self.sources and "tools" not in self.writers:
+            raise ValueError("'from' pose la clé par un outil : 'tools' doit être dans writers")
+        if self.required and any(
+            source.path is None and source.value is None for source in self.sources
+        ):
+            raise ValueError(
+                "from : une 'value' null effacerait une clé obligatoire ('required'), "
+                "que seule l'application remplace"
+            )
         tools = [source.tool for source in self.sources]
         doubles = sorted({tool for tool in tools if tools.count(tool) > 1})
         if doubles:
@@ -1006,7 +1062,30 @@ class AgentSpec(DomainModel):
             )
         for role in self.roles:
             self._check_role_state(role)
+        self._check_model_state()
         return self
+
+    def _check_model_state(self) -> None:
+        """Clés tenues par le modèle : ``loom.state`` déclaré, et les clés montrées à ``main``."""
+        kept = [key for key, declared in self.state.items() if "model" in declared.writers]
+        provided = any(tool.python == "loom.state" for tool in self.python_tools)
+        if kept and not provided:
+            raise ValueError(
+                f"state : {', '.join(map(repr, kept))} a 'model' dans writers, mais l'agent "
+                "n'a pas l'outil loom.state (tools: - python: loom.state)"
+            )
+        if provided and not kept:
+            raise ValueError(
+                "loom.state : aucune clé du state n'a 'model' dans writers, l'outil n'aurait "
+                "rien à écrire"
+            )
+        shown = self.main.state_keys
+        hidden = [key for key in kept if shown is None or (shown and key not in shown)]
+        if hidden:
+            raise ValueError(
+                f"state : le modèle écrit {', '.join(map(repr, hidden))} sans la voir — "
+                "la montrer dans main.context (session_state)"
+            )
 
     def _check_role_state(self, role: RoleSpec) -> None:
         """Le state que reçoit un rôle : des clés que l'agent déclare, citées comme telles."""

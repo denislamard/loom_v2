@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from loom_ia.core.model import RESERVED_PREFIX
 from loom_ia.core.ports import Tool
+from loom_ia.core.state_extract import ModelKey
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +80,10 @@ class BuiltinContext:
     # Variables des DSN du stockage de loom (journal, idempotence) : une base
     # qu'un outil fourni expose ne doit pas être celle-là.
     protected_dsns: tuple[str, ...] = ()
+    # Clés du state que le modèle tient à jour (``writers: [model]``), pour
+    # ``loom.state`` ; et la taille permise d'une valeur (``sessions.state``).
+    state_keys: tuple[ModelKey, ...] = ()
+    state_max_value_bytes: int = 1024
 
 
 @runtime_checkable
@@ -140,6 +145,16 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
             "par table (tables.<table>.approval)"
         ),
         extra="sql",
+        own_description=True,
+    ),
+    "loom.state": Builtin(
+        target="loom_ia.tools_builtin.state:build",
+        params="loom_ia.tools_builtin.state_params:StateParams",
+        refused=("approval", "side_effects", "idempotent"),
+        refused_because=(
+            "l'outil n'agit que sur le state de la session, sans effet hors de loom ; "
+            "qui peut écrire chaque clé se règle sur la clé (state.<clé>.writers)"
+        ),
         own_description=True,
     ),
 }

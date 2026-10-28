@@ -503,13 +503,18 @@ class ToolExecutor:
         return tuple(self._tools)
 
     def shows_refs(self, run: RunView) -> bool:
-        """Vrai si les références ``$ref`` sont montrées : un rôle ou un sous-agent est proposé.
+        """Vrai si les références ``$ref`` sont montrées : un rôle, un sous-agent ou ``loom.state``.
+
+        ``loom.state`` désigne un résultat par sa référence : sans elles, le modèle
+        ne saurait pas quoi lui donner (E4).
 
         Un outil masqué (rôle vision sans pièce jointe, sous-agent au-delà de la
         profondeur permise) ne compte pas.
         """
+        model_tool = self.state_rules.model_tool
         return any(
-            tool.spec.kind in {"role", "agent"} and _offered(tool, run)
+            (tool.spec.kind in {"role", "agent"} or tool.spec.name == model_tool)
+            and _offered(tool, run)
             for tool in self._tools.values()
         )
 
@@ -985,6 +990,8 @@ class ToolExecutor:
                 if self.artifacts is not None
                 else None
             ),
+            results=_RunResults(view.results),
+            keeps_state=bool(self.state_rules) and keeps_state(state),
         )
         started = time.perf_counter()
         consumption: Consumption | None = None
@@ -1510,6 +1517,22 @@ def _kind(value: object) -> str:
             return _KINDS["number"]
         case _:
             return _KINDS["null"]
+
+
+class _RunResults:
+    """Les résultats du run, en lecture pour un outil (``ToolContext.results``, state v2)."""
+
+    __slots__ = ("_index",)
+
+    def __init__(self, index: ResultIndex) -> None:
+        self._index = index
+
+    async def read(self, ref: str) -> JsonValue:
+        try:
+            resolved, _ = await self._index.resolve({"value": {"$ref": ref}})
+        except RefError as exc:
+            raise ToolError(exc.message) from exc
+        return resolved["value"]
 
 
 def _as_served(output: ToolOutput, served: ToolOutput) -> ToolOutput:

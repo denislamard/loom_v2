@@ -21,6 +21,7 @@ Ce fichier suppose les chapitres 7 (sessions), 12 (rôles délégués), 26 (reje
   - [Exemple 31.3 : ce que reçoit l'orchestrateur](#exemple-313--ce-que-reçoit-lorchestrateur)
   - [Exemple 31.4 : une écriture refusée](#exemple-314--une-écriture-refusée)
   - [Exemple 31.5 : tester le state, et ce que le rejeu ne voit pas](#exemple-315--tester-le-state-et-ce-que-le-rejeu-ne-voit-pas)
+  - [Exemple 31.6 : le modèle tient le state (`loom.state`)](#exemple-316--le-modèle-tient-le-state-loomstate)
 - [Pour aller plus loin](#pour-aller-plus-loin)
 
 ---
@@ -693,9 +694,122 @@ Remettez `path: /client` : l'évaluation repasse.
 
 ---
 
+### Exemple 31.6 : le modèle tient le state (`loom.state`)
+
+#### Pourquoi
+
+Un outil générique ne se prête pas à `from`. `loom.sql` rend `{columns, rows}`, et c'est le modèle qui choisit les colonnes et leur ordre : `/rows/0/0` vaut l'`id` à une requête, le numéro de facture à la suivante. Et seul le modèle sait de quoi parle la conversation : un state posé de l'extérieur finit par la contredire. Depuis loom-ia 2.0.15, le modèle tient lui-même certaines clés, sans jamais en recopier la valeur.
+
+#### Objectif
+
+Déclarer deux clés tenues par le modèle, voir ce qu'il envoie à `loom.state`, ce que loom en tire, et ce qu'il refuse.
+
+#### Mise en place
+
+L'exemple du dépôt `examples/j7/state_v2/` : un outil `chercher_clients` qui rend un tableau comme `loom.sql`, un modèle simulé, et l'agent `clients` :
+
+```yaml
+state:
+  client:
+    description: Client dont parle la conversation.
+    schema:
+      type: object
+      properties:
+        id: {type: integer}
+        code: {type: string, pattern: "^C-[0-9]{3,}$"}
+      required: [id, code]
+      additionalProperties: false
+    writers: [model]                          # seul le modèle l'écrit
+    extract: {fields: {id: id, code: code}}   # champ ← colonne, sur une ligne
+  selection:
+    description: Liste de travail en cours (ids de clients), avec son libellé.
+    schema:
+      type: object
+      properties:
+        ids: {type: array, items: {type: integer}, maxItems: 100}
+        libelle: {type: string, maxLength: 120}
+      required: [ids]
+    writers: [model]
+    extract: {columns: {ids: id}, label: libelle}   # une colonne, toutes les lignes
+  signature:
+    schema: {type: string, minLength: 1, maxLength: 80}
+    writers: [app]                            # réservée à l'application
+
+tools:
+  - python: chercher_clients
+  - python: loom.state
+```
+
+`main.context: [session_state]` est obligatoire : le modèle doit voir les clés qu'il écrit. `loom validate` montre la règle de chaque clé :
+
+```text
+  clients : modèle FAKE_MAIN, 2 outil(s) Python
+    outil state : client : une ligne, colonnes id, code
+    outil state : selection : toutes les lignes, ids ← id ; libellé dans libelle ('label')
+```
+
+#### Exécution
+
+Depuis `examples/j7/state_v2/` :
+
+```bash
+uv run loom run clients "Trouve Renard de Longvic." --session atelier --run-id 01a1-0001 --state "signature=Plomberie Lamard"
+uv run loom state atelier
+```
+
+```text
+Le client Renard de Longvic est C-261.
+{
+  "client": {
+    "code": "C-261",
+    "id": 261
+  },
+  "signature": "Plomberie Lamard"
+}
+```
+
+Le journal montre ce qui s'est passé (`loom inspect 01a1-0001 --session atelier`) :
+
+| Appel | Arguments | Résultat |
+|---|---|---|
+| `chercher_clients` | `{"nom": "Renard"}` | deux lignes : `[261, "C-261", "Renard", "Longvic"]`, `[312, "C-312", "Renard", "Dijon"]` |
+| `state` | `{"set": "client", "result": "result:1"}` | erreur : `client non posé : le résultat a 2 lignes : préciser 'row' (0 à 1)` |
+| `state` | `{"set": "client", "result": "result:1", "row": 0}` | `{"set": "client", "value": {"id": 261, "code": "C-261"}, "from": "result:1"}` |
+
+Le modèle n'a écrit ni `261` ni `C-261` : il a désigné le résultat (`result:1`, la référence qu'il lit en tête de chaque résultat) et la ligne. Avec deux homonymes, loom refuse de choisir à sa place.
+
+Un résultat qui n'existe pas, dans un nouveau run :
+
+```bash
+uv run loom run clients "Invente un client." --session atelier --run-id 01a1-0002
+```
+
+L'appel `{"set": "client", "result": "result:4"}` rend l'erreur `Référence inconnue : result:4. Aucun résultat à référencer dans ce run.` — seuls les résultats du run en cours se désignent — et le state ne bouge pas.
+
+L'application, elle, ne peut pas écrire une clé réservée au modèle :
+
+```bash
+uv run loom run clients "Montre la fiche de Dupuy." --session atelier --state 'client={"id": 8, "code": "C-008"}'
+```
+
+```text
+Demande refusée : State refusé : client : l'application ne l'écrit pas (writers : model)
+```
+
+#### À retenir
+
+- **`writers`** dit qui écrit une clé : `app`, `tools`, `model`. Par défaut `[app, tools]`, comme avant ; `writers: [app]` réserve une clé à l'application — même un outil qui rendrait `ToolOutput.state` ne la touche plus.
+- **Le modèle désigne, loom extrait** : `result` (en texte, jamais un `$ref`), `row` si le résultat a plusieurs lignes, `label` pour un libellé. La règle — `value`, `fields` ou `columns` — est sur la clé, pas dans l'appel.
+- Les refus de `loom.state` sont des **erreurs** que le modèle corrige ; `columns` refuse un résultat tronqué, qui donnerait une liste incomplète.
+- Poser une clé coûte un appel de modèle : relevez `max_iterations` d'un agent qui en tient plusieurs.
+- Une clé `required` ne s'efface plus par un outil ni par le modèle : la session resterait bloquée.
+- Le corpus `tests/regression/j7_state_v2/` rejoue ces runs à l'identique, et sa suite contrôle le state de chacun (`expect.state`).
+
+---
+
 ## Pour aller plus loin
 
-- **La référence** : `docs/state-et-context.md` — ce que fait le state, ses règles et ses décisions ; `docs/fonctions.md`, point 51.
+- **La référence** : `docs/state-et-context.md` — ce que fait le state, ses règles et ses décisions (§4.5 pour `loom.state`) ; `docs/fonctions.md`, point 51 ; l'analyse du state v2 : `docs/state_v2_analyse.md`.
 - **L'exemple du dépôt** : `examples/j7/state.py`, qui montre le bloc tel que l'orchestrateur l'a reçu (échanges bruts au journal), et sa suite de non-régression `tests/regression/j7/`.
 - **Ce que le state ne fait pas encore** : REST et MCP ne posent pas de state, si bien qu'un agent qui a une clé `required` n'y ouvre un run que dans une session où elle a déjà une valeur (sinon : 422 en REST, un résultat d'erreur en MCP) ; un juge ne reçoit pas le state ; un sous-agent non plus.
 

@@ -26,6 +26,7 @@ Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom 
   - [`loom.local_files` : des fichiers dans des dossiers permis](#loomlocal_files--des-fichiers-dans-des-dossiers-permis)
   - [`loom.excel` : des classeurs Excel mis en forme](#loomexcel--des-classeurs-excel-mis-en-forme)
   - [`loom.sql` : des bases SQLite et Postgres, avec des droits par table](#loomsql--des-bases-sqlite-et-postgres-avec-des-droits-par-table)
+  - [`loom.state` : le modèle tient le state de la session](#loomstate--le-modèle-tient-le-state-de-la-session)
 - [Pour aller plus loin](#pour-aller-plus-loin)
 
 ---
@@ -1170,6 +1171,29 @@ La table des secrets de chaque client contient la variable que nomme `dsn_env`, 
 - **Hors de portée de l'outil** : `MERGE`, `EXPLAIN`, une transaction sur plusieurs appels, le masquage de colonnes, MySQL. SQLite garde ses réglages : `foreign_keys` reste coupé si la base ne l'active pas.
 
 ---
+
+### `loom.state` : le modèle tient le state de la session
+
+Depuis loom-ia 2.0.15. L'outil n'a pas de paramètres : ce qu'il écrit se déclare sur les clés du state de l'agent (`writers: [model]` et `extract:`). Le modèle **désigne** un résultat d'outil du run par sa référence, loom en **tire** la valeur ; il ne recopie jamais de donnée.
+
+```yaml
+tools:
+  - python: loom.sql
+    databases: [...]
+  - python: loom.state
+state:
+  client:
+    description: Client dont parle la conversation.
+    schema: {type: object, properties: {id: {type: integer}, code: {type: string}}, required: [id, code]}
+    writers: [model]
+    extract: {fields: {id: id, code: code}}
+main:
+  model: HAIKU
+  system_file: secretariat.md
+  context: [session_state]
+```
+
+Ce que le modèle envoie : `{"set": "client", "result": "result:3", "row": 0}`, ou `{"clear": "client"}` ; ce qu'il reçoit : `{"set": "client", "value": {"id": 261, "code": "C-261"}, "from": "result:3"}`. Un refus est une erreur qui dit quoi corriger. L'outil est sans effet hors du state : `approval`, `side_effects` et `idempotent` sont refusés sur sa référence, `description` aussi (elle liste les clés). Le guide complet : [05-state-de-session.md](05-state-de-session.md), exemple 31.6 ; la référence : `docs/state-et-context.md`, §4.5.
 
 ## Pour aller plus loin
 
