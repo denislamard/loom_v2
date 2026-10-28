@@ -660,6 +660,7 @@ Clés du state de session : des valeurs typées que la session garde d'un run à
 | `<clé>.extract.value` | La valeur d'une colonne, sur une ligne. | nom de colonne | | `value: code` |
 | `<clé>.extract.fields` | Un objet : chaque champ pris dans une colonne d'une ligne (champ ← colonne). | table | | `fields: {id: id, code: code}` |
 | `<clé>.extract.columns` | Un objet : chaque champ reçoit la liste d'une colonne sur toutes les lignes. Refusé sur un résultat tronqué (`truncated: true`). | table | | `columns: {ids: id}` |
+| `<clé>.clears` | Clés que poser celle-ci par `loom.state` efface dans la même écriture : déclarées, avec `model` dans leurs `writers`, jamais `required` ni la clé elle-même. Seulement avec `extract`. | liste de clés | `[]` | `clears: [document]` |
 | `<clé>.extract.label` | Champ qui reçoit le libellé donné par le modèle (`label`) ; avec `fields` ou `columns`. | nom de champ | `null` | `label: libelle` |
 | `<clé>.from` | Outils dont un résultat réussi pose la clé ; un outil cité une fois par clé. Exige `tools` dans `writers`. Avec `path` sur `loom.sql`, `loom validate` avertit : préférer `loom.state`. | liste | `[]` | voir ci-dessous |
 | `<clé>.from[].tool` | Outil de l'agent (Python, rôle, sous-agent, ou outil préfixé MCP/source). | nom d'outil | **obligatoire** | `tool: chercher_devis` |

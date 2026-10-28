@@ -14,6 +14,11 @@ Sortie d'un outil terminal (#13) : le résultat est remplacé par un marqueur,
 et la sortie suit en message ``assistant``. Elle n'est pas dupliquée, et la
 séquence reste valide pour les API (résultat d'outil, puis assistant).
 
+Réponse écrite avec ``loom.state`` (M1) : le texte quitte le tour qui appelait
+``state``, et la réponse retenue le suit en message ``assistant``, comme une
+sortie terminale ; une réponse remplacée par une politique y figure sous sa
+forme retenue.
+
 Réparations (#20) : une réponse refusée par une politique et le diagnostic
 qui la suit (``message.user`` de ``kind: repair``) restent dans le journal,
 mais pas dans l'historique : seule la réponse acceptée y figure. Une réponse
@@ -160,6 +165,10 @@ def _conversation(state: RunState) -> tuple[Message, ...]:
         if state.output is not None and messages and messages[-1].role == "assistant":
             # Réponse finale, éventuellement remplacée par une politique.
             return (*messages[:-1], state.output)
+        if state.output is not None and messages and messages[-1].role == "tool":
+            # Réponse écrite avec des appels de loom.state (M1) : le texte quitte le
+            # tour qui appelait, et la réponse retenue le suit, comme une sortie terminale.
+            return (*_without_text_of_last_turn(messages), state.output)
         return messages
     marker = ToolOutput.text(TERMINAL_MARKER)
     kept = tuple(
@@ -178,6 +187,16 @@ def _conversation(state: RunState) -> tuple[Message, ...]:
         for message in messages
     )
     return (*kept, state.output)
+
+
+def _without_text_of_last_turn(messages: tuple[Message, ...]) -> tuple[Message, ...]:
+    """Les messages, sans le texte de la dernière réponse de l'assistant (ses appels restent)."""
+    position = max(i for i, m in enumerate(messages) if m.role == "assistant")
+    turn = messages[position]
+    kept = turn.model_copy(
+        update={"blocks": tuple(b for b in turn.blocks if not isinstance(b, TextBlock))}
+    )
+    return (*messages[:position], kept, *messages[position + 1 :])
 
 
 def _accepted(state: RunState) -> tuple[Message, ...]:

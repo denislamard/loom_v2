@@ -21,28 +21,45 @@ models:
     params:
       script:
         # Une fiche : un seul client, la ligne n'a pas à être précisée.
-        - with_text: Dupuy
+        - with_text: fiche de Dupuy
           tool_calls: [{name: chercher_clients, arguments: {nom: Dupuy}}]
-        - with_text: Dupuy
+        - with_text: fiche de Dupuy
           tool_calls: [{name: state, arguments: {set: client, result: "result:1"}}]
-        - with_text: Dupuy
+        - with_text: fiche de Dupuy
           text: Patrick Dupuy, client C-008.
-        # Deux homonymes : sans ligne, refus qui le dit ; puis la bonne ligne.
+        # Deux homonymes : sans ligne désignée, refus qui le dit ; puis la ligne par sa valeur.
         - with_text: Renard de Longvic
           tool_calls: [{name: chercher_clients, arguments: {nom: Renard}}]
         - with_text: Renard de Longvic
           tool_calls: [{name: state, arguments: {set: client, result: "result:1"}}]
         - with_text: Renard de Longvic
-          tool_calls: [{name: state, arguments: {set: client, result: "result:1", row: 0}}]
+          tool_calls: [{name: state, arguments: {set: client, result: "result:1", match: {code: C-261}}}]
         - with_text: Renard de Longvic
           text: Le client Renard de Longvic est C-261.
         # Une liste : la sélection et son libellé, posés avec la recherche suivante.
-        - with_text: Dijon
+        - with_text: clients de Dijon
           tool_calls: [{name: chercher_clients, arguments: {ville: Dijon}}]
-        - with_text: Dijon
+        - with_text: clients de Dijon
           tool_calls: [{name: state, arguments: {set: selection, result: "result:1", label: clients de Dijon}}]
-        - with_text: Dijon
+        - with_text: clients de Dijon
           text: Deux clients à Dijon.
+        # Un client, puis une liste : la sélection efface le client (clears).
+        - with_text: Enchaîne
+          tool_calls: [{name: chercher_clients, arguments: {nom: Dupuy}}]
+        - with_text: Enchaîne
+          tool_calls:
+            - {name: state, arguments: {set: client, result: "result:1"}}
+            - {name: chercher_clients, arguments: {ville: Dijon}}
+        - with_text: Enchaîne
+          tool_calls: [{name: state, arguments: {set: selection, result: "result:3", label: clients de Dijon}}]
+        - with_text: Enchaîne
+          text: Patrick Dupuy est C-008 ; deux clients à Dijon.
+        # La réponse et le state dans la même réponse : le run s'arrête sur ce texte.
+        - with_text: Réponds
+          tool_calls: [{name: chercher_clients, arguments: {nom: Renault}}]
+        - with_text: Réponds
+          text: Nicolas Renault est le client C-002.
+          tool_calls: [{name: state, arguments: {set: client, result: "result:1"}}]
         # Un résultat qui n'existe pas : rien n'est posé.
         - with_text: Invente
           tool_calls: [{name: state, arguments: {set: client, result: "result:4"}}]

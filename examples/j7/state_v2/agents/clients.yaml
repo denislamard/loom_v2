@@ -35,6 +35,8 @@ state:
       required: [ids]
     writers: [model]
     extract: {columns: {ids: id}, label: libelle}
+    # Une nouvelle liste : on ne parle plus d'un client en particulier.
+    clears: [client]
   signature:
     description: Nom de l'entreprise, posé par l'application.
     schema: {type: string, minLength: 1, maxLength: 80}

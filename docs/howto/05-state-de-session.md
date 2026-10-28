@@ -773,10 +773,10 @@ Le journal montre ce qui s'est passé (`loom inspect 01a1-0001 --session atelier
 | Appel | Arguments | Résultat |
 |---|---|---|
 | `chercher_clients` | `{"nom": "Renard"}` | deux lignes : `[261, "C-261", "Renard", "Longvic"]`, `[312, "C-312", "Renard", "Dijon"]` |
-| `state` | `{"set": "client", "result": "result:1"}` | erreur : `client non posé : le résultat a 2 lignes : préciser 'row' (0 à 1)` |
-| `state` | `{"set": "client", "result": "result:1", "row": 0}` | `{"set": "client", "value": {"id": 261, "code": "C-261"}, "from": "result:1"}` |
+| `state` | `{"set": "client", "result": "result:1"}` | erreur : `client non posé : le résultat a 2 lignes : désigner la bonne avec 'match' (une colonne et sa valeur, par exemple 'code') ou 'row' (0 à 1)` |
+| `state` | `{"set": "client", "result": "result:1", "match": {"code": "C-261"}}` | `{"set": "client", "value": {"id": 261, "code": "C-261"}, "from": "result:1"}` |
 
-Le modèle n'a écrit ni `261` ni `C-261` : il a désigné le résultat (`result:1`, la référence qu'il lit en tête de chaque résultat) et la ligne. Avec deux homonymes, loom refuse de choisir à sa place.
+Le modèle n'a pas écrit `261` : il a désigné le résultat (`result:1`, la référence qu'il lit en tête de chaque résultat) et la ligne, par une valeur qu'il y lit (`match`). Avec deux homonymes, loom refuse de choisir à sa place ; et un `match` qu'aucune ligne ne porte est refusé : il ne peut pas inventer de client.
 
 Un résultat qui n'existe pas, dans un nouveau run :
 
@@ -799,9 +799,10 @@ Demande refusée : State refusé : client : l'application ne l'écrit pas (write
 #### À retenir
 
 - **`writers`** dit qui écrit une clé : `app`, `tools`, `model`. Par défaut `[app, tools]`, comme avant ; `writers: [app]` réserve une clé à l'application — même un outil qui rendrait `ToolOutput.state` ne la touche plus.
-- **Le modèle désigne, loom extrait** : `result` (en texte, jamais un `$ref`), `row` si le résultat a plusieurs lignes, `label` pour un libellé. La règle — `value`, `fields` ou `columns` — est sur la clé, pas dans l'appel.
+- **Le modèle désigne, loom extrait** : `result` (`"result:3"`, `3` ou un `$ref` : l'outil relit lui-même le résultat), `match` (ou `row`) si le résultat a plusieurs lignes, `label` pour un libellé. La règle — `value`, `fields` ou `columns` — est sur la clé, pas dans l'appel.
 - Les refus de `loom.state` sont des **erreurs** que le modèle corrige ; `columns` refuse un résultat tronqué, qui donnerait une liste incomplète.
-- Poser une clé coûte un appel de modèle : relevez `max_iterations` d'un agent qui en tient plusieurs.
+- **`clears`** efface d'autres clés quand on en pose une : `selection` efface ici `client` (le corpus le montre, cas `sujet`).
+- Un tour qui écrit la réponse **et** n'appelle que `state` termine le run sur ce texte, sans rappeler le modèle (cas `reponse` du corpus) ; un tour qui ne fait que poser coûte un appel de modèle : relevez `max_iterations` d'un agent qui en tient plusieurs.
 - Une clé `required` ne s'efface plus par un outil ni par le modèle : la session resterait bloquée.
 - Le corpus `tests/regression/j7_state_v2/` rejoue ces runs à l'identique, et sa suite contrôle le state de chacun (`expect.state`).
 

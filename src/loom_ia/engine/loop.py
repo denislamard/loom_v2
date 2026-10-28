@@ -26,6 +26,13 @@ la réponse finale. ``run.completed`` désigne alors son ``tool.completed``
 au lieu de recopier la sortie. Appelé avec d'autres outils, il redevient un
 outil ordinaire et l'orchestrateur compose la réponse.
 
+Réponse écrite avec ``loom.state`` (state v2, M1) : quand le modèle écrit sa
+réponse et, dans la même réponse, n'appelle que ``loom.state``, tous ces
+appels réussis sans écriture refusée, son texte est la réponse finale, sans
+le rappeler — rappelé, il en réécrirait une autre. Elle passe par les mêmes
+contrôles que toute réponse finale (``_final``). Analyse :
+``docs/state_analyse_moteur.md``.
+
 Rôles et sous-agents : si l'un d'eux est proposé dans le run, chaque résultat
 montré au modèle porte sa référence (``[result:3]``) et le prompt système
 explique ``$ref`` (#12). Dans la requête, les résultats d'un tour suivent
@@ -1238,7 +1245,13 @@ async def _decide(
         return _repair(state, ctx, scope, state.pending_repair, cause)
     match state.status:
         case RunStatus.COMPLETED if not state.finished and last is not None and last.role == "tool":
-            # Seul un outil terminal mène à COMPLETED sur un résultat d'outil.
+            # Un outil terminal, ou une réponse qui n'appelait que loom.state (M1),
+            # mène à COMPLETED sur un résultat d'outil.
+            answer = _answered_with_state(state, ctx)
+            if answer is not None and _terminal(state, ctx)[0] is None:
+                output = state.replaced_output or answer
+                data = _structured(ctx.output, output)
+                return [scope.draft(_completed(state, output, data=data))]
             terminal = _terminal_event(state, cause)
             return [scope.draft(_completed(state, state.replaced_output, terminal=terminal))]
         case RunStatus.COMPLETED if not state.finished:
@@ -1266,6 +1279,11 @@ async def _decide(
             terminal, parallel = _terminal(state, ctx)
             if terminal is not None:
                 return await _final(state, ctx, scope, cause, _terminal_message(state), terminal)
+            answer = _answered_with_state(state, ctx)
+            if answer is not None:
+                # Le modèle a répondu et tenu son state dans la même réponse : son
+                # texte est la réponse finale, sans le rappeler (state v2, M1).
+                return await _final(state, ctx, scope, cause, answer, None)
             drafts = [
                 scope.draft(
                     PolicyDecided(
@@ -1582,6 +1600,44 @@ def _terminal(
     return (terminal[0] if succeeded else None), ()
 
 
+def _answered_with_state(state: RunState, ctx: RunContext) -> Message | None:
+    """La réponse finale d'un tour qui n'appelait que ``loom.state``, ou None (state v2, M1).
+
+    Le modèle a écrit sa réponse et, dans la même réponse, tenu le state : le
+    rappeler lui ferait réécrire une réponse, qui remplacerait la bonne. Il
+    faut un texte non vide, que tous les appels du tour soient ceux de
+    ``loom.state``, et que tous aient réussi sans écriture refusée — sinon le
+    modèle doit le savoir, et il est rappelé comme après tout outil. La
+    réponse rendue est le message du tour sans ses appels d'outils.
+    """
+    model_tool = ctx.tools.state_rules.model_tool
+    if model_tool is None:
+        return None
+    messages = state.messages
+    position = next(
+        (i for i in range(len(messages) - 1, -1, -1) if messages[i].role == "assistant"), None
+    )
+    if position is None:
+        return None
+    turn = messages[position]
+    calls = turn.tool_calls
+    if not calls or any(call.name != model_tool for call in calls) or not turn.text.strip():
+        return None
+    results = {
+        block.call_id: block.output
+        for message in messages[position + 1 :]
+        if message.role == "tool"
+        for block in message.blocks
+        if isinstance(block, ToolResultBlock)
+    }
+    for call in calls:
+        output = results.get(call.call_id)
+        if output is None or output.is_error or output.state_refused:
+            return None
+    kept = tuple(block for block in turn.blocks if not isinstance(block, ToolCallBlock))
+    return turn.model_copy(update={"blocks": kept})
+
+
 def _terminal_message(state: RunState) -> Message:
     """Sortie de l'outil terminal, en réponse de l'assistant."""
     last = state.messages[-1]
@@ -1845,9 +1901,14 @@ async def _model_step(
         )
         kept = tuple(b for b in message.blocks if not isinstance(b, ToolCallBlock))
         message = message.model_copy(update={"blocks": kept or (TextBlock(text=""),)})
-    if ctx.on_chunk is not None and live is None and message.tool_calls and message.text:
+    keeping = ctx.tools.state_rules.model_tool
+    only_state = keeping is not None and all(c.name == keeping for c in message.tool_calls)
+    early = bool(message.tool_calls) and bool(message.text) and not only_state
+    if ctx.on_chunk is not None and live is None and early:
         # after_guards : le texte d'une réponse qui appelle des outils n'est pas la
-        # réponse finale ; il part dès que la réponse est complète.
+        # réponse finale ; il part dès que la réponse est complète. Sauf si elle
+        # n'appelle que loom.state : ce texte peut être la réponse finale (M1), et
+        # partira alors une fois contrôlé, à la clôture (``_release``).
         await ctx.on_chunk(TextDelta(text=message.text))
     yield current.draft(
         responded(

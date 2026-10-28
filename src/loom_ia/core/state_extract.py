@@ -19,9 +19,16 @@ Trois règles :
   lignes. Refusé sur un résultat tronqué (``"truncated": true``), qui
   donnerait une liste incomplète sans le dire.
 
-Une ligne se choisit par ``row`` (à partir de 0) ; sans ``row``, le résultat
-doit avoir exactement une ligne. ``label`` ajoute un champ, rempli par le
-texte que donne le modèle (un libellé, jamais une donnée du résultat).
+Une colonne présente plusieurs fois (``SELECT id, code, *``) est lue quand
+toutes ses occurrences ont la même valeur ; sinon (``SELECT d.id, c.id``), refus.
+
+Une ligne se choisit par ``match`` — des colonnes et leurs valeurs, que doit
+porter exactement une ligne du résultat (``{"code": "C-261"}``) — ou par ``row``
+(à partir de 0) ; sans l'un ni l'autre, le résultat doit avoir exactement une
+ligne. ``match`` est le plus sûr : un modèle compte mal les lignes, et une
+valeur qu'il lit ne peut désigner qu'une ligne qui la porte vraiment.
+``label`` ajoute un champ, rempli par le texte que donne le modèle (un
+libellé, jamais une donnée du résultat).
 
 Module pur : aucune entrée-sortie, aucune dépendance au reste de loom.
 """
@@ -63,28 +70,34 @@ class _Table:
         record = self.rows[row]
         if self.tabular:
             assert isinstance(record, Sequence) and not isinstance(record, str)
-            index = self.index(column)
-            if index >= len(record):
+            indexes = self.indexes(column)
+            if indexes[-1] >= len(record):
                 raise ExtractError(f"ligne {row} : pas de valeur pour la colonne {column!r}")
-            return record[index]
+            values = [record[i] for i in indexes]
+            if any(value != values[0] for value in values[1:]):
+                raise ExtractError(
+                    f"colonne {column!r} présente {len(indexes)} fois, avec des valeurs "
+                    f"différentes (ligne {row}) : donner un alias dans la requête"
+                )
+            return values[0]
         assert isinstance(record, Mapping)
         if column not in record:
             raise ExtractError(
-                f"ligne {row} : colonne {column!r} absente (colonnes : {_listed(record)})"
+                f"ligne {row} : colonne {column!r} absente (colonnes : {_listed(record)}) : "
+                f"refaire la requête avec la colonne {column!r}, sous ce nom (sans alias)"
             )
         return record[column]
 
-    def index(self, column: str) -> int:
+    def indexes(self, column: str) -> list[int]:
+        """Positions de la colonne. Une colonne en double (``SELECT id, *``) est lue
+        si toutes ses occurrences ont la même valeur ; sinon ``cell`` la refuse."""
         found = [i for i, name in enumerate(self.names) if name == column]
         if not found:
             raise ExtractError(
-                f"colonne {column!r} absente du résultat (colonnes : {_listed(self.names)})"
+                f"colonne {column!r} absente du résultat (colonnes : {_listed(self.names)}) : "
+                f"refaire la requête avec la colonne {column!r}, sous ce nom (sans alias)"
             )
-        if len(found) > 1:
-            raise ExtractError(
-                f"colonne {column!r} présente {len(found)} fois : donner un alias dans la requête"
-            )
-        return found[0]
+        return found
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -96,33 +109,49 @@ class ModelKey:
     schema: Mapping[str, JsonValue]
     extraction: Extraction
     required: bool = False
+    # Clés que poser celle-ci efface, dans la même écriture (``clears:``).
+    clears: tuple[str, ...] = ()
 
 
 def extract(
-    data: JsonValue, rule: Extraction, *, row: int | None = None, label: str | None = None
+    data: JsonValue,
+    rule: Extraction,
+    *,
+    row: int | None = None,
+    match: Mapping[str, JsonValue] | None = None,
+    label: str | None = None,
 ) -> JsonValue:
     """La valeur que la règle tire de ces données ; ``ExtractError`` sinon."""
     table = _table(data)
     if rule.label is None and label is not None:
         raise ExtractError("cette clé ne prend pas de libellé : retirer 'label'")
+    if row is not None and match:
+        raise ExtractError("'row' ou 'match', l'un des deux")
     if rule.single_row:
-        index = _row(table, row)
+        index = _matched(table, match) if match else _row(table, row)
         if rule.value is not None:
             return table.cell(index, rule.value)
         result: dict[str, JsonValue] = {
             name: table.cell(index, column) for name, column in rule.fields.items()
         }
     else:
-        if row is not None:
-            raise ExtractError("cette clé prend toutes les lignes du résultat : retirer 'row'")
+        if row is not None or match:
+            raise ExtractError(
+                "cette clé prend toutes les lignes du résultat : retirer 'row' et 'match'"
+            )
         if table.truncated:
             raise ExtractError(
                 "résultat tronqué (truncated) : la liste serait incomplète ; refaire la requête "
                 "pour qu'elle rende toutes les lignes"
             )
+        if not table.rows:
+            raise ExtractError(
+                "le résultat n'a aucune ligne : liste vide, rien à poser (pour effacer la "
+                "clé : clear)"
+            )
         if table.tabular:
             for column in rule.columns.values():
-                table.index(column)
+                table.indexes(column)
         result = {
             name: [table.cell(i, column) for i in range(len(table.rows))]
             for name, column in rule.columns.items()
@@ -170,10 +199,44 @@ def _row(table: _Table, row: int | None) -> int:
             return 0
         if count == 0:
             raise ExtractError("le résultat n'a aucune ligne : rien à poser")
-        raise ExtractError(f"le résultat a {count} lignes : préciser 'row' (0 à {count - 1})")
+        raise ExtractError(
+            f"le résultat a {count} lignes : désigner la bonne avec 'match' (une colonne et "
+            f"sa valeur, par exemple 'code') ou 'row' (0 à {count - 1})"
+        )
     if not 0 <= row < count:
         raise ExtractError(f"ligne {row} hors du résultat ({count} ligne(s) : 0 à {count - 1})")
     return row
+
+
+def _matched(table: _Table, match: Mapping[str, JsonValue]) -> int:
+    """La seule ligne qui porte ces valeurs ; un nombre écrit en texte vaut le nombre."""
+    if table.tabular:
+        for column in match:
+            table.indexes(column)
+    found = [
+        i
+        for i in range(len(table.rows))
+        if all(_same(table.cell(i, column), wanted) for column, wanted in match.items())
+    ]
+    said = ", ".join(f"{column} = {wanted!r}" for column, wanted in match.items())
+    if not found:
+        raise ExtractError(f"aucune ligne du résultat n'a {said}")
+    if len(found) > 1:
+        raise ExtractError(
+            f"{len(found)} lignes du résultat ont {said} : ajouter une colonne à 'match'"
+        )
+    return found[0]
+
+
+def _same(value: JsonValue, wanted: JsonValue) -> bool:
+    if value == wanted and type(value) is type(wanted):
+        return True
+    scalar = (str, int, float)
+    if isinstance(value, bool) or isinstance(wanted, bool):
+        return value is wanted
+    if isinstance(value, scalar) and isinstance(wanted, scalar):
+        return str(value).strip() == str(wanted).strip() or value == wanted
+    return value == wanted
 
 
 def _listed(names: Mapping[str, object] | Sequence[str]) -> str:

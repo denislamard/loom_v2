@@ -2,7 +2,7 @@
 
 28 octobre 2026 · Denis Lamard
 
-> Statut : **réalisé le 28/10/2026 dans 2.0.15 (non publiée)**, les 4 lots, avec les recommandations de §8 (S10 : version gardée à 2.0.15). Écart avec l'analyse : la syntaxe d'`extract` est `value` / `fields` / `columns` (champ ← colonne) avec `label: <champ>` — §2.3 et §11 la suivent. Ce que fait loom : `state-et-context.md` §4.5. Analyse d'origine : Porte sur le commit `f23a44c` (version `2.0.15` non publiée). Fait suite à l'essai réel `state-01` sur l'agent de test `/home/denis/temp/agent` (Marie, Haiku, base `crm`). Documents liés : `state-et-context.md` (le state tel qu'il est), `state-et-context-analyse.md` (l'option C), `sql_builtin_tool.md`.
+> Statut : **réalisé le 28/10/2026 dans 2.0.15 (non publiée)**, les 4 lots, avec les recommandations de §8 (S10 : version gardée à 2.0.15). Écart avec l'analyse : la syntaxe d'`extract` est `value` / `fields` / `columns` (champ ← colonne) avec `label: <champ>` — §2.3 et §11 la suivent. Durci le même jour après les essais réels t2 à t7 (`match`, formes de `result` dont `$ref` non résolu pour cet outil — B1 tient toujours —, `clears`, messages d'erreur). Ce que fait loom : `state-et-context.md` §4.5. Analyse d'origine : Porte sur le commit `f23a44c` (version `2.0.15` non publiée). Fait suite à l'essai réel `state-01` sur l'agent de test `/home/denis/temp/agent` (Marie, Haiku, base `crm`). Documents liés : `state-et-context.md` (le state tel qu'il est), `state-et-context-analyse.md` (l'option C), `sql_builtin_tool.md`.
 
 ## En bref
 

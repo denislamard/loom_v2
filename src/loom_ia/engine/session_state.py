@@ -240,8 +240,10 @@ class StateRules:
             # Ajouté seulement avec une clé tenue par le modèle : la consigne des
             # agents d'avant ne change pas d'un octet (B2).
             lines.append(
-                f"Tiens toi-même à jour {', '.join(kept)} avec l'outil {self.model_tool} : "
-                "le state doit toujours dire de quoi parle la conversation."
+                f"Tiens toi-même à jour {', '.join(kept)} avec l'outil {self.model_tool}, sans "
+                "demander et sans en parler : le state doit toujours dire de quoi parle la "
+                "conversation. Pose une clé dès qu'un résultat la désigne ; quand la "
+                "conversation change de sujet, remplace-la ou efface-la."
             )
         return "\n".join(lines)
 

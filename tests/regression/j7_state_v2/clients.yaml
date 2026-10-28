@@ -18,7 +18,7 @@ cases:
       state:
         client: {id: 8, code: C-008}
         signature: Plomberie Lamard
-  # Deux homonymes : sans ligne, le refus le dit ; la bonne ligne est posée.
+  # Deux homonymes : sans ligne désignée, le refus le dit ; la ligne est désignée par sa valeur (match).
   - name: homonymes
     input: Trouve Renard de Longvic.
     state: {signature: Plomberie Lamard}
@@ -35,6 +35,25 @@ cases:
       state:
         selection: {ids: [2, 312], libelle: clients de Dijon}
         client: null
+  # Un client puis une liste dans le même run : poser la sélection efface le client (clears).
+  - name: sujet
+    input: Enchaîne la fiche Dupuy puis les clients à Dijon.
+    state: {signature: Plomberie Lamard}
+    expect:
+      status: completed
+      called: [chercher_clients, state, chercher_clients, state]
+      state:
+        selection: {ids: [2, 312], libelle: clients de Dijon}
+        client: null
+  # La réponse écrite avec l'appel de state : elle est la réponse finale, sans rappel du modèle.
+  - name: reponse
+    input: Réponds sur Renault.
+    state: {signature: Plomberie Lamard}
+    expect:
+      status: completed
+      contains: [Nicolas Renault est le client C-002.]
+      called: [chercher_clients, state]
+      state: {client: {id: 2, code: C-002}}
   # Un résultat qui n'existe pas : rien n'est posé.
   - name: invente
     input: Invente un client.

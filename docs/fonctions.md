@@ -575,6 +575,8 @@ La règle de V1 est conservée : un outil terminal n'est terminal que s'il est s
 
 **Journal :** pas de duplication. `run.completed` référence le `tool.completed` terminal ; l'historique LLM affiche la sortie comme réponse finale, avec un marqueur à la place du résultat d'outil.
 
+**Réponse écrite avec `loom.state` (2.0.15, M1) :** même logique pour un tour où le modèle écrit sa réponse et n'appelle que `loom.state`, tous ces appels réussis sans écriture refusée : son texte est la réponse finale, sans rappeler le modèle (rappelé, il en réécrivait une autre, qui remplaçait la bonne). Elle passe par `on_output`, `stream_output` et le contrat de l'agent comme toute réponse finale ; `run.completed` porte le texte ; l'historique montre le tour sans son texte, puis la réponse. Analyse : `docs/state_analyse_moteur.md`.
+
 **Réalisation (phase 3.2) :** la sortie d'un rôle terminal sous contrat est contrôlée, et réparée par le rôle, au point `after_tool`, avant d'être retenue ; le contrat `output` de l'agent, s'il en a un, s'applique ensuite au point `on_output`. Une sortie encore refusée après ses réparations (`on_failure: fail`) revient à l'orchestrateur en erreur : l'outil n'est alors pas terminal. L'objet JSON de la sortie est lu dans le `data` du `tool.completed` terminal (`RunResult.data`), sans duplication ; une sortie gardée malgré son contrat (`unverified`) rend le run `unverified`.
 
 ### 14. Images transmises aux rôles vision

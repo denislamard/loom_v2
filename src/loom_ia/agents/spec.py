@@ -945,6 +945,9 @@ class StateKey(DomainModel):
     # Ce que ``loom.state`` tire du résultat que le modèle désigne : exigé avec
     # ``model`` dans ``writers``, refusé sans.
     extract: StateExtract | None = None
+    # Clés que poser celle-ci par ``loom.state`` efface dans la même écriture :
+    # une nouvelle liste remplace le document dont on parlait (``clears: [document]``).
+    clears: tuple[str, ...] = ()
     # Run refusé à l'ouverture si la clé manque au state de la session (D13).
     required: bool = False
     # Valeur lue quand la clé est absente ; elle n'est jamais écrite (D13).
@@ -971,6 +974,12 @@ class StateKey(DomainModel):
                 "'model' dans writers et 'extract' vont ensemble : le modèle désigne un "
                 "résultat, extract dit ce qu'on en tire"
             )
+        if self.clears and self.extract is None:
+            raise ValueError(
+                "'clears' va avec 'extract' : il s'applique quand le modèle pose la clé"
+            )
+        if len(set(self.clears)) != len(self.clears):
+            raise ValueError("clears : clé citée deux fois")
         if self.sources and "tools" not in self.writers:
             raise ValueError("'from' pose la clé par un outil : 'tools' doit être dans writers")
         if self.required and any(
@@ -1063,7 +1072,26 @@ class AgentSpec(DomainModel):
         for role in self.roles:
             self._check_role_state(role)
         self._check_model_state()
+        self._check_clears()
         return self
+
+    def _check_clears(self) -> None:
+        """``clears`` : des clés déclarées, que le modèle peut effacer, jamais ``required``."""
+        for key, declared in self.state.items():
+            for other in declared.clears:
+                label = f"state {key!r}, clears {other!r}"
+                target = self.state.get(other)
+                if other == key:
+                    raise ValueError(f"{label} : une clé ne s'efface pas en se posant")
+                if target is None:
+                    raise ValueError(f"{label} : clé non déclarée (clés : {', '.join(self.state)})")
+                if target.required:
+                    raise ValueError(f"{label} : clé obligatoire, rien ne l'efface")
+                if "model" not in target.writers:
+                    raise ValueError(
+                        f"{label} : l'effacement vient du modèle, 'model' doit être dans "
+                        "ses writers"
+                    )
 
     def _check_model_state(self) -> None:
         """Clés tenues par le modèle : ``loom.state`` déclaré, et les clés montrées à ``main``."""

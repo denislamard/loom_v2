@@ -840,10 +840,16 @@ class ToolExecutor:
         if set(call.arguments) == {INVALID_JSON_KEY}:
             raw = str(call.arguments[INVALID_JSON_KEY])
             return f"Arguments illisibles : ce n'est pas un objet JSON valide.\nReçu : {raw[:500]}"
-        try:
-            arguments, refs = await view.results.resolve(call.arguments)
-        except RefError as exc:
-            return exc.message
+        if tool.spec.name == self.state_rules.model_tool:
+            # ``loom.state`` lit lui-même le résultat qu'on lui désigne : une référence
+            # écrite en ``$ref`` lui parvient telle quelle, sans être remplacée par des
+            # données qu'il ne pourrait plus distinguer de données écrites à la main.
+            arguments, refs = dict(call.arguments), ()
+        else:
+            try:
+                arguments, refs = await view.results.resolve(call.arguments)
+            except RefError as exc:
+                return exc.message
         if self.validate_arguments:
             written = (call.arguments, view.results) if refs else None
             problem = self._schema_errors(call.name, arguments, written=written)

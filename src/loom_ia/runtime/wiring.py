@@ -913,6 +913,7 @@ def model_keys(spec: AgentSpec) -> tuple[ModelKey, ...]:
                 label=key.extract.label,
             ),
             required=key.required,
+            clears=tuple(key.clears),
         )
         for name, key in spec.state.items()
         if "model" in key.writers and key.extract is not None
