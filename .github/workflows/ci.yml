@@ -350,7 +350,7 @@ jobs:
         "$loom" --help > /dev/null
         "$loom" schema > /dev/null
         "$loom" --config cfg/loom.yaml validate | tee validate.txt
-        grep -q "1 agent(s) monté(s) sans erreur" validate.txt
-        grep -q "forge (loom-ia $version)" validate.txt
+        grep -q "✓ 1 agent monté" validate.txt
+        grep -q "forge · loom-ia $version" validate.txt
         "$loom" --config cfg/loom.yaml run smoke "bonjour" 2> /dev/null | tee run.txt
         grep -qx "ok" run.txt
