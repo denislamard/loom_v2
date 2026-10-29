@@ -6,7 +6,7 @@
 >
 > **Navigation** : précédent : [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md) (vous êtes ici)
 
-Jusqu'ici, un outil était écrit par vous (chapitre 2), servi par un serveur MCP (chapitre 13) ou par un paquet installé (chapitre 29). loom-ia fournit aussi quelques outils prêts à l'emploi. Aucun n'est actif d'office : un agent n'a que les outils que liste son `tools:`, et il active un outil fourni en le nommant `loom.<outil>`. Le premier est `loom.fetch_page`, qui lit une page web publique ; depuis 2.0.13, `loom.current_datetime` donne la date et l'heure, `loom.local_files` lit et écrit des fichiers dans des dossiers que vous lui désignez, et `loom.excel` écrit des classeurs Excel mis en forme ; depuis 2.0.14, `loom.sql` lit et modifie des bases SQLite ou Postgres, table par table.
+Jusqu'ici, un outil était écrit par vous (chapitre 2), servi par un serveur MCP (chapitre 13) ou par un paquet installé (chapitre 29). loom-ia fournit aussi quelques outils prêts à l'emploi. Aucun n'est actif d'office : un agent n'a que les outils que liste son `tools:`, et il active un outil fourni en le nommant `loom.<outil>`. Le premier est `loom.fetch_page`, qui lit une page web publique ; depuis 2.0.13, `loom.current_datetime` donne la date et l'heure, `loom.local_files` lit et écrit des fichiers dans des dossiers que vous lui désignez, et `loom.excel` écrit des classeurs Excel mis en forme ; depuis 2.0.14, `loom.sql` lit et modifie des bases SQLite ou Postgres, table par table ; depuis 2.0.15, `loom.word` et `loom.pdf` écrivent et lisent des documents Word et PDF.
 
 Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom inspect`), 9 (validation humaine), 26 (rejeu) et 27 (évaluations) lus.
 
@@ -25,6 +25,7 @@ Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom 
   - [`loom.current_datetime` : la date et l'heure](#loomcurrent_datetime--la-date-et-lheure)
   - [`loom.local_files` : des fichiers dans des dossiers permis](#loomlocal_files--des-fichiers-dans-des-dossiers-permis)
   - [`loom.excel` : des classeurs Excel mis en forme](#loomexcel--des-classeurs-excel-mis-en-forme)
+  - [`loom.word` et `loom.pdf` : des documents Word et PDF](#loomword-et-loompdf--des-documents-word-et-pdf)
   - [`loom.sql` : des bases SQLite et Postgres, avec des droits par table](#loomsql--des-bases-sqlite-et-postgres-avec-des-droits-par-table)
   - [`loom.state` : le modèle tient le state de la session](#loomstate--le-modèle-tient-le-state-de-la-session)
 - [Pour aller plus loin](#pour-aller-plus-loin)
@@ -292,7 +293,7 @@ Run        : 32-2-validation
 
 #### À retenir
 
-- Les réglages d'un outil Python valent pour un outil fourni : `timeout`, `approval`, `side_effects`, `idempotent`, `offload_over` (chapitre 18), `output` (chapitre 11), `description` et `skill` (exemple dans la section `loom.excel`). `description` est refusée sur `local_files`, `excel` et `sql`, dont la description dit les dossiers, les droits ou les tables : un `skill` y ajoute du texte sans rien cacher. Ceux de l'agent l'emportent sur ce que l'outil déclare : `side_effects: none`, `timeout` 45 s, `offload_over` 20 000 caractères pour `fetch_page`.
+- Les réglages d'un outil Python valent pour un outil fourni : `timeout`, `approval`, `side_effects`, `idempotent`, `offload_over` (chapitre 18), `output` (chapitre 11), `description` et `skill` (exemple dans la section `loom.excel`). `description` est refusée sur `local_files`, `excel`, `word`, `pdf` et `sql`, dont la description dit les dossiers, les droits ou les tables : un `skill` y ajoute du texte sans rien cacher. Ceux de l'agent l'emportent sur ce que l'outil déclare : `side_effects: none`, `timeout` 45 s, `offload_over` 20 000 caractères pour `fetch_page`.
 - Pour un client (chapitre 22), `tools_deny` et `approvals` désignent l'outil par le nom que voit le modèle : `tools_deny: [fetch_page]`, `approvals: {fetch_page: always}`.
 - Remettez `agents/assistant.yaml` tel qu'à l'exemple 32.1 avant de continuer.
 
@@ -317,7 +318,7 @@ uv run loom validate
 ```text
 loom validate · loom.yaml                      ✗ montage interrompu · ⚠ 4 avertissements
 …
-Configuration : Agent 'assistant', outil 'loom.fetch_pages' : Outil fourni 'loom.fetch_pages' inconnu (fournis : loom.current_datetime, loom.fetch_page, loom.local_files, loom.excel, loom.sql, loom.state)
+Configuration : Agent 'assistant', outil 'loom.fetch_pages' : Outil fourni 'loom.fetch_pages' inconnu (fournis : loom.current_datetime, loom.fetch_page, loom.local_files, loom.excel, loom.word, loom.pdf, loom.sql, loom.state)
 ```
 
 Le rapport s'arrête là où le montage a échoué (« ✗ montage interrompu »), le code de sortie est 2, et le message liste les outils que loom-ia fournit.
@@ -920,6 +921,192 @@ Et `prompts/excel.md` :
 - **Le même réglage vaut pour tout outil** : un outil à soi (`skill:` en ligne), un outil MCP ou de paquet (`tools: {chercher: {skill_file: crm.md}}`, chapitre 13).
 - **Pas de `{{ variables }}`** : un skill est commun à tous les clients, et n'est pas rendu ; un `{{` est refusé au chargement.
 
+### `loom.word` et `loom.pdf` : des documents Word et PDF
+
+Depuis loom-ia 2.0.15. Jean Dupont veut que son assistant rédige ses devis et ses courriers, en Word pour pouvoir les retoucher, en PDF pour les envoyer, et qu'il sache lire les documents qu'on lui transmet. `loom.word` écrit et lit des `.docx`, `loom.pdf` écrit des PDF et en lit le texte. Comme `loom.excel`, ils partent d'une description sémantique : le modèle dit **ce que sont** les blocs — un titre, un paragraphe, une liste, un tableau aux colonnes typées, une note, une citation — et jamais à quoi ils ressemblent. Les deux outils partagent ce vocabulaire : le même appel donne le même document dans les deux formats.
+
+`loom.word` n'a besoin d'aucun extra : il écrit et lit le `.docx` avec la bibliothèque standard. `loom.pdf` s'appuie sur reportlab (écriture) et pypdf (lecture), qui viennent de l'extra `pdf` :
+
+```bash
+uv add 'loom-ia[pdf]'
+```
+
+Sans lui, le montage le dit, dès `loom validate` :
+
+```text
+Configuration : Agent 'assistant', outil 'loom.pdf' : Outil fourni 'loom.pdf' : dépendance 'reportlab' absente (installer l'extra : loom-ia[pdf])
+```
+
+```yaml
+tools:
+  - python: loom.word
+    folders:
+    - name: sortie
+      path: sortie
+      rights: [ read, write ]
+  - python: loom.pdf
+    folders:
+    - name: recus                    # les PDF reçus, à lire
+      path: recus
+      rights: [ read ]
+    - name: sortie
+      path: sortie
+      rights: [ read, write, overwrite ]
+    timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
+```
+
+Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), et `timezone`. Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
+
+`loom validate` montre les dossiers, puis le fuseau et la lecture :
+
+```text
+…
+AGENTS
+  assistant · SIMULE · 2 outils Python
+  ├ word         sortie → ./sortie
+  │              read, write
+  │              fuseau : Europe/Paris · lecture des documents : oui
+  └ pdf          recus → ./recus
+                 read
+                 sortie → ./sortie
+                 read, write · overwrite*
+                 fuseau : Europe/Paris · lecture des PDF : oui, process à part (20 s, 1 Gio)
+
+  * = approbation requise
+…
+```
+
+#### Ce que le modèle envoie
+
+Un appel décrit le document entier. Celui-ci, tiré d'un run réel (modèle simulé), écrit un devis :
+
+```json
+{"path": "sortie/devis-D-2026-042.docx",
+ "title": "Devis n° D-2026-042 — Rénovation salle de bains",
+ "blocks": [
+  {"type": "paragraphe", "text": "Madame **Dupont**,\nsuite à notre visite du 2 octobre, voici notre proposition *détaillée*."},
+  {"type": "titre", "text": "Objet des travaux"},
+  {"type": "liste", "items": ["Dépose de la baignoire",
+                              {"text": "Pose d'une douche à l'italienne", "items": ["receveur extra-plat", "paroi vitrée 120 cm"]}]},
+  {"type": "tableau",
+   "columns": [{"header": "Désignation"}, {"header": "Quantité", "type": "entier"},
+               {"header": "Montant HT", "type": "montant_eur"}, {"header": "TVA", "type": "pourcentage"}],
+   "rows": [["Dépose baignoire", 1, 180, 0.1],
+            ["Receveur extra-plat 120x90", 1, "1 250,50", 0.1],
+            ["Main d'œuvre plomberie (heures)", 14, 770, 0.1]],
+   "totals": {"Montant HT": "somme"},
+   "caption": "Montants hors taxes ; TVA réduite à 10 % (travaux de rénovation)."},
+  {"type": "note", "title": "Validité", "text": "Ce devis est valable **3 mois**."},
+  {"type": "titre", "text": "Conditions de paiement", "level": 2},
+  {"type": "liste", "ordered": true, "items": ["Acompte de 30 % à la signature", "Solde à la fin du chantier"]}]}
+```
+
+- **Blocs** : `titre` (`level` 1 à 3), `paragraphe`, `liste` (à puces, ou numérotée avec `ordered` ; un élément `{text, items}` porte une sous-liste), `tableau`, `note` (un encadré, avec un `title` facultatif), `citation` (avec sa `source`), `saut_de_page`. `title`, à côté des blocs, est le titre du document : en tête, et dans ses propriétés.
+- **Tableaux** : les types de colonne de `loom.excel` (`texte`, `entier`, `decimal`, `montant_eur`, `montant_keur`, `pourcentage`, `date`, `date_heure`, `annee`, `booleen`), avec la même conversion tolérante (`1 250,50`, `02/10/2026`, `15%`, `oui`). Une ligne plus courte que les colonnes est complétée de cellules vides. `totals` ajoute une ligne de total **calculée par l'outil** — un document n'a pas de formules — : `somme`, `moyenne`, `nombre`, `min` ou `max`. `caption` est la légende, sous le tableau. 8 colonnes et 500 lignes au plus : au-delà, un classeur (`excel`) se lit mieux.
+- **Texte** : `**gras**`, `*italique*`, et `\n` pour aller à la ligne dans le même paragraphe. Rien d'autre : un `#` ou un `-` en tête reste du texte, et `2 * 3 * 4` aussi.
+
+Le document produit : A4 portrait, marges de 2 cm, titre bleu nuit souligné d'un filet, titres de section bleu nuit, tableaux à en-tête bleu pâle répété d'une page à l'autre, ligne de total en gras sous un filet, nombres alignés à droite et dates centrées, notes en encadré gris à filet bleu, citations en retrait, « Page n / N » en pied. Le `.docx` est en Calibri 11 et déclaré en français (correcteur, césure). Le PDF reprend la même page en Helvetica, une police standard du PDF, non embarquée : le fichier reste léger.
+
+Les valeurs s'écrivent **à la française**, avec des espaces insécables : `1 250,50 €`, `12 500 k€`, `10,0 %`, `02/10/2026`, `02/10/2026 11:30` (une date-heure qui porte un fuseau passe à l'heure de `timezone`). Contrairement à `excel`, dont les formats suivent la langue du lecteur, un document est du texte figé. Les montants affichent leur unité : un en-tête « Montant HT » suffit.
+
+#### Ce que le modèle reçoit
+
+Un résumé, jamais le contenu ; pour un PDF, le nombre de pages en plus :
+
+```json
+{"path": "sortie/devis-D-2026-042.docx", "bytes": 5442, "written": true, "replaced": false,
+ "sha256": "cc4506a24fa885652672e76c780edcca05544d6dd52860aa68df4339013cfa0a",
+ "blocks": 7, "warnings": []}
+```
+
+```json
+{"path": "sortie/devis-D-2026-042.pdf", "bytes": 2502, "written": true, "replaced": false,
+ "sha256": "67f4e1908a668e1ec8aed34dda54fe9510b545fafe2278a7bda7ab263b5fcb88",
+ "pages": 1, "blocks": 2, "warnings": []}
+```
+
+Deux appels identiques donnent le même fichier, octet pour octet, dans les deux formats : un appel interrompu puis repris retrouve son fichier et répond `"written": false`.
+
+#### Ce que l'outil refuse
+
+Avant d'écrire, l'outil valide tout le document, et dit les fautes ensemble :
+
+```text
+Document refusé :
+- bloc 1 (titre) : texte vide
+- bloc 2 (tableau), ligne 1, « Montant HT » : 'environ 800' n'est pas un(e) montant eur
+- bloc 2 (tableau) : somme sur « Désignation », colonne texte : pas un nombre
+```
+
+Sont aussi refusés : un tableau de plus de 8 colonnes ou de 500 lignes, un en-tête en double, un total sur une colonne inconnue, un caractère de contrôle, un document sans contenu. Trois points ne sont qu'avertis, dans `warnings` : un titre qui saute un niveau, un pourcentage plus grand que 1, et, pour un PDF, un caractère que ses polices n'ont pas :
+
+```json
+["1 caractère(s) absent(s) des polices du PDF, imprimé(s) en carré noir : 🙂 — les remplacer par du texte"]
+```
+
+Les polices standard du PDF couvrent le français et l'Europe de l'Ouest, plus les symboles grecs et mathématiques (`≥`, `α`, `€`, `œ`, `« »` passent) ; un emoji ou un idéogramme s'imprime en carré noir.
+
+#### Lire un document Word
+
+Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossier qui a le droit `read`, et le rend **dans le vocabulaire de l'écriture** : ce qu'il lit peut être réécrit tel quel. Le devis ci-dessus, relu :
+
+```json
+{"action": "read", "path": "sortie/devis-D-2026-042.docx"}
+```
+
+```json
+{"path": "sortie/devis-D-2026-042.docx", "title": "Devis n° D-2026-042 — Rénovation salle de bains", "start": 0,
+ "blocks": [
+  {"type": "titre", "level": 0, "text": "Devis n° D-2026-042 — Rénovation salle de bains"},
+  {"type": "paragraphe", "text": "Madame **Dupont**,\nsuite à notre visite du 2 octobre, voici notre proposition *détaillée*."},
+  {"type": "titre", "level": 1, "text": "Objet des travaux"},
+  {"type": "liste", "ordered": false, "items": ["Dépose de la baignoire", {"text": "Pose d'une douche à l'italienne", "items": ["receveur extra-plat", "paroi vitrée 120 cm"]}]},
+  {"type": "tableau", "rows": [["Désignation", "Quantité", "Montant HT", "TVA"],
+                              ["Dépose baignoire", "1", "180,00 €", "10,0 %"], …,
+                              ["Total", "", "2 200,50 €", ""]]},
+  {"type": "paragraphe", "text": "Montants hors taxes ; TVA réduite à 10 % (travaux de rénovation)."},
+  {"type": "note", "text": "**Validité**\nCe devis est valable **3 mois**."},
+  {"type": "titre", "level": 2, "text": "Conditions de paiement"},
+  {"type": "liste", "ordered": true, "items": ["Acompte de 30 % à la signature", "Solde à la fin du chantier"]}],
+ "block_count": 9, "truncated": false}
+```
+
+- **Titres** : `level` 0 pour le titre du document (style « Titre »), 1 et plus pour les titres de section. Un document écrit ailleurs est reconnu par ses niveaux de plan ou ses styles de titre, quelle que soit la langue de Word.
+- **Tableaux** : les cellules en texte, telles qu'affichées ; une cellule fusionnée laisse les suivantes vides.
+- **Coupe** : au-delà de 40 000 caractères, `"truncated": true`, `"next_start"` (le bloc où reprendre, avec `start`) et `"outline"`, le plan entier avec l'indice de chaque titre, pour aller droit à une section.
+- **Notes** : les images non lues, les modifications suivies (le texte inséré est rendu, le texte supprimé ou déplacé omis), les commentaires présents.
+
+#### Lire un PDF
+
+`pdf` lit le texte de chaque page, depuis la première ou selon `pages` (`3`, `2-5`, `4-` jusqu'à la fin) :
+
+```json
+{"action": "read", "path": "sortie/devis-D-2026-042.pdf"}
+```
+
+```json
+{"path": "sortie/devis-D-2026-042.pdf", "page_count": 1,
+ "metadata": {"title": "Devis n° D-2026-042 — Rénovation salle de bains", "author": "loom-ia", "subject": "Devis n° D-2026-042 — Rénovation salle de bains"},
+ "pages": [{"number": 1, "text": "Page 1 / 1\nDevis n° D-2026-042 — Rénovation salle de bains\nMadame Dupont,\nsuite à notre visite du 2 octobre, voici notre proposition détaillée.\n Désignation\n Montant HT\nDépose baignoire\n 180,00 €\n…\nTotal\n 1 430,50 €"}],
+ "truncated": false}
+```
+
+- **Le texte que contient le PDF** : un PDF scanné n'en a pas, et une note dit quelles pages sont sans texte (pas d'OCR). La mise en page d'un tableau n'est pas reconstituée.
+- **Formulaire** : avec la première page, `fields` donne les champs du formulaire et leurs valeurs.
+- **Coupe** : au-delà de 40 000 caractères, `"next_page"`, à redemander avec `pages`.
+- **Chiffrement** : un PDF protégé par un mot de passe d'ouverture n'est pas lu ; un PDF chiffré sans mot de passe d'ouverture (droits seuls) l'est, et une note le dit.
+
+**Sécurité de la lecture.** Un document vient de n'importe où. Le `.docx` est contrôlé avant d'être ouvert (10 000 fichiers et 200 Mo décompressés au plus), lu au fil de l'eau par expat, qui refuse l'amplification d'entités XML et ne charge aucune entité externe, et la lecture s'arrête d'elle-même après 20 s. Le PDF est lu par pypdf **dans un process à part**, qui se borne lui-même (1 Gio de mémoire, aucun fichier écrit) et que loom tue au bout de 20 s, ou quand l'appel est annulé par le délai de l'outil : un PDF forgé ne peut ni bloquer l'agent, ni épuiser sa mémoire. Le prix : environ 0,2 s par lecture. pypdf 6.14.2 au moins est exigé au montage (deux boucles sans fin corrigées en 2026).
+
+#### À savoir
+
+- **Pas d'image** (pas de logo), pas d'en-tête de page personnalisé, pas de lien cliquable.
+- **On écrit un document neuf, ou on en lit un** : on ne modifie pas un document existant, et on ne remplit ni un modèle `.dotx` ni un formulaire PDF.
+- **La lecture d'un `.docx` ne voit pas** les images, les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
+- **Le style ne se règle pas**, comme pour `excel`.
+- **Rejeu** : comme pour `excel`, le rejeu sert le résultat du journal sans réécrire le fichier ; en rejeu en variante, un outil qui ne fait que lire est exécuté, un outil qui peut écrire ne l'est jamais.
+- **Coût** : environ 1,6 k tokens par outil et par appel de modèle, description et schéma compris.
+
 ### `loom.sql` : des bases SQLite et Postgres, avec des droits par table
 
 Jean Dupont tient ses clients, ses devis et ses relances dans une petite base. Il veut que son assistant y retrouve les devis à relancer et note les relances, sans jamais toucher à la structure de la base, ni à la table des factures, et sans changer un devis sans son accord. `loom.sql` donne à l'agent l'accès aux tables que sa référence déclare, chacune avec ses droits. Le modèle écrit lui-même ses requêtes ; l'outil n'admet que `SELECT`, `INSERT`, `UPDATE` et `DELETE`, jamais de DDL (`CREATE`, `ALTER`, `DROP`…).
@@ -1215,8 +1402,8 @@ Ce que le modèle envoie : `{"set": "client", "result": "result:3", "row": 0}`, 
 
 ## Pour aller plus loin
 
-- **La référence** : `docs/tools-builtin-analyse.md` — l'analyse, les décisions et l'organisation du dossier `src/loom_ia/tools_builtin/` ; `docs/outil-excel-loom_v2.md` et `docs/outil-excel-analyse.md` pour `loom.excel` ; `docs/sql_builtin_tool.md` pour `loom.sql` ; `docs/fonctions.md`, point 50 (formes de référence) et point 44 (dépendances du noyau).
-- **Ajouter un outil fourni**, pour qui contribue à loom-ia : un module par outil dans `src/loom_ia/tools_builtin/`, une ligne au catalogue `BUILTIN_TOOLS`, et ses tests. `tests/unit/test_tools_builtin.py` vérifie que chaque entrée du catalogue est un outil, nommé comme sa référence sans le préfixe. Un outil à paramètres déclare au catalogue un `Builtin` : le modèle Pydantic de ses paramètres, dans un module léger (`local_files_params.py`), et sa fabrique ; il ajoute aussi ses paramètres d'essai à `SAMPLE_PARAMS`. Un outil dont l'approbation ou les effets dépendent de l'appel implémente `assess_call` (`loom_ia.core.ports.CallAssessment`). Un outil qui lit ou écrit dans des dossiers déclarés s'appuie sur `tools_builtin/_folders.py`, comme `local_files` et `excel`. Un outil dont les dépendances viennent d'un extra le déclare au catalogue (`Builtin.extra`), et ses tests sautent sans lui (`importorskip`, raison « extra '…' absent »). Un outil qui lit des secrets les nomme dans ses paramètres (`secret_names()`, protocole `NamesSecrets`) : la table de chaque client les contient, et sa fabrique la reçoit (`BuiltinContext.secrets`). Un outil qui ouvre des connexions a un `aclose` : l'agent le ferme avec lui.
+- **La référence** : `docs/tools-builtin-analyse.md` — l'analyse, les décisions et l'organisation du dossier `src/loom_ia/tools_builtin/` ; `docs/outil-excel-loom_v2.md` et `docs/outil-excel-analyse.md` pour `loom.excel` ; `docs/outil-word-pdf-analyse.md` pour `loom.word` et `loom.pdf` ; `docs/sql_builtin_tool.md` pour `loom.sql` ; `docs/fonctions.md`, point 50 (formes de référence) et point 44 (dépendances du noyau).
+- **Ajouter un outil fourni**, pour qui contribue à loom-ia : un module par outil dans `src/loom_ia/tools_builtin/`, une ligne au catalogue `BUILTIN_TOOLS`, et ses tests. `tests/unit/test_tools_builtin.py` vérifie que chaque entrée du catalogue est un outil, nommé comme sa référence sans le préfixe. Un outil à paramètres déclare au catalogue un `Builtin` : le modèle Pydantic de ses paramètres, dans un module léger (`local_files_params.py`), et sa fabrique ; il ajoute aussi ses paramètres d'essai à `SAMPLE_PARAMS`. Un outil dont l'approbation ou les effets dépendent de l'appel implémente `assess_call` (`loom_ia.core.ports.CallAssessment`). Un outil qui lit ou écrit dans des dossiers déclarés s'appuie sur `tools_builtin/_folders.py`, comme `local_files`, `excel`, `word` et `pdf` ; un outil de documents prend ses dossiers sans `delete` et son fuseau dans `_office_params.py`, et le vocabulaire des colonnes typées dans `_values.py`. Un outil dont les dépendances viennent d'un extra le déclare au catalogue (`Builtin.extra`), et ses tests sautent sans lui (`importorskip`, raison « extra '…' absent »). Un outil qui lit des secrets les nomme dans ses paramètres (`secret_names()`, protocole `NamesSecrets`) : la table de chaque client les contient, et sa fabrique la reçoit (`BuiltinContext.secrets`). Un outil qui ouvre des connexions a un `aclose` : l'agent le ferme avec lui.
 - **La limite du proxy** : backlog #023.
 
 Navigation : [01-demarrer.md](01-demarrer.md) · [02-maitriser.md](02-maitriser.md) · [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) · [05-state-de-session.md](05-state-de-session.md) · [06-outils-fournis.md](06-outils-fournis.md)

@@ -88,6 +88,15 @@ crypto = [
 office = [
     "openpyxl>=3.1.5,<4",
 ]
+# tools_builtin/pdf (outil fourni loom.pdf) écrit les PDF avec reportlab et lit leur texte
+# avec pypdf, dans un process à part ; son module ne les importe qu'au montage d'un agent
+# qui l'active. Plancher de pypdf : 6.14.2, qui corrige deux boucles sans fin sur des PDF
+# forgés (CVE-2026-59935, CVE-2026-59937) ; l'outil le vérifie au montage. loom.word n'a
+# besoin d'aucun extra : il écrit et lit le .docx avec la bibliothèque standard.
+pdf = [
+    "pypdf>=6.14.2,<7",
+    "reportlab>=4.4.0,<6",
+]
 postgres = [
     "asyncpg>=0.31.0",
 ]
@@ -110,7 +119,7 @@ otel = [
     "opentelemetry-sdk>=1.44.0,<2",
 ]
 all = [
-    "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,rabbitmq,redis,otel,crypto,office,sql]",
+    "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,rabbitmq,redis,otel,crypto,office,pdf,sql]",
 ]
 
 [project.urls]

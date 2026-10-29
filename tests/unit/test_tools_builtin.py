@@ -274,6 +274,12 @@ SAMPLE_PARAMS: dict[str, Callable[[Path], dict[str, Any]]] = {
     "loom.excel": lambda folder: {
         "folders": [{"name": "essai", "path": str(folder), "rights": ["write"]}]
     },
+    "loom.word": lambda folder: {
+        "folders": [{"name": "essai", "path": str(folder), "rights": ["read", "write"]}]
+    },
+    "loom.pdf": lambda folder: {
+        "folders": [{"name": "essai", "path": str(folder), "rights": ["read", "write"]}]
+    },
     "loom.sql": lambda folder: {
         "databases": [
             {
@@ -353,18 +359,23 @@ def test_validating_a_config_imports_only_the_parameter_modules() -> None:
         "'tools': [{'python': 'loom.local_files', 'folders': "
         "[{'name': 'w', 'path': '/tmp', 'rights': ['read']}]}, {'python': 'loom.excel', "
         "'folders': [{'name': 'w', 'path': '/tmp', 'rights': ['write']}], 'recalc': True}, "
+        "{'python': 'loom.word', 'folders': [{'name': 'w', 'path': '/tmp', 'rights': ['read']}]}, "
+        "{'python': 'loom.pdf', 'folders': [{'name': 'w', 'path': '/tmp', 'rights': ['read']}]}, "
         "{'python': 'loom.sql', 'databases': [{'name': 'b', 'postgres': {'dsn_env': 'B'}, "
         "'tables': {'t': ['select']}}]}]})\n"
         "print('loom_ia.tools_builtin.local_files' in sys.modules, "
         "'loom_ia.tools_builtin.fetch_page' in sys.modules, "
         "'loom_ia.tools_builtin.excel' in sys.modules, 'openpyxl' in sys.modules, "
         "'loom_ia.tools_builtin.sql' in sys.modules, 'sqlglot' in sys.modules, "
-        "'asyncpg' in sys.modules)\n"
+        "'asyncpg' in sys.modules, 'loom_ia.tools_builtin.word' in sys.modules, "
+        "'loom_ia.tools_builtin._document' in sys.modules, "
+        "'loom_ia.tools_builtin.pdf' in sys.modules, 'reportlab' in sys.modules, "
+        "'pypdf' in sys.modules)\n"
     )
     done = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
     )
-    assert done.stdout.split() == ["False"] * 7
+    assert done.stdout.split() == ["False"] * 12
 
 
 # --- Paramètres sur la référence ----------------------------------------------------
@@ -421,10 +432,19 @@ def test_the_schema_describes_the_parameters() -> None:
     assert built["properties"]["python"]["const"] == "loom.local_files"
     assert "folders" in built["required"]
     assert schema["$defs"]["PythonTool"]["properties"]["python"]["not"] == {
-        "enum": ["loom.excel", "loom.local_files", "loom.sql", "loom.state"]
+        "enum": [
+            "loom.excel",
+            "loom.local_files",
+            "loom.pdf",
+            "loom.sql",
+            "loom.state",
+            "loom.word",
+        ]
     }
     assert "folders" in schema["$defs"]["Builtin_excel"]["required"]
     assert "databases" in schema["$defs"]["Builtin_sql"]["required"]
+    assert "folders" in schema["$defs"]["Builtin_word"]["required"]
+    assert "folders" in schema["$defs"]["Builtin_pdf"]["required"]
 
 
 # --- Ce que reçoit la fabrique, ce que l'agent ferme, ce que lit un client (loom.sql) --

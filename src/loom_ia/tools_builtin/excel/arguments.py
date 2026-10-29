@@ -13,6 +13,7 @@ from typing import Annotated, Final, Literal, Self, cast
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
 
 from loom_ia.core.ports import ToolError
+from loom_ia.tools_builtin._values import Aggregate, ColumnType, Scalar
 
 NAME: Final = "excel"
 MAX_SHEETS: Final = 50
@@ -30,21 +31,7 @@ MAX_READ_ROWS: Final = 1_000
 MAX_SHEET_ROWS: Final = 1_048_576
 MAX_SHEET_COLUMNS: Final = 16_384
 
-type ColumnType = Literal[
-    "texte",
-    "entier",
-    "decimal",
-    "montant_eur",
-    "montant_keur",
-    "pourcentage",
-    "date",
-    "date_heure",
-    "annee",
-    "booleen",
-]
 type Role = Literal["saisie", "formule", "hypothese", "total", "note"]
-type Aggregate = Literal["somme", "moyenne", "nombre", "min", "max"]
-type Scalar = str | int | float | bool | None
 
 # Les descriptions des champs restent courtes : la description de l'outil
 # explique déjà le vocabulaire, et le schéma est envoyé au modèle à chaque appel.

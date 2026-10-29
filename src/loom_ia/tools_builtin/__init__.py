@@ -184,6 +184,27 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         extra="office",
         own_description=True,
     ),
+    "loom.word": Builtin(
+        target="loom_ia.tools_builtin.word:build",
+        params="loom_ia.tools_builtin.word_params:WordParams",
+        refused=("approval", "side_effects", "idempotent"),
+        refused_because=(
+            "les droits de chaque dossier les expriment (folders[].rights), et "
+            "l'approbation se règle par dossier (folders[].approval)"
+        ),
+        own_description=True,
+    ),
+    "loom.pdf": Builtin(
+        target="loom_ia.tools_builtin.pdf:build",
+        params="loom_ia.tools_builtin.pdf_params:PdfParams",
+        refused=("approval", "side_effects", "idempotent"),
+        refused_because=(
+            "les droits de chaque dossier les expriment (folders[].rights), et "
+            "l'approbation se règle par dossier (folders[].approval)"
+        ),
+        extra="pdf",
+        own_description=True,
+    ),
     "loom.sql": Builtin(
         target="loom_ia.tools_builtin.sql:build",
         params="loom_ia.tools_builtin.sql_params:SqlParams",

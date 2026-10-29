@@ -23,6 +23,7 @@ from openpyxl.worksheet.properties import PageSetupProperties
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.writer.excel import ExcelWriter
 
+from loom_ia.tools_builtin._values import Stored, convert
 from loom_ia.tools_builtin.excel.arguments import (
     MAX_COLUMNS,
     MAX_DATA_ROWS,
@@ -35,7 +36,6 @@ from loom_ia.tools_builtin.excel.arguments import (
     SheetSpec,
 )
 from loom_ia.tools_builtin.excel.formulas import AGGREGATES, check_formula, sheet_name_problem
-from loom_ia.tools_builtin.excel.values import Stored, convert
 
 # Dates du classeur (docProps/core.xml) et de l'archive : fixes, pour que deux
 # appels identiques donnent le même fichier (reprise idempotente, empreinte).

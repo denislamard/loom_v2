@@ -82,7 +82,8 @@ jobs:
 
         import loom_ia  # noqa: F401
 
-        extras = ["anthropic", "openai", "fastapi", "mcp", "openpyxl", "sqlglot", "asyncpg"]
+        extras = ["anthropic", "openai", "fastapi", "mcp", "openpyxl", "sqlglot", "asyncpg",
+                  "reportlab", "pypdf"]
         installes = [m for m in extras if importlib.util.find_spec(m) is not None]
         if installes:
             raise SystemExit(f"Modules d'extras installés sans être demandés : {installes}")
@@ -158,11 +159,13 @@ jobs:
       run: uv sync --locked --all-extras
 
     # LibreOffice sans interface : le recalcul de loom.excel (`recalc: true`) est
-    # éprouvé ici, et `--require-services` fait échouer son essai s'il manque.
-    - name: Installer LibreOffice (recalcul de loom.excel)
+    # éprouvé ici, et `--require-services` fait échouer son essai s'il manque ; Writer
+    # vérifie que les .docx de loom.word s'ouvrent, et en fabrique un « d'ailleurs ».
+    - name: Installer LibreOffice (recalcul de loom.excel, documents de loom.word)
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends libreoffice-calc-nogui
+        sudo apt-get install -y --no-install-recommends libreoffice-calc-nogui \
+          libreoffice-writer-nogui
 
     # `--require-services` : une variable absente ou un extra manquant devient
     # un échec au lieu d'un saut. Sans lui, un conteneur tombé ou une variable
@@ -253,11 +256,13 @@ jobs:
       run: uv pip list
 
     # LibreOffice sans interface : le recalcul de loom.excel (`recalc: true`) est
-    # éprouvé ici, et `--require-services` fait échouer son essai s'il manque.
-    - name: Installer LibreOffice (recalcul de loom.excel)
+    # éprouvé ici, et `--require-services` fait échouer son essai s'il manque ; Writer
+    # vérifie que les .docx de loom.word s'ouvrent, et en fabrique un « d'ailleurs ».
+    - name: Installer LibreOffice (recalcul de loom.excel, documents de loom.word)
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends libreoffice-calc-nogui
+        sudo apt-get install -y --no-install-recommends libreoffice-calc-nogui \
+          libreoffice-writer-nogui
 
     - name: Tests
       run: .venv/bin/python -m pytest --require-services

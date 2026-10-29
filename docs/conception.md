@@ -1712,6 +1712,7 @@ src/loom_ia/
 | `redis` | `redis` |
 | `otel` | `opentelemetry-sdk` et un exporteur |
 | `office` | `openpyxl` (outil fourni `loom.excel`) |
+| `pdf` | `reportlab`, `pypdf` (outil fourni `loom.pdf` ; `loom.word` n'a besoin d'aucun extra) |
 | `sql` | `sqlglot`, `asyncpg` (outil fourni `loom.sql`) |
 | `all` | Tous les extras |
 

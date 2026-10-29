@@ -66,6 +66,7 @@ Le paquet s'appelle `loom-ia`. Il s'importe sous le nom `loom_ia` et installe la
 | `otel` | L'export des traces vers OpenTelemetry |
 | `crypto` | Le chiffrement du journal et des fichiers, client par client |
 | `office` | L'outil fourni `loom.excel`, qui écrit des classeurs Excel |
+| `pdf` | L'outil fourni `loom.pdf`, qui écrit des PDF et en lit le texte (`loom.word`, pour les documents Word, n'a besoin d'aucun extra) |
 | `sql` | L'outil fourni `loom.sql`, qui lit et modifie des bases SQLite ou Postgres |
 | `all` | Tous les extras |
 

@@ -1,0 +1,457 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Le document validé, prêt à rendre : texte découpé en segments, cellules mises en forme.
+
+Ce que décide le style maison sans dépendre du format : les valeurs d'une
+colonne typée écrites à la française (``1 250,50 €``, ``02/10/2026``,
+``15,0 %``), leur alignement, la ligne de total calculée par l'outil (un
+document n'a pas de formules), la largeur relative des colonnes. Chaque format
+(``word``, ``pdf``) ne fait plus que poser ces éléments sur la page.
+
+Dans un texte, ``**gras**`` et ``*italique*`` marquent l'emphase ; un saut de
+ligne reste un saut de ligne dans le même paragraphe.
+"""
+
+import datetime as dt
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Final, Literal
+from zoneinfo import ZoneInfo
+
+from loom_ia.tools_builtin._document.arguments import (
+    MAX_ITEMS,
+    MAX_TABLE_COLUMNS,
+    MAX_TABLE_ROWS,
+    MAX_TEXT,
+    Heading,
+    Item,
+    ListBlock,
+    Note,
+    PageBreak,
+    Paragraph,
+    Problems,
+    Quote,
+    Table,
+    WriteArguments,
+)
+from loom_ia.tools_builtin._values import Aggregate, ColumnType, Stored, convert
+
+MAX_TITLE: Final = 300
+# Largeur d'une colonne, en caractères, pour en tirer la part de la page.
+MIN_COLUMN_CHARS: Final = 4
+MAX_COLUMN_CHARS: Final = 40
+NUMERIC: Final[frozenset[ColumnType]] = frozenset(
+    {"entier", "decimal", "montant_eur", "montant_keur", "pourcentage"}
+)
+ORDERED_TYPES: Final[frozenset[ColumnType]] = NUMERIC | frozenset[ColumnType](
+    {"date", "date_heure"}
+)
+CENTERED: Final[frozenset[ColumnType]] = frozenset({"date", "date_heure", "annee", "booleen"})
+# Espace insécable : présente dans toutes les polices, y compris Helvetica (WinAnsi),
+# contrairement à l'espace fine insécable (U+202F) de la typographie française.
+NBSP: Final = "\u00a0"
+# Ce qu'un fichier XML ne peut pas contenir, et qu'aucun document n'affiche.
+_CONTROL: Final = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+type Align = Literal["left", "center", "right"]
+
+
+@dataclass(frozen=True, slots=True)
+class Run:
+    """Un segment de texte et son emphase ; ``\\n`` y est un saut de ligne."""
+
+    text: str
+    bold: bool = False
+    italic: bool = False
+
+
+type Inline = tuple[Run, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TitleOut:
+    runs: Inline
+
+
+@dataclass(frozen=True, slots=True)
+class HeadingOut:
+    level: int
+    runs: Inline
+
+
+@dataclass(frozen=True, slots=True)
+class ParagraphOut:
+    runs: Inline
+
+
+@dataclass(frozen=True, slots=True)
+class Entry:
+    runs: Inline
+    children: tuple[Inline, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ListOut:
+    ordered: bool
+    entries: tuple[Entry, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TableOut:
+    headers: tuple[str, ...]
+    align: tuple[Align, ...]
+    rows: tuple[tuple[str, ...], ...]
+    total: tuple[str, ...] | None
+    # La part de la largeur utile de chaque colonne ; leur somme vaut 1.
+    widths: tuple[float, ...]
+    caption: Inline | None
+
+
+@dataclass(frozen=True, slots=True)
+class NoteOut:
+    title: str | None
+    runs: Inline
+
+
+@dataclass(frozen=True, slots=True)
+class QuoteOut:
+    runs: Inline
+    source: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class BreakOut:
+    pass
+
+
+type BlockOut = (
+    TitleOut | HeadingOut | ParagraphOut | ListOut | TableOut | NoteOut | QuoteOut | BreakOut
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Prepared:
+    """Le document validé : son titre (pour les propriétés), ses blocs, les avertissements."""
+
+    title: str | None
+    blocks: tuple[BlockOut, ...]
+    warnings: tuple[str, ...]
+
+
+def prepare(arguments: WriteArguments, zone: ZoneInfo) -> Prepared:
+    """Valide le document entier ; ``ToolError`` qui liste toutes les fautes trouvées."""
+    problems = Problems()
+    blocks: list[BlockOut] = []
+    title = arguments.title.strip() if arguments.title else None
+    if title is not None:
+        if len(title) > MAX_TITLE:
+            problems.error(f"titre : {len(title)} caractères, au-delà de {MAX_TITLE}")
+        _clean(title, "titre", problems)
+        blocks.append(TitleOut(inline(title)))
+    level = 0
+    for index, block in enumerate(arguments.blocks, start=1):
+        where = f"bloc {index} ({block.type})"
+        match block:
+            case Heading():
+                text = _text(block.text, where, problems, required=True)
+                if block.level > level + 1:
+                    problems.warn(
+                        f"{where} : titre de niveau {block.level} après un niveau {level} — "
+                        "un niveau sauté brouille le plan du document"
+                    )
+                level = block.level
+                blocks.append(HeadingOut(block.level, inline(text)))
+            case Paragraph():
+                text = _text(block.text, where, problems, required=True)
+                blocks.append(ParagraphOut(inline(text)))
+            case ListBlock():
+                blocks.append(_list(block, where, problems))
+            case Table():
+                blocks.append(_table(block, where, problems, zone))
+            case Note():
+                text = _text(block.text, where, problems, required=True)
+                note_title = _text(block.title, f"{where}, title", problems) or None
+                blocks.append(NoteOut(note_title, inline(text)))
+            case Quote():
+                text = _text(block.text, where, problems, required=True)
+                source = _text(block.source, f"{where}, source", problems) or None
+                blocks.append(QuoteOut(inline(text), source))
+            case PageBreak():
+                blocks.append(BreakOut())
+    if not any(not isinstance(b, BreakOut) for b in blocks):
+        problems.error("document vide : ni titre, ni bloc de contenu")
+    problems.raise_if_any()
+    return Prepared(title=title, blocks=tuple(blocks), warnings=tuple(problems.warnings))
+
+
+def _text(text: str | None, where: str, problems: Problems, *, required: bool = False) -> str:
+    said = (text or "").strip()
+    if required and not said:
+        problems.error(f"{where} : texte vide")
+    if len(said) > MAX_TEXT:
+        problems.error(f"{where} : {len(said)} caractères, au-delà de {MAX_TEXT}")
+    _clean(said, where, problems)
+    return said
+
+
+def _clean(text: str, where: str, problems: Problems) -> None:
+    found = _CONTROL.search(text)
+    if found:
+        problems.error(f"{where} : caractère de contrôle U+{ord(found.group()):04X} refusé")
+
+
+def _list(block: ListBlock, where: str, problems: Problems) -> ListOut:
+    entries: list[Entry] = []
+    count = 0
+    for number, item in enumerate(block.items, start=1):
+        at = f"{where}, élément {number}"
+        if isinstance(item, Item):
+            children = tuple(
+                inline(_text(child, f"{at}.{sub}", problems, required=True))
+                for sub, child in enumerate(item.items, start=1)
+            )
+            count += len(children)
+            entries.append(Entry(inline(_text(item.text, at, problems, required=True)), children))
+        else:
+            entries.append(Entry(inline(_text(item, at, problems, required=True))))
+        count += 1
+    if count > MAX_ITEMS:
+        problems.error(f"{where} : {count} éléments, au-delà de {MAX_ITEMS}")
+    return ListOut(block.ordered, tuple(entries))
+
+
+def _table(block: Table, where: str, problems: Problems, zone: ZoneInfo) -> TableOut:
+    columns = block.columns
+    headers = [column.header.strip() for column in columns]
+    if len(columns) > MAX_TABLE_COLUMNS:
+        problems.error(
+            f"{where} : {len(columns)} colonnes, au-delà de {MAX_TABLE_COLUMNS} — une page "
+            "n'en tient pas plus ; scinder le tableau, ou en faire un classeur (excel)"
+        )
+    doubles = sorted({h for h in headers if headers.count(h) > 1})
+    if doubles:
+        problems.error(f"{where} : en-tête donné deux fois : {', '.join(doubles)}")
+    for header in headers:
+        _clean(header, where, problems)
+    if len(block.rows) > MAX_TABLE_ROWS:
+        problems.error(
+            f"{where} : {len(block.rows)} lignes, au-delà de {MAX_TABLE_ROWS} — un tableau "
+            "plus long se lit mieux dans un classeur (excel)"
+        )
+    stored: list[list[Stored]] = []
+    for number, row in enumerate(block.rows, start=1):
+        if len(row) > len(columns):
+            problems.error(
+                f"{where}, ligne {number} : {len(row)} valeurs pour {len(columns)} colonnes"
+            )
+        cells: list[Stored] = []
+        for index, column in enumerate(columns):
+            value = row[index] if index < len(row) else None
+            at = f"{where}, ligne {number}, « {column.header} »"
+            if isinstance(value, str):
+                _clean(value, at, problems)
+            cells.append(convert(value, column.type, at, problems, zone))
+        stored.append(cells)
+    total = _totals(block, stored, where, problems)
+    if block.totals and not block.rows:
+        problems.warn(f"{where} : aucune ligne, la ligne de total n'est pas écrite")
+        total = None
+    shown = tuple(
+        tuple(display(value, column.type) for value, column in zip(cells, columns, strict=True))
+        for cells in stored
+    )
+    widths = _widths(headers, [*shown, *([total] if total else [])])
+    caption = _text(block.caption, f"{where}, caption", problems) or None
+    return TableOut(
+        headers=tuple(headers),
+        align=tuple(_align(column.type) for column in columns),
+        rows=shown,
+        total=total,
+        widths=widths,
+        caption=inline(caption) if caption else None,
+    )
+
+
+def _totals(
+    block: Table, stored: list[list[Stored]], where: str, problems: Problems
+) -> tuple[str, ...] | None:
+    totals = block.totals or {}
+    if not totals:
+        return None
+    headers = [column.header for column in block.columns]
+    for header, aggregate in totals.items():
+        if header not in headers:
+            problems.error(f"{where} : total sur une colonne inconnue {header!r}")
+            continue
+        kind = block.columns[headers.index(header)].type
+        if aggregate in {"somme", "moyenne"} and kind not in NUMERIC:
+            problems.error(
+                f"{where} : {aggregate} sur « {header} », colonne {kind} : pas un nombre"
+            )
+        elif aggregate in {"min", "max"} and kind not in ORDERED_TYPES:
+            problems.error(f"{where} : {aggregate} sur « {header} », colonne {kind} : sans ordre")
+    labelled = _total_label(block)
+    cells: list[str] = []
+    for index, column in enumerate(block.columns):
+        aggregate = totals.get(column.header)
+        values = [row[index] for row in stored if row[index] is not None]
+        if aggregate is not None:
+            cells.append(_aggregate(aggregate, values, column.type))
+        else:
+            cells.append("Total" if index == labelled else "")
+    return tuple(cells)
+
+
+def _total_label(block: Table) -> int | None:
+    """La colonne où écrire « Total » : la première sans agrégat, texte d'abord (comme excel)."""
+    totals = block.totals or {}
+    free = [(i, c) for i, c in enumerate(block.columns) if c.header not in totals]
+    texts = [i for i, c in free if c.type == "texte"]
+    if texts:
+        return texts[0]
+    return free[0][0] if free else None
+
+
+def _aggregate(aggregate: Aggregate, values: Sequence[Stored], kind: ColumnType) -> str:
+    if aggregate == "nombre":
+        return display(len(values), "entier")
+    if not values:
+        return ""
+    try:
+        match aggregate:
+            case "somme":
+                return display(sum(_numbers(values)), kind)
+            case "moyenne":
+                numbers = _numbers(values)
+                mean = sum(numbers) / len(numbers)
+                return display(mean, "decimal" if kind == "entier" else kind)
+            case "min":
+                return display(min(values, key=_order), kind)
+            case "max":
+                return display(max(values, key=_order), kind)
+    except TypeError:
+        # Types mêlés : la faute est déjà dite par la validation des totaux.
+        return ""
+
+
+def _numbers(values: Sequence[Stored]) -> list[float | int]:
+    return [v for v in values if isinstance(v, int | float) and not isinstance(v, bool)]
+
+
+def _order(value: Stored) -> float | dt.datetime:
+    match value:
+        case dt.datetime():
+            return value
+        case dt.date():
+            return dt.datetime(value.year, value.month, value.day)
+        case int() | float():
+            return value
+        case _:
+            raise TypeError(value)
+
+
+def _align(kind: ColumnType) -> Align:
+    if kind in NUMERIC:
+        return "right"
+    return "center" if kind in CENTERED else "left"
+
+
+def _widths(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> tuple[float, ...]:
+    chars: list[int] = []
+    for index, header in enumerate(headers):
+        longest = max((len(row[index]) for row in rows), default=0)
+        # Un en-tête long se coupe sur deux lignes : il compte pour sa moitié.
+        wanted = max(longest, (len(header) + 1) // 2, min(len(header), 12))
+        chars.append(min(MAX_COLUMN_CHARS, max(MIN_COLUMN_CHARS, wanted)))
+    total = sum(chars) or 1
+    return tuple(count / total for count in chars)
+
+
+def display(value: Stored, kind: ColumnType) -> str:
+    """La valeur telle qu'un document l'écrit, à la française."""
+    match value:
+        case None:
+            return ""
+        case dt.datetime():
+            return value.strftime("%d/%m/%Y %H:%M")
+        case dt.date():
+            return value.strftime("%d/%m/%Y")
+        case bool():
+            return "Oui" if value else "Non"
+        case int() | float() if kind in NUMERIC:
+            return _number(value, kind)
+        case _:
+            return str(value)
+
+
+def _number(value: float, kind: ColumnType) -> str:
+    match kind:
+        case "entier":
+            return _french(f"{round(value):,}")
+        case "montant_eur":
+            return _french(f"{value:,.2f}") + f"{NBSP}€"
+        case "montant_keur":
+            return _french(f"{value:,.0f}") + f"{NBSP}k€"
+        case "pourcentage":
+            return _french(f"{value * 100:,.1f}") + f"{NBSP}%"
+        case _:
+            return _french(f"{value:,.2f}")
+
+
+def _french(said: str) -> str:
+    """« 1,250.50 » → « 1 250,50 » ; le signe moins reste un trait d'union."""
+    return said.replace(",", NBSP).replace(".", ",")
+
+
+# --- Emphase ---------------------------------------------------------------------------
+
+_MARK: Final = re.compile(r"\*\*|\*")
+
+
+def inline(text: str) -> Inline:
+    """Les segments d'un texte : ``**gras**`` et ``*italique*``, le reste tel quel.
+
+    Un marqueur ouvre seulement s'il est suivi d'un caractère visible et refermé
+    plus loin ; il ferme seulement s'il suit un caractère visible. Sinon il
+    reste du texte : « 2 * 3 » ne met rien en italique.
+    """
+    runs: list[Run] = []
+    bold = italic = False
+    buffer: list[str] = []
+    position = 0
+
+    def flush() -> None:
+        if buffer:
+            said = "".join(buffer)
+            if runs and (runs[-1].bold, runs[-1].italic) == (bold, italic):
+                runs[-1] = Run(runs[-1].text + said, bold, italic)
+            else:
+                runs.append(Run(said, bold, italic))
+            buffer.clear()
+
+    for found in _MARK.finditer(text):
+        start, end = found.span()
+        mark = found.group()
+        buffer.append(text[position:start])
+        position = end
+        before = text[start - 1] if start else " "
+        after = text[end] if end < len(text) else " "
+        is_open = bold if mark == "**" else italic
+        closing = is_open and not before.isspace()
+        opening = not is_open and not after.isspace() and mark in text[end:]
+        if closing or opening:
+            flush()
+            if mark == "**":
+                bold = not bold
+            else:
+                italic = not italic
+        else:
+            buffer.append(mark)
+    buffer.append(text[position:])
+    # Un marqueur ouvert jamais refermé : l'emphase s'arrête en fin de texte.
+    flush()
+    return tuple(run for run in runs if run.text)
+
+
+def plain(runs: Inline) -> str:
+    return "".join(run.text for run in runs)

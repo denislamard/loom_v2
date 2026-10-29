@@ -1,23 +1,50 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Valeurs : ce qu'une cellule reçoit, d'après le type sémantique de sa colonne.
+"""Valeurs typées : le vocabulaire des colonnes, partagé par ``excel``, ``word`` et ``pdf``.
 
-Tolérant aux exports français (``1 250,50``, ``02/10/2026``, ``15%``,
-``oui``) ; une date-heure qui porte un fuseau passe dans celui de l'outil,
-sans fuseau, car Excel n'en connaît pas.
+Le modèle dit ce qu'est une valeur — un montant en euros, une date, un
+pourcentage — et l'outil décide de son apparence. Ce module ne fait que la
+conversion, tolérante aux exports français (``1 250,50``, ``02/10/2026``,
+``15%``, ``oui``) ; une date-heure qui porte un fuseau passe dans celui de
+l'outil, sans fuseau, car ni Excel ni un document n'en affichent.
+
+Module léger — la bibliothèque standard seulement — : un outil l'importe sans
+tirer les dépendances d'un autre.
 """
 
 import datetime as dt
 import re
+from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
-from loom_ia.tools_builtin.excel.arguments import ColumnType, Problems, Scalar
+type ColumnType = Literal[
+    "texte",
+    "entier",
+    "decimal",
+    "montant_eur",
+    "montant_keur",
+    "pourcentage",
+    "date",
+    "date_heure",
+    "annee",
+    "booleen",
+]
+type Aggregate = Literal["somme", "moyenne", "nombre", "min", "max"]
+type Scalar = str | int | float | bool | None
 
 # Ce qu'une cellule reçoit : valeur convertie selon son type de colonne.
 type Stored = str | int | float | dt.date | dt.datetime | None
 
 
+class Reports(Protocol):
+    """Où dire une faute ou un avertissement : les ``Problems`` de chaque outil."""
+
+    def error(self, said: str) -> None: ...
+
+    def warn(self, said: str) -> None: ...
+
+
 def convert(
-    value: Scalar, kind: ColumnType, where: str, problems: Problems, zone: ZoneInfo
+    value: Scalar, kind: ColumnType, where: str, problems: Reports, zone: ZoneInfo
 ) -> Stored:
     """La valeur à écrire pour une colonne de ce type ; ``None`` et une erreur si impossible.
 
@@ -33,7 +60,7 @@ def convert(
 
 
 def _convert(
-    value: Scalar, kind: ColumnType, where: str, problems: Problems, zone: ZoneInfo
+    value: Scalar, kind: ColumnType, where: str, problems: Reports, zone: ZoneInfo
 ) -> Stored:
     match kind:
         case "texte":
