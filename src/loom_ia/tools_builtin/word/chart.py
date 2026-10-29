@@ -13,6 +13,7 @@ a plusieurs séries (ou des secteurs). L'ordre des éléments suit le schéma
 DrawingML, que Word applique strictement.
 """
 
+import math
 from collections.abc import Sequence
 from typing import Final
 from xml.sax.saxutils import escape, quoteattr
@@ -38,6 +39,8 @@ WIDTH: Final = 17 * CM
 HEIGHT: Final = 9 * CM
 # Au-delà, des étiquettes de valeur sur chaque barre se chevauchent.
 LABELLED_BARS: Final = 12
+# La place laissée au bout de la plus grande barre pour son étiquette, comme dans le PDF.
+LABEL_ROOM: Final = {"barres": 1.1, "barres_horizontales": 1.22}
 
 # Formats des nombres, en syntaxe neutre : Word applique les séparateurs de la langue.
 LABEL_FORMATS: Final[dict[ColumnType, str]] = {
@@ -150,6 +153,29 @@ def _labels(code: str, *, percent: bool = False, position: str | None = None) ->
     )
 
 
+def _labelled(chart: ChartOut) -> bool:
+    """Une valeur sur chaque barre : une seule série, et pas trop de barres."""
+    return len(chart.series) == 1 and len(chart.categories) <= LABELLED_BARS
+
+
+def _scale(chart: ChartOut) -> str:
+    """Les bornes de l'axe des valeurs, quand une étiquette doit tenir au bout des barres.
+
+    Sans elles, Word arrête l'axe juste après la plus grande barre, et son
+    étiquette déborde du graphique. Le bout de l'axe reste un nombre rond.
+    """
+    room = LABEL_ROOM.get(chart.kind)
+    values = [value for _, row in chart.series for value in row if value is not None]
+    if room is None or not _labelled(chart) or not values or min(values) < 0:
+        return ""
+    top = max(values) * room
+    if top <= 0:
+        return ""
+    step = 10 ** math.floor(math.log10(top)) / 5
+    end = math.ceil(top / step) * step
+    return f'<c:max val="{round(end, 10):.10g}"/><c:min val="0"/>'
+
+
 def _axes(chart: ChartOut) -> str:
     horizontal = chart.kind == "barres_horizontales"
     code = AXIS_FORMATS[chart.value_type]
@@ -172,7 +198,8 @@ def _axes(chart: ChartOut) -> str:
         f'<c:tickLblPos val="nextTo"/>{axis_line}{_text_props(900)}'
         '<c:crossAx val="1002"/><c:crosses val="autoZero"/><c:auto val="1"/>'
         '<c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>'
-        '<c:valAx><c:axId val="1002"/><c:scaling><c:orientation val="minMax"/></c:scaling>'
+        '<c:valAx><c:axId val="1002"/><c:scaling><c:orientation val="minMax"/>'
+        f"{_scale(chart)}</c:scaling>"
         f'<c:delete val="0"/><c:axPos val="{"b" if horizontal else "l"}"/>{grid}'
         f'<c:numFmt formatCode={quoteattr(code)} sourceLinked="0"/>'
         '<c:majorTickMark val="none"/><c:minorTickMark val="none"/>'
@@ -184,7 +211,6 @@ def _axes(chart: ChartOut) -> str:
 
 def _plot(chart: ChartOut) -> str:
     label = LABEL_FORMATS[chart.value_type]
-    single = len(chart.series) == 1
     match chart.kind:
         case "secteurs":
             name, values = chart.series[0]
@@ -220,7 +246,7 @@ def _plot(chart: ChartOut) -> str:
                 + _axes(chart)
             )
         case "barres" | "barres_horizontales":
-            labelled = single and len(chart.categories) <= LABELLED_BARS
+            labelled = _labelled(chart)
             series = "".join(
                 f'<c:ser><c:idx val="{i}"/><c:order val="{i}"/>{_name(i, name)}'
                 f'{_fill(PALETTE[i % len(PALETTE)])}<c:invertIfNegative val="0"/>'

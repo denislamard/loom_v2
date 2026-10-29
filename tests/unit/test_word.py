@@ -691,6 +691,12 @@ async def test_a_chart_is_a_native_word_chart(charted: WordTool, disk: Path) -> 
     values = [v.text for v in first.iter(f"{C}v")]
     assert ["Barre", "Lemaire", "Guillot"] == values[1:4]
     assert ["18034.17", "16247.36", "14709.17"] == values[4:]
+    # De la place au bout de la plus grande barre pour son étiquette : 18 034,17 fois 1,22,
+    # arrondi à la graduation ronde suivante.
+    scaling = first.find(f".//{C}valAx/{C}scaling")
+    assert scaling is not None
+    bounds = [(child.tag.removeprefix(C), child.get("val")) for child in scaling]
+    assert bounds == [("orientation", "minMax"), ("max", "24000"), ("min", "0")]
     second = part(path, "word/charts/chart2.xml")
     assert second.find(f".//{C}pieChart") is not None
     # Le même document, le même fichier.
@@ -699,6 +705,38 @@ async def test_a_chart_is_a_native_word_chart(charted: WordTool, disk: Path) -> 
 
 
 _R: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+@pytest.mark.parametrize(
+    ("chart", "bounds"),
+    [
+        # Barres verticales : 0,6 fois 1,1, arrondi à 0,02 près.
+        ({"kind": "barres", "series": [{"name": "Part", "values": [0.6, 0.4]}]}, ["0.66", "0"]),
+        # Deux séries : pas d'étiquette, l'axe est celui de Word.
+        (
+            {
+                "kind": "barres",
+                "series": [{"name": "A", "values": [1, 2]}, {"name": "B", "values": [3, 4]}],
+            },
+            [],
+        ),
+        # Une valeur négative : l'axe est celui de Word.
+        ({"kind": "barres", "series": [{"name": "Écart", "values": [-5, 12]}]}, []),
+        # Une courbe n'a pas d'étiquette.
+        ({"kind": "courbe", "series": [{"name": "CA", "values": [10, 20]}]}, []),
+    ],
+)
+async def test_the_value_axis_leaves_room_for_the_labels(
+    charted: WordTool, disk: Path, chart: dict[str, Any], bounds: list[str]
+) -> None:
+    block = {"type": "graphique", "categories": ["a", "b"], **chart}
+    await call(charted, path="sortie/axe.docx", blocks=[block], overwrite=True)
+    scaling = part(disk / "sortie" / "axe.docx", "word/charts/chart1.xml").find(
+        f".//{C}valAx/{C}scaling"
+    )
+    assert scaling is not None
+    found = [child.get("val") for child in scaling if child.tag != f"{C}orientation"]
+    assert found == bounds
 
 
 async def test_a_document_without_chart_has_no_chart_part(tool: WordTool, disk: Path) -> None:
