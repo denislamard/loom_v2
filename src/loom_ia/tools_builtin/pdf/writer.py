@@ -27,6 +27,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import (
     Flowable,
+    KeepTogether,
     ListFlowable,
     ListItem,
     PageBreak,
@@ -40,6 +41,7 @@ from reportlab.platypus.flowables import HRFlowable
 from loom_ia.tools_builtin._document.content import (
     BlockOut,
     BreakOut,
+    ChartOut,
     HeadingOut,
     Inline,
     ListOut,
@@ -51,6 +53,7 @@ from loom_ia.tools_builtin._document.content import (
     TitleOut,
     plain,
 )
+from loom_ia.tools_builtin.pdf import chart
 
 # --- Style maison ------------------------------------------------------------------
 
@@ -297,7 +300,29 @@ def _flowables(blocks: Iterable[BlockOut]) -> list[Flowable]:
                 found.append(_quote(quote))
             case BreakOut():
                 found.append(PageBreak())
+            case ChartOut():
+                found.append(_chart(block))
     return found
+
+
+CHART_TITLE: Final = ParagraphStyle(
+    "TitreGraphique", parent=BODY, fontName=BOLD, fontSize=10.5, textColor=NAVY,
+    alignment=TA_CENTER, spaceBefore=6, spaceAfter=4,
+)  # fmt: skip
+
+
+def _chart(block: ChartOut) -> Flowable:
+    """Le titre, le dessin et la légende du graphique, sur une même page."""
+    parts: list[Flowable] = []
+    if block.title:
+        parts.append(Paragraph(_text(block.title), CHART_TITLE))
+    parts.append(chart.drawing(block, TEXT_WIDTH))
+    parts.append(
+        Paragraph(_markup(block.caption), CAPTION)
+        if block.caption
+        else Paragraph("", ParagraphStyle("ApresGraphique", parent=BODY, spaceAfter=6, leading=6))
+    )
+    return KeepTogether(parts)
 
 
 def missing_glyphs(prepared: Prepared) -> list[str]:
@@ -337,6 +362,10 @@ def _said(block: BlockOut) -> str:
             return plain(runs) + (source or "")
         case BreakOut():
             return ""
+        case ChartOut():
+            names = "".join(name for name, _ in block.series)
+            caption = plain(block.caption) if block.caption else ""
+            return (block.title or "") + "".join(block.categories) + names + caption
 
 
 def render(prepared: Prepared) -> tuple[bytes, int, list[str]]:

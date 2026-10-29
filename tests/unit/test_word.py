@@ -11,6 +11,7 @@ LibreOffice (un document « d'ailleurs »).
 
 import io
 import json
+import re
 import subprocess
 import zipfile
 from pathlib import Path
@@ -23,6 +24,7 @@ from conftest import MODEL, ConfigFactory, demo_agent
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
+from loom_ia.core.bounded_regex import bounded_validator
 from loom_ia.core.events import ToolCompleted
 from loom_ia.core.model import DEFAULT_TENANT, RunId, RunStatus, SessionId
 from loom_ia.core.ports import ToolContext, ToolError
@@ -46,8 +48,8 @@ W: Final = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 NS: Final = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 
 
-def make(tmp_path: Path, *folders: dict[str, Any]) -> WordTool:
-    model = WordParams.model_validate({"folders": list(folders)})
+def make(tmp_path: Path, *folders: dict[str, Any], **params: Any) -> WordTool:
+    model = WordParams.model_validate({"folders": list(folders), **params})
     return build(model, BuiltinContext(base_dir=tmp_path))
 
 
@@ -176,7 +178,11 @@ def test_a_read_only_tool_says_so(disk: Path) -> None:
 def test_settings_for_validate(tool: WordTool) -> None:
     settings = tool.settings()
     assert [place.name for place in settings.places] == ["modeles", "sortie", "valide"]
-    assert settings.options == (("fuseau", "Europe/Paris"), ("lecture des documents", "oui"))
+    assert settings.options == (
+        ("fuseau", "Europe/Paris"),
+        ("graphiques", "non"),
+        ("lecture des documents", "oui"),
+    )
 
 
 # --- Écriture -------------------------------------------------------------------------
@@ -576,9 +582,169 @@ def test_validate_shows_the_folders(
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
     assert "loom.word" in out
-    assert "fuseau : Europe/Paris · lecture des documents : oui" in out
+    assert "fuseau : Europe/Paris · graphiques : non · lecture des documents : oui" in out
 
 
 async def test_overwrite_needs_its_right(disk: Path) -> None:
     only = make(disk, {"name": "sortie", "path": "sortie", "rights": ["write"]})
     await refused(only, "Droit overwrite refusé", path="sortie/a.docx", overwrite=True, **DEVIS)
+
+
+# --- Graphiques ------------------------------------------------------------------------
+
+C: Final = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
+RAPPORT: Final[dict[str, Any]] = {
+    "title": "Top clients",
+    "blocks": [
+        {
+            "type": "tableau",
+            "columns": [{"header": "Client"}, {"header": "Total TTC", "type": "montant_eur"}],
+            "rows": [["Barre", 18034.17], ["Lemaire", 16247.36], ["Guillot", 14709.17]],
+        },
+        {
+            "type": "graphique",
+            "kind": "barres_horizontales",
+            "title": "TTC par client",
+            "from_table": {"categories": "Client", "values": ["Total TTC"]},
+            "caption": "Montants facturés.",
+        },
+        {
+            "type": "graphique",
+            "kind": "secteurs",
+            "value_type": "pourcentage",
+            "categories": ["Plomberie", "Chauffage"],
+            "series": [{"name": "Part", "values": [0.6, 0.4]}],
+        },
+    ],
+}
+
+
+@pytest.fixture
+def charted(disk: Path) -> WordTool:
+    """Le même outil, monté avec ``charts: true``."""
+    return make(
+        disk,
+        {"name": "modeles", "path": "modeles", "rights": ["read"]},
+        {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]},
+        charts=True,
+    )
+
+
+def test_charts_are_off_unless_asked(tool: WordTool, charted: WordTool) -> None:
+    # Sans charts, ni le bloc ni sa ligne : la taille d'avant les graphiques.
+    assert "graphique" not in json.dumps(tool.spec.input_schema)
+    assert "Graphique" not in tool.spec.description
+    assert '"graphique"' in json.dumps(charted.spec.input_schema)
+    assert "Graphique ('type': 'graphique')" in charted.spec.description
+    assert ("graphiques", "oui") in charted.settings().options
+
+
+async def test_without_charts_a_chart_is_refused(tool: WordTool, charted: WordTool) -> None:
+    arguments: dict[str, Any] = {"path": "sortie/r.docx", **RAPPORT}
+    # Le moteur valide les arguments contre le schéma, avant l'outil.
+    assert list(bounded_validator(tool.spec.input_schema).iter_errors(arguments))
+    assert not list(bounded_validator(charted.spec.input_schema).iter_errors(arguments))
+    with pytest.raises(ToolError, match="Arguments invalides"):
+        await call(tool, **arguments)
+
+
+async def test_reading_charts_without_charts_says_so(tool: WordTool, charted: WordTool) -> None:
+    await call(charted, path="sortie/rapport.docx", **RAPPORT)
+    found = await call(tool, action="read", path="sortie/rapport.docx")
+    # Lus quand même : lire un graphique ne coûte rien dans le schéma.
+    assert [b["kind"] for b in found["blocks"] if b["type"] == "graphique"] == [
+        "barres_horizontales",
+        "secteurs",
+    ]
+    assert "2 graphique(s) lu(s) : cet outil n'en écrit pas" in " ".join(found["notes"])
+    again = await call(charted, action="read", path="sortie/rapport.docx")
+    assert "graphique" not in " ".join(again.get("notes", []))
+
+
+def test_validate_shows_charts(
+    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "sortie").mkdir()
+    folders = [{"name": "sortie", "path": "sortie", "rights": ["write"]}]
+    path = demo(agents=[word_agent(folders=folders, charts=True)], storage=JSONL)
+    assert main(["--config", str(path), "validate"]) == 0
+    assert "graphiques : oui" in capsys.readouterr().out
+
+
+async def test_a_chart_is_a_native_word_chart(charted: WordTool, disk: Path) -> None:
+    tool = charted
+    result = await call(tool, path="sortie/rapport.docx", **RAPPORT)
+    assert result["warnings"] == []
+    path = disk / "sortie" / "rapport.docx"
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+        types = archive.read("[Content_Types].xml").decode()
+        relations = archive.read("word/_rels/document.xml.rels").decode()
+    assert {"word/charts/chart1.xml", "word/charts/chart2.xml"} <= names
+    assert types.count("drawingml.chart+xml") == 2
+    assert 'Target="charts/chart2.xml"' in relations
+    body = part(path, "word/document.xml")
+    assert [c.get(f"{{{_R}}}id") for c in body.iter(f"{C}chart")] == ["rIdChart1", "rIdChart2"]
+    first = part(path, "word/charts/chart1.xml")
+    direction = first.find(f".//{C}barDir")
+    assert direction is not None and direction.get("val") == "bar"
+    values = [v.text for v in first.iter(f"{C}v")]
+    assert ["Barre", "Lemaire", "Guillot"] == values[1:4]
+    assert ["18034.17", "16247.36", "14709.17"] == values[4:]
+    second = part(path, "word/charts/chart2.xml")
+    assert second.find(f".//{C}pieChart") is not None
+    # Le même document, le même fichier.
+    again = await call(tool, path="sortie/rapport2.docx", **RAPPORT)
+    assert again["sha256"] == result["sha256"]
+
+
+_R: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+async def test_a_document_without_chart_has_no_chart_part(tool: WordTool, disk: Path) -> None:
+    from loom_ia.tools_builtin.word.writer import CONTENT_TYPES, DOCUMENT_RELS
+
+    await call(tool, path="sortie/devis.docx", **DEVIS)
+    with zipfile.ZipFile(disk / "sortie" / "devis.docx") as archive:
+        assert not [n for n in archive.namelist() if "chart" in n]
+        assert archive.read("[Content_Types].xml").decode() == CONTENT_TYPES
+        assert archive.read("word/_rels/document.xml.rels").decode() == DOCUMENT_RELS
+
+
+async def test_a_chart_reads_back_in_the_same_vocabulary(charted: WordTool) -> None:
+    tool = charted
+    await call(tool, path="sortie/rapport.docx", **RAPPORT)
+    found = await call(tool, action="read", path="sortie/rapport.docx")
+    charts = [b for b in found["blocks"] if b["type"] == "graphique"]
+    assert charts == [
+        {
+            "type": "graphique",
+            "kind": "barres_horizontales",
+            "title": "TTC par client",
+            "categories": ["Barre", "Lemaire", "Guillot"],
+            "series": [{"name": "Total TTC", "values": [18034.17, 16247.36, 14709.17]}],
+        },
+        {
+            "type": "graphique",
+            "kind": "secteurs",
+            "categories": ["Plomberie", "Chauffage"],
+            "series": [{"name": "Part", "values": [0.6, 0.4]}],
+        },
+    ]
+    # Un graphique n'est pas compté comme une image non lue.
+    assert "image" not in " ".join(found.get("notes", []))
+
+
+async def test_libreoffice_reads_the_chart(charted: WordTool, disk: Path, soffice: str) -> None:
+    tool = charted
+    await call(tool, path="sortie/rapport.docx", **RAPPORT)
+    convert(soffice, disk / "sortie" / "rapport.docx", disk / "odt", "odt")
+    with zipfile.ZipFile(disk / "odt" / "rapport.odt") as archive:
+        objects = [
+            archive.read(name).decode()
+            for name in archive.namelist()
+            if name.startswith("Object") and name.endswith("content.xml")
+        ]
+    classes = sorted(set(re.findall(r'chart:class="chart:(\w+)"', "".join(objects))))
+    assert classes == ["bar", "circle"]
+    assert "18034.17" in "".join(objects)

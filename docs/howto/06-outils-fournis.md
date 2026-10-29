@@ -940,6 +940,7 @@ Configuration : Agent 'assistant', outil 'loom.pdf' : Outil fourni 'loom.pdf' : 
 ```yaml
 tools:
   - python: loom.word
+    charts: true                     # le bloc graphique ; false par défaut
     folders:
     - name: sortie
       path: sortie
@@ -955,9 +956,9 @@ tools:
     timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
 ```
 
-Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), et `timezone`. Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
+Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, et `charts`, qui donne au modèle le bloc `graphique` (voir « Des graphiques »). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
 
-`loom validate` montre les dossiers, puis le fuseau et la lecture :
+`loom validate` montre les dossiers, puis le fuseau, les graphiques et la lecture :
 
 ```text
 …
@@ -965,12 +966,12 @@ AGENTS
   assistant · SIMULE · 2 outils Python
   ├ word         sortie → ./sortie
   │              read, write
-  │              fuseau : Europe/Paris · lecture des documents : oui
+  │              fuseau : Europe/Paris · graphiques : oui · lecture des documents : oui
   └ pdf          recus → ./recus
                  read
                  sortie → ./sortie
                  read, write · overwrite*
-                 fuseau : Europe/Paris · lecture des PDF : oui, process à part (20 s, 1 Gio)
+                 fuseau : Europe/Paris · graphiques : non · lecture des PDF : oui, process à part (20 s, 1 Gio)
 
   * = approbation requise
 …
@@ -1046,6 +1047,51 @@ Sont aussi refusés : un tableau de plus de 8 colonnes ou de 500 lignes, un en-t
 
 Les polices standard du PDF couvrent le français et l'Europe de l'Ouest, plus les symboles grecs et mathématiques (`≥`, `α`, `€`, `œ`, `« »` passent) ; un emoji ou un idéogramme s'imprime en carré noir.
 
+#### Des graphiques
+
+Avec `charts: true`, l'outil a un bloc de plus : `graphique`. Il n'est pas actif par défaut, parce qu'il coûte : environ 500 tokens par outil et par appel de modèle (sa description et son schéma), payés même par un agent qui n'en fait jamais. Sans `charts`, ce que voit le modèle est exactement ce qu'il voyait avant les graphiques. Le paramètre se règle outil par outil : ci-dessus, `word` dessine des graphiques, `pdf` non.
+
+Le plus souvent, les nombres d'un graphique sont déjà dans un tableau du document. `from_table` les y prend : le modèle ne recopie aucun nombre, il ne peut donc ni en déformer ni en inventer. Le run réel de cet exemple (modèle simulé) :
+
+```json
+{"path": "sortie/top-clients.docx", "title": "Top clients 2026",
+ "blocks": [
+  {"type": "tableau",
+   "columns": [{"header": "Client"}, {"header": "Total TTC", "type": "montant_eur"}],
+   "rows": [["Julien Barre", 18034.17], ["Chauffage Lemaire Rénovation", 16247.36], ["Guillot SARL", 14709.17]],
+   "totals": {"Total TTC": "somme"}},
+  {"type": "graphique", "kind": "barres_horizontales", "title": "Total TTC par client",
+   "from_table": {"categories": "Client", "values": ["Total TTC"]}}]}
+```
+
+Quand les nombres ne sont dans aucun tableau du document, ils se donnent en ligne :
+
+```json
+{"type": "graphique", "kind": "courbe", "title": "Chiffre d'affaires mensuel 2026", "value_type": "montant_eur",
+ "categories": ["janv.", "févr.", "mars", "avr."],
+ "series": [{"name": "Facturé", "values": [18200, 21500, 19800, 25400]},
+            {"name": "Encaissé", "values": [15100, 19900, 20500, null]}],
+ "caption": "Avril encaissé : pas encore connu."}
+```
+
+- **`kind`** : `barres` (par défaut) pour comparer, `barres_horizontales` pour des libellés longs (des noms de clients), `courbe` pour une évolution, `secteurs` pour les parts d'un tout.
+- **`from_table`** : le dernier tableau avant le graphique. `categories` nomme la colonne des libellés, `values` les colonnes de nombres, une série chacune, d'un même type. Les valeurs sont celles du tableau, déjà converties, sans la ligne de total.
+- **En ligne** : `categories`, `series` (`{name, values}`) et `value_type`, un type de colonne numérique (`entier`, `decimal`, `montant_eur`, `montant_keur`, `pourcentage`) qui décide de l'écriture des nombres. La conversion est celle des tableaux (`"25%"` donne 0,25) ; `null` laisse un trou dans la courbe.
+- **`title`** au-dessus du graphique, **`caption`** en légende dessous.
+- **Bornes** : 50 libellés et 6 séries au plus ; un graphique en secteurs a une seule série, 12 parts au plus, et aucune valeur négative.
+
+Le style est figé, comme le reste : la palette part du bleu nuit du document ; les graduations sont des nombres ronds (`5 000 €`) ; chaque barre porte sa valeur quand il n'y a qu'une série et 12 barres au plus ; la légende n'apparaît qu'avec plusieurs séries, ou des secteurs. Dans le `.docx`, c'est un **graphique Word**, pas une image : net à toute taille, et son type, ses couleurs et son titre se retouchent dans Word. Ses nombres sont dans le graphique, sans classeur embarqué : « Modifier les données » n'en trouve pas. Dans le PDF, c'est un dessin vectoriel, aux mêmes couleurs et dans le même ordre ; un libellé de plus de 18 caractères y est raccourci sous l'axe.
+
+Les fautes d'un graphique sont dites avec celles du document :
+
+```text
+Document refusé :
+- bloc 2 (graphique) : from_table, colonne(s) inconnue(s) du tableau précédent : TVA (colonnes : Client, Total TTC)
+- bloc 3 (graphique) : un graphique en secteurs n'a qu'une série
+```
+
+La description dit aussi au modèle de ne jamais dessiner un graphique en caractères (`█`, `#`). Sans `charts`, un bloc `graphique` est refusé par le moteur avant d'atteindre l'outil, puisque le schéma ne le connaît pas (« ne correspond à aucune des variantes autorisées »).
+
 #### Lire un document Word
 
 Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossier qui a le droit `read`, et le rend **dans le vocabulaire de l'écriture** : ce qu'il lit peut être réécrit tel quel. Le devis ci-dessus, relu :
@@ -1074,7 +1120,8 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 - **Titres** : `level` 0 pour le titre du document (style « Titre »), 1 et plus pour les titres de section. Un document écrit ailleurs est reconnu par ses niveaux de plan ou ses styles de titre, quelle que soit la langue de Word.
 - **Tableaux** : les cellules en texte, telles qu'affichées ; une cellule fusionnée laisse les suivantes vides.
 - **Coupe** : au-delà de 40 000 caractères, `"truncated": true`, `"next_start"` (le bloc où reprendre, avec `start`) et `"outline"`, le plan entier avec l'indice de chaque titre, pour aller droit à une section.
-- **Notes** : les images non lues, les modifications suivies (le texte inséré est rendu, le texte supprimé ou déplacé omis), les commentaires présents.
+- **Graphiques** : un graphique du `.docx` revient en bloc `graphique`, à sa place, avec ses libellés et ses séries (ce que Word garde dans le graphique) ; un type que l'outil n'écrit pas (aires, nuage de points…) revient avec son nom technique en `kind`. Le rapport ci-dessus, relu : `{"type": "graphique", "kind": "barres_horizontales", "title": "Total TTC par client", "categories": ["Julien Barre", "Chauffage Lemaire Rénovation", "Guillot SARL"], "series": [{"name": "Total TTC", "values": [18034.17, 16247.36, 14709.17]}]}`. La lecture rend les graphiques même sans `charts` ; une note dit alors que l'outil n'en écrit pas, et de les retirer avant de réécrire le document.
+- **Notes** : les images non lues (un graphique n'en est pas une), les modifications suivies (le texte inséré est rendu, le texte supprimé ou déplacé omis), les commentaires présents.
 
 #### Lire un PDF
 
@@ -1101,11 +1148,12 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 #### À savoir
 
 - **Pas d'image** (pas de logo), pas d'en-tête de page personnalisé, pas de lien cliquable.
+- **Graphiques** : quatre types, ni aires, ni nuage de points, ni barres empilées, ni deux axes ; `from_table` ne vise que le dernier tableau qui précède ; pas de classeur dans le `.docx`. `pdf` ne relit pas un graphique : un PDF n'en garde que le dessin, dont le texte donne les libellés.
 - **On écrit un document neuf, ou on en lit un** : on ne modifie pas un document existant, et on ne remplit ni un modèle `.dotx` ni un formulaire PDF.
 - **La lecture d'un `.docx` ne voit pas** les images, les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
 - **Le style ne se règle pas**, comme pour `excel`.
 - **Rejeu** : comme pour `excel`, le rejeu sert le résultat du journal sans réécrire le fichier ; en rejeu en variante, un outil qui ne fait que lire est exécuté, un outil qui peut écrire ne l'est jamais.
-- **Coût** : environ 1,6 k tokens par outil et par appel de modèle, description et schéma compris.
+- **Coût** : environ 1,6 k tokens par outil et par appel de modèle, description et schéma compris ; environ 500 de plus avec `charts: true`.
 
 ### `loom.sql` : des bases SQLite et Postgres, avec des droits par table
 
@@ -1402,7 +1450,7 @@ Ce que le modèle envoie : `{"set": "client", "result": "result:3", "row": 0}`, 
 
 ## Pour aller plus loin
 
-- **La référence** : `docs/tools-builtin-analyse.md` — l'analyse, les décisions et l'organisation du dossier `src/loom_ia/tools_builtin/` ; `docs/outil-excel-loom_v2.md` et `docs/outil-excel-analyse.md` pour `loom.excel` ; `docs/outil-word-pdf-analyse.md` pour `loom.word` et `loom.pdf` ; `docs/sql_builtin_tool.md` pour `loom.sql` ; `docs/fonctions.md`, point 50 (formes de référence) et point 44 (dépendances du noyau).
+- **La référence** : `docs/tools-builtin-analyse.md` — l'analyse, les décisions et l'organisation du dossier `src/loom_ia/tools_builtin/` ; `docs/outil-excel-loom_v2.md` et `docs/outil-excel-analyse.md` pour `loom.excel` ; `docs/outil-word-pdf-analyse.md` et `docs/outil-word-pdf-graphiques-analyse.md` pour `loom.word` et `loom.pdf` ; `docs/sql_builtin_tool.md` pour `loom.sql` ; `docs/fonctions.md`, point 50 (formes de référence) et point 44 (dépendances du noyau).
 - **Ajouter un outil fourni**, pour qui contribue à loom-ia : un module par outil dans `src/loom_ia/tools_builtin/`, une ligne au catalogue `BUILTIN_TOOLS`, et ses tests. `tests/unit/test_tools_builtin.py` vérifie que chaque entrée du catalogue est un outil, nommé comme sa référence sans le préfixe. Un outil à paramètres déclare au catalogue un `Builtin` : le modèle Pydantic de ses paramètres, dans un module léger (`local_files_params.py`), et sa fabrique ; il ajoute aussi ses paramètres d'essai à `SAMPLE_PARAMS`. Un outil dont l'approbation ou les effets dépendent de l'appel implémente `assess_call` (`loom_ia.core.ports.CallAssessment`). Un outil qui lit ou écrit dans des dossiers déclarés s'appuie sur `tools_builtin/_folders.py`, comme `local_files`, `excel`, `word` et `pdf` ; un outil de documents prend ses dossiers sans `delete` et son fuseau dans `_office_params.py`, et le vocabulaire des colonnes typées dans `_values.py`. Un outil dont les dépendances viennent d'un extra le déclare au catalogue (`Builtin.extra`), et ses tests sautent sans lui (`importorskip`, raison « extra '…' absent »). Un outil qui lit des secrets les nomme dans ses paramètres (`secret_names()`, protocole `NamesSecrets`) : la table de chaque client les contient, et sa fabrique la reçoit (`BuiltinContext.secrets`). Un outil qui ouvre des connexions a un `aclose` : l'agent le ferme avec lui.
 - **La limite du proxy** : backlog #023.
 

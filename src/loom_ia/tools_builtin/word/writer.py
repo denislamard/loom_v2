@@ -21,6 +21,7 @@ from xml.sax.saxutils import escape, quoteattr
 from loom_ia.tools_builtin._document.content import (
     BlockOut,
     BreakOut,
+    ChartOut,
     HeadingOut,
     Inline,
     ListOut,
@@ -31,6 +32,7 @@ from loom_ia.tools_builtin._document.content import (
     TableOut,
     TitleOut,
 )
+from loom_ia.tools_builtin.word import chart
 
 ZIP_DATE: Final = (2000, 1, 1, 0, 0, 0)
 FIXED_DATE: Final = "2000-01-01T00:00:00Z"
@@ -73,6 +75,7 @@ CONTENT_TYPES: Final = (
     'ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
     "</Types>"
 )
+_CHART_TYPE: Final = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
 PACKAGE_RELS: Final = (
     _HEAD + f'<Relationships xmlns="{_REL}">'
     f'<Relationship Id="rId1" Type="{_TYPE}/officeDocument" Target="word/document.xml"/>'
@@ -90,6 +93,27 @@ DOCUMENT_RELS: Final = (
     f'<Relationship Id="rId4" Type="{_TYPE}/footer" Target="footer1.xml"/>'
     "</Relationships>"
 )
+
+
+def _with_charts(count: int) -> tuple[str, str]:
+    """Types de contenu et relations du corps : ceux d'un document sans graphique, à
+    l'octet près, plus une partie et une relation par graphique."""
+    if not count:
+        return CONTENT_TYPES, DOCUMENT_RELS
+    types = "".join(
+        f'<Override PartName="/word/charts/chart{n}.xml" ContentType="{_CHART_TYPE}"/>'
+        for n in range(1, count + 1)
+    )
+    relations = "".join(
+        f'<Relationship Id="rIdChart{n}" Type="{_TYPE}/chart" Target="charts/chart{n}.xml"/>'
+        for n in range(1, count + 1)
+    )
+    return (
+        CONTENT_TYPES.replace("</Types>", types + "</Types>"),
+        DOCUMENT_RELS.replace("</Relationships>", relations + "</Relationships>"),
+    )
+
+
 APP: Final = (
     _HEAD + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/'
     'extended-properties"><Application>loom-ia</Application></Properties>'
@@ -354,10 +378,11 @@ def _table(table: TableOut) -> str:
 _JC: Final = {"left": "left", "center": "center", "right": "right"}
 
 
-def _body(blocks: Iterable[BlockOut]) -> tuple[str, list[bool]]:
-    """Le corps du document, et pour chaque liste si elle est numérotée."""
+def _body(blocks: Iterable[BlockOut]) -> tuple[str, list[bool], list[ChartOut]]:
+    """Le corps du document ; pour chaque liste, si elle est numérotée ; les graphiques."""
     said = ""
     lists: list[bool] = []
+    charts: list[ChartOut] = []
     for block in blocks:
         match block:
             case TitleOut(runs=runs):
@@ -387,7 +412,15 @@ def _body(blocks: Iterable[BlockOut]) -> tuple[str, list[bool]]:
                     said += _paragraph("QuoteSource", _run(f"— {source}"))
             case BreakOut():
                 said += '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
-    return said, lists
+            case ChartOut():
+                charts.append(block)
+                number = len(charts)
+                said += chart.anchor(f"rIdChart{number}", number, block)
+                if block.caption:
+                    said += _paragraph("Caption", _runs(block.caption))
+                else:
+                    said += _paragraph("Normal", "", '<w:spacing w:after="120"/>')
+    return said, lists, charts
 
 
 def _list_item(number: int, level: int, runs: Inline) -> str:
@@ -395,8 +428,8 @@ def _list_item(number: int, level: int, runs: Inline) -> str:
     return _paragraph("ListParagraph", _runs(runs), numbering)
 
 
-def _document(blocks: Iterable[BlockOut]) -> tuple[str, list[bool]]:
-    body, lists = _body(blocks)
+def _document(blocks: Iterable[BlockOut]) -> tuple[str, list[bool], list[ChartOut]]:
+    body, lists, charts = _body(blocks)
     section = (
         '<w:sectPr><w:footerReference w:type="default" r:id="rId4"/>'
         f'<w:pgSz w:w="{PAGE_WIDTH}" w:h="{PAGE_HEIGHT}"/>'
@@ -408,23 +441,26 @@ def _document(blocks: Iterable[BlockOut]) -> tuple[str, list[bool]]:
         _HEAD + f"<w:document xmlns:w={quoteattr(_W)} xmlns:r={quoteattr(_R)}>"
         f"<w:body>{body}{section}</w:body></w:document>",
         lists,
+        charts,
     )
 
 
 def render(prepared: Prepared) -> bytes:
     """Le fichier .docx, le même octet pour octet pour un même document."""
-    document, lists = _document(prepared.blocks)
+    document, lists, charts = _document(prepared.blocks)
+    types, relations = _with_charts(len(charts))
     parts = (
-        ("[Content_Types].xml", CONTENT_TYPES),
+        ("[Content_Types].xml", types),
         ("_rels/.rels", PACKAGE_RELS),
         ("docProps/core.xml", _core(prepared.title)),
         ("docProps/app.xml", APP),
         ("word/document.xml", document),
-        ("word/_rels/document.xml.rels", DOCUMENT_RELS),
+        ("word/_rels/document.xml.rels", relations),
         ("word/styles.xml", STYLES),
         ("word/numbering.xml", _numbering(lists)),
         ("word/settings.xml", SETTINGS),
         ("word/footer1.xml", FOOTER),
+        *((f"word/charts/chart{n}.xml", chart.part(c)) for n, c in enumerate(charts, start=1)),
     )
     raw = io.BytesIO()
     with zipfile.ZipFile(raw, "w", zipfile.ZIP_DEFLATED) as archive:

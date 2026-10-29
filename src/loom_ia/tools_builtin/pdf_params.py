@@ -47,6 +47,8 @@ class PdfParams(BaseModel):
     # Fuseau IANA où passe une date-heure qui en porte un : le document l'écrit
     # à l'heure de ce fuseau, sans le nommer.
     timezone: str = DEFAULT_TIMEZONE
+    # Le bloc graphique : environ 500 tokens de plus par appel au modèle, d'où false.
+    charts: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> Self:

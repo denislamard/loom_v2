@@ -23,6 +23,9 @@ MAX_TEXT: Final = 20_000
 MAX_ITEMS: Final = 200
 MAX_TABLE_COLUMNS: Final = 8
 MAX_TABLE_ROWS: Final = 500
+MAX_CATEGORIES: Final = 50
+MAX_SLICES: Final = 12
+MAX_SERIES: Final = 6
 MAX_SOURCE_BYTES: Final = 20_000_000
 MAX_OUTPUT_BYTES: Final = 50_000_000
 MAX_WARNINGS: Final = 20
@@ -94,8 +97,61 @@ class PageBreak(_Model):
     type: Literal["saut_de_page"]
 
 
+type ChartKind = Literal["barres", "barres_horizontales", "courbe", "secteurs"]
+
+
+class Series(_Model):
+    name: str
+    values: list[Scalar]
+
+
+class FromTable(_Model):
+    """Les données du tableau qui précède le graphique : ses colonnes, par en-tête."""
+
+    categories: Annotated[str, Field(description="En-tête de la colonne des libellés.")]
+    values: Annotated[
+        list[str], Field(min_length=1, description="En-têtes des colonnes de nombres.")
+    ]
+
+
+class Chart(_Model):
+    type: Literal["graphique"]
+    kind: ChartKind = "barres"
+    title: str | None = None
+    categories: list[str] | None = None
+    series: list[Series] | None = None
+    value_type: ColumnType | None = None
+    from_table: FromTable | None = None
+    caption: str | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> Self:
+        inline = self.categories is not None or self.series is not None
+        if inline == (self.from_table is not None):
+            raise ValueError(
+                "un graphique prend ses données soit de 'categories' et 'series', soit de "
+                "'from_table' (le tableau qui le précède)"
+            )
+        if inline and (self.categories is None or self.series is None):
+            raise ValueError("'categories' et 'series' vont ensemble")
+        if self.from_table is not None and self.value_type is not None:
+            raise ValueError(
+                "'value_type' ne sert qu'aux données en ligne : from_table prend le type "
+                "des colonnes"
+            )
+        return self
+
+
+# Les blocs que le modèle voit sans ``charts`` : le bloc ``graphique`` coûte
+# environ 500 tokens par appel au modèle, payés seulement là où il sert. Le nom
+# ``Block`` est celui du schéma : sans ``charts``, il reste celui d'avant les graphiques.
 type Block = Annotated[
     Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak,
+    Field(discriminator="type"),
+]
+# Tous les blocs : ce qu'une écriture porte, et ce que voit un outil monté avec ``charts``.
+type AnyBlock = Annotated[
+    Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak | Chart,
     Field(discriminator="type"),
 ]
 
@@ -108,7 +164,7 @@ class WriteArguments(_Model):
 
     path: str
     title: str | None
-    blocks: list[Block]
+    blocks: list[AnyBlock]
     overwrite: bool = False
 
 
@@ -121,6 +177,8 @@ class ReadArguments(_Model):
 
 
 type Action = Literal["write", "read"]
+
+BLOCKS_SAID: Final = "Pour write : les blocs, dans l'ordre."
 
 
 class DocumentCall(_Model):
@@ -142,7 +200,7 @@ class DocumentCall(_Model):
     ] = None
     blocks: Annotated[
         list[Block] | None,
-        Field(max_length=MAX_BLOCKS, description="Pour write : les blocs, dans l'ordre."),
+        Field(max_length=MAX_BLOCKS, description=BLOCKS_SAID),
     ] = None
     overwrite: Annotated[
         bool | None, Field(description="Pour write : remplacer un fichier existant.")
@@ -174,9 +232,21 @@ class DocumentCall(_Model):
         return WriteArguments(
             path=self.path,
             title=self.title,
-            blocks=cast(list[Block], self.blocks),
+            blocks=cast(list[AnyBlock], self.blocks),
             overwrite=bool(self.overwrite),
         )
+
+
+class WithCharts(DocumentCall):
+    """Le même appel, avec le bloc ``graphique`` : un outil monté avec ``charts``.
+
+    Chaque format l'hérite avant son propre appel (``WordChartCall(WithCharts, WordCall)``).
+    """
+
+    blocks: Annotated[  # pyright: ignore[reportIncompatibleVariableOverride]
+        list[AnyBlock] | None,
+        Field(max_length=MAX_BLOCKS, description=BLOCKS_SAID),
+    ] = None
 
 
 def parse(

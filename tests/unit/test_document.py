@@ -15,12 +15,14 @@ from loom_ia.core.ports import ToolError
 from loom_ia.tools_builtin._document.arguments import (
     DocumentCall,
     ReadArguments,
+    WithCharts,
     WriteArguments,
     parse,
 )
 from loom_ia.tools_builtin._document.content import (
     NBSP,
     BreakOut,
+    ChartOut,
     HeadingOut,
     ListOut,
     NoteOut,
@@ -41,7 +43,8 @@ PARIS: Final = ZoneInfo("Europe/Paris")
 
 
 def prepared(*blocks: dict[str, Any], title: str | None = None) -> Prepared:
-    request = parse(DocumentCall, {"path": "s/a", "title": title, "blocks": list(blocks)})
+    # Le vocabulaire complet, graphique compris (un outil monté avec charts).
+    request = parse(WithCharts, {"path": "s/a", "title": title, "blocks": list(blocks)})
     assert isinstance(request, WriteArguments)
     return prepare(request, PARIS)
 
@@ -286,3 +289,164 @@ def test_a_total_without_rows_is_not_written() -> None:
     [table] = found.blocks
     assert isinstance(table, TableOut) and table.total is None
     assert any("aucune ligne" in w for w in found.warnings)
+
+
+# --- Graphiques ------------------------------------------------------------------------
+
+SALES: Final[dict[str, Any]] = {
+    "type": "tableau",
+    "columns": [
+        {"header": "Client"},
+        {"header": "Total HT", "type": "montant_eur"},
+        {"header": "Total TTC", "type": "montant_eur"},
+        {"header": "Factures", "type": "entier"},
+    ],
+    "rows": [["Barre", 17094, "18 034,17", 2], ["Lemaire", 13539.47, 16247.36, 2]],
+    "totals": {"Total TTC": "somme"},
+}
+
+
+def test_a_chart_takes_its_data_from_the_table_before_it() -> None:
+    found = prepared(
+        SALES,
+        {
+            "type": "graphique",
+            "kind": "barres_horizontales",
+            "title": "TTC par client",
+            "from_table": {"categories": "Client", "values": ["Total HT", "Total TTC"]},
+        },
+    )
+    chart = found.blocks[1]
+    assert isinstance(chart, ChartOut)
+    assert chart.categories == ("Barre", "Lemaire")
+    # Les valeurs converties du tableau, sans sa ligne de total.
+    assert chart.series == (
+        ("Total HT", (17094.0, 13539.47)),
+        ("Total TTC", (18034.17, 16247.36)),
+    )
+    assert (chart.kind, chart.value_type, chart.title) == (
+        "barres_horizontales",
+        "montant_eur",
+        "TTC par client",
+    )
+
+
+def test_a_chart_with_inline_data() -> None:
+    found = prepared(
+        {
+            "type": "graphique",
+            "kind": "courbe",
+            "value_type": "pourcentage",
+            "categories": ["janv.", "févr.", "mars"],
+            "series": [{"name": "Marge", "values": [0.2, "25%", None]}],
+        }
+    )
+    [chart] = found.blocks
+    assert isinstance(chart, ChartOut)
+    assert chart.series == (("Marge", (0.2, 0.25, None)),)
+
+
+@pytest.mark.parametrize(
+    ("blocks", "said"),
+    [
+        (
+            [{"type": "graphique", "from_table": {"categories": "A", "values": ["B"]}}],
+            "aucun tableau ne précède le graphique",
+        ),
+        (
+            [
+                SALES,
+                {"type": "graphique", "from_table": {"categories": "Client", "values": ["TVA"]}},
+            ],
+            r"colonne\(s\) inconnue\(s\) du tableau précédent : TVA",
+        ),
+        (
+            [
+                SALES,
+                {
+                    "type": "graphique",
+                    "from_table": {"categories": "Client", "values": ["Total TTC", "Factures"]},
+                },
+            ],
+            "colonnes de nombres d'un même type",
+        ),
+        (
+            [
+                {
+                    "type": "graphique",
+                    "categories": ["a", "b"],
+                    "series": [{"name": "s", "values": [1]}],
+                }
+            ],
+            "1 valeurs pour 2 libellés",
+        ),
+        (
+            [
+                {
+                    "type": "graphique",
+                    "kind": "secteurs",
+                    "categories": ["a", "b"],
+                    "series": [{"name": "s", "values": [1, -1]}, {"name": "t", "values": [1, 1]}],
+                }
+            ],
+            "un graphique en secteurs n'a qu'une série",
+        ),
+        (
+            [
+                {
+                    "type": "graphique",
+                    "kind": "secteurs",
+                    "categories": [str(i) for i in range(13)],
+                    "series": [{"name": "s", "values": [1] * 13}],
+                }
+            ],
+            "13 secteurs, au-delà de 12",
+        ),
+        (
+            [
+                {
+                    "type": "graphique",
+                    "value_type": "texte",
+                    "categories": ["a"],
+                    "series": [{"name": "s", "values": [1]}],
+                }
+            ],
+            "un graphique porte des nombres",
+        ),
+    ],
+)
+def test_charts_refused(blocks: list[dict[str, Any]], said: str) -> None:
+    refused(said, *blocks)
+
+
+@pytest.mark.parametrize(
+    "blocks",
+    [
+        [{"type": "graphique", "from_table": {"categories": "A", "values": ["B"]}}],
+        [SALES, {"type": "graphique", "from_table": {"categories": "Client", "values": ["TVA"]}}],
+    ],
+)
+def test_a_chart_without_its_table_says_one_fault(blocks: list[dict[str, Any]]) -> None:
+    # Ni « aucun libellé » ni « aucune série » en plus : elles découlent de la première.
+    said = refused("graphique", *blocks)
+    assert said.count("\n- ") == 1, said
+
+
+@pytest.mark.parametrize(
+    ("chart", "said"),
+    [
+        ({"type": "graphique"}, "soit de 'categories' et 'series', soit de 'from_table'"),
+        ({"type": "graphique", "categories": ["a"]}, "'categories' et 'series' vont ensemble"),
+        (
+            {
+                "type": "graphique",
+                "value_type": "entier",
+                "from_table": {"categories": "a", "values": ["b"]},
+            },
+            "'value_type' ne sert qu'aux données en ligne",
+        ),
+    ],
+)
+def test_chart_arguments_refused(chart: dict[str, Any], said: str) -> None:
+    with pytest.raises(ToolError, match=said):
+        parse(WithCharts, {"path": "s/a", "blocks": [chart]})

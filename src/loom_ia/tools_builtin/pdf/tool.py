@@ -9,7 +9,12 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field, JsonValue
 
 from loom_ia.tools_builtin import BuiltinContext
-from loom_ia.tools_builtin._document.arguments import READ_CHARS, DocumentCall, ReadArguments
+from loom_ia.tools_builtin._document.arguments import (
+    READ_CHARS,
+    DocumentCall,
+    ReadArguments,
+    WithCharts,
+)
 from loom_ia.tools_builtin._document.content import Prepared
 from loom_ia.tools_builtin._document.tool import DocumentTool
 from loom_ia.tools_builtin._folders import Folders, mount
@@ -33,11 +38,17 @@ class PdfCall(DocumentCall):
     ] = None
 
 
+# ``blocks`` élargi au bloc graphique : voulu, comme dans ``WithCharts``.
+class PdfChartCall(WithCharts, PdfCall):  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Les arguments de ``pdf`` avec le bloc graphique (``charts: true``)."""
+
+
 class PdfTool(DocumentTool):
     """L'outil ``pdf`` monté avec ses dossiers et son fuseau."""
 
     NAME: ClassVar[str] = NAME
     CALL: ClassVar[type[DocumentCall]] = PdfCall
+    CHART_CALL: ClassVar[type[DocumentCall]] = PdfChartCall
     SUFFIX: ClassVar[str] = ".pdf"
     LABEL: ClassVar[str] = "document PDF"
 
@@ -91,4 +102,4 @@ def build(params: BaseModel, context: BuiltinContext) -> PdfTool:
                 f"pypdf {version('pypdf')} : {'.'.join(map(str, SAFE_PYPDF))} ou plus attendu "
                 "(boucles sans fin sur des PDF forgés) — mettre à jour loom-ia[pdf]"
             )
-    return PdfTool(space, ZoneInfo(params.timezone))
+    return PdfTool(space, ZoneInfo(params.timezone), charts=params.charts)

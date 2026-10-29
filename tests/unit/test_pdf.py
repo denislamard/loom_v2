@@ -8,6 +8,7 @@ meurent) et par une bombe de décompression.
 
 import asyncio
 import io
+import json
 import subprocess
 import sys
 import time
@@ -29,6 +30,7 @@ import loom_ia.tools_builtin.pdf.reader as reader_module
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
+from loom_ia.core.bounded_regex import bounded_validator
 from loom_ia.core.model import DEFAULT_TENANT, RunId, SessionId
 from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.runtime import build_agent
@@ -47,8 +49,8 @@ CONTEXT: Final = ToolContext(
 JSONL: Final = {"events": {"backend": "jsonl", "path": "journal"}}
 
 
-def make(tmp_path: Path, *folders: dict[str, Any]) -> PdfTool:
-    model = PdfParams.model_validate({"folders": list(folders)})
+def make(tmp_path: Path, *folders: dict[str, Any], **params: Any) -> PdfTool:
+    model = PdfParams.model_validate({"folders": list(folders), **params})
     return build(model, BuiltinContext(base_dir=tmp_path))
 
 
@@ -131,6 +133,7 @@ def test_the_spec_names_the_folders_and_the_reading(tool: PdfTool) -> None:
     settings = tool.settings()
     assert settings.options == (
         ("fuseau", "Europe/Paris"),
+        ("graphiques", "non"),
         ("lecture des PDF", "oui, process à part (20 s, 1 Gio)"),
     )
 
@@ -569,3 +572,68 @@ async def test_header_words_and_short_values_are_never_cut(
     text = PdfReader(disk / "sortie" / "top.pdf").pages[0].extract_text()
     for said in ("Rang", "Code", "Factures", "C-429", "18\u00a0034,17\u00a0€"):
         assert said in text or said.replace("\u00a0", " ") in text, said
+
+
+# --- Graphiques ------------------------------------------------------------------------
+
+
+@pytest.fixture
+def charted(disk: Path) -> PdfTool:
+    """Le même outil, monté avec ``charts: true``."""
+    return make(
+        disk, {"name": "sortie", "path": "sortie", "rights": ["read", "write"]}, charts=True
+    )
+
+
+async def test_charts_are_off_unless_asked(tool: PdfTool, charted: PdfTool) -> None:
+    assert "graphique" not in json.dumps(tool.spec.input_schema)
+    assert "Graphique" not in tool.spec.description
+    assert "Graphique ('type': 'graphique')" in charted.spec.description
+    assert ("graphiques", "oui") in charted.settings().options
+    chart = {"type": "graphique", "categories": ["a"], "series": [{"name": "s", "values": [1]}]}
+    arguments: dict[str, Any] = {"path": "sortie/g.pdf", "blocks": [chart]}
+    assert list(bounded_validator(tool.spec.input_schema).iter_errors(arguments))
+    assert not list(bounded_validator(charted.spec.input_schema).iter_errors(arguments))
+    with pytest.raises(ToolError, match="Arguments invalides"):
+        await call(tool, **arguments)
+    assert (await call(charted, **arguments))["pages"] == 1
+
+
+async def test_a_chart_is_drawn_in_the_pdf(charted: PdfTool, disk: Path) -> None:
+    tool = charted
+    blocks: list[dict[str, Any]] = [
+        TOP10,
+        {
+            "type": "graphique",
+            "kind": "barres_horizontales",
+            "title": "TTC par client",
+            "from_table": {"categories": "Client", "values": ["Total TTC"]},
+        },
+        {
+            "type": "graphique",
+            "kind": "courbe",
+            "value_type": "montant_eur",
+            "categories": ["janv.", "févr.", "mars"],
+            "series": [
+                {"name": "Facturé", "values": [18200, 21500, 19800]},
+                {"name": "Encaissé", "values": [15100, None, 20500]},
+            ],
+        },
+        {
+            "type": "graphique",
+            "kind": "secteurs",
+            "value_type": "pourcentage",
+            "categories": ["Plomberie", "Chauffage 🔥"],
+            "series": [{"name": "Part", "values": [0.6, 0.4]}],
+        },
+    ]
+    result = await call(tool, path="sortie/graphiques.pdf", blocks=blocks)
+    # Un libellé de graphique passe par la même vérification des polices que le texte.
+    assert [w for w in result["warnings"] if "🔥" in w]
+    text = " ".join(
+        page.extract_text() for page in PdfReader(disk / "sortie" / "graphiques.pdf").pages
+    ).replace("\u00a0", " ")
+    for said in ("TTC par client", "Julien Barre", "18 034,17 €", "Facturé", "60,0 %"):
+        assert said in text, said
+    again = await call(tool, path="sortie/graphiques2.pdf", blocks=blocks)
+    assert again["sha256"] == result["sha256"]

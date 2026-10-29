@@ -154,6 +154,8 @@ class _Package:
     numbering: dict[str, dict[int, bool]]
     title: str | None
     comments: bool
+    # Identifiant de relation → partie d'un graphique (``word/charts/chartN.xml``).
+    charts: dict[str, str] = field(default_factory=dict[str, str])
 
 
 def _open(data: bytes, where: str) -> _Package:
@@ -189,6 +191,7 @@ def _open(data: bytes, where: str) -> _Package:
         numbering=_numbering(_whole(archive, numbering_part, where)) if numbering_part else {},
         title=_title(archive, names, where),
         comments="comments" in related,
+        charts=_relations(archive, names, body, by_id="chart"),
     )
 
 
@@ -213,8 +216,11 @@ def _main_part(archive: zipfile.ZipFile, names: set[str]) -> str | None:
     return None
 
 
-def _relations(archive: zipfile.ZipFile, names: set[str], body: str) -> dict[str, str]:
-    """Les parties liées au corps, par type (« styles », « numbering »…)."""
+def _relations(
+    archive: zipfile.ZipFile, names: set[str], body: str, *, by_id: str | None = None
+) -> dict[str, str]:
+    """Les parties liées au corps, par type (« styles », « numbering »…) ; avec ``by_id``,
+    celles de ce type, par identifiant de relation (les graphiques)."""
     folder, _, file = body.rpartition("/")
     rels = f"{folder}/_rels/{file}.rels" if folder else f"_rels/{file}.rels"
     if rels not in names or archive.getinfo(rels).file_size > MAX_PART:
@@ -226,7 +232,10 @@ def _relations(archive: zipfile.ZipFile, names: set[str], body: str) -> dict[str
         if relation.get("TargetMode") == "External" or not target:
             continue
         path = target.lstrip("/") if target.startswith("/") else posixpath.join(folder, target)
-        found.setdefault(kind, posixpath.normpath(path))
+        if by_id is None:
+            found.setdefault(kind, posixpath.normpath(path))
+        elif kind == by_id:
+            found[relation.get("Id", "")] = posixpath.normpath(path)
     return found
 
 
@@ -430,6 +439,10 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
         direct = _child(properties, "outlineLvl")
         value = _attribute(direct, "val") if direct is not None else None
         outline = int(value) if value is not None and value.isdigit() else None
+    for chart_id in _chart_ids(element):
+        _close_list(reading)
+        reading.images -= 1
+        _emit(reading, _chart(package, chart_id))
     text = _markdown(_segments(element))
     if not text.strip():
         return
@@ -473,6 +486,99 @@ _KIND: Final = {
 def _style_name(styles: dict[str, _Style], style_id: str | None) -> str:
     style = styles.get(style_id or "")
     return style.name if style is not None else ""
+
+
+_CHART_NS: Final = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
+_DRAWING_NS: Final = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_R_ID: Final = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+MAX_CHART_POINTS: Final = 200
+
+
+def _chart_ids(element: Element) -> list[str]:
+    """Les graphiques ancrés dans un paragraphe : l'identifiant de relation de chacun."""
+    return [found.get(_R_ID, "") for found in element.iter(f"{_CHART_NS}chart") if found.get(_R_ID)]
+
+
+def _chart(package: _Package, relation: str) -> dict[str, JsonValue]:
+    """Un graphique Word, rendu dans le vocabulaire de l'écriture, d'après son cache.
+
+    Un graphique qu'on ne sait pas lire (partie absente, type inconnu) reste un bloc
+    ``graphique`` sans données : sa place dans le document est connue.
+    """
+    block: dict[str, JsonValue] = {"type": "graphique"}
+    name = package.charts.get(relation)
+    root = _whole(package.archive, name, "graphique") if name else None
+    if root is None:
+        return block
+    plot = root.find(f"{_CHART_NS}chart/{_CHART_NS}plotArea")
+    kinds = {
+        "barChart": "barres",
+        "bar3DChart": "barres",
+        "lineChart": "courbe",
+        "line3DChart": "courbe",
+        "pieChart": "secteurs",
+        "pie3DChart": "secteurs",
+        "doughnutChart": "secteurs",
+    }
+    children: list[Element] = list(plot) if plot is not None else []
+    found = next((child for child in children if child.tag.endswith("Chart")), None)
+    if found is None:
+        return block
+    local = found.tag.rpartition("}")[2]
+    kind = kinds.get(local, local)
+    direction = found.find(f"{_CHART_NS}barDir")
+    if kind == "barres" and direction is not None and direction.get("val") == "bar":
+        kind = "barres_horizontales"
+    block["kind"] = kind
+    title = root.find(f"{_CHART_NS}chart/{_CHART_NS}title")
+    if title is not None:
+        said = "".join(t.text or "" for t in title.iter(f"{_DRAWING_NS}t")).strip()
+        if said:
+            block["title"] = said[:MAX_CELL_CHARS]
+    categories: list[JsonValue] = []
+    series: list[JsonValue] = []
+    for ser in found.findall(f"{_CHART_NS}ser"):
+        cat = ser.find(f"{_CHART_NS}cat")
+        if not categories and cat is not None:
+            categories = [str(v) for v in _points(cat)]
+        name_at = ser.find(f"{_CHART_NS}tx")
+        series_name = (
+            "".join(v.text or "" for v in name_at.iter(f"{_CHART_NS}v"))
+            if name_at is not None
+            else ""
+        )
+        val = ser.find(f"{_CHART_NS}val")
+        values = [_float(v) for v in _points(val)] if val is not None else []
+        series.append({"name": series_name[:MAX_CELL_CHARS], "values": values})
+    block["categories"] = categories
+    block["series"] = series
+    return block
+
+
+def _points(source: Element) -> list[str | None]:
+    """Les points d'un cache (``strCache``, ``numCache``) ou d'un littéral, à leur rang."""
+    count = 0
+    for counted in source.iter(f"{_CHART_NS}ptCount"):
+        value = counted.get("val", "0")
+        count = min(int(value) if value.isdigit() else 0, MAX_CHART_POINTS)
+        break
+    found: list[str | None] = [None] * count
+    for point in source.iter(f"{_CHART_NS}pt"):
+        index = point.get("idx", "")
+        text = point.findtext(f"{_CHART_NS}v")
+        if index.isdigit() and int(index) < count:
+            found[int(index)] = text
+    return found
+
+
+def _float(value: str | None) -> JsonValue:
+    try:
+        number = float(value) if value is not None else None
+    except ValueError:
+        return None
+    if number is None or number != number or number in (float("inf"), float("-inf")):
+        return None
+    return int(number) if number.is_integer() and abs(number) < 2**53 else number
 
 
 def _style_meaning(

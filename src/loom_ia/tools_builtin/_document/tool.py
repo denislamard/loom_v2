@@ -24,8 +24,10 @@ from loom_ia.tools import to_output
 from loom_ia.tools_builtin import Settings
 from loom_ia.tools_builtin._document.arguments import (
     MAX_BLOCKS,
+    MAX_CATEGORIES,
     MAX_ITEMS,
     MAX_OUTPUT_BYTES,
+    MAX_SLICES,
     MAX_SOURCE_BYTES,
     MAX_TABLE_COLUMNS,
     MAX_TABLE_ROWS,
@@ -57,20 +59,37 @@ WRITING_HELP: Final = (
     "marges et numéros de page sont décidés par l'outil.",
 )
 
+# Le bloc graphique, seulement pour un outil monté avec ``charts``.
+CHART_HELP: Final = (
+    "Graphique ('type': 'graphique') : kind (barres, barres_horizontales, courbe, "
+    "secteurs), title, caption ; ses données viennent du tableau qui le précède "
+    "(from_table : {categories : en-tête des libellés, values : en-têtes des colonnes de "
+    "nombres}), ce qui évite de recopier les nombres, ou sont données en ligne "
+    "(categories, series [{name, values}], value_type). Des barres pour comparer, une "
+    "courbe pour une évolution, des secteurs pour les parts d'un tout (une série, "
+    f"{MAX_SLICES} parts au plus) ; {MAX_CATEGORIES} libellés au plus. Jamais de "
+    "graphique dessiné en caractères.",
+)
+
 
 class DocumentTool(ABC):
     """Un outil de document monté avec ses dossiers et son fuseau."""
 
     NAME: ClassVar[str]
+    # Les arguments sans le bloc graphique, puis avec (outil monté avec ``charts``).
     CALL: ClassVar[type[DocumentCall]]
+    CHART_CALL: ClassVar[type[DocumentCall]]
     # Le suffixe écrit (« .docx ») et le nom du fichier pour le modèle (« document Word »).
     SUFFIX: ClassVar[str]
     LABEL: ClassVar[str]
     MAX_SOURCE: ClassVar[int] = MAX_SOURCE_BYTES
 
-    def __init__(self, space: Folders, zone: ZoneInfo) -> None:
+    def __init__(self, space: Folders, zone: ZoneInfo, *, charts: bool = False) -> None:
         self._space = space
         self._zone = zone
+        self._charts = charts
+        # Le schéma vu par le modèle n'a le bloc graphique que s'il sert.
+        self._call = self.CHART_CALL if charts else self.CALL
         folders = space.folders
         # Le pire de ses appels ; un outil qui ne fait que lire n'en a aucun, et se
         # rejoue donc en variante (une lecture sans effet s'y exécute).
@@ -84,7 +103,7 @@ class DocumentTool(ABC):
         self._spec = ToolSpec(
             name=self.NAME,
             description=self._description(),
-            input_schema=input_schema(self.CALL),
+            input_schema=input_schema(self._call),
             kind="python",
             side_effects=effects,
             approval="always" if any(f.asking() for f in folders) else "never",
@@ -101,7 +120,7 @@ class DocumentTool(ABC):
     def assess_call(self, arguments: Mapping[str, JsonValue]) -> CallAssessment:
         """Approbation et effets de cet appel : les droits qu'il exerce, dossier par dossier."""
         try:
-            request = parse(self.CALL, arguments)
+            request = parse(self._call, arguments)
             if isinstance(request, ReadArguments):
                 return self._assess_read(self._source(request.path))
             return self._assess_write(request, self._output(request))
@@ -137,7 +156,7 @@ class DocumentTool(ABC):
         )
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
-        request = parse(self.CALL, arguments)
+        request = parse(self._call, arguments)
         if isinstance(request, ReadArguments):
             source = self._source(request.path)
             data = await asyncio.to_thread(self._load, source)
@@ -220,7 +239,7 @@ class DocumentTool(ABC):
         return ()
 
     def _options(self) -> tuple[tuple[str, str], ...]:
-        return (("fuseau", self._zone.key),)
+        return (("fuseau", self._zone.key), ("graphiques", "oui" if self._charts else "non"))
 
     def _description(self) -> str:
         space = self._space
@@ -241,6 +260,7 @@ class DocumentTool(ABC):
                 f"Le fichier s'écrit dans : {', '.join(writes)} ; un fichier existant n'est "
                 "remplacé qu'avec overwrite=true (droit overwrite).",
                 *WRITING_HELP,
+                *(CHART_HELP if self._charts else ()),
                 *self._writing_notes(),
                 f"Bornes : {MAX_BLOCKS} blocs, {MAX_ITEMS} éléments par liste. Résultat : le "
                 "chemin écrit et les avertissements ; jamais le contenu.",

@@ -20,10 +20,15 @@ from typing import Final, Literal
 from zoneinfo import ZoneInfo
 
 from loom_ia.tools_builtin._document.arguments import (
+    MAX_CATEGORIES,
     MAX_ITEMS,
+    MAX_SERIES,
+    MAX_SLICES,
     MAX_TABLE_COLUMNS,
     MAX_TABLE_ROWS,
     MAX_TEXT,
+    Chart,
+    ChartKind,
     Heading,
     Item,
     ListBlock,
@@ -136,8 +141,29 @@ class BreakOut:
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class ChartOut:
+    """Un graphique : ses libellés, ses séries de nombres, et le type de ces nombres."""
+
+    kind: ChartKind
+    title: str | None
+    categories: tuple[str, ...]
+    # (nom, valeurs) ; une valeur manquante est ``None`` : un trou dans la courbe.
+    series: tuple[tuple[str, tuple[float | None, ...]], ...]
+    value_type: ColumnType
+    caption: Inline | None
+
+
 type BlockOut = (
-    TitleOut | HeadingOut | ParagraphOut | ListOut | TableOut | NoteOut | QuoteOut | BreakOut
+    TitleOut
+    | HeadingOut
+    | ParagraphOut
+    | ListOut
+    | TableOut
+    | NoteOut
+    | QuoteOut
+    | BreakOut
+    | ChartOut
 )
 
 
@@ -161,6 +187,8 @@ def prepare(arguments: WriteArguments, zone: ZoneInfo) -> Prepared:
         _clean(title, "titre", problems)
         blocks.append(TitleOut(inline(title)))
     level = 0
+    # Le dernier tableau écrit, et ses valeurs : la source d'un graphique ``from_table``.
+    last_table: tuple[Table, list[list[Stored]]] | None = None
     for index, block in enumerate(arguments.blocks, start=1):
         where = f"bloc {index} ({block.type})"
         match block:
@@ -179,7 +207,11 @@ def prepare(arguments: WriteArguments, zone: ZoneInfo) -> Prepared:
             case ListBlock():
                 blocks.append(_list(block, where, problems))
             case Table():
-                blocks.append(_table(block, where, problems, zone))
+                table, stored = _table(block, where, problems, zone)
+                blocks.append(table)
+                last_table = (block, stored)
+            case Chart():
+                blocks.append(_chart(block, last_table, where, problems, zone))
             case Note():
                 text = _text(block.text, where, problems, required=True)
                 note_title = _text(block.title, f"{where}, title", problems) or None
@@ -232,7 +264,9 @@ def _list(block: ListBlock, where: str, problems: Problems) -> ListOut:
     return ListOut(block.ordered, tuple(entries))
 
 
-def _table(block: Table, where: str, problems: Problems, zone: ZoneInfo) -> TableOut:
+def _table(
+    block: Table, where: str, problems: Problems, zone: ZoneInfo
+) -> tuple[TableOut, list[list[Stored]]]:
     columns = block.columns
     headers = [column.header.strip() for column in columns]
     if len(columns) > MAX_TABLE_COLUMNS:
@@ -274,7 +308,7 @@ def _table(block: Table, where: str, problems: Problems, zone: ZoneInfo) -> Tabl
     )
     widths = _widths(headers, [*shown, *([total] if total else [])])
     caption = _text(block.caption, f"{where}, caption", problems) or None
-    return TableOut(
+    found = TableOut(
         headers=tuple(headers),
         align=tuple(_align(column.type) for column in columns),
         rows=shown,
@@ -282,6 +316,139 @@ def _table(block: Table, where: str, problems: Problems, zone: ZoneInfo) -> Tabl
         widths=widths,
         caption=inline(caption) if caption else None,
     )
+    return found, stored
+
+
+# --- Graphiques ----------------------------------------------------------------------------
+
+MAX_LABEL: Final = 60
+
+
+def _chart(
+    block: Chart,
+    last_table: tuple[Table, list[list[Stored]]] | None,
+    where: str,
+    problems: Problems,
+    zone: ZoneInfo,
+) -> ChartOut:
+    """Le graphique validé, ses données en ligne ou tirées du tableau qui le précède."""
+    found = True
+    if block.from_table is not None:
+        taken = _from_table(block, last_table, where, problems)
+        # Sans tableau ou sans ses colonnes, rien à vérifier de plus : la faute est dite.
+        found = taken is not None
+        categories, series, kind = taken or ([], [], "decimal")
+    else:
+        kind: ColumnType = block.value_type or "decimal"
+        if kind not in NUMERIC:
+            problems.error(f"{where} : value_type {kind} : un graphique porte des nombres")
+        categories = [str(label) for label in block.categories or []]
+        series: list[tuple[str, tuple[float | None, ...]]] = []
+        for number, given in enumerate(block.series or [], start=1):
+            at = f"{where}, série {number} « {given.name} »"
+            if len(given.values) != len(categories):
+                problems.error(
+                    f"{at} : {len(given.values)} valeurs pour {len(categories)} libellés"
+                )
+            values = [_numeric(convert(value, kind, at, problems, zone)) for value in given.values]
+            series.append((given.name.strip(), tuple(values)))
+    if found:
+        _check_chart(block.kind, categories, series, where, problems)
+    for label in categories:
+        _clean(label, where, problems)
+    title = _text(block.title, f"{where}, title", problems) or None
+    caption = _text(block.caption, f"{where}, caption", problems) or None
+    return ChartOut(
+        kind=block.kind,
+        title=title,
+        categories=tuple(label.strip()[:MAX_LABEL] for label in categories),
+        series=tuple(series),
+        value_type=kind,
+        caption=inline(caption) if caption else None,
+    )
+
+
+def _from_table(
+    block: Chart,
+    last_table: tuple[Table, list[list[Stored]]] | None,
+    where: str,
+    problems: Problems,
+) -> tuple[list[str], list[tuple[str, tuple[float | None, ...]]], ColumnType] | None:
+    """Libellés, séries et type tirés du tableau ; ``None`` si on ne peut pas les tirer."""
+    source = block.from_table
+    assert source is not None
+    if last_table is None:
+        problems.error(f"{where} : from_table, mais aucun tableau ne précède le graphique")
+        return None
+    table, stored = last_table
+    headers = [column.header.strip() for column in table.columns]
+    wanted = [source.categories, *source.values]
+    unknown = [name for name in wanted if name.strip() not in headers]
+    if unknown:
+        problems.error(
+            f"{where} : from_table, colonne(s) inconnue(s) du tableau précédent : "
+            f"{', '.join(unknown)} (colonnes : {', '.join(headers)})"
+        )
+        return None
+    label_at = headers.index(source.categories.strip())
+    label_kind = table.columns[label_at].type
+    categories = [display(row[label_at], label_kind) for row in stored]
+    kinds: set[ColumnType] = {
+        table.columns[headers.index(name.strip())].type for name in source.values
+    }
+    kind: ColumnType = next(iter(kinds))
+    if len(kinds) > 1 or kind not in NUMERIC:
+        problems.error(
+            f"{where} : from_table, les séries viennent de colonnes de nombres d'un même type "
+            f"(ici : {', '.join(sorted(kinds))})"
+        )
+    series = [
+        (
+            name.strip(),
+            tuple(_numeric(row[headers.index(name.strip())]) for row in stored),
+        )
+        for name in source.values
+    ]
+    return categories, series, kind
+
+
+def _numeric(value: Stored) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+def _check_chart(
+    kind: ChartKind,
+    categories: Sequence[str],
+    series: Sequence[tuple[str, tuple[float | None, ...]]],
+    where: str,
+    problems: Problems,
+) -> None:
+    if not categories:
+        problems.error(f"{where} : aucun libellé, le graphique serait vide")
+    if len(categories) > MAX_CATEGORIES:
+        problems.error(
+            f"{where} : {len(categories)} libellés, au-delà de {MAX_CATEGORIES} — regrouper, "
+            "ou garder les principaux"
+        )
+    if not series:
+        problems.error(f"{where} : aucune série")
+    if len(series) > MAX_SERIES:
+        problems.error(f"{where} : {len(series)} séries, au-delà de {MAX_SERIES}")
+    if any(len(label) > MAX_LABEL for label in categories):
+        problems.warn(f"{where} : libellé de plus de {MAX_LABEL} caractères, coupé")
+    if kind == "secteurs":
+        if len(series) > 1:
+            problems.error(f"{where} : un graphique en secteurs n'a qu'une série")
+        if len(categories) > MAX_SLICES:
+            problems.error(
+                f"{where} : {len(categories)} secteurs, au-delà de {MAX_SLICES} — illisible ; "
+                "garder les principaux et regrouper le reste en « Autres », ou des barres"
+            )
+        values = [value for _, values in series[:1] for value in values if value is not None]
+        if any(value < 0 for value in values):
+            problems.error(f"{where} : une valeur négative n'a pas de secteur")
+        elif values and not any(values):
+            problems.error(f"{where} : toutes les valeurs sont nulles")
 
 
 def _totals(
