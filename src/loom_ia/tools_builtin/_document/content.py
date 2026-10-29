@@ -12,6 +12,7 @@ ligne reste un saut de ligne dans le même paragraphe.
 """
 
 import datetime as dt
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -40,6 +41,17 @@ MAX_TITLE: Final = 300
 # Largeur d'une colonne, en caractères, pour en tirer la part de la page.
 MIN_COLUMN_CHARS: Final = 4
 MAX_COLUMN_CHARS: Final = 40
+# Ce qu'une colonne prend en plus de son texte : les marges de la cellule, et l'en-tête
+# en gras, plus large que le corps.
+COLUMN_PADDING: Final = 2
+# Ce que tient la largeur utile d'une page A4 (17 cm), en caractères de tableau : 90
+# (Helvetica 9,5 pt en fait une centaine en moyenne ; Calibri 10 pt, davantage).
+PAGE_CHARS: Final = 90
+# Un en-tête est en gras : ses lettres sont plus larges que celles du corps.
+BOLD_WIDTH: Final = 1.15
+# Une valeur jusqu'à cette longueur (un rang, un code, un montant, une date) n'est
+# jamais coupée ; une plus longue (un nom, un texte) peut passer à la ligne.
+SHORT_VALUE_CHARS: Final = 14
 NUMERIC: Final[frozenset[ColumnType]] = frozenset(
     {"entier", "decimal", "montant_eur", "montant_keur", "pourcentage"}
 )
@@ -357,14 +369,38 @@ def _align(kind: ColumnType) -> Align:
 
 
 def _widths(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> tuple[float, ...]:
-    chars: list[int] = []
+    """La part de la largeur utile de chaque colonne, d'après ce qu'elle contient.
+
+    Chaque colonne a un **plancher** : son mot d'en-tête le plus long, en gras, et sa
+    valeur la plus longue si elle est courte (``SHORT_VALUE_CHARS``) ; ni l'un ni
+    l'autre ne se coupe. Ce qui reste de la page va aux colonnes qui veulent plus
+    (un nom, un texte, qui passent à la ligne entre deux mots), en proportion. Un
+    partage seulement proportionnel écrasait les petites colonnes à côté d'une large :
+    « Rang », « Code » et « C-429 » coupés (essai réel du 29/10).
+    """
+    floors: list[int] = []
+    wants: list[int] = []
     for index, header in enumerate(headers):
         longest = max((len(row[index]) for row in rows), default=0)
-        # Un en-tête long se coupe sur deux lignes : il compte pour sa moitié.
-        wanted = max(longest, (len(header) + 1) // 2, min(len(header), 12))
-        chars.append(min(MAX_COLUMN_CHARS, max(MIN_COLUMN_CHARS, wanted)))
-    total = sum(chars) or 1
-    return tuple(count / total for count in chars)
+        word = max((len(part) for part in header.split()), default=0)
+        # Un en-tête long se coupe sur deux lignes, entre deux mots : il compte pour sa moitié.
+        wanted = max(longest, word, (len(header) + 1) // 2, min(len(header), 12))
+        # Une valeur courte (un rang, un code, un montant) ne se coupe pas non plus.
+        short = longest if longest <= SHORT_VALUE_CHARS else 0
+        floor = max(math.ceil(word * BOLD_WIDTH), MIN_COLUMN_CHARS, short) + COLUMN_PADDING
+        want = min(MAX_COLUMN_CHARS, max(MIN_COLUMN_CHARS, wanted)) + COLUMN_PADDING
+        floors.append(floor)
+        wants.append(max(want, floor))
+    if sum(wants) <= PAGE_CHARS:
+        # Tout tient : chaque colonne selon ce qu'elle veut.
+        return tuple(want / sum(wants) for want in wants)
+    if sum(floors) >= PAGE_CHARS:
+        # Même les planchers débordent : la page se partage selon eux.
+        return tuple(floor / sum(floors) for floor in floors)
+    spare = PAGE_CHARS - sum(floors)
+    extra = [want - floor for want, floor in zip(wants, floors, strict=True)]
+    shares = [floor + spare * more / sum(extra) for floor, more in zip(floors, extra, strict=True)]
+    return tuple(share / PAGE_CHARS for share in shares)
 
 
 def display(value: Stored, kind: ColumnType) -> str:

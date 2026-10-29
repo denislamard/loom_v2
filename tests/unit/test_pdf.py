@@ -14,6 +14,7 @@ import time
 import zlib
 from pathlib import Path
 from typing import Any, Final
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -514,3 +515,57 @@ def test_the_worker_main_writes_json(
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"")))
     worker.main()
     assert "mémoire épuisée" in json.loads(capsys.readouterr().out)["error"]
+
+
+TOP10: Final[dict[str, Any]] = {
+    "type": "tableau",
+    "columns": [
+        {"header": "Rang", "type": "entier"},
+        {"header": "Client"},
+        {"header": "Code"},
+        {"header": "Factures", "type": "entier"},
+        {"header": "Total HT", "type": "montant_eur"},
+        {"header": "Total TTC", "type": "montant_eur"},
+    ],
+    "rows": [
+        [1, "Julien Barre", "C-429", 2, 17094.0, 18034.17],
+        [2, "Chauffage Lemaire Rénovation", "C-851", 2, 13539.47, 16247.36],
+        [10, "Maxime Hubert", "C-143", 1, 10095.29, 10650.53],
+    ],
+    "totals": {"Factures": "somme", "Total HT": "somme", "Total TTC": "somme"},
+}
+
+
+def _with_bars(table: dict[str, Any]) -> dict[str, Any]:
+    """Le tableau, plus une colonne de barres en caractères, large : celle qu'a ajoutée Marie."""
+    rows = [[*row, "#" * round(30 * row[5] / 18034.17)] for row in table["rows"]]
+    return {**table, "columns": [*table["columns"], {"header": "Graphique (TTC)"}], "rows": rows}
+
+
+@pytest.mark.parametrize("table", [TOP10, _with_bars(TOP10)], ids=["six", "avec-barres"])
+async def test_header_words_and_short_values_are_never_cut(
+    tool: PdfTool, disk: Path, table: dict[str, Any]
+) -> None:
+    """Essais réels du 29/10 : « Ran / g », puis, à côté d'une large colonne, « Cod / e »
+    et « C-42 / 9 ». Un mot d'en-tête, ou une valeur courte, tient dans sa colonne."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    from loom_ia.tools_builtin._document.arguments import WriteArguments
+    from loom_ia.tools_builtin._document.content import SHORT_VALUE_CHARS, TableOut, prepare
+    from loom_ia.tools_builtin.pdf.writer import CELL, HEADER_CELL, TEXT_WIDTH
+
+    request = WriteArguments.model_validate({"path": "s/t.pdf", "title": None, "blocks": [table]})
+    [found] = prepare(request, ZoneInfo("Europe/Paris")).blocks
+    assert isinstance(found, TableOut)
+    for index, (header, part) in enumerate(zip(found.headers, found.widths, strict=True)):
+        width = part * TEXT_WIDTH - 8  # 4 points de marge de chaque côté de la cellule
+        for word in header.split():
+            assert stringWidth(word, HEADER_CELL.fontName, HEADER_CELL.fontSize) <= width, word
+        for row in [*found.rows, found.total or ()]:
+            value = row[index] if row else ""
+            if len(value) <= SHORT_VALUE_CHARS:
+                assert stringWidth(value, CELL.fontName, CELL.fontSize) <= width, value
+    await call(tool, path="sortie/top.pdf", blocks=[table], overwrite=True)
+    text = PdfReader(disk / "sortie" / "top.pdf").pages[0].extract_text()
+    for said in ("Rang", "Code", "Factures", "C-429", "18\u00a0034,17\u00a0€"):
+        assert said in text or said.replace("\u00a0", " ") in text, said
