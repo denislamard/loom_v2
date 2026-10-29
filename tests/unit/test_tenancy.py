@@ -837,7 +837,8 @@ def test_validate_shows_each_tenant_and_what_it_overrides(
     )
     assert main(["--config", str(config), "validate"]) == 0
     out = capsys.readouterr().out
-    assert f"Clients    : {DUPONT}, {MARTIN}" in out
+    assert f"  Clients      {DUPONT}, {MARTIN}\n" in out
+    assert "\nCLIENTS\n" in out
     assert f"  client {DUPONT}" in out
     assert "    agents : demo" in out
     assert "    outils retirés : calculer" in out
@@ -845,7 +846,7 @@ def test_validate_shows_each_tenant_and_what_it_overrides(
     assert f"  client {MARTIN}" in out
     assert "    rien de surchargé" in out
     # Un agent monté par client.
-    assert "2 agent(s) monté(s) sans erreur." in out
+    assert "✓ 2 agents montés" in out
 
 
 def test_run_acts_for_the_tenant_given_on_the_command_line(

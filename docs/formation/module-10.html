@@ -1510,9 +1510,13 @@ tenants:
 </table></div>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E 'Clés|monté'
-Clés d'API : app-dupont, lecture
-2 agent(s) monté(s) sans erreur.</code></pre>
+<pre><code><span class="p">$ </span>loom validate | sed -n '1p;/^ACCÈS/,/^$/p'
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 3 avertissements
+ACCÈS
+  Clés d'API   app-dupont, lecture
+               app-dupont : client default, portées run, read, read_content, approve
+               lecture : client default, portées read
+</code></pre>
 <p>Relancez <code>loom serve</code> dans le premier terminal. Dans le second, gardez les clés dans des variables (en remplaçant par les vôtres) :</p>
 <pre><code><span class="p">$ </span>CLE=lk_l8dMJTafbBDywRn4EdLbhwqRiE_Dar3hGRuW7LgLT-M
 <span class="p">$ </span>LECTURE=lk_1bAK2_yEKsywcV4J04x8UnXiwyXbSd7a3TYOHMNqmao</code></pre>

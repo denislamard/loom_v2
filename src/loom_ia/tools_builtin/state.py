@@ -39,7 +39,7 @@ from loom_ia.core.model import JsonBlock, ToolOutput, ToolSpec, finite_json, sta
 from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.core.schema_errors import schema_problem
 from loom_ia.core.state_extract import ExtractError, Extraction, ModelKey, extract
-from loom_ia.tools_builtin import BuiltinContext
+from loom_ia.tools_builtin import BuiltinContext, Settings
 from loom_ia.tools_builtin.state_params import StateParams
 
 NAME: Final = "state"
@@ -113,9 +113,9 @@ class StateTool:
     def spec(self) -> ToolSpec:
         return self._spec
 
-    def settings_lines(self) -> tuple[str, ...]:
-        """Une ligne par clé, pour ``loom validate``."""
-        return tuple(f"{key.name} : {_rule(key.extraction)}" for key in self.keys.values())
+    def settings(self) -> Settings:
+        """La règle de chaque clé, pour ``loom validate``."""
+        return Settings(rows=tuple((key.name, _rule(key.extraction)) for key in self.keys.values()))
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
         if not context.keeps_state:

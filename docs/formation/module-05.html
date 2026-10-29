@@ -460,14 +460,10 @@ numéro.
 <p class="legende-aj"><span></span>lignes ajoutées</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | tail -6
-  client default
-    variables : entreprise
-    assistant : modèle SIMULE, 4 outil(s) Python
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
-
-1 agent(s) monté(s) sans erreur.</code></pre>
-<p>Pour lister les outils, <code>loom validate</code> a lancé le serveur et lui a demandé ce qu'il propose : trois outils, préfixés par le nom du serveur, <code>catalogue__</code>. Le préfixe évite les collisions : deux serveurs peuvent avoir chacun un outil <code>rechercher</code>.</p>
+<pre><code><span class="p">$ </span>loom validate | grep -A1 MCP
+    └ MCP              catalogue__rechercher_article, catalogue__prix_article,
+                       catalogue__stock_article</code></pre>
+<p>Pour lister les outils, <code>loom validate</code> a lancé le serveur et lui a demandé ce qu'il propose. Ils forment la branche <code>MCP</code> de l'arbre de l'agent, repliée sur deux lignes : trois outils, préfixés par le nom du serveur, <code>catalogue__</code>. Le préfixe évite les collisions : deux serveurs peuvent avoir chacun un outil <code>rechercher</code>.</p>
 <pre><code><span class="p">$ </span>loom run assistant "Quel est le prix du chauffe-eau thermodynamique chez le fournisseur ?" --session catalogue
 Le chauffe-eau thermodynamique 200 L (référence CE-THERMO-200) coûte 1 290 € HT chez le fournisseur, et il en reste 3 en stock.
 
@@ -568,7 +564,7 @@ state:
     default: cordial</code></pre></figure>
 <p class="legende-aj"><span></span>ligne ajoutée</p>
 <pre><code><span class="p">$ </span>loom validate | grep MCP
-    MCP : catalogue__rechercher_article, catalogue__prix_article</code></pre>
+    └ MCP              catalogue__rechercher_article, catalogue__prix_article</code></pre>
 <figure class="code"><figcaption>agents/assistant.yaml</figcaption>
 <pre><code>name: assistant
 
@@ -599,7 +595,7 @@ state:
     default: cordial</code></pre></figure>
 <p class="legende-aj"><span></span>ligne ajoutée</p>
 <pre><code><span class="p">$ </span>loom validate | grep MCP
-    MCP : catalogue__rechercher_article, catalogue__prix_article</code></pre>
+    └ MCP              catalogue__rechercher_article, catalogue__prix_article</code></pre>
 <figure class="code"><figcaption>agents/assistant.yaml</figcaption>
 <pre><code>name: assistant
 
@@ -629,8 +625,9 @@ state:
     description: Ton des relances
     default: cordial</code></pre></figure>
 <p class="legende-aj"><span></span>ligne ajoutée</p>
-<pre><code><span class="p">$ </span>loom validate | grep MCP
-    MCP : fournisseur__rechercher_article, fournisseur__prix_article, fournisseur__stock_article</code></pre>
+<pre><code><span class="p">$ </span>loom validate | grep -A1 MCP
+    └ MCP              fournisseur__rechercher_article, fournisseur__prix_article,
+                       fournisseur__stock_article</code></pre>
 <div class="tableau"><table class="lignes">
 <tbody>
 <tr><td><code>include: […]</code></td><td>Seuls ces outils sont proposés (noms courts, sans préfixe).</td></tr>
@@ -663,13 +660,12 @@ state:
 <span class="aj">    args: [serveurs/catalog.py]</span></code></pre></figure>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | tail -4
+<pre><code><span class="p">$ </span>loom validate | grep -E 'MCP|monté'
 [catalogue] python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory
 2026-10-24 15:18:22 WARNING  loom_ia.engine.executor — Source d'outils catalogue indisponible : le serveur s'est arrêté ou a refusé l'ouverture (Connection closed) ; fin de son stderr : python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory [run_id=validate]
-    MCP : aucun
-    MCP catalogue indisponible : le serveur s'est arrêté ou a refusé l'ouverture (Connection closed) ; fin de son stderr : python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory
-
-1 agent(s) monté(s) sans erreur.
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+    ├ MCP              aucun
+    └ MCP catalogue    indisponible : le serveur s'est arrêté ou a refusé l'ouverture (Connection closed) ; fin de son stderr : python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory
 <span class="p">$ </span>loom run assistant "Quel est le prix du chauffe-eau thermodynamique chez le fournisseur ?" --session sans-catalogue
 [catalogue] python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory
 2026-10-24 15:18:24 WARNING  loom_ia.engine.executor — Source d'outils catalogue indisponible : le serveur s'est arrêté ou a refusé l'ouverture (Connection closed) ; fin de son stderr : python: can't open file '/home/jean/plomberie-dupont/serveurs/catalog.py': [Errno 2] No such file or directory [run_id=01a16e0f-fbef-76e9-a69a-c35d1e675b53]
@@ -760,8 +756,9 @@ Erreur     : source catalogue requise et indisponible : le serveur s'est arrêt�
 </table></div>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep MCP
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
+<pre><code><span class="p">$ </span>loom validate | grep -A1 MCP
+    └ MCP              catalogue__rechercher_article, catalogue__prix_article,
+                       catalogue__stock_article
 <span class="p">$ </span>loom run assistant "Quel est le prix du chauffe-eau thermodynamique chez le fournisseur ?" --session catalogue-http
 Le chauffe-eau thermodynamique 200 L (référence CE-THERMO-200) coûte 1 290 € HT chez le fournisseur, et il en reste 3 en stock.
 
@@ -927,11 +924,11 @@ du catalogue (catalogue__rechercher_article, catalogue__prix_article…).
 <p>loom-notes donne ces consignes au client dans ses « instructions » MCP, mais loom ne les transmet pas au modèle : recopiez dans le prompt celles qui comptent. Enfin, ajoutez <code>memoire/</code> au <code>.gitignore</code>.</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | tail -4
-    assistant : modèle SIMULE, 4 outil(s) Python
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article, memoire__search, memoire__get, memoire__list_docs, memoire__projects, memoire__add_text, memoire__add_url, memoire__add_file, memoire__update, memoire__delete
-
-1 agent(s) monté(s) sans erreur.
+<pre><code><span class="p">$ </span>loom validate | grep -A3 MCP
+    └ MCP              catalogue__rechercher_article, catalogue__prix_article,
+                       catalogue__stock_article, memoire__search, memoire__get,
+                       memoire__list_docs, memoire__projects, memoire__add_text,
+                       memoire__add_url, memoire__add_file, memoire__update, memoire__delete
 <span class="p">$ </span>loom run assistant "Mémorise que Mme Martin préfère être contactée le matin, avant 10 h." --session note-martin
 
 Statut     : paused · itérations : 1 · tokens : 2490/99 · coût : 0.0000 $

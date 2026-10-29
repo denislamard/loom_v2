@@ -42,7 +42,7 @@ from loom_ia.engine import begin_run, drive
 from loom_ia.engine.media import ConversationFiles
 from loom_ia.runtime import build_agent
 from loom_ia.tenancy import Tenants
-from loom_ia.tools_builtin import BuiltinContext, Protected
+from loom_ia.tools_builtin import BuiltinContext, Grant, Protected
 from loom_ia.tools_builtin.local_files import (
     MAX_COPY_BYTES,
     MAX_READ_BYTES,
@@ -129,29 +129,44 @@ def test_a_read_only_tool_declares_no_effect(disk: Path) -> None:
     assert (tool.spec.side_effects, tool.spec.approval) == ("none", "never")
 
 
-def test_settings_lines_for_validate(files: LocalFilesTool, disk: Path) -> None:
-    """Chaque dossier, puis une ligne par droit accordé ; un destructif sans approbation se voit."""
-    assert files.settings_lines() == (
-        f"work → {disk / 'work'}",
-        "  read : accordé, sans approbation",
-        "  write : accordé, sans approbation",
-        "  overwrite : accordé, sans approbation (destructif)",
-        "  delete : accordé, sans approbation (destructif)",
-        f"archives → {disk / 'work/archives'}",
-        "  read : accordé, sans approbation",
-        f"clients → {disk / 'clients'}",
-        "  read : accordé, sans approbation",
-        "  write : accordé, avec approbation",
-    )
+def test_settings_for_validate(files: LocalFilesTool, disk: Path) -> None:
+    """Chaque dossier et ses droits accordés ; un destructif sans approbation se voit."""
+    places = files.settings().places
+    assert [(place.name, place.path) for place in places] == [
+        ("work", disk / "work"),
+        ("archives", disk / "work/archives"),
+        ("clients", disk / "clients"),
+    ]
+    assert [place.grants for place in places] == [
+        (
+            (
+                "",
+                (
+                    Grant("read", False),
+                    Grant("write", False),
+                    Grant("overwrite", False, destructive=True),
+                    Grant("delete", False, destructive=True),
+                ),
+            ),
+        ),
+        (("", (Grant("read", False),)),),
+        (("", (Grant("read", False), Grant("write", True))),),
+    ]
+    assert [grant.right for grant in places[0].grants[0][1] if grant.unguarded] == [
+        "overwrite",
+        "delete",
+    ]
 
 
 def test_a_destructive_right_under_approval_is_not_flagged(disk: Path) -> None:
     tool = make(disk, {"name": "work", "path": "work", "rights": ["read", "write", "delete"]})
-    assert tool.settings_lines()[1:] == (
-        "  read : accordé, sans approbation",
-        "  write : accordé, sans approbation",
-        "  delete : accordé, avec approbation",
+    ((_, grants),) = tool.settings().places[0].grants
+    assert grants == (
+        Grant("read", False),
+        Grant("write", False),
+        Grant("delete", True, destructive=True),
     )
+    assert not any(grant.unguarded for grant in grants)
     # La description que lit le modèle ne change pas.
     assert "- work : read, write, delete (attend une approbation humaine : delete)" in (
         tool.spec.description
@@ -722,12 +737,8 @@ def test_validate_shows_the_folders(
     path = demo(agents=[files_agent(timeout=5, folders=folders)], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "Fournis    : loom.local_files\n" in out
-    assert (
-        f"    outil local_files : espace → {(tmp_path / 'espace').resolve()}\n"
-        "    outil local_files :   read : accordé, sans approbation\n"
-        "    outil local_files :   write : accordé, avec approbation\n"
-    ) in out
+    assert "  Fournis      loom.local_files\n" in out
+    assert "  └ local_files  espace → ./espace\n                 read · write*\n" in out
 
 
 def test_an_approval_on_a_memory_journal_says_which_calls(

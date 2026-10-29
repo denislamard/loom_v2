@@ -660,10 +660,9 @@ def test_validate_shows_the_bus(
 ) -> None:
     monkeypatch.delenv(VARIABLE, raising=False)
     assert main(["--config", str(demo()), "validate"]) == 0
-    assert (
-        "Bus        : memory (les nouvelles ne sortent pas de ce process)"
-        in capsys.readouterr().out
-    )
+    out = capsys.readouterr().out
+    assert "  Bus          memory\n" in out
+    assert "Bus memory   les nouvelles ne sortent pas de ce process" in out
 
 
 def test_validate_says_when_the_bus_variable_is_missing(
@@ -671,7 +670,12 @@ def test_validate_says_when_the_bus_variable_is_missing(
 ) -> None:
     monkeypatch.delenv(VARIABLE, raising=False)
     assert main(["--config", str(demo(storage=POSTGRES)), "validate"]) == 2
-    assert f"Bus        : postgres ({VARIABLE} : ABSENTE)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"  Bus          postgres ({VARIABLE} : ABSENTE)" in out
+    assert "✗ montage interrompu" in out
+    assert f"variable {VARIABLE} absente" in out
+    # L'agent qui échoue ne laisse pas de ligne vide orpheline.
+    assert "\n\n\n" not in out
 
 
 # --- Ce qui ne va pas ensemble à plusieurs process ---------------------------

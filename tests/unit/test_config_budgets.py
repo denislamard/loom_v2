@@ -91,7 +91,7 @@ def test_the_cli_shows_budgets_and_reports(
 ) -> None:
     path = str(budgeted(demo))
     assert main(["--config", path, "validate"]) == 0
-    assert "    budget : run max_cost 1, max_calls 20 ; session max_cost 5 ; stop" in (
+    assert "  └ budget       run max_cost 1, max_calls 20 ; session max_cost 5 ; stop" in (
         capsys.readouterr().out
     )
     assert main(["--config", path, "run", "demo", QUESTION, "--json"]) == 0

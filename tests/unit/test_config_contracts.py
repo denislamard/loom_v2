@@ -87,7 +87,7 @@ def test_the_cli_streams_the_checked_answer(
 ) -> None:
     path = structured(demo, on_failure="unverified")
     assert main(["--config", str(path), "validate"]) == 0
-    assert f"    politique {CONTRACT_POLICY} : after_tool, on_output" in capsys.readouterr().out
+    assert f"  ├ politiques   {CONTRACT_POLICY} : after_tool, on_output" in capsys.readouterr().out
     assert main(["--config", str(path), "run", "demo", QUESTION, "--stream"]) == 0
     captured = capsys.readouterr()
     # after_guards : la réponse refusée n'est jamais affichée.

@@ -42,6 +42,7 @@ from zoneinfo import ZoneInfo
 from pydantic import JsonValue
 
 from loom_ia.core.ports import ToolError
+from loom_ia.tools_builtin import Place
 from loom_ia.tools_builtin.sql.analysis import Analysis, Catalog, is_forbidden
 from loom_ia.tools_builtin.sql.arguments import ParamValue, Statement
 from loom_ia.tools_builtin.sql.schema import Column, TableInfo
@@ -125,8 +126,8 @@ class SqliteDatabase:
         self.catalog = catalog
         self.zone = zone
 
-    def location(self) -> str:
-        return f"sqlite, {self.path}"
+    def where(self) -> Place:
+        return Place(name="", kind="sqlite", path=self.path)
 
     async def query(self, unit: Statement, analysis: Analysis) -> dict[str, JsonValue]:
         def work(conn: sqlite3.Connection) -> dict[str, JsonValue]:

@@ -880,13 +880,20 @@ tenants:
 
 <h4>Exécution</h4>
 <pre><code><span class="p">$ </span>loom validate
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
 …
-      politique loom.contract : after_tool
-      contrat (rôle rediger_relance) : schéma (requis : objet, corps), must_match D-\d{4}-\d{3}, max_chars 1200 ; réparations 1, échec → fail
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
-    traducteur : modèle TRADUCTEUR, 0 outil(s) Python
+    assistant · SIMULE · 4 outils Python · sous-agent : traduire (traducteur) · rôles : rediger_relance (REDACTEUR), decrire_photo (VISION)
+    ├ politiques       loom.contract : after_tool
+    ├ fetch_page
+    ├ prix_ttc
+    ├ chercher_devis
+    ├ etiquette_devis
+    ├ MCP              catalogue__rechercher_article, catalogue__prix_article,
+    │                  catalogue__stock_article
+    └ contrats         rôle rediger_relance : schéma (requis : objet, corps), must_match D-\d{4}-\d{3}, max_chars 1200 ; réparations 1, échec → fail
 
-2 agent(s) monté(s) sans erreur.
+    traducteur · TRADUCTEUR · 0 outil Python
+…
 <span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session contrat
 {"objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin,\n\nJe me permets de revenir vers vous au sujet de notre devis D-2026-042 pour le remplacement de votre chauffe-eau (1 840 € TTC), envoyé le 3 septembre. Avez-vous pu en prendre connaissance ?\n\nJe reste à votre disposition.\n\nCordialement,\nJean Dupont, Plomberie Dupont"}
 
@@ -1691,39 +1698,59 @@ state:
     default: cordial</code></pre></figure>
 <p class="legende-aj"><span></span>ligne ajoutée</p>
 <pre><code><span class="p">$ </span>loom validate
-…
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Env        : aucun (/home/jean/plomberie-dupont/.env)
-Modèles    : SIMULE, REDACTEUR, JUGE, VISION, TRADUCTEUR, HAIKU, OPUS
-Agents     : assistant, traducteur
-Outils     : chercher_devis, etiquette_devis, prix_ttc
-Fournis    : loom.fetch_page
-Paquets    : forge (loom-ia 2.0.11) (groupe loom_ia.tools)
-Journal    : jsonl (/home/jean/plomberie-dupont/data)
-Artefacts  : local (/home/jean/plomberie-dupont/data/.artifacts)
-Idempotence: journal
-File       : asyncio
-Bus        : memory (les nouvelles ne sortent pas de ce process)
-Chiffrement: aucun (contenus en clair au repos)
-Rétention  : aucune (rien ne s'efface)
-Télémétrie : logs WARNING (console) ; exports sans contenu (metadata) ; pas d'échanges bruts
-    collecteur : aucun — rien ne sort du journal que les logs
-Clés d'API : aucune (API REST ouverte)
-Clients    : default
+(heure) WARNING  loom_ia.runtime.wiring — Client 'default', agent 'assistant', juge 'rediger_relance' : bloquant, mais ne juge qu'une partie des runs (sample 0.5)
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
+Racine : /home/jean/plomberie-dupont
 
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      SIMULE, REDACTEUR, JUGE, VISION, TRADUCTEUR, HAIKU, OPUS
+  Clients      default
+
+EXTENSIONS
+  Fournis      loom.fetch_page
+  Paquets      forge · loom-ia 2.0.15 · groupe loom_ia.tools
+  Outils       chercher_devis, etiquette_devis, prix_ttc
+
+EXÉCUTION
+  Journal      jsonl     ./data
+  Artefacts    local     ./data/.artifacts
+  Idempotence  journal
+  File         asyncio
+  Bus          memory
+  Chiffrement  aucun
+  Rétention    aucune
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+               pas d'échanges bruts · collecteur : aucun
+
+ACCÈS
+  Clés d'API   aucune
+
+CLIENTS
   client default
     variables : entreprise
-(heure) WARNING  loom_ia.runtime.wiring — Client 'default', agent 'assistant', juge 'rediger_relance' : bloquant, mais ne juge qu'une partie des runs (sample 0.5)
-    assistant : modèle SIMULE, 4 outil(s) Python, rôle rediger_relance (REDACTEUR), rôle decrire_photo (VISION), sous-agent traduire (traducteur)
-      politique loom.contract : after_tool
-      politique loom.judge.rediger_relance : after_tool
-      contrat (rôle rediger_relance) : schéma (requis : objet, corps), must_match D-\d{4}-\d{3}, max_chars 1200 ; réparations 1, échec → fail
-      juge rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s), sample 0.5
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
-    traducteur : modèle TRADUCTEUR, 0 outil(s) Python
 
-2 agent(s) monté(s) sans erreur.</code></pre>
+    assistant · SIMULE · 4 outils Python · sous-agent : traduire (traducteur) · rôles : rediger_relance (REDACTEUR), decrire_photo (VISION)
+    ├ politiques       loom.contract : after_tool
+    │                  loom.judge.rediger_relance : after_tool
+    ├ fetch_page
+    ├ prix_ttc
+    ├ chercher_devis
+    ├ etiquette_devis
+    ├ MCP              catalogue__rechercher_article, catalogue__prix_article,
+    │                  catalogue__stock_article
+    ├ contrats         rôle rediger_relance : schéma (requis : objet, corps), must_match D-\d{4}-\d{3}, max_chars 1200 ; réparations 1, échec → fail
+    └ juges            rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s), sample 0.5
+
+    traducteur · TRADUCTEUR · 0 outil Python
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte</code></pre>
 <p>loom avertit : un juge <strong>bloquant</strong> qui ne juge qu'une partie des runs laisse passer les autres sans contrôle. En profil <code>prod</code>, cet avertissement devient une erreur. Quatre runs, puis un run forcé :</p>
 <pre><code><span class="p">$ </span>for i in 1 2 3 4; do loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session echantillon-$i 2&gt;&amp;1 | grep '^Juge' | head -1; done
 Juge       : rediger_relance (rôle rediger_relance, appel 1), tentative 1 — refusée : fidele 0,10 (seuil 0,80), ton 0,90
@@ -1963,10 +1990,10 @@ tenants:
 <p class="legende-aj"><span></span>lignes ajoutées</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E 'contrat|juge'
-      contrat (rôle rediger_relance) : schéma (requis : objet, corps), must_match D-\d{4}-\d{3}, max_chars 1200 ; réparations 1, échec → fail
-      contrat (outil prix_ttc) : schéma (requis : montant_ttc) ; échec → fail
-      juge rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s)
+<pre><code><span class="p">$ </span>loom validate | sed -n '/├ contrats/,/└ juges/p'
+    ├ contrats         rôle rediger_relance : schéma (requis : objet, corps), must_match D-\d{4}-\d{3}, max_chars 1200 ; réparations 1, échec → fail
+    │                  outil prix_ttc : schéma (requis : montant_ttc) ; échec → fail
+    └ juges            rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s)
 <span class="p">$ </span>loom run assistant "Quel est le prix TTC de 80 000 € HT ?" --session plafond
 Je ne peux pas chiffrer ce montant automatiquement ; il dépasse le plafond prévu. Vérifiez-le avec Jean.
 
@@ -2096,12 +2123,12 @@ state:
 <p class="legende-aj"><span></span>ligne modifiée</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate 2&gt;&amp;1 | grep -E 'WARNING|juge rediger|monté'
-Télémétrie : logs WARNING (console) ; exports sans contenu (metadata) ; pas d'échanges bruts
+<pre><code><span class="p">$ </span>loom validate 2&gt;&amp;1 | grep -E 'WARNING|juges|monté'
 (heure) WARNING  loom_ia.runtime.wiring — Client 'default', agent 'assistant', juge 'rediger_relance' : même modèle que la sortie qu'il évalue (REDACTEUR) : juge corrélé
-      juge rediger_relance (rôle rediger_relance) : modèle REDACTEUR, 2 critère(s)
-2 agent(s) monté(s) sans erreur.
-<span class="p">$ </span>loom validate --profile prod 2&gt;&amp;1 | tail -1
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+    └ juges            rediger_relance (rôle rediger_relance) : modèle REDACTEUR, 2 critère(s)
+<span class="p">$ </span>loom validate --profile prod &gt; /dev/null
 Configuration : Profil prod : Client 'default', agent 'assistant', juge 'rediger_relance' : même modèle que la sortie qu'il évalue (REDACTEUR) : juge corrélé
 <span class="p">$ </span>echo $?
 2</code></pre>
@@ -2388,12 +2415,12 @@ tenants:
 <p class="legende-aj"><span></span>lignes ajoutées ou modifiées</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E 'Politiques|politique|monté'
-Politiques : taux_tva_valide
-      politique loom.contract : after_tool
-      politique loom.judge.rediger_relance : after_tool
-      politique taux_tva_valide : before_tool
-2 agent(s) monté(s) sans erreur.
+<pre><code><span class="p">$ </span>loom validate | grep -E 'monté|Politiques|: (before|after)_'
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
+  Politiques   taux_tva_valide
+    ├ politiques       loom.contract : after_tool
+    │                  loom.judge.rediger_relance : after_tool
+    │                  taux_tva_valide : before_tool
 <span class="p">$ </span>loom run assistant "Quel est le prix TTC de 1 000 € HT avec une TVA à 7 % ?" --session taux
 Le taux de 7 % n'existe pas en France ; les taux possibles sont 5,5 %, 10 % et 20 %. Lequel s'applique ?
 
@@ -2636,12 +2663,12 @@ tenants:
       entreprise: Plomberie Dupont</code></pre></figure>
 <p class="legende-aj"><span></span>lignes ajoutées</p>
 <p>La capture des échanges bruts est réactivée, pour voir la requête envoyée au modèle.</p>
-<pre><code><span class="p">$ </span>loom validate | grep -E 'politique|monté'
-      politique loom.contract : after_tool
-      politique loom.judge.rediger_relance : after_tool
-      politique taux_tva_valide : before_tool
-      politique loom.require_tool : before_model
-2 agent(s) monté(s) sans erreur.
+<pre><code><span class="p">$ </span>loom validate | grep -E 'monté|: (before|after)_'
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
+    ├ politiques       loom.contract : after_tool
+    │                  loom.judge.rediger_relance : after_tool
+    │                  taux_tva_valide : before_tool
+    │                  loom.require_tool : before_model
 <span class="p">$ </span>loom run assistant "Quel taux de TVA pour remplacer un chauffe-eau thermodynamique dans un logement de 15 ans ?" --session tva-imposee
 D'après la fiche des impôts, un chauffe-eau thermodynamique relève du taux de 5,5 %. Source : impots.gouv.fr.
 

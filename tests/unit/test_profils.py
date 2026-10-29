@@ -308,15 +308,15 @@ def test_validate_says_which_profile_applies(
     )
     assert main(["--config", path, "validate"]) == 0
     sans = capsys.readouterr().out
-    assert "Profil     : dev (par config) — assoupli ; surcharges : prod" in sans
+    assert "  Profil       dev (par config) — assoupli\n  Surcharges   prod\n" in sans
 
     assert main(["--config", path, "--profile", "prod", "validate"]) == 0
     option = capsys.readouterr().out
-    assert "Profil     : prod (par option) — les avertissements sont des erreurs" in option
+    assert "  Profil       prod (par option) — les avertissements sont des erreurs" in option
 
     assert main(["--config", str(demo()), "validate"]) == 0
     aucun = capsys.readouterr().out
-    assert "Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')" in aucun
+    assert "  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')" in aucun
 
 
 # --- Capacités à déclarer -----------------------------------------------------
@@ -363,7 +363,8 @@ def test_validate_shows_the_capability_warning(
     demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert main(["--config", str(demo(models=[MODEL, VOIT])), "validate", "--no-keys"]) == 0
-    assert "Modèle 'VOIT' : sdk anthropic avec vision" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "⚠ Modèle 'VOIT'" in out and "  sdk anthropic avec vision" in out
 
 
 # --- Clé d'API oubliée (20/10) -------------------------------------------------
@@ -396,7 +397,9 @@ def test_validate_shows_the_missing_key(
 ) -> None:
     path = demo(models=[MODEL, SANS_CLE])
     assert main(["--config", str(path), "validate", "--no-keys"]) == 0
-    assert f"    {SANS_CLE_SAID}\n" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    subject, _, message = SANS_CLE_SAID.partition(" : ")
+    assert f"⚠ {subject}  {message}\n" in out
 
 
 async def test_a_missing_key_stops_prod(demo: ConfigFactory) -> None:

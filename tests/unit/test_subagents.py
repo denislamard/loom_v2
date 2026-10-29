@@ -549,7 +549,7 @@ async def test_standalone_agents_mount_their_subagents(tmp_path: Path) -> None:
 def test_cli_lists_subagents(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = str(write(tmp_path))
     assert main(["--config", path, "validate"]) == 0
-    assert "demo : modèle MAIN, 0 outil(s) Python, sous-agent verifier (verificateur)" in (
+    assert "  demo · MAIN · 0 outil Python · sous-agent : verifier (verificateur)\n" in (
         capsys.readouterr().out
     )
     assert main(["--config", path, "run", "demo", "2 + 2 ?", "--stream"]) == 0

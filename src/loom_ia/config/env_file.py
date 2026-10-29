@@ -64,20 +64,25 @@ class EnvFileReport:
     # Variables du fichier déjà définies : l'environnement l'emporte.
     kept: tuple[str, ...] = ()
 
-    def describe(self) -> str:
-        """Une ligne pour ``loom validate`` et le bandeau de ``loom serve``."""
+    def describe(self, *, shown: str | None = None) -> str:
+        """Une ligne pour ``loom validate`` et le bandeau de ``loom serve``.
+
+        ``shown`` remplace le chemin du fichier à l'affichage (``loom validate``
+        l'écrit relatif au dossier de la config).
+        """
         if self.source == "désactivé":
             return "non lu (--no-env-file)"
         if self.path is None:
             return "aucun"
+        path = self.path if shown is None else shown
         if not self.found:
-            return f"aucun ({self.path})"
+            return f"aucun ({path})"
         details: list[str] = []
         if self.loaded:
             details.append(f"lues : {', '.join(self.loaded)}")
         if self.kept:
             details.append(f"déjà définies, gardées : {', '.join(self.kept)}")
-        return f"{self.path} (par {self.source}) — {' ; '.join(details) or 'aucune variable'}"
+        return f"{path} (par {self.source}) — {' ; '.join(details) or 'aucune variable'}"
 
     def prod_warning(self) -> str | None:
         """L'avertissement du profil prod quand des variables viennent du fichier, sinon None.

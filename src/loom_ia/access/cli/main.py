@@ -43,6 +43,7 @@ import re
 import signal
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from importlib.util import find_spec
 from pathlib import Path
@@ -87,7 +88,7 @@ from loom_ia.config.models import (
     IdempotencyStorage,
     QueueStorage,
 )
-from loom_ia.config.references import resolve
+from loom_ia.config.references import Registry, resolve
 from loom_ia.config.telemetry import CaptureConfig, CaptureOverride
 from loom_ia.core import SETUP, TOLD
 from loom_ia.core.events import BudgetExceeded, Event, SessionCompacted
@@ -156,7 +157,7 @@ from loom_ia.telemetry import BUILTIN_PATTERNS, Trace, render_trace
 from loom_ia.telemetry.logs import printable
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, Tenant, UnknownTenant
 from loom_ia.tools import innermost
-from loom_ia.tools_builtin import ShowsSettings, is_builtin
+from loom_ia.tools_builtin import Grant, Place, Settings, ShowsSettings, is_builtin
 from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import describe as describe_budget
 from loom_ia.usage import render as render_report
@@ -718,10 +719,17 @@ def _config(args: argparse.Namespace, path: Path | None = None) -> LoomConfig:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    return asyncio.run(_validate(args))
+    # La racine du projet, résolue hors de la boucle : les chemins du rapport s'y rapportent.
+    return asyncio.run(_validate(args, root=Path(args.config).resolve().parent))
 
 
-async def _validate(args: argparse.Namespace) -> int:
+async def _validate(args: argparse.Namespace, *, root: Path) -> int:
+    """Le rapport est construit d'abord, puis imprimé : le verdict passe en tête.
+
+    Si le montage d'un agent échoue, ce qui a été construit s'imprime quand
+    même, avec un verdict d'échec, avant que l'erreur ne remonte : on y lit
+    où le montage s'est arrêté.
+    """
     config = _config(args)
     # Ce que la commande imprime à sa place n'est pas redit par le log du
     # montage (lot C du 23/10 : le collecteur non monté se lisait deux fois).
@@ -730,73 +738,344 @@ async def _validate(args: argparse.Namespace) -> int:
         lambda record: not (getattr(record, SETUP, False) and record.getMessage() in printed)
     )
     registry = load_registry(config)
-    storage = config.storage
-    journal = _storage_line(storage.events)
-    files = storage.artifacts_path
-    artifacts = f"{storage.artifacts_backend} ({files})" if files else storage.artifacts_backend
-    keys = ", ".join(key.id for key in config.security.api_keys)
+    report = _Report(config=args.config, root=root)
+    _configuration(report, config, args, printed)
+    _extensions(report, config, registry)
+    _execution(report, config, printed)
+    _access(report, config)
+    try:
+        await _mount(report, config, registry, no_keys=args.no_keys)
+    except BaseException:
+        # Vidé avant que l'erreur ne s'écrive : derrière un pipe, le rapport la précède.
+        print(_render(report, failed=True), flush=True)
+        raise
+    print(_render(report))
+    return OK
+
+
+# --- loom validate : le rapport ---------------------------------------------
+
+# Largeur visée d'une ligne du rapport : le verdict s'aligne à droite, les listes s'y replient.
+_WIDTH: Final = 88
+# Largeur minimale des libellés de section.
+_LABEL: Final = 11
+# Largeur d'une liste repliée, à droite des libellés.
+_LISTED: Final = _WIDTH - 2 - _LABEL - 2
+
+
+@dataclass(frozen=True, slots=True)
+class _Field:
+    """Une ligne de section : son libellé, sa valeur, et ses lignes de suite."""
+
+    label: str
+    value: str
+    more: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _Warning:
+    """Un avertissement du rapport : son sujet, puis ce qu'il en dit."""
+
+    subject: str
+    message: str
+
+
+@dataclass(slots=True)
+class _Section:
+    """Une section : des champs alignés, puis des lignes libres (les agents)."""
+
+    title: str
+    fields: list[_Field] = field(default_factory=list[_Field])
+    lines: list[str] = field(default_factory=list[str])
+
+    def add(self, label: str, value: str, more: Iterable[str] = ()) -> None:
+        self.fields.append(_Field(label, value, tuple(more)))
+
+    def add_listed(self, label: str, names: Iterable[str]) -> None:
+        """Une liste, repliée sur plusieurs lignes si elle dépasse la largeur."""
+        first, *more = _packed(list(names), _LISTED)
+        self.add(label, first, more)
+
+
+@dataclass(slots=True)
+class _Report:
+    """Ce que ``loom validate`` imprime ; ``root`` est le dossier de la config."""
+
+    config: Path
+    root: Path
+    sections: list[_Section] = field(default_factory=list[_Section])
+    warnings: list[_Warning] = field(default_factory=list[_Warning])
+    mounted: int = 0
+    # Marques de droits montrées dans l'arbre des agents : la légende n'explique qu'elles.
+    marks: set[str] = field(default_factory=set[str])
+
+    def section(self, title: str) -> _Section:
+        found = _Section(title)
+        self.sections.append(found)
+        return found
+
+    def warn(self, subject: str, message: str) -> None:
+        """Un avertissement, dit une fois : un agent monté pour plusieurs clients le redirait."""
+        warning = _Warning(subject, message)
+        if warning not in self.warnings:
+            self.warnings.append(warning)
+
+    def warn_said(self, text: str) -> None:
+        """Un avertissement déjà rédigé « Sujet : message » (ceux de ``runtime``)."""
+        subject, separator, message = text.partition(" : ")
+        if separator:
+            self.warn(subject, message)
+        else:
+            self.warn("", text)
+
+    def shown(self, path: Path | str) -> str:
+        """Un chemin sous la racine s'écrit ``./…`` ; un autre reste tel quel."""
+        try:
+            inside = Path(path).resolve().relative_to(self.root)
+        except ValueError:
+            return str(path)
+        return f"./{inside}" if inside.parts else "."
+
+
+def _render(report: _Report, *, failed: bool = False) -> str:
+    """Le rapport en texte : verdict, racine, sections, puis les avertissements."""
+    if failed:
+        verdict = "✗ montage interrompu"
+    else:
+        # « 0 agent monté » : le pluriel ne commence qu'à deux.
+        verdict = f"✓ {report.mounted} " + (
+            "agents montés" if report.mounted > 1 else "agent monté"
+        )
+    if count := len(report.warnings):
+        verdict += f" · ⚠ {count} avertissement" + ("s" if count > 1 else "")
+    title = f"{PROG} validate · {report.config}"
+    gap = max(2, _WIDTH - len(title) - len(verdict))
+    out = [f"{title}{' ' * gap}{verdict}", f"Racine : {report.root}"]
+    labels = [len(item.label) for section in report.sections for item in section.fields]
+    width = max(_LABEL, *labels) + 2 if labels else _LABEL + 2
+    for section in report.sections:
+        if not (section.fields or section.lines):
+            continue
+        out += ["", section.title]
+        for item in section.fields:
+            out.append(f"  {item.label:<{width}}{item.value}".rstrip())
+            out.extend(f"  {'':<{width}}{line}" for line in item.more)
+        out.extend(section.lines)
+    if report.warnings:
+        out += ["", "AVERTISSEMENTS"]
+        wide = max(len(warning.subject) for warning in report.warnings)
+        out.extend(
+            f"  ⚠ {warning.subject:<{wide}}  {warning.message}"
+            if warning.subject
+            else f"  ⚠ {warning.message}"
+            for warning in report.warnings
+        )
+    return "\n".join(out)
+
+
+def _packed(names: list[str], width: int) -> list[str]:
+    """Des noms séparés par des virgules, en lignes d'au plus ``width`` caractères.
+
+    Un nom n'est jamais coupé ; une liste vide se dit « aucun ».
+    """
+    if not names:
+        return ["aucun"]
+    lines: list[str] = []
+    current = ""
+    for index, name in enumerate(names):
+        piece = name + ("," if index < len(names) - 1 else "")
+        if current and len(current) + 1 + len(piece) > width:
+            lines.append(current)
+            current = piece
+        else:
+            current = f"{current} {piece}" if current else piece
+    lines.append(current)
+    return lines
+
+
+def _configuration(
+    report: _Report, config: LoomConfig, args: argparse.Namespace, printed: set[str]
+) -> None:
+    section = report.section("CONFIGURATION")
+    active, declared = _profile_said(config, args.profile)
+    section.add("Profil", active)
+    section.add("Surcharges", declared)
     env: EnvFileReport = args.env_report
-    print(f"Config     : {args.config}")
-    print(f"Profil     : {_profile_line(config, args.profile)}")
-    print(f"Env        : {env.describe()}")
-    print(f"Modèles    : {_listed(spec.id for spec in config.models)}")
-    for warning in (*key_warnings(config), *model_warnings(config)):
-        printed.add(warning)
-        print(f"    {warning}")
+    section.add("Env", env.describe(shown=report.shown(env.path) if env.path else None))
+    first, *more = _packed([spec.id for spec in config.models], _LISTED)
     if args.no_keys:
         # Les clients de modèle ne sont pas créés : ce que le montage aurait
         # vérifié d'eux — clé d'API présente, SDK installé — ne l'est pas.
-        print("    clients de modèle non créés (--no-keys) : clés d'API et SDK non vérifiés")
-    print(f"Agents     : {_listed(agent.name for agent in config.agents)}")
-    named = [(name, registry.get(name)) for name in registry.names]
-    print(f"Outils     : {_listed(name for name, obj in named if isinstance(obj, Tool))}")
+        more.append("clients de modèle non créés (--no-keys) : clés d'API et SDK non vérifiés")
+    section.add("Modèles", first, more)
+    for warning in (*key_warnings(config), *model_warnings(config)):
+        printed.add(warning)
+        report.warn_said(warning)
+    if config.tenants:
+        section.add_listed("Clients", (tenant.id for tenant in config.tenants))
+
+
+def _extensions(report: _Report, config: LoomConfig, registry: Registry) -> None:
+    section = report.section("EXTENSIONS")
     references = {ref.python for spec in config.agents for ref in spec.python_tools}
     provided = sorted(ref for ref in references if is_builtin(ref))
     if provided:
-        print(f"Fournis    : {_listed(provided)}")
+        section.add_listed("Fournis", provided)
+    packages = _package_lines(config)
+    if packages:
+        section.add("Paquets", packages[0], packages[1:])
+    declared = [
+        f"{source.name} → point d'entrée {source.entry_point}" for source in config.tool_sources
+    ]
+    if declared:
+        section.add("Sources", declared[0], declared[1:])
+    named = [(name, registry.get(name)) for name in registry.names]
+    section.add_listed("Outils", (name for name, obj in named if isinstance(obj, Tool)))
     policies = [name for name, obj in named if isinstance(obj, Policy)]
     if policies:
-        print(f"Politiques : {_listed(policies)}")
-    for line in _source_lines(config):
-        print(line)
-    print(f"Journal    : {journal}")
-    print(f"Artefacts  : {artifacts}")
-    print(f"Idempotence: {_storage_line(storage.idempotency)}")
-    print(f"File       : {_queue_line(storage.queue)}")
-    print(f"Bus        : {_bus_line(storage.bus)}")
-    print(f"Chiffrement: {_sealing_line(config)}")
-    for line in _sealing_report(config):
-        printed.add(line)
-        print(f"    {line}")
-    print(f"Rétention  : {_retention_line(config)}")
+        section.add_listed("Politiques", policies)
+
+
+def _package_lines(config: LoomConfig) -> list[str]:
+    """Les points d'entrée installés — lus sans rien importer —, un par ligne.
+
+    Rien n'est dit sans source déclarée ni paquet installé : la plupart des
+    configs n'en ont pas. Le groupe se dit une fois.
+    """
+    found = installed()
+    if not (found or config.tool_sources):
+        return []
+    used = {declared.entry_point for declared in config.tool_sources}
+    lines = [
+        " · ".join(
+            filter(
+                None,
+                (
+                    point.name,
+                    " ".join(filter(None, (point.package, point.version))),
+                    "utilisé" if point.name in used else "",
+                ),
+            )
+        )
+        for point in found
+    ]
+    if len(lines) == 1:
+        return [f"{lines[0]} · groupe {SOURCES_GROUP}"]
+    return [*lines, f"groupe {SOURCES_GROUP}"] if lines else [f"aucun (groupe {SOURCES_GROUP})"]
+
+
+def _execution(report: _Report, config: LoomConfig, printed: set[str]) -> None:
+    section = report.section("EXÉCUTION")
+    storage = config.storage
+    section.add("Journal", _storage_said("Journal", storage.events, report))
+    files = storage.artifacts_path
+    backend = storage.artifacts_backend
+    section.add("Artefacts", f"{backend:<9} {report.shown(files)}" if files else backend)
+    section.add("Idempotence", _storage_said("Idempotence", storage.idempotency, report))
+    queue = storage.queue
+    # Le piège de la file servie : tout se met en file, rien ne tourne.
+    waiting = ("les tâches de fond attendent un worker : loom worker",) if queue.brokered else ()
+    section.add("File", _queue_line(queue), waiting)
+    if queue.url_env is not None and not os.environ.get(queue.url_env):
+        report.warn("File", f"variable {queue.url_env} absente")
+    bus = storage.bus
+    if bus.variable is None:
+        section.add("Bus", bus.backend)
+        report.warn(f"Bus {bus.backend}", "les nouvelles ne sortent pas de ce process")
+    else:
+        section.add("Bus", _bus_line(bus))
+        if not os.environ.get(bus.variable):
+            report.warn("Bus", f"variable {bus.variable} absente")
+    if config.storage.encryption is None:
+        section.add("Chiffrement", "aucun")
+        report.warn("Chiffrement", "aucun : contenus en clair au repos")
+    else:
+        lines, warnings = _sealing_report(config)
+        section.add("Chiffrement", _sealing_line(config), lines)
+        for warning in warnings:
+            printed.add(warning)
+            report.warn_said(warning)
+    if _retains_everything(config):
+        section.add("Rétention", "aucune")
+        report.warn("Rétention", "aucune : rien ne s'efface")
+    else:
+        section.add("Rétention", _retention_line(config))
     # Au test K4 du 21/10, rien ne disait ce qui sort du journal : ni le
     # collecteur, ni la capture, ni les motifs de masquage.
-    print(f"Télémétrie : {_telemetry_line(config)}")
-    for line in _telemetry_details(config):
-        print(f"    {line}")
-    printed.update(exporter_warnings(config))
-    if storage.queue.brokered:
-        # Le piège de la file servie : tout se met en file, rien ne tourne.
-        print("    les tâches de fond attendent un worker : loom worker")
+    first, *more = _telemetry_lines(config)
+    section.add("Télémétrie", first, more)
+    for warning in exporter_warnings(config):
+        printed.add(warning)
+        report.warn_said(warning)
     for warning in storage_warnings(config):
         printed.add(warning)
-        print(f"    {warning}")
-    print(f"Clés d'API : {keys or 'aucune (API REST ouverte)'}")
+        report.warn_said(warning)
+
+
+def _storage_said(label: str, declared: EventsStorage | IdempotencyStorage, report: _Report) -> str:
+    """Un stockage : son backend, et son dossier relatif à la racine ou sa variable de DSN."""
+    if declared.dsn_env is not None:
+        if not os.environ.get(declared.dsn_env):
+            report.warn(label, f"variable {declared.dsn_env} absente")
+        return _storage_line(declared)
+    if declared.path:
+        return f"{declared.backend:<9} {report.shown(declared.path)}"
+    return declared.backend
+
+
+def _retains_everything(config: LoomConfig) -> bool:
+    """Vrai si aucune borne de rétention n'est posée, ni à la racine ni pour un client."""
+    return config.storage.retention.events_days is None and all(
+        config.retention_days(tenant) is None for tenant in config.tenant_ids
+    )
+
+
+def _telemetry_lines(config: LoomConfig) -> list[str]:
+    """Logs et exports, échanges bruts, puis un collecteur par ligne et le masquage."""
+    telemetry = config.telemetry
+    logs = telemetry.logging
+    capture = telemetry.capture
+    exports = (
+        "exports : contenu masqué"
+        if capture.exports == "content"
+        else "exports : métadonnées seules"
+    )
+    raw = (
+        f"échanges bruts au journal (≤ {_kib(capture.raw_max_bytes)}/corps)"
+        if capture.raw_exchanges
+        else "pas d'échanges bruts"
+    )
+    lines = [f"logs {logs.level.upper()} ({logs.format}) · {exports}"]
+    if not telemetry.exporters:
+        return [*lines, f"{raw} · collecteur : aucun"]
+    return [*lines, raw, *_telemetry_details(config)]
+
+
+def _access(report: _Report, config: LoomConfig) -> None:
+    section = report.section("ACCÈS")
+    keys = [key.id for key in config.security.api_keys]
+    if keys:
+        first, *more = _packed(keys, _LISTED)
+        section.add("Clés d'API", first, [*more, *_key_lines(config, report)])
+    else:
+        section.add("Clés d'API", "aucune")
+        report.warn("Clés d'API", "aucune : API REST ouverte")
     mcp = config.server.mcp
     if mcp.http:
         origines = _listed(mcp.allowed_origins) if mcp.allowed_origins else "aucune déclarée"
-        print(f"MCP HTTP   : monté sous {config.server.http.base_path}/mcp, origines : {origines}")
-        gabarits = len(MCP_TEMPLATES)
-        print(
-            f"    ressources en lecture seule : {MCP_RUNS}, {MCP_SESSIONS}, et {gabarits} gabarits"
+        section.add(
+            "MCP HTTP",
+            f"monté sous {config.server.http.base_path}/mcp, origines : {origines}",
+            [
+                f"ressources en lecture seule : {MCP_RUNS}, {MCP_SESSIONS}, "
+                f"et {len(MCP_TEMPLATES)} gabarits"
+            ],
         )
-    for line in _key_lines(config):
-        print(f"    {line}")
     if config.triggers:
         base = config.server.http.base_path
-        print(f"Portes     : {_listed(trigger.name for trigger in config.triggers)}")
+        doors: list[str] = []
         for trigger in config.triggers:
-            print(f"    POST {base}/v1/hooks/{trigger.name} → agent {trigger.agent}")
+            doors.append(f"POST {base}/v1/hooks/{trigger.name} → agent {trigger.agent}")
             details = [f"session {trigger.session}"] if trigger.session else ["session par run"]
             if trigger.delivery_header:
                 details.append(f"livraison sur {trigger.delivery_header}")
@@ -804,58 +1083,50 @@ async def _validate(args: argparse.Namespace) -> int:
                 # Sans en-tête de livraison, une plateforme qui réessaie ouvre
                 # un second run : le dire ici, c'est le dire avant la panne.
                 details.append("aucun en-tête de livraison : une relivraison rouvre un run")
-            print(f"    {'':<4}{', '.join(details)}")
-    if config.tenants:
-        print(f"Clients    : {_listed(tenant.id for tenant in config.tenants)}")
+            doors.append(f"  {', '.join(details)}")
+        first, *more = _packed([trigger.name for trigger in config.triggers], _LISTED)
+        section.add("Portes", first, [*more, *doors])
 
-    mounted = 0
-    clients = {spec.id: FakeModel(spec) for spec in config.models} if args.no_keys else None
+
+async def _mount(report: _Report, config: LoomConfig, registry: Registry, *, no_keys: bool) -> None:
+    """Monte chaque agent pour chaque client ; avec des clients, les agents se rangent sous eux."""
+    tenants = bool(config.tenants)
+    section = report.section("CLIENTS" if tenants else "AGENTS")
+    indent = "  " if tenants else ""
+    clients = {spec.id: FakeModel(spec) for spec in config.models} if no_keys else None
     async with Loom(config, registry=registry, models=clients) as loom:
         for tenant_id in config.tenant_ids:
             tenant = loom.tenant(tenant_id)
-            if config.tenants:
-                print(f"\n  client {tenant_id}")
-                for line in _tenant_lines(tenant):
-                    print(f"    {line}")
+            if tenants:
+                if section.lines:
+                    section.lines.append("")
+                section.lines.append(f"  client {tenant_id}")
+                section.lines.extend(f"    {line}" for line in _tenant_lines(tenant))
             for spec in config.agents:
                 if not tenant.allows(spec.name):
                     continue
-                mounted += 1
-                await _show_agent(loom, tenant_id, spec, indent="  " if config.tenants else "")
+                # La ligne vide ne s'ajoute qu'une fois l'agent monté : un échec ne
+                # laisse pas de séparateur orphelin dans le rapport partiel.
+                lines = await _agent_lines(loom, tenant_id, spec, report, indent=indent)
+                report.mounted += 1
+                if section.lines:
+                    section.lines.append("")
+                section.lines.extend(lines)
             if config.sessions.compaction is not None:
                 # L'agent interne n'est pas déclaré, mais il est monté au premier
                 # résumé : une clé absente pour son modèle se dit ici, pas dans une
                 # tâche de fond qui n'échoue pas le run. Il ne compte pas dans les
                 # agents montés : ce sont ceux que la config déclare.
                 internal = compaction_agent(config.sessions.compaction)
-                await _show_agent(loom, tenant_id, internal, indent="  " if config.tenants else "")
-    print(f"\n{mounted} agent(s) monté(s) sans erreur.")
-    return OK
+                line = _internal_line(loom, tenant_id, internal, indent=indent)
+                section.lines += ["", line]
+    legend = [said for mark, said in _MARKS.items() if mark in report.marks]
+    if legend:
+        section.lines += ["", f"  {' · '.join(legend)}"]
 
 
-def _source_lines(config: LoomConfig) -> list[str]:
-    """Les sources déclarées, et les points d'entrée installés — lus sans rien importer.
-
-    Rien n'est dit sans source déclarée ni paquet installé : la plupart des
-    configs n'en ont pas.
-    """
-    lines: list[str] = []
-    for declared in config.tool_sources:
-        lines.append(f"Source     : {declared.name} → point d'entrée {declared.entry_point}")
-    found = installed()
-    if found or config.tool_sources:
-        used = {declared.entry_point for declared in config.tool_sources}
-        listed = [
-            f"{point.name} ({' '.join(filter(None, (point.package, point.version)))}"
-            f"{', utilisé' if point.name in used else ''})"
-            for point in found
-        ]
-        lines.append(f"Paquets    : {_listed(listed)} (groupe {SOURCES_GROUP})")
-    return lines
-
-
-def _profile_line(config: LoomConfig, given: str | None) -> str:
-    """Le profil actif, d'où il vient, et ce qu'il change ; ``given`` est celui de l'option.
+def _profile_said(config: LoomConfig, given: str | None) -> tuple[str, str]:
+    """Le profil actif, d'où il vient et ce qu'il change ; puis les surcharges déclarées.
 
     Un profil qu'on ne voit pas est un profil qu'on oublie : un déploiement
     qui croit être en prod doit pouvoir le lire ici.
@@ -863,9 +1134,15 @@ def _profile_line(config: LoomConfig, given: str | None) -> str:
     active, source = chosen_profile(given, config.profile)
     declared = _listed(sorted(config.profiles)) if config.profiles else "aucune"
     if active is None:
-        return f"aucun (ni --profile, ni {PROFILE_ENV}, ni 'profile:') ; surcharges : {declared}"
+        return f"aucun (ni --profile, ni {PROFILE_ENV}, ni 'profile:')", declared
     effet = "les avertissements sont des erreurs" if active == "prod" else "assoupli"
-    return f"{active} (par {source}) — {effet} ; surcharges : {declared}"
+    return f"{active} (par {source}) — {effet}", declared
+
+
+def _profile_line(config: LoomConfig, given: str | None) -> str:
+    """Le profil en une ligne, pour le bandeau de ``loom serve``."""
+    active, declared = _profile_said(config, given)
+    return f"{active} ; surcharges : {declared}"
 
 
 def _retention_line(config: LoomConfig) -> str:
@@ -885,12 +1162,6 @@ def _retention_line(config: LoomConfig) -> str:
     commune = f"sessions effacées après {racine} jour(s)" if racine else "aucune à la racine"
     dit = f"{commune} ; {', '.join(propres)}" if propres else commune
     return f"{dit} — par « loom retention », que la plateforme met à l'heure"
-
-
-def _telemetry_line(config: LoomConfig) -> str:
-    """Logs, capture des exports et échanges bruts : ce que la racine décide."""
-    logs = config.telemetry.logging
-    return f"logs {logs.level.upper()} ({logs.format}) ; {_capture_said(config.telemetry.capture)}"
 
 
 def _capture_said(capture: CaptureConfig) -> str:
@@ -951,9 +1222,9 @@ def _sealing_line(config: LoomConfig) -> str:
     return f"charges et fichiers scellés — {secrets}"
 
 
-def _sealing_report(config: LoomConfig) -> list[str]:
-    """Une ligne par client — l'empreinte de sa clé ou son absence —, puis les
-    avertissements du trousseau.
+def _sealing_report(config: LoomConfig) -> tuple[list[str], list[str]]:
+    """Une ligne par client — l'empreinte de sa clé ou son absence —, et à part
+    les avertissements du trousseau.
 
     L'empreinte est imprimée, jamais la clé : elle suffit à voir que deux
     clients scellent avec la même, ou que celle d'un client a changé. Un
@@ -962,13 +1233,13 @@ def _sealing_report(config: LoomConfig) -> list[str]:
     valider.
     """
     if config.storage.encryption is None:
-        return []
+        return [], []
     try:
         keyring = create_keyring(config)
     except ConfigError as error:  # extra 'crypto' absent
-        return [str(error)]
+        return [], [f"Chiffrement : {error}"]
     if keyring is None:
-        return []
+        return [], []
     lines: list[str] = []
     for tenant_id in config.tenant_ids:
         try:
@@ -977,7 +1248,7 @@ def _sealing_report(config: LoomConfig) -> list[str]:
             lines.append(f"{tenant_id} : SANS CLÉ")
             continue
         lines.append(f"{tenant_id} : clé {', '.join(cipher.key_id for cipher in ciphers)}")
-    return lines + encryption_warnings(config, keyring)
+    return lines, encryption_warnings(config, keyring)
 
 
 def _storage_line(declared: EventsStorage | IdempotencyStorage) -> str:
@@ -994,8 +1265,8 @@ def _storage_line(declared: EventsStorage | IdempotencyStorage) -> str:
     return f"{declared.backend} ({declared.path})" if declared.path else declared.backend
 
 
-def _key_lines(config: LoomConfig) -> list[str]:
-    """Ce que chaque clé d'API permet, et ce qui cloche (J5.2a, #39)."""
+def _key_lines(config: LoomConfig, report: _Report) -> list[str]:
+    """Ce que chaque clé d'API permet ; ce qui cloche va aux avertissements (J5.2a, #39)."""
     now = datetime.now(UTC)
     lines: list[str] = []
     for key in config.security.api_keys:
@@ -1008,6 +1279,7 @@ def _key_lines(config: LoomConfig) -> list[str]:
             reste = key.expires - now
             if key.expired(now):
                 etat = "EXPIRÉE"
+                report.warn(f"Clé d'API {key.id}", "expirée")
             elif reste <= _BIENTOT:
                 etat = f"expire dans {reste.days} j"
             else:
@@ -1017,7 +1289,7 @@ def _key_lines(config: LoomConfig) -> list[str]:
         if "approve" in key.scopes and "read_content" not in key.scopes:
             # Approuver sans lire, c'est trancher à l'aveugle : les arguments
             # de l'appel en attente lui sont masqués.
-            lines.append(f"  {key.id} peut approuver sans lire : ajouter 'read_content'")
+            report.warn(f"Clé d'API {key.id}", "peut approuver sans lire : ajouter 'read_content'")
     return lines
 
 
@@ -1061,8 +1333,66 @@ def _tenant_lines(tenant: Tenant) -> list[str]:
     return lines or ["rien de surchargé"]
 
 
-async def _show_agent(loom: Loom, tenant_id: TenantId, spec: AgentSpec, *, indent: str) -> None:
-    """Une fiche d'agent, montée pour un client."""
+# Marques d'un droit dans l'arbre des agents, et ce que dit la légende.
+_ASKS: Final = "*"
+_UNGUARDED: Final = "!"
+_MARKS: Final = {_ASKS: "* = approbation requise", _UNGUARDED: "! = destructif, sans approbation"}
+# Largeur minimale du nom d'une branche.
+_BRANCH: Final = 11
+
+
+@dataclass(frozen=True, slots=True)
+class _Branch:
+    """Une branche de l'arbre d'un agent : son nom, puis ses lignes."""
+
+    label: str
+    lines: tuple[str, ...] = ()
+
+
+def _tree(header: str, branches: Sequence[_Branch], *, indent: str) -> list[str]:
+    """L'en-tête de l'agent, puis une branche par outil ou réglage, alignées."""
+    out = [f"{indent}  {header}"]
+    if not branches:
+        return out
+    width = max(_BRANCH, *(len(branch.label) for branch in branches)) + 2
+    for index, branch in enumerate(branches):
+        last = index == len(branches) - 1
+        first, *more = branch.lines or ("",)
+        out.append(f"{indent}  {'└' if last else '├'} {branch.label:<{width}}{first}".rstrip())
+        bar = " " if last else "│"
+        out.extend(f"{indent}  {bar} {'':<{width}}{line}".rstrip() for line in more)
+    return out
+
+
+def _counted(count: int, word: str) -> str:
+    return f"{count} {word}{'s' if count > 1 else ''}"
+
+
+def _agent_header(spec: AgentSpec, chain: Callable[[tuple[str, ...]], str]) -> str:
+    """« agent · HAIKU · 6 outils Python · sous-agent : forgeron »."""
+    parts = [
+        spec.name,
+        chain(spec.main.chain),
+        f"{_counted(len(spec.python_tools), 'outil')} Python",
+    ]
+    if spec.subagents:
+        named = [
+            ref.tool_name if ref.tool_name == ref.agent else f"{ref.tool_name} ({ref.agent})"
+            for ref in spec.subagents
+        ]
+        parts.append(f"sous-agent{'s' if len(named) > 1 else ''} : {', '.join(named)}")
+    if spec.roles:
+        roles = [f"{role.name} ({chain(role.chain)})" for role in spec.roles]
+        parts.append(f"rôle{'s' if len(roles) > 1 else ''} : {', '.join(roles)}")
+    if spec.timeout is not None:
+        parts.append(f"délai {spec.timeout:g} s")
+    return " · ".join(parts)
+
+
+async def _agent_lines(
+    loom: Loom, tenant_id: TenantId, spec: AgentSpec, report: _Report, *, indent: str
+) -> list[str]:
+    """L'arbre d'un agent monté pour un client : ses outils, ses réglages, ses sources."""
     config = loom.config
     context = loom.context(spec.name, tenant_id)
     tenant = loom.tenant(tenant_id).spec
@@ -1071,42 +1401,129 @@ async def _show_agent(loom: Loom, tenant_id: TenantId, spec: AgentSpec, *, inden
     def chain(models: tuple[str, ...]) -> str:
         return _chain(models, mapped)
 
-    roles = "".join(f", rôle {role.name} ({chain(role.chain)})" for role in spec.roles)
-    subagents = "".join(f", sous-agent {ref.tool_name} ({ref.agent})" for ref in spec.subagents)
-    delay = f", délai {spec.timeout:g} s" if spec.timeout is not None else ""
-    print(
-        f"{indent}  {spec.name} : modèle {chain(spec.main.chain)}, "
-        f"{len(spec.python_tools)} outil(s) Python{roles}{subagents}{delay}"
-    )
-    for bound in context.policies.bound:
-        print(f"{indent}    politique {bound.name} : {', '.join(sorted(bound.points))}")
-    for declared in spec.python_tools:
-        if not is_builtin(declared.python):
-            continue
-        name = declared.python.removeprefix(RESERVED_PREFIX)
-        shown = innermost(context.tools.get(name))
-        if isinstance(shown, ShowsSettings):
-            for line in shown.settings_lines():
-                print(f"{indent}    outil {name} : {line}")
+    branches: list[_Branch] = []
+    policies = [
+        f"{bound.name} : {', '.join(sorted(bound.points))}" for bound in context.policies.bound
+    ]
+    if policies:
+        branches.append(_Branch("politiques", tuple(policies)))
+    # Le skill d'un outil part avec chaque appel de modèle : il se dit sous l'outil.
+    skills: dict[str, str] = {}
     for name in context.tools.names:
         mounted = context.tools.get(name)
         if mounted is not None and mounted.spec.skill:
-            print(f"{indent}    outil {name} : skill, {_skill_size(mounted.spec.skill)}")
-    for name, skill in declared_skills(config, spec):
-        print(f"{indent}    outil {name} : skill, {_skill_size(skill)}")
-    for target, contract, repairs in _contracts(spec):
-        print(f"{indent}    contrat ({target}) : {_contract_line(contract, repairs=repairs)}")
+            skills[name] = mounted.spec.skill
+    skills.update(declared_skills(config, spec))
+    for declared in spec.python_tools:
+        name = declared.python.removeprefix(RESERVED_PREFIX)
+        lines: list[str] = []
+        shown = innermost(context.tools.get(name)) if is_builtin(declared.python) else None
+        if isinstance(shown, ShowsSettings):
+            lines.extend(_settings_lines(shown.settings(), report, agent=spec.name, tool=name))
+        if (skill := skills.pop(name, None)) is not None:
+            lines.append(f"skill, {_skill_size(skill)}")
+        branches.append(_Branch(name, tuple(lines)))
+    branches.extend(
+        _Branch(name, (f"skill, {_skill_size(skill)}",)) for name, skill in skills.items()
+    )
+    branches.extend(await _source_branches(spec.name, context.tools))
+    contracts = [
+        f"{target} : {_contract_line(contract, repairs=repairs)}"
+        for target, contract, repairs in _contracts(spec)
+    ]
+    if contracts:
+        branches.append(_Branch("contrats", tuple(contracts)))
     budgets = config.budget_of(spec.name)
     if budgets.limited:
-        print(f"{indent}    budget : {_budget_line(budgets)}")
+        branches.append(_Branch("budget", (_budget_line(budgets),)))
+    judges: list[str] = []
     for name, role, judge in spec.judges:
         target = f"rôle {role.name}" if role is not None else "réponse finale"
         sample = f", sample {judge.when.sample:g}" if judge.when.sample < 1 else ""
-        print(
-            f"{indent}    juge {name} ({target}) : modèle {chain(judge.chain)}, "
+        judges.append(
+            f"{name} ({target}) : modèle {chain(judge.chain)}, "
             f"{len(judge.criteria)} critère(s){sample}"
         )
-    await _show_sources(spec.name, context.tools)
+    if judges:
+        branches.append(_Branch("juges", tuple(judges)))
+    return _tree(_agent_header(spec, chain), branches, indent=indent)
+
+
+def _internal_line(loom: Loom, tenant_id: TenantId, spec: AgentSpec, *, indent: str) -> str:
+    """Un agent interne (``_compaction``) en une ligne : son modèle et ses politiques."""
+    tenant = loom.tenant(tenant_id).spec
+    mapped: Mapping[str, str] = tenant.models if tenant is not None else {}
+    parts = [f"interne : {spec.name}", _chain(spec.main.chain, mapped)]
+    parts.extend(
+        f"{bound.name} ({', '.join(sorted(bound.points))})"
+        for bound in loom.context(spec.name, tenant_id).policies.bound
+    )
+    return f"{indent}  {' · '.join(parts)}"
+
+
+def _settings_lines(settings: Settings, report: _Report, *, agent: str, tool: str) -> list[str]:
+    """Les réglages d'un outil fourni : ses dossiers ou ses bases, ses clés, ses options.
+
+    Un droit destructif accordé sans approbation est marqué, et va aux avertissements.
+    """
+    lines: list[str] = []
+    for place in settings.places:
+        where = " ".join(filter(None, (place.kind, report.shown(place.path) if place.path else "")))
+        head = " · ".join(filter(None, (where, *place.notes)))
+        lines.append(f"{place.name} → {head}" if head else place.name)
+        lines.extend(place.limits)
+        if len(place.grants) == 1 and not place.grants[0][0]:
+            lines.append(_grants_said(place.grants[0][1], report))
+        elif place.grants:
+            lines.extend(_matrix(place, report))
+        for target, grants in place.grants:
+            unguarded = [grant.right for grant in grants if grant.unguarded]
+            if unguarded:
+                at = f"{place.name}.{target}" if target else place.name
+                report.warn(
+                    f"Agent {agent}",
+                    f"{tool} {at} : {', '.join(unguarded)} sans approbation (destructif)",
+                )
+    if settings.rows:
+        width = max(len(key) for key, _ in settings.rows) + 2
+        lines.extend(f"{key:<{width}}{value}" for key, value in settings.rows)
+    if settings.options:
+        lines.append(" · ".join(f"{key} : {value}" for key, value in settings.options))
+    return lines
+
+
+def _mark(grant: Grant, report: _Report) -> str:
+    """« * » : approbation requise ; « ! » : destructif, sans approbation."""
+    mark = _ASKS if grant.approval else _UNGUARDED if grant.unguarded else ""
+    if mark:
+        report.marks.add(mark)
+    return mark
+
+
+def _grants_said(grants: Sequence[Grant], report: _Report) -> str:
+    """« read, write · overwrite*, delete* » : ce qui passe seul, puis ce qui attend un humain."""
+    free = [grant.right + _mark(grant, report) for grant in grants if not grant.approval]
+    asked = [grant.right + _mark(grant, report) for grant in grants if grant.approval]
+    return " · ".join(filter(None, (", ".join(free), ", ".join(asked)))) or "aucun droit"
+
+
+def _matrix(place: Place, report: _Report) -> list[str]:
+    """Les droits d'une base, une ligne par table, une colonne par droit accordé quelque part."""
+    used = {grant.right for _, grants in place.grants for grant in grants}
+    columns = [right for right in place.rights if right in used]
+    columns += sorted(used - set(columns))
+    names = max(len(table) for table, _ in place.grants) + 2
+    cells = max(len(column) for column in columns) + 2
+    lines = [f"{'':<{names}}" + "".join(f"{column:<{cells}}" for column in columns).rstrip()]
+    for table, grants in place.grants:
+        by_right = {grant.right: grant for grant in grants}
+        row = ""
+        for column in columns:
+            grant = by_right.get(column)
+            cell = "✓" + _mark(grant, report) if grant is not None else ""
+            row += f"{cell:<{cells}}"
+        lines.append(f"{table:<{names}}{row}".rstrip())
+    return lines
 
 
 def _chain(models: tuple[str, ...], mapped: Mapping[str, str] | None = None) -> str:
@@ -2448,10 +2865,14 @@ def _budget_line(budgets: Budgets) -> str:
     return f"{' ; '.join(parts)} ; {budgets.on_exceed}"
 
 
-async def _show_sources(agent: str, tools: ToolExecutor) -> None:
-    """Ouvre les sources de l'agent — serveurs MCP, sources de paquet — et liste leurs outils."""
+async def _source_branches(agent: str, tools: ToolExecutor) -> list[_Branch]:
+    """Ouvre les sources de l'agent — serveurs MCP, sources de paquet — et liste leurs outils.
+
+    Ce qu'un serveur a écrit est rendu imprimable : il ne pilote pas le terminal.
+    """
     if not tools.sources:
-        return
+        return []
+    branches: list[_Branch] = []
     packaged = {s.name: s for s in tools.sources if isinstance(s, PackagedSource)}
     servers = [s for s in tools.sources if not isinstance(s, PackagedSource)]
     context = SourceContext(
@@ -2462,16 +2883,18 @@ async def _show_sources(agent: str, tools: ToolExecutor) -> None:
     )
     async with tools.opened(context) as opened:
         if servers:
-            found = [spec.name for spec in opened.tools.specs if spec.kind == "mcp"]
-            _say(f"    MCP : {_listed(found)}")
+            found = [printable(spec.name) for spec in opened.tools.specs if spec.kind == "mcp"]
+            branches.append(_Branch("MCP", tuple(_packed(found, _LISTED - 4))))
         for name, source in packaged.items():
             mine = f"{source.prefix}{MCP_PREFIX_SEPARATOR}"
-            found = [spec.name for spec in opened.tools.specs if spec.name.startswith(mine)]
-            _say(f"    source {name} : {_listed(found)}")
+            found = [printable(s.name) for s in opened.tools.specs if s.name.startswith(mine)]
+            branches.append(_Branch(name, tuple(_packed(found, _LISTED - 4))))
         for missing in opened.unavailable:
             required = " (requis)" if missing.required else ""
             kind = "source" if missing.source in packaged else "MCP"
-            _say(f"    {kind} {missing.source} indisponible{required} : {missing.error}")
+            said = printable(f"indisponible{required} : {missing.error}")
+            branches.append(_Branch(f"{kind} {missing.source}", (said,)))
+    return branches
 
 
 def _report(

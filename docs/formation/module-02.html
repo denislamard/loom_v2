@@ -265,11 +265,13 @@ et cite ta source.
 <p class="legende-aj"><span></span>lignes ajoutées</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E 'Outils|Fournis|assistant :'
-Outils     : prix_ttc
-Fournis    : loom.fetch_page
-  assistant : modèle SIMULE, 2 outil(s) Python</code></pre>
-<p><code>Outils</code> liste vos outils, ceux de <code>imports</code> ; <code>Fournis</code>, ceux livrés avec loom. L'agent en utilise deux.</p>
+<pre><code><span class="p">$ </span>loom validate | grep -E '^  (Outils|Fournis) |^  assistant ·|^  [├└] '
+  Fournis      loom.fetch_page
+  Outils       prix_ttc
+  assistant · SIMULE · 2 outils Python
+  ├ fetch_page
+  └ prix_ttc</code></pre>
+<p><code>Outils</code> liste vos outils, ceux de <code>imports</code> ; <code>Fournis</code>, ceux livrés avec loom. L'agent en utilise deux : sous sa ligne, dans la section AGENTS, chaque outil est une branche de son arbre (<code>├</code>, et <code>└</code> pour la dernière). Un outil qui a des réglages les montre à droite de son nom. Le <code>grep</code> ne garde ici que ces lignes.</p>
 <pre><code><span class="p">$ </span>loom run assistant "Quel prix TTC pour 1 250 € HT de travaux de rénovation, avec une TVA à 10 % ?" --session prix-1250
 Pour 1 250 € HT avec une TVA à 10 %, le client paiera 1 375 € TTC.
 
@@ -774,9 +776,13 @@ tools:
 <p class="legende-aj"><span></span>ligne ajoutée</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E 'Outils|assistant :'
-Outils     : chercher_devis, etiquette_devis, prix_ttc
-  assistant : modèle SIMULE, 4 outil(s) Python
+<pre><code><span class="p">$ </span>loom validate | grep -E '^  Outils |^  assistant ·|^  [├└] '
+  Outils       chercher_devis, etiquette_devis, prix_ttc
+  assistant · SIMULE · 4 outils Python
+  ├ fetch_page
+  ├ prix_ttc
+  ├ chercher_devis
+  └ etiquette_devis
 <span class="p">$ </span>loom run assistant "Fais-moi l'étiquette du devis D-2026-042." --session etiquette
 Voici l'étiquette du devis D-2026-042 (orange, car il est envoyé et sans réponse).
 

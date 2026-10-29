@@ -326,9 +326,9 @@ def test_validate_lists_the_mcp_tools(tmp_path: Path, capsys: pytest.CaptureFixt
     broken = servers(math={"args": ["absent.py"], "connect_timeout": 5})
     assert main(["--config", str(write(tmp_path, agent(), mcp_servers=broken)), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "assistant : modèle FAKE, 0 outil(s) Python" in out
-    assert "    MCP : time__maintenant" in out
-    assert "    MCP math indisponible : " in out
+    assert "  assistant · FAKE · 0 outil Python\n" in out
+    assert "  ├ MCP          time__maintenant\n" in out
+    assert "  └ MCP math     indisponible : " in out
 
 
 def test_stream_shows_an_unavailable_server(

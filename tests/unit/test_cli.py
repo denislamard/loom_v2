@@ -23,7 +23,12 @@ from conftest import (
 
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
-from loom_ia.access.cli.main import _state_item  # pyright: ignore[reportPrivateUsage]
+from loom_ia.access.cli.main import (  # pyright: ignore[reportPrivateUsage]
+    _render,  # pyright: ignore[reportPrivateUsage]
+    _Report,  # pyright: ignore[reportPrivateUsage]
+    _settings_lines,  # pyright: ignore[reportPrivateUsage]
+    _state_item,  # pyright: ignore[reportPrivateUsage]
+)
 from loom_ia.adapters.stores import JsonlEventStore
 from loom_ia.config.keys import matches
 from loom_ia.config.models import QueueStorage
@@ -31,6 +36,7 @@ from loom_ia.core.events import Event, EventDraft, RunClaimed
 from loom_ia.core.model import DEFAULT_TENANT, Message, RunStatus, SessionId, ToolOutput
 from loom_ia.core.ports import JournalBusy, JournalCorrupted
 from loom_ia.testing import RunJournal, tool_call_message
+from loom_ia.tools_builtin import Place, Settings
 
 JOURNAL: dict[str, Any] = {"events": {"backend": "jsonl", "path": "journaux"}}
 
@@ -40,11 +46,63 @@ def test_validate_shows_what_the_config_declares(
 ) -> None:
     assert main(["--config", str(demo()), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "Modèles    : FAKE" in out
-    assert "Agents     : demo" in out
-    assert "Outils     : calculer" in out
-    assert "Clés d'API : aucune" in out
-    assert "1 agent(s) monté(s) sans erreur." in out
+    assert "✓ 1 agent monté" in out.splitlines()[0]
+    assert "  Modèles      FAKE\n" in out
+    assert "\nAGENTS\n  demo · FAKE · 1 outil Python\n  └ calculer\n" in out
+    assert "  Outils       calculer\n" in out
+    assert "  Clés d'API   aucune\n" in out
+    assert "Clés d'API   aucune : API REST ouverte" in out
+
+
+def test_validate_puts_the_verdict_first_and_the_warnings_last(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le verdict en tête, des sections nommées, les points à risque regroupés à la fin."""
+    path = demo()
+    assert main(["--config", str(path), "validate"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith(f"loom validate · {path}")
+    assert lines[0].endswith("✓ 1 agent monté · ⚠ 4 avertissements")
+    assert lines[1] == f"Racine : {path.parent.resolve()}"
+    titles = [line for line in lines if line and line == line.upper() and not line[0].isspace()]
+    assert titles == [
+        "CONFIGURATION",
+        "EXTENSIONS",
+        "EXÉCUTION",
+        "ACCÈS",
+        "AGENTS",
+        "AVERTISSEMENTS",
+    ]
+    assert lines[lines.index("AVERTISSEMENTS") + 1 :] == [
+        "  ⚠ Bus memory   les nouvelles ne sortent pas de ce process",
+        "  ⚠ Chiffrement  aucun : contenus en clair au repos",
+        "  ⚠ Rétention    aucune : rien ne s'efface",
+        "  ⚠ Clés d'API   aucune : API REST ouverte",
+    ]
+
+
+def test_validate_aligns_the_rows_and_joins_the_options_of_a_provided_tool(tmp_path: Path) -> None:
+    report = _Report(config=Path("loom.yaml"), root=tmp_path)
+    settings = Settings(
+        places=(Place("sortie", path=tmp_path / "sortie", grants=(("", ()),)),),
+        rows=(("client", "une ligne"), ("selection", "toutes les lignes")),
+        options=(("fuseau", "Europe/Paris"), ("recalcul", "non")),
+    )
+    assert _settings_lines(settings, report, agent="demo", tool="outil") == [
+        "sortie → ./sortie",
+        "aucun droit",
+        "client     une ligne",
+        "selection  toutes les lignes",
+        "fuseau : Europe/Paris · recalcul : non",
+    ]
+    assert report.warnings == [] and report.marks == set()
+
+
+def test_the_verdict_says_zero_agent_in_the_singular(tmp_path: Path) -> None:
+    report = _Report(config=Path("loom.yaml"), root=tmp_path)
+    assert "✓ 0 agent monté" in _render(report).splitlines()[0]
+    report.mounted = 2
+    assert "✓ 2 agents montés" in _render(report).splitlines()[0]
 
 
 def test_validate_mounts_the_internal_compaction_agent(
@@ -55,8 +113,8 @@ def test_validate_mounts_the_internal_compaction_agent(
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
     # L'agent interne est monté, mais ce n'est pas un agent que la config déclare.
-    assert "_compaction : modèle RESUME" in out
-    assert "1 agent(s) monté(s) sans erreur." in out
+    assert "\n  interne : _compaction · RESUME" in out
+    assert "✓ 1 agent monté" in out
 
 
 def test_validate_refuses_a_compaction_model_without_its_key(
@@ -94,7 +152,7 @@ def test_validate_tells_what_is_wrong_with_the_declared_state(
 
     fixed: dict[str, Any] = {"k": {"schema": {}, "from": [{"tool": "calculer", "value": "fait"}]}}
     assert main(["--config", str(demo(agents=[demo_agent(state=fixed)])), "validate"]) == 0
-    assert "1 agent(s) monté(s) sans erreur." in capsys.readouterr().out
+    assert "✓ 1 agent monté" in capsys.readouterr().out
 
 
 ABSENTE = "LOOM_VALIDATE_CLE_ABSENTE"
@@ -117,7 +175,7 @@ def test_validate_without_keys_mounts_the_agents_a_missing_key_would_refuse(
         assert main(["--config", str(path), "validate", flag]) == 0
         out = capsys.readouterr().out
         assert "clients de modèle non créés (--no-keys)" in out
-        assert "1 agent(s) monté(s) sans erreur." in out
+        assert "✓ 1 agent monté" in out
 
 
 def test_run_prints_the_answer(demo: ConfigFactory, capsys: pytest.CaptureFixture[str]) -> None:
@@ -941,12 +999,12 @@ def test_validate_shows_what_each_contract_requires(
     assert main(["--config", str(demo(agents=[agent])), "validate"]) == 0
     out = capsys.readouterr().out
     assert (
-        "    contrat (réponse finale) : must_match \\d{2}/\\d{2}/\\d{4}, must_not_match (?i)sk-, "
-        "max_chars 400 ; réparations 0, échec → fallback "
+        "  └ contrats     réponse finale : must_match \\d{2}/\\d{2}/\\d{4}, "
+        "must_not_match (?i)sk-, max_chars 400 ; réparations 0, échec → fallback "
         "« Réponse indisponible pour le moment, me… »\n"
+        # Un outil ne se répare pas : pas de « réparations ».
+        "                 outil calculer : schéma (requis : valeur, unite) ; échec → fail\n"
     ) in out
-    # Un outil ne se répare pas : pas de « réparations ».
-    assert "    contrat (outil calculer) : schéma (requis : valeur, unite) ; échec → fail\n" in out
 
 
 def test_validate_writes_a_client_model_mapping_apart_from_the_fallbacks(
@@ -974,8 +1032,10 @@ def test_validate_writes_a_client_model_mapping_apart_from_the_fallbacks(
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
     dupont, martin = out.split("client martin")
-    assert "juge output (réponse finale) : modèle OPUS (FAKE pour ce client) → SONNET" in dupont
-    assert "juge output (réponse finale) : modèle OPUS → SONNET," in martin
+    assert "juges        output (réponse finale) : modèle OPUS (FAKE pour ce client) → SONNET" in (
+        dupont
+    )
+    assert "juges        output (réponse finale) : modèle OPUS → SONNET," in martin
 
 
 def test_the_run_summary_names_the_cache_when_there_is_some() -> None:
@@ -1077,7 +1137,7 @@ def test_global_options_are_read_after_the_subcommand(
     monkeypatch.chdir(path.parent.parent)
     assert main(["validate", "--config", str(path), "--profile", "prod", "--no-env-file"]) == 0
     out = capsys.readouterr().out
-    assert f"Config     : {path}" in out and "prod (par option)" in out
+    assert f"loom validate · {path}" in out and "prod (par option)" in out
     # Avant la sous-commande, comme avant ; après, elle l'emporte.
     assert main(["--profile", "prod", "--config", str(path), "validate", "--profile", "dev"]) == 0
     assert "dev (par option)" in capsys.readouterr().out
@@ -1155,8 +1215,8 @@ def test_validate_says_there_is_no_collector(
 ) -> None:
     assert main(["--config", str(demo()), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "Télémétrie : logs " in out and "exports sans contenu (metadata)" in out
-    assert "collecteur : aucun — rien ne sort du journal que les logs" in out
+    assert "  Télémétrie   logs " in out and "exports : métadonnées seules" in out
+    assert "collecteur : aucun" in out
 
 
 def test_validate_shows_the_collector_the_capture_and_the_overrides(
@@ -1179,8 +1239,8 @@ def test_validate_shows_the_collector_the_capture_and_the_overrides(
     assert main(["--config", str(path), "validate"]) == 0
     printed = capsys.readouterr()
     assert (
-        "Télémétrie : logs WARNING (console) ; exports sans contenu (metadata) ; "
-        "échanges bruts au journal (256 Kio par corps au plus)"
+        "  Télémétrie   logs WARNING (console) · exports : métadonnées seules\n"
+        "               échanges bruts au journal (≤ 256 Kio/corps)\n"
     ) in printed.out
     assert (
         "collecteur otel : adresse dans LOOM_OTLP_VIDE (vide — non monté, aucune trace n'en "

@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
 from loom_ia.tools import to_output
-from loom_ia.tools_builtin import BuiltinContext
+from loom_ia.tools_builtin import BuiltinContext, Settings
 from loom_ia.tools_builtin._folders import TEMP_PREFIX, Folder, Folders, Located, mount, write_bytes
 from loom_ia.tools_builtin.local_files_params import LocalFilesParams, Right
 
@@ -147,9 +147,9 @@ class LocalFilesTool:
     def spec(self) -> ToolSpec:
         return self._spec
 
-    def settings_lines(self) -> tuple[str, ...]:
-        """Une ligne par dossier, pour ``loom validate``."""
-        return self._space.settings_lines()
+    def settings(self) -> Settings:
+        """Les dossiers et leurs droits, pour ``loom validate``."""
+        return Settings(places=self._space.places())
 
     def assess_call(self, arguments: Mapping[str, JsonValue]) -> CallAssessment:
         """Approbation et effets de cet appel, d'après ses arguments et les droits du dossier."""

@@ -1,0 +1,8 @@
+docker volume rm pg-dev-data
+
+docker run -d --name pg-loomdata -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=data -p 5454:5432 -v pg-dev-data:/var/lib/postgresql --restart unless-stopped postgres:18
+
+psql "postgresql://postgres:postgres@localhost:5454/data" -v app_role=user_loom -v app_password='Webcam10' -f schema_data.sql
+
+
+USER_LOOM_DSN=postgresql://user_loom:Webcam10@localhost:5454/data

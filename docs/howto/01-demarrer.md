@@ -216,26 +216,44 @@ uv run loom validate
 ```
 
 ```text
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Modèles    : SIMULE
-Agents     : devis
-Outils     : aucun
-Paquets    : forge (loom-ia 2.0.0) (groupe loom_ia.tools)
-Journal    : jsonl (/home/denis/mon-agent/data)
-Artefacts  : local (/home/denis/mon-agent/data/.artifacts)
-Idempotence: journal
-File       : asyncio
-Bus        : memory (les nouvelles ne sortent pas de ce process)
-Chiffrement: aucun (contenus en clair au repos)
-Rétention  : aucune (rien ne s'efface)
-Clés d'API : aucune (API REST ouverte)
-  devis : modèle SIMULE, 0 outil(s) Python
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+Racine : /home/denis/mon-agent
 
-1 agent(s) monté(s) sans erreur.
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      SIMULE
+
+EXTENSIONS
+  Paquets      forge · loom-ia 2.0.15 · groupe loom_ia.tools
+  Outils       aucun
+
+EXÉCUTION
+  Journal      jsonl     ./data
+  Artefacts    local     ./data/.artifacts
+  Idempotence  journal
+  File         asyncio
+  Bus          memory
+  Chiffrement  aucun
+  Rétention    aucune
+  Télémétrie   logs INFO (console) · exports : métadonnées seules
+               pas d'échanges bruts · collecteur : aucun
+
+ACCÈS
+  Clés d'API   aucune
+
+AGENTS
+  devis · SIMULE · 0 outil Python
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
 ```
 
-Les dernières lignes de la partie haute (file, bus, chiffrement, rétention, clés) décrivent ce que Loom-IA a choisi par défaut ; vous les reverrez dans les niveaux suivants. Lancez ensuite un run :
+La première ligne donne le verdict : un agent monté, quatre avertissements. Les sections `EXÉCUTION` et `ACCÈS` décrivent ce que Loom-IA a choisi par défaut, et le bloc `AVERTISSEMENTS` final reprend ce que ces choix laissent ouvert ; vous les reverrez dans les niveaux suivants. Lancez ensuite un run :
 
 ```bash
 uv run loom run devis "Bonjour, ici la Plomberie Dupont."
@@ -431,19 +449,24 @@ toi-même, et reprends les montants qu'il renvoie.
 uv run loom validate
 ```
 
-La partie haute est identique à celle de l'exemple 1.1. Ce qui change :
+Le rapport ressemble à celui de l'exemple 1.1. Ce qui change :
 
 ```text
-Modèles    : SIMULE
-Agents     : devis
-Outils     : prix_ttc
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
 …
-  devis : modèle SIMULE, 1 outil(s) Python
-
-1 agent(s) monté(s) sans erreur.
+EXTENSIONS
+  Paquets      forge · loom-ia 2.0.15 · groupe loom_ia.tools
+  Outils       prix_ttc
+…
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+…
+AGENTS
+  devis · SIMULE · 1 outil Python
+  └ prix_ttc
+…
 ```
 
-(Les lignes de `Profil` et `Paquets` à `Clés d'API` sont omises.) Puis le run :
+(Les lignes inchangées sont omises.) L'arbre de l'agent liste chacun de ses outils. Puis le run :
 
 ```bash
 uv run loom run devis "Quel prix TTC pour un devis de 1 250 € HT en rénovation (TVA à 10 %) ?"
@@ -1061,25 +1084,50 @@ uv run loom validate
 ```
 
 ```text
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Modèles    : SIMULE, SIMULE_ATELIER
-Agents     : atelier, devis
-Outils     : chercher_devis, montant_echeance, prix_ttc
-Paquets    : forge (loom-ia 2.0.0) (groupe loom_ia.tools)
-Journal    : jsonl (/home/denis/mon-agent/data)
-Artefacts  : local (/home/denis/mon-agent/data/.artifacts)
-Idempotence: journal
-File       : asyncio
-Bus        : memory (les nouvelles ne sortent pas de ce process)
-Chiffrement: aucun (contenus en clair au repos)
-Rétention  : aucune (rien ne s'efface)
-Clés d'API : aucune (API REST ouverte)
-  atelier : modèle SIMULE_ATELIER, 2 outil(s) Python
-  devis : modèle SIMULE, 1 outil(s) Python
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
+Racine : /home/denis/mon-agent
 
-2 agent(s) monté(s) sans erreur.
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      SIMULE, SIMULE_ATELIER
+
+EXTENSIONS
+  Paquets      forge · loom-ia 2.0.15 · groupe loom_ia.tools
+  Outils       agenda_artisan, chercher_devis, delai_livraison, montant_echeance,
+               prix_ttc, stock_chauffe_eau
+
+EXÉCUTION
+  Journal      jsonl     ./data
+  Artefacts    local     ./data/.artifacts
+  Idempotence  journal
+  File         asyncio
+  Bus          memory
+  Chiffrement  aucun
+  Rétention    aucune
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+               pas d'échanges bruts · collecteur : aucun
+
+ACCÈS
+  Clés d'API   aucune
+
+AGENTS
+  atelier · SIMULE_ATELIER · 2 outils Python
+  ├ chercher_devis
+  └ montant_echeance
+
+  devis · SIMULE · 1 outil Python
+  └ prix_ttc
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
 ```
+
+`Outils` liste tout ce que `imports` a enregistré (les six outils de `outils.py`) ; l'arbre de chaque agent, ceux qu'il a le droit d'appeler.
 
 **Erreur 1 : un modèle inconnu.** Dans `agents/devis.yaml`, écrivez `model: SIMULÉ` (avec un accent) au lieu de `SIMULE` :
 
@@ -1105,7 +1153,7 @@ uv run loom validate
 Configuration : Agent 'devis', outil 'prix_ht' : Référence 'prix_ht' introuvable : aucun objet de ce nom (enregistrés : chercher_devis, montant_echeance, prix_ttc). Utiliser 'imports' ou un chemin 'module:attr'
 ```
 
-(Avant ce message, la sortie standard a déjà listé la partie haute du rapport et l'agent `atelier`, qui, lui, se monte : l'erreur arrive en montant `devis`.)
+(Avant ce message, la sortie standard a déjà imprimé le rapport, avec « ✗ montage interrompu » en tête : l'agent `atelier` s'y monte, l'erreur arrive en montant `devis`.)
 
 **Erreur 3 : une clé inconnue.** Rétablissez l'outil, puis écrivez `max_iteration: 5` au lieu de `max_iterations: 5` :
 
@@ -1181,7 +1229,7 @@ Puis ajoutez en première ligne de `agents/devis.yaml` (le chemin est relatif au
 ```bash
 ls -l loom.schema.json agent.schema.json
 head -3 agents/devis.yaml
-uv run loom validate | tail -4
+uv run loom validate | head -1
 ```
 
 ```text
@@ -1190,10 +1238,7 @@ uv run loom validate | tail -4
 # yaml-language-server: $schema=../agent.schema.json
 name: devis
 description: Répond aux questions de prix sur les devis.
-  atelier : modèle SIMULE_ATELIER, 2 outil(s) Python
-  devis : modèle SIMULE, 1 outil(s) Python
-
-2 agent(s) monté(s) sans erreur.
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
 ```
 
 La ligne de commentaire ne gêne pas la validation. Le comportement de la complétion dans l'éditeur n'a pas pu être vérifié ici (pas d'éditeur dans l'environnement de rédaction), seule la génération et l'absence d'effet de bord l'ont été.
@@ -1931,11 +1976,27 @@ env -u ANTHROPIC_API_KEY uv run loom --no-env-file validate; echo "code de retou
 (`--no-env-file` écarte le `.env` voisin de `loom.yaml` : s'il donne la clé, la validation passerait.)
 
 ```text
+loom validate · loom.yaml                      ✗ montage interrompu · ⚠ 4 avertissements
 …
-  atelier : modèle SIMULE_ATELIER, 2 outil(s) Python
-  devis : modèle SIMULE, 1 outil(s) Python
-  devis_local : modèle LOCAL, 1 outil(s) Python
-  devis_panne : modèle SIMULE_PANNE, 1 outil(s) Python
+AGENTS
+  atelier · SIMULE_ATELIER · 2 outils Python
+  ├ chercher_devis
+  └ montant_echeance
+
+  devis · SIMULE · 1 outil Python
+  └ prix_ttc
+
+  devis_local · LOCAL · 1 outil Python
+  └ prix_ttc
+
+  devis_panne · SIMULE_PANNE · 1 outil Python
+  └ prix_ttc
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
 Demande refusée : Modèle 'HAIKU' : la variable d'environnement ANTHROPIC_API_KEY est absente ou vide
 code de retour : 2
 ```
@@ -1943,18 +2004,11 @@ code de retour : 2
 (Cette sortie vient du projet complet, après l'exemple 5.3, d'où l'agent `devis_local`. Le principe est le même avec ce chapitre seul.) Avec une variable présente, même factice, la validation passe, puisqu'elle ne fait aucun appel :
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-factice uv run loom validate | tail -8
+ANTHROPIC_API_KEY=sk-ant-factice uv run loom validate | head -1
 ```
 
 ```text
-  atelier : modèle SIMULE_ATELIER, 2 outil(s) Python
-  devis : modèle SIMULE, 1 outil(s) Python
-  devis_local : modèle LOCAL, 1 outil(s) Python
-  devis_panne : modèle SIMULE_PANNE, 1 outil(s) Python
-  devis_reel : modèle HAIKU, 1 outil(s) Python
-  devis_tarife : modèle SIMULE_TARIFE, 1 outil(s) Python
-
-6 agent(s) monté(s) sans erreur.
+loom validate · loom.yaml                         ✓ 6 agents montés · ⚠ 4 avertissements
 ```
 
 Avec cette clé factice, le run atteint bien l'API d'Anthropic, qui la refuse :

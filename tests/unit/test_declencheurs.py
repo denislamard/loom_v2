@@ -494,7 +494,7 @@ def test_validate_shows_the_doors(demo: ConfigFactory, capsys: pytest.CaptureFix
     avec = {**RELANCE, "name": "avec-entete", "delivery_header": "X-Delivery-Id"}
     assert main(["--config", str(demo(triggers=[sans, avec])), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "Portes     : sans-entete, avec-entete" in out
+    assert "  Portes       sans-entete, avec-entete\n" in out
     assert "POST /v1/hooks/avec-entete → agent demo" in out
     assert "livraison sur X-Delivery-Id" in out
     # Le piège dit avant la panne : sans en-tête, une relivraison rouvre un run.

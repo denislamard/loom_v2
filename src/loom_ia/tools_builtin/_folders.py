@@ -36,8 +36,7 @@ from typing import Final, Literal
 from pydantic import JsonValue
 
 from loom_ia.core.ports import ToolError
-from loom_ia.tools_builtin import BuiltinContext, Protected
-from loom_ia.tools_builtin._rights import granted_line
+from loom_ia.tools_builtin import BuiltinContext, Grant, Place, Protected
 from loom_ia.tools_builtin.local_files_params import (
     DESTRUCTIVE,
     RIGHTS,
@@ -91,20 +90,29 @@ class Folders:
         # Du plus profond au moins profond : le premier qui contient un chemin le gouverne.
         self._deepest = sorted(folders, key=lambda f: len(f.root.parts), reverse=True)
 
-    def settings_lines(self) -> tuple[str, ...]:
-        """Pour ``loom validate`` : chaque dossier, puis une ligne par droit accordé.
+    def places(self) -> tuple[Place, ...]:
+        """Pour ``loom validate`` : chaque dossier et ses droits accordés.
 
         Un droit refusé n'est pas listé. ``granted()``, que lit le modèle, reste à part.
         """
-        lines: list[str] = []
-        for folder in self.folders:
-            lines.append(f"{folder.name} → {folder.root}")
-            lines.extend(
-                "  " + granted_line(right, approval, destructive=right in DESTRUCTIVE)
-                for right in RIGHTS
-                if (approval := folder.rights.get(right)) is not None
+        return tuple(
+            Place(
+                name=folder.name,
+                path=folder.root,
+                rights=RIGHTS,
+                grants=(
+                    (
+                        "",
+                        tuple(
+                            Grant(right, approval == "always", right in DESTRUCTIVE)
+                            for right in RIGHTS
+                            if (approval := folder.rights.get(right)) is not None
+                        ),
+                    ),
+                ),
             )
-        return tuple(lines)
+            for folder in self.folders
+        )
 
     def described(self) -> list[str]:
         """Une ligne par dossier, pour la description que lit le modèle : jamais le chemin."""

@@ -31,7 +31,7 @@ from loom_ia.core.model import DEFAULT_TENANT, RunId, RunStatus, SessionId
 from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.engine import begin_run, drive
 from loom_ia.runtime import build_agent
-from loom_ia.tools_builtin import BuiltinContext, Protected
+from loom_ia.tools_builtin import BuiltinContext, Grant, Protected
 from loom_ia.tools_builtin.sql import SqlTool, build
 from loom_ia.tools_builtin.sql.analysis import FORBIDDEN, Catalog, analyze
 from loom_ia.tools_builtin.sql.sqlite import (  # pyright: ignore[reportPrivateUsage]
@@ -328,10 +328,9 @@ def test_the_sqlite_file_must_exist(tmp_path: Path) -> None:
 
 def test_a_relative_path_is_from_the_config(tmp_path: Path, base: Path) -> None:
     tool = make(tmp_path, database(sqlite={"path": base.name}))
-    assert tool.settings_lines()[:2] == (
-        f"crm → sqlite, {base}",
-        "  devis.select : accordé, sans approbation",
-    )
+    place = tool.settings().places[0]
+    assert (place.name, place.kind, place.path) == ("crm", "sqlite", base)
+    assert place.grants[0] == ("devis", (Grant("select", False),))
 
 
 def test_loom_own_files_are_refused(tmp_path: Path, base: Path) -> None:
@@ -361,9 +360,11 @@ def test_the_dsn_comes_from_the_secrets_and_is_never_shown() -> None:
     with pytest.raises(ValueError, match="la variable CRM_DSN \\(dsn_env\\) est absente ou vide"):
         build(model, BuiltinContext(secrets={}))
     tool = build(model, BuiltinContext(secrets={"CRM_DSN": secret}))
-    shown = "\n".join([tool.spec.description, *tool.settings_lines()])
-    assert "motdepasse" not in shown
-    assert "pg → postgres, CRM_DSN, schéma public\n  devis.select : accordé" in shown
+    settings = tool.settings()
+    assert "motdepasse" not in tool.spec.description + repr(settings)
+    place = settings.places[0]
+    assert (place.name, place.kind, place.path) == ("pg", "postgres", None)
+    assert place.notes == ("DSN dans CRM_DSN", "schéma public")
 
 
 def test_the_storage_dsn_is_refused() -> None:
@@ -405,18 +406,18 @@ def test_description_and_settings(tool: SqlTool) -> None:
     assert "paramètres $1, $2…" in description
     assert "en heure de Europe/Paris" in description
     assert "title" not in str(tool.spec.input_schema)
-    assert tool.settings_lines()[1:] == (
-        "  devis.select : accordé, sans approbation",
-        "  devis.insert : accordé, sans approbation",
-        "  devis.update : accordé, avec approbation",
-        "  clients.select : accordé, sans approbation",
-        "  relances.select : accordé, sans approbation",
-        "  relances.insert : accordé, sans approbation",
-        "  relances.delete : accordé, sans approbation (destructif)",
-        "  v_devis.select : accordé, sans approbation",
-        "crm : 200 lignes lues, 100 modifiées au plus ; 10 s par instruction",
-        "fuseau : Europe/Paris",
-    )
+    settings = tool.settings()
+    (place,) = settings.places
+    assert [(table, [(g.right, g.approval) for g in grants]) for table, grants in place.grants] == [
+        ("devis", [("select", False), ("insert", False), ("update", True)]),
+        ("clients", [("select", False)]),
+        ("relances", [("select", False), ("insert", False), ("delete", False)]),
+        ("v_devis", [("select", False)]),
+    ]
+    # Un droit destructif sans approbation se voit.
+    assert [g.right for _, grants in place.grants for g in grants if g.unguarded] == ["delete"]
+    assert place.limits == ("≤ 200 lignes lues · ≤ 100 modifiées · 10 s/instruction",)
+    assert settings.options == (("fuseau", "Europe/Paris"),)
 
 
 # --- Analyse --------------------------------------------------------------------------
@@ -1099,19 +1100,19 @@ def test_validate_shows_the_databases(
     path = demo(agents=[sql_agent(databases=[crm(base)])], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "Fournis    : loom.sql\n" in out
+    assert "  Fournis      loom.sql\n" in out
     assert (
-        f"    outil sql : crm → sqlite, {base}\n"
-        "    outil sql :   clients.select : accordé, sans approbation\n"
-        "    outil sql :   devis.select : accordé, sans approbation\n"
-        "    outil sql :   devis.insert : accordé, sans approbation\n"
-        "    outil sql :   devis.update : accordé, avec approbation\n"
-        "    outil sql :   relances.select : accordé, sans approbation\n"
-        "    outil sql :   relances.insert : accordé, sans approbation\n"
-        "    outil sql :   relances.delete : accordé, sans approbation (destructif)\n"
+        f"  └ sql          crm → sqlite ./{base.name}\n"
+        "                 ≤ 200 lignes lues · ≤ 100 modifiées · 10 s/instruction\n"
+        "                           select  insert  update  delete\n"
+        "                 clients   ✓\n"
+        "                 devis     ✓       ✓       ✓*\n"
+        "                 relances  ✓       ✓               ✓!\n"
+        "                 v_devis   ✓\n"
+        "                 fuseau : Europe/Paris\n"
     ) in out
-    assert "    outil sql : crm : 200 lignes lues, 100 modifiées au plus" in out
-    assert "    outil sql : fuseau : Europe/Paris\n" in out
+    assert "\n  * = approbation requise · ! = destructif, sans approbation\n" in out
+    assert "⚠ Agent demo   sql crm.relances : delete sans approbation (destructif)" in out
 
 
 def test_schema_is_built_from_catalog_rows_when_the_base_keeps_no_ddl() -> None:

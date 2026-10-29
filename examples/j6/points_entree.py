@@ -346,15 +346,19 @@ async def cas_source(args: argparse.Namespace, dossier: Path, controle: Controle
 
         titre("loom validate")
         code, sortie = valide(fichier, site)
-        montre(sortie, "Source", "Paquets", "relance", "source carnet", "Configuration")
+        montre(sortie, "Sources", "Paquets", "relance", "├ carnet", "└ carnet", "Configuration")
         print(
             "  la source, le paquet utilisé et l'outil préfixé sont nommés : "
             + controle.tient(
                 f"source : loom validate ne dit pas ce qui est annoncé (code {code})",
                 code == 0
-                and "Source     : carnet → point d'entrée carnet" in sortie
-                and "carnet (carnet-devis 0.1, utilisé)" in sortie
-                and f"source carnet : {OUTIL}" in sortie,
+                and "Sources      carnet → point d'entrée carnet" in sortie
+                and "carnet · carnet-devis 0.1 · utilisé" in sortie
+                # La branche de la source, dans l'arbre de l'agent : son nom, ses outils.
+                and any(
+                    ligne.lstrip("│├└ ").startswith("carnet ") and OUTIL in ligne
+                    for ligne in sortie.splitlines()
+                ),
             )
         )
 

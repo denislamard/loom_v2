@@ -900,8 +900,8 @@ tenants:
 </table></div>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E '^Clients|^  client'
-Clients    : default, martin-chauffage
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Clients|^  client'
+  Clients      default, martin-chauffage
   client default
   client martin-chauffage</code></pre>
 <p>Pour agir au nom d'un client, la CLI prend l'option <code>--tenant</code>. Sans elle, c'est <code>default</code>.</p>
@@ -1085,12 +1085,12 @@ def envoyer_email(destinataire: str, objet: str, corps: str, ctx: ToolContext) -
 </table></div>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E '^  client|    assistant :|    modèles'
+<pre><code><span class="p">$ </span>loom validate | grep -E '^  client|^    assistant|    modèles'
   client default
-    assistant : modèle SIMULE, 5 outil(s) Python, rôle rediger_relance (REDACTEUR), rôle decrire_photo (VISION), sous-agent traduire (traducteur)
+    assistant · SIMULE · 5 outils Python · sous-agent : traduire (traducteur) · rôles : rediger_relance (REDACTEUR), decrire_photo (VISION)
   client martin-chauffage
     modèles : SIMULE → SIMULE_MARTIN
-    assistant : modèle SIMULE (SIMULE_MARTIN pour ce client), 5 outil(s) Python, rôle rediger_relance (REDACTEUR), rôle decrire_photo (VISION), sous-agent traduire (traducteur)
+    assistant · SIMULE (SIMULE_MARTIN pour ce client) · 5 outils Python · sous-agent : traduire (traducteur) · rôles : rediger_relance (REDACTEUR), decrire_photo (VISION)
 <span class="p">$ </span>loom run assistant "Quel est le montant du devis M-2026-017 ?" --tenant martin-chauffage --session devis-martin
 Le devis M-2026-017 s'élève à 189 € TTC (171,82 € HT).
 
@@ -1170,14 +1170,13 @@ Run        : 01a16e86-8d97-74f2-b825-b42c174aba4b</code></pre>
 <p class="legende-aj"><span></span>lignes ajoutées</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | sed -n '/^  client martin/,/^    variables/p'
+<pre><code><span class="p">$ </span>loom validate | sed -n '/^  client martin/,/^    variables/p;/├ MCP  *aucun/p'
   client martin-chauffage
     agents : assistant
     modèles : SIMULE → SIMULE_MARTIN
     outils retirés : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article, traduire
     variables : entreprise, signature
-…
-    MCP : aucun
+    ├ MCP              aucun
 <span class="p">$ </span>loom run traducteur "Bonjour" --tenant martin-chauffage
 Agent 'traducteur' non ouvert au client 'martin-chauffage'</code></pre>
 <p>Pour voir les outils réellement proposés au modèle, lancez une question pour chaque client, puis lisez la liste <code>tools</code> de la première requête de chaque run :</p>
@@ -1240,7 +1239,8 @@ data/default/outils-dupont.jsonl
 <p>La clé de Martin irait dans le fichier <code>.env</code>, à côté de celle de Jean : <code>MARTIN_ANTHROPIC_KEY=…</code>. Pour l'essai, ne la mettez pas.</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E '    secrets|    modèles|Demande'
+<pre><code><span class="p">$ </span>loom validate 2&gt;&amp;1 | grep -E '    secrets|    modèles|✗|refusée'
+loom validate · loom.yaml                      ✗ montage interrompu · ⚠ 3 avertissements
     modèles : SIMULE → HAIKU
     secrets : ANTHROPIC_API_KEY → MARTIN_ANTHROPIC_KEY
 Demande refusée : Client 'martin-chauffage' : la variable MARTIN_ANTHROPIC_KEY (redirection de ANTHROPIC_API_KEY) est absente ou vide — modèle 'SIMULE' (claude-haiku-5-5 pour ce client)
@@ -1312,10 +1312,10 @@ security:
 </table></div>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E '^Clés|    app-'
-Clés d'API : app-martin, app-dupont, crm
-    app-martin : client martin-chauffage, portées run, read, read_content
-    app-dupont : client default, portées run, read, read_content, approve
+<pre><code><span class="p">$ </span>loom validate | grep -E '^  Clés|^ +app-'
+  Clés d'API   app-martin, app-dupont, crm
+               app-martin : client martin-chauffage, portées run, read, read_content
+               app-dupont : client default, portées run, read, read_content, approve
 <span class="p">$ </span>loom serve &amp;
 <span class="p">$ </span>curl -s -X POST http://127.0.0.1:8000/v1/agents/assistant/runs -H "Authorization: Bearer $CLE_MARTIN" -H 'Content-Type: application/json' -d '{"message":"Quel est le montant du devis M-2026-017 ?","session_id":"api-martin"}' | jq '{session_id, status, text}'
 {
@@ -1464,22 +1464,24 @@ Statut     : completed · itérations : 2 · tokens : 3846/105 · coût : 0.0131
 </table></div>
 <p>Sans les clés, loom prévient :</p>
 <pre><code><span class="p">$ </span>loom validate | grep Chiffrement
-Chiffrement: charges et fichiers scellés — secret 'JOURNAL_KEY' ferme
-    Chiffrement : Client 'default' : aucune clé de sceau — le secret 'JOURNAL_KEY' est absent ou vide. Son journal reste illisible et ses runs sont refusés : c'est l'effet voulu après un effacement de clé, et si la clé n'était pas censée disparaître, c'est elle qu'il faut remettre
-    Chiffrement : Client 'martin-chauffage' : aucune clé de sceau — le secret 'JOURNAL_KEY' est absent ou vide. Son journal reste illisible et ses runs sont refusés : c'est l'effet voulu après un effacement de clé, et si la clé n'était pas censée disparaître, c'est elle qu'il faut remettre</code></pre>
+  Chiffrement  charges et fichiers scellés — secret 'JOURNAL_KEY' ferme
+  ⚠ Chiffrement  Client 'default' : aucune clé de sceau — le secret 'JOURNAL_KEY' est absent ou vide. Son journal reste illisible et ses runs sont refusés : c'est l'effet voulu après un effacement de clé, et si la clé n'était pas censée disparaître, c'est elle qu'il faut remettre
+  ⚠ Chiffrement  Client 'martin-chauffage' : aucune clé de sceau — le secret 'JOURNAL_KEY' est absent ou vide. Son journal reste illisible et ses runs sont refusés : c'est l'effet voulu après un effacement de clé, et si la clé n'était pas censée disparaître, c'est elle qu'il faut remettre</code></pre>
 <p>Une clé est faite de 32 octets tirés au hasard, écrits en base64. Fabriquez les vôtres, directement dans le fichier <code>.env</code> (ne les recopiez jamais ailleurs, et ne réutilisez pas celles d'un exemple) :</p>
 <pre><code><span class="p">$ </span>echo "DUPONT_JOURNAL_KEY=$(openssl rand -base64 32)" &gt;&gt; .env
 <span class="p">$ </span>echo "MARTIN_JOURNAL_KEY=$(openssl rand -base64 32)" &gt;&gt; .env</code></pre>
 <p>Ces clés sont aussi précieuses que les données : perdues, le journal est perdu. En production, elles vivent dans un gestionnaire de secrets, sauvegardées à part du journal.</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E '^Env|^Chiffrement|    secrets|monté'
-Env        : /home/jean/plomberie-dupont/.env (par défaut) — lues : DUPONT_JOURNAL_KEY, MARTIN_JOURNAL_KEY
-Chiffrement: charges et fichiers scellés — secret 'JOURNAL_KEY' ferme
-MCP HTTP   : monté sous /mcp, origines : aucune déclarée
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Env|Chiffrement| : clé |secrets|monté'
+loom validate · loom.yaml                         ✓ 3 agents montés · ⚠ 2 avertissements
+  Env          ./.env (par défaut) — lues : DUPONT_JOURNAL_KEY, MARTIN_JOURNAL_KEY
+  Chiffrement  charges et fichiers scellés — secret 'JOURNAL_KEY' ferme
+               default : clé 508d87c5899b
+               martin-chauffage : clé 239b40c3cb7c
+  MCP HTTP     monté sous /mcp, origines : aucune déclarée
     secrets : JOURNAL_KEY → DUPONT_JOURNAL_KEY
     secrets : JOURNAL_KEY → MARTIN_JOURNAL_KEY
-3 agent(s) monté(s) sans erreur.
 <span class="p">$ </span>loom run assistant "Quel est le montant du devis M-2026-017 ?" --tenant martin-chauffage --session scelle-martin
 Le devis M-2026-017 s'élève à 189 € TTC (171,82 € HT).
 
@@ -1549,8 +1551,10 @@ tenants:
 <p class="legende-aj"><span></span>lignes modifiées ou ajoutées</p>
 <pre><code><span class="p">$ </span>echo "DUPONT_JOURNAL_KEY_2027=$(openssl rand -base64 32)" &gt;&gt; .env
 <span class="p">$ </span>echo "MARTIN_JOURNAL_KEY_2027=$(openssl rand -base64 32)" &gt;&gt; .env
-<span class="p">$ </span>loom validate | grep -E '^Chiffrement|    secrets'
-Chiffrement: charges et fichiers scellés — secret 'JOURNAL_KEY_2027' ferme, JOURNAL_KEY ouvre(nt) encore
+<span class="p">$ </span>loom validate | grep -E 'Chiffrement| : clé |secrets'
+  Chiffrement  charges et fichiers scellés — secret 'JOURNAL_KEY_2027' ferme, JOURNAL_KEY ouvre(nt) encore
+               default : clé 2a96cd0dfc27, 508d87c5899b
+               martin-chauffage : clé c422a39df452, 239b40c3cb7c
     secrets : JOURNAL_KEY → DUPONT_JOURNAL_KEY, JOURNAL_KEY_2027 → DUPONT_JOURNAL_KEY_2027
     secrets : JOURNAL_KEY → MARTIN_JOURNAL_KEY, JOURNAL_KEY_2027 → MARTIN_JOURNAL_KEY_2027
 <span class="p">$ </span>loom run assistant "Quel est le montant du devis M-2026-017 ?" --tenant martin-chauffage --session scelle-martin-2027
@@ -1574,10 +1578,11 @@ Session    : scelle-martin · 17 événements · 2026-10-24 17:29</code></pre>
 Session scelle-martin supprimée : 17 événement(s), 0 fichier(s), 0 clé(s).
 Session scelle-martin-2027 supprimée : 17 événement(s), 0 fichier(s), 0 clé(s).
 Session scelle-dupont supprimée : 17 événement(s), 0 fichier(s), 0 clé(s).
-<span class="p">$ </span>loom validate | grep -E '^Chiffrement|monté'
-Chiffrement: aucun (contenus en clair au repos)
-MCP HTTP   : monté sous /mcp, origines : aucune déclarée
-3 agent(s) monté(s) sans erreur.</code></pre>
+<span class="p">$ </span>loom validate | grep -E 'Chiffrement|monté'
+loom validate · loom.yaml                         ✓ 3 agents montés · ⚠ 3 avertissements
+  Chiffrement  aucun
+  MCP HTTP     monté sous /mcp, origines : aucune déclarée
+  ⚠ Chiffrement  aucun : contenus en clair au repos</code></pre>
 <p>En production, gardez le chiffrement : il ne coûte presque rien et change tout le jour d'une fuite.</p>
 </section>
 
@@ -1625,7 +1630,7 @@ MCP HTTP   : monté sous /mcp, origines : aucune déclarée
 
 <h4>Exécution</h4>
 <pre><code><span class="p">$ </span>loom validate | grep Rétention
-Rétention  : sessions effacées après 365 jour(s) ; martin-chauffage: aucune — par « loom retention », que la plateforme met à l'heure
+  Rétention    sessions effacées après 365 jour(s) ; martin-chauffage: aucune — par « loom retention », que la plateforme met à l'heure
 <span class="p">$ </span>loom retention
 default : 365 jour(s)
 martin-chauffage : aucune règle
@@ -1731,12 +1736,12 @@ GRANT ROLE</code></pre>
 <tr><td><code>grant loom_app to loom_service</code></td><td>L'utilisateur de connexion peut prendre ce rôle de travail.</td></tr>
 </tbody>
 </table></div>
-<pre><code><span class="p">$ </span>loom validate | grep -E '^Env|^Journal|^Artefacts|monté'
-Env        : /home/jean/plomberie-dupont/.env (par défaut) — lues : LOOM_DSN
-Journal    : postgres (DSN dans LOOM_DSN : renseignée, rôle : loom_app)
-Artefacts  : local (/home/jean/plomberie-dupont/data/fichiers)
-MCP HTTP   : monté sous /mcp, origines : aucune déclarée
-3 agent(s) monté(s) sans erreur.
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Env|Journal|Artefacts|monté'
+loom validate · loom.yaml                         ✓ 3 agents montés · ⚠ 2 avertissements
+  Env          ./.env (par défaut) — lues : LOOM_DSN
+  Journal      postgres (DSN dans LOOM_DSN : renseignée, rôle : loom_app)
+  Artefacts    local     ./data/fichiers
+  MCP HTTP     monté sous /mcp, origines : aucune déclarée
 <span class="p">$ </span>loom run assistant "Quel est le montant du devis D-2026-042 ?" --session pg-dupont
 Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).
 
@@ -1813,10 +1818,10 @@ ERROR:  permission denied for table loom_events
 
 <h4>À retenir</h4>
 <p>La table d'idempotence n'a pas de politique de lignes : ses clés sont préfixées par le client. Et pour une séparation complète, un client peut avoir sa propre base (<code>storage</code> dans son bloc, exercice 12.3). Pour la suite de la formation, revenez au journal JSONL : remettez <code>events: {backend: jsonl, path: data}</code>, retirez la ligne <code>artifacts</code>, le fichier <code>.env</code> et <code>loom.sql</code>.</p>
-<pre><code><span class="p">$ </span>loom validate | grep -E '^Journal|monté'
-Journal    : jsonl (/home/jean/plomberie-dupont/data)
-MCP HTTP   : monté sous /mcp, origines : aucune déclarée
-3 agent(s) monté(s) sans erreur.</code></pre>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'Journal|monté'
+loom validate · loom.yaml                         ✓ 3 agents montés · ⚠ 2 avertissements
+  Journal      jsonl     ./data
+  MCP HTTP     monté sous /mcp, origines : aucune déclarée</code></pre>
 </section>
 
 <h2 id="bilan">Bilan du module</h2>

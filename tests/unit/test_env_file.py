@@ -197,8 +197,8 @@ def test_the_file_comes_before_the_config_and_its_profile(
     write(config.parent / ".env", f"LOOM_PROFILE=dev\nLOOM_ESSAI_CLE={SECRET}\n")
     assert main(["--config", str(config), "validate"]) == 0
     seen = capsys.readouterr()
-    assert f"Profil     : dev (par {PROFILE_ENV})" in seen.out
-    assert "(par défaut) — lues : LOOM_PROFILE, LOOM_ESSAI_CLE" in seen.out
+    assert f"  Profil       dev (par {PROFILE_ENV})" in seen.out
+    assert "  Env          ./.env (par défaut) — lues : LOOM_PROFILE, LOOM_ESSAI_CLE" in seen.out
     assert os.environ["LOOM_ESSAI_CLE"] == SECRET
     assert SECRET not in seen.out + seen.err
 
@@ -217,7 +217,7 @@ def test_a_key_from_the_file_mounts_a_real_model(
     assert "LOOM_ESSAI_CLE est absente ou vide" in capsys.readouterr().err
     assert main(["--config", str(config), "validate"]) == 0
     seen = capsys.readouterr()
-    assert "1 agent(s) monté(s) sans erreur." in seen.out
+    assert "✓ 1 agent monté" in seen.out
     assert SECRET not in seen.out + seen.err
 
 
@@ -225,7 +225,7 @@ def test_no_env_file_reads_nothing(demo: ConfigFactory, capsys: pytest.CaptureFi
     config = demo()
     write(config.parent / ".env", "LOOM_ESSAI_A=1\n")
     assert main(["--config", str(config), "--no-env-file", "validate"]) == 0
-    assert "Env        : non lu (--no-env-file)" in capsys.readouterr().out
+    assert "  Env          non lu (--no-env-file)" in capsys.readouterr().out
     assert "LOOM_ESSAI_A" not in os.environ
 
 
@@ -236,7 +236,8 @@ def test_the_env_file_option_replaces_the_default(
     write(config.parent / ".env", "LOOM_ESSAI_VOISIN=1\n")
     autre = write(tmp_path / "secrets" / "autre.env", "LOOM_ESSAI_AUTRE=1\n")
     assert main(["--config", str(config), "--env-file", str(autre), "validate"]) == 0
-    assert f"Env        : {autre.resolve()} (par option)" in capsys.readouterr().out
+    # Sous le dossier de la config : le chemin s'écrit relatif à lui.
+    assert "  Env          ./secrets/autre.env (par option)" in capsys.readouterr().out
     assert "LOOM_ESSAI_AUTRE" in os.environ
     assert "LOOM_ESSAI_VOISIN" not in os.environ
 

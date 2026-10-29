@@ -16,7 +16,7 @@ $ uv add "loom-ia[sqlite,mcp]"
 
 Chaque exemple vit dans son propre sous-dossier de `mon-agent/` (`ch07a`, `ch07b`, `ch08`, …) : ainsi un exemple ne pollue pas le suivant. Le dossier contient son propre `loom.yaml`, et toutes les commandes se lancent depuis ce dossier avec `uv run loom …`. Les chemins écrits dans un `loom.yaml` (`agents_dir`, `imports`, `storage`, `args` d'un serveur MCP) sont relatifs à ce fichier.
 
-Les sorties reproduites sont des sorties réelles. Seules deux choses ont été retouchées : les chemins absolus sont remplacés par `/chemin/vers/mon-agent`, et les identifiants de run sont ceux que l'on fixe avec `--run-id` (la commande accepte n'importe quelle chaîne ; sans cette option, loom en génère un). Les lignes techniques sans intérêt (`Paquets`, `Journal`, `Artefacts`, …) d'un `loom validate` sont abrégées en `…`.
+Les sorties reproduites sont des sorties réelles. Seules deux choses ont été retouchées : les chemins absolus sont remplacés par `/chemin/vers/mon-agent`, et les identifiants de run sont ceux que l'on fixe avec `--run-id` (la commande accepte n'importe quelle chaîne ; sans cette option, loom en génère un). Les sections sans intérêt pour l'exemple (`EXTENSIONS`, `EXÉCUTION`, `AVERTISSEMENTS`, …) d'un `loom validate` sont abrégées en `…`.
 
 ### Lire un script du modèle simulé
 
@@ -614,19 +614,23 @@ tenants:
 
 ```console
 $ uv run loom validate
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Modèles    : SIMULE
-Agents     : devis
-Outils     : prix_ttc
-…
-Clients    : default
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+Racine : /chemin/vers/mon-agent/ch08
 
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      SIMULE
+  Clients      default
+…
+CLIENTS
   client default
     variables : entreprise, signature
-    devis : modèle SIMULE, 1 outil(s) Python
 
-1 agent(s) monté(s) sans erreur.
+    devis · SIMULE · 1 outil Python
+    └ prix_ttc
+…
 $ uv run python systeme.py
 Tu es l'assistant de la Plomberie Dupont. Tu réponds en français, en une ou deux phrases.
 
@@ -700,50 +704,62 @@ Profil par défaut du fichier (`dev`) : la configuration est acceptée, avec un 
 
 ```console
 $ uv run loom validate
-Config     : loom.yaml
-Profil     : dev (par config) — assoupli ; surcharges : prod
-Modèles    : SIMULE
-Agents     : devis
-Outils     : prix_ttc
-…
-Clients    : default
+2026-10-10 17:39:08 WARNING  loom_ia.runtime.wiring — Agent 'devis' : budget en dollars, mais sans tarif pour SIMULE : leurs appels comptent 0 $
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+Racine : /chemin/vers/mon-agent/ch08
 
+CONFIGURATION
+  Profil       dev (par config) — assoupli
+  Surcharges   prod
+  Env          aucun (./.env)
+  Modèles      SIMULE
+  Clients      default
+…
+CLIENTS
   client default
     variables : entreprise, signature
-    devis : modèle SIMULE, 1 outil(s) Python
-      politique loom.budget : before_model
-      budget : run max_cost 0.05 ; stop
 
-1 agent(s) monté(s) sans erreur.
-2026-10-10 17:39:08 WARNING  loom_ia.runtime.wiring — Agent 'devis' : budget en dollars, mais sans tarif pour SIMULE : leurs appels comptent 0 $
+    devis · SIMULE · 1 outil Python
+    ├ politiques   loom.budget : before_model
+    ├ prix_ttc
+    └ budget       run max_cost 0.05 ; stop
+…
 ```
 
 En `prod`, ce même avertissement devient une erreur. Trois façons de choisir le profil, par ordre de priorité décroissante : l'option `--profile`, la variable d'environnement `LOOM_PROFILE`, la clé `profile:` du fichier.
 
 ```console
 $ uv run loom --profile prod validate
-Config     : loom.yaml
-Profil     : prod (par option) — les avertissements sont des erreurs ; surcharges : prod
-Modèles    : SIMULE
-Agents     : devis
-Outils     : prix_ttc
-…
-Clients    : default
+loom validate · loom.yaml                      ✗ montage interrompu · ⚠ 4 avertissements
+Racine : /chemin/vers/mon-agent/ch08
 
+CONFIGURATION
+  Profil       prod (par option) — les avertissements sont des erreurs
+  Surcharges   prod
+  Env          aucun (./.env)
+  Modèles      SIMULE
+  Clients      default
+…
+CLIENTS
   client default
     variables : entreprise, signature
+…
 Configuration : Profil prod : Agent 'devis' : budget en dollars, mais sans tarif pour SIMULE : leurs appels comptent 0 $
 $ LOOM_PROFILE=prod uv run loom validate
-Config     : loom.yaml
-Profil     : prod (par LOOM_PROFILE) — les avertissements sont des erreurs ; surcharges : prod
-Modèles    : SIMULE
-Agents     : devis
-Outils     : prix_ttc
-…
-Clients    : default
+loom validate · loom.yaml                      ✗ montage interrompu · ⚠ 4 avertissements
+Racine : /chemin/vers/mon-agent/ch08
 
+CONFIGURATION
+  Profil       prod (par LOOM_PROFILE) — les avertissements sont des erreurs
+  Surcharges   prod
+  Env          aucun (./.env)
+  Modèles      SIMULE
+  Clients      default
+…
+CLIENTS
   client default
     variables : entreprise, signature
+…
 Configuration : Profil prod : Agent 'devis' : budget en dollars, mais sans tarif pour SIMULE : leurs appels comptent 0 $
 ```
 
@@ -751,22 +767,26 @@ L'option l'emporte sur la variable :
 
 ```console
 $ LOOM_PROFILE=prod uv run loom --profile dev validate
-Config     : loom.yaml
-Profil     : dev (par option) — assoupli ; surcharges : prod
-Modèles    : SIMULE
-Agents     : devis
-Outils     : prix_ttc
-…
-Clients    : default
+2026-10-10 17:39:10 WARNING  loom_ia.runtime.wiring — Agent 'devis' : budget en dollars, mais sans tarif pour SIMULE : leurs appels comptent 0 $
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+Racine : /chemin/vers/mon-agent/ch08
 
+CONFIGURATION
+  Profil       dev (par option) — assoupli
+  Surcharges   prod
+  Env          aucun (./.env)
+  Modèles      SIMULE
+  Clients      default
+…
+CLIENTS
   client default
     variables : entreprise, signature
-    devis : modèle SIMULE, 1 outil(s) Python
-      politique loom.budget : before_model
-      budget : run max_cost 0.05 ; stop
 
-1 agent(s) monté(s) sans erreur.
-2026-10-10 17:39:10 WARNING  loom_ia.runtime.wiring — Agent 'devis' : budget en dollars, mais sans tarif pour SIMULE : leurs appels comptent 0 $
+    devis · SIMULE · 1 outil Python
+    ├ politiques   loom.budget : before_model
+    ├ prix_ttc
+    └ budget       run max_cost 0.05 ; stop
+…
 ```
 
 Pour corriger, on déclare un tarif pour le modèle dans le profil `prod`. Une liste (`models`) est **remplacée** en entier par la surcharge, d'où la redéfinition complète du modèle. Quatrième version de `ch08/loom.yaml` :
@@ -814,21 +834,25 @@ profiles:
 
 ```console
 $ uv run loom --profile prod validate
-Config     : loom.yaml
-Profil     : prod (par option) — les avertissements sont des erreurs ; surcharges : prod
-Modèles    : SIMULE
-Agents     : devis
-Outils     : prix_ttc
-…
-Clients    : default
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+Racine : /chemin/vers/mon-agent/ch08
 
+CONFIGURATION
+  Profil       prod (par option) — les avertissements sont des erreurs
+  Surcharges   prod
+  Env          aucun (./.env)
+  Modèles      SIMULE
+  Clients      default
+…
+CLIENTS
   client default
     variables : entreprise, signature
-    devis : modèle SIMULE, 1 outil(s) Python
-      politique loom.budget : before_model
-      budget : run max_cost 0.05 ; stop
 
-1 agent(s) monté(s) sans erreur.
+    devis · SIMULE · 1 outil Python
+    ├ politiques   loom.budget : before_model
+    ├ prix_ttc
+    └ budget       run max_cost 0.05 ; stop
+…
 ```
 
 Un run en `prod` applique les surcharges : le niveau de logs passe à `INFO` (on voit les lignes de journal) et la capture des échanges est coupée.
@@ -964,15 +988,19 @@ storage:
 
 ```console
 $ uv run loom validate
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Modèles    : SIMULE
-Agents     : relance
-Outils     : envoyer_email
-…
-  relance : modèle SIMULE, 1 outil(s) Python
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+Racine : /chemin/vers/mon-agent/ch09
 
-1 agent(s) monté(s) sans erreur.
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      SIMULE
+…
+AGENTS
+  relance · SIMULE · 1 outil Python
+  └ envoyer_email
+…
 ```
 
 Le journal est durable (`jsonl`), condition nécessaire pour une pause (voir plus bas). Lançons la relance :
@@ -1097,19 +1125,17 @@ Le modèle lit qui a refusé et pourquoi, et qu'il s'agit d'une décision, pas d
 
 ```console
 $ sed 's#events: {backend: jsonl, path: data}#events: {backend: memory}#' loom.yaml > loom.memoire.yaml
-$ uv run loom --config loom.memoire.yaml validate | tail -3
-Configuration : Agent 'relance' : outil 'envoyer_email' en approval: always — une approbation exige un journal durable (jsonl ou sqlite ou postgres), pas 'memory' (#28)
-…
+$ uv run loom --config loom.memoire.yaml validate 2>&1 | sed -n '1p;$p'
+loom validate · loom.memoire.yaml              ✗ montage interrompu · ⚠ 4 avertissements
+Configuration : Agent 'relance' (client 'default') : outil 'envoyer_email' en approval: always — une approbation exige un journal durable (jsonl ou sqlite ou postgres), pas 'memory' (#28)
 ```
 
 En profil `dev`, ce même problème n'est qu'un avertissement (le seul point que `dev` assouplit) :
 
 ```console
-$ uv run loom --config loom.memoire.yaml --profile dev validate | tail -3
-2026-10-10 17:41:19 WARNING  loom_ia.runtime.wiring — Agent 'relance' : outil 'envoyer_email' en approval: always — une approbation exige un journal durable (jsonl ou sqlite ou postgres), pas 'memory' (#28)
-  relance : modèle SIMULE, 1 outil(s) Python
-
-1 agent(s) monté(s) sans erreur.
+$ uv run loom --config loom.memoire.yaml --profile dev validate | head -1
+2026-10-10 17:41:19 WARNING  loom_ia.runtime.wiring — Agent 'relance' (client 'default') : outil 'envoyer_email' en approval: always — une approbation exige un journal durable (jsonl ou sqlite ou postgres), pas 'memory' (#28)
+loom validate · loom.memoire.yaml                   ✓ 1 agent monté · ⚠ 4 avertissements
 ```
 
 #### À retenir
@@ -1550,14 +1576,19 @@ storage:
 #### Exécution
 
 ```console
-$ uv run loom validate | tail -6
-  consultation : modèle SIMULE_NUMERO, 1 outil(s) Python
-    politique numero_devis : before_tool
-  devis : modèle SIMULE, 1 outil(s) Python
-    politique taux_de_tva : before_tool
+$ uv run loom validate | sed '2,/^AGENTS/d;/^AVERTISSEMENTS/,$d'
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
+  consultation · SIMULE_NUMERO · 1 outil Python
+  ├ politiques      numero_devis : before_tool
+  └ chercher_devis
 
-2 agent(s) monté(s) sans erreur.
+  devis · SIMULE · 1 outil Python
+  ├ politiques   taux_de_tva : before_tool
+  └ prix_ttc
+
 ```
+
+(Le `sed` garde la première ligne, le verdict, et la section `AGENTS` sans son titre.)
 
 Le modèle se trompe de taux, la politique refuse, le modèle corrige :
 
@@ -2423,11 +2454,11 @@ asyncio.run(main(sys.argv[1]))
 #### Exécution
 
 ```console
-$ uv run loom validate | tail -5
-…
-  relance : modèle ORCHESTRATEUR, 1 outil(s) Python, rôle rediger_relance (REDACTEUR)
+$ uv run loom validate | sed '2,/^AGENTS/d;/^AVERTISSEMENTS/,$d'
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+  relance · ORCHESTRATEUR · 1 outil Python · rôle : rediger_relance (REDACTEUR)
+  └ chercher_devis
 
-1 agent(s) monté(s) sans erreur.
 $ uv run loom run relance "Relance Mme Martin pour le devis D-2026-042." --run-id rel-1
 Objet : Votre devis D-2026-042
 
@@ -3053,7 +3084,7 @@ asyncio.run(main())
 
 ```console
 $ uv run loom validate | grep accueil
-  accueil : modèle ORCH_PORTAIL, 1 outil(s) Python, rôle ecrire_accueil (REDACTEUR_PORTAIL)
+  accueil · ORCH_PORTAIL · 1 outil Python · rôle : ecrire_accueil (REDACTEUR_PORTAIL)
 $ uv run python portail.py
 completed - Bonjour Mme Martin, votre devis D-2026-042 (1 840 € TTC) est valable jusqu'au 31 octobre.
 completed - Je ne peux pas retrouver votre devis, car vous n'êtes pas identifié.
@@ -3326,16 +3357,20 @@ La sortie de `loom validate` ci-dessous liste aussi `gestion`, `gestion_nue` et 
 #### Exécution
 
 ```console
-$ uv run loom validate | sed -n '/^Agents/p;/^  /p'
-Agents     : devis_mcp, devis_requis, gestion, gestion_nue
-  devis_mcp : modèle SIMULE, 0 outil(s) Python
-    MCP : devis__chercher_devis, devis__lister_devis
-  devis_requis : modèle SIMULE, 0 outil(s) Python
-    MCP : devis__chercher_devis, devis__lister_devis
-  gestion : modèle SIMULE_GESTION, 0 outil(s) Python
-    MCP : d__chercher_devis, d__supprimer_devis
-  gestion_nue : modèle SIMULE_GESTION, 0 outil(s) Python
-    MCP : d__chercher_devis, d__supprimer_devis
+$ uv run loom validate | sed '2,/^AGENTS/d;/^AVERTISSEMENTS/,$d'
+loom validate · loom.yaml                         ✓ 4 agents montés · ⚠ 4 avertissements
+  devis_mcp · SIMULE · 0 outil Python
+  └ MCP          devis__chercher_devis, devis__lister_devis
+
+  devis_requis · SIMULE · 0 outil Python
+  └ MCP          devis__chercher_devis, devis__lister_devis
+
+  gestion · SIMULE_GESTION · 0 outil Python
+  └ MCP          d__chercher_devis, d__supprimer_devis
+
+  gestion_nue · SIMULE_GESTION · 0 outil Python
+  └ MCP          d__chercher_devis, d__supprimer_devis
+
 ```
 
 `loom validate` démarre les serveurs pour lister les outils effectivement offerts à chaque agent : `devis_mcp` n'a que `chercher_devis` et `lister_devis` (pas `supprimer_devis`). Consultation :
@@ -4080,9 +4115,9 @@ Deux autres exigences du profil `prod`. Il refuse un juge qui utilise **le même
 
 ```console
 $ sed -e 's/^name: relance$/name: relance_meme/' -e 's/model: JUGE/model: REDACTEUR/' agents/relance.yaml > agents/relance_meme.yaml
-$ uv run loom validate | grep -E "WARNING|monté"
+$ uv run loom validate | head -1
 2026-10-10 17:50:00 WARNING  loom_ia.runtime.wiring — Agent 'relance_meme', juge 'rediger_relance' : même modèle que la sortie qu'il évalue (REDACTEUR) : juge corrélé
-3 agent(s) monté(s) sans erreur.
+loom validate · loom.yaml                         ✓ 3 agents montés · ⚠ 4 avertissements
 $ uv run loom --profile prod validate | grep -E "Configuration|monté"
 Configuration : Profil prod : Agent 'relance_meme', juge 'rediger_relance' : même modèle que la sortie qu'il évalue (REDACTEUR) : juge corrélé
 ```

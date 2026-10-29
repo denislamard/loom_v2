@@ -810,13 +810,22 @@ __pycache__/
 <p class="legende-aj"><span></span>ligne ajoutée</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | tail -6
-      contrat (rôle rediger_relance) : schéma (requis : objet, corps), must_match D-\d{4}-\d{3}, max_chars 1200 ; réparations 1, échec → fail
-      juge rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s)
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
-    traducteur : modèle TRADUCTEUR, 0 outil(s) Python
+<pre><code><span class="p">$ </span>loom validate | sed -n '1p;/^    assistant/,/^$/p'
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
+    assistant · SIMULE · 5 outils Python · sous-agent : traduire (traducteur) · rôles : rediger_relance (REDACTEUR), decrire_photo (VISION)
+    ├ politiques       loom.contract : after_tool
+    │                  loom.judge.rediger_relance : after_tool
+    │                  taux_tva_valide : before_tool
+    ├ fetch_page
+    ├ prix_ttc
+    ├ chercher_devis
+    ├ etiquette_devis
+    ├ envoyer_email
+    ├ MCP              catalogue__rechercher_article, catalogue__prix_article,
+    │                  catalogue__stock_article
+    ├ contrats         rôle rediger_relance : schéma (requis : objet, corps), must_match D-\d{4}-\d{3}, max_chars 1200 ; réparations 1, échec → fail
+    └ juges            rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s)
 
-2 agent(s) monté(s) sans erreur.
 <span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session relance-martin
 
 Statut     : paused · itérations : 3 · tokens : 7500/484 · coût : 0.0000 $
@@ -1523,7 +1532,7 @@ Configuration : Agent 'assistant' : outil(s) 'envoyer_email' à clé métier —
 
 <h4>Exécution</h4>
 <pre><code><span class="p">$ </span>loom validate | grep Idempotence
-Idempotence: sqlite (/home/jean/plomberie-dupont/data/idempotence.db)
+  Idempotence  sqlite    ./data/idempotence.db
 <span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session cle-1
 <span class="p">$ </span>loom approve &lt;run&gt; --call fake_2_0 --session cle-1 --by jean
 Accordé : fake_2_0
@@ -2103,11 +2112,8 @@ def envoyer_email(destinataire: str, objet: str, corps: str) -&gt; str:
     message = {"a": destinataire, "objet": objet, "corps": corps}
     fichier.write_text(json.dumps(message, ensure_ascii=False, indent=2), encoding="utf-8")
     return f"E-mail envoyé à {destinataire} (objet : {objet})."</code></pre></figure>
-<pre><code><span class="p">$ </span>loom validate | tail -4
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
-    traducteur : modèle TRADUCTEUR, 0 outil(s) Python
-
-2 agent(s) monté(s) sans erreur.</code></pre>
+<pre><code><span class="p">$ </span>loom validate | head -1
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements</code></pre>
 <p>L'agent agit maintenant sur le monde. Au module 9, on le prépare aux mauvais jours : un fournisseur de modèle en panne, un modèle de secours, et une facture qu'on surveille.</p>
 
 <nav class="suite" aria-label="Pages voisines"><a class="avant" href="module-07.html"><small>Précédent</small>Module 7 : Fiabilité des sorties</a><a class="apres" href="module-09.html"><small>Suivant</small>Module 9 : Résilience et coûts</a></nav>

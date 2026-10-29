@@ -627,7 +627,7 @@ async def test_an_agent_may_only_read(disk: Path) -> None:
     """D-4 : un dossier read suffit ; l'outil le dit, et refuse d'écrire."""
     reader = make(disk, {"name": "donnees", "path": "donnees", "rights": ["read"]})
     assert "Aucun dossier n'a le droit write : l'outil ne fait que lire" in reader.spec.description
-    assert reader.settings_lines()[-1] == "lecture des classeurs : oui"
+    assert dict(reader.settings().options)["lecture des classeurs"] == "oui"
     sample(disk / "donnees" / "a.xlsx")
     found = await call(reader, action="read", path="donnees/a.xlsx")
     assert found["sheets"][0]["name"] == "Données"
@@ -637,7 +637,7 @@ async def test_an_agent_may_only_read(disk: Path) -> None:
 
 def test_a_writer_without_read_says_it_cannot_read(disk: Path) -> None:
     writer = make(disk, {"name": "sortie", "path": "sortie", "rights": ["write"]})
-    assert writer.settings_lines()[-1] == "lecture des classeurs : aucun dossier read"
+    assert dict(writer.settings().options)["lecture des classeurs"] == "aucun dossier read"
 
 
 @pytest.mark.parametrize(
@@ -679,7 +679,7 @@ async def test_reading_is_refused_with_unsafe_xml_parsers(
 
     assert re.search(said, reader_module.xml_safety() or "")
     tool = make(disk, {"name": "donnees", "path": "donnees", "rights": ["read", "write"]})
-    assert tool.settings_lines()[-1].startswith("lecture des classeurs : non (")
+    assert dict(tool.settings().options)["lecture des classeurs"].startswith("non (")
     assert "Lecture (action=read) : indisponible ici" in tool.spec.description
     sample(disk / "donnees" / "a.xlsx")
     with pytest.raises(ToolError, match="lecture des classeurs désactivée ici"):

@@ -196,11 +196,12 @@ uv run loom validate
 ```
 
 ```text
-Config     : loom.yaml
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
 …
-  relance : modèle SIMULE, 1 outil(s) Python, rôle rediger_relance (REDACTEUR)
-
-1 agent(s) monté(s) sans erreur.
+AGENTS
+  relance · SIMULE · 1 outil Python · rôle : rediger_relance (REDACTEUR)
+  └ chercher_devis
+…
 ```
 
 #### Exécution
@@ -743,9 +744,10 @@ tools:
 `main.context: [session_state]` est obligatoire : le modèle doit voir les clés qu'il écrit. `loom validate` montre la règle de chaque clé :
 
 ```text
-  clients : modèle FAKE_MAIN, 2 outil(s) Python
-    outil state : client : une ligne, colonnes id, code
-    outil state : selection : toutes les lignes, ids ← id ; libellé dans libelle ('label')
+  clients · FAKE_MAIN · 2 outils Python
+  ├ chercher_clients
+  └ state             client     une ligne, colonnes id, code
+                      selection  toutes les lignes, ids ← id ; libellé dans libelle ('label')
 ```
 
 #### Exécution

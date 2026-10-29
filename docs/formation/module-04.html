@@ -566,12 +566,11 @@ sessions:
 </tbody>
 </table></div>
 <p>loom monte pour cela un agent interne, <code>_compaction</code>, avec un prompt fourni (on peut le remplacer par <code>system_file</code>) :</p>
-<pre><code><span class="p">$ </span>loom validate | tail -5
-    assistant : modèle SIMULE, 4 outil(s) Python
-    _compaction : modèle RESUME, 0 outil(s) Python
-      politique loom.fidelity : on_output
-
-1 agent(s) monté(s) sans erreur.</code></pre>
+<pre><code><span class="p">$ </span>loom validate | grep -E 'monté|^    (assistant ·|interne :)'
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+    assistant · SIMULE · 4 outils Python
+    interne : _compaction · RESUME · loom.fidelity (on_output)</code></pre>
+<p>Il se montre sur une ligne à part, marquée <code>interne</code>, avec son modèle et sa politique : vous ne l'avez pas déclaré, et il ne compte pas dans les agents montés.</p>
 
 <h4>Exécution</h4>
 <p>La session <code>chantier-martin</code> dépasse déjà 300 tokens (485 selon le snapshot). Le run suivant déclenche donc un résumé :</p>
@@ -815,8 +814,8 @@ user : text
 <pre><code>storage:
 <span class="aj">  events: {backend: memory}</span></code></pre></figure>
 <pre><code><span class="p">$ </span>loom validate | grep -E 'Journal|Artefacts'
-Journal    : memory
-Artefacts  : memory
+  Journal      memory
+  Artefacts    memory
 <span class="p">$ </span>loom run assistant "Et quel était le montant ?" --session en-memoire
 Le devis D-2026-042 s'élève à 1 840 € TTC.
 
@@ -848,15 +847,15 @@ chantier-martin              59 événements   2026-10-24 15:07
 <tr><td><code>path: data/journal.db</code></td><td>Le fichier de la base, créé au premier run.</td></tr>
 </tbody>
 </table></div>
-<pre><code><span class="p">$ </span>loom validate | tail -1
+<pre><code><span class="p">$ </span>loom validate &gt; /dev/null
 Configuration : Journal 'sqlite' : le paquet 'aiosqlite' n'est pas installé (installer l'extra : loom-ia[sqlite])</code></pre>
-<p>SQLite demande un paquet en plus, l'extra <code>sqlite</code>. Comme au module 3, redonnez la liste complète des extras à <code>uv add</code>, pour ne perdre aucun de ceux déjà installés :</p>
+<p>(<code>&gt; /dev/null</code> écarte le rapport, qui s'arrête sur « ✗ montage interrompu », pour ne garder que l'erreur.) SQLite demande un paquet en plus, l'extra <code>sqlite</code>. Comme au module 3, redonnez la liste complète des extras à <code>uv add</code>, pour ne perdre aucun de ceux déjà installés :</p>
 <pre><code><span class="p">$ </span>uv add "loom-ia[anthropic,openai,sqlite]"
 …
  + aiosqlite==0.22.1
 <span class="p">$ </span>loom validate | grep -E 'Journal|Artefacts'
-Journal    : sqlite (/home/jean/plomberie-dupont/data/journal.db)
-Artefacts  : local (/home/jean/plomberie-dupont/data/.artifacts)
+  Journal      sqlite    ./data/journal.db
+  Artefacts    local     ./data/.artifacts
 <span class="p">$ </span>loom run assistant "Relance le devis D-2026-042" --session base-sqlite
 Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »
 
@@ -891,15 +890,15 @@ CREATE DATABASE</code></pre>
 </table></div>
 <figure class="code"><figcaption>.env</figcaption>
 <pre><code>LOOM_DSN=postgresql://loom_login:mot-de-passe@127.0.0.1:15432/loom</code></pre></figure>
-<pre><code><span class="p">$ </span>loom validate | tail -1
+<pre><code><span class="p">$ </span>loom validate &gt; /dev/null
 Configuration : Journal 'postgres' : le paquet 'asyncpg' n'est pas installé (installer l'extra : loom-ia[postgres])
 <span class="p">$ </span>uv add "loom-ia[anthropic,openai,sqlite,postgres]"
 …
 <span class="p">$ </span>loom validate | grep -E 'Env|Journal|Artefacts|monté'
-Env        : /home/jean/plomberie-dupont/.env (par défaut) — lues : LOOM_DSN
-Journal    : postgres (DSN dans LOOM_DSN : renseignée, rôle : loom_app)
-Artefacts  : local (/home/jean/plomberie-dupont/data/fichiers)
-1 agent(s) monté(s) sans erreur.
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+  Env          ./.env (par défaut) — lues : LOOM_DSN
+  Journal      postgres (DSN dans LOOM_DSN : renseignée, rôle : loom_app)
+  Artefacts    local     ./data/fichiers
 <span class="p">$ </span>loom run assistant "Relance le devis D-2026-042" --session base-postgres
 Voici une relance pour Mme Martin : « Bonjour Madame, nous revenons vers vous au sujet de notre devis D-2026-042 du 3 septembre 2026 pour le remplacement de votre chauffe-eau. Souhaitez-vous que nous planifiions l'intervention ? »
 

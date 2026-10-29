@@ -300,7 +300,7 @@ def test_validate_shows_the_queue_and_says_a_worker_is_needed(
     monkeypatch.setenv(VARIABLE, URL)
     assert main(["--config", str(demo(storage=RABBITMQ)), "validate"]) == 0
     out = capsys.readouterr().out
-    assert f"File       : rabbitmq (URL dans {VARIABLE} : renseignée)" in out
+    assert f"  File         rabbitmq (URL dans {VARIABLE} : renseignée)" in out
     assert "les tâches de fond attendent un worker : loom worker" in out
     # L'URL porte un mot de passe : elle n'est jamais imprimée.
     assert "secret" not in out

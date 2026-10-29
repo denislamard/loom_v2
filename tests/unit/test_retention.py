@@ -370,7 +370,9 @@ def test_validate_prints_the_active_rule(
 ) -> None:
     sans = demo(storage=journal(tmp_path))
     assert main(["--config", str(sans), "validate"]) == 0
-    assert "Rétention  : aucune (rien ne s'efface)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "  Rétention    aucune\n" in out
+    assert "Rétention    aucune : rien ne s'efface" in out
     avec = demo(
         storage={**journal(tmp_path), "retention": {"events_days": 30}},
         tenants=[{"id": str(MARTIN), "retention": {"events_days": 7}}, {"id": str(DUPONT)}],

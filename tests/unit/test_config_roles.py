@@ -190,7 +190,7 @@ def test_cli_shows_roles_and_the_terminal_output(
 ) -> None:
     path = str(write(tmp_path, agent()))
     assert main(["--config", path, "validate"]) == 0
-    assert "demo : modèle MAIN, 1 outil(s) Python, rôle rediger (ROLE)" in capsys.readouterr().out
+    assert "  demo · MAIN · 1 outil Python · rôle : rediger (ROLE)\n" in capsys.readouterr().out
 
     # En direct, la sortie du rôle terminal est diffusée par le rôle lui-même (#009).
     assert main(["--config", path, "run", "demo", "Combien ?", "--stream"]) == 0

@@ -413,9 +413,10 @@ def test_validate_says_whether_the_variable_is_filled(
     assert main(["--config", str(path), "validate"]) == 2
     absente = capsys.readouterr()
     assert (
-        f"Journal    : postgres (DSN dans {VARIABLE} : ABSENTE, rôle : {DEFAULT_ROLE})"
+        f"  Journal      postgres (DSN dans {VARIABLE} : ABSENTE, rôle : {DEFAULT_ROLE})"
         in absente.out
     )
+    assert f"variable {VARIABLE} absente" in absente.out
     assert f"la variable {VARIABLE!r} est vide ou absente" in absente.err
 
     # Renseignée, le montage va jusqu'au bout : rien ne se connecte avant la

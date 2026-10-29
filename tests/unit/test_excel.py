@@ -30,7 +30,7 @@ from loom_ia.core.model import DEFAULT_TENANT, RunId, RunStatus, SessionId
 from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.engine import begin_run, drive
 from loom_ia.runtime import build_agent
-from loom_ia.tools_builtin import BuiltinContext
+from loom_ia.tools_builtin import BuiltinContext, Grant
 from loom_ia.tools_builtin.excel import ExcelTool, build
 from loom_ia.tools_builtin.excel.arguments import Problems, SheetSpec
 from loom_ia.tools_builtin.excel.formulas import check_formula, quoted, sheet_name_problem
@@ -137,18 +137,22 @@ def test_the_spec_names_the_folders_and_the_vocabulary(tool: ExcelTool) -> None:
     assert "sheets" in str(spec.input_schema)
 
 
-def test_settings_lines_for_validate(tool: ExcelTool, disk: Path) -> None:
-    assert tool.settings_lines() == (
-        f"donnees → {disk / 'donnees'}",
-        "  read : accordé, sans approbation",
-        f"sortie → {disk / 'sortie'}",
-        "  write : accordé, sans approbation",
-        "  overwrite : accordé, avec approbation",
-        f"valide → {disk / 'valide'}",
-        "  write : accordé, avec approbation",
-        "fuseau : Europe/Paris",
-        "recalcul : non",
-        "lecture des classeurs : oui",
+def test_settings_for_validate(tool: ExcelTool, disk: Path) -> None:
+    settings = tool.settings()
+    assert [(place.name, place.path) for place in settings.places] == [
+        ("donnees", disk / "donnees"),
+        ("sortie", disk / "sortie"),
+        ("valide", disk / "valide"),
+    ]
+    assert [place.grants for place in settings.places] == [
+        (("", (Grant("read", False),)),),
+        (("", (Grant("write", False), Grant("overwrite", True, destructive=True))),),
+        (("", (Grant("write", True),)),),
+    ]
+    assert settings.options == (
+        ("fuseau", "Europe/Paris"),
+        ("recalcul", "non"),
+        ("lecture des classeurs", "oui"),
     )
 
 
@@ -545,7 +549,7 @@ async def test_the_timezone_is_a_parameter(disk: Path) -> None:
     # Sans fuseau, l'heure est prise telle quelle.
     assert str(cell(disk / "sortie/t.xlsx", "T", "A3").value) == "2026-10-25 09:00:00"
     assert "en heure de America/New_York" in tool.spec.description
-    assert tool.settings_lines()[-3] == "fuseau : America/New_York"
+    assert dict(tool.settings().options)["fuseau"] == "America/New_York"
 
 
 async def test_a_percent_given_as_a_whole_number_warns(tool: ExcelTool) -> None:
@@ -727,7 +731,7 @@ async def test_recalc_timeout_and_failure(disk: Path, monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(recalc_module.subprocess, "run", slow)
     await refused(tool, "Recalcul interrompu après 5 s", path="sortie/r.xlsx", sheets=[sheet])
-    assert tool.settings_lines()[-2] == f"recalcul : {fake} (au plus 5 s)"
+    assert dict(tool.settings().options)["recalcul"] == f"{fake} (au plus 5 s)"
 
 
 # --- Montage par la config, run, validate ----------------------------------------------
@@ -823,9 +827,11 @@ def test_validate_shows_the_folders_and_the_recalc(
     path = demo(agents=[excel_agent(folders=folders)], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "Fournis    : loom.excel\n" in out
+    assert "  Fournis      loom.excel\n" in out
     assert (
-        f"    outil excel : sortie → {(tmp_path / 'sortie').resolve()}\n"
-        "    outil excel :   write : accordé, avec approbation\n"
+        "  └ excel        sortie → ./sortie\n"
+        "                 write*\n"
+        "                 fuseau : Europe/Paris · recalcul : non · "
+        "lecture des classeurs : aucun dossier read\n"
     ) in out
-    assert "    outil excel : recalcul : non\n" in out
+    assert "\n  * = approbation requise\n" in out

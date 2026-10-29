@@ -15,7 +15,7 @@ from pydantic import BaseModel, JsonValue
 from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
 from loom_ia.tools import to_output
-from loom_ia.tools_builtin import BuiltinContext
+from loom_ia.tools_builtin import BuiltinContext, Settings
 from loom_ia.tools_builtin._folders import Folders, Located, mount, write_bytes
 from loom_ia.tools_builtin.excel.arguments import (
     MAX_COLUMNS,
@@ -79,21 +79,26 @@ class ExcelTool:
     def spec(self) -> ToolSpec:
         return self._spec
 
-    def settings_lines(self) -> tuple[str, ...]:
-        """Les dossiers, le fuseau, le recalcul, puis la lecture, pour ``loom validate``."""
-        recalc = (
-            f"recalcul : {self._recalc.soffice} (au plus {self._recalc.timeout:g} s)"
-            if self._recalc
-            else "recalcul : non"
-        )
+    def settings(self) -> Settings:
+        """Les dossiers, puis le fuseau, le recalcul et la lecture, pour ``loom validate``."""
+        recalc = "non"
+        if self._recalc:
+            recalc = f"{self._recalc.soffice} (au plus {self._recalc.timeout:g} s)"
         reading = (
-            f"lecture des classeurs : non ({self._unsafe})"
+            f"non ({self._unsafe})"
             if self._unsafe
-            else "lecture des classeurs : oui"
+            else "oui"
             if any("read" in folder.rights for folder in self._space.folders)
-            else "lecture des classeurs : aucun dossier read"
+            else "aucun dossier read"
         )
-        return (*self._space.settings_lines(), f"fuseau : {self._zone.key}", recalc, reading)
+        return Settings(
+            places=self._space.places(),
+            options=(
+                ("fuseau", self._zone.key),
+                ("recalcul", recalc),
+                ("lecture des classeurs", reading),
+            ),
+        )
 
     def assess_call(self, arguments: Mapping[str, JsonValue]) -> CallAssessment:
         """Approbation et effets de cet appel : les droits qu'il exerce, dossier par dossier."""

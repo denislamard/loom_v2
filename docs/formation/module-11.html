@@ -901,11 +901,17 @@ server:
 </tbody>
 </table></div>
 <pre><code><span class="p">$ </span>loom validate
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 3 avertissements
 …
-Portes     : devis-a-relancer
-    POST /v1/hooks/devis-a-relancer → agent assistant
-        session devis-{{ payload.numero }}, livraison sur X-Delivery-Id
-    crm : client default, portées run, agents assistant
+ACCÈS
+  Clés d'API   app-dupont, crm
+               app-dupont : client default, portées run, read, read_content, approve
+               crm : client default, portées run, agents assistant
+  MCP HTTP     monté sous /mcp, origines : aucune déclarée
+               ressources en lecture seule : loom://runs, loom://sessions, et 6 gabarits
+  Portes       devis-a-relancer
+               POST /v1/hooks/devis-a-relancer → agent assistant
+                 session devis-{{ payload.numero }}, livraison sur X-Delivery-Id
 …</code></pre>
 
 <h4>Exécution</h4>
@@ -1115,13 +1121,23 @@ Configuration : File 'rabbitmq' : la variable 'AMQP_URL' est vide ou absente —
 <figure class="code"><figcaption>.env</figcaption>
 <pre><code>AMQP_URL=amqp://guest:guest@127.0.0.1:5672/</code></pre></figure>
 <pre><code><span class="p">$ </span>loom validate
-Env        : /home/jean/plomberie-dupont/.env (par défaut) — lues : AMQP_URL
-Journal    : jsonl (/home/jean/plomberie-dupont/data)
-Artefacts  : local (/home/jean/plomberie-dupont/data/.artifacts)
-Idempotence: sqlite (/home/jean/plomberie-dupont/data/idempotence.db)
-File       : rabbitmq (URL dans AMQP_URL : renseignée)
-Bus        : memory (les nouvelles ne sortent pas de ce process)
-    Stockage : file servie par un courtier et artefacts 'local' (/home/jean/plomberie-dupont/data/.artifacts) — les process doivent partager ce dossier, sinon un run repris ailleurs ne retrouvera ni ses pièces jointes ni ses résultats déportés</code></pre>
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
+…
+  Env          ./.env (par défaut) — lues : AMQP_URL
+…
+EXÉCUTION
+  Journal      jsonl     ./data
+  Artefacts    local     ./data/.artifacts
+  Idempotence  sqlite    ./data/idempotence.db
+  File         rabbitmq (URL dans AMQP_URL : renseignée)
+               les tâches de fond attendent un worker : loom worker
+  Bus          memory
+…
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Stockage     file servie par un courtier et artefacts 'local' (/home/jean/plomberie-dupont/data/.artifacts) — les process doivent partager ce dossier, sinon un run repris ailleurs ne retrouvera ni ses pièces jointes ni ses résultats déportés</code></pre>
 <p><code>validate</code> ne se connecte à rien : il décrit l'architecture. Il prévient aussi que les fichiers (pièces jointes, résultats déportés, module 2) ne voyagent pas par la file : si les workers tournent sur d'autres machines, le dossier <code>data/.artifacts</code> doit leur être commun (un volume partagé). On lance un worker, qui mène deux tâches de front :</p>
 <pre><code><span class="p">$ </span>loom worker --jobs 2
 Config   : loom.yaml
@@ -1196,9 +1212,9 @@ id: 36
 <tr><td><code>redis://127.0.0.1:6379/0</code></td><td>L'adresse de Redis : la machine, le port, et le numéro de la base (0).</td></tr>
 </tbody>
 </table></div>
-<pre><code><span class="p">$ </span>loom validate | grep -E '^(Env|Bus)'
-Env        : /home/jean/plomberie-dupont/.env (par défaut) — lues : REDIS_URL
-Bus        : redis (REDIS_URL : renseignée)</code></pre>
+<pre><code><span class="p">$ </span>loom validate | grep -E '^  (Env|Bus) '
+  Env          ./.env (par défaut) — lues : REDIS_URL
+  Bus          redis (REDIS_URL : renseignée)</code></pre>
 <p>Relancez les deux serveurs. Chacun prévient que les fichiers doivent être partagés entre process, comme avec la file de l'exercice précédent :</p>
 <pre><code><span class="p">$ </span>loom serve
 Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
@@ -1255,9 +1271,9 @@ id: 50
 <p class="legende-aj"><span></span>ligne ajoutée</p>
 <figure class="code"><figcaption>.env</figcaption>
 <pre><code>LOOM_DSN=postgresql://loom_login:mot-de-passe@127.0.0.1:15432/loom</code></pre></figure>
-<pre><code><span class="p">$ </span>loom validate | grep -E '^(Env|Bus)'
-Env        : /home/jean/plomberie-dupont/.env (par défaut) — lues : LOOM_DSN
-Bus        : postgres (LOOM_DSN : renseignée)
+<pre><code><span class="p">$ </span>loom validate | grep -E '^  (Env|Bus) '
+  Env          ./.env (par défaut) — lues : LOOM_DSN
+  Bus          postgres (LOOM_DSN : renseignée)
 <span class="c">(le flux de B, même manœuvre dans la session bus-pg)</span>
 id: 36
 	event: run.claimed

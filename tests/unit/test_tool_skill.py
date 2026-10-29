@@ -415,8 +415,9 @@ def test_validate_shows_each_skill_and_its_size(
     assert main(["validate", "--config", str(path), "--no-env-file"]) == 0
     out = capsys.readouterr().out
     size = f"{len(SKILL)} caractères (environ {len(SKILL) // 4} tokens)"
-    assert f"outil local_files : skill, {size}" in out
-    assert "outil time__maintenant : skill, 15 caractères (environ 3 tokens)" in out
+    # Sous l'outil qui le porte, après ses réglages.
+    assert f"  │                   read, write\n  │                   skill, {size}\n" in out
+    assert "  ├ time__maintenant  skill, 15 caractères (environ 3 tokens)\n" in out
 
 
 def test_a_long_skill_warns_without_refusing_even_in_prod(

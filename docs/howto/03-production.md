@@ -230,26 +230,46 @@ uv run loom validate
 ```
 
 ```text
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Modèles    : PRINCIPAL, SECOURS, REDACTEUR
-Agents     : relance
-Outils     : chercher_devis, envoyer_email
-Paquets    : forge (loom-ia 2.0.0) (groupe loom_ia.tools)
-Journal    : jsonl (/chemin/vers/relance/data)
-Artefacts  : local (/chemin/vers/relance/data/.artifacts)
-Idempotence: journal
-File       : asyncio
-Bus        : memory (les nouvelles ne sortent pas de ce process)
-Chiffrement: aucun (contenus en clair au repos)
-Rétention  : aucune (rien ne s'efface)
-Clés d'API : aucune (API REST ouverte)
-  relance : modèle PRINCIPAL → SECOURS, 2 outil(s) Python, rôle rediger_relance (REDACTEUR)
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+Racine : /chemin/vers/relance
 
-1 agent(s) monté(s) sans erreur.
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      PRINCIPAL, SECOURS, REDACTEUR
+
+EXTENSIONS
+  Paquets      forge · loom-ia 2.0.15 · groupe loom_ia.tools
+  Outils       chercher_devis, envoyer_email
+
+EXÉCUTION
+  Journal      jsonl     ./data
+  Artefacts    local     ./data/.artifacts
+  Idempotence  journal
+  File         asyncio
+  Bus          memory
+  Chiffrement  aucun
+  Rétention    aucune
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+               pas d'échanges bruts · collecteur : aucun
+
+ACCÈS
+  Clés d'API   aucune
+
+AGENTS
+  relance · PRINCIPAL → SECOURS · 2 outils Python · rôle : rediger_relance (REDACTEUR)
+  ├ chercher_devis
+  └ envoyer_email
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
 ```
 
-La dernière ligne de détail montre la chaîne de secours : `PRINCIPAL → SECOURS`.
+L'en-tête de l'agent, dans la section `AGENTS`, montre la chaîne de secours : `PRINCIPAL → SECOURS`.
 
 ```bash
 uv run loom run relance "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial."
@@ -1151,15 +1171,18 @@ Le plafond de 0,004 $ est volontairement bas : les deux premiers appels de l'orc
 
 ```bash
 rm -rf data
-uv run loom validate | tail -5
+uv run loom validate | sed -n '/^AGENTS/,/^AVERTISSEMENTS/p'
 ```
 
 ```text
-  relance : modèle PRINCIPAL, 2 outil(s) Python, rôle rediger_relance (REDACTEUR)
-    politique loom.budget : before_model
-    budget : run max_cost 0.004 ; stop
+AGENTS
+  relance · PRINCIPAL · 2 outils Python · rôle : rediger_relance (REDACTEUR)
+  ├ politiques      loom.budget : before_model
+  ├ chercher_devis
+  ├ envoyer_email
+  └ budget          run max_cost 0.004 ; stop
 
-1 agent(s) monté(s) sans erreur.
+AVERTISSEMENTS
 ```
 
 Le budget est une politique fournie, `loom.budget`, branchée avant chaque appel de modèle de l'orchestrateur. Lancez le run :
@@ -1254,15 +1277,18 @@ budget:
 ```
 
 ```bash
-uv run loom validate | tail -5
+uv run loom validate | sed -n '/^AGENTS/,/^AVERTISSEMENTS/p'
 ```
 
 ```text
-  relance : modèle PRINCIPAL, 2 outil(s) Python, rôle rediger_relance (REDACTEUR)
-    politique loom.budget : before_model
-    budget : run max_cost 0.004, max_calls 10 ; stop
+AGENTS
+  relance · PRINCIPAL · 2 outils Python · rôle : rediger_relance (REDACTEUR)
+  ├ politiques      loom.budget : before_model
+  ├ chercher_devis
+  ├ envoyer_email
+  └ budget          run max_cost 0.004, max_calls 10 ; stop
 
-1 agent(s) monté(s) sans erreur.
+AVERTISSEMENTS
 ```
 
 Le budget effectif de l'agent est la fusion des deux : `max_cost 0.004` (celui de l'agent) et `max_calls 10` (celui de la racine), avec `stop` (celui de l'agent). Le run se comporte alors comme dans le premier essai de cet exemple : arrêt en `finalizing`.
@@ -1270,21 +1296,16 @@ Le budget effectif de l'agent est la fusion des deux : `max_cost 0.004` (celui d
 Enfin, le tarif manquant. Retirez `pricing` du modèle `REDACTEUR` et validez :
 
 ```bash
-uv run loom validate 2>&1 | tail -6
-uv run loom --profile prod validate 2>&1 | tail -1
+uv run loom validate 2>&1 >/dev/null
+uv run loom --profile prod validate 2>&1 >/dev/null
 ```
 
 ```text
 2026-10-10 17:30:11 WARNING  loom_ia.runtime.wiring — Agent 'relance' : budget en dollars, mais sans tarif pour REDACTEUR : leurs appels comptent 0 $
-  relance : modèle PRINCIPAL, 2 outil(s) Python, rôle rediger_relance (REDACTEUR)
-    politique loom.budget : before_model
-    budget : run max_cost 0.004, max_calls 10 ; stop
-
-1 agent(s) monté(s) sans erreur.
 Configuration : Profil prod : Agent 'relance' : budget en dollars, mais sans tarif pour REDACTEUR : leurs appels comptent 0 $
 ```
 
-Sans profil, un avertissement ; en `prod`, la configuration est refusée. (Remettez le `pricing` de `REDACTEUR` pour la suite.)
+(`2>&1 >/dev/null` ne garde que ce qui part sur la sortie d'erreur : le log et le refus, pas le rapport.) Sans profil, un avertissement, et la validation sort en 0 ; en `prod`, la configuration est refusée (code 2, et le rapport s'arrête sur « ✗ montage interrompu »). (Remettez le `pricing` de `REDACTEUR` pour la suite.)
 
 **À retenir.**
 
@@ -1595,21 +1616,26 @@ budgets:
 
 ```bash
 rm -rf data
-uv run loom validate | tail -8
+uv run loom validate | sed -n '/^AGENTS/,/^AVERTISSEMENTS/p'
 ```
 
 ```text
-  relance : modèle PRINCIPAL, 2 outil(s) Python, rôle rediger_relance (REDACTEUR), sous-agent verifier (verificateur)
-    politique loom.budget : before_model
-    budget : run max_cost 0.05 ; stop
-  verificateur : modèle VERIF, 1 outil(s) Python
-    politique loom.budget : before_model
-    budget : run max_cost 0.05 ; stop
+AGENTS
+  relance · PRINCIPAL · 2 outils Python · sous-agent : verifier (verificateur) · rôle : rediger_relance (REDACTEUR)
+  ├ politiques      loom.budget : before_model
+  ├ chercher_devis
+  ├ envoyer_email
+  └ budget          run max_cost 0.05 ; stop
 
-2 agent(s) monté(s) sans erreur.
+  verificateur · VERIF · 1 outil Python
+  ├ politiques      loom.budget : before_model
+  ├ chercher_devis
+  └ budget          run max_cost 0.05 ; stop
+
+AVERTISSEMENTS
 ```
 
-Les deux agents sont montés ; `verifier` apparaît dans les outils de `relance`.
+Les deux agents sont montés ; `verifier` apparaît dans l'en-tête de `relance`, comme sous-agent.
 
 ```bash
 uv run loom run relance "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial."
@@ -2683,11 +2709,11 @@ find data-fichiers fichiers-artefacts -type f
 ```
 
 ```text
-Journal    : jsonl (/chemin/vers/relance/data-fichiers)
-Artefacts  : local (/chemin/vers/relance/fichiers-artefacts)
+  Journal      jsonl     ./data-fichiers
+  Artefacts    local     ./fichiers-artefacts
 ```
 
-(`validate` affiche d'autres lignes avant et après celles-ci ; on ne garde que celles qui nous intéressent.) Puis, après `fichiers.py`, le résultat de `find` :
+(`validate` affiche d'autres lignes avant et après celles-ci ; on ne garde que celles qui nous intéressent. Les chemins sous le dossier de la configuration s'écrivent relatifs à lui.) Puis, après `fichiers.py`, le résultat de `find` :
 
 ```text
 data-fichiers/default/01a1267b-e09b-779e-8232-7a0692f860bf.jsonl
@@ -3199,10 +3225,10 @@ Dans `service.yaml`, importez le module (`imports: [outils, outils_service, rela
         - text: La relance du devis D-2026-042 a été traitée.
 ```
 
-**Exécution.** Sans magasin d'idempotence partagé, le chargement refuse :
+**Exécution.** Sans magasin d'idempotence partagé, le montage de l'agent est refusé (code 2 ; le rapport s'arrête sur « ✗ montage interrompu ») :
 
 ```bash
-uv run loom --config service.yaml validate 2>&1 | tail -1
+uv run loom --config service.yaml validate 2>&1 >/dev/null
 ```
 
 ```text
@@ -3647,7 +3673,7 @@ Quelques règles à connaître :
 - **Synchrone par défaut.** `POST …/runs` attend la fin du run et rend le résultat complet. Avec `"background": true`, il répond **tout de suite** `202 Accepted` avec l'identifiant du run, qui tourne en arrière-plan (c'est `Loom.submit()` du chapitre 19).
 - **Session nommée.** Quand on donne un `session_id`, les routes qui lisent un run (`GET /v1/runs/{id}`, `…/events`, `…/approve`) doivent le recevoir **aussi**, en paramètre de requête : `?session_id=…`. Sans lui, le run est introuvable.
 - **Publication.** Un agent déclare dans son YAML `expose: {rest: true, mcp: true}` (les deux par défaut). Mettre `rest: false` le retire de l'API.
-- **L'API est ouverte tant qu'aucune clé n'est déclarée.** `loom validate` le rappelle (« Clés d'API : aucune (API REST ouverte) »), et le profil `prod` en fait une erreur. Le chapitre 22 ajoute les clés. Dans ce chapitre, le serveur n'écoute que sur `127.0.0.1`.
+- **L'API est ouverte tant qu'aucune clé n'est déclarée.** `loom validate` le rappelle (dans ses avertissements : « Clés d'API   aucune : API REST ouverte »), et le profil `prod` en fait une erreur. Le chapitre 22 ajoute les clés. Dans ce chapitre, le serveur n'écoute que sur `127.0.0.1`.
 
 ### Exemple 20.1 : lancer le serveur et interroger un agent par `curl`
 
@@ -4876,32 +4902,45 @@ storage:
 
 ```bash
 rm -rf data-clients
-uv run loom --config clients.yaml validate | sed -n '/client dupont/,$p'
+uv run loom --config clients.yaml validate | sed -n '/^CLIENTS/,/^AVERTISSEMENTS/p'
 ```
 
 ```text
+CLIENTS
   client dupont-plomberie
     variables : entreprise, signature
-    devis : modèle DEVIS, 1 outil(s) Python
-    relance : modèle PRINCIPAL, 2 outil(s) Python
+
+    devis · DEVIS · 1 outil Python
+    └ chercher_devis
+
+    relance · PRINCIPAL · 2 outils Python
+    ├ chercher_devis
+    └ envoyer_email
 
   client martin-chauffage
     modèles : PRINCIPAL → ECONOMIQUE
     approbations : chercher_devis : always
     variables : entreprise, signature
     stockage : jsonl (/chemin/vers/relance/data-clients/martin)
-    devis : modèle DEVIS, 1 outil(s) Python
-    relance : modèle PRINCIPAL, 2 outil(s) Python
+
+    devis · DEVIS · 1 outil Python
+    └ chercher_devis
+
+    relance · PRINCIPAL (ECONOMIQUE pour ce client) · 2 outils Python
+    ├ chercher_devis
+    └ envoyer_email
 
   client comptable-dupont
     agents : devis
     variables : entreprise, signature
-    devis : modèle DEVIS, 1 outil(s) Python
 
-5 agent(s) monté(s) sans erreur.
+    devis · DEVIS · 1 outil Python
+    └ chercher_devis
+
+AVERTISSEMENTS
 ```
 
-Les clients se choisissent avec `--tenant`. Un client inconnu, et un agent non ouvert à un client, sont refusés :
+Avec des clients, la section `AGENTS` devient `CLIENTS` : chaque client dit ce qu'il surcharge, puis ses agents ; le verdict de l'en-tête compte un agent par client (« ✓ 5 agents montés »). Les clients se choisissent avec `--tenant`. Un client inconnu, et un agent non ouvert à un client, sont refusés :
 
 ```bash
 uv run loom --config clients.yaml run relance "Relance Mme Martin pour le devis D-2026-042." --tenant dupont-plomberie --session r1
@@ -5050,16 +5089,19 @@ security:
 (Le reste du fichier — `imports`, `models`, `telemetry`, `storage` — est celui de `clients.yaml`, avec `data-clients-api` à la place de `data-clients`.) La validation résume les clés :
 
 ```bash
-uv run loom --config clients-api.yaml validate | grep -E "Clés|^    [a-z-]+ : client"
+uv run loom --config clients-api.yaml validate | sed -n '/^ACCÈS/,/^$/p'
 ```
 
 ```text
-Clés d'API : app-dupont, app-martin, compta-dupont, ancienne
-    app-dupont : client dupont-plomberie, portées run, read, read_content, approve, expire le 2027-01-08
-    app-martin : client martin-chauffage, portées run, read, read_content, approve, agents relance, débit 4/min
-    compta-dupont : client comptable-dupont, portées read
-    ancienne : client dupont-plomberie, portées run, read, EXPIRÉE
+ACCÈS
+  Clés d'API   app-dupont, app-martin, compta-dupont, ancienne
+               app-dupont : client dupont-plomberie, portées run, read, read_content, approve, expire le 2027-01-08
+               app-martin : client martin-chauffage, portées run, read, read_content, approve, agents relance, débit 4/min
+               compta-dupont : client comptable-dupont, portées read
+               ancienne : client dupont-plomberie, portées run, read, EXPIRÉE
 ```
+
+La clé expirée revient aussi dans les avertissements, à la fin du rapport (« ⚠ Clé d'API ancienne  expirée »).
 
 **Exécution.** On lance le serveur (`uv run loom --config clients-api.yaml serve`), puis, dans un autre terminal, on prépare des variables avec les clés obtenues :
 
@@ -5380,12 +5422,14 @@ uv run loom --config hooks.yaml validate | grep -A4 Portes
 ```
 
 ```text
-Portes     : devis-signe, relance-matinale
-    POST /v1/hooks/devis-signe → agent devis / session devis-{{ payload.devis.numero }}, livraison sur X-Delivery-Id
-    POST /v1/hooks/relance-matinale → agent relance / session par run, aucun en-tête de livraison : une relivraison rouvre un run
+  Portes       devis-signe, relance-matinale
+               POST /v1/hooks/devis-signe → agent devis
+                 session devis-{{ payload.devis.numero }}, livraison sur X-Delivery-Id
+               POST /v1/hooks/relance-matinale → agent relance
+                 session par run, aucun en-tête de livraison : une relivraison rouvre un run
 ```
 
-La seconde ligne annonce déjà le piège de `relance-matinale`, qu'on verra plus bas.
+La dernière ligne annonce déjà le piège de `relance-matinale`, qu'on verra plus bas.
 
 **Exécution.** On démarre le serveur, puis on joue le CRM avec `curl` (les clés sont dans `$CRM` et `$PLAN`) :
 
@@ -5549,14 +5593,20 @@ Les rôles :
 **Exécution.** Je n'ai pas de RabbitMQ sur ma machine de travail : cette partie n'est donc **pas exécutée de bout en bout**. Voici ce que j'ai pu vérifier, c'est-à-dire tout ce que Loom contrôle avant de parler au courtier. Sans la variable d'URL :
 
 ```bash
-env -u LOOM_AMQP uv run loom --config rabbit.yaml validate | tail -3
+env -u LOOM_AMQP uv run loom --config rabbit.yaml validate 2>&1 | sed -n '/^AVERTISSEMENTS/,$p'
 ```
 
 ```text
-    Stockage : file servie par un courtier et artefacts 'local' (/srv/loom/artefacts) — les process doivent partager ce dossier, sinon un run repris ailleurs ne retrouvera ni ses pièces jointes ni ses résultats déportés
-Clés d'API : aucune (API REST ouverte)
+AVERTISSEMENTS
+  ⚠ File         variable LOOM_AMQP absente
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Stockage     file servie par un courtier et artefacts 'local' (/srv/loom/artefacts) — les process doivent partager ce dossier, sinon un run repris ailleurs ne retrouvera ni ses pièces jointes ni ses résultats déportés
+  ⚠ Clés d'API   aucune : API REST ouverte
 Configuration : File 'rabbitmq' : la variable 'LOOM_AMQP' est vide ou absente — c'est elle qui porte l'URL du courtier
 ```
+
+Le rapport, qui s'arrête sur « ✗ montage interrompu », finit par ses avertissements ; le refus suit (`2>&1` le fait passer dans le même flux, après le rapport).
 
 Avec les variables renseignées, `validate` décrit l'architecture sans se connecter à rien :
 
@@ -5564,15 +5614,15 @@ Avec les variables renseignées, `validate` décrit l'architecture sans se conne
 export LOOM_PG=postgresql://loom_login@127.0.0.1:15432/loom_prod
 export LOOM_AMQP=amqp://guest:guest@127.0.0.1:5672/
 export LOOM_REDIS=redis://127.0.0.1:16379/0
-uv run loom --config rabbit.yaml validate | grep -E "^(Journal|Artefacts|Idempotence|File|Bus)"
+uv run loom --config rabbit.yaml validate | grep -E "^  (Journal|Artefacts|Idempotence|File|Bus) "
 ```
 
 ```text
-Journal    : postgres (DSN dans LOOM_PG : renseignée, rôle : loom_app)
-Artefacts  : local (/srv/loom/artefacts)
-Idempotence: postgres (DSN dans LOOM_PG : renseignée, rôle : loom_app)
-File       : rabbitmq (URL dans LOOM_AMQP : renseignée)
-Bus        : redis (LOOM_REDIS : renseignée)
+  Journal      postgres (DSN dans LOOM_PG : renseignée, rôle : loom_app)
+  Artefacts    local     /srv/loom/artefacts
+  Idempotence  postgres (DSN dans LOOM_PG : renseignée, rôle : loom_app)
+  File         rabbitmq (URL dans LOOM_AMQP : renseignée)
+  Bus          redis (LOOM_REDIS : renseignée)
 ```
 
 (Cet affichage vaut pour la lecture ; voir plus bas le piège du `validate` qui ne rend pas la main avec un bus Redis.) Et un worker lancé sur une file qui n'est pas un courtier est refusé, ce que j'ai pu jouer :
@@ -5725,7 +5775,7 @@ Le flux s'arrête là : il montre ce qui était **déjà écrit** quand le clien
 - Redis (ou Postgres) comme **magasin d'idempotence** marche comme annoncé : une clé métier est vue de tous les process. `postgres`, `redis` et `sqlite` (fichier partagé) sont les trois choix d'un service ; `journal` et `memory` ne conviennent qu'à un process.
 - Le bus ne transporte pas les événements ; il dit « du neuf dans tel journal ». Qui l'écoute relit le journal. Un bus en panne ne fait donc jamais échouer une écriture : on perd une notification, jamais un événement, et le suivi rattrape à la notification suivante.
 - **Écart avec la documentation (2.0.0).** Dans mes essais, c'est `async with Loom.from_config(…)` qui met l'oreille sur le bus (premier essai, process B en direct), alors que `loom serve` ne le fait pas : le flux SSE d'un second `loom serve` reste figé sur ce qui était écrit à la connexion. J'ai obtenu le même résultat avec `bus: memory` et avec `bus: redis`. Les sources de 2.0.1 ont le même code côté `serve`. En pratique : pour suivre en direct, passez par un seul serveur (les clients SSE se connectent à celui qui pilote), ou rouvrez la connexion avec `Last-Event-ID` / `?after_seq=` (chapitre 20), qui relit le journal et, lui, ne rate rien.
-- **Piège.** `loom validate` avec un bus Redis affiche toute sa sortie puis **ne rend pas la main** (2.0.0) ; il faut l'interrompre avec Ctrl-C. `loom run` et `loom serve` ne sont pas touchés. Avec un bus `postgres` (`bus: {backend: postgres, dsn_env: LOOM_PG}`, qui utilise `LISTEN/NOTIFY`), `validate` se termine normalement et affiche `Bus : postgres (LOOM_PG : renseignée)` ; je n'ai pas rejoué le suivi inter-process avec Postgres.
+- **Piège.** `loom validate` avec un bus Redis affiche toute sa sortie puis **ne rend pas la main** (2.0.0) ; il faut l'interrompre avec Ctrl-C. `loom run` et `loom serve` ne sont pas touchés. Avec un bus `postgres` (`bus: {backend: postgres, dsn_env: LOOM_PG}`, qui utilise `LISTEN/NOTIFY`), `validate` se termine normalement et sa ligne `Bus` affiche `postgres (LOOM_PG : renseignée)` ; je n'ai pas rejoué le suivi inter-process avec Postgres.
 - La **variable manquante** est dite en clair : `Configuration : Bus 'redis' : la variable 'LOOM_REDIS' est vide ou absente — c'est elle qui porte l'URL`.
 
 ---
@@ -6046,13 +6096,13 @@ sed 's/clients.yaml/scelle.yaml/' deux_clients.py > deux_clients_scelle.py
 **Exécution.** `validate` montre ce qui ferme, et avec quelle clé (par empreinte, jamais la clé) :
 
 ```bash
-uv run loom --config scelle.yaml validate | grep -A3 Chiffrement
+uv run loom --config scelle.yaml validate | grep -A2 Chiffrement
 ```
 
 ```text
-Chiffrement: charges et fichiers scellés — secret 'LOOM_JOURNAL_KEY' ferme
-    dupont-plomberie : clé c3b22dd4c01b
-    martin-chauffage : clé 85d798a1008a
+  Chiffrement  charges et fichiers scellés — secret 'LOOM_JOURNAL_KEY' ferme
+               dupont-plomberie : clé c3b22dd4c01b
+               martin-chauffage : clé 85d798a1008a
 ```
 
 (Vos empreintes seront différentes.) On joue les deux relances, puis on regarde ce qu'il y a **dans** la base :
@@ -6202,7 +6252,7 @@ uv run loom --config retention.yaml validate | grep Rétention
 ```
 
 ```text
-Rétention  : sessions effacées après 365 jour(s) ; martin-chauffage: aucune — par « loom retention », que la plateforme met à l'heure
+  Rétention    sessions effacées après 365 jour(s) ; martin-chauffage: aucune — par « loom retention », que la plateforme met à l'heure
 ```
 
 Pour avoir des sessions anciennes sans attendre un an, `anciennes.py` crée, pour Dupont et Martin, une session `relance-2025` et une `relance-2026`, puis on **antidate** les premières dans la base (c'est de la mise en scène : une vraie session ancienne l'est parce que personne n'y a écrit depuis) :

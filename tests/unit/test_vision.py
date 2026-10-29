@@ -512,7 +512,7 @@ def test_cli_attaches_images(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     pdf.write_bytes(b"%PDF-1.7")
 
     assert main(["--config", path, "validate"]) == 0
-    assert f"Artefacts  : local ({tmp_path / 'data' / '.artifacts'})" in capsys.readouterr().out
+    assert "  Artefacts    local     ./data/.artifacts\n" in capsys.readouterr().out
 
     assert main(["--config", path, "run", "demo", "Que montre ?", "--attach", str(photo)]) == 0
     assert capsys.readouterr().out.strip() == "La photo montre un carré bleu."

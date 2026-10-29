@@ -216,8 +216,10 @@ def test_validate_lists_the_provided_tools(
     path = demo(agents=[demo_agent(tools=tools)])
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "Outils     : calculer\nFournis    : loom.fetch_page\n" in out
-    assert "  demo : modèle FAKE, 2 outil(s) Python" in out
+    assert "  Fournis      loom.fetch_page\n" in out and "  Outils       calculer\n" in out
+    assert out.index("Fournis") < out.index("Outils")
+    # Tous les outils Python de l'agent, les siens comme les fournis.
+    assert "  demo · FAKE · 2 outils Python\n  ├ calculer\n  └ fetch_page\n" in out
 
 
 def test_validate_says_nothing_without_provided_tools(

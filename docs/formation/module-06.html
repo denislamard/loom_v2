@@ -469,11 +469,16 @@ du catalogue (catalogue__rechercher_article, catalogue__prix_article…).
 
 <h4>Exécution</h4>
 <pre><code><span class="p">$ </span>loom validate
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
 …
-    assistant : modèle SIMULE, 4 outil(s) Python, rôle rediger_relance (REDACTEUR)
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
-
-1 agent(s) monté(s) sans erreur.
+    assistant · SIMULE · 4 outils Python · rôle : rediger_relance (REDACTEUR)
+    ├ fetch_page
+    ├ prix_ttc
+    ├ chercher_devis
+    ├ etiquette_devis
+    └ MCP              catalogue__rechercher_article, catalogue__prix_article,
+                       catalogue__stock_article
+…
 <span class="p">$ </span>loom run assistant "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --session relance
 Le projet d'e-mail de relance pour Mme Martin est prêt.
 
@@ -515,7 +520,7 @@ Bilan      : 4 appel(s) de modèle, 2 appel(s) d'outil</code></pre>
 
 <h4>Ce qu'il faut comprendre</h4>
 <ul>
-<li><code>loom validate</code> annonce le rôle : <code>rôle rediger_relance (REDACTEUR)</code>.</li>
+<li><code>loom validate</code> annonce le rôle dans l'en-tête de l'agent : <code>rôle : rediger_relance (REDACTEUR)</code>.</li>
 <li>Pour l'orchestrateur, <code>rediger_relance</code> est un outil comme un autre : il l'appelle avec <code>{"ton": "cordial"}</code> à l'étape 3.</li>
 <li>L'étape 4 montre l'appel du rôle, et dessous, l'appel du modèle <code>REDACTEUR</code> qu'il a déclenché. Le texte du rôle revient à l'orchestrateur comme résultat d'outil.</li>
 </ul>
@@ -968,11 +973,16 @@ rédaction de l'e-mail au rôle `rediger_relance`.
 <h4>Exécution</h4>
 <p>L'option <code>--attach</code> joint un fichier à la demande. Elle se répète pour plusieurs fichiers.</p>
 <pre><code><span class="p">$ </span>loom validate
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
 …
-    assistant : modèle SIMULE, 4 outil(s) Python, rôle rediger_relance (REDACTEUR), rôle decrire_photo (VISION)
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
-
-1 agent(s) monté(s) sans erreur.
+    assistant · SIMULE · 4 outils Python · rôles : rediger_relance (REDACTEUR), decrire_photo (VISION)
+    ├ fetch_page
+    ├ prix_ttc
+    ├ chercher_devis
+    ├ etiquette_devis
+    └ MCP              catalogue__rechercher_article, catalogue__prix_article,
+                       catalogue__stock_article
+…
 <span class="p">$ </span>loom run assistant "Voici une photo de mon chauffe-eau, qu'en pensez-vous ?" --attach chauffe-eau.png --session photo
 D'après la photo : un chauffe-eau électrique mural, avec des traces de rouille au raccord d'eau froide. Je vous conseille de prévoir son remplacement.
 
@@ -1284,18 +1294,30 @@ tenants:
 
 <h4>Exécution</h4>
 <pre><code><span class="p">$ </span>loom validate
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Env        : aucun (/home/jean/plomberie-dupont/.env)
-Modèles    : SIMULE, REDACTEUR, VISION, TRADUCTEUR, HAIKU, OPUS
-Agents     : assistant, traducteur
-…
-    variables : entreprise
-    assistant : modèle SIMULE, 4 outil(s) Python, rôle rediger_relance (REDACTEUR), rôle decrire_photo (VISION)
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
-    traducteur : modèle TRADUCTEUR, 0 outil(s) Python
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
+Racine : /home/jean/plomberie-dupont
 
-2 agent(s) monté(s) sans erreur.
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      SIMULE, REDACTEUR, VISION, TRADUCTEUR, HAIKU, OPUS
+  Clients      default
+…
+CLIENTS
+  client default
+    variables : entreprise
+
+    assistant · SIMULE · 4 outils Python · rôles : rediger_relance (REDACTEUR), decrire_photo (VISION)
+    ├ fetch_page
+    ├ prix_ttc
+    ├ chercher_devis
+    ├ etiquette_devis
+    └ MCP              catalogue__rechercher_article, catalogue__prix_article,
+                       catalogue__stock_article
+
+    traducteur · TRADUCTEUR · 0 outil Python
+…
 <span class="p">$ </span>loom run traducteur "Bonjour Madame Martin, votre devis D-2026-042 est toujours valable. Cordialement, Jean Dupont." --session traduction
 Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont.
 
@@ -1510,12 +1532,18 @@ Si le client joint une photo, demande sa description au rôle `decrire_photo`.
 
 <h4>Exécution</h4>
 <pre><code><span class="p">$ </span>loom validate
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
 …
-    assistant : modèle SIMULE, 4 outil(s) Python, rôle rediger_relance (REDACTEUR), rôle decrire_photo (VISION), sous-agent traduire (traducteur)
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
-    traducteur : modèle TRADUCTEUR, 0 outil(s) Python
+    assistant · SIMULE · 4 outils Python · sous-agent : traduire (traducteur) · rôles : rediger_relance (REDACTEUR), decrire_photo (VISION)
+    ├ fetch_page
+    ├ prix_ttc
+    ├ chercher_devis
+    ├ etiquette_devis
+    └ MCP              catalogue__rechercher_article, catalogue__prix_article,
+                       catalogue__stock_article
 
-2 agent(s) monté(s) sans erreur.
+    traducteur · TRADUCTEUR · 0 outil Python
+…
 <span class="p">$ </span>loom run assistant "Mme Martin est anglophone : traduis en anglais le message pour son devis D-2026-042." --session anglais
 Voici la traduction : « Dear Mrs Martin, your quote D-2026-042 is still valid. Kind regards, Jean Dupont. »
 

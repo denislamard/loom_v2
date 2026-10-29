@@ -1656,36 +1656,44 @@ pythonpath = ["."]
 <h4>Exécution</h4>
 <p>Validez la configuration, avec les traces de la source :</p>
 <pre><code><span class="p">$ </span>CALENDRIER_TRACES=1 loom validate
-Source     : calendrier → point d'entrée calendrier
-Paquets    : calendrier (calendrier-artisan 0.1.0, utilisé), forge (loom-ia 2.0.11) (groupe loom_ia.tools)
+[calendrier] fabrique pour 'calendrier'
+[calendrier] ouverture pour le run validate (client default)
+[calendrier] fermeture du run validate
+[calendrier] fabrique pour 'calendrier'
+[calendrier] ouverture pour le run validate (client default)
+[calendrier] fermeture du run validate
+[calendrier] source fermée avec l'instance
+[calendrier] source fermée avec l'instance
+loom validate · loom.yaml                         ✓ 3 agents montés · ⚠ 2 avertissements
 …
+EXTENSIONS
+  Fournis      loom.fetch_page
+  Paquets      calendrier · calendrier-artisan 0.1.0 · utilisé
+               forge · loom-ia 2.0.15
+               groupe loom_ia.tools
+  Sources      calendrier → point d'entrée calendrier
+…
+CLIENTS
   client default
     variables : entreprise, signature
-[calendrier] fabrique pour 'calendrier'
-    assistant : modèle SIMULE, 5 outil(s) Python, rôle rediger_relance (REDACTEUR), rôle decrire_photo (VISION), sous-agent traduire (traducteur)
+
+    assistant · SIMULE · 5 outils Python · sous-agent : traduire (traducteur) · rôles : rediger_relance (REDACTEUR), decrire_photo (VISION)
 …
-[calendrier] ouverture pour le run validate (client default)
-    MCP : catalogue__rechercher_article, catalogue__prix_article, catalogue__stock_article
-    source calendrier : calendrier__jour_ouvre, calendrier__jours_feries
-[calendrier] fermeture du run validate
-    traducteur : modèle TRADUCTEUR, 0 outil(s) Python
+    ├ MCP              catalogue__rechercher_article, catalogue__prix_article,
+    │                  catalogue__stock_article
+    ├ calendrier       calendrier__jour_ouvre, calendrier__jours_feries
 …
+    traducteur · TRADUCTEUR · 0 outil Python
+
   client martin-chauffage
 …
-[calendrier] fabrique pour 'calendrier'
-…
-[calendrier] ouverture pour le run validate (client default)
-    MCP : aucun
-    source calendrier : calendrier__jour_ouvre, calendrier__jours_feries
-[calendrier] fermeture du run validate
-[calendrier] source fermée avec l'instance
-[calendrier] source fermée avec l'instance
-
-3 agent(s) monté(s) sans erreur.</code></pre>
+    ├ MCP              aucun
+    ├ calendrier       calendrier__jour_ouvre, calendrier__jours_feries
+…</code></pre>
 <ul>
-<li><code>Paquets</code> liste tous les paquets de l'environnement qui annoncent le groupe <code>loom_ia.tools</code> : le vôtre (« utilisé », puisqu'un agent le référence) et <code>forge</code>, livré avec loom.</li>
-<li><code>source calendrier : calendrier__jour_ouvre, calendrier__jours_feries</code> : les noms que verra le modèle, <code>&lt;source&gt;__&lt;outil&gt;</code>.</li>
-<li>Les lignes <code>[calendrier]</code> montrent le cycle de vie : la fabrique est appelée une fois par agent et par client (deux fois ici, Dupont et Martin), <code>open()</code> pour un run d'essai que <code>validate</code> nomme <code>validate</code>, puis <code>aclose()</code>.</li>
+<li><code>Paquets</code> liste tous les paquets de l'environnement qui annoncent le groupe <code>loom_ia.tools</code>, un par ligne : le vôtre (« utilisé », puisqu'un agent le référence) et <code>forge</code>, livré avec loom.</li>
+<li>La branche <code>calendrier</code> de l'arbre de l'assistant, <code>calendrier__jour_ouvre, calendrier__jours_feries</code> : les noms que verra le modèle, <code>&lt;source&gt;__&lt;outil&gt;</code>.</li>
+<li>Les lignes <code>[calendrier]</code> montrent le cycle de vie : la fabrique est appelée une fois par agent et par client (deux fois ici, Dupont et Martin), <code>open()</code> pour un run d'essai que <code>validate</code> nomme <code>validate</code>, puis <code>aclose()</code>. Elles sortent pendant le montage, donc avant le rapport, qui s'imprime une fois tous les agents montés.</li>
 </ul>
 <p>Posez la question à l'assistant :</p>
 <pre><code><span class="p">$ </span>CALENDRIER_TRACES=1 loom run assistant "Le 11 novembre 2026 est-il un jour ouvré ? Je voudrais relancer Mme Martin ce jour-là." --session calendrier
@@ -2101,7 +2109,7 @@ tools:
 <p>Sans dossier de VM, la configuration est refusée :</p>
 <pre><code><span class="p">$ </span>loom --config atelier/loom.yaml validate
 …
-Configuration : Agent 'atelier', source 'forge' (loom-ia 2.0.11, loom_ia.adapters.firecracker.forge:forge_source) : refusée par sa fabrique — 'vm_dir' : /home/jean/plomberie-dupont/atelier/vm/vm.env introuvable — dossier de VM invalide</code></pre>
+Configuration : Agent 'atelier', source 'forge' (loom-ia 2.0.15, loom_ia.adapters.firecracker.forge:forge_source) : refusée par sa fabrique — 'vm_dir' : /home/jean/plomberie-dupont/atelier/vm/vm.env introuvable — dossier de VM invalide</code></pre>
 <p>La fabrique lit le fichier <code>vm.env</code> du dossier de VM, et ses six variables : le nom de la VM, son identifiant vsock (le canal entre l'hôte et la VM), les chemins de ses deux sockets, le port d'execd et l'origine d'execd. Pour essayer la configuration sans VM, créez un dossier factice avec un <code>vm.env</code> seulement. La validation n'exécute rien, elle suffit donc :</p>
 <pre><code><span class="p">$ </span>mkdir atelier/vm</code></pre>
 <figure class="code"><figcaption>atelier/vm/vm.env (factice, pour cet essai)</figcaption>
@@ -2112,11 +2120,12 @@ VSOCK_UDS="/tmp/dupont-forge/v.sock"
 EXECD_PORT="5100"
 EXECD_SRC="service"</code></pre></figure>
 <pre><code><span class="p">$ </span>loom --config atelier/loom.yaml validate
+loom validate · atelier/loom.yaml                   ✓ 1 agent monté · ⚠ 4 avertissements
 …
-  atelier : modèle SIMULE_ATELIER, 0 outil(s) Python
-    source forge : forge__forge, forge__call, forge__tva_mixte
-
-1 agent(s) monté(s) sans erreur.</code></pre>
+AGENTS
+  atelier · SIMULE_ATELIER · 0 outil Python
+  └ forge        forge__forge, forge__call, forge__tva_mixte
+…</code></pre>
 <p>L'agent voit trois outils : les deux de la source, et <code>forge__tva_mixte</code>, lu dans le catalogue. Demandez le calcul :</p>
 <pre><code><span class="p">$ </span>loom --config atelier/loom.yaml run atelier "Calcule la TVA mixte : 1000 € HT à 5,5 % et 500 € HT à 20 %." --session tva-mixte
 (heure) WARNING  loom_ia.adapters.firecracker.forge — Source forge : VM ou execd indisponible — [Errno 2] No such file or directory: '/home/jean/plomberie-dupont/atelier/vm/run.sh'
@@ -2329,7 +2338,7 @@ sans exemple         refusé : examples : de 1 à 10 exemples attendus, 0 reçu(
 <pre><code><span class="p">$ </span>rm -r atelier/vm
 <span class="p">$ </span>loom --config atelier/loom.yaml validate
 …
-Configuration : Agent 'atelier', source 'forge' (loom-ia 2.0.11, loom_ia.adapters.firecracker.forge:forge_source) : refusée par sa fabrique — 'vm_dir' : /home/jean/vms/dupont-forge/vm.env introuvable — dossier de VM invalide</code></pre>
+Configuration : Agent 'atelier', source 'forge' (loom-ia 2.0.15, loom_ia.adapters.firecracker.forge:forge_source) : refusée par sa fabrique — 'vm_dir' : /home/jean/vms/dupont-forge/vm.env introuvable — dossier de VM invalide</code></pre>
 <p>Sur la machine de rédaction, sans VM, c'est ce refus que l'on obtient : c'est l'état final du projet ici. Avec la VM construite, <code>validate</code> liste les trois outils de l'atelier.</p>
 <p>Les limites, à régler dans <code>limits</code> : la VM applique une valeur par défaut quand on ne demande rien, et ramène toute demande à son plafond (d'après le service execd du dépôt, version 2.0.11).</p>
 <div class="tableau"><table>

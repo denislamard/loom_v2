@@ -561,12 +561,13 @@ def test_validate_names_sources_packages_and_tools(
     carnet.installe("piege", "piege_loom", PIEGE, {"piege": "piege_loom:fabrique"}, "2.0")
     assert main(["--config", str(config_file(tmp_path)), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "Source     : carnet → point d'entrée carnet" in out
+    assert "  Sources      carnet → point d'entrée carnet\n" in out
     assert (
-        "Paquets    : carnet (carnet-devis 0.1, utilisé), piege (piege 2.0) (groupe loom_ia.tools)"
-        in out
-    )
-    assert "source carnet : carnet__chercher_devis, carnet__noter" in out
+        "  Paquets      carnet · carnet-devis 0.1 · utilisé\n"
+        "               piege · piege 2.0\n"
+        "               groupe loom_ia.tools\n"
+    ) in out
+    assert "carnet       carnet__chercher_devis, carnet__noter\n" in out
     assert "piege_loom" not in sys.modules
 
 
@@ -575,7 +576,7 @@ def test_validate_says_nothing_of_packages_without_any(
 ) -> None:
     assert main(["--config", str(demo()), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "Paquets" not in out and "Source     :" not in out
+    assert "Paquets" not in out and "Sources" not in out
 
 
 async def test_each_client_gets_its_own_source_and_secrets(carnet: Paquets, tmp_path: Path) -> None:

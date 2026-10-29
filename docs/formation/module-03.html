@@ -366,9 +366,9 @@ telemetry:
 <p>Les autres capacités, avec leur valeur par défaut, sont décrites dans <code>docs/configuration.md</code> du dépôt. Celles que vous rencontrerez : <code>vision</code> (le modèle voit les images, module 6) et <code>context_window</code> (la taille de sa fenêtre, exercice 3.6).</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E 'Modèles|monté'
-Modèles    : SIMULE, HAIKU, OPUS
-1 agent(s) monté(s) sans erreur.</code></pre>
+<pre><code><span class="p">$ </span>loom validate | grep -E '^  Modèles |monté'
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+  Modèles      SIMULE, HAIKU, OPUS</code></pre>
 <p>Déclarer un modèle ne l'utilise pas : l'agent reste sur <code>SIMULE</code>. C'est la ligne <code>model:</code> de l'agent qui choisit (<a href="module-01.html#vrai-modele">rappel</a>).</p>
 </section>
 
@@ -440,9 +440,9 @@ Installed 1 package in 24ms
  + openai==3.37.0
 <span class="p">$ </span>grep loom-ia pyproject.toml
     "loom-ia[anthropic,openai]&gt;=2.0.11",
-<span class="p">$ </span>loom validate | grep -E 'Modèles|monté'
-Modèles    : SIMULE, HAIKU, OPUS, LOCAL
-1 agent(s) monté(s) sans erreur.</code></pre>
+<span class="p">$ </span>loom validate | grep -E '^  Modèles |monté'
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+  Modèles      SIMULE, HAIKU, OPUS, LOCAL</code></pre>
 
 <h4>Exécution</h4>
 <p>Passez l'agent sur <code>LOCAL</code> (ligne <code>model: LOCAL</code> dans <code>agents/assistant.yaml</code>) et lancez-le. Sans Ollama démarré, voici ce qui se passe :</p>
@@ -882,12 +882,12 @@ Erreur     : Requête estimée à 801 tokens, plus 0 en sortie : dépasse la fen
 <h4>Exécution</h4>
 <p><strong>Le <code>.env</code> voisin</strong>, celui du module 1 :</p>
 <pre><code><span class="p">$ </span>loom validate | grep Env
-Env        : /home/jean/plomberie-dupont/.env (par défaut) — lues : ANTHROPIC_API_KEY</code></pre>
+  Env          ./.env (par défaut) — lues : ANTHROPIC_API_KEY</code></pre>
 <p><strong>Un autre fichier, donné par l'option.</strong> Créez un fichier de test dans un dossier <code>secrets/</code> :</p>
 <pre><code><span class="p">$ </span>mkdir secrets
 <span class="p">$ </span>printf 'ANTHROPIC_API_KEY=clé-de-test\nOPENAI_API_KEY=autre-clé\n' &gt; secrets/test.env
 <span class="p">$ </span>loom validate --env-file secrets/test.env | grep Env
-Env        : /home/jean/plomberie-dupont/secrets/test.env (par option) — lues : ANTHROPIC_API_KEY, OPENAI_API_KEY</code></pre>
+  Env          ./secrets/test.env (par option) — lues : ANTHROPIC_API_KEY, OPENAI_API_KEY</code></pre>
 <p><strong>Un fichier désigné dans la configuration</strong>, avec la clé <code>env_file</code>, en tête de <code>loom.yaml</code> :</p>
 <figure class="code"><figcaption>loom.yaml (début)</figcaption>
 <pre><code>version: 1
@@ -896,13 +896,13 @@ Env        : /home/jean/plomberie-dupont/secrets/test.env (par option) — lues 
 imports: [outils]
 <span class="c">… la suite du fichier, inchangée …</span></code></pre></figure>
 <pre><code><span class="p">$ </span>loom validate | grep Env
-Env        : /home/jean/plomberie-dupont/secrets/test.env (par config) — lues : ANTHROPIC_API_KEY, OPENAI_API_KEY</code></pre>
-<p>Le chemin est relatif au dossier de <code>loom.yaml</code>. Si le fichier n'existe pas, loom s'arrête (code 2) : <code>Configuration : Fichier d'environnement introuvable (env_file) : /home/jean/plomberie-dupont/secrets/absent.env</code>. <strong>Retirez la ligne <code>env_file</code></strong> et le dossier <code>secrets/</code> après l'essai.</p>
+  Env          ./secrets/test.env (par config) — lues : ANTHROPIC_API_KEY, OPENAI_API_KEY</code></pre>
+<p>Le chemin est relatif au dossier de <code>loom.yaml</code>, et <code>loom validate</code> l'écrit ainsi (<code>./secrets/test.env</code>). Si le fichier n'existe pas, loom s'arrête (code 2) : <code>Configuration : Fichier d'environnement introuvable (env_file) : /home/jean/plomberie-dupont/secrets/absent.env</code>. <strong>Retirez la ligne <code>env_file</code></strong> et le dossier <code>secrets/</code> après l'essai.</p>
 <p><strong>Une variable déjà définie l'emporte</strong> sur le fichier :</p>
 <pre><code><span class="p">$ </span>ANTHROPIC_API_KEY=clé-exportée loom validate | grep Env
-Env        : /home/jean/plomberie-dupont/.env (par défaut) — déjà définies, gardées : ANTHROPIC_API_KEY
+  Env          ./.env (par défaut) — déjà définies, gardées : ANTHROPIC_API_KEY
 <span class="p">$ </span>loom validate --no-env-file | grep Env
-Env        : non lu (--no-env-file)</code></pre>
+  Env          non lu (--no-env-file)</code></pre>
 
 <h4>À retenir</h4>
 <ul>
@@ -996,12 +996,12 @@ telemetry:
 </table></div>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E 'Clients|client|variables|assistant :|monté'
-Clients    : default
+<pre><code><span class="p">$ </span>loom validate | grep -E '^  (Clients|client) |variables|^    assistant ·|monté'
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+  Clients      default
   client default
     variables : entreprise
-    assistant : modèle SIMULE, 4 outil(s) Python
-1 agent(s) monté(s) sans erreur.
+    assistant · SIMULE · 4 outils Python
 <span class="p">$ </span>loom run assistant "Bonjour, qui es-tu ?" --session variables
 Bonjour, je suis l'assistant de la Plomberie Dupont. Que puis-je pour vous ?
 
@@ -1096,16 +1096,20 @@ tenants:
 </table></div>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -E 'Profil|Télémétrie'
-Profil     : dev (par config) — assoupli ; surcharges : dev, prod
-Télémétrie : logs INFO (console) ; exports sans contenu (metadata) ; échanges bruts au journal (256 Kio par corps au plus)
-<span class="p">$ </span>loom --profile prod validate | grep -E 'Profil|Télémétrie|Avert'
+<pre><code><span class="p">$ </span>loom validate | grep -E '^  (Profil|Surcharges|Télémétrie) |^ +échanges'
+  Profil       dev (par config) — assoupli
+  Surcharges   dev, prod
+  Télémétrie   logs INFO (console) · exports : métadonnées seules
+               échanges bruts au journal (≤ 256 Kio/corps) · collecteur : aucun
+<span class="p">$ </span>loom --profile prod validate | grep -E '^  (Profil|Surcharges|Télémétrie) |^ +échanges'
 Avertissement : variables lues dans /home/jean/plomberie-dupont/.env (ANTHROPIC_API_KEY) — en prod, préférer l'environnement du service
-Profil     : prod (par option) — les avertissements sont des erreurs ; surcharges : dev, prod
-Télémétrie : logs WARNING (json) ; exports sans contenu (metadata) ; échanges bruts au journal (256 Kio par corps au plus)
-<span class="p">$ </span>LOOM_PROFILE=prod loom validate | grep -E 'Profil'
+  Profil       prod (par option) — les avertissements sont des erreurs
+  Surcharges   dev, prod
+  Télémétrie   logs WARNING (json) · exports : métadonnées seules
+               échanges bruts au journal (≤ 256 Kio/corps) · collecteur : aucun
+<span class="p">$ </span>LOOM_PROFILE=prod loom validate | grep -E '^  Profil '
 Avertissement : variables lues dans /home/jean/plomberie-dupont/.env (ANTHROPIC_API_KEY) — en prod, préférer l'environnement du service
-Profil     : prod (par LOOM_PROFILE) — les avertissements sont des erreurs ; surcharges : dev, prod</code></pre>
+  Profil       prod (par LOOM_PROFILE) — les avertissements sont des erreurs</code></pre>
 <p>Les options générales comme <code>--profile</code> ou <code>--env-file</code> s'écrivent avant ou après la commande (<code>loom --profile prod validate</code> ou <code>loom validate --profile prod</code>).</p>
 
 <p><strong>Ce que la production durcit.</strong> En <code>prod</code>, les avertissements deviennent des erreurs, et certains assouplissements sont interdits. Par exemple, l'option <code>--judges skip</code> de <code>loom run</code>, qui saute les juges (module 7), est refusée :</p>
@@ -1116,10 +1120,13 @@ Configuration : Profil prod : judges='skip' retire un contrôle et n'y est pas p
 2</code></pre>
 <p>Autre exemple : retirez la ligne <code>api_key_env</code> du modèle <code>OPUS</code>, et passez <code>profile: prod</code> dans le fichier. En <code>dev</code>, loom avertit ; en <code>prod</code>, il refuse :</p>
 <pre><code><span class="p">$ </span>loom --profile dev validate | grep -E "Profil|OPUS|monté"
-Profil     : dev (par option) — assoupli ; surcharges : dev, prod
-    Modèle 'OPUS' : sdk anthropic vers l'API officielle sans api_key_env — aucune clé d'API n'est envoyée, chaque appel sera refusé (401) ; déclarer api_key_env: ANTHROPIC_API_KEY
-1 agent(s) monté(s) sans erreur.
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 5 avertissements
+  Profil       dev (par option) — assoupli
+  Modèles      SIMULE, HAIKU, OPUS, LOCAL
+  ⚠ Modèle 'OPUS'  sdk anthropic vers l'API officielle sans api_key_env — aucune clé d'API n'est envoyée, chaque appel sera refusé (401) ; déclarer api_key_env: ANTHROPIC_API_KEY
 <span class="p">$ </span>loom validate
+Avertissement : variables lues dans /home/jean/plomberie-dupont/.env (ANTHROPIC_API_KEY) — en prod, préférer l'environnement du service
+loom validate · loom.yaml                      ✗ montage interrompu · ⚠ 5 avertissements
 …
 Configuration : Profil prod : Modèle 'OPUS' : sdk anthropic vers l'API officielle sans api_key_env — aucune clé d'API n'est envoyée, chaque appel sera refusé (401) ; déclarer api_key_env: ANTHROPIC_API_KEY
 <span class="p">$ </span>echo $?
@@ -1231,11 +1238,11 @@ toi-même, et reprends les montants qu'il renvoie.
 Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
 numéro.</code></pre></figure>
 <p><code>agents/assistant.yaml</code> et <code>outils.py</code> sont ceux du module 2. Le paquet a maintenant deux extras, <code>anthropic</code> et <code>openai</code>. Vérification finale :</p>
-<pre><code><span class="p">$ </span>loom validate | tail -4
+<pre><code><span class="p">$ </span>loom validate | grep -E 'monté|^  client |^    (variables|assistant)'
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+  client default
     variables : entreprise
-    assistant : modèle SIMULE, 4 outil(s) Python
-
-1 agent(s) monté(s) sans erreur.
+    assistant · SIMULE · 4 outils Python
 <span class="p">$ </span>loom run assistant "Où en est le devis D-2026-042 ?" --session fin-module-3
 Le devis D-2026-042 de Mme Martin (remplacement du chauffe-eau, 1 840 € TTC) a été envoyé le 3 septembre 2026. Il attend toujours une réponse.
 

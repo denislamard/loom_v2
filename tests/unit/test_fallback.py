@@ -582,7 +582,7 @@ def test_validate_shows_the_chains(demo: ConfigFactory, capsys: pytest.CaptureFi
         ],
     )
     assert main(["--config", str(path), "validate"]) == 0
-    assert "  demo : modèle DOWN → FAKE, 1 outil(s) Python" in capsys.readouterr().out
+    assert "  demo · DOWN → FAKE · 1 outil Python\n" in capsys.readouterr().out
 
 
 ROLE_SCRIPT: list[dict[str, Any]] = [

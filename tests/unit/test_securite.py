@@ -665,9 +665,10 @@ def test_validate_shows_each_key_and_flags_an_expired_one(
     config = demo(tenants=[{"id": "dupont-plomberie"}, {"id": "default"}], security=security)
     assert main(["--config", str(config), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "Clés d'API : app, vieille, courte, aveugle" in out
+    assert "  Clés d'API   app, vieille, courte, aveugle\n" in out
     assert "app : client dupont-plomberie, portées run, read, read_content" in out
     assert "agents demo" in out and "débit 60/min" in out
     assert "vieille : client default, portées run, read, EXPIRÉE" in out
     assert "courte : client default, portées run, read, expire dans 2 j" in out
-    assert "aveugle peut approuver sans lire : ajouter 'read_content'" in out
+    assert "⚠ Clé d'API vieille  expirée\n" in out
+    assert "⚠ Clé d'API aveugle  peut approuver sans lire : ajouter 'read_content'" in out

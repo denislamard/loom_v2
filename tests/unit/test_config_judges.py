@@ -87,8 +87,8 @@ def test_the_cli_lists_skips_and_forces_the_judges(
     path = judged(demo, judge={"when": {"sample": 0.0}, "criteria": CRITERIA[1:]})
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "    politique loom.judge.output : on_output" in out
-    assert "    juge output (réponse finale) : modèle JUDGE, 1 critère(s), sample 0" in out
+    assert "  ├ politiques   loom.judge.output : on_output" in out
+    assert "  └ juges        output (réponse finale) : modèle JUDGE, 1 critère(s), sample 0" in out
 
     assert main(["--config", str(path), "run", "demo", QUESTION, "--stream"]) == 0
     err = capsys.readouterr().err

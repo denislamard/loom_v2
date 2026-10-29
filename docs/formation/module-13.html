@@ -1623,15 +1623,21 @@ if __name__ == "__main__":
 <p>Autres réglages possibles d'un collecteur : <code>protocol</code> (<code>http/protobuf</code> par défaut, ou <code>grpc</code>, port 4317), <code>headers_env</code> (la variable qui porte des en-têtes d'authentification, au format <code>clé=valeur,clé=valeur</code>) et <code>timeout</code> (10 s par défaut).</p>
 
 <h4>Exécution : OpenTelemetry</h4>
-<p>Sans la variable, rien ne casse : le collecteur n'est simplement pas monté, et <code>loom validate</code> le dit.</p>
-<pre><code><span class="p">$ </span>loom validate | grep -A1 '^Télémétrie'
-Télémétrie : logs WARNING (console) ; exports sans contenu (metadata) ; pas d'échanges bruts
-    collecteur otel : adresse dans OTEL_EXPORTER_OTLP_ENDPOINT (vide — non monté, aucune trace n'en partira), http/protobuf, service plomberie-dupont, délai 10 s</code></pre>
+<p>Sans la variable, rien ne casse : le collecteur n'est simplement pas monté, et <code>loom validate</code> le dit, sous <code>Télémétrie</code> et dans ses avertissements.</p>
+<pre><code><span class="p">$ </span>loom validate | sed -n '/^  Télémétrie/,/^$/p'
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+               pas d'échanges bruts
+               collecteur otel : adresse dans OTEL_EXPORTER_OTLP_ENDPOINT (vide — non monté, aucune trace n'en partira), http/protobuf, service plomberie-dupont, délai 10 s
+               masquage du contenu exporté : secret, email, phone, iban
+</code></pre>
 <p>Lancez le collecteur dans un second terminal (<code>python collecteur.py 4318</code>), ou Jaeger, puis donnez l'adresse et lancez un run :</p>
 <pre><code><span class="p">$ </span>export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-<span class="p">$ </span>loom validate | grep -A1 '^Télémétrie'
-Télémétrie : logs WARNING (console) ; exports sans contenu (metadata) ; pas d'échanges bruts
-    collecteur otel : adresse dans OTEL_EXPORTER_OTLP_ENDPOINT (renseignée), http/protobuf, service plomberie-dupont, délai 10 s
+<span class="p">$ </span>loom validate | sed -n '/^  Télémétrie/,/^$/p'
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+               pas d'échanges bruts
+               collecteur otel : adresse dans OTEL_EXPORTER_OTLP_ENDPOINT (renseignée), http/protobuf, service plomberie-dupont, délai 10 s
+               masquage du contenu exporté : secret, email, phone, iban
+
 <span class="p">$ </span>loom run assistant "Quel est le montant du devis D-2026-042 ?" --session otel-meta
 Le devis D-2026-042 s'élève à 1 840 € TTC (1 533,33 € HT).
 
@@ -1696,9 +1702,10 @@ span chat fake-1 {'gen_ai.request.model': 'fake-1', 'loom.cost_usd': '0.006972',
 1</code></pre>
 <p>(Une ligne du journal contient l'adresse, une autre le téléphone.) Pour la suite, retirez la variable et revenez au bloc <code>telemetry</code> d'avant l'exercice, sans export :</p>
 <pre><code><span class="p">$ </span>unset OTEL_EXPORTER_OTLP_ENDPOINT
-<span class="p">$ </span>loom validate | grep -A1 '^Télémétrie'
-Télémétrie : logs WARNING (console) ; exports sans contenu (metadata) ; pas d'échanges bruts
-    collecteur : aucun — rien ne sort du journal que les logs</code></pre>
+<span class="p">$ </span>loom validate | sed -n '/^  Télémétrie/,/^$/p'
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+               pas d'échanges bruts · collecteur : aucun
+</code></pre>
 
 <h4>À retenir</h4>
 <ul>

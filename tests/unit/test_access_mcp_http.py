@@ -704,7 +704,7 @@ def test_validate_announces_the_resources(
     path = demo(security=security, server=MCP_HTTP)
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "MCP HTTP   : monté sous /mcp" in out
+    assert "  MCP HTTP     monté sous /mcp" in out
     # Les ressources ne dépendent d'aucune config : elles sont le journal.
     gabarits = len(TEMPLATES)
     assert f"ressources en lecture seule : {RUNS}, {SESSIONS}, et {gabarits} gabarits" in out

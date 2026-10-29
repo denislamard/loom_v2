@@ -218,8 +218,8 @@ Configuration : Dossier d'agents introuvable : /home/jean/plomberie-dupont/agent
 <h3><span class="exo-num">7</span> Créer le dossier des agents</h3>
 <pre><code><span class="p">$ </span>mkdir agents
 <span class="p">$ </span>loom validate
+loom validate · loom.yaml                           ✓ 0 agent monté · ⚠ 4 avertissements
 …
-0 agent(s) monté(s) sans erreur.
 <span class="p">$ </span>loom run assistant "Bonjour, qui es-tu ?"
 Agent 'assistant' inconnu (agents : aucun)</code></pre>
 <p>La configuration est valide, mais le dossier est vide : loom ne connaît aucun agent. Chaque fichier <code>.yaml</code> de ce dossier décrit un agent ; il reste à écrire celui de l'assistant.</p>
@@ -246,27 +246,43 @@ EOF</code></pre>
 </table></div>
 
 <pre><code><span class="p">$ </span>loom validate
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Env        : aucun (/home/jean/plomberie-dupont/.env)
-Modèles    : SIMULE
-Agents     : assistant
-Outils     : aucun
-Paquets    : forge (loom-ia 2.0.11) (groupe loom_ia.tools)
-Journal    : memory
-Artefacts  : memory
-Idempotence: journal
-File       : asyncio
-Bus        : memory (les nouvelles ne sortent pas de ce process)
-Chiffrement: aucun (contenus en clair au repos)
-Rétention  : aucune (rien ne s'efface)
-Télémétrie : logs INFO (console) ; exports sans contenu (metadata) ; pas d'échanges bruts
-    collecteur : aucun — rien ne sort du journal que les logs
-Clés d'API : aucune (API REST ouverte)
-  assistant : modèle SIMULE, 0 outil(s) Python
+loom validate · loom.yaml                           <span class="s">✓ 1 agent monté</span> · ⚠ 4 avertissements
+Racine : /home/jean/plomberie-dupont
 
-<span class="s">1 agent(s) monté(s) sans erreur.</span></code></pre>
-<p>Cette fois, loom affiche ce qu'il a compris. Pour l'instant, regardez trois lignes : <code>Modèles : SIMULE</code>, <code>Agents : assistant</code>, et la dernière, qui dit que l'agent est prêt. Les autres décrivent des fonctions de loom que vous n'avez pas configurées ; elles gardent leur réglage par défaut, et la formation les présente une à une.</p>
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      SIMULE
+
+EXTENSIONS
+  Paquets      forge · loom-ia 2.0.15 · groupe loom_ia.tools
+  Outils       aucun
+
+EXÉCUTION
+  Journal      memory
+  Artefacts    memory
+  Idempotence  journal
+  File         asyncio
+  Bus          memory
+  Chiffrement  aucun
+  Rétention    aucune
+  Télémétrie   logs INFO (console) · exports : métadonnées seules
+               pas d'échanges bruts · collecteur : aucun
+
+ACCÈS
+  Clés d'API   aucune
+
+AGENTS
+  assistant · SIMULE · 0 outil Python
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte</code></pre>
+<p>Cette fois, loom affiche ce qu'il a compris. Pour l'instant, regardez trois endroits : la première ligne, qui dit que l'agent est monté, donc prêt ; la ligne <code>Modèles</code>, dans la section CONFIGURATION ; et la section AGENTS, où chaque agent a sa ligne : son nom, son modèle et son nombre d'outils. Les autres sections décrivent des fonctions de loom que vous n'avez pas configurées ; elles gardent leur réglage par défaut, et la formation les présente une à une.</p>
+<p>Le bloc AVERTISSEMENTS, à la fin, relève les réglages par défaut qui conviennent à un essai, pas à un service ouvert à d'autres : rien n'est chiffré, rien ne s'efface, l'API n'a pas de clé. Il n'empêche rien ; vous pouvez l'ignorer pendant la formation.</p>
 
 <div class="encadre piege"><p class="encadre-titre">Si loom refuse le fichier</p>
 <p>Le message nomme le fichier et la clé en cause. Les causes les plus courantes :</p>

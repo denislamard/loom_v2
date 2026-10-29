@@ -944,3 +944,12 @@ async def test_an_answer_written_with_state_ends_the_run_and_replays(
     for report in reports:
         assert report.identical, (report.mode, report.divergence)
         assert report.model_calls == (2, 2)
+
+
+def test_settings_for_validate() -> None:
+    """``loom validate`` montre la règle de chaque clé, une ligne par clé."""
+    assert state_tool().settings().rows == (
+        ("client", "une ligne, colonnes id, code"),
+        ("selection", "toutes les lignes, ids ← id ; libellé dans libelle ('label')"),
+        ("signature", "une ligne, colonne code"),
+    )

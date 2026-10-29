@@ -36,7 +36,7 @@ Les chapitres 25 à 29 ne reprennent pas `mon-agent/` : ils travaillent dans un 
 
 ### Ce qui a été exécuté, et ce qui ne l'a pas été
 
-Comme dans les fichiers précédents, les sorties sont réelles : `loom-ia` **2.0.0** (PyPI), Linux, Python 3.14.6, modèles simulés (`sdk: fake`). Les identifiants de run (`01a1…`) et les durées en millisecondes changeront chez vous ; les chemins absolus sont abrégés en `/home/denis/…`. Ce qui demande une ressource absente de la machine d'essai est marqué **« Non exécuté ici »**, avec la raison. Dans ce fichier :
+Comme dans les fichiers précédents, les sorties sont réelles : `loom-ia` **2.0.0** (PyPI ; celles de `loom validate`, en 2.0.15), Linux, Python 3.14.6, modèles simulés (`sdk: fake`). Les identifiants de run (`01a1…`) et les durées en millisecondes changeront chez vous ; les chemins absolus sont abrégés en `/home/denis/…`. Ce qui demande une ressource absente de la machine d'essai est marqué **« Non exécuté ici »**, avec la raison. Dans ce fichier :
 
 | Sujet | État |
 |---|---|
@@ -190,23 +190,43 @@ uv run loom validate
 ```
 
 ```text
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Modèles    : SIMULE_RELANCE
-Agents     : relance_simple
-Outils     : chercher_devis, envoyer_email
-Paquets    : forge (loom-ia 2.0.0) (groupe loom_ia.tools)
-Journal    : jsonl (/home/denis/qualite/data)
-Artefacts  : local (/home/denis/qualite/data/.artifacts)
-Idempotence: journal
-File       : asyncio
-Bus        : memory (les nouvelles ne sortent pas de ce process)
-Chiffrement: aucun (contenus en clair au repos)
-Rétention  : aucune (rien ne s'efface)
-Clés d'API : aucune (API REST ouverte)
-  relance_simple : modèle SIMULE_RELANCE, 2 outil(s) Python
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+Racine : /home/denis/qualite
 
-1 agent(s) monté(s) sans erreur.
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      SIMULE_RELANCE
+
+EXTENSIONS
+  Paquets      forge · loom-ia 2.0.15 · groupe loom_ia.tools
+  Outils       chercher_devis, envoyer_email
+
+EXÉCUTION
+  Journal      jsonl     ./data
+  Artefacts    local     ./data/.artifacts
+  Idempotence  journal
+  File         asyncio
+  Bus          memory
+  Chiffrement  aucun
+  Rétention    aucune
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+               pas d'échanges bruts · collecteur : aucun
+
+ACCÈS
+  Clés d'API   aucune
+
+AGENTS
+  relance_simple · SIMULE_RELANCE · 2 outils Python
+  ├ chercher_devis
+  └ envoyer_email
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
 ```
 
 Lancez la relance. Elle s'arrête sur l'approbation de `envoyer_email`, déclaré `approval: always` :
@@ -796,18 +816,20 @@ grep -c "mme.martin@example.fr" data/default/01a1267e-8227-7000-bd19-72f68e3f658
 6
 ```
 
-Si vous oubliez la variable `OTEL_EXPORTER_OTLP_ENDPOINT`, rien ne casse : Loom-IA écrit un avertissement et n'exporte rien.
+Si vous oubliez la variable `OTEL_EXPORTER_OTLP_ENDPOINT`, rien ne casse : Loom-IA écrit un avertissement et n'exporte rien. `loom validate` le range avec les autres, à la fin de son rapport (la ligne `Télémétrie` dit aussi le collecteur non monté) :
 
 ```bash
 unset OTEL_EXPORTER_OTLP_ENDPOINT
-uv run loom --config loom-otel.yaml validate | tail -4
+uv run loom --config loom-otel.yaml validate | sed -n '/^AVERTISSEMENTS/,$p'
 ```
 
 ```text
-2026-10-10 17:46:37 WARNING  loom_ia.runtime.wiring — Télémétrie : la variable 'OTEL_EXPORTER_OTLP_ENDPOINT' est vide ou absente — ce collecteur n'est pas monté, aucune trace n'en partira
-  relance_simple : modèle SIMULE_RELANCE, 2 outil(s) Python
-
-1 agent(s) monté(s) sans erreur.
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Télémétrie   la variable 'OTEL_EXPORTER_OTLP_ENDPOINT' est vide ou absente — ce collecteur n'est pas monté, aucune trace n'en partira
+  ⚠ Clés d'API   aucune : API REST ouverte
 ```
 
 #### À retenir
@@ -2413,33 +2435,56 @@ uv run loom validate
 ```
 
 ```text
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Modèles    : SIMULE_RELANCE, SIMULE_BREF, SIMULE_OUBLIEUR, SIMULE_JUGE, SIMULE_CARNET
-Agents     : carnet, relance_simple
-Outils     : chercher_devis, envoyer_email
-Source     : carnet → point d'entrée carnet
-Paquets    : carnet (carnet-devis 0.1.0, utilisé), forge (loom-ia 2.0.0) (groupe loom_ia.tools)
-Journal    : jsonl (/home/denis/qualite/data)
-Artefacts  : local (/home/denis/qualite/data/.artifacts)
-Idempotence: journal
-File       : asyncio
-Bus        : memory (les nouvelles ne sortent pas de ce process)
-Chiffrement: aucun (contenus en clair au repos)
-Rétention  : aucune (rien ne s'efface)
-Clés d'API : aucune (API REST ouverte)
 [carnet] fabrique pour 'carnet'
-  carnet : modèle SIMULE_CARNET, 0 outil(s) Python
 [carnet] ouverture pour le run validate (client default)
-    source carnet : carnet__chercher_devis
 [carnet] fermeture du run validate
-  relance_simple : modèle SIMULE_RELANCE, 2 outil(s) Python
 [carnet] source fermée avec l'instance
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 4 avertissements
+Racine : /home/denis/qualite
 
-2 agent(s) monté(s) sans erreur.
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      SIMULE_RELANCE, SIMULE_BREF, SIMULE_OUBLIEUR, SIMULE_JUGE, SIMULE_CARNET
+
+EXTENSIONS
+  Paquets      carnet · carnet-devis 0.1.0 · utilisé
+               forge · loom-ia 2.0.15
+               groupe loom_ia.tools
+  Sources      carnet → point d'entrée carnet
+  Outils       chercher_devis, envoyer_email
+
+EXÉCUTION
+  Journal      jsonl     ./data
+  Artefacts    local     ./data/.artifacts
+  Idempotence  journal
+  File         asyncio
+  Bus          memory
+  Chiffrement  aucun
+  Rétention    aucune
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+               pas d'échanges bruts · collecteur : aucun
+
+ACCÈS
+  Clés d'API   aucune
+
+AGENTS
+  carnet · SIMULE_CARNET · 0 outil Python
+  └ carnet       carnet__chercher_devis
+
+  relance_simple · SIMULE_RELANCE · 2 outils Python
+  ├ chercher_devis
+  └ envoyer_email
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
 ```
 
-Trois lignes méritent d'être lues. `Paquets` liste les paquets qui déclarent le groupe `loom_ia.tools` : `carnet` (utilisé par un agent) et `forge` (livré avec Loom-IA). `source carnet : carnet__chercher_devis` montre le nom que le modèle verra : `<source>__<outil>`. Les lignes `[carnet]` sont celles que notre source écrit sur la sortie d'erreur : la fabrique est appelée **une fois par agent**, `open` **une fois par run** (ici, celui de `validate`), `aclose` à la fin.
+Trois choses méritent d'être lues. `Paquets` liste les paquets qui déclarent le groupe `loom_ia.tools` : `carnet` (utilisé par un agent) et `forge` (livré avec Loom-IA). Dans l'arbre de l'agent `carnet`, la branche `carnet` (la source) montre le nom que le modèle verra : `<source>__<outil>`. Les lignes `[carnet]` sont celles que notre source écrit sur la sortie d'erreur, pendant le montage, donc avant le rapport : la fabrique est appelée **une fois par agent**, `open` **une fois par run** (ici, celui de `validate`), `aclose` à la fin.
 
 Lancez l'agent, puis un agent qui n'utilise pas la source :
 
@@ -2475,21 +2520,28 @@ Le second run ne produit aucune ligne `[carnet]` : tant qu'aucun agent n'utilise
 Deux erreurs fréquentes, avec leurs messages. Un point d'entrée que personne ne déclare (remplacez `entry_point: carnet` par `carnet-ancien` dans une copie de la configuration) :
 
 ```text
-Rétention  : aucune (rien ne s'efface)
-Clés d'API : aucune (API REST ouverte)
+…
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
 Configuration : Point d'entrée 'carnet-ancien' absent du groupe loom_ia.tools : aucun paquet installé ne le déclare (installés : carnet, forge)
 ```
 
 Un paramètre que la fabrique ne connaît pas (`fichiers` au lieu de `fichier`) :
 
 ```text
-Chiffrement: aucun (contenus en clair au repos)
-Rétention  : aucune (rien ne s'efface)
-Clés d'API : aucune (API REST ouverte)
+…
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
 Configuration : Agent 'carnet', source 'carnet' (carnet-devis 0.1.0, carnet_devis:fabrique) : refusée par sa fabrique — paramètres inconnus : fichiers (attendu : fichier)
 ```
 
-Les deux sortent avec le code 2 : la configuration est en cause, aucun run n'a eu lieu.
+Les deux sortent avec le code 2 : la configuration est en cause, aucun run n'a eu lieu. Le rapport s'imprime quand même, jusqu'où le montage est allé, avec `✗ montage interrompu` en tête.
 
 #### À retenir
 
@@ -2623,9 +2675,13 @@ uv run loom --config forge/loom.yaml validate
 ```
 
 ```text
-Rétention  : aucune (rien ne s'efface)
-Clés d'API : aucune (API REST ouverte)
-Configuration : Agent 'atelier', source 'forge' (loom-ia 2.0.0, loom_ia.adapters.firecracker.forge:forge_source) : refusée par sa fabrique — 'vm_dir' : /home/denis/qualite/forge/vm/vm.env introuvable — dossier de VM invalide
+…
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
+Configuration : Agent 'atelier', source 'forge' (loom-ia 2.0.15, loom_ia.adapters.firecracker.forge:forge_source) : refusée par sa fabrique — 'vm_dir' : /home/denis/qualite/forge/vm/vm.env introuvable — dossier de VM invalide
 ```
 
 Un dossier `forge/vm/` contenant seulement un `vm.env` (les six variables que lit Loom-IA : le nom, le CID vsock, les chemins des deux sockets, le port d'execd et la source d'execd) suffit à **valider** la configuration, puisque la validation n'exécute rien et ne démarre pas la VM. Ce dossier factice remplace, pour cet essai seulement, celui que produit `make_vm.sh`. Créez `forge/vm/vm.env` :
@@ -2644,21 +2700,33 @@ uv run loom --config forge/loom.yaml validate
 ```
 
 ```text
-Journal    : jsonl (/home/denis/qualite/forge/data)
-Artefacts  : local (/home/denis/qualite/forge/data/.artifacts)
-Idempotence: journal
-File       : asyncio
-Bus        : memory (les nouvelles ne sortent pas de ce process)
-Chiffrement: aucun (contenus en clair au repos)
-Rétention  : aucune (rien ne s'efface)
-Clés d'API : aucune (API REST ouverte)
-  atelier : modèle SIMULE_ATELIER, 0 outil(s) Python
-    source forge : forge__forge, forge__call, forge__total_ttc
+…
+EXÉCUTION
+  Journal      jsonl     ./data
+  Artefacts    local     ./data/.artifacts
+  Idempotence  journal
+  File         asyncio
+  Bus          memory
+  Chiffrement  aucun
+  Rétention    aucune
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+               pas d'échanges bruts · collecteur : aucun
 
-1 agent(s) monté(s) sans erreur.
+ACCÈS
+  Clés d'API   aucune
+
+AGENTS
+  atelier · SIMULE_ATELIER · 0 outil Python
+  └ forge        forge__forge, forge__call, forge__total_ttc
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
 ```
 
-(Fin de la sortie.) L'agent voit trois outils : `forge__forge`, `forge__call`, et `forge__total_ttc`, lu dans le catalogue. Si l'agent essaie maintenant d'exécuter `forge__total_ttc` (par un modèle simulé qui l'appelle), la VM manque et le modèle reçoit l'erreur au lieu d'un plantage. Voici la variante de configuration qui l'y pousse, `forge/loom-essai.yaml` :
+(Fin de la sortie.) L'agent voit trois outils, dans la branche `forge` de son arbre : `forge__forge`, `forge__call`, et `forge__total_ttc`, lu dans le catalogue. Si l'agent essaie maintenant d'exécuter `forge__total_ttc` (par un modèle simulé qui l'appelle), la VM manque et le modèle reçoit l'erreur au lieu d'un plantage. Voici la variante de configuration qui l'y pousse, `forge/loom-essai.yaml` :
 
 ```yaml
 version: 1
@@ -2929,27 +2997,41 @@ uv run loom --config memoire/loom.yaml validate
 ```
 
 ```text
-File       : asyncio
-Bus        : memory (les nouvelles ne sortent pas de ce process)
-Chiffrement: aucun (contenus en clair au repos)
-Rétention  : aucune (rien ne s'efface)
-Clés d'API : aucune (API REST ouverte)
-Clients    : dupont-plomberie, martin-chauffage
+  File         asyncio
+  Bus          memory
+  Chiffrement  aucun
+  Rétention    aucune
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+               pas d'échanges bruts · collecteur : aucun
 
+ACCÈS
+  Clés d'API   aucune
+
+CLIENTS
   client dupont-plomberie
     secrets : MEMOIRE_DOSSIER → DUPONT_MEMOIRE
-    memoire : modèle SIMULE_MEMOIRE, 0 outil(s) Python
-    MCP : memoire__search, memoire__get, memoire__list_docs, memoire__projects, memoire__add_text, memoire__add_url, memoire__add_file, memoire__update, memoire__delete
+
+    memoire · SIMULE_MEMOIRE · 0 outil Python
+    └ MCP          memoire__search, memoire__get, memoire__list_docs, memoire__projects,
+                   memoire__add_text, memoire__add_url, memoire__add_file,
+                   memoire__update, memoire__delete
 
   client martin-chauffage
     secrets : MEMOIRE_DOSSIER → MARTIN_MEMOIRE
-    memoire : modèle SIMULE_MEMOIRE, 0 outil(s) Python
-    MCP : memoire__search, memoire__get, memoire__list_docs, memoire__projects, memoire__add_text, memoire__add_url, memoire__add_file, memoire__update, memoire__delete
 
-2 agent(s) monté(s) sans erreur.
+    memoire · SIMULE_MEMOIRE · 0 outil Python
+    └ MCP          memoire__search, memoire__get, memoire__list_docs, memoire__projects,
+                   memoire__add_text, memoire__add_url, memoire__add_file,
+                   memoire__update, memoire__delete
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
 ```
 
-(Fin de la sortie.) Chaque client voit les neuf outils, préfixés `memoire__`. Demandez maintenant d'écrire une note. Chaque commande affiche aussi deux lignes `Starting MCP server 'loom-notes'`, écrites par le serveur lui-même sur sa sortie d'erreur :
+(Fin de la sortie.) Chaque client voit les neuf outils, préfixés `memoire__`, dans la branche `MCP` de l'arbre de son agent. Demandez maintenant d'écrire une note. Chaque commande affiche aussi deux lignes `Starting MCP server 'loom-notes'`, écrites par le serveur lui-même sur sa sortie d'erreur :
 
 ```bash
 uv run loom --config memoire/loom.yaml run memoire "Mémorise que Mme Martin préfère être contactée le matin, avant 10 h." --tenant dupont-plomberie
@@ -3414,51 +3496,75 @@ uv run loom validate
 ```
 
 ```text
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Modèles    : ORCHESTRATEUR, REDACTEUR, REDACTEUR_MARTIN, JUGE
-Agents     : relance
-Outils     : chercher_devis, envoyer_email
-Paquets    : forge (loom-ia 2.0.0) (groupe loom_ia.tools)
-Journal    : sqlite (/home/denis/relance/data/journal.db)
-Artefacts  : local (/home/denis/relance/data/.artifacts)
-Idempotence: sqlite (/home/denis/relance/data/cles.db)
-File       : asyncio
-Bus        : memory (les nouvelles ne sortent pas de ce process)
-Chiffrement: aucun (contenus en clair au repos)
-Rétention  : aucune (rien ne s'efface)
-Clés d'API : app-dupont, lecture-dupont, app-martin
-    app-dupont : client dupont-plomberie, portées run, read, read_content, approve
-    lecture-dupont : client dupont-plomberie, portées read
-    app-martin : client martin-chauffage, portées run, read, read_content, approve
-Clients    : dupont-plomberie, martin-chauffage
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 3 avertissements
+Racine : /home/denis/relance
 
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      ORCHESTRATEUR, REDACTEUR, REDACTEUR_MARTIN, JUGE
+  Clients      dupont-plomberie, martin-chauffage
+
+EXTENSIONS
+  Paquets      forge · loom-ia 2.0.15 · groupe loom_ia.tools
+  Outils       chercher_devis, envoyer_email
+
+EXÉCUTION
+  Journal      sqlite    ./data/journal.db
+  Artefacts    local     ./data/.artifacts
+  Idempotence  sqlite    ./data/cles.db
+  File         asyncio
+  Bus          memory
+  Chiffrement  aucun
+  Rétention    aucune
+  Télémétrie   logs WARNING (console) · exports : métadonnées seules
+               pas d'échanges bruts · collecteur : aucun
+
+ACCÈS
+  Clés d'API   app-dupont, lecture-dupont, app-martin
+               app-dupont : client dupont-plomberie, portées run, read, read_content, approve
+               lecture-dupont : client dupont-plomberie, portées read
+               app-martin : client martin-chauffage, portées run, read, read_content, approve
+
+CLIENTS
   client dupont-plomberie
     variables : entreprise
     budget : max_cost par jour 5,00000 $
     quota : 30 run(s) par minute
-    relance : modèle ORCHESTRATEUR, 2 outil(s) Python, rôle rediger_relance (REDACTEUR)
-      politique loom.contract : after_tool
-      politique loom.judge.rediger_relance : after_tool
-      politique loom.budget : before_model
-      budget : run max_cost 0.1 ; session max_cost 0.5 ; stop
-      juge rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s)
+
+    relance · ORCHESTRATEUR · 2 outils Python · rôle : rediger_relance (REDACTEUR)
+    ├ politiques      loom.contract : after_tool
+    │                 loom.judge.rediger_relance : after_tool
+    │                 loom.budget : before_model
+    ├ chercher_devis
+    ├ envoyer_email
+    ├ contrats        rôle rediger_relance : schéma (requis : objet, corps), must_not_match (?i)à compléter|xxx, max_chars 3000 ; réparations 1, échec → fail
+    ├ budget          run max_cost 0.1 ; session max_cost 0.5 ; stop
+    └ juges           rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s)
 
   client martin-chauffage
     modèles : REDACTEUR → REDACTEUR_MARTIN
     variables : entreprise
     stockage : sqlite (/home/denis/relance/data/martin.db)
-    relance : modèle ORCHESTRATEUR, 2 outil(s) Python, rôle rediger_relance (REDACTEUR)
-      politique loom.contract : after_tool
-      politique loom.judge.rediger_relance : after_tool
-      politique loom.budget : before_model
-      budget : run max_cost 0.1 ; session max_cost 0.5 ; stop
-      juge rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s)
 
-2 agent(s) monté(s) sans erreur.
+    relance · ORCHESTRATEUR · 2 outils Python · rôle : rediger_relance (REDACTEUR (REDACTEUR_MARTIN pour ce client))
+    ├ politiques      loom.contract : after_tool
+    │                 loom.judge.rediger_relance : after_tool
+    │                 loom.budget : before_model
+    ├ chercher_devis
+    ├ envoyer_email
+    ├ contrats        rôle rediger_relance : schéma (requis : objet, corps), must_not_match (?i)à compléter|xxx, max_chars 3000 ; réparations 1, échec → fail
+    ├ budget          run max_cost 0.1 ; session max_cost 0.5 ; stop
+    └ juges           rediger_relance (rôle rediger_relance) : modèle JUGE, 2 critère(s)
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
 ```
 
-Chaque agent monte les politiques que sa configuration implique : `loom.contract` (contrat de sortie du rôle), `loom.judge.rediger_relance` (juge) et `loom.budget`. Lancez la relance de la Plomberie Dupont :
+Chaque agent monte les politiques que sa configuration implique : `loom.contract` (contrat de sortie du rôle), `loom.judge.rediger_relance` (juge) et `loom.budget`. Les branches `contrats`, `budget` et `juges` de l'arbre disent ce que chacune exige. Lancez la relance de la Plomberie Dupont :
 
 ```bash
 uv run loom run relance "Relance Mme Martin pour le devis D-2026-042, sur un ton cordial." --tenant dupont-plomberie
@@ -4019,21 +4125,25 @@ uv run loom --profile prod validate
 ```
 
 ```text
-Config     : loom.yaml
-Profil     : prod (par option) — les avertissements sont des erreurs ; surcharges : aucune
-Modèles    : ORCHESTRATEUR, REDACTEUR, REDACTEUR_MARTIN, JUGE
+loom validate · loom.yaml                         ✓ 2 agents montés · ⚠ 3 avertissements
+Racine : /home/denis/relance
 
-2 agent(s) monté(s) sans erreur.
+CONFIGURATION
+  Profil       prod (par option) — les avertissements sont des erreurs
+  Surcharges   aucune
+  Env          aucun (./.env)
 ```
 
-(Début et fin de la sortie.) Voyons ce qu'il refuse. Dans une copie de `loom.yaml`, remplacez `events: {backend: sqlite, path: data/journal.db}` par `events: {backend: memory}` :
+(Début de la sortie : le verdict est en tête.) Voyons ce qu'il refuse. Dans une copie de `loom.yaml`, remplacez `events: {backend: sqlite, path: data/journal.db}` par `events: {backend: memory}` :
 
 ```bash
 uv run loom --config loom-fragile.yaml --profile prod validate
 ```
 
 ```text
-Configuration : Profil prod : Agent 'relance' : outil 'envoyer_email' en approval: always — une approbation exige un journal durable (jsonl ou sqlite ou postgres), pas 'memory' (#28)
+loom validate · loom-fragile.yaml              ✗ montage interrompu · ⚠ 3 avertissements
+…
+Configuration : Profil prod : Agent 'relance' (client 'dupont-plomberie') : outil 'envoyer_email' en approval: always — une approbation exige un journal durable (jsonl ou sqlite ou postgres), pas 'memory' (#28)
 ```
 
 Le code de sortie est 2. Un outil `approval: always` qui peut mettre le run en pause pendant des heures ne peut pas vivre sur un journal en mémoire, que le prochain redémarrage efface.

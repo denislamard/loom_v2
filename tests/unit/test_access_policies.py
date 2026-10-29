@@ -106,9 +106,12 @@ def test_the_cli_shows_policies_and_decisions(
 ) -> None:
     assert main(["--config", str(config), "validate"]) == 0
     out = capsys.readouterr().out
-    assert "Outils     : calculer\nPolitiques : signature\n" in out
-    assert "    politique loom.require_tool : before_model" in out
-    assert "    politique signature : on_output" in out
+    assert "  Outils       calculer\n  Politiques   signature\n" in out
+    assert (
+        "  ├ politiques   loom.require_tool : before_model\n"
+        "  │              signature : on_output\n"
+        "  └ calculer\n"
+    ) in out
 
     assert main(["--config", str(config), "run", "demo", QUESTION, "--stream"]) == 0
     captured = capsys.readouterr()

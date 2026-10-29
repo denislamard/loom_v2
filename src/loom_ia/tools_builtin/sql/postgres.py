@@ -41,6 +41,7 @@ from asyncpg.types import Type
 from pydantic import JsonValue
 
 from loom_ia.core.ports import ToolError
+from loom_ia.tools_builtin import Place
 from loom_ia.tools_builtin.sql.analysis import Analysis, Catalog
 from loom_ia.tools_builtin.sql.arguments import ParamValue, Statement
 from loom_ia.tools_builtin.sql.schema import Column, TableInfo
@@ -75,9 +76,10 @@ class PostgresDatabase:
         self._lock = asyncio.Lock()
         self._checked = False
 
-    def location(self) -> str:
+    def where(self) -> Place:
         assert self.spec.postgres is not None
-        return f"postgres, {self.spec.postgres.dsn_env}, schéma {self.schema}"
+        notes = (f"DSN dans {self.spec.postgres.dsn_env}", f"schéma {self.schema}")
+        return Place(name="", kind="postgres", notes=notes)
 
     # --- Appels ---------------------------------------------------------------------
 

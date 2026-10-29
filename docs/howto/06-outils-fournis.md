@@ -137,20 +137,33 @@ uv run loom validate
 ```
 
 ```text
-Config     : loom.yaml
-Profil     : aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:') ; surcharges : aucune
-Modèles    : SIMULE
-Agents     : assistant
-Outils     : aucun
-Fournis    : loom.fetch_page
-Paquets    : forge (loom-ia 2.0.7) (groupe loom_ia.tools)
-…
-  assistant : modèle SIMULE, 1 outil(s) Python
+loom validate · loom.yaml                           ✓ 1 agent monté · ⚠ 4 avertissements
+Racine : /home/jean/pages
 
-1 agent(s) monté(s) sans erreur.
+CONFIGURATION
+  Profil       aucun (ni --profile, ni LOOM_PROFILE, ni 'profile:')
+  Surcharges   aucune
+  Env          aucun (./.env)
+  Modèles      SIMULE
+
+EXTENSIONS
+  Fournis      loom.fetch_page
+  Paquets      forge · loom-ia 2.0.15 · groupe loom_ia.tools
+  Outils       aucun
+…
+
+AGENTS
+  assistant · SIMULE · 1 outil Python
+  └ fetch_page
+
+AVERTISSEMENTS
+  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
+  ⚠ Chiffrement  aucun : contenus en clair au repos
+  ⚠ Rétention    aucune : rien ne s'efface
+  ⚠ Clés d'API   aucune : API REST ouverte
 ```
 
-`Outils` liste les outils de vos `imports` : il n'y en a pas. `Fournis` liste les outils fournis qu'un agent de la configuration active. La fiche de l'agent compte `fetch_page` parmi ses outils Python.
+`Outils` liste les outils de vos `imports` : il n'y en a pas. `Fournis` liste les outils fournis qu'un agent de la configuration active. Dans l'arbre de l'agent, `fetch_page` est une branche : il compte parmi ses outils Python. Les avertissements de la fin disent des réglages par défaut (bus, chiffrement, rétention, clés d'API) qui conviennent à un essai, pas forcément à un service.
 
 ```bash
 uv run loom run assistant "Quelles versions de loom-ia sont publiées ? La liste est sur https://pypi.org/simple/loom-ia/" --run-id 32-1-lecture
@@ -224,7 +237,7 @@ Le modèle reçoit l'adresse finale (après les redirections), le titre, le text
 
 - Un outil fourni s'active dans l'agent, par `- python: loom.<outil>`, sans rien dans `loom.yaml`. Aucun n'est actif d'office.
 - Le modèle le voit sous son nom sans le préfixe : `fetch_page`.
-- `loom validate` liste les outils fournis activés sur la ligne `Fournis`.
+- `loom validate` liste les outils fournis activés sur la ligne `Fournis` (section EXTENSIONS), et chacun est une branche de l'arbre de l'agent.
 
 ### Exemple 32.2 : régler l'outil pour un agent
 
@@ -302,12 +315,12 @@ uv run loom validate
 ```
 
 ```text
+loom validate · loom.yaml                      ✗ montage interrompu · ⚠ 4 avertissements
 …
-Clés d'API : aucune (API REST ouverte)
-Configuration : Outil fourni 'loom.fetch_pages' inconnu (fournis : loom.fetch_page)
+Configuration : Agent 'assistant', outil 'loom.fetch_pages' : Outil fourni 'loom.fetch_pages' inconnu (fournis : loom.current_datetime, loom.fetch_page, loom.local_files, loom.excel, loom.sql, loom.state)
 ```
 
-Le code de sortie est 2, et le message liste les outils que loom-ia fournit.
+Le rapport s'arrête là où le montage a échoué (« ✗ montage interrompu »), le code de sortie est 2, et le message liste les outils que loom-ia fournit.
 
 Remettez `loom.fetch_page`. Supposons maintenant que le projet ait déjà son propre lecteur de pages, `outils.py` :
 
@@ -334,8 +347,8 @@ uv run loom validate
 ```
 
 ```text
+loom validate · loom.yaml                      ✗ montage interrompu · ⚠ 4 avertissements
 …
-Clés d'API : aucune (API REST ouverte)
 Configuration : Agent 'assistant' : plusieurs outils, rôles ou sous-agents s'appellent fetch_page
 ```
 
@@ -624,23 +637,28 @@ L'approbation se décide **appel par appel** : dans la même étape, lire `clien
 
 Une approbation suppose un journal durable : sur un journal `memory`, le montage refuse « outil 'local_files' dont certains appels attendent une approbation » (en profil `dev`, il avertit seulement).
 
-`loom validate` montre chaque dossier, puis chacun de ses droits accordés et son approbation. Un droit refusé n'est pas listé ; un droit qui détruit ce qui existe (`overwrite`, `delete`) et passe sans approbation est signalé :
+`loom validate` montre, dans l'arbre de l'agent, chaque dossier puis ses droits accordés : d'abord ceux qui passent seuls, puis, après « · », ceux qui attendent une approbation, marqués `*`. Un chemin sous le dossier du `loom.yaml` s'écrit `./…`. Un droit refusé n'est pas listé ; un droit qui détruit ce qui existe (`overwrite`, `delete`) et passe sans approbation est marqué `!`, et redit dans les avertissements :
 
 ```text
-Fournis    : loom.local_files
-  assistant : modèle SIMULE, 1 outil(s) Python
-    outil local_files : work → /home/jean/chantiers/brouillons
-    outil local_files :   read : accordé, sans approbation
-    outil local_files :   write : accordé, sans approbation
-    outil local_files :   overwrite : accordé, sans approbation (destructif)
-    outil local_files :   delete : accordé, sans approbation (destructif)
-    outil local_files : clients → /home/jean/clients
-    outil local_files :   read : accordé, sans approbation
-    outil local_files :   write : accordé, avec approbation
-    outil local_files : devis → /…/devis
-    outil local_files :   read : accordé, sans approbation
+…
+EXTENSIONS
+  Fournis      loom.local_files
+…
 
-1 agent(s) monté(s) sans erreur.
+AGENTS
+  assistant · SIMULE · 1 outil Python
+  └ local_files  work → /home/jean/chantiers/brouillons
+                 read, write, overwrite!, delete!
+                 clients → /home/jean/clients
+                 read · write*
+                 devis → ./devis
+                 read
+
+  * = approbation requise · ! = destructif, sans approbation
+
+AVERTISSEMENTS
+  …
+  ⚠ Agent assistant  local_files work : overwrite, delete sans approbation (destructif)
 ```
 
 #### Ce que voit le modèle
@@ -719,19 +737,18 @@ Les dossiers ont la forme et les règles de `loom.local_files` (droits, approbat
 | `soffice` | chemin de LibreOffice, avec `recalc` | `soffice`, cherché dans le `PATH` |
 | `recalc_timeout` | délai du recalcul, en secondes, avec `recalc` | `60` |
 
-`loom validate` montre les dossiers, le fuseau, le recalcul et la lecture :
+`loom validate` montre les dossiers et leurs droits, puis, sur une ligne, le fuseau, le recalcul et la lecture :
 
 ```text
-Fournis    : loom.excel
-  assistant : modèle SIMULE, 1 outil(s) Python
-    outil excel : donnees → /…/donnees
-    outil excel :   read : accordé, sans approbation
-    outil excel : sortie → /…/sortie
-    outil excel :   write : accordé, sans approbation
-    outil excel : fuseau : Europe/Paris
-    outil excel : recalcul : /usr/bin/soffice (au plus 60 s)
-    outil excel : lecture des classeurs : oui
-1 agent(s) monté(s) sans erreur.
+…
+AGENTS
+  assistant · SIMULE · 1 outil Python
+  └ excel        donnees → ./donnees
+                 read
+                 sortie → ./sortie
+                 write
+                 fuseau : Europe/Paris · recalcul : /usr/bin/soffice (au plus 60 s) · lecture des classeurs : oui
+…
 ```
 
 #### Ce que le modèle envoie
@@ -896,7 +913,7 @@ Et `prompts/excel.md` :
 - Une cellule à remplir à la main a le rôle `saisie`.
 ```
 
-`loom validate` montre la ligne `outil excel : skill, 298 caractères (environ 74 tokens)`.
+`loom validate` montre, sous la branche `excel` de l'agent, la ligne `skill, 298 caractères (environ 74 tokens)`.
 
 - **Un skill n'ajoute pas de moyens à l'outil** : il améliore l'usage du vocabulaire (types, rôles, onglets), pas la mise en forme, qui reste celle de l'outil.
 - **Il part avec chaque appel de modèle de l'agent**, que l'outil serve ou non ; le cache de prompt en absorbe l'essentiel, mais le modifier invalide le cache de l'agent, et un run fait avant ne se rejoue plus à l'identique (« ce qui diffère : les outils proposés »). Au-delà de 8 000 caractères, le montage avertit.
@@ -981,21 +998,22 @@ Là aussi, `never` veut dire « sans approbation », jamais « interdit » : un 
 
 Une base est `sqlite` ou `postgres`, jamais les deux. Le montage refuse un fichier SQLite absent, et un fichier qui est le journal de loom, son magasin d'idempotence, ou qui est sous un dossier protégé (artefacts, agents, prompts).
 
-`loom validate` montre chaque base, puis chaque droit accordé, table par table, avec son approbation, sans jamais se connecter. Comme pour les dossiers, un `update` ou un `delete` qui passe sans approbation est signalé « (destructif) » :
+`loom validate` montre chaque base, ses bornes, puis ses droits en tableau : une ligne par table, une colonne par droit accordé quelque part, sans jamais se connecter. `✓*` attend une approbation ; comme pour les dossiers, un `update` ou un `delete` qui passe sans approbation est marqué `✓!`, et redit dans les avertissements :
 
 ```text
-Fournis    : loom.sql
-  assistant : modèle SIMULE, 1 outil(s) Python
-    outil sql : crm → sqlite, /…/donnees/crm.db
-    outil sql :   devis.select : accordé, sans approbation
-    outil sql :   devis.update : accordé, avec approbation
-    outil sql :   clients.select : accordé, sans approbation
-    outil sql :   relances.select : accordé, sans approbation
-    outil sql :   relances.insert : accordé, sans approbation
-    outil sql : crm : 200 lignes lues, 100 modifiées au plus ; 10 s par instruction
-    outil sql : fuseau : Europe/Paris
+…
+AGENTS
+  assistant · SIMULE · 1 outil Python
+  └ sql          crm → sqlite ./donnees/crm.db
+                 ≤ 200 lignes lues · ≤ 100 modifiées · 10 s/instruction
+                           select  insert  update
+                 devis     ✓               ✓*
+                 clients   ✓
+                 relances  ✓       ✓
+                 fuseau : Europe/Paris
 
-1 agent(s) monté(s) sans erreur.
+  * = approbation requise
+…
 ```
 
 #### Ce que le modèle envoie et reçoit
@@ -1123,9 +1141,9 @@ Le DSN ne se met jamais dans la config : elle nomme la variable qui le porte, co
 La variable est vérifiée au montage : sans elle, `loom validate` le dit (« base 'crm' : la variable CRM_DATABASE_URL (dsn_env) est absente ou vide »). Un rejeu sur une autre machine doit donc la définir aussi, mais sa valeur ne sert pas : un rejeu ne se connecte pas. Le DSN du stockage de loom (journal, idempotence, bus) est refusé, par son nom comme par sa valeur. `loom validate` montre la variable, jamais le DSN :
 
 ```text
-    outil sql : crm → postgres, CRM_DATABASE_URL, schéma public
-    outil sql :   devis.select : accordé, sans approbation
-    …
+  └ sql          crm → postgres · DSN dans CRM_DATABASE_URL · schéma public
+                 ≤ 200 lignes lues · ≤ 100 modifiées · 10 s/instruction
+                 …
 ```
 
 Le rôle se crée avec les droits de la config, table par table :

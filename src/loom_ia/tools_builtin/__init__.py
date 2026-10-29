@@ -86,11 +86,59 @@ class BuiltinContext:
     state_max_value_bytes: int = 1024
 
 
+@dataclass(frozen=True, slots=True)
+class Grant:
+    """Un droit accordé, pour ``loom validate`` : s'il attend une approbation, s'il détruit."""
+
+    right: str
+    approval: bool
+    destructive: bool = False
+
+    @property
+    def unguarded(self) -> bool:
+        """Destructif et sans approbation : un choix légitime, qui doit se voir."""
+        return self.destructive and not self.approval
+
+
+@dataclass(frozen=True, slots=True)
+class Place:
+    """Un dossier ou une base qu'expose un outil fourni : où, ce qu'on y peut, ses bornes.
+
+    Un dossier a ses droits sous la cible ``""`` ; une base, table par table.
+    ``path`` est montré relatif au dossier de la config quand il s'y trouve.
+    """
+
+    name: str
+    # « sqlite », « postgres » ; vide pour un dossier.
+    kind: str = ""
+    path: Path | None = None
+    # Dit après l'emplacement, sur la même ligne (variable du DSN, schéma).
+    notes: tuple[str, ...] = ()
+    grants: tuple[tuple[str, tuple[Grant, ...]], ...] = ()
+    # L'ordre où dire les droits (les colonnes, pour une base).
+    rights: tuple[str, ...] = ()
+    # Une ligne chacune (lignes lues au plus, délai…).
+    limits: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Settings:
+    """Ce qu'un outil fourni montre à ``loom validate`` ; la CLI en fait la mise en page.
+
+    ``rows`` : un réglage par ligne, alignés (les clés du state) ; ``options`` :
+    des réglages courts, dits sur une ligne (fuseau, recalcul…).
+    """
+
+    places: tuple[Place, ...] = ()
+    rows: tuple[tuple[str, str], ...] = ()
+    options: tuple[tuple[str, str], ...] = ()
+
+
 @runtime_checkable
 class ShowsSettings(Protocol):
-    """Outil fourni qui dit ses réglages à ``loom validate``, une ligne par réglage."""
+    """Outil fourni qui dit ses réglages à ``loom validate``."""
 
-    def settings_lines(self) -> tuple[str, ...]: ...
+    def settings(self) -> Settings: ...
 
 
 @runtime_checkable

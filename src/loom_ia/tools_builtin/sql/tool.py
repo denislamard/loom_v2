@@ -3,7 +3,7 @@
 
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -13,8 +13,7 @@ from pydantic import BaseModel, JsonValue
 from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
 from loom_ia.tools import to_output
-from loom_ia.tools_builtin import BuiltinContext, Protected
-from loom_ia.tools_builtin._rights import granted_line
+from loom_ia.tools_builtin import BuiltinContext, Grant, Place, Protected, Settings
 from loom_ia.tools_builtin.sql.analysis import Analysis, Catalog, analyze
 from loom_ia.tools_builtin.sql.arguments import (
     MAX_STATEMENTS,
@@ -38,7 +37,9 @@ from loom_ia.tools_builtin.sql_params import (
 class Backend(Protocol):
     """Ce que l'outil demande à une base, Postgres ou SQLite."""
 
-    def location(self) -> str: ...
+    def where(self) -> Place:
+        """Où est la base, pour ``loom validate`` : son type, son fichier ou sa variable."""
+        ...
 
     async def query(self, unit: Statement, analysis: Analysis) -> dict[str, JsonValue]: ...
 
@@ -112,33 +113,43 @@ class SqlTool:
     def spec(self) -> ToolSpec:
         return self._spec
 
-    def settings_lines(self) -> tuple[str, ...]:
-        """Pour ``loom validate`` : chaque base, une ligne par droit accordé, ses limites.
+    def settings(self) -> Settings:
+        """Pour ``loom validate`` : chaque base, ses droits table par table, ses bornes ; le fuseau.
 
-        Puis le fuseau. Un droit refusé n'est pas listé. ``granted()``, que lit le
-        modèle, reste à part.
+        Un droit refusé n'est pas listé. ``granted()``, que lit le modèle, reste à part.
         """
-        lines: list[str] = []
+        places: list[Place] = []
         for db in self._databases.values():
-            lines.append(f"{db.name} → {db.backend.location()}")
-            lines.extend(
-                f"  {table}." + granted_line(right, approval, destructive=right in DESTRUCTIVE)
-                for table, spec in db.spec.tables.items()
-                for right in SQL_RIGHTS
-                if (approval := spec.rights.get(right)) is not None
+            spec = db.spec
+            limits = [
+                f"≤ {spec.max_rows} lignes lues · ≤ {spec.max_affected_rows} modifiées · "
+                f"{spec.statement_timeout:g} s/instruction"
+            ]
+            if spec.allow_full_table:
+                limits.append("UPDATE/DELETE sans WHERE permis")
+            if spec.functions:
+                limits.append(f"fonctions permises : {', '.join(spec.functions)}")
+            grants = tuple(
+                (
+                    table,
+                    tuple(
+                        Grant(right, approval == "always", right in DESTRUCTIVE)
+                        for right in SQL_RIGHTS
+                        if (approval := rules.rights.get(right)) is not None
+                    ),
+                )
+                for table, rules in spec.tables.items()
             )
-            lines.append(
-                f"{db.name} : {db.spec.max_rows} lignes lues, {db.spec.max_affected_rows} "
-                f"modifiées au plus ; {db.spec.statement_timeout:g} s par instruction"
-                + (" ; UPDATE/DELETE sans WHERE permis" if db.spec.allow_full_table else "")
-                + (
-                    f" ; fonctions permises : {', '.join(db.spec.functions)}"
-                    if db.spec.functions
-                    else ""
+            places.append(
+                replace(
+                    db.backend.where(),
+                    name=db.name,
+                    grants=grants,
+                    rights=SQL_RIGHTS,
+                    limits=tuple(limits),
                 )
             )
-        lines.append(f"fuseau : {self._zone.key}")
-        return tuple(lines)
+        return Settings(places=tuple(places), options=(("fuseau", self._zone.key),))
 
     def assess_call(self, arguments: Mapping[str, JsonValue]) -> CallAssessment:
         """Approbation et effets de cet appel : les droits qu'il exerce, table par table."""
