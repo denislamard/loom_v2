@@ -6,13 +6,14 @@ lignes et des cellules, formules —, jamais leur apparence. Pydantic
 seulement : ni openpyxl, ni disque.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Annotated, Final, Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
 
 from loom_ia.core.ports import ToolError
+from loom_ia.tools_builtin._document.arguments import MAX_SERIES, ChartKind
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Scalar
 
 NAME: Final = "excel"
@@ -102,6 +103,35 @@ class SheetSpec(_Model):
         if self.rows is not None and self.data is not None:
             raise ValueError(f"{self.name} : 'rows' ou 'data', pas les deux")
         return self
+
+    def chart_specs(self) -> Sequence[ChartSpec]:
+        """Les graphiques de l'onglet : aucun, sans ``charts`` dans la config de l'outil."""
+        return ()
+
+
+class ChartSpec(_Model):
+    """Un graphique tiré des colonnes de son onglet : libellés et séries, par en-tête."""
+
+    kind: ChartKind = "barres"
+    title: str | None = None
+    categories: Annotated[str, Field(description="En-tête de la colonne des libellés.")]
+    values: Annotated[
+        list[str],
+        Field(
+            min_length=1,
+            max_length=MAX_SERIES,
+            description="En-têtes des colonnes de nombres, une série chacune.",
+        ),
+    ]
+
+
+# Le même onglet, avec ses graphiques : ce que voit un outil monté avec ``charts``.
+# Pas de docstring : elle partirait dans le schéma, envoyé au modèle à chaque appel.
+class ChartedSheetSpec(SheetSpec):
+    charts: list[ChartSpec] | None = None
+
+    def chart_specs(self) -> Sequence[ChartSpec]:
+        return self.charts or ()
 
 
 class ExcelArguments(_Model):
@@ -197,10 +227,22 @@ class ExcelCall(_Model):
         )
 
 
-def parse(arguments: Mapping[str, JsonValue]) -> ExcelArguments | ReadArguments:
+# Le même appel, où un onglet peut porter des graphiques (outil monté avec ``charts``).
+class ExcelChartCall(ExcelCall):
+    """Ce que voit le modèle : une écriture (par défaut) ou une lecture, à plat."""
+
+    sheets: Annotated[  # pyright: ignore[reportIncompatibleVariableOverride]
+        list[ChartedSheetSpec] | None,
+        Field(min_length=1, max_length=MAX_SHEETS, description="Pour write : les onglets."),
+    ] = None
+
+
+def parse(
+    arguments: Mapping[str, JsonValue], model: type[ExcelCall] = ExcelCall
+) -> ExcelArguments | ReadArguments:
     """Les arguments validés ; ``ToolError`` qui dit chaque champ fautif (10 au plus)."""
     try:
-        return ExcelCall.model_validate(dict(arguments)).request()
+        return model.model_validate(dict(arguments)).request()
     except ValidationError as exc:
         lines = ["Arguments invalides :"]
         for item in exc.errors(include_url=False)[:MAX_ERRORS_SAID]:
@@ -209,9 +251,9 @@ def parse(arguments: Mapping[str, JsonValue]) -> ExcelArguments | ReadArguments:
         raise ToolError("\n".join(lines)) from None
 
 
-def input_schema() -> dict[str, JsonValue]:
+def input_schema(model: type[ExcelCall] = ExcelCall) -> dict[str, JsonValue]:
     """Le schéma des arguments, sans les titres que Pydantic ajoute à chaque champ."""
-    return cast(dict[str, JsonValue], _untitled(ExcelCall.model_json_schema()))
+    return cast(dict[str, JsonValue], _untitled(model.model_json_schema()))
 
 
 def _untitled(node: object, *, names: bool = False) -> object:

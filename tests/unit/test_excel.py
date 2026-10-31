@@ -151,6 +151,7 @@ def test_settings_for_validate(tool: ExcelTool, disk: Path) -> None:
     ]
     assert settings.options == (
         ("fuseau", "Europe/Paris"),
+        ("graphiques", "non"),
         ("recalcul", "non"),
         ("lecture des classeurs", "oui"),
     )
@@ -831,7 +832,7 @@ def test_validate_shows_the_folders_and_the_recalc(
     assert (
         "  └ excel        sortie → ./sortie\n"
         "                 write*\n"
-        "                 fuseau : Europe/Paris · recalcul : non · "
+        "                 fuseau : Europe/Paris · graphiques : non · recalcul : non · "
         "lecture des classeurs : aucun dossier read\n"
     ) in out
     assert "\n  * = approbation requise\n" in out

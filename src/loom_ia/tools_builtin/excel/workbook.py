@@ -2,8 +2,9 @@
 """Le classeur : description validée, puis mise en forme par le style maison, puis octets.
 
 Le style est figé ici : police, couleurs par rôle, formats par type, largeurs,
-volets gelés, filtre, légende. Deux descriptions identiques donnent le même
-fichier, octet pour octet : les dates du classeur et de l'archive sont fixées.
+volets gelés, filtre, légende ; les graphiques, dans ``charts``. Deux descriptions
+identiques donnent le même fichier, octet pour octet : les dates du classeur et
+de l'archive sont fixées.
 """
 
 import datetime as dt
@@ -24,6 +25,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.writer.excel import ExcelWriter
 
 from loom_ia.tools_builtin._values import Stored, convert
+from loom_ia.tools_builtin.excel import charts
 from loom_ia.tools_builtin.excel.arguments import (
     MAX_COLUMNS,
     MAX_DATA_ROWS,
@@ -105,6 +107,7 @@ class Written:
     name: str
     rows: int
     formulas: list[str] = field(default_factory=list[str])
+    charts: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +118,8 @@ class Prepared:
     warnings: tuple[str, ...]
     # Le fuseau où passent les dates-heures qui en portent un.
     zone: ZoneInfo
+    # Les graphiques validés de chaque onglet, dans l'ordre des onglets.
+    charts: tuple[tuple[charts.Plotted, ...], ...] = ()
 
 
 def prepare(
@@ -135,12 +140,19 @@ def prepare(
         else:
             names[sheet.name.lower()] = sheet.name
     prepared: list[tuple[SheetSpec, list[RowSpec]]] = []
+    plotted: list[tuple[charts.Plotted, ...]] = []
     for sheet in arguments.sheets:
         rows = _sheet_rows(sheet, sources, problems)
         _check_sheet(sheet, rows, problems)
         prepared.append((sheet, rows))
+        plotted.append(tuple(charts.check(sheet, rows, problems)))
     problems.raise_if_any()
-    return Prepared(sheets=tuple(prepared), warnings=tuple(problems.warnings), zone=zone)
+    return Prepared(
+        sheets=tuple(prepared),
+        warnings=tuple(problems.warnings),
+        zone=zone,
+        charts=tuple(plotted),
+    )
 
 
 def _sheet_rows(
@@ -193,9 +205,14 @@ def build_workbook(prepared: Prepared) -> tuple[Workbook, list[Written], list[st
     names = {sheet.name.lower(): sheet.name for sheet, _ in prepared.sheets}
     problems = Problems(warnings=list(prepared.warnings))
     written: list[Written] = []
-    for sheet, rows in prepared.sheets:
+    for number, (sheet, rows) in enumerate(prepared.sheets):
         ws = workbook.create_sheet(sheet.name)
-        written.append(_write_sheet(ws, sheet, rows, names, problems, prepared.zone))
+        done = _write_sheet(ws, sheet, rows, names, problems, prepared.zone)
+        plotted = prepared.charts[number] if prepared.charts else ()
+        if plotted:
+            charts.draw(ws, sheet, plotted)
+            done.charts = len(plotted)
+        written.append(done)
     problems.raise_if_any()
     workbook.properties.creator = "loom-ia"
     workbook.properties.lastModifiedBy = "loom-ia"

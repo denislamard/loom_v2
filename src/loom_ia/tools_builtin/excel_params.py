@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Paramètres de ``loom.excel`` : les dossiers permis, et le recalcul par LibreOffice.
+"""Paramètres de ``loom.excel`` : les dossiers permis, le recalcul par LibreOffice, les graphiques.
 
 Module léger — Pydantic et ``_office_params`` seulement — : la config
 l'importe pour valider la référence au chargement, sans importer l'outil ni
@@ -19,6 +19,7 @@ openpyxl.
         approval: { overwrite: never } # remplacer sans validation : dit explicitement
       timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
       recalc: true                     # vérifier les formules avec LibreOffice
+      charts: true                     # des graphiques dans les onglets ; false par défaut
 
 Les dossiers suivent la forme de ``loom.local_files`` (``name``, ``path``,
 ``rights``, ``approval``) ; le droit ``delete`` n'a pas de sens ici et est refusé.
@@ -69,6 +70,9 @@ class ExcelParams(BaseModel):
     # L'exécutable de LibreOffice ; par défaut ``soffice`` cherché dans le PATH.
     soffice: Path | None = None
     recalc_timeout: PositiveFloat = DEFAULT_RECALC_TIMEOUT
+    # Des graphiques Excel liés aux cellules de leur onglet. Faux par défaut : leur
+    # mode d'emploi et leur schéma coûtent à chaque appel du modèle, comme pour word et pdf.
+    charts: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> Self:

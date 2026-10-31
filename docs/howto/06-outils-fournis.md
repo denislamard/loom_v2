@@ -737,8 +737,9 @@ Les dossiers ont la forme et les règles de `loom.local_files` (droits, approbat
 | `recalc` | recalculer les formules avec LibreOffice avant d'écrire | `false` |
 | `soffice` | chemin de LibreOffice, avec `recalc` | `soffice`, cherché dans le `PATH` |
 | `recalc_timeout` | délai du recalcul, en secondes, avec `recalc` | `60` |
+| `charts` | des graphiques dans les onglets (voir « Des graphiques ») | `false` |
 
-`loom validate` montre les dossiers et leurs droits, puis, sur une ligne, le fuseau, le recalcul et la lecture :
+`loom validate` montre les dossiers et leurs droits, puis, sur une ligne, le fuseau, les graphiques, le recalcul et la lecture :
 
 ```text
 …
@@ -748,7 +749,7 @@ AGENTS
                  read
                  sortie → ./sortie
                  write
-                 fuseau : Europe/Paris · recalcul : /usr/bin/soffice (au plus 60 s) · lecture des classeurs : oui
+                 fuseau : Europe/Paris · graphiques : non · recalcul : /usr/bin/soffice (au plus 60 s) · lecture des classeurs : oui
 …
 ```
 
@@ -833,9 +834,66 @@ Recalcul : 1 formule(s) en erreur sur 2 — #DIV/0! : R!B2. Le classeur n'est pa
 
 Le fichier livré reste celui de l'outil, sans valeurs calculées : LibreOffice réécrirait ses formats. Excel recalcule tout à l'ouverture. Comptez une à deux secondes de plus par appel ; plusieurs recalculs peuvent tourner en même temps. LibreOffice n'est demandé qu'avec `recalc` : s'il est introuvable, le montage refuse l'agent.
 
+#### Des graphiques
+
+Avec `charts: true`, un onglet peut porter des graphiques : les mêmes que ceux de `loom.word` et `loom.pdf`, mais des **graphiques Excel liés aux cellules** de leur onglet. Le paramètre n'est pas actif par défaut, parce qu'il coûte : environ 400 tokens par appel de modèle (l'aide et le schéma), payés même par un agent qui n'en fait jamais. Sans `charts`, ce que voit le modèle est exactement ce qu'il voyait avant les graphiques.
+
+```yaml
+- python: loom.excel
+  charts: true                       # facultatif, false par défaut
+  folders:
+  - name: sortie
+    path: sortie
+    rights: [ write ]
+```
+
+Le graphique cite les colonnes de son onglet par leur en-tête. Un appel réel de l'outil :
+
+```json
+{"path": "sortie/top-clients.xlsx",
+ "sheets": [
+  {"name": "Clients",
+   "columns": [{"header": "Client"}, {"header": "Total TTC", "type": "montant_eur"}],
+   "rows": [{"cells": ["Julien Barre", 18034.17]}, {"cells": ["Chauffage Lemaire Rénovation", 16247.36]},
+            {"cells": ["Guillot SARL", 14709.17]}],
+   "totals": {"Total TTC": "somme"},
+   "charts": [
+     {"kind": "barres_horizontales", "title": "Total TTC par client", "categories": "Client", "values": ["Total TTC"]},
+     {"kind": "secteurs", "title": "Part de chaque client", "categories": "Client", "values": ["Total TTC"]}]}]}
+```
+
+Le résumé compte les graphiques de chaque onglet, et seulement là où il y en a :
+
+```json
+{"path": "sortie/top-clients.xlsx", "bytes": 8159, "written": true, "replaced": false,
+ "sha256": "254b842383aa06a0032c0e10b57808f8b220b65ab29daf0d69e044a45b3c2f41",
+ "sheets": [{"name": "Clients", "rows": 3, "formulas": 1, "charts": 2}], "warnings": []}
+```
+
+- **`kind`** : `barres` (par défaut) pour comparer, `barres_horizontales` pour des libellés longs (des noms de clients), `courbe` pour une évolution, `secteurs` pour les parts d'un tout.
+- **`categories`** nomme la colonne des libellés, **`values`** les colonnes de nombres, une série chacune (6 au plus), d'un même type numérique. **`title`** s'affiche au-dessus du graphique.
+- **Les lignes tracées** sont celles des données, depuis la ligne 2 : ni la ligne de `totals`, ni les lignes `total` ou `note` de la fin. Les données d'un graphique se suivent : une ligne de données après un total ou une note est refusée.
+- **Pas de données en ligne**, contrairement à `word` et `pdf` : dans un classeur, les nombres vivent dans des cellules. Pour un graphique sur des nombres calculés ailleurs, le modèle les met dans un onglet, et le graphique les cite.
+- **Une colonne de formules** se trace comme une autre : Excel (ou LibreOffice) la calcule à l'ouverture. Un onglet rempli par `data` (CSV, JSON, `.xlsx`) aussi.
+- **Bornes** : 50 lignes pour des barres ou des secteurs, 1 000 pour une courbe (une année au jour le jour) ; un graphique en secteurs a une seule série, 12 parts au plus, et aucune valeur négative ; 10 graphiques par onglet.
+
+Le graphique est celui d'Excel, pas une image : ses libellés et ses séries sont des **plages** de l'onglet (`'Clients'!$B$2:$B$4`), et le nom d'une série est la cellule de son en-tête. Changer un montant change le graphique, et « Sélectionner les données » montre ces plages ; son type, ses couleurs et son titre se retouchent dans Excel. Le style est celui des graphiques de `word` et `pdf` : la palette part du bleu nuit, les graduations sont des nombres ronds (`5 000 €`), chaque barre porte sa valeur quand il n'y a qu'une série et 12 barres au plus, la légende n'apparaît qu'avec plusieurs séries ou des secteurs, et les barres horizontales mettent la première ligne en haut, comme dans le tableau. Quand une valeur vient d'une formule, Excel choisit lui-même le bout de l'axe. Les graphiques se placent à droite des données, à une colonne d'écart, depuis la ligne 2 ; plusieurs graphiques s'empilent. À l'impression, ils entrent dans la page : l'onglet tient toujours sur une page de large, son tableau un peu réduit.
+
+Les fautes d'un graphique sont dites avec celles du classeur :
+
+```text
+Classeur refusé :
+- Clients, graphique 1 : colonne(s) inconnue(s) : TVA (colonnes : Client, Total TTC)
+- Clients, graphique 2 : une colonne citée deux fois
+- Clients, graphique 3 : les séries viennent de colonnes de nombres d'un même type (ici : texte)
+```
+
+Sans `charts`, une liste `charts` est refusée par le moteur avant d'atteindre l'outil, puisque le schéma ne la connaît pas. `loom validate` ajoute `graphiques : oui` ou `graphiques : non` aux réglages de l'outil.
+
 #### À savoir
 
-- **Ni graphiques, ni mise en forme conditionnelle, ni tableaux croisés, ni listes déroulantes, ni macros** ; et l'outil n'édite pas un classeur existant : il le lit (`action: read`), et en écrit un autre.
+- **Ni mise en forme conditionnelle, ni tableaux croisés, ni listes déroulantes, ni macros** ; et l'outil n'édite pas un classeur existant : il le lit (`action: read`), et en écrit un autre.
+- **Graphiques** : quatre types, ni aires, ni nuage de points, ni barres empilées, ni deux axes ; un graphique ne cite que les colonnes de son onglet ; la lecture (`action: read`) ne les voit pas.
 - **Le style ne se règle pas** : c'est ce qui rend les classeurs constants d'un run à l'autre.
 - **Un recalcul sans erreur ne prouve pas la justesse** : une plage décalée d'une ligne donne un classeur propre aux chiffres faux. Faites relire les formules importantes.
 - **Un outil qui relit le fichier** en ne prenant que les valeurs (pandas…) trouve des cellules vides à la place des formules, puisqu'elles n'ont pas de valeur calculée.

@@ -7,19 +7,27 @@ du lecteur. Ses données sont écrites dans le cache de la partie (``numCache``,
 ``strCache``), sans classeur embarqué : Word et LibreOffice l'affichent tel quel,
 mais « Modifier les données » ne trouve pas de classeur.
 
-Le style est figé ici, comme celui du document : la palette de la maison, des
+Le style est figé, comme celui du document (``_chart_style``) : la palette de la maison, des
 étiquettes de valeur quand il y a peu de barres, la légende seulement quand il y
 a plusieurs séries (ou des secteurs). L'ordre des éléments suit le schéma
 DrawingML, que Word applique strictement.
 """
 
-import math
 from collections.abc import Sequence
 from typing import Final
 from xml.sax.saxutils import escape, quoteattr
 
+from loom_ia.tools_builtin._chart_style import (
+    AXIS_FORMATS,
+    GRID,
+    LABEL_FORMATS,
+    LABEL_ROOM,
+    LABELLED_BARS,
+    PALETTE,
+    TEXT,
+    axis_end,
+)
 from loom_ia.tools_builtin._document.content import ChartOut
-from loom_ia.tools_builtin._values import ColumnType
 
 _C: Final = "http://schemas.openxmlformats.org/drawingml/2006/chart"
 _A: Final = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -27,36 +35,11 @@ _R: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationships
 _WP: Final = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 _HEAD: Final = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 
-# La palette de la maison : bleu nuit, puis des couleurs qui s'en distinguent bien.
-PALETTE: Final = ("1F3864", "C55A11", "8EA9DB", "548235", "7F7F7F", "BF9000",
-                  "2F5496", "843C0C", "A5A5A5", "4472C4", "70AD47", "FFC000")  # fmt: skip
-GRID: Final = "D9D9D9"
-TEXT: Final = "404040"
 FONT: Final = "Calibri"
 # Mesures en EMU : 360 000 par centimètre.
 CM: Final = 360_000
 WIDTH: Final = 17 * CM
 HEIGHT: Final = 9 * CM
-# Au-delà, des étiquettes de valeur sur chaque barre se chevauchent.
-LABELLED_BARS: Final = 12
-# La place laissée au bout de la plus grande barre pour son étiquette, comme dans le PDF.
-LABEL_ROOM: Final = {"barres": 1.1, "barres_horizontales": 1.22}
-
-# Formats des nombres, en syntaxe neutre : Word applique les séparateurs de la langue.
-LABEL_FORMATS: Final[dict[ColumnType, str]] = {
-    "entier": "#,##0",
-    "decimal": "#,##0.00",
-    "montant_eur": '#,##0.00 "€"',
-    "montant_keur": '#,##0 "k€"',
-    "pourcentage": "0.0%",
-}
-AXIS_FORMATS: Final[dict[ColumnType, str]] = {
-    "entier": "#,##0",
-    "decimal": "#,##0.##",
-    "montant_eur": '#,##0 "€"',
-    "montant_keur": '#,##0 "k€"',
-    "pourcentage": "0%",
-}
 
 
 def height(chart: ChartOut) -> int:
@@ -165,14 +148,12 @@ def _scale(chart: ChartOut) -> str:
     étiquette déborde du graphique. Le bout de l'axe reste un nombre rond.
     """
     room = LABEL_ROOM.get(chart.kind)
+    if room is None or not _labelled(chart):
+        return ""
     values = [value for _, row in chart.series for value in row if value is not None]
-    if room is None or not _labelled(chart) or not values or min(values) < 0:
+    end = axis_end(values, room)
+    if end is None:
         return ""
-    top = max(values) * room
-    if top <= 0:
-        return ""
-    step = 10 ** math.floor(math.log10(top)) / 5
-    end = math.ceil(top / step) * step
     return f'<c:max val="{round(end, 10):.10g}"/><c:min val="0"/>'
 
 

@@ -6,7 +6,7 @@ import hashlib
 import shutil
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 from zoneinfo import ZoneInfo
 
 from openpyxl.utils import get_column_letter
@@ -16,6 +16,7 @@ from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
 from loom_ia.tools import to_output
 from loom_ia.tools_builtin import BuiltinContext, Settings
+from loom_ia.tools_builtin._document.arguments import MAX_CATEGORIES, MAX_SLICES
 from loom_ia.tools_builtin._folders import Folders, Located, mount, write_bytes
 from loom_ia.tools_builtin.excel.arguments import (
     MAX_COLUMNS,
@@ -27,11 +28,14 @@ from loom_ia.tools_builtin.excel.arguments import (
     READ_ROWS,
     DataSource,
     ExcelArguments,
+    ExcelCall,
+    ExcelChartCall,
     ReadArguments,
     SheetSpec,
     input_schema,
     parse,
 )
+from loom_ia.tools_builtin.excel.charts import MAX_POINTS
 from loom_ia.tools_builtin.excel.recalc import Recalc, recalculate
 from loom_ia.tools_builtin.excel.sources import read_rows
 from loom_ia.tools_builtin.excel.workbook import build_workbook, prepare, to_bytes
@@ -48,8 +52,13 @@ class ExcelTool:
         zone: ZoneInfo,
         recalc: Recalc | None,
         unsafe: str | None = None,
+        *,
+        charts: bool = False,
     ) -> None:
         self._space = space
+        self._charts = charts
+        # Le schéma vu par le modèle n'a les graphiques que s'ils servent.
+        self._call: type[ExcelCall] = ExcelChartCall if charts else ExcelCall
         self._zone = zone
         self._recalc = recalc
         # Pourquoi les classeurs ne se lisent pas ici (versions d'expat ou de lxml).
@@ -66,8 +75,8 @@ class ExcelTool:
         )
         self._spec = ToolSpec(
             name=NAME,
-            description=_description(space, zone, recalc is not None, unsafe),
-            input_schema=input_schema(),
+            description=_description(space, zone, recalc is not None, unsafe, charts=charts),
+            input_schema=input_schema(self._call),
             kind="python",
             # Le pire des cas, pour ce qui ne regarde pas l'appel lui-même ;
             # chaque appel est évalué à part (``assess_call``).
@@ -95,6 +104,7 @@ class ExcelTool:
             places=self._space.places(),
             options=(
                 ("fuseau", self._zone.key),
+                ("graphiques", "oui" if self._charts else "non"),
                 ("recalcul", recalc),
                 ("lecture des classeurs", reading),
             ),
@@ -103,7 +113,7 @@ class ExcelTool:
     def assess_call(self, arguments: Mapping[str, JsonValue]) -> CallAssessment:
         """Approbation et effets de cet appel : les droits qu'il exerce, dossier par dossier."""
         try:
-            request = parse(arguments)
+            request = parse(arguments, self._call)
             if isinstance(request, ReadArguments):
                 return self._assess_read(request)
             located = self._output(request)
@@ -144,7 +154,7 @@ class ExcelTool:
         )
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
-        request = parse(arguments)
+        request = parse(arguments, self._call)
         if isinstance(request, ReadArguments):
             source = self._workbook(request.path)
             found = await asyncio.to_thread(self._perform_read, request, source)
@@ -216,7 +226,13 @@ class ExcelTool:
             **outcome,
             "sha256": hashlib.sha256(data).hexdigest(),
             "sheets": [
-                {"name": sheet.name, "rows": sheet.rows, "formulas": len(sheet.formulas)}
+                {
+                    "name": sheet.name,
+                    "rows": sheet.rows,
+                    "formulas": len(sheet.formulas),
+                    # Seulement s'il y en a : le résumé d'un classeur sans graphique ne change pas.
+                    **({"charts": sheet.charts} if sheet.charts else {}),
+                }
                 for sheet in written
             ],
             "warnings": list[JsonValue](warnings),
@@ -293,7 +309,9 @@ def _with_data(request: ExcelArguments) -> Iterable[tuple[SheetSpec, DataSource]
     return ((sheet, sheet.data) for sheet in request.sheets if sheet.data is not None)
 
 
-def _description(space: Folders, zone: ZoneInfo, recalc: bool, unsafe: str | None) -> str:
+def _description(
+    space: Folders, zone: ZoneInfo, recalc: bool, unsafe: str | None, *, charts: bool = False
+) -> str:
     writes = [folder.name for folder in space.folders if "write" in folder.rights]
     reads = [folder.name for folder in space.folders if "read" in folder.rights]
     lines = [
@@ -332,6 +350,7 @@ def _description(space: Folders, zone: ZoneInfo, recalc: bool, unsafe: str | Non
             "Hypothèses'!B2). Mettre chaque hypothèse dans sa cellule et la citer ($B$2), "
             "plutôt qu'un nombre dans la formule. Pas de XLOOKUP, FILTER, SORT, UNIQUE : "
             "préparer les données avant.",
+            *(CHART_HELP if charts else ()),
             "Résultat : le chemin écrit, les onglets et leurs nombres de lignes et de formules, "
             "les avertissements ; jamais le contenu.",
         ]
@@ -357,6 +376,18 @@ def _description(space: Folders, zone: ZoneInfo, recalc: bool, unsafe: str | Non
     return "\n".join(lines)
 
 
+CHART_HELP: Final = (
+    "Graphiques d'un onglet ('charts', liste) : {kind (barres, barres_horizontales, courbe, "
+    "secteurs), title, categories : en-tête de la colonne des libellés, values : en-têtes des "
+    "colonnes de nombres, une série chacune}. Le graphique est lié aux cellules de l'onglet "
+    "(lignes de données depuis la ligne 2, sans total ni note) et se place à droite des "
+    "données : ne pas recopier les nombres ailleurs. Des barres pour comparer, une courbe "
+    f"pour une évolution ({MAX_POINTS} points au plus), des secteurs pour les parts d'un tout "
+    f"(une série, {MAX_SLICES} parts au plus) ; {MAX_CATEGORIES} libellés au plus sinon. "
+    "Pour un graphique sur des données d'un autre onglet, les y mettre.",
+)
+
+
 def build(params: BaseModel, context: BuiltinContext) -> ExcelTool:
     """La fabrique de ``loom.excel`` : les dossiers comme ``local_files``, puis LibreOffice."""
     if not isinstance(params, ExcelParams):
@@ -379,4 +410,4 @@ def build(params: BaseModel, context: BuiltinContext) -> ExcelTool:
         from loom_ia.tools_builtin.excel.reader import xml_safety
 
         unsafe = xml_safety()
-    return ExcelTool(space, ZoneInfo(params.timezone), recalc, unsafe)
+    return ExcelTool(space, ZoneInfo(params.timezone), recalc, unsafe, charts=params.charts)

@@ -19,19 +19,16 @@ from reportlab.graphics.widgets import markers
 from reportlab.lib import colors
 from reportlab.lib.units import cm
 
+from loom_ia.tools_builtin import _chart_style as style
 from loom_ia.tools_builtin._document.content import NBSP, ChartOut, display
 from loom_ia.tools_builtin._values import ColumnType
 
 FONT: Final = "Helvetica"
-PALETTE: Final = tuple(
-    colors.HexColor(f"#{code}")
-    for code in ("1F3864", "C55A11", "8EA9DB", "548235", "7F7F7F", "BF9000",
-                 "2F5496", "843C0C", "A5A5A5", "4472C4", "70AD47", "FFC000")
-)  # fmt: skip
-GRID: Final = colors.HexColor("#D9D9D9")
-TEXT: Final = colors.HexColor("#404040")
+# Le style commun aux trois outils (``_chart_style``), en couleurs de reportlab.
+PALETTE: Final = tuple(colors.HexColor(f"#{code}") for code in style.PALETTE)
+GRID: Final = colors.HexColor(f"#{style.GRID}")
+TEXT: Final = colors.HexColor(f"#{style.TEXT}")
 HEIGHT: Final = 9 * cm
-LABELLED_BARS: Final = 12
 # Un libellé plus long est raccourci sous l'axe : il chevaucherait ses voisins.
 AXIS_LABEL: Final = 18
 
@@ -134,7 +131,7 @@ def drawing(chart: ChartOut, width: float) -> Drawing:
         for index in range(len(chart.series)):
             plot.bars[index].fillColor = PALETTE[index % len(PALETTE)]
             plot.bars[index].strokeColor = None
-        if not multi and len(chart.categories) <= LABELLED_BARS:
+        if not multi and len(chart.categories) <= style.LABELLED_BARS:
             plot.barLabelFormat = _label(chart.value_type)
             plot.barLabels.fontName = FONT
             plot.barLabels.fontSize = 7
@@ -144,7 +141,7 @@ def drawing(chart: ChartOut, width: float) -> Drawing:
             plot.barLabels.boxAnchor = "w" if horizontal else "s"
             if values and min(values) >= 0:
                 # De la place au bout de la plus grande barre, pour son étiquette.
-                plot.valueAxis.valueMax = max(values) * (1.22 if horizontal else 1.1)
+                plot.valueAxis.valueMax = max(values) * style.LABEL_ROOM[chart.kind]
     found.add(plot)
     if multi:
         _legend(found, [name for name, _ in chart.series], width / 2, 0.1 * cm, "s")
