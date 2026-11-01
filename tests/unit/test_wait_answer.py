@@ -45,6 +45,7 @@ from loom_ia.core.model import (
 from loom_ia.core.projections import ProjectionError, fold
 from loom_ia.engine import SessionWriter, run_scope
 from loom_ia.engine.pending import question_note
+from loom_ia.engine.questions import OFF_TOPIC
 from loom_ia.testing import RunJournal, assert_replays, tool_call_message
 
 SESSION = SessionId("s1")
@@ -174,6 +175,28 @@ def test_a_question_pauses_the_run_without_running_the_tool(tmp_path: Path) -> N
     asyncio.run(go())
 
 
+def test_the_paused_result_keeps_what_the_model_wrote_with_its_question(tmp_path: Path) -> None:
+    # Essai Haiku (ask-09) : l'heure donnée, puis la question reposée. Le texte
+    # écrit avec l'appel à ask est la réponse du run en pause.
+    script: list[dict[str, Any]] = [
+        {"text": "Il est 12 h 43.", "tool_calls": [{"name": "ask", "arguments": QUESTION}]},
+        {"text": "Devis préparé."},
+    ]
+
+    async def go() -> None:
+        async with mounted(config(tmp_path, script)) as (loom, _):
+            paused = await loom.run("demo", "Prépare un devis.", session_id=SESSION)
+            again = await loom.result(paused.run_id, session_id=SESSION)
+            done = await loom.run("demo", "Dupont", session_id=SESSION)
+        assert paused.status is RunStatus.PAUSED and paused.pending_questions
+        assert paused.text == again.text == "Il est 12 h 43."
+        assert done.run_id == paused.run_id and done.text == "Devis préparé."
+        # Sans read_content, ce texte est masqué comme une réponse.
+        assert paused.masked().text == "" and "text" in paused.masked().redacted
+
+    asyncio.run(go())
+
+
 def test_the_answer_comes_back_as_the_tool_result(tmp_path: Path) -> None:
     async def go() -> None:
         async with mounted(config(tmp_path)) as (loom, store):
@@ -203,7 +226,9 @@ def test_a_free_message_is_an_answer(tmp_path: Path) -> None:
             await answer(store, await loom.state(first.run_id, session_id=SESSION), text="Dupont")
             await loom.resume(first.run_id, session_id=SESSION)
             events = await loom.export_session(SESSION)
-        assert tool_text(events) == "Réponse de l'utilisateur, en message libre : Dupont"
+        assert tool_text(events) == (
+            f"Réponse de l'utilisateur, en message libre : Dupont\n\n{OFF_TOPIC}"
+        )
 
     asyncio.run(go())
 

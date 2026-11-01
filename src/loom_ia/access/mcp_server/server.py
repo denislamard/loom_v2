@@ -687,8 +687,10 @@ def _asking(result: RunResult) -> str:
         for question in pending.questions:
             choices = ", ".join(o.label for o in question.options)
             lines.append(question.question + (f" (choix : {choices})" if choices else ""))
+    said = f"{result.text}\n\n" if result.text else ""
     return (
-        "\n".join(lines)
+        said
+        + "\n".join(lines)
         + f"\n\n[L'agent attend la réponse de l'utilisateur : rappeler {result.agent} avec "
         f"session_id={result.session_id} et la réponse en message.]"
     )

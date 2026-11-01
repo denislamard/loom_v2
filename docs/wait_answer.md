@@ -141,7 +141,11 @@ ou, pour un message libre :
 
 ```text
 Réponse de l'utilisateur, en message libre : Dupont, celui de Lyon
+
+S'il parle d'autre chose sans répondre à ta question, traite son message, puis repose ta question avec ask.
 ```
+
+La consigne vient de l'essai sur Haiku : à « Au fait, quelle heure est-il ? » pendant la question, il donnait l'heure et reposait sa question en texte. Le run se terminait alors sans question ouverte, et la réponse suivante démarrait un nouveau run.
 
 Le résultat porte aussi les données (`{"answers": [{"question": …, "answer": [...]}]}` ou `{"reply": …}`), que `$ref` et l'interface peuvent lire.
 
@@ -225,7 +229,7 @@ Pour quel client faut-il préparer le devis ?
 
 Statut     : paused · itérations : 1 · tokens : 483/71 · coût : 0.0000 $
 Run        : 01a19351-0a8d-77ec-9997-bd79b31601fe
-Question   : fake_0_0 — répondre : loom run demo "<réponse>" --session s1 (ou loom answer 01a19351-… … --session s1)
+Question   : fake_0_0 — répondre : loom run demo "<réponse>" --session s1 (ou loom answer 01a19351-… --answer <n°> --session s1)
 
 $ loom run demo "Dupont, celui de Lyon" --session s1 --stream
 · réponse de l'utilisateur reçue
@@ -236,10 +240,10 @@ Statut     : completed · itérations : 2 · tokens : 1134/102 · coût : 0.0000
 Run        : 01a19351-0a8d-77ec-9997-bd79b31601fe
 ```
 
-- **La question part sur stdout**, avec ses choix numérotés. C'est ce que l'utilisateur doit lire. Une pause d'approbation, elle, laisse stdout vide.
+- **La question part sur stdout**, avec ses choix numérotés, après ce que le modèle a écrit en la posant (`RunResult.text`). C'est ce que l'utilisateur doit lire. Une pause d'approbation, elle, laisse stdout vide.
 - **Code de sortie 0** pour un run qui n'attend que l'utilisateur (D-8). Une pause d'approbation garde 1.
 - **`loom answer RUN_ID [TEXTE] [--answer RÉPONSE …] [--call ID] [--by NOM] [--session] [--no-wait] [--json]`** :
-  - `--answer` se répète, une fois par question, et « ; » y sépare plusieurs choix ;
+  - `--answer` se répète, une fois par question, et « ; » y sépare plusieurs choix ; il prend le libellé d'un choix ou le numéro que `loom run` affiche (`--answer 2`), sauf si un libellé est lui-même ce nombre ;
   - comme `approve`, la commande pilote la reprise dans le terminal, sauf avec `--no-wait` ou une file servie par un courtier ;
   - une réponse refusée donne le code 2.
 - **`--stream`** montre « question à l'utilisateur : … », « réponse de l'utilisateur reçue » (ou « réponse de <by> reçue ») et « question restée sans réponse : le modèle continue sans ».

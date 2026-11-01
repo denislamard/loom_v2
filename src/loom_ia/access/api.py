@@ -860,7 +860,7 @@ class RunResult(DomainModel):
             session_id=state.session_id,
             agent=state.agent,
             status=state.status,
-            text=state.output.text if state.output else "",
+            text=state.output.text if state.output else _asked_with(state, tree),
             output=state.output,
             error_type=state.error_type,
             error=state.error,
@@ -941,15 +941,43 @@ def _awaited(state: RunState, tree: Sequence[Event]) -> tuple[PendingApproval, .
 
 def _asked(state: RunState, tree: Sequence[Event]) -> tuple[PendingQuestion, ...]:
     """Questions sans réponse dans tout l'arbre d'un run comme ``_awaited`` (wait_answer)."""
+    return tuple(question for owner in _asking_runs(state, tree) for question in owner.asking)
+
+
+def _asking_runs(state: RunState, tree: Sequence[Event]) -> list[RunState]:
+    """Le run et ceux de ses sous-runs qui ont une question sans réponse."""
     if state.finished:
-        return state.asking
+        return [state] if state.asking else []
     inner = [
-        question
+        folded
         for run_id, own in _by_run(tree).items()
-        if run_id != state.run_id
-        for question in fold(own, run_id).asking
+        if run_id != state.run_id and (folded := fold(own, run_id)).asking
     ]
-    return (*state.asking, *inner)
+    return [state, *inner] if state.asking else inner
+
+
+def _asked_with(state: RunState, tree: Sequence[Event]) -> str:
+    """Ce que le modèle a écrit en posant les questions en attente, ou ``""``.
+
+    Le modèle peut écrire avant d'appeler ``ask`` : à l'essai Haiku (ask-09),
+    il donnait l'heure demandée puis reposait sa question. Sans ce texte, le
+    résultat du run en pause n'en disait rien : seule la question restait.
+    """
+    said: list[str] = []
+    for owner in _asking_runs(state, tree):
+        open_calls = {question.call_id for question in owner.asking}
+        carrier = next(
+            (
+                message
+                for message in reversed(owner.messages)
+                if message.role == "assistant"
+                and any(call.call_id in open_calls for call in message.tool_calls)
+            ),
+            None,
+        )
+        if carrier is not None and carrier.text.strip():
+            said.append(carrier.text.strip())
+    return "\n\n".join(said)
 
 
 def _usable(what: str, value: str) -> str:

@@ -105,6 +105,7 @@ from loom_ia.core.model import (
     BudgetPeriod,
     Budgets,
     OutputContract,
+    Question,
     RunId,
     RunStatus,
     SessionId,
@@ -474,7 +475,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         metavar="RÉPONSE",
-        help="réponse à une question, dans leur ordre (répéter ; « ; » sépare plusieurs choix)",
+        help=(
+            "réponse à une question, dans leur ordre : le libellé ou le numéro d'un choix, "
+            "ou un texte (répéter ; « ; » sépare plusieurs choix)"
+        ),
     )
     reply.add_argument("--call", type=str, default=None, metavar="CALL_ID", help="question visée")
     reply.add_argument("--by", type=str, default=None, metavar="NOM", help="qui répond")
@@ -2208,7 +2212,9 @@ def cmd_answer(args: argparse.Namespace) -> int:
         try:
             call = await loom.answer(
                 run_id,
-                answers=answers,
+                answers=None
+                if answers is None
+                else await _choices_by_number(loom, run_id, args.call, answers, session, tenant),
                 text=args.texte,
                 call_id=args.call,
                 by=args.by,
@@ -2231,6 +2237,56 @@ def cmd_answer(args: argparse.Namespace) -> int:
     if result is None:
         return OK
     return _report(result, as_json=args.json, tenant=tenant)
+
+
+async def _choices_by_number(
+    loom: Loom,
+    run_id: RunId,
+    call_id: str | None,
+    answers: list[list[str]],
+    session: SessionId | None,
+    tenant: TenantId | None,
+) -> list[list[str]]:
+    """Les ``--answer`` avec le numéro d'un choix affiché remplacé par son libellé.
+
+    ``loom run`` affiche les choix numérotés : ``--answer 2`` désigne le 2ᵉ.
+    Sans question unique à viser, ou si le run est introuvable, les réponses
+    passent telles quelles et ``Loom.answer`` dit ce qui ne va pas.
+    """
+    try:
+        result = await loom.result(run_id, session_id=session, tenant_id=tenant)
+    except UnknownRun:
+        return answers
+    targets = [
+        pending
+        for pending in result.pending_questions
+        if call_id is None or pending.call_id == call_id
+    ]
+    if len(targets) != 1:
+        return answers
+    return _numbered(targets[0].questions, answers)
+
+
+def _numbered(questions: Sequence[Question], answers: list[list[str]]) -> list[list[str]]:
+    """Chaque valeur qui est le numéro d'un choix (1 à n) devient le libellé de ce choix.
+
+    Un libellé qui est lui-même un nombre (« 2 » pour « combien de radiateurs ? »)
+    reste ce qu'il est ; une question sans choix garde le texte donné.
+    """
+    if len(questions) != len(answers):
+        return answers
+    numbered: list[list[str]] = []
+    for question, values in zip(questions, answers, strict=True):
+        labels = [option.label for option in question.options]
+        numbered.append(
+            [
+                labels[int(value) - 1]
+                if value.isdecimal() and value not in labels and 1 <= int(value) <= len(labels)
+                else value
+                for value in values
+            ]
+        )
+    return numbered
 
 
 def _json_object(text: str) -> dict[str, JsonValue] | None:
@@ -3027,11 +3083,13 @@ def _report(
         if not quiet:
             # La sortie standard porte la réponse ; un échec se dit sur stderr, à la
             # ligne « Erreur » (au test L2 du 22/10, il était aussi recopié ici).
-            if result.text:
+            if result.pending_questions:
+                # La question est ce que l'utilisateur doit lire : elle part sur stdout,
+                # après ce que le modèle a écrit en la posant (essai Haiku, ask-09).
+                asked = _questions_text(result)
+                print(_for_stdout(f"{result.text}\n\n{asked}" if result.text else asked))
+            elif result.text:
                 print(_for_stdout(result.text))
-            elif result.pending_questions:
-                # La question est ce que l'utilisateur doit lire : elle part sur stdout.
-                print(_for_stdout(_questions_text(result)))
             elif result.status is not RunStatus.PAUSED:
                 print("—")
             # En pause, rien encore à répondre : stdout reste vide (test H4 du 20/10).
@@ -3074,7 +3132,7 @@ def _report(
                 f"Question   : {question.call_id} — répondre : loom run {result.agent} "
                 f'"<réponse>" --session {result.session_id}'
                 + (f" --tenant {tenant}" if tenant is not None else "")
-                + f" (ou loom answer {result.run_id} …{where})",
+                + f" (ou loom answer {result.run_id} --answer <n°>{where})",
                 file=sys.stderr,
             )
         if result.unverified and not brief:

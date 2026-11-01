@@ -16,6 +16,14 @@ from pydantic import JsonValue, ValidationError
 from loom_ia.core.model import TextBlock, ToolOutput
 from loom_ia.core.model.question import PendingQuestion, Question, QuestionReply
 
+# Un message libre est routé vers la question même s'il parle d'autre chose
+# (D-3) : sans cette consigne, le modèle y répond et repose sa question en
+# texte, et le run se termine sans question ouverte (essai Haiku, ask-06).
+OFF_TOPIC = (
+    "S'il parle d'autre chose sans répondre à ta question, traite son message, "
+    "puis repose ta question avec ask."
+)
+
 
 def asked(arguments: Mapping[str, JsonValue]) -> tuple[Question, ...] | str:
     """Les questions de l'appel, ou ce qui ne va pas (pour le modèle)."""
@@ -63,7 +71,7 @@ def answered_output(pending: PendingQuestion) -> ToolOutput:
     data: dict[str, JsonValue]
     if reply.text is not None:
         data = {"reply": reply.text}
-        text = f"Réponse de l'utilisateur, en message libre : {reply.text}"
+        text = f"Réponse de l'utilisateur, en message libre : {reply.text}\n\n{OFF_TOPIC}"
     else:
         pairs: list[JsonValue] = [
             {"question": question.question, "answer": list(values)}

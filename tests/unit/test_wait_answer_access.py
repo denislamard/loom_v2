@@ -39,6 +39,21 @@ def test_cli_shows_the_question_and_a_message_answers_it(
     assert code == 0 and "Devis préparé." in out
 
 
+def test_cli_prints_what_the_model_wrote_before_the_question(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from test_wait_answer import QUESTION
+
+    script = [
+        {"text": "Il est 12 h 43.", "tool_calls": [{"name": "ask", "arguments": QUESTION}]},
+        {"text": "Devis préparé."},
+    ]
+    path = config(tmp_path, script)
+    assert main(["--config", str(path), "run", "demo", "Prépare un devis.", "--session", "s1"]) == 0
+    out, _ = capsys.readouterr()
+    assert out.index("Il est 12 h 43.") < out.index("Pour quel client") < out.index("2. Martin")
+
+
 def test_cli_answer_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = config(tmp_path)
     main(["--config", str(path), "run", "demo", "Prépare un devis.", "--json"])
@@ -51,6 +66,56 @@ def test_cli_answer_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert main(["--config", str(path), "answer", run_id, "--answer", "Martin"]) == 0
     out, err = capsys.readouterr()
     assert "Répondu" in err and "Devis préparé" in out
+
+
+def test_cli_answer_takes_the_number_shown(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # loom run affiche « 2. Martin » : --answer 2 répond « Martin » (essai Haiku, ask-07).
+    path = config(tmp_path)
+    main(["--config", str(path), "run", "demo", "Prépare un devis.", "--session", "s1"])
+    _, err = capsys.readouterr()
+    assert "--answer <n°>" in err
+    run_id = next(
+        line.split(":", 1)[1].strip() for line in err.splitlines() if line.startswith("Run ")
+    )
+    assert main(["--config", str(path), "answer", run_id, "--answer", "2", "--session", "s1"]) == 0
+    assert "Devis préparé" in capsys.readouterr().out
+    lines = (tmp_path / "data" / "default" / "s1.jsonl").read_text(encoding="utf-8")
+    import json
+
+    [answered] = [
+        json.loads(line)["payload"]
+        for line in lines.splitlines()
+        if json.loads(line)["payload"]["type"] == "question.answered"
+    ]
+    assert answered["answers"] == [["Martin"]]
+
+
+def test_numbers_become_labels_only_when_they_name_a_choice() -> None:
+    from loom_ia.access.cli.main import _numbered  # pyright: ignore[reportPrivateUsage]
+    from loom_ia.core.model import Question, QuestionOption
+
+    clients = Question(
+        question="Quel client ?",
+        header="Client",
+        options=(QuestionOption(label="Dupont"), QuestionOption(label="Martin")),
+        multiple=True,
+    )
+    pieces = Question(
+        question="Combien ?",
+        header="Nombre",
+        options=(QuestionOption(label="2"), QuestionOption(label="1")),
+    )
+    libre = Question(question="Quelle adresse ?", header="Adresse")
+    assert _numbered([clients], [["2", "1"]]) == [["Martin", "Dupont"]]
+    # Hors des choix, ou une question sans choix : le texte reste tel quel.
+    assert _numbered([clients], [["3"]]) == [["3"]]
+    assert _numbered([libre], [["12"]]) == [["12"]]
+    # Un libellé qui est ce nombre l'emporte : « 2 » reste « 2 », « 1 » aussi.
+    assert _numbered([pieces], [["1"]]) == [["1"]]
+    # Pas autant de réponses que de questions : Loom.answer dira ce qui ne va pas.
+    assert _numbered([clients, libre], [["1"]]) == [["1"]]
 
 
 def test_cli_stream_routes_the_answer(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

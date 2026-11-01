@@ -1510,7 +1510,7 @@ Réponse de l'utilisateur :
 - Pour quel client faut-il préparer le devis ? → Dupont
 ```
 
-ou `Réponse de l'utilisateur, en message libre : Dupont, celui de Lyon` quand l'utilisateur a simplement écrit.
+ou `Réponse de l'utilisateur, en message libre : Dupont, celui de Lyon` quand l'utilisateur a simplement écrit. Le message libre est suivi d'une consigne : s'il parle d'autre chose, le modèle le traite puis repose sa question avec `ask`, et le run reste en attente de la réponse.
 
 **Répondre, c'est écrire dans la session.** Le message suivant de la conversation **est** la réponse : c'est le run qui a posé la question qui reprend, et le résultat rendu porte **son** `run_id`. Il en va ainsi par tous les accès :
 
@@ -1521,7 +1521,7 @@ Pour quel client faut-il préparer le devis ?
   2. Martin
 
 Statut     : paused · itérations : 1 · …
-Question   : fake_0_0 — répondre : loom run demo "<réponse>" --session s1 (ou loom answer <run_id> … --session s1)
+Question   : fake_0_0 — répondre : loom run demo "<réponse>" --session s1 (ou loom answer <run_id> --answer <n°> --session s1)
 
 $ loom run demo "Dupont, celui de Lyon" --session s1
 Devis préparé.
@@ -1531,8 +1531,8 @@ Le message n'est pas pris comme réponse — c'est un nouveau tour, et le modèl
 
 | Accès | Ce que voit le client | Répondre autrement qu'en écrivant |
 |---|---|---|
-| Python | `RunResult.status` `paused` (`waiting_child` si un sous-agent a posé la question), `pending_questions` ; `SessionInfo.pending_questions` | `await loom.answer(run_id, answers=[["Dupont"]])` ou `text="…"`, `call_id=` s'il y en a plusieurs ; `answerer=` sur `run()` / `stream()` répond dans la boucle |
-| CLI | La question et ses choix sur stdout, code 0 ; `loom sessions show` les liste ; `--stream` : « question à l'utilisateur : … », « réponse de l'utilisateur reçue » | `loom answer <run_id> "texte"`, ou `--answer` par question (« ; » sépare plusieurs choix) |
+| Python | `RunResult.status` `paused` (`waiting_child` si un sous-agent a posé la question), `pending_questions`, et dans `text` ce que le modèle a écrit en posant la question ; `SessionInfo.pending_questions` | `await loom.answer(run_id, answers=[["Dupont"]])` ou `text="…"`, `call_id=` s'il y en a plusieurs ; `answerer=` sur `run()` / `stream()` répond dans la boucle |
+| CLI | La question et ses choix sur stdout, code 0 ; `loom sessions show` les liste ; `--stream` : « question à l'utilisateur : … », « réponse de l'utilisateur reçue » | `loom answer <run_id> "texte"`, ou `--answer` par question : le libellé ou le numéro affiché d'un choix (« ; » sépare plusieurs choix) |
 | REST | `201` (ou `202` en `background`) avec `status: paused` et `pending_questions` ; le flux SSE reste ouvert et suit la reprise | `POST /v1/runs/{id}/answer` `{"answers": [["Dupont"]]}` ou `{"text": "…"}` — portée `run` ; 404 si rien n'attend, 409 si la question a expiré, 422 si la réponse ne convient pas |
 | MCP | Sans elicitation : la question en texte, et « rappeler l'agent avec session_id=… et la réponse en message » ; `pending_questions` dans le résultat structuré | Avec elicitation (client stdio qui la déclare) : un formulaire, sans pause — une liste par question à choix unique, un champ libre qui l'emporte |
 
