@@ -177,7 +177,9 @@ def test_a_read_has_no_effect_and_asks_only_where_the_folder_asks(tool: ExcelToo
     assert (free.side_effects, free.approval, free.idempotent) == ("none", "never", True)
     asked = tool.assess_call({"action": "read", "path": "valide/a.xlsx"})
     assert asked.approval == "always" and asked.side_effects == "none"
-    assert asked.reason == "lire le classeur valide/a.xlsx : approbation demandée pour read"
+    assert asked.reason == (
+        "lire le classeur valide/a.xlsx — la config exige une approbation pour lire dans valide"
+    )
 
 
 @pytest.mark.parametrize(

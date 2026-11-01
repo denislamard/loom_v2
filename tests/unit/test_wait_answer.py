@@ -383,8 +383,9 @@ def test_the_tool_the_model_sees(tmp_path: Path) -> None:
         size = len(tool.description) + len(
             json.dumps(tool.input_schema, ensure_ascii=False, separators=(",", ":"))
         )
-        # Environ 320 tokens par appel de modèle, pour un agent qui déclare l'outil.
-        assert size < 1_300
+        assert "appelle ask" in tool.description and "pourquoi" in tool.description
+        # Environ 390 tokens par appel de modèle, pour un agent qui déclare l'outil.
+        assert size < 1_500
 
     asyncio.run(go())
 

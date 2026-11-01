@@ -208,8 +208,18 @@ def _said(span: TraceSpan, event: TraceEvent, full: bool) -> list[str]:
             return [said.rstrip()]
         case "question.expired":
             return ["sans réponse dans le délai : le modèle continue sans"]
-        case "approval.requested" if span.kind != "other":
-            return [f"approbation demandée pour {data.get('tool_name', '?')}"]
+        case "approval.requested":
+            # Le motif est du contenu : sans lui, on ne lit que l'outil. Dans le
+            # span de l'approbation, l'en-tête nomme déjà l'outil (essai du 01/11).
+            reason = content.get("reason") if content is not None else None
+            said = (
+                None
+                if span.kind == "other"
+                else f"approbation demandée pour {data.get('tool_name', '?')}"
+            )
+            if isinstance(reason, str) and reason:
+                return [_line("motif     : " if said is None else f"{said} : ", reason, full)]
+            return [] if said is None else [said]
         case "approval.granted" | "approval.rejected" | "approval.expired":
             return [] if span.kind == "other" else [_approval(event)]
         case "guard.checked":

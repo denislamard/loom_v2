@@ -635,7 +635,7 @@ C'est le premier outil fourni à **paramètres** : `folders` se donne sur la ré
 
 > **`never` veut dire « sans approbation », jamais « interdit ».** Pour interdire un droit, ne le mettez pas dans `rights`. Jusqu'à la 2.0.13, `rights` s'écrivait aussi en table droit → approbation : `rights: { delete: never }` se lisait « suppression interdite », et l'accordait sans rien demander. Cette écriture est refusée depuis la 2.0.14, et le message donne l'écriture équivalente, à recopier : « dossier 'work' : 'rights' en table droit → approbation n'est plus accepté (never voulait dire « sans approbation », pas « refusé ») — écrire rights: [read, write, overwrite, delete] et approval: { overwrite: never, delete: never } ».
 
-L'approbation se décide **appel par appel** : dans la même étape, lire `clients/c1.txt` part tout de suite, et écrire `clients/c2.txt` met le run en pause (chapitre 9). L'approbateur lit le motif : « écrire clients/c2.txt : le dossier clients demande une approbation pour write (effets : reversible) ». Une approbation imposée par un client (`tenants[].approvals: { local_files: always }`) garde le dernier mot. `approval`, `side_effects` et `idempotent` ne se règlent pas sur la référence : les droits les expriment déjà, et l'approbation se règle par dossier (`folders[].approval`).
+L'approbation se décide **appel par appel** : dans la même étape, lire `clients/c1.txt` part tout de suite, et écrire `clients/c2.txt` met le run en pause (chapitre 9). L'approbateur lit le motif : « écrire clients/c2.txt — la config exige une approbation pour écrire dans clients (réversible) ». Une approbation imposée par un client (`tenants[].approvals: { local_files: always }`) garde le dernier mot. `approval`, `side_effects` et `idempotent` ne se règlent pas sur la référence : les droits les expriment déjà, et l'approbation se règle par dossier (`folders[].approval`).
 
 Une approbation suppose un journal durable : sur un journal `memory`, le montage refuse « outil 'local_files' dont certains appels attendent une approbation » (en profil `dev`, il avertit seulement).
 
@@ -1368,9 +1368,10 @@ Le modèle note alors la relance : un `UPDATE` de `devis` et un `INSERT` dans `r
 Statut     : paused · itérations : 4 · tokens : 6319/410 · coût : 0.0000 $
 Run        : 01a17900-0000-7000-8000-000000000032
 En attente : sql (fake_3_0) — loom approve 01a17900-0000-7000-8000-000000000032 --call fake_3_0
+Motif      : base crm : UPDATE sur devis, INSERT sur relances — la config exige une approbation pour UPDATE sur devis (irréversible)
 ```
 
-L'approbateur lit le motif, qui nomme les droits exercés : « crm : update sur devis, insert sur relances — approbation demandée pour update sur devis (effets : irreversible) ». Une fois l'appel accordé, les deux instructions passent ensemble :
+L'approbateur lit le motif, qui dit ce que fait l'appel puis la règle qui l'arrête. Une fois l'appel accordé, les deux instructions passent ensemble :
 
 ```bash
 uv run loom approve 01a17900-0000-7000-8000-000000000032 --call fake_3_0
@@ -1510,7 +1511,7 @@ Réponse de l'utilisateur :
 - Pour quel client faut-il préparer le devis ? → Dupont
 ```
 
-ou `Réponse de l'utilisateur, en message libre : Dupont, celui de Lyon` quand l'utilisateur a simplement écrit. Le message libre est suivi d'une consigne : s'il parle d'autre chose, le modèle le traite puis repose sa question avec `ask`, et le run reste en attente de la réponse.
+ou `Réponse de l'utilisateur, en message libre : Dupont, celui de Lyon` quand l'utilisateur a simplement écrit. Le message libre est suivi d'une consigne : s'il ne répond pas à la question (autre sujet, ou la demande de départ répétée), le modèle le traite puis repose sa question avec `ask`, et le run reste en attente de la réponse.
 
 **Répondre, c'est écrire dans la session.** Le message suivant de la conversation **est** la réponse : c'est le run qui a posé la question qui reprend, et le résultat rendu porte **son** `run_id`. Il en va ainsi par tous les accès :
 
@@ -1539,7 +1540,7 @@ Le message n'est pas pris comme réponse — c'est un nouveau tour, et le modèl
 - **Sans réponse.** Sans `expires_in`, une question attend indéfiniment. Avec, elle expire : le modèle reçoit « L'utilisateur n'a pas répondu dans le délai… » et continue ; le run n'échoue jamais pour cela. Une réponse arrivée après l'échéance est refusée (`QuestionStale`, 409).
 - **Annulé, le run retire sa question** (`run.cancelled.withdrawn`).
 - **Masquage.** Sans `read_content`, relire un run ne montre pas le texte des questions (`redacted` : `pending_questions[].questions`) : il est écrit par le modèle, donc du contenu.
-- **Ce que voit le modèle :** environ 320 tokens par appel de modèle (description et schéma), pour les agents qui déclarent l'outil. `approval`, `side_effects`, `idempotent`, `timeout` et `output` sont refusés sur sa référence : l'outil ne fait rien lui-même. Une politique `before_tool` ne voit pas ses appels.
+- **Ce que voit le modèle :** environ 390 tokens par appel de modèle (description et schéma), pour les agents qui déclarent l'outil. `approval`, `side_effects`, `idempotent`, `timeout` et `output` sont refusés sur sa référence : l'outil ne fait rien lui-même. Une politique `before_tool` ne voit pas ses appels.
 - **Au rejeu**, la réponse vient du journal, sans pause ; en évaluation, personne ne répond.
 - ⚠ **Une loom plus ancienne ne lit pas une session où une question a été posée** : les événements `question.*` lui sont inconnus. Les autres sessions ne sont pas touchées.
 

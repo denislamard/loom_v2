@@ -671,7 +671,10 @@ def _text(result: RunResult) -> str:
 
 def _awaiting(result: RunResult) -> str:
     """Ce qu'un run arrêté sur une approbation dit au client : quoi, et comment reprendre."""
-    asked = ", ".join(f"{a.tool_name} ({a.call_id})" for a in result.pending_approvals)
+    asked = ", ".join(
+        f"{a.tool_name} ({a.call_id})" + (f" — {a.reason}" if a.reason else "")
+        for a in result.pending_approvals
+    )
     return (
         f"Run {result.run_id} en attente d'approbation : {asked}. "
         "Un humain doit trancher (API REST ou « loom approve »), "

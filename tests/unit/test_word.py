@@ -261,7 +261,8 @@ def test_assess_asks_only_where_the_folder_asks(tool: WordTool) -> None:
     replacing = tool.assess_call({"path": "sortie/a.docx", "overwrite": True, **DEVIS})
     assert (replacing.approval, replacing.side_effects) == ("always", "irreversible")
     assert replacing.reason == (
-        "écrire sortie/a.docx : approbation demandée pour overwrite sur sortie/a.docx"
+        "écrire le fichier sortie/a.docx, en remplaçant le fichier s'il existe — la config "
+        "exige une approbation pour remplacer un fichier existant dans sortie"
     )
     asked = tool.assess_call({"path": "valide/a.docx", **DEVIS})
     assert asked.approval == "always"

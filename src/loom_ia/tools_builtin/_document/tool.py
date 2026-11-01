@@ -137,7 +137,7 @@ class DocumentTool(ABC):
             approval="always",
             side_effects="none",
             idempotent=True,
-            reason=f"lire {source.address} : approbation demandée pour read",
+            reason=f"lire le fichier {source.address} — {Folders.rule([(source, 'read')])}",
         )
 
     @staticmethod
@@ -151,8 +151,9 @@ class DocumentTool(ABC):
             approval="always",
             side_effects=effects,
             idempotent=True,
-            reason=f"écrire {located.address} : approbation demandée pour "
-            + ", ".join(f"{right} sur {located.address}" for right in asking),
+            reason=f"écrire le fichier {located.address}"
+            + (", en remplaçant le fichier s'il existe" if request.overwrite else "")
+            + f" — {Folders.rule((located, right) for right in asking)}",
         )
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:

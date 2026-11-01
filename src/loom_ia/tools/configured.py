@@ -19,6 +19,7 @@ from typing import Final
 from pydantic import JsonValue
 
 from loom_ia.core.model import (
+    EVERY_CALL,
     Approval,
     OutputContract,
     SideEffects,
@@ -61,11 +62,7 @@ class ConfiguredTool:
             idempotent=self.spec.idempotent if "idempotent" in fixed else found.idempotent,
             # Fixée par la config, l'approbation dit d'où elle vient, pas le motif de
             # l'outil (test D7 du 18/10 : le motif doit nommer la bonne source).
-            reason=(
-                ("outil déclaré à approbation obligatoire" if approval == "always" else None)
-                if imposed
-                else found.reason
-            ),
+            reason=((EVERY_CALL if approval == "always" else None) if imposed else found.reason),
         )
 
 

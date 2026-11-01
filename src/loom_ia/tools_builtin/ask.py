@@ -30,7 +30,10 @@ DESCRIPTION: Final = (
     "précision, une préférence) ; ne pas écrire la question dans ta réponse. Propose des "
     "choix ('options') quand les réponses possibles sont connues ; l'utilisateur peut "
     "toujours répondre autre chose. Pas pour faire valider une action : ce n'est pas une "
-    "autorisation."
+    "autorisation. S'il te faut encore une réponse de l'utilisateur à la fin de ton tour, "
+    "appelle ask : une question écrite dans ta réponse termine le run et n'attend rien. "
+    "Si tu reposes une question, dis d'abord en une phrase pourquoi la réponse précédente "
+    "ne suffisait pas."
 )
 
 SCHEMA: Final[dict[str, JsonValue]] = {

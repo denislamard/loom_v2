@@ -501,8 +501,8 @@ async def test_overwrite_creates_a_missing_file(files: LocalFilesTool, disk: Pat
                 approval="always",
                 side_effects="reversible",
                 idempotent=True,
-                reason="écrire clients/c2.txt : le dossier clients demande une approbation "
-                "pour write",
+                reason="écrire clients/c2.txt — la config exige une approbation pour écrire "
+                "dans clients",
             ),
         ),
         # Refusé à l'exécution pour la même raison : rien à approuver, aucun effet.
@@ -526,7 +526,10 @@ def test_overwrite_asks_when_either_right_asks(disk: Path) -> None:
         {"action": "write", "path": "work/a", "content": "x", "overwrite": True}
     )
     assert asked.approval == "always"
-    assert asked.reason is not None and "pour overwrite" in asked.reason
+    assert asked.reason == (
+        "écrire work/a, en remplaçant le fichier s'il existe — la config exige une approbation "
+        "pour remplacer un fichier existant dans work"
+    )
     assert (
         tool.assess_call({"action": "write", "path": "work/a", "content": "x"}).approval == "never"
     )
@@ -713,8 +716,8 @@ async def test_a_run_waits_only_for_the_call_that_asks(demo: ConfigFactory, tmp_
     assert state.status is RunStatus.PAUSED
     [pending] = state.awaiting
     assert pending.reason == (
-        "supprimer espace/a.txt : le dossier espace demande une approbation pour delete "
-        "(effets : irreversible)"
+        "supprimer espace/a.txt — la config exige une approbation pour supprimer dans espace "
+        "(irréversible)"
     )
     events = await store.read(DEFAULT_TENANT, run.session_id)
     [read] = [e.payload for e in events if isinstance(e.payload, ToolCompleted)]

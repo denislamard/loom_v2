@@ -2498,6 +2498,8 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
             else "sans échéance"
         )
         _say(f"  {asked.tool_name} ({asked.call_id}) — run {holder}, {expiry}")
+        if asked.reason:
+            _say(f"    motif : {asked.reason}")
         # La décision se prend sur la racine : c'est elle qui repart et rejoue
         # l'appel qui mène au sous-run en attente.
         target = root_of(holder) or "<run_id>"
@@ -3127,6 +3129,9 @@ def _report(
                 f"loom approve {result.run_id} --call {asked.call_id}{where}",
                 file=sys.stderr,
             )
+            if asked.reason:
+                # Ce qu'il faut savoir pour trancher (essai du 01/11 : rien ne le disait).
+                _say(f"Motif      : {asked.reason}", file=sys.stderr)
         for question in result.pending_questions:
             _say(
                 f"Question   : {question.call_id} — répondre : loom run {result.agent} "

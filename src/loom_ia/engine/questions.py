@@ -19,9 +19,12 @@ from loom_ia.core.model.question import PendingQuestion, Question, QuestionReply
 # Un message libre est routé vers la question même s'il parle d'autre chose
 # (D-3) : sans cette consigne, le modèle y répond et repose sa question en
 # texte, et le run se termine sans question ouverte (essai Haiku, ask-06).
+# La demande de départ répétée est nommée : Haiku la prenait pour une
+# nouvelle demande et finissait sur la question écrite en texte (ask-12).
 OFF_TOPIC = (
-    "S'il parle d'autre chose sans répondre à ta question, traite son message, "
-    "puis repose ta question avec ask."
+    "Si ce message ne répond pas à ta question (autre sujet, ou ta demande de départ "
+    "répétée), traite-le si besoin, puis repose ta question avec ask, jamais dans ta "
+    "réponse en texte : le run se terminerait sans attendre la réponse."
 )
 
 

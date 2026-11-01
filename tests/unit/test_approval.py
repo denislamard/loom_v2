@@ -1122,6 +1122,8 @@ def test_sessions_show_lists_runs_and_what_awaits(
     assert f"  {racine}  demo " in out and "paused" in out
     assert "(sous-run de " in out
     assert "envoyer_email (" in out and "expire le " in out
+    # Le motif dit ce qu'on tranche, et d'où vient l'approbation (essai du 01/11).
+    assert "    motif : la config exige une approbation pour chaque appel de cet outil" in out
     assert f"loom approve {racine} --call " in out and f"--session {SESSION}" in out
     # Les arguments de l'appel ne s'affichent pas.
     assert "mme.martin@example.com" not in out
@@ -1303,3 +1305,18 @@ def _handed(event: Event) -> bool:
 def _paused(events: list[Event]) -> list[Event]:
     """Transitions vers la pause : aucune, avec un approbateur en ligne."""
     return [e for e in events if e.facets.get("to_state") == "paused"]
+
+
+def test_inspect_says_why_an_approval_is_asked(
+    atelier: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``loom inspect`` donne le motif de la demande, pas seulement l'outil (essai du 01/11)."""
+    path = str(atelier())
+    assert main(["--config", path, "run", "demo", DEMANDE, "--session", SESSION, "--json"]) == 1
+    run_id = json.loads(capsys.readouterr().out)["run_id"]
+    assert main(["--config", path, "inspect", run_id, "--session", SESSION]) == 0
+    out = capsys.readouterr().out
+    assert "approbation pour envoyer_email — en attente" in out
+    assert (
+        "motif     : la config exige une approbation pour chaque appel de cet outil (irréversible)"
+    ) in out

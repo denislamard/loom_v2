@@ -49,6 +49,15 @@ from loom_ia.tools_builtin.local_files_params import (
 TEMP_PREFIX: Final = ".loom-"
 
 
+# Ce qu'un droit permet, dit à l'approbateur.
+RIGHT_WORDS: Final[Mapping[Right, str]] = {
+    "read": "lire",
+    "write": "écrire",
+    "overwrite": "remplacer un fichier existant",
+    "delete": "supprimer",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class Folder:
     """Un dossier permis, tel que l'outil l'utilise : sa racine résolue et ses droits."""
@@ -167,6 +176,24 @@ class Folders:
     def asked(located: Located, rights: Iterable[Right]) -> list[Right]:
         """Parmi ces droits, ceux que le dossier soumet à une approbation."""
         return [right for right in rights if located.folder.rights.get(right) == "always"]
+
+    @staticmethod
+    def rule(asked: Iterable[tuple[Located, Right]]) -> str:
+        """La règle de config qui exige l'approbation, en clair, dossier par dossier.
+
+        « la config exige une approbation pour écrire et remplacer un fichier
+        existant dans sortie » : l'approbateur lit ce que la règle protège, pas
+        le nom du droit (essai du 01/11 : « overwrite sur … » ne disait rien).
+        """
+        by_folder: dict[str, list[str]] = {}
+        for located, right in asked:
+            words = by_folder.setdefault(located.folder.name, [])
+            if RIGHT_WORDS[right] not in words:
+                words.append(RIGHT_WORDS[right])
+        said = ", ".join(
+            f"{' et '.join(words)} dans {folder}" for folder, words in by_folder.items()
+        )
+        return f"la config exige une approbation pour {said}"
 
     def resolved(self, located: Located) -> Path:
         """Le chemin réel, liens suivis, qui doit rester dans le dossier qui le gouverne."""

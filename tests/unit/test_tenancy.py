@@ -191,7 +191,8 @@ async def test_an_imposed_approval_says_it_comes_from_the_tenant(demo: ConfigFac
         result = await loom.run("demo", QUESTION, tenant=DUPONT)
     [asked] = result.pending_approvals
     assert asked.reason == (
-        f"approbation imposée par la configuration pour le client {DUPONT} (effets : none)"
+        "la config impose une approbation pour chaque appel de cet outil, pour le client "
+        f"{DUPONT} (sans effet)"
     )
 
 

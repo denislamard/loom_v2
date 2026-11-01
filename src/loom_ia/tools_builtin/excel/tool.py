@@ -125,20 +125,23 @@ class ExcelTool:
         if request.overwrite:
             needed.append((located, "overwrite"))
         needed.extend((source, "read") for source in sources)
-        asking = [
-            f"{right} sur {where.address}"
-            for where, right in needed
-            if Folders.asked(where, (right,))
+        asking: list[tuple[Located, Right]] = [
+            (where, right) for where, right in needed if Folders.asked(where, (right,))
         ]
         effects: SideEffects = "irreversible" if request.overwrite else "reversible"
         if not asking:
             return CallAssessment(side_effects=effects, idempotent=True)
+        read = list(dict.fromkeys(source.address for source in sources))
+        said = (
+            f"écrire le classeur {located.address}"
+            + (", en remplaçant le fichier s'il existe" if request.overwrite else "")
+            + (f", en lisant {', '.join(read)}" if read else "")
+        )
         return CallAssessment(
             approval="always",
             side_effects=effects,
             idempotent=True,
-            reason=f"écrire le classeur {located.address} : approbation demandée pour "
-            + ", ".join(dict.fromkeys(asking)),
+            reason=f"{said} — {Folders.rule(asking)}",
         )
 
     def _assess_read(self, request: ReadArguments) -> CallAssessment:
@@ -150,7 +153,7 @@ class ExcelTool:
             approval="always",
             side_effects="none",
             idempotent=True,
-            reason=f"lire le classeur {source.address} : approbation demandée pour read",
+            reason=f"lire le classeur {source.address} — {Folders.rule([(source, 'read')])}",
         )
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:

@@ -261,7 +261,7 @@ Un type non géré (`inet`…) demande un cast dans le SQL : `($n::text::inet)`.
 | `execute` avec des `INSERT` seuls | `reversible` | selon les droits exercés | `on_unknown: pause` |
 | `execute` avec `UPDATE` ou `DELETE` | `irreversible` | selon les droits exercés | `on_unknown: pause` |
 
-**Le motif montré à l'approbateur** nomme les droits exercés, par exemple : `crm : insert sur relances, update sur devis — approbation demandée pour update sur devis`.
+**Le motif montré à l'approbateur** dit ce que fait l'appel, puis la règle qui l'arrête, par exemple : `base crm : INSERT sur relances, UPDATE sur devis — la config exige une approbation pour UPDATE sur devis (irréversible)`.
 
 **La `spec` déclare le pire des cas**, comme `local_files`. Un `UPDATE` à `always` met donc l'agent sous la garde du journal durable (`_check_durable_journal`), hors profil `dev`.
 

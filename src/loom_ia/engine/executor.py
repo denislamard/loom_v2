@@ -89,6 +89,8 @@ from loom_ia.core.events import (
 )
 from loom_ia.core.model import (
     CONTINUE,
+    EFFECTS_SAID,
+    EVERY_CALL,
     INVALID_JSON_KEY,
     AfterTool,
     Answerer,
@@ -1461,20 +1463,21 @@ def _asks_approval(
     pour cet appel : c'est lui qui dit s'il faut approuver, et pourquoi. La
     consigne de l'appelant garde le dernier mot.
     """
-    effects = spec.side_effects if assessment is None else assessment.side_effects
+    effects = EFFECTS_SAID[spec.side_effects if assessment is None else assessment.side_effects]
     if (forced := (imposed or {}).get(spec.name)) is not None:
         if forced == "always":
             who = f"le client {tenant}" if tenant else "l'appelant"
             return (
-                f"approbation imposée par la configuration pour {who} (effets : {effects})",
+                f"la config impose une approbation pour chaque appel de cet outil, pour {who} "
+                f"({effects})",
                 None,
             )
     elif assessment is not None:
         if assessment.approval == "always":
-            said = assessment.reason or "approbation exigée par l'outil pour cet appel"
-            return f"{said} (effets : {effects})", None
+            said = assessment.reason or "l'outil exige une approbation pour cet appel"
+            return f"{said} ({effects})", None
     elif spec.approval == "always":
-        return f"outil déclaré à approbation obligatoire (effets : {effects})", None
+        return f"{EVERY_CALL} ({effects})", None
     if isinstance(verdict.decision, Pause):
         return verdict.decision.reason, verdict.by
     return None

@@ -3906,7 +3906,7 @@ curl -s "http://127.0.0.1:18301/v1/runs/$R?$S" | jq -c '{status, text, pending: 
 ```
 
 ```text
-{"status":"paused","text":"","pending":[{"call_id":"fake_1_0","tool_name":"envoyer_email","reason":"outil déclaré à approbation obligatoire (effets : irreversible)"}]}
+{"status":"paused","text":"","pending":[{"call_id":"fake_1_0","tool_name":"envoyer_email","reason":"la config exige une approbation pour chaque appel de cet outil (irréversible)"}]}
 ```
 
 Le flux d'événements est du **SSE** (*Server-Sent Events*) : une connexion HTTP qui reste ouverte et pousse des événements. Chaque événement porte un `id` (son numéro de séquence dans le journal) et un `event` (son type). Sans les événements de plomberie :
@@ -4440,12 +4440,12 @@ uv run loom --config api.yaml sessions export mcp-eli | jq -c 'select(.type|test
 ```text
 formulaire : Approbation demandée pour l'outil envoyer_email.
 Arguments : {"destinataire": "mme.martin@example.fr", "objet": "Votre devis D-2026-042", "corps": "Bonjour Madame Martin, je me permets de revenir vers vous au sujet du devis D-2026-042 (1 840 €) envoyé le 3 septembre. Restant à votre disposition, cordialement."}
-Motif : outil déclaré à approbation obligatoire (effets : irreversible)
+Motif : la config exige une approbation pour chaque appel de cet outil (irréversible)
 champs     : ['decision', 'motif']
 statut : completed
 texte  : La relance du devis D-2026-042 est partie chez Mme Martin.
 mme.martin@example.fr | Votre devis D-2026-042
-{"type":"approval.requested","by":null,"reason":"outil déclaré à approbation obligatoire (effets : irreversible)"}
+{"type":"approval.requested","by":null,"reason":"la config exige une approbation pour chaque appel de cet outil (irréversible)"}
 {"type":"approval.granted","by":"mcp:mcp","reason":"Vérifié par Denis"}
 ```
 

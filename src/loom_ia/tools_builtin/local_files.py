@@ -171,8 +171,13 @@ class LocalFilesTool:
             side_effects=effects,
             idempotent=idempotent,
             reason=(
-                f"{_SAID[request.action]} {located.address} : le dossier {located.folder.name} "
-                f"demande une approbation pour {', '.join(asking)}"
+                f"{_SAID[request.action]} {located.address}"
+                + (
+                    ", en remplaçant le fichier s'il existe"
+                    if request.action == "write" and request.overwrite
+                    else ""
+                )
+                + f" — {Folders.rule((located, right) for right in asking)}"
             ),
         )
 

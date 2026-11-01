@@ -17,7 +17,7 @@ Par tous les accès, l'utilisateur répond en écrivant simplement son message d
 
 - **Tests :** 3 588 verts sur `tests/unit` et `tests/regression`, tous les extras, soit 3 564 plus 24 nouveaux ; 131 sautés, comme avant. Les 7 corpus de rejeu (j1 à j7) se rejouent à l'identique.
 - **Qualité :** ruff propre, 5 contrats d'import tenus. pyright strict : aucune erreur nouvelle (les 68 de `src`, toutes dans les adaptateurs Postgres faute de stubs d'`asyncpg` dans l'espace d'essai, étaient là avant).
-- **Coût :** 1 168 caractères (description 509, schéma 659), soit environ 320 tokens par appel de modèle. Seuls les agents qui déclarent `loom.ask` le paient ; les requêtes des autres ne changent pas d'un octet.
+- **Coût :** 1 425 caractères (description 766, schéma 659), soit environ 390 tokens par appel de modèle (320 avant les deux phrases ajoutées après l'essai sur Haiku). Seuls les agents qui déclarent `loom.ask` le paient ; les requêtes des autres ne changent pas d'un octet.
 
 | Point | Constat | Preuve |
 | --- | --- | --- |
@@ -107,7 +107,7 @@ L'utilisateur peut **toujours** répondre autre chose qu'un choix proposé, comm
 
 La description de l'outil :
 
-> Pose une ou plusieurs questions à l'utilisateur et attend sa réponse, qui te revient comme résultat de cet appel. À utiliser quand une information indispensable manque et qu'aucun autre outil ne peut la donner (un choix entre plusieurs voies, une précision, une préférence) ; ne pas écrire la question dans ta réponse. Propose des choix ('options') quand les réponses possibles sont connues ; l'utilisateur peut toujours répondre autre chose. Pas pour faire valider une action : ce n'est pas une autorisation.
+> Pose une ou plusieurs questions à l'utilisateur et attend sa réponse, qui te revient comme résultat de cet appel. À utiliser quand une information indispensable manque et qu'aucun autre outil ne peut la donner (un choix entre plusieurs voies, une précision, une préférence) ; ne pas écrire la question dans ta réponse. Propose des choix ('options') quand les réponses possibles sont connues ; l'utilisateur peut toujours répondre autre chose. Pas pour faire valider une action : ce n'est pas une autorisation. S'il te faut encore une réponse de l'utilisateur à la fin de ton tour, appelle ask : une question écrite dans ta réponse termine le run et n'attend rien. Si tu reposes une question, dis d'abord en une phrase pourquoi la réponse précédente ne suffisait pas.
 
 ### Ce que l'utilisateur répond
 
@@ -142,10 +142,10 @@ ou, pour un message libre :
 ```text
 Réponse de l'utilisateur, en message libre : Dupont, celui de Lyon
 
-S'il parle d'autre chose sans répondre à ta question, traite son message, puis repose ta question avec ask.
+Si ce message ne répond pas à ta question (autre sujet, ou ta demande de départ répétée), traite-le si besoin, puis repose ta question avec ask, jamais dans ta réponse en texte : le run se terminerait sans attendre la réponse.
 ```
 
-La consigne vient de l'essai sur Haiku : à « Au fait, quelle heure est-il ? » pendant la question, il donnait l'heure et reposait sa question en texte. Le run se terminait alors sans question ouverte, et la réponse suivante démarrait un nouveau run.
+La consigne vient de l'essai sur Haiku : à « Au fait, quelle heure est-il ? » pendant la question, il donnait l'heure et reposait sa question en texte. Le run se terminait alors sans question ouverte, et la réponse suivante démarrait un nouveau run. La demande de départ répétée est nommée depuis l'essai ask-12 : Haiku la prenait pour une nouvelle demande et finissait sur la question écrite en texte.
 
 Le résultat porte aussi les données (`{"answers": [{"question": …, "answer": [...]}]}` ou `{"reply": …}`), que `$ref` et l'interface peuvent lire.
 
@@ -330,7 +330,7 @@ En tout, 28 fichiers, +1 982 / −24 lignes, tests compris.
 | Fiabilité | Appel explicite, typé, validé par le schéma | Le modèle l'oublie, ou l'écrit mal | Un appel de plus, qui se trompe | Nulle : « Voulez-vous autre chose ? » n'attend rien |
 | Choix proposés | Oui (`options`) | À inventer dans la balise | Non | Non |
 | Ce que voit le client | Rien (l'appel n'est pas du texte) | La balise, à retirer | Rien | Rien |
-| Coût | ~320 tokens par appel, pour les agents qui l'ont | Une consigne | Un appel de modèle par run | Rien |
+| Coût | ~390 tokens par appel, pour les agents qui l'ont | Une consigne | Un appel de modèle par run | Rien |
 
 L'outil est aussi ce que fait Claude, et le même mécanisme qu'une sortie d'outil terminal ou que `loom.state` : le moteur reconnaît l'appel et en tire la suite.
 
@@ -348,7 +348,7 @@ L'outil est aussi ce que fait Claude, et le même mécanisme qu'une sortie d'out
 **Le rejeu, sans casser les implémentations existantes.** `ToolReplay` gagne `answer`. Une implémentation écrite avant (il y en a une dans les tests de l'exécuteur) est tolérée : personne ne répond, la question se clôt sans réponse.
 
 **Mesures :**
-- **Coût en tokens :** description 509 et schéma 659 caractères, en JSON compact, soit environ 320 tokens par appel de modèle pour un agent qui déclare `loom.ask`.
+- **Coût en tokens :** description 766 et schéma 659 caractères, en JSON compact, soit environ 390 tokens par appel de modèle pour un agent qui déclare `loom.ask`.
 - **Coût du routage :** une lecture de plus du journal de la session, à chaque run lancé avec une `session_id`, mais seulement pour un client dont un agent déclare `loom.ask`. Sans lui, rien n'est relu.
 
 ### Tests écrits sur le prototype (24)
@@ -368,7 +368,7 @@ L'outil est aussi ce que fait Claude, et le même mécanisme qu'une sortie d'out
 
 1. ⚠ **Une loom qui ne connaît pas ces événements ne lit pas une session qui en contient.** Démontré : le code de `7e7fe83` lit les journaux du prototype en `JournalCorrupted` (« category : Input should be 'run', 'message'… »). Ce sont seulement les sessions où une question a été posée ; les autres restent lisibles. Lister, la rétention et l'effacement passent toujours, car ils ne lisent que les marques. C'est la limite de la lecture tolérante (DEC-1) : un champ ajouté passe, un type nouveau non. `loom.state` v2 l'avait évitée en n'ajoutant aucun type ; ce n'est pas possible ici sans détourner les événements d'approbation, ce qui est exactement la confusion à éviter. À dire dans le CHANGELOG : « une 2.0.14 ne lit pas une session où `loom.ask` a servi ».
 2. **Les requêtes des agents sans `loom.ask` ne changent pas.** Les 7 corpus de rejeu sont identiques, à l'empreinte de chaque requête près, et aucune note n'apparaît dans une session sans question.
-3. **Un agent qui déclare `loom.ask` voit ses requêtes changer** (environ 320 tokens). Un run fait avant ne se rejoue plus à l'identique (« ce qui diffère : les outils proposés »), et le cache de prompt est réécrit une fois.
+3. **Un agent qui déclare `loom.ask` voit ses requêtes changer** (environ 390 tokens). Un run fait avant ne se rejoue plus à l'identique (« ce qui diffère : les outils proposés »), et le cache de prompt est réécrit une fois.
 4. **Un message peut rendre un `run_id` déjà connu.** Dans une session où une question attend, `run()`, `POST /agents/{name}/runs` et l'outil MCP de l'agent rendent le run repris, avec son `run_id`, et non un nouveau. Une application qui suppose un run neuf par message, pour ses statistiques ou son interface, doit l'accepter. Cela ne vaut que pour les agents qui déclarent `loom.ask`.
 5. **CLI et MCP :** le `run_id` n'est plus fixé d'avance dans une session (sauf `--run-id`). Rien de visible, mais c'était un prérequis du routage.
 6. **Schémas publiés, tous additifs :**

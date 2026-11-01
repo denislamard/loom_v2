@@ -448,6 +448,8 @@ async def test_without_elicitation_the_tool_hands_back_a_paused_run(
     ]
     dit = _text(paused.content)
     assert "en attente d'approbation" in dit and run_id in dit and STATUS_TOOL in dit
+    # Le motif accompagne l'appel : le client sait ce qu'un humain doit trancher.
+    assert "la config exige une approbation pour chaque appel de cet outil" in dit
     assert relu.structuredContent == paused.structuredContent
     assert fini.structuredContent["status"] == "completed"
 

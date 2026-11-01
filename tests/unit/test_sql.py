@@ -895,7 +895,7 @@ def test_assess_follows_the_rights_exercised(tmp_path: Path, base: Path) -> None
     asked = tool.assess_call(query("SELECT nom FROM clients"))
     assert (asked.approval, asked.reason) == (
         "always",
-        "crm : lecture — approbation demandée pour select sur clients",
+        "base crm : SELECT sur clients — la config exige une approbation pour cette opération",
     )
     insert = tool.assess_call(execute(("INSERT INTO relances (devis_id) VALUES ($1)", [1])))
     assert (insert.side_effects, insert.approval, insert.idempotent) == (
@@ -912,8 +912,8 @@ def test_assess_follows_the_rights_exercised(tmp_path: Path, base: Path) -> None
     assert (update.side_effects, update.approval) == ("irreversible", "always")
     assert (
         update.reason
-        == "crm : insert sur relances, update sur devis — approbation demandée pour update "
-        "sur devis"
+        == "base crm : INSERT sur relances, UPDATE sur devis — la config exige une approbation "
+        "pour UPDATE sur devis"
     )
     invalid = tool.assess_call(execute("DROP TABLE devis"))
     assert (invalid.side_effects, invalid.approval) == ("none", "never")

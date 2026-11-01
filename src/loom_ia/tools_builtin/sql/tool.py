@@ -170,18 +170,24 @@ class SqlTool:
             else "none"
         )
         asking = [
-            f"{right} sur {table}"
+            f"{right.upper()} sur {table}"
             for table, right in exercised
             if database.spec.tables[table].rights.get(right) == "always"
         ]
         if not asking:
             return CallAssessment(side_effects=effects)
-        done = ", ".join(f"{right} sur {table}" for table, right in exercised if right != "select")
+        # Ce que fait l'appel : ses écritures, ou ses lectures s'il n'écrit rien.
+        done = [f"{right.upper()} sur {table}" for table, right in exercised if right != "select"]
+        done = done or [f"SELECT sur {table}" for table, _ in exercised]
+        if asking == done:
+            rule = "cette opération" if len(done) == 1 else "ces opérations"
+        else:
+            rule = ", ".join(asking)
         return CallAssessment(
             approval="always",
             side_effects=effects,
-            reason=f"{database.name} : {done or 'lecture'} — approbation demandée pour "
-            + ", ".join(asking),
+            reason=f"base {database.name} : {', '.join(done)} — la config exige une approbation "
+            f"pour {rule}",
         )
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:

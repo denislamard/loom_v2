@@ -145,7 +145,7 @@ def test_what_the_config_fixes_wins_field_by_field() -> None:
     assert assessed(forced, {"x": 2}) == CallAssessment(
         approval="always",
         side_effects="reversible",
-        reason="outil déclaré à approbation obligatoire",
+        reason="la config exige une approbation pour chaque appel de cet outil",
     )
     # ``policy`` laisse décider les politiques : pas d'approbation d'office.
     assert assessed(configure(AssessingTool(), approval="policy"), {"x": 1}) == CallAssessment(
@@ -172,7 +172,7 @@ def test_an_envelope_around_a_plain_tool_assesses_nothing() -> None:
 async def test_only_the_calls_that_ask_wait_for_a_human() -> None:
     fichiers = AssessingTool()
     events = await collect(ToolExecutor([fichiers]), awaiting(call("c1", 2), call("c2", 1)))
-    assert requested(events) == {"c2": "suppression : à approuver (effets : irreversible)"}
+    assert requested(events) == {"c2": "suppression : à approuver (irréversible)"}
     assert not completed(events)["c1"].is_error
     assert fichiers.calls == [{"x": 2}]
 

@@ -401,12 +401,13 @@ def test_assess_asks_only_where_the_folder_asks(tool: ExcelTool, disk: Path) -> 
     # En liste, overwrite prend son approbation par défaut : always.
     assert (replace.approval, replace.side_effects) == ("always", "irreversible")
     assert replace.reason == (
-        "écrire le classeur sortie/a.xlsx : approbation demandée pour overwrite sur sortie/a.xlsx"
+        "écrire le classeur sortie/a.xlsx, en remplaçant le fichier s'il existe — la config "
+        "exige une approbation pour remplacer un fichier existant dans sortie"
     )
     asked = tool.assess_call({"path": "valide/a.xlsx", "sheets": [SUIVI]})
     assert asked.approval == "always"
     assert asked.reason == (
-        "écrire le classeur valide/a.xlsx : approbation demandée pour write sur valide/a.xlsx"
+        "écrire le classeur valide/a.xlsx — la config exige une approbation pour écrire dans valide"
     )
     guarded = make(
         disk,
@@ -418,7 +419,8 @@ def test_assess_asks_only_where_the_folder_asks(tool: ExcelTool, disk: Path) -> 
     read = guarded.assess_call(arguments)
     assert (read.approval, read.reason) == (
         "always",
-        "écrire le classeur sortie/a.xlsx : approbation demandée pour read sur donnees/devis.csv",
+        "écrire le classeur sortie/a.xlsx, en lisant donnees/devis.csv — la config exige une "
+        "approbation pour lire dans donnees",
     )
     wrong = tool.assess_call({"path": "/etc/a.xlsx", "sheets": [SUIVI]})
     assert (wrong.approval, wrong.side_effects) == ("never", "none")

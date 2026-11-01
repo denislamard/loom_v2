@@ -190,6 +190,8 @@ from loom_ia.core.model.streaming import (
 from loom_ia.core.model.tooling import (
     DEFAULT_APPROVAL_DELAY,
     DEFAULT_RETENTION,
+    EFFECTS_SAID,
+    EVERY_CALL,
     MAIN_ROLE,
     MAX_RECORDED,
     SKILL_SEPARATOR,
@@ -227,6 +229,8 @@ __all__ = [
     "DEFAULT_MIN_SCORE",
     "DEFAULT_RETENTION",
     "DEFAULT_TENANT",
+    "EFFECTS_SAID",
+    "EVERY_CALL",
     "FINALIZE_HINT",
     "HOOK_POINTS",
     "IMAGE_TYPES",

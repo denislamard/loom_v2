@@ -1227,7 +1227,7 @@ Observez l'écart entre les deux lignes : `arguments` affiche ce que le **modèl
 $ uv run loom sessions export relance-042b --out relance-042b.jsonl
 25 événements écrits dans relance-042b.jsonl
 $ uv run python approbations.py relance-042b.jsonl
-approval.requested {"call_id": "fake_0_0", "tool_name": "envoyer_email", "arguments": {"destinataire": "mme.martin@example.fr", "objet": "Votre devis D-2026-042", "corps": "Bonjour Mme Martin, votre devis D-2026-042 de 1 840 € est toujours valable."}, "reason": "outil déclaré à approbation obligatoire (effets : irreversible)", "policy": null, "scope": "approve", "expire_at": "2026-10-11T15:41:15.029790Z"}
+approval.requested {"call_id": "fake_0_0", "tool_name": "envoyer_email", "arguments": {"destinataire": "mme.martin@example.fr", "objet": "Votre devis D-2026-042", "corps": "Bonjour Mme Martin, votre devis D-2026-042 de 1 840 € est toujours valable."}, "reason": "la config exige une approbation pour chaque appel de cet outil (irréversible)", "policy": null, "scope": "approve", "expire_at": "2026-10-11T15:41:15.029790Z"}
 approval.granted {"call_id": "fake_0_0", "tool_name": "envoyer_email", "by": "denis", "reason": "", "arguments": {"destinataire": "martin.chauffe-eau@example.fr", "objet": "Votre devis D-2026-042", "corps": "Bonjour Mme Martin, votre devis D-2026-042 de 1 840 € reste valable jusqu a fin octobre."}}
 ```
 

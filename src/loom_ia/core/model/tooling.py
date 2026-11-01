@@ -21,6 +21,16 @@ type Approval = Literal["never", "always", "policy"]
 # Ce qu'il advient d'une demande d'approbation laissée sans réponse (#17).
 type ExpiryAction = Literal["deny", "fail"]
 
+# Les effets d'un appel, dits à l'approbateur dans le motif d'une demande.
+EFFECTS_SAID: Final[dict[SideEffects, str]] = {
+    "none": "sans effet",
+    "reversible": "réversible",
+    "irreversible": "irréversible",
+}
+# Motif d'un outil déclaré ``approval: always`` : la source, que l'approbateur
+# doit pouvoir retrouver (test D7 du 18/10).
+EVERY_CALL: Final = "la config exige une approbation pour chaque appel de cet outil"
+
 # Contrainte commune aux API des fournisseurs sur les noms d'outils.
 TOOL_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 

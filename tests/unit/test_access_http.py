@@ -428,6 +428,10 @@ async def test_an_approval_is_granted_over_rest(atelier: ConfigFactory) -> None:
 
     assert paused["status"] == "paused"
     assert [a["tool_name"] for a in attente] == ["envoyer_email"]
+    # Le motif, en clair : ce qui exige l'approbation et ses effets (essai du 01/11).
+    assert [a["reason"] for a in attente] == [
+        "la config exige une approbation pour chaque appel de cet outil (irréversible)"
+    ]
     assert decided.status_code == 200
     assert decided.json() == {"run_id": paused["run_id"], "calls": [attente[0]["call_id"]]}
     assert finished.json()["status"] == "completed"

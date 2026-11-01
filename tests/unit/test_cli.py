@@ -677,7 +677,10 @@ def test_the_proposed_approve_command_names_its_session_and_tenant(
     args = ["--config", path, "run", "demo", "Relance.", "--session", "s1", "--tenant", "dupont"]
     assert main(args) == 1
     erreur = capsys.readouterr().err
-    assert "--call " in erreur and erreur.rstrip().endswith("--session s1 --tenant dupont")
+    [approve] = [line for line in erreur.splitlines() if line.startswith("En attente")]
+    assert "--call " in approve and approve.endswith("--session s1 --tenant dupont")
+    # Le motif suit la commande : l'approbateur sait ce qu'il tranche (essai du 01/11).
+    assert "Motif      : la config exige une approbation pour chaque appel" in erreur
     # Sans session ni client donnés, la commande n'en porte pas : le run est son journal.
     assert main(["--config", path, "run", "demo", "Relance."]) == 1
     seule = capsys.readouterr().err
