@@ -51,6 +51,9 @@ from loom_ia.core.events import (
     ModelResponded,
     ModelRetried,
     PolicyDecided,
+    QuestionAnswered,
+    QuestionAsked,
+    QuestionExpired,
     RunCancelled,
     RunClaimed,
     RunCompleted,
@@ -73,6 +76,7 @@ from loom_ia.core.model import (
     Message,
     PendingApproval,
     PendingCall,
+    PendingQuestion,
     PendingRepair,
     RunClaim,
     RunId,
@@ -129,7 +133,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
         # elle ne rouvre rien et ne rend pas le journal illisible.
         claim = RunClaim(worker_id=payload.worker_id, lease_until=payload.lease_until)
         return state.model_copy(update={"last_seq": event.seq, "claim": claim})
-    if isinstance(payload, ApprovalGranted | ApprovalRejected) and (
+    if isinstance(payload, ApprovalGranted | ApprovalRejected | QuestionAnswered) and (
         state.finished or state.status.is_terminal
     ):
         # Décision écrite après l'état final : le run était déjà fini (annulé pendant que
@@ -291,6 +295,12 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 event,
                 ApprovalOutcome(verdict="rejected", by=refused.by, reason=refused.reason),
             )
+        case QuestionAsked() as asked:
+            update["questions"] = (*state.questions, asked.as_pending(state.run_id))
+        case QuestionAnswered(call_id=call_id) as answered:
+            update["questions"] = _answered(state, call_id, event, {"reply": answered.reply()})
+        case QuestionExpired(call_id=call_id):
+            update["questions"] = _answered(state, call_id, event, {"expired": True})
         case ApprovalExpired(call_id=call_id, expire_at=expire_at):
             update["approvals"] = _settled(
                 state,
@@ -363,6 +373,24 @@ def _settled(
     return tuple(
         a.model_copy(update={"outcome": outcome}) if a is asked else a for a in state.approvals
     )
+
+
+def _answered(
+    state: RunState, call_id: str, event: Event, change: dict[str, object]
+) -> tuple[PendingQuestion, ...]:
+    """Question refermée par sa réponse ou son expiration ; une seule fois."""
+    asked = state.question(call_id)
+    if asked is None:
+        raise ProjectionError(
+            f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, sans question "
+            f"(seq {event.seq})"
+        )
+    if not asked.open:
+        raise ProjectionError(
+            f"Run {state.run_id} : {event.type} pour l'appel {call_id!r}, déjà close "
+            f"(seq {event.seq})"
+        )
+    return tuple(q.model_copy(update=change) if q is asked else q for q in state.questions)
 
 
 def _launched(state: RunState, call_id: str) -> tuple[PendingApproval, ...]:
@@ -574,6 +602,28 @@ def awaiting_in_session(events: Iterable[Event]) -> tuple[PendingApproval, ...]:
         and (top := root(state)).kind == "normal"
         and not (top.finished or top.status.is_terminal)
         for approval in state.awaiting
+    )
+
+
+def asking_in_session(events: Iterable[Event]) -> tuple[PendingQuestion, ...]:
+    """Questions sans réponse des runs racine encore ouverts d'un journal.
+
+    Comme ``awaiting_in_session`` : celles du run racine et de ses sous-runs.
+    """
+    states = fold_all(events)
+
+    def root(state: RunState) -> RunState:
+        while state.parent_run_id is not None and state.parent_run_id in states:
+            state = states[state.parent_run_id]
+        return state
+
+    return tuple(
+        question
+        for state in states.values()
+        if state.asking
+        and (top := root(state)).kind == "normal"
+        and not (top.finished or top.status.is_terminal)
+        for question in state.asking
     )
 
 

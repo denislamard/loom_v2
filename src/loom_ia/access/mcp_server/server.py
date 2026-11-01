@@ -81,11 +81,15 @@ from loom_ia.config.models import Scope
 from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
+    Answerer,
     ApprovalDecision,
     Approved,
     Approver,
     Attachment,
+    NoAnswer,
     PendingApproval,
+    PendingQuestion,
+    QuestionReply,
     Rejected,
     RunId,
     RunStatus,
@@ -195,6 +199,7 @@ _REFS, _DEFS = models_json_schema(
         (JudgeVerdict, "serialization"),
         (JudgeSkip, "serialization"),
         (PendingApproval, "serialization"),
+        (PendingQuestion, "serialization"),
     ],
     ref_template="#/$defs/{model}",
 )
@@ -252,6 +257,12 @@ RUN_OUTPUT: Final[dict[str, Any]] = {
         "pending_approvals": {
             "type": "array",
             "items": _REFS[(PendingApproval, "serialization")],
+        },
+        # Questions posées à l'utilisateur qui attendent sa réponse (wait_answer) :
+        # rappeler l'outil de l'agent avec la même session et la réponse en message.
+        "pending_questions": {
+            "type": "array",
+            "items": _REFS[(PendingQuestion, "serialization")],
         },
         # Ce que le masquage a retiré (clé sans ``read_content``), par chemin.
         "redacted": {"type": "array", "items": {"type": "string"}},
@@ -435,6 +446,7 @@ async def _run(
     ctx = server.request_context
     token = ctx.meta.progressToken if ctx.meta is not None else None
     approver = _elicited(ctx)
+    answerer = _answering(ctx)
     if token is None:
         return await loom.run(
             agent,
@@ -443,8 +455,12 @@ async def _run(
             session_id=session_id,
             approver=approver,
             tenant=tenant,
+            answerer=answerer,
         )
-    run_id = new_run_id()
+    # Sans session, le run a son identifiant d'avance ; avec, le message peut répondre
+    # à une question qui attend, et le run suivi est alors celui qui l'a posée
+    # (wait_answer) : son identifiant se lit sur ses événements.
+    run_id = new_run_id() if session_id is None else None
     progress = Progress()
     sent = 0
     async for item in loom.stream(
@@ -455,13 +471,87 @@ async def _run(
         run_id=run_id,
         approver=approver,
         tenant=tenant,
+        answerer=answerer,
     ):
+        if isinstance(item, Event) and run_id is None:
+            run_id = item.root_run_id
         if isinstance(item, Event) and (line := progress.line(item)) is not None:
             sent += 1
             await ctx.session.send_progress_notification(
                 token, sent, message=line, related_request_id=str(ctx.request_id)
             )
+    if run_id is None:
+        raise RuntimeError("le flux du run n'a rendu aucun événement")
     return await loom.result(run_id, session_id=session_id, tenant_id=tenant)
+
+
+def _answering(ctx: RequestContext[Any, Any, Any]) -> Answerer | None:
+    """Répondeur en ligne bâti sur l'elicitation (wait_answer), si le client la déclare.
+
+    Un formulaire MCP n'a qu'un niveau de propriétés, de types simples : une
+    question à choix devient une liste, avec un champ libre à côté ; plusieurs
+    choix s'écrivent dans un texte, séparés par « ; ». Formulaire refusé ou
+    fermé : la question reste posée, et le run se met en pause.
+    """
+    capable = types.ClientCapabilities(elicitation=types.ElicitationCapability())
+    if not ctx.session.check_client_capability(capable):
+        return None
+    client = ctx.session.client_params
+    by = f"mcp:{client.clientInfo.name}" if client is not None else "mcp"
+
+    async def respond(pending: PendingQuestion) -> QuestionReply | NoAnswer:
+        schema, fields = _question_form(pending)
+        # Le message est ce que le client montre d'abord : les questions elles-mêmes.
+        intro = "\n".join(question.question for question in pending.questions)
+        given = await ctx.session.elicit_form(intro, schema, related_request_id=str(ctx.request_id))
+        if given.action != "accept":
+            return NoAnswer(reason=_CLOSED[given.action])
+        content: dict[str, FormValue] = given.content or {}
+        answers: list[tuple[str, ...]] = []
+        for (choice, free), question in zip(fields, pending.questions, strict=True):
+            text = str(content.get(free) or "").strip()
+            picked = str(content.get(choice) or "").strip() if choice else ""
+            value = text or picked
+            if not value:
+                return NoAnswer(reason="formulaire incomplet")
+            parts = [p.strip() for p in value.split(";")] if question.multiple else [value]
+            answers.append(tuple(p for p in parts if p))
+        return QuestionReply(answers=tuple(answers), by=by)
+
+    return respond
+
+
+def _question_form(
+    pending: PendingQuestion,
+) -> tuple[dict[str, Any], list[tuple[str | None, str]]]:
+    """Le formulaire d'elicitation des questions, et ses champs (choix, texte) par question."""
+    properties: dict[str, Any] = {}
+    fields: list[tuple[str | None, str]] = []
+    for number, question in enumerate(pending.questions, start=1):
+        title = question.header or f"Question {number}"
+        choice: str | None = None
+        if question.options and not question.multiple:
+            choice = f"choix_{number}"
+            properties[choice] = {
+                "type": "string",
+                "title": title,
+                "description": question.question,
+                "enum": [option.label for option in question.options],
+            }
+        free = f"reponse_{number}"
+        hint = (
+            "Autre réponse (prioritaire sur le choix)"
+            if choice
+            else question.question
+            + (
+                " — choix : " + ", ".join(o.label for o in question.options) + " (séparés par ;)"
+                if question.options
+                else ""
+            )
+        )
+        properties[free] = {"type": "string", "title": title, "description": hint}
+        fields.append((choice, free))
+    return {"type": "object", "properties": properties}, fields
 
 
 def _elicited(ctx: RequestContext[Any, Any, Any]) -> Approver | None:
@@ -559,6 +649,9 @@ def structured(result: RunResult) -> dict[str, Any]:
         "pending_approvals": [
             approval.model_dump(mode="json") for approval in result.pending_approvals
         ],
+        "pending_questions": [
+            question.model_dump(mode="json") for question in result.pending_questions
+        ],
         "artifacts": [
             artifact.model_dump(mode="json", exclude_none=True) for artifact in result.artifacts
         ],
@@ -571,6 +664,8 @@ def _text(result: RunResult) -> str:
         return f"Échec de l'agent {result.agent} : {result.error}"
     if result.pending_approvals:
         return _awaiting(result)
+    if result.pending_questions:
+        return _asking(result)
     return result.text or f"Run {result.run_id} : {result.status}"
 
 
@@ -582,6 +677,20 @@ def _awaiting(result: RunResult) -> str:
         "Un humain doit trancher (API REST ou « loom approve »), "
         f"puis {STATUS_TOOL} relit le run "
         f"(run_id={result.run_id}, session_id={result.session_id})."
+    )
+
+
+def _asking(result: RunResult) -> str:
+    """Ce qu'un run arrêté sur une question dit au client : la question, et comment répondre."""
+    lines: list[str] = []
+    for pending in result.pending_questions:
+        for question in pending.questions:
+            choices = ", ".join(o.label for o in question.options)
+            lines.append(question.question + (f" (choix : {choices})" if choices else ""))
+    return (
+        "\n".join(lines)
+        + f"\n\n[L'agent attend la réponse de l'utilisateur : rappeler {result.agent} avec "
+        f"session_id={result.session_id} et la réponse en message.]"
     )
 
 

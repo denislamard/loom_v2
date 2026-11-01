@@ -68,15 +68,23 @@ def render_trace(trace: Trace, *, full: bool = False) -> list[str]:
     for span in trace.spans:
         parent = span.parent_span_id if span.parent_span_id in ids else None
         children.setdefault(parent, []).append(span)
+    # Les outils qui posent une question (wait_answer) : leur résultat est une
+    # réponse de l'utilisateur, pas un appel refusé.
+    asked = frozenset(
+        str(event.data.get("tool_name"))
+        for span in trace.spans
+        for event in span.events
+        if event.name == "question.asked"
+    )
     for root in children.get(None, []):
-        lines += _tree(root, children, 0, full)
+        lines += _tree(root, children, 0, full, asked)
     lines.append("")
     if trace.output is not None:
         lines.append("Réponse finale :")
         lines += [f"{_INDENT}{line}" for line in trace.output.splitlines() or [""]]
     elif trace.content and trace.finished:
         lines.append("Réponse finale : aucune")
-    lines.append(f"Bilan      : {_tally(trace.spans)}")
+    lines.append(f"Bilan      : {_tally(trace.spans, asked)}")
     return lines
 
 
@@ -84,19 +92,23 @@ def render_trace(trace: Trace, *, full: bool = False) -> list[str]:
 
 
 def _tree(
-    span: TraceSpan, children: Mapping[str | None, list[TraceSpan]], depth: int, full: bool
+    span: TraceSpan,
+    children: Mapping[str | None, list[TraceSpan]],
+    depth: int,
+    full: bool,
+    asked: frozenset[str] = frozenset(),
 ) -> list[str]:
     pad = _INDENT * depth
-    lines = [f"{pad}{_head(span)}"]
+    lines = [f"{pad}{_head(span, asked)}"]
     # Ce qui s'est passé dans le span, marqué, au niveau de ses enfants.
     inner = f"{pad}{_INDENT}· "
     lines += [f"{inner}{line}".replace("\n", "\n" + " " * len(inner)) for line in _body(span, full)]
     for child in children.get(span.span_id, []):
-        lines += _tree(child, children, depth + 1, full)
+        lines += _tree(child, children, depth + 1, full, asked)
     return lines
 
 
-def _head(span: TraceSpan) -> str:
+def _head(span: TraceSpan, asked: frozenset[str] = frozenset()) -> str:
     """La ligne d'un span : ce qu'il est, combien de temps, combien d'argent."""
     a = span.attributes
     said: str
@@ -126,7 +138,11 @@ def _head(span: TraceSpan) -> str:
                 said += f", {a['loom.attempts']} tentatives"
         case "tool":
             name = a.get("gen_ai.tool.name", "?")
-            if not _executed(span):
+            if _answered(span, asked):
+                # Une question à l'utilisateur : le moteur n'exécute pas l'outil, il
+                # rend la réponse au modèle (wait_answer).
+                said = f"question {name} — réponse rendue au modèle"
+            elif not _executed(span):
                 # Refusé avant de partir (arguments non conformes, outil
                 # inconnu, approbation refusée…) : rien n'a tourné, la raison
                 # est dans le résultat que le modèle a reçu.
@@ -177,6 +193,21 @@ def _said(span: TraceSpan, event: TraceEvent, full: bool) -> list[str]:
             return []
         case "judge.evaluated":
             return [_verdict(data)]
+        case "question.asked":
+            given = content.get("questions") if content is not None else None
+            if isinstance(given, list):
+                return [_line("question  : ", _questions(given), full)]
+            return []
+        case "question.answered":
+            by = data.get("by")
+            said = f"réponse de {by}" if by else "réponse  "
+            if content is not None:
+                given = content.get("text") or content.get("answers")
+                if given is not None:
+                    return [_line(f"{said} : ", _compact(given), full)]
+            return [said.rstrip()]
+        case "question.expired":
+            return ["sans réponse dans le délai : le modèle continue sans"]
         case "approval.requested" if span.kind != "other":
             return [f"approbation demandée pour {data.get('tool_name', '?')}"]
         case "approval.granted" | "approval.rejected" | "approval.expired":
@@ -210,13 +241,32 @@ def _said(span: TraceSpan, event: TraceEvent, full: bool) -> list[str]:
             return [f"{name} ({event.status})"]
 
 
+def _answered(span: TraceSpan, asked: frozenset[str]) -> bool:
+    """Le résultat d'un outil qui pose une question : rendu sans exécution, et sans erreur."""
+    return (
+        str(span.attributes.get("gen_ai.tool.name")) in asked
+        and not _executed(span)
+        and not span.attributes.get("loom.tool.is_error")
+    )
+
+
 def _executed(span: TraceSpan) -> bool:
     """Un appel d'outil est parti s'il a son ``tool.called`` ; un appel refusé n'a que sa fin."""
     return any(event.name == "tool.called" for event in span.events)
 
 
 def _other(span: TraceSpan) -> str:
-    """Un span qui n'est ni run, ni étape, ni appel : une approbation, le plus souvent."""
+    """Un span qui n'est ni run, ni étape, ni appel : une approbation, ou une question."""
+    question = next((e for e in span.events if e.name == "question.asked"), None)
+    if question is not None:
+        closed = next(
+            (e for e in span.events if e.name in ("question.answered", "question.expired")), None
+        )
+        if closed is None:
+            return "question à l'utilisateur — en attente"
+        if closed.name == "question.expired":
+            return "question à l'utilisateur — expirée"
+        return "question à l'utilisateur — répondue"
     requested = next((e for e in span.events if e.name == "approval.requested"), None)
     if requested is None:
         return span.name
@@ -242,6 +292,13 @@ def _approval(event: TraceEvent) -> str:
 
 
 # --- Contenus --------------------------------------------------------------------
+
+
+def _questions(given: list[JsonValue]) -> str:
+    """Les questions posées, en une ligne : le texte de chacune."""
+    return " ; ".join(
+        str(item.get("question", "?")) if isinstance(item, dict) else str(item) for item in given
+    )
 
 
 def _answer(content: Mapping[str, JsonValue] | None, full: bool) -> list[str]:
@@ -355,18 +412,21 @@ def _tokens(a: Mapping[str, AttributeValue]) -> str:
     return said
 
 
-def _tally(spans: Sequence[TraceSpan]) -> str:
+def _tally(spans: Sequence[TraceSpan], asked: frozenset[str] = frozenset()) -> str:
     """Ce que l'arbre contient, compté sur ses spans."""
     runs = sum(1 for s in spans if s.kind == "run")
     chats = sum(1 for s in spans if s.kind == "chat")
     tools = [s for s in spans if s.kind == "tool"]
-    refused = sum(1 for s in tools if not _executed(s))
+    refused = sum(1 for s in tools if not _executed(s) and not _answered(s, asked))
     approvals = sum(1 for s in spans if s.kind == "other" and s.name == "approval.requested")
+    questions = sum(1 for s in spans if s.kind == "other" and s.name == "question.asked")
     said = f"{chats} appel(s) de modèle, {len(tools)} appel(s) d'outil"
     if refused:
         said += f" dont {refused} refusé(s) avant exécution"
     if approvals:
         said += f", {approvals} approbation(s)"
+    if questions:
+        said += f", {questions} question(s) à l'utilisateur"
     if runs > 1:
         said += f", {runs - 1} sous-run(s)"
     return said

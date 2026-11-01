@@ -79,6 +79,9 @@ from loom_ia.core.events import (
     ArtifactStored,
     CircuitOpened,
     IdempotencyReused,
+    QuestionAnswered,
+    QuestionAsked,
+    QuestionExpired,
     RunScope,
     ToolCalled,
     ToolCompleted,
@@ -88,6 +91,7 @@ from loom_ia.core.model import (
     CONTINUE,
     INVALID_JSON_KEY,
     AfterTool,
+    Answerer,
     Approval,
     ApprovalDecision,
     ApprovalSettings,
@@ -99,10 +103,13 @@ from loom_ia.core.model import (
     Fail,
     InlineDataBlock,
     Message,
+    NoAnswer,
     OutputBlock,
     Pause,
     PendingApproval,
     PendingCall,
+    PendingQuestion,
+    QuestionReply,
     Rejected,
     Retry,
     RunId,
@@ -133,6 +140,7 @@ from loom_ia.core.ports import (
 )
 from loom_ia.core.projections import state_of_run
 from loom_ia.core.schema_errors import schema_problem
+from loom_ia.engine import questions
 from loom_ia.engine.circuit import CircuitBreakers, mcp_key
 from loom_ia.engine.delegated import (
     Consumption,
@@ -206,6 +214,9 @@ type ToolEvent = (
     | ApprovalRequested
     | ApprovalGranted
     | ApprovalRejected
+    | QuestionAsked
+    | QuestionAnswered
+    | QuestionExpired
     | Waiting
 )
 
@@ -309,6 +320,10 @@ class ToolReplay(Protocol):
         L'appel est désigné par son run et son ``call_id`` — un identifiant
         d'appel n'est unique que dans son run.
         """
+        ...
+
+    async def answer(self, run_id: RunId, pending: PendingQuestion) -> QuestionReply | NoAnswer:
+        """Réponse en ligne à une question (``ask``) : celle du journal, au rejeu."""
         ...
 
 
@@ -572,6 +587,7 @@ class ToolExecutor:
         summary: str | None = None,
         approver: Approver | None = None,
         session_state: Mapping[str, JsonValue] | None = None,
+        answerer: Answerer | None = None,
     ) -> AsyncGenerator[ToolEvent]:
         """Traite les appels en attente du run et émet leurs événements.
 
@@ -591,6 +607,10 @@ class ToolExecutor:
         policies = policies or Policies()
         if self.replay is not None:
             approver = partial(self.replay.approve, state.run_id)
+            # Un rejeu écrit avant les questions n'a pas ``answer`` : personne ne
+            # répond, la question se clôt sans réponse (wait_answer).
+            answers = getattr(self.replay, "answer", None)
+            answerer = partial(answers, state.run_id) if answers is not None else _nobody
         # Un sous-run et un run de compaction n'ont pas de state (D3).
         keeps = bool(self.state_rules) and keeps_state(state)
         current = (
@@ -616,6 +636,8 @@ class ToolExecutor:
                 view = replace(view, on_chunk=on_chunk)
         ready: list[_Ready] = []
         held: list[tuple[_Ready, ApprovalRequested]] = []
+        # Questions à l'utilisateur sans répondeur en ligne : écrites après le lot.
+        held_questions: list[QuestionAsked] = []
         for call in state.pending_calls:
             tool = self._tools.get(call.name)
             try:
@@ -630,6 +652,13 @@ class ToolExecutor:
                 prepared = _unprepared(call.name, exc, state)
             if not isinstance(prepared, _Ready):
                 yield _completed(call, ToolOutput.error(prepared), started=None)
+                continue
+            if prepared.tool.spec.asks is not None:
+                # Une question à l'utilisateur (wait_answer) : rien ne s'exécute,
+                # ni politique ni approbation. La réponse déjà au journal part au
+                # modèle ; sinon la question s'écrit, et le run attendra.
+                async for event in self._ask(call, prepared, state, answerer, held_questions):
+                    yield event
                 continue
             # Un appel repris a été lancé avec ces arguments-là, remplacés par une
             # politique le cas échéant (``_before_tool``) : ce sont eux qui disent
@@ -828,6 +857,78 @@ class ToolExecutor:
         # trouverait le run encore piloté, et se ferait refuser sa reprise.
         for _, request in held:
             yield request
+        for question in held_questions:
+            yield question
+
+    async def _ask(
+        self,
+        call: PendingCall,
+        prepared: _Ready,
+        state: RunState,
+        answerer: Answerer | None,
+        held: list[QuestionAsked],
+    ) -> AsyncGenerator[ToolEvent]:
+        """Un appel à ``ask`` : sa réponse, ou sa question à écrire (wait_answer)."""
+        known = state.question(call.call_id)
+        if known is not None and not known.open:
+            output = (
+                questions.answered_output(known)
+                if known.reply is not None
+                else questions.expired_output(known)
+            )
+            yield _completed(call, output, started=None)
+            return
+        if known is not None:
+            # Déjà posée et encore ouverte : le run ne devrait pas être ici.
+            return
+        found = questions.asked(prepared.arguments)
+        if isinstance(found, str):
+            yield _completed(call, ToolOutput.error(found), started=None)
+            return
+        settings = prepared.tool.spec.asks
+        expires_in = settings.expires_in if settings is not None else None
+        request = QuestionAsked(
+            call_id=call.call_id,
+            tool_name=call.name,
+            questions=found,
+            expire_at=questions.expiry(expires_in),
+        )
+        if answerer is None:
+            held.append(request)
+            return
+        yield request
+        reply = await answerer(request.as_pending(state.run_id))
+        if isinstance(reply, NoAnswer):
+            if reply.expired:
+                # Close sans réponse (rejeu d'une expiration, éval sans humain).
+                yield QuestionExpired(
+                    call_id=call.call_id,
+                    tool_name=call.name,
+                    expire_at=request.expire_at or datetime.now(UTC),
+                )
+                yield _completed(call, questions.expired_output(request.as_pending()), started=None)
+            # Sinon la question reste posée : le run attendra une réponse.
+            return
+        problem = questions.reply_problem(request.as_pending(state.run_id), reply)
+        if problem is not None:
+            # Un répondeur en ligne qui répond de travers ne doit pas bloquer le run :
+            # la question reste posée, une réponse viendra par un autre accès.
+            logger.warning(
+                "Run %s : réponse en ligne écartée pour %s (%s) — la question reste posée",
+                state.run_id,
+                call.call_id,
+                problem,
+            )
+            return
+        yield QuestionAnswered(
+            call_id=call.call_id,
+            tool_name=call.name,
+            answers=reply.answers,
+            text=reply.text,
+            by=reply.by,
+        )
+        pending = request.as_pending(state.run_id).model_copy(update={"reply": reply})
+        yield _completed(call, questions.answered_output(pending), started=None)
 
     # --- Interne ---------------------------------------------------------
 
@@ -1377,6 +1478,10 @@ def _asks_approval(
     if isinstance(verdict.decision, Pause):
         return verdict.decision.reason, verdict.by
     return None
+
+
+async def _nobody(_: PendingQuestion) -> NoAnswer:
+    return NoAnswer(reason="personne ne répond au rejeu", expired=True)
 
 
 def _request(

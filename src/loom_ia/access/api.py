@@ -78,6 +78,7 @@ from loom_ia.config.models import TriggerSpec
 from loom_ia.config.references import Registry
 from loom_ia.core.closing import Closing
 from loom_ia.core.events import (
+    ApprovalExpired,
     ApprovalGranted,
     ApprovalRejected,
     ApprovalRequested,
@@ -87,6 +88,9 @@ from loom_ia.core.events import (
     EventQuery,
     GuardChecked,
     JudgeEvaluated,
+    QuestionAnswered,
+    QuestionAsked,
+    QuestionExpired,
     RunCancelled,
     RunCompleted,
     RunFailed,
@@ -97,6 +101,7 @@ from loom_ia.core.events import (
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     SAFE_ID,
+    Answerer,
     Approver,
     ArtifactLocation,
     ArtifactOrigin,
@@ -110,6 +115,8 @@ from loom_ia.core.model import (
     ModelChunk,
     ModelSpec,
     PendingApproval,
+    PendingQuestion,
+    QuestionReply,
     RunId,
     RunKind,
     RunState,
@@ -146,6 +153,7 @@ from loom_ia.core.projections import (
     OpeningSummaries,
     ProjectionError,
     RunTree,
+    asking_in_session,
     fold,
     session_state,
 )
@@ -167,6 +175,7 @@ from loom_ia.engine import (
     run_scope,
     subruns_cancellation,
 )
+from loom_ia.engine.questions import reply_problem
 from loom_ia.guards import JUDGE_POLICY_PREFIX
 from loom_ia.replay import (
     Double,
@@ -291,6 +300,26 @@ class UnknownApproval(Unknown):
 
     def __init__(self, run_id: RunId, call_id: str) -> None:
         super().__init__(f"Run {run_id} : aucune approbation en attente pour l'appel {call_id!r}")
+
+
+class _AlreadyDecided(Exception):
+    """Une autre décision est passée entre la lecture et l'écriture de la nôtre."""
+
+
+class UnknownQuestion(Unknown):
+    """Aucune question en attente pour cet appel (wait_answer)."""
+
+    def __init__(self, run_id: RunId, call_id: str | None) -> None:
+        which = f" pour l'appel {call_id!r}" if call_id else ""
+        super().__init__(f"Run {run_id} : aucune question en attente{which}")
+
+
+class InvalidAnswer(ValueError):
+    """La réponse ne convient pas aux questions posées : rien n'est écrit."""
+
+
+class QuestionStale(ValueError):
+    """Question périmée : elle ne prend plus de réponse ; la reprise du run la clôt."""
 
 
 class ApprovalStale(ValueError):
@@ -432,6 +461,15 @@ def _approvals_redacted(approvals: tuple[PendingApproval, ...]) -> list[str]:
     return removed
 
 
+def _masked_questions(questions: tuple[PendingQuestion, ...]) -> tuple[PendingQuestion, ...]:
+    """Questions sans leur texte : il est écrit par le modèle, donc du contenu."""
+    return tuple(q.model_copy(update={"questions": (), "reply": None}) for q in questions)
+
+
+def _questions_redacted(questions: tuple[PendingQuestion, ...]) -> list[str]:
+    return ["pending_questions[].questions"] if questions else []
+
+
 def unpiloted(state: RunState, now: datetime | None = None) -> bool:
     """Vrai pour un run ni fini ni en pause que personne ne pilote : à reprendre.
 
@@ -548,6 +586,8 @@ class SessionInfo(DomainModel):
     # Ce qui attend un humain, tous runs confondus (#17) : sans cela,
     # l'appelant devrait ouvrir chaque run pour savoir ce qu'on lui demande.
     pending_approvals: tuple[PendingApproval, ...] = ()
+    # Questions posées à l'utilisateur sans réponse (wait_answer), tous runs confondus.
+    pending_questions: tuple[PendingQuestion, ...] = ()
     # Ce que le masquage a retiré (clé sans ``read_content``), par chemin :
     # sans lui, un champ vidé ne se distinguait pas d'un champ vide (test N2
     # du 23/10). Même règle que pour un événement (``redacted``).
@@ -558,7 +598,11 @@ class SessionInfo(DomainModel):
         return self.model_copy(
             update={
                 "pending_approvals": _masked_approvals(self.pending_approvals),
-                "redacted": tuple(_approvals_redacted(self.pending_approvals)),
+                "pending_questions": _masked_questions(self.pending_questions),
+                "redacted": (
+                    *_approvals_redacted(self.pending_approvals),
+                    *_questions_redacted(self.pending_questions),
+                ),
             }
         )
 
@@ -712,6 +756,9 @@ class RunResult(DomainModel):
     # de ses sous-runs comprises : l'appelant n'a pas à savoir qu'un
     # sous-agent existe pour savoir ce qu'on lui demande.
     pending_approvals: tuple[PendingApproval, ...] = ()
+    # Questions posées à l'utilisateur qui attendent sa réponse (wait_answer),
+    # celles des sous-runs comprises : ``answer()`` y répond.
+    pending_questions: tuple[PendingQuestion, ...] = ()
     # Ce que le masquage a retiré, par chemin (``text``, ``artifacts[].name``…) :
     # un ``text`` vidé ne se distinguait pas d'une réponse vide (test N2 du 23/10).
     redacted: tuple[str, ...] = ()
@@ -747,6 +794,7 @@ class RunResult(DomainModel):
             if present
         ]
         removed += _approvals_redacted(self.pending_approvals)
+        removed += _questions_redacted(self.pending_questions)
         return self.model_copy(
             update={
                 "redacted": tuple(removed),
@@ -757,6 +805,7 @@ class RunResult(DomainModel):
                 "artifacts": tuple(a.model_copy(update={"name": None}) for a in self.artifacts),
                 "verdicts": tuple(v.masked() for v in self.verdicts),
                 "pending_approvals": _masked_approvals(self.pending_approvals),
+                "pending_questions": _masked_questions(self.pending_questions),
             }
         )
 
@@ -835,6 +884,7 @@ class RunResult(DomainModel):
                 and (skip := JudgeSkip.of(event, checked)) is not None
             ),
             pending_approvals=_awaited(state, tree),
+            pending_questions=_asked(state, tree),
         )
 
     @property
@@ -887,6 +937,19 @@ def _awaited(state: RunState, tree: Sequence[Event]) -> tuple[PendingApproval, .
         for approval in fold(own, run_id).awaiting
     ]
     return (*state.awaiting, *inner)
+
+
+def _asked(state: RunState, tree: Sequence[Event]) -> tuple[PendingQuestion, ...]:
+    """Questions sans réponse dans tout l'arbre d'un run comme ``_awaited`` (wait_answer)."""
+    if state.finished:
+        return state.asking
+    inner = [
+        question
+        for run_id, own in _by_run(tree).items()
+        if run_id != state.run_id
+        for question in fold(own, run_id).asking
+    ]
+    return (*state.asking, *inner)
 
 
 def _usable(what: str, value: str) -> str:
@@ -953,13 +1016,14 @@ def _where(
     Une décision prise hors de la boucle — par REST, par la CLI, par
     ``approve()`` — n'a pas d'étape à elle : elle se range donc **là où la
     demande attendait**, et les deux se lisent d'un bloc, comme lorsqu'un
-    approbateur en ligne tranche dans le lot. Sans demande retrouvée, le span
-    racine du run vaut.
+    approbateur en ligne tranche dans le lot. Il en va de même d'une réponse à
+    une question (wait_answer), rangée là où la question attendait. Sans demande
+    retrouvée, le span racine du run vaut.
     """
     for event in reversed(tree):
         if (
             event.run_id == run_id
-            and isinstance(request := event.payload, ApprovalRequested)
+            and isinstance(request := event.payload, ApprovalRequested | QuestionAsked)
             and request.call_id == call_id
         ):
             return event.span_id, event.parent_span_id
@@ -1469,8 +1533,14 @@ class Loom:
         approver: Approver | None = None,
         tenant: TenantId | None = None,
         state: Mapping[str, JsonValue] | None = None,
+        answerer: Answerer | None = None,
     ) -> RunResult:
         """Fait tourner un run jusqu'au bout et renvoie ce qu'il a produit.
+
+        Une session où une question de cet agent attend sa réponse (wait_answer)
+        prend le message comme réponse : la question reçoit ce texte, et c'est
+        le run qui l'avait posée qui reprend — son résultat est rendu, avec son
+        ``run_id``. ``answerer`` répond aux questions dans la boucle.
 
         Une pièce jointe refusée (format, taille) lève ``AttachmentError``
         avant que le run ne commence. ``judges`` (#21) : ``auto``, chaque juge
@@ -1500,12 +1570,114 @@ class Loom:
         panne est journalisée (ERROR) et le résultat est celui du run.
         """
         caller, who = await self._admitted(agent, context, tenant)
+        ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver, answerer=answerer)
+        routed = await self._routed(agent, who.id, session_id, message, attachments, state, run_id)
+        if routed is not None:
+            return await self._answered_run(ctx, routed, message, caller)
         await self._unclaimed(run_id, session_id, who.id)
-        ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
         started = await self._start(
             ctx, message, attachments, session_id, caller, run_id, judges, state
         )
         return await self._result(started)
+
+    async def _routed(
+        self,
+        agent: str,
+        tenant: TenantId,
+        session_id: SessionId | None,
+        message: str | Message,
+        attachments: Sequence[Attachment],
+        state: Mapping[str, JsonValue] | None,
+        run_id: RunId | None,
+    ) -> tuple[RunState, PendingQuestion] | None:
+        """La question de cet agent qui attend une réponse dans la session, s'il y en a une.
+
+        Le message ne lui est donné que s'il n'est qu'un texte : avec des pièces
+        jointes, des écritures du state ou un ``run_id`` choisi, c'est un
+        nouveau tour, et le modèle apprend par une note que la question attend.
+        """
+        if session_id is None or attachments or state or run_id is not None:
+            return None
+        if not isinstance(message, str) or not message.strip():
+            return None
+        if not self._asks(tenant):
+            # Aucun agent de ce client ne pose de question : rien à relire.
+            return None
+        events = await self._store.read(tenant, session_id)
+        try:
+            waiting = asking_in_session(events)
+        except ProjectionError, ValidationError:
+            # Session illisible : le démarrage du run le dira (``SessionUnreadable``).
+            return None
+        if not waiting:
+            return None
+        states = {s.run_id: s for s in _run_states(events)}
+        for question in waiting:
+            owner = states.get(question.run_id) if question.run_id else None
+            while owner is not None and owner.parent_run_id is not None:
+                owner = states.get(owner.parent_run_id)
+            if owner is not None and owner.agent == agent:
+                return owner, question
+        return None
+
+    async def _answered_later(
+        self,
+        routed: tuple[RunState, PendingQuestion],
+        message: str | Message,
+        caller: CallerContext,
+    ) -> RunId:
+        """Le message devient la réponse, et la reprise du run part en file (``submit``)."""
+        root, question = routed
+        text = message if isinstance(message, str) else message.text
+        await self._write_answer(
+            root.run_id,
+            question.call_id,
+            QuestionReply(text=text, by=caller.user_id),
+            session_id=root.session_id,
+            tenant_id=root.context.tenant_id,
+        )
+        await self._queue.submit(
+            Job(
+                kind="resume",
+                tenant_id=root.context.tenant_id,
+                session_id=root.session_id,
+                run_id=root.root_run_id,
+            ),
+            key=f"run:{root.root_run_id}",
+        )
+        return root.run_id
+
+    def _asks(self, tenant: TenantId) -> bool:
+        """Un agent de ce client a-t-il ``loom.ask`` ? Sans lui, aucune question n'attend."""
+        config = self._tenants.get(tenant).config
+        return any(
+            getattr(tool, "python", None) == "loom.ask"
+            for agent in config.agents
+            for tool in agent.tools
+        )
+
+    async def _answered_run(
+        self,
+        ctx: RunContext,
+        routed: tuple[RunState, PendingQuestion],
+        message: str | Message,
+        caller: CallerContext,
+    ) -> RunResult:
+        """Le message devient la réponse à la question, et le run qui l'a posée reprend."""
+        root, question = routed
+        text = message if isinstance(message, str) else message.text
+        await self._write_answer(
+            root.run_id,
+            question.call_id,
+            QuestionReply(text=text, by=caller.user_id),
+            session_id=root.session_id,
+            tenant_id=root.context.tenant_id,
+        )
+        state = await self.state(
+            root.run_id, session_id=root.session_id, tenant_id=root.context.tenant_id
+        )
+        writer = await self._writer(state.context.tenant_id, state.session_id)
+        return await self._result(await self._piloted(ctx, state, writer))
 
     async def stream(
         self,
@@ -1521,6 +1693,7 @@ class Loom:
         approver: Approver | None = None,
         tenant: TenantId | None = None,
         state: Mapping[str, JsonValue] | None = None,
+        answerer: Answerer | None = None,
     ) -> AsyncGenerator[StreamItem]:
         """Événements du journal et morceaux du modèle, dans l'ordre d'arrivée.
 
@@ -1544,8 +1717,14 @@ class Loom:
             items.put_nowait(chunk)
 
         caller, who = await self._admitted(agent, context, tenant)
-        await self._unclaimed(chosen, session_id, who.id)
-        ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver)
+        ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver, answerer=answerer)
+        # Une question de cet agent attend dans la session : le message y répond, et
+        # le flux est celui du run qui l'a posée (wait_answer).
+        routed = await self._routed(agent, who.id, session_id, message, attachments, state, chosen)
+        if routed is not None:
+            run_id = routed[0].run_id
+        else:
+            await self._unclaimed(chosen, session_id, who.id)
         tree = RunTree(run_id, subruns=subruns)
         summaries = OpeningSummaries(run_id)
         session = session_id or SessionId(run_id)
@@ -1563,7 +1742,11 @@ class Loom:
         # Écoute posée avant le démarrage : l'arbre se reconnaît dans l'ordre d'écriture.
         with self._store.listen(items.put_nowait, accept=accept):
             task = asyncio.create_task(
-                self._start(ctx, message, attachments, session_id, caller, run_id, judges, state)
+                self._answered_run(ctx, routed, message, caller)
+                if routed is not None
+                else self._start(
+                    ctx, message, attachments, session_id, caller, run_id, judges, state
+                )
             )
             task.add_done_callback(lambda _: items.put_nowait(None))
             try:
@@ -1601,6 +1784,7 @@ class Loom:
         *,
         on_chunk: ChunkCallback | None = None,
         approver: Approver | None = None,
+        answerer: Answerer | None = None,
     ) -> RunContext:
         """Contexte d'exécution d'un agent pour un client, monté au premier appel.
 
@@ -1634,12 +1818,13 @@ class Loom:
         context = replace(
             built.context, worker_id=self._worker_id, lease=self._config.execution.lease
         )
-        if on_chunk is None and approver is None:
+        if on_chunk is None and approver is None and answerer is None:
             return context
         return replace(
             context,
             on_chunk=on_chunk or context.on_chunk,
             approver=approver or context.approver,
+            answerer=answerer or context.answerer,
         )
 
     # --- Rejouer un run ---------------------------------------------------------
@@ -2132,6 +2317,7 @@ class Loom:
             updated_at=events[-1].ts,
             runs=tuple(RunSummary.of(state) for state in states),
             pending_approvals=tuple(approval for state in states for approval in state.awaiting),
+            pending_questions=tuple(question for state in states for question in state.asking),
         )
 
     async def session_files(
@@ -2697,6 +2883,20 @@ class Loom:
         if not decided:
             return ()
         writer = await self._writers.open(self._store, tenant, root.session_id)
+        targets = {(owner.run_id, asked.call_id) for owner, asked in decided}
+
+        def undecided(landed: Sequence[Event]) -> None:
+            # Une autre décision (ou l'expiration) est passée depuis notre lecture :
+            # double clic, deux accès, deux approbateurs. Écrire la nôtre ferait deux
+            # décisions pour un appel, et la projection rendrait la session illisible.
+            for event in landed:
+                payload = event.payload
+                if (
+                    isinstance(payload, ApprovalGranted | ApprovalRejected | ApprovalExpired)
+                    and (event.run_id, payload.call_id) in targets
+                ):
+                    raise _AlreadyDecided
+
         drafts: list[EventDraft] = []
         for owner, asked in decided:
             span, parent = _where(tree, owner.run_id, asked.call_id)
@@ -2704,9 +2904,10 @@ class Loom:
                 run_scope(owner).draft(payload(asked), span_id=span, parent_span_id=parent)
             )
         try:
-            await writer.append(drafts)
-        except RunMoved:
-            # Clos ailleurs entre la lecture et la décision : il n'attend plus rien.
+            await writer.append(drafts, guard=undecided, since=events[-1].seq if events else 0)
+        except RunMoved, _AlreadyDecided:
+            # Clos ailleurs entre la lecture et la décision, ou tranché par un autre
+            # accès entre-temps : il n'attend plus rien de nous.
             return ()
         try:
             await self._queue.submit(
@@ -2730,6 +2931,132 @@ class Loom:
                 exc_info=True,
             )
         return tuple(asked.call_id for _, asked in decided)
+
+    async def answer(
+        self,
+        run_id: RunId,
+        *,
+        answers: Sequence[Sequence[str]] | None = None,
+        text: str | None = None,
+        call_id: str | None = None,
+        by: str | None = None,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+    ) -> str:
+        """Répond à une question que le run attend (wait_answer), et remet son pilotage en file.
+
+        ``answers`` : une liste de réponses par question, dans leur ordre (le
+        libellé d'un choix, ou un texte libre) ; ``text`` : un message libre
+        qui répond à l'ensemble. Sans ``call_id``, la seule question en attente
+        de l'arbre du run ; s'il y en a plusieurs, ``call_id`` est exigé.
+
+        Rend l'appel auquel la réponse est donnée. ``UnknownQuestion`` si rien
+        n'attend, ``InvalidAnswer`` si la réponse ne convient pas,
+        ``QuestionStale`` si la question a expiré : rien n'est écrit.
+        Une réponse n'est pas une approbation : elle ne tranche aucune demande
+        d'approbation du même run.
+        """
+        reply = QuestionReply(
+            answers=None if answers is None else tuple(tuple(a) for a in answers),
+            text=text,
+            by=by,
+        )
+        root = await self._write_answer(
+            run_id, call_id, reply, session_id=session_id, tenant_id=tenant_id
+        )
+        answered = root[1]
+        try:
+            await self._queue.submit(
+                Job(
+                    kind="resume",
+                    tenant_id=root[0].context.tenant_id,
+                    session_id=root[0].session_id,
+                    run_id=root[0].root_run_id,
+                ),
+                key=f"run:{root[0].root_run_id}",
+            )
+        except Exception:
+            logger.error(
+                "Run %s : réponse écrite au journal, mais sa reprise n'a pas pu être mise en "
+                "file — recover() ou resume() le reprend",
+                root[0].root_run_id,
+                exc_info=True,
+            )
+        return answered
+
+    async def _write_answer(
+        self,
+        run_id: RunId,
+        call_id: str | None,
+        reply: QuestionReply,
+        *,
+        session_id: SessionId | None,
+        tenant_id: TenantId | None,
+    ) -> tuple[RunState, str]:
+        """Écrit la réponse à une question de l'arbre du run ; rend la racine et l'appel."""
+        tenant = tenant_id or DEFAULT_TENANT
+        events = await self._store.read(tenant, session_id or SessionId(run_id))
+        tree = RunTree(run_id).select(events)
+        if not tree:
+            raise UnknownRun(run_id)
+        root = fold([e for e in tree if e.run_id == run_id], run_id)
+        open_questions = [
+            (owner, question)
+            for owner in _run_states(tree)
+            for question in owner.asking
+            if call_id is None or question.call_id == call_id
+        ]
+        if root.finished or not open_questions:
+            raise UnknownQuestion(run_id, call_id)
+        if len(open_questions) > 1:
+            calls = ", ".join(question.call_id for _, question in open_questions)
+            raise InvalidAnswer(f"plusieurs questions attendent ({calls}) : indiquer call_id")
+        owner, question = open_questions[0]
+        if question.stale(datetime.now(UTC)):
+            raise QuestionStale(
+                f"Run {root.root_run_id} : la question {question.call_id} a expiré ; "
+                "la reprise du run la clôt"
+            )
+        problem = reply_problem(question, reply)
+        if problem is not None:
+            raise InvalidAnswer(f"Réponse refusée : {problem}")
+        writer = await self._writers.open(self._store, tenant, root.session_id)
+        span, parent = _where(tree, owner.run_id, question.call_id)
+        seen = events[-1].seq if events else 0
+        target = (owner.run_id, question.call_id)
+
+        def still_open(landed: Sequence[Event]) -> None:
+            # Une autre réponse, une expiration ou une clôture est passée depuis notre
+            # lecture : écrire la nôtre ferait deux réponses (journal illisible).
+            for event in landed:
+                payload = event.payload
+                if (
+                    isinstance(payload, QuestionAnswered | QuestionExpired)
+                    and (event.run_id, payload.call_id) == target
+                ) or (
+                    event.run_id == owner.run_id
+                    and event.category == "run"
+                    and event.type in ("run.cancelled", "run.failed", "run.completed")
+                ):
+                    raise UnknownQuestion(run_id, question.call_id)
+
+        call = owner.pending(question.call_id)
+        draft = run_scope(owner).draft(
+            QuestionAnswered(
+                call_id=question.call_id,
+                tool_name=call.name if call is not None else "ask",
+                answers=reply.answers,
+                text=reply.text,
+                by=reply.by,
+            ),
+            span_id=span,
+            parent_span_id=parent,
+        )
+        try:
+            await writer.append([draft], guard=still_open, since=seen)
+        except RunMoved:
+            raise UnknownQuestion(run_id, call_id) from None
+        return root, question.call_id
 
     async def submit(
         self,
@@ -2757,6 +3084,14 @@ class Loom:
         """
         caller, who = await self._admitted(agent, context, tenant)
         if trigger is None:
+            # Comme ``run`` : un message dans une session où une question de cet agent
+            # attend y répond, et c'est le run qui l'a posée qui repart (wait_answer).
+            # Une livraison de porte n'est pas une réponse de l'utilisateur.
+            routed = await self._routed(
+                agent, who.id, session_id, message, attachments, state, run_id
+            )
+            if routed is not None:
+                return await self._answered_later(routed, message, caller)
             # Une porte cherche ses identifiants de livraison elle-même (``_elsewhere``).
             await self._unclaimed(run_id, session_id, who.id)
         ctx = self.context(agent, who.id)
@@ -3188,6 +3523,7 @@ class Loom:
         """
         tree = RunTree(state.run_id).select(events)
         deadlines = [a.expire_at for a in _awaited(state, tree) if a.expire_at is not None]
+        deadlines += [q.expire_at for q in _asked(state, tree) if q.expire_at is not None]
         if not deadlines:
             return
         try:

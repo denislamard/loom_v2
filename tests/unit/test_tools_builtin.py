@@ -268,6 +268,7 @@ async def test_register_refuses_a_loom_name(demo: ConfigFactory) -> None:
 # doit en ajouter ici, sinon ``test_catalogue_is_consistent`` échoue.
 SAMPLE_PARAMS: dict[str, Callable[[Path], dict[str, Any]]] = {
     "loom.state": lambda _: {},
+    "loom.ask": lambda _: {},
     "loom.local_files": lambda folder: {
         "folders": [{"name": "essai", "path": str(folder), "rights": ["read"]}]
     },
@@ -433,6 +434,7 @@ def test_the_schema_describes_the_parameters() -> None:
     assert "folders" in built["required"]
     assert schema["$defs"]["PythonTool"]["properties"]["python"]["not"] == {
         "enum": [
+            "loom.ask",
             "loom.excel",
             "loom.local_files",
             "loom.pdf",

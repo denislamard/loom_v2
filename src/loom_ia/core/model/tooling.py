@@ -148,6 +148,13 @@ class ApprovalSettings(DomainModel):
     scope: str = "approve"
 
 
+class AskSettings(DomainModel):
+    """Ce que le moteur fait d'une question à l'utilisateur (wait_answer)."""
+
+    # Sans réponse après ce délai (s), la question expire ; ``None`` : elle attend.
+    expires_in: PositiveFloat | None = None
+
+
 class ToolDefinition(DomainModel):
     """Ce que le modèle voit d'un outil."""
 
@@ -211,6 +218,9 @@ class ToolSpec(ToolDefinition):
     # Mode d'emploi donné par la config, ajouté à la description vue par le
     # modèle ; ``description`` reste celle de l'outil.
     skill: SkillText | None = None
+    # Outil qui pose une question à l'utilisateur (``loom.ask``) : le moteur ne
+    # l'exécute pas, il écrit la question et attend la réponse (wait_answer).
+    asks: AskSettings | None = None
 
     @property
     def safe_to_retry(self) -> bool:

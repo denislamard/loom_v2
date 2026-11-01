@@ -82,8 +82,11 @@ from loom_ia.core.model import (
     Message,
     ModelRequest,
     ModelSpec,
+    NoAnswer,
     PendingApproval,
     PendingCall,
+    PendingQuestion,
+    QuestionReply,
     Quotas,
     Rejected,
     RunId,
@@ -513,6 +516,10 @@ class EvalTools:
         if self.fates[key] == "double":
             return await doubled(self.doubles[name], name, resolved), None
         return ToolOutput.error(REFUSED.format(name=name, effects=self._effects[key])), None
+
+    async def answer(self, run_id: RunId, pending: PendingQuestion) -> QuestionReply | NoAnswer:
+        """Personne ne répond pendant une évaluation : la question se clôt sans réponse."""
+        return NoAnswer(reason="personne ne répond en évaluation", expired=True)
 
     async def approve(self, run_id: RunId, pending: PendingApproval) -> ApprovalDecision:
         """Accordée quand rien ne part pour de vrai ; refusée sinon."""

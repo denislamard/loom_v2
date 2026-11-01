@@ -395,6 +395,29 @@ async def test_a_write_about_a_run_closed_elsewhere_is_refused() -> None:
     assert autre[0].seq == arret[-1].seq + 1
 
 
+async def test_a_guard_sees_what_landed_since_the_callers_read() -> None:
+    """``since`` : sous le verrou, avant la première tentative, sans conflit à voir (lot 0)."""
+    store = InMemoryEventStore()
+    writer = await SessionWriter.open(store, DEFAULT_TENANT, SESSION)
+    read = await writer.append(RunJournal(session_id=SESSION).start("Premier ?").take())
+    seen = read[-1].seq
+    # Écrit par le même écrivain partagé après la lecture de l'appelant : aucun conflit.
+    await writer.append(RunJournal(session_id=SESSION).start("Second ?").take())
+    landed: list[list[str]] = []
+
+    def guard(events: Sequence[Event]) -> None:
+        landed.append([e.type for e in events])
+        raise RuntimeError("décidé ailleurs")
+
+    with pytest.raises(RuntimeError, match="décidé ailleurs"):
+        await writer.append(
+            RunJournal(session_id=SESSION).start("Troisième ?").take(), guard=guard, since=seen
+        )
+    assert landed == [["run.started", "message.user"]]
+    # Rien n'a été écrit.
+    assert await store.last_seq(DEFAULT_TENANT, SESSION) == writer.last_seq == seen + 2
+
+
 async def test_a_run_is_not_opened_twice_through_one_writer() -> None:
     """L'écrivain partagé suit le journal : sans conflit à voir, seule sa vérification refuse."""
     store = InMemoryEventStore()

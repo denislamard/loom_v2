@@ -74,6 +74,7 @@ from loom_ia.core.model.judge import CriterionScore, JudgesMode
 from loom_ia.core.model.media import ArtifactOrigin, ArtifactRecord
 from loom_ia.core.model.messages import Message
 from loom_ia.core.model.policy import CheckOutcome, CheckResolution, DecisionKind, HookPoint
+from loom_ia.core.model.question import PendingQuestion, Question, QuestionReply
 from loom_ia.core.model.run_state import CancelReason, PendingApproval, RunKind, RunStatus
 from loom_ia.core.model.streaming import ModelErrorKind, StopReason
 from loom_ia.core.model.tooling import ExpiryAction, ToolKind
@@ -87,6 +88,7 @@ type EventCategory = Literal[
     "guard",
     "policy",
     "approval",
+    "question",
     "idempotency",
     "artifact",
     "session",
@@ -995,6 +997,68 @@ class ApprovalExpired(Payload):
         return "warning"
 
 
+# --- Questions à l'utilisateur ------------------------------------------------
+
+
+class QuestionAsked(Payload):
+    """Le modèle pose une question à l'utilisateur (outil ``ask``) : le run attend sa réponse.
+
+    Écrite par l'exécuteur après les appels du lot, comme une demande
+    d'approbation : le run passe alors en ``PAUSED``. ``expire_at`` fait foi.
+    """
+
+    category: ClassVar[EventCategory] = "question"
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name",)
+    content_fields: ClassVar[tuple[str, ...]] = ("questions",)
+    type: Literal["question.asked"] = "question.asked"
+    call_id: str
+    tool_name: str
+    questions: tuple[Question, ...]
+    expire_at: datetime | None = None
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning"
+
+    def as_pending(self, run_id: RunId | None = None) -> PendingQuestion:
+        return PendingQuestion(
+            call_id=self.call_id, questions=self.questions, run_id=run_id, expire_at=self.expire_at
+        )
+
+
+class QuestionAnswered(Payload):
+    """L'utilisateur a répondu : sa réponse part au modèle comme résultat de l'appel."""
+
+    category: ClassVar[EventCategory] = "question"
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by")
+    content_fields: ClassVar[tuple[str, ...]] = ("answers", "text")
+    type: Literal["question.answered"] = "question.answered"
+    call_id: str
+    tool_name: str
+    answers: tuple[tuple[str, ...], ...] | None = None
+    text: str | None = None
+    by: str | None = None
+
+    def reply(self) -> QuestionReply:
+        return QuestionReply(answers=self.answers, text=self.text, by=self.by)
+
+
+class QuestionExpired(Payload):
+    """Question restée sans réponse jusqu'à son ``expire_at`` : le modèle l'apprend."""
+
+    category: ClassVar[EventCategory] = "question"
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name",)
+    content_fields: ClassVar[tuple[str, ...]] = ()
+    type: Literal["question.expired"] = "question.expired"
+    call_id: str
+    tool_name: str
+    expire_at: datetime
+
+    @property
+    def event_status(self) -> EventStatus:
+        return "warning"
+
+
 # --- Idempotence -------------------------------------------------------------
 
 
@@ -1210,6 +1274,9 @@ type DurablePayload = Annotated[
     | ApprovalGranted
     | ApprovalRejected
     | ApprovalExpired
+    | QuestionAsked
+    | QuestionAnswered
+    | QuestionExpired
     | IdempotencyRecorded
     | IdempotencyReused
     | ArtifactStored

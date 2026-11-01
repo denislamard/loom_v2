@@ -21,7 +21,7 @@ import json
 from collections.abc import Sequence
 from typing import Final
 
-from loom_ia.core.model import SYSTEM_NOTE, Message, PendingApproval
+from loom_ia.core.model import SYSTEM_NOTE, Message, PendingApproval, PendingQuestion
 
 ARGUMENTS_CHARS: Final = 300
 
@@ -53,3 +53,19 @@ def _item(approval: PendingApproval) -> str:
     if len(arguments) > ARGUMENTS_CHARS:
         arguments = f"{arguments[: ARGUMENTS_CHARS - 1]}…"
     return f"{approval.tool_name} (appel {approval.call_id}, arguments : {arguments})"
+
+
+def question_note(questions: Sequence[PendingQuestion]) -> Message | None:
+    """Message à placer avant la demande du tour quand une question attend encore sa réponse.
+
+    Cas d'un tour qui n'a pas été pris comme réponse (wait_answer) : la question
+    reste posée, et le modèle doit le savoir pour ne pas la reposer.
+    """
+    if not questions:
+        return None
+    asked = " ; ".join(q.question for pending in questions for q in pending.questions)
+    text = (
+        "au début de ce tour, une question posée plus tôt dans cette conversation attend "
+        f"encore la réponse de l'utilisateur : {asked}. Elle reste posée ; ne la repose pas."
+    )
+    return Message.user(f"[{SYSTEM_NOTE} : {text}]")

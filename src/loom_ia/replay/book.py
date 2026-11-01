@@ -40,6 +40,8 @@ from loom_ia.core.events import (
     Event,
     ModelFellBack,
     ModelResponded,
+    QuestionAnswered,
+    QuestionExpired,
     RunFailed,
     RunStarted,
     ToolCalled,
@@ -53,8 +55,11 @@ from loom_ia.core.model import (
     ModelRequest,
     ModelResponse,
     ModelSpec,
+    NoAnswer,
     PendingApproval,
     PendingCall,
+    PendingQuestion,
+    QuestionReply,
     Rejected,
     RunId,
     ToolOutput,
@@ -64,7 +69,7 @@ from loom_ia.core.model import (
 from loom_ia.core.ports import AnsweringClient, ModelError
 from loom_ia.engine import AnyTool, Consumption
 
-type DivergenceKind = Literal["model", "tool", "approval", "end"]
+type DivergenceKind = Literal["model", "tool", "approval", "question", "end"]
 
 # Noms des parties d'une requête, dans l'ordre où le diagnostic les cite.
 PARTS: Final = ("model", "system", "tools", "messages", "settings")
@@ -136,6 +141,9 @@ class ReplayBook:
     approvals: dict[tuple[str, str], ApprovalGranted | ApprovalRejected | ApprovalExpired] = field(
         default_factory=dict[tuple[str, str], ApprovalGranted | ApprovalRejected | ApprovalExpired]
     )
+    answers: dict[tuple[str, str], QuestionAnswered | QuestionExpired] = field(
+        default_factory=dict[tuple[str, str], QuestionAnswered | QuestionExpired]
+    )
     fallbacks: list[ModelFellBack] = field(default_factory=list[ModelFellBack])
     divergence: Divergence | None = None
     # La panne de modèle sur laquelle le run racine s'est arrêté, s'il s'est
@@ -177,6 +185,9 @@ class ReplayBook:
                     # l'appel qu'une fois. Une seconde (effet devenu inconnu après
                     # un plantage) porte sur un lancement que le rejeu n'a pas.
                     book.approvals.setdefault((event.run_id, decided.call_id), decided)
+                case QuestionAnswered() | QuestionExpired() as replied:
+                    # La réponse de l'utilisateur, servie en ligne au rejeu (wait_answer).
+                    book.answers.setdefault((event.run_id, replied.call_id), replied)
                 case ModelFellBack() as fell:
                     book.fallbacks.append(fell)
                 case RunStarted(parent_run_id=parent) if parent is not None:
@@ -429,6 +440,31 @@ class ReplayBook:
                 )
                 return Rejected(reason="rejeu : demande absente du journal", by="rejeu")
 
+    # --- Questions (wait_answer) ------------------------------------------
+
+    def recorded_answer(self, run_id: str, call_id: str) -> QuestionReply | NoAnswer | None:
+        """La réponse que le journal porte pour cette question de ce run."""
+        match self.answers.get((run_id, call_id)):
+            case QuestionAnswered() as answered:
+                return answered.reply()
+            case QuestionExpired():
+                return NoAnswer(reason="question expirée (au journal)", expired=True)
+            case None:
+                return None
+
+    async def reply_to(self, run_id: str, pending: PendingQuestion) -> QuestionReply | NoAnswer:
+        """La réponse du journal, rendue en ligne : le rejeu ne s'arrête pas pour attendre."""
+        found = self.recorded_answer(run_id, pending.call_id)
+        if found is not None:
+            return found
+        self.diverge(
+            Divergence(
+                kind="question",
+                where=f"question ({pending.call_id}) : absente du journal",
+            )
+        )
+        return NoAnswer(reason="rejeu : question absente du journal", expired=True)
+
 
 def recorded_response(recorded: ModelResponded) -> ModelResponse:
     """La réponse telle que le journal l'a gardée, entière."""
@@ -494,6 +530,10 @@ class JournalTools:
     async def approve(self, run_id: RunId, pending: PendingApproval) -> ApprovalDecision:
         """La décision du journal, rendue en ligne."""
         return await self.book.approve(run_id, pending)
+
+    async def answer(self, run_id: RunId, pending: PendingQuestion) -> QuestionReply | NoAnswer:
+        """La réponse du journal, rendue en ligne."""
+        return await self.book.reply_to(run_id, pending)
 
     async def output(
         self,

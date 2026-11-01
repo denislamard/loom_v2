@@ -226,6 +226,15 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         ),
         own_description=True,
     ),
+    "loom.ask": Builtin(
+        target="loom_ia.tools_builtin.ask:build",
+        params="loom_ia.tools_builtin.ask_params:AskParams",
+        refused=("approval", "side_effects", "idempotent", "timeout", "output"),
+        refused_because=(
+            "l'outil ne fait rien lui-même : il pose une question et attend la réponse de "
+            "l'utilisateur ; une action à faire valider passe par l'approbation"
+        ),
+    ),
 }
 
 

@@ -229,6 +229,7 @@ class SessionWriter:
         checked: bool = True,
         opens: RunId | None = None,
         guard: Callable[[Sequence[Event]], None] | None = None,
+        since: int | None = None,
     ) -> list[Event]:
         """Écrit les brouillons à la suite, dans l'ordre, et les renvoie numérotés.
 
@@ -242,7 +243,12 @@ class SessionWriter:
 
         ``guard`` reçoit, avant chaque reprise, les événements écrits depuis
         la position de l'écrivain ; ce qu'elle lève sort tel quel, et rien
-        n'est écrit.
+        n'est écrit. Avec ``since`` — le dernier ``seq`` que l'appelant a lu
+        avant de décider —, elle reçoit aussi, **sous le verrou et avant la
+        première tentative**, ce qui s'est écrit depuis : une décision prise
+        sur une lecture dépassée (deux accords, un accord et un refus, une
+        décision et l'expiration de la demande) est refusée au lieu de rendre
+        le journal illisible.
 
         Une vue de pilote (``held``) dont la concession a été prise lève
         ``ClaimConflict``, et dont le run a été clos ailleurs ``RunMoved`` :
@@ -255,6 +261,8 @@ class SessionWriter:
                 self.tenant_id, self.session_id, run_id=opens
             ):
                 raise RunExists(opens)
+            if since is not None and guard is not None:
+                guard(await self.store.read(self.tenant_id, self.session_id, after_seq=since))
             attempt = 0
             while True:
                 attempt += 1

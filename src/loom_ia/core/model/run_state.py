@@ -21,6 +21,7 @@ from loom_ia.core.model.ids import RunId, SessionId, SpanId
 from loom_ia.core.model.judge import JudgesMode
 from loom_ia.core.model.media import ArtifactRecord
 from loom_ia.core.model.messages import Message
+from loom_ia.core.model.question import PendingQuestion
 from loom_ia.core.model.usage import Usage
 
 # Durée d'une concession sur un run, en secondes (#27) : renouvelée au tiers,
@@ -317,6 +318,10 @@ class RunState(DomainModel):
     # attendent encore tiennent le run en PAUSED ; les autres gardent leur
     # décision, que la reprise applique à l'appel.
     approvals: tuple[PendingApproval, ...] = ()
+    # Questions posées à l'utilisateur (``ask``), dans l'ordre. Celles qui
+    # attendent encore tiennent le run en PAUSED, comme une approbation ;
+    # les autres gardent leur réponse, que la reprise rend au modèle.
+    questions: tuple[PendingQuestion, ...] = ()
     # Appels partis avec d'autres arguments que ceux du modèle, dans l'ordre des lancements.
     amendments: tuple[Amendment, ...] = ()
     # Vrai après run.completed, run.failed ou run.cancelled : plus rien n'est accepté.
@@ -356,6 +361,24 @@ class RunState(DomainModel):
         if self.finished or self.status.is_terminal:
             return ()
         return tuple(a for a in self.approvals if a.outcome is None)
+
+    @property
+    def asking(self) -> tuple[PendingQuestion, ...]:
+        """Questions sans réponse : le run attend l'utilisateur.
+
+        Comme ``awaiting`` : un run fini n'attend plus rien.
+        """
+        if self.finished or self.status.is_terminal:
+            return ()
+        return tuple(q for q in self.questions if q.open)
+
+    @property
+    def on_hold(self) -> bool:
+        """Le run attend un humain : une décision, ou une réponse."""
+        return bool(self.awaiting or self.asking)
+
+    def question(self, call_id: str) -> PendingQuestion | None:
+        return next((q for q in reversed(self.questions) if q.call_id == call_id), None)
 
     def approval(self, call_id: str) -> PendingApproval | None:
         """Dernière demande d'approbation de cet appel, tranchée ou non.

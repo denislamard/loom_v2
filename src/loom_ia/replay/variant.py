@@ -42,8 +42,11 @@ from loom_ia.core.model import (
     ModelRequest,
     ModelResponse,
     ModelSpec,
+    NoAnswer,
     PendingApproval,
     PendingCall,
+    PendingQuestion,
+    QuestionReply,
     Rejected,
     ResponseAccumulator,
     RunId,
@@ -194,6 +197,13 @@ class VariantTools:
                 return await doubled(self.doubles[name], name, resolved), None
             case _:
                 return ToolOutput.error(REFUSED.format(name=name, effects=decision.effects)), None
+
+    async def answer(self, run_id: RunId, pending: PendingQuestion) -> QuestionReply | NoAnswer:
+        """La réponse du journal si la question y est ; sinon personne ne répond en variante."""
+        found = self.book.recorded_answer(run_id, pending.call_id)
+        if found is not None:
+            return found
+        return NoAnswer(reason="personne ne répond en variante", expired=True)
 
     async def approve(self, run_id: RunId, pending: PendingApproval) -> ApprovalDecision:
         """Décision en ligne : celle du journal, ou accordée quand rien ne part pour de vrai."""

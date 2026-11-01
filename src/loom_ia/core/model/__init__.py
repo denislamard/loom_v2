@@ -137,6 +137,14 @@ from loom_ia.core.model.policy import (
     Retry,
     Stop,
 )
+from loom_ia.core.model.question import (
+    Answerer,
+    NoAnswer,
+    PendingQuestion,
+    Question,
+    QuestionOption,
+    QuestionReply,
+)
 from loom_ia.core.model.quota import WINDOW, Quotas, RateLimit
 from loom_ia.core.model.run_state import (
     DEFAULT_LEASE,
@@ -243,6 +251,7 @@ __all__ = [
     "AfterModel",
     "AfterTool",
     "Amendment",
+    "Answerer",
     "AnthropicMeta",
     "Approval",
     "ApprovalDecision",
@@ -305,6 +314,7 @@ __all__ = [
     "ModelResponse",
     "ModelSpec",
     "ModelTimeouts",
+    "NoAnswer",
     "OnExceed",
     "OnFailure",
     "OnOutput",
@@ -314,6 +324,7 @@ __all__ = [
     "Pause",
     "PendingApproval",
     "PendingCall",
+    "PendingQuestion",
     "PendingRepair",
     "PolicyContext",
     "PolicySubject",
@@ -321,6 +332,9 @@ __all__ = [
     "Pricing",
     "PromptCache",
     "ProviderMeta",
+    "Question",
+    "QuestionOption",
+    "QuestionReply",
     "Quotas",
     "RateLimit",
     "ReasoningBlock",

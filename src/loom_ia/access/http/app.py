@@ -120,7 +120,9 @@ from loom_ia.access.api import (
     AgentNotAllowed,
     ApprovalStale,
     DeliveryRefused,
+    InvalidAnswer,
     Loom,
+    QuestionStale,
     RunPage,
     RunResult,
     SessionDeletion,
@@ -129,6 +131,7 @@ from loom_ia.access.api import (
     StreamItem,
     Triggered,
     UnknownApproval,
+    UnknownQuestion,
     UnknownRun,
     UnknownSession,
     UnknownTrigger,
@@ -137,6 +140,8 @@ from loom_ia.access.api import (
 from loom_ia.access.http.auth import API_KEY_HEADER, Caller, identify, require, throttle
 from loom_ia.access.http.schemas import (
     AgentInfo,
+    Answer,
+    Answered,
     Approval,
     Cancellation,
     Cancelled,
@@ -352,6 +357,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     @app.exception_handler(ArtifactNotFound)
     @app.exception_handler(UnknownAgent)
     @app.exception_handler(UnknownApproval)
+    @app.exception_handler(UnknownQuestion)
     @app.exception_handler(UnknownRun)
     @app.exception_handler(UnknownSession)
     @app.exception_handler(UnknownTrigger)
@@ -385,6 +391,12 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             headers={"Retry-After": str(max(1, math.ceil(left)))},
         )
 
+    @app.exception_handler(InvalidAnswer)
+    async def _bad_answer(request: Request, exc: Exception) -> JSONResponse:
+        # La réponse ne convient pas aux questions : rien n'est écrit.
+        return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+    @app.exception_handler(QuestionStale)
     @app.exception_handler(ApprovalStale)
     async def _expired(request: Request, exc: Exception) -> JSONResponse:
         # La demande existe, mais son échéance est passée : elle ne se tranche
@@ -720,6 +732,28 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             tenant_id=who.tenant,
         )
         return Decided(run_id=run_id, calls=calls)
+
+    @router.post(
+        "/runs/{run_id}/answer", tags=["runs"], summary="Répond à une question que le run attend"
+    )
+    async def answer(
+        who: Who, run_id: RunId, body: Answer, session_id: SessionId | None = None
+    ) -> Answered:
+        # Répondre, c'est poursuivre la conversation : le droit de lancer l'agent,
+        # pas celui d'approuver (une réponse n'autorise rien).
+        require(who, "run")
+        state = await loom.state(run_id, session_id=session_id, tenant_id=who.tenant)
+        require(who, "run", state.agent)
+        call = await loom.answer(
+            run_id,
+            answers=body.answers,
+            text=body.text,
+            call_id=body.call_id,
+            by=body.by or _signature(who),
+            session_id=session_id,
+            tenant_id=who.tenant,
+        )
+        return Answered(run_id=run_id, call_id=call)
 
     @router.post("/runs/{run_id}/cancel", tags=["runs"], summary="Arrête un run")
     async def cancel(

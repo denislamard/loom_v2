@@ -27,6 +27,7 @@ Ce fichier suppose les chapitres 2 (outils Python), 3 (`loom validate` et `loom 
   - [`loom.excel` : des classeurs Excel mis en forme](#loomexcel--des-classeurs-excel-mis-en-forme)
   - [`loom.word` et `loom.pdf` : des documents Word et PDF](#loomword-et-loompdf--des-documents-word-et-pdf)
   - [`loom.sql` : des bases SQLite et Postgres, avec des droits par table](#loomsql--des-bases-sqlite-et-postgres-avec-des-droits-par-table)
+  - [`loom.ask` : le modèle pose une question, le moteur attend la réponse](#loomask--le-modèle-pose-une-question-le-moteur-attend-la-réponse)
   - [`loom.state` : le modèle tient le state de la session](#loomstate--le-modèle-tient-le-state-de-la-session)
 - [Pour aller plus loin](#pour-aller-plus-loin)
 
@@ -1483,6 +1484,67 @@ La table des secrets de chaque client contient la variable que nomme `dsn_env`, 
 
 ---
 
+### `loom.ask` : le modèle pose une question, le moteur attend la réponse
+
+Depuis loom-ia 2.0.15. Quand une information manque — quel client, quelle date, quelle voie entre deux —, le modèle ne l'écrit pas dans sa réponse : il appelle `ask`. Le moteur n'exécute pas l'outil ; il écrit la question au journal (`question.asked`), met le run **en pause**, et la réponse de l'utilisateur revient au modèle comme **résultat de l'appel**, dans le **même run**, avec tout son contexte.
+
+```yaml
+tools:
+- python: loom.ask
+  expires_in: 86400        # facultatif : sans réponse après ce délai (s), le modèle l'apprend
+```
+
+**Ce n'est pas une approbation.** Une approbation vient de la config (`approval`, politiques), se tranche par oui ou non par un approbateur (portée `approve`), et porte sur un appel déjà formé. Une question vient du modèle, l'utilisateur de la session y répond, et sa réponse est une information. Les deux attentes se cumulent : un run qui attend une décision et une réponse ne repart que quand les deux sont là. Une action à faire valider reste une approbation ; la description de `ask` le dit au modèle (« Pas pour faire valider une action : ce n'est pas une autorisation »).
+
+Ce que le modèle envoie (1 à 4 questions, 6 choix au plus chacune ; l'utilisateur peut toujours répondre autre chose) :
+
+```json
+{"questions": [{"question": "Pour quel client faut-il préparer le devis ?", "header": "Client",
+                "options": [{"label": "Dupont"}, {"label": "Martin"}]}]}
+```
+
+Ce qu'il reçoit, une fois la réponse donnée :
+
+```text
+Réponse de l'utilisateur :
+- Pour quel client faut-il préparer le devis ? → Dupont
+```
+
+ou `Réponse de l'utilisateur, en message libre : Dupont, celui de Lyon` quand l'utilisateur a simplement écrit.
+
+**Répondre, c'est écrire dans la session.** Le message suivant de la conversation **est** la réponse : c'est le run qui a posé la question qui reprend, et le résultat rendu porte **son** `run_id`. Il en va ainsi par tous les accès :
+
+```text
+$ loom run demo "Prépare un devis." --session s1
+Pour quel client faut-il préparer le devis ?
+  1. Dupont
+  2. Martin
+
+Statut     : paused · itérations : 1 · …
+Question   : fake_0_0 — répondre : loom run demo "<réponse>" --session s1 (ou loom answer <run_id> … --session s1)
+
+$ loom run demo "Dupont, celui de Lyon" --session s1
+Devis préparé.
+```
+
+Le message n'est pas pris comme réponse — c'est un nouveau tour, et le modèle apprend par une note que la question attend toujours — sans session, avec des pièces jointes, des écritures du state ou un `run_id` choisi, ou quand la question vient d'un autre agent. Une livraison de webhook n'est jamais une réponse.
+
+| Accès | Ce que voit le client | Répondre autrement qu'en écrivant |
+|---|---|---|
+| Python | `RunResult.status` `paused` (`waiting_child` si un sous-agent a posé la question), `pending_questions` ; `SessionInfo.pending_questions` | `await loom.answer(run_id, answers=[["Dupont"]])` ou `text="…"`, `call_id=` s'il y en a plusieurs ; `answerer=` sur `run()` / `stream()` répond dans la boucle |
+| CLI | La question et ses choix sur stdout, code 0 ; `loom sessions show` les liste ; `--stream` : « question à l'utilisateur : … », « réponse de l'utilisateur reçue » | `loom answer <run_id> "texte"`, ou `--answer` par question (« ; » sépare plusieurs choix) |
+| REST | `201` (ou `202` en `background`) avec `status: paused` et `pending_questions` ; le flux SSE reste ouvert et suit la reprise | `POST /v1/runs/{id}/answer` `{"answers": [["Dupont"]]}` ou `{"text": "…"}` — portée `run` ; 404 si rien n'attend, 409 si la question a expiré, 422 si la réponse ne convient pas |
+| MCP | Sans elicitation : la question en texte, et « rappeler l'agent avec session_id=… et la réponse en message » ; `pending_questions` dans le résultat structuré | Avec elicitation (client stdio qui la déclare) : un formulaire, sans pause — une liste par question à choix unique, un champ libre qui l'emporte |
+
+- **Sans réponse.** Sans `expires_in`, une question attend indéfiniment. Avec, elle expire : le modèle reçoit « L'utilisateur n'a pas répondu dans le délai… » et continue ; le run n'échoue jamais pour cela. Une réponse arrivée après l'échéance est refusée (`QuestionStale`, 409).
+- **Annulé, le run retire sa question** (`run.cancelled.withdrawn`).
+- **Masquage.** Sans `read_content`, relire un run ne montre pas le texte des questions (`redacted` : `pending_questions[].questions`) : il est écrit par le modèle, donc du contenu.
+- **Ce que voit le modèle :** environ 320 tokens par appel de modèle (description et schéma), pour les agents qui déclarent l'outil. `approval`, `side_effects`, `idempotent`, `timeout` et `output` sont refusés sur sa référence : l'outil ne fait rien lui-même. Une politique `before_tool` ne voit pas ses appels.
+- **Au rejeu**, la réponse vient du journal, sans pause ; en évaluation, personne ne répond.
+- ⚠ **Une loom plus ancienne ne lit pas une session où une question a été posée** : les événements `question.*` lui sont inconnus. Les autres sessions ne sont pas touchées.
+
+L'analyse, les mesures et les décisions : `docs/wait_answer.md`.
+
 ### `loom.state` : le modèle tient le state de la session
 
 Depuis loom-ia 2.0.15. L'outil n'a pas de paramètres : ce qu'il écrit se déclare sur les clés du state de l'agent (`writers: [model]` et `extract:`). Le modèle **désigne** un résultat d'outil du run par sa référence, loom en **tire** la valeur ; il ne recopie jamais de donnée.
@@ -1508,7 +1570,7 @@ Ce que le modèle envoie : `{"set": "client", "result": "result:3", "row": 0}`, 
 
 ## Pour aller plus loin
 
-- **La référence** : `docs/tools-builtin-analyse.md` — l'analyse, les décisions et l'organisation du dossier `src/loom_ia/tools_builtin/` ; `docs/outil-excel-loom_v2.md` et `docs/outil-excel-analyse.md` pour `loom.excel` ; `docs/outil-word-pdf-analyse.md` et `docs/outil-word-pdf-graphiques-analyse.md` pour `loom.word` et `loom.pdf` ; `docs/sql_builtin_tool.md` pour `loom.sql` ; `docs/fonctions.md`, point 50 (formes de référence) et point 44 (dépendances du noyau).
+- **La référence** : `docs/tools-builtin-analyse.md` — l'analyse, les décisions et l'organisation du dossier `src/loom_ia/tools_builtin/` ; `docs/outil-excel-loom_v2.md` et `docs/outil-excel-analyse.md` pour `loom.excel` ; `docs/outil-word-pdf-analyse.md` et `docs/outil-word-pdf-graphiques-analyse.md` pour `loom.word` et `loom.pdf` ; `docs/sql_builtin_tool.md` pour `loom.sql` ; `docs/wait_answer.md` pour `loom.ask` ; `docs/fonctions.md`, point 50 (formes de référence) et point 44 (dépendances du noyau).
 - **Ajouter un outil fourni**, pour qui contribue à loom-ia : un module par outil dans `src/loom_ia/tools_builtin/`, une ligne au catalogue `BUILTIN_TOOLS`, et ses tests. `tests/unit/test_tools_builtin.py` vérifie que chaque entrée du catalogue est un outil, nommé comme sa référence sans le préfixe. Un outil à paramètres déclare au catalogue un `Builtin` : le modèle Pydantic de ses paramètres, dans un module léger (`local_files_params.py`), et sa fabrique ; il ajoute aussi ses paramètres d'essai à `SAMPLE_PARAMS`. Un outil dont l'approbation ou les effets dépendent de l'appel implémente `assess_call` (`loom_ia.core.ports.CallAssessment`). Un outil qui lit ou écrit dans des dossiers déclarés s'appuie sur `tools_builtin/_folders.py`, comme `local_files`, `excel`, `word` et `pdf` ; un outil de documents prend ses dossiers sans `delete` et son fuseau dans `_office_params.py`, et le vocabulaire des colonnes typées dans `_values.py`. Un outil dont les dépendances viennent d'un extra le déclare au catalogue (`Builtin.extra`), et ses tests sautent sans lui (`importorskip`, raison « extra '…' absent »). Un outil qui lit des secrets les nomme dans ses paramètres (`secret_names()`, protocole `NamesSecrets`) : la table de chaque client les contient, et sa fabrique la reçoit (`BuiltinContext.secrets`). Un outil qui ouvre des connexions a un `aclose` : l'agent le ferme avec lui.
 - **La limite du proxy** : backlog #023.
 

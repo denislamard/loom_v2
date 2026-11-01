@@ -54,7 +54,9 @@ from pydantic import JsonValue
 from loom_ia import __version__
 from loom_ia.access.api import (
     AgentNotAllowed,
+    InvalidAnswer,
     Loom,
+    QuestionStale,
     RetentionReport,
     RunResult,
     SessionDeletion,
@@ -63,6 +65,7 @@ from loom_ia.access.api import (
     StreamItem,
     TenantConsumption,
     UnknownApproval,
+    UnknownQuestion,
     UnknownRun,
     UnknownSession,
     check_deletable_id,
@@ -462,6 +465,25 @@ def build_parser() -> argparse.ArgumentParser:
         )
         decision.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
         decision.set_defaults(handler=cmd_decide, verdict=verbe)
+
+    reply = tenanted(commands.add_parser("answer", help="répond à une question que le run attend"))
+    reply.add_argument("run_id")
+    reply.add_argument("texte", nargs="?", default=None, help="la réponse, en message libre")
+    reply.add_argument(
+        "--answer",
+        action="append",
+        default=None,
+        metavar="RÉPONSE",
+        help="réponse à une question, dans leur ordre (répéter ; « ; » sépare plusieurs choix)",
+    )
+    reply.add_argument("--call", type=str, default=None, metavar="CALL_ID", help="question visée")
+    reply.add_argument("--by", type=str, default=None, metavar="NOM", help="qui répond")
+    reply.add_argument("--session", type=str, default=None, help="journal du run")
+    reply.add_argument(
+        "--no-wait", action="store_true", help="écrit la réponse et sort, sans piloter la reprise"
+    )
+    reply.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
+    reply.set_defaults(handler=cmd_answer)
 
     serve = commands.add_parser("serve", help="sert l'API REST")
     serve.add_argument("--host", default=None)
@@ -1619,7 +1641,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     _console(config)
     session = SessionId(args.session) if args.session else None
     tenant = _tenant(args)
-    run_id = RunId(args.run_id) if args.run_id else new_run_id()
+    # Sans --run-id, aucun identifiant choisi d'avance : dans une session, le message
+    # peut répondre à une question qui attend, et le run est alors celui qui l'a
+    # posée (wait_answer). Son identifiant se lit sur le résultat ou le flux.
+    chosen = RunId(args.run_id) if args.run_id else None
+    run_id = chosen or (new_run_id() if session is None else None)
     paths: list[Path] = args.attach or []
     try:
         attachments = [Attachment.from_path(path) for path in paths]
@@ -1638,6 +1664,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         async with Loom(config) as loom:
             if args.stream:
                 live = _Live()
+                followed = run_id
                 async for item in loom.stream(
                     args.agent,
                     args.message,
@@ -1648,15 +1675,21 @@ def cmd_run(args: argparse.Namespace) -> int:
                     tenant=tenant,
                     state=posed,
                 ):
+                    if followed is None and isinstance(item, Event):
+                        followed = item.root_run_id
                     live.show(item)
                 print()
-                state = await loom.state(run_id, session_id=session, tenant_id=tenant)
+                if followed is None:
+                    raise RuntimeError("le flux du run n'a rendu aucun événement")
+                run_id_seen: RunId = followed
+                state = await loom.state(run_id_seen, session_id=session, tenant_id=tenant)
                 live = loom.context(args.agent, tenant).stream_output == "live"
                 if live and state.replaced_output is not None and state.output is not None:
                     # Réponse remplacée par une politique après sa diffusion.
                     print(f"[Réponse retenue]\n{_for_stdout(state.output.text)}")
                 # Le résumé de l'ouverture est déjà passé dans le déroulé.
-                return await loom.result(run_id, session_id=session, tenant_id=tenant), [], []
+                result = await loom.result(run_id_seen, session_id=session, tenant_id=tenant)
+                return result, [], []
             result = await loom.run(
                 args.agent,
                 args.message,
@@ -2148,6 +2181,58 @@ def cmd_decide(args: argparse.Namespace) -> int:
     return _report(result, as_json=args.json, tenant=_tenant(args))
 
 
+def cmd_answer(args: argparse.Namespace) -> int:
+    """Répond à une question que le run attend (wait_answer), puis pilote sa reprise.
+
+    Comme ``approve`` : la reprise se fait dans ce terminal, sauf ``--no-wait``
+    ou une file servie par un courtier. Plus simple encore : ``loom run <agent>
+    "<réponse>" --session <session>`` répond aussi, dans la conversation.
+    """
+    config = _config(args)
+    _console(config)
+    run_id = RunId(args.run_id)
+    session = SessionId(args.session) if args.session else None
+    tenant = _tenant(args)
+    if (args.texte is None) == (args.answer is None):
+        print("Donner la réponse en texte, ou une --answer par question.", file=sys.stderr)
+        return REFUSED
+    answers = (
+        None
+        if args.answer is None
+        else [[part.strip() for part in given.split(";") if part.strip()] for given in args.answer]
+    )
+    brokered = config.storage.queue.brokered
+
+    async def go() -> tuple[str, RunResult | None]:
+        loom = Loom(config)
+        try:
+            call = await loom.answer(
+                run_id,
+                answers=answers,
+                text=args.texte,
+                call_id=args.call,
+                by=args.by,
+                session_id=session,
+                tenant_id=tenant,
+            )
+            if args.no_wait or brokered:
+                return call, None
+            await loom.drain()
+            return call, await loom.result(run_id, session_id=session, tenant_id=tenant)
+        finally:
+            await loom.aclose(wait=not args.no_wait)
+
+    try:
+        call, result = asyncio.run(go())
+    except (UnknownQuestion, InvalidAnswer, QuestionStale) as exc:
+        print(str(exc), file=sys.stderr)
+        return REFUSED
+    _say(f"Répondu   : {call}", file=sys.stderr)
+    if result is None:
+        return OK
+    return _report(result, as_json=args.json, tenant=tenant)
+
+
 def _json_object(text: str) -> dict[str, JsonValue] | None:
     """Objet JSON d'un argument de ligne de commande, ou None avec un message."""
     try:
@@ -2320,12 +2405,35 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
         for run in stalled:
             _say(f"  {run.run_id} ({run.status})")
             _say(f"    loom resume {run.run_id} --session {info.session_id}{tenant_flag}")
-    if not info.pending_approvals:
+    if not info.pending_approvals and not info.pending_questions:
         _say("En attente : rien")
         return OK
     _say("En attente :")
     parents = {run.run_id: run.parent_run_id for run in info.runs}
+    agents = {run.run_id: run.agent for run in info.runs}
     tenant = f" --tenant {args.tenant}" if args.tenant else ""
+
+    def root_of(run_id: RunId | None) -> RunId | None:
+        while run_id is not None and parents.get(run_id) is not None:
+            run_id = parents[run_id]
+        return run_id
+
+    for question in info.pending_questions:
+        expiry = (
+            f"expire le {question.expire_at.astimezone().strftime('%d/%m %H:%M')}"
+            if question.expire_at is not None
+            else "sans échéance"
+        )
+        said = " ; ".join(q.question for q in question.questions) or "(question masquée)"
+        _say(f"  question ({question.call_id}) — run {question.run_id}, {expiry} : {said}")
+        # On répond sur la racine, ou en écrivant à son agent dans la session.
+        root = root_of(question.run_id)
+        agent = agents.get(root) if root is not None else None
+        _say(
+            f'    loom run {agent or "<agent>"} "<réponse>" --session {info.session_id}{tenant}'
+            f"  (ou loom answer {root or '<run_id>'} --call {question.call_id} "
+            f"--session {info.session_id}{tenant} …)"
+        )
     for asked in info.pending_approvals:
         holder = asked.run_id
         expiry = (
@@ -2336,10 +2444,7 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
         _say(f"  {asked.tool_name} ({asked.call_id}) — run {holder}, {expiry}")
         # La décision se prend sur la racine : c'est elle qui repart et rejoue
         # l'appel qui mène au sous-run en attente.
-        root = holder
-        while root is not None and parents.get(root) is not None:
-            root = parents[root]
-        target = root or "<run_id>"
+        target = root_of(holder) or "<run_id>"
         _say(
             f"    loom approve {target} --call {asked.call_id} --session {info.session_id}{tenant}"
         )
@@ -2924,6 +3029,9 @@ def _report(
             # ligne « Erreur » (au test L2 du 22/10, il était aussi recopié ici).
             if result.text:
                 print(_for_stdout(result.text))
+            elif result.pending_questions:
+                # La question est ce que l'utilisateur doit lire : elle part sur stdout.
+                print(_for_stdout(_questions_text(result)))
             elif result.status is not RunStatus.PAUSED:
                 print("—")
             # En pause, rien encore à répondre : stdout reste vide (test H4 du 20/10).
@@ -2961,6 +3069,14 @@ def _report(
                 f"loom approve {result.run_id} --call {asked.call_id}{where}",
                 file=sys.stderr,
             )
+        for question in result.pending_questions:
+            _say(
+                f"Question   : {question.call_id} — répondre : loom run {result.agent} "
+                f'"<réponse>" --session {result.session_id}'
+                + (f" --tenant {tenant}" if tenant is not None else "")
+                + f" (ou loom answer {result.run_id} …{where})",
+                file=sys.stderr,
+            )
         if result.unverified and not brief:
             _say("Vérifiée   : non (gardée malgré son contrat ou son juge)", file=sys.stderr)
         if result.fallback and not brief:
@@ -2971,7 +3087,23 @@ def _report(
             )
         if result.error:
             _say(f"Erreur     : {result.error} ({result.error_type})", file=sys.stderr)
-    return OK if result.ok else FAILED
+    # Un run qui attend seulement la réponse de l'utilisateur n'a pas échoué.
+    asking = bool(result.pending_questions) and not result.pending_approvals
+    return OK if result.ok or asking else FAILED
+
+
+def _questions_text(result: RunResult) -> str:
+    """Les questions en attente, lisibles : le texte, puis les choix numérotés."""
+    lines: list[str] = []
+    for pending in result.pending_questions:
+        for question in pending.questions:
+            lines.append(question.question)
+            lines += [
+                f"  {number}. {option.label}"
+                + (f" — {option.description}" if option.description else "")
+                for number, option in enumerate(question.options, start=1)
+            ]
+    return "\n".join(lines)
 
 
 def _only_data(result: RunResult) -> int:

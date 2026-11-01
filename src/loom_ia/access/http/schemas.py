@@ -115,6 +115,26 @@ class Approval(Decision):
         return self
 
 
+class Answer(DomainModel):
+    """La réponse de l'utilisateur à une question que le run attend (wait_answer)."""
+
+    # Question visée ; sans elle, la seule question en attente du run.
+    call_id: str | None = None
+    # Une liste de réponses par question (libellés choisis ou texte libre), ou un
+    # message libre qui répond à l'ensemble : l'un des deux.
+    answers: list[list[str]] | None = None
+    text: str | None = None
+    # Qui répond. Sans lui, c'est la clé d'API qui signe.
+    by: str | None = None
+
+
+class Answered(DomainModel):
+    """L'appel auquel la réponse a été donnée ; le run reprend en tâche de fond."""
+
+    run_id: RunId
+    call_id: str
+
+
 class Decided(DomainModel):
     """Appels tranchés par une décision ; vide si le run n'attendait rien.
 

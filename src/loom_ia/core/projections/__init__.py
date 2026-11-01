@@ -13,6 +13,7 @@ from loom_ia.core.projections.ledger import LedgerEntry, ledger, spent
 from loom_ia.core.projections.run_state import (
     ProjectionError,
     apply,
+    asking_in_session,
     awaiting_in_session,
     fold,
     fold_all,
@@ -28,6 +29,7 @@ __all__ = [
     "ProjectionError",
     "RunTree",
     "apply",
+    "asking_in_session",
     "awaiting_in_session",
     "fold",
     "fold_all",

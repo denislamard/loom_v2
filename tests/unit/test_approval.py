@@ -509,6 +509,79 @@ def test_a_cancelled_paused_run_awaits_nothing(atelier: ConfigFactory) -> None:
     assert "approval.granted" not in types and "approval.rejected" not in types
 
 
+# --- Décisions simultanées -------------------------------------------------------
+
+
+def test_two_simultaneous_approvals_decide_once(atelier: ConfigFactory) -> None:
+    """Double clic, deux accès : la seconde décision ne s'écrit pas (lot 0, 01/11).
+
+    Sur 2.0.15 jusqu'à 1c43b7e, les deux s'écrivaient, la projection refusait la
+    seconde (« déjà tranché »), et chaque run suivant de la session était refusé.
+    """
+
+    async def go() -> tuple[list[tuple[str, ...]], RunStatus, RunStatus, list[str]]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            decided = await asyncio.gather(
+                loom.approve(run.run_id, by="denis", session_id=SESSION),
+                loom.approve(run.run_id, by="marie", session_id=SESSION),
+            )
+            await loom.drain()
+            fin = await loom.result(run.run_id, session_id=SESSION)
+            suivant = await loom.run("demo", DEMANDE, session_id=SESSION)
+            events = await loom.export_session(SESSION)
+        return list(decided), fin.status, suivant.status, [e.type for e in events]
+
+    decided, status, suivant, types = asyncio.run(go())
+    assert sorted(len(calls) for calls in decided) == [0, 1]
+    assert status is RunStatus.COMPLETED
+    # La session reste lisible : le tour suivant s'ouvre (et attend sa propre approbation).
+    assert suivant is RunStatus.PAUSED
+    assert types.count("approval.granted") == 1
+
+
+def test_an_approval_and_a_refusal_at_once_decide_once(atelier: ConfigFactory) -> None:
+    async def go() -> tuple[list[tuple[str, ...]], RunStatus, list[str]]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            decided = await asyncio.gather(
+                loom.approve(run.run_id, by="denis", session_id=SESSION),
+                loom.reject(run.run_id, by="marie", reason="non", session_id=SESSION),
+            )
+            await loom.drain()
+            fin = await loom.result(run.run_id, session_id=SESSION)
+            events = await loom.export_session(SESSION)
+        return list(decided), fin.status, [e.type for e in events]
+
+    decided, status, types = asyncio.run(go())
+    assert sorted(len(calls) for calls in decided) == [0, 1]
+    assert status is RunStatus.COMPLETED
+    assert types.count("approval.granted") + types.count("approval.rejected") == 1
+
+
+def test_two_instances_deciding_at_once_decide_once(atelier: ConfigFactory) -> None:
+    """Deux process (la CLI et un serveur) : chacun son écrivain, le conflit de séquence tranche."""
+
+    async def go() -> tuple[list[tuple[str, ...]], list[str]]:
+        path = atelier()
+        async with Loom.from_config(path) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+        async with Loom.from_config(path) as cli, Loom.from_config(path) as serveur:
+            decided = await asyncio.gather(
+                cli.approve(run.run_id, by="cli", session_id=SESSION),
+                serveur.approve(run.run_id, by="rest", session_id=SESSION),
+            )
+            await cli.drain()
+            await serveur.drain()
+            events = await cli.export_session(SESSION)
+            await cli.result(run.run_id, session_id=SESSION)
+        return list(decided), [e.type for e in events]
+
+    decided, types = asyncio.run(go())
+    assert sorted(len(calls) for calls in decided) == [0, 1]
+    assert types.count("approval.granted") == 1
+
+
 # --- Une file en panne, le journal écrit ----------------------------------------
 
 

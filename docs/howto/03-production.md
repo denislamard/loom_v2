@@ -3659,6 +3659,7 @@ Jusqu'ici, l'agent se pilotait depuis un terminal ou un script Python. Une appli
 | `GET /v1/runs`, `GET /v1/runs/{id}` | Lister les runs, lire le statut et le résultat | `read` |
 | `GET /v1/runs/{id}/events` | Déroulé en direct (SSE), reprise par `Last-Event-ID` | `read` |
 | `POST /v1/runs/{id}/approve`, `/reject` | Validation humaine | `approve` |
+| `POST /v1/runs/{id}/answer` | Réponse à une question du modèle (`loom.ask`, chapitre 32) | `run` |
 | `POST /v1/runs/{id}/cancel` | Arrêt d'un run | `run` |
 | `GET /v1/sessions`, `GET /v1/sessions/{id}` | Sessions, fiche d'une session | `read` |
 | `GET /v1/sessions/{id}/events`, `/report` | Journal (JSONL) et consommation d'une session | `read` |
@@ -3671,7 +3672,7 @@ Trois réglages de la section `server` de `loom.yaml` : `http.host` (`127.0.0.1`
 Quelques règles à connaître :
 
 - **Synchrone par défaut.** `POST …/runs` attend la fin du run et rend le résultat complet. Avec `"background": true`, il répond **tout de suite** `202 Accepted` avec l'identifiant du run, qui tourne en arrière-plan (c'est `Loom.submit()` du chapitre 19).
-- **Session nommée.** Quand on donne un `session_id`, les routes qui lisent un run (`GET /v1/runs/{id}`, `…/events`, `…/approve`) doivent le recevoir **aussi**, en paramètre de requête : `?session_id=…`. Sans lui, le run est introuvable.
+- **Session nommée.** Quand on donne un `session_id`, les routes qui lisent un run (`GET /v1/runs/{id}`, `…/events`, `…/approve`, `…/answer`) doivent le recevoir **aussi**, en paramètre de requête : `?session_id=…`. Sans lui, le run est introuvable.
 - **Publication.** Un agent déclare dans son YAML `expose: {rest: true, mcp: true}` (les deux par défaut). Mettre `rest: false` le retire de l'API.
 - **L'API est ouverte tant qu'aucune clé n'est déclarée.** `loom validate` le rappelle (dans ses avertissements : « Clés d'API   aucune : API REST ouverte »), et le profil `prod` en fait une erreur. Le chapitre 22 ajoute les clés. Dans ce chapitre, le serveur n'écoute que sur `127.0.0.1`.
 

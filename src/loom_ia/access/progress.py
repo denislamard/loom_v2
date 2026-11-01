@@ -33,6 +33,9 @@ from loom_ia.core.events import (
     JudgeEvaluated,
     ModelFellBack,
     PolicyDecided,
+    QuestionAnswered,
+    QuestionAsked,
+    QuestionExpired,
     RunCancelled,
     RunCompleted,
     RunFailed,
@@ -189,6 +192,15 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
         case ApprovalExpired():
             suite = "appel refusé" if payload.action == "deny" else "run en échec"
             return f"approbation périmée : {payload.tool_name} — {suite}"
+        case QuestionAsked():
+            asked = " ; ".join(q.question for q in payload.questions)
+            return f"question à l'utilisateur : {asked}"
+        case QuestionAnswered(by=str() as author):
+            return f"réponse de {author} reçue"
+        case QuestionAnswered():
+            return "réponse de l'utilisateur reçue"
+        case QuestionExpired():
+            return "question restée sans réponse : le modèle continue sans"
         case ArtifactStored():
             return (
                 f"{STORED[payload.origin]} : {payload.name or payload.uri} "

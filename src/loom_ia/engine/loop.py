@@ -124,6 +124,9 @@ from loom_ia.core.events import (
     ModelResponded,
     ModelRetried,
     PolicyDecided,
+    QuestionAnswered,
+    QuestionAsked,
+    QuestionExpired,
     RunCancelled,
     RunClaimed,
     RunCompleted,
@@ -145,6 +148,7 @@ from loom_ia.core.model import (
     MAIN_ROLE,
     REPAIR_PREFIX,
     AfterModel,
+    Answerer,
     ApprovalSettings,
     Approver,
     ArtifactRefBlock,
@@ -199,6 +203,7 @@ from loom_ia.core.projections import (
     ProjectionError,
     RunTree,
     apply,
+    asking_in_session,
     awaiting_in_session,
     fold,
     last_summary,
@@ -215,7 +220,7 @@ from loom_ia.engine.fallback import Answered, ModelChain, ModelLink
 from loom_ia.engine.hooks import Policies, PolicyEvent, Verdict
 from loom_ia.engine.media import earlier_images
 from loom_ia.engine.model_call import responded
-from loom_ia.engine.pending import pending_note
+from loom_ia.engine.pending import pending_note, question_note
 from loom_ia.engine.refs import REFS_HINT, ResultIndex, in_call_order, mark_results
 from loom_ia.engine.session_state import StateRefused, keeps_state, state_message
 from loom_ia.engine.writer import ClaimConflict, RunExists, RunMoved, SessionWriter
@@ -240,6 +245,9 @@ _BARE_EVENTS: Final = (
     ApprovalRequested,
     ApprovalGranted,
     ApprovalRejected,
+    QuestionAsked,
+    QuestionAnswered,
+    QuestionExpired,
 )
 
 _ACTIONABLE: Final = frozenset(
@@ -313,6 +321,9 @@ class RunContext:
     # Approbateur en ligne (#28) : il tranche dans la boucle, et le run ne
     # passe jamais par ``PAUSED``. Sans lui, l'approbation est asynchrone.
     approver: Approver | None = None
+    # Répondeur en ligne (wait_answer) : il répond aux questions ``ask`` dans la
+    # boucle (elicitation MCP, script). Sans lui, le run attend en ``PAUSED``.
+    answerer: Answerer | None = None
 
     @property
     def artifacts(self) -> ArtifactStore | None:
@@ -741,6 +752,8 @@ async def _driven(
         # Un tour précédent en pause n'est pas dans l'historique : la note le dit (18/10).
         if (note := pending_note(awaiting_in_session(earlier))) is not None:
             previous.append(note)
+        if (asked := question_note(asking_in_session(earlier))) is not None:
+            previous.append(asked)
         # Consommation des runs précédents de la session : budget de session (J4).
         session_spent = spent(earlier)
         # Seul un agent qui déclare un state le lit : les autres n'ont pas à relire la session.
@@ -889,7 +902,9 @@ def _actionable(state: RunState) -> bool:
     """
     if state.status is RunStatus.PAUSED:
         now = datetime.now(UTC)
-        return not state.awaiting or any(a.stale(now) for a in state.awaiting)
+        if not state.on_hold:
+            return True
+        return any(a.stale(now) for a in state.awaiting) or any(q.stale(now) for q in state.asking)
     return state.status in _ACTIONABLE
 
 
@@ -1089,7 +1104,10 @@ def cancellation(
                 iterations=state.iterations,
                 usage=state.usage,
                 cost_usd=state.cost_usd,
-                withdrawn=tuple(a.call_id for a in state.approvals if a.outcome is None),
+                withdrawn=(
+                    *(a.call_id for a in state.approvals if a.outcome is None),
+                    *(q.call_id for q in state.questions if q.open),
+                ),
             )
         ),
     ]
@@ -1272,8 +1290,9 @@ async def _decide(
             # Un enfant peut repartir : on rejoue l'appel qui l'a lancé, et
             # c'est lui qui le reprendra là où il en était (C5, #26).
             return [_transition(state, scope, RunStatus.AWAITING_TOOLS, cause)]
-        case RunStatus.AWAITING_TOOLS if state.awaiting:
-            # Le reste du lot est passé ; ces appels-là attendent un humain (#17).
+        case RunStatus.AWAITING_TOOLS if state.on_hold:
+            # Le reste du lot est passé ; ces appels-là attendent un humain : une
+            # décision (#17), ou une réponse de l'utilisateur (wait_answer).
             return [_transition(state, scope, RunStatus.PAUSED, cause)]
         case RunStatus.AWAITING_TOOLS if not state.pending_calls:
             terminal, parallel = _terminal(state, ctx)
@@ -1321,6 +1340,20 @@ def _resumed(
     now = datetime.now(UTC)
     action = ctx.approval.on_expiry
     stale = [a for a in state.awaiting if a.stale(now) and a.expire_at is not None]
+    # Une question périmée ne fait pas échouer le run : le modèle apprend qu'il
+    # n'a pas eu de réponse, et continue (wait_answer).
+    unanswered = [q for q in state.asking if q.stale(now) and q.expire_at is not None]
+    expired_questions = [
+        scope.draft(
+            QuestionExpired(
+                call_id=q.call_id,
+                tool_name=_called_name(state, q.call_id),
+                expire_at=q.expire_at,
+            )
+        )
+        for q in unanswered
+        if q.expire_at is not None
+    ]
     drafts = [
         scope.draft(
             ApprovalExpired(
@@ -1345,10 +1378,16 @@ def _resumed(
                 cause,
             ),
         ]
-    if len(stale) < len(state.awaiting):
+    drafts = [*drafts, *expired_questions]
+    if len(stale) < len(state.awaiting) or len(unanswered) < len(state.asking):
         # Il en reste qui attendent vraiment : le run se rendort.
         return drafts
     return [*drafts, _transition(state, scope, RunStatus.AWAITING_TOOLS, cause)]
+
+
+def _called_name(state: RunState, call_id: str) -> str:
+    call = state.pending(call_id)
+    return call.name if call is not None else "ask"
 
 
 async def _review(
@@ -1951,6 +1990,7 @@ async def _tool_step(
         summary=ctx.summary,
         approver=ctx.approver,
         session_state=ctx.session_state,
+        answerer=ctx.answerer,
     )
     # Appels laissés en suspens : leur run délégué attend une décision humaine.
     paused_children: list[RunId] = []
