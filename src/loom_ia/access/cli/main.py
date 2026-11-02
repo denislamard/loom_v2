@@ -2342,7 +2342,11 @@ def _check_choices(target: _Target, answers: list[list[str]], tenant: TenantId |
 def _answer_command(pending: PendingQuestion, hint: _Hint) -> str:
     """La commande ``loom answer`` à compléter : un ``--answer`` par question, dans l'ordre."""
     call = f" --call {pending.call_id}" if hint.with_call else ""
-    holes = _placeholders(pending.questions) if len(pending.questions) > 1 else ["<n°>"]
+    if len(pending.questions) > 1:
+        holes = _placeholders(pending.questions)
+    else:
+        # Une question sans choix n'a pas de numéro à donner (essai réel t-4000, 02/11).
+        holes = ["<n°>" if pending.questions and pending.questions[0].options else "<réponse>"]
     answers = "".join(f" --answer {hole}" for hole in holes)
     return f"loom answer {hint.run_id}{call}{answers}{hint.where}"
 
@@ -3314,6 +3318,10 @@ def _question_blocks(pending: PendingQuestion) -> list[str]:
         lines += _choice_lines(question)
         if total > 1 and question.multiple:
             lines.append("  plusieurs choix : les séparer par « ; » (ex. 1;3)")
+        if total > 1 and not question.options:
+            # Sans cette ligne, rien ne la distinguait d'une question à choix : un
+            # « --answer 1 » y partait en texte « 1 » (essai réel t-4000, 02/11).
+            lines.append("  réponse libre, en texte")
         blocks.append("\n".join(lines))
     return blocks
 

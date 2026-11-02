@@ -291,7 +291,7 @@ Pourquoi pas d'outil `answer` en MCP : pour l'approbation, il est exclu, sinon l
 Ajouté après l'essai réel `t-2000` (deux questions, refus de `--answer 1` sans indication). Analyse complète : `docs/multi-questions.md`.
 
 - **Moteur** : le refus nomme les questions par leur intitulé et dit la règle, pour tous les accès : `1 réponse pour 2 questions (Relances, Acompte) : une réponse par question, dans leur ordre`, `question 2 (Acompte) : un seul choix attendu`. C'est le `detail` du 422 REST et le texte de `InvalidAnswer`.
-- **CLI** : « Question i/n · intitulé » devant chaque question, une ligne vide entre elles ; la commande exacte (`--answer <Relances> --answer <Acompte>`) ; refus avec cette commande ; numéro hors des choix refusé ; écho de ce qui a été compris (`Répondu    : Relances → Oui`) ; `loom sessions show` avec les choix.
+- **CLI** : « Question i/n · intitulé » devant chaque question, une ligne vide entre elles ; la commande exacte (`--answer <Relances> --answer <Acompte>`) ; refus avec cette commande ; numéro hors des choix refusé ; écho de ce qui a été compris (`Répondu    : Relances → Oui`) ; `loom sessions show` avec les choix ; une question sans choix marquée « réponse libre, en texte », et `--answer <réponse>` au lieu de `<n°>` dans sa commande (essai t-4000).
 - **REST** : une liste de réponses par question, dans leur ordre :
 
 ```json

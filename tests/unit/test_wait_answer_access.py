@@ -214,6 +214,39 @@ def test_cli_stream_names_several_questions(
     assert "questions à l'utilisateur (2) : Relances ; Pièces" in err
 
 
+def test_cli_marks_a_free_question_and_asks_no_number_for_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Essai réel t-4000 (02/11) : « --answer 1 » sur une question sans choix est parti en
+    # texte « 1 » ; rien ne la distinguait d'une question à choix.
+    asked = {
+        "questions": [
+            {
+                "question": "Remplacer le fichier existant ?",
+                "header": "Fichier",
+                "options": [{"label": "Remplacer"}, {"label": "Autre nom"}],
+            },
+            {"question": "Vos coordonnées ?", "header": "Identité"},
+        ]
+    }
+    script = [{"text": "", "tool_calls": [{"name": "ask", "arguments": asked}]}, {"text": "Ok."}]
+    path = config(tmp_path, script)
+    main(["--config", str(path), "run", "demo", "La lettre.", "--session", "s1"])
+    out, _ = capsys.readouterr()
+    assert "Question 2/2 · Identité\nVos coordonnées ?\n  réponse libre, en texte" in out
+    assert out.count("réponse libre, en texte") == 1  # pas sous la question à choix
+
+    # Une seule question, sans choix : pas de numéro à donner.
+    one = {"questions": [{"question": "Vos coordonnées ?", "header": "Identité"}]}
+    script = [{"text": "", "tool_calls": [{"name": "ask", "arguments": one}]}, {"text": "Ok."}]
+    (tmp_path / "seule").mkdir()
+    path = config(tmp_path / "seule", script)
+    main(["--config", str(path), "run", "demo", "La lettre.", "--session", "s2"])
+    out, err = capsys.readouterr()
+    assert out.startswith("Vos coordonnées ?") and "réponse libre" not in out
+    assert "--answer <réponse> --session s2)" in err and "<n°>" not in err
+
+
 def test_placeholders_name_each_question() -> None:
     from loom_ia.access.cli.main import _placeholders  # pyright: ignore[reportPrivateUsage]
     from loom_ia.core.model import Question
