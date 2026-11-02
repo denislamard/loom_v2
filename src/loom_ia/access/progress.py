@@ -192,6 +192,10 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
         case ApprovalExpired():
             suite = "appel refusé" if payload.action == "deny" else "run en échec"
             return f"approbation périmée : {payload.tool_name} — {suite}"
+        case QuestionAsked() if len(payload.questions) > 1:
+            # Plusieurs questions : leurs intitulés, le détail suit à la pause.
+            named = " ; ".join((q.header or "").strip() or q.question for q in payload.questions)
+            return f"questions à l'utilisateur ({len(payload.questions)}) : {named}"
         case QuestionAsked():
             asked = " ; ".join(q.question for q in payload.questions)
             return f"question à l'utilisateur : {asked}"

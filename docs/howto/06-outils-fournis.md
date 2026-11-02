@@ -1528,14 +1528,41 @@ $ loom run demo "Dupont, celui de Lyon" --session s1
 Devis préparé.
 ```
 
+**Plusieurs questions dans un même appel.** Chacune est numérotée avec son intitulé, et la commande proposée a un `--answer` par question, dans leur ordre :
+
+```text
+$ loom run agent "Prépare la mise en demeure de la facture INV-2026-0013" --session t-2000
+…
+Question 1/2 · Relances
+Aucune relance n'est notée sur la facture. Les J+10 et J+21 ont-ils été faits ?
+  1. Oui, relances faites
+  2. Non, aucune relance faite
+
+Question 2/2 · Acompte
+Un acompte a-t-il été versé sur cette facture ?
+  1. Non, rien versé
+  2. Oui (je donne le montant)
+
+Questions  : 2 en attente (toolu_…) — une réponse par question, dans l'ordre :
+             loom answer 01a… --answer <Relances> --answer <Acompte> --session t-2000
+             (le numéro d'un choix, son libellé, ou un texte ; en message libre :
+              loom run agent "<réponse>" --session t-2000)
+
+$ loom answer 01a… --answer 1 --answer 1 --session t-2000
+Répondu    : Relances → Oui, relances faites
+             Acompte  → Non, rien versé
+```
+
+Une réponse qui ne compte pas autant de `--answer` que de questions est refusée, avec la commande à taper ; un numéro qui ne désigne aucun choix aussi (`--answer 3` sur deux choix) : pour répondre « 3 » en texte, l'écrire en message libre. En MCP sans elicitation, les questions arrivent numérotées de même, et la consigne demande les réponses en un seul message.
+
 Le message n'est pas pris comme réponse — c'est un nouveau tour, et le modèle apprend par une note que la question attend toujours — sans session, avec des pièces jointes, des écritures du state ou un `run_id` choisi, ou quand la question vient d'un autre agent. Une livraison de webhook n'est jamais une réponse.
 
 | Accès | Ce que voit le client | Répondre autrement qu'en écrivant |
 |---|---|---|
 | Python | `RunResult.status` `paused` (`waiting_child` si un sous-agent a posé la question), `pending_questions`, et dans `text` ce que le modèle a écrit en posant la question ; `SessionInfo.pending_questions` | `await loom.answer(run_id, answers=[["Dupont"]])` ou `text="…"`, `call_id=` s'il y en a plusieurs ; `answerer=` sur `run()` / `stream()` répond dans la boucle |
-| CLI | La question et ses choix sur stdout, code 0 ; `loom sessions show` les liste ; `--stream` : « question à l'utilisateur : … », « réponse de l'utilisateur reçue » | `loom answer <run_id> "texte"`, ou `--answer` par question : le libellé ou le numéro affiché d'un choix (« ; » sépare plusieurs choix) |
+| CLI | La question et ses choix sur stdout, code 0 (plusieurs : « Question i/n · intitulé ») ; `loom sessions show` les liste, choix compris ; `--stream` : « question à l'utilisateur : … », « réponse de l'utilisateur reçue » | `loom answer <run_id> "texte"`, ou un `--answer` par question, dans leur ordre : le libellé ou le numéro affiché d'un choix (« ; » sépare plusieurs choix) ; la commande répète ce qu'elle a compris |
 | REST | `201` (ou `202` en `background`) avec `status: paused` et `pending_questions` ; le flux SSE reste ouvert et suit la reprise | `POST /v1/runs/{id}/answer` `{"answers": [["Dupont"]]}` ou `{"text": "…"}` — portée `run` ; 404 si rien n'attend, 409 si la question a expiré, 422 si la réponse ne convient pas |
-| MCP | Sans elicitation : la question en texte, et « rappeler l'agent avec session_id=… et la réponse en message » ; `pending_questions` dans le résultat structuré | Avec elicitation (client stdio qui la déclare) : un formulaire, sans pause — une liste par question à choix unique, un champ libre qui l'emporte |
+| MCP | Sans elicitation : la question en texte (plusieurs : numérotées, réponses « en un seul message »), et « rappeler l'agent avec session_id=… et la réponse en message » ; `pending_questions` dans le résultat structuré | Avec elicitation (client stdio qui la déclare) : un formulaire, sans pause — une liste par question à choix unique, un champ libre qui l'emporte |
 
 - **Sans réponse.** Sans `expires_in`, une question attend indéfiniment. Avec, elle expire : le modèle reçoit « L'utilisateur n'a pas répondu dans le délai… » et continue ; le run n'échoue jamais pour cela. Une réponse arrivée après l'échéance est refusée (`QuestionStale`, 409).
 - **Annulé, le run retire sa question** (`run.cancelled.withdrawn`).

@@ -249,7 +249,7 @@ Run        : 01a19351-0a8d-77ec-9997-bd79b31601fe
 - **`--stream`** montre « question à l'utilisateur : … », « réponse de l'utilisateur reçue » (ou « réponse de <by> reçue ») et « question restée sans réponse : le modèle continue sans ».
 - ⚠ **`loom run --session` sans `--run-id` ne fixe plus le `run_id` d'avance**, sans quoi le message ne pourrait jamais répondre. L'identifiant se lit sur le résultat, ou sur les événements du flux. Aucun changement visible.
 - **Non fait dans le prototype :**
-  - `loom sessions show` ne liste pas encore les questions en attente, comme il le fait pour les approbations ;
+  - `loom sessions show` ne liste pas encore les questions en attente, comme il le fait pour les approbations (fait depuis ; avec leurs choix depuis le 02/11) ;
   - `loom inspect` montre les trois événements sous leur forme générique (« question.asked (warning) »).
 
 ### REST
@@ -285,6 +285,24 @@ Les codes de la route `answer` sont démontrés. L'OpenAPI se met à jour seul (
 - ⚠ Le chemin avec progression (`progressToken`) ne fixe plus le `run_id` d'avance quand une session est donnée. Il le lit sur les événements du flux (`root_run_id`).
 
 Pourquoi pas d'outil `answer` en MCP : pour l'approbation, il est exclu, sinon le LLM client approuverait lui-même ses effets. Pour une question, le risque est moindre, puisqu'une réponse n'autorise rien. Mais le routage suffit, et n'ajoute rien au schéma vu par le LLM client.
+
+### Plusieurs questions dans un même appel (02/11)
+
+Ajouté après l'essai réel `t-2000` (deux questions, refus de `--answer 1` sans indication). Analyse complète : `docs/multi-questions.md`.
+
+- **Moteur** : le refus nomme les questions par leur intitulé et dit la règle, pour tous les accès : `1 réponse pour 2 questions (Relances, Acompte) : une réponse par question, dans leur ordre`, `question 2 (Acompte) : un seul choix attendu`. C'est le `detail` du 422 REST et le texte de `InvalidAnswer`.
+- **CLI** : « Question i/n · intitulé » devant chaque question, une ligne vide entre elles ; la commande exacte (`--answer <Relances> --answer <Acompte>`) ; refus avec cette commande ; numéro hors des choix refusé ; écho de ce qui a été compris (`Répondu    : Relances → Oui`) ; `loom sessions show` avec les choix.
+- **REST** : une liste de réponses par question, dans leur ordre :
+
+```json
+POST /v1/runs/{run_id}/answer?session_id=t-2000
+{"answers": [["Oui, relances faites"], ["Non, rien versé"]]}
+```
+
+  Avec une seule liste, `422` et `{"detail": "Réponse refusée : 1 réponse pour 2 questions (Relances, Acompte) : une réponse par question, dans leur ordre"}`.
+- **MCP sans elicitation** : questions numérotées avec leur intitulé, choix séparés par « ; », et « rappeler … et les réponses en un seul message ». Un run qui attend une approbation **et** une question rend les deux (avant, l'approbation seule).
+- **MCP avec elicitation** : le champ libre qui accompagne une liste est titré « <intitulé> : autre réponse ».
+- Avec une seule question, tous les rendus restent ceux d'avant, sauf l'écho de `loom answer`.
 
 ### Autres accès
 

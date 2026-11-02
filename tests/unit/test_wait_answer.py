@@ -492,6 +492,53 @@ def test_bad_answers_are_refused_and_nothing_is_written(tmp_path: Path) -> None:
     asyncio.run(go())
 
 
+def test_a_refused_answer_names_the_questions_and_the_rule() -> None:
+    # Essai réel t-2000 (02/11) : « 1 réponse(s) pour 2 question(s) » ne disait ni
+    # lesquelles ni comment répondre. Le message sert tous les accès.
+    from loom_ia.engine.questions import reply_problem
+
+    relances = Question(
+        question="Les relances ont-elles été faites ?",
+        header="Relances",
+        options=(QuestionOption(label="Oui"), QuestionOption(label="Non")),
+    )
+    acompte = Question(question="Un acompte a-t-il été versé ?", header="Acompte")
+    two = PendingQuestion(call_id="c1", questions=(relances, acompte))
+
+    def problem(pending: PendingQuestion, *answers: tuple[str, ...]) -> str | None:
+        return reply_problem(pending, QuestionReply(answers=answers))
+
+    assert problem(two, ("Oui",)) == (
+        "1 réponse pour 2 questions (Relances, Acompte) : une réponse par question, dans leur ordre"
+    )
+    assert (
+        problem(two, ("Oui", "Non"), ("rien",)) == "question 1 (Relances) : un seul choix attendu"
+    )
+    assert problem(two, ("Oui",), (" ",)) == "question 2 (Acompte) : réponse vide"
+    assert problem(two, ("Oui",), ("rien",)) is None
+
+    bare = PendingQuestion(
+        call_id="c2",
+        questions=(Question(question="A ?"), Question(question="B ?"), Question(question="C ?")),
+    )
+    assert problem(bare) == (
+        "0 réponse pour 3 questions (questions 1, 2 et 3) : une réponse par question, "
+        "dans leur ordre"
+    )
+    assert problem(bare, ("a",), ("b", "c"), ("d",)) == "question 2 : un seul choix attendu"
+
+    mixed = PendingQuestion(call_id="c3", questions=(relances, Question(question="B ?")))
+    assert "pour 2 questions (Relances, question 2) :" in (problem(mixed, ("Oui",)) or "")
+
+    one = PendingQuestion(call_id="c4", questions=(Question(question="A ?"),))
+    assert problem(one, ("a",), ("b",)) == (
+        "2 réponses pour 1 question (question 1) : une réponse par question, dans leur ordre"
+    )
+    # Un message libre convient toujours ; vide, il est refusé, comme avant.
+    assert reply_problem(two, QuestionReply(text="oui, rien versé")) is None
+    assert reply_problem(two, QuestionReply(text="  ")) == "réponse vide"
+
+
 def test_an_inline_answerer_answers_without_pausing(tmp_path: Path) -> None:
     async def go() -> None:
         seen: list[PendingQuestion] = []

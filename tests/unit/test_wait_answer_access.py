@@ -68,6 +68,29 @@ def test_cli_answer_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert "Répondu" in err and "Devis préparé" in out
 
 
+def test_cli_shows_a_refusal_without_driving_the_terminal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Le refus nomme les questions par leur intitulé, écrit par le modèle : la CLI
+    # le montre (« \\x1b ») sans l'exécuter (séquence OSC 52 : le presse-papier).
+    import json
+
+    two = {
+        "questions": [
+            {"question": "Relances faites ?", "header": "Rel\x1b]52;c;eA==\x07"},
+            {"question": "Acompte versé ?", "header": "Acompte"},
+        ]
+    }
+    script = [{"text": "", "tool_calls": [{"name": "ask", "arguments": two}]}, {"text": "Fait."}]
+    path = config(tmp_path, script)
+    main(["--config", str(path), "run", "demo", "Prépare la lettre.", "--json"])
+    run_id = json.loads(capsys.readouterr().out)["run_id"]
+    assert main(["--config", str(path), "answer", run_id, "--answer", "Oui"]) == 2
+    err = capsys.readouterr().err
+    assert "1 réponse pour 2 questions (" in err and "Acompte) : une réponse par question" in err
+    assert "\x1b" not in err and "\\x1b" in err
+
+
 def test_cli_answer_takes_the_number_shown(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -127,6 +150,167 @@ def test_cli_stream_routes_the_answer(tmp_path: Path, capsys: pytest.CaptureFixt
     out, err = capsys.readouterr()
     assert code == 0 and "Devis préparé." in out
     assert "réponse de l'utilisateur reçue" in err
+
+
+# Deux questions dans un même ask, dont une à choix multiples (essai réel t-2000, 02/11).
+TWO = {
+    "questions": [
+        {
+            "question": "Les relances ont-elles été faites ?",
+            "header": "Relances",
+            "options": [{"label": "Oui"}, {"label": "Non"}],
+        },
+        {
+            "question": "Quelles pièces changer ?",
+            "header": "Pièces",
+            "options": [{"label": "Joint"}, {"label": "Robinet"}, {"label": "Siphon"}],
+            "multiple": True,
+        },
+    ]
+}
+TWO_SCRIPT = [{"text": "", "tool_calls": [{"name": "ask", "arguments": TWO}]}, {"text": "Fait."}]
+
+
+def test_cli_numbers_several_questions_and_gives_the_exact_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = config(tmp_path, TWO_SCRIPT)
+    code = main(["--config", str(path), "run", "demo", "Prépare la lettre.", "--session", "s1"])
+    out, err = capsys.readouterr()
+    assert code == 0
+    first = out.index("Question 1/2 · Relances")
+    second = out.index("Question 2/2 · Pièces")
+    # Chaque question a ses choix, et une ligne vide la sépare de la suivante.
+    assert first < out.index("2. Non") < out.index("\n\nQuestion 2/2") < second
+    assert out.index("3. Siphon") < out.index("plusieurs choix : les séparer par « ; »")
+    run_id = next(
+        line.split(":", 1)[1].strip() for line in err.splitlines() if line.startswith("Run ")
+    )
+    assert "Questions  : 2 en attente (" in err
+    assert f"loom answer {run_id} --answer <Relances> --answer <Pièces> --session s1" in err
+    assert 'loom run demo "<réponse>" --session s1' in err
+    assert "--answer <n°>" not in err
+
+
+def test_cli_one_question_keeps_its_rendering(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Une question seule : ni « Question 1/1 », ni intitulé, ni nouvelle ligne d'aide.
+    path = config(tmp_path)
+    main(["--config", str(path), "run", "demo", "Prépare un devis.", "--session", "s1"])
+    out, err = capsys.readouterr()
+    assert out.startswith("Pour quel client faut-il préparer le devis ?\n  1. Dupont\n  2. Martin")
+    assert "Question 1/1" not in out and "Client" not in out
+    assert "Question   : " in err and "--answer <n°> --session s1)" in err
+    assert "--call" not in err and "Questions  :" not in err
+
+
+def test_cli_stream_names_several_questions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = config(tmp_path, TWO_SCRIPT)
+    main(["--config", str(path), "run", "demo", "Prépare.", "--session", "s1", "--stream"])
+    _, err = capsys.readouterr()
+    assert "questions à l'utilisateur (2) : Relances ; Pièces" in err
+
+
+def test_placeholders_name_each_question() -> None:
+    from loom_ia.access.cli.main import _placeholders  # pyright: ignore[reportPrivateUsage]
+    from loom_ia.core.model import Question
+
+    asked = (
+        Question(question="Quel client ?", header="Client"),
+        Question(question="Et le second ?", header="Client"),
+        Question(question="Quelle date ?"),
+        Question(question="Quel ton ?", header=" Ton "),
+    )
+    assert _placeholders(asked) == ["<Client 1>", "<Client 2>", "<réponse 3>", "<Ton>"]
+
+
+def _paused(path: Path, capsys: pytest.CaptureFixture[str]) -> str:
+    """Lance le run jusqu'à sa question ; rend son run_id."""
+    import json
+
+    main(["--config", str(path), "run", "demo", "Prépare.", "--json"])
+    return json.loads(capsys.readouterr().out)["run_id"]
+
+
+def test_cli_refusal_shows_the_command_to_type(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = config(tmp_path, TWO_SCRIPT)
+    run_id = _paused(path, capsys)
+    assert main(["--config", str(path), "answer", run_id, "--answer", "1"]) == 2
+    err = capsys.readouterr().err
+    assert "1 réponse pour 2 questions (Relances, Pièces)" in err
+    assert f"  loom answer {run_id} --answer <Relances> --answer <Pièces>" in err
+
+
+def test_cli_refuses_a_number_that_names_no_choice(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Avant, « 3 » sur deux choix partait au modèle comme texte libre.
+    path = config(tmp_path, TWO_SCRIPT)
+    run_id = _paused(path, capsys)
+    code = main(["--config", str(path), "answer", run_id, "--answer", "3", "--answer", "1"])
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "question 1 (Relances) : choix 3 inconnu, attendu 1 à 2 ou un libellé." in err
+    assert f'l\'écrire en message : loom answer {run_id} "3"' in err
+    # Un choix multiple hors liste aussi ; rien n'a été écrit, la question attend.
+    code = main(["--config", str(path), "answer", run_id, "--answer", "1", "--answer", "1;4"])
+    assert code == 2 and "question 2 (Pièces) : choix 4 inconnu, attendu 1 à 3" in (
+        capsys.readouterr().err
+    )
+    assert main(["--config", str(path), "answer", run_id, "--answer", "1", "--answer", "2"]) == 0
+
+
+def test_cli_a_number_stays_text_without_choices_or_with_numeric_labels(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asked = {
+        "questions": [
+            {"question": "Combien de radiateurs ?", "header": "Nombre"},
+            {
+                "question": "Combien d'étages ?",
+                "header": "Étages",
+                "options": [{"label": "1"}, {"label": "2"}],
+            },
+        ]
+    }
+    script = [{"text": "", "tool_calls": [{"name": "ask", "arguments": asked}]}, {"text": "Ok."}]
+    path = config(tmp_path, script)
+    run_id = _paused(path, capsys)
+    assert main(["--config", str(path), "answer", run_id, "--answer", "3", "--answer", "5"]) == 0
+    err = capsys.readouterr().err
+    assert "Répondu    : Nombre → 3" in err and "             Étages → 5" in err
+
+
+def test_cli_echoes_what_was_understood(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = config(tmp_path, TWO_SCRIPT)
+    run_id = _paused(path, capsys)
+    assert main(["--config", str(path), "answer", run_id, "--answer", "1", "--answer", "1;3"]) == 0
+    err = capsys.readouterr().err
+    assert "Répondu    : Relances → Oui\n             Pièces   → Joint ; Siphon" in err
+    assert "toolu" not in err and "fake_" not in err.split("Répondu")[1].split("\n")[0]
+
+
+def test_cli_echo_for_one_question_and_for_a_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = config(tmp_path)
+    run_id = _paused(path, capsys)
+    assert main(["--config", str(path), "answer", run_id, "--answer", "2"]) == 0
+    assert "Répondu    : Client → Martin" in capsys.readouterr().err
+
+    (tmp_path / "libre").mkdir()
+    path = config(tmp_path / "libre")
+    run_id = _paused(path, capsys)
+    long = "Dupont, celui de Lyon, " * 10
+    assert main(["--config", str(path), "answer", run_id, long]) == 0
+    err = capsys.readouterr().err
+    assert "Répondu    : message libre « Dupont, celui de Lyon," in err
+    assert "… »" in err and long not in err
 
 
 # --- REST ------------------------------------------------------------------------------
@@ -189,6 +373,28 @@ def test_rest_answer_route_needs_run_not_approve(tmp_path: Path) -> None:
     asyncio.run(go())
 
 
+def test_rest_a_refusal_names_the_questions(tmp_path: Path) -> None:
+    # Le refus du moteur nomme les questions : c'est le detail du 422 (multi-questions, lot 0).
+    async def go() -> None:
+        async with http_serving(config(tmp_path, TWO_SCRIPT)) as (loom, http):
+            started = await http.post(
+                "/v1/agents/demo/runs", json={"message": "La lettre.", "session_id": "s1"}
+            )
+            run_id = started.json()["run_id"]
+            url = f"/v1/runs/{run_id}/answer?session_id=s1"
+            bad = await http.post(url, json={"answers": [["Oui"]]})
+            assert bad.status_code == 422
+            assert bad.json()["detail"] == (
+                "Réponse refusée : 1 réponse pour 2 questions (Relances, Pièces) : "
+                "une réponse par question, dans leur ordre"
+            )
+            done = await http.post(url, json={"answers": [["Oui"], ["Joint", "Siphon"]]})
+            assert done.status_code == 200
+            await loom.drain()
+
+    asyncio.run(go())
+
+
 def test_rest_a_new_message_answers_and_resumes(tmp_path: Path) -> None:
     async def go() -> None:
         async with http_serving(config(tmp_path)) as (_, http):
@@ -233,6 +439,32 @@ def test_cli_sessions_show_lists_the_question(
     out = capsys.readouterr().out
     assert "question (fake_0_0)" in out and "sans échéance : Pour quel client" in out
     assert 'loom run demo "<réponse>" --session s1' in out
+    # Les choix, pour répondre par numéro sans relancer le run (lot 3).
+    assert out.index("Pour quel client") < out.index("      1. Dupont") < out.index("2. Martin")
+    assert out.index("2. Martin") < out.index('loom run demo "<réponse>"')
+
+
+def test_cli_sessions_show_lists_several_questions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = config(tmp_path, TWO_SCRIPT)
+    main(["--config", str(path), "run", "demo", "Prépare la lettre.", "--session", "s1"])
+    run_id = next(
+        line.split(":", 1)[1].strip()
+        for line in capsys.readouterr().err.splitlines()
+        if line.startswith("Run ")
+    )
+    assert main(["--config", str(path), "sessions", "show", "s1"]) == 0
+    out = capsys.readouterr().out
+    assert "  question (fake_0_0) — run " in out and "sans échéance\n" in out
+    first, second = out.index("    Question 1/2 · Relances"), out.index("    Question 2/2 · Pièces")
+    assert first < out.index("      2. Non") < out.index("\n\n    Question 2/2") < second
+    assert out.index("      3. Siphon") < out.index("    plusieurs choix")
+    assert (
+        f"    loom answer {run_id} --call fake_0_0 --answer <Relances> --answer <Pièces> "
+        "--session s1" in out
+    )
+    assert '    (ou en message libre : loom run demo "<réponse>" --session s1)' in out
 
 
 def test_rest_a_background_message_answers_too(tmp_path: Path) -> None:

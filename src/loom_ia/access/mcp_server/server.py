@@ -549,7 +549,10 @@ def _question_form(
                 else ""
             )
         )
-        properties[free] = {"type": "string", "title": title, "description": hint}
+        # À côté d'une liste, le champ libre a son propre titre : sinon deux champs
+        # portaient le même intitulé (« Client », « Client »).
+        free_title = f"{title} : autre réponse" if choice else title
+        properties[free] = {"type": "string", "title": free_title, "description": hint}
         fields.append((choice, free))
     return {"type": "object", "properties": properties}, fields
 
@@ -662,6 +665,11 @@ def _text(result: RunResult) -> str:
     """La réponse ; pour un échec, ce qui l'a arrêté ; pour une pause, ce qui attend."""
     if result.status is RunStatus.FAILED:
         return f"Échec de l'agent {result.agent} : {result.error}"
+    if result.pending_approvals and result.pending_questions:
+        # Les deux attentes se cumulent : rendre l'approbation seule cachait la
+        # question, que le client découvrait seulement après avoir fait approuver
+        # (docs/multi-questions.md, § 6.1).
+        return f"{_awaiting(result)}\n\n{_asking(result)}"
     if result.pending_approvals:
         return _awaiting(result)
     if result.pending_questions:
@@ -684,19 +692,45 @@ def _awaiting(result: RunResult) -> str:
 
 
 def _asking(result: RunResult) -> str:
-    """Ce qu'un run arrêté sur une question dit au client : la question, et comment répondre."""
+    """Ce qu'un run arrêté sur une question dit au client : la question, et comment répondre.
+
+    Le client est souvent un modèle, qui lit ce texte et rappelle l'agent. Avec
+    plusieurs questions dans un même appel, chacune est numérotée avec son
+    intitulé, ses choix séparés par « ; » (un libellé contient souvent une
+    virgule), et la consigne demande les réponses en un seul message. Une
+    question seule garde son texte d'avant.
+    """
+    total = sum(len(pending.questions) for pending in result.pending_questions)
+    several = any(len(pending.questions) > 1 for pending in result.pending_questions)
     lines: list[str] = []
     for pending in result.pending_questions:
-        for question in pending.questions:
-            choices = ", ".join(o.label for o in question.options)
-            lines.append(question.question + (f" (choix : {choices})" if choices else ""))
+        count = len(pending.questions)
+        for number, question in enumerate(pending.questions, start=1):
+            if count > 1:
+                header = (question.header or "").strip()
+                named = f"Question {number}/{count}" + (f" · {header}" if header else "")
+                choices = " ; ".join(o.label for o in question.options)
+                multiple = ", plusieurs possibles" if question.multiple and choices else ""
+                lines.append(
+                    f"{named} : {question.question}"
+                    + (f" (choix{multiple} : {choices})" if choices else "")
+                )
+            else:
+                choices = ", ".join(o.label for o in question.options)
+                lines.append(question.question + (f" (choix : {choices})" if choices else ""))
     said = f"{result.text}\n\n" if result.text else ""
-    return (
-        said
-        + "\n".join(lines)
-        + f"\n\n[L'agent attend la réponse de l'utilisateur : rappeler {result.agent} avec "
-        f"session_id={result.session_id} et la réponse en message.]"
-    )
+    if several:
+        tail = (
+            f"\n\n[L'agent attend la réponse de l'utilisateur aux {total} questions : rappeler "
+            f"{result.agent} avec session_id={result.session_id} et les réponses en un seul "
+            "message.]"
+        )
+    else:
+        tail = (
+            f"\n\n[L'agent attend la réponse de l'utilisateur : rappeler {result.agent} avec "
+            f"session_id={result.session_id} et la réponse en message.]"
+        )
+    return said + "\n".join(lines) + tail
 
 
 async def _report(

@@ -119,7 +119,8 @@ def test_elicitation_answers_in_the_loop(tmp_path: Path) -> None:
     assert message == "Pour quel client faut-il préparer le devis ?"
     assert form["properties"]["choix_1"]["enum"] == ["Dupont", "Martin"]
     assert form["properties"]["choix_1"]["title"] == "Client"
-    assert "reponse_1" in form["properties"]
+    # Le champ libre a son propre titre à côté de la liste (lot 4).
+    assert form["properties"]["reponse_1"]["title"] == "Client : autre réponse"
 
 
 def test_a_free_text_wins_and_multiple_choices_are_split(tmp_path: Path) -> None:
@@ -155,6 +156,8 @@ def test_a_free_text_wins_and_multiple_choices_are_split(tmp_path: Path) -> None
     # Plusieurs choix : pas de liste (un formulaire MCP n'a pas de tableau), un texte.
     assert "choix_2" not in form["properties"]
     assert "Pose, Dépose (séparés par ;)" in form["properties"]["reponse_2"]["description"]
+    # Sans liste, le champ libre est le seul de sa question : il garde l'intitulé.
+    assert form["properties"]["reponse_2"]["title"] == "Question 2"
 
 
 def test_a_dismissed_form_leaves_the_question_waiting(tmp_path: Path) -> None:
@@ -194,3 +197,87 @@ def test_run_status_shows_the_question(tmp_path: Path) -> None:
         assert "Pour quel client" in _texts(status.content)
 
     asyncio.run(go())
+
+
+TWO: dict[str, Any] = {
+    "questions": [
+        {
+            "question": "Les relances ont-elles été faites ?",
+            "header": "Relances",
+            "options": [{"label": "Oui, par e-mail"}, {"label": "Non"}],
+        },
+        {
+            "question": "Quelles pièces changer ?",
+            "header": "Pièces",
+            "options": [{"label": "Joint"}, {"label": "Siphon"}],
+            "multiple": True,
+        },
+    ]
+}
+
+
+def test_without_elicitation_several_questions_are_numbered(tmp_path: Path) -> None:
+    # Essai réel t-2000 (02/11) : deux questions ; le client doit savoir les distinguer
+    # et répondre aux deux en un seul message (docs/multi-questions.md, § 2.8).
+    script = [{"text": "", "tool_calls": [{"name": "ask", "arguments": TWO}]}, {"text": "Noté."}]
+    lines: list[str] = []
+
+    async def progress(progress: float, total: float | None, message: str | None) -> None:
+        lines.append(message or "")
+
+    async def go() -> str:
+        async with Loom.from_config(config(tmp_path, script)) as loom:
+            async with connected(create_server(loom), client_info=CLIENT) as client:
+                paused = await client.call_tool(
+                    "demo",
+                    {"message": "La lettre.", "session_id": "s1"},
+                    progress_callback=progress,
+                )
+                return _texts(paused.content)
+
+    said = asyncio.run(go())
+    assert (
+        "Question 1/2 · Relances : Les relances ont-elles été faites ? "
+        "(choix : Oui, par e-mail ; Non)" in said
+    )
+    assert (
+        "Question 2/2 · Pièces : Quelles pièces changer ? "
+        "(choix, plusieurs possibles : Joint ; Siphon)" in said
+    )
+    assert "réponse de l'utilisateur aux 2 questions : rappeler demo avec session_id=s1" in said
+    assert "les réponses en un seul message" in said
+    assert any("questions à l'utilisateur (2) : Relances ; Pièces" in line for line in lines)
+
+
+def test_without_elicitation_an_approval_does_not_hide_the_question(tmp_path: Path) -> None:
+    # Avant, un run qui attendait les deux ne montrait que l'approbation (§ 6.1).
+    question = {
+        "questions": [
+            {"question": "Pour quel client ?", "options": [{"label": "Dupont"}]},
+        ]
+    }
+    script = [
+        {
+            "text": "",
+            "tool_calls": [
+                {"name": "ask", "arguments": question},
+                {"name": "envoyer", "arguments": {"destinataire": "a@example.com"}},
+            ],
+        },
+        {"text": "Fini."},
+    ]
+
+    async def go() -> str:
+        async with Loom.from_config(config(tmp_path, script)) as loom:
+            async with connected(create_server(loom), client_info=CLIENT) as client:
+                paused = await client.call_tool("demo", {"message": "Envoie.", "session_id": "s1"})
+                assert paused.structuredContent is not None
+                assert len(paused.structuredContent["pending_approvals"]) == 1
+                assert len(paused.structuredContent["pending_questions"]) == 1
+                return _texts(paused.content)
+
+    said = asyncio.run(go())
+    approval = said.index("en attente d'approbation : envoyer")
+    asked = said.index("Pour quel client ? (choix : Dupont)")
+    assert approval < asked
+    assert "rappeler demo avec session_id=s1" in said

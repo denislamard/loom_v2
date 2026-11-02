@@ -42,6 +42,7 @@ import os
 import re
 import signal
 import sys
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -105,6 +106,7 @@ from loom_ia.core.model import (
     BudgetPeriod,
     Budgets,
     OutputContract,
+    PendingQuestion,
     Question,
     RunId,
     RunStatus,
@@ -130,6 +132,7 @@ from loom_ia.core.ports import (
 from loom_ia.core.projections import OpeningSummaries
 from loom_ia.engine import ClaimConflict, SessionUnreadable, ToolExecutor
 from loom_ia.engine.media import size_label
+from loom_ia.engine.questions import named_question
 from loom_ia.replay import (
     Comparison,
     Double,
@@ -2191,6 +2194,10 @@ def cmd_answer(args: argparse.Namespace) -> int:
     Comme ``approve`` : la reprise se fait dans ce terminal, sauf ``--no-wait``
     ou une file servie par un courtier. Plus simple encore : ``loom run <agent>
     "<réponse>" --session <session>`` répond aussi, dans la conversation.
+
+    Un refus montre la commande à corriger ; une réponse acceptée est répétée
+    question par question (« Relances → Oui »), pour vérifier ce qui a été
+    compris avant la reprise (essai réel t-2000 du 02/11, docs/multi-questions.md).
     """
     config = _config(args)
     _console(config)
@@ -2206,21 +2213,30 @@ def cmd_answer(args: argparse.Namespace) -> int:
         else [[part.strip() for part in given.split(";") if part.strip()] for given in args.answer]
     )
     brokered = config.storage.queue.brokered
+    # La question visée, lue avant de répondre : pour les numéros, le refus et l'écho.
+    seen: list[_Target] = []
 
     async def go() -> tuple[str, RunResult | None]:
         loom = Loom(config)
         try:
+            target = await _target(loom, run_id, args.call, session, tenant)
+            sent = answers
+            if target is not None:
+                seen.append(target)
+                if answers is not None:
+                    _check_choices(target, answers, tenant)
+                    sent = _numbered(target.pending.questions, answers)
             call = await loom.answer(
                 run_id,
-                answers=None
-                if answers is None
-                else await _choices_by_number(loom, run_id, args.call, answers, session, tenant),
+                answers=sent,
                 text=args.texte,
                 call_id=args.call,
                 by=args.by,
                 session_id=session,
                 tenant_id=tenant,
             )
+            if target is not None:
+                target.sent = sent
             if args.no_wait or brokered:
                 return call, None
             await loom.drain()
@@ -2231,40 +2247,134 @@ def cmd_answer(args: argparse.Namespace) -> int:
     try:
         call, result = asyncio.run(go())
     except (UnknownQuestion, InvalidAnswer, QuestionStale) as exc:
-        print(str(exc), file=sys.stderr)
+        _say(str(exc), file=sys.stderr)
+        if isinstance(exc, InvalidAnswer) and not isinstance(exc, _OutOfChoices) and seen:
+            # Ce qu'il fallait taper : la commande, un --answer par question.
+            _say(f"  {_answer_command(seen[0].pending, seen[0].hint)}", file=sys.stderr)
         return REFUSED
-    _say(f"Répondu   : {call}", file=sys.stderr)
+    for line in _echo(seen[0] if seen else None, args.texte, call):
+        _say(line, file=sys.stderr)
     if result is None:
         return OK
     return _report(result, as_json=args.json, tenant=tenant)
 
 
-async def _choices_by_number(
+@dataclass(frozen=True, slots=True)
+class _Hint:
+    """Ce qu'il faut à une commande ``loom answer`` pour viser le bon run."""
+
+    run_id: RunId
+    where: str
+    with_call: bool
+
+
+@dataclass(slots=True)
+class _Target:
+    """L'appel ``ask`` visé par ``loom answer``, et de quoi montrer la commande."""
+
+    pending: PendingQuestion
+    hint: _Hint
+    # Les réponses envoyées, numéros remplacés par les libellés (pour l'écho).
+    sent: list[list[str]] | None = None
+
+
+async def _target(
     loom: Loom,
     run_id: RunId,
     call_id: str | None,
-    answers: list[list[str]],
     session: SessionId | None,
     tenant: TenantId | None,
-) -> list[list[str]]:
-    """Les ``--answer`` avec le numéro d'un choix affiché remplacé par son libellé.
+) -> _Target | None:
+    """La seule question visée, ou ``None`` : run introuvable, ou plusieurs appels sans ``--call``.
 
-    ``loom run`` affiche les choix numérotés : ``--answer 2`` désigne le 2ᵉ.
-    Sans question unique à viser, ou si le run est introuvable, les réponses
-    passent telles quelles et ``Loom.answer`` dit ce qui ne va pas.
+    Sans cible, les réponses partent telles quelles et ``Loom.answer`` dit ce
+    qui ne va pas, comme avant.
     """
     try:
         result = await loom.result(run_id, session_id=session, tenant_id=tenant)
     except UnknownRun:
-        return answers
+        return None
     targets = [
         pending
         for pending in result.pending_questions
         if call_id is None or pending.call_id == call_id
     ]
     if len(targets) != 1:
-        return answers
-    return _numbered(targets[0].questions, answers)
+        return None
+    where = "" if result.session_id == result.run_id else f" --session {result.session_id}"
+    if tenant is not None:
+        where += f" --tenant {tenant}"
+    with_call = call_id is not None or len(result.pending_questions) > 1
+    return _Target(targets[0], _Hint(result.run_id, where, with_call))
+
+
+class _OutOfChoices(InvalidAnswer):
+    """Un numéro qui ne désigne aucun choix affiché : refusé avant d'écrire."""
+
+
+def _check_choices(target: _Target, answers: list[list[str]], tenant: TenantId | None) -> None:
+    """Refuse un numéro hors des choix d'une question (``--answer 3`` sur deux choix).
+
+    Avant, il partait au modèle comme texte libre « 3 », sans rien dire. Le
+    contrôle ne vaut que pour une question qui a des choix dont aucun libellé
+    n'est un nombre : sur une question sans choix, « 3 » est peut-être la
+    réponse. Le message libre reste le moyen de répondre ce texte-là.
+    """
+    questions = target.pending.questions
+    if len(questions) != len(answers):
+        return  # le moteur refuse, avec son message
+    for number, (question, values) in enumerate(zip(questions, answers, strict=True), start=1):
+        labels = [option.label for option in question.options]
+        if not labels or any(label.strip().isdecimal() for label in labels):
+            continue
+        for value in values:
+            if value.isdecimal() and value not in labels and not 1 <= int(value) <= len(labels):
+                expected = "1" if len(labels) == 1 else f"1 à {len(labels)}"
+                hint = target.hint
+                raise _OutOfChoices(
+                    f"Réponse refusée : {named_question(number, question)} : choix {value} "
+                    f"inconnu, attendu {expected} ou un libellé.\n"
+                    f"Pour répondre « {value} » en texte, l'écrire en message : "
+                    f'loom answer {hint.run_id} "{value}"{hint.where}'
+                )
+
+
+def _answer_command(pending: PendingQuestion, hint: _Hint) -> str:
+    """La commande ``loom answer`` à compléter : un ``--answer`` par question, dans l'ordre."""
+    call = f" --call {pending.call_id}" if hint.with_call else ""
+    holes = _placeholders(pending.questions) if len(pending.questions) > 1 else ["<n°>"]
+    answers = "".join(f" --answer {hole}" for hole in holes)
+    return f"loom answer {hint.run_id}{call}{answers}{hint.where}"
+
+
+def _echo(target: _Target | None, text: str | None, call: str) -> list[str]:
+    """Ce qui a été compris, à relire avant la reprise : une ligne par question.
+
+    « Relances → Oui » ; une question seule sans intitulé : sa valeur ; un message
+    libre : son texte, coupé à 110 caractères. Sans cible connue : l'appel,
+    comme avant.
+    """
+    first = "Répondu    : "
+    if text is not None:
+        said = text if len(text) <= 110 else text[:109] + "…"
+        return [f"{first}message libre « {said} »"]
+    if target is None or target.sent is None:
+        return [f"{first}{call}"]
+    questions = target.pending.questions
+    if len(questions) != len(target.sent):
+        return [f"{first}{call}"]
+    several = len(questions) > 1
+    names = [
+        (question.header or "").strip() or (f"question {rank}" if several else "")
+        for rank, question in enumerate(questions, start=1)
+    ]
+    width = max(len(name) for name in names)
+    lines: list[str] = []
+    for rank, (name, values) in enumerate(zip(names, target.sent, strict=True)):
+        value = " ; ".join(values)
+        said = f"{name:<{width}} → {value}" if name else value
+        lines.append((first if rank == 0 else " " * len(first)) + said)
+    return lines
 
 
 def _numbered(questions: Sequence[Question], answers: list[list[str]]) -> list[list[str]]:
@@ -2480,13 +2590,29 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
             if question.expire_at is not None
             else "sans échéance"
         )
-        said = " ; ".join(q.question for q in question.questions) or "(question masquée)"
-        _say(f"  question ({question.call_id}) — run {question.run_id}, {expiry} : {said}")
         # On répond sur la racine, ou en écrivant à son agent dans la session.
         root = root_of(question.run_id)
         agent = agents.get(root) if root is not None else None
+        message = f'loom run {agent or "<agent>"} "<réponse>" --session {info.session_id}{tenant}'
+        heading = f"  question ({question.call_id}) — run {question.run_id}, {expiry}"
+        if len(question.questions) > 1:
+            # Plusieurs questions : le même bloc que « loom run », choix compris,
+            # puis la commande exacte (docs/multi-questions.md, § 2.5).
+            _say(heading)
+            for block in "\n\n".join(_question_blocks(question)).split("\n"):
+                _say(f"    {block}" if block else "")
+            hint = _Hint(root or RunId("<run_id>"), f" --session {info.session_id}{tenant}", True)
+            _say(f"    {_answer_command(question, hint)}")
+            _say(f"    (ou en message libre : {message})")
+            continue
+        said = " ; ".join(q.question for q in question.questions) or "(question masquée)"
+        _say(f"{heading} : {said}")
+        # Les choix, pour répondre par numéro sans relancer le run pour les revoir.
+        for asked in question.questions:
+            for line in _choice_lines(asked):
+                _say(f"    {line}")
         _say(
-            f'    loom run {agent or "<agent>"} "<réponse>" --session {info.session_id}{tenant}'
+            f"    {message}"
             f"  (ou loom answer {root or '<run_id>'} --call {question.call_id} "
             f"--session {info.session_id}{tenant} …)"
         )
@@ -3132,14 +3258,18 @@ def _report(
             if asked.reason:
                 # Ce qu'il faut savoir pour trancher (essai du 01/11 : rien ne le disait).
                 _say(f"Motif      : {asked.reason}", file=sys.stderr)
+        several = len(result.pending_questions) > 1
         for question in result.pending_questions:
-            _say(
-                f"Question   : {question.call_id} — répondre : loom run {result.agent} "
-                f'"<réponse>" --session {result.session_id}'
-                + (f" --tenant {tenant}" if tenant is not None else "")
-                + f" (ou loom answer {result.run_id} --answer <n°>{where})",
-                file=sys.stderr,
-            )
+            for line in _answer_hint(
+                question,
+                run_id=result.run_id,
+                agent=result.agent,
+                session_id=result.session_id,
+                where=where,
+                tenant=tenant,
+                with_call=several,
+            ):
+                _say(line, file=sys.stderr)
         if result.unverified and not brief:
             _say("Vérifiée   : non (gardée malgré son contrat ou son juge)", file=sys.stderr)
         if result.fallback and not brief:
@@ -3156,17 +3286,94 @@ def _report(
 
 
 def _questions_text(result: RunResult) -> str:
-    """Les questions en attente, lisibles : le texte, puis les choix numérotés."""
-    lines: list[str] = []
-    for pending in result.pending_questions:
-        for question in pending.questions:
-            lines.append(question.question)
-            lines += [
-                f"  {number}. {option.label}"
-                + (f" — {option.description}" if option.description else "")
-                for number, option in enumerate(question.options, start=1)
-            ]
-    return "\n".join(lines)
+    """Les questions en attente, lisibles : le texte, puis les choix numérotés.
+
+    Avec plusieurs questions dans un même appel, chacune est précédée de
+    « Question i/n · intitulé » et séparée de la suivante par une ligne vide :
+    sans cela, deux listes de choix numérotées à partir de 1 se suivaient sans
+    dire où commençait la seconde (essai réel t-2000 du 02/11). Une question
+    seule garde son rendu d'avant.
+    """
+    several = any(len(pending.questions) > 1 for pending in result.pending_questions)
+    separator = "\n\n" if several else "\n"
+    return separator.join(
+        block for pending in result.pending_questions for block in _question_blocks(pending)
+    )
+
+
+def _question_blocks(pending: PendingQuestion) -> list[str]:
+    """Un bloc par question d'un appel ``ask`` : en-tête s'il y en a plusieurs, texte, choix."""
+    total = len(pending.questions)
+    blocks: list[str] = []
+    for number, question in enumerate(pending.questions, start=1):
+        lines: list[str] = []
+        if total > 1:
+            header = (question.header or "").strip()
+            lines.append(f"Question {number}/{total}" + (f" · {header}" if header else ""))
+        lines.append(question.question)
+        lines += _choice_lines(question)
+        if total > 1 and question.multiple:
+            lines.append("  plusieurs choix : les séparer par « ; » (ex. 1;3)")
+        blocks.append("\n".join(lines))
+    return blocks
+
+
+def _choice_lines(question: Question) -> list[str]:
+    """Les choix numérotés d'une question, tels que ``--answer <n°>`` les désigne."""
+    return [
+        f"  {rank}. {option.label}" + (f" — {option.description}" if option.description else "")
+        for rank, option in enumerate(question.options, start=1)
+    ]
+
+
+def _placeholders(questions: Sequence[Question]) -> list[str]:
+    """Les « <…> » de la commande ``loom answer`` : l'intitulé de chaque question.
+
+    Sans intitulé, « <réponse i> » ; deux intitulés identiques prennent leur rang
+    (« <Client 1> », « <Client 2> »). Sans guillemets, comme « <n°> » : copiée
+    telle quelle, la ligne échoue dans le shell (« < » redirige) au lieu
+    d'envoyer « <Relances> » au modèle comme une réponse.
+    """
+    headers = [(question.header or "").strip() for question in questions]
+    counts = Counter(header for header in headers if header)
+    return [
+        (f"<{header} {rank}>" if counts[header] > 1 else f"<{header}>")
+        if header
+        else f"<réponse {rank}>"
+        for rank, header in enumerate(headers, start=1)
+    ]
+
+
+def _answer_hint(
+    pending: PendingQuestion,
+    *,
+    run_id: RunId,
+    agent: str,
+    session_id: SessionId,
+    where: str,
+    tenant: TenantId | None,
+    with_call: bool = False,
+) -> list[str]:
+    """Comment répondre à un appel ``ask`` en attente : les lignes à montrer sur stderr.
+
+    Une question : la ligne d'avant. Plusieurs : la commande exacte, un
+    ``--answer`` par question dans leur ordre ; l'essai t-2000 (02/11) avait
+    tapé un seul ``--answer``, refusé sans savoir comment corriger.
+    ``with_call`` : plusieurs appels attendent dans le run, ``loom answer``
+    exige alors ``--call`` (sans lui, le moteur refuse : « indiquer call_id »).
+    """
+    tenant_flag = f" --tenant {tenant}" if tenant is not None else ""
+    message = f'loom run {agent} "<réponse>" --session {session_id}{tenant_flag}'
+    command = _answer_command(pending, _Hint(run_id, where, with_call))
+    if len(pending.questions) <= 1:
+        return [f"Question   : {pending.call_id} — répondre : {message} (ou {command})"]
+    return [
+        f"Questions  : {len(pending.questions)} en attente ({pending.call_id}) — "
+        "une réponse par question, dans l'ordre :",
+        f"             {command}",
+        "             (le numéro d'un choix, son libellé, ou un texte ; en message libre :",
+        f"              {message})",
+    ]
 
 
 def _only_data(result: RunResult) -> int:

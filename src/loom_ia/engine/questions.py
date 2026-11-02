@@ -51,20 +51,56 @@ def reply_problem(pending: PendingQuestion, reply: QuestionReply) -> str | None:
     Un texte libre convient toujours. Des réponses par question : une par
     question, au moins une valeur chacune, une seule sauf ``multiple``. Un
     choix proposé n'est pas exigé : l'utilisateur peut répondre autre chose.
+
+    Le message nomme les questions par leur intitulé et dit la règle : il est
+    rendu tel quel par chaque accès (``InvalidAnswer`` du SDK, ``detail`` d'un
+    422 REST, refus de la CLI). Avant, « 1 réponse(s) pour 2 question(s) » ne
+    disait ni lesquelles ni comment répondre (essai réel t-2000 du 02/11).
+    Il ne part ni au modèle ni au journal.
     """
     if (reply.answers is None) == (reply.text is None):
         return "une réponse donne soit 'answers' (une par question), soit 'text'"
     if reply.text is not None:
         return None if reply.text.strip() else "réponse vide"
     answers = reply.answers or ()
-    if len(answers) != len(pending.questions):
-        return f"{len(answers)} réponse(s) pour {len(pending.questions)} question(s)"
-    for number, (question, values) in enumerate(zip(pending.questions, answers, strict=True), 1):
+    wanted = pending.questions
+    if len(answers) != len(wanted):
+        return (
+            f"{_count(len(answers), 'réponse')} pour {_count(len(wanted), 'question')} "
+            f"({_names(wanted)}) : une réponse par question, dans leur ordre"
+        )
+    for number, (question, values) in enumerate(zip(wanted, answers, strict=True), 1):
         if not values or not all(value.strip() for value in values):
-            return f"question {number} : réponse vide"
+            return f"{named_question(number, question)} : réponse vide"
         if len(values) > 1 and not question.multiple:
-            return f"question {number} : un seul choix attendu"
+            return f"{named_question(number, question)} : un seul choix attendu"
     return None
+
+
+def _count(n: int, word: str) -> str:
+    """« 1 réponse », « 2 réponses » : le pluriel français dès 2."""
+    return f"{n} {word}{'s' if n > 1 else ''}"
+
+
+def named_question(number: int, question: Question) -> str:
+    """« question 2 (Acompte) », ou « question 2 » sans intitulé."""
+    header = (question.header or "").strip()
+    return f"question {number} ({header})" if header else f"question {number}"
+
+
+def _names(questions: Sequence[Question]) -> str:
+    """Les questions attendues : leurs intitulés, sinon leurs rangs.
+
+    « Relances, Acompte » ; sans aucun intitulé, « questions 1 et 2 » (ou
+    « question 1 ») ; un intitulé absent est remplacé par « question i ».
+    """
+    headers = [(question.header or "").strip() for question in questions]
+    if any(headers):
+        return ", ".join(h or f"question {i}" for i, h in enumerate(headers, 1))
+    ranks = [str(i) for i in range(1, len(questions) + 1)]
+    if len(ranks) == 1:
+        return "question 1"
+    return f"questions {', '.join(ranks[:-1])} et {ranks[-1]}"
 
 
 def answered_output(pending: PendingQuestion) -> ToolOutput:
