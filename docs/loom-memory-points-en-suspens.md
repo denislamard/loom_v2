@@ -18,6 +18,7 @@ Ce document recense ce qui reste à faire. Rien n'y est implémenté. Pour chaqu
 | 6 | Texte d'interface résiduel dans `add_url` | Qualité d'extraction | Basse | Faible |
 | 7 | Outils MCP non annotés : irréversibles mais sans approbation | Sécurité | Haute | Moyen (effets de bord) |
 | 8 | Tests non joués en vrai | Validation | Moyenne | Faible |
+| 9 | Calculs des modèles sur un GPU distant, avec repli sur le CPU | Fonctionnalité / performance | Moyenne | Élevé |
 
 Les limites connues et acceptées sont listées à la fin. Elles ne sont pas à corriger, seulement à garder en tête.
 
@@ -299,6 +300,99 @@ Ces cas sont couverts par les tests automatiques, mais n'ont pas été joués av
 | Plusieurs clients | `store: { path_env: … }` et deux `tenants` | Deux fichiers, aucun ne voit l'autre (couvert en test moteur). |
 | `serve --reload` | Modifier un fichier de config pendant que la mémoire sert | Rechargement, puis un premier `search` qui fonctionne, avec et sans `preload`. |
 | `examples/j6/memory.py` | Avec un vrai orchestrateur | Les 4 cas de l'exemple. |
+
+---
+
+## 9. Calculs des modèles sur un GPU distant, avec repli sur le CPU
+
+### Besoin
+
+Sur CPU, avec les mesures des tests du 03/11 :
+- une recherche prend environ 10 s avec `rerank_candidates: 8` ;
+- l'indexation prend environ 1,5 à 2 s par passage ;
+- au-delà d'environ 150 Ko, un fichier dépasse le délai de 300 s.
+
+On veut que loom continue de tourner sur le poste local, et n'envoie que les **calculs des modèles** (vecteurs et reranking) à un GPU distant quand il est disponible : une VM louée à la minute, comme Thunder Compute, ou la machine qui a la RTX 5060 Ti.
+
+### Ce qui est possible aujourd'hui, sans code
+
+Pour les gros calculs ponctuels, on peut tout faire à la main :
+1. démarrer la VM ;
+2. y copier `memoire.db` et la config ;
+3. y lancer `loom memory import` ou `loom memory reindex` ;
+4. rapatrier `memoire.db` ;
+5. arrêter la VM.
+
+La base reste compatible, puisque c'est le même modèle des deux côtés : un calcul en fp16 sur GPU et en fp32 sur CPU donne des vecteurs quasi identiques. Mais ça ne couvre pas les `add_file` et `add_url` lancés par l'agent en cours de run, ni les recherches.
+
+### Solution retenue : un serveur de modèles à nous
+
+**Écartée : Ollama.** `ollama pull bge-m3` sert BGE-M3, mais `/api/embed` ne renvoie que le vecteur **dense**. Le lexical, qui retrouve les termes exacts comme les numéros de devis, les références ou les noms propres, n'est pas disponible. Ollama n'a pas non plus de point d'accès dédié au reranking. Il faudrait un `llama-server` de llama.cpp en plus pour bge-reranker-v2-m3, la base indexée deviendrait incompatible avec le calcul local, et la recherche serait moins bonne qu'aujourd'hui.
+
+**Retenue : un serveur qui réutilise `bge_m3.py`**, pour calculer exactement le même dense, le même lexical et le même reranking qu'en local.
+
+#### Côté GPU : `loom memory models serve`
+
+- Une nouvelle commande, qui charge `BgeM3Embedder` et `BgeReranker` avec un `ModelsSpec` (`device: cuda`, `fp16: true`) et les sert en HTTP.
+- Ses points d'accès, avec du JSON, en entrée comme en sortie :
+
+  | Point d'accès | Entrée | Sortie |
+  |---|---|---|
+  | `GET /health` | — | `{embedder, reranker, dim, device, fp16, version}` |
+  | `POST /embed` | `{texts: [...]}` | `[{dense: [1024 floats], sparse: {indices, values}}]` |
+  | `POST /score` | `{query, passages: [...]}` | `[float]` |
+
+- Il impose un plafond sur le nombre de textes et sur leur taille par requête, pour qu'un seul appel ne monopolise pas la carte.
+- Il demande une authentification par jeton (`Authorization: Bearer`), lu dans une variable d'environnement.
+- Il écoute par défaut sur `127.0.0.1`, pour être joint par un tunnel SSH. Pour l'ouvrir au réseau, il faut le demander explicitement, et seulement avec TLS.
+- Il réutilise le verrou de `LazyModel` : un calcul à la fois par modèle, comme en local.
+- Il dépend de l'extra `http`, déjà présent pour `loom serve`.
+
+#### Côté loom : un nouveau type de modèles
+
+```yaml
+models:
+  kind: remote
+  url_env: LOOM_MODELS_URL        # ex. http://127.0.0.1:8765 par tunnel SSH
+  token_env: LOOM_MODELS_TOKEN
+  fallback: cpu                    # cpu | none
+  connect_timeout: 3               # s : une VM éteinte ne bloque pas chaque appel
+```
+
+- **`RemoteEmbedder` et `RemoteReranker`** implémentent les protocoles `Embedder` et `Reranker` de `models.py`. `load()` appelle `/health`.
+- **La vérification du modèle.** Au premier contact, le nom de l'`embedder` et la dimension renvoyés par `/health` doivent être ceux de la config et de la base (table `meta`). Sinon, le chargement est refusé, avec le même message que pour une base indexée par un autre modèle.
+- **Le repli.** Avec `fallback: cpu`, un serveur injoignable fait passer au calcul local : `BgeM3Embedder` et `BgeReranker`, avec les mêmes poids, donc des vecteurs compatibles. Avec `fallback: none`, l'appel échoue avec un message clair. Le serveur est re-sondé à intervalles, pour revenir au GPU quand il répond de nouveau.
+- **Le registre partagé** (`shared_models`) ajoute l'URL et le repli à sa clé.
+
+#### Allumer et éteindre la VM
+
+Ce n'est pas le rôle de loom. Soit à la main, soit avec un script autour de la CLI du fournisseur, par exemple `tnr` pour Thunder Compute. loom envoie au GPU tant que le serveur répond, et calcule en local sinon. Pas besoin de règle du type « gros fichier = GPU » : quand le GPU est disponible, tout y passe, recherches comprises.
+
+### Effets de bord à surveiller
+
+- **Le repli sur le CPU charge environ 4,5 Go de RAM** au moment où il se déclenche. Avec `preload: true`, faut-il précharger les modèles locaux même quand le serveur répond ? À trancher. Je propose de ne pas le faire, et de les charger au premier repli.
+- **Les délais.** Le délai propre de 300 s de l'outil reste nécessaire pour le repli. Côté réseau : un délai de connexion court, et un délai de lecture proportionné au nombre de textes.
+- **L'annulation** (point 2) doit fonctionner aussi pour un appel distant. Fermer la connexion suffit côté client, mais le serveur doit arrêter le calcul entre deux lots quand le client s'en va.
+- **Les données sur le réseau.** Les textes des documents et des requêtes transitent jusqu'au GPU. Il faut TLS ou un tunnel SSH, et vérifier la localisation des données chez le fournisseur : Thunder Compute tourne sur AWS EC2, sans région européenne documentée. C'est un sujet RGPD pour des données clients.
+- **Les imports légers.** `kind: remote` ne doit importer ni torch ni transformers tant que le repli n'est pas déclenché. Un poste sans l'extra `memory` peut alors utiliser un GPU distant, avec `fallback: none`.
+- **La compatibilité des vecteurs.** Ce sont les mêmes poids et le même code (`bge_m3.py`) des deux côtés, la seule différence étant fp16 contre fp32. Il faut vérifier par un test que l'ordre des résultats d'une recherche ne change pas selon que le calcul est local ou distant, sur un petit corpus.
+
+### Tests à ajouter
+
+- **Serveur** (`test_memory_models_server.py`) : `/health`, `/embed` et `/score` sur les faux torch et transformers déjà utilisés par `test_memory_models.py` ; jeton absent ou faux refusé ; plafonds appliqués.
+- **Client** (`test_memory_models.py`) :
+  - `RemoteEmbedder` et `RemoteReranker` contre un faux serveur ;
+  - un modèle annoncé différent est refusé ;
+  - un serveur injoignable passe au CPU avec `fallback: cpu`, et échoue clairement avec `fallback: none` ;
+  - le retour au GPU après une nouvelle sonde.
+- **Moteur** : un `add_text` puis un `search` avec `kind: remote` contre un faux serveur, sans torch importé.
+- **Contrats d'import** : `kind: remote` n'importe pas torch.
+- **En vrai** : sur la RTX 5060 Ti ou une VM, comparer l'ordre des résultats et les scores avec ceux du CPU sur `test15.jsonl` (`loom memory eval`), et mesurer la durée d'une recherche et d'un `reindex`.
+
+### Pistes non retenues
+
+- **Les serveurs d'embedding génériques** (Hugging Face TEI, Infinity) : ils servent souvent le dense et le reranking, mais rarement le lexical de BGE-M3 tel que loom le calcule. Avec le même problème de compatibilité qu'Ollama.
+- **Déporter tout loom sur la VM** : c'est possible, mais la VM doit alors rester allumée tant que l'agent sert. C'est le contraire du « quand c'est nécessaire ».
 
 ---
 
