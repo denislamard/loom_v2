@@ -2,7 +2,9 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.15 - non publiée
+## 2.0.16 - non publiée
+
+## 2.0.15 - publiée
 
 ### State de session : le modèle tient le state (state v2)
 - **`loom.state`** (nouveau outil fourni) : le modèle tient lui-même des clés du state. Il **désigne** un résultat d'outil du run par sa référence en texte (`{"set": "client", "result": "result:3", "row": 0}`, `{"clear": "client"}`) ; loom relit ce résultat (`ToolContext.results`) et en **tire** la valeur selon la règle déclarée sur la clé. Le modèle ne transmet aucune donnée : il ne peut ni mal recopier un identifiant, ni en inventer un. Les écritures voyagent dans `tool.completed.output.state`, comme celles de tout outil : aucun type d'événement ni champ nouveau, une session v2 se relit telle quelle par une 2.0.14 (vérifié). Un refus (clé inconnue, référence introuvable, ligne ou colonne absente, colonne en double aux valeurs différentes — un double aux mêmes valeurs, comme `SELECT id, code, *`, est lu —, schéma, taille, sous-run) est un résultat en erreur qui dit quoi corriger. Sa description dit au modèle que le state est sa tenue de dossier interne : poser ou effacer une clé sans demander l'accord de l'utilisateur ni en parler (à l'essai, Haiku proposait d'« enregistrer la sélection » au lieu de la poser). Sans paramètres ; `approval`, `side_effects`, `idempotent` et `description` refusés sur sa référence. `loom validate` montre la règle de chaque clé.
