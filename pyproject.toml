@@ -1,6 +1,6 @@
 [project]
 name = "loom-ia"
-version = "2.0.15"
+version = "2.0.16"
 description = "Moteur d'agents IA en Python asynchrone : rôles délégués à des modèles, outils Python et MCP, runs journalisés, rejouables et reprenables, en librairie Python, API REST ou serveur MCP."
 readme = "README.md"
 authors = [
@@ -118,6 +118,22 @@ otel = [
     "opentelemetry-exporter-otlp>=1.44.0,<2",
     "opentelemetry-sdk>=1.44.0,<2",
 ]
+# tools_builtin/memory (outil fourni loom.memory) : BGE-M3 et son reranker sur transformers,
+# CPU ou GPU. Importés au premier calcul (ou au préchargement), jamais au montage ; sans cet
+# extra, l'outil tourne avec ses modèles factices (models.kind: fake). Le torch de PyPI est
+# sous Linux la version CUDA (plusieurs Go) : pour un serveur sans carte, installer d'abord
+# torch depuis l'index CPU de PyTorch. Plancher de torch : la première version à roues 3.14.
+memory = [
+    "torch>=2.9.0,<3",
+    "transformers>=4.56.0,<6",
+]
+# add_url de loom.memory : HTML vers markdown, analysé par html.parser — jamais par lxml, qui,
+# installé, changerait la lecture des classeurs par openpyxl (loom.excel).
+memory-web = [
+    "beautifulsoup4>=4.13.0,<5",
+    "markdownify>=1.1.0,<2",
+]
+# Ni memory ni memory-web : torch pèse plusieurs Go, et la mémoire se choisit.
 all = [
     "loom-ia[anthropic,openai,mcp,http,sqlite,postgres,rabbitmq,redis,otel,crypto,office,pdf,sql]",
 ]

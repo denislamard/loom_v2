@@ -68,7 +68,9 @@ Le paquet s'appelle `loom-ia`. Il s'importe sous le nom `loom_ia` et installe la
 | `office` | L'outil fourni `loom.excel`, qui écrit des classeurs Excel |
 | `pdf` | L'outil fourni `loom.pdf`, qui écrit des PDF et en lit le texte (`loom.word`, pour les documents Word, n'a besoin d'aucun extra) |
 | `sql` | L'outil fourni `loom.sql`, qui lit et modifie des bases SQLite ou Postgres |
-| `all` | Tous les extras |
+| `memory` | Les vrais modèles de l'outil fourni `loom.memory`, la mémoire long terme (BGE-M3 et son reranker : torch et transformers, plusieurs Go) ; sans lui, l'outil tourne avec des modèles factices |
+| `memory-web` | L'action `add_url` de `loom.memory`, qui mémorise une page web |
+| `all` | Tous les extras, sauf `memory` et `memory-web` |
 
 Si votre configuration réclame un extra qui n'est pas installé, Loom-IA refuse de la charger et vous dit lequel ajouter.
 
@@ -309,6 +311,8 @@ git clone https://github.com/denislamard/loom_v2.git
 cd loom_v2
 uv sync --all-extras --group types
 ```
+
+`--all-extras` installe aussi `memory`, donc torch (sous Linux, la version CUDA de PyPI, plusieurs Go). La CI s'en passe : ses jobs listent leurs extras sans `memory` (`EXTRAS` dans `.github/workflows/ci.yml`), et les essais de `loom.memory` tournent sur des modèles factices.
 
 Avant de pousser, lancez les mêmes contrôles que la CI :
 

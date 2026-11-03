@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Module 5 : Outils MCP et mémoire long terme · loom_v2</title>
-<meta name="description" content="Module 5 de la formation loom_v2 : comprendre MCP, écrire un petit serveur MCP en Python, le brancher sur l&#x27;agent en stdio puis en HTTP, choisir ses outils, gérer son indisponibilité, et donner à l&#x27;agent une mémoire long terme avec loom-notes.">
+<meta name="description" content="Module 5 de la formation loom_v2 : comprendre MCP, écrire un petit serveur MCP en Python, le brancher sur l&#x27;agent en stdio puis en HTTP, choisir ses outils, gérer son indisponibilité, et donner à l&#x27;agent une mémoire long terme avec loom.memory.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -783,101 +783,20 @@ Run        : 01a16e10-2300-70c1-a635-287e782867f0</code></pre>
 
 <!-- ===================================================================== -->
 <section class="exo" id="ex-5-6">
-<h3><span class="exo-num">5.6</span> Une mémoire long terme : loom-notes</h3>
+<h3><span class="exo-num">5.6</span> Une mémoire long terme : loom.memory</h3>
 <p class="fns"><a class="fn" href="matrice.html#F6">F6</a></p>
 
 <h4>Pourquoi</h4>
 <p>Jean dit à l'assistant : « Mme Martin préfère qu'on l'appelle le matin. » La semaine suivante, dans une autre conversation, l'assistant ne s'en souvient pas : une session (module 4) n'est pas une mémoire. Il faut un carnet de notes durable, où l'agent cherche librement, mais où il n'écrit qu'avec l'accord de Jean.</p>
-<p><strong>loom-notes</strong> est un serveur MCP de mémoire, publié sur PyPI : on y range des textes, des pages web ou des fichiers, et l'agent les retrouve par une recherche par le sens (on parle de <strong>RAG</strong> : l'agent retrouve des documents avant de répondre). Il se branche comme le catalogue.</p>
+<p>Ce n'est pas un serveur MCP : loom fournit cette mémoire lui-même, avec l'outil <strong>loom.memory</strong>. On y range des textes, des pages web ou des fichiers, et l'agent les retrouve par une recherche par le sens (on parle de <strong>RAG</strong> : l'agent retrouve des documents avant de répondre). Il se déclare comme <code>loom.fetch_page</code>, avec quelques paramètres.</p>
 
-<h4>Mise en place : installer loom-notes</h4>
-<p>loom-notes ne s'ajoute pas aux dépendances du projet : ses propres dépendances entrent en conflit avec celles de loom-ia. On l'installe à part, comme un outil isolé, avec <code>uv tool install</code>. En usage réel, il lui faut ses modèles d'intelligence artificielle (l'extra <code>models</code>, qui tire PyTorch et télécharge environ 5 Go au premier usage) :</p>
-<pre><code><span class="p">$ </span>uv tool install "loom-notes[models]"</code></pre>
-<p>Pour la formation, la version sans modèles suffit : loom-notes propose des <strong>modèles factices</strong> (variable <code>LOOM_NOTES_FAKE_MODELS</code>), qui permettent d'écrire, de lire et de chercher sans rien télécharger. La recherche n'y est pas « par le sens », mais le branchement, les écritures et les approbations sont réels.</p>
-<pre><code><span class="p">$ </span>uv tool install loom-notes
-…
-Installed 2 executables: loom-notes, loom-notes-mcp
-<span class="p">$ </span>which loom-notes-mcp
-/home/jean/.local/bin/loom-notes-mcp</code></pre>
-<p>Le serveur s'appelle <code>loom-notes-mcp</code>. Ses neuf outils : quatre lectures (<code>search</code>, <code>get</code>, <code>list_docs</code>, <code>projects</code>) et cinq écritures (<code>add_text</code>, <code>add_url</code>, <code>add_file</code>, <code>update</code>, <code>delete</code>).</p>
+<h4>Mise en place : les modèles</h4>
+<p>En usage réel, la recherche par le sens demande des modèles d'intelligence artificielle (BGE-M3 et un reclasseur), apportés par l'extra <code>memory</code> de loom-ia : il tire PyTorch et télécharge plusieurs Go au premier usage.</p>
+<pre><code><span class="p">$ </span>uv add "loom-ia[memory]"</code></pre>
+<p>Pour la formation, rien à installer : l'outil a des <strong>modèles factices</strong> (<code>models: {kind: fake}</code>), qui permettent d'écrire, de lire et de chercher sans rien télécharger. La recherche n'y est pas « par le sens », mais les écritures et les approbations sont réelles.</p>
+<p>L'outil s'appelle <code>memory</code>, et le modèle choisit une <strong>action</strong> : des lectures (<code>search</code>, <code>get</code>, <code>list_docs</code>, <code>projects</code>) et des écritures (<code>add_text</code>, <code>add_url</code>, <code>add_file</code>, <code>update</code>, <code>delete</code>). Seules les actions que la configuration permet existent pour le modèle, et les écritures attendent l'accord d'un humain par défaut.</p>
 
 <h4>Mise en place : la configuration</h4>
-<figure class="code"><figcaption>loom.yaml</figcaption>
-<pre><code>version: 1
-
-imports: [outils]
-
-models:
-  - id: SIMULE
-    sdk: fake
-    model: fake-1
-    params:
-      script:
-        - with_text: chauffe-eau thermodynamique
-          text: Je cherche l'article dans le catalogue du fournisseur.
-          tool_calls:
-            - name: catalogue__rechercher_article
-              arguments: {texte: thermodynamique}
-        - with_text: chauffe-eau thermodynamique
-          text: Je regarde son prix et son stock.
-          tool_calls:
-            - name: catalogue__prix_article
-              arguments: {reference: CE-THERMO-200}
-            - name: catalogue__stock_article
-              arguments: {reference: CE-THERMO-200}
-        - with_text: chauffe-eau thermodynamique
-          text: Le chauffe-eau thermodynamique 200 L (référence CE-THERMO-200) coûte 1 290 € HT chez le fournisseur, et il en reste 3 en stock.
-<span class="aj">        - with_text: Mémorise</span><span class="aj">          text: J'enregistre la note dans la mémoire.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: memoire__add_text</span><span class="aj">              arguments:</span><span class="aj">                text: Mme Martin préfère être contactée le matin, avant 10 h.</span><span class="aj">                title: Préférence de contact de Mme Martin</span><span class="aj">                project: clients</span><span class="aj">        - with_text: Mémorise</span><span class="aj">          text: C'est noté dans la mémoire de l'entreprise.</span><span class="aj">        - with_text: appeler Mme Martin</span><span class="aj">          text: Je consulte la mémoire.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: memoire__search</span><span class="aj">              arguments: {query: "Mme Martin contact"}</span><span class="aj">        - with_text: appeler Mme Martin</span><span class="aj">          text: D'après la mémoire de l'entreprise, Mme Martin préfère être contactée le matin, avant 10 h.</span>        - with_text: CE-XYZ
-          text: Je regarde le prix.
-          tool_calls:
-            - name: catalogue__prix_article
-              arguments: {reference: CE-XYZ}
-        - with_text: CE-XYZ
-          text: Le fournisseur ne connaît pas la référence CE-XYZ. Vérifiez-la sur votre bon de commande.
-
-  - id: HAIKU
-    sdk: anthropic
-    model: claude-haiku-5-5
-    api_key_env: ANTHROPIC_API_KEY
-    max_tokens: 4096
-    cache: {system: true, tools: true, messages: true}
-
-  - id: OPUS
-    sdk: anthropic
-    model: claude-opus-5-5
-    api_key_env: ANTHROPIC_API_KEY
-    capabilities: {forced_tool_choice: false}
-
-mcp_servers:
-  - name: catalogue
-    transport: stdio
-    command: python
-    args: [serveurs/catalogue.py]
-<span class="aj">  - name: memoire</span><span class="aj">    transport: stdio</span><span class="aj">    command: loom-notes-mcp</span><span class="aj">    env:</span><span class="aj">      LOOM_NOTES_DATA_DIR: memoire</span><span class="aj">      LOOM_NOTES_FAKE_MODELS: "1"</span><span class="aj">      LOOM_NOTES_WARMUP_ON_START: "false"</span><span class="aj">      FASTMCP_LOG_LEVEL: WARNING</span><span class="aj">    tools:</span><span class="aj">      add_text: {approval: always}</span><span class="aj">      add_url: {approval: always}</span><span class="aj">      add_file: {approval: always}</span><span class="aj">      update: {approval: always}</span><span class="aj">      delete: {approval: always}</span>
-storage:
-  events: {backend: jsonl, path: data}
-
-telemetry:
-  logging: {level: WARNING}
-
-tenants:
-  - id: default
-    variables:
-      entreprise: Plomberie Dupont</code></pre></figure>
-<p class="legende-aj"><span></span>lignes ajoutées</p>
-<div class="tableau"><table class="lignes">
-<tbody>
-<tr><td><code>command: loom-notes-mcp</code></td><td>Le programme installé par <code>uv tool install</code> (dans <code>~/.local/bin</code>).</td></tr>
-<tr><td><code>env:</code></td><td>Les variables passées au serveur.</td></tr>
-<tr><td><code>LOOM_NOTES_DATA_DIR: memoire</code></td><td>Le dossier de ses données, ici <code>memoire/</code> dans le projet.</td></tr>
-<tr><td><code>LOOM_NOTES_FAKE_MODELS: "1"</code></td><td>Les modèles factices. À retirer avec les vrais modèles installés.</td></tr>
-<tr><td><code>LOOM_NOTES_WARMUP_ON_START: "false"</code></td><td>Ne pas précharger les modèles au démarrage (inutile avec des modèles factices).</td></tr>
-<tr><td><code>FASTMCP_LOG_LEVEL: WARNING</code></td><td>Rend le serveur discret dans la console.</td></tr>
-<tr><td><code>tools:</code></td><td>Des <strong>surcharges par outil</strong>, pour tous les agents qui utilisent ce serveur (noms courts, sans préfixe). Ce sont les mêmes que pour un outil Python (module 2).</td></tr>
-<tr><td><code>add_text: {approval: always}</code></td><td>Chaque appel à cet outil attend l'accord d'un humain avant de s'exécuter. Les cinq écritures sont ainsi protégées ; les lectures passent librement.</td></tr>
-</tbody>
-</table></div>
-<p>Les valeurs de <code>env</code> sont entre guillemets quand elles ressemblent à un nombre ou à un booléen : une variable d'environnement est toujours du texte.</p>
 <figure class="code"><figcaption>agents/assistant.yaml</figcaption>
 <pre><code>name: assistant
 
@@ -894,7 +813,7 @@ tools:
   - python: chercher_devis
   - python: etiquette_devis
   - mcp: catalogue
-<span class="aj">  - mcp: memoire</span>
+<span class="aj">  - python: loom.memory</span><span class="aj">    store: {path: memoire.db}</span><span class="aj">    project: clients</span><span class="aj">    models: {kind: fake}</span><span class="aj">    actions: [search, get, list_docs, add_text, update, delete]</span>
 state:
   devis_courant:
     schema: {type: string}
@@ -906,7 +825,20 @@ state:
     schema: {enum: [cordial, ferme]}
     description: Ton des relances
     default: cordial</code></pre></figure>
-<p class="legende-aj"><span></span>ligne ajoutée</p>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
+<div class="tableau"><table class="lignes">
+<tbody>
+<tr><td><code>python: loom.memory</code></td><td>L'outil fourni par loom : rien à lancer à côté.</td></tr>
+<tr><td><code>store: {path: memoire.db}</code></td><td>La base, un fichier SQLite à côté de <code>loom.yaml</code>, créé au premier appel.</td></tr>
+<tr><td><code>project: clients</code></td><td>Le projet est imposé : le modèle ne le choisit pas, et tout ce qu'il écrit va dans ce projet.</td></tr>
+<tr><td><code>models: {kind: fake}</code></td><td>Les modèles factices. À retirer avec l'extra <code>memory</code> installé.</td></tr>
+<tr><td><code>actions:</code></td><td>Les actions permises. Les écritures (<code>add_text</code>, <code>update</code>, <code>delete</code>) attendent l'accord d'un humain ; les lectures passent librement.</td></tr>
+</tbody>
+</table></div>
+<p>Dans le script du modèle simulé (<code>loom.yaml</code>), l'outil s'appelle <code>memory</code> et ses arguments commencent par l'action :</p>
+<figure class="code"><figcaption>loom.yaml (extrait du script de SIMULE)</figcaption>
+<pre><code><span class="aj">        - with_text: Mémorise</span><span class="aj">          text: J'enregistre la note dans la mémoire.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: memory</span><span class="aj">              arguments:</span><span class="aj">                action: add_text</span><span class="aj">                text: Mme Martin préfère être contactée le matin, avant 10 h.</span><span class="aj">                title: Préférence de contact de Mme Martin</span><span class="aj">        - with_text: Mémorise</span><span class="aj">          text: C'est noté dans la mémoire de l'entreprise.</span><span class="aj">        - with_text: appeler Mme Martin</span><span class="aj">          text: Je consulte la mémoire.</span><span class="aj">          tool_calls:</span><span class="aj">            - name: memory</span><span class="aj">              arguments: {action: search, query: "Mme Martin contact"}</span><span class="aj">        - with_text: appeler Mme Martin</span><span class="aj">          text: D'après la mémoire de l'entreprise, Mme Martin préfère être contactée le matin, avant 10 h.</span></code></pre></figure>
+<p class="legende-aj"><span></span>lignes ajoutées</p>
 <figure class="code"><figcaption>prompts/system.md</figcaption>
 <pre><code>Tu es l'assistant de la {{ entreprise }}, une entreprise de plomberie et de
 chauffage. Tu réponds en français, en deux ou trois phrases.
@@ -919,59 +851,36 @@ Pour une question sur un devis, appelle l'outil `chercher_devis` avec son
 numéro.
 Pour le prix ou le stock d'un article chez le fournisseur, utilise les outils
 du catalogue (catalogue__rechercher_article, catalogue__prix_article…).
-<span class="aj">Avant de répondre sur un client, consulte la mémoire de l'entreprise</span><span class="aj">(memoire__search). N'y écris que si Jean te le demande dans son message.</span></code></pre></figure>
+<span class="aj">Avant de répondre sur un client, consulte la mémoire de l'entreprise</span><span class="aj">(outil memory, action search). N'y écris que si Jean te le demande.</span></code></pre></figure>
 <p class="legende-aj"><span></span>lignes ajoutées</p>
-<p>loom-notes donne ces consignes au client dans ses « instructions » MCP, mais loom ne les transmet pas au modèle : recopiez dans le prompt celles qui comptent. Enfin, ajoutez <code>memoire/</code> au <code>.gitignore</code>.</p>
+<p>Une écriture sous approbation demande un journal durable : c'est le cas ici (<code>storage.events</code> en JSONL). Ajoutez <code>memoire.db*</code> au <code>.gitignore</code>.</p>
 
 <h4>Exécution</h4>
-<pre><code><span class="p">$ </span>loom validate | grep -A3 MCP
-    └ MCP              catalogue__rechercher_article, catalogue__prix_article,
-                       catalogue__stock_article, memoire__search, memoire__get,
-                       memoire__list_docs, memoire__projects, memoire__add_text,
-                       memoire__add_url, memoire__add_file, memoire__update, memoire__delete
-<span class="p">$ </span>loom run assistant "Mémorise que Mme Martin préfère être contactée le matin, avant 10 h." --session note-martin
+<pre><code><span class="p">$ </span>loom run assistant "Mémorise que Mme Martin préfère être contactée le matin, avant 10 h." --session note-martin
 
-Statut     : paused · itérations : 1 · tokens : 2490/99 · coût : 0.0000 $
-Run        : 01a16e10-4523-718a-9336-a5d4f824d27c
-En attente : memoire__add_text (fake_0_0) — loom approve 01a16e10-4523-718a-9336-a5d4f824d27c --call fake_0_0 --session note-martin</code></pre>
-<p>Le run s'est arrêté en <code>paused</code> (code de sortie 1) : l'appel à <code>memoire__add_text</code> attend l'accord. La dernière ligne donne la commande à lancer pour l'accorder. Le module 8 détaille ces approbations (refuser, corriger les arguments, expiration) ; ici, Jean accepte :</p>
-<pre><code><span class="p">$ </span>loom approve 01a16e10-4523-718a-9336-a5d4f824d27c --call fake_0_0 --session note-martin
-Accordé : fake_0_0
-C'est noté dans la mémoire de l'entreprise.
-
-Statut     : completed · itérations : 2 · tokens : 5236/135 · coût : 0.0000 $
-Run        : 01a16e10-4523-718a-9336-a5d4f824d27c</code></pre>
-<p>La note est écrite. La semaine suivante, dans une autre session :</p>
+Statut     : paused · …
+Run        : …
+En attente : memory (fake_0_0) — loom approve … --call fake_0_0 --session note-martin
+Motif      : mémoriser un texte « Préférence de contact de Mme Martin » dans le projet clients — la config exige une approbation pour add_text (réversible)</code></pre>
+<p>(Extrait.) Le run s'est arrêté en <code>paused</code> (code de sortie 1) : l'appel à <code>memory</code> attend l'accord, et le motif dit ce qui serait écrit, et où. La ligne <code>En attente</code> donne la commande à lancer pour l'accorder. Le module 8 détaille ces approbations (refuser, corriger les arguments, expiration) ; ici, Jean accepte avec <code>loom approve</code>, et la note est écrite. La semaine suivante, dans une autre session :</p>
 <pre><code><span class="p">$ </span>loom run assistant "Quand peut-on appeler Mme Martin ?" --session question-martin
-D'après la mémoire de l'entreprise, Mme Martin préfère être contactée le matin, avant 10 h.
-
-Statut     : completed · itérations : 2 · tokens : 5279/117 · coût : 0.0000 $
-Run        : 01a16e10-769a-72fb-98c9-2aa940b398a6
-<span class="p">$ </span>loom inspect 01a16e10-769a-72fb-98c9-2aa940b398a6 --session question-martin --full | sed -n 6,14p
-run assistant — completed, 3.3 s, 0.000000 $
-  étape 1
-    modèle SIMULE (fake-1) (main) — 3 ms, 2482 → 69 tokens, 0.000000 $
-      · répond    : Je consulte la mémoire.
-      · appelle   : memoire__search({"query": "Mme Martin contact"})
-  étape 2
-    outil memoire__search — 18 ms
-      · arguments : {"query": "Mme Martin contact"}
-      · résultat  : [{"doc_id":"13bdf3ef-d86a-41c7-984d-096e8ba5fd3b","title":"Préférence de contact de Mme Martin","project":"clients","score":1.0,"snippet":"Mme Martin préfère être contactée le matin, avant 10 h.","truncated":false,"heading_path":"Préférence de contact de Mme Martin","source":null,"added_at":"2026-10-24T13:18:52.799177+00:00"}]</code></pre>
+D'après la mémoire de l'entreprise, Mme Martin préfère être contactée le matin, avant 10 h.</code></pre>
+<p>Dans la trace (<code>loom inspect … --full</code>), l'appel <code>memory</code> avec <code>{"action": "search", "query": "Mme Martin contact"}</code> rend la note, son titre, son projet et son score, sans avoir demandé d'accord.</p>
 
 <h4>Ce qu'il faut comprendre</h4>
 <ul>
 <li>La note a traversé les sessions : elle vit dans la mémoire, pas dans le journal d'une conversation.</li>
-<li>Le contrôle des écritures est du code : sans l'accord de Jean, rien n'est écrit, quoi que le modèle décide.</li>
+<li>Le contrôle des écritures est du code : sans l'accord de Jean, rien n'est écrit, quoi que le modèle décide. Une action que la configuration ne permet pas n'existe pas pour lui.</li>
 <li>Avec les vrais modèles, <code>search</code> retrouve aussi une note formulée autrement (« joindre la cliente avant midi ») ; les modèles factices ne le font pas.</li>
 </ul>
-<div class="encadre piege"><p class="encadre-titre">Piège : un seul process à la fois</p>
-<p>Sans autre réglage, loom-notes range sa base (Qdrant) dans son dossier de données, et un seul process peut l'ouvrir. Deux commandes <code>loom</code> lancées en même temps sur le même dossier se gênent. Pour un usage partagé (Claude Desktop, un serveur), le README de loom-notes explique comment lancer Qdrant à part (variable <code>LOOM_NOTES_QDRANT_URL</code>). Pour deux entreprises, donnez à chacune son dossier et <code>scope: tenant</code> (module 12).</p></div>
+<div class="encadre piege"><p class="encadre-titre">Piège : le premier appel avec les vrais modèles</p>
+<p>Avec l'extra <code>memory</code>, le premier appel charge les modèles (et les télécharge la première fois) : sur un ordinateur sans carte graphique, comptez des dizaines de secondes, et environ 4,5 Go de mémoire vive. Donnez à l'outil un <code>timeout</code> en conséquence, ou <code>models: {preload: true}</code> pour les charger dès le montage. Pour deux entreprises, donnez à chacune sa base avec <code>store: {path_env: …}</code>, lu dans ses secrets (module 12).</p></div>
 <div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
 <p>Avec <code>HAIKU</code>, Claude décide seul de chercher dans la mémoire avant de répondre sur un client, et n'appelle <code>add_text</code> que quand Jean le demande, comme le dit le prompt. Si une écriture est refusée, il reçoit le refus et le dit.</p></div>
 </section>
 
 <h2 id="bilan">Bilan du module</h2>
-<p>L'agent consulte le catalogue du fournisseur par MCP. Pour la suite, on garde le serveur du catalogue, en <code>stdio</code>, et on retire la mémoire loom-notes, qui demande une installation à part : remettez <code>loom.yaml</code>, l'agent et le prompt de l'exercice 5.2. Si vous voulez garder la mémoire, laissez sa configuration : la suite fonctionne aussi avec elle.</p>
+<p>L'agent consulte le catalogue du fournisseur par MCP. Pour la suite, on garde le serveur du catalogue, en <code>stdio</code>, et on retire la mémoire : remettez <code>loom.yaml</code>, l'agent et le prompt de l'exercice 5.2. Si vous voulez garder la mémoire, laissez sa configuration : la suite fonctionne aussi avec elle.</p>
 <figure class="code"><figcaption>plomberie-dupont/</figcaption>
 <pre><code>plomberie-dupont/
 ├── loom.yaml            trois modèles, le serveur MCP catalogue, journal JSONL

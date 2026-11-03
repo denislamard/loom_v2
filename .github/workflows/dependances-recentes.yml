@@ -17,6 +17,11 @@ permissions:
 
 env:
   UV_VERSION: "0.11.14"
+  # Les extras installés par les jobs « tous les extras » : tous, sauf memory. torch pèse
+  # plusieurs Go (version CUDA de PyPI) et n'est pas nécessaire : les essais de loom.memory
+  # tournent sur des modèles factices, et ceux de bge_m3 sur des torch et transformers
+  # factices. tests/unit/test_dependances.py vérifie que la liste suit pyproject.toml.
+  EXTRAS: "--extra anthropic --extra openai --extra mcp --extra http --extra sqlite --extra postgres --extra rabbitmq --extra redis --extra otel --extra crypto --extra office --extra pdf --extra sql --extra memory-web"
 
 defaults:
   run:
@@ -85,10 +90,10 @@ jobs:
 
       # `uv pip` et non `uv sync --upgrade`, qui réécrirait uv.lock : ici, aucun verrou n'est
       # lu ni écrit, la résolution part de pyproject.toml seul.
-      - name: Installer le projet (tous les extras, versions les plus récentes permises)
+      - name: Installer le projet (les extras sauf memory, versions les plus récentes permises)
         run: |
           uv venv --python 3.14
-          uv pip install --upgrade -r pyproject.toml --all-extras --group dev --group types
+          uv pip install --upgrade -r pyproject.toml $EXTRAS --group dev --group types
           uv pip install --no-deps -e .
 
       - name: Versions installées

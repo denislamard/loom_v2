@@ -1,42 +1,33 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Phase 6.4d : la mémoire long terme — ``loom-notes`` branché en serveur MCP.
+"""Phase 6.4d : la mémoire long terme — l'outil fourni ``loom.memory``.
 
-    uv run python examples/j6/memoire.py
-    uv run python examples/j6/memoire.py --cas chercher
-    uv run python examples/j6/memoire.py --cas memoriser
-    uv run python examples/j6/memoire.py --cas rejeu
-    uv run python examples/j6/memoire.py --cas clients
-    uv run python examples/j6/memoire.py --serveur ~/dev/loom-notes/.venv/bin/loom-notes-mcp
-    uv run --env-file .env --extra anthropic \\
-        python examples/j6/memoire.py --reel
-    uv run --env-file .env --extra anthropic \\
-        python examples/j6/memoire.py --reel --device cpu
+    uv run python examples/j6/memory.py
+    uv run python examples/j6/memory.py --cas chercher
+    uv run python examples/j6/memory.py --cas memoriser
+    uv run python examples/j6/memory.py --cas rejeu
+    uv run python examples/j6/memory.py --cas clients
+    uv run --env-file .env --extra anthropic --extra memory \\
+        python examples/j6/memory.py --reel
+    uv run --env-file .env --extra anthropic --extra memory \\
+        python examples/j6/memory.py --reel --device cpu
 
-Le serveur est ``loom-notes`` publié sur PyPI, à la version ``LOOM_NOTES``,
-lancé par ``uvx`` : rien à installer. L'exemple le prépare avant de démarrer
-(``uvx --from loom-notes==… loom-notes --help``) ; la première fois, uvx
-télécharge le paquet, et en ``--reel`` son extra ``models`` (torch compris,
-plusieurs Go). ``--serveur`` le remplace par un binaire ``loom-notes-mcp``
-local, pour essayer un changement pas encore publié. loom le lance en
-serveur MCP stdio, ``memoire``, sur une base vide d'un dossier temporaire
-(``LOOM_NOTES_DATA_DIR``), effacé à la fin : aucune base existante n'est
-ouverte. Le serveur tourne dans ce dossier, pour qu'aucun ``.env`` du dossier
-de lancement ne règle sa base à la place de la config. En simulé, il tourne
-en modèles factices ; en ``--reel``, avec ses vrais modèles (BGE-M3 et le
-reranker) sur ``--device`` (``cuda`` par défaut), chargés au premier appel qui
-en a besoin plutôt qu'en tâche de fond — le délai de ces outils est allongé
-d'autant ; un cache de modèles déplacé (``HF_HOME``, ``HF_HUB_CACHE``) lui est
-transmis.
+La mémoire est l'outil ``loom.memory``, monté dans le process de loom : une
+base SQLite neuve dans un dossier temporaire, effacé à la fin — aucune base
+existante n'est ouverte. En simulé, ses modèles sont les factices
+(``models.kind: fake``) ; en ``--reel``, BGE-M3 et son reranker (extra
+``memory``) sur ``--device`` (``cuda`` par défaut), chargés au premier appel
+qui en a besoin — le délai de l'outil est allongé d'autant. Les modèles sont
+partagés par le process : les deux clients de ``clients`` n'en chargent qu'un
+exemplaire.
 
-Ce que la config dit du serveur, outil par outil (``mcp_servers[].tools``) :
+Ce que la config dit de la mémoire (sa référence dans l'agent) :
 
-- les cinq écritures (``add_text``, ``add_url``, ``add_file``, ``update``,
-  ``delete``) en ``approval: always`` : le run s'arrête avant chacune, et
-  l'exemple joue l'artisan qui accepte ou refuse ;
-- les descriptions qui nomment l'utilisateur de ``loom-notes`` sont
-  réécrites (``description``) pour celui de l'agent, l'artisan : c'est ce que
-  le modèle lit. loom ne transmet pas les ``instructions`` du serveur ; le
-  prompt de l'agent dit lui-même quand chercher et quand écrire.
+- le projet est imposé (``project: dupont``) : le modèle ne le choisit pas ;
+- six actions permises, les écritures (``add_text``, ``update``, ``delete``)
+  à leur approbation par défaut, ``always`` : le run s'arrête avant chacune,
+  et l'exemple joue l'artisan qui accepte ou refuse ;
+- un ``skill`` dit à quoi sert cette mémoire ; la description de l'outil est
+  tirée de ses paramètres (actions, projet, ce qui attend un accord).
 
 L'agent : ``assistant``, un orchestrateur simulé, ou en ``--reel``
 ``assistant_reel``, MiniMax-M3 comme dans la config de J4 (clé dans
@@ -47,9 +38,8 @@ fait pas sur commande.
 
 * **chercher** : la mémoire est remplie de trois notes du carnet, écritures
   approuvées par l'artisan ; puis l'agent répond sur le devis D-2026-042 en
-  appelant ``search``, sans approbation. Les outils que voit le modèle se
-  lisent dans les échanges bruts : aucun ne nomme plus l'utilisateur de
-  ``loom-notes``.
+  appelant ``search``, sans approbation. L'outil que voit le modèle se lit dans
+  les échanges bruts : ``memory``, ses actions, le projet, le skill.
 * **memoriser** : « Mémorise que… » arrête le run sur l'écriture ; tant que
   l'artisan n'a pas répondu, la mémoire n'a pas changé ; il accepte, la note
   y est. Puis une écriture que personne n'a demandée est refusée, et rien
@@ -58,23 +48,19 @@ fait pas sur commande.
   est rejoué à l'identique dans une instance neuve : le journal sert
   l'écriture, la note ne revient pas. ``memoriser`` est joué d'abord s'il
   n'est pas demandé.
-* **clients** : Dupont et Martin en ``scope: tenant`` — un serveur par
-  client, sa base dans le dossier que nomment ses secrets. Ce que Dupont
-  mémorise, Martin ne le trouve pas. En ``--reel``, sauté : chaque client y
-  chargerait les modèles.
+* **clients** : Dupont et Martin, chacun sa base, au chemin que nomment ses
+  secrets (``store.path_env``). Ce que Dupont mémorise, Martin ne le trouve pas.
 
 En ``--reel``, ce que fait MiniMax est montré, pas exigé — ce qu'il cherche,
 ce qu'il écrit, ce qu'il répond, ce que la recherche trouve. Ce qui tient à
 loom reste exigé : la lecture sans approbation, l'arrêt avant l'écriture, la
-mémoire inchangée sans accord, les descriptions de la config, le rejeu.
+mémoire inchangée sans accord, la description de l'outil, le rejeu.
 """
 
 import argparse
 import asyncio
 import json
 import os
-import shutil
-import subprocess
 import sys
 import tempfile
 import textwrap
@@ -101,24 +87,13 @@ from loom_ia.core.model import PendingApproval, RunStatus, TenantId
 
 J4 = Path(__file__).parent.parent / "j4" / "relance"
 CAS = ("chercher", "memoriser", "rejeu", "clients")
-SERVEUR = "memoire"
-LECTURES = ("search", "get", "list_docs", "projects")
-ECRITURES = ("add_text", "add_url", "add_file", "update", "delete")
-# Les outils qui passent par les modèles : leur premier appel les charge.
-CHARGENT = ("search", "add_text", "add_url", "add_file", "update")
+OUTIL = "memory"
+LECTURES = ("search", "get", "list_docs")
+ECRITURES = ("add_text", "update", "delete")
 DELAI_REEL = 300.0
-# L'utilisateur que les descriptions de loom-notes nomment.
-NOMME = "Denis"
 ARTISAN = "l'artisan"
 PROJET = "dupont"
 CLIENTS = ("dupont", "martin")
-# Les caches de modèles que le serveur doit retrouver, s'ils sont déplacés.
-CACHES = ("HF_HOME", "HF_HUB_CACHE")
-# La version publiée de loom-notes, lancée par uvx quand --serveur n'est pas donné.
-LOOM_NOTES = "1.1.0"
-# Ce dont uvx a besoin pour retrouver l'environnement préparé : le serveur n'hérite
-# que d'un environnement réduit.
-UV_ENV = ("UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR")
 
 NOTES = (
     (
@@ -138,14 +113,14 @@ NOTES = (
     ),
 )
 RAPPEL = {
+    "action": "add_text",
     "text": "Mme Martin préfère être rappelée après 17 h.",
     "title": "Rappels de Mme Martin",
-    "project": PROJET,
 }
 IMPREVU = {
+    "action": "add_text",
     "text": "Mme Martin est joignable le samedi matin.",
     "title": "Samedis de Mme Martin",
-    "project": PROJET,
 }
 
 DEMANDE_CARNET = "Mémorise ces trois notes de mon carnet :\n" + "\n".join(
@@ -157,45 +132,23 @@ DEMANDE_QUAND = "Quand puis-je rappeler Mme Martin ?"
 DEMANDE_LISTE = "Liste les documents de la mémoire."
 DEMANDE_EFFACE = "Efface la note sur les rappels de Mme Martin."
 
-GARDE = " Uniquement si l'artisan le demande dans son message ; chaque écriture attend son accord."
-# Ce que le modèle lit des outils qui nomment l'utilisateur de loom-notes ;
-# get, list_docs et projects gardent la leur.
-DESCRIPTIONS = {
-    "search": (
-        "Recherche dans la mémoire de l'entreprise : notes, devis, clients, chantiers. À "
-        "appeler avant de répondre sur un client, un devis ou une décision passée. Rend des "
-        "extraits courts avec doc_id, titre, projet et score ; get lit un document en entier."
-    ),
-    "add_text": "Ajoute une note à la mémoire." + GARDE,
-    "add_url": (
-        "Télécharge une page web, en extrait le contenu principal et l'ajoute à la mémoire. "
-        "Le titre est celui de la page." + GARDE
-    ),
-    "add_file": (
-        "Ajoute un fichier markdown local à la mémoire, découpé par titres. Le titre est le "
-        "premier H1, sinon le nom du fichier." + GARDE
-    ),
-    "update": (
-        "Remplace le texte d'un document existant (même doc_id ; titre, projet et tags "
-        "conservés)." + GARDE
-    ),
-    "delete": (
-        "Supprime définitivement un document de la mémoire. Rend le résumé de ce qui a été "
-        "supprimé." + GARDE
-    ),
-}
+# Ce que la config ajoute à la description de l'outil : à quoi sert cette mémoire.
+SKILL = (
+    "La mémoire de l'entreprise : notes, devis, clients, chantiers. Chercher (search) avant "
+    "de répondre sur un client, un devis ou une décision passée."
+)
 
 SYSTEME = (
-    "Tu es l'assistant d'un artisan plombier. Sa mémoire (outils memoire__*) garde ses notes : "
+    "Tu es l'assistant d'un artisan plombier. Sa mémoire (l'outil memory) garde ses notes : "
     "clients, devis, chantiers. Avant de répondre sur un client, un devis ou une décision "
-    "passée, cherche dans la mémoire avec memoire__search. N'écris dans la mémoire que si "
+    "passée, cherche dans la mémoire (action search). N'écris dans la mémoire que si "
     "l'artisan le demande dans son message ; chaque écriture attend son accord, et un refus ne "
     "se discute pas. Réponds en une ou deux phrases."
 )
 
 
-def appel(nom: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {"name": f"{SERVEUR}__{nom}", "arguments": arguments}
+def appel(action: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {"name": OUTIL, "arguments": {"action": action, **arguments}}
 
 
 def script(efface: str | None = None) -> list[dict[str, Any]]:
@@ -204,13 +157,12 @@ def script(efface: str | None = None) -> list[dict[str, Any]]:
     ``efface`` : le document que « Efface la note… » supprime — connu une fois
     la note écrite, il demande de réécrire la config.
     """
-    # Les trois notes l'une après l'autre : en réel, le premier appel charge le
-    # modèle, et loom-notes ne protège pas ce chargement d'appels simultanés.
+    # Les trois notes l'une après l'autre : une approbation chacune.
     pas: list[dict[str, Any]] = [
         {
             "with_text": "trois notes",
             "text": f"Je mémorise « {titre_} ».",
-            "tool_calls": [appel("add_text", {"text": texte, "title": titre_, "project": PROJET})],
+            "tool_calls": [appel("add_text", {"text": texte, "title": titre_})],
         }
         for titre_, texte in NOTES
     ]
@@ -229,7 +181,7 @@ def script(efface: str | None = None) -> list[dict[str, Any]]:
         {
             "with_text": "Mémorise que",
             "text": "Je le note.",
-            "tool_calls": [appel("add_text", RAPPEL)],
+            "tool_calls": [{"name": OUTIL, "arguments": RAPPEL}],
         },
         {"with_text": "Mémorise que", "text": "C'est noté."},
         {
@@ -240,7 +192,7 @@ def script(efface: str | None = None) -> list[dict[str, Any]]:
         {
             "with_text": "Quand puis-je",
             "text": "Je note aussi qu'elle est joignable le samedi.",
-            "tool_calls": [appel("add_text", IMPREVU)],
+            "tool_calls": [{"name": OUTIL, "arguments": IMPREVU}],
         },
         {"with_text": "Quand puis-je", "text": "Après 17 h, d'après vos notes."},
         {"with_text": "Liste les documents", "tool_calls": [appel("list_docs", {"n": 50})]},
@@ -315,45 +267,21 @@ def enonce(quoi: str, texte: str, largeur: int = 96) -> None:
 # --- La config ----------------------------------------------------------------------
 
 
-def serveur_memoire(base: Path, args: argparse.Namespace, *, clients: bool) -> dict[str, Any]:
-    """Le serveur ``memoire`` : son lancement, sa base, et ce que la config dit de ses outils."""
-    env: dict[str, str] = {
-        "FASTMCP_SHOW_SERVER_BANNER": "false",
-        "FASTMCP_CHECK_FOR_UPDATES": "off",
-        "FASTMCP_LOG_LEVEL": "WARNING",
+def memoire(args: argparse.Namespace, *, clients: bool) -> dict[str, Any]:
+    """La référence ``loom.memory`` de l'agent : sa base, son projet, ses actions, ses modèles."""
+    reference: dict[str, Any] = {
+        "python": "loom.memory",
+        # Un client : sa base au chemin que nomment ses secrets.
+        "store": {"path_env": "MEMOIRE_BASE"} if clients else {"path": "memoire.db"},
+        "project": PROJET,
+        "models": {"device": args.device} if args.reel else {"kind": "fake"},
+        "actions": [*LECTURES, *ECRITURES],
+        "skill": SKILL,
     }
     if args.reel:
-        # Les modèles se chargent au premier appel qui en a besoin, pas en tâche de fond :
-        # un chargement à la fois.
-        env |= {"LOOM_NOTES_DEVICE": args.device, "LOOM_NOTES_WARMUP_ON_START": "false"}
-        env |= {nom: os.environ[nom] for nom in CACHES if nom in os.environ}
-    else:
-        env["LOOM_NOTES_FAKE_MODELS"] = "true"
-    if args.serveur is None:
-        env |= {nom: os.environ[nom] for nom in UV_ENV if nom in os.environ}
-    if not clients:
-        env["LOOM_NOTES_DATA_DIR"] = str(base / "memoire")
-    outils: dict[str, dict[str, Any]] = {nom: {"description": d} for nom, d in DESCRIPTIONS.items()}
-    for nom in ECRITURES:
-        outils[nom]["approval"] = "always"
-    if args.reel:
-        for nom in CHARGENT:
-            outils[nom]["timeout"] = DELAI_REEL
-    memoire: dict[str, Any] = {
-        "name": SERVEUR,
-        "transport": "stdio",
-        "command": args.commande,
-        "args": list(args.arguments),
-        "cwd": str(base),
-        "env": env,
-        # Gardé ouvert le temps de l'instance : en réel, avec ses modèles chargés.
-        "idle_timeout": None,
-        "tools": outils,
-    }
-    if clients:
-        # Un serveur par client, sa base dans le dossier que nomment ses secrets.
-        memoire |= {"scope": "tenant", "env_from": {"LOOM_NOTES_DATA_DIR": "MEMOIRE_DOSSIER"}}
-    return memoire
+        # Le premier appel qui en a besoin charge les modèles.
+        reference["timeout"] = DELAI_REEL
+    return reference
 
 
 def ecrit_config(
@@ -362,6 +290,7 @@ def ecrit_config(
     """La config : le serveur, l'orchestrateur simulé, et en réel MiniMax-M3."""
     (base / "agents").mkdir(parents=True, exist_ok=True)
     reel = args.reel and not clients
+    outil = memoire(args, clients=clients)
     modeles: list[dict[str, Any]] = [
         {
             "id": "FAKE_MAIN",
@@ -378,13 +307,12 @@ def ecrit_config(
     config: dict[str, Any] = {
         "version": 1,
         "models": modeles,
-        "mcp_servers": [serveur_memoire(base, args, clients=clients)],
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "telemetry": {"logging": {"level": "WARNING"}, "capture": {"raw_exchanges": True}},
     }
     if clients:
         config["tenants"] = [
-            {"id": client, "secrets": {"MEMOIRE_DOSSIER": f"{client.upper()}_MEMOIRE"}}
+            {"id": client, "secrets": {"MEMOIRE_BASE": f"{client.upper()}_MEMOIRE"}}
             for client in CLIENTS
         ]
     (base / "loom.yaml").write_text(
@@ -396,7 +324,7 @@ def ecrit_config(
             "description": "Répond à l'artisan en s'appuyant sur sa mémoire.",
             "main": {"model": modele, "system": SYSTEME},
             "max_iterations": 6,
-            "tools": [{"mcp": SERVEUR, "required": True}],
+            "tools": [outil],
         }
         (base / "agents" / f"{nom}.yaml").write_text(
             yaml.safe_dump(agent, allow_unicode=True, sort_keys=False), encoding="utf-8"
@@ -432,14 +360,11 @@ def demandes(events: list[Event]) -> list[str]:
 
 
 def liste(rendu: ToolCompleted) -> list[dict[str, Any]] | None:
-    """La liste qu'un outil de la mémoire a rendue (``search``, ``list_docs``) ; sinon ``None``.
-
-    FastMCP enveloppe une liste dans ``{"result": …}`` ; loom en fait le ``data``.
-    """
+    """La liste que la mémoire a rendue (``search``, ``list_docs``) ; sinon ``None``."""
     data = rendu.output.data
-    if not isinstance(data, dict) or not isinstance(data.get("result"), list):
+    if not isinstance(data, list):
         return None
-    return [cast(dict[str, Any], item) for item in cast(list[Any], data["result"])]
+    return [cast(dict[str, Any], item) for item in data]
 
 
 def resume(rendu: ToolCompleted) -> str:
@@ -489,8 +414,13 @@ def sans_suite(result: RunResult, fait: str) -> str:
     return f"MiniMax {fait}"
 
 
-def rendus_de(events: list[Event], outil: str) -> list[ToolCompleted]:
-    return [r for f, r in appels(events) if f.tool_name == f"{SERVEUR}__{outil}" and r]
+def action(fait: ToolCalled | PendingApproval) -> str:
+    """L'action d'un appel de la mémoire."""
+    return str(fait.arguments.get("action", ""))
+
+
+def rendus_de(events: list[Event], quoi: str) -> list[ToolCompleted]:
+    return [r for f, r in appels(events) if f.tool_name == OUTIL and action(f) == quoi and r]
 
 
 def titres(documents: list[dict[str, Any]]) -> list[str]:
@@ -540,15 +470,11 @@ async def decide(
 
 
 class ReleveImpossible(Exception):
-    """La mémoire n'a pas pu être relevée : son serveur ne répond pas comme prévu."""
+    """La mémoire n'a pas pu être relevée : elle ne répond pas comme prévu."""
 
 
 async def releve(loom: Loom, *, tenant: TenantId | None = None) -> list[dict[str, Any]]:
-    """Ce que la mémoire contient, lu par l'orchestrateur simulé (``list_docs``).
-
-    Il passe par le même serveur que l'agent : une base embarquée ne s'ouvre
-    que dans un process à la fois.
-    """
+    """Ce que la mémoire contient, lu par l'orchestrateur simulé (``list_docs``)."""
     result, events = await demande(loom, "assistant", DEMANDE_LISTE, tenant=tenant)
     rendus = rendus_de(events, "list_docs")
     trouves = liste(rendus[0]) if len(rendus) == 1 else None
@@ -615,25 +541,21 @@ async def cas_chercher(atelier: Atelier, controle: Controle) -> None:
         raconte(result, events)
     outils = proposes(events)
     lus = {str(o.get("name")): str(o.get("description")) for o in outils}
-    enonce("  le modèle lit memoire__search : ", lus.get(f"{SERVEUR}__search", "(absent)"))
+    decrit = lus.get(OUTIL, "(absent)")
+    enonce("  le modèle lit memory : ", decrit)
     print(
-        f"  il voit les neuf outils, aucun ne nomme {NOMME}, les descriptions sont celles "
-        "de la config : "
+        "  il voit un seul outil, memory, au projet imposé, avec le skill de la config : "
         + controle.tient(
-            "chercher : les outils vus par le modèle ne sont pas ceux annoncés",
-            sorted(lus) == sorted(f"{SERVEUR}__{n}" for n in LECTURES + ECRITURES)
-            and NOMME not in json.dumps(outils, ensure_ascii=False)
-            and all(lus[f"{SERVEUR}__{n}"] == d for n, d in DESCRIPTIONS.items()),
+            "chercher : l'outil vu par le modèle n'est pas celui annoncé",
+            sorted(lus) == [OUTIL] and f"Projet imposé : {PROJET}" in decrit and SKILL in decrit,
         )
     )
-    lectures = {f"{SERVEUR}__{n}" for n in LECTURES}
-    lu = [f.tool_name for f, _ in appels(events) if f.tool_name in lectures]
+    lu = [action(f) for f, _ in appels(events) if f.tool_name == OUTIL and action(f) in LECTURES]
     if lu:
         print(
             "  la lecture n'a demandé aucune approbation : "
             + controle.tient(
-                "chercher : une lecture a demandé une approbation",
-                not set(demandes(events)) & lectures,
+                "chercher : une lecture a demandé une approbation", not demandes(events)
             )
         )
     if not atelier.reel:
@@ -666,8 +588,9 @@ async def cas_memoriser(atelier: Atelier, controle: Controle) -> None:
         titre(f"Run de {atelier.agent} : {DEMANDE_RAPPEL}")
         asked, events = await demande(loom, atelier.agent, DEMANDE_RAPPEL)
         deja = raconte(asked, events)
-        ecritures = {f"{SERVEUR}__{n}" for n in ECRITURES}
-        attente = [a for a in asked.pending_approvals if a.tool_name in ecritures]
+        attente = [
+            a for a in asked.pending_approvals if a.tool_name == OUTIL and action(a) in ECRITURES
+        ]
         if asked.status == RunStatus.PAUSED and attente:
             await accorde_la_note(atelier, loom, controle, asked, attente[0], avant, deja)
             if atelier.reel:
@@ -708,10 +631,9 @@ async def accorde_la_note(
     apres = await releve(loom)
     nouveaux = sorted(set(titres(apres)) - set(titres(avant)))
     print(f"  la mémoire : {', '.join(titres(apres))}")
-    if attente.tool_name != f"{SERVEUR}__add_text":
+    if action(attente) != "add_text":
         print(
-            f"  l'écriture accordée est {attente.tool_name}, pas add_text : "
-            "la note n'est pas suivie"
+            f"  l'écriture accordée est {action(attente)}, pas add_text : la note n'est pas suivie"
         )
         controle.saute("memoriser (écriture accordée autre que add_text : non suivie)", partie=True)
         return
@@ -752,8 +674,7 @@ async def refuse_l_imprevu(atelier: Atelier, loom: Loom, controle: Controle) -> 
         + controle.tient(
             "memoriser : le run ne s'arrête pas avant l'écriture imprévue",
             asked.status == RunStatus.PAUSED
-            and [(a.tool_name, a.arguments) for a in asked.pending_approvals]
-            == [(f"{SERVEUR}__add_text", IMPREVU)],
+            and [(a.tool_name, a.arguments) for a in asked.pending_approvals] == [(OUTIL, IMPREVU)],
         )
     )
     titre(f"{ARTISAN.capitalize()} refuse")
@@ -790,7 +711,7 @@ async def cas_rejeu(atelier: Atelier, controle: Controle) -> None:
         + controle.tient(
             "rejeu : la note n'a pas été effacée",
             asked.status == RunStatus.PAUSED
-            and [a.tool_name for a in asked.pending_approvals] == [f"{SERVEUR}__delete"]
+            and [action(a) for a in asked.pending_approvals] == ["delete"]
             and fini.status == RunStatus.COMPLETED
             and document not in {d.get("doc_id") for d in efface},
         )
@@ -821,9 +742,9 @@ async def cas_rejeu(atelier: Atelier, controle: Controle) -> None:
 
 
 @contextmanager
-def dossiers_clients(dossier: Path) -> Generator[dict[str, Path]]:
-    """Le dossier de chaque client, dans la variable que nomment ses secrets."""
-    dossiers = {client: dossier / f"memoire-{client}" for client in CLIENTS}
+def bases_clients(dossier: Path) -> Generator[dict[str, Path]]:
+    """La base de chaque client, dans la variable que nomment ses secrets."""
+    dossiers = {client: dossier / f"{client}.db" for client in CLIENTS}
     variables = {f"{client.upper()}_MEMOIRE": str(d) for client, d in dossiers.items()}
     avant = {nom: os.environ.get(nom) for nom in variables}
     os.environ.update(variables)
@@ -838,17 +759,11 @@ def dossiers_clients(dossier: Path) -> Generator[dict[str, Path]]:
 
 
 async def cas_clients(atelier: Atelier, controle: Controle) -> None:
-    if atelier.reel:
-        controle.saute(
-            "clients (en --reel : chaque client y chargerait les modèles dans son serveur ; "
-            "joué en simulé)"
-        )
-        return
     dupont, martin = (TenantId(client) for client in CLIENTS)
-    with dossiers_clients(atelier.dossier) as dossiers:
+    with bases_clients(atelier.dossier) as dossiers:
         fichier = ecrit_config(atelier.dossier / "clients", atelier.args, clients=True)
         for client, chemin in dossiers.items():
-            print(f"  {client} : base dans {chemin.name}/, nommée par {client.upper()}_MEMOIRE")
+            print(f"  {client} : base {chemin.name}, nommée par {client.upper()}_MEMOIRE")
         async with Loom(load_config(fichier)) as loom:
             titre(f"Dupont : {DEMANDE_RAPPEL}")
             asked, events = await demande(loom, "assistant", DEMANDE_RAPPEL, tenant=dupont)
@@ -878,10 +793,10 @@ async def cas_clients(atelier: Atelier, controle: Controle) -> None:
         )
     )
     print(
-        "  deux bases, chacune dans le dossier de son client : "
+        "  deux bases, chacune au chemin que nomment les secrets de son client : "
         + controle.tient(
-            "clients : les deux bases ne sont pas dans leurs dossiers",
-            all((chemin / "qdrant").is_dir() for chemin in dossiers.values()),
+            "clients : les deux bases ne sont pas à leurs chemins",
+            all(chemin.is_file() for chemin in dossiers.values()),
         )
     )
 
@@ -900,53 +815,14 @@ async def jouer(nom: str, atelier: Atelier, controle: Controle) -> None:
         await cas_clients(atelier, controle)
 
 
-def prepare_uvx(reel: bool) -> tuple[str, tuple[str, ...]] | None:
-    """Prépare loom-notes de PyPI par uvx ; rend la commande du serveur, ou None.
-
-    Le premier lancement résout et télécharge le paquet : il est fait ici, hors du
-    délai de connexion de loom (``connect_timeout``), et uvx montre sa progression.
-    """
-    uvx = shutil.which("uvx")
-    if uvx is None:
-        print(
-            "uvx introuvable : installe uv, ou passe --serveur <binaire loom-notes-mcp>.",
-            file=sys.stderr,
-        )
-        return None
-    paquet = f"loom-notes[models]=={LOOM_NOTES}" if reel else f"loom-notes=={LOOM_NOTES}"
-    print(f"Préparation de {paquet} par uvx…")
-    try:
-        subprocess.run(
-            [uvx, "--from", paquet, "loom-notes", "--help"], check=True, stdout=subprocess.DEVNULL
-        )
-    except subprocess.CalledProcessError:
-        print(f"uvx n'a pas pu préparer {paquet} (voir ci-dessus).", file=sys.stderr)
-        return None
-    return uvx, ("--from", paquet, "loom-notes-mcp")
-
-
 async def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="La mémoire long terme : loom-notes en MCP")
-    parser.add_argument(
-        "--serveur", type=Path, help="binaire loom-notes-mcp local, à la place du paquet PyPI"
-    )
+    parser = argparse.ArgumentParser(description="La mémoire long terme : l'outil loom.memory")
     parser.add_argument("--reel", action="store_true", help="vrais modèles (assistant_reel)")
     parser.add_argument("--cas", action="append", choices=CAS, help="cas à jouer (tous par défaut)")
     parser.add_argument(
-        "--device", default="cuda", help="périphérique des modèles de loom-notes en --reel"
+        "--device", default="cuda", help="périphérique des modèles de la mémoire en --reel"
     )
     args = parser.parse_args(argv)
-    if args.serveur is not None:
-        args.serveur = args.serveur.expanduser().resolve()
-        if not args.serveur.is_file():
-            print(f"Serveur : {args.serveur} introuvable", file=sys.stderr)
-            return 2
-        args.commande, args.arguments, args.decrit = str(args.serveur), (), str(args.serveur)
-    elif (lancement := prepare_uvx(args.reel)) is None:
-        return 2
-    else:
-        args.commande, args.arguments = lancement
-        args.decrit = f"loom-notes {LOOM_NOTES} (PyPI, par uvx)"
     cas = tuple(args.cas) if args.cas else CAS
     if "rejeu" in cas and "memoriser" not in cas:
         print("Le cas `rejeu` rejoue l'écriture de `memoriser` : `memoriser` est joué d'abord.")
@@ -957,7 +833,7 @@ async def main(argv: list[str]) -> int:
         try:
             atelier = Atelier(args, Path(dossier))
             modeles = f"vrais, sur {args.device}" if args.reel else "factices"
-            print(f"Agent : {atelier.agent} ; serveur : {args.decrit} ; modèles {modeles}")
+            print(f"Agent : {atelier.agent} ; mémoire : loom.memory ; modèles {modeles}")
             for nom in cas:
                 print(f"\n{'─' * 78}\nCas {nom}\n{'─' * 78}")
                 try:

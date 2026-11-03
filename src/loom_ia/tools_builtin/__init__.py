@@ -216,6 +216,17 @@ BUILTIN_TOOLS: Final[dict[str, str | Builtin]] = {
         extra="sql",
         own_description=True,
     ),
+    "loom.memory": Builtin(
+        target="loom_ia.tools_builtin.memory:build",
+        params="loom_ia.tools_builtin.memory_params:MemoryParams",
+        refused=("approval", "side_effects", "idempotent"),
+        refused_because=(
+            "chaque action permise a son approbation (actions.<action>.approval), et ses "
+            "effets tiennent à l'action"
+        ),
+        extra="memory",
+        own_description=True,
+    ),
     "loom.state": Builtin(
         target="loom_ia.tools_builtin.state:build",
         params="loom_ia.tools_builtin.state_params:StateParams",
