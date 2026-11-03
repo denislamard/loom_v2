@@ -7,6 +7,7 @@ Modèles factices, base dans un dossier temporaire : ni torch ni réseau.
 import asyncio
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -225,6 +226,41 @@ async def test_concurrent_writes_on_one_file_all_land(tmp_path: Path) -> None:
         *(add(service, f"Note numéro {i}.", f"Note {i}") for i, service in enumerate(services))
     )
     assert services[0].store.count() == (4, 4)
+
+
+class Contended:
+    """Une connexion dont le passage en WAL est refusé ``busy`` fois, puis accepté."""
+
+    def __init__(self, busy: int, code: int = sqlite3.SQLITE_BUSY) -> None:
+        self.busy = busy
+        self.code = code
+        self.tries = 0
+
+    def execute(self, statement: str) -> None:
+        assert statement == "PRAGMA journal_mode = WAL"
+        self.tries += 1
+        if self.tries <= self.busy:
+            error = sqlite3.OperationalError("database is locked")
+            error.sqlite_errorcode = self.code
+            raise error
+
+
+def test_switching_to_wal_is_retried_while_the_base_is_busy() -> None:
+    """Une base neuve ouverte par plusieurs connexions : « occupée » sur-le-champ, puis libre."""
+    connection = Contended(busy=3)
+    store_module.use_wal(cast(sqlite3.Connection, connection))
+    assert connection.tries == 4
+
+
+def test_switching_to_wal_gives_up_after_the_timeout_or_on_another_error() -> None:
+    busy = Contended(busy=1_000)
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        store_module.use_wal(cast(sqlite3.Connection, busy), timeout=0.05)
+    assert busy.tries > 1
+    broken = Contended(busy=1, code=sqlite3.SQLITE_IOERR)
+    with pytest.raises(sqlite3.OperationalError):
+        store_module.use_wal(cast(sqlite3.Connection, broken))
+    assert broken.tries == 1
 
 
 async def test_a_base_indexed_by_another_model_is_refused(tmp_path: Path) -> None:

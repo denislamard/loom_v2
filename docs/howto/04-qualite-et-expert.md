@@ -3095,15 +3095,17 @@ uv run loom --config memoire/loom.yaml memory export memoire sauvegarde-dupont.j
 1 document(s) écrit(s) dans sauvegarde-dupont.jsonl
 ```
 
-`loom memory import` le réimporte (sans doublon), `loom memory reindex` recalcule les passages après un changement de modèle, `loom memory eval` mesure la recherche sur un jeu de questions dont on connaît la réponse.
+`loom memory import` le réimporte (sans doublon), `loom memory reindex` recalcule les passages après un changement de modèle, `loom memory eval` mesure la recherche sur un jeu de questions dont on connaît la réponse : une ligne JSON par question, `{"query": …, "doc_id": …}`. Ajoutez des questions hors sujet, avec `"doc_id": null` : elles ne comptent pas dans le recall, mais leur meilleur score situe le bruit, et le `min_score` suggéré tombe entre ce bruit et la réponse attendue la plus faible (ou la commande dit qu'aucun seuil ne les sépare). Prenez les questions dans les requêtes réelles de l'agent (les `query` de ses appels `search` au journal) : le modèle reformule, et ses requêtes scorent souvent plus bas que les vôtres.
 
 #### À retenir
 
 - La mémoire est un outil fourni : une référence `loom.memory` dans l'agent, rien à lancer à côté. Les écritures attendent un accord par défaut, les lectures passent ; une action non permise n'existe pas pour le modèle.
 - L'isolation entre clients tient à `store.path_env`, lu dans les secrets de chaque client : une base par client. Le projet imposé (`project`) sépare en plus les usages d'une même base.
 - Les vrais modèles sont chargés une fois par process, partagés par tous les agents et tous les clients : de l'ordre de 4,5 Go de mémoire vive sur CPU, 2,3 Go de mémoire du GPU en demi-précision. `models.preload: true` les charge dès le montage de l'agent plutôt qu'au premier appel.
+- `models.offline: true` lit les modèles dans le cache local de Hugging Face seulement : aucune requête vers le Hub au démarrage, et l'agent ne dépend plus du réseau pour tourner. Téléchargez-les une fois avant (`hf download BAAI/bge-m3 --exclude "onnx/*"`, `hf download BAAI/bge-reranker-v2-m3`) : un modèle absent du cache fait échouer le chargement, avec la commande à lancer.
 - Le run qui a écrit se rejoue à l'identique **sans réécrire la note** : le rejeu lit les résultats au journal. En variante (chapitre 26), l'outil est jugé au pire de ses actions permises : avec une écriture permise, aucune action de la mémoire n'y est exécutée.
-- **Piège** : le premier appel avec les vrais modèles les charge (et les télécharge la première fois) : sur CPU, comptez des dizaines de secondes. Donnez à l'outil un `timeout` en conséquence, ou `models.preload: true`.
+- **Piège** : le premier appel avec les vrais modèles les charge (et les télécharge la première fois), et indexer une page sur CPU prend de l'ordre de 1,5 s par passage (35 s pour une page de 23 passages). L'outil a son propre délai, 300 s, au lieu des 30 s communs des outils ; `timeout` dans la référence le change. `models.preload: true` charge les modèles dès le montage.
+- **Piège** : `models.device: cuda` forcé sur une carte que la version installée de torch ne prend pas en charge fait échouer le chargement, avec la raison (architecture de la carte, aucun GPU vu, carte absente). `auto` se replie sur le CPU avec un avertissement.
 - **Non exécuté ici** : la recherche par le sens réelle (`search`), qui demande les vrais modèles.
 
 ---

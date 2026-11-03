@@ -177,7 +177,7 @@ def test_the_description_says_the_project_and_what_waits(memory: MemoryTool) -> 
 # --- Approbation appel par appel ----------------------------------------------------------
 
 
-def test_reads_pass_and_writes_wait(memory: MemoryTool) -> None:
+async def test_reads_pass_and_writes_wait(memory: MemoryTool) -> None:
     search = memory.assess_call({"action": "search", "query": "devis"})
     assert (search.approval, search.side_effects) == ("never", "none")
     add = memory.assess_call({"action": "add_text", "text": NOTE, "title": "Devis Martin"})
@@ -186,7 +186,8 @@ def test_reads_pass_and_writes_wait(memory: MemoryTool) -> None:
         "mémoriser un texte « Devis Martin » dans le projet documentation — la config exige "
         "une approbation pour add_text"
     )
-    delete = memory.assess_call({"action": "delete", "doc_id": "x"})
+    added = await call(memory, action="add_text", text=NOTE, title="Devis Martin")
+    delete = memory.assess_call({"action": "delete", "doc_id": added["doc_id"]})
     assert (delete.approval, delete.side_effects, delete.idempotent) == (
         "always",
         "irreversible",
@@ -208,6 +209,98 @@ def test_a_call_that_will_be_refused_has_no_effect(memory: MemoryTool) -> None:
     ):
         found = memory.assess_call(cast(dict[str, JsonValue], arguments))
         assert (found.approval, found.side_effects) == ("never", "none")
+
+
+async def test_a_file_add_file_cannot_read_is_not_put_to_a_human(
+    memory: MemoryTool, workspace: Path
+) -> None:
+    """Dossier, droit et extension sont vérifiés avant l'approbation ; le contenu, à l'exécution."""
+    (workspace / "plaquette.docx").write_bytes(b"PK\x03\x04")
+    allowed = memory.assess_call({"action": "add_file", "file": "workspace/cgv.md"})
+    assert (allowed.approval, allowed.side_effects) == ("always", "reversible")
+    assert allowed.reason is not None and "workspace/cgv.md" in allowed.reason
+    for file in ("workspace/plaquette.docx", "inconnu/cgv.md", "workspace/../hors.md"):
+        found = memory.assess_call({"action": "add_file", "file": file})
+        assert (found.approval, found.side_effects) == ("never", "none"), file
+    # Refusé tout de suite à l'exécution, pour la même raison.
+    await refused(
+        memory, r"extension \.docx refusée", action="add_file", file="workspace/plaquette.docx"
+    )
+    # Un fichier absent passe l'évaluation : il peut être déposé pendant l'attente.
+    missing = memory.assess_call({"action": "add_file", "file": "workspace/a-venir.md"})
+    assert missing.approval == "always"
+
+
+def assessed(tool: MemoryTool, **arguments: JsonValue) -> tuple[str, str]:
+    found = tool.assess_call(arguments)
+    return found.approval, found.side_effects
+
+
+async def test_an_update_or_delete_that_writes_nothing_is_not_put_to_a_human(
+    tmp_path: Path, memory: MemoryTool
+) -> None:
+    """Document inconnu, d'un autre projet, texte inchangé ou déjà pris : aucune approbation."""
+    base = tmp_path / "memoire.db"
+    # Base absente : aucun document, et le coup d'œil ne la crée pas.
+    assert assessed(memory, action="delete", doc_id="inconnu") == ("never", "none")
+    assert not base.exists()
+    note = await call(memory, action="add_text", text=NOTE, title="Devis Martin")
+    other = await call(memory, action="add_text", text="Facture F-2026-007.", title="Facture")
+    doc_id = note["doc_id"]
+    waiting = ("always", "irreversible")
+    assert assessed(memory, action="delete", doc_id=doc_id) == waiting
+    assert assessed(memory, action="delete", doc_id=f"  {doc_id} ") == waiting
+    assert assessed(memory, action="update", doc_id=doc_id, text="Nouveau texte.") == (
+        "always",
+        "reversible",
+    )
+    nothing = ("never", "none")
+    assert assessed(memory, action="delete", doc_id="inconnu") == nothing
+    assert assessed(memory, action="update", doc_id="inconnu", text="x") == nothing
+    # Même texte, à la casse et aux espaces près : rien ne serait écrit.
+    assert assessed(memory, action="update", doc_id=doc_id, text=f"  {NOTE.upper()}  ") == nothing
+    # Le texte d'un autre document : refusé à l'exécution.
+    assert assessed(memory, action="update", doc_id=doc_id, text="Facture F-2026-007.") == nothing
+    await refused(
+        memory, "déjà celui du document", action="update", doc_id=doc_id, text="Facture F-2026-007."
+    )
+    # Un autre projet imposé ne voit pas ce document.
+    elsewhere = mounted(tmp_path, project="ailleurs")
+    assert assessed(elsewhere, action="delete", doc_id=other["doc_id"]) == nothing
+
+
+async def test_adding_a_text_the_project_already_has_is_not_put_to_a_human(
+    tmp_path: Path, memory: MemoryTool
+) -> None:
+    """Le même texte (casse et espaces mis à part) : ``duplicate_of``, sans approbation."""
+    new = ("always", "reversible")
+    assert assessed(memory, action="add_text", text=NOTE, title="Devis Martin") == new
+    first = await call(memory, action="add_text", text=NOTE, title="Devis Martin")
+    nothing = ("never", "none")
+    again = {"action": "add_text", "text": f" {NOTE.upper()} ", "title": "Autre titre"}
+    assert assessed(memory, **again) == nothing
+    assert (await call(memory, **again))["duplicate_of"] == first["doc_id"]
+    assert assessed(memory, action="add_text", text="Un texte neuf.", title="Neuf") == new
+    # Refusés à l'exécution : titre trop court, texte vide.
+    assert assessed(memory, action="add_text", text=NOTE, title="D") == nothing
+    assert assessed(memory, action="add_text", text="   ", title="Vide") == nothing
+    # Un autre projet n'a pas ce texte : l'écriture y créerait un document.
+    free = mounted(tmp_path, actions=["search", "add_text", "projects"])
+    assert assessed(free, action="add_text", text=NOTE, title="Devis", project="chantiers") == new
+    # Le projet donné par le modèle est mis en forme comme à l'écriture.
+    assert assessed(
+        free, action="add_text", text=NOTE, title="Devis", project=" Documentation "
+    ) == (nothing)
+
+
+@pytest.mark.parametrize("content", [b"pas une base SQLite", b""])
+def test_an_unreadable_base_asks_as_usual(tmp_path: Path, content: bytes) -> None:
+    """Au moindre doute (fichier abîmé, schéma absent), l'approbation est demandée."""
+    (tmp_path / "memoire.db").write_bytes(content)
+    tool = mounted(tmp_path, actions=["add_text", "delete"], project="p")
+    assert assessed(tool, action="delete", doc_id="x") == ("always", "irreversible")
+    assert assessed(tool, action="add_text", text=NOTE, title="Devis") == ("always", "reversible")
+    assert (tmp_path / "memoire.db").read_bytes() == content
 
 
 # --- Exécution ---------------------------------------------------------------------------
@@ -394,6 +487,15 @@ def test_mounted_from_the_config(demo: ConfigFactory) -> None:
     [spec] = [tool for tool in agent.context.tools.specs if tool.name == "memory"]
     assert "Projet imposé : documentation" in spec.description
     assert spec.skill == "Base documentaire de l'entreprise."
+
+
+def test_the_tool_has_its_own_timeout_and_the_agent_may_change_it(demo: ConfigFactory) -> None:
+    """Indexer une page sur CPU dépasse les 30 s communs : l'outil en déclare 300."""
+    for given, expected in (({}, 300.0), ({"timeout": 900}, 900.0)):
+        path = demo(agents=[memory_agent(**given)], storage=JSONL)
+        agent = build_agent(load_config(path), "demo", InMemoryEventStore())
+        [spec] = [tool for tool in agent.context.tools.specs if tool.name == "memory"]
+        assert spec.timeout == expected
 
 
 @pytest.mark.parametrize("setting", ["approval", "side_effects", "idempotent"])

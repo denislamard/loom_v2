@@ -18,8 +18,9 @@ connexion par opération, ouverte et fermée dans le thread qui l'utilise.
 """
 
 import sqlite3
+import time
 from array import array
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,35 @@ from loom_ia.tools_builtin.memory.records import Chunk, Document, SourceKind
 
 SCHEMA_VERSION: Final = "1"
 BUSY_TIMEOUT_S: Final = 10.0
+# Un coup d'œil avant un appel tourne dans la boucle du moteur : il n'attend pas un verrou.
+PEEK_TIMEOUT_S: Final = 0.5
+
+# Attentes entre deux essais du passage en WAL, en secondes : de 10 ms à 200 ms.
+_WAL_FIRST_WAIT: Final = 0.01
+_WAL_LONGEST_WAIT: Final = 0.2
+_BUSY: Final = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED})
+
+
+def use_wal(connection: sqlite3.Connection, timeout: float = BUSY_TIMEOUT_S) -> None:
+    """Passe la base en WAL, en réessayant tant qu'elle est occupée, au plus ``timeout``.
+
+    Le passage demande un verrou exclusif. Quand plusieurs connexions ouvrent en
+    même temps une base neuve, SQLite peut répondre « occupée » sur-le-champ, sans
+    attendre ``busy_timeout`` (il y voit un interblocage) : l'essai est refait.
+    Une base déjà en WAL le reste, sans verrou.
+    """
+    deadline = time.monotonic() + timeout
+    wait = _WAL_FIRST_WAIT
+    while True:
+        try:
+            connection.execute("PRAGMA journal_mode = WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            if exc.sqlite_errorcode not in _BUSY or time.monotonic() >= deadline:
+                raise
+        time.sleep(wait)
+        wait = min(wait * 2, _WAL_LONGEST_WAIT)
+
 
 _DDL: Final = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -73,6 +103,15 @@ _DOCUMENT_COLUMNS: Final = (
 
 class ModelMismatchError(Exception):
     """La base a été indexée avec un autre modèle que celui de la config."""
+
+
+@dataclass(frozen=True, slots=True)
+class Peeked:
+    """Ce qu'un coup d'œil à la base dit d'un document (``MemoryStore.peek``)."""
+
+    doc: Document | None
+    # Dans le projet de ``doc``, le document qui a déjà le contenu cherché.
+    same: Document | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +200,7 @@ class MemoryStore:
         ``check=False`` : seulement pour ``reindex``, qui remplace l'index.
         """
         with self._connection() as connection:
-            connection.execute("PRAGMA journal_mode = WAL")
+            use_wal(connection)
             connection.execute("BEGIN IMMEDIATE")
             try:
                 for statement in _DDL.split(";"):
@@ -282,19 +321,51 @@ class MemoryStore:
 
     def _many(self, where: str, args: tuple[object, ...]) -> list[Document]:
         with self._connection() as connection:
-            rows = connection.execute(
-                f"SELECT {_DOCUMENT_COLUMNS} FROM documents WHERE {where}", args
-            ).fetchall()
-            documents: list[Document] = []
-            for row in rows:
-                tags = [
-                    str(tag)
-                    for (tag,) in connection.execute(
-                        "SELECT tag FROM doc_tags WHERE doc_id = ? ORDER BY position", (row[0],)
-                    )
-                ]
-                documents.append(_document(row, tags))
-        return documents
+            return _documents(connection, where, args)
+
+    # --- Coup d'œil, avant un appel --------------------------------------------------
+
+    def peek(self, doc_id: str, content_hash: str | None = None) -> Peeked | None:
+        """Le document ``doc_id``, et celui qui a déjà ``content_hash`` dans son projet.
+
+        Pour juger un appel avant de le soumettre à un humain. En lecture seule : la
+        base n'est jamais créée ni modifiée, et une base absente n'a aucun document.
+        ``None`` quand la base ne peut pas être lue (verrou au-delà de
+        ``PEEK_TIMEOUT_S``, schéma absent, fichier abîmé) : on ne sait pas.
+        """
+
+        def look(connection: sqlite3.Connection) -> Peeked:
+            found = _documents(connection, "doc_id = ? LIMIT 1", (doc_id,))
+            doc = found[0] if found else None
+            if doc is None or content_hash is None:
+                return Peeked(doc=doc)
+            return Peeked(doc=doc, same=_with_content(connection, content_hash, doc.project))
+
+        return self._read_only(look)
+
+    def peek_content(self, content_hash: str, project: str) -> Peeked | None:
+        """Le document de ``project`` qui a déjà ce contenu (``same``) ; comme ``peek``."""
+
+        def look(connection: sqlite3.Connection) -> Peeked:
+            return Peeked(doc=None, same=_with_content(connection, content_hash, project))
+
+        return self._read_only(look)
+
+    def _read_only(self, look: Callable[[sqlite3.Connection], Peeked]) -> Peeked | None:
+        if not self.path.exists():
+            return Peeked(doc=None)
+        try:
+            connection = sqlite3.connect(
+                f"{self.path.resolve().as_uri()}?mode=ro", uri=True, timeout=PEEK_TIMEOUT_S
+            )
+        except sqlite3.Error:
+            return None
+        try:
+            return look(connection)
+        except sqlite3.Error:
+            return None
+        finally:
+            connection.close()
 
     # --- Écriture -------------------------------------------------------------------
 
@@ -361,6 +432,33 @@ class MemoryStore:
                 "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
                 [("embedder", model), ("dim", str(dim))],
             )
+
+
+def _documents(
+    connection: sqlite3.Connection, where: str, args: tuple[object, ...]
+) -> list[Document]:
+    rows = connection.execute(
+        f"SELECT {_DOCUMENT_COLUMNS} FROM documents WHERE {where}", args
+    ).fetchall()
+    documents: list[Document] = []
+    for row in rows:
+        tags = [
+            str(tag)
+            for (tag,) in connection.execute(
+                "SELECT tag FROM doc_tags WHERE doc_id = ? ORDER BY position", (row[0],)
+            )
+        ]
+        documents.append(_document(row, tags))
+    return documents
+
+
+def _with_content(
+    connection: sqlite3.Connection, content_hash: str, project: str
+) -> Document | None:
+    found = _documents(
+        connection, "content_hash = ? AND project = ? LIMIT 1", (content_hash, project)
+    )
+    return found[0] if found else None
 
 
 def _document(row: Sequence[object], tags: list[str]) -> Document:

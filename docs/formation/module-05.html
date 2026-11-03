@@ -874,7 +874,7 @@ D'après la mémoire de l'entreprise, Mme Martin préfère être contactée le m
 <li>Avec les vrais modèles, <code>search</code> retrouve aussi une note formulée autrement (« joindre la cliente avant midi ») ; les modèles factices ne le font pas.</li>
 </ul>
 <div class="encadre piege"><p class="encadre-titre">Piège : le premier appel avec les vrais modèles</p>
-<p>Avec l'extra <code>memory</code>, le premier appel charge les modèles (et les télécharge la première fois) : sur un ordinateur sans carte graphique, comptez des dizaines de secondes, et environ 4,5 Go de mémoire vive. Donnez à l'outil un <code>timeout</code> en conséquence, ou <code>models: {preload: true}</code> pour les charger dès le montage. Pour deux entreprises, donnez à chacune sa base avec <code>store: {path_env: …}</code>, lu dans ses secrets (module 12).</p></div>
+<p>Avec l'extra <code>memory</code>, le premier appel charge les modèles (et les télécharge la première fois) : sur un ordinateur sans carte graphique, comptez des dizaines de secondes, et environ 4,5 Go de mémoire vive. L'outil a son propre délai, 300 s, que <code>timeout</code> change ; <code>models: {preload: true}</code> les charge dès le montage. Pour deux entreprises, donnez à chacune sa base avec <code>store: {path_env: …}</code>, lu dans ses secrets (module 12).</p></div>
 <div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
 <p>Avec <code>HAIKU</code>, Claude décide seul de chercher dans la mémoire avant de répondre sur un client, et n'appelle <code>add_text</code> que quand Jean le demande, comme le dit le prompt. Si une écriture est refusée, il reçoit le refus et le dit.</p></div>
 </section>

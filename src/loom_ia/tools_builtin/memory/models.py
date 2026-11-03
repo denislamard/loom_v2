@@ -74,6 +74,10 @@ class ModelLoadError(ModelError):
     """
 
 
+class ModelNotCached(Exception):
+    """Un modèle lu hors ligne (``models.offline``) manque au cache local de Hugging Face."""
+
+
 class ModelRunError(ModelError):
     """Un modèle chargé a échoué sur un calcul (mémoire du GPU saturée, par exemple).
 
@@ -84,16 +88,25 @@ class ModelRunError(ModelError):
 # --- Device ----------------------------------------------------------------------
 
 
+class UnsupportedDevice(Exception):
+    """Le device forcé (``models.device: cuda``) n'est pas utilisable par ce torch."""
+
+
 @functools.cache
 def resolve_device(device: str) -> str:
-    """Résout ``auto`` en cuda, sinon mps, sinon cpu ; toute autre valeur est rendue telle quelle.
+    """Résout ``auto`` en cuda, sinon mps, sinon cpu ; vérifie un ``cuda`` forcé.
 
     ``cuda`` n'est choisi que si torch a des noyaux pour la carte : un GPU vu par
     torch mais trop ancien pour la roue installée fait échouer les modèles plus
-    loin, sans message utile. Il est écarté avec un avertissement. torch n'est
-    importé que pour ``auto``, au chargement des vrais modèles ; le résultat est
-    gardé, l'avertissement n'est donc écrit qu'une fois.
+    loin, sans message utile. Avec ``auto``, il est écarté avec un avertissement ;
+    forcé (``cuda``, ``cuda:N``), il lève ``UnsupportedDevice`` qui dit pourquoi,
+    comme l'absence de GPU. torch n'est importé que pour ``auto`` et ``cuda``, au
+    chargement des vrais modèles ; le résultat est gardé, l'avertissement n'est
+    donc écrit qu'une fois.
     """
+    if device.startswith("cuda"):
+        _check_cuda(device)
+        return device
     if device != "auto":
         return device
     torch: Any = importlib.import_module("torch")
@@ -107,8 +120,23 @@ def resolve_device(device: str) -> str:
     return "cpu"
 
 
-def unsupported_gpu(torch: Any) -> str | None:
-    """Dit pourquoi la carte 0 n'est pas utilisable par ce torch, ou ``None`` si elle l'est.
+def _check_cuda(device: str) -> None:
+    torch: Any = importlib.import_module("torch")
+    _, _, number = device.partition(":")
+    index = int(number) if number else 0
+    said = f"models.device {device} inutilisable"
+    if not torch.cuda.is_available():
+        raise UnsupportedDevice(f"{said} : aucun GPU CUDA vu par ce torch ({torch.__version__})")
+    count = int(torch.cuda.device_count())
+    if index >= count:
+        raise UnsupportedDevice(f"{said} : pas de carte {index}, torch en voit {count}")
+    problem = unsupported_gpu(torch, index)
+    if problem is not None:
+        raise UnsupportedDevice(f"{said} : {problem}")
+
+
+def unsupported_gpu(torch: Any, index: int = 0) -> str | None:
+    """Dit pourquoi la carte ``index`` n'est pas utilisable par ce torch, ou ``None`` si elle l'est.
 
     Même règle que torch : un binaire ``sm_XY`` tourne sur une carte de même
     version majeure X et de version mineure au moins Y ; un code ``compute_XY``
@@ -118,8 +146,8 @@ def unsupported_gpu(torch: Any) -> str | None:
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        major, minor = (int(v) for v in torch.cuda.get_device_capability(0))
-        name = str(torch.cuda.get_device_name(0))
+        major, minor = (int(v) for v in torch.cuda.get_device_capability(index))
+        name = str(torch.cuda.get_device_name(index))
         archs = [str(a) for a in torch.cuda.get_arch_list()]
     binaries: list[tuple[int, int]] = []
     ptx: list[tuple[int, int]] = []
@@ -211,6 +239,17 @@ class LazyModel[T]:
                 f"Modèle {self._name} : dépendance {missing!r} absente "
                 f"(installer l'extra : loom-ia[{MODELS_EXTRA}])"
             ) from exc
+        except UnsupportedDevice as exc:
+            raise ModelLoadError(
+                f"Modèle {self._name} : {exc}. Mettre models.device à auto (qui se replie "
+                "sur cpu quand la carte ne convient pas) ou à cpu"
+            ) from exc
+        except ModelNotCached as exc:
+            raise ModelLoadError(
+                f"Modèle {self._name} absent du cache local de Hugging Face "
+                f"(models.offline) : le télécharger avec « hf download {self._name} », "
+                "ou retirer models.offline"
+            ) from exc
         except Exception as exc:
             raise ModelLoadError(
                 f"Chargement du modèle {self._name} impossible sur {device} : "
@@ -250,7 +289,7 @@ class Models:
         self._preloading.start()
 
 
-_SHARED: Final[dict[tuple[str, str, str, bool], Models]] = {}
+_SHARED: Final[dict[tuple[str, str, str, bool, bool], Models]] = {}
 _GUARD: Final = threading.Lock()
 
 
@@ -264,7 +303,7 @@ def shared_models(spec: ModelsSpec) -> Models:
         from loom_ia.tools_builtin.memory.fake import FakeEmbedder, FakeReranker
 
         return Models(FakeEmbedder(), FakeReranker())
-    key = (spec.embedder, spec.reranker, spec.device, spec.fp16)
+    key = (spec.embedder, spec.reranker, spec.device, spec.fp16, spec.offline)
     with _GUARD:
         found = _SHARED.get(key)
         if found is None:

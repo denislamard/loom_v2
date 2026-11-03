@@ -13,19 +13,27 @@ Les mêmes calculs que FlagEmbedding, sans lui :
 
 torch et transformers ne sont importés qu'au chargement des poids, au premier
 calcul ou au préchargement : ce module s'importe sans eux. Demi-précision sur
-GPU (``fp16``), float32 sur CPU. Lots de 16 textes ; au plus 1024 tokens par
-texte, 512 par paire pour le reranker.
+GPU (``fp16``, faite avant le transfert vers la carte), float32 sur CPU. Lots
+de 16 textes ; au plus 1024 tokens par texte, 512 par paire pour le reranker.
+
+Les barres de progression de transformers et de huggingface_hub (« Loading
+weights », téléchargements) sont coupées au chargement : un outil n'écrit rien
+dans la console. Le réglage vaut pour le process. Avec ``models.offline``, les
+fichiers sont lus dans le cache local seulement, sans requête vers le Hub.
 """
 
+import contextlib
 import importlib
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
 from loom_ia.tools_builtin.memory.models import (
     Embedding,
     LazyModel,
+    ModelNotCached,
     SparseVec,
+    first_line,
     resolve_device,
 )
 from loom_ia.tools_builtin.memory_params import ModelsSpec
@@ -42,13 +50,27 @@ def _modules() -> tuple[Any, Any]:
     """torch et transformers ; ``ImportError`` (nommant le paquet) sans l'extra ``memory``."""
     torch: Any = importlib.import_module("torch")
     transformers: Any = importlib.import_module("transformers")
+    transformers.utils.logging.disable_progress_bar()
     return torch, transformers
 
 
+@contextlib.contextmanager
+def _from_hub(offline: bool) -> Generator[None]:
+    """Hors ligne, un fichier absent du cache (``OSError``) devient ``ModelNotCached``."""
+    try:
+        yield
+    except OSError as exc:
+        if not offline:
+            raise
+        raise ModelNotCached(first_line(exc)) from exc
+
+
 def _placed(module: Any, device: str, half: bool) -> Any:
-    module = module.to(device)
+    # Demi-précision avant le transfert : la carte ne reçoit jamais les poids en float32,
+    # deux fois plus lourds (2,2 Go pour BGE-M3), ce qui ferait déborder une petite carte.
     if half:
         module = module.half()
+    module = module.to(device)
     module.eval()
     return module
 
@@ -153,11 +175,13 @@ class BgeM3Embedder:
     def _build(self, device: str) -> _Encoder:
         torch, transformers = _modules()
         name = self._spec.embedder
+        offline = self._spec.offline
         half = self._spec.fp16 and device.startswith("cuda")
-        tokenizer = transformers.AutoTokenizer.from_pretrained(name)
-        model = transformers.AutoModel.from_pretrained(name)
+        with _from_hub(offline):
+            tokenizer = transformers.AutoTokenizer.from_pretrained(name, local_files_only=offline)
+            model = transformers.AutoModel.from_pretrained(name, local_files_only=offline)
+            weights = transformers.utils.cached_file(name, SPARSE_HEAD, local_files_only=offline)
         head = torch.nn.Linear(model.config.hidden_size, 1)
-        weights = transformers.utils.cached_file(name, SPARSE_HEAD)
         head.load_state_dict(torch.load(weights, map_location="cpu", weights_only=True))
         special = {
             tokenizer.cls_token_id,
@@ -206,9 +230,13 @@ class BgeReranker:
     def _build(self, device: str) -> _PairScorer:
         torch, transformers = _modules()
         name = self._spec.reranker
+        offline = self._spec.offline
         half = self._spec.fp16 and device.startswith("cuda")
-        tokenizer = transformers.AutoTokenizer.from_pretrained(name)
-        model = transformers.AutoModelForSequenceClassification.from_pretrained(name)
+        with _from_hub(offline):
+            tokenizer = transformers.AutoTokenizer.from_pretrained(name, local_files_only=offline)
+            model = transformers.AutoModelForSequenceClassification.from_pretrained(
+                name, local_files_only=offline
+            )
         return _PairScorer(
             torch=torch,
             tokenizer=tokenizer,

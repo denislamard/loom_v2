@@ -9,7 +9,7 @@ référence au chargement, sans importer l'outil, ni torch, ni transformers.
       project: documentation                   # fixé : le modèle ne le choisit pas
       folders:                                 # pour add_file seulement
       - { name: workspace, path: /home/denis/temp/agent/workspace }
-      models: { device: cpu, preload: true }
+      models: { device: cpu, preload: true, offline: true }
       retrieval: { rerank_candidates: 8 }
       actions:
         search: {}
@@ -142,6 +142,9 @@ class ModelsSpec(BaseModel):
     fp16: bool = True
     # Charger les modèles en tâche de fond dès le montage de l'agent, au lieu du premier appel.
     preload: bool = False
+    # Lire les modèles dans le cache local de Hugging Face seulement : aucune requête vers le
+    # Hub. Un modèle absent du cache fait échouer le chargement (``hf download`` l'y met).
+    offline: bool = False
 
 
 class RetrievalSpec(BaseModel):

@@ -140,6 +140,61 @@ async def test_evaluation_metrics_and_threshold(tmp_path: Path) -> None:
     assert report.suggested_min_score is not None and 0 < report.suggested_min_score <= 1
 
 
+async def test_off_topic_questions_place_the_threshold_between_noise_and_answers(
+    tmp_path: Path,
+) -> None:
+    """``doc_id: null`` : hors du recall, son meilleur score situe le bruit à écarter."""
+    memory, ids = await filled(tmp_path / "m.db")
+    cases = [
+        GoldenCase(query="docker qdrant restart", doc_id=ids["qdrant"]),
+        GoldenCase(query="rôles plafonds", doc_id=ids["roles"]),
+        GoldenCase(query="recette du bœuf bourguignon", doc_id=None),
+        # Le reranker factice : la part des mots de la question repris par le passage.
+        GoldenCase(query="docker flutter", doc_id=None),
+    ]
+    report = await evaluate(memory, cases)
+    assert (report.cases, report.off_topic) == (2, 2)
+    assert report.recall_at_1 == report.mrr == 1.0
+    assert (report.lowest_expected, report.highest_off_topic) == (1.0, 0.5)
+    assert report.separable is True and report.suggested_min_score == 0.75
+    off = report.results[3]
+    assert (off.doc_id, off.rank, off.expected_score, off.top_score) == (None, None, None, 0.5)
+    # Une question hors sujet qui atteint une réponse attendue : aucun seuil ne sépare.
+    overlap = await evaluate(memory, [*cases, GoldenCase(query="rôles plafonds", doc_id=None)])
+    assert overlap.separable is False and overlap.suggested_min_score is None
+
+
+@pytest.mark.parametrize(
+    ("lowest", "highest", "expected"),
+    [
+        (0.871, None, (None, 0.871)),  # sans hors-sujet : le plus haut seuil sans perte
+        (0.871, 0.0, (True, 0.435)),
+        (0.4, 0.4, (False, None)),
+        (None, 0.3, (None, None)),  # aucune réponse attendue trouvée : rien à protéger
+        # Arrondi au millième, le milieu sortirait de l'intervalle : il est gardé tel quel.
+        (0.1236, 0.1234, (True, 0.1235)),
+    ],
+)
+def test_the_suggested_threshold(
+    lowest: float | None, highest: float | None, expected: tuple[bool | None, float | None]
+) -> None:
+    separable, suggested = maintenance._threshold(lowest, highest)  # pyright: ignore[reportPrivateUsage]
+    assert separable is expected[0]
+    assert suggested == pytest.approx(expected[1]) if expected[1] is not None else suggested is None
+    if separable and highest is not None and lowest is not None and suggested is not None:
+        assert highest < suggested <= lowest
+
+
+def test_a_golden_case_says_its_document_or_null(tmp_path: Path) -> None:
+    golden = tmp_path / "golden.jsonl"
+    golden.write_text('{"query": "hors sujet", "doc_id": null}\n', encoding="utf-8")
+    assert load_golden(golden)[0].doc_id is None
+    # Un doc_id oublié n'est pas une question hors sujet.
+    golden.write_text('{"query": "oubli"}\n', encoding="utf-8")
+    with pytest.raises(ToolError, match=r"golden\.jsonl, ligne 1 : cas illisible"):
+        load_golden(golden)
+
+
 # --- loom memory --------------------------------------------------------------------------
 
 JSONL: Final = {"events": {"backend": "jsonl", "path": "journal"}}
@@ -181,6 +236,16 @@ def test_the_cli_exports_imports_reindexes_and_evaluates(
     assert "ok       #1" in out and "1 cas — recall@1 1.00" in out
     assert main([*config, "memory", "eval", "assistant", str(golden), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["recall_at_1"] == 1.0
+    with golden.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"query": "recette du bœuf bourguignon", "doc_id": None}) + "\n")
+    assert main([*config, "memory", "eval", "assistant", str(golden)]) == 0
+    out = capsys.readouterr().out
+    assert "--     hors  0.000  recette du bœuf bourguignon" in out
+    assert "1 cas, 1 hors sujet — recall@1 1.00" in out
+    assert (
+        "min_score suggéré : 0.5 (entre le hors-sujet le plus fort, 0.0, "
+        "et la réponse attendue la plus faible, 1.0 ; " in out
+    )
 
 
 def test_an_agent_without_memory_is_refused(

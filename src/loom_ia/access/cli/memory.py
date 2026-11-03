@@ -5,6 +5,7 @@
     loom memory import <agent> <fichier.jsonl>    réimporte un export, sans doublon
     loom memory reindex <agent>                   recalcule les passages (modèle de la config)
     loom memory eval <agent> <golden.jsonl>       recall@1, recall@5, MRR, seuil suggéré
+                                                  (doc_id: null = question hors sujet)
 
 La base est celle que l'agent monte pour le client (``--tenant``) : son
 ``store``, et ``path_env`` lu dans les secrets de ce client. Les modèles de
@@ -55,7 +56,11 @@ def add_actions(
     reindex.add_argument("agent")
     evaluate = tenanted(actions.add_parser("eval", help="mesure la recherche sur un jeu doré"))
     evaluate.add_argument("agent")
-    evaluate.add_argument("file", type=Path, help="jeu doré JSONL : {query, doc_id, project?}")
+    evaluate.add_argument(
+        "file",
+        type=Path,
+        help="jeu doré JSONL : {query, doc_id, project?} ; doc_id null : question hors sujet",
+    )
     evaluate.add_argument("--k", type=int, default=10, choices=range(1, 51), metavar="K")
     evaluate.add_argument("--json", action="store_true", help="rapport complet en JSON")
     for command in (export, imported, reindex, evaluate):
@@ -113,15 +118,39 @@ def _print_report(report: EvalReport, *, as_json: bool) -> None:
         print(report.model_dump_json(indent=2))
         return
     for result in report.results:
+        if result.doc_id is None:
+            # Hors sujet : son meilleur score, le bruit à écarter.
+            score = f"{result.top_score:.3f}" if result.top_score is not None else "  -  "
+            print(f"--  {'hors':>7}  {score}  {result.query}")
+            continue
         mark = "ok " if result.rank == 1 else ("~  " if result.rank else "KO ")
         rank = f"#{result.rank}" if result.rank else "absent"
         score = f"{result.expected_score:.3f}" if result.expected_score is not None else "  -  "
         print(f"{mark} {rank:>7}  {score}  {result.query}")
+    off = f", {report.off_topic} hors sujet" if report.off_topic else ""
     print(
-        f"\n{report.cases} cas — recall@1 {report.recall_at_1:.2f}  "
+        f"\n{report.cases} cas{off} — recall@1 {report.recall_at_1:.2f}  "
         f"recall@5 {report.recall_at_5:.2f}  MRR {report.mrr:.2f}"
     )
-    if report.suggested_min_score is not None:
-        noise = report.noise_removed_at_suggested
-        tail = f" (aucun cas perdu ; {noise:.0%} du bruit filtré)" if noise is not None else ""
-        print(f"min_score suggéré : {report.suggested_min_score}{tail}")
+    lowest, highest = report.lowest_expected, report.highest_off_topic
+    if report.separable is False:
+        print(
+            f"aucun min_score ne sépare : une question hors sujet atteint {highest}, "
+            f"une réponse attendue tombe à {lowest}"
+        )
+        return
+    if report.suggested_min_score is None:
+        return
+    noise = report.noise_removed_at_suggested
+    filtered = f"{noise:.0%} du bruit filtré" if noise is not None else ""
+    if report.separable:
+        why = (
+            f"entre le hors-sujet le plus fort, {highest}, "
+            f"et la réponse attendue la plus faible, {lowest}"
+        )
+        tail = f" ({why}{' ; ' + filtered if filtered else ''})"
+    else:
+        tail = f" (aucun cas perdu{' ; ' + filtered if filtered else ''})"
+    print(f"min_score suggéré : {report.suggested_min_score}{tail}")
+    if not report.off_topic:
+        print("Ajouter des questions hors sujet (doc_id: null) situe le bruit à écarter.")

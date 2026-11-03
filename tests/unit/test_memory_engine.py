@@ -61,17 +61,22 @@ def write_config(
     *,
     tenants: list[dict[str, Any]] | None = None,
     other: list[dict[str, Any]] | None = None,
+    files: bool = False,
 ) -> Path:
     """Une config : l'orchestrateur simulé, l'agent ``assistant`` et sa mémoire."""
     (base / "agents").mkdir(parents=True, exist_ok=True)
     store = {"path": "memoire.db"} if tenants is None else {"path_env": "MEMOIRE_BASE"}
-    memory = {
+    memory: dict[str, Any] = {
         "python": "loom.memory",
         "store": store,
         "project": "atelier",
         "models": {"kind": "fake"},
         "actions": ["search", "list_docs", "add_text", "delete"],
     }
+    if files:
+        (base / "workspace").mkdir(exist_ok=True)
+        memory["actions"] = [*memory["actions"], "add_file"]
+        memory["folders"] = [{"name": "workspace", "path": "workspace"}]
     config: dict[str, Any] = {
         "version": 1,
         "models": [
@@ -249,3 +254,55 @@ async def test_each_client_has_its_own_memory(
         assert rendered(hit) == []
     # Deux bases, chacune au chemin que donnent les secrets de son client.
     assert (tmp_path / "dupont.db").is_file() and (tmp_path / "martin.db").is_file()
+
+
+async def test_a_file_add_file_refuses_never_waits_for_a_human(tmp_path: Path) -> None:
+    """Une extension refusée l'est avant l'approbation : le run ne s'arrête pas pour rien."""
+    script = [
+        {"with_text": "plaquette", **call(action="add_file", file="workspace/plaquette.docx")},
+        {"with_text": "plaquette", "text": "Format refusé."},
+        *SCRIPT,
+    ]
+    path = write_config(tmp_path, script, files=True)
+    (tmp_path / "workspace" / "plaquette.docx").write_bytes(b"PK\x03\x04")
+    async with Loom(load_config(path)) as loom:
+        session = SessionId("atelier")
+        done = await loom.run("assistant", "Mémorise la plaquette.", session_id=session)
+        assert done.status == RunStatus.COMPLETED and not done.pending_approvals
+        events = await loom.events(done.run_id, session_id=session)
+        [refusal] = completed(events, "add_file")
+        assert refusal.output.is_error
+        assert await listed(loom, session) == []
+
+
+async def test_deleting_an_unknown_document_never_waits_for_a_human(tmp_path: Path) -> None:
+    """Un document inconnu ne peut pas être supprimé : le run ne s'arrête pas pour rien."""
+    path = write_config(tmp_path, script_deleting("00000000-0000-0000-0000-000000000000"))
+    async with Loom(load_config(path)) as loom:
+        session = SessionId("atelier")
+        done = await loom.run("assistant", "Oublie ce devis.", session_id=session)
+        assert done.status == RunStatus.COMPLETED and not done.pending_approvals
+        events = await loom.events(done.run_id, session_id=session)
+        [refusal] = completed(events, "delete")
+        assert refusal.output.is_error
+
+
+async def test_adding_a_note_already_there_never_waits_for_a_human(tmp_path: Path) -> None:
+    """Le même texte, déjà mémorisé : ``duplicate_of`` sans approbation, rien n'est écrit."""
+    script = [
+        {"with_text": "Encore", **call(action="add_text", text=NOTE, title="Encore le devis")},
+        {"with_text": "Encore", "text": "Déjà noté."},
+        *SCRIPT,
+    ]
+    session = SessionId("atelier")
+    async with Loom(load_config(write_config(tmp_path, script))) as loom:
+        first = await loom.run("assistant", "Mémorise ce devis.", session_id=session)
+        await loom.approve(first.run_id, by="l'artisan", session_id=session)
+        await loom.drain()
+        [document] = await listed(loom, session)
+        again = await loom.run("assistant", "Encore ce devis.", session_id=session)
+        assert again.status == RunStatus.COMPLETED and not again.pending_approvals
+        events = await loom.events(again.run_id, session_id=session)
+        [done] = completed(events, "add_text")
+        assert cast(dict[str, Any], done.output.data)["duplicate_of"] == document["doc_id"]
+        assert [d["doc_id"] for d in await listed(loom, session)] == [document["doc_id"]]

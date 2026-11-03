@@ -33,16 +33,26 @@ from loom_ia.tools_builtin import (
     Protected,
     Settings,
 )
-from loom_ia.tools_builtin._folders import Folders, mount
+from loom_ia.tools_builtin._folders import Folders, Located, mount
 from loom_ia.tools_builtin.local_files_params import FolderSpec
 from loom_ia.tools_builtin.memory.arguments import NAME, MemoryArguments, parse, schema
+from loom_ia.tools_builtin.memory.chunk import content_hash
 from loom_ia.tools_builtin.memory.models import shared_models
-from loom_ia.tools_builtin.memory.service import Extracted, MemoryService
+from loom_ia.tools_builtin.memory.service import (
+    MIN_TITLE_CHARS,
+    Extracted,
+    MemoryService,
+    clean_project,
+)
 from loom_ia.tools_builtin.memory.store import MemoryStore
 from loom_ia.tools_builtin.memory_params import READS, MemoryAction, MemoryParams
 
 # add_file : ce qu'on lit d'un fichier, et lesquels.
 MAX_FILE_BYTES: Final = 1_000_000
+# Délai d'un appel, en secondes, quand l'agent n'en donne pas (``timeout``). Indexer une
+# page sur CPU prend de l'ordre de 1,5 s par passage, et le premier appel peut charger les
+# modèles : le délai commun des outils (30 s) n'y suffit pas.
+TIMEOUT: Final = 300.0
 FILE_SUFFIXES: Final = frozenset({".md", ".markdown", ".txt"})
 _H1: Final = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 
@@ -98,6 +108,7 @@ class MemoryTool:
             # Le pire des actions permises ; chaque appel est évalué à part.
             side_effects=effects,
             approval="always" if any(params.approval(a) == "always" for a in declared) else "never",
+            timeout=TIMEOUT,
         )
         if params.models.preload:
             models.preload()
@@ -119,6 +130,18 @@ class MemoryTool:
         except ToolError:
             # L'appel sera refusé à l'exécution, pour la même raison : aucun effet.
             return CallAssessment(side_effects="none")
+        if request.action == "add_file":
+            try:
+                # Dossier, droit et extension : un fichier qui ne peut pas être lu n'est
+                # pas soumis à un humain. Le contenu, lui, est lu à l'exécution : il peut
+                # changer pendant l'attente, et l'exécution refait ces contrôles.
+                self._file_target(cast(str, request.file))
+            except ToolError:
+                return CallAssessment(side_effects="none")
+        if request.action in ("update", "delete") and self._writes_nothing(request):
+            return CallAssessment(side_effects="none")
+        if request.action == "add_text" and self._adds_nothing(request):
+            return CallAssessment(side_effects="none")
         effects, idempotent = _EFFECTS[request.action]
         if self.params.approval(request.action) == "never":
             return CallAssessment(side_effects=effects, idempotent=idempotent)
@@ -129,6 +152,43 @@ class MemoryTool:
             reason=f"{_SAID[request.action]}{self._what(request)} — la config exige une "
             f"approbation pour {request.action}",
         )
+
+    def _writes_nothing(self, request: MemoryArguments) -> bool:
+        """Vrai si ``update`` ou ``delete`` ne peut rien écrire ; au moindre doute, faux.
+
+        Document inconnu, ou hors du projet imposé : l'appel sera refusé. ``update``
+        d'un texte vide sera refusé ; d'un texte inchangé (casse et espaces mis à part),
+        il n'écrit rien ; du texte d'un autre document, il est refusé. La base est lue
+        sans être créée ; illisible, l'approbation est demandée comme d'habitude.
+        """
+        digest: str | None = None
+        if request.action == "update":
+            text = (request.text or "").strip()
+            if not text:
+                return True
+            digest = content_hash(text)
+        seen = self.store.peek(cast(str, request.doc_id).strip(), digest)
+        if seen is None:
+            return False
+        project = self._project(request)
+        if seen.doc is None or (project is not None and seen.doc.project != project):
+            return True
+        return seen.same is not None
+
+    def _adds_nothing(self, request: MemoryArguments) -> bool:
+        """Vrai si ``add_text`` ne peut rien écrire ; au moindre doute, faux.
+
+        Titre trop court, texte vide ou projet absent : l'appel sera refusé. Un texte
+        que le projet a déjà (casse et espaces mis à part) : l'exécution rend
+        ``duplicate_of`` sans rien écrire. La base est lue sans être créée.
+        """
+        title = (request.title or "").strip()
+        text = (request.text or "").strip()
+        place = clean_project(self._project(request))
+        if len(title) < MIN_TITLE_CHARS or not text or place is None:
+            return True
+        seen = self.store.peek_content(content_hash(text), place)
+        return seen is not None and seen.same is not None
 
     def _what(self, request: MemoryArguments) -> str:
         project = self._project(request)
@@ -196,8 +256,8 @@ class MemoryTool:
     def _project(self, request: MemoryArguments) -> str | None:
         return self.params.project if self.params.project is not None else request.project
 
-    def _read_file(self, path: str) -> tuple[str, Extracted]:
-        """Le fichier désigné « <dossier>/<chemin> » : son adresse, son titre, son texte."""
+    def _file_target(self, path: str) -> tuple[Located, Path]:
+        """Le fichier « <dossier>/<chemin> », s'il est permis : dossier, droit, extension."""
         if self.folders is None:  # add_file sans dossiers : refusé par les paramètres
             raise ToolError("Aucun dossier n'est permis à add_file.")
         located = self.folders.locate(path)
@@ -208,6 +268,11 @@ class MemoryTool:
                 f"{located.address} : extension {target.suffix or 'absente'} refusée ; "
                 f"permises : {', '.join(sorted(FILE_SUFFIXES))}."
             )
+        return located, target
+
+    def _read_file(self, path: str) -> tuple[str, Extracted]:
+        """Le fichier désigné « <dossier>/<chemin> » : son adresse, son titre, son texte."""
+        located, target = self._file_target(path)
         try:
             if not target.is_file():
                 raise ToolError(f"{located.address} : fichier introuvable.")
