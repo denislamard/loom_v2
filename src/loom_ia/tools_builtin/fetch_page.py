@@ -38,6 +38,35 @@ async def fetch_page(url: str) -> str:
     trouvé dans une page déjà lue. Ne gère ni JavaScript, ni connexion à un compte,
     ni PDF, ni image.
     """
+    page = await download(url)
+    # Décoder et analyser une grosse page prend jusqu'à une seconde ou deux : hors de
+    # la boucle asyncio, pour ne pas figer le moteur ni les outils lancés en parallèle.
+    return await asyncio.to_thread(
+        _render, page.body, page.charset, page.media_type, page.url, page.truncated
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Downloaded:
+    """Une page téléchargée, pas encore décodée."""
+
+    # Adresse finale, après les redirections.
+    url: str
+    body: bytes
+    charset: str | None
+    media_type: str
+    # Vrai si la page dépassait MAX_BYTES et a été coupée.
+    truncated: bool
+
+
+async def download(url: str) -> Downloaded:
+    """Télécharge une page web publique, avec les garde-fous de ``fetch_page``.
+
+    Chaque adresse, redirections comprises, est vérifiée (http ou https, ports 80
+    et 443, hôte public) ; au plus ``MAX_REDIRECTS`` redirections et ``MAX_BYTES``
+    lus ; seul un contenu textuel est accepté. ``ToolError`` dit ce qui a échoué.
+    Partagé avec ``loom.memory`` (action ``add_url``).
+    """
     async with httpx2.AsyncClient(
         headers=HEADERS, timeout=TIMEOUT, follow_redirects=False, transport=_PublicOnlyTransport()
     ) as client:
@@ -67,10 +96,13 @@ async def fetch_page(url: str) -> str:
                 raise ToolError(f"Pas de réponse à temps de {current}.") from exc
             except (httpx2.HTTPError, httpx2.InvalidURL) as exc:
                 raise ToolError(f"Page injoignable ({type(exc).__name__}) : {current}") from exc
-            # Décoder et analyser une grosse page prend jusqu'à une seconde ou deux : hors de
-            # la boucle asyncio, pour ne pas figer le moteur ni les outils lancés en parallèle.
-            return await asyncio.to_thread(_render, body, charset, media_type, current, truncated)
+            return Downloaded(current, body, charset, media_type, truncated)
     raise ToolError(f"Plus de {MAX_REDIRECTS} redirections depuis {url}.")
+
+
+def is_html(media_type: str) -> bool:
+    """Vrai pour une page HTML ou XHTML."""
+    return media_type in _HTML
 
 
 # --- Garde-fous réseau ---------------------------------------------------------
@@ -234,7 +266,7 @@ _XML_ENCODING: Final = re.compile(rb"""<\?xml[^>]+encoding=["']([\w.:-]+)""", re
 _ASCII: Final = bytes(range(128))
 
 
-def _decode(body: bytes, charset: str | None, media_type: str) -> str:
+def decode(body: bytes, charset: str | None, media_type: str) -> str:
     """Texte de la page, dans l'ordre des navigateurs : BOM, en-tête HTTP, déclaration dans
     le document ; à défaut UTF-8, ou windows-1252 si ce n'en est visiblement pas."""
     for bom, encoding in _BOMS:
@@ -272,7 +304,7 @@ def _decode_as(body: bytes, label: str) -> str | None:
 
 
 def _render(body: bytes, charset: str | None, media_type: str, url: str, truncated: bool) -> str:
-    text = _decode(body, charset, media_type)
+    text = decode(body, charset, media_type)
     note = f"(page tronquée : seuls ses {MAX_BYTES // 1_000_000} premiers Mo ont été lus)"
     if media_type in _HTML:
         return _render_html(text, url, note if truncated else None)

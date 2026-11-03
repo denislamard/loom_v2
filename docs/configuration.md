@@ -556,7 +556,7 @@ Liste d'outils, sous trois formes, dans l'ordre de déclaration.
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
 | `python` | Outil : nom enregistré (module de `imports`), chemin `module:attr`, ou outil fourni `loom.<outil>` (vu par le modèle sans le préfixe). Unique dans l'agent. | texte | **obligatoire** | `python: loom.fetch_page` |
-| `description` | Ce que le modèle lit de l'outil, à la place de ce que l'outil en dit. Refusée sur `loom.local_files`, `loom.excel`, `loom.sql` et `loom.state`, dont la description dit les dossiers, les droits, les tables ou les clés : y ajouter du texte avec `skill`. | texte non vide | celle de l'outil | `description: Donne l'heure de Paris.` |
+| `description` | Ce que le modèle lit de l'outil, à la place de ce que l'outil en dit. Refusée sur `loom.local_files`, `loom.excel`, `loom.sql`, `loom.state` et `loom.memory`, dont la description dit les dossiers, les droits, les tables, les clés ou les actions : y ajouter du texte avec `skill`. | texte non vide | celle de l'outil | `description: Donne l'heure de Paris.` |
 | `skill` | Mode d'emploi ajouté **à la suite** de la description : quand se servir de l'outil, comment choisir entre ses options. Part avec chaque appel de modèle de l'agent ; au-delà de 8 000 caractères, un avertissement. Pas de `{{ variables }}`. Exclusif de `skill_file`. | texte non vide | `null` | `skill: Une liste par onglet.` |
 | `skill_file` | Le même dans un fichier, relatif à `prompts_dir` et contenu dans ce dossier, lu au chargement. | chemin | `null` | `skill_file: excel.md` |
 | `timeout` | Délai de l'outil (s). | nombre > 0 | celui de l'outil, sinon `execution.tools.timeout` | `timeout: 60` |

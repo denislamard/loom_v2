@@ -110,7 +110,7 @@ Les exemples vont du plus simple au plus complexe, dans ce fichier comme dans l'
 | **01-demarrer.md** (celui-ci) | 1 à 6 | Installer, premier outil, valider et inspecter, appel Python, vrai modèle, config en Python |
 | [02-maitriser.md](02-maitriser.md) | 7 à 14 | Sessions, variables et profils, validation humaine, politiques, contrats, rôles, MCP, juges |
 | [03-production.md](03-production.md) | 15 à 24 | Résilience, budgets, sous-agents, gros résultats, exécution durable et idempotence, REST, serveur MCP, plusieurs clients, webhooks et workers, Postgres, chiffrement, RGPD |
-| [04-qualite-et-expert.md](04-qualite-et-expert.md) | 25 à 30 et annexes | Traces et OpenTelemetry, rejeu, évaluations, tests, sources d'outils (forge, loom-notes), projet de synthèse |
+| [04-qualite-et-expert.md](04-qualite-et-expert.md) | 25 à 30 et annexes | Traces et OpenTelemetry, rejeu, évaluations, tests, sources d'outils (forge), mémoire `loom.memory`, projet de synthèse |
 | [05-state-de-session.md](05-state-de-session.md) | 31 | State de session : posé par l'application ou par un outil, reçu par l'orchestrateur et les rôles, testé (loom-ia 2.0.6) |
 | [06-outils-fournis.md](06-outils-fournis.md) | 32 | Outils fournis : activer `loom.fetch_page`, le régler, ce qu'il refuse, le tester sans réseau (loom-ia 2.0.7) |
 

@@ -2,7 +2,7 @@
 
 # Niveau 5 : Expert — observabilité, qualité, sandbox
 
-> **Dans ce fichier** : relire ce qu'un run a fait (traces, journal, OpenTelemetry), le rejouer, le noter, le tester, brancher des sources d'outils (paquet Python, sandbox `forge`, mémoire `loom-notes`), puis assembler le tout dans un projet de synthèse (chapitres 25 à 30), suivis des annexes de référence.
+> **Dans ce fichier** : relire ce qu'un run a fait (traces, journal, OpenTelemetry), le rejouer, le noter, le tester, brancher des sources d'outils (paquet Python, sandbox `forge`) et une mémoire long terme (`loom.memory`), puis assembler le tout dans un projet de synthèse (chapitres 25 à 30), suivis des annexes de référence.
 >
 > **Navigation** : précédent : [03-production.md](03-production.md) · [04-qualite-et-expert.md](04-qualite-et-expert.md) (vous êtes ici) · suivant : [05-state-de-session.md](05-state-de-session.md)
 
@@ -17,7 +17,7 @@ Le niveau 4 a mis l'agent en service : plusieurs clients, une API, un journal du
 - [26. Rejouer un run](#26-rejouer-un-run)
 - [27. Évaluer un agent](#27-évaluer-un-agent)
 - [28. Tests et non-régression](#28-tests-et-non-régression)
-- [29. Sources d'outils : paquet, sandbox `forge`, mémoire `loom-notes`](#29-sources-doutils--paquet-sandbox-forge-mémoire-loom-notes)
+- [29. Sources d'outils : paquet, sandbox `forge`, mémoire `loom.memory`](#29-sources-doutils--paquet-sandbox-forge-mémoire-loommemory)
 - [30. Projet de synthèse : `relance/`](#30-projet-de-synthèse--relance)
 - [Annexe A. Référence de la ligne de commande](#annexe-a-référence-de-la-ligne-de-commande)
 - [Annexe B. Routes de l'API REST](#annexe-b-routes-de-lapi-rest)
@@ -42,7 +42,7 @@ Comme dans les fichiers précédents, les sorties sont réelles : `loom-ia` **2.
 |---|---|
 | Export OTLP | Exécuté vers un mini collecteur local ; **non exécuté** vers un vrai collecteur (Jaeger, Grafana Tempo, Datadog…) |
 | Sandbox `forge` | Contrôles de l'hôte et erreur de configuration exécutés ; **non exécuté** dans une micro-VM (la machine d'essai n'a ni `/dev/kvm` ni `sudo`) |
-| `loom-notes` | Exécuté avec ses modèles factices ; **non exécuté** avec les vrais modèles d'embedding (plusieurs Go de dépendances) |
+| `loom.memory` | Exécuté avec ses modèles factices ; **non exécuté** avec les vrais modèles d'embedding (extra `memory`, plusieurs Go de dépendances) |
 | Vrais modèles Anthropic ou OpenAI | **Non exécuté** : aucune clé d'API. Tout tourne avec `sdk: fake` |
 | Postgres, Redis, RabbitMQ | **Non exécuté** : aucun service. SQLite et fichiers JSONL à la place |
 
@@ -2146,7 +2146,7 @@ Rangez les fichiers que vous voulez garder dans `journaux/` : le test et la suit
 
 ---
 
-## 29. Sources d'outils : paquet, sandbox `forge`, mémoire `loom-notes`
+## 29. Sources d'outils : paquet, sandbox `forge`, mémoire `loom.memory`
 
 Jusqu'ici, un outil était soit une fonction Python du projet (`@tool`), soit un serveur MCP. Une troisième voie existe : une **source d'outils**, un paquet Python installé qui déclare un point d'entrée et fournit ses outils au début de chaque run. C'est ainsi que Loom-IA livre ses propres sources (la sandbox `forge`), et c'est ainsi que vous pouvez partager un jeu d'outils entre plusieurs projets.
 
@@ -2863,9 +2863,9 @@ nom de module standard   refusé : name 'json' : c'est un module de la biblioth�
 - **Piège** : le catalogue est rangé par client (`catalogue/<client>/…`). Un outil forgé pour la Plomberie Dupont n'existe pas pour le Chauffage Martin. Et il contient du code écrit par un modèle : versionnez-le et relisez-le avant de le promouvoir en production.
 - **Non exécuté ici** : la construction de la VM, le démarrage, l'exécution des exemples, la forge réelle d'un outil.
 
-### Exemple 29.3 : une mémoire long terme avec `loom-notes`
+### Exemple 29.3 : une mémoire long terme avec `loom.memory`
 
-> **Non exécuté ici** : les vrais modèles d'embedding de `loom-notes` (BGE-M3 et un reclasseur) demandent l'extra `[models]`, c'est-à-dire PyTorch et plusieurs Go de téléchargements. Cet exemple a été exécuté avec les **modèles factices** que le serveur propose (`LOOM_NOTES_FAKE_MODELS=1`) : les écritures, les lectures, les approbations et l'isolation entre clients sont réelles, mais la recherche sémantique ne l'est pas.
+> **Non exécuté ici** : les vrais modèles d'embedding (BGE-M3 et son reranker) demandent l'extra `memory`, c'est-à-dire PyTorch et plusieurs Go de téléchargements. Cet exemple a été exécuté avec les **modèles factices** de l'outil (`models.kind: fake`) : les écritures, les lectures, les approbations et l'isolation entre clients sont réelles, mais la recherche par le sens ne l'est pas.
 
 #### Pourquoi
 
@@ -2873,18 +2873,18 @@ Jean Dupont dit à l'assistant : « Mme Martin préfère qu'on l'appelle le mati
 
 #### Objectif
 
-Brancher le serveur MCP `loom-notes` comme n'importe quel serveur MCP (chapitre 13), exiger l'approbation de toute écriture, donner à chaque client sa propre base, et vérifier qu'un refus n'écrit rien.
+Donner à l'agent l'outil fourni `loom.memory`, exiger l'approbation de toute écriture, donner à chaque client sa propre base, et vérifier qu'un refus n'écrit rien.
 
 #### Mise en place
 
-`loom-notes` est un serveur MCP publié sur PyPI (version 1.1.0 au moment de l'essai), qui s'exécute sur la sortie standard (`stdio`). Il ne s'ajoute **pas** aux dépendances du projet : ses propres dépendances (FastMCP 4) sont incompatibles avec la version de `mcp` qu'exige `loom-ia`. On le lance donc par `uvx`, dans un environnement isolé, en process séparé. Aucune installation préalable : `uvx` la fait au premier lancement.
+`loom.memory` est un outil fourni par Loom-IA, comme `loom.local_files` (chapitre 15) : rien à lancer à côté. Sa base est un fichier SQLite. Ses modèles réels (BGE-M3 et un reranker, sur CPU ou GPU) viennent de l'extra `memory` ; sans lui, l'outil tourne avec des modèles factices, qui suffisent pour cet exemple.
 
-Ses neuf outils : `search`, `get`, `list_docs`, `projects` (lectures, annoncées en lecture seule) et `add_text`, `add_url`, `add_file`, `update`, `delete` (écritures). Il ne lit son dossier de données que dans la variable `LOOM_NOTES_DATA_DIR`.
+C'est un seul outil, `memory`, et le modèle choisit une `action` parmi celles que la configuration permet : `search`, `get`, `list_docs`, `projects` (lectures) et `add_text`, `add_url`, `add_file`, `update`, `delete` (écritures). Une action absente de la configuration n'existe pas pour le modèle. Les écritures attendent une approbation humaine par défaut.
 
 Créez un sous-projet `memoire/`, avec sa configuration. Le modèle simulé joue deux scénarios selon la demande : « Mémorise… » écrit une note, « Que sait-on… » liste les documents.
 
 ```bash
-mkdir -p memoire/agents memoire/prompts
+mkdir -p memoire/agents memoire/prompts memoire/donnees
 ```
 
 `memoire/loom.yaml` :
@@ -2903,41 +2903,25 @@ models:
       script:
         - with_text: Mémorise
           tool_calls:
-            - name: memoire__add_text
+            - name: memory
               arguments:
+                action: add_text
                 text: Mme Martin préfère être contactée le matin, avant 10 h.
                 title: Préférence de contact de Mme Martin
-                project: clients
         - with_text: Mémorise
           text: C'est noté dans la mémoire de l'entreprise.
         - with_text: Que sait-on
           tool_calls:
-            - name: memoire__list_docs
-              arguments: {}
+            - name: memory
+              arguments: {action: list_docs}
         - with_text: Que sait-on
           text: Voici ce que la mémoire contient, d'après la liste des documents.
 
-mcp_servers:
-  - name: memoire
-    transport: stdio
-    command: uvx
-    args: [--from, loom-notes, loom-notes-mcp]
-    env: {LOOM_NOTES_FAKE_MODELS: "1", LOOM_NOTES_WARMUP_ON_START: "false"}
-    env_from: {LOOM_NOTES_DATA_DIR: MEMOIRE_DOSSIER}
-    scope: tenant
-    connect_timeout: 60
-    tools:
-      add_text: {approval: always}
-      add_url: {approval: always}
-      add_file: {approval: always}
-      update: {approval: always}
-      delete: {approval: always}
-
 tenants:
   - id: dupont-plomberie
-    secrets: {MEMOIRE_DOSSIER: DUPONT_MEMOIRE}
+    secrets: {MEMOIRE_BASE: DUPONT_MEMOIRE}
   - id: martin-chauffage
-    secrets: {MEMOIRE_DOSSIER: MARTIN_MEMOIRE}
+    secrets: {MEMOIRE_BASE: MARTIN_MEMOIRE}
 
 telemetry:
   logging: {level: WARNING}
@@ -2945,14 +2929,6 @@ telemetry:
 storage:
   events: {backend: jsonl, path: data}
 ```
-
-Lecture de la configuration :
-
-- `command: uvx` avec `args: [--from, loom-notes, loom-notes-mcp]` lance le serveur. `env` fixe ses variables : les modèles factices, et pas de préchauffage au démarrage.
-- `env_from: {LOOM_NOTES_DATA_DIR: MEMOIRE_DOSSIER}` donne au serveur son dossier de données, **lu dans les secrets du client** : la variable `MEMOIRE_DOSSIER` désigne, pour chaque client, une variable d'environnement différente (`tenants[].secrets`).
-- `scope: tenant` : un serveur par client. C'est ce qui donne à chacun sa base, et donc leur isolation.
-- `tools` : les cinq écritures sont en `approval: always`. Les lectures n'ont rien à demander.
-- `connect_timeout: 60` laisse au premier lancement de `uvx` le temps de préparer son environnement.
 
 `memoire/agents/memoire.yaml` :
 
@@ -2967,8 +2943,22 @@ main:
 max_iterations: 4
 
 tools:
-  - mcp: memoire
+  - python: loom.memory
+    store: {path_env: MEMOIRE_BASE}
+    project: clients
+    models: {kind: fake}
+    actions: [search, get, list_docs, add_text, update, delete]
+    skill: La mémoire de l'entreprise (clients, devis, chantiers). Chercher avant de répondre sur un client.
 ```
+
+Lecture de la référence :
+
+- `store: {path_env: MEMOIRE_BASE}` : le chemin de la base est **lu dans les secrets du client** ; la variable `MEMOIRE_BASE` désigne, pour chaque client, une variable d'environnement différente (`tenants[].secrets`). C'est ce qui donne à chacun sa base. Pour un seul client, `store: {path: memoire.db}` suffit (relatif au fichier de configuration). L'outil crée la base, jamais son dossier.
+- `project: clients` : le projet est **imposé**. Le modèle n'a pas d'argument `project` : tout ce qu'il écrit va dans ce projet, et il ne voit que ses documents.
+- `models: {kind: fake}` : les modèles factices. Avec l'extra `memory` installé, retirez cette ligne (ou écrivez `models: {device: cpu}` pour forcer le CPU).
+- `actions` : les six actions permises. Les écritures (`add_text`, `update`, `delete`) gardent leur approbation par défaut, `always` ; `{add_text: {approval: never}}` (forme objet) la changerait. `approval` ne se règle pas sur la référence entière : la configuration le refuse.
+- `skill` : le texte métier ajouté à la description de l'outil. La description elle-même est tirée des paramètres (actions, projet, ce qui attend un accord).
+- Une écriture sous approbation demande un journal durable : `storage.events` en JSONL ici.
 
 `memoire/prompts/memoire.md` :
 
@@ -2979,120 +2969,91 @@ Avant de répondre à une question sur un client, un devis ou une décision pass
 N'y écris jamais de ta propre initiative : seulement quand l'artisan le demande dans son message.
 ```
 
-Ce prompt reprend, avec les mots de l'atelier, ce que le serveur dit de lui-même dans ses `instructions` MCP. Loom-IA ne transmet pas ces instructions au modèle : si elles comptent, recopiez-les dans votre prompt.
-
-Chaque client a son dossier de données, désigné par une variable d'environnement :
+Chaque client a sa base, désignée par une variable d'environnement :
 
 ```bash
-export DUPONT_MEMOIRE=$PWD/memoire/donnees/dupont
-export MARTIN_MEMOIRE=$PWD/memoire/donnees/martin
+export DUPONT_MEMOIRE=$PWD/memoire/donnees/dupont.db
+export MARTIN_MEMOIRE=$PWD/memoire/donnees/martin.db
 ```
 
 #### Exécution
 
-Validez. Le premier lancement télécharge le serveur (quelques secondes), et un serveur démarre par client :
+Validez :
 
 ```bash
 uv run loom --config memoire/loom.yaml validate
 ```
 
 ```text
-  File         asyncio
-  Bus          memory
-  Chiffrement  aucun
-  Rétention    aucune
-  Télémétrie   logs WARNING (console) · exports : métadonnées seules
-               pas d'échanges bruts · collecteur : aucun
-
-ACCÈS
-  Clés d'API   aucune
-
 CLIENTS
   client dupont-plomberie
-    secrets : MEMOIRE_DOSSIER → DUPONT_MEMOIRE
+    secrets : MEMOIRE_BASE → DUPONT_MEMOIRE
 
-    memoire · SIMULE_MEMOIRE · 0 outil Python
-    └ MCP          memoire__search, memoire__get, memoire__list_docs, memoire__projects,
-                   memoire__add_text, memoire__add_url, memoire__add_file,
-                   memoire__update, memoire__delete
+    memoire · SIMULE_MEMOIRE · 1 outil Python
+    └ memory       memory → sqlite ./donnees/dupont.db · projet clients
+                   search, get, list_docs · add_text*, update*, delete*
+                   modèles : factices · préchargement : non
+                   skill, 97 caractères (environ 24 tokens)
 
   client martin-chauffage
-    secrets : MEMOIRE_DOSSIER → MARTIN_MEMOIRE
+    secrets : MEMOIRE_BASE → MARTIN_MEMOIRE
 
-    memoire · SIMULE_MEMOIRE · 0 outil Python
-    └ MCP          memoire__search, memoire__get, memoire__list_docs, memoire__projects,
-                   memoire__add_text, memoire__add_url, memoire__add_file,
-                   memoire__update, memoire__delete
+    memoire · SIMULE_MEMOIRE · 1 outil Python
+    └ memory       memory → sqlite ./donnees/martin.db · projet clients
+                   search, get, list_docs · add_text*, update*, delete*
+                   modèles : factices · préchargement : non
+                   skill, 97 caractères (environ 24 tokens)
 
-AVERTISSEMENTS
-  ⚠ Bus memory   les nouvelles ne sortent pas de ce process
-  ⚠ Chiffrement  aucun : contenus en clair au repos
-  ⚠ Rétention    aucune : rien ne s'efface
-  ⚠ Clés d'API   aucune : API REST ouverte
+  * = approbation requise
 ```
 
-(Fin de la sortie.) Chaque client voit les neuf outils, préfixés `memoire__`, dans la branche `MCP` de l'arbre de son agent. Demandez maintenant d'écrire une note. Chaque commande affiche aussi deux lignes `Starting MCP server 'loom-notes'`, écrites par le serveur lui-même sur sa sortie d'erreur :
+(Extrait.) Chaque client a sa base, et l'étoile marque les actions qui attendent un accord. Valider ne crée pas les bases : elles le sont au premier appel. Demandez maintenant d'écrire une note :
 
 ```bash
 uv run loom --config memoire/loom.yaml run memoire "Mémorise que Mme Martin préfère être contactée le matin, avant 10 h." --tenant dupont-plomberie
 ```
 
 ```text
-[10/10/26 15:54:01] INFO     Starting MCP server 'loom-notes'   transport.py:241
-                             with transport 'stdio'                             
-—
-
-Statut     : paused · itérations : 1 · tokens : 1450/72 · coût : 0.0000 $
-Run        : 01a12685-6879-7136-8666-86efe4bb7246
-En attente : memoire__add_text (fake_0_0) — loom approve 01a12685-6879-7136-8666-86efe4bb7246 --call fake_0_0
+Statut     : paused · itérations : 1 · tokens : 898/69 · coût : 0.0000 $
+Run        : 01a1a0ad-0313-74c8-ac17-72432a810e52
+En attente : memory (fake_0_0) — loom approve 01a1a0ad-0313-74c8-ac17-72432a810e52 --call fake_0_0 --tenant dupont-plomberie
+Motif      : mémoriser un texte « Préférence de contact de Mme Martin » dans le projet clients — la config exige une approbation pour add_text (réversible)
 ```
 
-L'écriture est en attente. Demandez ce que la mémoire contient **avant** l'accord :
+L'écriture est en attente, et le motif dit ce qui serait écrit, et où. Demandez ce que la mémoire contient **avant** l'accord :
 
 ```bash
 uv run loom --config memoire/loom.yaml run memoire "Que sait-on de Mme Martin ?" --tenant dupont-plomberie
 ```
 
-```text
-[10/10/26 15:54:04] INFO     Starting MCP server 'loom-notes'   transport.py:241
-                             with transport 'stdio'                             
-Voici ce que la mémoire contient, d'après la liste des documents.
-
-Statut     : completed · itérations : 2 · tokens : 2977/81 · coût : 0.0000 $
-Run        : 01a12685-74a1-7287-96e6-5932bdcee61a
-```
-
-Le résultat de l'outil `list_docs`, lu dans la trace (`loom inspect … --full`) :
+Le résultat de l'action `list_docs`, lu dans la trace (`loom inspect … --full`) :
 
 ```text
-    outil memoire__list_docs — 10 ms
-      · résultat  : {"result": []}
-  étape 3
-    modèle fake-memoire (main) — 1 ms, 1537 → 41 tokens, 0.000000 $
+    outil memory — 8 ms
+      · arguments : {"action": "list_docs"}
+      · résultat  : []
 ```
 
 La liste est vide : rien n'a été écrit pendant l'attente. Jean Dupont approuve :
 
 ```bash
-uv run loom --config memoire/loom.yaml approve 01a12685-6879-7136-8666-86efe4bb7246 --tenant dupont-plomberie --by "Jean Dupont"
+uv run loom --config memoire/loom.yaml approve 01a1a0ad-0313-74c8-ac17-72432a810e52 --tenant dupont-plomberie --by "Jean Dupont"
 ```
 
 ```text
-[10/10/26 15:54:15] INFO     Starting MCP server 'loom-notes'   transport.py:241
-                             with transport 'stdio'                             
 Accordé : fake_0_0
 C'est noté dans la mémoire de l'entreprise.
 
-Statut     : completed · itérations : 2 · tokens : 3129/108 · coût : 0.0000 $
-Run        : 01a12685-6879-7136-8666-86efe4bb7246
+Statut     : completed · itérations : 2 · tokens : 2017/105 · coût : 0.0000 $
+Run        : 01a1a0ad-0313-74c8-ac17-72432a810e52
 ```
 
 Même question, après l'accord :
 
 ```text
-    outil memoire__list_docs — 11 ms
-      · résultat  : [{"doc_id":"684396ba-9595-476e-99dd-a0006360cb6d","title":"Préférence de contact de Mme Martin","project":"clients","tags":[],"source_kind":"text","source":null,"added_at":"2026-10-10T15:54:15.358462+00:00","updated_at":null,"chars":55}]
-  étape 3
+    outil memory — 3 ms
+      · arguments : {"action": "list_docs"}
+      · résultat  : [{"doc_id": "80a32963-060c-4408-9f51-760999ec0402", "title": "Préférence de contact de Mme Martin", "project": "clients", "tags": [], "source_kind": "text", "source": null, "added_at": "2026-11-03T09:11:04.124073+00:00", "updated_at": null, "chars": 55}]
 ```
 
 La note est là. Chez le Chauffage Martin, la mémoire reste vide :
@@ -3102,39 +3063,50 @@ uv run loom --config memoire/loom.yaml run memoire "Que sait-on de Mme Martin ?"
 ```
 
 ```text
-    outil memoire__list_docs — 10 ms
-      · résultat  : {"result": []}
-  étape 3
+    outil memory — 6 ms
+      · arguments : {"action": "list_docs"}
+      · résultat  : []
 ```
 
 Enfin, un refus. Le Chauffage Martin demande la même écriture, et Paul Martin la refuse :
 
 ```bash
 uv run loom --config memoire/loom.yaml run memoire "Mémorise que Mme Martin préfère être contactée le matin, avant 10 h." --tenant martin-chauffage
-uv run loom --config memoire/loom.yaml reject 01a12685-cfd2-7555-8f60-54a98cf215fc --tenant martin-chauffage --by "Paul Martin" --reason "Pas de ce client"
+uv run loom --config memoire/loom.yaml reject 01a1a0ad-36ae-71c5-8d50-f13c5c6a4ae1 --tenant martin-chauffage --by "Paul Martin" --reason "Pas de ce client"
 ```
 
 ```text
-[10/10/26 15:54:31] INFO     Starting MCP server 'loom-notes'   transport.py:241
-                             with transport 'stdio'                             
 Refusé : fake_0_0
 C'est noté dans la mémoire de l'entreprise.
 
-Statut     : completed · itérations : 2 · tokens : 3057/108 · coût : 0.0000 $
-Run        : 01a12685-cfd2-7555-8f60-54a98cf215fc
+Statut     : completed · itérations : 2 · tokens : 1986/105 · coût : 0.0000 $
+Run        : 01a1a0ad-36ae-71c5-8d50-f13c5c6a4ae1
 ```
 
 La mémoire de Martin reste vide : un refus n'écrit rien. (Le modèle simulé répond « C'est noté » parce que son script le dit ; un vrai modèle recevrait le refus et répondrait en conséquence.)
 
+Pour sauvegarder une base, `loom memory export` écrit ses documents, un par ligne JSON, dans un fichier neuf :
+
+```bash
+uv run loom --config memoire/loom.yaml memory export memoire sauvegarde-dupont.jsonl --tenant dupont-plomberie
+```
+
+```text
+1 document(s) écrit(s) dans sauvegarde-dupont.jsonl
+```
+
+`loom memory import` le réimporte (sans doublon), `loom memory reindex` recalcule les passages après un changement de modèle, `loom memory eval` mesure la recherche sur un jeu de questions dont on connaît la réponse : une ligne JSON par question, `{"query": …, "doc_id": …}`. Ajoutez des questions hors sujet, avec `"doc_id": null` : elles ne comptent pas dans le recall, mais leur meilleur score situe le bruit, et le `min_score` suggéré tombe entre ce bruit et la réponse attendue la plus faible (ou la commande dit qu'aucun seuil ne les sépare). Prenez les questions dans les requêtes réelles de l'agent (les `query` de ses appels `search` au journal) : le modèle reformule, et ses requêtes scorent souvent plus bas que les vôtres.
+
 #### À retenir
 
-- Une mémoire se branche comme n'importe quel serveur MCP : tout ce que vous savez des chapitres 9 et 13 s'applique. Les écritures en `approval: always` s'arrêtent, les lectures passent.
-- L'isolation entre clients tient à deux réglages : `scope: tenant` (un serveur par client) et un dossier de données différent par client, lu dans leurs secrets. Sans le second, deux serveurs écriraient dans la même base.
-- Un serveur par client a un coût. Avec les vrais modèles d'embedding, chaque serveur charge, d'après les notes du projet, de l'ordre de 5 Go en mémoire : pour beaucoup de clients, prévoyez une machine en conséquence ou une base partagée avec des projets séparés.
-- Le run qui a écrit se rejoue à l'identique **sans réécrire la note** : le rejeu lit les résultats au journal.
-- **Piège** : `uvx` démarre dans l'environnement que Loom-IA lui fournit, et Loom-IA ne transmet que les variables que la configuration nomme. Derrière un proxy d'entreprise qui présente son propre certificat, `uvx` échoue dans le sous-process avec `invalid peer certificate: UnknownIssuer` et le serveur apparaît « indisponible : Connection closed ». Transmettez le certificat avec `env_from: {SSL_CERT_FILE: SSL_CERT_FILE}` (c'est ce qu'a demandé la machine d'essai de ce guide). Hors proxy, vous n'avez rien à ajouter.
-- **Piège** : le premier lancement télécharge le serveur. `connect_timeout` doit lui laisser ce temps, ou le premier run échouera et les suivants passeront.
-- **Non exécuté ici** : la recherche sémantique réelle (`search`), qui demande les vrais modèles.
+- La mémoire est un outil fourni : une référence `loom.memory` dans l'agent, rien à lancer à côté. Les écritures attendent un accord par défaut, les lectures passent ; une action non permise n'existe pas pour le modèle.
+- L'isolation entre clients tient à `store.path_env`, lu dans les secrets de chaque client : une base par client. Le projet imposé (`project`) sépare en plus les usages d'une même base.
+- Les vrais modèles sont chargés une fois par process, partagés par tous les agents et tous les clients : de l'ordre de 4,5 Go de mémoire vive sur CPU, 2,3 Go de mémoire du GPU en demi-précision. `models.preload: true` les charge dès le montage de l'agent plutôt qu'au premier appel.
+- `models.offline: true` lit les modèles dans le cache local de Hugging Face seulement : aucune requête vers le Hub au démarrage, et l'agent ne dépend plus du réseau pour tourner. Téléchargez-les une fois avant (`hf download BAAI/bge-m3 --exclude "onnx/*"`, `hf download BAAI/bge-reranker-v2-m3`) : un modèle absent du cache fait échouer le chargement, avec la commande à lancer.
+- Le run qui a écrit se rejoue à l'identique **sans réécrire la note** : le rejeu lit les résultats au journal. En variante (chapitre 26), l'outil est jugé au pire de ses actions permises : avec une écriture permise, aucune action de la mémoire n'y est exécutée.
+- **Piège** : le premier appel avec les vrais modèles les charge (et les télécharge la première fois), et indexer une page sur CPU prend de l'ordre de 1,5 s par passage (35 s pour une page de 23 passages). L'outil a son propre délai, 300 s, au lieu des 30 s communs des outils ; `timeout` dans la référence le change. `models.preload: true` charge les modèles dès le montage.
+- **Piège** : `models.device: cuda` forcé sur une carte que la version installée de torch ne prend pas en charge fait échouer le chargement, avec la raison (architecture de la carte, aucun GPU vu, carte absente). `auto` se replie sur le CPU avec un avertissement.
+- **Non exécuté ici** : la recherche par le sens réelle (`search`), qui demande les vrais modèles.
 
 ---
 
@@ -4169,7 +4141,7 @@ Tout ce que ce chapitre a exécuté est volontairement local et simulé. Voici c
 | API REST | Clés dans `loom.yaml` | Clés à durée de vie (`--expires`), limites de débit (`--rate-limit`), HTTPS devant le serveur, jamais d'API ouverte (chapitres 20 et 22) |
 | Observabilité | Aucune | Export OpenTelemetry (`telemetry.exporters`), contenu masqué (chapitre 25), logs au format JSON |
 | Budgets | Run, session, journée | Réglés sur des coûts réels, avec `on_exceed: stop` et un quota par client (chapitre 16) |
-| Sandbox et mémoire | Non utilisées ici | `forge` sur une VM Firecracker réelle ; `loom-notes` avec `[models]` si l'agent doit chercher dans une mémoire (chapitre 29) |
+| Sandbox et mémoire | Non utilisées ici | `forge` sur une VM Firecracker réelle ; `loom.memory` avec l'extra `memory` si l'agent doit chercher dans une mémoire (chapitre 29) |
 | Contrôle continu | `pytest` en local | `uv run pytest`, `loom eval` et un rejeu des journaux de référence dans l'intégration continue (chapitres 26 à 28) |
 
 **Non exécuté ici** : tout ce qui est de la colonne de droite, faute de clé d'API, de Postgres, de Redis, de RabbitMQ, de collecteur OpenTelemetry et de VM.
@@ -4430,9 +4402,9 @@ Un rôle `terminal: true` termine le run avec sa propre sortie : les outils suiv
 
 Variable d'environnement de l'exporteur absente : simple WARNING (« ce collecteur n'est pas monté »), pas une erreur. Un exporteur déclaré dans `loom.yaml` ajoute ce WARNING à chaque commande ; l'isoler dans une configuration à part, passée par `--config`. Le masquage (`redaction.patterns`) ne vaut que pour les exports : le journal reste en clair.
 
-### `loom-notes` et le conflit de dépendances
+### `loom.memory` et ses extras
 
-`loom-ia` demande `mcp<2` alors que `loom-notes` s'appuie sur FastMCP 4 : installer les deux dans le même projet échoue. Lancer `loom-notes` en sous-processus par `uvx --from loom-notes loom-notes-mcp`. Loom ne transmet à ce sous-processus que les variables nommées dans `env` ou `env_from`. Derrière un proxy TLS, `uvx` échoue (`invalid peer certificate: UnknownIssuer` ou `Connection closed`) tant que `env_from: {SSL_CERT_FILE: SSL_CERT_FILE}` n'est pas ajouté. `loom reject` n'écrit rien dans la mémoire, mais le modèle simulé répond quand même « C'est noté ».
+Les vrais modèles de `loom.memory` viennent de l'extra `memory` (torch et transformers), absent de `all`. Sous Linux, le torch de PyPI est la version CUDA (plusieurs Go) : sur une machine sans carte, installer d'abord torch depuis l'index CPU de PyTorch. `add_url` demande l'extra `memory-web` ; il analyse le HTML sans lxml, qui, installé, changerait la lecture des classeurs par `loom.excel`.
 
 ### Sorties qui surprennent
 

@@ -130,3 +130,22 @@ def test_a_missing_extra_fails_under_require_services(tmp_path: Path) -> None:
     assert f"\nclient HTTP de test absent — {exige}\n" in said, said
     assert "SKIPPED [1] test_essais.py:16: extra 'exemple' présent" in said, said
     assert "SKIPPED [1] test_essais.py:22: rien à voir avec un paquet" in said, said
+
+
+# Les extras que les jobs « tous les extras » laissent de côté, et pourquoi.
+_NOT_IN_CI = {
+    "all": "un raccourci vers les autres",
+    "memory": "torch pèse plusieurs Go ; loom.memory s'éprouve sur des modèles factices",
+}
+
+
+def test_the_ci_installs_every_extra_but_memory() -> None:
+    """``EXTRAS`` des workflows suit ``pyproject.toml`` : un extra ajouté y est éprouvé."""
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    expected = set(project["optional-dependencies"]) - set(_NOT_IN_CI)
+    for workflow in ("ci.yml", "dependances-recentes.yml"):
+        text = (ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+        found = re.search(r'^  EXTRAS: "([^"]*)"$', text, re.MULTILINE)
+        assert found is not None, workflow
+        assert set(re.findall(r"--extra (\S+)", found.group(1))) == expected, workflow
+        assert "--all-extras" not in text, workflow

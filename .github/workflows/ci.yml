@@ -24,6 +24,11 @@ env:
   # Version d'uv épinglée, la même que dans publish.yml. L'uv local peut être plus
   # récent : uv.lock est vérifié tel quel (--locked), il doit rester lisible par celle-ci.
   UV_VERSION: "0.11.14"
+  # Les extras installés par les jobs « tous les extras » : tous, sauf memory. torch pèse
+  # plusieurs Go (version CUDA de PyPI) et n'est pas nécessaire : les essais de loom.memory
+  # tournent sur des modèles factices, et ceux de bge_m3 sur des torch et transformers
+  # factices. tests/unit/test_dependances.py vérifie que la liste suit pyproject.toml.
+  EXTRAS: "--extra anthropic --extra openai --extra mcp --extra http --extra sqlite --extra postgres --extra rabbitmq --extra redis --extra otel --extra crypto --extra office --extra pdf --extra sql --extra memory-web"
 
 defaults:
   run:
@@ -45,8 +50,8 @@ jobs:
     # --locked échoue si uv.lock n'est pas à jour avec pyproject.toml.
     # --group types : les stubs des extras (asyncpg-stubs), sans lesquels pyright
     # ne connaît pas les types d'asyncpg.
-    - name: Installer le projet (tous les extras, et leurs types)
-      run: uv sync --locked --all-extras --group types
+    - name: Installer le projet (les extras sauf memory, et leurs types)
+      run: uv sync --locked $EXTRAS --group types
 
     - name: Ruff (lint)
       run: uv run --locked ruff check .
@@ -83,7 +88,7 @@ jobs:
         import loom_ia  # noqa: F401
 
         extras = ["anthropic", "openai", "fastapi", "mcp", "openpyxl", "sqlglot", "asyncpg",
-                  "reportlab", "pypdf"]
+                  "reportlab", "pypdf", "torch", "transformers", "bs4", "markdownify"]
         installes = [m for m in extras if importlib.util.find_spec(m) is not None]
         if installes:
             raise SystemExit(f"Modules d'extras installés sans être demandés : {installes}")
@@ -155,8 +160,8 @@ jobs:
         psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 \
           -c "CREATE DATABASE loom OWNER loom"
 
-    - name: Installer le projet (tous les extras)
-      run: uv sync --locked --all-extras
+    - name: Installer le projet (les extras sauf memory)
+      run: uv sync --locked $EXTRAS
 
     # LibreOffice sans interface : le recalcul de loom.excel (`recalc: true`) est
     # éprouvé ici, et `--require-services` fait échouer son essai s'il manque ; Writer
@@ -246,10 +251,10 @@ jobs:
     # `uv pip` et non `uv sync` : `uv sync --resolution lowest-direct` réécrit uv.lock
     # (uv 0.11 n'a pas d'option pour s'en passer), alors que `uv pip` ne le lit ni ne
     # l'écrit. Les dépendances indirectes restent à leur version la plus récente.
-    - name: Installer le projet (tous les extras, dépendances directes à leur plus basse version)
+    - name: Installer le projet (les extras sauf memory, dépendances directes à leur plus basse version)
       run: |
         uv venv --python 3.14
-        uv pip install --resolution lowest-direct -r pyproject.toml --all-extras --group dev --group types
+        uv pip install --resolution lowest-direct -r pyproject.toml $EXTRAS --group dev --group types
         uv pip install --no-deps -e .
 
     - name: Versions installées

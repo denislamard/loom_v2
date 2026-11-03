@@ -69,7 +69,7 @@
 - **F3** Compaction automatique : seuil, modèle dédié, N derniers tours conservés ; en tâche de fond après le run, ou bloquante à l'ouverture du run suivant (`blocking: true`, 2.0.9, point 23).
 - **F4** Nettoyage : thinking retiré, médias remplacés par des références.
 - **F5** Backends : mémoire vive, fichier, `[V2]` Firestore (non réalisé) ou SQL.
-- **F6** `[V2]` Mémoire long terme / RAG, exposée comme un outil. Réalisée en 6.4d : un serveur MCP, `loom-notes`, branché en source d'outils (point 19).
+- **F6** `[V2]` Mémoire long terme / RAG, exposée comme un outil. Réalisée en 6.4d par un serveur MCP externe, puis intégrée en 2.0.16 : l'outil fourni `loom.memory` (point 19).
 - **F7** `[V2]` Gestion des sessions : lister, supprimer, exporter (RGPD).
 - **F8** `[V2]` State de session : quelques valeurs typées et durables (clés déclarées, un JSON Schema chacune), posées par l'application à l'ouverture d'un run ou par le résultat d'un outil, relues par l'orchestrateur, les rôles et les outils, et que la compaction ne touche pas. Réalisé en 2.0.6 (point 51). En 2.0.15 (state v2), le modèle tient lui-même des clés avec l'outil fourni `loom.state` : il désigne un résultat d'outil du run (`result:N`), loom en tire la valeur d'après `extract:` ; `writers` dit qui peut écrire chaque clé (`app`, `tools`, `model`) ; analyse : `docs/state_v2_analyse.md`.
 
@@ -757,15 +757,18 @@ tools:
 - Démarrage indépendant : un serveur indisponible voit ses outils retirés pour le run (avec un avertissement), les autres restent utilisables ; `required: true` rend son absence bloquante.
 - Contrôles au démarrage : serveur référencé mais non déclaré ; outil de `include` ou `exclude` inconnu une fois le serveur connecté (avertissement) ; deux références qui produisent le même préfixe.
 
-**Réalisation (phase 6.4d — la mémoire long terme, F6) :** la mémoire long terme est un **serveur MCP**, `loom-notes` (anciennement `loom-memory`, renommé le 08/10 ; RAG hybride : BGE-M3 dense et sparse, reranker, Qdrant), branché comme n'importe quel serveur : ses outils deviennent `memoire__search`, `memoire__add_text`…, et loom n'a rien de propre à la mémoire. Décisions du 08/10 :
+**Réalisation (la mémoire long terme, F6) :** en 6.4d, la mémoire était un serveur MCP externe, branché comme un autre ; le seul ajout au code fut `ToolOverrides.description`, qui reste (réglages par outil de `mcp_servers[].tools`, de `tool_sources[].tools` et d'une référence dans l'agent). En **2.0.16**, la mémoire est un **outil fourni**, `loom.memory`, monté dans le process de loom, sans dépendance externe :
 
-- les écritures (`add_text`, `add_url`, `add_file`, `update`, `delete`) en `approval: always` : la règle du serveur, « n'écrire que sur demande explicite », devient un contrôle — le run s'arrête avant chaque écriture, un refus n'écrit rien et son motif revient au modèle ;
-- un serveur par client (`scope: tenant`), son dossier de données lu dans ses secrets (`env_from: {LOOM_NOTES_DATA_DIR: MEMOIRE_DOSSIER}`) : ce qu'un client mémorise, un autre ne le trouve pas ;
-- une clé `description` dans les réglages par outil, pour réécrire ce que le modèle lit : celles de `loom-notes` nomment son utilisateur.
+- recherche hybride : BGE-M3 (dense et lexical) puis reranker (bge-reranker-v2-m3), sur `transformers`, CPU ou GPU (extra `memory`) ; modèles factices sans l'extra (`models.kind: fake`) ; un seul exemplaire des modèles par process ;
+- base SQLite (`store.path`, ou `store.path_env` lu dans les secrets du client : chaque client a sa base) ; un document et ses passages s'écrivent en une transaction ;
+- un seul outil, `memory`, et une `action` parmi celles que la config permet (`search`, `get`, `list_docs`, `projects`, `add_text`, `add_url`, `add_file`, `update`, `delete`) ; une action absente est refusée ; les écritures en `approval: always` par défaut, décidé appel par appel (`assess_call`) ;
+- `project` imposé par la config : absent des arguments, et `get`, `update`, `delete` ne voient que ses documents ;
+- `add_file` par des dossiers nommés (`<dossier>/<chemin>`, fichiers cachés refusés, `.md`, `.markdown`, `.txt`, 1 Mo) ; `add_url` par le réseau de `fetch_page` (extra `memory-web`, sans lxml) ;
+- entretien hors run : `loom memory export | import | reindex | eval`.
 
-Ce que loom apportait déjà : les lectures, annotées `readOnlyHint`, passent sans approbation ; un run qui a écrit se rejoue sans réécrire, le journal servant l'appel ; en variante, `add_text`, sans annotation, compte comme irréversible et n'est jamais exécuté. Le seul ajout au code est `ToolOverrides.description`. Elle vaut pour `mcp_servers[].tools`, pour `tool_sources[].tools` et pour les `tools` d'une référence dans l'agent, qui l'emportent ; pas pour un outil Python, dont la description est sa docstring ; vide, elle est refusée au chargement. Essais : `tests/integration/test_memoire.py`, contre le vrai serveur, `loom-notes` publié sur PyPI et lancé par `uvx` (`LOOM_NOTES_SERVER` le remplace par un binaire local), en modèles factices ; exemple `examples/j6/memoire.py`, cas `chercher`, `memoriser`, `rejeu`, `clients`.
+Essais : `tests/unit/test_memory_*.py` (base, découpage, modèles avec des torch et transformers factices, outil, pages web, entretien, moteur : approbation, refus, rejeu, variante, clients) ; exemple `examples/j6/memory.py`, cas `chercher`, `memoriser`, `rejeu`, `clients`.
 
-**Reste connu (6.4d) :** loom ne transmet pas au modèle les `instructions` d'un serveur MCP — ce que le serveur dit de son usage (quand chercher, quand écrire) doit être repris dans le prompt de l'agent ; `description` réécrit celle de l'outil, pas celles de ses paramètres ; une description réécrite reste celle de la config si le serveur change la sienne ; en `scope: tenant`, chaque client actif a son process, avec ses modèles en mémoire.
+**Reste connu :** au rejeu en variante et en évaluation, l'outil est jugé au pire de ses actions permises (`strictest_side_effects`) : avec une écriture permise, même `search` y est refusé ou doit être doublé ; les vrais modèles ne tournent pas en CI (seuls leurs calculs autour, sur des modules factices).
 
 ### 20. Réparation de la réponse finale
 

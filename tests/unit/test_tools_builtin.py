@@ -281,6 +281,11 @@ SAMPLE_PARAMS: dict[str, Callable[[Path], dict[str, Any]]] = {
     "loom.pdf": lambda folder: {
         "folders": [{"name": "essai", "path": str(folder), "rights": ["read", "write"]}]
     },
+    "loom.memory": lambda folder: {
+        "store": {"path": str(folder / "memoire.db")},
+        "models": {"kind": "fake"},
+        "actions": ["search"],
+    },
     "loom.sql": lambda folder: {
         "databases": [
             {
@@ -363,7 +368,8 @@ def test_validating_a_config_imports_only_the_parameter_modules() -> None:
         "{'python': 'loom.word', 'folders': [{'name': 'w', 'path': '/tmp', 'rights': ['read']}]}, "
         "{'python': 'loom.pdf', 'folders': [{'name': 'w', 'path': '/tmp', 'rights': ['read']}]}, "
         "{'python': 'loom.sql', 'databases': [{'name': 'b', 'postgres': {'dsn_env': 'B'}, "
-        "'tables': {'t': ['select']}}]}]})\n"
+        "'tables': {'t': ['select']}}]}, {'python': 'loom.memory', 'store': {'path': 'm.db'}, "
+        "'actions': ['search', 'add_url']}]})\n"
         "print('loom_ia.tools_builtin.local_files' in sys.modules, "
         "'loom_ia.tools_builtin.fetch_page' in sys.modules, "
         "'loom_ia.tools_builtin.excel' in sys.modules, 'openpyxl' in sys.modules, "
@@ -371,12 +377,13 @@ def test_validating_a_config_imports_only_the_parameter_modules() -> None:
         "'asyncpg' in sys.modules, 'loom_ia.tools_builtin.word' in sys.modules, "
         "'loom_ia.tools_builtin._document' in sys.modules, "
         "'loom_ia.tools_builtin.pdf' in sys.modules, 'reportlab' in sys.modules, "
-        "'pypdf' in sys.modules)\n"
+        "'pypdf' in sys.modules, 'loom_ia.tools_builtin.memory' in sys.modules, "
+        "'torch' in sys.modules, 'transformers' in sys.modules, 'bs4' in sys.modules)\n"
     )
     done = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
     )
-    assert done.stdout.split() == ["False"] * 12
+    assert done.stdout.split() == ["False"] * 16
 
 
 # --- Paramètres sur la référence ----------------------------------------------------
@@ -437,6 +444,7 @@ def test_the_schema_describes_the_parameters() -> None:
             "loom.ask",
             "loom.excel",
             "loom.local_files",
+            "loom.memory",
             "loom.pdf",
             "loom.sql",
             "loom.state",
@@ -447,6 +455,7 @@ def test_the_schema_describes_the_parameters() -> None:
     assert "databases" in schema["$defs"]["Builtin_sql"]["required"]
     assert "folders" in schema["$defs"]["Builtin_word"]["required"]
     assert "folders" in schema["$defs"]["Builtin_pdf"]["required"]
+    assert {"store", "actions"} <= set(schema["$defs"]["Builtin_memory"]["required"])
 
 
 # --- Ce que reçoit la fabrique, ce que l'agent ferme, ce que lit un client (loom.sql) --

@@ -19,6 +19,8 @@
     loom keys create <nom>         fabrique une clé d'API
     loom worker                    consomme la file des tâches de fond
     loom storage sql               SQL du stockage Postgres déclaré
+    loom memory export <agent> F   entretient la mémoire d'un agent (loom.memory) :
+                                   export, import, reindex, eval
     loom schema                    JSON Schema du fichier de configuration
 
 ``--config`` désigne le fichier de configuration (``./loom.yaml`` par
@@ -72,6 +74,7 @@ from loom_ia.access.api import (
     check_deletable_id,
     unpiloted,
 )
+from loom_ia.access.cli import memory as memory_cli
 from loom_ia.access.evals import evaluate
 from loom_ia.access.progress import SKIP_REASONS, Progress, describe_compaction, notes
 from loom_ia.access.resources import RUNS as MCP_RUNS
@@ -666,6 +669,11 @@ def build_parser() -> argparse.ArgumentParser:
         "sql", help="imprime le SQL du stockage Postgres déclaré (tables, rôle, politiques)"
     )
     ddl.set_defaults(handler=cmd_storage_sql)
+
+    memory = commands.add_parser(
+        "memory", help="entretient la mémoire d'un agent (loom.memory) : export, import…"
+    )
+    memory_cli.add_actions(memory, tenanted, cmd_memory)
 
     schema = commands.add_parser("schema", help="JSON Schema du fichier de configuration")
     schema.set_defaults(handler=cmd_schema)
@@ -3096,6 +3104,11 @@ def cmd_storage_sql(args: argparse.Namespace) -> int:
         )
     print(postgres_ddl(config), end="")
     return OK
+
+
+def cmd_memory(args: argparse.Namespace) -> int:
+    """``loom memory`` : la base de l'agent, hors de tout run (``access/cli/memory.py``)."""
+    return memory_cli.run(_config(args), args)
 
 
 def cmd_schema(args: argparse.Namespace) -> int:
