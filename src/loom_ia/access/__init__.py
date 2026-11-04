@@ -24,6 +24,7 @@ from loom_ia.access.api import (
     UnknownSession,
     UnknownTrigger,
 )
+from loom_ia.access.authz import AccessDenied, Actor
 from loom_ia.access.resources import (
     ARTIFACTS,
     EVENTS,
@@ -50,6 +51,8 @@ __all__ = [
     "SESSIONS",
     "TEMPLATES",
     "TRACES",
+    "AccessDenied",
+    "Actor",
     "AgentNotAllowed",
     "ApprovalStale",
     "BudgetExhausted",

@@ -14,7 +14,9 @@ from zoneinfo import ZoneInfo
 import pytest
 import yaml
 from conftest import secured
+from pydantic import JsonValue
 
+from loom_ia.access import AccessDenied
 from loom_ia.access.api import ApprovalStale, Loom, RunResult, UnknownApproval
 from loom_ia.access.cli import main
 from loom_ia.access.evals import received_arguments
@@ -28,6 +30,7 @@ from loom_ia.core.events import (
     EventDraft,
     FacetValue,
     RunClaimed,
+    RunStarted,
     RunTransitioned,
     ToolCalled,
     ToolCompleted,
@@ -1484,3 +1487,234 @@ def test_a_replay_serves_the_decision_with_its_audit() -> None:
     assert book.recorded_decision(journal.run_id, "c1") == Approved(
         by="marie", via="app-crm", roles=("approbateur",), self_approved=True
     )
+
+
+# --- Qui tranche, par le SDK (user=, § 4.4, § 6.3, lot 3) -------------------------------
+
+EQUIPE: dict[str, Any] = {
+    "roles": [
+        {
+            "id": "gerant",
+            "permissions": [
+                "run",
+                "answer",
+                "cancel",
+                "approve",
+                "self_approve",
+                "amend",
+                "read",
+                "read_content",
+            ],
+        },
+        {"id": "approbateur", "permissions": ["approve", "read", "read_content"]},
+        {"id": "assistante", "permissions": ["run", "answer", "cancel", "read", "read_content"]},
+    ],
+    "users": [
+        {"id": "denis", "roles": ["gerant"]},
+        {"id": "alice", "roles": ["approbateur"]},
+        {"id": "marie", "roles": ["assistante"]},
+    ],
+}
+
+
+def _decisions(events: Sequence[Event]) -> list[ApprovalGranted | ApprovalRejected]:
+    return [e.payload for e in events if isinstance(e.payload, ApprovalGranted | ApprovalRejected)]
+
+
+def test_the_launcher_is_the_user_who_ran_the_agent(atelier: ConfigFactory) -> None:
+    async def go() -> list[Event]:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            return await loom.export_session(SESSION)
+
+    [started] = [e.payload for e in asyncio.run(go()) if isinstance(e.payload, RunStarted)]
+    assert started.context.user_id == "marie"
+
+
+def test_an_approver_decides_the_run_of_another_and_signs_it(atelier: ConfigFactory) -> None:
+    async def go() -> tuple[str, list[Event]]:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            with pytest.raises(AccessDenied, match="marie ne peut pas trancher"):
+                await loom.approve(run.run_id, session_id=SESSION, user="marie")
+            assert await loom.approve(run.run_id, session_id=SESSION, user="alice")
+            await loom.drain()
+            done = await loom.result(run.run_id, session_id=SESSION)
+            return str(done.status), await loom.export_session(SESSION)
+
+    status, events = asyncio.run(go())
+    assert status == RunStatus.COMPLETED
+    [accord] = _decisions(events)
+    assert isinstance(accord, ApprovalGranted)
+    assert (accord.by, accord.roles, accord.self_approved) == ("alice", ("approbateur",), False)
+
+
+def test_approving_ones_own_run_is_signed_as_such(atelier: ConfigFactory) -> None:
+    async def go() -> list[Event]:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="denis")
+            await loom.approve(run.run_id, session_id=SESSION, user="denis")
+            await loom.drain()
+            return await loom.export_session(SESSION)
+
+    [accord] = _decisions(asyncio.run(go()))
+    assert accord.by == "denis" and accord.roles == ("gerant",) and accord.self_approved
+
+
+def test_an_agent_that_forbids_self_approval_needs_someone_else(atelier: ConfigFactory) -> None:
+    path = avec_acces(atelier(security=EQUIPE), {"self_approval": False})
+
+    async def go() -> list[Event]:
+        async with Loom.from_config(path) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="denis")
+            with pytest.raises(AccessDenied, match="l'agent interdit l'auto-approbation"):
+                await loom.approve(run.run_id, session_id=SESSION, user="denis")
+            await loom.approve(run.run_id, session_id=SESSION, user="alice")
+            await loom.drain()
+            return await loom.export_session(SESSION)
+
+    assert [d.by for d in _decisions(asyncio.run(go()))] == ["alice"]
+
+
+def test_only_the_frozen_approvers_decide(atelier: ConfigFactory) -> None:
+    path = avec_acces(
+        atelier(security=EQUIPE), {"approve": {"tools": {"envoyer_email": ["gerant"]}}}
+    )
+
+    async def go() -> list[Event]:
+        async with Loom.from_config(path) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            with pytest.raises(AccessDenied, match="n'est tranchable que par gerant"):
+                await loom.approve(run.run_id, session_id=SESSION, user="alice")
+            await loom.approve(run.run_id, session_id=SESSION, user="denis")
+            await loom.drain()
+            return await loom.export_session(SESSION)
+
+    assert [d.by for d in _decisions(asyncio.run(go()))] == ["denis"]
+
+
+def test_correcting_the_arguments_needs_amend(atelier: ConfigFactory) -> None:
+    corrige: dict[str, JsonValue] = {"destinataire": "compta@example.com"}
+
+    async def go() -> list[Event]:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            [attente] = run.pending_approvals
+            with pytest.raises(AccessDenied, match="il faut 'amend'"):
+                await loom.approve(
+                    run.run_id,
+                    call_id=attente.call_id,
+                    arguments=corrige,
+                    session_id=SESSION,
+                    user="alice",
+                )
+            await loom.approve(
+                run.run_id,
+                call_id=attente.call_id,
+                arguments=corrige,
+                session_id=SESSION,
+                user="denis",
+            )
+            await loom.drain()
+            return await loom.export_session(SESSION)
+
+    [accord] = _decisions(asyncio.run(go()))
+    assert isinstance(accord, ApprovalGranted)
+    assert accord.by == "denis" and accord.arguments == corrige
+
+
+def test_a_refusal_needs_the_same_rights_and_is_signed(atelier: ConfigFactory) -> None:
+    async def go() -> list[Event]:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            with pytest.raises(AccessDenied):
+                await loom.reject(run.run_id, session_id=SESSION, user="marie", reason="non")
+            await loom.reject(run.run_id, session_id=SESSION, user="alice", reason="non")
+            await loom.drain()
+            return await loom.export_session(SESSION)
+
+    [refus] = _decisions(asyncio.run(go()))
+    assert isinstance(refus, ApprovalRejected)
+    assert refus.by == "alice" and refus.roles == ("approbateur",)
+
+
+def test_a_refused_decision_writes_nothing(atelier: ConfigFactory) -> None:
+    async def go() -> tuple[int, int]:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            avant = len(await loom.export_session(SESSION))
+            with pytest.raises(AccessDenied):
+                await loom.approve(run.run_id, session_id=SESSION, user="marie")
+            return avant, len(await loom.export_session(SESSION))
+
+    avant, apres = asyncio.run(go())
+    assert avant == apres
+
+
+def test_a_user_signs_himself_and_takes_no_free_signature(atelier: ConfigFactory) -> None:
+    async def go() -> None:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            with pytest.raises(TypeError, match="c'est l'utilisateur qui signe"):
+                await loom.approve(run.run_id, session_id=SESSION, user="alice", by="le patron")
+
+    asyncio.run(go())
+
+
+def test_can_says_who_may_decide_without_writing(atelier: ConfigFactory) -> None:
+    async def go() -> tuple[dict[str, bool], int, int]:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            avant = len(await loom.export_session(SESSION))
+            vu = {
+                "marie": await loom.can("marie", "approve", run_id=run.run_id, session_id=SESSION),
+                "alice": await loom.can("alice", "approve", run_id=run.run_id, session_id=SESSION),
+                "alice_amend": await loom.can(
+                    "alice", "amend", run_id=run.run_id, session_id=SESSION
+                ),
+                "denis_amend": await loom.can(
+                    "denis", "amend", run_id=run.run_id, session_id=SESSION
+                ),
+                "inconnu": await loom.can(
+                    "fantome", "approve", run_id=run.run_id, session_id=SESSION
+                ),
+                "lancer": await loom.can("alice", "run", agent="demo"),
+            }
+            with pytest.raises(ValueError, match="se déduit du lanceur"):
+                await loom.can("denis", "self_approve", run_id=run.run_id, session_id=SESSION)
+            return vu, avant, len(await loom.export_session(SESSION))
+
+    vu, avant, apres = asyncio.run(go())
+    assert vu == {
+        "marie": False,
+        "alice": True,
+        "alice_amend": False,
+        "denis_amend": True,
+        "inconnu": False,
+        "lancer": False,
+    }
+    assert avant == apres
+
+
+def test_a_subagent_request_follows_the_subagent_access_and_the_root_launcher(
+    delegue: ConfigFactory, tmp_path: Path
+) -> None:
+    """La demande du secrétaire suit son ``access`` ; le lanceur est celui de la racine (§ 5.2)."""
+    path = delegue(security=EQUIPE)
+    fichier = tmp_path / "agents" / "secretaire.yaml"
+    secretaire = yaml.safe_load(fichier.read_text(encoding="utf-8"))
+    secretaire["access"] = {"approve": {"default": ["gerant"]}, "self_approval": False}
+    fichier.write_text(yaml.safe_dump(secretaire), encoding="utf-8")
+
+    async def go() -> list[Event]:
+        async with Loom.from_config(path) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="denis")
+            with pytest.raises(AccessDenied, match="n'est tranchable que par gerant"):
+                await loom.approve(run.run_id, session_id=SESSION, user="alice")
+            # Denis a lancé la racine : le secrétaire interdit qu'il s'approuve.
+            with pytest.raises(AccessDenied, match="l'agent interdit l'auto-approbation"):
+                await loom.approve(run.run_id, session_id=SESSION, user="denis")
+            assert not await loom.can("denis", "approve", run_id=run.run_id, session_id=SESSION)
+            return await loom.export_session(SESSION)
+
+    assert _decisions(asyncio.run(go())) == []

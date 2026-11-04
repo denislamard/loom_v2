@@ -58,14 +58,15 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import ExitStack, asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Final, Self
+from typing import Final, NamedTuple, Self
 
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
 
+from loom_ia.access.authz import AccessDenied, Actor, Approvable, require, require_decision
 from loom_ia.adapters.models import create_model_client
 from loom_ia.adapters.queue import Handler
 from loom_ia.adapters.stores import PLAIN, JournalCodec, NotifyingEventStore, SealingCodec
@@ -74,7 +75,7 @@ from loom_ia.agents.registry import AgentRegistry
 from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
-from loom_ia.config.models import TriggerSpec
+from loom_ia.config.models import Permission, TriggerSpec
 from loom_ia.config.references import Registry
 from loom_ia.core.closing import Closing
 from loom_ia.core.events import (
@@ -1031,6 +1032,99 @@ def _run_states(events: Sequence[Event]) -> list[RunState]:
     return [fold(own, run_id) for run_id, own in _by_run(events).items()]
 
 
+class _Routed(NamedTuple):
+    """Une question qui attend, à laquelle un message écrit dans la session répond."""
+
+    # Run racine, celui qui reprend.
+    root: RunState
+    question: PendingQuestion
+    # Agent du run qui l'a posée : un sous-agent, s'il y en a un (§ 6.5).
+    asker: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Signed:
+    """Qui tranche une demande, et à quel titre : ce que la décision écrit (§ 7)."""
+
+    by: str | None
+    via: str | None = None
+    roles: tuple[str, ...] = ()
+    self_approved: bool = False
+
+
+def _launched_by(
+    actor: Actor, context: CallerContext | None, tenant: TenantId | None
+) -> tuple[CallerContext, TenantId | None]:
+    """Le contexte d'un run lancé par cet utilisateur, et son client (règle 1, D-7).
+
+    Le contexte porte son identifiant — et la passerelle, s'il est endossé :
+    c'est le lanceur, qu'une auto-approbation reconnaît. Sans client nommé,
+    c'est le sien ; un client nommé qui n'est pas le sien est refusé par le
+    contrôle des droits, pas ici.
+    """
+    given = context or CallerContext()
+    if given.user_id is not None and given.user_id != actor.user:
+        raise ValueError(
+            f"Utilisateur contradictoire : user={actor.user!r} et context.user_id={given.user_id!r}"
+        )
+    named = tenant is not None or (context is not None and "tenant_id" in context.model_fields_set)
+    return (
+        given.model_copy(update={"user_id": actor.user, "via": actor.via}),
+        tenant if named else actor.tenant,
+    )
+
+
+def _decidable(
+    actor: Actor,
+    asked: Sequence[tuple[RunState, PendingApproval]],
+    tree: Sequence[Event],
+    tenant: TenantId,
+    *,
+    amend: bool,
+) -> tuple[list[tuple[RunState, PendingApproval]], dict[tuple[RunId, str], _Signed]]:
+    """Les demandes que l'acteur peut trancher, et la signature de chacune (§ 4.4).
+
+    Une seule demande visée, ou aucune qu'il puisse trancher parmi celles qui
+    attendent : ``AccessDenied``, avec le motif de la première — un succès vide
+    laisserait croire que le run n'attendait rien.
+    """
+    kept: list[tuple[RunState, PendingApproval]] = []
+    signed: dict[tuple[RunId, str], _Signed] = {}
+    refused: AccessDenied | None = None
+    for owner, request in asked:
+        launcher = _launcher(tree, owner)
+        approvable = Approvable(
+            agent=owner.agent,
+            tool=request.tool_name,
+            approvers=request.approvers,
+            self_approval=request.self_approval,
+            launcher=launcher,
+        )
+        try:
+            roles = require_decision(actor, approvable, tenant=tenant, amend=amend)
+        except AccessDenied as error:
+            refused = refused or error
+            continue
+        kept.append((owner, request))
+        signed[owner.run_id, request.call_id] = _Signed(
+            by=actor.user,
+            via=actor.via,
+            roles=tuple(role.id for role in roles),
+            self_approved=launcher == actor.user,
+        )
+    if refused is not None and not kept:
+        raise refused
+    return kept, signed
+
+
+def _launcher(tree: Sequence[Event], state: RunState) -> str | None:
+    """L'utilisateur qui a lancé le run racine de ``state`` (§ 4.4)."""
+    for event in tree:
+        if event.run_id == state.root_run_id and isinstance(event.payload, RunStarted):
+            return event.payload.context.user_id
+    return state.context.user_id
+
+
 def _awaiting_runs(tree: Sequence[Event]) -> list[RunState]:
     """Runs de l'arbre qui attendent une approbation, dans l'ordre du journal."""
     return [state for state in _run_states(tree) if state.awaiting]
@@ -1519,19 +1613,124 @@ class Loom:
         return caller, found
 
     async def _admitted(
-        self, agent: str, context: CallerContext | None, tenant: TenantId | None
+        self,
+        agent: str,
+        context: CallerContext | None,
+        tenant: TenantId | None,
+        actor: Actor | None = None,
     ) -> tuple[CallerContext, Tenant]:
         """Ce qu'il faut vérifier avant d'ouvrir un run, dans l'ordre du moins cher.
 
-        Le client, puis l'agent qu'on lui ouvre, puis son débit (en mémoire),
-        puis son budget de période (qui peut relire le journal). Rien n'est
-        écrit tant que les quatre ne sont pas passés : un run refusé n'a pas
-        existé.
+        Le client, puis l'agent qu'on lui ouvre, puis les droits de
+        l'utilisateur (``actor``, § 4.3), puis son débit (en mémoire), puis son
+        budget de période (qui peut relire le journal). Rien n'est écrit tant
+        que tout n'est pas passé : un run refusé n'a pas existé, et ne
+        consomme pas le débit de son client.
+
+        Avec un utilisateur, le client est le sien (règle 1) et le contexte
+        porte son identifiant : c'est le lanceur, dont dépend l'auto-approbation
+        (D-7).
         """
+        if actor is not None:
+            context, tenant = _launched_by(actor, context, tenant)
         caller, found = self._for(agent, context, tenant)
+        if actor is not None:
+            require(actor, "run", agent=self._agents.get(agent), tenant=found.id)
         self._quota.check(found.id, found.quotas.runs_per_minute)
         await self._usage.check(found)
         return caller, found
+
+    async def can(
+        self,
+        user: str | Actor,
+        permission: Permission,
+        *,
+        agent: str | None = None,
+        run_id: RunId | None = None,
+        call_id: str | None = None,
+        session_id: SessionId | None = None,
+        tenant_id: TenantId | None = None,
+    ) -> bool:
+        """Vrai si l'utilisateur peut faire cette action ; rien n'est écrit (§ 6.3).
+
+        Pour n'afficher une action qu'à qui peut s'en servir — le bouton
+        « Approuver », par exemple. Les mêmes règles que les méthodes qui
+        agissent : un ``True`` ici, et l'action passera ses contrôles de droits.
+
+        - ``approve`` ou ``amend`` : sur un run (``run_id``), la demande
+          ``call_id`` — ou l'une au moins de celles qui attendent ; ``amend``,
+          c'est l'accorder en corrigeant ses arguments. ``self_approve`` ne se
+          demande pas : il se déduit de qui a lancé le run.
+        - Toute autre permission : sur l'agent nommé (``agent``), ou sur celui
+          du run (``run_id``) ; sans l'un ni l'autre, hors de tout agent.
+
+        Un utilisateur inconnu ne peut rien ; un run inconnu lève ``UnknownRun``.
+        """
+        if permission == "self_approve":
+            raise ValueError(
+                "self_approve se déduit du lanceur du run : demander 'approve' sur ce run"
+            )
+        try:
+            actor = user if isinstance(user, Actor) else Actor.of(self.config.security, user)
+        except AccessDenied:
+            return False
+        tenant = tenant_id or actor.tenant
+        if permission in ("approve", "amend"):
+            if run_id is None:
+                raise ValueError(f"{permission!r} se demande sur un run : indiquer run_id")
+            events = await self._store.read(tenant, session_id or SessionId(run_id))
+            tree = RunTree(run_id).select(events)
+            if not tree:
+                raise UnknownRun(run_id)
+            asked = [
+                (owner, request)
+                for owner in _awaiting_runs(tree)
+                for request in owner.awaiting
+                if call_id is None or request.call_id == call_id
+            ]
+            if not asked:
+                return False
+            try:
+                _decidable(actor, asked, tree, tenant, amend=permission == "amend")
+            except AccessDenied:
+                return False
+            return True
+        spec: AgentSpec | None = None
+        if agent is not None:
+            spec = self._agents.get(agent)
+        elif run_id is not None:
+            state = await self.state(run_id, session_id=session_id, tenant_id=tenant)
+            spec = self._agents.get(state.agent)
+        try:
+            require(actor, permission, agent=spec, tenant=tenant)
+        except AccessDenied:
+            return False
+        return True
+
+    def _actor(self, user: str | Actor | None, by: str | None = None) -> Actor | None:
+        """L'acteur d'un appel, ou ``None`` sans utilisateur (rien n'est contrôlé, lot 3).
+
+        ``user`` est un identifiant déclaré, ou un ``Actor`` déjà résolu par un
+        accès (clé d'API, passerelle). ``by`` est l'ancienne signature libre :
+        elle ne se mêle pas à un utilisateur, qui signe lui-même.
+        """
+        if user is None:
+            return None
+        if by is not None:
+            raise TypeError("by= et user= : c'est l'utilisateur qui signe, retirer by=")
+        if isinstance(user, Actor):
+            return user
+        return Actor.of(self.config.security, user)
+
+    def _require_on_run(self, actor: Actor | None, permission: Permission, state: RunState) -> None:
+        """Les droits de l'acteur sur l'agent d'un run existant, chez le client du run."""
+        if actor is not None:
+            require(
+                actor,
+                permission,
+                agent=self._agents.get(state.agent),
+                tenant=state.context.tenant_id,
+            )
 
     def _judged(self, judges: JudgesMode) -> JudgesMode:
         """Ce que l'appelant demande aux juges, si le profil le permet (M4).
@@ -1562,8 +1761,15 @@ class Loom:
         tenant: TenantId | None = None,
         state: Mapping[str, JsonValue] | None = None,
         answerer: Answerer | None = None,
+        user: str | Actor | None = None,
     ) -> RunResult:
         """Fait tourner un run jusqu'au bout et renvoie ce qu'il a produit.
+
+        ``user`` : l'utilisateur qui lance (docs/loom_role_user.md). Ses droits
+        sont vérifiés — ``run`` sur l'agent, et ``answer`` si le message répond
+        à une question qui attend —, le client est le sien, et il devient le
+        lanceur du run. ``AccessDenied`` sinon, avant que rien ne soit écrit.
+        Sans lui, rien n'est contrôlé (il deviendra obligatoire, lot 5).
 
         Une session où une question de cet agent attend sa réponse (wait_answer)
         prend le message comme réponse : la question reçoit ce texte, et c'est
@@ -1597,10 +1803,12 @@ class Loom:
         approbation) alors que le run est écrit ne fait pas échouer l'appel : la
         panne est journalisée (ERROR) et le résultat est celui du run.
         """
-        caller, who = await self._admitted(agent, context, tenant)
+        actor = self._actor(user)
+        caller, who = await self._admitted(agent, context, tenant, actor)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver, answerer=answerer)
         routed = await self._routed(agent, who.id, session_id, message, attachments, state, run_id)
         if routed is not None:
+            self._may_answer(actor, routed)
             return await self._answered_run(ctx, routed, message, caller)
         await self._unclaimed(run_id, session_id, who.id)
         started = await self._start(
@@ -1617,7 +1825,7 @@ class Loom:
         attachments: Sequence[Attachment],
         state: Mapping[str, JsonValue] | None,
         run_id: RunId | None,
-    ) -> tuple[RunState, PendingQuestion] | None:
+    ) -> _Routed | None:
         """La question de cet agent qui attend une réponse dans la session, s'il y en a une.
 
         Le message ne lui est donné que s'il n'est qu'un texte : avec des pièces
@@ -1641,26 +1849,41 @@ class Loom:
             return None
         states = {s.run_id: s for s in _run_states(events)}
         for question in waiting:
-            owner = states.get(question.run_id) if question.run_id else None
+            asker = states.get(question.run_id) if question.run_id else None
+            owner = asker
             while owner is not None and owner.parent_run_id is not None:
                 owner = states.get(owner.parent_run_id)
-            if owner is not None and owner.agent == agent:
-                return owner, question
+            if owner is not None and asker is not None and owner.agent == agent:
+                return _Routed(owner, question, asker.agent)
         return None
+
+    def _may_answer(self, actor: Actor | None, routed: _Routed) -> None:
+        """Répondre en écrivant, c'est aussi répondre : ``answer`` sur l'agent qui a demandé.
+
+        Celui du run qui a posé la question — un sous-agent, s'il y en a un :
+        c'est son ``access`` qui dit qui lui répond (§ 5.2, § 6.5).
+        """
+        if actor is not None:
+            require(
+                actor,
+                "answer",
+                agent=self._agents.get(routed.asker),
+                tenant=routed.root.context.tenant_id,
+            )
 
     async def _answered_later(
         self,
-        routed: tuple[RunState, PendingQuestion],
+        routed: _Routed,
         message: str | Message,
         caller: CallerContext,
     ) -> RunId:
         """Le message devient la réponse, et la reprise du run part en file (``submit``)."""
-        root, question = routed
+        root, question, _ = routed
         text = message if isinstance(message, str) else message.text
         await self._write_answer(
             root.run_id,
             question.call_id,
-            QuestionReply(text=text, by=caller.user_id),
+            QuestionReply(text=text, by=caller.user_id, via=caller.via),
             session_id=root.session_id,
             tenant_id=root.context.tenant_id,
         )
@@ -1687,17 +1910,17 @@ class Loom:
     async def _answered_run(
         self,
         ctx: RunContext,
-        routed: tuple[RunState, PendingQuestion],
+        routed: _Routed,
         message: str | Message,
         caller: CallerContext,
     ) -> RunResult:
         """Le message devient la réponse à la question, et le run qui l'a posée reprend."""
-        root, question = routed
+        root, question, _ = routed
         text = message if isinstance(message, str) else message.text
         await self._write_answer(
             root.run_id,
             question.call_id,
-            QuestionReply(text=text, by=caller.user_id),
+            QuestionReply(text=text, by=caller.user_id, via=caller.via),
             session_id=root.session_id,
             tenant_id=root.context.tenant_id,
         )
@@ -1722,6 +1945,7 @@ class Loom:
         tenant: TenantId | None = None,
         state: Mapping[str, JsonValue] | None = None,
         answerer: Answerer | None = None,
+        user: str | Actor | None = None,
     ) -> AsyncGenerator[StreamItem]:
         """Événements du journal et morceaux du modèle, dans l'ordre d'arrivée.
 
@@ -1732,7 +1956,7 @@ class Loom:
         d'un autre client qui aurait choisi le même ``run_id`` n'y paraît pas
         (dans un même client, ce ``run_id`` pris ailleurs est refusé :
         ``RunExists``).
-        ``judges``, ``approver`` et ``state`` : comme pour ``run``.
+        ``judges``, ``approver``, ``state`` et ``user`` : comme pour ``run``.
 
         Un run arrêté par ``cancel()`` termine le flux proprement, après
         ``run.cancelled`` ; l'arrêt de la tâche qui itère, lui, se propage.
@@ -1744,13 +1968,15 @@ class Loom:
         async def on_chunk(chunk: ModelChunk) -> None:
             items.put_nowait(chunk)
 
-        caller, who = await self._admitted(agent, context, tenant)
+        actor = self._actor(user)
+        caller, who = await self._admitted(agent, context, tenant, actor)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver, answerer=answerer)
         # Une question de cet agent attend dans la session : le message y répond, et
         # le flux est celui du run qui l'a posée (wait_answer).
         routed = await self._routed(agent, who.id, session_id, message, attachments, state, chosen)
         if routed is not None:
-            run_id = routed[0].run_id
+            self._may_answer(actor, routed)
+            run_id = routed.root.run_id
         else:
             await self._unclaimed(chosen, session_id, who.id)
         tree = RunTree(run_id, subruns=subruns)
@@ -1798,9 +2024,18 @@ class Loom:
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
         on_chunk: ChunkCallback | None = None,
+        user: str | Actor | None = None,
     ) -> RunResult:
-        """Reprend un run interrompu, là où son journal s'est arrêté."""
+        """Reprend un run interrompu, là où son journal s'est arrêté.
+
+        ``user`` : reprendre, c'est faire tourner l'agent — ``run`` sur lui,
+        chez son client. ``AccessDenied`` sinon ; sans lui, rien n'est contrôlé.
+        """
+        actor = self._actor(user)
+        if actor is not None and tenant_id is None:
+            tenant_id = actor.tenant
         state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
+        self._require_on_run(actor, "run", state)
         ctx = self.context(state.agent, state.context.tenant_id, on_chunk=on_chunk)
         writer = await self._writer(state.context.tenant_id, state.session_id)
         return await self._result(await self._piloted(ctx, state, writer))
@@ -2720,8 +2955,13 @@ class Loom:
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
         by: str | None = None,
+        user: str | Actor | None = None,
     ) -> bool:
         """Arrête un run et écrit ``run.cancelled`` (A5) ; faux s'il est déjà fini.
+
+        ``user`` : ``cancel`` sur l'agent du run, chez son client ; il signe
+        l'arrêt (``by``, et ``via`` pour une passerelle). ``AccessDenied``
+        sinon, et rien n'est interrompu. Sans lui, rien n'est contrôlé.
 
         Le run piloté ici est d'abord interrompu, puis clos au journal. Un run
         que cette instance ne pilote pas — repris ailleurs, ou laissé en plan
@@ -2741,8 +2981,18 @@ class Loom:
         ``CancelledError``, ou ``TimeoutError`` sous ``asyncio.timeout``.
         L'appelant ne reçoit pas le booléen ; le journal dit ce qu'il en est.
         """
+        actor = self._actor(user, by)
+        via: str | None = None
+        if actor is not None:
+            tenant_id = tenant_id or actor.tenant
+            self._require_on_run(
+                actor,
+                "cancel",
+                await self.state(run_id, session_id=session_id, tenant_id=tenant_id),
+            )
+            by, via = actor.user, actor.via
         stopping = asyncio.create_task(
-            self._cancel(run_id, session_id=session_id, tenant_id=tenant_id, by=by)
+            self._cancel(run_id, session_id=session_id, tenant_id=tenant_id, by=by, via=via)
         )
         try:
             return await asyncio.shield(stopping)
@@ -2762,6 +3012,7 @@ class Loom:
         session_id: SessionId | None,
         tenant_id: TenantId | None,
         by: str | None,
+        via: str | None = None,
     ) -> bool:
         """L'arrêt lui-même : interrompre le pilote d'ici, puis écrire la clôture."""
         key = (tenant_id or DEFAULT_TENANT, session_id or SessionId(run_id), run_id)
@@ -2785,7 +3036,7 @@ class Loom:
             tree = await self.events(run_id, session_id=session_id, tenant_id=tenant_id)
             try:
                 await writer.append(
-                    [*subruns_cancellation(tree, state), *cancellation(state, by=by)]
+                    [*subruns_cancellation(tree, state), *cancellation(state, by=by, via=via)]
                 )
             except RunMoved:
                 return False
@@ -2801,8 +3052,17 @@ class Loom:
         arguments: dict[str, JsonValue] | None = None,
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
+        user: str | Actor | None = None,
     ) -> tuple[str, ...]:
         """Autorise un appel que le run attend, et remet son pilotage en file (#17).
+
+        ``user`` : l'approbateur. Il ne tranche que les demandes que ses rôles
+        lui permettent (§ 4.4) — approbateurs figés, ``self_approve`` s'il a
+        lancé le run, ``amend`` s'il corrige les arguments — et il signe la
+        décision (``by``, ``via``, ``roles``, ``self_approved``). Une demande
+        désignée qu'il ne peut pas trancher, ou aucune parmi celles qui
+        attendent : ``AccessDenied``, et rien n'est écrit. Sans lui, rien n'est
+        contrôlé, et ``by`` signe.
 
         Sans ``call_id``, toutes les demandes en attente sont accordées —
         le cas courant, un seul appel à valider. ``arguments`` corrige ceux de
@@ -2829,12 +3089,18 @@ class Loom:
             call_id,
             session_id=session_id,
             tenant_id=tenant_id,
-            payload=lambda asked: ApprovalGranted(
+            actor=self._actor(user, by),
+            by=by,
+            amend=arguments is not None,
+            payload=lambda asked, signed: ApprovalGranted(
                 call_id=asked.call_id,
                 tool_name=asked.tool_name,
-                by=by,
+                by=signed.by,
                 reason=reason,
                 arguments=arguments,
+                via=signed.via,
+                roles=signed.roles,
+                self_approved=signed.self_approved,
             ),
         )
 
@@ -2847,21 +3113,31 @@ class Loom:
         reason: str = "",
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
+        user: str | Actor | None = None,
     ) -> tuple[str, ...]:
         """Refuse un appel que le run attend (#17) : le motif revient au modèle.
 
         Le run n'échoue pas : l'appel rend une erreur, et l'orchestrateur fait
         ce qu'il peut de ce refus. Comme pour ``approve``, une panne de la file
         après l'écriture du refus est journalisée et ne fait pas échouer l'appel,
-        et une demande périmée ne se tranche plus (``ApprovalStale``).
+        et une demande périmée ne se tranche plus (``ApprovalStale``). Refuser,
+        c'est aussi trancher : ``user`` demande les mêmes droits qu'un accord.
         """
         return await self._decided(
             run_id,
             call_id,
             session_id=session_id,
             tenant_id=tenant_id,
-            payload=lambda asked: ApprovalRejected(
-                call_id=asked.call_id, tool_name=asked.tool_name, by=by, reason=reason
+            actor=self._actor(user, by),
+            by=by,
+            payload=lambda asked, signed: ApprovalRejected(
+                call_id=asked.call_id,
+                tool_name=asked.tool_name,
+                by=signed.by,
+                reason=reason,
+                via=signed.via,
+                roles=signed.roles,
+                self_approved=signed.self_approved,
             ),
         )
 
@@ -2872,14 +3148,23 @@ class Loom:
         *,
         session_id: SessionId | None,
         tenant_id: TenantId | None,
-        payload: Callable[[PendingApproval], ApprovalGranted | ApprovalRejected],
+        payload: Callable[[PendingApproval, _Signed], ApprovalGranted | ApprovalRejected],
+        actor: Actor | None = None,
+        by: str | None = None,
+        amend: bool = False,
     ) -> tuple[str, ...]:
         """Écrit une décision d'approbation, puis remet la racine en file.
 
         La demande est cherchée dans tout l'arbre du run : on tranche là où on
         a lu, et c'est toujours la racine qui repart — c'est elle qui rejouera
         l'appel menant au sous-run qui attend.
+
+        Avec un acteur, seules les demandes qu'il peut trancher le sont, chacune
+        signée des rôles qui le lui permettent (§ 4.4) ; le contrôle passe avant
+        l'échéance, pour ne rien dire d'une demande à qui ne peut pas la voir.
         """
+        if actor is not None:
+            tenant_id = tenant_id or actor.tenant
         tenant = tenant_id or DEFAULT_TENANT
         events = await self._store.read(tenant, session_id or SessionId(run_id))
         tree = RunTree(run_id).select(events)
@@ -2895,6 +3180,9 @@ class Loom:
             ]
         if call_id is not None and not decided:
             raise UnknownApproval(run_id, call_id)
+        signatures: dict[tuple[RunId, str], _Signed] = {}
+        if actor is not None:
+            decided, signatures = _decidable(actor, decided, tree, tenant, amend=amend)
         # Une demande périmée ne se tranche plus, même si personne n'est encore
         # venu écrire son expiration : seules les autres reçoivent la décision.
         now = datetime.now(UTC)
@@ -2928,8 +3216,9 @@ class Loom:
         drafts: list[EventDraft] = []
         for owner, asked in decided:
             span, parent = _where(tree, owner.run_id, asked.call_id)
+            signed = signatures.get((owner.run_id, asked.call_id), _Signed(by=by))
             drafts.append(
-                run_scope(owner).draft(payload(asked), span_id=span, parent_span_id=parent)
+                run_scope(owner).draft(payload(asked, signed), span_id=span, parent_span_id=parent)
             )
         try:
             await writer.append(drafts, guard=undecided, since=events[-1].seq if events else 0)
@@ -2970,8 +3259,13 @@ class Loom:
         by: str | None = None,
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
+        user: str | Actor | None = None,
     ) -> str:
         """Répond à une question que le run attend (wait_answer), et remet son pilotage en file.
+
+        ``user`` : ``answer`` sur l'agent du run qui a posé la question (un
+        sous-agent, s'il y en a un), chez son client ; il signe la réponse.
+        ``AccessDenied`` sinon, et rien n'est écrit. Sans lui, ``by`` signe.
 
         ``answers`` : une liste de réponses par question, dans leur ordre (le
         libellé d'un choix, ou un texte libre) ; ``text`` : un message libre
@@ -2984,13 +3278,17 @@ class Loom:
         Une réponse n'est pas une approbation : elle ne tranche aucune demande
         d'approbation du même run.
         """
+        actor = self._actor(user, by)
+        if actor is not None:
+            by, tenant_id = actor.user, tenant_id or actor.tenant
         reply = QuestionReply(
             answers=None if answers is None else tuple(tuple(a) for a in answers),
             text=text,
             by=by,
+            via=None if actor is None else actor.via,
         )
         root = await self._write_answer(
-            run_id, call_id, reply, session_id=session_id, tenant_id=tenant_id
+            run_id, call_id, reply, session_id=session_id, tenant_id=tenant_id, actor=actor
         )
         answered = root[1]
         try:
@@ -3020,8 +3318,14 @@ class Loom:
         *,
         session_id: SessionId | None,
         tenant_id: TenantId | None,
+        actor: Actor | None = None,
     ) -> tuple[RunState, str]:
-        """Écrit la réponse à une question de l'arbre du run ; rend la racine et l'appel."""
+        """Écrit la réponse à une question de l'arbre du run ; rend la racine et l'appel.
+
+        Avec un acteur, il faut ``answer`` sur l'agent du run qui l'a posée,
+        vérifié avant de juger la réponse : on ne dit pas à qui ne peut pas
+        répondre ce que la réponse aurait dû être.
+        """
         tenant = tenant_id or DEFAULT_TENANT
         events = await self._store.read(tenant, session_id or SessionId(run_id))
         tree = RunTree(run_id).select(events)
@@ -3040,6 +3344,7 @@ class Loom:
             calls = ", ".join(question.call_id for _, question in open_questions)
             raise InvalidAnswer(f"plusieurs questions attendent ({calls}) : indiquer call_id")
         owner, question = open_questions[0]
+        self._require_on_run(actor, "answer", owner)
         if question.stale(datetime.now(UTC)):
             raise QuestionStale(
                 f"Run {root.root_run_id} : la question {question.call_id} a expiré ; "
@@ -3076,6 +3381,7 @@ class Loom:
                 answers=reply.answers,
                 text=reply.text,
                 by=reply.by,
+                via=reply.via,
             ),
             span_id=span,
             parent_span_id=parent,
@@ -3099,6 +3405,7 @@ class Loom:
         tenant: TenantId | None = None,
         trigger: str | None = None,
         state: Mapping[str, JsonValue] | None = None,
+        user: str | Actor | None = None,
     ) -> RunId:
         """Ouvre un run et met son pilotage en file ; rend son identifiant (H5).
 
@@ -3108,9 +3415,11 @@ class Loom:
         ensuite avec ``result(run_id)``, ou s'attend avec ``drain()``.
 
         Une pièce jointe refusée lève ``AttachmentError`` avant l'ouverture ;
-        un ``state`` refusé, ``StateRefused`` (voir ``run``).
+        un ``state`` refusé, ``StateRefused`` ; un utilisateur sans les droits,
+        ``AccessDenied`` (voir ``run``).
         """
-        caller, who = await self._admitted(agent, context, tenant)
+        actor = self._actor(user)
+        caller, who = await self._admitted(agent, context, tenant, actor)
         if trigger is None:
             # Comme ``run`` : un message dans une session où une question de cet agent
             # attend y répond, et c'est le run qui l'a posée qui repart (wait_answer).
@@ -3119,6 +3428,7 @@ class Loom:
                 agent, who.id, session_id, message, attachments, state, run_id
             )
             if routed is not None:
+                self._may_answer(actor, routed)
                 return await self._answered_later(routed, message, caller)
             # Une porte cherche ses identifiants de livraison elle-même (``_elsewhere``).
             await self._unclaimed(run_id, session_id, who.id)

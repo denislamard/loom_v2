@@ -1086,7 +1086,11 @@ async def _renewed(
 
 
 def cancellation(
-    state: RunState, *, reason: CancelReason = "requested", by: str | None = None
+    state: RunState,
+    *,
+    reason: CancelReason = "requested",
+    by: str | None = None,
+    via: str | None = None,
 ) -> list[EventDraft]:
     """Transition et clôture d'un run arrêté à la demande (A5).
 
@@ -1101,6 +1105,7 @@ def cancellation(
             RunCancelled(
                 reason=reason,
                 by=by,
+                via=via,
                 iterations=state.iterations,
                 usage=state.usage,
                 cost_usd=state.cost_usd,

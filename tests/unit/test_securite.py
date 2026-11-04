@@ -22,7 +22,7 @@ import pytest
 import yaml
 from conftest import ANSWER, DEV, EVERYTHING, OWNER, QUESTION, ConfigFactory, demo_agent
 
-from loom_ia.access import JudgeVerdict, Loom, RunResult
+from loom_ia.access import JudgeVerdict, Loom, RunResult, UnknownSession
 from loom_ia.access.authz import (
     AccessDenied,
     Actor,
@@ -44,6 +44,8 @@ from loom_ia.core.events import (
     Event,
     JudgeEvaluated,
     Payload,
+    QuestionAnswered,
+    RunCancelled,
     RunClaimed,
     RunCompleted,
     RunStarted,
@@ -1204,3 +1206,164 @@ def test_the_approvers_of_a_tool_fall_back_on_those_of_the_agent() -> None:
     assert access.approvers().of("autre") == ("gerant",)
     assert SECRETARIAT.access.approvers().of("envoyer") is None
     assert not agent_named("y", self_approval=False).access.approvers().self_approval
+
+
+# --- Le SDK contrôle l'utilisateur qu'on lui donne (user=, § 6.3, lot 3) -----------------
+
+BUREAU: dict[str, Any] = {
+    "roles": [
+        OWNER,
+        {"id": "assistante", "permissions": ["run", "answer", "cancel", "read", "read_content"]},
+        {"id": "lecteur", "permissions": ["read"]},
+        {"id": "lanceur", "permissions": ["run", "read"]},
+        {
+            "id": "passerelle",
+            "permissions": ["run", "read", "act_as"],
+            "act_as_roles": ["assistante"],
+        },
+    ],
+    "users": [
+        {"id": DEV, "roles": ["owner"]},
+        {"id": "marie", "roles": ["assistante"]},
+        {"id": "lea", "roles": ["lecteur"]},
+        {"id": "luc", "roles": ["lanceur"]},
+        {"id": "app-crm", "roles": ["passerelle"]},
+    ],
+}
+
+
+async def test_a_user_without_run_cannot_launch_and_nothing_is_written(
+    demo: ConfigFactory,
+) -> None:
+    async with Loom.from_config(demo(security=BUREAU, storage=JOURNAL)) as loom:
+        with pytest.raises(AccessDenied, match="lea n'a pas la permission 'run'"):
+            await loom.run("demo", QUESTION, session_id=SessionId("s"), user="lea")
+        # Rien n'a été écrit : la session n'existe pas.
+        with pytest.raises(UnknownSession):
+            await loom.export_session(SessionId("s"))
+        done = await loom.run("demo", QUESTION, session_id=SessionId("s"), user="marie")
+    assert done.text == ANSWER
+
+
+async def test_the_access_list_of_an_agent_is_applied_to_a_launch(demo: ConfigFactory) -> None:
+    path = demo(security=BUREAU, agents=[demo_agent(access={"run": ["owner"]})])
+    async with Loom.from_config(path) as loom:
+        with pytest.raises(AccessDenied, match="l'agent la réserve aux rôles owner"):
+            await loom.run("demo", QUESTION, user="marie")
+        assert (await loom.run("demo", QUESTION, user=DEV)).text == ANSWER
+
+
+async def test_a_launch_runs_for_the_tenant_of_its_user(demo: ConfigFactory) -> None:
+    """Règle 1 : le client vient de l'utilisateur ; un autre client nommé est refusé."""
+    tenants = [{"id": "default"}, {"id": "martin"}]
+    users = [
+        {"id": DEV, "roles": ["owner"]},
+        {"id": "paul", "roles": ["owner"], "tenant": "martin"},
+    ]
+    path = demo(tenants=tenants, security={"users": users}, storage=JOURNAL)
+    async with Loom.from_config(path) as loom:
+        await loom.run("demo", QUESTION, session_id=SessionId("p"), user="paul")
+        chez_martin = await loom.export_session(SessionId("p"), tenant_id=TenantId("martin"))
+        with pytest.raises(AccessDenied, match="agit pour le client martin, pas pour default"):
+            await loom.run("demo", QUESTION, user="paul", tenant=TenantId("default"))
+    assert chez_martin and {e.tenant_id for e in chez_martin} == {"martin"}
+
+
+async def test_a_context_cannot_name_another_launcher(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo(security=BUREAU)) as loom:
+        with pytest.raises(ValueError, match="Utilisateur contradictoire"):
+            await loom.run("demo", QUESTION, user="marie", context=CallerContext(user_id="lea"))
+
+
+async def test_a_gateway_launches_for_a_user_and_the_journal_says_so(demo: ConfigFactory) -> None:
+    """Un acteur endossé (``as_user``) : le lanceur est l'utilisateur, ``via`` la passerelle."""
+    path = demo(security=BUREAU, storage=JOURNAL)
+    async with Loom.from_config(path) as loom:
+        security = loom.config.security
+        marie = Actor.of(security, "app-crm").endorse(security, "marie")
+        await loom.run("demo", QUESTION, session_id=SessionId("g"), user=marie)
+        events = await loom.export_session(SessionId("g"))
+    [started] = [e.payload for e in events if isinstance(e.payload, RunStarted)]
+    assert started.context.user_id == "marie" and started.context.via == "app-crm"
+
+
+async def test_stream_and_submit_check_the_launcher_too(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo(security=BUREAU, storage=JOURNAL)) as loom:
+        with pytest.raises(AccessDenied):
+            async for _ in loom.stream("demo", QUESTION, user="lea"):
+                pass
+        with pytest.raises(AccessDenied):
+            await loom.submit("demo", QUESTION, user="lea")
+        run_id = await loom.submit("demo", QUESTION, user="marie")
+        await loom.drain()
+        assert (await loom.result(run_id)).text == ANSWER
+
+
+async def test_cancelling_needs_cancel_and_is_signed(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo(security=BUREAU, storage=JOURNAL)) as loom:
+        run_id = await loom.submit("demo", QUESTION, session_id=SessionId("c"), user="marie")
+        with pytest.raises(AccessDenied, match="luc n'a pas la permission 'cancel'"):
+            await loom.cancel(run_id, session_id=SessionId("c"), user="luc")
+        assert await loom.cancel(run_id, session_id=SessionId("c"), user="marie")
+        events = await loom.export_session(SessionId("c"))
+    [arret] = [e.payload for e in events if isinstance(e.payload, RunCancelled)]
+    assert arret.by == "marie" and arret.via is None
+
+
+async def test_resuming_needs_run_on_the_agent(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo(security=BUREAU, storage=JOURNAL)) as loom:
+        done = await loom.run("demo", QUESTION, session_id=SessionId("r"), user="marie")
+        with pytest.raises(AccessDenied, match="lea n'a pas la permission 'run'"):
+            await loom.resume(done.run_id, session_id=SessionId("r"), user="lea")
+        again = await loom.resume(done.run_id, session_id=SessionId("r"), user="luc")
+    assert again.text == ANSWER
+
+
+async def test_can_answers_for_a_launch_without_writing(demo: ConfigFactory) -> None:
+    async with Loom.from_config(demo(security=BUREAU, storage=JOURNAL)) as loom:
+        assert await loom.can("marie", "run", agent="demo")
+        assert not await loom.can("lea", "run", agent="demo")
+        assert await loom.can(DEV, "admin")
+        assert not await loom.can("fantome", "run", agent="demo")
+        done = await loom.run("demo", QUESTION, session_id=SessionId("k"), user="marie")
+        assert await loom.can("marie", "cancel", run_id=done.run_id, session_id=SessionId("k"))
+        assert not await loom.can("luc", "cancel", run_id=done.run_id, session_id=SessionId("k"))
+
+
+# --- Répondre à une question (answer, § 6.5, lot 3) ------------------------------------
+
+
+def wait_answer_config(tmp_path: Path) -> Path:
+    """La config de test de ``loom.ask``, avec les utilisateurs du bureau."""
+    from test_wait_answer import config as asking
+
+    path = asking(tmp_path)
+    root = yaml.safe_load(path.read_text(encoding="utf-8"))
+    root["security"] = BUREAU
+    path.write_text(yaml.safe_dump(root), encoding="utf-8")
+    return path
+
+
+async def test_answering_needs_answer_and_is_signed(tmp_path: Path) -> None:
+    async with Loom.from_config(wait_answer_config(tmp_path)) as loom:
+        paused = await loom.run("demo", "Prépare un devis.", session_id=SessionId("q"), user="luc")
+        with pytest.raises(AccessDenied, match="luc n'a pas la permission 'answer'"):
+            await loom.answer(paused.run_id, text="Dupont", session_id=SessionId("q"), user="luc")
+        await loom.answer(paused.run_id, text="Dupont", session_id=SessionId("q"), user="marie")
+        await loom.drain()
+        events = await loom.export_session(SessionId("q"))
+    [reponse] = [e.payload for e in events if isinstance(e.payload, QuestionAnswered)]
+    assert reponse.by == "marie" and reponse.via is None
+
+
+async def test_answering_by_writing_in_the_session_needs_answer_too(tmp_path: Path) -> None:
+    """Un message qui répond à une question est une réponse : ``run`` ne suffit pas."""
+    async with Loom.from_config(wait_answer_config(tmp_path)) as loom:
+        await loom.run("demo", "Prépare un devis.", session_id=SessionId("w"), user="luc")
+        with pytest.raises(AccessDenied, match="'answer'"):
+            await loom.run("demo", "Dupont", session_id=SessionId("w"), user="luc")
+        done = await loom.run("demo", "Dupont", session_id=SessionId("w"), user="marie")
+        events = await loom.export_session(SessionId("w"))
+    assert done.text == "Devis préparé."
+    [reponse] = [e.payload for e in events if isinstance(e.payload, QuestionAnswered)]
+    assert reponse.by == "marie"
