@@ -3358,7 +3358,7 @@ La sortie de `loom validate` ci-dessous liste aussi `gestion`, `gestion_nue` et 
 
 ```console
 $ uv run loom validate | sed '2,/^AGENTS/d;/^AVERTISSEMENTS/,$d'
-loom validate · loom.yaml                         ✓ 4 agents montés · ⚠ 4 avertissements
+loom validate · loom.yaml                         ✓ 4 agents montés · ⚠ 5 avertissements
   devis_mcp · SIMULE · 0 outil Python
   └ MCP          devis__chercher_devis, devis__lister_devis
 
@@ -3373,7 +3373,7 @@ loom validate · loom.yaml                         ✓ 4 agents montés · ⚠ 4
 
 ```
 
-`loom validate` démarre les serveurs pour lister les outils effectivement offerts à chaque agent : `devis_mcp` n'a que `chercher_devis` et `lister_devis` (pas `supprimer_devis`). Consultation :
+`loom validate` démarre les serveurs pour lister les outils effectivement offerts à chaque agent : `devis_mcp` n'a que `chercher_devis` et `lister_devis` (pas `supprimer_devis`). Le cinquième avertissement, coupé ici par `sed`, concerne `gestion_nue` : on le lit en 13.2. Consultation :
 
 ```console
 $ uv run loom run devis_mcp "Où en est le devis D-2026-042 ?" --run-id mcp-1
@@ -3470,6 +3470,7 @@ Agent sans surcharge :
 
 ```console
 $ uv run loom run gestion_nue "Supprime le devis D-2026-043." --run-id mcp-2
+2026-11-04 09:38:00 WARNING  loom_ia.adapters.mcp.source — Serveur MCP devis : supprimer_devis exécuté(s) sans approbation alors qu'irréversible(s) — sans annotation, la spec MCP tient un outil pour destructeur. Dans mcp_servers[].tools ou la référence de l'agent : approval: always pour demander un accord, ou side_effects: none | reversible pour dire ce qu'il fait vraiment.
 J'ai traité la demande pour le devis D-2026-043.
 
 Statut     : completed · itérations : 2 · tokens : 662/107 · coût : 0.0000 $
@@ -3498,7 +3499,15 @@ Réponse finale :
 Bilan      : 2 appel(s) de modèle, 1 appel(s) d'outil
 ```
 
-L'outil a été **exécuté sans validation** : `supprimer_devis` est bien traité comme irréversible, mais une action irréversible ne déclenche pas à elle seule de pause pour un outil MCP. Avec la surcharge :
+L'outil a été **exécuté sans validation** : `supprimer_devis` est bien traité comme irréversible, mais une action irréversible ne déclenche pas à elle seule de pause pour un outil MCP. loom le signale (la ligne `WARNING` ci-dessus, dite une fois par serveur), et `loom validate` le range dans ses avertissements :
+
+```console
+$ uv run loom validate | grep gestion_nue
+  gestion_nue · SIMULE_GESTION · 0 outil Python
+  ⚠ Agent gestion_nue  MCP d__supprimer_devis : irréversible(s), sans approbation — approval: always ou side_effects dans mcp_servers[].tools
+```
+
+Avec la surcharge :
 
 ```console
 $ uv run loom run gestion "Supprime le devis D-2026-043." --run-id mcp-3
@@ -3534,7 +3543,7 @@ Run        : mcp-3
 
 - Déduction faite des annotations MCP : `readOnlyHint` donne un outil sans effet et idempotent ; sinon l'outil est traité comme irréversible, sauf si `destructiveHint` vaut explicitement `False` (alors réversible). Un outil **sans annotation** est donc traité comme irréversible.
 - Ordre de priorité des surcharges, de la plus faible à la plus forte : annotations du serveur, puis `tools:` du serveur dans `loom.yaml`, puis `tools:` de l'usage dans l'agent.
-- Piège : « irréversible » ne signifie pas « validation obligatoire » pour un outil MCP. Si l'action est dangereuse, écrivez `approval: always` : le journal doit alors être durable (chapitre 9).
+- Piège : « irréversible » ne signifie pas « validation obligatoire » pour un outil MCP. Si l'action est dangereuse, écrivez `approval: always` : le journal doit alors être durable (chapitre 9). loom avertit au démarrage, et `loom validate` dans ses avertissements, pour chaque outil MCP irréversible que rien ne fait approuver ; l'avertissement disparaît dès que la config dit `approval: always`, ou `side_effects: none` ou `reversible` pour un outil qui ne détruit rien.
 - `alias: d` renomme le préfixe : `d__chercher_devis` au lieu de `devis__chercher_devis`. Pensez-y dans vos scripts de test.
 - Les surcharges portent sur les propriétés d'un outil : `side_effects`, `approval`, `idempotent`, `on_unknown`, `timeout`, `offload_over` (les mêmes que pour `@tool`), et sur ce qu'en lit le modèle : `description` la remplace, `skill` ou `skill_file` y ajoute un mode d'emploi.
 

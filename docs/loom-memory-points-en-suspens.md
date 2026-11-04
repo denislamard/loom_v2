@@ -2,25 +2,43 @@
 
 *loom-ia 2.0.16 (branche `loom-mem`, mergée dans `main`). Tests de bout en bout du 03/11/2026 sur l'agent `agent-mem` (Haiku 5.5, modèles réels BGE-M3 et bge-reranker-v2-m3) : sur le CPU du poste, puis sur une VM GPU Thunder Compute (supprimée depuis).*
 
-Ce document recense ce qui reste à faire. Rien n'y est implémenté. Pour chaque point : ce qui a été observé, la cause dans le code, la correction proposée, les effets de bord à surveiller et les tests à ajouter.
+Ce document recense ce qui restait à faire après ces tests. Pour chaque point : ce qui a été observé, la cause dans le code, la correction proposée, les effets de bord à surveiller et les tests à ajouter.
+
+**Les points 1 à 7 sont faits en 2.0.17** (04/11/2026) : la section « Fait en 2.0.17 » ci-dessous dit en quoi la réalisation s'écarte de la proposition, et pourquoi. Les points 8 et 9 restent ouverts.
 
 ---
 
 ## Vue d'ensemble
 
-| # | Point | Nature | Priorité | Effort |
-|---|---|---|---|---|
-| 1 | Une question de FAQ séparée de sa réponse au découpage | Qualité de recherche | Haute | Moyen |
-| 2 | Le calcul continue après l'expiration du délai | Ressources | Haute | Moyen |
-| 3 | Gros fichiers sur CPU : délai dépassé, coût invisible à l'approbation | Ergonomie / doc | Moyenne | Faible |
-| 4 | Premier passage trop court, avant le premier titre | Qualité de recherche | Basse | Faible |
-| 5 | `add_file` limité à `.md`, `.markdown` et `.txt` | Fonctionnalité | Moyenne | Moyen |
-| 6 | Texte d'interface résiduel dans `add_url` | Qualité d'extraction | Basse | Faible |
-| 7 | Outils MCP non annotés : irréversibles mais sans approbation | Sécurité | Haute | Moyen (effets de bord) |
-| 8 | Tests non joués en vrai | Validation | Moyenne | Faible |
-| 9 | Serveur de modèles : une seule copie en VRAM, locale ou sur une VM cloud, avec repli sur le CPU | Fonctionnalité / performance | Haute | Élevé |
+| # | Point | Nature | Priorité | Effort | Statut |
+|---|---|---|---|---|---|
+| 1 | Une question de FAQ séparée de sa réponse au découpage | Qualité de recherche | Haute | Moyen | Fait (2.0.17) |
+| 2 | Le calcul continue après l'expiration du délai | Ressources | Haute | Moyen | Fait (2.0.17) |
+| 3 | Gros fichiers sur CPU : délai dépassé, coût invisible à l'approbation | Ergonomie / doc | Moyenne | Faible | Fait (2.0.17) |
+| 4 | Premier passage trop court, avant le premier titre | Qualité de recherche | Basse | Faible | Fait (2.0.17) |
+| 5 | `add_file` limité à `.md`, `.markdown` et `.txt` | Fonctionnalité | Moyenne | Moyen | Fait (2.0.17) |
+| 6 | Texte d'interface résiduel dans `add_url` | Qualité d'extraction | Basse | Faible | Fait (2.0.17) |
+| 7 | Outils MCP non annotés : irréversibles mais sans approbation | Sécurité | Haute | Moyen (effets de bord) | Avertissement fait (2.0.17) ; défaut inchangé |
+| 8 | Tests non joués en vrai | Validation | Moyenne | Faible | Ouvert, liste mise à jour |
+| 9 | Serveur de modèles : une seule copie en VRAM, locale ou sur une VM cloud, avec repli sur le CPU | Fonctionnalité / performance | Haute | Élevé | Ouvert |
 
 Les limites connues et acceptées sont listées à la fin. Elles ne sont pas à corriger, seulement à garder en tête.
+
+---
+
+## Fait en 2.0.17
+
+Sept lots, un fichier n'étant touché que par un seul. Le détail est dans le CHANGELOG ; ici, ce qui s'écarte des propositions plus bas.
+
+| Lot | Points | Fichiers | Écarts avec la proposition |
+|---|---|---|---|
+| 1. Découpage | 1A, 4 | `memory/chunk.py` | La règle « annonce reportée au passage suivant » ne suffisait pas : sans plus, une annonce reportée dont la réponse dépasse environ 1 400 caractères se retrouvait de nouveau seule. Une annonce seule garde donc sa suite jusqu'à `max_chars`. L'emphase et les guillemets qui ferment une question (`**Q ?**`) sont ignorés. Le seuil reste une constante (`LEAD_CHARS`, 200), pas un réglage. **Bug trouvé en plus** : `_merge_tiny` perdait le titre de toute section courte fusionnée (le chemin n'en garde qu'un) ; il est maintenant écrit dans le texte. **Ajout** : une annonce en fin de section (l'étiquette d'une page posée au-dessus d'un titre) passe en tête de la section suivante. Point 4 : le passage obtenu prend le chemin du suivant. |
+| 2. Extraction web | 1B, 6 | `memory/web.py` | La FAQ de la page est en `<details><summary>`, comme prévu ; le niveau du titre créé est relatif au titre qui précède. Le `<dl>` de la page n'est pas une FAQ (les étages de la pile) : un `<dl>` donne « **terme** : définition », pas des titres. Point 6 : « faites défiler le schéma » est un `<p class="hint">` dans un `<figure>`, pas un `button` ; retirer `button` ou `[role=presentation]` aurait emporté des questions d'accordéon et des tableaux de mise en page. D'une figure à schéma `<svg>` restent le titre et la description du schéma, et la légende. **Ajout** : un titre dans un élément de liste (« 4. ### ») devient du gras. **Non traité** : une FAQ en accordéon `button` + panneau `aria-hidden` perd ses réponses fermées (`_NOISE`). |
+| 3. Calcul annulable | 2 | `memory/models.py`, `bge_m3.py`, `fake.py`, `service.py` | Comme proposé, plus : un appel annulé **pendant qu'il attend le verrou** du modèle quitte la file (attente par tranches de 0,1 s) ; sinon il aurait fait tout son calcul une fois le verrou obtenu, comme la deuxième tentative de test-mem-4. Les threads d'asyncio ne s'accumulent plus derrière le verrou, et `loom run` ne bloque plus à la sortie. `device` (le device des poids chargés) sert au lot 4. |
+| 4. `add_file` | 3, 5 | `memory/tool.py`, `arguments.py`, `files.py` (nouveau), `word/reader.py`, `pdf/reader.py`, `pdf/tool.py`, `pdf_params.py` | Point 3 : l'estimation taille ÷ `target_chars` se trompait d'un facteur 2 à 4 (17,5 Ko → 39 passages ; 64 Ko → 63) ; pour un texte, le fichier est découpé à l'évaluation et le nombre de passages est exact. Rien n'est décidé sur le contenu à l'évaluation : un fichier absent, trop gros ou trop long demande quand même l'accord, le motif le dit ; un autre outil du même tour pourrait écrire le fichier entre l'évaluation et l'exécution. Point 5 : `loom.word` ne dépend pas de python-docx (bibliothèque standard) ; seul le `.pdf` demande un extra. Les lecteurs paginaient à 40 000 caractères : un paramètre `budget`. Bornes : 20 Mo (1 Mo refusait tout .docx illustré) et 300 000 caractères. Titre d'un .docx : le style Titre, jamais `dc:title`. Un bloc Word ou une page PDF coupé par la borne fait refuser le fichier. |
+| 5. MCP | 7 | `adapters/mcp/source.py`, `access/cli/main.py`, `core/__init__.py` | Option A de l'arbitrage du 04/11 : l'avertissement seul. Il n'existe pas d'`approvals` par serveur (celui de `config/models.py` est celui d'un client), et les évals et variantes jugent sur `side_effects`, pas sur `approval` : elles ne bougeaient pas. Le changement de défaut est écarté : la garde du journal durable ne voit pas les outils d'un serveur au chargement, et le journal par défaut est `memory`. |
+| 6. Doc | — | CHANGELOG, howto 13.1, 13.2, 29.3, formation (module 5 et pièges ; le serveur `catalogue` des modules 5 à 15) | Le serveur `catalogue` de la formation n'annotait pas ses trois lectures : avec le lot 5, l'avertissement serait apparu à partir du module 5 et le nombre d'avertissements de `loom validate` aurait changé dans toutes les sorties. Ses outils sont annotés `readOnlyHint=True`, ce qu'ils sont ; aucune sortie montrée ne change. |
+| 7. Validation | 8 | — | Voir le point 8. |
 
 ---
 
@@ -313,6 +331,18 @@ Ces cas sont couverts par les tests automatiques, mais n'ont pas été joués av
 | `serve --reload` | Modifier un fichier de config pendant que la mémoire sert | Rechargement, puis un premier `search` qui fonctionne, avec et sans `preload`. |
 | `examples/j6/memory.py` | Avec un vrai orchestrateur | Les 4 cas de l'exemple. |
 
+### À jouer après la 2.0.17
+
+| Cas | Commande | Attendu |
+|---|---|---|
+| Nouveau découpage | `loom memory export` (sauvegarde), puis `loom memory reindex agent` | La page passe de 23 à 29 passages ; chaque question de la FAQ a le sien, avec sa réponse. |
+| test-mem-7 rejoué | « Que se passe-t-il si Denis est indisponible pendant un projet ? » | Le passage de la question « …indisponible ? » arrive premier, avec sa réponse, nettement au-dessus de 0,46. |
+| Délai dépassé sur CPU | `add_file` d'un fichier d'environ 200 Ko, `timeout: 60` | « Délai dépassé » ; un `search` lancé juste après répond en une dizaine de secondes, sans attendre la fin du calcul ; rien n'est écrit. |
+| Motif d'approbation | `add_file` de `workspace/config.md`, modèle chargé (`preload: true`) | Le motif dit « 64 Ko, 63 passages, ~2 min de calcul sur cpu ». |
+| Plaquette Word | `add_file` de `plaquette_commerciale_APP_Novative.docx` | Approbation, puis un document de source `workspace/…docx`, aux sections tirées des titres Word ; le même fichier redonné rend `duplicate_of`. |
+| PDF | `add_file` d'un PDF texte, puis d'un PDF scanné | Le premier est rangé ; le second est refusé (« aucun texte dans le PDF »). |
+| Avertissement MCP | `loom validate` sur une config qui référence un serveur sans annotations (loom-notes, par exemple) | Une ligne « MCP … : irréversible(s), sans approbation » par agent, et rien de redit dans le journal. |
+
 ---
 
 ## 9. Serveur de modèles : une seule copie en VRAM, locale ou sur une VM cloud, avec repli sur le CPU
@@ -477,7 +507,7 @@ La même règle est à prévoir dans son prompt, avec la liste des sujets de **s
 ## Limites connues et acceptées
 
 - **Les variantes et les évals refusent toute action de la mémoire dès qu'une écriture est permise**, même `search`. C'est la règle du moteur (`strictest_side_effects`) : un outil à actions est jugé sur la pire d'entre elles. C'est le prix de l'option B, un seul outil. Si des évals de recherche deviennent nécessaires, il faudra un agent d'éval avec `actions: [search, get, list_docs]` seulement.
-- **`add_file` et `add_url` ne détectent un doublon qu'à l'exécution.** Ils doivent lire le fichier ou la page pour le savoir. L'approbation est donc toujours demandée, puis `duplicate_of` est rendu sans calcul.
+- **`add_file` et `add_url` ne détectent un doublon qu'à l'exécution.** Ils doivent lire le fichier ou la page pour le savoir. L'approbation est donc toujours demandée, puis `duplicate_of` est rendu sans calcul. Même raison pour un fichier trop long ou absent (2.0.17) : le motif d'approbation le dit, mais l'accord est demandé, le fichier pouvant changer d'ici l'exécution.
 - **`min_score`** : 0,1 par défaut, à garder tant que le fichier de questions de `loom memory eval` ne contient pas les requêtes réelles de l'agent. Le modèle reformule, et ses requêtes scorent plus bas : 0,46 et 0,18 à test-mem-7, contre 0,87 à 0,999 pour les questions écrites à la main.
 - **Recherche sur CPU** : environ 10 s avec `rerank_candidates: 8`, et 22 s avec 20 candidats (le défaut). Le reranker est le poste de coût dominant.
 

@@ -277,6 +277,7 @@ def png_uni(largeur: int, hauteur: int, rgb: tuple[int, int, int]) -&gt; bytes:
 import sys
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 serveur = FastMCP("catalogue", host="127.0.0.1", port=8765, log_level="WARNING")
 
@@ -293,7 +294,7 @@ def article(reference: str) -&gt; dict:
     return ARTICLES[reference]
 
 
-@serveur.tool()
+@serveur.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def rechercher_article(texte: str) -&gt; list[dict]:
     """Cherche des articles du catalogue dont le nom contient ce texte."""
     texte = texte.lower()
@@ -304,13 +305,13 @@ def rechercher_article(texte: str) -&gt; list[dict]:
     ]
 
 
-@serveur.tool()
+@serveur.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def prix_article(reference: str) -&gt; dict:
     """Donne le prix public HT d'un article, par sa référence."""
     return {"reference": reference, "prix_ht": article(reference)["prix_ht"]}
 
 
-@serveur.tool()
+@serveur.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def stock_article(reference: str) -&gt; dict:
     """Donne le nombre d'exemplaires en stock d'un article, par sa référence."""
     return {"reference": reference, "stock": article(reference)["stock"]}

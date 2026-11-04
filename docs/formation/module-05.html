@@ -310,6 +310,7 @@ Installed 15 packages in 23ms
 import sys
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 serveur = FastMCP("catalogue", host="127.0.0.1", port=8765, log_level="WARNING")
 
@@ -326,7 +327,7 @@ def article(reference: str) -&gt; dict:
     return ARTICLES[reference]
 
 
-@serveur.tool()
+@serveur.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def rechercher_article(texte: str) -&gt; list[dict]:
     """Cherche des articles du catalogue dont le nom contient ce texte."""
     texte = texte.lower()
@@ -337,13 +338,13 @@ def rechercher_article(texte: str) -&gt; list[dict]:
     ]
 
 
-@serveur.tool()
+@serveur.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def prix_article(reference: str) -&gt; dict:
     """Donne le prix public HT d'un article, par sa référence."""
     return {"reference": reference, "prix_ht": article(reference)["prix_ht"]}
 
 
-@serveur.tool()
+@serveur.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def stock_article(reference: str) -&gt; dict:
     """Donne le nombre d'exemplaires en stock d'un article, par sa référence."""
     return {"reference": reference, "stock": article(reference)["stock"]}
@@ -354,7 +355,8 @@ if __name__ == "__main__":
 <div class="tableau"><table class="lignes">
 <tbody>
 <tr><td><code>FastMCP("catalogue", …)</code></td><td>Le serveur, avec son nom. <code>host</code> et <code>port</code> ne servent qu'en HTTP (exercice 5.5). <code>log_level="WARNING"</code> le rend discret.</td></tr>
-<tr><td><code>@serveur.tool()</code></td><td>Publie la fonction comme outil MCP. Comme <code>@tool</code> dans loom (module 2), la signature donne le schéma des arguments et la docstring la description lue par le modèle.</td></tr>
+<tr><td><code>@serveur.tool(…)</code></td><td>Publie la fonction comme outil MCP. Comme <code>@tool</code> dans loom (module 2), la signature donne le schéma des arguments et la docstring la description lue par le modèle.</td></tr>
+<tr><td><code>annotations=ToolAnnotations(readOnlyHint=True)</code></td><td>Dit au client que l'outil lit sans rien changer. Sans annotation, MCP suppose qu'un outil peut détruire : loom le traite alors comme irréversible, et avertit au démarrage qu'il s'exécute sans approbation.</td></tr>
 <tr><td><code>raise ValueError(…)</code></td><td>Une erreur dans un outil revient au client comme un résultat d'erreur.</td></tr>
 <tr><td><code>serveur.run(…)</code></td><td>Démarre le serveur : en <code>stdio</code> par défaut, en HTTP avec l'option <code>--http</code>.</td></tr>
 </tbody>
@@ -872,9 +874,10 @@ D'après la mémoire de l'entreprise, Mme Martin préfère être contactée le m
 <li>La note a traversé les sessions : elle vit dans la mémoire, pas dans le journal d'une conversation.</li>
 <li>Le contrôle des écritures est du code : sans l'accord de Jean, rien n'est écrit, quoi que le modèle décide. Une action que la configuration ne permet pas n'existe pas pour lui.</li>
 <li>Avec les vrais modèles, <code>search</code> retrouve aussi une note formulée autrement (« joindre la cliente avant midi ») ; les modèles factices ne le font pas.</li>
+<li><code>add_file</code> (non permis ici) lit un fichier des dossiers déclarés dans <code>folders</code> : du texte (<code>.md</code>, <code>.txt</code>), du Word (<code>.docx</code>, dont les titres deviennent des sections) et du PDF (extra <code>pdf</code>). L'approbation annonce sa taille et, pour un texte, le nombre de passages à calculer.</li>
 </ul>
 <div class="encadre piege"><p class="encadre-titre">Piège : le premier appel avec les vrais modèles</p>
-<p>Avec l'extra <code>memory</code>, le premier appel charge les modèles (et les télécharge la première fois) : sur un ordinateur sans carte graphique, comptez des dizaines de secondes, et environ 4,5 Go de mémoire vive. L'outil a son propre délai, 300 s, que <code>timeout</code> change ; <code>models: {preload: true}</code> les charge dès le montage. Pour deux entreprises, donnez à chacune sa base avec <code>store: {path_env: …}</code>, lu dans ses secrets (module 12).</p></div>
+<p>Avec l'extra <code>memory</code>, le premier appel charge les modèles (et les télécharge la première fois) : sur un ordinateur sans carte graphique, comptez des dizaines de secondes, et environ 4,5 Go de mémoire vive. Ensuite, ranger un texte coûte de 1,5 à 2 s par passage sur processeur : au-delà de 150 Ko environ, le délai propre de l'outil, 300 s, n'y suffit pas ; <code>timeout</code> le change. Délai dépassé, le calcul s'arrête et rien n'est écrit. <code>models: {preload: true}</code> charge les modèles dès le montage. Pour deux entreprises, donnez à chacune sa base avec <code>store: {path_env: …}</code>, lu dans ses secrets (module 12).</p></div>
 <div class="encadre reel"><p class="encadre-titre">Variante vrai modèle</p>
 <p>Avec <code>HAIKU</code>, Claude décide seul de chercher dans la mémoire avant de répondre sur un client, et n'appelle <code>add_text</code> que quand Jean le demande, comme le dit le prompt. Si une écriture est refusée, il reçoit le refus et le dit.</p></div>
 </section>
