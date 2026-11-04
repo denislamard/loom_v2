@@ -590,10 +590,10 @@ async def test_without_the_pdf_extra_a_pdf_is_refused_before_approval(
 
 
 def test_why_pdf_files_cannot_be_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    found = importlib.util.find_spec
-
+    # Les modules sont dits présents ou absents ici : le test ne dépend pas des extras
+    # installés (le job « noyau seul » de la CI n'a ni pypdf ni reportlab).
     def without(missing: str) -> Callable[[str], ModuleSpec | None]:
-        return lambda name: None if name == missing else found(name)
+        return lambda name: None if name == missing else ModuleSpec(name, None)
 
     monkeypatch.setattr(files_module.importlib.util, "find_spec", without("pypdf"))
     assert files_module.unreadable() == {

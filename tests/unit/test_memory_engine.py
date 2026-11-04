@@ -357,8 +357,12 @@ async def test_a_write_cut_by_the_tool_timeout_stops_computing_and_writes_nothin
         [cut] = completed(events, "add_text")
         assert cut.output.is_error
         assert any("Délai dépassé" in getattr(b, "text", "") for b in cut.output.blocks)
-        # Le calcul s'est arrêté au lot suivant, loin de ses 40 passages.
-        stopped = len(computed)
+        # Le calcul s'arrête au lot suivant : le texte en cours à l'annulation (dans son
+        # sleep) va à son terme, puis plus rien — loin des 40 passages.
+        cut_at = len(computed)
         await asyncio.sleep(0.3)
-        assert len(computed) == stopped < 20
+        settled = len(computed)
+        assert cut_at <= settled <= cut_at + 1 and settled < 20
+        await asyncio.sleep(0.3)
+        assert len(computed) == settled
         assert await listed(loom, session) == []
