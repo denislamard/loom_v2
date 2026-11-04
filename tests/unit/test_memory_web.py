@@ -20,8 +20,9 @@ from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.tools_builtin import BuiltinContext
 from loom_ia.tools_builtin.fetch_page import Downloaded
 from loom_ia.tools_builtin.memory import build
+from loom_ia.tools_builtin.memory.chunk import chunk_document
 from loom_ia.tools_builtin.memory.web import extract_from_html, fetch_markdown
-from loom_ia.tools_builtin.memory_params import MemoryParams
+from loom_ia.tools_builtin.memory_params import ChunkingSpec, MemoryParams
 
 HTML = """<html><head><title>Ma page</title></head><body>
 <nav>Accueil Contact</nav>
@@ -75,6 +76,91 @@ def test_the_structure_is_kept_and_glued_labels_are_separated() -> None:
     assert "```\nx = 1\n```" in page.text
     assert "| a | b |" in page.text
     assert "menu" not in page.text and "pied" not in page.text
+
+
+def test_faq_questions_become_headings_under_the_previous_one() -> None:
+    html = """<html><body><main><h2>Questions fréquentes</h2>
+    <details><summary>Vous êtes seul.
+      Que se passe-t-il si vous êtes indisponible&nbsp;?</summary>
+      <div class="ans">Tout le code est sur vos comptes.</div></details>
+    <details><summary><span>+</span> À qui appartient le code ?</summary>
+      <p>À vous, intégralement.</p></details>
+    </main></body></html>"""
+    text = extract_from_html(html, "https://example.org/faq").text
+    # Un niveau sous le h2 ; la seconde question n'est pas rangée sous la première.
+    # Les blancs de la question, insécables compris, deviennent des espaces simples.
+    assert "### Vous êtes seul. Que se passe-t-il si vous êtes indisponible ?" in text
+    assert "### + À qui appartient le code ?\n\nÀ vous, intégralement." in text
+    assert "<details>" not in text and "summary" not in text
+
+
+def test_a_faq_without_heading_before_it_starts_at_level_two() -> None:
+    html = (
+        "<html><body><details><summary>Une question ?</summary>Sa réponse.</details></body></html>"
+    )
+    assert (
+        extract_from_html(html, "https://example.org/").text == "## Une question ?\n\nSa réponse."
+    )
+
+
+def test_details_without_summary_keep_their_content() -> None:
+    html = "<html><body><h2>T</h2><details><p>Contenu replié.</p></details></body></html>"
+    assert extract_from_html(html, "https://example.org/").text == "## T\n\nContenu replié."
+
+
+def test_each_faq_answer_is_chunked_with_its_question() -> None:
+    answer = "Une réponse assez longue pour faire un passage à elle seule, avec des mots. " * 4
+    items = "".join(
+        f"<details><summary>Question numéro {i} ?</summary><div>{answer}</div></details>"
+        for i in range(8)
+    )
+    html = f"<html><body><main><h2>FAQ</h2>{items}</main></body></html>"
+    page = extract_from_html(html, "https://example.org/faq")
+    chunks = chunk_document("d", page.title, page.text, ChunkingSpec())
+    assert [c.heading_path for c in chunks] == [
+        f"https://example.org/faq > FAQ > Question numéro {i} ?" for i in range(8)
+    ]
+    assert all(c.text.startswith("Une réponse") for c in chunks)
+
+
+def test_definition_lists_keep_each_term_with_its_definition() -> None:
+    html = """<html><body><h2>Étages</h2><dl class="layers">
+    <div><dt>Orchestration</dt><dd>boucle d'agent · reprise sur incident</dd></div>
+    <div><dt>Modèles</dt><dt>Fournisseurs</dt><dd>API <em>Anthropic</em> · OpenAI</dd></div>
+    <dt>Données</dt><dd><p>Premier point.</p><ul><li>un</li><li>deux</li></ul></dd>
+    <dt>Orphelin</dt></dl></body></html>"""
+    text = extract_from_html(html, "https://example.org/").text
+    assert "**Orchestration** : boucle d'agent · reprise sur incident" in text
+    assert "**Modèles / Fournisseurs** : API *Anthropic* · OpenAI" in text
+    assert "**Données** :\n\nPremier point.\n\n- un\n- deux" in text
+    assert text.endswith("**Orphelin**")
+
+
+def test_a_figure_with_a_drawing_keeps_its_description_and_caption_only() -> None:
+    html = """<html><body><h2>Architecture</h2>
+    <figure class="schema"><p class="hint">faites défiler le schéma &rarr;</p>
+      <div class="scroll"><svg role="img"><title>Architecture du harness</title>
+        <desc>Un orchestrateur au-dessus de trois abstractions.</desc>
+        <text>LLMProvider</text></svg></div>
+      <figcaption>Trois classes de base, <em>trois</em> natures d'outil.</figcaption></figure>
+    <figure class="trace"><ol><li>queue.consume</li></ol>
+      <figcaption>Un run réel.</figcaption></figure>
+    </body></html>"""
+    text = extract_from_html(html, "https://example.org/").text
+    assert "défiler" not in text and "LLMProvider" not in text
+    assert "Architecture du harness — Un orchestrateur au-dessus de trois abstractions." in text
+    assert "Trois classes de base, *trois* natures d'outil." in text
+    # Sans schéma, la figure reste telle quelle.
+    assert "1. queue.consume" in text and "Un run réel." in text
+
+
+def test_a_heading_inside_a_list_item_becomes_bold() -> None:
+    html = """<html><body><h2>Déroulement</h2><ol>
+    <li><h3>On cadre</h3><p>Une semaine.</p></li>
+    <li><h3>On le met sous pression</h3><p>Avant vos utilisateurs.</p></li></ol></body></html>"""
+    text = extract_from_html(html, "https://example.org/").text
+    assert "2. **On le met sous pression**" in text
+    assert "###" not in text
 
 
 def test_an_empty_page_is_refused() -> None:

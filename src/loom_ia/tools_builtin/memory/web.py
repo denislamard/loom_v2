@@ -8,6 +8,20 @@ du bruit évident (navigation, pied de page, scripts) : un titre perdu coûte pl
 à la recherche qu'un menu résiduel, et les pages mémorisées sont choisies, pas
 moissonnées.
 
+Avant ce retrait, trois structures sont réécrites pour que le découpage en
+passages ne sépare pas ce qui va ensemble :
+
+- une FAQ en ``<details><summary>`` : chaque question devient un titre, un
+  niveau sous le titre qui la précède, et sa réponse forme sa section ;
+- une liste de définitions ``<dl>`` : chaque terme et sa définition, un seul
+  paragraphe (« **terme** : définition ») ;
+- une figure qui contient un schéma ``<svg>`` : il reste le titre et la
+  description du schéma, et la légende ; le reste (« faites défiler le schéma »)
+  n'est que de l'interface.
+
+Un titre posé dans un élément de liste devient du gras : en markdown, il ne
+serait plus un titre (« 4. ### Étape »), et casserait la liste.
+
 markdownify et BeautifulSoup viennent de l'extra ``memory-web`` ; ce module ne
 les importe qu'à la première page convertie. L'analyse passe par
 ``html.parser`` de la bibliothèque standard, jamais par lxml : installé, lxml
@@ -31,6 +45,9 @@ _NOISE: Final = (
     "[aria-hidden='true'], [role='navigation']"
 )
 _INLINE_TAGS: Final = ("span", "strong", "b", "em", "i", "code", "a", "small", "abbr", "time")
+_HEADINGS: Final = ("h1", "h2", "h3", "h4", "h5", "h6")
+# Ce qu'une définition (``<dd>``) peut contenir sans tenir sur une ligne.
+_BLOCKS: Final = ("p", "div", "ul", "ol", "table", "pre", "blockquote", "dl", *_HEADINGS)
 
 
 async def fetch_markdown(url: str) -> Extracted:
@@ -55,6 +72,11 @@ def extract_from_html(html: str, url: str) -> Extracted:
     markdownify: Any = importlib.import_module("markdownify")
     soup: Any = bs4.BeautifulSoup(html, "html.parser")
     title = _page_title(soup) or url
+    # Avant le retrait du bruit : il emporterait les schémas, et leur description.
+    _questions_as_headings(soup)
+    _definitions_as_paragraphs(soup)
+    _figures_as_text(soup)
+    _list_headings_as_bold(soup)
     for node in [*soup.select(_NOISE), *_banners(soup)]:
         if not node.decomposed:
             node.decompose()
@@ -67,6 +89,109 @@ def extract_from_html(html: str, url: str) -> Extracted:
     if not text:
         raise ToolError(f"Aucun contenu exploitable dans {url}.")
     return Extracted(title=title, text=text)
+
+
+def _flat(node: Any) -> str:
+    return " ".join(node.get_text(" ").split())
+
+
+def _questions_as_headings(soup: Any) -> None:
+    """``<details><summary>Q</summary>R</details>`` : Q en titre, R en sa section.
+
+    Le niveau est celui du titre qui précède, plus un (6 au plus) ; sans titre
+    avant, 2. Les niveaux sont lus avant toute réécriture : une question réécrite
+    ne devient pas le parent de la suivante.
+    """
+    found: list[tuple[Any, Any, int]] = []
+    for details in soup.find_all("details"):
+        summary = details.find("summary")
+        previous = details.find_previous(_HEADINGS)
+        level = 2 if previous is None else min(int(previous.name[1]) + 1, 6)
+        found.append((details, summary, level))
+    for details, summary, level in found:
+        if summary is not None:
+            question = _flat(summary)
+            if question:
+                heading = soup.new_tag(f"h{level}")
+                heading.string = question
+                summary.replace_with(heading)
+            else:
+                summary.decompose()
+        details.unwrap()
+
+
+def _definitions_as_paragraphs(soup: Any) -> None:
+    """``<dt>terme</dt><dd>définition</dd>`` : « **terme** : définition », un paragraphe.
+
+    Une définition faite de blocs (paragraphes, listes) les garde, précédés de
+    « **terme** : ». Les listes imbriquées sont réécrites d'abord.
+    """
+    for listing in reversed(soup.find_all("dl")):
+        rewritten = soup.new_tag("div")
+        terms: list[str] = []
+        for item in listing.find_all(["dt", "dd"]):
+            if item.name == "dt":
+                text = _flat(item)
+                if text:
+                    terms.append(text)
+                continue
+            lead = soup.new_tag("p")
+            if terms:
+                strong = soup.new_tag("strong")
+                strong.string = " / ".join(terms)
+                lead.append(strong)
+                lead.append(" : ")
+            terms = []
+            if item.find(_BLOCKS) is not None:
+                rewritten.append(lead)
+                block = soup.new_tag("div")
+                for child in list(item.contents):
+                    block.append(child.extract())
+                rewritten.append(block)
+            else:
+                for child in list(item.contents):
+                    lead.append(child.extract())
+                rewritten.append(lead)
+        for term in terms:  # Un terme sans définition.
+            alone = soup.new_tag("p")
+            strong = soup.new_tag("strong")
+            strong.string = term
+            alone.append(strong)
+            rewritten.append(alone)
+        listing.replace_with(rewritten)
+
+
+def _figures_as_text(soup: Any) -> None:
+    """Une figure qui contient un ``<svg>`` : le titre et la description du schéma, la légende."""
+    for figure in soup.find_all("figure"):
+        drawings = figure.find_all("svg")
+        if not drawings:
+            continue
+        kept = soup.new_tag("div")
+        for drawing in drawings:
+            said = [
+                text
+                for part in (drawing.find("title"), drawing.find("desc"))
+                if part is not None and (text := _flat(part))
+            ]
+            if said:
+                paragraph = soup.new_tag("p")
+                paragraph.string = " — ".join(said)
+                kept.append(paragraph)
+        for caption in figure.find_all("figcaption"):
+            paragraph = soup.new_tag("p")
+            for child in list(caption.contents):
+                paragraph.append(child.extract())
+            kept.append(paragraph)
+        figure.replace_with(kept)
+
+
+def _list_headings_as_bold(soup: Any) -> None:
+    """Un titre dans un élément de liste devient du gras : la liste reste une liste."""
+    for item in soup.find_all("li"):
+        for heading in item.find_all(_HEADINGS):
+            heading.name = "strong"
+            heading.attrs = {}
 
 
 def _banners(soup: Any) -> list[Any]:
