@@ -203,11 +203,13 @@ def test_progress_lines_of_policy_decisions() -> None:
 async def test_stream_shows_the_subruns(tree: ConfigFactory) -> None:
     async with Loom.from_config(tree()) as loom:
         items = [
-            item async for item in loom.stream("demo", TREE_QUESTION) if isinstance(item, Event)
+            item
+            async for item in loom.stream("demo", TREE_QUESTION, user=DEV)
+            if isinstance(item, Event)
         ]
         alone = [
             item
-            async for item in loom.stream("demo", TREE_QUESTION, subruns=False)
+            async for item in loom.stream("demo", TREE_QUESTION, subruns=False, user=DEV)
             if isinstance(item, Event)
         ]
 
@@ -226,11 +228,15 @@ async def test_stream_keeps_the_whole_tree_of_each_client_sharing_a_run_id(
     run_id = new_run_id()
     acme, beta = TenantId("acme"), TenantId("beta")
     async with Loom.from_config(tree(tenants=[{"id": acme}, {"id": beta}])) as loom:
-        async with aclosing(loom.stream("demo", TREE_QUESTION, run_id=run_id, tenant=acme)) as one:
+        async with aclosing(
+            loom.stream("demo", TREE_QUESTION, run_id=run_id, tenant=acme, user=acme)
+        ) as one:
             opening = await anext(one)
             other = [
                 item
-                async for item in loom.stream("demo", TREE_QUESTION, run_id=run_id, tenant=beta)
+                async for item in loom.stream(
+                    "demo", TREE_QUESTION, run_id=run_id, tenant=beta, user=beta
+                )
             ]
             rest = [item async for item in one]
 
@@ -243,7 +249,7 @@ async def test_stream_keeps_the_whole_tree_of_each_client_sharing_a_run_id(
 
 async def test_follow_and_events_give_the_tree(tree: ConfigFactory) -> None:
     async with Loom.from_config(tree()) as loom:
-        result = await loom.run("demo", TREE_QUESTION)
+        result = await loom.run("demo", TREE_QUESTION, user=DEV)
         followed = [e async for e in loom.follow(result.run_id)]
         listed = await loom.events(result.run_id)
         child = next(e.run_id for e in listed if e.run_id != result.run_id)
@@ -265,7 +271,7 @@ async def test_follow_stops_on_its_own_run_while_it_is_running(tree: ConfigFacto
     async with Loom.from_config(tree()) as loom:
         running = asyncio.Event()
         with loom.store.listen(lambda _: running.set(), run_id):
-            task = asyncio.create_task(loom.run("demo", TREE_QUESTION, run_id=run_id))
+            task = asyncio.create_task(loom.run("demo", TREE_QUESTION, run_id=run_id, user=DEV))
             async with asyncio.timeout(5):
                 await running.wait()
                 followed = [e async for e in loom.follow(run_id)]
@@ -330,7 +336,7 @@ async def test_sse_refuses_the_whole_tree_to_a_key_without_every_agent(tree: Con
 
     security, complete, parent = limited_to_the_parent()
     async with Loom.from_config(tree(security=security)) as loom:
-        run_id = (await loom.run("demo", TREE_QUESTION)).run_id
+        run_id = (await loom.run("demo", TREE_QUESTION, user=DEV)).run_id
         transport = httpx2.ASGITransport(create_app(loom))
         async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
             url = f"/v1/runs/{run_id}/events"
@@ -407,7 +413,7 @@ async def test_a_reread_names_only_the_agents_the_key_may_read(tree: ConfigFacto
 
     security, complete, parent = limited_to_the_parent()
     async with Loom.from_config(tree(security=security)) as loom:
-        run_id = (await loom.run("demo", TREE_QUESTION)).run_id
+        run_id = (await loom.run("demo", TREE_QUESTION, user=DEV)).run_id
         transport = httpx2.ASGITransport(create_app(loom))
         async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
             whole = await http.get(f"/v1/runs/{run_id}", headers=bearer(complete))
@@ -434,7 +440,7 @@ async def test_restricting_a_result_drops_the_runs_roles_and_verdicts_of_refused
     tree: ConfigFactory,
 ) -> None:
     async with Loom.from_config(tree()) as loom:
-        result = await loom.run("demo", TREE_QUESTION)
+        result = await loom.run("demo", TREE_QUESTION, user=DEV)
     verdicts = tuple(
         JudgeVerdict(
             run_id=result.run_id,
@@ -478,7 +484,7 @@ async def mcp_client(path: Path) -> AsyncGenerator[tuple[Loom, object]]:
     from loom_ia.access.mcp_server import create_server
 
     async with Loom.from_config(path) as loom:
-        async with connected(create_server(loom)) as client:
+        async with connected(create_server(loom, user=DEV)) as client:
             yield loom, client
 
 
@@ -518,7 +524,7 @@ async def test_the_three_accesses_give_the_same_tree(tree: ConfigFactory) -> Non
     path = tree()
     runs: dict[str, RunId] = {}
     async with Loom.from_config(path) as loom:
-        runs["python"] = (await loom.run("demo", TREE_QUESTION)).run_id
+        runs["python"] = (await loom.run("demo", TREE_QUESTION, user=DEV)).run_id
         transport = httpx2.ASGITransport(create_app(loom))
         async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
             posted = await http.post("/v1/agents/demo/runs", json={"message": TREE_QUESTION})
@@ -556,8 +562,8 @@ def test_a_session_run_keeps_its_tree(tree: ConfigFactory) -> None:
     async def go() -> list[Event]:
         async with Loom.from_config(tree()) as loom:
             session = SessionId("atelier")
-            await loom.run("demo", TREE_QUESTION, session_id=session)
-            second = await loom.run("demo", TREE_QUESTION, session_id=session)
+            await loom.run("demo", TREE_QUESTION, session_id=session, user=DEV)
+            second = await loom.run("demo", TREE_QUESTION, session_id=session, user=DEV)
             return await loom.events(second.run_id, session_id=session)
 
     events = asyncio.run(go())

@@ -220,7 +220,9 @@ async def enregistrer(
     ids: list[str] = []
     async with Loom(config) as loom:
         for demande in DEMANDES:
-            result = await loom.run(agent_de(args), demande, session_id=session, tenant=DUPONT)
+            result = await loom.run(
+                agent_de(args), demande, session_id=session, tenant=DUPONT, user=DUPONT
+            )
             print(f"  run {result.run_id} : {result.status}")
             ids.append(result.run_id)
     return ids
@@ -417,16 +419,21 @@ async def variante(args: argparse.Namespace, controle: Controle) -> None:
         titre("Le run d'origine")
         async with Loom(config) as loom:
             loom.register(acces.ENVOI, acces.envoyer_email)
-            result = await loom.run(agent, acces.DEMANDE, session_id=session)
+            result = await loom.run(
+                agent, acces.DEMANDE, session_id=session, user=acces.UTILISATEUR
+            )
             accordes: tuple[str, ...] = ()
             if result.pending_approvals:
                 accordes = await loom.approve(
-                    result.run_id, by=acces.ARTISAN, reason="devis vérifié", session_id=session
+                    result.run_id,
+                    user=acces.UTILISATEUR,
+                    reason="devis vérifié",
+                    session_id=session,
                 )
                 await loom.drain()
             fin = await loom.result(result.run_id, session_id=session)
         print(f"  run {result.run_id} : {fin.status}")
-        print(f"  approbation : {len(accordes)} appel(s) accordé(s) par « {acces.ARTISAN} »")
+        print(f"  approbation : {len(accordes)} appel(s) accordé(s) par « {acces.UTILISATEUR} »")
         print(f"  boîte d'envoi : {len(acces.BOITE)} e-mail(s) parti(s)")
         if str(fin.status) not in ("completed", "failed", "cancelled"):
             # Un rejeu compare un run fini.
@@ -528,7 +535,7 @@ def _attendus(
             f"  avec la décision du journal (accordé par {', '.join(map(str, accords))}) : "
             + controle.tient(
                 "variante : la décision d'approbation ne vient pas du journal",
-                accords == [acces.ARTISAN],
+                accords == [acces.UTILISATEUR],
             )
         )
 
@@ -582,7 +589,9 @@ async def inspect_(args: argparse.Namespace, controle: Controle) -> None:
         annonce(CONFIG, agent_de(args))
         titre("Un run de Dupont")
         async with Loom(config) as loom:
-            result = await loom.run(agent_de(args), DEMANDES[0], session_id=session, tenant=DUPONT)
+            result = await loom.run(
+                agent_de(args), DEMANDES[0], session_id=session, tenant=DUPONT, user=DUPONT
+            )
             print(f"  run {result.run_id} : {result.status}")
             trace = await loom.trace(result.run_id, session_id=session, tenant_id=DUPONT)
 
@@ -693,7 +702,7 @@ async def _par_mcp(loom: Loom, run_id: str, session: SessionId) -> Any:
     from loom_ia.access import TRACES
     from loom_ia.access.mcp_server import create_server
 
-    async with connected(create_server(loom, tenant=DUPONT)) as client:
+    async with connected(create_server(loom, user=DUPONT)) as client:
         lue = await client.read_resource(AnyUrl(f"{TRACES}/{run_id}?session_id={session}"))
     [contenu] = lue.contents
     assert isinstance(contenu, TextResourceContents)

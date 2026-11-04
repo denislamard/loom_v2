@@ -156,7 +156,9 @@ async def cas_journal(loom: Loom, prefixe: str, agent: str, controle: Controle) 
     print(f"Table : {EVENTS_TABLE}, créée à la première requête (loom storage sql l'imprime)")
     for tenant in (DUPONT, MARTIN):
         session = SessionId(f"{prefixe}-{tenant}")
-        result = await loom.run(agent, demande(tenant), tenant=tenant, session_id=session)
+        result = await loom.run(
+            agent, demande(tenant), tenant=tenant, session_id=session, user=tenant
+        )
         print(f"\n  {tenant} : run {result.run_id}, statut {result.status}")
         print(f"    coût {result.cost_usd:.6f} $, {result.iterations} itération(s)")
         # La base garde ce que les lancements précédents y ont écrit : on ne

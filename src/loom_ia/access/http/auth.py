@@ -2,9 +2,9 @@
 """Clés d'API de l'accès REST (N2, #39).
 
 La configuration ne garde que l'empreinte des clés (``sha256:…``) : la clé
-elle-même n'existe qu'une fois, à sa création. Une instance sans clé
-déclarée est ouverte — c'est le cas de l'usage local ; ``create_app``
-prévient si elle écoute ailleurs que sur la machine.
+elle-même n'existe qu'une fois, à sa création. Une instance sans clé déclarée
+agit au nom de ``server.http.user``, sur la boucle locale (D-1b) ; sans l'un
+ni l'autre, ``create_app`` refuse de la servir (D-1).
 
 Permissions vérifiées : ``run`` pour lancer un run, ``read`` pour lire agents,
 statuts, événements et rapports, ``admin`` pour lancer un run sans ses juges
@@ -57,10 +57,17 @@ def identify(security: SecurityConfig, request: Request, local_user: str | None 
 
     Sans clé déclarée, ``local_user`` (``server.http.user``, D-1b) est
     l'appelant de toute requête : une instance locale qui sait au nom de qui
-    elle agit. Sans lui, l'instance est ouverte.
+    elle agit. ``create_app`` refuse une instance qui n'a ni l'un ni l'autre ;
+    appelé quand même, c'est un 401.
     """
     if not security.api_keys:
-        return Caller() if local_user is None else Caller.acting(security, local_user)
+        if local_user is None:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                "Instance sans clé d'API ni utilisateur local : personne au nom de qui agir",
+                headers=_CHALLENGE,
+            )
+        return Caller.acting(security, local_user)
     given = presented(request)
     if not given:
         raise HTTPException(

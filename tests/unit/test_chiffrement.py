@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import QUESTION, ConfigFactory, demo_agent, secured
+from conftest import DEV, QUESTION, ConfigFactory, demo_agent, secured
 
 from loom_ia.access import Loom
 from loom_ia.adapters.artifacts import InMemoryArtifactStore, SealingArtifactStore
@@ -537,7 +537,7 @@ async def test_a_run_writes_nothing_readable_without_the_key(
     )
     config = load_config(path)
     async with Loom(config, environ={KEY_ENV: KEY_A}) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         assert result.status == "completed"
         # Avec la clé, l'instance lit son journal comme avant.
         state = await loom.state(result.run_id)
@@ -563,9 +563,9 @@ async def test_a_client_without_a_key_cannot_run(demo: ConfigFactory, tmp_path: 
     config = load_config(path)
     # Dupont lit la variable commune, Martin la sienne — qui n'existe pas.
     async with Loom(config, environ={KEY_ENV: KEY_A}) as loom:
-        assert (await loom.run("demo", QUESTION, tenant=DUPONT)).status == "completed"
+        assert (await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)).status == "completed"
         with pytest.raises(MissingKey, match="martin"):
-            await loom.run("demo", QUESTION, tenant=MARTIN)
+            await loom.run("demo", QUESTION, tenant=MARTIN, user=MARTIN)
 
 
 # --- Ce que le chargement dit --------------------------------------------------
@@ -705,7 +705,7 @@ async def test_a_sealed_read_answers_424_and_names_the_key(
     )
     config = load_config(path)
     async with Loom(config, environ={KEY_ENV: KEY_A}) as loom:
-        run = await loom.run("demo", QUESTION)
+        run = await loom.run("demo", QUESTION, user=DEV)
     async with Loom(config, environ={}) as shredded:
         app = create_app(shredded)
         transport = ASGITransport(app=app)
@@ -731,7 +731,7 @@ def _sealed_run(demo: ConfigFactory, tmp_path: Path) -> tuple[Path, str]:
 
     async def run() -> str:
         async with Loom(load_config(path), environ={KEY_ENV: KEY_A}) as loom:
-            return (await loom.run("demo", QUESTION)).run_id
+            return (await loom.run("demo", QUESTION, user=DEV)).run_id
 
     return path, asyncio.run(run())
 

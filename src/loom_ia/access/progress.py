@@ -180,12 +180,14 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             )
             return f"approbation demandée : {payload.tool_name} — {payload.reason}{delai}"
         case ApprovalGranted(by=str() as author):
-            return f"approbation accordée par {author} : {payload.tool_name}"
+            who = signed(author, payload.via, self_approved=payload.self_approved)
+            return f"approbation accordée par {who} : {payload.tool_name}"
         case ApprovalGranted():
             return f"approbation accordée : {payload.tool_name}"
         case ApprovalRejected(by=str() as author):
             motif = f" — {payload.reason}" if payload.reason else ""
-            return f"approbation refusée par {author} : {payload.tool_name}{motif}"
+            who = signed(author, payload.via, self_approved=payload.self_approved)
+            return f"approbation refusée par {who} : {payload.tool_name}{motif}"
         case ApprovalRejected():
             motif = f" — {payload.reason}" if payload.reason else ""
             return f"approbation refusée : {payload.tool_name}{motif}"
@@ -200,7 +202,7 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
             asked = " ; ".join(q.question for q in payload.questions)
             return f"question à l'utilisateur : {asked}"
         case QuestionAnswered(by=str() as author):
-            return f"réponse de {author} reçue"
+            return f"réponse de {signed(author, payload.via)} reçue"
         case QuestionAnswered():
             return "réponse de l'utilisateur reçue"
         case QuestionExpired():
@@ -221,11 +223,20 @@ def describe(event: Event, *, subrun: bool = False) -> str | None:
         case RunCancelled(reason="parent") if subrun:
             return f"sous-agent {event.agent} : annulé avec son parent"
         case RunCancelled(by=str() as author):
-            return f"run annulé par {author}{_withdrawn(payload)}"
+            return f"run annulé par {signed(author, payload.via)}{_withdrawn(payload)}"
         case RunCancelled():
             return f"run annulé{_withdrawn(payload)}"
         case _:
             return None
+
+
+def signed(by: str, via: str | None = None, *, self_approved: bool = False) -> str:
+    """Qui a agi, tel que le déroulé le dit : ``marie (via app-crm)`` (§ 7).
+
+    Une auto-approbation se dit : celui qui tranche a lancé le run (D-7).
+    """
+    said = by if via is None else f"{by} (via {via})"
+    return f"{said}, auto-approbation" if self_approved else said
 
 
 # Ce que dit le contrôle de fidélité d'un résumé.

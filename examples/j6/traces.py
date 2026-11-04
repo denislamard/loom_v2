@@ -346,7 +346,7 @@ async def lancer(
             for tenant in clients:
                 session = SessionId(f"traces-{new_id()[-8:]}")
                 result = await loom.run(
-                    agent_de(args), demande(tenant), session_id=session, tenant=tenant
+                    agent_de(args), demande(tenant), session_id=session, tenant=tenant, user=tenant
                 )
                 lances.append((tenant, result.run_id, result.status, session))
             journaux = {
@@ -708,7 +708,7 @@ async def logs(args: argparse.Namespace, controle: Controle) -> None:
             session = SessionId(f"traces-{new_id()[-8:]}")
             async with Loom(config) as loom:
                 result = await loom.run(
-                    agent_de(args), demande(DUPONT), session_id=session, tenant=DUPONT
+                    agent_de(args), demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT
                 )
                 events = [
                     e for e in await loom.store.read(DUPONT, session) if e.run_id == result.run_id

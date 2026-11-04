@@ -113,7 +113,9 @@ async def isolation(config: LoomConfig, agent: str, prefixe: str) -> None:
     async with Loom(config) as loom:
         for tenant in (DUPONT, MARTIN):
             session = SessionId(f"{prefixe}-{tenant}")
-            result = await loom.run(agent, demande(tenant), session_id=session, tenant=tenant)
+            result = await loom.run(
+                agent, demande(tenant), session_id=session, tenant=tenant, user=tenant
+            )
             print(f"  {tenant:<18} {ligne(result)}")
 
         titre("Le devis de l'autre n'existe pas")
@@ -124,6 +126,7 @@ async def isolation(config: LoomConfig, agent: str, prefixe: str) -> None:
             demande(DUPONT),
             session_id=SessionId(f"{prefixe}-{MARTIN}-egare"),
             tenant=MARTIN,
+            user=MARTIN,
         )
         print(f"  {MARTIN:<18} {ligne(egare)}")
 
@@ -347,7 +350,9 @@ async def acces(config: LoomConfig, agent: str, prefixe: str) -> None:
 
     titre("Python : le client s'écrit tenant=")
     async with Loom(config) as loom:
-        result = await loom.run(agent, demande(DUPONT), session_id=session, tenant=DUPONT)
+        result = await loom.run(
+            agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT
+        )
         print(f"  {DUPONT:<18} {ligne(result)}")
 
         titre("REST : c'est la clé qui porte le client")
@@ -382,7 +387,7 @@ async def acces(config: LoomConfig, agent: str, prefixe: str) -> None:
         client = Implementation(name="atelier-mcp", version="1.0")
         for tenant in (DUPONT, MARTIN):
             par_mcp_session = SessionId(f"{prefixe}-mcp-{tenant}")
-            async with connected(create_server(loom, tenant=tenant), client_info=client) as mcp:
+            async with connected(create_server(loom, user=tenant), client_info=client) as mcp:
                 rendu = await mcp.call_tool(
                     agent, {"message": demande(tenant), "session_id": par_mcp_session}
                 )

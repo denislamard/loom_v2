@@ -237,7 +237,7 @@ async def main(argv: list[str]) -> int:
         )
         try:
             for number, question in enumerate(TOURS[: args.tours], start=1):
-                result = await loom.run(agent, question, session_id=session)
+                result = await loom.run(agent, question, session_id=session, user="dev")
                 await loom.drain()
                 events = await loom.export_session(session)
                 taille = estimate_tokens(history(events))

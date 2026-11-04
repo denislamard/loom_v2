@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import ANSWER, PNG, QUESTION, ConfigFactory
+from conftest import ANSWER, DEV, PNG, QUESTION, ConfigFactory
 
 from loom_ia.access import Loom
 from loom_ia.config import ConfigError, load_config
@@ -24,7 +24,7 @@ LIMITS: dict[str, Any] = {"attachments": {"max_bytes": 1000, "max_files": 2}}
 async def test_python_access_limits_the_number_of_attachments(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo(execution=LIMITS)) as loom:
         with pytest.raises(AttachmentError, match="3 pièces jointes, au-delà de la limite de 2"):
-            await loom.run("demo", QUESTION, attachments=[Attachment(data=PNG)] * 3)
+            await loom.run("demo", QUESTION, attachments=[Attachment(data=PNG)] * 3, user=DEV)
 
 
 def test_mcp_access_config(demo: ConfigFactory, tmp_path: Path) -> None:
@@ -74,8 +74,8 @@ async def test_multipart_attaches_images(demo: ConfigFactory) -> None:
     ]
     assert stored == PNG
     [started] = [e.payload for e in events if isinstance(e.payload, RunStarted)]
-    # Le lanceur ne vient jamais du corps (D-5) : sur une instance ouverte, personne.
-    assert (started.context.user_id, started.context.metadata) == (None, {"canal": "web"})
+    # Le lanceur ne vient jamais du corps (D-5) : sur une instance locale, son utilisateur.
+    assert (started.context.user_id, started.context.metadata) == (DEV, {"canal": "web"})
 
 
 async def test_multipart_takes_no_free_user(demo: ConfigFactory) -> None:
@@ -334,7 +334,7 @@ async def mcp(path: Path) -> AsyncGenerator[tuple[Loom, Any]]:
     from loom_ia.access.mcp_server import create_server
 
     async with Loom.from_config(path) as loom:
-        async with connected(create_server(loom)) as client:
+        async with connected(create_server(loom, user=DEV)) as client:
             yield loom, client
 
 

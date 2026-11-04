@@ -551,7 +551,7 @@ class Atelier:
     async def run(self, loom: Loom, numero: str, demande: str) -> tuple[RunResult, list[Event]]:
         titre(f"Run {numero} de {self.agent}")
         enonce("  demande : ", demande)
-        result = await loom.run(self.agent, demande)
+        result = await loom.run(self.agent, demande, user="dev")
         events = await loom.events(result.run_id, session_id=result.session_id)
         raconte(result, events)
         return result, events

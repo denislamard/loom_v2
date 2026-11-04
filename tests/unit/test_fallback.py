@@ -7,7 +7,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 import pytest
-from conftest import ANSWER, MODEL, QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, DEV, MODEL, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -540,7 +540,7 @@ async def test_the_breaker_is_shared_by_the_runs_of_an_instance(demo: ConfigFact
     events: list[Event] = []
     async with Loom.from_config(path) as loom:
         for _ in range(3):
-            result = await loom.run("demo", QUESTION)
+            result = await loom.run("demo", QUESTION, user=DEV)
             assert result.text == ANSWER
             events = await loom.events(result.run_id)
             reasons.append(
@@ -565,7 +565,7 @@ async def test_the_progress_lines_of_a_fallback(demo: ConfigFactory) -> None:
         ],
     )
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         events = await loom.events(result.run_id)
     assert lines(events)[:2] == [
         "· disjoncteur ouvert : modèle DOWN écarté 30 s (échecs de suite : 1)",
@@ -620,7 +620,7 @@ async def test_a_role_falls_back_and_its_fallback_repairs(demo: ConfigFactory) -
         ],
     )
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         events = await loom.events(result.run_id)
         state = await loom.state(result.run_id)
 
@@ -651,7 +651,7 @@ async def test_a_judge_falls_back(demo: ConfigFactory) -> None:
     }
     path = demo(models=[MODEL, DOWN_MODEL, judge_model], agents=[demo_agent(judge=judge)])
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         events = await loom.events(result.run_id)
         state = await loom.state(result.run_id)
 
@@ -679,7 +679,7 @@ async def test_a_judge_on_a_model_refusing_a_forced_tool(demo: ConfigFactory) ->
     judge = {"model": "JUDGE", "criteria": [{"name": "exact", "rule": "Le résultat est juste."}]}
     path = demo(models=[MODEL, judge_model], agents=[demo_agent(judge=judge)])
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         events = await loom.events(result.run_id)
     assert result.text == ANSWER
     [evaluated] = [e.payload for e in events if isinstance(e.payload, JudgeEvaluated)]
@@ -690,7 +690,7 @@ async def test_a_judge_on_a_model_refusing_a_forced_tool(demo: ConfigFactory) ->
     mute = {**judge_model, "params": {"script": [{"text": "Tout est juste."}]}}
     path = demo(models=[MODEL, mute], agents=[demo_agent(judge=judge)])
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
     assert result.status is RunStatus.FAILED
     assert result.error is not None and "verdict" in result.error
     assert "tool_choice" not in result.error
@@ -853,7 +853,7 @@ async def test_events_name_the_model_of_the_config(
     )
     async with Loom.from_config(path) as loom:
         with caplog.at_level(logging.INFO, logger="loom_ia.engine.loop"):
-            result = await loom.run("demo", QUESTION)
+            result = await loom.run("demo", QUESTION, user=DEV)
         events = await loom.events(result.run_id)
         trace = await loom.trace(result.run_id)
     assert result.text == ANSWER
@@ -891,8 +891,8 @@ async def test_the_report_separates_two_declarations_of_a_model(demo: ConfigFact
     )
     session = SessionId("deux-modeles")
     async with Loom.from_config(path) as loom:
-        await loom.run("demo", QUESTION, session_id=session)
-        await loom.run("bis", QUESTION, session_id=session)
+        await loom.run("demo", QUESTION, session_id=session, user=DEV)
+        await loom.run("bis", QUESTION, session_id=session, user=DEV)
         report = await loom.report(session_id=session)
         found = await loom.query(
             EventQuery(tenant_id=DEFAULT_TENANT, session_id=session, model="BIS")

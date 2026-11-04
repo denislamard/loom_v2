@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import QUESTION, ConfigFactory
+from conftest import DEV, QUESTION, ConfigFactory
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -163,7 +163,7 @@ async def test_a_swept_session_takes_its_files_with_it(demo: ConfigFactory, tmp_
         )
     )
     async with Loom(config) as loom:
-        result = await loom.run("demo", QUESTION, session_id=VIEILLE)
+        result = await loom.run("demo", QUESTION, session_id=VIEILLE, user=DEV)
         assert result.status == "completed"
         fichiers = [path for path in (tmp_path / "files").rglob("*") if path.is_file()]
         assert fichiers, "le run devait déporter un résultat"
@@ -289,7 +289,9 @@ async def test_a_sealed_journal_is_swept_without_its_key(
         )
     )
     async with Loom(config, environ={CLE_ENV: CLE}) as loom:
-        assert (await loom.run("demo", QUESTION, session_id=VIEILLE)).status == "completed"
+        assert (
+            await loom.run("demo", QUESTION, session_id=VIEILLE, user=DEV)
+        ).status == "completed"
     # La clé effacée, le contenu est perdu — mais la place, non : c'est tout
     # l'intérêt d'une borne qui se lit sur la marque et jamais sur le contenu.
     async with Loom(config, environ={}) as efface:

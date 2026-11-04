@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import DEV, secured
 
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
@@ -480,7 +480,7 @@ def test_compacting_replaces_the_old_turns(conversation: ConfigFactory) -> None:
     async def go() -> tuple[list[Event], list[Message]]:
         async with Loom.from_config(path) as loom:
             for _ in range(2):
-                await loom.run("demo", DEVIS, session_id=SESSION)
+                await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             await loom.drain()
             events = await loom.export_session(SESSION)
             return events, history(events)
@@ -513,7 +513,9 @@ def test_a_queue_failure_after_the_run_does_not_fail_it(
         async with Loom.from_config(path) as loom:
             monkeypatch.setattr(loom._queue, "submit", broker_down)  # pyright: ignore[reportPrivateUsage]
             with caplog.at_level(logging.ERROR, logger="loom_ia.access.api"):
-                runs = [await loom.run("demo", DEVIS, session_id=SESSION) for _ in range(2)]
+                runs = [
+                    await loom.run("demo", DEVIS, session_id=SESSION, user=DEV) for _ in range(2)
+                ]
             return [run.status for run in runs], await loom.export_session(SESSION)
 
     statuses, events = asyncio.run(go())
@@ -530,7 +532,7 @@ def test_the_compaction_run_stays_out_of_the_history(conversation: ConfigFactory
     async def go() -> tuple[list[Event], list[Message]]:
         async with Loom.from_config(path) as loom:
             for _ in range(2):
-                await loom.run("demo", DEVIS, session_id=SESSION)
+                await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             await loom.drain()
             events = await loom.export_session(SESSION)
             return events, history(events)
@@ -550,7 +552,7 @@ def test_a_refreshed_snapshot_follows_the_summary(conversation: ConfigFactory) -
     async def go() -> list[Event]:
         async with Loom.from_config(path) as loom:
             for _ in range(2):
-                await loom.run("demo", DEVIS, session_id=SESSION)
+                await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             await loom.drain()
             return await loom.export_session(SESSION)
 
@@ -568,7 +570,7 @@ def test_compacting_on_demand_ignores_the_threshold(conversation: ConfigFactory)
     async def go() -> tuple[SessionCompacted | None, list[Event]]:
         async with Loom.from_config(path) as loom:
             for _ in range(2):
-                await loom.run("demo", DEVIS, session_id=SESSION)
+                await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             written = await loom.compact(SESSION)
             return written, await loom.export_session(SESSION)
 
@@ -587,7 +589,7 @@ def test_a_summary_that_loses_a_marker_is_repaired(conversation: ConfigFactory) 
     async def go() -> list[Event]:
         async with Loom.from_config(path) as loom:
             for _ in range(2):
-                await loom.run("demo", DEVIS, session_id=SESSION)
+                await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             await loom.drain()
             return await loom.export_session(SESSION)
 
@@ -614,7 +616,7 @@ def test_a_summary_that_keeps_losing_it_is_kept_with_a_warning(
     async def go() -> list[Event]:
         async with Loom.from_config(path) as loom:
             for _ in range(2):
-                await loom.run("demo", DEVIS, session_id=SESSION)
+                await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             await loom.drain()
             return await loom.export_session(SESSION)
 
@@ -637,7 +639,7 @@ def test_fidelity_can_be_turned_off(conversation: ConfigFactory) -> None:
     async def go() -> list[Event]:
         async with Loom.from_config(path) as loom:
             for _ in range(2):
-                await loom.run("demo", DEVIS, session_id=SESSION)
+                await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             await loom.drain()
             return await loom.export_session(SESSION)
 
@@ -659,12 +661,14 @@ def test_a_blocking_summary_is_made_when_the_next_run_opens(conversation: Config
     async def go() -> tuple[list[Event], list[Event]]:
         async with Loom.from_config(path) as loom:
             for _ in range(2):
-                await loom.run("demo", DEVIS, session_id=SESSION)
+                await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             await loom.drain()
             before = await loom.export_session(SESSION)
-            await loom.submit("demo", DEVIS, session_id=SESSION, run_id=RunId("troisieme"))
+            await loom.submit(
+                "demo", DEVIS, session_id=SESSION, run_id=RunId("troisieme"), user=DEV
+            )
             await loom.drain()
-            await loom.run("demo", DEVIS, session_id=SESSION, run_id=RunId("quatrieme"))
+            await loom.run("demo", DEVIS, session_id=SESSION, run_id=RunId("quatrieme"), user=DEV)
             return before, await loom.export_session(SESSION)
 
     before, events = asyncio.run(go())
@@ -701,7 +705,9 @@ def test_a_blocking_summary_that_fails_does_not_fail_the_run(
             assert job is not None
             monkeypatch.setattr(job, "compact", down)
             with caplog.at_level(logging.WARNING, logger="loom_ia.sessions.compaction"):
-                runs = [await loom.run("demo", DEVIS, session_id=SESSION) for _ in range(3)]
+                runs = [
+                    await loom.run("demo", DEVIS, session_id=SESSION, user=DEV) for _ in range(3)
+                ]
             return [run.status for run in runs], await loom.export_session(SESSION)
 
     statuses, events = asyncio.run(go())
@@ -729,7 +735,7 @@ def test_ensure_fits_compacts_before_the_run(conversation: ConfigFactory, tmp_pa
         # n'a pu être mise en file, c'est le filet qui agit.
         await written(tmp_path, 2)
         async with Loom.from_config(path) as loom:
-            await loom.run("demo", DEVIS, session_id=SESSION)
+            await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             return await loom.export_session(SESSION)
 
     events = asyncio.run(go())
@@ -751,7 +757,7 @@ def test_a_session_that_cannot_be_summarised_is_trimmed(
     async def go() -> list[Event]:
         await written(tmp_path, 2)
         async with Loom.from_config(path) as loom:
-            await loom.run("demo", DEVIS, session_id=SESSION)
+            await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             return await loom.export_session(SESSION)
 
     events = asyncio.run(go())
@@ -866,7 +872,7 @@ def test_a_missing_summary_key_does_not_fail_the_run(
         await written(tmp_path, 2)
         async with Loom.from_config(path) as loom:
             with caplog.at_level(logging.WARNING, logger="loom_ia.sessions.compaction"):
-                result = await loom.run("demo", DEVIS, session_id=SESSION)
+                result = await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             return result.status, await loom.export_session(SESSION)
 
     status, events = asyncio.run(go())
@@ -931,9 +937,9 @@ def test_the_summary_run_only_sees_its_segment(conversation: ConfigFactory) -> N
     async def go() -> list[Event]:
         async with Loom.from_config(path) as loom:
             for _ in range(2):
-                await loom.run("demo", DEVIS, session_id=SESSION)
+                await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             # Le dernier tour est gardé par `keep_last` : il ne doit pas partir.
-            await loom.run("demo", gros, session_id=SESSION)
+            await loom.run("demo", gros, session_id=SESSION, user=DEV)
             await loom.drain()
             return await loom.export_session(SESSION)
 
@@ -1044,10 +1050,10 @@ def two_turns(path: Path, *, compact: bool = False) -> str:
 
     async def go() -> str:
         async with Loom.from_config(path) as loom:
-            await loom.run("demo", CHERCHE, session_id=SESSION)
+            await loom.run("demo", CHERCHE, session_id=SESSION, user=DEV)
             if compact:
                 await loom.drain()
-            second = await loom.run("demo", REDIGE, session_id=SESSION)
+            second = await loom.run("demo", REDIGE, session_id=SESSION, user=DEV)
             return second.text
 
     return asyncio.run(go())
@@ -1086,8 +1092,8 @@ def test_without_the_session_scope_the_role_is_refused(withrole: Callable[..., P
 
     async def go() -> list[Event]:
         async with Loom.from_config(path) as loom:
-            await loom.run("demo", CHERCHE, session_id=SESSION)
-            await loom.run("demo", REDIGE, session_id=SESSION)
+            await loom.run("demo", CHERCHE, session_id=SESSION, user=DEV)
+            await loom.run("demo", REDIGE, session_id=SESSION, user=DEV)
             return await loom.export_session(SESSION)
 
     events = asyncio.run(go())
@@ -1118,7 +1124,7 @@ def test_the_safety_net_names_the_run_it_protects(
     async def go() -> tuple[RunId, list[Event]]:
         await written(tmp_path, 2)
         async with Loom.from_config(path) as loom:
-            result = await loom.run("demo", DEVIS, session_id=SESSION)
+            result = await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             return result.run_id, await loom.export_session(SESSION)
 
     run_id, events = asyncio.run(go())
@@ -1138,7 +1144,7 @@ def test_the_opening_summary_is_in_the_stream_without_the_summariser_run(
     async def go() -> list[Any]:
         await written(tmp_path, 2)
         async with Loom.from_config(path) as loom:
-            return [item async for item in loom.stream("demo", DEVIS, session_id=SESSION)]
+            return [item async for item in loom.stream("demo", DEVIS, session_id=SESSION, user=DEV)]
 
     items = asyncio.run(go())
     events = [item for item in items if isinstance(item, Event)]
@@ -1161,7 +1167,7 @@ def test_a_summary_made_after_a_run_is_not_its_opening(
     async def go() -> tuple[RunId, list[Event]]:
         await written(tmp_path, 2)
         async with Loom.from_config(path) as loom:
-            result = await loom.run("demo", DEVIS, session_id=SESSION)
+            result = await loom.run("demo", DEVIS, session_id=SESSION, user=DEV)
             await loom.drain()
             return result.run_id, await loom.export_session(SESSION)
 

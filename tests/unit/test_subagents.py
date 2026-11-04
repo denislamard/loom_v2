@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import DEV, secured
 
 from loom_ia.access.api import Loom, RunResult
 from loom_ia.access.cli import main
@@ -521,7 +521,7 @@ def write(tmp_path: Path, **changes: Any) -> Path:
 
 async def test_loom_runs_subagents(tmp_path: Path) -> None:
     async with Loom(load_config(write(tmp_path))) as loom:
-        result = await loom.run("demo", "Combien font 2 + 2 ?")
+        result = await loom.run("demo", "Combien font 2 + 2 ?", user=DEV)
         own = await loom.events(result.run_id, subruns=False)
         both = await loom.events(result.run_id)
         tree = await loom.store.read(DEFAULT_TENANT, result.session_id)

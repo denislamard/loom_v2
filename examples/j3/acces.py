@@ -365,7 +365,7 @@ async def by_python(config: LoomConfig, cases: tuple[Case, ...]) -> dict[str, di
     """``Loom.run()`` : le ``RunResult`` de chaque cas, en JSON."""
     async with Loom(config) as loom:
         return {
-            case.key: (await loom.run(case.agent, QUESTION)).model_dump(mode="json")
+            case.key: (await loom.run(case.agent, QUESTION, user="dev")).model_dump(mode="json")
             for case in cases
         }
 
@@ -408,7 +408,7 @@ async def by_mcp(
     results: dict[str, dict[str, Any]] = {}
     reports: dict[str, str] = {}
     async with Loom(config) as loom:
-        async with connected(create_server(loom)) as client:
+        async with connected(create_server(loom, user="dev")) as client:
             for case in cases:
                 called = await client.call_tool(case.agent, {"message": QUESTION})
                 results[case.key] = called.structuredContent or {}

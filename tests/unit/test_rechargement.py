@@ -705,7 +705,7 @@ async def test_the_server_stops_listening_then_says_so_then_ends(
 async def test_the_process_that_serves_judges_the_host_it_listens_on(
     demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Sous ``--reload --host``, l'API sans clé avertit de l'adresse servie, pas de la config."""
+    """Sous ``--reload --host``, l'API sans clé est jugée sur l'adresse servie, pas la config."""
 
     class Listening:
         started = True
@@ -724,11 +724,10 @@ async def test_the_process_that_serves_judges_the_host_it_listens_on(
         pass
 
     monkeypatch.setattr(http_serve, "_Taking", Listening)
-    started = await _served(
-        demo(), None, "0.0.0.0", 8000, cast(Any, None), banner, cast(Any, Ready()), 0, DISABLED
-    )
-    assert started
-    assert "API REST ouverte sur 0.0.0.0 sans clé déclarée" in capsys.readouterr().err
+    with pytest.raises(ConfigError, match=r"API REST sans clé sur 0\.0\.0\.0"):
+        await _served(
+            demo(), None, "0.0.0.0", 8000, cast(Any, None), banner, cast(Any, Ready()), 0, DISABLED
+        )
 
 
 # --- Le fichier d'environnement ---------------------------------------------------

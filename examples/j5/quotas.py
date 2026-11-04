@@ -227,7 +227,9 @@ async def budget(config: LoomConfig, agent: str, prefixe: str) -> None:
             avant = etat(await loom.consumption(DUPONT))
             session = SessionId(f"{prefixe}-jour-{numero}")
             try:
-                result = await loom.run(agent, demande(DUPONT), session_id=session, tenant=DUPONT)
+                result = await loom.run(
+                    agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT
+                )
             except BudgetExhausted as refus:
                 refuse = numero
                 print(f"  run {numero} : REFUSÉ    {avant}")
@@ -257,7 +259,11 @@ async def budget(config: LoomConfig, agent: str, prefixe: str) -> None:
 
         titre("Martin n'a pas d'enveloppe : rien ne le borne")
         result = await loom.run(
-            agent, demande(MARTIN), session_id=SessionId(f"{prefixe}-martin"), tenant=MARTIN
+            agent,
+            demande(MARTIN),
+            session_id=SessionId(f"{prefixe}-martin"),
+            tenant=MARTIN,
+            user=MARTIN,
         )
         print(f"  {MARTIN:<18} {ligne(result)}")
         # Le rapport relit le journal, donc il vaut même pour un client dont le
@@ -279,7 +285,9 @@ async def quota(config: LoomConfig, agent: str, prefixe: str) -> None:
         for numero in range(1, 5):
             session = SessionId(f"{prefixe}-minute-{numero}")
             try:
-                result = await loom.run(agent, demande(MARTIN), session_id=session, tenant=MARTIN)
+                result = await loom.run(
+                    agent, demande(MARTIN), session_id=session, tenant=MARTIN, user=MARTIN
+                )
             except QuotaExceeded as refus:
                 print(f"  run {numero} : REFUSÉ    {refus}")
                 continue
@@ -295,7 +303,9 @@ async def quota(config: LoomConfig, agent: str, prefixe: str) -> None:
         titre("Dupont, sans quota, n'est pas concerné")
         for numero in range(1, 4):
             session = SessionId(f"{prefixe}-libre-{numero}")
-            result = await loom.run(agent, demande(DUPONT), session_id=session, tenant=DUPONT)
+            result = await loom.run(
+                agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT
+            )
             print(f"  run {numero} : {ligne(result)}")
 
 
@@ -310,7 +320,7 @@ async def reprise(config: LoomConfig, agent: str, prefixe: str) -> None:
             session = SessionId(f"{prefixe}-avant-{numero}")
             try:
                 result = await premiere.run(
-                    agent, demande(DUPONT), session_id=session, tenant=DUPONT
+                    agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT
                 )
             except BudgetExhausted as refus:
                 print(f"  run {numero} : REFUSÉ — {refus.reached}")
@@ -326,7 +336,7 @@ async def reprise(config: LoomConfig, agent: str, prefixe: str) -> None:
         # `model.responded` du journal depuis minuit, puis il refuse.
         session = SessionId(f"{prefixe}-neuve")
         try:
-            await neuve.run(agent, demande(DUPONT), session_id=session, tenant=DUPONT)
+            await neuve.run(agent, demande(DUPONT), session_id=session, tenant=DUPONT, user=DUPONT)
             print("  le premier run est passé : le compteur n'a rien relu !")
         except BudgetExhausted as refus:
             print(f"  premier run : REFUSÉ — {refus.reached}")

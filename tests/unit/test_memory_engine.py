@@ -21,7 +21,7 @@ from typing import Any, Final, cast
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import DEV, secured
 
 from loom_ia.access.api import Loom
 from loom_ia.config import load_config
@@ -137,7 +137,9 @@ async def listed(
     loom: Loom, session: SessionId, tenant: TenantId | None = None
 ) -> list[dict[str, Any]]:
     """Les documents de la mémoire, lus par un run qui appelle ``list_docs``."""
-    result = await loom.run("assistant", "Liste les documents.", session_id=session, tenant=tenant)
+    result = await loom.run(
+        "assistant", "Liste les documents.", session_id=session, tenant=tenant, user=tenant or DEV
+    )
     assert result.status == RunStatus.COMPLETED
     events = await loom.events(result.run_id, session_id=session, tenant_id=tenant)
     [done] = completed(events, "list_docs")
@@ -147,7 +149,7 @@ async def listed(
 async def test_reading_needs_no_approval_and_writing_waits_for_a_human(tmp_path: Path) -> None:
     session = SessionId("atelier")
     async with Loom(load_config(write_config(tmp_path, SCRIPT))) as loom:
-        asked = await loom.run("assistant", "Mémorise ce devis.", session_id=session)
+        asked = await loom.run("assistant", "Mémorise ce devis.", session_id=session, user=DEV)
         assert asked.status == RunStatus.PAUSED
         [pending] = asked.pending_approvals
         assert pending.tool_name == "memory"
@@ -155,14 +157,14 @@ async def test_reading_needs_no_approval_and_writing_waits_for_a_human(tmp_path:
         # Rien n'est écrit tant que personne n'a dit oui.
         assert await listed(loom, session) == []
 
-        await loom.approve(asked.run_id, by="l'artisan", session_id=session)
+        await loom.approve(asked.run_id, user=DEV, session_id=session)
         await loom.drain()
         done = await loom.result(asked.run_id, session_id=session)
         assert done.status == RunStatus.COMPLETED
         [document] = await listed(loom, session)
         assert document["title"] == "Devis Martin" and document["project"] == "atelier"
 
-        found = await loom.run("assistant", "Et ce chauffe-eau ?", session_id=session)
+        found = await loom.run("assistant", "Et ce chauffe-eau ?", session_id=session, user=DEV)
         assert found.status == RunStatus.COMPLETED
         events = await loom.events(found.run_id, session_id=session)
         [hit] = completed(events, "search")
@@ -172,9 +174,9 @@ async def test_reading_needs_no_approval_and_writing_waits_for_a_human(tmp_path:
 async def test_a_refused_write_is_never_made(tmp_path: Path) -> None:
     session = SessionId("atelier")
     async with Loom(load_config(write_config(tmp_path, SCRIPT))) as loom:
-        asked = await loom.run("assistant", "Mémorise ce devis.", session_id=session)
+        asked = await loom.run("assistant", "Mémorise ce devis.", session_id=session, user=DEV)
         assert asked.status == RunStatus.PAUSED
-        await loom.reject(asked.run_id, by="l'artisan", reason="pas maintenant", session_id=session)
+        await loom.reject(asked.run_id, user=DEV, reason="pas maintenant", session_id=session)
         await loom.drain()
         done = await loom.result(asked.run_id, session_id=session)
         assert done.status == RunStatus.COMPLETED
@@ -186,15 +188,15 @@ async def test_replaying_a_run_that_wrote_writes_nothing(tmp_path: Path) -> None
     session = SessionId("atelier")
     path = write_config(tmp_path, SCRIPT)
     async with Loom(load_config(path)) as loom:
-        wrote = await loom.run("assistant", "Mémorise ce devis.", session_id=session)
-        await loom.approve(wrote.run_id, by="l'artisan", session_id=session)
+        wrote = await loom.run("assistant", "Mémorise ce devis.", session_id=session, user=DEV)
+        await loom.approve(wrote.run_id, user=DEV, session_id=session)
         await loom.drain()
         [document] = await listed(loom, session)
     path = write_config(tmp_path, script_deleting(document["doc_id"]))
     async with Loom(load_config(path)) as loom:
-        forgot = await loom.run("assistant", "Oublie ce devis.", session_id=session)
+        forgot = await loom.run("assistant", "Oublie ce devis.", session_id=session, user=DEV)
         assert forgot.status == RunStatus.PAUSED
-        await loom.approve(forgot.run_id, by="l'artisan", session_id=session)
+        await loom.approve(forgot.run_id, user=DEV, session_id=session)
         await loom.drain()
         assert await listed(loom, session) == []
     # Le rejeu tourne avec la config du run d'origine : sinon le script de
@@ -224,8 +226,8 @@ async def test_a_variant_never_writes(tmp_path: Path) -> None:
     ]
     path = write_config(tmp_path, SCRIPT, other=other)
     async with Loom(load_config(path)) as loom:
-        wrote = await loom.run("assistant", "Mémorise ce devis.", session_id=session)
-        await loom.approve(wrote.run_id, by="l'artisan", session_id=session)
+        wrote = await loom.run("assistant", "Mémorise ce devis.", session_id=session, user=DEV)
+        await loom.approve(wrote.run_id, user=DEV, session_id=session)
         await loom.drain()
         report = await loom.replay(
             wrote.run_id, session_id=session, mode="variant", models={"main": "AUTRE"}
@@ -249,14 +251,16 @@ async def test_each_client_has_its_own_memory(
     session = SessionId("atelier")
     path = write_config(tmp_path, SCRIPT, tenants=tenants)
     async with Loom(load_config(path)) as loom:
-        asked = await loom.run("assistant", "Mémorise ce devis.", session_id=session, tenant=dupont)
-        await loom.approve(asked.run_id, by="Dupont", session_id=session, tenant_id=dupont)
+        asked = await loom.run(
+            "assistant", "Mémorise ce devis.", session_id=session, tenant=dupont, user=dupont
+        )
+        await loom.approve(asked.run_id, user=dupont, session_id=session, tenant_id=dupont)
         await loom.drain()
         assert [d["title"] for d in await listed(loom, session, dupont)] == ["Devis Martin"]
         assert await listed(loom, session, martin) == []
 
         found = await loom.run(
-            "assistant", "Et ce chauffe-eau ?", session_id=session, tenant=martin
+            "assistant", "Et ce chauffe-eau ?", session_id=session, tenant=martin, user=martin
         )
         events = await loom.events(found.run_id, session_id=session, tenant_id=martin)
         [hit] = completed(events, "search")
@@ -276,7 +280,7 @@ async def test_a_file_add_file_refuses_never_waits_for_a_human(tmp_path: Path) -
     (tmp_path / "workspace" / "plaquette.odt").write_bytes(b"PK\x03\x04")
     async with Loom(load_config(path)) as loom:
         session = SessionId("atelier")
-        done = await loom.run("assistant", "Mémorise la plaquette.", session_id=session)
+        done = await loom.run("assistant", "Mémorise la plaquette.", session_id=session, user=DEV)
         assert done.status == RunStatus.COMPLETED and not done.pending_approvals
         events = await loom.events(done.run_id, session_id=session)
         [refusal] = completed(events, "add_file")
@@ -289,7 +293,7 @@ async def test_deleting_an_unknown_document_never_waits_for_a_human(tmp_path: Pa
     path = write_config(tmp_path, script_deleting("00000000-0000-0000-0000-000000000000"))
     async with Loom(load_config(path)) as loom:
         session = SessionId("atelier")
-        done = await loom.run("assistant", "Oublie ce devis.", session_id=session)
+        done = await loom.run("assistant", "Oublie ce devis.", session_id=session, user=DEV)
         assert done.status == RunStatus.COMPLETED and not done.pending_approvals
         events = await loom.events(done.run_id, session_id=session)
         [refusal] = completed(events, "delete")
@@ -305,11 +309,11 @@ async def test_adding_a_note_already_there_never_waits_for_a_human(tmp_path: Pat
     ]
     session = SessionId("atelier")
     async with Loom(load_config(write_config(tmp_path, script))) as loom:
-        first = await loom.run("assistant", "Mémorise ce devis.", session_id=session)
-        await loom.approve(first.run_id, by="l'artisan", session_id=session)
+        first = await loom.run("assistant", "Mémorise ce devis.", session_id=session, user=DEV)
+        await loom.approve(first.run_id, user=DEV, session_id=session)
         await loom.drain()
         [document] = await listed(loom, session)
-        again = await loom.run("assistant", "Encore ce devis.", session_id=session)
+        again = await loom.run("assistant", "Encore ce devis.", session_id=session, user=DEV)
         assert again.status == RunStatus.COMPLETED and not again.pending_approvals
         events = await loom.events(again.run_id, session_id=session)
         [done] = completed(events, "add_text")
@@ -354,7 +358,7 @@ async def test_a_write_cut_by_the_tool_timeout_stops_computing_and_writes_nothin
     agent_file.write_text(yaml.safe_dump(agent, allow_unicode=True), encoding="utf-8")
     async with Loom(load_config(path)) as loom:
         session = SessionId("atelier")
-        done = await loom.run("assistant", "Archive ce texte.", session_id=session)
+        done = await loom.run("assistant", "Archive ce texte.", session_id=session, user=DEV)
         assert done.status == RunStatus.COMPLETED
         events = await loom.events(done.run_id, session_id=session)
         [cut] = completed(events, "add_text")

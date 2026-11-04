@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import DEV, secured
 from pydantic import JsonValue
 
 from loom_ia.access.api import Loom
@@ -2157,8 +2157,8 @@ async def test_the_trace_reaches_the_journal_under_its_call(
     path = atelier(magasin={"backend": "sqlite", "path": "keys.db"}, script=ENVOI_SCRIPT)
     autre = SessionId("atelier-bis")
     async with Loom.from_config(path) as loom:
-        await loom.run("demo", "Relance.", session_id=SESSION)
-        await loom.run("demo", "Relance.", session_id=autre)
+        await loom.run("demo", "Relance.", session_id=SESSION, user=DEV)
+        await loom.run("demo", "Relance.", session_id=autre, user=DEV)
         premiers = await loom.export_session(SESSION)
         seconds = await loom.export_session(autre)
 

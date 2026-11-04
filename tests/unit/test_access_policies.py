@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from conftest import (
     ANSWER,
+    DEV,
     HOSTILE,
     HOSTILE_SHOWN,
     MODEL,
@@ -78,7 +79,7 @@ async def test_the_three_accesses_journal_the_same_decisions(config: Path) -> No
 
     runs: dict[str, RunId] = {}
     async with Loom.from_config(config) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         assert result.text == SIGNED
         runs["python"] = result.run_id
         transport = httpx2.ASGITransport(create_app(loom))
@@ -86,7 +87,7 @@ async def test_the_three_accesses_journal_the_same_decisions(config: Path) -> No
             posted = await http.post("/v1/agents/demo/runs", json={"message": QUESTION})
             assert posted.json()["text"] == SIGNED
             runs["rest"] = RunId(posted.json()["run_id"])
-        async with connected(create_server(loom)) as client:
+        async with connected(create_server(loom, user=DEV)) as client:
             called = await client.call_tool(
                 "demo", {"message": QUESTION}, progress_callback=on_progress
             )

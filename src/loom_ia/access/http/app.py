@@ -152,8 +152,8 @@ from loom_ia.access.http.schemas import (
 )
 from loom_ia.access.http.uploads import RUN_BODY, BodyLimit, run_request
 from loom_ia.agents.registry import UnknownAgent
-from loom_ia.config import LoomConfig
-from loom_ia.config.models import TriggerSpec
+from loom_ia.config import ConfigError, LoomConfig
+from loom_ia.config.models import LOOPBACK_HOSTS, TriggerSpec
 from loom_ia.core.events import (
     EVENT_ID_PATTERN,
     EVENTS_LIMIT,
@@ -166,7 +166,6 @@ from loom_ia.core.events import (
     redacted_all,
 )
 from loom_ia.core.model import (
-    DEFAULT_TENANT,
     ArtifactOrigin,
     AttachmentError,
     EventId,
@@ -185,7 +184,6 @@ from loom_ia.core.ports import (
 )
 from loom_ia.core.projections import ProjectionError
 from loom_ia.engine import ClaimConflict, SessionUnreadable, StateRefused
-from loom_ia.runtime import announce
 from loom_ia.telemetry import Trace
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, RateWindow, UnknownTenant
 from loom_ia.usage import UsageReport
@@ -195,7 +193,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-LOCAL_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1"})
 # Un événement par ligne : le format d'export du journal, celui de la CLI.
 NDJSON: Final = "application/x-ndjson"
 
@@ -226,32 +223,30 @@ HEADER_SCHEME: Final = APIKeyHeader(
 )
 
 
-def _open_warnings(config: LoomConfig, host: str | None = None) -> list[str]:
-    """Ce qu'une API sans clé déclarée laisse passer (#39).
+def _who_calls(config: LoomConfig, host: str | None = None) -> None:
+    """Refuse une API qui ne saurait pas au nom de qui elle agit (D-1, D-1b).
 
-    ``host`` est l'adresse où l'application est servie quand ce n'est pas celle
-    de la config (``loom serve --host``) : c'est elle qui ouvre l'API, donc
-    elle qui est jugée.
+    Avec des clés, chacun présente la sienne. Sans clé, l'instance agit au nom
+    de ``server.http.user``, et seulement sur la boucle locale. ``host`` est
+    l'adresse où l'application est servie quand ce n'est pas celle de la
+    config (``loom serve --host``) : c'est elle qui ouvre l'API, donc elle qui
+    est jugée.
     """
-    if config.security.api_keys or config.server.http.user is not None:
-        # Avec des clés, chacun présente la sienne ; avec ``server.http.user``, une
-        # instance locale agit au nom d'un utilisateur déclaré (D-1b).
-        return []
-    warnings: list[str] = []
-    if config.tenants:
-        named = ", ".join(config.tenant_ids)
-        warnings.append(
-            f"API REST sans clé déclarée alors que la config nomme des clients ({named}) : "
-            f"tout passera par {DEFAULT_TENANT!r}, puisque c'est la clé qui dit au nom de "
-            "qui elle agit"
+    if config.security.api_keys:
+        return
+    http = config.server.http
+    if http.user is None:
+        raise ConfigError(
+            "API REST sans clé d'API ni utilisateur local : ajouter 'security.api_keys' "
+            "(loom keys create), ou, pour une instance sur la machine, 'server.http.user'"
         )
-    listening = host or config.server.http.host
-    if listening not in LOCAL_HOSTS:
-        warnings.append(
-            f"API REST ouverte sur {listening} sans clé déclarée : ajouter "
-            "'security.api_keys' (loom keys create) pour en exiger une"
+    listening = host or http.host
+    if listening not in LOOPBACK_HOSTS:
+        raise ConfigError(
+            f"API REST sans clé sur {listening} : 'server.http.user' ({http.user!r}) est "
+            "réservé à la boucle locale ; ailleurs, chacun doit présenter sa clé "
+            "('security.api_keys')"
         )
-    return warnings
 
 
 async def _payload(request: Request) -> JsonValue:
@@ -288,7 +283,7 @@ async def caller(
     monté par l'application compte dans la même fenêtre (``app.state.rates``).
 
     Les deux schémas sont là pour le document OpenAPI ; la clé se relit sur la
-    requête elle-même, une instance ouverte n'en demandant aucune.
+    requête elle-même, une instance locale n'en demandant aucune (D-1b).
     """
     loom: Loom = request.app.state.loom
     who = identify(loom.config.security, request, loom.config.server.http.user)
@@ -312,8 +307,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     sans clé doit justifier. Omis, c'est ``server.http.host``.
     """
     http = loom.config.server.http
-    # Profil prod : une API sans clé y est une erreur, pas un avertissement (M4).
-    announce(loom.config, _open_warnings(loom.config, host))
+    _who_calls(loom.config, host)
 
     # Débit des clés d'API (#39) : une fenêtre glissante par application servie,
     # que le MCP HTTP monté ici partage.
@@ -766,9 +760,6 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         actor = _acting(loom, who, body.as_user)
         if body.as_user is None:
             require(who, "answer")
-        if actor is None:
-            state = await loom.state(run_id, session_id=session_id, tenant_id=who.tenant)
-            require(who, "answer", state.agent)
         call = await loom.answer(
             run_id,
             answers=body.answers,
@@ -793,9 +784,6 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         actor = _acting(loom, who, as_user)
         if as_user is None:
             require(who, "cancel")
-        if actor is None:
-            state = await loom.state(run_id, session_id=session_id, tenant_id=who.tenant)
-            require(who, "cancel", state.agent)
         stopped = await loom.cancel(run_id, session_id=session_id, tenant_id=who.tenant, user=actor)
         return Cancelled(run_id=run_id, cancelled=stopped)
 
@@ -947,30 +935,21 @@ async def _messages(events: AsyncGenerator[Event], who: Caller) -> AsyncGenerato
             yield sse(event, masked=who.masks)
 
 
-def _acting(loom: Loom, who: Caller, as_user: str | None) -> Actor | None:
+def _acting(loom: Loom, who: Caller, as_user: str | None) -> Actor:
     """L'utilisateur au nom duquel la requête agit : celui de la clé, ou celui d'``as_user``.
 
     ``as_user`` est réservé à une passerelle (``act_as``), qui n'exerce au nom
     de l'utilisateur que les rôles qu'elle endosse ; sa clé la restreint encore
-    (D-5, D-5b). Une instance qui ne sait pas qui appelle ne peut endosser
-    personne : 403. Une instance ouverte, sans ``as_user``, n'a pas d'acteur.
+    (D-5, D-5b). L'utilisateur d'une instance locale n'a pas ``act_as`` : 403.
     """
     if as_user is None:
         return who.actor
-    if who.actor is None:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "as_user : cette instance ne sait pas qui appelle (aucune clé d'API), elle "
-            "n'agit au nom de personne",
-        )
     return who.actor.endorse(loom.config.security, as_user)
 
 
-def _administers(
-    loom: Loom, who: Caller, actor: Actor | None, agent: str, *, endorsed: bool
-) -> None:
+def _administers(loom: Loom, who: Caller, actor: Actor, agent: str, *, endorsed: bool) -> None:
     """``admin`` : celle de l'utilisateur endossé, sinon celle de l'appelant."""
-    if not endorsed or actor is None:
+    if not endorsed:
         require(who, "admin")
         return
     spec = next(spec for spec in loom.agents if spec.name == agent)

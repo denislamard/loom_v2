@@ -289,19 +289,17 @@ def create_server(
     loom: Loom,
     *,
     name: str = SERVER_NAME,
-    tenant: TenantId = DEFAULT_TENANT,
     callers: CallerSource | None = None,
     user: str | None = None,
 ) -> Server[object, Any]:
     """Serveur MCP publiant les agents d'une instance, au nom d'un appelant.
 
     En **stdio** il n'y a pas de clé d'API, donc rien dans le protocole ne
-    dirait au nom de qui une requête arrive : un serveur sert **un** client,
-    choisi à son lancement. ``user`` (``loom mcp --user``) nomme l'utilisateur
-    au nom duquel il agit : le client est le sien, et ses droits valent comme
-    partout. Sans lui, tout est permis au client ``tenant`` (jusqu'au lot 5).
-    Un ``tenant`` qui n'est pas celui de l'utilisateur lève ``ValueError``.
-    Jamais le modèle ne choisit l'identité : aucun outil ne prend d'utilisateur.
+    dirait au nom de qui une requête arrive : un serveur sert **un**
+    utilisateur, nommé à son lancement (``user``, ``loom mcp --user``). Le
+    client est le sien, et ses droits valent comme partout ; sans lui,
+    ``TypeError`` (D-1). Jamais le modèle ne choisit l'identité : aucun outil
+    ne prend d'utilisateur. ``AccessDenied`` pour un utilisateur inconnu.
 
     En **HTTP** (J5.2b), ``callers`` rend l'appelant de la requête en cours,
     tiré de sa clé : un même serveur sert alors tous les clients, publie à
@@ -318,19 +316,13 @@ def create_server(
                 f"({STATUS_TOOL}, {REPORT_TOOL}, {CANCEL_TOOL}), qui le masquerait. "
                 "Renommer l'agent, ou le retirer du MCP (expose.mcp: false)."
             )
-    fixed = Caller(without_key=tenant)
-    if user is not None:
+    if callers is not None:
+        who, instructions = callers, _INSTRUCTIONS
+    elif user is not None:
         fixed = Caller.acting(loom.config.security, user)
-        if tenant != DEFAULT_TENANT and tenant != fixed.tenant:
-            raise ValueError(
-                f"Client contradictoire : {user!r} agit pour {fixed.tenant!r}, pas pour {tenant!r}"
-            )
-        tenant = fixed.tenant
-
-    def who() -> Caller:
-        return fixed if callers is None else callers()
-
-    instructions = _INSTRUCTIONS if callers is not None else _instructions(loom, tenant)
+        who, instructions = _always(fixed), _instructions(loom, fixed.tenant)
+    else:
+        raise TypeError("create_server : user= (stdio) ou callers= (HTTP) — au nom de qui ?")
     server = Server[object, Any](name, version=__version__, instructions=instructions)
 
     def attachments_of(caller: Caller) -> AttachmentReader:
@@ -462,13 +454,13 @@ async def _run(
     message: str,
     attachments: list[Attachment],
     session_id: SessionId | None,
-    tenant: TenantId = DEFAULT_TENANT,
-    user: Actor | None = None,
+    tenant: TenantId,
+    user: Actor,
 ) -> RunResult:
     """Fait tourner le run ; suit sa progression et fait trancher, si le client le sait.
 
-    Avec un utilisateur, l'élicitation agit pour lui, qui a lancé le run : elle
-    ne tranche que ce qu'il peut s'approuver, et le reste attend en pause
+    L'élicitation agit pour l'utilisateur, qui a lancé le run : elle ne
+    tranche que ce qu'il peut s'approuver, et le reste attend en pause
     (§ 6.2) ; elle ne répond que s'il a ``answer``. C'est le SDK qui l'applique.
     """
     ctx = server.request_context
@@ -637,12 +629,11 @@ def _question(asked: PendingApproval) -> str:
 async def run_stdio(
     loom: Loom,
     *,
+    user: str,
     name: str = SERVER_NAME,
-    tenant: TenantId = DEFAULT_TENANT,
-    user: str | None = None,
 ) -> None:
-    """Sert l'instance sur l'entrée et la sortie standard, jusqu'à la fin du flux."""
-    server = create_server(loom, name=name, tenant=tenant, user=user)
+    """Sert l'instance au nom de ``user``, sur l'entrée et la sortie standard."""
+    server = create_server(loom, name=name, user=user)
     async with stdio_server() as (reader, writer):
         await server.run(reader, writer, server.create_initialization_options())
 
@@ -819,6 +810,11 @@ async def _cancel(
         content=[types.TextContent(type="text", text=f"Run {run_id} : {said}.")],
         structuredContent={"run_id": run_id, "cancelled": stopped},
     )
+
+
+def _always(caller: Caller) -> CallerSource:
+    """L'appelant de toutes les requêtes d'un serveur en stdio : son utilisateur."""
+    return lambda: caller
 
 
 def _refused(message: str) -> types.CallToolResult:

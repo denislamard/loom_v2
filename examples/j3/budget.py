@@ -162,7 +162,7 @@ async def main(argv: list[str]) -> int:
         )
         print(f"  budget du run : {limits} ; {budgets.on_exceed}\n")
         try:
-            result = await loom.run(agent, args.question)
+            result = await loom.run(agent, args.question, user="dev")
         except (ModelConfigError, ConfigError) as error:
             print(f"Configuration : {error}", file=sys.stderr)
             return 2

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import DEV
 from test_wait_answer import config
 
 from loom_ia.access import Loom
@@ -40,7 +41,7 @@ def _texts(content: list[Any]) -> str:
 def test_without_elicitation_the_question_comes_back_as_text(tmp_path: Path) -> None:
     async def go() -> None:
         async with Loom.from_config(config(tmp_path)) as loom:
-            async with connected(create_server(loom), client_info=CLIENT) as client:
+            async with connected(create_server(loom, user=DEV), client_info=CLIENT) as client:
                 paused = await client.call_tool(
                     "demo", {"message": "Prépare un devis.", "session_id": "s1"}
                 )
@@ -72,7 +73,7 @@ def test_with_progress_the_answered_run_is_the_one_followed(tmp_path: Path) -> N
 
     async def go() -> None:
         async with Loom.from_config(config(tmp_path)) as loom:
-            async with connected(create_server(loom), client_info=CLIENT) as client:
+            async with connected(create_server(loom, user=DEV), client_info=CLIENT) as client:
                 paused = await client.call_tool(
                     "demo",
                     {"message": "Prépare un devis.", "session_id": "s1"},
@@ -85,7 +86,7 @@ def test_with_progress_the_answered_run_is_the_one_followed(tmp_path: Path) -> N
         assert again.structuredContent["run_id"] == paused.structuredContent["run_id"]
         assert again.structuredContent["status"] == "completed"
         assert any("question à l'utilisateur" in line for line in lines)
-        assert any("réponse de l'utilisateur reçue" in line for line in lines)
+        assert any(f"réponse de {DEV} reçue" in line for line in lines)
 
     asyncio.run(go())
 
@@ -102,7 +103,7 @@ def test_elicitation_answers_in_the_loop(tmp_path: Path) -> None:
     async def go() -> None:
         async with Loom.from_config(config(tmp_path)) as loom:
             async with connected(
-                create_server(loom), client_info=CLIENT, elicitation_callback=elicit
+                create_server(loom, user=DEV), client_info=CLIENT, elicitation_callback=elicit
             ) as client:
                 result = await client.call_tool(
                     "demo", {"message": "Prépare un devis.", "session_id": "s1"}
@@ -111,7 +112,8 @@ def test_elicitation_answers_in_the_loop(tmp_path: Path) -> None:
         assert result.structuredContent is not None
         assert result.structuredContent["status"] == "completed"
         answered = [e for e in events if e.type == "question.answered"]
-        assert answered[0].facets.get("by") == "mcp:atelier-client"
+        # L'élicitation répond pour le lanceur : c'est lui qui signe (§ 6.2).
+        assert answered[0].facets.get("by") == DEV
         assert "paused" not in [e.facets.get("to_state") for e in events]
 
     asyncio.run(go())
@@ -144,7 +146,7 @@ def test_a_free_text_wins_and_multiple_choices_are_split(tmp_path: Path) -> None
     async def go() -> None:
         async with Loom.from_config(config(tmp_path, script)) as loom:
             async with connected(
-                create_server(loom), client_info=CLIENT, elicitation_callback=elicit
+                create_server(loom, user=DEV), client_info=CLIENT, elicitation_callback=elicit
             ) as client:
                 await client.call_tool("demo", {"message": "Devis.", "session_id": "s1"})
                 events = await loom.export_session(SessionId("s1"))
@@ -169,7 +171,7 @@ def test_a_dismissed_form_leaves_the_question_waiting(tmp_path: Path) -> None:
     async def go() -> None:
         async with Loom.from_config(config(tmp_path)) as loom:
             async with connected(
-                create_server(loom), client_info=CLIENT, elicitation_callback=elicit
+                create_server(loom, user=DEV), client_info=CLIENT, elicitation_callback=elicit
             ) as client:
                 result = await client.call_tool(
                     "demo", {"message": "Prépare un devis.", "session_id": "s1"}
@@ -184,7 +186,7 @@ def test_a_dismissed_form_leaves_the_question_waiting(tmp_path: Path) -> None:
 def test_run_status_shows_the_question(tmp_path: Path) -> None:
     async def go() -> None:
         async with Loom.from_config(config(tmp_path)) as loom:
-            async with connected(create_server(loom), client_info=CLIENT) as client:
+            async with connected(create_server(loom, user=DEV), client_info=CLIENT) as client:
                 paused = await client.call_tool(
                     "demo", {"message": "Prépare un devis.", "session_id": "s1"}
                 )
@@ -227,7 +229,7 @@ def test_without_elicitation_several_questions_are_numbered(tmp_path: Path) -> N
 
     async def go() -> str:
         async with Loom.from_config(config(tmp_path, script)) as loom:
-            async with connected(create_server(loom), client_info=CLIENT) as client:
+            async with connected(create_server(loom, user=DEV), client_info=CLIENT) as client:
                 paused = await client.call_tool(
                     "demo",
                     {"message": "La lettre.", "session_id": "s1"},
@@ -269,7 +271,7 @@ def test_without_elicitation_an_approval_does_not_hide_the_question(tmp_path: Pa
 
     async def go() -> str:
         async with Loom.from_config(config(tmp_path, script)) as loom:
-            async with connected(create_server(loom), client_info=CLIENT) as client:
+            async with connected(create_server(loom, user=DEV), client_info=CLIENT) as client:
                 paused = await client.call_tool("demo", {"message": "Envoie.", "session_id": "s1"})
                 assert paused.structuredContent is not None
                 assert len(paused.structuredContent["pending_approvals"]) == 1

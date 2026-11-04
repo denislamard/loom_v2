@@ -76,7 +76,7 @@ def test_a_trigger_may_open_an_agent_that_rest_does_not_publish(demo: ConfigFact
 
 async def test_a_delivery_renders_its_message_and_opens_a_run(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo(storage=JOURNAL, triggers=[RELANCE])) as loom:
-        opened = await loom.trigger("relance-quotidienne", CHARGE)
+        opened = await loom.trigger("relance-quotidienne", CHARGE, user=DEV)
         await loom.drain()
         events = await loom.events(opened.run_id, session_id=opened.session_id)
         result = await loom.result(opened.run_id, session_id=opened.session_id)
@@ -94,7 +94,7 @@ async def test_a_missing_variable_makes_a_poorer_message_not_a_lost_delivery(
     demo: ConfigFactory,
 ) -> None:
     async with Loom.from_config(demo(storage=JOURNAL, triggers=[RELANCE])) as loom:
-        opened = await loom.trigger("relance-quotidienne", {"client": "Mme Martin"})
+        opened = await loom.trigger("relance-quotidienne", {"client": "Mme Martin"}, user=DEV)
         events = await loom.events(opened.run_id, session_id=opened.session_id)
 
     demande = [event.payload for event in events if event.type == "message.user"]
@@ -104,8 +104,8 @@ async def test_a_missing_variable_makes_a_poorer_message_not_a_lost_delivery(
 async def test_a_trigger_can_gather_its_deliveries_in_one_session(demo: ConfigFactory) -> None:
     avec = {**RELANCE, "session": "devis-{{ payload.devis.numero }}"}
     async with Loom.from_config(demo(storage=JOURNAL, triggers=[avec])) as loom:
-        first = await loom.trigger("relance-quotidienne", CHARGE)
-        second = await loom.trigger("relance-quotidienne", CHARGE)
+        first = await loom.trigger("relance-quotidienne", CHARGE, user=DEV)
+        second = await loom.trigger("relance-quotidienne", CHARGE, user=DEV)
         fiche = await loom.session(SessionId("devis-D-2026-042"))
 
     assert first.session_id == second.session_id == SessionId("devis-D-2026-042")
@@ -115,7 +115,7 @@ async def test_a_trigger_can_gather_its_deliveries_in_one_session(demo: ConfigFa
 async def test_an_unknown_trigger_names_the_declared_ones(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo(triggers=[RELANCE])) as loom:
         with pytest.raises(UnknownTrigger, match="relance-quotidienne"):
-            await loom.trigger("absent")
+            await loom.trigger("absent", user=DEV)
 
 
 # --- Les doublons de livraison ------------------------------------------------
@@ -123,9 +123,9 @@ async def test_an_unknown_trigger_names_the_declared_ones(demo: ConfigFactory) -
 
 async def test_the_same_delivery_twice_opens_one_run(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo(storage=JOURNAL, triggers=[RELANCE])) as loom:
-        first = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1")
-        second = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1")
-        autre = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-2")
+        first = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1", user=DEV)
+        second = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1", user=DEV)
+        autre = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-2", user=DEV)
         await loom.drain()
         journaux = await loom.sessions()
 
@@ -166,8 +166,8 @@ async def test_two_simultaneous_deliveries_open_one_run(
 
         monkeypatch.setattr(loom.store, "read", read)
         first, second = await asyncio.gather(
-            loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1"),
-            loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1"),
+            loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1", user=DEV),
+            loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1", user=DEV),
         )
         await loom.drain()
         events = await loom.events(first.run_id, session_id=first.session_id)
@@ -186,10 +186,10 @@ async def test_a_delivery_id_taken_by_another_door_is_refused(demo: ConfigFactor
     agents = [demo_agent(), demo_agent(name="autre")]
     path = demo(storage=JOURNAL, agents=agents, triggers=[RELANCE, facturation])
     async with Loom.from_config(path) as loom:
-        first = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1")
+        first = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1", user=DEV)
         with pytest.raises(DeliveryRefused, match=r"evt-1.*relance-quotidienne"):
-            await loom.trigger("facturation", CHARGE, delivery_id="evt-1")
-        again = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1")
+            await loom.trigger("facturation", CHARGE, delivery_id="evt-1", user=DEV)
+        again = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="evt-1", user=DEV)
         await loom.drain()
         journaux = await loom.sessions()
 
@@ -202,10 +202,10 @@ async def test_a_delivery_id_reused_with_another_session_is_refused(demo: Config
     avec = {**RELANCE, "session": "devis-{{ payload.devis.numero }}"}
     autre_devis: dict[str, Any] = {**CHARGE, "devis": {"numero": "D-2026-079"}}
     async with Loom.from_config(demo(storage=JOURNAL, triggers=[avec])) as loom:
-        first = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="crm-0001")
+        first = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="crm-0001", user=DEV)
         with pytest.raises(DeliveryRefused) as refused:
-            await loom.trigger("relance-quotidienne", autre_devis, delivery_id="crm-0001")
-        again = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="crm-0001")
+            await loom.trigger("relance-quotidienne", autre_devis, delivery_id="crm-0001", user=DEV)
+        again = await loom.trigger("relance-quotidienne", CHARGE, delivery_id="crm-0001", user=DEV)
         await loom.drain()
         journaux = await loom.sessions()
 
@@ -221,7 +221,7 @@ async def test_a_delivery_id_reused_with_another_session_is_refused(demo: Config
 async def test_a_delivery_id_that_is_not_usable_is_refused(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo(storage=JOURNAL, triggers=[RELANCE])) as loom:
         with pytest.raises(DeliveryRefused, match="Identifiant de livraison"):
-            await loom.trigger("relance-quotidienne", CHARGE, delivery_id="../ailleurs")
+            await loom.trigger("relance-quotidienne", CHARGE, delivery_id="../ailleurs", user=DEV)
 
 
 async def test_a_session_template_that_renders_nothing_is_refused(demo: ConfigFactory) -> None:
@@ -230,7 +230,7 @@ async def test_a_session_template_that_renders_nothing_is_refused(demo: ConfigFa
     avec = {**RELANCE, "session": "{{ payload.absente }}"}
     async with Loom.from_config(demo(storage=JOURNAL, triggers=[avec])) as loom:
         with pytest.raises(DeliveryRefused, match="Session du déclencheur"):
-            await loom.trigger("relance-quotidienne", CHARGE)
+            await loom.trigger("relance-quotidienne", CHARGE, user=DEV)
 
 
 # --- La porte en REST ---------------------------------------------------------

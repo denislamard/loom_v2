@@ -18,7 +18,7 @@ from typing import Any, Self
 
 import pytest
 import yaml
-from conftest import demo_agent, secured
+from conftest import DEV, demo_agent, secured
 
 from loom_ia.access.api import Loom, RunResult, StreamItem
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
@@ -99,7 +99,7 @@ def durable(tmp_path: Path) -> ConfigFactory:
 def test_a_run_is_claimed_before_it_is_piloted(durable: ConfigFactory) -> None:
     async def go() -> list[Event]:
         async with Loom.from_config(durable()) as loom:
-            await loom.run("demo", QUESTION, session_id=SESSION)
+            await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             return await loom.export_session(SESSION)
 
     events = asyncio.run(go())
@@ -121,7 +121,7 @@ def test_a_second_pilot_is_refused_while_the_lease_lives(durable: ConfigFactory)
         journal, held = await _held(store_path, worker="worker-ailleurs", seconds=600)
         async with Loom.from_config(path) as loom:
             with pytest.raises(ClaimConflict) as raised:
-                await loom.resume(journal.run_id, session_id=SESSION)
+                await loom.resume(journal.run_id, session_id=SESSION, user=DEV)
         assert raised.value.worker_id == "worker-ailleurs"
         assert raised.value.lease_until == held
 
@@ -135,7 +135,7 @@ def test_an_expired_lease_lets_another_pilot_take_over(durable: ConfigFactory) -
     async def go() -> RunStatus:
         journal, _ = await _held(store_path, worker="worker-mort", seconds=-1)
         async with Loom.from_config(path) as loom:
-            return (await loom.resume(journal.run_id, session_id=SESSION)).status
+            return (await loom.resume(journal.run_id, session_id=SESSION, user=DEV)).status
 
     assert asyncio.run(go()) is RunStatus.COMPLETED
 
@@ -146,9 +146,9 @@ def test_the_same_worker_takes_its_own_run_back(durable: ConfigFactory) -> None:
 
     async def go() -> RunStatus:
         async with Loom.from_config(path) as loom:
-            result = await loom.run("demo", QUESTION, session_id=SESSION)
+            result = await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             # Même instance, donc même concession : la reprise passe.
-            return (await loom.resume(result.run_id, session_id=SESSION)).status
+            return (await loom.resume(result.run_id, session_id=SESSION, user=DEV)).status
 
     assert asyncio.run(go()) is RunStatus.COMPLETED
 
@@ -159,7 +159,7 @@ def test_a_subrun_takes_no_claim(durable: ConfigFactory) -> None:
 
     async def go() -> list[Event]:
         async with Loom.from_config(path) as loom:
-            await loom.run("demo", QUESTION, session_id=SESSION)
+            await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             return await loom.export_session(SESSION)
 
     events = asyncio.run(go())
@@ -176,7 +176,7 @@ def test_a_submitted_run_exists_before_submit_returns(durable: ConfigFactory) ->
 
     async def go() -> tuple[RunStatus, RunStatus]:
         async with Loom.from_config(durable()) as loom:
-            run_id = await loom.submit("demo", QUESTION, session_id=SESSION)
+            run_id = await loom.submit("demo", QUESTION, session_id=SESSION, user=DEV)
             posee = (await loom.state(run_id, session_id=SESSION)).status
             await loom.drain()
             return posee, (await loom.state(run_id, session_id=SESSION)).status
@@ -189,7 +189,7 @@ def test_a_submitted_run_exists_before_submit_returns(durable: ConfigFactory) ->
 def test_a_submitted_run_can_be_read_back(durable: ConfigFactory) -> None:
     async def go() -> str:
         async with Loom.from_config(durable()) as loom:
-            run_id = await loom.submit("demo", QUESTION, session_id=SESSION)
+            run_id = await loom.submit("demo", QUESTION, session_id=SESSION, user=DEV)
             await loom.drain()
             return (await loom.result(run_id, session_id=SESSION)).text
 
@@ -201,7 +201,7 @@ def test_closing_the_instance_waits_for_a_submitted_run(durable: ConfigFactory) 
 
     async def go() -> RunStatus:
         async with Loom.from_config(path) as loom:
-            run_id = await loom.submit("demo", QUESTION, session_id=SESSION)
+            run_id = await loom.submit("demo", QUESTION, session_id=SESSION, user=DEV)
         # `aclose` a attendu la file : le run est fini au journal.
         async with Loom.from_config(path) as second:
             return (await second.state(run_id, session_id=SESSION)).status
@@ -238,7 +238,7 @@ def test_recover_leaves_finished_runs_alone(durable: ConfigFactory) -> None:
 
     async def go() -> tuple[RunId, ...]:
         async with Loom.from_config(path) as loom:
-            await loom.run("demo", QUESTION, session_id=SESSION)
+            await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             return await loom.recover()
 
     assert asyncio.run(go()) == ()
@@ -432,7 +432,7 @@ def test_a_run_left_between_its_final_transition_and_its_end_is_finished_cleanly
     async def go() -> tuple[RunStatus, list[Event]]:
         journal = await _half_closed(store_path, worker="worker-mort", seconds=-1)
         async with Loom.from_config(path) as loom:
-            status = (await loom.resume(journal.run_id, session_id=SESSION)).status
+            status = (await loom.resume(journal.run_id, session_id=SESSION, user=DEV)).status
             return status, await loom.export_session(SESSION)
 
     status, events = asyncio.run(go())
@@ -453,7 +453,7 @@ def test_a_half_closed_run_still_waits_for_a_live_lease(durable: ConfigFactory) 
         journal = await _half_closed(store_path, worker="worker-ailleurs", seconds=600)
         async with Loom.from_config(path) as loom:
             with pytest.raises(ClaimConflict):
-                await loom.resume(journal.run_id, session_id=SESSION)
+                await loom.resume(journal.run_id, session_id=SESSION, user=DEV)
 
     asyncio.run(go())
 
@@ -513,9 +513,9 @@ async def test_resume_waits_for_the_pilot_instead_of_running_the_tool_again(
     """``submit`` puis ``resume`` : le second attend, au lieu de refaire l'effet."""
     async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
         loom.register("calculer", _bloque(porte))
-        run_id = await loom.submit("demo", QUESTION)
+        run_id = await loom.submit("demo", QUESTION, user=DEV)
         await porte.entered.get()
-        second = asyncio.create_task(loom.resume(run_id))
+        second = asyncio.create_task(loom.resume(run_id, user=DEV))
         await _calme()
         assert porte.runs == 1
         porte.open.set()
@@ -532,7 +532,7 @@ async def test_recover_leaves_a_run_this_instance_is_piloting(demo: ConfigFactor
     """Sans erreur, et sans le compter : la concession est celle de l'instance elle-même."""
     async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
         loom.register("calculer", _bloque(porte))
-        direct = asyncio.create_task(loom.run("demo", QUESTION))
+        direct = asyncio.create_task(loom.run("demo", QUESTION, user=DEV))
         await porte.entered.get()
         repris = await loom.recover()
         await _calme()
@@ -553,9 +553,9 @@ async def test_a_waiting_pilot_takes_over_when_the_first_one_is_interrupted(
     run_id = new_run_id()
     async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
         loom.register("calculer", _bloque(porte))
-        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id))
+        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id, user=DEV))
         await porte.entered.get()
-        second = asyncio.create_task(loom.resume(run_id))
+        second = asyncio.create_task(loom.resume(run_id, user=DEV))
         await _calme()
         assert porte.runs == 1
         first.cancel()
@@ -574,12 +574,12 @@ async def test_cancel_stops_the_pilot_and_the_one_waiting_behind_it(demo: Config
     run_id = new_run_id()
     async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
         loom.register("calculer", _bloque(porte))
-        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id))
+        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id, user=DEV))
         await porte.entered.get()
-        second = asyncio.create_task(loom.resume(run_id))
+        second = asyncio.create_task(loom.resume(run_id, user=DEV))
         await _calme()
         assert porte.runs == 1
-        assert await loom.cancel(run_id, by="denis")
+        assert await loom.cancel(run_id, user=DEV)
         with suppress(asyncio.CancelledError):
             await first
         result = await second
@@ -598,9 +598,9 @@ async def test_cancel_gives_the_pilots_caller_the_cancelled_run(demo: ConfigFact
     run_id = new_run_id()
     async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
         loom.register("calculer", _bloque(porte))
-        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id))
+        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id, user=DEV))
         await porte.entered.get()
-        assert await loom.cancel(run_id, by="denis")
+        assert await loom.cancel(run_id, user=DEV)
         await asyncio.wait({first}, timeout=5)
         # Ni annulé ni en échec : l'appelant n'a pas été arrêté, c'est son run.
         assert first.done() and not first.cancelled() and first.exception() is None
@@ -619,9 +619,9 @@ async def test_cancel_gives_the_resuming_caller_the_cancelled_run(demo: ConfigFa
         journal = RunJournal(agent="demo")
         journal.start(QUESTION)
         await loom.store.append(journal.take(), expected_seq=0)
-        resuming = asyncio.create_task(loom.resume(journal.run_id))
+        resuming = asyncio.create_task(loom.resume(journal.run_id, user=DEV))
         await porte.entered.get()
-        assert await loom.cancel(journal.run_id)
+        assert await loom.cancel(journal.run_id, user=DEV)
         await asyncio.wait({resuming}, timeout=5)
         assert resuming.done() and not resuming.cancelled() and resuming.exception() is None
         result = resuming.result()
@@ -639,12 +639,12 @@ async def test_cancel_ends_the_stream_of_the_pilots_caller_on_run_cancelled(
         loom.register("calculer", _bloque(porte))
 
         async def follow() -> None:
-            async for item in loom.stream("demo", QUESTION, run_id=run_id):
+            async for item in loom.stream("demo", QUESTION, run_id=run_id, user=DEV):
                 seen.append(item)
 
         streaming = asyncio.create_task(follow())
         await porte.entered.get()
-        assert await loom.cancel(run_id, by="denis")
+        assert await loom.cancel(run_id, user=DEV)
         await asyncio.wait({streaming}, timeout=5)
         assert streaming.done() and not streaming.cancelled() and streaming.exception() is None
         state = await loom.state(run_id)
@@ -666,7 +666,7 @@ async def test_cancelling_the_calling_task_still_raises_cancelled_error(
     called, timed, streamed = new_run_id(), new_run_id(), new_run_id()
     async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
         loom.register("calculer", _bloque(porte))
-        calling = asyncio.create_task(loom.run("demo", QUESTION, run_id=called))
+        calling = asyncio.create_task(loom.run("demo", QUESTION, run_id=called, user=DEV))
         await porte.entered.get()
         calling.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -676,7 +676,7 @@ async def test_cancelling_the_calling_task_still_raises_cancelled_error(
 
         async def bounded() -> None:
             async with limit:
-                await loom.run("demo", QUESTION, run_id=timed)
+                await loom.run("demo", QUESTION, run_id=timed, user=DEV)
 
         waiting = asyncio.create_task(bounded())
         await porte.entered.get()
@@ -686,7 +686,7 @@ async def test_cancelling_the_calling_task_still_raises_cancelled_error(
             await waiting
 
         async def follow() -> None:
-            async for _ in loom.stream("demo", QUESTION, run_id=streamed):
+            async for _ in loom.stream("demo", QUESTION, run_id=streamed, user=DEV):
                 pass
 
         streaming = asyncio.create_task(follow())
@@ -722,10 +722,10 @@ async def test_an_interrupted_pilot_keeps_the_interruption_when_cancel_could_not
             return await write(drafts, expected_seq=expected_seq)
 
         monkeypatch.setattr(loom.store, "append", refusing)
-        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id))
+        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id, user=DEV))
         await porte.entered.get()
         with pytest.raises(OSError, match="disque plein"):
-            await loom.cancel(run_id)
+            await loom.cancel(run_id, user=DEV)
         await asyncio.wait({first}, timeout=5)
         assert first.cancelled()
         state = await loom.state(run_id)
@@ -733,7 +733,7 @@ async def test_an_interrupted_pilot_keeps_the_interruption_when_cancel_could_not
         # Il reste à reprendre : personne ne le pilote plus, et rien ne l'a clos.
         monkeypatch.setattr(loom.store, "append", write)
         porte.open.set()
-        resumed = await loom.resume(run_id)
+        resumed = await loom.resume(run_id, user=DEV)
 
     assert not state.finished and "run.cancelled" not in types
     assert porte.runs == 2
@@ -747,9 +747,9 @@ async def test_cancel_keeps_the_run_until_it_is_closed(
     run_id = new_run_id()
     async with Loom.from_config(_bloquant(demo)) as loom, Porte() as porte:
         loom.register("calculer", _bloque(porte))
-        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id))
+        first = asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id, user=DEV))
         await porte.entered.get()
-        second = asyncio.create_task(loom.resume(run_id))
+        second = asyncio.create_task(loom.resume(run_id, user=DEV))
         await _calme()
         reading, go = asyncio.Event(), asyncio.Event()
         read = loom.state
@@ -762,7 +762,7 @@ async def test_cancel_keeps_the_run_until_it_is_closed(
             return await read(run_id, session_id=session_id, tenant_id=tenant_id)
 
         monkeypatch.setattr(loom, "state", slow_state)
-        cancelling = asyncio.create_task(loom.cancel(run_id))
+        cancelling = asyncio.create_task(loom.cancel(run_id, user=DEV))
         await reading.wait()
         await _calme()
         assert porte.runs == 1
@@ -784,14 +784,16 @@ async def test_two_clients_with_the_same_run_id_are_piloted_apart(demo: ConfigFa
     async with Loom.from_config(path) as loom, Porte() as porte:
         loom.register("calculer", _bloque(porte))
         runs = {
-            tenant: asyncio.create_task(loom.run("demo", QUESTION, run_id=run_id, tenant=tenant))
+            tenant: asyncio.create_task(
+                loom.run("demo", QUESTION, run_id=run_id, tenant=tenant, user=tenant)
+            )
             for tenant in (acme, beta)
         }
         async with asyncio.timeout(5):
             # Chacun a son outil en cours : aucun n'attend l'autre.
             await porte.entered.get()
             await porte.entered.get()
-        assert await loom.cancel(run_id, tenant_id=acme)
+        assert await loom.cancel(run_id, tenant_id=acme, user=acme)
         porte.open.set()
         with suppress(asyncio.CancelledError):
             await runs[acme]
@@ -836,11 +838,11 @@ async def _arrete_ailleurs(path: Path, quand: type) -> tuple[RunStatus, list[Eve
     async with Loom.from_config(path) as ailleurs:
 
         async def arrete(run_id: RunId) -> None:
-            assert await ailleurs.cancel(run_id, session_id=SESSION, by="ailleurs")
+            assert await ailleurs.cancel(run_id, session_id=SESSION, user=DEV)
 
         pilote = Loom(load_config(path), store=Glissant(store_path, quand, arrete))
         async with pilote:
-            result = await pilote.run("demo", QUESTION, session_id=SESSION)
+            result = await pilote.run("demo", QUESTION, session_id=SESSION, user=DEV)
         return result.status, await ailleurs.export_session(SESSION)
 
 
@@ -864,7 +866,7 @@ def test_a_run_stopped_elsewhere_while_piloted_stops_at_its_next_write(
     assert types.index("run.claimed") < types.index("run.cancelled") == len(types) - 1
     assert "model.responded" not in types
     cancelled = events[-1].payload
-    assert isinstance(cancelled, RunCancelled) and cancelled.by == "ailleurs"
+    assert isinstance(cancelled, RunCancelled) and cancelled.by == DEV
     fold(events, events[0].run_id)
 
 
@@ -879,11 +881,11 @@ def test_a_stop_that_arrives_after_the_end_says_already_finished(
         async with Loom.from_config(path) as pilote:
 
             async def finit(run_id: RunId) -> None:
-                await pilote.resume(run_id, session_id=SESSION)
+                await pilote.resume(run_id, session_id=SESSION, user=DEV)
 
             arreteur = Loom(load_config(path), store=Glissant(store_path, RunCancelled, finit))
             async with arreteur:
-                arrete = await arreteur.cancel(journal.run_id, session_id=SESSION)
+                arrete = await arreteur.cancel(journal.run_id, session_id=SESSION, user=DEV)
             return arrete, await pilote.export_session(SESSION)
 
     arrete, events = asyncio.run(go())
@@ -920,17 +922,17 @@ def test_an_approval_after_a_stop_elsewhere_decides_nothing(
 
     async def go() -> tuple[tuple[str, ...], list[Event]]:
         async with Loom.from_config(path) as ailleurs:
-            run = await ailleurs.run("demo", "Envoie.", session_id=SESSION)
+            run = await ailleurs.run("demo", "Envoie.", session_id=SESSION, user=DEV)
             assert run.status is RunStatus.PAUSED
 
             async def arrete(run_id: RunId) -> None:
-                assert await ailleurs.cancel(run_id, session_id=SESSION, by="ailleurs")
+                assert await ailleurs.cancel(run_id, session_id=SESSION, user=DEV)
 
             approbateur = Loom(
                 load_config(path), store=Glissant(store_path, ApprovalGranted, arrete)
             )
             async with approbateur:
-                accordes = await approbateur.approve(run.run_id, session_id=SESSION)
+                accordes = await approbateur.approve(run.run_id, session_id=SESSION, user=DEV)
             return accordes, await ailleurs.export_session(SESSION)
 
     accordes, events = asyncio.run(go())

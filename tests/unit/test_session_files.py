@@ -120,7 +120,7 @@ def atelier(tmp_path: Path) -> Path:
 async def produced(path: Path) -> tuple[SessionFile, ...]:
     async with Loom.from_config(path) as loom:
         photo = Attachment(data=PNG, media_type="image/png", name="photo.png")
-        await loom.run("demo", "Produis.", session_id=SESSION, attachments=[photo])
+        await loom.run("demo", "Produis.", session_id=SESSION, attachments=[photo], user=DEV)
         return await loom.session_files(SESSION)
 
 

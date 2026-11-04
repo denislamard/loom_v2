@@ -74,7 +74,7 @@ async def main(argv: list[str]) -> int:
     async with Loom(config) as loom:
         print(f"> {args.question}\n")
         try:
-            result = await loom.run(agent, args.question)
+            result = await loom.run(agent, args.question, user="dev")
         except ModelConfigError as error:
             print(f"Modèle : {error}", file=sys.stderr)
             return 2

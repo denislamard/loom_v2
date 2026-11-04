@@ -381,6 +381,7 @@ async def fichiers(scene: Scene) -> None:
         attachments=[photo],
         session_id=session_id,
         tenant=DUPONT,
+        user=DUPONT,
     )
     for record in ran.artifacts:
         print(f"  {record.uri}")
@@ -434,7 +435,7 @@ async def arret(scene: Scene) -> None:
 
     titre("Un run déjà terminé : rien à arrêter, et ce n'est pas une erreur")
     fini = SessionId(f"{prefixe}-fini")
-    ran = await loom.run(agent, demande(DUPONT), session_id=fini, tenant=DUPONT)
+    ran = await loom.run(agent, demande(DUPONT), session_id=fini, tenant=DUPONT, user=DUPONT)
     async with session_mcp(base, jetons["dupont"]) as (session, _):
         rendu = await session.call_tool("cancel", {"run_id": ran.run_id, "session_id": fini})
     structure = rendu.structuredContent or {}
@@ -453,7 +454,7 @@ async def arret(scene: Scene) -> None:
     # alors qu'un aller-retour, là où une poignée de main en coûterait assez
     # pour qu'un run simulé finisse d'abord.
     async with session_mcp(base, jetons["dupont"]) as (session, _):
-        laisse = await loom.submit(agent, demande(DUPONT), tenant=DUPONT)
+        laisse = await loom.submit(agent, demande(DUPONT), tenant=DUPONT, user=DUPONT)
         rendu = await session.call_tool("cancel", {"run_id": laisse})
     structure = rendu.structuredContent or {}
     arrete = bool(structure.get("cancelled"))

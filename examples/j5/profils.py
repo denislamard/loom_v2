@@ -296,7 +296,12 @@ async def durcit(args: argparse.Namespace, controle: Controle) -> None:
     titre("Se passer des juges — judges='skip'")
     async with Loom(load_config(CONFIG)) as loom:
         result = await loom.run(
-            agent, demande(), session_id=SessionId(_session("sans")), tenant=DUPONT, judges="skip"
+            agent,
+            demande(),
+            session_id=SessionId(_session("sans")),
+            tenant=DUPONT,
+            judges="skip",
+            user=DUPONT,
         )
         print(f"  sans profil → {result.status}, {len(result.verdicts)} verdict(s)")
     async with Loom(load_config(CONFIG, profile="prod")) as loom:
@@ -307,6 +312,7 @@ async def durcit(args: argparse.Namespace, controle: Controle) -> None:
                 session_id=SessionId(_session("prod")),
                 tenant=DUPONT,
                 judges="skip",
+                user=DUPONT,
             )
         )
         print(f"  --profile prod → {coupe(dit)}")
@@ -370,7 +376,7 @@ async def assouplit(args: argparse.Namespace, controle: Controle) -> None:
     juge_prod = _juge_en(load_config(CONFIG), agent, "prod")
     async with Loom(juge_prod.model_copy(update={"profile": "dev"})) as loom:
         session = SessionId(_session("dev"))
-        ailleurs = await loom.run(agent, demande(), session_id=session, tenant=DUPONT)
+        ailleurs = await loom.run(agent, demande(), session_id=session, tenant=DUPONT, user=DUPONT)
         sautes = await loom.events(ailleurs.run_id, session_id=session, tenant_id=DUPONT)
     passes = [e for e in sautes if e.type == "guard.checked" and e.facets.get("guard") == "judge"]
     motifs = [str(getattr(e.payload, "reason", "")) for e in passes]
@@ -378,7 +384,7 @@ async def assouplit(args: argparse.Namespace, controle: Controle) -> None:
     print(f"  {'':<10}motif au journal : {', '.join(motifs) or 'aucun'}")
     async with Loom(juge_prod.model_copy(update={"profile": "prod"})) as loom:
         session = SessionId(_session("juge"))
-        chez_lui = await loom.run(agent, demande(), session_id=session, tenant=DUPONT)
+        chez_lui = await loom.run(agent, demande(), session_id=session, tenant=DUPONT, user=DUPONT)
     print(f"  en prod → {len(chez_lui.verdicts)} verdict(s)")
     print(
         "\n  un juge déclaré ne disparaît pas en silence : "

@@ -442,7 +442,7 @@ def _listening(child: subprocess.Popen[str], limit: float = 60.0) -> bool:
 
 async def _submit(config: Path) -> RunId:
     async with Loom.from_config(config) as loom:
-        return await loom.submit("demo", QUESTION, session_id=SESSION)
+        return await loom.submit("demo", QUESTION, session_id=SESSION, user="dev")
 
 
 def _claims(root: Path) -> list[str]:

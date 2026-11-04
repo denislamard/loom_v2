@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import ANSWER, MODEL, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, DEV, MODEL, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
 from pydantic import JsonValue
 
 from loom_ia.access import Loom, UnknownRun, UnknownSession
@@ -50,7 +50,7 @@ async def test_run_answers_and_writes_its_journal(demo: ConfigFactory) -> None:
         assert [spec.name for spec in loom.agents] == ["demo"]
         assert loom.exposed("rest") == loom.exposed("mcp") == loom.agents
         assert loom.config.version == 1 and "calculer" in loom.registry.names
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
 
     assert (result.status, result.text, result.ok) == (RunStatus.COMPLETED, ANSWER, True)
     assert result.iterations == 2
@@ -60,7 +60,7 @@ async def test_run_answers_and_writes_its_journal(demo: ConfigFactory) -> None:
 
 async def test_run_journal_holds_the_whole_story(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo()) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         events = await loom.events(result.run_id)
         state = await loom.state(result.run_id)
 
@@ -75,7 +75,7 @@ async def test_run_journal_holds_the_whole_story(demo: ConfigFactory) -> None:
 async def test_stream_mixes_events_and_chunks(demo: ConfigFactory) -> None:
     run_id = new_run_id()
     async with Loom.from_config(demo()) as loom:
-        items = [item async for item in loom.stream("demo", QUESTION, run_id=run_id)]
+        items = [item async for item in loom.stream("demo", QUESTION, run_id=run_id, user=DEV)]
         result = await loom.result(run_id)
 
     events = [item for item in items if isinstance(item, Event)]
@@ -95,7 +95,7 @@ async def test_stream_mixes_events_and_chunks(demo: ConfigFactory) -> None:
 async def test_stream_cancels_the_run_when_the_caller_leaves(demo: ConfigFactory) -> None:
     run_id = new_run_id()
     async with Loom.from_config(demo()) as loom:
-        async with aclosing(loom.stream("demo", QUESTION, run_id=run_id)) as items:
+        async with aclosing(loom.stream("demo", QUESTION, run_id=run_id, user=DEV)) as items:
             async for _ in items:
                 break
         state = await loom.state(run_id)
@@ -124,7 +124,9 @@ async def test_stream_does_not_mix_two_clients_choosing_the_same_run_id(
     """Chacun ne voit que son journal : ni les événements ni le contenu de l'autre."""
     run_id = new_run_id()
     async with Loom.from_config(demo(tenants=[{"id": ACME}, {"id": BETA}])) as loom:
-        acme, beta = await _two_streams(loom, run_id, {"tenant": ACME}, {"tenant": BETA})
+        acme, beta = await _two_streams(
+            loom, run_id, {"tenant": ACME, "user": ACME}, {"tenant": BETA, "user": BETA}
+        )
         assert acme == await loom.events(run_id, tenant_id=ACME)
         assert beta == await loom.events(run_id, tenant_id=BETA)
 
@@ -142,20 +144,20 @@ async def test_a_run_id_taken_in_another_session_is_refused(demo: ConfigFactory)
     run_id = new_run_id()
     first, second = SessionId("s-1"), SessionId("s-2")
     async with Loom.from_config(demo()) as loom:
-        await loom.run("demo", QUESTION, session_id=first, run_id=run_id)
+        await loom.run("demo", QUESTION, session_id=first, run_id=run_id, user=DEV)
         with pytest.raises(RunExists, match=f"{run_id} existe déjà dans la session s-1"):
-            await loom.run("demo", QUESTION, session_id=second, run_id=run_id)
+            await loom.run("demo", QUESTION, session_id=second, run_id=run_id, user=DEV)
         with pytest.raises(RunExists, match="dans la session s-1"):
-            await loom.submit("demo", QUESTION, session_id=second, run_id=run_id)
+            await loom.submit("demo", QUESTION, session_id=second, run_id=run_id, user=DEV)
         with pytest.raises(RunExists, match="dans la session s-1"):
             async with aclosing(
-                loom.stream("demo", QUESTION, session_id=second, run_id=run_id)
+                loom.stream("demo", QUESTION, session_id=second, run_id=run_id, user=DEV)
             ) as items:
                 async for _ in items:
                     pass
         # Sans session, le run irait dans celle qui porte son nom : autre session aussi.
         with pytest.raises(RunExists, match="dans la session s-1"):
-            await loom.run("demo", QUESTION, run_id=run_id)
+            await loom.run("demo", QUESTION, run_id=run_id, user=DEV)
         found = await loom.query(
             EventQuery(tenant_id=DEFAULT_TENANT, run_id=run_id, types=("run.started",))
         )
@@ -168,10 +170,10 @@ async def test_a_run_id_is_unique_per_tenant_only(demo: ConfigFactory) -> None:
     run_id = new_run_id()
     async with Loom.from_config(demo(tenants=[{"id": ACME}, {"id": BETA}])) as loom:
         acme = await loom.run(
-            "demo", QUESTION, session_id=SessionId("s-1"), run_id=run_id, tenant=ACME
+            "demo", QUESTION, session_id=SessionId("s-1"), run_id=run_id, tenant=ACME, user=ACME
         )
         beta = await loom.run(
-            "demo", QUESTION, session_id=SessionId("s-2"), run_id=run_id, tenant=BETA
+            "demo", QUESTION, session_id=SessionId("s-2"), run_id=run_id, tenant=BETA, user=BETA
         )
 
     assert acme.ok and beta.ok
@@ -185,7 +187,7 @@ async def test_resume_finishes_without_rerunning_the_tool(demo: ConfigFactory) -
         ).tool_results({"c1": ToolOutput.text("87")})
         interrupted = await loom.store.append(journal.take(), expected_seq=0)
 
-        result = await loom.resume(journal.run_id)
+        result = await loom.resume(journal.run_id, user=DEV)
         events = await loom.events(journal.run_id)
 
     assert (result.status, result.text) == (RunStatus.COMPLETED, ANSWER)
@@ -196,7 +198,7 @@ async def test_resume_finishes_without_rerunning_the_tool(demo: ConfigFactory) -
 
 async def test_follow_replays_a_finished_run(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo()) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         seen = [event async for event in loom.follow(result.run_id)]
         tail = [event async for event in loom.follow(result.run_id, after_seq=seen[-2].seq)]
 
@@ -207,7 +209,7 @@ async def test_follow_replays_a_finished_run(demo: ConfigFactory) -> None:
 async def test_follow_ends_when_the_run_is_cancelled(atelier: ConfigFactory) -> None:
     """``follow`` s'arrête sur ``run.cancelled`` comme sur la fin ou l'échec du run."""
     async with Loom.from_config(atelier()) as loom:
-        run_id = await loom.submit("demo", "Relance.")
+        run_id = await loom.submit("demo", "Relance.", user=DEV)
 
         async def following() -> list[Event]:
             return [event async for event in loom.follow(run_id)]
@@ -215,7 +217,7 @@ async def test_follow_ends_when_the_run_is_cancelled(atelier: ConfigFactory) -> 
         # Quel que soit l'instant de l'arrêt, avant ou après que le flux ait rejoint
         # le direct, il doit se clore sur lui : le délai fait échouer l'essai sinon.
         task = asyncio.create_task(following())
-        assert await loom.cancel(run_id)
+        assert await loom.cancel(run_id, user=DEV)
         async with asyncio.timeout(5):
             seen = await task
 
@@ -226,10 +228,10 @@ async def test_a_cancellation_closes_the_approvals_left_open(atelier: ConfigFact
     """Test N2 du 23/10 : l'annulation d'un run en pause laissait sa demande d'approbation
     sans clôture dans le journal ; ``run.cancelled`` nomme désormais celles qu'il clôt."""
     async with Loom.from_config(atelier()) as loom:
-        paused = await loom.run("demo", "Relance.")
+        paused = await loom.run("demo", "Relance.", user=DEV)
         asked = [a.call_id for a in paused.pending_approvals]
         assert paused.status is RunStatus.PAUSED and asked
-        assert await loom.cancel(paused.run_id)
+        assert await loom.cancel(paused.run_id, user=DEV)
         events = await loom.events(paused.run_id)
 
     cancelled = next(e.payload for e in events if isinstance(e.payload, RunCancelled))
@@ -238,8 +240,8 @@ async def test_a_cancellation_closes_the_approvals_left_open(atelier: ConfigFact
 
 async def test_a_cancellation_without_open_approvals_closes_nothing(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo()) as loom:
-        run_id = await loom.submit("demo", QUESTION)
-        await loom.cancel(run_id)
+        run_id = await loom.submit("demo", QUESTION, user=DEV)
+        await loom.cancel(run_id, user=DEV)
         await loom.drain()
         events = await loom.events(run_id)
 
@@ -259,7 +261,7 @@ async def test_follow_and_state_refuse_an_unknown_run(demo: ConfigFactory) -> No
 async def test_unknown_agent_is_named(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo()) as loom:
         with pytest.raises(UnknownAgent, match="demo"):
-            await loom.run("absent", QUESTION)
+            await loom.run("absent", QUESTION, user=DEV)
 
 
 async def test_register_names_a_tool_without_imports(demo: ConfigFactory) -> None:
@@ -280,8 +282,8 @@ async def test_register_names_a_tool_without_imports(demo: ConfigFactory) -> Non
 async def test_two_runs_share_one_session(demo: ConfigFactory) -> None:
     session = SessionId("atelier")
     async with Loom.from_config(demo()) as loom:
-        first = await loom.run("demo", QUESTION, session_id=session)
-        second = await loom.run("demo", "Et encore ?", session_id=session)
+        first = await loom.run("demo", QUESTION, session_id=session, user=DEV)
+        second = await loom.run("demo", "Et encore ?", session_id=session, user=DEV)
         events = await loom.events(second.run_id, session_id=session)
 
     assert first.run_id != second.run_id
@@ -298,8 +300,8 @@ def _is(item: Event | ModelChunk, type_: str) -> bool:
 
 async def test_runs_lists_the_runs_of_every_session(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo()) as loom:
-        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
-        second = await loom.run("demo", QUESTION, session_id=SessionId("c-2"))
+        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"), user=DEV)
+        second = await loom.run("demo", QUESTION, session_id=SessionId("c-2"), user=DEV)
         page = await loom.runs()
 
     # Du plus récemment écrit au plus ancien, et un run par entrée.
@@ -321,8 +323,8 @@ async def test_runs_lists_the_runs_of_every_session(demo: ConfigFactory) -> None
 async def test_runs_filters_on_agent_status_and_dates(demo: ConfigFactory) -> None:
     path = demo(agents=[demo_agent(), demo_agent(name="autre")])
     async with Loom.from_config(path) as loom:
-        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
-        second = await loom.run("autre", QUESTION, session_id=SessionId("c-2"))
+        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"), user=DEV)
+        second = await loom.run("autre", QUESTION, session_id=SessionId("c-2"), user=DEV)
         # Dernière écriture du second run : la borne à éprouver.
         border = (await loom.runs()).runs[0].updated_at
 
@@ -343,7 +345,7 @@ async def test_runs_filters_on_agent_status_and_dates(demo: ConfigFactory) -> No
 async def test_runs_says_when_a_bound_stopped_the_search(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo()) as loom:
         for number in range(3):
-            await loom.run("demo", QUESTION, session_id=SessionId(f"c-{number}"))
+            await loom.run("demo", QUESTION, session_id=SessionId(f"c-{number}"), user=DEV)
         bounded = await loom.runs(limit=2)
         shallow = await loom.runs(sessions=1)
         whole = await loom.runs()
@@ -357,9 +359,9 @@ async def test_a_page_of_recent_runs_keeps_the_most_recent_ones(demo: ConfigFact
     # S1 {r1, r2} et S2 {r3}, écrits r1, r3, r2 : la session la plus récemment
     # écrite (S1) ne contient pas que les runs les plus récents.
     async with Loom.from_config(demo()) as loom:
-        r1 = await loom.run("demo", QUESTION, session_id=SessionId("s-1"))
-        r3 = await loom.run("demo", QUESTION, session_id=SessionId("s-2"))
-        r2 = await loom.run("demo", QUESTION, session_id=SessionId("s-1"))
+        r1 = await loom.run("demo", QUESTION, session_id=SessionId("s-1"), user=DEV)
+        r3 = await loom.run("demo", QUESTION, session_id=SessionId("s-2"), user=DEV)
+        r2 = await loom.run("demo", QUESTION, session_id=SessionId("s-1"), user=DEV)
         page = await loom.runs(limit=2)
         whole = await loom.runs()
 
@@ -373,7 +375,7 @@ async def test_runs_stops_reading_once_older_sessions_cannot_matter(
 ) -> None:
     async with Loom.from_config(demo()) as loom:
         for number in range(4):
-            await loom.run("demo", QUESTION, session_id=SessionId(f"c-{number}"))
+            await loom.run("demo", QUESTION, session_id=SessionId(f"c-{number}"), user=DEV)
         page = await loom.runs(limit=1)
 
     # Une session par run : la deuxième, plus ancienne que le run trouvé, n'est pas ouverte.
@@ -386,7 +388,7 @@ async def test_runs_stops_at_the_first_session_older_than_since(demo: ConfigFact
     # porter un run assez récent.
     async with Loom.from_config(demo()) as loom:
         for number in range(3):
-            await loom.run("demo", QUESTION, session_id=SessionId(f"c-{number}"))
+            await loom.run("demo", QUESTION, session_id=SessionId(f"c-{number}"), user=DEV)
         listed = (await loom.runs()).runs
         border = listed[1].updated_at
         page = await loom.runs(since=border)
@@ -417,10 +419,10 @@ async def test_no_run_is_opened_in_a_session_with_an_unreadable_run(
     async with Loom(load_config(demo()), store=store) as loom:
         for _ in range(2):
             with pytest.raises(SessionUnreadable, match="casse"):
-                await loom.run("demo", QUESTION, session_id=session)
+                await loom.run("demo", QUESTION, session_id=session, user=DEV)
         with pytest.raises(ProjectionError):
             await loom.state(broken, session_id=session)
-        other = await loom.run("demo", QUESTION, session_id=SessionId("saine"))
+        other = await loom.run("demo", QUESTION, session_id=SessionId("saine"), user=DEV)
 
     # Refusé avant d'écrire : aucune tentative ne laisse un run échoué de plus.
     assert await store.last_seq(DEFAULT_TENANT, session) == before
@@ -430,7 +432,7 @@ async def test_no_run_is_opened_in_a_session_with_an_unreadable_run(
 
 async def test_runs_lists_a_subrun_naming_its_delegate(tree: ConfigFactory) -> None:
     async with Loom.from_config(tree()) as loom:
-        result = await loom.run("demo", TREE_QUESTION)
+        result = await loom.run("demo", TREE_QUESTION, user=DEV)
         page = await loom.runs()
 
     assert len(page.runs) == 2 and page.scanned == 1
@@ -441,7 +443,7 @@ async def test_runs_lists_a_subrun_naming_its_delegate(tree: ConfigFactory) -> N
 async def test_runs_of_another_tenant_are_not_listed(demo: ConfigFactory) -> None:
     path = demo(tenants=[{"id": "dupont"}, {"id": "martin"}])
     async with Loom.from_config(path) as loom:
-        await loom.run("demo", QUESTION, tenant=TenantId("dupont"))
+        await loom.run("demo", QUESTION, tenant=TenantId("dupont"), user=TenantId("dupont"))
         mine = await loom.runs(tenant_id=TenantId("dupont"))
         theirs = await loom.runs(tenant_id=TenantId("martin"))
 
@@ -477,9 +479,9 @@ async def test_runs_skips_a_session_whose_journal_is_unreadable(
     jsonl = tmp_path / "data" if backend == "jsonl" else None
     path = demo(storage={"events": {"backend": "jsonl", "path": "data"}}) if jsonl else demo()
     async with Loom.from_config(path) as loom:
-        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
+        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"), user=DEV)
         await _spoil(loom, SessionId("c-2"), jsonl=jsonl)
-        last = await loom.run("demo", QUESTION, session_id=SessionId("c-3"))
+        last = await loom.run("demo", QUESTION, session_id=SessionId("c-3"), user=DEV)
         with caplog.at_level(logging.WARNING, logger="loom_ia.access.api"):
             page = await loom.runs()
 
@@ -514,8 +516,8 @@ async def test_runs_skips_a_session_whose_key_was_erased(demo: ConfigFactory) ->
     """Le crypto-shredding est un état voulu : la session effacée ne fait pas échouer la liste."""
     store = KeyLost()
     async with Loom(load_config(demo()), store=store) as loom:
-        await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
-        kept = await loom.run("demo", QUESTION, session_id=SessionId("c-2"))
+        await loom.run("demo", QUESTION, session_id=SessionId("c-1"), user=DEV)
+        kept = await loom.run("demo", QUESTION, session_id=SessionId("c-2"), user=DEV)
         store.lost = SessionId("c-1")
         page = await loom.runs()
 
@@ -524,7 +526,7 @@ async def test_runs_skips_a_session_whose_key_was_erased(demo: ConfigFactory) ->
 
 async def test_query_searches_the_journal_and_paginates(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo()) as loom:
-        await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
+        await loom.run("demo", QUESTION, session_id=SessionId("c-1"), user=DEV)
         calls = await loom.query(EventQuery(tenant_id=DEFAULT_TENANT, types=("tool.called",)))
         first = await loom.query(EventQuery(tenant_id=DEFAULT_TENANT, limit=1))
         after = await loom.query(
@@ -566,7 +568,7 @@ async def test_aclose_goes_on_after_a_failing_step(
     _watching(monkeypatch, closed, InMemoryEventStore, "journal")
     _watching(monkeypatch, closed, InMemoryUsageCounter, "compteur")
     loom = Loom.from_config(demo())
-    await loom.run("demo", QUESTION)
+    await loom.run("demo", QUESTION, user=DEV)
 
     with pytest.raises(RuntimeError, match="le modèle ne ferme pas"):
         await loom.aclose()
@@ -582,7 +584,7 @@ async def test_aclose_raises_the_first_failure_and_logs_the_others(
     _watching(monkeypatch, closed, InMemoryEventStore, "journal", OSError("second"))
     _watching(monkeypatch, closed, InMemoryUsageCounter, "compteur")
     loom = Loom.from_config(demo())
-    await loom.run("demo", QUESTION)
+    await loom.run("demo", QUESTION, user=DEV)
 
     with caplog.at_level(logging.WARNING), pytest.raises(RuntimeError, match="premier"):
         await loom.aclose()
@@ -601,7 +603,7 @@ async def test_aclose_goes_on_after_a_cancellation(
     _watching(monkeypatch, closed, InMemoryEventStore, "journal", RuntimeError("ordinaire"))
     _watching(monkeypatch, closed, InMemoryUsageCounter, "compteur")
     loom = Loom.from_config(demo())
-    await loom.run("demo", QUESTION)
+    await loom.run("demo", QUESTION, user=DEV)
 
     with pytest.raises(asyncio.CancelledError):
         await loom.aclose()
@@ -658,11 +660,11 @@ async def test_run_poses_the_state_of_the_application(demo: ConfigFactory) -> No
     """Écrit dans ``run.started``, avant la demande ; ``session_state`` relit la session."""
     async with Loom.from_config(stateful(demo)) as loom:
         first = await loom.run(
-            "demo", QUESTION, session_id=CONVERSATION, state={"client_id": "CL-00042"}
+            "demo", QUESTION, session_id=CONVERSATION, state={"client_id": "CL-00042"}, user=DEV
         )
         after_first = await loom.session_state(CONVERSATION)
         # La clé obligatoire est dans la session : le run suivant n'a rien à reposer.
-        second = await loom.run("demo", QUESTION, session_id=CONVERSATION)
+        second = await loom.run("demo", QUESTION, session_id=CONVERSATION, user=DEV)
         events = await loom.export_session(CONVERSATION)
         with pytest.raises(UnknownSession, match="Session absente inconnue"):
             await loom.session_state(SessionId("absente"))
@@ -688,6 +690,7 @@ async def test_session_state_stays_with_its_tenant(demo: ConfigFactory) -> None:
                 session_id=CONVERSATION,
                 tenant=tenant,
                 state={"client_id": client},
+                user=tenant,
             )
         states = [await loom.session_state(CONVERSATION, tenant_id=t) for t in (ACME, BETA)]
         with pytest.raises(UnknownSession):
@@ -701,11 +704,15 @@ async def test_stream_and_submit_pose_the_state_too(demo: ConfigFactory) -> None
         streamed = [
             item
             async for item in loom.stream(
-                "demo", QUESTION, session_id=SessionId("s1"), state={"client_id": "CL-00001"}
+                "demo",
+                QUESTION,
+                session_id=SessionId("s1"),
+                state={"client_id": "CL-00001"},
+                user=DEV,
             )
         ]
         await loom.submit(
-            "demo", QUESTION, session_id=SessionId("s2"), state={"client_id": "CL-00002"}
+            "demo", QUESTION, session_id=SessionId("s2"), state={"client_id": "CL-00002"}, user=DEV
         )
         await loom.drain()
         states = [await loom.session_state(SessionId(s)) for s in ("s1", "s2")]
@@ -722,12 +729,14 @@ async def test_a_run_without_its_required_key_is_refused_before_anything_is_writ
     """D13 : ``run``, ``stream`` et ``submit`` refusent ; la session n'existe pas."""
     async with Loom.from_config(stateful(demo)) as loom:
         with pytest.raises(StateRefused, match="client_id : clé obligatoire sans valeur"):
-            await loom.run("demo", QUESTION, session_id=CONVERSATION)
+            await loom.run("demo", QUESTION, session_id=CONVERSATION, user=DEV)
         with pytest.raises(StateRefused, match="client_id : ne suit pas son schéma"):
-            await loom.submit("demo", QUESTION, session_id=CONVERSATION, state={"client_id": "x"})
+            await loom.submit(
+                "demo", QUESTION, session_id=CONVERSATION, state={"client_id": "x"}, user=DEV
+            )
         with pytest.raises(StateRefused, match="clé non déclarée dans 'state'"):
             async with aclosing(
-                loom.stream("demo", QUESTION, session_id=CONVERSATION, state={"autre": 1})
+                loom.stream("demo", QUESTION, session_id=CONVERSATION, state={"autre": 1}, user=DEV)
             ) as items:
                 async for _ in items:
                     pass
@@ -735,7 +744,7 @@ async def test_a_run_without_its_required_key_is_refused_before_anything_is_writ
 
     async with Loom.from_config(demo()) as loom:
         with pytest.raises(StateRefused, match="l'agent 'demo' ne déclare pas de state"):
-            await loom.run("demo", QUESTION, state={"client_id": "CL-00001"})
+            await loom.run("demo", QUESTION, state={"client_id": "CL-00001"}, user=DEV)
 
 
 async def test_a_refused_state_does_not_compact_the_session(demo: ConfigFactory) -> None:
@@ -749,14 +758,16 @@ async def test_a_refused_state_does_not_compact_the_session(demo: ConfigFactory)
     compaction = {"model": "RESUME", "over_tokens": 1, "hard_tokens": 2, "keep_last": 0}
     config = stateful(demo, models=[MODEL, resume], sessions={"compaction": compaction})
     async with Loom.from_config(config) as loom:
-        await loom.run("demo", QUESTION, session_id=CONVERSATION, state={"client_id": "CL-00042"})
+        await loom.run(
+            "demo", QUESTION, session_id=CONVERSATION, state={"client_id": "CL-00042"}, user=DEV
+        )
         await loom.drain()
         before = await loom.export_session(CONVERSATION)
         erased: dict[str, JsonValue] = {"client_id": None}
         with pytest.raises(StateRefused, match="client_id : clé obligatoire sans valeur"):
-            await loom.run("demo", QUESTION, session_id=CONVERSATION, state=erased)
+            await loom.run("demo", QUESTION, session_id=CONVERSATION, state=erased, user=DEV)
         with pytest.raises(StateRefused, match="client_id : clé obligatoire sans valeur"):
-            await loom.submit("demo", QUESTION, session_id=CONVERSATION, state=erased)
+            await loom.submit("demo", QUESTION, session_id=CONVERSATION, state=erased, user=DEV)
         after = await loom.export_session(CONVERSATION)
         # Une demande rejouée (même run_id) garde sa réponse : le run existe déjà.
         done = await loom.run(
@@ -765,14 +776,25 @@ async def test_a_refused_state_does_not_compact_the_session(demo: ConfigFactory)
             session_id=CONVERSATION,
             run_id=RunId("r1"),
             state={"client_id": "CL-00007"},
+            user=DEV,
         )
         with pytest.raises(RunExists):
             await loom.run(
-                "demo", QUESTION, session_id=CONVERSATION, run_id=RunId("r1"), state=erased
+                "demo",
+                QUESTION,
+                session_id=CONVERSATION,
+                run_id=RunId("r1"),
+                state=erased,
+                user=DEV,
             )
         with pytest.raises(RunExists):
             await loom.submit(
-                "demo", QUESTION, session_id=CONVERSATION, run_id=RunId("r1"), state=erased
+                "demo",
+                QUESTION,
+                session_id=CONVERSATION,
+                run_id=RunId("r1"),
+                state=erased,
+                user=DEV,
             )
 
     assert after == before

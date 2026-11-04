@@ -101,7 +101,7 @@ async def by_python(config: Path, photo: Attachment) -> RunId:
     # Du texte du modèle est en cours : la ligne suivante doit en partir.
     writing = False
     async with Loom.from_config(config) as loom:
-        async for item in loom.stream(AGENT, QUESTION, attachments=[photo]):
+        async for item in loom.stream(AGENT, QUESTION, attachments=[photo], user="dev"):
             if isinstance(item, TextDelta):
                 print(item.text if writing else f"  {item.text}", end="", flush=True)
                 writing = True
@@ -162,7 +162,7 @@ async def by_mcp(config: Path, photo: Attachment) -> RunId:
         "name": photo.name or "photo",
     }
     async with Loom.from_config(config) as loom:
-        async with connected(create_server(loom)) as client:
+        async with connected(create_server(loom, user="dev")) as client:
             answer = await client.call_tool(
                 AGENT,
                 {"message": QUESTION, "attachments": [image]},

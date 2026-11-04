@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import DEV, secured
 
 from loom_ia.access.api import Loom, UnknownSession
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
@@ -206,7 +206,7 @@ def test_a_run_that_runs_out_of_time_fails_with_a_timeout(patient: ConfigFactory
 
     async def go() -> list[Event]:
         async with Loom.from_config(path) as loom:
-            result = await loom.run("demo", QUESTION, session_id=SESSION)
+            result = await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             assert result.status is RunStatus.FAILED
             assert result.error_type == "timeout"
             return await loom.export_session(SESSION)
@@ -229,7 +229,7 @@ def test_a_run_without_a_deadline_takes_its_time(patient: ConfigFactory) -> None
 
     async def go() -> RunStatus:
         async with Loom.from_config(path) as loom:
-            return (await loom.run("demo", QUESTION, session_id=SESSION)).status
+            return (await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)).status
 
     assert asyncio.run(go()) is RunStatus.COMPLETED
 
@@ -250,7 +250,7 @@ def test_a_run_already_over_budget_fails_before_its_next_step(patient: ConfigFac
         await store.append(journal.take(), expected_seq=0)
         await store.aclose()
         async with Loom.from_config(path) as loom:
-            result = await loom.resume(journal.run_id, session_id=SESSION)
+            result = await loom.resume(journal.run_id, session_id=SESSION, user=DEV)
             assert result.error_type == "timeout"
             events = await loom.export_session(SESSION)
         return next(e for e in events if e.type == "run.failed")
@@ -271,12 +271,12 @@ def test_a_timed_out_run_stays_closed(patient: ConfigFactory) -> None:
 
     async def go() -> RunStatus:
         async with Loom.from_config(path) as loom:
-            first = await loom.run("demo", QUESTION, session_id=SESSION)
+            first = await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             assert first.error_type == "timeout"
             run_id = first.run_id
         raised = patient(timeout=30.0, attente=0.5)
         async with Loom.from_config(raised) as loom:
-            return (await loom.resume(run_id, session_id=SESSION)).status
+            return (await loom.resume(run_id, session_id=SESSION, user=DEV)).status
 
     assert asyncio.run(go()) is RunStatus.FAILED
 
@@ -290,9 +290,11 @@ def test_cancelling_a_running_run_closes_it(patient: ConfigFactory) -> None:
     async def go() -> list[Event]:
         run_id = new_run_id()
         async with Loom.from_config(path) as loom:
-            run = asyncio.create_task(loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id))
+            run = asyncio.create_task(
+                loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id, user=DEV)
+            )
             await asyncio.sleep(0.15)
-            assert await loom.cancel(run_id, session_id=SESSION, by="denis")
+            assert await loom.cancel(run_id, session_id=SESSION, user=DEV)
             run.cancel()
             with suppress(asyncio.CancelledError):
                 await run
@@ -304,7 +306,7 @@ def test_cancelling_a_running_run_closes_it(patient: ConfigFactory) -> None:
 
     assert isinstance(payload, RunCancelled)
     assert payload.reason == "requested"
-    assert payload.by == "denis"
+    assert payload.by == DEV
     assert cancelled.status == "warning"
     assert fold(events, cancelled.run_id).status is RunStatus.CANCELLED
 
@@ -331,7 +333,9 @@ def test_a_cancel_whose_caller_gives_up_still_closes_the_run(patient: ConfigFact
     async def go() -> tuple[bool, list[Event]]:
         run_id = new_run_id()
         async with Loom.from_config(path) as loom:
-            run = asyncio.create_task(loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id))
+            run = asyncio.create_task(
+                loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id, user=DEV)
+            )
             # L'outil doit être en plein effet : une attente fixe (0,15 s) ne suffisait pas
             # sur la CI du 23/10, où l'arrêt a fini avant le délai, l'outil pas encore lancé.
             await _until_called(loom, "attendre")
@@ -341,7 +345,7 @@ def test_a_cancel_whose_caller_gives_up_still_closes_the_run(patient: ConfigFact
             timed_out = False
             try:
                 async with asyncio.timeout(0.05):
-                    await loom.cancel(run_id, session_id=SESSION, by="denis")
+                    await loom.cancel(run_id, session_id=SESSION, user=DEV)
             except TimeoutError:
                 timed_out = True
             # Le run est déjà clos quand le délai remonte : rien d'autre à attendre.
@@ -362,8 +366,8 @@ def test_cancelling_a_finished_run_changes_nothing(patient: ConfigFactory) -> No
 
     async def go() -> bool:
         async with Loom.from_config(path) as loom:
-            result = await loom.run("demo", QUESTION, session_id=SESSION)
-            return await loom.cancel(result.run_id, session_id=SESSION)
+            result = await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
+            return await loom.cancel(result.run_id, session_id=SESSION, user=DEV)
 
     assert asyncio.run(go()) is False
 
@@ -381,7 +385,7 @@ def test_a_run_left_in_the_air_is_cancelled_from_its_journal(patient: ConfigFact
         await store.append(journal.take(), expected_seq=0)
         await store.aclose()
         async with Loom.from_config(path) as loom:
-            assert await loom.cancel(journal.run_id, session_id=SESSION)
+            assert await loom.cancel(journal.run_id, session_id=SESSION, user=DEV)
             return await loom.export_session(SESSION)
 
     events = asyncio.run(go())
@@ -413,11 +417,13 @@ def test_cancelling_a_parent_cancels_the_subruns_it_left_open(delegating: Path) 
         run_id = new_run_id()
         store = Watching()
         async with Loom(load_config(delegating), store=store) as loom:
-            run = asyncio.create_task(loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id))
+            run = asyncio.create_task(
+                loom.run("demo", QUESTION, session_id=SESSION, run_id=run_id, user=DEV)
+            )
             async with asyncio.timeout(10):
                 # Le sous-agent est dans son outil : il ne rendra rien avant l'arrêt.
                 await store.started.wait()
-            assert await loom.cancel(run_id, session_id=SESSION, by="denis")
+            assert await loom.cancel(run_id, session_id=SESSION, user=DEV)
             run.cancel()
             with suppress(asyncio.CancelledError):
                 await run
@@ -449,7 +455,7 @@ def test_a_cancelled_run_is_not_a_turn_of_the_session(patient: ConfigFactory) ->
         await store.append(journal.take(), expected_seq=0)
         await store.aclose()
         async with Loom.from_config(path) as loom:
-            await loom.cancel(journal.run_id, session_id=SESSION)
+            await loom.cancel(journal.run_id, session_id=SESSION, user=DEV)
             return history(await loom.export_session(SESSION))
 
     assert asyncio.run(go()) == []

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import MODEL, QUESTION, ConfigFactory, demo_agent
+from conftest import DEV, MODEL, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -155,31 +155,32 @@ async def test_skipping_the_judges_is_refused_in_prod(demo: ConfigFactory) -> No
     async with Loom.from_config(path) as loom:
         # Sans profil, `skip` reste permis : la portée `admin` de l'accès REST
         # est la seule barrière, comme depuis 3.3.
-        assert (await loom.run("demo", QUESTION, judges="skip")).status == "completed"
+        assert (await loom.run("demo", QUESTION, judges="skip", user=DEV)).status == "completed"
     async with Loom.from_config(path, profile="prod") as loom:
         with pytest.raises(ConfigError, match=r"judges='skip'"):
-            await loom.run("demo", QUESTION, judges="skip")
+            await loom.run("demo", QUESTION, judges="skip", user=DEV)
         # Les autres modes passent.
-        assert (await loom.run("demo", QUESTION, judges="force")).status == "completed"
+        assert (await loom.run("demo", QUESTION, judges="force", user=DEV)).status == "completed"
 
 
-def test_an_open_api_without_keys_refuses_to_serve_in_prod(demo: ConfigFactory) -> None:
+def test_an_api_without_keys_off_the_loopback_is_refused_with_or_without_profile(
+    demo: ConfigFactory,
+) -> None:
+    """Sans clé, l'API n'agit qu'au nom de ``server.http.user``, sur la boucle locale (D-1b)."""
     pytest.importorskip("fastapi", reason="extra 'http' absent")
 
     from loom_ia.access.http import create_app
 
     ouverte: dict[str, Any] = {"http": {"host": "0.0.0.0", "port": 8000}}
     path = demo(server=ouverte)
-    # Sans profil : un avertissement, et l'application se monte.
-    assert create_app(Loom(load_config(path))) is not None
-    with pytest.raises(ConfigError, match=r"Profil prod .*sans clé déclarée"):
-        create_app(Loom(load_config(path, profile="prod")))
+    for profile in (None, "prod"):
+        with pytest.raises(ConfigError, match="sans clé d'API ni utilisateur local"):
+            create_app(Loom(load_config(path, profile=profile)))
 
 
 def test_serve_judges_the_host_it_listens_on_not_the_configured_one(
     demo: ConfigFactory,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """``loom serve --host`` remplace ``server.http.host`` : c'est lui qui ouvre l'API."""
@@ -194,38 +195,17 @@ def test_serve_judges_the_host_it_listens_on_not_the_configured_one(
         listened.append(host)
 
     monkeypatch.setattr(http_serve.uvicorn, "run", listen)
+    # Une instance locale, au nom de son utilisateur : servie sur la boucle locale…
     path = demo()
-    # Sans profil : un avertissement qui nomme l'adresse servie, et le serveur part.
-    with caplog.at_level("WARNING"):
-        serve(Loom(load_config(path)), host="0.0.0.0")
-    assert listened == ["0.0.0.0"]
-    assert "API REST ouverte sur 0.0.0.0 sans clé déclarée" in caplog.text
-    # En prod : refusé avant d'écouter.
-    listened.clear()
-    assert main(["--config", str(path), "--profile", "prod", "serve", "--host", "0.0.0.0"]) == 2
-    assert listened == []
-    assert "Profil prod : API REST ouverte sur 0.0.0.0" in capsys.readouterr().err
-
-
-def test_serve_does_not_judge_a_configured_host_it_does_not_listen_on(
-    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Config ouverte, mais ``--host 127.0.0.1`` : l'API n'écoute que sur la machine."""
-    pytest.importorskip("fastapi", reason="extra 'http' absent")
-    http_serve = importlib.import_module("loom_ia.access.http.serve")
-
-    listened: list[str] = []
-
-    def listen(app: Any, *, host: str, **options: Any) -> None:
-        listened.append(host)
-
-    monkeypatch.setattr(http_serve.uvicorn, "run", listen)
-    ouverte = str(demo(server={"http": {"host": "0.0.0.0"}}))
-    args = ["--config", ouverte, "--profile", "prod", "serve"]
-    assert main([*args, "--host", "127.0.0.1"]) == 0
+    serve(Loom(load_config(path)), host="127.0.0.1")
     assert listened == ["127.0.0.1"]
-    # Sans l'option, c'est la config qui parle, comme avant.
-    assert main(args) == 2
+    # … refusée ailleurs, avant d'écouter.
+    listened.clear()
+    with pytest.raises(ConfigError, match=r"API REST sans clé sur 0\.0\.0\.0"):
+        serve(Loom(load_config(path)), host="0.0.0.0")
+    assert main(["--config", str(path), "serve", "--host", "0.0.0.0"]) == 2
+    assert listened == []
+    assert "API REST sans clé sur 0.0.0.0" in capsys.readouterr().err
 
 
 # --- Ce que dev assouplit -----------------------------------------------------
@@ -278,10 +258,10 @@ async def test_a_judge_declared_for_prod_is_skipped_elsewhere_and_says_so(
         storage={"events": {"backend": "jsonl", "path": "d"}},
     )
     async with Loom.from_config(path, profile="dev") as loom:
-        ailleurs = await loom.run("demo", QUESTION)
+        ailleurs = await loom.run("demo", QUESTION, user=DEV)
         sautes = await loom.events(ailleurs.run_id)
     async with Loom.from_config(path, profile="prod") as loom:
-        chez_lui = await loom.run("demo", QUESTION, judges="auto")
+        chez_lui = await loom.run("demo", QUESTION, judges="auto", user=DEV)
         juges = await loom.events(chez_lui.run_id)
 
     # En dev le juge ne juge pas, et le journal dit pourquoi.

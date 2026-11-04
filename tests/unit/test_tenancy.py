@@ -13,9 +13,10 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from conftest import ANSWER, MODEL, QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, DEV, MODEL, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import AgentNotAllowed, Loom, UnknownTenant
+from loom_ia.access.api import UNCHECKED
 from loom_ia.adapters.models import ModelConfigError
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
@@ -38,31 +39,32 @@ def two(**extra: Any) -> list[dict[str, Any]]:
 async def test_without_tenants_only_default_exists(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo()) as loom:
         assert loom.tenants == (DEFAULT_TENANT,)
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         assert result.text == ANSWER
 
 
 async def test_declaring_tenants_closes_the_list(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo(tenants=two())) as loom:
         assert loom.tenants == (DUPONT, MARTIN)
-        # `default` n'est plus un client : il n'est pas déclaré.
+        # `default` n'est plus un client : il n'est pas déclaré. Le chemin interne
+        # (sans utilisateur, dont le client dirait déjà tout) le montre.
         with pytest.raises(UnknownTenant, match="default"):
-            await loom.run("demo", QUESTION)
+            await loom.run("demo", QUESTION, user=UNCHECKED)
         with pytest.raises(UnknownTenant, match="inconnu"):
-            await loom.run("demo", QUESTION, tenant=TenantId("inconnu"))
-        result = await loom.run("demo", QUESTION, tenant=DUPONT)
+            await loom.run("demo", QUESTION, tenant=TenantId("inconnu"), user=UNCHECKED)
+        result = await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
         assert result.text == ANSWER
 
 
 async def test_default_is_a_tenant_like_any_other_when_declared(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo(tenants=[{"id": DEFAULT_TENANT}, {"id": DUPONT}])) as loom:
         assert loom.tenants == (DEFAULT_TENANT, DUPONT)
-        assert (await loom.run("demo", QUESTION)).text == ANSWER
+        assert (await loom.run("demo", QUESTION, user=DEFAULT_TENANT)).text == ANSWER
 
 
 async def test_a_run_carries_its_tenant_to_the_journal(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo(tenants=two())) as loom:
-        result = await loom.run("demo", QUESTION, tenant=DUPONT)
+        result = await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
         events = await loom.events(result.run_id, tenant_id=DUPONT)
         assert {event.tenant_id for event in events} == {DUPONT}
         # Le même run, demandé au nom de l'autre client : rien.
@@ -74,7 +76,13 @@ async def test_tenant_and_context_must_agree(demo: ConfigFactory) -> None:
 
     async with Loom.from_config(demo(tenants=two())) as loom:
         with pytest.raises(ValueError, match="contradictoire"):
-            await loom.run("demo", QUESTION, tenant=DUPONT, context=CallerContext(tenant_id=MARTIN))
+            await loom.run(
+                "demo",
+                QUESTION,
+                tenant=DUPONT,
+                context=CallerContext(tenant_id=MARTIN),
+                user=DUPONT,
+            )
 
 
 # --- Agents ouverts à un client (L1) ------------------------------------------
@@ -83,7 +91,7 @@ async def test_tenant_and_context_must_agree(demo: ConfigFactory) -> None:
 async def test_a_tenant_only_launches_the_agents_it_is_given(demo: ConfigFactory) -> None:
     config = demo(tenants=[{"id": DUPONT, "agents": ["demo"]}, {"id": MARTIN, "agents": []}])
     async with Loom.from_config(config) as loom:
-        assert await loom.run("demo", QUESTION, tenant=DUPONT)
+        assert await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
         assert [spec.name for spec in loom.exposed("rest", DUPONT)] == ["demo"]
 
 
@@ -94,7 +102,7 @@ async def test_an_agent_closed_to_a_tenant_is_refused_and_unpublished(
     config = demo(agents=agents, tenants=[{"id": DUPONT, "agents": ["autre"]}])
     async with Loom.from_config(config) as loom:
         with pytest.raises(AgentNotAllowed, match="demo"):
-            await loom.run("demo", QUESTION, tenant=DUPONT)
+            await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
         assert [spec.name for spec in loom.exposed("rest", DUPONT)] == ["autre"]
         assert [spec.name for spec in loom.exposed("mcp", DUPONT)] == ["autre"]
 
@@ -142,8 +150,10 @@ async def test_two_tenants_of_one_agent_are_mounted_apart(demo: ConfigFactory) -
     async with Loom.from_config(mapped(demo)) as loom:
         assert loom.context("demo", DUPONT) is not loom.context("demo", MARTIN)
         # Le second modèle répond sans appeler d'outil : la réponse le montre.
-        assert (await loom.run("demo", QUESTION, tenant=DUPONT)).text == "Réponse du second modèle."
-        assert (await loom.run("demo", QUESTION, tenant=MARTIN)).text == ANSWER
+        assert (
+            await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
+        ).text == "Réponse du second modèle."
+        assert (await loom.run("demo", QUESTION, tenant=MARTIN, user=MARTIN)).text == ANSWER
 
 
 def test_a_model_replacement_passes_the_same_checks(demo: ConfigFactory) -> None:
@@ -177,7 +187,7 @@ async def test_a_tenant_can_impose_an_approval(atelier: Any) -> None:
     # L'outil est déclaré `approval: always` : le client le lève pour lui.
     config = atelier(tenants=[{"id": DUPONT, "approvals": {"envoyer_email": "never"}}])
     async with Loom.from_config(config) as loom:
-        result = await loom.run("demo", "Relance Mme Martin.", tenant=DUPONT)
+        result = await loom.run("demo", "Relance Mme Martin.", tenant=DUPONT, user=DUPONT)
         assert result.ok and not result.pending_approvals
 
 
@@ -188,7 +198,7 @@ async def test_an_imposed_approval_says_it_comes_from_the_tenant(demo: ConfigFac
         tenants=[{"id": DUPONT, "approvals": {"calculer": "always"}}],
     )
     async with Loom.from_config(config) as loom:
-        result = await loom.run("demo", QUESTION, tenant=DUPONT)
+        result = await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
     [asked] = result.pending_approvals
     assert asked.reason == (
         "la config impose une approbation pour chaque appel de cet outil, pour le client "
@@ -613,8 +623,8 @@ def routed(demo: ConfigFactory) -> Path:
 async def test_a_tenant_with_its_own_storage_writes_elsewhere(demo: ConfigFactory) -> None:
     path = routed(demo)
     async with Loom.from_config(path) as loom:
-        chez_dupont = await loom.run("demo", QUESTION, tenant=DUPONT)
-        chez_martin = await loom.run("demo", QUESTION, tenant=MARTIN)
+        chez_dupont = await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
+        chez_martin = await loom.run("demo", QUESTION, tenant=MARTIN, user=MARTIN)
         # Chacun relit le sien, et seulement le sien.
         assert [r.session_id for r in await loom.sessions(tenant_id=DUPONT)] == [
             SessionId(chez_dupont.run_id)
@@ -635,8 +645,8 @@ async def test_without_its_own_storage_a_tenant_shares_the_common_journal(
 ) -> None:
     path = demo(storage={"events": {"backend": "jsonl", "path": "commun"}}, tenants=two())
     async with Loom.from_config(path) as loom:
-        await loom.run("demo", QUESTION, tenant=DUPONT)
-        await loom.run("demo", QUESTION, tenant=MARTIN)
+        await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
+        await loom.run("demo", QUESTION, tenant=MARTIN, user=MARTIN)
     # Un dossier par client sous le même journal : l'isolation reste logique.
     assert {p.name for p in (path.parent / "commun").iterdir()} == {DUPONT, MARTIN}
 
@@ -778,18 +788,14 @@ async def test_a_key_only_ever_reads_its_own_tenant(demo: ConfigFactory) -> None
 async def test_an_open_instance_with_declared_tenants_is_refused(demo: ConfigFactory) -> None:
     pytest.importorskip("fastapi", reason="extra 'http' absent")
     pytest.importorskip("httpx2", reason="client HTTP de test absent")
-    import httpx2
 
     from loom_ia.access.http import create_app
 
-    # Sans clé, rien ne dit au nom de qui agir : `default` n'étant pas
-    # déclaré, la demande est refusée plutôt que servie au hasard.
+    # Sans clé ni utilisateur local, rien ne dit au nom de qui agir : l'API
+    # n'est pas servie plutôt que servie au hasard (D-1).
     async with Loom.from_config(demo(tenants=two())) as loom:
-        transport = httpx2.ASGITransport(create_app(loom))
-        async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
-            response = await http.post("/v1/agents/demo/runs", json={"message": QUESTION})
-            assert response.status_code == 403
-            assert "default" in response.json()["detail"]
+        with pytest.raises(ConfigError, match="ni utilisateur local"):
+            create_app(loom)
 
 
 async def test_an_agent_closed_to_a_tenant_is_refused_over_rest(demo: ConfigFactory) -> None:
@@ -865,19 +871,20 @@ def test_run_acts_for_the_tenant_given_on_the_command_line(
     from loom_ia.access.cli import main
 
     config = demo(storage={"events": {"backend": "jsonl", "path": "data"}}, tenants=two())
-    assert main(["--config", str(config), "run", "demo", QUESTION, "--tenant", DUPONT]) == 0
+    assert main(["--config", str(config), "run", "demo", QUESTION, "--user", DUPONT]) == 0
     assert capsys.readouterr().out.strip() == ANSWER
     assert (config.parent / "data" / DUPONT).is_dir()
     assert not (config.parent / "data" / MARTIN).exists()
 
 
-def test_run_without_tenant_is_refused_when_the_list_is_closed(
+def test_run_without_a_user_of_a_declared_tenant_is_refused(
     demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Le client est celui de l'utilisateur : ``dev`` (LOOM_USER) n'est d'aucun client déclaré."""
     from loom_ia.access.cli import main
 
     assert main(["--config", str(demo(tenants=two())), "run", "demo", QUESTION]) == 2
-    assert "Client 'default' non déclaré" in capsys.readouterr().err
+    assert f"Utilisateur {DEV!r} inconnu" in capsys.readouterr().err
 
 
 async def test_closing_the_router_reaches_every_tenant_store_even_when_one_fails(

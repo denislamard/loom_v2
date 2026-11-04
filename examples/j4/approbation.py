@@ -340,7 +340,7 @@ def entete(events: list[Event]) -> None:
 
 async def accord(loom: Loom, agent: str, session: SessionId) -> None:
     print("— Accordé : l'artisan valide, et l'appel part avec ses corrections\n")
-    result = await loom.run(agent, DEMANDE, session_id=session)
+    result = await loom.run(agent, DEMANDE, session_id=session, user="dev")
     events = await loom.export_session(session)
     print(f"  run       : {outcome(result)}")
     entete(events)
@@ -349,7 +349,7 @@ async def accord(loom: Loom, agent: str, session: SessionId) -> None:
     await loom.approve(
         result.run_id,
         call_id=asked.call_id,
-        by="l'artisan",
+        user="dev",
         arguments={**asked.arguments, "destinataire": CORRIGE},
         session_id=session,
     )
@@ -363,13 +363,13 @@ async def accord(loom: Loom, agent: str, session: SessionId) -> None:
 
 async def refus(loom: Loom, agent: str, session: SessionId) -> None:
     print("— Refusé : l'outil n'est jamais appelé, le motif revient au modèle\n")
-    result = await loom.run(agent, DEMANDE, session_id=session)
+    result = await loom.run(agent, DEMANDE, session_id=session, user="dev")
     events = await loom.export_session(session)
     print(f"  run       : {outcome(result)}")
     entete(events)
     motif = "le devis n'est pas signé, on n'envoie rien pour l'instant"
     print(f"  l'artisan refuse : « {motif} »")
-    await loom.reject(result.run_id, by="l'artisan", reason=motif, session_id=session)
+    await loom.reject(result.run_id, user="dev", reason=motif, session_id=session)
     await loom.drain()
     fin = await loom.result(result.run_id, session_id=session)
     events = await loom.export_session(session)
@@ -380,7 +380,7 @@ async def refus(loom: Loom, agent: str, session: SessionId) -> None:
 
 async def delai(loom: Loom, agent: str, session: SessionId) -> None:
     print(f"— Périmé : personne ne répond dans les {DELAI:g} s\n")
-    result = await loom.run(agent, DEMANDE, session_id=session)
+    result = await loom.run(agent, DEMANDE, session_id=session, user="dev")
     events = await loom.export_session(session)
     print(f"  run       : {outcome(result)}")
     entete(events)
@@ -407,7 +407,7 @@ async def en_ligne(loom: Loom, agent: str, session: SessionId) -> None:
             return Approved(by="l'artisan", reason="cliente connue")
         return Rejected(by="l'artisan", reason="destinataire inconnu")
 
-    result = await loom.run(agent, DEMANDE, session_id=session, approver=approbateur)
+    result = await loom.run(agent, DEMANDE, session_id=session, approver=approbateur, user="dev")
     events = await loom.export_session(session)
     pauses = [e for e in events if e.facets.get("to_state") == "paused"]
     print(f"  run       : {outcome(result)} en {result.iterations} itération(s)")
@@ -418,7 +418,7 @@ async def en_ligne(loom: Loom, agent: str, session: SessionId) -> None:
 
 async def sous_agent(loom: Loom, agent: str, session: SessionId) -> None:
     print("— Sous-agent : c'est l'enfant qui attend, et son parent avec lui\n")
-    result = await loom.run(agent, DEMANDE, session_id=session)
+    result = await loom.run(agent, DEMANDE, session_id=session, user="dev")
     events = await loom.export_session(session)
     enfants = {e.run_id for e in events if e.run_id != result.run_id}
     print(f"  racine    : {outcome(result)} ({len(enfants)} sous-run)")
@@ -426,7 +426,7 @@ async def sous_agent(loom: Loom, agent: str, session: SessionId) -> None:
     asked = result.pending_approvals[0]
     print(f"  la racine rend la demande de son enfant : {asked.tool_name}")
     print("  l'artisan valide, sur la racine")
-    await loom.approve(result.run_id, by="l'artisan", session_id=session)
+    await loom.approve(result.run_id, user="dev", session_id=session)
     await loom.drain()
     fin = await loom.result(result.run_id, session_id=session)
     events = await loom.export_session(session)

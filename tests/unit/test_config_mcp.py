@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import DEV, secured
 from pydantic import ValidationError
 
 from loom_ia.access.api import Loom
@@ -279,10 +279,12 @@ def test_role_can_read_results_of_a_prefixed_tool(tmp_path: Path) -> None:
 
 async def test_run_with_two_mcp_servers(tmp_path: Path) -> None:
     async with Loom(load_config(write(tmp_path, agent()))) as loom:
-        result = await loom.run("assistant", "Quelle heure, et combien font 121 fois 24 ?")
+        result = await loom.run(
+            "assistant", "Quelle heure, et combien font 121 fois 24 ?", user=DEV
+        )
         events = await loom.events(result.run_id)
         # Deuxième run : la connexion partagée à « time » est réutilisée.
-        again = await loom.run("assistant", "Encore ?")
+        again = await loom.run("assistant", "Encore ?", user=DEV)
 
     assert result.status is RunStatus.COMPLETED and again.ok
     calls = [e.payload for e in events if isinstance(e.payload, ToolCalled)]
@@ -302,7 +304,7 @@ async def test_run_with_two_mcp_servers(tmp_path: Path) -> None:
 async def test_unavailable_server_is_journaled(tmp_path: Path) -> None:
     broken = servers(math={"args": ["absent.py"], "connect_timeout": 5})
     async with Loom(load_config(write(tmp_path, agent(), mcp_servers=broken))) as loom:
-        result = await loom.run("assistant", "Quelle heure ?")
+        result = await loom.run("assistant", "Quelle heure ?", user=DEV)
         events = await loom.events(result.run_id)
     missing = [e.payload for e in events if isinstance(e.payload, ToolSourceUnavailable)]
     assert [(m.source, m.required) for m in missing] == [("math", False)]
@@ -317,7 +319,7 @@ async def test_unavailable_server_is_journaled(tmp_path: Path) -> None:
 
     required = agent(tools=[{"mcp": "time"}, {"mcp": "math", "alias": "m", "required": True}])
     async with Loom(load_config(write(tmp_path, required, mcp_servers=broken))) as loom:
-        failed = await loom.run("assistant", "Quelle heure ?")
+        failed = await loom.run("assistant", "Quelle heure ?", user=DEV)
         closing = (await loom.events(failed.run_id))[-1].payload
     assert failed.status is RunStatus.FAILED
     assert isinstance(closing, RunFailed) and closing.error_type == "tool.source_unavailable"

@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import DEV, secured
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -324,8 +324,8 @@ async def test_the_agent_uses_the_tools_of_the_package(carnet: Paquets, tmp_path
     # Lire la config n'importe rien : seul le montage d'un agent qui la référence le fait.
     assert "carnet_devis" not in sys.modules
     async with Loom(config, environ={"CARNET_JETON": "j-1"}) as loom:
-        first = await loom.run("relance", "Relance le devis D-2026-042.")
-        second = await loom.run("relance", "Relance le devis D-2026-042.")
+        first = await loom.run("relance", "Relance le devis D-2026-042.", user=DEV)
+        second = await loom.run("relance", "Relance le devis D-2026-042.", user=DEV)
         events = await loom.events(first.run_id, session_id=first.session_id)
     module = carnet.module("carnet_devis")
     assert first.status == second.status == RunStatus.COMPLETED
@@ -344,7 +344,7 @@ async def test_the_agent_uses_the_tools_of_the_package(carnet: Paquets, tmp_path
 async def test_only_the_referenced_package_is_imported(carnet: Paquets, tmp_path: Path) -> None:
     carnet.installe("piege", "piege_loom", PIEGE, {"piege": "piege_loom:fabrique"})
     async with Loom(load_config(config_file(tmp_path))) as loom:
-        result = await loom.run("relance", "Relance.")
+        result = await loom.run("relance", "Relance.", user=DEV)
     assert result.status == RunStatus.COMPLETED
     assert "carnet_devis" in sys.modules and "piege_loom" not in sys.modules
 
@@ -500,7 +500,7 @@ async def test_an_unavailable_source_is_journaled(
     paquets.installe("panne", "panne_loom", PANNE, {"carnet": "panne_loom:fabrique"})
     tools = [{"source": "carnet", "required": required}]
     async with Loom(load_config(config_file(tmp_path, tools=tools, calls=()))) as loom:
-        result = await loom.run("relance", "Relance.")
+        result = await loom.run("relance", "Relance.", user=DEV)
         events = await loom.events(result.run_id, session_id=result.session_id)
     [missing] = [e.payload for e in events if isinstance(e.payload, ToolSourceUnavailable)]
     assert (missing.source, missing.required) == ("carnet", required)
@@ -513,7 +513,7 @@ async def test_a_run_with_a_package_replays_without_calling_it(
 ) -> None:
     path = config_file(tmp_path, storage={"events": {"backend": "jsonl", "path": "data"}})
     async with Loom(load_config(path)) as loom:
-        result = await loom.run("relance", "Relance.")
+        result = await loom.run("relance", "Relance.", user=DEV)
         appels = list(carnet.module("carnet_devis").APPELS)
         report = await loom.replay(result.run_id)
     assert report.identical
@@ -591,7 +591,9 @@ async def test_each_client_gets_its_own_source_and_secrets(carnet: Paquets, tmp_
     environ = {"DUPONT_JETON": "jd", "MARTIN_JETON": "jm"}
     async with Loom(config, environ=environ) as loom:
         for tenant in ("dupont", "martin"):
-            result = await loom.run("relance", "Relance.", tenant=TenantId(tenant))
+            result = await loom.run(
+                "relance", "Relance.", tenant=TenantId(tenant), user=TenantId(tenant)
+            )
             assert result.status == RunStatus.COMPLETED
     recus = carnet.module("carnet_devis").RECUS
     assert [r["jeton"] for r in recus] == ["jd", "jm"]
@@ -648,7 +650,9 @@ async def test_a_package_factory_gets_only_what_its_client_may_read(
     environ = {"DUPONT_JETON": "jd", "MARTIN_JETON": "jm", "AWS_SECRET_ACCESS_KEY": "autre"}
     async with Loom(load_config(path), environ=environ) as loom:
         for tenant in ("dupont", "martin"):
-            result = await loom.run("relance", "Relance.", tenant=TenantId(tenant))
+            result = await loom.run(
+                "relance", "Relance.", tenant=TenantId(tenant), user=TenantId(tenant)
+            )
             assert result.status == RunStatus.COMPLETED
     # Chacun ne voit que le nom que la config lui fait rediriger ; rien n'a été écrit.
     assert (
@@ -667,7 +671,7 @@ async def test_a_package_factory_cannot_write_into_a_provider_table(
     path = config_file(tmp_path, sources=sources, tools=[{"source": "espion"}], calls=())
     coffre = CoffreVivant()
     async with Loom(load_config(path), environ={}, secrets=coffre) as loom:
-        result = await loom.run("relance", "Relance.")
+        result = await loom.run("relance", "Relance.", user=DEV)
     assert result.status == RunStatus.COMPLETED
     assert paquets.module("espion_loom").VUS == [
         {"variables": ["CARNET_JETON"], "ecriture": "refusée"}
@@ -680,7 +684,7 @@ async def test_a_package_source_has_no_circuit_breaker(paquets: Paquets, tmp_pat
     paquets.installe("panne", "panne_loom", PANNE, {"carnet": "panne_loom:fabrique"})
     async with Loom(load_config(config_file(tmp_path, calls=()))) as loom:
         for _ in range(6):
-            result = await loom.run("relance", "Relance.")
+            result = await loom.run("relance", "Relance.", user=DEV)
             events = await loom.events(result.run_id, session_id=result.session_id)
             types = [e.type for e in events]
             assert "tool.source_unavailable" in types and "circuit.opened" not in types

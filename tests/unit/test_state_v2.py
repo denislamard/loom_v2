@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import ConfigFactory, demo_agent
+from conftest import DEV, ConfigFactory, demo_agent
 from pydantic import JsonValue, ValidationError
 
 from loom_ia.adapters.stores import InMemoryEventStore
@@ -483,11 +483,13 @@ async def test_the_model_poses_and_clears_from_results(demo: ConfigFactory, crm:
     session = SessionId("s1")
     path = demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(SCRIPT))
     async with Loom.from_config(path) as loom:
-        first = await loom.run("demo", "Fiche", session_id=session, state={"signature": "L"})
+        first = await loom.run(
+            "demo", "Fiche", session_id=session, state={"signature": "L"}, user=DEV
+        )
         after_first = await loom.session_state(session)
-        second = await loom.run("demo", "Liste", session_id=session)
+        second = await loom.run("demo", "Liste", session_id=session, user=DEV)
         after_second = await loom.session_state(session)
-        third = await loom.run("demo", "Invente", session_id=session)
+        third = await loom.run("demo", "Invente", session_id=session, user=DEV)
         after_third = await loom.session_state(session)
         events = await loom.export_session(session)
         # Rejeu identique (state servi du journal) et variante (loom.state relancé).
@@ -521,7 +523,9 @@ async def test_the_application_cannot_pose_a_model_key(demo: ConfigFactory, crm:
     path = demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(SCRIPT))
     async with Loom.from_config(path) as loom:
         with pytest.raises(ValueError, match="client : l'application ne l'écrit pas"):
-            await loom.run("demo", "Fiche", session_id=SessionId("s2"), state={"client": {"id": 1}})
+            await loom.run(
+                "demo", "Fiche", session_id=SessionId("s2"), state={"client": {"id": 1}}, user=DEV
+            )
 
 
 async def test_the_system_prompt_asks_the_model_to_keep_its_keys(
@@ -906,7 +910,7 @@ async def test_the_engine_hands_a_ref_to_loom_state_untouched(
     ]
     path = demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(script))
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", "Ref", session_id=Sid("r1"))
+        result = await loom.run("demo", "Ref", session_id=Sid("r1"), user=DEV)
         state = await loom.session_state(Sid("r1"))
         events = await loom.export_session(Sid("r1"))
     assert result.ok
@@ -933,7 +937,7 @@ async def test_an_answer_written_with_state_ends_the_run_and_replays(
     ]
     path = demo(imports=IMPORTS, agents=[state_agent(crm)], models=model(script))
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", "Réponds", session_id=Sid("m1"))
+        result = await loom.run("demo", "Réponds", session_id=Sid("m1"), user=DEV)
         state = await loom.session_state(Sid("m1"))
         reports = [
             await loom.replay(result.run_id, session_id=Sid("m1"), mode=mode)

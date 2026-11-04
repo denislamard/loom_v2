@@ -17,6 +17,9 @@ from typing import Any
 import pytest
 import yaml
 
+from loom_ia.access.cli.main import USER_ENV
+from loom_ia.config.models import LOOPBACK_HOSTS
+
 QUESTION = "Combien font 12 fois 7, plus 3 ?"
 ANSWER = "12 fois 7, plus 3, font 87."
 
@@ -80,6 +83,11 @@ def secured(config: dict[str, Any]) -> dict[str, Any]:
     Ce que la config déclare déjà est gardé. Sans ``roles``, le rôle ``owner`` ;
     sans ``users``, un utilisateur par client déclaré (de même identifiant, dans
     ce client), ou ``dev`` quand la config n'en nomme aucun.
+
+    Une API REST sans clé agit au nom de ``dev`` (``server.http.user``, D-1b)
+    quand c'est permis : sans client déclaré, sans MCP HTTP, sur la boucle
+    locale, et si ``dev`` est déclaré. Le profil ``prod``, qui le refuse, le
+    retire : un essai qui charge la config en production la reçoit sans lui.
     """
     security: dict[str, Any] = dict(config.get("security") or {})
     security.setdefault("roles", [OWNER])
@@ -90,7 +98,41 @@ def secured(config: dict[str, Any]) -> dict[str, Any]:
         [{"id": tenant, "roles": ["owner"], "tenant": tenant} for tenant in tenants]
         or [{"id": DEV, "roles": ["owner"]}],
     )
-    return {**config, "security": security}
+    secured = {**config, "security": security}
+    server: dict[str, Any] = dict(config.get("server") or {})
+    http: dict[str, Any] = dict(server.get("http") or {})
+    mcp: dict[str, Any] = server.get("mcp") or {}
+    if (
+        "user" not in http
+        and not security.get("api_keys")
+        and not tenants
+        and not mcp.get("http")
+        and http.get("host", "127.0.0.1") in LOOPBACK_HOSTS
+        and any(user["id"] == DEV for user in security["users"])
+    ):
+        http["user"] = DEV
+        secured["server"] = {**server, "http": http}
+        profiles: dict[str, Any] = dict(config.get("profiles") or {})
+        if not isinstance(profiles.get("prod", {}), dict):
+            # Un bloc de profil invalide : la config doit le refuser telle quelle.
+            return secured
+        prod: dict[str, Any] = dict(profiles.get("prod") or {})
+        prod_server: dict[str, Any] = dict(prod.get("server") or {})
+        prod_http: dict[str, Any] = dict(prod_server.get("http") or {})
+        prod_http.setdefault("user", None)
+        profiles["prod"] = {**prod, "server": {**prod_server, "http": prod_http}}
+        secured["profiles"] = profiles
+    return secured
+
+
+@pytest.fixture(autouse=True)
+def loom_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    """L'utilisateur des commandes de la CLI : ``dev``, comme dans le ``.env`` d'un développeur.
+
+    Un essai qui éprouve son absence le retire (``monkeypatch.delenv``) ; un
+    essai d'une config à clients passe ``--user``.
+    """
+    monkeypatch.setenv(USER_ENV, DEV)
 
 
 @pytest.fixture

@@ -150,7 +150,7 @@ def test_cli_stream_routes_the_answer(tmp_path: Path, capsys: pytest.CaptureFixt
     code = main(["--config", str(path), "run", "demo", "Dupont", "--session", "s1", "--stream"])
     out, err = capsys.readouterr()
     assert code == 0 and "Devis préparé." in out
-    assert "réponse de l'utilisateur reçue" in err
+    assert f"réponse de {DEV} reçue" in err
 
 
 # Deux questions dans un même ask, dont une à choix multiples (essai réel t-2000, 02/11).
@@ -368,6 +368,8 @@ def keyed(tmp_path: Path) -> Path:
             {"id": "lecture", "user": DEV, "hash": fingerprint(LECTEUR), "scopes": ["read"]},
         ],
     }
+    # Avec des clés, plus d'utilisateur local : chacun présente la sienne (D-1b).
+    del root["server"]["http"]["user"]
     path.write_text(yaml.safe_dump(root), encoding="utf-8")
     return path
 

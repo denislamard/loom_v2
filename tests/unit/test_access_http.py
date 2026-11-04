@@ -339,15 +339,23 @@ async def test_a_base_path_moves_every_route(demo: ConfigFactory) -> None:
     assert moved.status_code == 200 and gone.status_code == 404
 
 
-async def test_an_open_instance_off_localhost_warns(
-    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_an_instance_without_keys_nor_local_user_is_not_served(demo: ConfigFactory) -> None:
+    """D-1 : une API qui ne sait pas au nom de qui elle agit ne démarre pas."""
+    # Hors de la boucle locale, pas d'utilisateur local possible.
     path = demo(server={"http": {"host": "0.0.0.0"}})
     async with Loom.from_config(path) as loom:
-        with caplog.at_level("WARNING", logger="loom_ia.access.http.app"):
+        with pytest.raises(ConfigError, match="sans clé d'API ni utilisateur local"):
             create_app(loom)
 
-    assert "sans clé déclarée" in caplog.text
+
+async def test_a_local_instance_acts_for_its_user(demo: ConfigFactory) -> None:
+    """D-1b : sans clé, chaque requête agit au nom de ``server.http.user``."""
+    async with serving(demo()) as (loom, http):
+        created = await http.post("/v1/agents/demo/runs", json={"message": QUESTION})
+        state = await loom.state(created.json()["run_id"])
+
+    assert created.status_code == 201
+    assert state.context.user_id == DEV
 
 
 async def test_an_owned_instance_listens_to_the_bus_while_it_serves(
@@ -477,7 +485,7 @@ async def test_a_stale_approval_is_a_409(atelier: ConfigFactory) -> None:
     spec = yaml.safe_load(agent.read_text(encoding="utf-8"))
     agent.write_text(yaml.safe_dump({**spec, "approval": {"expires_in": 0.3}}), encoding="utf-8")
     first = Loom.from_config(path)
-    run = await first.run("demo", "Relance.")
+    run = await first.run("demo", "Relance.", user="atelier")
     await first.aclose(wait=False)
     await asyncio.sleep(0.6)
     async with serving(path) as (loom, http):
@@ -751,8 +759,9 @@ async def test_a_key_limited_to_agents_cannot_list_sessions(demo: ConfigFactory)
     [
         ({}, True),
         ({"server": {"http": {"docs": False}}}, False),
-        ({"profile": "prod"}, False),
-        ({"profile": "prod", "server": {"http": {"docs": True}}}, True),
+        # En prod, chaque appelant présente sa clé : la config en déclare.
+        ({"profile": "prod", "security": SECURITY}, False),
+        ({"profile": "prod", "security": SECURITY, "server": {"http": {"docs": True}}}, True),
     ],
     ids=["défaut", "fermées", "prod", "prod ouvertes"],
 )

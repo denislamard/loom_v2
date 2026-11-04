@@ -38,7 +38,7 @@ from typing import Self
 from pydantic import JsonValue
 
 from loom_ia.access import Loom, RunResult
-from loom_ia.access.api import doubles_problem
+from loom_ia.access.api import UNCHECKED, doubles_problem
 from loom_ia.access.evals import run_outcome
 from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.core.events import Event
@@ -204,7 +204,9 @@ class Bench:
         """
         loom = self.loom
         self._check(loom, agent, tenant)
-        result = await loom.run(agent, message, tenant=tenant, session_id=session_id, state=state)
+        result = await loom.run(
+            agent, message, tenant=tenant, session_id=session_id, state=state, user=UNCHECKED
+        )
         tenant_id = tenant or DEFAULT_TENANT
         events = await loom.events(result.run_id, session_id=result.session_id, tenant_id=tenant_id)
         kept = await loom.session_state(result.session_id, tenant_id=tenant_id)

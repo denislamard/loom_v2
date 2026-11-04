@@ -224,7 +224,9 @@ async def borne(args: argparse.Namespace, controle: Controle) -> None:
         vivante = session("vivante")
         async with Loom(config) as loom:
             for ou in (dormante, vivante):
-                result = await loom.run(agent, demande(MARTIN), session_id=ou, tenant=MARTIN)
+                result = await loom.run(
+                    agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN
+                )
                 print(f"  {ou} : run {result.status}")
 
             # Une des deux est vieillie de 90 jours : ses lignes sont réécrites
@@ -390,7 +392,7 @@ async def _une_chacun(loom: Loom, agent: str) -> dict[TenantId, SessionId]:
     for tenant in (MARTIN, DUPONT):
         ou = session(str(tenant).split("-")[0])
         places[tenant] = ou
-        await loom.run(agent, demande(tenant), session_id=ou, tenant=tenant)
+        await loom.run(agent, demande(tenant), session_id=ou, tenant=tenant, user=tenant)
     return places
 
 
@@ -412,7 +414,9 @@ async def scelle(args: argparse.Namespace, controle: Controle) -> None:
         titre("Un journal scellé, puis la clé s'en va")
         ou = session("scelle")
         async with Loom(config, environ=avec) as loom:
-            result = await loom.run(agent, demande(MARTIN), session_id=ou, tenant=MARTIN)
+            result = await loom.run(
+                agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN
+            )
             print(f"  run {result.status}, journal scellé")
 
         sans = {name: value for name, value in os.environ.items() if name != CLE}

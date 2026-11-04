@@ -32,7 +32,7 @@ from pathlib import Path
 
 from pydantic import JsonValue
 
-from loom_ia.access.api import Loom, RunResult, doubles_problem, tree_tools
+from loom_ia.access.api import UNCHECKED, Loom, RunResult, doubles_problem, tree_tools
 from loom_ia.adapters.models import create_model_client
 from loom_ia.agents.registry import AgentRegistry
 from loom_ia.config import LoomConfig, Registry, load_config, resolve
@@ -354,7 +354,9 @@ async def _play(
         return replace(played, skipped=CAP_REACHED.format(spent=spent, cap=cap))
     tenant = suite.tenant_of(case)
     try:
-        result = await loom.run(suite.agent, case.request, tenant=tenant, state=case.state)
+        result = await loom.run(
+            suite.agent, case.request, tenant=tenant, state=case.state, user=UNCHECKED
+        )
     except Exception as exc:
         # Une éval dit ce qui a cassé et continue : le rapport le porte.
         logger.warning("Éval %s/%s : le run n'a pas pu aller au bout", variant.name, case.name)

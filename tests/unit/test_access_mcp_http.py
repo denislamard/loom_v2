@@ -550,7 +550,7 @@ async def test_a_trace_resource_follows_the_scope_and_every_agent_of_the_tree(
     )
     path = tree(security=security, server=MCP_HTTP)
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", TREE_QUESTION)
+        result = await loom.run("demo", TREE_QUESTION, user=DEV)
         uri = AnyUrl(f"{TRACES}/{result.run_id}")
         async with parle(loom, jetons["complete"]) as session:
             entiere = lu(await session.read_resource(uri))
@@ -576,7 +576,7 @@ async def test_the_events_resource_follows_every_agent_of_the_tree(tree: ConfigF
     )
     path = tree(security=security, server=MCP_HTTP)
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", TREE_QUESTION)
+        result = await loom.run("demo", TREE_QUESTION, user=DEV)
         uri = AnyUrl(f"{RUNS}/{result.run_id}/events")
         async with parle(loom, jetons["complete"]) as session:
             entier = lu(await session.read_resource(uri))
@@ -596,7 +596,7 @@ async def test_a_reread_names_only_the_agents_the_key_may_read(tree: ConfigFacto
     path = tree(security=security, server=MCP_HTTP)
     seen: dict[str, tuple[Any, str, Any]] = {}
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", TREE_QUESTION)
+        result = await loom.run("demo", TREE_QUESTION, user=DEV)
         for nom in ("complete", "parent"):
             async with parle(loom, jetons[nom]) as session:
                 statut = await session.call_tool("run_status", {"run_id": result.run_id})
@@ -663,7 +663,7 @@ async def test_cancel_by_mcp_signs_with_the_user_of_the_key(demo: ConfigFactory)
     security, jetons = cles(atelier={"scopes": ["run", "cancel", "read"]})
     path = demo(storage=JOURNAL, security=security, server=MCP_HTTP)
     async with Loom.from_config(path) as loom:
-        laisse = await loom.submit("demo", QUESTION)
+        laisse = await loom.submit("demo", QUESTION, user=DEV)
         async with parle(loom, jetons["atelier"]) as session:
             arrete = await session.call_tool("cancel", {"run_id": laisse})
         events = await loom.events(laisse)
@@ -678,7 +678,7 @@ async def test_cancel_needs_the_cancel_permission(demo: ConfigFactory) -> None:
     security, jetons = cles(lanceur={"scopes": ["run", "read"]})
     path = demo(storage=JOURNAL, security=security, server=MCP_HTTP)
     async with Loom.from_config(path) as loom:
-        laisse = await loom.submit("demo", QUESTION)
+        laisse = await loom.submit("demo", QUESTION, user=DEV)
         async with parle(loom, jetons["lanceur"]) as session:
             refus = await session.call_tool("cancel", {"run_id": laisse})
     assert refus.isError and "portée 'cancel'" in texte(refus)
@@ -692,7 +692,7 @@ async def test_cancel_needs_the_right_on_the_agent_of_the_run(demo: ConfigFactor
     agents = [demo_agent(), demo_agent(name="autre")]
     path = demo(agents=agents, storage=JOURNAL, security=security, server=MCP_HTTP)
     async with Loom.from_config(path) as loom:
-        laisse = await loom.submit("demo", QUESTION)
+        laisse = await loom.submit("demo", QUESTION, user=DEV)
         async with parle(loom, jetons["bureau"]) as session:
             refus = await session.call_tool("cancel", {"run_id": laisse})
         async with parle(loom, jetons["tout"]) as session:

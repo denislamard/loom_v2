@@ -625,23 +625,23 @@ async def test_the_budget_is_read_at_launch_so_the_first_run_always_passes(
 ) -> None:
     config = demo(storage=JOURNAL, tenants=clients(budgets=AFTER_ONE))
     async with Loom.from_config(config) as loom:
-        assert (await loom.run("demo", QUESTION, tenant=DUPONT)).text == ANSWER
+        assert (await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)).text == ANSWER
         with pytest.raises(BudgetExhausted, match="budget du client atteint"):
-            await loom.run("demo", QUESTION, tenant=DUPONT)
+            await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
         # Un run refusé n'a pas existé : le journal ne porte que le premier.
         assert (await loom.consumption(DUPONT)).runs == 1
         # Le voisin, sans budget, n'a pas à en souffrir.
-        assert (await loom.run("demo", QUESTION, tenant=MARTIN)).text == ANSWER
+        assert (await loom.run("demo", QUESTION, tenant=MARTIN, user=MARTIN)).text == ANSWER
 
 
 async def test_a_new_instance_learns_the_day_from_the_journal(demo: ConfigFactory) -> None:
     config = demo(storage=JOURNAL, tenants=clients(budgets=AFTER_ONE))
     async with Loom.from_config(config) as first:
-        await first.run("demo", QUESTION, tenant=DUPONT)
+        await first.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
     # Le compteur ne survit pas à l'instance ; le journal, lui, dit la vérité.
     async with Loom.from_config(config) as second:
         with pytest.raises(BudgetExhausted):
-            await second.run("demo", QUESTION, tenant=DUPONT)
+            await second.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
 
 
 async def test_a_dollar_budget_counts_what_the_pricing_says(demo: ConfigFactory) -> None:
@@ -651,10 +651,10 @@ async def test_a_dollar_budget_counts_what_the_pricing_says(demo: ConfigFactory)
         tenants=clients(budgets={"tenant": {"max_cost_per_month": 0.000001}}),
     )
     async with Loom.from_config(config) as loom:
-        result = await loom.run("demo", QUESTION, tenant=DUPONT)
+        result = await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
         assert result.cost_usd > 0.000001
         with pytest.raises(BudgetExhausted) as raised:
-            await loom.run("demo", QUESTION, tenant=DUPONT)
+            await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
     assert (raised.value.reached.limit, raised.value.reached.period.kind) == ("max_cost", "month")
 
 
@@ -662,7 +662,7 @@ async def test_a_subrun_is_counted_with_its_parent_and_not_apart(tree: ConfigFac
     path = tree(tenants=clients(budgets={"tenant": {"max_tokens_per_day": 1_000_000}}))
     counter = InMemoryUsageCounter()
     async with Loom(load_config(path), counter=counter) as loom:
-        await loom.run("demo", TREE_QUESTION, tenant=DUPONT)
+        await loom.run("demo", TREE_QUESTION, tenant=DUPONT, user=DUPONT)
         found = await loom.consumption(DUPONT)
         posed = await counter.consumed(DUPONT, Period.of("day").key)
     # Deux runs au journal, une seule valeur au compteur : la consommation de
@@ -676,19 +676,19 @@ async def test_a_tenant_quota_refuses_the_second_launch_and_writes_nothing(
 ) -> None:
     config = demo(storage=JOURNAL, tenants=clients(quotas={"runs_per_minute": 1}))
     async with Loom.from_config(config) as loom:
-        assert (await loom.run("demo", QUESTION, tenant=DUPONT)).text == ANSWER
+        assert (await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)).text == ANSWER
         with pytest.raises(QuotaExceeded, match="par minute"):
-            await loom.run("demo", QUESTION, tenant=DUPONT)
+            await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
         assert (await loom.consumption(DUPONT)).runs == 1
-        assert (await loom.run("demo", QUESTION, tenant=MARTIN)).text == ANSWER
+        assert (await loom.run("demo", QUESTION, tenant=MARTIN, user=MARTIN)).text == ANSWER
 
 
 async def test_a_stream_is_admitted_like_a_run(demo: ConfigFactory) -> None:
     config = demo(storage=JOURNAL, tenants=clients(quotas={"runs_per_minute": 1}))
     async with Loom.from_config(config) as loom:
-        await loom.run("demo", QUESTION, tenant=DUPONT)
+        await loom.run("demo", QUESTION, tenant=DUPONT, user=DUPONT)
         with pytest.raises(QuotaExceeded):
-            async for _ in loom.stream("demo", QUESTION, tenant=DUPONT):
+            async for _ in loom.stream("demo", QUESTION, tenant=DUPONT, user=DUPONT):
                 pass
 
 
@@ -808,7 +808,7 @@ def test_report_period_prints_what_a_tenant_spent_and_what_is_left(
         storage=JOURNAL,
         tenants=clients(budgets={"tenant": {"max_cost_per_day": 5.0}}),
     )
-    assert main(["--config", str(config), "run", "demo", QUESTION, "--tenant", DUPONT]) == 0
+    assert main(["--config", str(config), "run", "demo", QUESTION, "--user", DUPONT]) == 0
     capsys.readouterr()
 
     assert main(["--config", str(config), "report", "--period", "day", "--tenant", DUPONT]) == 0
@@ -862,7 +862,7 @@ def test_the_cli_refuses_an_exhausted_budget_and_writes_nothing(
     from loom_ia.access.cli import main
 
     config = str(demo(storage=JOURNAL, tenants=clients(budgets=AFTER_ONE)))
-    run = ["--config", config, "run", "demo", QUESTION, "--tenant", DUPONT]
+    run = ["--config", config, "run", "demo", QUESTION, "--user", DUPONT]
     assert main([*run, "--run-id", "premier"]) == 0
     capsys.readouterr()
 
@@ -907,7 +907,7 @@ def test_the_cli_says_when_the_budget_comes_back(
 
     monkeypatch.setattr(TenantUsage, "check", refuse)
     config = demo(tenants=clients(budgets=AFTER_ONE))
-    assert main(["--config", str(config), "run", "demo", QUESTION, "--tenant", DUPONT]) == 2
+    assert main(["--config", str(config), "run", "demo", QUESTION, "--user", DUPONT]) == 2
     assert capsys.readouterr().err.strip().endswith(f"— réessayer dans {said}")
 
 
@@ -922,7 +922,7 @@ def test_the_cli_refuses_a_quota_with_the_wait_it_carries(
 
     monkeypatch.setattr(Quota, "check", refuse)
     config = demo(tenants=clients(quotas={"runs_per_minute": 1}))
-    assert main(["--config", str(config), "run", "demo", QUESTION, "--tenant", DUPONT]) == 2
+    assert main(["--config", str(config), "run", "demo", QUESTION, "--user", DUPONT]) == 2
     err = capsys.readouterr().err
     assert err == f"Client {DUPONT!r} : 1 par minute dépassé, réessayer dans 42.0 s\n"
 
@@ -934,7 +934,7 @@ def test_sessions_list_can_name_the_tenant_it_asks_for(
     from loom_ia.access.cli import main
 
     config = demo(storage=JOURNAL, tenants=clients())
-    assert main(["--config", str(config), "run", "demo", QUESTION, "--tenant", DUPONT]) == 0
+    assert main(["--config", str(config), "run", "demo", QUESTION, "--user", DUPONT]) == 0
     capsys.readouterr()
     assert main(["--config", str(config), "sessions", "list", "--tenant", DUPONT]) == 0
     assert "événements" in capsys.readouterr().out

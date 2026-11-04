@@ -104,7 +104,7 @@ async def rest(path: Path) -> AsyncGenerator[tuple[Loom, httpx2.AsyncClient]]:
 @asynccontextmanager
 async def mcp(path: Path) -> AsyncGenerator[tuple[Loom, ClientSession]]:
     async with Loom.from_config(path) as loom:
-        async with connected(create_server(loom)) as client:
+        async with connected(create_server(loom, user=DEV)) as client:
             yield loom, client
 
 
@@ -113,7 +113,7 @@ async def mcp(path: Path) -> AsyncGenerator[tuple[Loom, ClientSession]]:
 
 async def test_a_result_carries_its_breakdown_and_verdicts(demo: ConfigFactory) -> None:
     async with Loom.from_config(judged(demo)) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         again = await loom.result(result.run_id)
 
     assert result.ok and result.text == ANSWER and not result.unverified
@@ -141,7 +141,7 @@ async def test_a_result_carries_its_breakdown_and_verdicts(demo: ConfigFactory) 
 
 async def test_a_failure_has_a_type_and_a_readable_message(demo: ConfigFactory) -> None:
     async with Loom.from_config(judged(demo, 0.2)) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
 
     assert result.status is RunStatus.FAILED and result.text == ""
     assert result.error_type == "guard.judge"
@@ -153,7 +153,7 @@ async def test_a_failure_has_a_type_and_a_readable_message(demo: ConfigFactory) 
 
 async def test_a_kept_answer_is_marked_unverified(demo: ConfigFactory) -> None:
     async with Loom.from_config(judged(demo, 0.2, on_failure="unverified")) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
 
     assert result.ok and result.text == ANSWER and result.unverified
     assert [v.blocked for v in result.verdicts] == [True]
@@ -161,7 +161,7 @@ async def test_a_kept_answer_is_marked_unverified(demo: ConfigFactory) -> None:
 
 async def test_the_breakdown_covers_the_subruns(tree: ConfigFactory) -> None:
     async with Loom.from_config(tree()) as loom:
-        result = await loom.run("demo", TREE_QUESTION)
+        result = await loom.run("demo", TREE_QUESTION, user=DEV)
 
     assert result.report is not None
     assert [(run.agent, run.depth, run.status) for run in result.report.runs] == [
@@ -347,7 +347,7 @@ async def test_a_fallback_answer_is_said_by_every_access(demo: ConfigFactory) ->
     # sans rien qui la distingue d'une vraie réponse hors du journal.
     path = judged(demo, 0.2, on_failure="fallback", fallback_message="Réponse indisponible.")
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
     assert result.status is RunStatus.COMPLETED and result.text == "Réponse indisponible."
     assert result.fallback and not result.unverified
     assert result.masked().fallback
@@ -418,8 +418,8 @@ def test_the_cli_shows_verdicts_and_the_error_type(
 async def test_a_result_names_the_judges_that_did_not_judge(demo: ConfigFactory) -> None:
     path = judged(demo, when={"sample": 0.0})
     async with Loom.from_config(path) as loom:
-        skipped = await loom.run("demo", QUESTION)
-        forced = await loom.run("demo", QUESTION, judges="force")
+        skipped = await loom.run("demo", QUESTION, user=DEV)
+        forced = await loom.run("demo", QUESTION, judges="force", user=DEV)
     assert skipped.verdicts == ()
     [skip] = skipped.skipped_judges
     assert (skip.run_id, skip.agent, skip.judge, skip.target, skip.reason) == (
@@ -450,7 +450,7 @@ def test_the_cli_marks_a_failed_criterion_that_does_not_block(
 
 async def test_verdicts_name_the_judged_call(demo: ConfigFactory) -> None:
     async with Loom.from_config(role_judged(demo)) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
 
     assert [(v.attempt, v.blocked) for v in result.verdicts] == [
         (1, True),

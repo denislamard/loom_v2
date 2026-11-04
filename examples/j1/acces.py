@@ -63,11 +63,11 @@ async def main(argv: list[str]) -> int:
 async def by_python(config: Path) -> RunId:
     """``loom.run()`` puis ``loom.stream()`` : la façade, en direct."""
     async with Loom.from_config(config) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user="dev")
         print(f"run()    : {result.text} ({result.status}, {result.iterations} itérations)")
 
         print("stream() : ", end="", flush=True)
-        async for item in loom.stream("demo", QUESTION):
+        async for item in loom.stream("demo", QUESTION, user="dev"):
             if isinstance(item, TextDelta):
                 print(item.text, end="", flush=True)
             elif isinstance(item, Event) and item.type == "tool.called":
@@ -114,7 +114,7 @@ async def by_mcp(config: Path) -> RunId:
     from loom_ia.access.mcp_server import create_server
 
     async with Loom.from_config(config) as loom:
-        async with connected(create_server(loom)) as client:
+        async with connected(create_server(loom, user="dev")) as client:
             listed = await client.list_tools()
             print(f"outils   : {', '.join(tool.name for tool in listed.tools)}")
             answer = await client.call_tool("demo", {"message": QUESTION})

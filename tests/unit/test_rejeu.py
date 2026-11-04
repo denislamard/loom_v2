@@ -60,6 +60,7 @@ import pytest
 import yaml
 from conftest import (
     ANSWER,
+    DEV,
     HOSTILE,
     HOSTILE_SHOWN,
     MODEL,
@@ -239,8 +240,8 @@ def atelier(tmp_path: Path) -> ConfigFactory:
 async def deux_runs(path: Path) -> list[RunId]:
     """Deux runs dans la même session : le second a un historique à reconstruire."""
     async with Loom.from_config(path) as loom:
-        first = await loom.run("demo", QUESTION, session_id=SESSION)
-        second = await loom.run("demo", "Et 12 fois 8 ?", session_id=SESSION)
+        first = await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
+        second = await loom.run("demo", "Et 12 fois 8 ?", session_id=SESSION, user=DEV)
     assert first.ok and second.ok
     return [first.run_id, second.run_id]
 
@@ -327,11 +328,11 @@ async def test_an_approval_is_decided_as_it_was(tmp_path: Path) -> None:
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
     path = tmp_path / "loom.yaml"
     async with Loom.from_config(path) as loom:
-        run = await loom.run("demo", "Envoie.", session_id=SESSION)
+        run = await loom.run("demo", "Envoie.", session_id=SESSION, user=DEV)
         await loom.approve(
             run.run_id,
             call_id=run.pending_approvals[0].call_id,
-            by="denis",
+            user=DEV,
             arguments={"destinataire": "compta"},
             session_id=SESSION,
         )
@@ -339,7 +340,7 @@ async def test_an_approval_is_decided_as_it_was(tmp_path: Path) -> None:
         report = await loom.replay(run.run_id, session_id=SESSION)
     assert report.identical, report.divergence
     accord = next(e for e in report.events if e.type == "approval.granted")
-    assert accord.payload.by == "denis"  # type: ignore[union-attr]
+    assert accord.payload.by == DEV  # type: ignore[union-attr]
     assert "paused" not in [
         e.payload.to_state  # type: ignore[union-attr]
         for e in report.events
@@ -349,7 +350,7 @@ async def test_an_approval_is_decided_as_it_was(tmp_path: Path) -> None:
 
 async def test_a_subagent_is_read_not_relaunched(tree: ConfigFactory) -> None:
     async with Loom(load_config(tree())) as loom:
-        result = await loom.run("demo", "Combien font 2 + 2 ?")
+        result = await loom.run("demo", "Combien font 2 + 2 ?", user=DEV)
         report = await loom.replay(result.run_id)
     assert report.identical, report.divergence
     # Un seul run rejoué : l'enfant n'a pas été relancé, son résultat a été lu.
@@ -368,7 +369,7 @@ async def test_a_run_with_an_attachment_replays_identically(
     model = {**MODEL, "capabilities": {"vision": vision}}
     photo = Attachment(data=PNG, name="photo.png")
     async with Loom(load_config(demo(models=[model]))) as loom:
-        result = await loom.run("demo", QUESTION, attachments=[photo])
+        result = await loom.run("demo", QUESTION, attachments=[photo], user=DEV)
         exact = await loom.replay(result.run_id)
         variant = await loom.replay(result.run_id, mode="variant")
     assert exact.identical, exact.divergence
@@ -463,7 +464,7 @@ async def test_same_calls_but_another_ending_diverge(demo: ConfigFactory, tmp_pa
     jsonl = {"events": {"backend": "jsonl", "path": "data"}}
     path = demo(storage=jsonl)
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
     (tmp_path / "politiques_rejeu.py").write_text(REFUS, encoding="utf-8")
     refusant = demo(
         storage=jsonl,
@@ -507,7 +508,7 @@ async def test_a_run_that_failed_on_a_model_call_replays_identically(
         storage={"events": {"backend": "jsonl", "path": "data"}}, models=[_failing(*script)]
     )
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         report = await loom.replay(result.run_id)
 
     assert result.status is RunStatus.FAILED
@@ -525,7 +526,7 @@ async def test_a_completed_run_does_not_get_a_failure_to_serve(
     jsonl = {"events": {"backend": "jsonl", "path": "data"}}
     path = demo(storage=jsonl, models=[_failing({"text": ANSWER})])
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
     # Aujourd'hui, la même réponse appelle un outil : un second appel de modèle suit.
     demo(storage=jsonl, models=[_failing({**SCRIPT[0], "text": ANSWER}, {"text": ANSWER})])
     async with Loom.from_config(path) as loom:
@@ -735,7 +736,7 @@ async def test_what_cannot_be_replayed_is_refused(
         with pytest.raises(ReplayError, match="introuvable"):
             await loom.replay(RunId("absent"), session_id=SESSION)
     async with Loom(load_config(tree())) as loom:
-        result = await loom.run("demo", "Combien font 2 + 2 ?")
+        result = await loom.run("demo", "Combien font 2 + 2 ?", user=DEV)
         events = await loom.events(result.run_id)
         enfant = next(
             e.run_id
@@ -765,7 +766,7 @@ async def test_an_unfinished_run_is_refused(tmp_path: Path) -> None:
     }
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
     async with Loom.from_config(tmp_path / "loom.yaml") as loom:
-        run = await loom.run("demo", "Envoie.", session_id=SESSION)
+        run = await loom.run("demo", "Envoie.", session_id=SESSION, user=DEV)
         with pytest.raises(ReplayError, match="inachevé"):
             await loom.replay(run.run_id, session_id=SESSION)
 
@@ -877,7 +878,7 @@ async def test_a_journal_gives_its_root_runs_only(tree: ConfigFactory, tmp_path:
     """Un sous-run se rejoue avec sa racine ; un run système n'est pas un run demandé."""
     path = tree()
     async with Loom(load_config(path)) as loom:
-        result = await loom.run("demo", "Combien font 2 + 2 ?")
+        result = await loom.run("demo", "Combien font 2 + 2 ?", user=DEV)
         events = await loom.export_session(result.session_id)
     assert any(
         isinstance(e.payload, RunStarted) and e.payload.parent_run_id is not None for e in events
@@ -1018,7 +1019,7 @@ async def test_the_kit_lends_registered_objects(atelier: ConfigFactory, tmp_path
     path = atelier(extra_tools=[{"python": "outil_enregistre"}])
     async with Loom.from_config(path) as loom:
         loom.register("outil_enregistre", tool(noter))
-        result = await loom.run("demo", QUESTION, session_id=SESSION)
+        result = await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
         assert result.ok
         fichier = ecrit(tmp_path / "session.jsonl", await loom.export_session(SESSION))
     [rejoue] = await assert_replays(path, fichier, register={"outil_enregistre": tool(noter)})
@@ -1183,11 +1184,11 @@ def variante(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 async def enregistre(path: Path) -> RunId:
     """Le run d'origine : l'envoi approuvé par denis, une ligne dans envois.txt."""
     async with Loom.from_config(path) as loom:
-        run = await loom.run("demo", "Relance martin.", session_id=SESSION)
+        run = await loom.run("demo", "Relance martin.", session_id=SESSION, user=DEV)
         await loom.approve(
             run.run_id,
             call_id=run.pending_approvals[0].call_id,
-            by="denis",
+            user=DEV,
             session_id=SESSION,
         )
         await loom.drain()
@@ -1326,7 +1327,7 @@ async def test_a_side_effect_call_found_in_the_journal_is_read_with_its_decision
     assert comparison is not None
     assert dict(comparison.tools) == {"journal": 2}
     accord = next(e.payload for e in report.events if isinstance(e.payload, ApprovalGranted))
-    assert accord.by == "denis"
+    assert accord.by == DEV
     assert envois(variante) == ["martin"]
 
 
@@ -1430,7 +1431,7 @@ async def test_a_subagent_is_relaunched_when_its_call_changes(tree: ConfigFactor
         models=[*(m.model_dump(mode="json", exclude_defaults=True) for m in base.models), *extra]
     )
     async with Loom(load_config(path)) as loom:
-        result = await loom.run("demo", "Combien font 2 + 2 ?")
+        result = await loom.run("demo", "Combien font 2 + 2 ?", user=DEV)
         relance = await loom.replay(result.run_id, mode="variant", models={"main": "AUTRE"})
         lu = await loom.replay(result.run_id, mode="variant", models={"main": "MEME"})
     comparison = relance.comparison
@@ -1453,7 +1454,7 @@ async def test_a_subagent_is_relaunched_when_its_call_changes(tree: ConfigFactor
 async def test_a_variant_that_changes_nothing_reads_its_subagent(tree: ConfigFactory) -> None:
     """Sans changement, le sous-agent est lu, et ses appels n'ont pas à être refaits."""
     async with Loom(load_config(tree())) as loom:
-        result = await loom.run("demo", "Combien font 2 + 2 ?")
+        result = await loom.run("demo", "Combien font 2 + 2 ?", user=DEV)
         report = await loom.replay(result.run_id, mode="variant")
     assert report.identical, report.divergence
     assert {e.run_id for e in report.events} == {result.run_id}
@@ -1750,8 +1751,10 @@ ETAT_FINAL: dict[str, JsonValue] = {
 async def relances(path: Path) -> list[RunId]:
     """Deux runs dans la session : le premier pose le ton, le second hérite du state."""
     async with Loom.from_config(path) as loom:
-        first = await loom.run("demo", "Relance D-1.", session_id=SESSION, state={"ton": "ferme"})
-        second = await loom.run("demo", "Encore.", session_id=SESSION)
+        first = await loom.run(
+            "demo", "Relance D-1.", session_id=SESSION, state={"ton": "ferme"}, user=DEV
+        )
+        second = await loom.run("demo", "Encore.", session_id=SESSION, user=DEV)
     assert first.ok and second.ok
     return [first.run_id, second.run_id]
 

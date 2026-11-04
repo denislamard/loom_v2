@@ -465,7 +465,7 @@ async def test_the_spans_are_the_tree_of_the_journal(demo: ConfigFactory) -> Non
         recueil = Recueil()
         export = exporteur(loom.store, recueil)
         with loom.store.listen(export, own=True):
-            result = await loom.run("demo", QUESTION)
+            result = await loom.run("demo", QUESTION, user=DEV)
             await export.aclose(5)
         events = await loom.store.read(DEFAULT_TENANT, SessionId(result.run_id))
     spans = recueil.spans
@@ -488,7 +488,7 @@ async def test_a_subagent_hangs_under_the_call_that_launched_it(tree: ConfigFact
         recueil = Recueil()
         export = exporteur(loom.store, recueil)
         with loom.store.listen(export, own=True):
-            result = await loom.run("demo", "Combien font 2 + 2 ?")
+            result = await loom.run("demo", "Combien font 2 + 2 ?", user=DEV)
             await export.aclose(5)
     # Deux runs, deux exports, une seule trace.
     assert len(recueil.lots) == 2
@@ -584,7 +584,7 @@ async def test_a_broken_collector_never_fails_a_run(
     async with Loom(load_config(demo())) as loom:
         export = exporteur(loom.store, Recueil(casse=True))
         with loom.store.listen(export, own=True), caplog.at_level(logging.WARNING):
-            result = await loom.run("demo", QUESTION)
+            result = await loom.run("demo", QUESTION, user=DEV)
             await export.aclose(5)
     assert result.ok
     assert "non remis (collecteur injoignable)" in caplog.text
@@ -686,7 +686,7 @@ async def test_the_spans_reach_an_otlp_collector(demo: ConfigFactory) -> None:
         environ = {VARIABLE: adresse, "LOOM_OTLP_ENTETES": "x-cle=s%C3%A9same"}
         async with Loom(config, environ=environ) as loom:
             assert loom.exporter is not None
-            result = await loom.run("demo", f"{QUESTION} Réponse à {COURRIEL}")
+            result = await loom.run("demo", f"{QUESTION} Réponse à {COURRIEL}", user=DEV)
         # La fermeture a vidé le processeur : tout est arrivé.
     assert recus and all(chemin == "/v1/traces" for chemin, _ in recus)
     assert entetes[0]["x-cle"] == "sésame"
@@ -955,7 +955,7 @@ TRACE_SESSION = SessionId("relue")
 
 async def test_a_trace_holds_the_spans_of_the_run_and_its_subruns(tree: ConfigFactory) -> None:
     async with Loom(load_config(tree())) as loom:
-        result = await loom.run("demo", TREE_QUESTION)
+        result = await loom.run("demo", TREE_QUESTION, user=DEV)
         trace = await loom.trace(result.run_id)
         events = await loom.events(result.run_id)
         state = await loom.state(result.run_id)
@@ -982,7 +982,7 @@ async def test_a_trace_holds_the_spans_of_the_run_and_its_subruns(tree: ConfigFa
 
 async def test_without_the_right_a_trace_has_no_content_at_all(demo: ConfigFactory) -> None:
     async with Loom.from_config(demo()) as loom:
-        result = await loom.run("demo", SECRET, session_id=TRACE_SESSION)
+        result = await loom.run("demo", SECRET, session_id=TRACE_SESSION, user=DEV)
         complete = await loom.trace(result.run_id, session_id=TRACE_SESSION)
         nue = await loom.trace(result.run_id, session_id=TRACE_SESSION, content=False)
 
@@ -1003,9 +1003,9 @@ async def test_an_unfinished_run_has_its_trace_and_says_what_is_open(
     atelier: ConfigFactory,
 ) -> None:
     async with Loom.from_config(atelier()) as loom:
-        run = await loom.run("demo", "Relance.", session_id=TRACE_SESSION)
+        run = await loom.run("demo", "Relance.", session_id=TRACE_SESSION, user=DEV)
         en_pause = await loom.trace(run.run_id, session_id=TRACE_SESSION)
-        await loom.approve(run.run_id, by="denis", session_id=TRACE_SESSION)
+        await loom.approve(run.run_id, user=DEV, session_id=TRACE_SESSION)
         await loom.drain()
         finie = await loom.trace(run.run_id, session_id=TRACE_SESSION)
 
@@ -1018,7 +1018,7 @@ async def test_an_unfinished_run_has_its_trace_and_says_what_is_open(
 async def test_exchange_bodies_never_enter_a_trace(demo: ConfigFactory) -> None:
     path = demo(telemetry={"capture": {"raw_exchanges": True}})
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         trace = await loom.trace(result.run_id)
 
     echanges = [e for span in trace.spans for e in span.events if e.name == "model.exchanged"]
@@ -1072,7 +1072,7 @@ async def test_a_trace_is_read_over_rest_by_scope(tree: ConfigFactory) -> None:
 
     security, jetons = _trace_keys()
     async with Loom.from_config(tree(security=security)) as loom:
-        result = await loom.run("demo", TREE_QUESTION)
+        result = await loom.run("demo", TREE_QUESTION, user=DEV)
         attendue = await loom.trace(result.run_id)
         transport = httpx2.ASGITransport(create_app(loom))
         async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
@@ -1109,9 +1109,9 @@ async def test_a_trace_is_a_resource(tree: ConfigFactory) -> None:
     from loom_ia.access.mcp_server import create_server
 
     async with Loom(load_config(tree())) as loom:
-        result = await loom.run("demo", TREE_QUESTION)
+        result = await loom.run("demo", TREE_QUESTION, user=DEV)
         attendue = await loom.trace(result.run_id)
-        async with connected(create_server(loom)) as client:
+        async with connected(create_server(loom, user=DEV)) as client:
             gabarits = await client.list_resource_templates()
             lue = await client.read_resource(AnyUrl(f"{TRACES}/{result.run_id}"))
             with pytest.raises(McpError, match="introuvable"):
@@ -1131,7 +1131,7 @@ async def test_inspect_reads_the_tree_the_answer_and_the_tally(
 ) -> None:
     path = tree()
     async with Loom(load_config(path)) as loom:
-        result = await loom.run("demo", TREE_QUESTION)
+        result = await loom.run("demo", TREE_QUESTION, user=DEV)
         trace = await loom.trace(result.run_id)
 
     assert await _cli(["--config", str(path), "inspect", result.run_id]) == 0
@@ -1275,7 +1275,7 @@ async def test_inspect_says_a_call_refused_before_running(demo: ConfigFactory) -
         models=[{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": script}}]
     )
     async with Loom(load_config(path)) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         trace = await loom.trace(result.run_id)
 
     outils = [span for span in trace.spans if span.kind == "tool"]
@@ -1304,7 +1304,7 @@ async def test_inspect_shows_control_characters_without_obeying_them(
         storage={"events": {"backend": "jsonl", "path": "data"}},
     )
     async with Loom(load_config(path)) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
 
     for full in ([], ["--full"]):
         assert await _cli(["--config", str(path), "inspect", result.run_id, *full]) == 0

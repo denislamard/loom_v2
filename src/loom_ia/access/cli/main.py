@@ -177,6 +177,8 @@ from loom_ia.usage import describe as describe_budget
 from loom_ia.usage import render as render_report
 
 PROG: Final = "loom"
+# Utilisateur des commandes qui agissent, faute de ``--user`` (D-10).
+USER_ENV: Final = "LOOM_USER"
 DEFAULT_CONFIG: Final = Path("loom.yaml")
 MISSING_EXTRA: Final = "{what} demande l'extra '{extra}' (installer l'extra : loom-ia[{extra}])"
 
@@ -202,6 +204,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(str(error), file=sys.stderr)
         return REFUSED
     except AgentNotAllowed as error:
+        print(str(error), file=sys.stderr)
+        return REFUSED
+    except AccessDenied as error:
+        # Avant ValueError : un refus de droits n'est pas une demande mal formée.
+        print(f"Accès refusé : {error}", file=sys.stderr)
+        return REFUSED
+    except MissingUser as error:
         print(str(error), file=sys.stderr)
         return REFUSED
     except ValueError as error:
@@ -268,6 +277,17 @@ def build_parser() -> argparse.ArgumentParser:
     _global_options(parser)
     commands = parser.add_subparsers(dest="command", required=True)
 
+    def acting(command: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        """Ajoute ``--user`` : l'utilisateur au nom duquel la commande agit (D-10)."""
+        command.add_argument(
+            "--user",
+            default=None,
+            metavar="UTILISATEUR",
+            help=f"utilisateur déclaré dans security.users (défaut : {USER_ENV}) ; "
+            "le client est le sien",
+        )
+        return command
+
     def tenanted(command: argparse.ArgumentParser) -> argparse.ArgumentParser:
         """Ajoute ``--tenant`` : au nom de quel client la commande agit (L1)."""
         command.add_argument(
@@ -288,7 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate.set_defaults(handler=cmd_validate)
 
-    run = tenanted(commands.add_parser("run", help="lance un run et attend sa fin"))
+    run = acting(tenanted(commands.add_parser("run", help="lance un run et attend sa fin")))
     run.add_argument("agent")
     run.add_argument("message")
     run.add_argument("--stream", action="store_true", help="affiche la réponse au fil de l'eau")
@@ -341,7 +361,7 @@ def build_parser() -> argparse.ArgumentParser:
     state.add_argument("session_id")
     state.set_defaults(handler=cmd_state)
 
-    resume = tenanted(commands.add_parser("resume", help="reprend un run interrompu"))
+    resume = acting(tenanted(commands.add_parser("resume", help="reprend un run interrompu")))
     resume.add_argument("run_id")
     resume.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
     resume.add_argument("--session", type=str, default=None, help="journal du run")
@@ -443,7 +463,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("approve", "autorise un appel que le run attend"),
         ("reject", "refuse un appel que le run attend"),
     ):
-        decision = tenanted(commands.add_parser(verbe, help=aide))
+        decision = acting(tenanted(commands.add_parser(verbe, help=aide)))
         decision.add_argument("run_id")
         decision.add_argument(
             "--call",
@@ -451,13 +471,6 @@ def build_parser() -> argparse.ArgumentParser:
             default=None,
             metavar="CALL_ID",
             help="appel visé ; sans lui, tout ce que le run attend est tranché",
-        )
-        decision.add_argument(
-            "--by",
-            type=str,
-            default=None,
-            metavar="NOM",
-            help="qui tranche : inscrit au journal, et c'est tout l'audit qu'il y aura",
         )
         decision.add_argument("--reason", type=str, default="", help="motif de la décision")
         if verbe == "approve":
@@ -477,7 +490,9 @@ def build_parser() -> argparse.ArgumentParser:
         decision.add_argument("--json", action="store_true", help="affiche le résultat en JSON")
         decision.set_defaults(handler=cmd_decide, verdict=verbe)
 
-    reply = tenanted(commands.add_parser("answer", help="répond à une question que le run attend"))
+    reply = acting(
+        tenanted(commands.add_parser("answer", help="répond à une question que le run attend"))
+    )
     reply.add_argument("run_id")
     reply.add_argument("texte", nargs="?", default=None, help="la réponse, en message libre")
     reply.add_argument(
@@ -491,7 +506,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     reply.add_argument("--call", type=str, default=None, metavar="CALL_ID", help="question visée")
-    reply.add_argument("--by", type=str, default=None, metavar="NOM", help="qui répond")
     reply.add_argument("--session", type=str, default=None, help="journal du run")
     reply.add_argument(
         "--no-wait", action="store_true", help="écrit la réponse et sort, sans piloter la reprise"
@@ -512,14 +526,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve.set_defaults(handler=cmd_serve)
 
-    mcp = tenanted(commands.add_parser("mcp", help="sert les agents en MCP, sur stdio"))
-    mcp.add_argument(
-        "--user",
-        default=None,
-        metavar="UTILISATEUR",
-        help="utilisateur au nom duquel le serveur agit, déclaré dans security.users ; "
-        "le client est le sien",
-    )
+    mcp = acting(tenanted(commands.add_parser("mcp", help="sert les agents en MCP, sur stdio")))
     mcp.set_defaults(handler=cmd_mcp)
 
     keys = commands.add_parser("keys", help="clés d'API de l'accès REST")
@@ -1123,7 +1130,7 @@ def _access(report: _Report, config: LoomConfig) -> None:
         section.add("Clés d'API", f"aucune : API REST locale, au nom de {config.server.http.user}")
     else:
         section.add("Clés d'API", "aucune")
-        report.warn("Clés d'API", "aucune : API REST ouverte")
+        report.warn("Clés d'API", "aucune, ni 'server.http.user' : loom serve refusera de démarrer")
     mcp = config.server.mcp
     if mcp.http:
         origines = _listed(mcp.allowed_origins) if mcp.allowed_origins else "aucune déclarée"
@@ -1837,7 +1844,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     config = _config(args)
     _console(config)
     session = SessionId(args.session) if args.session else None
-    tenant = _tenant(args)
+    actor, tenant = _acting(args, config)
     # Sans --run-id, aucun identifiant choisi d'avance : dans une session, le message
     # peut répondre à une question qui attend, et le run est alors celui qui l'a
     # posée (wait_answer). Son identifiant se lit sur le résultat ou le flux.
@@ -1871,6 +1878,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     judges=args.judges,
                     tenant=tenant,
                     state=posed,
+                    user=actor,
                 ):
                     if followed is None and isinstance(item, Event):
                         followed = item.root_run_id
@@ -1896,6 +1904,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 judges=args.judges,
                 tenant=tenant,
                 state=posed,
+                user=actor,
             )
             summaries = await _opening_summaries(loom, result, tenant)
             return result, summaries, await _budgets_reached(loom, result, tenant)
@@ -1907,7 +1916,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         quiet=args.stream,
         brief=args.quiet,
         only_data=args.onlydata,
-        tenant=_tenant(args),
+        tenant=tenant,
         summaries=summaries,
         budgets=budgets,
     )
@@ -1979,14 +1988,15 @@ def cmd_resume(args: argparse.Namespace) -> int:
     config = _config(args)
     _console(config)
     session = SessionId(args.session) if args.session else None
+    actor, tenant = _acting(args, config)
 
     async def go() -> RunResult | RunStatus:
         async with Loom(config) as loom:
-            run_id, tenant = RunId(args.run_id), _tenant(args)
+            run_id = RunId(args.run_id)
             state = await loom.state(run_id, session_id=session, tenant_id=tenant)
             if state.finished:
                 return state.status
-            return await loom.resume(run_id, session_id=session, tenant_id=tenant)
+            return await loom.resume(run_id, session_id=session, tenant_id=tenant, user=actor)
 
     outcome = asyncio.run(go())
     if isinstance(outcome, RunStatus):
@@ -2000,7 +2010,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return OK
-    return _report(outcome, as_json=args.json, tenant=_tenant(args))
+    return _report(outcome, as_json=args.json, tenant=tenant)
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
@@ -2316,7 +2326,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
     _console(config)
     run_id = RunId(args.run_id)
     session = SessionId(args.session) if args.session else None
-    tenant = _tenant(args)
+    actor, tenant = _acting(args, config)
     arguments = getattr(args, "arguments", None)
     if arguments is not None and args.call is None:
         print("--arguments corrige un appel désigné : ajouter --call.", file=sys.stderr)
@@ -2333,7 +2343,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
                 calls = await loom.approve(
                     run_id,
                     call_id=args.call,
-                    by=args.by,
+                    user=actor,
                     reason=args.reason,
                     arguments=corrected,
                     session_id=session,
@@ -2343,7 +2353,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
                 calls = await loom.reject(
                     run_id,
                     call_id=args.call,
-                    by=args.by,
+                    user=actor,
                     reason=args.reason,
                     session_id=session,
                     tenant_id=tenant,
@@ -2366,7 +2376,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
     _say(f"{verdict} : {', '.join(calls)}", file=sys.stderr)
     if brokered and not args.no_wait:
         follow = f"loom sessions show {session or run_id}"
-        if tenant is not None:
+        if tenant != DEFAULT_TENANT:
             follow += f" --tenant {tenant}"
         _say(
             f"Reprise confiée au worker (file {config.storage.queue.backend}) : "
@@ -2375,7 +2385,7 @@ def cmd_decide(args: argparse.Namespace) -> int:
         )
     if result is None:
         return OK
-    return _report(result, as_json=args.json, tenant=_tenant(args))
+    return _report(result, as_json=args.json, tenant=tenant)
 
 
 def cmd_answer(args: argparse.Namespace) -> int:
@@ -2393,7 +2403,7 @@ def cmd_answer(args: argparse.Namespace) -> int:
     _console(config)
     run_id = RunId(args.run_id)
     session = SessionId(args.session) if args.session else None
-    tenant = _tenant(args)
+    actor, tenant = _acting(args, config)
     if (args.texte is None) == (args.answer is None):
         print("Donner la réponse en texte, ou une --answer par question.", file=sys.stderr)
         return REFUSED
@@ -2421,7 +2431,7 @@ def cmd_answer(args: argparse.Namespace) -> int:
                 answers=sent,
                 text=args.texte,
                 call_id=args.call,
-                by=args.by,
+                user=actor,
                 session_id=session,
                 tenant_id=tenant,
             )
@@ -2492,7 +2502,7 @@ async def _target(
     if len(targets) != 1:
         return None
     where = "" if result.session_id == result.run_id else f" --session {result.session_id}"
-    if tenant is not None:
+    if tenant is not None and tenant != DEFAULT_TENANT:
         where += f" --tenant {tenant}"
     with_call = call_id is not None or len(result.pending_questions) > 1
     return _Target(targets[0], _Hint(result.run_id, where, with_call))
@@ -3111,27 +3121,14 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         print(MISSING_EXTRA.format(what="'loom mcp'", extra="mcp"), file=sys.stderr)
         return REFUSED
 
-    tenant = _tenant(args)
-    if args.user is not None:
-        # Vérifié avant d'ouvrir le serveur : une erreur dite sur stderr, pas
-        # un protocole qui se ferme sans un mot.
-        try:
-            actor = Actor.of(config.security, args.user)
-        except AccessDenied as refused:
-            print(refused, file=sys.stderr)
-            return REFUSED
-        if tenant is not None and tenant != actor.tenant:
-            print(
-                f"--tenant {tenant} : {actor.user} agit pour le client {actor.tenant}",
-                file=sys.stderr,
-            )
-            return REFUSED
-        tenant = actor.tenant
+    # Vérifié avant d'ouvrir le serveur : une erreur dite sur stderr, pas un
+    # protocole qui se ferme sans un mot.
+    actor, _ = _acting(args, config)
 
     async def go() -> None:
         # Rien ne doit aller sur stdout : le protocole y passe.
         async with Loom(config) as loom:
-            await run_stdio(loom, tenant=tenant or DEFAULT_TENANT, user=args.user)
+            await run_stdio(loom, user=actor.user)
 
     asyncio.run(go())
     return OK
@@ -3358,6 +3355,32 @@ def _tenant(args: argparse.Namespace) -> TenantId | None:
     return TenantId(given) if given else None
 
 
+class MissingUser(Exception):
+    """Une commande qui agit sans dire au nom de qui : ni ``--user``, ni ``LOOM_USER``."""
+
+
+def _acting(args: argparse.Namespace, config: LoomConfig) -> tuple[Actor, TenantId]:
+    """L'utilisateur de la commande et son client (D-10).
+
+    ``--user``, sinon ``LOOM_USER`` — qui peut se poser dans le ``.env`` du
+    projet, que ``loom`` lit avant tout. L'identité est **déclarative** : la
+    CLI lit le journal elle-même, loom ne peut pas l'authentifier ; les droits
+    y sont un garde-fou contre l'erreur, pas une sécurité (§ 6.4). Un
+    ``--tenant`` qui n'est pas celui de l'utilisateur est refusé.
+    """
+    user = getattr(args, "user", None) or os.environ.get(USER_ENV)
+    if not user:
+        raise MissingUser(
+            f"Au nom de qui ? Donner --user UTILISATEUR, ou poser {USER_ENV} "
+            "(dans l'environnement ou le .env du projet)"
+        )
+    actor = Actor.of(config.security, user)
+    tenant = _tenant(args)
+    if tenant is not None and tenant != actor.tenant:
+        raise AccessDenied(f"--tenant {tenant} : {actor.user} agit pour le client {actor.tenant}")
+    return actor, actor.tenant
+
+
 def _budget_line(budgets: Budgets) -> str:
     """Limites d'un agent, en une ligne : « run max_cost 0.05, max_calls 20 ; stop »."""
     parts: list[str] = []
@@ -3480,7 +3503,7 @@ def _report(
         # La commande se copie telle quelle : sans la session ni le client, elle
         # chercherait le run dans un journal qui n'est pas le sien (18/10).
         where = "" if result.session_id == result.run_id else f" --session {result.session_id}"
-        if tenant is not None:
+        if tenant is not None and tenant != DEFAULT_TENANT:
             where += f" --tenant {tenant}"
         for asked in result.pending_approvals:
             _say(
@@ -3599,7 +3622,7 @@ def _answer_hint(
     ``with_call`` : plusieurs appels attendent dans le run, ``loom answer``
     exige alors ``--call`` (sans lui, le moteur refuse : « indiquer call_id »).
     """
-    tenant_flag = f" --tenant {tenant}" if tenant is not None else ""
+    tenant_flag = f" --tenant {tenant}" if tenant not in (None, DEFAULT_TENANT) else ""
     message = f'loom run {agent} "<réponse>" --session {session_id}{tenant_flag}'
     command = _answer_command(pending, _Hint(run_id, where, with_call))
     if len(pending.questions) <= 1:

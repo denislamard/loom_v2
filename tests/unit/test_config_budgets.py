@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import MODEL, QUESTION, ConfigFactory, demo_agent
+from conftest import DEV, MODEL, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -39,7 +39,7 @@ async def test_agent_budget_overrides_the_root_and_is_bound(demo: ConfigFactory)
         assert [b.name for b in bound] == ["loom.budget"]
         guard = bound[0].policy
         assert isinstance(guard, BudgetGuard) and guard.budgets == budgets
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         report = await loom.report(result.run_id)
     assert report.total.calls == 2 and report.total.cost == pytest.approx(result.cost_usd)
     assert [line.name for line in report.roles] == ["main"]

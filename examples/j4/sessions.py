@@ -99,8 +99,8 @@ def marqueurs(events: list[Event]) -> list[tuple[int, SessionSnapshot]]:
 
 
 async def conversation(loom: Loom, agent: str, session: SessionId) -> tuple[RunResult, RunResult]:
-    first = await loom.run(agent, PREMIERE, session_id=session)
-    second = await loom.run(agent, SECONDE, session_id=session)
+    first = await loom.run(agent, PREMIERE, session_id=session, user="dev")
+    second = await loom.run(agent, SECONDE, session_id=session, user="dev")
     return first, second
 
 
@@ -108,8 +108,8 @@ async def paralleles(loom: Loom, agent: str, session: SessionId) -> list[RunResu
     """Deux runs lancés en même temps sur la même session."""
     return list(
         await asyncio.gather(
-            loom.run(agent, PREMIERE, session_id=session),
-            loom.run(agent, PREMIERE, session_id=session),
+            loom.run(agent, PREMIERE, session_id=session, user="dev"),
+            loom.run(agent, PREMIERE, session_id=session, user="dev"),
         )
     )
 

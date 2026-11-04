@@ -31,7 +31,7 @@ accès a sa façon de le rendre et de le trancher.
   ``status: paused``, le ``run_id`` et ce qui attend — un humain tranche
   ailleurs, puis ``run_status`` relit le run.
 
-La CLI tranche de la même façon (``loom approve <run_id> --by …``), et
+La CLI tranche de la même façon (``loom approve <run_id> --user …``), et
 l'exemple affiche la commande ; il ne la lance pas, parce que l'outil
 sensible vit dans ce fichier et non dans la config que la commande
 chargerait.
@@ -71,7 +71,9 @@ DEMANDE = "Relance le client du devis D-2026-042, sur un ton cordial."
 CAS = ("python", "rest", "mcp")
 ENVOI = "envoyer_email"
 CLIENTE = "mme.martin@example.com"
-ARTISAN = "l'artisan"
+# L'utilisateur au nom duquel l'exemple agit, déclaré dans relance/loom.yaml (D-1) :
+# c'est lui qui lance, et lui qui signe les décisions.
+UTILISATEUR = "dev"
 # Au-delà, l'attente d'un état abandonne : l'exemple ne doit pas pendre.
 ATTENTE_MAX = 120.0
 
@@ -200,13 +202,13 @@ def _security(declared: SecurityConfig) -> SecurityConfig:
                 ApiKey(
                     id="atelier",
                     hash=fingerprint(CLE_ATELIER),
-                    user="dev",
+                    user=UTILISATEUR,
                     scopes=("run", "answer", "cancel", "read", "approve", "self_approve", "amend"),
                 ),
                 ApiKey(
                     id="tableau",
                     hash=fingerprint(CLE_TABLEAU),
-                    user="dev",
+                    user=UTILISATEUR,
                     scopes=("run", "answer", "cancel", "read"),
                 ),
             )
@@ -267,7 +269,7 @@ async def attendre(loom: Loom, run_id: RunId, session: SessionId, *etats: str) -
 
 async def par_python(loom: Loom, agent: str, session: SessionId) -> None:
     print("— Python : le run part en arrière-plan, l'artisan tranche, le run repart\n")
-    run_id = await loom.submit(agent, DEMANDE, session_id=session)
+    run_id = await loom.submit(agent, DEMANDE, session_id=session, user=UTILISATEUR)
     print(f"  submit    : {run_id} — déjà inscrit au journal, rendu sans attendre")
     await loom.drain()
 
@@ -276,10 +278,12 @@ async def par_python(loom: Loom, agent: str, session: SessionId) -> None:
     print(f"  fiche     : {len(fiche.runs)} run, {len(attente)} approbation(s) à trancher")
     for asked in attente:
         print(f"    {asked.tool_name} ({asked.call_id}) → {asked.arguments.get('destinataire')}")
-    print(f'  en CLI    : loom approve {run_id} --session {session} --by "{ARTISAN}"')
+    print(f"  en CLI    : loom approve {run_id} --session {session} --user {UTILISATEUR}")
 
-    accordes = await loom.approve(run_id, by=ARTISAN, reason="devis vérifié", session_id=session)
-    print(f"  décision  : {len(accordes)} appel accordé par « {ARTISAN} »")
+    accordes = await loom.approve(
+        run_id, user=UTILISATEUR, reason="devis vérifié", session_id=session
+    )
+    print(f"  décision  : {len(accordes)} appel accordé par « {UTILISATEUR} »")
     await loom.drain()
     fin = await loom.result(run_id, session_id=session)
     events = await loom.export_session(session)
@@ -403,7 +407,7 @@ async def par_mcp(loom: Loom, agent: str, session: SessionId) -> None:
     client = Implementation(name="atelier-mcp", version="1.0")
     print("  client qui déclare l'elicitation :")
     async with connected(
-        create_server(loom), client_info=client, elicitation_callback=formulaire
+        create_server(loom, user=UTILISATEUR), client_info=client, elicitation_callback=formulaire
     ) as mcp:
         result = await mcp.call_tool(agent, {"message": DEMANDE, "session_id": avec})
         structure = result.structuredContent or {}
@@ -415,7 +419,7 @@ async def par_mcp(loom: Loom, agent: str, session: SessionId) -> None:
 
     sans = SessionId(f"{session}-pause")
     print("\n  client qui ne la déclare pas :")
-    async with connected(create_server(loom), client_info=client) as mcp:
+    async with connected(create_server(loom, user=UTILISATEUR), client_info=client) as mcp:
         arrete = await mcp.call_tool(agent, {"message": DEMANDE, "session_id": sans})
         structure = arrete.structuredContent or {}
         run_id = RunId(str(structure["run_id"]))
@@ -423,7 +427,7 @@ async def par_mcp(loom: Loom, agent: str, session: SessionId) -> None:
         print(f"    outil     : {structure.get('status')}, isError={bool(arrete.isError)}")
         print(f"    rendu     : run {run_id}, {len(attente)} approbation(s) — pas une erreur")
 
-        await loom.approve(run_id, by=ARTISAN, session_id=sans)
+        await loom.approve(run_id, user=UTILISATEUR, session_id=sans)
         await loom.drain()
         print(f"    un humain tranche ailleurs (REST, ou loom approve {run_id})")
         relu = await mcp.call_tool(STATUS_TOOL, {"run_id": run_id, "session_id": sans})

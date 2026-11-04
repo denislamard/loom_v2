@@ -13,13 +13,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import DEV, secured
 from pydantic import JsonValue
 
 from loom_ia.access import AccessDenied
-from loom_ia.access.api import ApprovalStale, Loom, RunResult, UnknownApproval
+from loom_ia.access.api import UNCHECKED, ApprovalStale, Loom, RunResult, UnknownApproval
 from loom_ia.access.cli import main
 from loom_ia.access.evals import received_arguments
+from loom_ia.access.progress import describe
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
@@ -49,6 +50,8 @@ from loom_ia.core.projections import awaiting_in_session, fold
 from loom_ia.engine import cancellation
 from loom_ia.replay.book import ReplayBook
 from loom_ia.runtime import build_agent
+from loom_ia.telemetry import Trace
+from loom_ia.telemetry.inspect import render_trace
 from loom_ia.testing import RunJournal
 
 type ConfigFactory = Callable[..., Path]
@@ -245,8 +248,8 @@ def test_a_policy_can_require_an_approval_on_any_tool(atelier: ConfigFactory) ->
 def test_an_approved_call_is_replayed_and_the_run_finishes(atelier: ConfigFactory) -> None:
     async def go() -> tuple[list[str], str]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
-            assert await loom.approve(run.run_id, by="denis", session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
+            assert await loom.approve(run.run_id, user=DEV, session_id=SESSION)
             await loom.drain()
             fin = await loom.result(run.run_id, session_id=SESSION)
             events = await loom.export_session(SESSION)
@@ -268,11 +271,11 @@ def test_an_approver_can_correct_the_arguments(atelier: ConfigFactory) -> None:
 
     async def go() -> tuple[dict[str, Any], dict[str, Any], str]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             await loom.approve(
                 run.run_id,
                 call_id=run.pending_approvals[0].call_id,
-                by="denis",
+                user=DEV,
                 arguments={"destinataire": "compta@example.com"},
                 session_id=SESSION,
             )
@@ -298,9 +301,9 @@ def test_a_deferred_approval_sends_what_the_approver_saw(atelier: ConfigFactory)
 
     async def go() -> tuple[dict[str, Any], str]:
         async with Loom.from_config(atelier(policies=[{"hook": "corrige_destinataire"}])) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             [demande] = run.pending_approvals
-            assert await loom.approve(run.run_id, by="denis", session_id=SESSION)
+            assert await loom.approve(run.run_id, user=DEV, session_id=SESSION)
             await loom.drain()
             events = await loom.export_session(SESSION)
         fini = next(
@@ -325,11 +328,11 @@ def test_evals_read_the_arguments_the_approver_corrected(atelier: ConfigFactory)
 
     async def go() -> dict[tuple[str, str], dict[str, Any]]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             await loom.approve(
                 run.run_id,
                 call_id=run.pending_approvals[0].call_id,
-                by="denis",
+                user=DEV,
                 arguments={"destinataire": "compta@example.com"},
                 session_id=SESSION,
             )
@@ -349,15 +352,16 @@ def test_corrected_arguments_need_a_designated_call(atelier: ConfigFactory) -> N
 
     async def go() -> tuple[int, tuple[str, ...]]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             with pytest.raises(ValueError, match="call_id"):
                 await loom.approve(
                     run.run_id,
                     arguments={"destinataire": "compta@example.com"},
                     session_id=SESSION,
+                    user=DEV,
                 )
             # Rien n'a été décidé : l'appel attend toujours.
-            granted = await loom.approve(run.run_id, by="denis", session_id=SESSION)
+            granted = await loom.approve(run.run_id, user=DEV, session_id=SESSION)
             await loom.drain()
             return len(run.pending_approvals), granted
 
@@ -375,11 +379,11 @@ def test_the_model_reads_the_call_that_actually_went_out(atelier: ConfigFactory)
 
     async def go() -> list[dict[str, Any]]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             await loom.approve(
                 run.run_id,
                 call_id=run.pending_approvals[0].call_id,
-                by="denis",
+                user=DEV,
                 arguments={"destinataire": "compta@example.com"},
                 session_id=SESSION,
             )
@@ -405,11 +409,11 @@ def test_a_paused_correction_is_kept_for_the_model(atelier: ConfigFactory) -> No
 
     async def go() -> tuple[Amendment, ...]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             await loom.approve(
                 run.run_id,
                 call_id=run.pending_approvals[0].call_id,
-                by="denis",
+                user=DEV,
                 reason="adresse de la compta",
                 arguments={"destinataire": "compta@example.com"},
                 session_id=SESSION,
@@ -419,7 +423,7 @@ def test_a_paused_correction_is_kept_for_the_model(atelier: ConfigFactory) -> No
 
     [amendment] = asyncio.run(go())
     assert (amendment.origin, amendment.fields) == ("approval", ("destinataire",))
-    assert (amendment.by, amendment.reason) == ("denis", "adresse de la compta")
+    assert (amendment.by, amendment.reason) == (DEV, "adresse de la compta")
 
 
 def test_a_policy_replacement_is_visible_to_the_model_too(atelier: ConfigFactory) -> None:
@@ -428,7 +432,7 @@ def test_a_policy_replacement_is_visible_to_the_model_too(atelier: ConfigFactory
     async def go() -> list[dict[str, Any]]:
         path = atelier(approval=None, policies=[{"hook": "corrige_destinataire"}])
         async with Loom.from_config(path) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             state = await loom.state(run.run_id, session_id=SESSION)
         return [
             dict(block.arguments)
@@ -445,9 +449,9 @@ def test_a_rejected_call_never_runs_and_its_reason_goes_to_the_model(
 ) -> None:
     async def go() -> tuple[list[str], str]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             await loom.reject(
-                run.run_id, by="denis", reason="destinataire non vérifié", session_id=SESSION
+                run.run_id, user=DEV, reason="destinataire non vérifié", session_id=SESSION
             )
             await loom.drain()
             events = await loom.export_session(SESSION)
@@ -468,8 +472,8 @@ def test_a_rejected_call_never_runs_and_its_reason_goes_to_the_model(
 def test_deciding_an_unknown_call_is_refused(atelier: ConfigFactory) -> None:
     async def go() -> None:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
-            await loom.approve(run.run_id, call_id="inconnu", session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
+            await loom.approve(run.run_id, call_id="inconnu", session_id=SESSION, user=DEV)
 
     with pytest.raises(UnknownApproval, match="inconnu"):
         asyncio.run(go())
@@ -478,10 +482,10 @@ def test_deciding_an_unknown_call_is_refused(atelier: ConfigFactory) -> None:
 def test_deciding_a_finished_run_changes_nothing(atelier: ConfigFactory) -> None:
     async def go() -> tuple[tuple[str, ...], int]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
-            await loom.approve(run.run_id, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
+            await loom.approve(run.run_id, session_id=SESSION, user=DEV)
             await loom.drain()
-            encore = await loom.approve(run.run_id, by="denis", session_id=SESSION)
+            encore = await loom.approve(run.run_id, user=DEV, session_id=SESSION)
             events = await loom.export_session(SESSION)
         return encore, len([e for e in events if e.type == "approval.granted"])
 
@@ -495,17 +499,20 @@ def test_a_cancelled_paused_run_awaits_nothing(atelier: ConfigFactory) -> None:
 
     async def go() -> list[str]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             [asked] = run.pending_approvals
-            assert await loom.cancel(run.run_id, session_id=SESSION, by="denis")
+            assert await loom.cancel(run.run_id, session_id=SESSION, user=DEV)
 
             result = await loom.result(run.run_id, session_id=SESSION)
             assert result.status is RunStatus.CANCELLED
             assert result.pending_approvals == ()
             assert (await loom.session(SESSION)).pending_approvals == ()
             for decide in (loom.approve, loom.reject):
-                assert await decide(run.run_id, by="denis", session_id=SESSION) == ()
-                assert await decide(run.run_id, call_id=asked.call_id, session_id=SESSION) == ()
+                assert await decide(run.run_id, user=DEV, session_id=SESSION) == ()
+                assert (
+                    await decide(run.run_id, call_id=asked.call_id, session_id=SESSION, user=DEV)
+                    == ()
+                )
             await loom.drain()
             # Le run se relit encore : rien n'a été écrit après son annulation.
             await loom.result(run.run_id, session_id=SESSION)
@@ -528,14 +535,14 @@ def test_two_simultaneous_approvals_decide_once(atelier: ConfigFactory) -> None:
 
     async def go() -> tuple[list[tuple[str, ...]], RunStatus, RunStatus, list[str]]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             decided = await asyncio.gather(
-                loom.approve(run.run_id, by="denis", session_id=SESSION),
-                loom.approve(run.run_id, by="marie", session_id=SESSION),
+                loom.approve(run.run_id, user=DEV, session_id=SESSION),
+                loom.approve(run.run_id, user=DEV, session_id=SESSION),
             )
             await loom.drain()
             fin = await loom.result(run.run_id, session_id=SESSION)
-            suivant = await loom.run("demo", DEMANDE, session_id=SESSION)
+            suivant = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             events = await loom.export_session(SESSION)
         return list(decided), fin.status, suivant.status, [e.type for e in events]
 
@@ -550,10 +557,10 @@ def test_two_simultaneous_approvals_decide_once(atelier: ConfigFactory) -> None:
 def test_an_approval_and_a_refusal_at_once_decide_once(atelier: ConfigFactory) -> None:
     async def go() -> tuple[list[tuple[str, ...]], RunStatus, list[str]]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             decided = await asyncio.gather(
-                loom.approve(run.run_id, by="denis", session_id=SESSION),
-                loom.reject(run.run_id, by="marie", reason="non", session_id=SESSION),
+                loom.approve(run.run_id, user=DEV, session_id=SESSION),
+                loom.reject(run.run_id, user=DEV, reason="non", session_id=SESSION),
             )
             await loom.drain()
             fin = await loom.result(run.run_id, session_id=SESSION)
@@ -572,11 +579,11 @@ def test_two_instances_deciding_at_once_decide_once(atelier: ConfigFactory) -> N
     async def go() -> tuple[list[tuple[str, ...]], list[str]]:
         path = atelier()
         async with Loom.from_config(path) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
         async with Loom.from_config(path) as cli, Loom.from_config(path) as serveur:
             decided = await asyncio.gather(
-                cli.approve(run.run_id, by="cli", session_id=SESSION),
-                serveur.approve(run.run_id, by="rest", session_id=SESSION),
+                cli.approve(run.run_id, user=DEV, session_id=SESSION),
+                serveur.approve(run.run_id, user=DEV, session_id=SESSION),
             )
             await cli.drain()
             await serveur.drain()
@@ -605,7 +612,7 @@ def test_a_queue_failure_after_the_pause_leaves_the_run_and_its_result(
         async with Loom.from_config(atelier()) as loom:
             monkeypatch.setattr(loom._queue, "submit", broker_down)  # pyright: ignore[reportPrivateUsage]
             with caplog.at_level(logging.ERROR, logger="loom_ia.access.api"):
-                run = await loom.run("demo", DEMANDE, session_id=SESSION)
+                run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             return run, (await loom.state(run.run_id, session_id=SESSION)).status
 
     run, status = asyncio.run(go())
@@ -627,11 +634,11 @@ def test_a_queue_failure_after_a_decision_keeps_the_decision(
 
     async def go() -> tuple[tuple[str, ...], list[str], bool, tuple[str, ...], RunStatus]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             real = loom._queue.submit  # pyright: ignore[reportPrivateUsage]
             monkeypatch.setattr(loom._queue, "submit", broker_down)  # pyright: ignore[reportPrivateUsage]
             with caplog.at_level(logging.ERROR, logger="loom_ia.access.api"):
-                granted = await loom.approve(run.run_id, by="denis", session_id=SESSION)
+                granted = await loom.approve(run.run_id, user=DEV, session_id=SESSION)
             types = [e.type for e in await loom.export_session(SESSION)]
             finished = (await loom.state(run.run_id, session_id=SESSION)).finished
             monkeypatch.setattr(loom._queue, "submit", real)  # pyright: ignore[reportPrivateUsage]
@@ -654,7 +661,7 @@ def test_a_failure_before_the_decision_is_written_still_raises(
 
     async def go() -> list[str]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             write = loom.store.append
 
             async def refusing(
@@ -664,7 +671,7 @@ def test_a_failure_before_the_decision_is_written_still_raises(
 
             monkeypatch.setattr(loom.store, "append", refusing)
             with pytest.raises(OSError, match="journal en panne"):
-                await loom.approve(run.run_id, session_id=SESSION)
+                await loom.approve(run.run_id, session_id=SESSION, user=DEV)
             monkeypatch.setattr(loom.store, "append", write)
             return [
                 a.tool_name for a in (await loom.state(run.run_id, session_id=SESSION)).awaiting
@@ -681,14 +688,14 @@ def test_closing_without_waiting_leaves_the_resumption_to_the_journal(
     async def go() -> tuple[list[str], list[str], RunStatus]:
         path = atelier()
         loom = Loom.from_config(path)
-        run = await loom.run("demo", DEMANDE, session_id=SESSION)
-        assert await loom.approve(run.run_id, by="denis", session_id=SESSION)
+        run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
+        assert await loom.approve(run.run_id, user=DEV, session_id=SESSION)
         await loom.aclose(wait=False)
 
         # Une autre instance relit le journal : rien n'a suivi la décision.
         async with Loom.from_config(path) as again:
             before = [e.type for e in await again.export_session(SESSION)]
-            resumed = await again.resume(run.run_id, session_id=SESSION)
+            resumed = await again.resume(run.run_id, session_id=SESSION, user=DEV)
             after = [e.type for e in await again.export_session(SESSION)]
         return before, after, resumed.status
 
@@ -703,8 +710,8 @@ def test_closing_waits_for_the_resumption_by_default(atelier: ConfigFactory) -> 
     async def go() -> list[str]:
         path = atelier()
         loom = Loom.from_config(path)
-        run = await loom.run("demo", DEMANDE, session_id=SESSION)
-        assert await loom.approve(run.run_id, by="denis", session_id=SESSION)
+        run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
+        assert await loom.approve(run.run_id, user=DEV, session_id=SESSION)
         await loom.aclose()
         async with Loom.from_config(path) as again:
             return [e.type for e in await again.export_session(SESSION)]
@@ -724,10 +731,10 @@ def test_a_request_is_bounded_by_default(atelier: ConfigFactory) -> None:
 
     async def go() -> tuple[datetime | None, datetime | None]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             defaut = run.pending_approvals[0].expire_at
         async with Loom.from_config(atelier(settings={"expires_in": None})) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SessionId("sans-delai"))
+            run = await loom.run("demo", DEMANDE, session_id=SessionId("sans-delai"), user=DEV)
             retire = run.pending_approvals[0].expire_at
         return defaut, retire
 
@@ -744,7 +751,7 @@ def test_an_unanswered_request_expires_from_the_journal(atelier: ConfigFactory) 
     async def go() -> tuple[list[str], str]:
         path = atelier(settings={"expires_in": 0.3})
         async with Loom.from_config(path) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             assert run.status is RunStatus.PAUSED
             await asyncio.sleep(0.6)
             # Personne n'a appelé `approve` : c'est le réveil différé qui reprend.
@@ -762,7 +769,7 @@ def test_an_expiry_can_fail_the_run(atelier: ConfigFactory) -> None:
     async def go() -> tuple[str, str | None]:
         path = atelier(settings={"expires_in": 0.3, "on_expiry": "fail"})
         async with Loom.from_config(path) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             await asyncio.sleep(0.6)
             await loom.drain()
             fin = await loom.result(run.run_id, session_id=SESSION)
@@ -780,8 +787,8 @@ def test_a_decision_still_wins_over_a_deadline_that_has_not_passed(
     async def go() -> list[str]:
         path = atelier(settings={"expires_in": 30})
         async with Loom.from_config(path) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
-            await loom.approve(run.run_id, by="denis", session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
+            await loom.approve(run.run_id, user=DEV, session_id=SESSION)
             await loom.drain()
             events = await loom.export_session(SESSION)
         return [e.type for e in events]
@@ -802,7 +809,7 @@ def test_a_stale_request_can_no_longer_be_decided(atelier: ConfigFactory) -> Non
     async def go() -> tuple[str, list[str], list[str], RunStatus]:
         path = atelier(settings={"expires_in": 0.3})
         loom = Loom.from_config(path)
-        run = await loom.run("demo", DEMANDE, session_id=SESSION)
+        run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
         call = run.pending_approvals[0].call_id
         # Comme le process de ``loom run`` : le réveil différé est perdu.
         await loom.aclose(wait=False)
@@ -810,11 +817,11 @@ def test_a_stale_request_can_no_longer_be_decided(atelier: ConfigFactory) -> Non
         async with Loom.from_config(path) as again:
             paused = [e.type for e in await again.export_session(SESSION)]
             with pytest.raises(ApprovalStale) as refused:
-                await again.approve(run.run_id, by="denis", session_id=SESSION)
+                await again.approve(run.run_id, user=DEV, session_id=SESSION)
             with pytest.raises(ApprovalStale):
-                await again.reject(run.run_id, call_id=call, session_id=SESSION)
+                await again.reject(run.run_id, call_id=call, session_id=SESSION, user=DEV)
             before = [e.type for e in await again.export_session(SESSION)]
-            resumed = await again.resume(run.run_id, session_id=SESSION)
+            resumed = await again.resume(run.run_id, session_id=SESSION, user=DEV)
             after = [e.type for e in await again.export_session(SESSION)]
         assert before == paused
         return f"{call}|{refused.value}", before, after, resumed.status
@@ -909,7 +916,9 @@ def test_an_inline_approver_decides_without_pausing(atelier: ConfigFactory) -> N
 
     async def go() -> tuple[list[str], int, str]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur)
+            run = await loom.run(
+                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user=DEV
+            )
             events = await loom.export_session(SESSION)
         return [e.type for e in events], len(_paused(events)), str(run.status)
 
@@ -926,7 +935,9 @@ def test_an_inline_approver_can_refuse(atelier: ConfigFactory) -> None:
 
     async def go() -> tuple[list[str], str]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur)
+            run = await loom.run(
+                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user=DEV
+            )
             events = await loom.export_session(SESSION)
         return [e.type for e in events], str(run.status)
 
@@ -937,18 +948,22 @@ def test_an_inline_approver_can_refuse(atelier: ConfigFactory) -> None:
 
 
 def test_an_inline_approver_records_who_decided(atelier: ConfigFactory) -> None:
-    """L'audit de #17 tient dans ce champ, et nulle part ailleurs."""
+    """L'audit de #17 tient dans ce champ, et nulle part ailleurs.
+
+    L'approbateur en ligne agit pour le lanceur : c'est lui qui signe, quoi
+    que l'approbateur écrive (§ 6.2).
+    """
 
     async def approbateur(demande: PendingApproval) -> ApprovalDecision:
         return Approved(by="denis")
 
     async def go() -> list[FacetValue]:
         async with Loom.from_config(atelier()) as loom:
-            await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur)
+            await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur, user=DEV)
             events = await loom.export_session(SESSION)
         return [e.facets.get("by") for e in events if e.type == "approval.granted"]
 
-    assert asyncio.run(go()) == ["denis"]
+    assert asyncio.run(go()) == [DEV]
 
 
 def test_a_decision_is_written_where_its_request_waited(atelier: ConfigFactory) -> None:
@@ -967,13 +982,13 @@ def test_a_decision_is_written_where_its_request_waited(atelier: ConfigFactory) 
             return Approved(by="denis")
 
         async with Loom.from_config(atelier()) as loom:
-            await loom.run("demo", DEMANDE, session_id=boucle, approver=approbateur)
+            await loom.run("demo", DEMANDE, session_id=boucle, approver=approbateur, user=DEV)
             return _spans(await loom.export_session(boucle))
 
     async def asynchrone() -> tuple[str, str, str]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=dehors)
-            await loom.approve(run.run_id, by="denis", session_id=dehors)
+            run = await loom.run("demo", DEMANDE, session_id=dehors, user=DEV)
+            await loom.approve(run.run_id, user=DEV, session_id=dehors)
             await loom.drain()
             events = await loom.export_session(dehors)
             racine = next(e.span_id for e in events if e.type == "run.started")
@@ -1002,7 +1017,7 @@ def test_a_paused_child_puts_its_parent_on_hold(delegue: ConfigFactory) -> None:
 
     async def go() -> tuple[list[str], Any]:
         async with Loom.from_config(delegue()) as loom:
-            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             events = await loom.export_session(SESSION)
         parent = [e for e in events if e.run_id == result.run_id]
         return [e.type for e in parent], result
@@ -1020,7 +1035,7 @@ def test_the_waiting_transition_says_what_caused_it(delegue: ConfigFactory) -> N
 
     async def go() -> tuple[str | None, str | None]:
         async with Loom.from_config(delegue()) as loom:
-            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             events = await loom.export_session(SESSION)
         transition = next(
             e.payload
@@ -1040,7 +1055,7 @@ def test_the_root_shows_what_its_child_awaits(delegue: ConfigFactory) -> None:
 
     async def go() -> tuple[list[str], int]:
         async with Loom.from_config(delegue()) as loom:
-            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             racine = await loom.state(result.run_id, session_id=SESSION)
         return [a.tool_name for a in result.pending_approvals], len(racine.awaiting)
 
@@ -1055,8 +1070,8 @@ def test_approving_on_the_root_resumes_the_whole_tree(delegue: ConfigFactory) ->
 
     async def go() -> tuple[str, list[tuple[str, bool]], int]:
         async with Loom.from_config(delegue()) as loom:
-            result = await loom.run("demo", DEMANDE, session_id=SESSION)
-            assert await loom.approve(result.run_id, by="denis", session_id=SESSION)
+            result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
+            assert await loom.approve(result.run_id, user=DEV, session_id=SESSION)
             await loom.drain()
             fin = await loom.result(result.run_id, session_id=SESSION)
             events = await loom.export_session(SESSION)
@@ -1080,7 +1095,7 @@ def test_each_pending_approval_names_its_run(delegue: ConfigFactory) -> None:
 
     async def go() -> tuple[str, str | None, str | None, tuple[str | None, ...]]:
         async with Loom.from_config(delegue()) as loom:
-            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             info = await loom.session(SESSION)
         enfant = next(r.run_id for r in info.runs if r.parent_run_id == result.run_id)
         [asked] = result.pending_approvals
@@ -1101,9 +1116,9 @@ def test_a_paused_subrun_counts_for_the_next_turn(delegue: ConfigFactory) -> Non
 
     async def go() -> tuple[tuple[str, ...], tuple[str, ...]]:
         async with Loom.from_config(delegue()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             before = awaiting_in_session(await loom.export_session(SESSION))
-            await loom.approve(run.run_id, by="denis", session_id=SESSION)
+            await loom.approve(run.run_id, user=DEV, session_id=SESSION)
             await loom.drain()
             after = awaiting_in_session(await loom.export_session(SESSION))
         return tuple(a.tool_name for a in before), tuple(a.tool_name for a in after)
@@ -1119,7 +1134,7 @@ def test_sessions_show_lists_runs_and_what_awaits(
 
     async def go() -> str:
         async with Loom.from_config(path) as loom:
-            return (await loom.run("demo", DEMANDE, session_id=SESSION)).run_id
+            return (await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)).run_id
 
     racine = asyncio.run(go())
     capsys.readouterr()
@@ -1148,7 +1163,7 @@ def test_sessions_show_without_anything_to_decide(
 
     async def go() -> None:
         async with Loom.from_config(path) as loom:
-            await loom.run("demo", DEMANDE, session_id=SESSION)
+            await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
 
     asyncio.run(go())
     capsys.readouterr()
@@ -1173,7 +1188,7 @@ def test_a_closed_root_awaits_nothing_from_the_subrun_it_left_paused(
 
     async def go() -> tuple[tuple[str, ...], tuple[str, ...], list[str]]:
         async with Loom.from_config(path) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION)
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             assert [a.tool_name for a in run.pending_approvals] == ["envoyer_email"]
             events = await loom.export_session(SESSION)
         # La clôture d'avant la fermeture des sous-runs : le parent seul, l'enfant reste en pause.
@@ -1183,7 +1198,7 @@ def test_a_closed_root_awaits_nothing_from_the_subrun_it_left_paused(
         await store.aclose()
         async with Loom.from_config(path) as loom:
             result = await loom.result(run.run_id, session_id=SESSION)
-            granted = await loom.approve(run.run_id, session_id=SESSION)
+            granted = await loom.approve(run.run_id, session_id=SESSION, user=DEV)
             after = await loom.export_session(SESSION)
         return (
             tuple(a.tool_name for a in result.pending_approvals),
@@ -1201,9 +1216,9 @@ def test_a_refused_child_call_lets_the_tree_finish(delegue: ConfigFactory) -> No
 
     async def go() -> tuple[str, int]:
         async with Loom.from_config(delegue()) as loom:
-            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             await loom.reject(
-                result.run_id, by="denis", reason="pas ce destinataire", session_id=SESSION
+                result.run_id, user=DEV, reason="pas ce destinataire", session_id=SESSION
             )
             await loom.drain()
             fin = await loom.result(result.run_id, session_id=SESSION)
@@ -1225,7 +1240,7 @@ def test_a_waiting_parent_hands_its_lease_back(delegue: ConfigFactory) -> None:
 
     async def go() -> list[tuple[str, bool]]:
         async with Loom.from_config(delegue()) as loom:
-            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             events = await loom.export_session(SESSION)
         return [
             (str(e.facets["worker_id"]), _handed(e))
@@ -1243,7 +1258,7 @@ def test_a_childs_deadline_wakes_the_whole_tree(delegue: ConfigFactory) -> None:
     async def go() -> tuple[str, int]:
         path = delegue(settings={"expires_in": 0.3})
         async with Loom.from_config(path) as loom:
-            result = await loom.run("demo", DEMANDE, session_id=SESSION)
+            result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
             assert result.status is RunStatus.WAITING_CHILD
             # Personne n'appelle rien : c'est le réveil différé qui reprend.
             await asyncio.sleep(0.8)
@@ -1286,7 +1301,7 @@ def test_an_agent_that_cannot_pause_runs_on_any_journal(atelier: ConfigFactory) 
 
 async def _events(path: Path) -> tuple[list[Event], Any]:
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", DEMANDE, session_id=SESSION)
+        result = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
         return await loom.export_session(SESSION), result
 
 
@@ -1350,7 +1365,7 @@ def avec_acces(path: Path, access: dict[str, Any]) -> Path:
 
 async def _en_pause(path: Path) -> tuple[RunResult, list[Event]]:
     async with Loom.from_config(path) as loom:
-        run = await loom.run("demo", DEMANDE, session_id=SESSION)
+        run = await loom.run("demo", DEMANDE, session_id=SESSION, user=DEV)
         return run, await loom.export_session(SESSION)
 
 
@@ -1430,14 +1445,20 @@ def test_a_request_written_with_a_scope_still_reads(atelier: ConfigFactory) -> N
 def test_a_decision_records_its_gateway_its_roles_and_self_approval(
     atelier: ConfigFactory,
 ) -> None:
-    """L'audit (§ 7) : qui, par quelle passerelle, à quel titre, et s'il s'approuvait."""
+    """L'audit (§ 7) : qui, par quelle passerelle, à quel titre, et s'il s'approuvait.
+
+    Par le chemin interne (``UNCHECKED``) : la décision est écrite telle que
+    l'approbateur la signe, sans lanceur pour la réécrire.
+    """
 
     async def approbateur(demande: PendingApproval) -> ApprovalDecision:
         return Approved(by="marie", via="app-crm", roles=("approbateur",), self_approved=True)
 
     async def go() -> tuple[list[Event], RunResult]:
         async with Loom.from_config(atelier()) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur)
+            run = await loom.run(
+                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user=UNCHECKED
+            )
             return await loom.export_session(SESSION), run
 
     events, _ = asyncio.run(go())
@@ -1458,13 +1479,40 @@ def test_a_decision_records_its_gateway_its_roles_and_self_approval(
     )
 
 
+def test_the_progress_and_the_trace_say_who_decided_and_through_what(
+    atelier: ConfigFactory,
+) -> None:
+    """Le déroulé et ``loom inspect`` nomment la passerelle et l'auto-approbation (§ 7)."""
+
+    async def approbateur(demande: PendingApproval) -> ApprovalDecision:
+        return Approved(by="marie", via="app-crm", roles=("approbateur",), self_approved=True)
+
+    async def go() -> tuple[list[Event], Trace]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run(
+                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user=UNCHECKED
+            )
+            trace = await loom.trace(run.run_id, session_id=SESSION)
+            return await loom.export_session(SESSION), trace
+
+    events, trace = asyncio.run(go())
+    said = [describe(event) for event in events]
+    shown = "\n".join(render_trace(trace))
+
+    expected = "marie (via app-crm), auto-approbation"
+    assert f"approbation accordée par {expected} : envoyer_email" in said
+    assert f"approbation accordée par {expected}" in shown
+
+
 def test_a_refusal_records_the_same_audit(atelier: ConfigFactory) -> None:
     async def approbateur(demande: PendingApproval) -> ApprovalDecision:
         return Rejected(reason="non", by="alice", roles=("approbateur",))
 
     async def go() -> list[Event]:
         async with Loom.from_config(atelier()) as loom:
-            await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur)
+            await loom.run(
+                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user=UNCHECKED
+            )
             return await loom.export_session(SESSION)
 
     [refus] = [e.payload for e in asyncio.run(go()) if isinstance(e.payload, ApprovalRejected)]
@@ -1649,16 +1697,6 @@ def test_a_refused_decision_writes_nothing(atelier: ConfigFactory) -> None:
 
     avant, apres = asyncio.run(go())
     assert avant == apres
-
-
-def test_a_user_signs_himself_and_takes_no_free_signature(atelier: ConfigFactory) -> None:
-    async def go() -> None:
-        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
-            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
-            with pytest.raises(TypeError, match="c'est l'utilisateur qui signe"):
-                await loom.approve(run.run_id, session_id=SESSION, user="alice", by="le patron")
-
-    asyncio.run(go())
 
 
 def test_can_says_who_may_decide_without_writing(atelier: ConfigFactory) -> None:

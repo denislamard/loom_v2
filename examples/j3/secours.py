@@ -118,7 +118,7 @@ async def main(argv: list[str]) -> int:
     async with Loom(config) as loom:
         for number in range(1, args.runs + 1):
             try:
-                result = await loom.run(agent, args.question)
+                result = await loom.run(agent, args.question, user="dev")
             except (ModelConfigError, ConfigError) as error:
                 print(f"Configuration : {error}", file=sys.stderr)
                 return 2

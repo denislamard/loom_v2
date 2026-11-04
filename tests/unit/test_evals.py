@@ -52,7 +52,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import HOSTILE, HOSTILE_SHOWN, secured
+from conftest import DEV, HOSTILE, HOSTILE_SHOWN, secured
 from pydantic import JsonValue, ValidationError
 
 from loom_ia.access import Loom
@@ -297,8 +297,11 @@ def retouche(config: Path, target: Path, **root: Any) -> Path:
     data = yaml.safe_load(config.read_text(encoding="utf-8"))
     merged = {**data, **root}
     if "tenants" in root:
-        # Les utilisateurs suivent les clients déclarés (``secured``) : un par client.
+        # Les utilisateurs suivent les clients déclarés (``secured``) : un par client,
+        # et ``dev``, l'utilisateur local, n'en est plus.
         merged["security"] = {k: v for k, v in merged["security"].items() if k != "users"}
+        http = {k: v for k, v in merged["server"]["http"].items() if k != "user"}
+        merged["server"] = {**merged["server"], "http": http}
     target.write_text(yaml.safe_dump(secured(merged)), encoding="utf-8")
     return target
 
@@ -1660,7 +1663,7 @@ async def test_an_instance_serves_provided_models_and_leaves_them_open(labo: Pat
     with pytest.raises(ConfigError, match="non déclarés : ABSENT"):
         Loom(load_config(labo), models={"ABSENT": fourni})
     async with Loom(load_config(labo), models={"MAIN": fourni}) as loom:
-        result = await loom.run("demo", CALCUL)
+        result = await loom.run("demo", CALCUL, user=DEV)
     assert result.text == "2 + 2 = 4." and calcul.remaining == 0
     # Il reste à l'appelant : l'instance ne l'a pas fermé.
     assert not fourni.closed

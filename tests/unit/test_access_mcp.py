@@ -12,7 +12,7 @@ import pytest
 import yaml
 from conftest import ANSWER, DEV, PNG, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
 
-from loom_ia.access import Loom
+from loom_ia.access import AccessDenied, Loom
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import ApprovalGranted, Event, RunCancelled
@@ -56,7 +56,7 @@ type ElicitAction = Literal["accept", "decline", "cancel"]
 
 @asynccontextmanager
 async def serving(
-    path: Path, *, elicitation: Elicitation | None = None, user: str | None = None
+    path: Path, *, elicitation: Elicitation | None = None, user: str = DEV
 ) -> AsyncGenerator[tuple[Loom, ClientSession]]:
     """Une instance servie en MCP, et un client branché dessus.
 
@@ -69,6 +69,15 @@ async def serving(
             create_server(loom, user=user), client_info=CLIENT, elicitation_callback=elicitation
         ) as client:
             yield loom, client
+
+
+async def test_a_stdio_server_acts_for_a_named_user(demo: ConfigFactory) -> None:
+    """D-1 : sans clé, un serveur en stdio sert un utilisateur nommé, ou ne se monte pas."""
+    async with Loom.from_config(demo()) as loom:
+        with pytest.raises(TypeError, match="au nom de qui"):
+            create_server(loom)
+        with pytest.raises(AccessDenied, match="Utilisateur 'fantome' inconnu"):
+            create_server(loom, user="fantome")
 
 
 async def test_each_published_agent_is_a_tool(demo: ConfigFactory) -> None:
@@ -91,14 +100,14 @@ async def test_an_agent_named_like_a_control_tool_is_refused_at_mount(
     path = demo(agents=[demo_agent(), demo_agent(name=name)])
     async with Loom.from_config(path) as loom:
         with pytest.raises(ConfigError, match=f"Agent '{name}' publié en MCP"):
-            create_server(loom)
+            create_server(loom, user=DEV)
 
 
 async def test_such_an_agent_can_stay_off_mcp(demo: ConfigFactory) -> None:
     path = demo(agents=[demo_agent(), demo_agent(name=CANCEL_TOOL, expose={"mcp": False})])
     async with serving(path) as (loom, client):
         listed = await client.list_tools()
-        result = await loom.run(CANCEL_TOOL, QUESTION)
+        result = await loom.run(CANCEL_TOOL, QUESTION, user=DEV)
 
     assert {tool.name for tool in listed.tools} == {"demo", STATUS_TOOL, REPORT_TOOL, CANCEL_TOOL}
     assert result.text == ANSWER
@@ -164,7 +173,7 @@ async def test_a_call_on_an_unreadable_session_is_an_error_result_and_writes_not
     before = await store.last_seq(DEFAULT_TENANT, session)
 
     async with Loom(load_config(demo()), store=store) as loom:
-        async with connected(create_server(loom), client_info=CLIENT) as client:
+        async with connected(create_server(loom, user=DEV), client_info=CLIENT) as client:
             result = await client.call_tool("demo", {"message": QUESTION, "session_id": session})
 
     assert result.isError
@@ -191,7 +200,7 @@ async def test_a_run_refused_for_its_state_is_an_error_result_and_writes_nothing
         notes.append(message)
 
     async with Loom(load_config(demo(agents=[demo_agent(state=required)])), store=store) as loom:
-        async with connected(create_server(loom), client_info=CLIENT) as client:
+        async with connected(create_server(loom, user=DEV), client_info=CLIENT) as client:
             refused = [
                 await client.call_tool("demo", ask),
                 await client.call_tool("demo", ask, progress_callback=on_progress),
@@ -215,7 +224,7 @@ async def test_mcp_runs_in_a_session_whose_state_the_application_posed(
     required = {"client_id": {"schema": {"type": "string"}, "required": True}}
     session = SessionId("atelier")
     async with serving(demo(agents=[demo_agent(state=required)])) as (loom, client):
-        await loom.run("demo", QUESTION, session_id=session, state={"client_id": "C-001"})
+        await loom.run("demo", QUESTION, session_id=session, state={"client_id": "C-001"}, user=DEV)
         result = await client.call_tool("demo", {"message": QUESTION, "session_id": session})
         kept = await loom.session_state(session)
 
@@ -233,7 +242,7 @@ async def test_the_journal_is_the_same_as_by_the_python_access(demo: ConfigFacto
         by_mcp = await loom.events(result.structuredContent["run_id"])
 
     async with Loom.from_config(path) as loom:
-        direct = await loom.run("demo", QUESTION)
+        direct = await loom.run("demo", QUESTION, user=DEV)
         by_python = await loom.events(direct.run_id)
 
     assert [event.type for event in by_mcp] == [event.type for event in by_python]
@@ -261,8 +270,8 @@ async def test_the_two_indexes_are_listed_and_the_rest_is_templated(demo: Config
 
 async def test_the_index_of_runs_is_the_page_of_the_python_access(demo: ConfigFactory) -> None:
     async with serving(demo()) as (loom, client):
-        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
-        await loom.run("demo", QUESTION, session_id=SessionId("c-2"))
+        first = await loom.run("demo", QUESTION, session_id=SessionId("c-1"), user=DEV)
+        await loom.run("demo", QUESTION, session_id=SessionId("c-2"), user=DEV)
         page = _read(await client.read_resource(AnyUrl(RUNS)))
         journaux = _read(await client.read_resource(AnyUrl(SESSIONS)))
         direct = await loom.runs()
@@ -276,7 +285,7 @@ async def test_the_index_of_runs_is_the_page_of_the_python_access(demo: ConfigFa
 
 async def test_a_run_and_its_trace_are_read_by_uri(demo: ConfigFactory) -> None:
     async with serving(demo()) as (loom, client):
-        ran = await loom.run("demo", QUESTION, session_id=SessionId("c-1"))
+        ran = await loom.run("demo", QUESTION, session_id=SessionId("c-1"), user=DEV)
         dans = "?session_id=c-1"
         run = _read(await client.read_resource(AnyUrl(f"{RUNS}/{ran.run_id}{dans}")))
         trace = _read(await client.read_resource(AnyUrl(f"{RUNS}/{ran.run_id}/events{dans}")))
@@ -306,7 +315,7 @@ async def test_an_unknown_resource_says_so(demo: ConfigFactory) -> None:
 async def test_the_bytes_of_a_file_are_read_by_resource(tree: ConfigFactory) -> None:
     async with serving(tree()) as (loom, client):
         photo = Attachment(data=PNG, media_type="image/png", name="photo.png")
-        ran = await loom.run("demo", TREE_QUESTION, attachments=[photo])
+        ran = await loom.run("demo", TREE_QUESTION, attachments=[photo], user=DEV)
         [record] = [art for art in ran.artifacts if art.origin == "attachment"]
         # L'URI que le journal publie se lit telle quelle : un lien rendu par
         # loom n'est plus un lien mort.
@@ -333,7 +342,7 @@ async def test_a_file_of_another_client_is_not_found(demo: ConfigFactory) -> Non
     path = demo(tenants=[{"id": "default"}, {"id": "dupont"}])
     sien = "artifact://dupont/c-1/abc.png"
     mien = "artifact://default/c-1/abc.png"
-    async with serving(path) as (loom, client):
+    async with serving(path, user="default") as (loom, client):
         await loom.artifacts.put(sien, PNG)
         await loom.artifacts.put(mien, PNG)
         # Le serveur en stdio sert `default` : le fichier existe, et il est
@@ -348,9 +357,9 @@ async def test_cancel_stops_a_run_and_says_when_there_was_nothing_to_stop(
     demo: ConfigFactory,
 ) -> None:
     async with serving(demo(), user=DEV) as (loom, client):
-        ran = await loom.run("demo", QUESTION)
+        ran = await loom.run("demo", QUESTION, user=DEV)
         fini = await client.call_tool(CANCEL_TOOL, {"run_id": ran.run_id})
-        laisse = await loom.submit("demo", QUESTION)
+        laisse = await loom.submit("demo", QUESTION, user=DEV)
         # Le modèle ne choisit pas qui signe (D-5) : l'outil n'a pas de ``by``.
         signe = await client.call_tool(CANCEL_TOOL, {"run_id": laisse, "by": "l'artisan"})
         arrete = await client.call_tool(CANCEL_TOOL, {"run_id": laisse})
@@ -399,7 +408,8 @@ async def test_an_approval_is_elicited_when_the_client_can(atelier: ConfigFactor
     # Le run n'est jamais passé par la pause : la décision est venue dans la boucle.
     assert "approval.requested" in types and "approval.granted" in types
     assert "paused" not in [event.facets.get("to_state") for event in events]
-    assert _by(events, "approval.granted") == ["mcp:atelier-client"]
+    # L'élicitation tranche pour le lanceur : c'est lui qui signe (§ 6.2).
+    assert _by(events, "approval.granted") == [DEV]
     assert _reason(events, "approval.granted") == "devis vérifié"
 
 
@@ -413,7 +423,7 @@ async def test_an_elicited_refusal_never_calls_the_tool(atelier: ConfigFactory) 
         events = await loom.events(result.structuredContent["run_id"])
 
     assert result.structuredContent["status"] == "completed"
-    assert _by(events, "approval.rejected") == ["mcp:atelier-client"]
+    assert _by(events, "approval.rejected") == [DEV]
     assert "tool.called" not in [event.type for event in events]
 
 
@@ -440,7 +450,7 @@ async def test_without_elicitation_the_tool_hands_back_a_paused_run(
         run_id = paused.structuredContent["run_id"]
         relu = await client.call_tool(STATUS_TOOL, {"run_id": run_id})
 
-        await loom.approve(run_id, by="denis")
+        await loom.approve(run_id, user=DEV)
         await loom.drain()
         fini = await client.call_tool(STATUS_TOOL, {"run_id": run_id})
         assert fini.structuredContent is not None

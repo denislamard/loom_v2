@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from conftest import ANSWER, QUESTION, ConfigFactory
+from conftest import ANSWER, DEV, QUESTION, ConfigFactory
 
 from loom_ia.access.api import Loom, UnknownSession
 from loom_ia.access.cli import main
@@ -271,7 +271,7 @@ def test_a_snapshot_over_orphan_subruns_leaves_the_next_request_unchanged(
         await legacy_orphans(store)
         await store.aclose()
         async with Loom.from_config(path) as loom:
-            result = await loom.run("demo", QUESTION, session_id=SESSION)
+            result = await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             events = await loom.export_session(SESSION)
         hashes = [
             e.payload.request_hash
@@ -540,8 +540,8 @@ def test_two_runs_of_a_session_share_its_journal(demo: ConfigFactory) -> None:
     async def go() -> list[Event]:
         async with Loom.from_config(path) as loom:
             await asyncio.gather(
-                loom.run("demo", QUESTION, session_id=SESSION),
-                loom.run("demo", QUESTION, session_id=SESSION),
+                loom.run("demo", QUESTION, session_id=SESSION, user=DEV),
+                loom.run("demo", QUESTION, session_id=SESSION, user=DEV),
             )
             return await loom.export_session(SESSION)
 
@@ -559,8 +559,8 @@ def test_a_second_run_reads_the_first_from_the_snapshot(demo: ConfigFactory) -> 
 
     async def go() -> tuple[str, list[Event]]:
         async with Loom.from_config(path) as loom:
-            await loom.run("demo", QUESTION, session_id=SESSION)
-            second = await loom.run("demo", QUESTION, session_id=SESSION)
+            await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
+            second = await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             return second.text, await loom.export_session(SESSION)
 
     answer, events = asyncio.run(go())
@@ -583,7 +583,7 @@ def test_an_anonymous_run_gets_no_snapshot(demo: ConfigFactory) -> None:
 
     async def go() -> list[Event]:
         async with Loom.from_config(path) as loom:
-            result = await loom.run("demo", QUESTION)
+            result = await loom.run("demo", QUESTION, user=DEV)
             return await loom.export_session(result.session_id)
 
     assert not [e for e in asyncio.run(go()) if e.category == "session"]
@@ -597,7 +597,7 @@ def test_a_snapshot_stays_out_of_the_run_events(demo: ConfigFactory) -> None:
 
     async def go() -> tuple[list[Event], list[Event]]:
         async with Loom.from_config(path) as loom:
-            result = await loom.run("demo", QUESTION, session_id=SESSION)
+            result = await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             tree = await loom.events(result.run_id, session_id=SESSION)
             alone = await loom.events(result.run_id, session_id=SESSION, subruns=False)
             return tree, alone
@@ -615,8 +615,8 @@ def test_sessions_lists_what_the_instance_wrote(demo: ConfigFactory) -> None:
 
     async def go() -> list[str]:
         async with Loom.from_config(path) as loom:
-            await loom.run("demo", QUESTION, session_id=SESSION)
-            await loom.run("demo", QUESTION, session_id=SessionId("autre"))
+            await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
+            await loom.run("demo", QUESTION, session_id=SessionId("autre"), user=DEV)
             return [record.session_id for record in await loom.sessions()]
 
     assert sorted(asyncio.run(go())) == ["atelier", "autre"]
@@ -639,7 +639,7 @@ def test_deleting_a_session_removes_its_journal_and_its_files(demo: ConfigFactor
 
     async def go() -> tuple[int, int, list[SessionId], bool]:
         async with Loom.from_config(path) as loom:
-            await loom.run("demo", QUESTION, session_id=SESSION)
+            await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             await loom.artifacts.put(uri, b"des octets")
             removed = await loom.delete_session(SESSION)
             left = [record.session_id for record in await loom.sessions()]
@@ -697,7 +697,7 @@ def test_deleting_with_an_unusable_id_is_refused_before_touching_anything(
 
     async def go() -> tuple[int, bytes]:
         async with Loom.from_config(path) as loom:
-            await loom.run("demo", QUESTION, session_id=SESSION)
+            await loom.run("demo", QUESTION, session_id=SESSION, user=DEV)
             await loom.artifacts.put(uri, b"des octets")
             with pytest.raises(UnusableId, match="inutilisable"):
                 await loom.delete_session(SessionId(session), tenant_id=tenant)

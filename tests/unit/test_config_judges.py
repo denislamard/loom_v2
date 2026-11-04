@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import ANSWER, MODEL, QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, DEV, MODEL, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -64,7 +64,7 @@ async def test_a_judged_answer_by_the_python_access(demo: ConfigFactory) -> None
         assert context.stream_output == "after_guards"
         [guard] = [b.policy for b in context.policies.bound]
         assert isinstance(guard, JudgeGuard) and guard.model_spec.id == "JUDGE"
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         events = await loom.events(result.run_id)
 
     assert result.text == ANSWER and result.cost_usd > 0
@@ -133,7 +133,7 @@ async def test_a_role_judge_with_a_condition(demo: ConfigFactory, tmp_path: Path
     ]
     path = demo(models=models, agents=[demo_agent(roles=[role], tools=[])])
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         events = await loom.events(result.run_id)
     checks = [e.payload for e in events if isinstance(e.payload, GuardChecked)]
     assert [(c.target, c.outcome) for c in checks] == [("role:verifier", "passed")]

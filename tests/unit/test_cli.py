@@ -13,6 +13,7 @@ from typing import Any, NoReturn
 import pytest
 from conftest import (
     ANSWER,
+    DEV,
     HOSTILE,
     HOSTILE_SHOWN,
     MODEL,
@@ -24,6 +25,7 @@ from conftest import (
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
 from loom_ia.access.cli.main import (  # pyright: ignore[reportPrivateUsage]
+    USER_ENV,
     _render,  # pyright: ignore[reportPrivateUsage]
     _Report,  # pyright: ignore[reportPrivateUsage]
     _settings_lines,  # pyright: ignore[reportPrivateUsage]
@@ -50,8 +52,7 @@ def test_validate_shows_what_the_config_declares(
     assert "  Modèles      FAKE\n" in out
     assert "\nAGENTS\n  demo · FAKE · 1 outil Python\n  └ calculer\n" in out
     assert "  Outils       calculer\n" in out
-    assert "  Clés d'API   aucune\n" in out
-    assert "Clés d'API   aucune : API REST ouverte" in out
+    assert f"  Clés d'API   aucune : API REST locale, au nom de {DEV}\n" in out
 
 
 def test_validate_puts_the_verdict_first_and_the_warnings_last(
@@ -62,7 +63,7 @@ def test_validate_puts_the_verdict_first_and_the_warnings_last(
     assert main(["--config", str(path), "validate"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith(f"loom validate · {path}")
-    assert lines[0].endswith("✓ 1 agent monté · ⚠ 4 avertissements")
+    assert lines[0].endswith("✓ 1 agent monté · ⚠ 3 avertissements")
     assert lines[1] == f"Racine : {path.parent.resolve()}"
     titles = [line for line in lines if line and line == line.upper() and not line[0].isspace()]
     assert titles == [
@@ -77,7 +78,6 @@ def test_validate_puts_the_verdict_first_and_the_warnings_last(
         "  ⚠ Bus memory   les nouvelles ne sortent pas de ce process",
         "  ⚠ Chiffrement  aucun : contenus en clair au repos",
         "  ⚠ Rétention    aucune : rien ne s'efface",
-        "  ⚠ Clés d'API   aucune : API REST ouverte",
     ]
 
 
@@ -442,7 +442,7 @@ def test_an_agent_closed_to_a_tenant_keeps_its_own_refusal(
     agents = [demo_agent(), demo_agent(name="autre")]
     path = demo(agents=agents, tenants=tenants)
 
-    assert main(["--config", str(path), "run", "demo", QUESTION, "--tenant", "dupont"]) == 2
+    assert main(["--config", str(path), "run", "demo", QUESTION, "--user", "dupont"]) == 2
     err = capsys.readouterr().err
     assert "non ouvert au client" in err
     assert "Erreur d'entrée-sortie" not in err
@@ -648,18 +648,57 @@ def test_mcp_serves_on_stdio(
     server = pytest.importorskip("loom_ia.access.mcp_server", reason="extra 'mcp' absent")
     served: dict[str, Any] = {}
 
-    async def fake_stdio(loom: Any, tenant: str = "default", user: str | None = None) -> None:
+    async def fake_stdio(loom: Any, user: str) -> None:
         served["agents"] = loom.names
-        served["tenant"] = tenant
         served["user"] = user
 
     monkeypatch.setattr(server, "run_stdio", fake_stdio)
+    # L'utilisateur vient de LOOM_USER (posé par les essais), ou de --user.
     assert main(["--config", str(demo()), "mcp"]) == 0
-    assert served == {"agents": ("demo",), "tenant": "default", "user": None}
+    assert served == {"agents": ("demo",), "user": DEV}
     # Rien sur stdout : le protocole y passe.
     assert capsys.readouterr().out == ""
-    assert main(["--config", str(demo()), "mcp", "--user", "dev"]) == 0
-    assert served["user"] == "dev" and served["tenant"] == "default"
+    path = demo(tenants=[{"id": "dupont"}])
+    assert main(["--config", str(path), "mcp", "--user", "dupont"]) == 0
+    assert served["user"] == "dupont"
+
+
+def test_a_command_without_user_says_how_to_name_one(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D-1, D-10 : ni ``--user`` ni ``LOOM_USER`` — refusé avant d'ouvrir le journal."""
+    monkeypatch.delenv(USER_ENV)
+    path = str(demo(storage={"events": {"backend": "jsonl", "path": "journaux"}}))
+    for command in (["run", "demo", QUESTION], ["approve", "r-1"], ["answer", "r-1", "x"]):
+        assert main(["--config", path, *command]) == 2
+        assert capsys.readouterr().err == (
+            f"Au nom de qui ? Donner --user UTILISATEUR, ou poser {USER_ENV} "
+            "(dans l'environnement ou le .env du projet)\n"
+        )
+    assert not (Path(path).parent / "journaux").exists()
+    # --user suffit, sans la variable.
+    assert main(["--config", path, "run", "demo", QUESTION, "--user", DEV]) == 0
+
+
+def test_the_user_option_wins_over_the_variable(
+    demo: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(USER_ENV, "fantome")
+    path = str(demo())
+    assert main(["--config", path, "run", "demo", QUESTION]) == 2
+    assert "Accès refusé : Utilisateur 'fantome' inconnu" in capsys.readouterr().err
+    assert main(["--config", path, "run", "demo", QUESTION, "--user", DEV]) == 0
+
+
+def test_a_run_for_another_tenant_than_the_user_s_is_refused(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le client est celui de l'utilisateur : ``--tenant`` ne le change pas."""
+    path = str(demo(tenants=[{"id": "dupont"}, {"id": "martin"}]))
+    args = ["--config", path, "run", "demo", QUESTION, "--user", "dupont"]
+    assert main([*args, "--tenant", "martin"]) == 2
+    assert "dupont agit pour le client dupont" in capsys.readouterr().err
+    assert main([*args, "--tenant", "dupont"]) == 0
 
 
 def test_mcp_refuses_an_unknown_user_or_another_tenant(
@@ -710,7 +749,7 @@ def test_the_proposed_approve_command_names_its_session_and_tenant(
 ) -> None:
     """Copiée telle quelle, la commande doit trouver le run (test D7 du 18/10)."""
     path = str(atelier(tenants=[{"id": "default"}, {"id": "dupont"}]))
-    args = ["--config", path, "run", "demo", "Relance.", "--session", "s1", "--tenant", "dupont"]
+    args = ["--config", path, "run", "demo", "Relance.", "--session", "s1", "--user", "dupont"]
     assert main(args) == 1
     erreur = capsys.readouterr().err
     [approve] = [line for line in erreur.splitlines() if line.startswith("En attente")]
@@ -718,7 +757,7 @@ def test_the_proposed_approve_command_names_its_session_and_tenant(
     # Le motif suit la commande : l'approbateur sait ce qu'il tranche (essai du 01/11).
     assert "Motif      : la config exige une approbation pour chaque appel" in erreur
     # Sans session ni client donnés, la commande n'en porte pas : le run est son journal.
-    assert main(["--config", path, "run", "demo", "Relance."]) == 1
+    assert main(["--config", path, "run", "demo", "Relance.", "--user", "default"]) == 1
     seule = capsys.readouterr().err
     assert "loom approve" in seule and "--session" not in seule and "--tenant" not in seule
 
@@ -729,11 +768,11 @@ def test_approve_finishes_the_run_in_this_terminal(
     path = atelier()
     run_id = _paused(path, capsys)
 
-    assert main(["--config", str(path), "approve", run_id, "--by", "denis"]) == 0
+    assert main(["--config", str(path), "approve", run_id]) == 0
     fini = capsys.readouterr()
     assert fini.out.strip() == "Relance envoyée."
     assert "Accordé : " in fini.err
-    assert _decisions(path, "approval.granted") == ["denis"]
+    assert _decisions(path, "approval.granted") == [DEV]
 
 
 def test_reject_hands_the_reason_back_to_the_model(
@@ -745,7 +784,7 @@ def test_reject_hands_the_reason_back_to_the_model(
     # Un refus n'arrête pas le run : l'orchestrateur en fait ce qu'il peut.
     assert main(["--config", str(path), "reject", run_id, "--reason", "mauvais devis"]) == 0
     assert "Refusé : " in capsys.readouterr().err
-    assert _decisions(path, "approval.rejected") == [None]
+    assert _decisions(path, "approval.rejected") == [DEV]
 
 
 @pytest.mark.parametrize(

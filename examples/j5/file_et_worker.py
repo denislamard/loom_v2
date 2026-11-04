@@ -151,7 +151,9 @@ async def cas_file(config: LoomConfig, prefixe: str, agent: str, controle: Contr
         print(f"  soumettant: {facade.worker_id}")
         service = asyncio.create_task(worker.work())
         try:
-            run_id = await facade.submit(agent, demande(), session_id=session, tenant=DUPONT)
+            run_id = await facade.submit(
+                agent, demande(), session_id=session, tenant=DUPONT, user=DUPONT
+            )
             print(f"  run soumis : {run_id}")
             fini = await attendre(lambda: termine(facade, run_id, session), limite=30.0)
             print(f"  mené au bout : {controle.tient('run terminé', fini)}")

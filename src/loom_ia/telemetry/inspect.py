@@ -290,7 +290,12 @@ def _other(span: TraceSpan) -> str:
 
 
 def _approval(event: TraceEvent) -> str:
-    by = event.data.get("by")
+    by = str(event.data.get("by"))
+    via = event.data.get("via")
+    if isinstance(via, str):
+        by = f"{by} (via {via})"
+    if event.data.get("self_approved") is True:
+        by = f"{by}, auto-approbation"
     match event.name:
         case "approval.granted":
             return f"approbation accordée par {by}"

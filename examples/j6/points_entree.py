@@ -384,7 +384,7 @@ async def cas_source(args: argparse.Namespace, dossier: Path, controle: Controle
         async with Loom(config) as loom:
             runs: list[RunResult] = []
             for numero in (1, 2):
-                result = await loom.run(agent, DEMANDE)
+                result = await loom.run(agent, DEMANDE, user="dev")
                 runs.append(result)
                 titre(f"Run {numero} de {agent} : {DEMANDE}")
                 print(

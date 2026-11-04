@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import SECURITY_YAML, secured
+from conftest import DEV, SECURITY_YAML, secured
 from pydantic import ValidationError
 
 from loom_ia.access import Loom
@@ -1039,8 +1039,8 @@ async def test_a_tool_reads_what_an_earlier_run_of_the_session_wrote(tmp_path: P
     path = write_state(tmp_path, agent, root={"models": [scripted]})
     session = SessionId("conversation")
     async with Loom(load_config(path)) as loom:
-        first = await loom.run("demo", "Qui est Martin ?", session_id=session)
-        second = await loom.run("demo", "Et maintenant ?", session_id=session)
+        first = await loom.run("demo", "Qui est Martin ?", session_id=session, user=DEV)
+        second = await loom.run("demo", "Et maintenant ?", session_id=session, user=DEV)
         before = await loom.events(first.run_id, session_id=session)
         after = await loom.events(second.run_id, session_id=session)
         for run in (first, second):
@@ -1082,8 +1082,8 @@ async def test_the_orchestrator_reads_the_session_state_declared_by_its_config(
     path = write_state(tmp_path, agent, root=captured)
     session = SessionId("conversation")
     async with Loom(load_config(path)) as loom:
-        first = await loom.run("demo", "Qui est Martin ?", session_id=session)
-        second = await loom.run("demo", "Et maintenant ?", session_id=session)
+        first = await loom.run("demo", "Qui est Martin ?", session_id=session, user=DEV)
+        second = await loom.run("demo", "Et maintenant ?", session_id=session, user=DEV)
         events = [
             *await loom.events(first.run_id, session_id=session),
             *await loom.events(second.run_id, session_id=session),
@@ -1108,5 +1108,5 @@ async def test_a_required_key_of_the_config_refuses_a_run_without_it(tmp_path: P
     """D13 : ``client_id`` est obligatoire ; sans valeur, le run n'est pas ouvert."""
     async with Loom(load_config(write_state(tmp_path))) as loom:
         with pytest.raises(StateRefused, match="client_id : clé obligatoire sans valeur"):
-            await loom.run("demo", "Bonjour", session_id=SessionId("s1"))
+            await loom.run("demo", "Bonjour", session_id=SessionId("s1"), user=DEV)
         assert await loom.sessions() == []

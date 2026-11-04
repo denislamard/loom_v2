@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import DEV, secured
 
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
@@ -123,7 +123,7 @@ async def test_roles_are_loaded_and_wired(tmp_path: Path) -> None:
 
 async def test_run_with_a_terminal_role(tmp_path: Path) -> None:
     async with Loom(load_config(write(tmp_path, agent()))) as loom:
-        result = await loom.run("demo", "Combien font 12 fois 7 plus 3 ?")
+        result = await loom.run("demo", "Combien font 12 fois 7 plus 3 ?", user=DEV)
         events = await loom.events(result.run_id)
 
     assert result.status is RunStatus.COMPLETED
@@ -179,7 +179,7 @@ async def test_a_role_of_the_config_receives_the_session_state(tmp_path: Path) -
     role_script = [{"with_text": "Client : C-002", "text": "Pour C-002."}, {"text": "Inconnu."}]
     models = [MODELS[0], {**MODELS[1], "params": {"script": role_script}}]
     async with Loom(load_config(write(tmp_path, spec, models=models))) as loom:
-        result = await loom.run("demo", "Combien ?")
+        result = await loom.run("demo", "Combien ?", user=DEV)
         report = await loom.replay(result.run_id)
 
     assert (result.status, result.text) == (RunStatus.COMPLETED, "Pour C-002.")

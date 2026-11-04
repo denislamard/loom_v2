@@ -870,10 +870,10 @@ async def test_loom_mounts_the_source_and_the_vm_lives_with_it(
     path = config_file(tmp_path / "config", vm_dir)
     async with Loom(load_config(path)) as loom:
         assert not vm.is_running()
-        first = await loom.run("atelier", "Forge un outil.")
+        first = await loom.run("atelier", "Forge un outil.", user="dev")
         assert first.status == RunStatus.COMPLETED
         assert vm.is_running()
-        second = await loom.run("atelier", "Utilise-le.")
+        second = await loom.run("atelier", "Utilise-le.", user="dev")
         assert second.status == RunStatus.COMPLETED
         events = [*await loom.events(first.run_id), *await loom.events(second.run_id)]
     assert not vm.is_running()
@@ -895,7 +895,7 @@ async def test_a_vm_already_running_is_left_running(
     try:
         path = config_file(tmp_path / "config", vm_dir)
         async with Loom(load_config(path)) as loom:
-            first = await loom.run("atelier", "Forge un outil.")
+            first = await loom.run("atelier", "Forge un outil.", user="dev")
             assert first.status == RunStatus.COMPLETED
         assert vm.is_running()
     finally:
@@ -912,7 +912,7 @@ async def test_validate_and_replay_start_no_vm(
     vm = Vm.load(vm_dir)
     path = config_file(tmp_path / "config", vm_dir)
     async with Loom(load_config(path)) as loom:
-        first = await loom.run("atelier", "Forge un outil.")
+        first = await loom.run("atelier", "Forge un outil.", user="dev")
     assert not vm.is_running()
     assert (tmp_path / "config" / "catalogue" / "default" / "carres").is_dir()
     async with Loom(load_config(path)) as loom:
@@ -1274,7 +1274,7 @@ async def test_loom_stores_the_file_and_journals_its_uri(
     config["models"][0]["params"]["script"] = FILE_SCRIPT
     path.write_text(yaml.safe_dump(config, allow_unicode=True))
     async with Loom(load_config(path)) as loom:
-        run = await loom.run("atelier", "Dessine un graphe.")
+        run = await loom.run("atelier", "Dessine un graphe.", user="dev")
         assert run.status == RunStatus.COMPLETED
         events = await loom.events(run.run_id)
         [described] = await loom.session_files(run.session_id)
@@ -1375,7 +1375,7 @@ async def test_a_forged_file_goes_from_the_vm_to_a_folder_through_a_subagent(
             yaml.safe_dump(agent, allow_unicode=True)
         )
     async with Loom(load_config(base / "loom.yaml")) as loom:
-        run = await loom.run("chef", "Dessine un graphe et range-le.")
+        run = await loom.run("chef", "Dessine un graphe et range-le.", user="dev")
         events = await loom.events(run.run_id)
     assert run.status == RunStatus.COMPLETED, run
     assert (base / "rendu" / "g.svg").read_bytes() == b"<svg>g.svg</svg>"

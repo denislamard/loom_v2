@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import secured
+from conftest import DEV, secured
 from pydantic import JsonValue, ValidationError
 
 from loom_ia.access.api import Loom
@@ -492,10 +492,10 @@ def write(tmp_path: Path) -> Path:
 async def test_loom_runs_with_attachments(tmp_path: Path) -> None:
     async with Loom(load_config(write(tmp_path))) as loom:
         photo = Attachment(data=PNG, name="photo.png")
-        result = await loom.run("demo", "Que montre la photo ?", attachments=[photo])
+        result = await loom.run("demo", "Que montre la photo ?", attachments=[photo], user=DEV)
         [record] = result.artifacts
         assert await loom.artifact(record.uri) == PNG
-        plain = await loom.run("demo", "Bonjour")
+        plain = await loom.run("demo", "Bonjour", user=DEV)
 
     assert (result.text, result.iterations) == ("La photo montre un carré bleu.", 2)
     assert (record.origin, record.name) == ("attachment", "photo.png")

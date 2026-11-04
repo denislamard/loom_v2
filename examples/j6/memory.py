@@ -457,7 +457,7 @@ async def demande(
     loom: Loom, agent: str, texte: str, *, tenant: TenantId | None = None
 ) -> tuple[RunResult, list[Event]]:
     """Un run neuf, dans sa propre session ; rend son résultat et son journal."""
-    result = await loom.run(agent, texte, tenant=tenant)
+    result = await loom.run(agent, texte, tenant=tenant, user=tenant or "dev")
     events = await loom.events(result.run_id, session_id=result.session_id, tenant_id=tenant)
     return result, events
 
@@ -473,10 +473,16 @@ async def decide(
     """L'artisan accepte ou refuse ce que le run attend ; le run va au bout."""
     deja = len(await loom.events(asked.run_id, session_id=asked.session_id, tenant_id=tenant))
     if accorde:
-        await loom.approve(asked.run_id, by=ARTISAN, session_id=asked.session_id, tenant_id=tenant)
+        await loom.approve(
+            asked.run_id, user=tenant or "dev", session_id=asked.session_id, tenant_id=tenant
+        )
     else:
         await loom.reject(
-            asked.run_id, by=ARTISAN, reason=motif, session_id=asked.session_id, tenant_id=tenant
+            asked.run_id,
+            user=tenant or "dev",
+            reason=motif,
+            session_id=asked.session_id,
+            tenant_id=tenant,
         )
     await loom.drain()
     fini = await loom.result(asked.run_id, session_id=asked.session_id, tenant_id=tenant)

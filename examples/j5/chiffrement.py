@@ -220,7 +220,9 @@ async def scelle(args: argparse.Namespace, controle: Controle) -> None:
         print(f"  journal                 : {Path(dossier) / 'events'} (temporaire)")
         ou = session("scelle")
         async with Loom(config, environ=environ) as loom:
-            result = await loom.run(agent, demande(MARTIN), session_id=ou, tenant=MARTIN)
+            result = await loom.run(
+                agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN
+            )
             print(f"\n  run {result.status}, {result.usage.total_tokens} tokens")
             # Avec la clé, rien ne change : l'instance relit son journal comme
             # elle l'a toujours fait.
@@ -315,7 +317,9 @@ async def efface(args: argparse.Namespace, controle: Controle) -> None:
         ou = session("efface")
         titre("Un run écrit, puis la clé s'en va")
         async with Loom(config, environ=avec) as loom:
-            result = await loom.run(agent, demande(MARTIN), session_id=ou, tenant=MARTIN)
+            result = await loom.run(
+                agent, demande(MARTIN), session_id=ou, tenant=MARTIN, user=MARTIN
+            )
             print(f"  run {result.status}, journal scellé par la clé {empreinte}")
 
         # La même config, le même journal, sans la variable : c'est tout ce que
@@ -354,9 +358,13 @@ async def efface(args: argparse.Namespace, controle: Controle) -> None:
         neuve = fingerprint(decode_key(neuve_b64, what="exemple"))
         suite = session("tournee")
         async with Loom(config, environ=avec) as avant:
-            premier = await avant.run(agent, demande(MARTIN), session_id=suite, tenant=MARTIN)
+            premier = await avant.run(
+                agent, demande(MARTIN), session_id=suite, tenant=MARTIN, user=MARTIN
+            )
         async with Loom(deux, environ=tournee) as apres:
-            second = await apres.run(agent, demande(MARTIN), session_id=suite, tenant=MARTIN)
+            second = await apres.run(
+                agent, demande(MARTIN), session_id=suite, tenant=MARTIN, user=MARTIN
+            )
             tout = await apres.events(second.run_id, session_id=suite, tenant_id=MARTIN)
             avant_tout = await apres.events(premier.run_id, session_id=suite, tenant_id=MARTIN)
         empreintes = {
@@ -416,7 +424,9 @@ async def clients(args: argparse.Namespace, controle: Controle) -> None:
             for tenant in (DUPONT, MARTIN):
                 ou = session(str(tenant).split("-")[0])
                 places[tenant] = ou
-                result = await loom.run(agent, demande(tenant), session_id=ou, tenant=tenant)
+                result = await loom.run(
+                    agent, demande(tenant), session_id=ou, tenant=tenant, user=tenant
+                )
                 runs[tenant] = result.run_id
                 fichier = journal(config, tenant, ou)
                 scellants[tenant] = {str(_charge(ligne)["key_id"]) for ligne in lignes(fichier)}
@@ -442,7 +452,7 @@ async def clients(args: argparse.Namespace, controle: Controle) -> None:
             enonce("  Martin, sans la sienne → ", dit)
             refuse = await _refus(
                 lambda: boiteux.run(
-                    agent, demande(MARTIN), session_id=session("refus"), tenant=MARTIN
+                    agent, demande(MARTIN), session_id=session("refus"), tenant=MARTIN, user=MARTIN
                 )
             )
             enonce("  Martin, un nouveau run → ", refuse)

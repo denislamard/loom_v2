@@ -109,7 +109,7 @@ async def main(argv: list[str]) -> int:
             return 2
         print(f"Session    : {session}\n")
         try:
-            await loom.run(AGENT, PREMIERE, session_id=session)
+            await loom.run(AGENT, PREMIERE, session_id=session, user="dev")
         except StateRefused as refus:
             print(f"--- Sans signature : {refus}")
             sessions = {record.session_id for record in await loom.sessions()}
@@ -120,9 +120,11 @@ async def main(argv: list[str]) -> int:
             return 1
 
         pose = {"signature": SIGNATURE}
-        premier = await loom.run(AGENT, PREMIERE, session_id=session, state=pose)
+        premier = await loom.run(AGENT, PREMIERE, session_id=session, state=pose, user="dev")
         apres_premier = await loom.session_state(session)
-        second = await loom.run(AGENT, SECONDE, session_id=session, state={"ton": "ferme"})
+        second = await loom.run(
+            AGENT, SECONDE, session_id=session, state={"ton": "ferme"}, user="dev"
+        )
         apres_second = await loom.session_state(session)
         events = await loom.export_session(session)
         rejeux = [await loom.replay(r.run_id, session_id=session) for r in (premier, second)]

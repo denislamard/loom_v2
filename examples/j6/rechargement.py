@@ -605,9 +605,17 @@ def cas_donnees(args: argparse.Namespace, dossier: Path, controle: Controle) -> 
         arreter(process, port, controle, "donnees")
 
 
+# Le bloc que les configs d'exemple portent pour servir sans clé sur la machine (D-1b).
+UTILISATEUR_LOCAL = "server:\n  http: {user: dev}\n"
+
+
 def cas_prod(args: argparse.Namespace, dossier: Path, controle: Controle) -> None:
     fichier = copie(dossier)
     config = load_config(fichier)
+    locale = fichier.read_text(encoding="utf-8")
+    # L'utilisateur local (server.http.user, D-1b) est refusé en prod lui aussi :
+    # retiré le temps du lancement, pour que le refus montré soit celui de --reload.
+    fichier.write_text(locale.replace(UTILISATEUR_LOCAL, ""), encoding="utf-8")
     console = dossier / "console.log"
     titre("loom --profile prod serve --reload")
     process, port = lancer(fichier, console, environ(args, config), "--profile", "prod")
@@ -627,6 +635,7 @@ def cas_prod(args: argparse.Namespace, dossier: Path, controle: Controle) -> Non
     )
 
     titre("La config qui passe en prod pendant que le serveur tourne")
+    fichier.write_text(locale, encoding="utf-8")
     console = dossier / "console-2.log"
     process, port = lancer(fichier, console, environ(args, config))
     try:
@@ -642,7 +651,10 @@ def cas_prod(args: argparse.Namespace, dossier: Path, controle: Controle) -> Non
             "  refusé, et l'ancien process sert encore : "
             + controle.tient(
                 f"prod : le passage en prod n'est pas refusé ({verdict})",
-                verdict == "refuse" and "refusé en profil prod" in dit and agents(port) == departs,
+                # Refusé avant même --reload : l'utilisateur local n'a pas sa place en prod.
+                verdict == "refuse"
+                and "refusé en profil 'prod'" in dit
+                and agents(port) == departs,
             )
         )
         verdict, _ = releve(console, process, lambda: fichier.write_text(bon, encoding="utf-8"))

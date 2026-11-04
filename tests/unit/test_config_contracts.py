@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import QUESTION, ConfigFactory, demo_agent, secured
+from conftest import DEV, QUESTION, ConfigFactory, demo_agent, secured
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -52,7 +52,7 @@ def structured(demo: ConfigFactory, **output: Any) -> Path:
 async def test_a_structured_answer_by_the_python_and_rest_accesses(demo: ConfigFactory) -> None:
     path = structured(demo)
     async with Loom.from_config(path) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         assert loom.context("demo").stream_output == "after_guards"
         events = await loom.events(result.run_id)
         pytest.importorskip("fastapi", reason="extra 'http' absent")

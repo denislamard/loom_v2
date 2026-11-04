@@ -273,10 +273,12 @@ async def expiration(loom: Loom, run_id: RunId, session: SessionId) -> float:
 async def annulation(loom: Loom, agent: str, session: SessionId) -> None:
     print("— Annulé : la décision d'arrêter, écrite au journal\n")
     run_id = new_run_id()
-    task = asyncio.create_task(loom.run(agent, DEMANDE, session_id=session, run_id=run_id))
+    task = asyncio.create_task(
+        loom.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev")
+    )
     await dans_l_erp(loom, run_id, session)
     print("  l'artisan annule pendant la consultation de l'ERP…")
-    arrete = await loom.cancel(run_id, session_id=session, by="l'artisan")
+    arrete = await loom.cancel(run_id, session_id=session, user="dev")
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
@@ -292,8 +294,8 @@ async def annulation(loom: Loom, agent: str, session: SessionId) -> None:
         f"  étapes   : {piloting(events, run_id):.2f} s terminées, "
         f"{unfinished(events, run_id)} coupée en cours"
     )
-    encore = await loom.cancel(run_id, session_id=session)
-    repris = await loom.resume(run_id, session_id=session)
+    encore = await loom.cancel(run_id, session_id=session, user="dev")
+    repris = await loom.resume(run_id, session_id=session, user="dev")
     print(f"  annuler à nouveau : {encore} · reprendre : {outcome(repris)}\n")
 
 
@@ -301,7 +303,7 @@ async def delai(loom: Loom, presse: str, session: SessionId, *, reel: bool) -> N
     limite = DELAI_REEL if reel else DELAI
     latence = LATENCE_REELLE if reel else LATENCE
     print(f"— Expiré : l'agent {presse} a {limite:g} s, l'ERP en prend {latence:g}\n")
-    result = await loom.run(presse, DEMANDE, session_id=session)
+    result = await loom.run(presse, DEMANDE, session_id=session, user="dev")
     events = await loom.export_session(session)
     failed = next(
         (p for e in events if isinstance(p := e.payload, RunFailed) and e.run_id == result.run_id),
@@ -314,14 +316,16 @@ async def delai(loom: Loom, presse: str, session: SessionId, *, reel: bool) -> N
         f"  étapes   : {piloting(events, result.run_id):.2f} s terminées, "
         f"{unfinished(events, result.run_id)} coupée en cours"
     )
-    repris = await loom.resume(result.run_id, session_id=session)
+    repris = await loom.resume(result.run_id, session_id=session, user="dev")
     print(f"  reprendre ce run : {outcome(repris)} — un run clos reste clos\n")
 
 
 async def interruption(loom: Loom, agent: str, session: SessionId) -> None:
     print("— Interrompu : personne ne décide, donc rien n'est écrit\n")
     run_id = new_run_id()
-    task = asyncio.create_task(loom.run(agent, DEMANDE, session_id=session, run_id=run_id))
+    task = asyncio.create_task(
+        loom.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev")
+    )
     await dans_l_erp(loom, run_id, session)
     print("  l'appelant abandonne (process tué, flux fermé, requête coupée)…")
     task.cancel()
@@ -332,7 +336,7 @@ async def interruption(loom: Loom, agent: str, session: SessionId) -> None:
     closes = [e.type for e in events if e.run_id == run_id and e.type.startswith("run.")]
     print(f"  journal  : {closes[-1]} en dernier — aucune clôture")
     print(f"  état     : {state.status} (terminal : {state.status.is_terminal})")
-    repris = await loom.resume(run_id, session_id=session)
+    repris = await loom.resume(run_id, session_id=session, user="dev")
     print(f"  reprendre : {outcome(repris)} en {repris.iterations} itération(s)")
     print(f"  réponse  : {repris.text.splitlines()[0][:70] if repris.text else '—'}\n")
 
@@ -341,7 +345,7 @@ async def arriere_plan(loom: Loom, agent: str, session: SessionId) -> None:
     """``submit()`` : le run part en file, l'appelant garde la main."""
     print("— Arrière-plan : le run part en file, l'appelant garde la main\n")
     depart = time.monotonic()
-    run_id = await loom.submit(agent, DEMANDE, session_id=session)
+    run_id = await loom.submit(agent, DEMANDE, session_id=session, user="dev")
     rendu = time.monotonic() - depart
     # Le run est au journal avant le retour : son état est lisible aussitôt.
     state = await loom.state(run_id, session_id=session)
@@ -365,11 +369,13 @@ async def concession(config: LoomConfig, agent: str, session: SessionId) -> None
         un.register("consulter_erp", consulter_erp)
         deux.register("consulter_erp", consulter_erp)
         run_id = new_run_id()
-        pilotage = asyncio.create_task(un.run(agent, DEMANDE, session_id=session, run_id=run_id))
+        pilotage = asyncio.create_task(
+            un.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev")
+        )
         await dans_l_erp(un, run_id, session)
         print("  l'instance 1 pilote le run (elle est dans l'ERP)")
         try:
-            await deux.resume(run_id, session_id=session)
+            await deux.resume(run_id, session_id=session, user="dev")
         except ClaimConflict as refus:
             print(f"  l'instance 2 tente de le reprendre : refusé, {refus.worker_id} le tient")
 
@@ -443,7 +449,7 @@ async def main(argv: list[str]) -> int:
             return 2
         if "delai" in cas:
             # La conversation continue : le run suivant retrouve l'historique.
-            suite = await loom.run(agent, SUITE, session_id=session)
+            suite = await loom.run(agent, SUITE, session_id=session, user="dev")
             print(f"La session continue : « {SUITE} » → {outcome(suite)}")
         events = await loom.export_session(session)
 

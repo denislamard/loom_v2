@@ -392,7 +392,9 @@ async def _parti(loom: Loom, run_id: RunId, session: SessionId, *, memorise: boo
 async def _interrompu(loom: Loom, agent: str, session: SessionId, *, memorise: bool) -> RunId:
     """Lance le run et abandonne le pilote dès que la relance est partie."""
     run_id = new_run_id()
-    task = asyncio.create_task(loom.run(agent, DEMANDE, session_id=session, run_id=run_id))
+    task = asyncio.create_task(
+        loom.run(agent, DEMANDE, session_id=session, run_id=run_id, user="dev")
+    )
     await _parti(loom, run_id, session, memorise=memorise)
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
@@ -412,7 +414,7 @@ async def rejoue(loom: Loom, agent: str, session: SessionId) -> None:
         " est mort avant"
     )
 
-    repris = await loom.resume(run_id, session_id=session)
+    repris = await loom.resume(run_id, session_id=session, user="dev")
     events = [e for e in await loom.export_session(session) if e.run_id == run_id]
     appels, memorises = envois(events)
     print(f"  reprise    : {outcome(repris)} en {repris.iterations} itération(s)")
@@ -428,7 +430,7 @@ async def etat_inconnu(loom: Loom, agent: str, session: SessionId) -> None:
     run_id = await _interrompu(loom, agent, session, memorise=False)
     print(f"  pilote tué : {len(BOITE)} relance(s) partie(s), aucun résultat au journal")
 
-    repris = await loom.resume(run_id, session_id=session)
+    repris = await loom.resume(run_id, session_id=session, user="dev")
     events = [e for e in await loom.export_session(session) if e.run_id == run_id]
     appels, _ = envois(events)
     print(f"  reprise    : {outcome(repris)} en {repris.iterations} itération(s)")
@@ -443,12 +445,12 @@ async def humain(loom: Loom, agent: str, session: SessionId) -> None:
     run_id = await _interrompu(loom, agent, session, memorise=False)
     print(f"  pilote tué : {len(BOITE)} relance(s) partie(s) — rien ne le dit au journal")
 
-    repris = await loom.resume(run_id, session_id=session)
+    repris = await loom.resume(run_id, session_id=session, user="dev")
     print(f"  reprise    : {outcome(repris)} — le run attend une décision")
     asked = repris.pending_approvals[0]
     print(f"  en attente : {asked.tool_name} — {asked.reason[:60]}…")
     print("  l'artisan tranche : il accorde, en sachant que la relance peut repartir")
-    await loom.approve(run_id, call_id=asked.call_id, by="l'artisan", session_id=session)
+    await loom.approve(run_id, call_id=asked.call_id, user="dev", session_id=session)
     await loom.drain()
     fin = await loom.result(run_id, session_id=session)
     events = [e for e in await loom.export_session(session) if e.run_id == run_id]
@@ -463,7 +465,7 @@ async def humain(loom: Loom, agent: str, session: SessionId) -> None:
 
 async def deux_appels(loom: Loom, agent: str, session: SessionId) -> None:
     print("— Deux appels : la clé technique protège un appel, pas un doublon métier\n")
-    result = await loom.run(agent, DEMANDE, session_id=session)
+    result = await loom.run(agent, DEMANDE, session_id=session, user="dev")
     events = [e for e in await loom.export_session(session) if e.run_id == result.run_id]
     appels, memorises = envois(events)
     print(f"  run        : {outcome(result)} en {result.iterations} itération(s)")
@@ -491,7 +493,7 @@ async def _cles_vides(config: LoomConfig) -> None:
 
 async def cle_metier(loom: Loom, agent: str, session: SessionId) -> None:
     print("— Clé métier : deux conversations, un seul envoi\n")
-    premier = await loom.run(agent, DEMANDE, session_id=session)
+    premier = await loom.run(agent, DEMANDE, session_id=session, user="dev")
     events = [e for e in await loom.export_session(session) if e.run_id == premier.run_id]
     appels, _ = envois(events)
     print(f"  run 1      : {outcome(premier)} — {appels} appel(s) d'envoi")
@@ -500,7 +502,7 @@ async def cle_metier(loom: Loom, agent: str, session: SessionId) -> None:
     # Une autre conversation, un autre run : rien au journal ne les relie.
     # Ce qui les relie est la clé « relance:D-2026-042 », dans la base.
     suivante = SessionId(f"{session}-bis")
-    second = await loom.run(agent, DEMANDE, session_id=suivante)
+    second = await loom.run(agent, DEMANDE, session_id=suivante, user="dev")
     events = [e for e in await loom.export_session(suivante) if e.run_id == second.run_id]
     appels, _ = envois(events)
     print(f"  run 2      : {outcome(second)} — {appels} appel(s) d'envoi, dans une autre session")
@@ -526,13 +528,13 @@ async def effet_inconnu(loom: Loom, agent: str, session: SessionId, config: Loom
         await closing()
     print(f"  au magasin : réservation périmée sur « {clef} », sans résultat")
 
-    result = await loom.run(agent, DEMANDE, session_id=session)
+    result = await loom.run(agent, DEMANDE, session_id=session, user="dev")
     print(f"  run        : {outcome(result)}")
     asked = result.pending_approvals[0]
     print(f"  en attente : {asked.tool_name} — {asked.reason[:58]}…")
     print(f"  boîte      : {len(BOITE)} relance(s) partie(s) — rien n'est parti de ce run")
     print("  l'artisan a vérifié la boîte d'envoi du client : rien n'est arrivé, il accorde")
-    await loom.approve(result.run_id, call_id=asked.call_id, by="l'artisan", session_id=session)
+    await loom.approve(result.run_id, call_id=asked.call_id, user="dev", session_id=session)
     await loom.drain()
     fin = await loom.result(result.run_id, session_id=session)
     events = [e for e in await loom.export_session(session) if e.run_id == result.run_id]

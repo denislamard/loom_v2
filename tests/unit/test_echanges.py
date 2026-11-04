@@ -25,7 +25,7 @@ from importlib.util import find_spec
 from typing import Any
 
 import pytest
-from conftest import QUESTION, ConfigFactory, demo_agent
+from conftest import DEV, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.config import load_config
@@ -251,7 +251,7 @@ async def test_without_the_capture_nothing_is_kept() -> None:
 async def test_an_exchange_is_not_an_attempt(demo: ConfigFactory) -> None:
     config = load_config(demo(telemetry={"capture": {"raw_exchanges": True}}))
     async with Loom(config) as loom:
-        result = await loom.run("demo", QUESTION)
+        result = await loom.run("demo", QUESTION, user=DEV)
         events = await loom.store.read(DEFAULT_TENANT, result.session_id)
     responded = [e for e in events if e.type == "model.responded"]
     assert responded and all(e.payload.attempts == 1 for e in responded)  # type: ignore[union-attr]
@@ -476,7 +476,7 @@ def deux_ateliers(demo: ConfigFactory) -> LoomConfig:
 
 
 async def journal(loom: Loom, tenant: TenantId) -> list[Event]:
-    await loom.run("demo", QUESTION, tenant=tenant, session_id=SessionId(str(tenant)))
+    await loom.run("demo", QUESTION, tenant=tenant, session_id=SessionId(str(tenant)), user=tenant)
     return await loom.store.read(tenant, SessionId(str(tenant)))
 
 
@@ -532,7 +532,7 @@ async def test_one_log_line_per_call_and_no_content(
     config = load_config(demo(agents=[agent]))
     with caplog.at_level(logging.INFO, logger="loom_ia.engine.loop"):
         async with Loom(config) as loom:
-            await loom.run("demo", QUESTION)
+            await loom.run("demo", QUESTION, user=DEV)
     lines = [r for r in caplog.records if r.name == "loom_ia.engine.loop"]
     models = [r.getMessage() for r in lines if r.getMessage().startswith("Modèle ")]
     tools = [r.getMessage() for r in lines if r.getMessage().startswith("Outil ")]
@@ -554,6 +554,6 @@ async def test_a_tool_error_is_said_in_its_line(
     config = load_config(demo(models=[model]))
     with caplog.at_level(logging.INFO, logger="loom_ia.engine.loop"):
         async with Loom(config) as loom:
-            await loom.run("demo", QUESTION)
+            await loom.run("demo", QUESTION, user=DEV)
     [line] = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Outil ")]
     assert line.endswith("(erreur)")

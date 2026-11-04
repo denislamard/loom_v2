@@ -128,7 +128,7 @@ async def main(argv: list[str]) -> int:
     async with loom:
         print(f"> {args.question}\n  [image jointe : {image.name}, {len(image.data)} octets]\n")
         try:
-            result = await loom.run(agent, args.question, attachments=[image])
+            result = await loom.run(agent, args.question, attachments=[image], user="dev")
         except AttachmentError as error:
             print(f"Image refusée : {error}", file=sys.stderr)
             return 2

@@ -1044,6 +1044,20 @@ def _run_states(events: Sequence[Event]) -> list[RunState]:
     return [fold(own, run_id) for run_id, own in _by_run(events).items()]
 
 
+class Unchecked:
+    """Le chemin interne sans contrôle de droits (§ 6.7) : évaluations et banc d'essai.
+
+    Ils font tourner un agent pour l'éprouver, pas au nom de quelqu'un : aucun
+    droit n'est vérifié, et le journal ne nomme aucun utilisateur. Seul
+    ``run`` l'accepte, et seul le code de loom s'en sert (``UNCHECKED``).
+    """
+
+    __slots__ = ()
+
+
+UNCHECKED: Final = Unchecked()
+
+
 class _Routed(NamedTuple):
     """Une question qui attend, à laquelle un message écrit dans la session répond."""
 
@@ -1058,7 +1072,7 @@ class _Routed(NamedTuple):
 class _Signed:
     """Qui tranche une demande, et à quel titre : ce que la décision écrit (§ 7)."""
 
-    by: str | None
+    by: str
     via: str | None = None
     roles: tuple[str, ...] = ()
     self_approved: bool = False
@@ -1760,17 +1774,13 @@ class Loom:
             return False
         return True
 
-    def _actor(self, user: str | Actor | None, by: str | None = None) -> Actor | None:
-        """L'acteur d'un appel, ou ``None`` sans utilisateur (rien n'est contrôlé, lot 3).
+    def _actor(self, user: str | Actor) -> Actor:
+        """L'acteur d'un appel : un identifiant déclaré, ou un ``Actor`` déjà résolu.
 
-        ``user`` est un identifiant déclaré, ou un ``Actor`` déjà résolu par un
-        accès (clé d'API, passerelle). ``by`` est l'ancienne signature libre :
-        elle ne se mêle pas à un utilisateur, qui signe lui-même.
+        Un accès le résout lui-même quand il le peut — clé d'API, passerelle
+        (``as_user``) — pour que les restrictions de la clé suivent.
+        ``AccessDenied`` pour un utilisateur inconnu.
         """
-        if user is None:
-            return None
-        if by is not None:
-            raise TypeError("by= et user= : c'est l'utilisateur qui signe, retirer by=")
         if isinstance(user, Actor):
             return user
         return Actor.of(self.config.security, user)
@@ -1811,15 +1821,11 @@ class Loom:
 
         return answer
 
-    def _require_on_run(self, actor: Actor | None, permission: Permission, state: RunState) -> None:
+    def _require_on_run(self, actor: Actor, permission: Permission, state: RunState) -> None:
         """Les droits de l'acteur sur l'agent d'un run existant, chez le client du run."""
-        if actor is not None:
-            require(
-                actor,
-                permission,
-                agent=self._agents.get(state.agent),
-                tenant=state.context.tenant_id,
-            )
+        require(
+            actor, permission, agent=self._agents.get(state.agent), tenant=state.context.tenant_id
+        )
 
     def _judged(self, judges: JudgesMode) -> JudgesMode:
         """Ce que l'appelant demande aux juges, si le profil le permet (M4).
@@ -1850,7 +1856,7 @@ class Loom:
         tenant: TenantId | None = None,
         state: Mapping[str, JsonValue] | None = None,
         answerer: Answerer | None = None,
-        user: str | Actor | None = None,
+        user: str | Actor | Unchecked,
     ) -> RunResult:
         """Fait tourner un run jusqu'au bout et renvoie ce qu'il a produit.
 
@@ -1858,7 +1864,8 @@ class Loom:
         sont vérifiés — ``run`` sur l'agent, et ``answer`` si le message répond
         à une question qui attend —, le client est le sien, et il devient le
         lanceur du run. ``AccessDenied`` sinon, avant que rien ne soit écrit.
-        Sans lui, rien n'est contrôlé (il deviendra obligatoire, lot 5).
+        ``UNCHECKED`` est le chemin interne des évaluations : rien n'y est
+        contrôlé.
 
         Une session où une question de cet agent attend sa réponse (wait_answer)
         prend le message comme réponse : la question reçoit ce texte, et c'est
@@ -1896,7 +1903,7 @@ class Loom:
         approbation) alors que le run est écrit ne fait pas échouer l'appel : la
         panne est journalisée (ERROR) et le résultat est celui du run.
         """
-        actor = self._actor(user)
+        actor = None if isinstance(user, Unchecked) else self._actor(user)
         caller, who = await self._admitted(agent, context, tenant, actor)
         approver, answerer = self._in_line(actor, agent, approver, answerer)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver, answerer=answerer)
@@ -2039,7 +2046,7 @@ class Loom:
         tenant: TenantId | None = None,
         state: Mapping[str, JsonValue] | None = None,
         answerer: Answerer | None = None,
-        user: str | Actor | None = None,
+        user: str | Actor,
     ) -> AsyncGenerator[StreamItem]:
         """Événements du journal et morceaux du modèle, dans l'ordre d'arrivée.
 
@@ -2119,16 +2126,15 @@ class Loom:
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
         on_chunk: ChunkCallback | None = None,
-        user: str | Actor | None = None,
+        user: str | Actor,
     ) -> RunResult:
         """Reprend un run interrompu, là où son journal s'est arrêté.
 
         ``user`` : reprendre, c'est faire tourner l'agent — ``run`` sur lui,
-        chez son client. ``AccessDenied`` sinon ; sans lui, rien n'est contrôlé.
+        chez son client. ``AccessDenied`` sinon.
         """
         actor = self._actor(user)
-        if actor is not None and tenant_id is None:
-            tenant_id = actor.tenant
+        tenant_id = tenant_id or actor.tenant
         state = await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
         self._require_on_run(actor, "run", state)
         ctx = self.context(state.agent, state.context.tenant_id, on_chunk=on_chunk)
@@ -3049,14 +3055,13 @@ class Loom:
         *,
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
-        by: str | None = None,
-        user: str | Actor | None = None,
+        user: str | Actor,
     ) -> bool:
         """Arrête un run et écrit ``run.cancelled`` (A5) ; faux s'il est déjà fini.
 
         ``user`` : ``cancel`` sur l'agent du run, chez son client ; il signe
         l'arrêt (``by``, et ``via`` pour une passerelle). ``AccessDenied``
-        sinon, et rien n'est interrompu. Sans lui, rien n'est contrôlé.
+        sinon, et rien n'est interrompu.
 
         Le run piloté ici est d'abord interrompu, puis clos au journal. Un run
         que cette instance ne pilote pas — repris ailleurs, ou laissé en plan
@@ -3076,18 +3081,15 @@ class Loom:
         ``CancelledError``, ou ``TimeoutError`` sous ``asyncio.timeout``.
         L'appelant ne reçoit pas le booléen ; le journal dit ce qu'il en est.
         """
-        actor = self._actor(user, by)
-        via: str | None = None
-        if actor is not None:
-            tenant_id = tenant_id or actor.tenant
-            self._require_on_run(
-                actor,
-                "cancel",
-                await self.state(run_id, session_id=session_id, tenant_id=tenant_id),
-            )
-            by, via = actor.user, actor.via
+        actor = self._actor(user)
+        tenant_id = tenant_id or actor.tenant
+        self._require_on_run(
+            actor, "cancel", await self.state(run_id, session_id=session_id, tenant_id=tenant_id)
+        )
         stopping = asyncio.create_task(
-            self._cancel(run_id, session_id=session_id, tenant_id=tenant_id, by=by, via=via)
+            self._cancel(
+                run_id, session_id=session_id, tenant_id=tenant_id, by=actor.user, via=actor.via
+            )
         )
         try:
             return await asyncio.shield(stopping)
@@ -3142,12 +3144,11 @@ class Loom:
         run_id: RunId,
         *,
         call_id: str | None = None,
-        by: str | None = None,
         reason: str = "",
         arguments: dict[str, JsonValue] | None = None,
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
-        user: str | Actor | None = None,
+        user: str | Actor,
     ) -> tuple[str, ...]:
         """Autorise un appel que le run attend, et remet son pilotage en file (#17).
 
@@ -3156,14 +3157,12 @@ class Loom:
         lancé le run, ``amend`` s'il corrige les arguments — et il signe la
         décision (``by``, ``via``, ``roles``, ``self_approved``). Une demande
         désignée qu'il ne peut pas trancher, ou aucune parmi celles qui
-        attendent : ``AccessDenied``, et rien n'est écrit. Sans lui, rien n'est
-        contrôlé, et ``by`` signe.
+        attendent : ``AccessDenied``, et rien n'est écrit.
 
         Sans ``call_id``, toutes les demandes en attente sont accordées —
         le cas courant, un seul appel à valider. ``arguments`` corrige ceux de
         l'appel, et ne vaut que pour un ``call_id`` désigné : sans lui, la demande
-        est refusée (``ValueError``) plutôt que la correction perdue. ``by`` est
-        l'identité de l'approbateur : c'est tout l'audit qu'il y aura.
+        est refusée (``ValueError``) plutôt que la correction perdue.
 
         Rend les appels accordés ; vide si le run n'attendait rien — un run fini
         n'attend plus rien, même annulé en pause. Une demande dont l'échéance
@@ -3184,8 +3183,7 @@ class Loom:
             call_id,
             session_id=session_id,
             tenant_id=tenant_id,
-            actor=self._actor(user, by),
-            by=by,
+            actor=self._actor(user),
             amend=arguments is not None,
             payload=lambda asked, signed: ApprovalGranted(
                 call_id=asked.call_id,
@@ -3204,11 +3202,10 @@ class Loom:
         run_id: RunId,
         *,
         call_id: str | None = None,
-        by: str | None = None,
         reason: str = "",
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
-        user: str | Actor | None = None,
+        user: str | Actor,
     ) -> tuple[str, ...]:
         """Refuse un appel que le run attend (#17) : le motif revient au modèle.
 
@@ -3223,8 +3220,7 @@ class Loom:
             call_id,
             session_id=session_id,
             tenant_id=tenant_id,
-            actor=self._actor(user, by),
-            by=by,
+            actor=self._actor(user),
             payload=lambda asked, signed: ApprovalRejected(
                 call_id=asked.call_id,
                 tool_name=asked.tool_name,
@@ -3244,8 +3240,7 @@ class Loom:
         session_id: SessionId | None,
         tenant_id: TenantId | None,
         payload: Callable[[PendingApproval, _Signed], ApprovalGranted | ApprovalRejected],
-        actor: Actor | None = None,
-        by: str | None = None,
+        actor: Actor,
         amend: bool = False,
     ) -> tuple[str, ...]:
         """Écrit une décision d'approbation, puis remet la racine en file.
@@ -3254,13 +3249,11 @@ class Loom:
         a lu, et c'est toujours la racine qui repart — c'est elle qui rejouera
         l'appel menant au sous-run qui attend.
 
-        Avec un acteur, seules les demandes qu'il peut trancher le sont, chacune
-        signée des rôles qui le lui permettent (§ 4.4) ; le contrôle passe avant
+        Seules les demandes que l'acteur peut trancher le sont, chacune signée
+        des rôles qui le lui permettent (§ 4.4) ; le contrôle passe avant
         l'échéance, pour ne rien dire d'une demande à qui ne peut pas la voir.
         """
-        if actor is not None:
-            tenant_id = tenant_id or actor.tenant
-        tenant = tenant_id or DEFAULT_TENANT
+        tenant = tenant_id or actor.tenant
         events = await self._store.read(tenant, session_id or SessionId(run_id))
         tree = RunTree(run_id).select(events)
         if not tree:
@@ -3275,9 +3268,7 @@ class Loom:
             ]
         if call_id is not None and not decided:
             raise UnknownApproval(run_id, call_id)
-        signatures: dict[tuple[RunId, str], _Signed] = {}
-        if actor is not None:
-            decided, signatures = _decidable(actor, decided, tree, tenant, amend=amend)
+        decided, signatures = _decidable(actor, decided, tree, tenant, amend=amend)
         # Une demande périmée ne se tranche plus, même si personne n'est encore
         # venu écrire son expiration : seules les autres reçoivent la décision.
         now = datetime.now(UTC)
@@ -3311,9 +3302,12 @@ class Loom:
         drafts: list[EventDraft] = []
         for owner, asked in decided:
             span, parent = _where(tree, owner.run_id, asked.call_id)
-            signed = signatures.get((owner.run_id, asked.call_id), _Signed(by=by))
             drafts.append(
-                run_scope(owner).draft(payload(asked, signed), span_id=span, parent_span_id=parent)
+                run_scope(owner).draft(
+                    payload(asked, signatures[owner.run_id, asked.call_id]),
+                    span_id=span,
+                    parent_span_id=parent,
+                )
             )
         try:
             await writer.append(drafts, guard=undecided, since=events[-1].seq if events else 0)
@@ -3351,16 +3345,15 @@ class Loom:
         answers: Sequence[Sequence[str]] | None = None,
         text: str | None = None,
         call_id: str | None = None,
-        by: str | None = None,
         session_id: SessionId | None = None,
         tenant_id: TenantId | None = None,
-        user: str | Actor | None = None,
+        user: str | Actor,
     ) -> str:
         """Répond à une question que le run attend (wait_answer), et remet son pilotage en file.
 
         ``user`` : ``answer`` sur l'agent du run qui a posé la question (un
         sous-agent, s'il y en a un), chez son client ; il signe la réponse.
-        ``AccessDenied`` sinon, et rien n'est écrit. Sans lui, ``by`` signe.
+        ``AccessDenied`` sinon, et rien n'est écrit.
 
         ``answers`` : une liste de réponses par question, dans leur ordre (le
         libellé d'un choix, ou un texte libre) ; ``text`` : un message libre
@@ -3373,14 +3366,13 @@ class Loom:
         Une réponse n'est pas une approbation : elle ne tranche aucune demande
         d'approbation du même run.
         """
-        actor = self._actor(user, by)
-        if actor is not None:
-            by, tenant_id = actor.user, tenant_id or actor.tenant
+        actor = self._actor(user)
+        tenant_id = tenant_id or actor.tenant
         reply = QuestionReply(
             answers=None if answers is None else tuple(tuple(a) for a in answers),
             text=text,
-            by=by,
-            via=None if actor is None else actor.via,
+            by=actor.user,
+            via=actor.via,
         )
         root = await self._write_answer(
             run_id, call_id, reply, session_id=session_id, tenant_id=tenant_id, actor=actor
@@ -3417,7 +3409,9 @@ class Loom:
     ) -> tuple[RunState, str]:
         """Écrit la réponse à une question de l'arbre du run ; rend la racine et l'appel.
 
-        Avec un acteur, il faut ``answer`` sur l'agent du run qui l'a posée,
+        Sans acteur, les droits ont été vérifiés avant (``_may_answer``), ou ne
+        le sont pas (``UNCHECKED``). Avec, il faut ``answer`` sur l'agent du run
+        qui l'a posée,
         vérifié avant de juger la réponse : on ne dit pas à qui ne peut pas
         répondre ce que la réponse aurait dû être.
         """
@@ -3439,7 +3433,8 @@ class Loom:
             calls = ", ".join(question.call_id for _, question in open_questions)
             raise InvalidAnswer(f"plusieurs questions attendent ({calls}) : indiquer call_id")
         owner, question = open_questions[0]
-        self._require_on_run(actor, "answer", owner)
+        if actor is not None:
+            self._require_on_run(actor, "answer", owner)
         if question.stale(datetime.now(UTC)):
             raise QuestionStale(
                 f"Run {root.root_run_id} : la question {question.call_id} a expiré ; "
@@ -3500,7 +3495,7 @@ class Loom:
         tenant: TenantId | None = None,
         trigger: str | None = None,
         state: Mapping[str, JsonValue] | None = None,
-        user: str | Actor | None = None,
+        user: str | Actor,
     ) -> RunId:
         """Ouvre un run et met son pilotage en file ; rend son identifiant (H5).
 
@@ -3579,7 +3574,7 @@ class Loom:
         *,
         delivery_id: str | None = None,
         tenant_id: TenantId | None = None,
-        user: str | Actor | None = None,
+        user: str | Actor,
     ) -> Triggered:
         """Ouvre le run d'un déclencheur, depuis la charge reçue (H6).
 
@@ -3605,10 +3600,8 @@ class Loom:
         """
         spec = self.trigger_spec(name)
         actor = self._actor(user)
-        if actor is not None:
-            tenant_id = tenant_id or actor.tenant
-            require(actor, "run", agent=self._agents.get(spec.agent), tenant=tenant_id)
-        tenant = tenant_id or DEFAULT_TENANT
+        tenant = tenant_id or actor.tenant
+        require(actor, "run", agent=self._agents.get(spec.agent), tenant=tenant)
         values: dict[str, JsonValue] = {
             "payload": payload,
             "trigger": name,
