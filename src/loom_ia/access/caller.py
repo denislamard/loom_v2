@@ -10,7 +10,8 @@ relecture est masquée.
 Une clé identifie un utilisateur déclaré (D-4) : les permissions sont celles
 de ses rôles d'accès, que les ``scopes`` de la clé peuvent restreindre. Le
 contrôle complet — rôles bornés à des agents, listes ``access`` des agents,
-approbateurs d'une demande — viendra du noyau d'autorisation (lot 1).
+approbateurs d'une demande — est celui de ``access/authz.py`` ; les accès s'y
+branchent aux lots 3 (SDK) et 4 (REST, MCP).
 
 Le MCP en **stdio** n'a pas de clé : rien dans le protocole ne dirait au nom de
 qui une requête arrive. Son appelant est donc sans clé, avec le client choisi

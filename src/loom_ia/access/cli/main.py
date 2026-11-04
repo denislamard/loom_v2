@@ -1638,8 +1638,7 @@ def _access_lines(
         lines.append("auto-approbation interdite (l'agent)")
     approvers = _able(config, spec, "approve")
     for tool in asking:
-        listed = access.approve.tools.get(tool, access.approve.default)
-        if not _holders(config, spec.name, "approve", listed):
+        if not _holders(config, spec.name, "approve", access.approvers(tool)):
             report.warn(
                 subject,
                 f"outil {tool} : aucun utilisateur ne peut trancher ses demandes, "

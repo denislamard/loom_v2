@@ -1063,6 +1063,14 @@ class AgentAccess(DomainModel):
                 _check_access_list(f"access.{key}", roles)
         return self
 
+    def approvers(self, tool: str) -> tuple[str, ...] | None:
+        """Rôles qui tranchent les demandes de cet outil ; ``None`` : tout rôle qui a ``approve``.
+
+        La liste de l'outil, à défaut celle de l'agent (``default``). Une
+        politique ``Pause`` sur n'importe quel outil suit la même règle (§ 5.2).
+        """
+        return self.approve.tools.get(tool, self.approve.default)
+
     def listed(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
         """Chaque liste déclarée, avec la permission qu'elle exige de ses rôles."""
         pairs: list[tuple[str, tuple[str, ...]]] = [

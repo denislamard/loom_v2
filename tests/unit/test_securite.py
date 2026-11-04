@@ -13,6 +13,7 @@ stockage — un run ne se rejoue pas sans ce que le modèle a lu et répondu.
 
 import json
 import re
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,11 +23,21 @@ import yaml
 from conftest import ANSWER, DEV, EVERYTHING, OWNER, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import JudgeVerdict, Loom, RunResult
+from loom_ia.access.authz import (
+    AccessDenied,
+    Actor,
+    Approvable,
+    can,
+    can_decide,
+    require,
+    require_decision,
+)
 from loom_ia.access.caller import Caller
 from loom_ia.access.cli import main
+from loom_ia.agents.spec import AgentSpec
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.keys import fingerprint, matches, new_api_key
-from loom_ia.config.models import ApiKey
+from loom_ia.config.models import AccessRole, ApiKey, SecurityConfig
 from loom_ia.core.events import (
     DURABLE_PAYLOADS,
     DurablePayload,
@@ -48,6 +59,7 @@ from loom_ia.core.model import (
     RunId,
     RunStatus,
     SessionId,
+    TenantId,
 )
 from loom_ia.testing import RunJournal
 
@@ -963,3 +975,231 @@ def test_validate_says_when_the_only_approver_cannot_approve_his_own_runs(
     assert main(["--config", str(demo(agents=[agent])), "validate"]) == 0
     out = capsys.readouterr().out
     assert "dev est le seul approbateur : ses propres runs attendront sans fin" in out
+
+
+# --- Noyau d'autorisation (§ 4.3, § 4.4, lot 1) -------------------------------------
+
+MATRICE = SecurityConfig.model_validate(
+    {
+        "roles": [
+            {
+                "id": "gerant",
+                "permissions": [*EVERYTHING],
+            },
+            {"id": "approbateur", "permissions": ["approve", "read", "read_content"]},
+            {
+                "id": "assistante",
+                "permissions": ["run", "answer", "cancel", "read", "read_content"],
+                "agents": ["secretariat"],
+            },
+            {
+                "id": "passerelle",
+                "permissions": ["run", "answer", "read", "read_content", "act_as"],
+                "act_as_roles": ["assistante", "approbateur"],
+            },
+            # Il approuve et s'approuve, mais ailleurs que là où il est approbateur figé.
+            {"id": "solo", "permissions": ["approve", "self_approve"]},
+            {"id": "lecteur", "permissions": ["read"]},
+        ],
+        "users": [
+            {"id": "denis", "roles": ["gerant"]},
+            {"id": "paul", "roles": ["gerant", "assistante"]},
+            {"id": "marie", "roles": ["assistante"]},
+            {"id": "alice", "roles": ["approbateur"]},
+            {"id": "mixte", "roles": ["approbateur", "solo"]},
+            {"id": "app-crm", "roles": ["passerelle"]},
+            {"id": "lea", "roles": ["lecteur"]},
+            {"id": "martin", "roles": ["gerant"], "tenant": "martin"},
+        ],
+    }
+)
+
+
+def agent_named(name: str, **access: Any) -> AgentSpec:
+    return AgentSpec.model_validate(
+        {"name": name, "main": {"model": "M", "system": "x"}, "access": access}
+    )
+
+
+SECRETARIAT = agent_named("secretariat")
+PAIEMENTS = agent_named("paiements", run=["gerant"], approve={"default": ["gerant"]})
+
+
+def acteur(user: str, **key: Any) -> Actor:
+    """L'acteur ``user``, identifié par une clé de lui quand ``key`` porte des restrictions."""
+    found = ApiKey(id=f"cle-{user}", user=user, hash="sha256:" + "0" * 64, **key) if key else None
+    return Actor.of(MATRICE, user, key=found)
+
+
+def roles_of(found: tuple[AccessRole, ...]) -> list[str]:
+    return [role.id for role in found]
+
+
+def test_an_actor_is_a_declared_user_with_his_roles_and_his_tenant() -> None:
+    martin = acteur("martin")
+    assert martin.tenant == "martin" and roles_of(martin.roles) == ["gerant"]
+    assert martin.via is None and martin.signature == "martin"
+    with pytest.raises(AccessDenied, match="Utilisateur 'fantome' inconnu"):
+        Actor.of(MATRICE, "fantome")
+
+
+def test_a_key_identifies_only_its_own_user() -> None:
+    cle = ApiKey(id="app", user="marie", hash="sha256:" + "0" * 64)
+    with pytest.raises(AccessDenied, match="La clé 'app' identifie 'marie', pas 'denis'"):
+        Actor.of(MATRICE, "denis", key=cle)
+
+
+def test_a_permission_comes_from_a_role_that_covers_the_agent() -> None:
+    """Règle 2 : un rôle qui porte la permission et vaut pour l'agent."""
+    assert roles_of(require(acteur("marie"), "run", agent=SECRETARIAT)) == ["assistante"]
+    with pytest.raises(AccessDenied, match="bornés à des agents"):
+        require(acteur("marie"), "run", agent=PAIEMENTS)
+    with pytest.raises(AccessDenied, match=r"aucun de ses rôles \(lecteur\) ne la porte"):
+        require(acteur("lea"), "run", agent=SECRETARIAT)
+
+
+def test_the_access_list_of_an_agent_restricts_the_roles() -> None:
+    """Règle 3 : la liste de l'agent ne garde que les rôles qu'elle cite."""
+    with pytest.raises(AccessDenied, match="l'agent la réserve aux rôles gerant"):
+        require(acteur("app-crm"), "run", agent=PAIEMENTS)
+    # Paul est gérant et assistant : seul son rôle de gérant le laisse lancer les paiements.
+    assert roles_of(require(acteur("paul"), "run", agent=PAIEMENTS)) == ["gerant"]
+    assert roles_of(require(acteur("paul"), "run", agent=SECRETARIAT)) == ["gerant", "assistante"]
+
+
+def test_outside_an_agent_only_unbounded_roles_count() -> None:
+    """Lister les sessions d'un client : un rôle borné à des agents n'y suffit pas."""
+    assert can(acteur("denis"), "read")
+    with pytest.raises(AccessDenied, match="hors d'un agent"):
+        require(acteur("marie"), "read")
+
+
+def test_a_key_restricts_and_never_adds() -> None:
+    """Règle 4 (D-4) : les scopes et les agents de la clé retirent, ils ne donnent rien."""
+    with pytest.raises(AccessDenied, match=r"la clé cle-denis retire run \(scopes\)"):
+        require(acteur("denis", scopes=("read",)), "run", agent=SECRETARIAT)
+    with pytest.raises(AccessDenied, match="la clé cle-denis est bornée à paiements"):
+        require(acteur("denis", agents=("paiements",)), "run", agent=SECRETARIAT)
+    # Une clé qui garde run ne le donne pas à qui ne l'a pas.
+    assert not can(acteur("lea", scopes=("run", "read")), "run", agent=SECRETARIAT)
+
+
+def test_an_actor_acts_only_for_his_tenant() -> None:
+    """Règle 1 : le client vient de l'utilisateur, jamais d'ailleurs (#34)."""
+    with pytest.raises(AccessDenied, match="agit pour le client default, pas pour martin"):
+        require(acteur("denis"), "run", agent=SECRETARIAT, tenant=TenantId("martin"))
+
+
+def test_approving_is_asked_of_require_decision() -> None:
+    with pytest.raises(ValueError, match="require_decision"):
+        require(acteur("denis"), "approve", agent=SECRETARIAT)
+
+
+def test_an_approver_decides_the_requests_of_others() -> None:
+    """Règle 5 : ``approve`` sur l'agent ; sans approbateurs figés, tout rôle qui l'a."""
+    demande = Approvable(agent="secretariat", tool="envoyer", launcher="marie")
+    assert roles_of(require_decision(acteur("alice"), demande)) == ["approbateur"]
+    with pytest.raises(AccessDenied, match="n'a 'approve' sur cet agent"):
+        require_decision(acteur("marie"), demande)
+
+
+def test_the_frozen_approvers_decide_who_may_decide() -> None:
+    """Règle 6 : les approbateurs figés dans la demande, pas ceux de la config du moment."""
+    demande = Approvable(
+        agent="paiements", tool="virement", approvers=("gerant",), launcher="marie"
+    )
+    assert can_decide(acteur("denis"), demande)
+    with pytest.raises(AccessDenied, match="n'est tranchable que par gerant"):
+        require_decision(acteur("alice"), demande)
+
+
+def test_approving_ones_own_run_needs_self_approve() -> None:
+    """Règle 7 (D-7) : son propre run, seulement avec ``self_approve``."""
+    a_soi = Approvable(agent="secretariat", tool="envoyer", launcher="denis")
+    assert roles_of(require_decision(acteur("denis"), a_soi)) == ["gerant"]
+    du_sien = Approvable(agent="secretariat", tool="envoyer", launcher="alice")
+    with pytest.raises(AccessDenied, match="il faut 'self_approve'"):
+        require_decision(acteur("alice"), du_sien)
+
+
+def test_an_agent_may_forbid_approving_ones_own_run() -> None:
+    """D-7b : l'agent durcit, même pour un rôle qui a ``self_approve``."""
+    demande = Approvable(agent="paiements", tool="virement", self_approval=False, launcher="denis")
+    with pytest.raises(AccessDenied, match="l'agent interdit l'auto-approbation"):
+        require_decision(acteur("denis"), demande)
+    # Celui d'un autre, le même gérant le tranche.
+    assert can_decide(acteur("denis"), replace(demande, launcher="paul"))
+
+
+def test_one_and_the_same_role_must_fulfil_every_condition() -> None:
+    """Approbateur figé par un rôle, ``self_approve`` par un autre : refusé (§ 4.4)."""
+    demande = Approvable(
+        agent="secretariat", tool="envoyer", approvers=("approbateur",), launcher="mixte"
+    )
+    with pytest.raises(AccessDenied, match="il faut 'self_approve'"):
+        require_decision(acteur("mixte"), demande)
+    # Sans approbateurs figés, son rôle « solo » remplit tout à lui seul.
+    assert roles_of(require_decision(acteur("mixte"), replace(demande, approvers=None))) == ["solo"]
+
+
+def test_correcting_the_arguments_needs_amend() -> None:
+    """Règle 8 : corriger les arguments, c'est écrire l'action."""
+    demande = Approvable(agent="secretariat", tool="envoyer", launcher="marie")
+    assert can_decide(acteur("alice"), demande)
+    with pytest.raises(AccessDenied, match="il faut 'amend'"):
+        require_decision(acteur("alice"), demande, amend=True)
+    assert can_decide(acteur("denis"), demande, amend=True)
+
+
+def test_a_key_restricts_a_decision_too() -> None:
+    demande = Approvable(agent="secretariat", tool="envoyer", launcher="denis")
+    restreinte = acteur("denis", scopes=("run", "approve"))
+    with pytest.raises(AccessDenied, match=r"la clé cle-denis retire self_approve"):
+        require_decision(restreinte, demande)
+    assert can_decide(restreinte, replace(demande, launcher="marie"))
+    assert not can_decide(acteur("denis"), demande, tenant=TenantId("martin"))
+
+
+def test_a_gateway_acts_for_a_user_with_the_roles_it_may_endorse() -> None:
+    """D-5, D-5b : ``as_user`` exerce les rôles de l'utilisateur, bornés à ``act_as_roles``."""
+    crm = acteur("app-crm")
+    marie = crm.endorse(MATRICE, "marie")
+    assert marie.user == "marie" and marie.via == "app-crm"
+    assert marie.signature == "marie (via app-crm)"
+    assert can(marie, "run", agent=SECRETARIAT)
+    # Alice approuve en son nom : la passerelle n'a pas approve, elle porte la décision.
+    alice = crm.endorse(MATRICE, "alice")
+    assert can_decide(alice, Approvable(agent="secretariat", tool="envoyer", launcher="marie"))
+    # Paul est gérant et assistant : par la passerelle, il n'est qu'assistant.
+    paul = crm.endorse(MATRICE, "paul")
+    assert roles_of(paul.roles) == ["assistante"]
+    assert not can(paul, "run", agent=PAIEMENTS)
+
+
+def test_a_gateway_cannot_endorse_beyond_its_bounds() -> None:
+    crm = acteur("app-crm")
+    with pytest.raises(AccessDenied, match="ne peut pas agir au nom de denis"):
+        crm.endorse(MATRICE, "denis")
+    with pytest.raises(AccessDenied, match="n'agit pas au nom d'autrui"):
+        acteur("marie").endorse(MATRICE, "alice")
+    with pytest.raises(AccessDenied, match="n'agit pas au nom d'autrui"):
+        acteur("app-crm", scopes=("run",)).endorse(MATRICE, "marie")
+    with pytest.raises(AccessDenied, match="martin est chez martin"):
+        crm.endorse(MATRICE, "martin")
+    with pytest.raises(AccessDenied, match="on n'endosse pas en chaîne"):
+        crm.endorse(MATRICE, "marie").endorse(MATRICE, "alice")
+
+
+def test_the_key_of_the_gateway_still_restricts_the_endorsed_user() -> None:
+    marie = acteur("app-crm", scopes=("act_as", "read")).endorse(MATRICE, "marie")
+    with pytest.raises(AccessDenied, match=r"la clé cle-app-crm retire run"):
+        require(marie, "run", agent=SECRETARIAT)
+
+
+def test_the_approvers_of_a_tool_fall_back_on_those_of_the_agent() -> None:
+    access = agent_named(
+        "x", approve={"default": ["gerant"], "tools": {"envoyer": ["approbateur"]}}
+    ).access
+    assert access.approvers("envoyer") == ("approbateur",)
+    assert access.approvers("autre") == ("gerant",)
+    assert SECRETARIAT.access.approvers("envoyer") is None
