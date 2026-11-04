@@ -15,6 +15,8 @@ torch et transformers ne sont importés qu'au chargement des poids, au premier
 calcul ou au préchargement : ce module s'importe sans eux. Demi-précision sur
 GPU (``fp16``, faite avant le transfert vers la carte), float32 sur CPU. Lots
 de 16 textes ; au plus 1024 tokens par texte, 512 par paire pour le reranker.
+Un calcul abandonné (``cancel``) s'arrête avant le lot suivant : sur CPU, un lot
+prend de l'ordre de 30 s.
 
 Les barres de progression de transformers et de huggingface_hub (« Loading
 weights », téléchargements) sont coupées au chargement : un outil n'écrit rien
@@ -24,6 +26,7 @@ fichiers sont lus dans le cache local seulement, sans requête vers le Hub.
 
 import contextlib
 import importlib
+import threading
 from collections.abc import Generator, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
@@ -33,6 +36,7 @@ from loom_ia.tools_builtin.memory.models import (
     LazyModel,
     ModelNotCached,
     SparseVec,
+    checkpoint,
     first_line,
     resolve_device,
 )
@@ -88,11 +92,14 @@ class _Encoder:
     device: str
     special: frozenset[int]
 
-    def encode(self, texts: Sequence[str]) -> list[Embedding]:
+    def encode(
+        self, texts: Sequence[str], cancel: threading.Event | None = None
+    ) -> list[Embedding]:
         found: list[Embedding] = []
         torch = self.torch
         with torch.inference_mode():
             for batch in _batches(texts):
+                checkpoint(cancel)
                 inputs = self.tokenizer(
                     list(batch),
                     padding=True,
@@ -131,11 +138,14 @@ class _PairScorer:
     model: Any
     device: str
 
-    def score(self, query: str, passages: Sequence[str]) -> list[float]:
+    def score(
+        self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
+    ) -> list[float]:
         found: list[float] = []
         torch = self.torch
         with torch.inference_mode():
             for batch in _batches(passages):
+                checkpoint(cancel)
                 inputs = self.tokenizer(
                     [query] * len(batch),
                     list(batch),
@@ -169,6 +179,10 @@ class BgeM3Embedder:
     def dim(self) -> int:
         return DENSE_DIM
 
+    @property
+    def device(self) -> str | None:
+        return self._model.device
+
     def load(self) -> None:
         self._model.load()
 
@@ -198,14 +212,16 @@ class BgeM3Embedder:
             special=frozenset(int(i) for i in special if i is not None),
         )
 
-    def embed_documents(self, texts: Sequence[str]) -> list[Embedding]:
+    def embed_documents(
+        self, texts: Sequence[str], cancel: threading.Event | None = None
+    ) -> list[Embedding]:
         if not texts:
             return []
         batch = list(texts)
-        return self._model.run(lambda encoder: encoder.encode(batch))
+        return self._model.run(lambda encoder: encoder.encode(batch, cancel), cancel)
 
-    def embed_query(self, text: str) -> Embedding:
-        return self._model.run(lambda encoder: encoder.encode([text]))[0]
+    def embed_query(self, text: str, cancel: threading.Event | None = None) -> Embedding:
+        return self._model.run(lambda encoder: encoder.encode([text], cancel), cancel)[0]
 
 
 class BgeReranker:
@@ -223,6 +239,10 @@ class BgeReranker:
     @property
     def model_name(self) -> str:
         return self._spec.reranker
+
+    @property
+    def device(self) -> str | None:
+        return self._model.device
 
     def load(self) -> None:
         self._model.load()
@@ -244,8 +264,10 @@ class BgeReranker:
             device=device,
         )
 
-    def score(self, query: str, passages: Sequence[str]) -> list[float]:
+    def score(
+        self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
+    ) -> list[float]:
         if not passages:
             return []
         batch = list(passages)
-        return self._model.run(lambda scorer: scorer.score(query, batch))
+        return self._model.run(lambda scorer: scorer.score(query, batch, cancel), cancel)

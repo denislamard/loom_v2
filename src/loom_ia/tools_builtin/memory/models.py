@@ -6,6 +6,12 @@ lourds (BGE-M3 et son reranker font chacun ~568 M de paramètres) : un seul
 exemplaire par process et par réglage, partagé par tous les agents et tous
 les clients (``shared_models``). Le device se choisit pour le process, pas
 pour un appel.
+
+Un calcul s'abandonne entre deux lots (``cancel``) : quand l'appel qui
+l'attendait est annulé — délai de l'outil dépassé, run arrêté —, le thread ne
+finit pas un calcul dont personne ne lira le résultat, et rend le modèle aux
+appels suivants. Un appel annulé pendant qu'il attend le modèle quitte la file
+sans calculer.
 """
 
 import functools
@@ -37,28 +43,42 @@ class Embedding:
 
 
 class Embedder(Protocol):
+    """Les vecteurs des textes. ``cancel`` levé, le calcul s'arrête au lot suivant."""
+
     @property
     def model_name(self) -> str: ...
 
     @property
     def dim(self) -> int: ...
 
+    @property
+    def device(self) -> str | None:
+        """Le device des poids chargés ; ``None`` tant qu'ils ne le sont pas."""
+        ...
+
     def load(self) -> None:
         """Charge les poids s'ils ne le sont pas : ce que fait le préchargement."""
         ...
 
-    def embed_documents(self, texts: Sequence[str]) -> list[Embedding]: ...
+    def embed_documents(
+        self, texts: Sequence[str], cancel: threading.Event | None = None
+    ) -> list[Embedding]: ...
 
-    def embed_query(self, text: str) -> Embedding: ...
+    def embed_query(self, text: str, cancel: threading.Event | None = None) -> Embedding: ...
 
 
 class Reranker(Protocol):
     @property
     def model_name(self) -> str: ...
 
+    @property
+    def device(self) -> str | None: ...
+
     def load(self) -> None: ...
 
-    def score(self, query: str, passages: Sequence[str]) -> list[float]:
+    def score(
+        self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
+    ) -> list[float]:
         """Un score par passage, entre 0 et 1."""
         ...
 
@@ -83,6 +103,24 @@ class ModelRunError(ModelError):
 
     Le modèle est gardé : l'échec tient au calcul, pas au chargement.
     """
+
+
+class ModelCancelled(Exception):
+    """Calcul abandonné : l'appel qui l'attendait a été annulé (``cancel``).
+
+    Pas une ``ModelError`` : personne n'attend plus le résultat, il n'y a rien à
+    dire au modèle. Le modèle chargé est gardé.
+    """
+
+
+# Toutes les combien de secondes un appel qui attend le modèle regarde s'il est annulé.
+_CANCEL_POLL: Final = 0.1
+
+
+def checkpoint(cancel: threading.Event | None) -> None:
+    """Lève ``ModelCancelled`` si le calcul a été abandonné : à appeler entre deux lots."""
+    if cancel is not None and cancel.is_set():
+        raise ModelCancelled
 
 
 # --- Device ----------------------------------------------------------------------
@@ -193,6 +231,11 @@ class LazyModel[T]:
     Le modèle construit tourne une première fois (``check``) avant d'être gardé :
     un modèle qui ne tourne pas est jeté, l'erreur devient ``ModelLoadError``, et
     l'appel suivant recharge.
+
+    ``run`` s'abandonne (``cancel``) en attendant le verrou, avant le chargement,
+    et avant le calcul ; pendant le calcul, c'est à ``fn`` de regarder ``cancel``
+    entre ses lots. Un chargement commencé va à son terme : il servira à l'appel
+    suivant.
     """
 
     def __init__(
@@ -208,6 +251,12 @@ class LazyModel[T]:
         self._check = check
         self._lock = threading.Lock()
         self._model: T | None = None
+        self._loaded_on: str | None = None
+
+    @property
+    def device(self) -> str | None:
+        """Le device où le modèle est chargé ; ``None`` tant qu'il ne l'est pas."""
+        return self._loaded_on if self._model is not None else None
 
     def load(self) -> None:
         """Charge le modèle s'il ne l'est pas déjà."""
@@ -215,17 +264,32 @@ class LazyModel[T]:
             if self._model is None:
                 self._model = self._load()
 
-    def run[R](self, fn: Callable[[T], R]) -> R:
-        with self._lock:
+    def run[R](self, fn: Callable[[T], R], cancel: threading.Event | None = None) -> R:
+        self._acquire(cancel)
+        try:
+            checkpoint(cancel)
             if self._model is None:
                 self._model = self._load()
+            checkpoint(cancel)
             try:
                 return fn(self._model)
+            except ModelCancelled:
+                raise
             except Exception as exc:
                 raise ModelRunError(
                     f"Calcul du modèle {self._name} impossible : {first_line(exc)}. "
                     "Réessayer ; si l'erreur persiste, relancer loom."
                 ) from exc
+        finally:
+            self._lock.release()
+
+    def _acquire(self, cancel: threading.Event | None) -> None:
+        """Le verrou ; un appel annulé pendant l'attente quitte la file (``ModelCancelled``)."""
+        if cancel is None:
+            self._lock.acquire()
+            return
+        while not self._lock.acquire(timeout=_CANCEL_POLL):
+            checkpoint(cancel)
 
     def _load(self) -> T:
         device = "?"
@@ -257,6 +321,7 @@ class LazyModel[T]:
                 "models.device et l'installation de torch."
             ) from exc
         log.info("modèle %s chargé sur %s", self._name, device)
+        self._loaded_on = device
         return model
 
 

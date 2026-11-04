@@ -2,7 +2,10 @@
 """Les opérations de la mémoire, communes à l'outil et à ``loom memory``.
 
 Asynchrones : la base et les modèles travaillent dans des threads. Les
-erreurs destinées au modèle sont des ``ToolError``, au message lisible.
+erreurs destinées au modèle sont des ``ToolError``, au message lisible. Un appel
+annulé (délai de l'outil dépassé, run arrêté) abandonne le calcul de modèle en
+cours au lot suivant : il ne garde pas le modèle pour un résultat que personne
+ne lira.
 
 Ce que la mémoire garantit, et que vérifient ses essais :
 
@@ -107,11 +110,11 @@ class MemoryService:
         pool = selected(index, clean_project(project), clean_tags(tags))
         if not pool:
             return []
-        embedded = await self._model(self.models.embedder.embed_query, query)
+        embedder, reranker = self.models.embedder, self.models.reranker
+        embedded = await self._model(lambda cancel: embedder.embed_query(query, cancel))
         candidates = fused(embedded, pool, self._retrieval)
-        scores = await self._model(
-            self.models.reranker.score, query, [passage(chunk) for chunk in candidates]
-        )
+        passages = [passage(chunk) for chunk in candidates]
+        scores = await self._model(lambda cancel: reranker.score(query, passages, cancel))
         return hits(candidates, scores, k, self._retrieval, min_score=min_score)
 
     async def get(self, doc_id: str, *, project: str | None) -> Document:
@@ -228,9 +231,9 @@ class MemoryService:
     async def index_document(self, doc: Document) -> int:
         """Découpe, vectorise et écrit le document ; rend le nombre de passages."""
         chunks = chunk_document(doc.doc_id, doc.title, doc.text, self._chunking)
-        embeddings = await self._model(
-            self.models.embedder.embed_documents, [chunk.embed_text for chunk in chunks]
-        )
+        texts = [chunk.embed_text for chunk in chunks]
+        embedder = self.models.embedder
+        embeddings = await self._model(lambda cancel: embedder.embed_documents(texts, cancel))
         try:
             await asyncio.to_thread(self.store.write, doc, chunks, embeddings)
         except sqlite3.IntegrityError as exc:
@@ -248,10 +251,18 @@ class MemoryService:
                 self._index = self.store.index()
             return self._index[1]
 
-    async def _model[**P, R](self, fn: Callable[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
-        """Un calcul de modèle, hors de la boucle ; son échec dit au modèle, sans trace."""
+    async def _model[R](self, fn: Callable[[threading.Event], R]) -> R:
+        """Un calcul de modèle, hors de la boucle ; son échec dit au modèle, sans trace.
+
+        Le thread ne s'interrompt pas : annulé, l'appel lève l'événement que le
+        calcul regarde entre ses lots, puis laisse passer l'annulation.
+        """
+        cancel = threading.Event()
         try:
-            return await asyncio.to_thread(fn, *args, **kwargs)
+            return await asyncio.to_thread(fn, cancel)
+        except asyncio.CancelledError:
+            cancel.set()
+            raise
         except ModelError as exc:
             raise ToolError(str(exc)) from exc
 

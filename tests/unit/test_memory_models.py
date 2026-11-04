@@ -25,6 +25,7 @@ import pytest
 from loom_ia.tools_builtin.memory.bge_m3 import BgeM3Embedder, BgeReranker
 from loom_ia.tools_builtin.memory.models import (
     LazyModel,
+    ModelCancelled,
     ModelLoadError,
     ModelRunError,
     resolve_device,
@@ -326,7 +327,7 @@ def fakes(monkeypatch: pytest.MonkeyPatch) -> Fakes:
     return found
 
 
-def install(monkeypatch: pytest.MonkeyPatch, found: Fakes) -> Fakes:
+def install[F: Fakes](monkeypatch: pytest.MonkeyPatch, found: F) -> F:
     monkeypatch.setitem(sys.modules, "torch", found.torch())
     monkeypatch.setitem(sys.modules, "transformers", found.transformers())
     return found
@@ -517,6 +518,119 @@ def test_a_failed_computation_keeps_the_model() -> None:
         "2.00 GiB. Réessayer ; si l'erreur persiste, relancer loom."
     )
     assert builds == ["cpu"]  # le modèle n'est pas jeté
+
+
+# --- Annulation et device ---------------------------------------------------------------
+
+
+class Cancelling(Fakes):
+    """Lève ``cancel`` à chaque calcul, une fois armé ; compte les passages du modèle."""
+
+    def __init__(self, cancel: threading.Event) -> None:
+        super().__init__()
+        self.cancel = cancel
+        self.armed = False
+        self.passes = 0
+
+    def enter(self) -> None:
+        super().enter()
+        if self.armed:
+            self.passes += 1
+            self.cancel.set()
+
+
+def test_a_cancelled_embedding_stops_before_the_next_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancel = threading.Event()
+    found = install(monkeypatch, Cancelling(cancel))
+    embedder = BgeM3Embedder(CPU)
+    embedder.load()
+    found.armed = True
+    with pytest.raises(ModelCancelled):
+        embedder.embed_documents([f"mot{i}" for i in range(40)], cancel)  # 3 lots de 16
+    assert found.passes == 1
+    # Le modèle est gardé, et libre : l'appel suivant calcule tout, sans recharger.
+    found.armed = False
+    assert len(embedder.embed_documents([f"mot{i}" for i in range(40)])) == 40
+    assert found.built == 1
+
+
+def test_a_cancelled_scoring_stops_before_the_next_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    cancel = threading.Event()
+    found = install(monkeypatch, Cancelling(cancel))
+    reranker = BgeReranker(CPU)
+    reranker.load()
+    found.armed = True
+    with pytest.raises(ModelCancelled):
+        reranker.score("q", ["p"] * 40, cancel)
+    assert found.passes == 1
+
+
+def test_a_call_cancelled_while_waiting_leaves_without_computing() -> None:
+    builds: list[str] = []
+    lazy = LazyModel[str]("m", lambda: "cpu", lambda d: builds.append(d) or "m", lambda _: None)
+    busy, release = threading.Event(), threading.Event()
+    ran: list[str] = []
+
+    def long(model: str) -> str:
+        busy.set()
+        release.wait(5)
+        ran.append("long")
+        return model
+
+    first = threading.Thread(target=lazy.run, args=(long,))
+    first.start()
+    assert busy.wait(5)
+    cancel = threading.Event()
+    outcome: list[str] = []
+
+    def waiting() -> None:
+        try:
+            lazy.run(lambda _: ran.append("en attente"), cancel)
+        except ModelCancelled:
+            outcome.append("abandonné")
+
+    second = threading.Thread(target=waiting)
+    second.start()
+    time.sleep(0.05)
+    cancel.set()
+    # Parti de la file avant que le premier calcul ne rende le verrou.
+    second.join(timeout=2)
+    assert not second.is_alive() and outcome == ["abandonné"]
+    release.set()
+    first.join(timeout=5)
+    assert ran == ["long"] and builds == ["cpu"]
+
+
+def test_a_call_cancelled_before_the_load_loads_nothing() -> None:
+    builds: list[str] = []
+    lazy = LazyModel[str]("m", lambda: "cpu", lambda d: builds.append(d) or "m", lambda _: None)
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(ModelCancelled):
+        lazy.run(lambda model: model, cancel)
+    assert builds == [] and lazy.device is None
+
+
+def test_a_cancelled_computation_is_not_a_failure_and_keeps_the_model() -> None:
+    builds: list[str] = []
+    lazy = LazyModel[str]("m", lambda: "cpu", lambda d: builds.append(d) or "m", lambda _: None)
+
+    def abandoned(_: str) -> str:
+        raise ModelCancelled
+
+    # Ni ModelRunError (rien à dire au modèle), ni modèle jeté.
+    with pytest.raises(ModelCancelled):
+        lazy.run(abandoned)
+    assert lazy.run(lambda model: model) == "m" and builds == ["cpu"]
+
+
+def test_the_device_is_known_once_the_weights_are_loaded(fakes: Fakes) -> None:
+    embedder, reranker = BgeM3Embedder(CPU), BgeReranker(CPU)
+    assert embedder.device is None and reranker.device is None
+    embedder.embed_query("x")
+    assert embedder.device == "cpu" and reranker.device is None
 
 
 # --- Registre et préchargement ----------------------------------------------------------

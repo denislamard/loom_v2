@@ -6,6 +6,9 @@ Modèles factices, base dans un dossier temporaire : ni torch ni réseau.
 
 import asyncio
 import sqlite3
+import threading
+import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
@@ -13,7 +16,14 @@ import pytest
 
 import loom_ia.tools_builtin.memory.store as store_module
 from loom_ia.core.ports import ToolError
-from loom_ia.tools_builtin.memory.models import shared_models
+from loom_ia.tools_builtin.memory.fake import FakeEmbedder, FakeReranker
+from loom_ia.tools_builtin.memory.models import (
+    Embedding,
+    LazyModel,
+    Models,
+    checkpoint,
+    shared_models,
+)
 from loom_ia.tools_builtin.memory.service import Extracted, MemoryService
 from loom_ia.tools_builtin.memory.store import MemoryStore
 from loom_ia.tools_builtin.memory_params import ChunkingSpec, ModelsSpec, RetrievalSpec
@@ -272,3 +282,56 @@ async def test_a_base_indexed_by_another_model_is_refused(tmp_path: Path) -> Non
     connection.close()
     with pytest.raises(ToolError, match=r"indexée avec autre-modele.*loom memory reindex"):
         await service_on(path).search("chauffe-eau", project=None)
+
+
+# --- Calcul abandonné -----------------------------------------------------------------
+
+
+class SlowEmbedder(FakeEmbedder):
+    """Un texte toutes les 50 ms, sous un seul verrou, comme un vrai modèle sur CPU."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lazy = LazyModel[FakeEmbedder]("lent", lambda: "cpu", lambda _: FakeEmbedder(), id)
+        self.computed = 0
+
+    def embed_documents(
+        self, texts: Sequence[str], cancel: threading.Event | None = None
+    ) -> list[Embedding]:
+        def run(model: FakeEmbedder) -> list[Embedding]:
+            found: list[Embedding] = []
+            for text in texts:
+                checkpoint(cancel)
+                time.sleep(0.05)
+                self.computed += 1
+                found.append(model.embed_query(text))
+            return found
+
+        return self.lazy.run(run, cancel)
+
+    def embed_query(self, text: str, cancel: threading.Event | None = None) -> Embedding:
+        return self.lazy.run(lambda model: model.embed_query(text), cancel)
+
+
+async def test_an_add_cut_by_its_timeout_frees_the_model_at_once(tmp_path: Path) -> None:
+    slow = SlowEmbedder()
+    memory = MemoryService(
+        MemoryStore(tmp_path / "memoire.db"),
+        Models(slow, FakeReranker()),
+        RetrievalSpec(),
+        ChunkingSpec(target_chars=200, max_chars=300, overlap_chars=0, min_chars=0),
+    )
+    await add(memory, NOTE, "Devis Martin")
+    # Un passage par paragraphe : 100 passages, 5 s de calcul.
+    long_text = "\n\n".join(f"Paragraphe {i} : " + "mot " * 40 for i in range(100))
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.3):
+            await add(memory, long_text, "Long document")
+    started = time.monotonic()
+    found = await memory.search("chauffe-eau de Mme Martin", project="dupont")
+    # La recherche n'attend pas la fin d'un calcul que personne ne lira.
+    assert time.monotonic() - started < 1.0
+    assert found[0].title == "Devis Martin"
+    assert slow.computed < 20
+    # Et rien n'a été écrit pour l'ajout abandonné.
+    assert [d.title for d in await memory.list_docs(project="dupont")] == ["Devis Martin"]

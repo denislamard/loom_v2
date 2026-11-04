@@ -12,6 +12,10 @@ d'elle :
 - chaque client a sa base (``store.path_env`` lu dans ses secrets).
 """
 
+import asyncio
+import threading
+import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -22,6 +26,8 @@ from loom_ia.access.api import Loom
 from loom_ia.config import load_config
 from loom_ia.core.events import ToolCalled, ToolCompleted
 from loom_ia.core.model import RunStatus, SessionId, TenantId
+from loom_ia.tools_builtin.memory.fake import FakeEmbedder
+from loom_ia.tools_builtin.memory.models import Embedding, checkpoint
 
 NOTE: Final = (
     "Le devis D-2026-042 de Mme Martin porte sur le remplacement d'un chauffe-eau de 200 L, "
@@ -306,3 +312,53 @@ async def test_adding_a_note_already_there_never_waits_for_a_human(tmp_path: Pat
         [done] = completed(events, "add_text")
         assert cast(dict[str, Any], done.output.data)["duplicate_of"] == document["doc_id"]
         assert [d["doc_id"] for d in await listed(loom, session)] == [document["doc_id"]]
+
+
+async def test_a_write_cut_by_the_tool_timeout_stops_computing_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Délai de l'outil dépassé : le run continue, rien n'est écrit, le calcul s'arrête."""
+    computed: list[str] = []
+
+    def slow(
+        self: FakeEmbedder, texts: Sequence[str], cancel: threading.Event | None = None
+    ) -> list[Embedding]:
+        found: list[Embedding] = []
+        for text in texts:
+            checkpoint(cancel)
+            time.sleep(0.05)
+            computed.append(text)
+            found.append(self.embed_query(text))
+        return found
+
+    monkeypatch.setattr(FakeEmbedder, "embed_documents", slow)
+    # Environ 40 passages : 2 s de calcul, pour un délai de 0,3 s.
+    long_text = "\n\n".join(f"Paragraphe {i} : " + "mot " * 40 for i in range(400))
+    script = [
+        {"with_text": "Archive", **call(action="add_text", text=long_text, title="Archive")},
+        {"with_text": "Archive", "text": "Trop long pour le délai."},
+        *SCRIPT,
+    ]
+    path = write_config(tmp_path, script)
+    agent_file = tmp_path / "agents" / "assistant.yaml"
+    agent = yaml.safe_load(agent_file.read_text(encoding="utf-8"))
+    agent["tools"][0]["timeout"] = 0.3
+    agent["tools"][0]["actions"] = {
+        "search": {},
+        "list_docs": {},
+        "add_text": {"approval": "never"},
+    }
+    agent_file.write_text(yaml.safe_dump(agent, allow_unicode=True), encoding="utf-8")
+    async with Loom(load_config(path)) as loom:
+        session = SessionId("atelier")
+        done = await loom.run("assistant", "Archive ce texte.", session_id=session)
+        assert done.status == RunStatus.COMPLETED
+        events = await loom.events(done.run_id, session_id=session)
+        [cut] = completed(events, "add_text")
+        assert cut.output.is_error
+        assert any("Délai dépassé" in getattr(b, "text", "") for b in cut.output.blocks)
+        # Le calcul s'est arrêté au lot suivant, loin de ses 40 passages.
+        stopped = len(computed)
+        await asyncio.sleep(0.3)
+        assert len(computed) == stopped < 20
+        assert await listed(loom, session) == []

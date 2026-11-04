@@ -10,11 +10,12 @@ démonstrations. Ce n'est pas une recherche par le sens.
 import hashlib
 import math
 import re
+import threading
 from collections import Counter
 from collections.abc import Sequence
 from typing import Final
 
-from loom_ia.tools_builtin.memory.models import Embedding, SparseVec
+from loom_ia.tools_builtin.memory.models import Embedding, SparseVec, checkpoint
 
 _TOKEN: Final = re.compile(r"\w+", re.UNICODE)
 
@@ -39,6 +40,10 @@ class FakeEmbedder:
     def dim(self) -> int:
         return self._dim
 
+    @property
+    def device(self) -> str | None:
+        return None
+
     def load(self) -> None:
         pass
 
@@ -59,10 +64,17 @@ class FakeEmbedder:
             sparse=SparseVec(indices=[i for i, _ in items], values=[v for _, v in items]),
         )
 
-    def embed_documents(self, texts: Sequence[str]) -> list[Embedding]:
-        return [self._one(text) for text in texts]
+    def embed_documents(
+        self, texts: Sequence[str], cancel: threading.Event | None = None
+    ) -> list[Embedding]:
+        found: list[Embedding] = []
+        for text in texts:
+            checkpoint(cancel)
+            found.append(self._one(text))
+        return found
 
-    def embed_query(self, text: str) -> Embedding:
+    def embed_query(self, text: str, cancel: threading.Event | None = None) -> Embedding:
+        checkpoint(cancel)
         return self._one(text)
 
 
@@ -71,10 +83,17 @@ class FakeReranker:
     def model_name(self) -> str:
         return "fake-reranker"
 
+    @property
+    def device(self) -> str | None:
+        return None
+
     def load(self) -> None:
         pass
 
-    def score(self, query: str, passages: Sequence[str]) -> list[float]:
+    def score(
+        self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
+    ) -> list[float]:
+        checkpoint(cancel)
         asked = set(_tokens(query))
         if not asked:
             return [0.0] * len(passages)
