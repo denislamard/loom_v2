@@ -2,7 +2,9 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.16 - non publiée
+## 2.0.17 - non publiée
+
+## 2.0.16 - publiée
 
 ### Mémoire long terme : l'outil fourni `loom.memory`
 - **`loom.memory`** (nouvel outil fourni) : une mémoire long terme où l'agent cherche et range des documents, dans le process de loom, sans serveur à côté. Recherche hybride : BGE-M3 (dense et lexical, fusion par rangs) puis reranker bge-reranker-v2-m3, sur `transformers`, CPU ou GPU (fp16 sur GPU) ; un seul exemplaire des modèles par process et par réglage, partagé par les agents et les clients ; chargés au premier calcul, ou dès le montage avec `models.preload: true` ; `models.offline: true` les lit dans le cache local de Hugging Face seulement, sans requête vers le Hub (un modèle absent du cache est nommé, avec la commande `hf download` qui l'y met). Les barres de progression de transformers et de huggingface_hub sont tues : l'outil n'écrit rien dans la console. L'outil a son propre délai, 300 s au lieu des 30 s communs (indexer une page sur CPU prend de l'ordre de 1,5 s par passage) ; `timeout` le change. `models.device: cuda` forcé est vérifié au chargement comme `auto` : une carte que torch ne prend pas en charge, aucun GPU vu ou une carte absente font échouer le chargement avec la raison. Sans l'extra `memory`, `models: {kind: fake}` donne des modèles factices et déterministes.

@@ -1,6 +1,6 @@
 # loom.memory — points en suspens après les tests utilisateur
 
-*Branche `loom-mem`, loom-ia 2.0.16, tests de bout en bout du 03/11/2026 sur l'agent `agent-mem` (Haiku 5.5, `device: cpu`, modèles réels BGE-M3 et bge-reranker-v2-m3).*
+*loom-ia 2.0.16 (branche `loom-mem`, mergée dans `main`). Tests de bout en bout du 03/11/2026 sur l'agent `agent-mem` (Haiku 5.5, modèles réels BGE-M3 et bge-reranker-v2-m3) : sur le CPU du poste, puis sur une VM GPU Thunder Compute (supprimée depuis).*
 
 Ce document recense ce qui reste à faire. Rien n'y est implémenté. Pour chaque point : ce qui a été observé, la cause dans le code, la correction proposée, les effets de bord à surveiller et les tests à ajouter.
 
@@ -18,7 +18,7 @@ Ce document recense ce qui reste à faire. Rien n'y est implémenté. Pour chaqu
 | 6 | Texte d'interface résiduel dans `add_url` | Qualité d'extraction | Basse | Faible |
 | 7 | Outils MCP non annotés : irréversibles mais sans approbation | Sécurité | Haute | Moyen (effets de bord) |
 | 8 | Tests non joués en vrai | Validation | Moyenne | Faible |
-| 9 | Calculs des modèles sur un GPU distant, avec repli sur le CPU | Fonctionnalité / performance | Moyenne | Élevé |
+| 9 | Serveur de modèles : une seule copie en VRAM, locale ou sur une VM cloud, avec repli sur le CPU | Fonctionnalité / performance | Haute | Élevé |
 
 Les limites connues et acceptées sont listées à la fin. Elles ne sont pas à corriger, seulement à garder en tête.
 
@@ -148,7 +148,7 @@ Au moment de l'approbation, rien ne dit à l'humain que l'appel va occuper le pr
 
 ### Correction proposée
 
-1. **Documentation**, dans le howto chapitre 4 et la formation (`pieges.html`) : l'ordre de grandeur par passage sur CPU et sur GPU, et les deux remèdes, un `timeout` plus long ou le GPU.
+1. **Documentation**, dans le howto chapitre 4 et la formation (`pieges.html`) : l'ordre de grandeur par passage, environ 1,5 à 2 s sur CPU contre environ 14 ms sur GPU (VM du 03/11 : 39 passages en 0,5 s, hors chargement des modèles), et les deux remèdes, un `timeout` plus long ou le GPU.
 2. **Une estimation dans le motif d'approbation de `add_file`.** Pendant l'évaluation, on dispose déjà du chemin résolu (`_file_target`). Un `stat()` donne la taille sans lire le fichier. Le motif pourrait devenir : « mémoriser un fichier (workspace/config.md, 64 Ko, ~40 passages) … ». Le nombre de passages se déduit de la taille divisée par `chunking.target_chars`. L'appareil, lui, n'est connu qu'au chargement du modèle : ne l'afficher que si le modèle est déjà chargé.
 3. **Option à discuter :** refuser dès l'évaluation un fichier dont l'estimation dépasse nettement le délai de l'outil, avec un message qui dit quoi faire. Le risque est un refus à tort, si l'estimation se trompe ou si le GPU est plus rapide que prévu. Je ne le recommande pas sans mesures sur GPU.
 
@@ -289,13 +289,25 @@ C'est ce qui permettait à `add_url` de loom-notes d'écrire sans accord quand l
 
 ## 8. Tests non joués en vrai
 
+### Joués sur la VM GPU (03/11)
+
+| Cas | Résultat |
+|---|---|
+| 6 `add_file` lancés ensemble (`workspace/archives/*.md`) | 6 approbations, puis 6 documents et 39 passages, sans doublon. Les titres viennent des `# …`. Les 6 calculs ont fini en 0,53 s, après environ 22 s d'attente du chargement des modèles par le processus `loom approve`. |
+| Recherche sur un document (« taux de TVA… rénovation énergétique ») | Le bon document en tête (0,996). La réponse reprend une règle maison : « en cas de doute, appliquer 10 % et le signaler à Denis ». La recherche a pris 17 s, presque tout en chargement des modèles (voir le point 9). |
+| Recherche sur plusieurs documents (relance et pénalités) | 5 résultats pertinents sur 3 documents, de 0,84 à 0,996, avec 2 passages au plus par document. La réponse reprend le calendrier de relance, le calcul semestre par semestre et l'indemnité de 40 €. |
+
+L'appareil choisi n'a pas été journalisé (`logging: WARNING`). Le passage par le GPU est déduit des durées : sur CPU, les 6 fins se seraient étalées sur environ une minute. **La durée d'une recherche sans le chargement des modèles reste à mesurer** : il faut lancer `loom memory eval` avec 1 question puis avec 10, et comparer les deux durées.
+
+### Encore à jouer
+
 Ces cas sont couverts par les tests automatiques, mais n'ont pas été joués avec les vrais modèles :
 
 | Cas | Commande | Attendu |
 |---|---|---|
 | Le même fichier enregistré deux fois | `loom run agent "Utilise l'action add_file de la mémoire pour mémoriser workspace/config.md." --session …` | Approbation **demandée**, puisque le contenu d'un fichier n'est pas lu avant. Après accord : `duplicate_of: 569d565d-…`, aucun calcul. |
 | Suppression approuvée | `loom run agent "Supprime le document « loom_v2 — Clés de configuration » de la mémoire." --session …` | Approbation (irréversible), puis document et 63 passages supprimés. Base à 2 documents et 24 passages. |
-| GPU, carte prise en charge | `models: { device: auto }` sur la RTX 5060 Ti | `cuda` choisi, fp16, temps par passage à mesurer, mémoire GPU d'environ 1,1 Go par modèle. |
+| GPU local | `models: { device: auto }` sur la RTX 5060 Ti | `cuda` choisi, fp16, mémoire GPU d'environ 1,1 Go par modèle, à côté de Qwen3. Mesurer le chargement et une recherche seule. |
 | GPU, petite carte | `device: cuda` forcé sur la carte de 4 Go | Refus clair au chargement (« models.device cuda inutilisable : … ») si la carte n'est pas prise en charge par torch 2.15. Sinon, chargement en fp16 sans débordement mémoire, grâce à la conversion avant copie. |
 | Plusieurs clients | `store: { path_env: … }` et deux `tenants` | Deux fichiers, aucun ne voit l'autre (couvert en test moteur). |
 | `serve --reload` | Modifier un fichier de config pendant que la mémoire sert | Rechargement, puis un premier `search` qui fonctionne, avec et sans `preload`. |
@@ -303,7 +315,7 @@ Ces cas sont couverts par les tests automatiques, mais n'ont pas été joués av
 
 ---
 
-## 9. Calculs des modèles sur un GPU distant, avec repli sur le CPU
+## 9. Serveur de modèles : une seule copie en VRAM, locale ou sur une VM cloud, avec repli sur le CPU
 
 ### Besoin
 
@@ -312,7 +324,17 @@ Sur CPU, avec les mesures des tests du 03/11 :
 - l'indexation prend environ 1,5 à 2 s par passage ;
 - au-delà d'environ 150 Ko, un fichier dépasse le délai de 300 s.
 
-On veut que loom continue de tourner sur le poste local, et n'envoie que les **calculs des modèles** (vecteurs et reranking) à un GPU distant quand il est disponible : une VM louée à la minute, comme Thunder Compute, ou la machine qui a la RTX 5060 Ti.
+Sur GPU (VM de test du 03/11), le calcul est négligeable : 39 passages en environ 0,5 s. Mais **chaque `loom run`, `loom approve` ou `loom memory …` est un nouveau processus**. Il recharge les deux modèles depuis le disque vers la VRAM (environ 15 s mesurées), puis libère la VRAM en se terminant. Sur GPU, une recherche lancée depuis la CLI prend donc 16 à 17 s, presque entièrement en chargement. Le problème est le même avec un GPU local.
+
+`loom serve` et `loom worker` gardent déjà les modèles chargés, puisque ce sont des processus qui restent lancés. Mais :
+- la CLI n'a pas de mode client pour confier un run à un `loom serve` déjà lancé ;
+- `loom serve --reload` relance le processus, donc recharge les modèles, à chaque changement de config.
+
+On veut donc **un processus qui charge les modèles une seule fois et les garde en VRAM**, et que tous les processus loom appellent : la CLI, `serve`, `worker`, et plusieurs agents à la fois. Ce processus doit pouvoir tourner :
+- **sur le poste local**, avec un GPU local (RTX 5060 Ti) ;
+- **sur une VM cloud** louée à la minute (Thunder Compute ou autre), jointe **directement par le réseau**, pas seulement par un tunnel SSH.
+
+Quand il ne répond pas, loom calcule sur le CPU local.
 
 ### Ce qui est possible aujourd'hui, sans code
 
@@ -343,21 +365,46 @@ La base reste compatible, puisque c'est le même modèle des deux côtés : un c
   | `POST /score` | `{query, passages: [...]}` | `[float]` |
 
 - Il impose un plafond sur le nombre de textes et sur leur taille par requête, pour qu'un seul appel ne monopolise pas la carte.
-- Il demande une authentification par jeton (`Authorization: Bearer`), lu dans une variable d'environnement.
-- Il écoute par défaut sur `127.0.0.1`, pour être joint par un tunnel SSH. Pour l'ouvrir au réseau, il faut le demander explicitement, et seulement avec TLS.
 - Il réutilise le verrou de `LazyModel` : un calcul à la fois par modèle, comme en local.
+- Il charge les modèles **au démarrage**, avant d'accepter des requêtes. `/health` ne répond « prêt » qu'une fois les deux modèles chargés et testés.
+- **Une seule instance par port.** Si le port est déjà pris, il le dit et s'arrête sans charger les modèles, pour ne jamais occuper deux fois la VRAM.
 - Il dépend de l'extra `http`, déjà présent pour `loom serve`.
+
+##### Trois façons de le joindre
+
+| Usage | Écoute | Jeton | Chiffrement |
+|---|---|---|---|
+| GPU local | `--host 127.0.0.1` (défaut) | facultatif | inutile (la boucle locale ne sort pas de la machine) |
+| VM cloud par tunnel SSH | `--host 127.0.0.1` sur la VM | facultatif | assuré par SSH |
+| **VM cloud jointe directement par le réseau** | `--host 0.0.0.0` ou l'IP publique | **obligatoire** | **TLS obligatoire** : `--tls-cert` et `--tls-key` (TLS natif d'uvicorn), ou `--behind-proxy` quand un reverse proxy HTTPS (Caddy, nginx) ou le HTTPS du fournisseur termine le TLS |
+
+Les règles de démarrage, vérifiées avant de charger les modèles :
+- **Sur une autre adresse que la boucle locale, sans jeton** : refus de démarrer.
+- **Sur une autre adresse que la boucle locale, sans `--tls-cert`/`--tls-key` ni `--behind-proxy`** : refus de démarrer. Les textes des documents ne circulent jamais en clair sur le réseau.
+- **Le jeton** est lu dans une variable d'environnement (`--token-env`), jamais passé en argument, puisqu'il serait alors visible dans la liste des processus. Il est comparé en temps constant (`hmac.compare_digest`). Prévoir deux jetons acceptés à la fois, pour pouvoir en changer sans coupure.
+- **Avec `--behind-proxy`,** le serveur écoute en clair, mais seulement pour le proxy. La doc doit dire de ne pas ouvrir son port au réseau, et de n'ouvrir que celui du proxy.
+
+Côté réseau de la VM, à documenter mais hors de loom :
+- n'ouvrir que le port HTTPS dans le pare-feu ou le *security group* ;
+- restreindre la source à l'IP du poste ou du serveur loom quand c'est possible ;
+- avec un certificat auto-signé, le client doit le connaître (`ca_file`, voir ci-dessous).
 
 #### Côté loom : un nouveau type de modèles
 
 ```yaml
 models:
   kind: remote
-  url_env: LOOM_MODELS_URL        # ex. http://127.0.0.1:8765 par tunnel SSH
-  token_env: LOOM_MODELS_TOKEN
+  url_env: LOOM_MODELS_URL        # http://127.0.0.1:8765 (local, tunnel) ou https://gpu.exemple.fr (VM cloud)
+  token_env: LOOM_MODELS_TOKEN     # obligatoire dès que l'URL n'est pas la boucle locale
+  ca_file: certs/gpu-ca.pem        # facultatif : certificat auto-signé de la VM
   fallback: cpu                    # cpu | none
   connect_timeout: 3               # s : une VM éteinte ne bloque pas chaque appel
 ```
+
+Les contrôles faits au chargement de la config, sans contacter le serveur :
+- **URL en `http://` vers une autre adresse que la boucle locale** : refusée. Seul `https://` est accepté hors de la machine.
+- **URL hors de la boucle locale sans `token_env`** : refusée.
+- **`url_env` et `token_env`** sont lus dans les secrets du client (`tenants[].secrets`), comme `store.path_env`. Chaque client peut ainsi avoir son serveur de modèles, ou le même.
 
 - **`RemoteEmbedder` et `RemoteReranker`** implémentent les protocoles `Embedder` et `Reranker` de `models.py`. `load()` appelle `/health`.
 - **La vérification du modèle.** Au premier contact, le nom de l'`embedder` et la dimension renvoyés par `/health` doivent être ceux de la config et de la base (table `meta`). Sinon, le chargement est refusé, avec le même message que pour une base indexée par un autre modèle.
@@ -373,13 +420,21 @@ Ce n'est pas le rôle de loom. Soit à la main, soit avec un script autour de la
 - **Le repli sur le CPU charge environ 4,5 Go de RAM** au moment où il se déclenche. Avec `preload: true`, faut-il précharger les modèles locaux même quand le serveur répond ? À trancher. Je propose de ne pas le faire, et de les charger au premier repli.
 - **Les délais.** Le délai propre de 300 s de l'outil reste nécessaire pour le repli. Côté réseau : un délai de connexion court, et un délai de lecture proportionné au nombre de textes.
 - **L'annulation** (point 2) doit fonctionner aussi pour un appel distant. Fermer la connexion suffit côté client, mais le serveur doit arrêter le calcul entre deux lots quand le client s'en va.
-- **Les données sur le réseau.** Les textes des documents et des requêtes transitent jusqu'au GPU. Il faut TLS ou un tunnel SSH, et vérifier la localisation des données chez le fournisseur : Thunder Compute tourne sur AWS EC2, sans région européenne documentée. C'est un sujet RGPD pour des données clients.
+- **Les données sur le réseau.** Les textes des documents et des requêtes transitent jusqu'au GPU. Le chiffrement est imposé hors de la boucle locale (voir les règles de démarrage et les contrôles de la config). Reste la localisation des données chez le fournisseur : Thunder Compute tourne sur AWS EC2, sans région européenne documentée. C'est un sujet RGPD pour des données clients : un fournisseur avec une région européenne, ou la RTX 5060 Ti, évite la question.
+- **Le serveur est une surface exposée.** Avec le réseau ouvert, quiconque a le jeton peut faire calculer la carte. Il faut des plafonds par requête (déjà prévus), une limite de requêtes simultanées, et un journal d'accès sans le contenu des textes.
 - **Les imports légers.** `kind: remote` ne doit importer ni torch ni transformers tant que le repli n'est pas déclenché. Un poste sans l'extra `memory` peut alors utiliser un GPU distant, avec `fallback: none`.
 - **La compatibilité des vecteurs.** Ce sont les mêmes poids et le même code (`bge_m3.py`) des deux côtés, la seule différence étant fp16 contre fp32. Il faut vérifier par un test que l'ordre des résultats d'une recherche ne change pas selon que le calcul est local ou distant, sur un petit corpus.
 
 ### Tests à ajouter
 
-- **Serveur** (`test_memory_models_server.py`) : `/health`, `/embed` et `/score` sur les faux torch et transformers déjà utilisés par `test_memory_models.py` ; jeton absent ou faux refusé ; plafonds appliqués.
+- **Serveur** (`test_memory_models_server.py`) :
+  - `/health`, `/embed` et `/score` sur les faux torch et transformers déjà utilisés par `test_memory_models.py` ;
+  - un jeton absent ou faux est refusé, et la comparaison se fait en temps constant ;
+  - les plafonds sont appliqués ;
+  - refus de démarrer hors de la boucle locale sans jeton, ou sans TLS ni `--behind-proxy` ;
+  - un port déjà pris arrête le serveur sans charger les modèles ;
+  - `/health` ne répond pas « prêt » avant la fin du chargement.
+- **Config** : `http://` vers une autre adresse que la boucle locale est refusé, une URL distante sans `token_env` aussi, et `url_env`/`token_env` sont lus dans les secrets du client.
 - **Client** (`test_memory_models.py`) :
   - `RemoteEmbedder` et `RemoteReranker` contre un faux serveur ;
   - un modèle annoncé différent est refusé ;
@@ -393,6 +448,29 @@ Ce n'est pas le rôle de loom. Soit à la main, soit avec un script autour de la
 
 - **Les serveurs d'embedding génériques** (Hugging Face TEI, Infinity) : ils servent souvent le dense et le reranking, mais rarement le lexical de BGE-M3 tel que loom le calcule. Avec le même problème de compatibilité qu'Ollama.
 - **Déporter tout loom sur la VM** : c'est possible, mais la VM doit alors rester allumée tant que l'agent sert. C'est le contraire du « quand c'est nécessaire ».
+
+---
+
+## Côté agent, hors loom : quand la mémoire est consultée
+
+### Observé (VM, run « archives-q1 »)
+
+À la question « Quel taux de TVA s'applique à des travaux de rénovation énergétique ? », Marie a répondu **sans consulter la mémoire**, avec ses connaissances générales. Elle a donc manqué la règle maison des archives (« en cas de doute, appliquer 10 % et le signaler à Denis »). Avec « D'après la mémoire, … », elle a cherché et trouvé.
+
+### Cause
+
+Le prompt (`prompts/system.md`, section « Mémoire ») ne demande de chercher que pour les questions « sur Denis, ses projets, ses clients ou ce qui a déjà été dit ». Une question de TVA n'en fait pas partie.
+
+### Correction (prompt, non appliquée)
+
+```markdown
+- Pour toute question liée à l'activité (devis, factures, TVA, garanties, conditions générales, pénalités, relances, support client) ou à Denis, ses projets et ses clients, **cherche d'abord dans la mémoire** (`search`), puis lis le document entier (`get`) si l'extrait ne suffit pas.
+- Quand la mémoire contient la réponse, elle prime sur tes connaissances générales. Si tu complètes avec des connaissances générales, dis-le explicitement.
+```
+
+### Pour un agent livré à un client
+
+La même règle est à prévoir dans son prompt, avec la liste des sujets de **sa** mémoire. Une piste côté loom : un `skill` par défaut pour `loom.memory`, qui rappelle de chercher avant de répondre sur les sujets de la base. Il s'ajouterait à la description de l'outil, ce que les outils fournis savent déjà faire. À évaluer : ça ne remplace pas la liste des sujets, que seul le prompt de l'agent connaît.
 
 ---
 
