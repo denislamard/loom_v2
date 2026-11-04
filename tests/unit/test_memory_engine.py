@@ -265,12 +265,12 @@ async def test_each_client_has_its_own_memory(
 async def test_a_file_add_file_refuses_never_waits_for_a_human(tmp_path: Path) -> None:
     """Une extension refusée l'est avant l'approbation : le run ne s'arrête pas pour rien."""
     script = [
-        {"with_text": "plaquette", **call(action="add_file", file="workspace/plaquette.docx")},
+        {"with_text": "plaquette", **call(action="add_file", file="workspace/plaquette.odt")},
         {"with_text": "plaquette", "text": "Format refusé."},
         *SCRIPT,
     ]
     path = write_config(tmp_path, script, files=True)
-    (tmp_path / "workspace" / "plaquette.docx").write_bytes(b"PK\x03\x04")
+    (tmp_path / "workspace" / "plaquette.odt").write_bytes(b"PK\x03\x04")
     async with Loom(load_config(path)) as loom:
         session = SessionId("atelier")
         done = await loom.run("assistant", "Mémorise la plaquette.", session_id=session)

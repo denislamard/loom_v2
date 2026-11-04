@@ -331,6 +331,8 @@ class _Reading:
     """Ce que la lecture rend, et ce qu'elle a vu en passant."""
 
     start: int
+    # Taille du résultat, en caractères JSON : au-delà, la lecture s'arrête (``next_start``).
+    budget: int = READ_CHARS
     blocks: list[JsonValue] = field(default_factory=list[JsonValue])
     used: int = 0
     full: bool = False
@@ -346,13 +348,17 @@ class _Reading:
     pending_id: str | None = None
 
 
-def read(data: bytes, where: str, start: int) -> dict[str, JsonValue]:
-    """Les blocs du document à partir de ``start``, dans un budget de taille."""
+def read(data: bytes, where: str, start: int, budget: int = READ_CHARS) -> dict[str, JsonValue]:
+    """Les blocs du document à partir de ``start``, dans un budget de taille.
+
+    ``budget`` : celui d'un résultat d'outil par défaut ; ``loom.memory``, qui lit
+    le document entier, en donne un plus grand.
+    """
     deadline = time.monotonic() + READ_DEADLINE
     with _guarded(where):
         package = _open(data, where)
         with package.archive:
-            reading = _Reading(start=start)
+            reading = _Reading(start=start, budget=budget)
             _walk(package, reading, deadline, where)
     result: dict[str, JsonValue] = {
         "title": package.title,
@@ -742,22 +748,22 @@ def _emit(
     if index < reading.start or reading.full:
         return
     size = len(json.dumps(block, ensure_ascii=False))
-    if reading.blocks and reading.used + size > READ_CHARS:
+    if reading.blocks and reading.used + size > reading.budget:
         # Le bloc ne tient plus : il sera le premier de la suite.
         reading.full = True
         reading.next_start = index
         return
-    if size > READ_CHARS:
-        block = _shortened(block)
+    if size > reading.budget:
+        block = _shortened(block, reading.budget)
         reading.cut += 1
     reading.blocks.append(block)
     reading.used += size
 
 
-def _shortened(block: dict[str, JsonValue]) -> dict[str, JsonValue]:
+def _shortened(block: dict[str, JsonValue], budget: int) -> dict[str, JsonValue]:
     """Un bloc seul plus grand que le budget : coupé, pour que la lecture avance."""
     said = json.dumps(block, ensure_ascii=False)
-    return {"type": block.get("type"), "text": said[: READ_CHARS - 200] + "…", "cut": True}
+    return {"type": block.get("type"), "text": said[: budget - 200] + "…", "cut": True}
 
 
 def _bounded(outline: list[JsonValue]) -> list[JsonValue]:
@@ -780,7 +786,7 @@ def _notes(package: _Package, reading: _Reading, start: int) -> list[JsonValue]:
         )
     if reading.next_start is not None:
         notes.append(
-            f"Lecture coupée par la taille du résultat ({READ_CHARS} caractères) : la suite "
+            f"Lecture coupée par la taille du résultat ({reading.budget} caractères) : la suite "
             f"commence au bloc {reading.next_start} (start) ; 'outline' donne le plan."
         )
     if reading.images:

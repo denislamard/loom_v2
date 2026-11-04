@@ -11,12 +11,18 @@ pour ce qui ne regarde pas l'appel lui-même.
 | add_text, add_url, add_file | réversible | oui : même contenu ou même source, rien de doublé |
 | update | réversible | oui : le même texte ne réécrit rien |
 | delete | irréversible | non |
+
+``add_file`` lit du texte (.md, .markdown, .txt), du Word et du PDF (``files``).
+Avant l'approbation, seul ce qui ne peut pas changer est vérifié : dossier,
+droit, extension. Le motif dit ce que l'humain approuve — la taille du fichier
+et, pour un texte, le nombre de passages et le temps de calcul quand le modèle
+est chargé —, mais n'en décide rien : le fichier peut changer pendant
+l'attente, et l'exécution refait tout.
 """
 
 import asyncio
 import importlib.util
 import os
-import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Final, cast
@@ -36,7 +42,18 @@ from loom_ia.tools_builtin import (
 from loom_ia.tools_builtin._folders import Folders, Located, mount
 from loom_ia.tools_builtin.local_files_params import FolderSpec
 from loom_ia.tools_builtin.memory.arguments import NAME, MemoryArguments, parse, schema
-from loom_ia.tools_builtin.memory.chunk import content_hash
+from loom_ia.tools_builtin.memory.chunk import chunk_document, content_hash
+from loom_ia.tools_builtin.memory.files import (
+    MAX_FILE_BYTES,
+    MAX_TEXT_BYTES,
+    MAX_TEXT_CHARS,
+    PDF_SUFFIXES,
+    TEXT_SUFFIXES,
+    WORD_SUFFIXES,
+    extract,
+    text_title,
+    unreadable,
+)
 from loom_ia.tools_builtin.memory.models import shared_models
 from loom_ia.tools_builtin.memory.service import (
     MIN_TITLE_CHARS,
@@ -47,14 +64,13 @@ from loom_ia.tools_builtin.memory.service import (
 from loom_ia.tools_builtin.memory.store import MemoryStore
 from loom_ia.tools_builtin.memory_params import READS, MemoryAction, MemoryParams
 
-# add_file : ce qu'on lit d'un fichier, et lesquels.
-MAX_FILE_BYTES: Final = 1_000_000
 # Délai d'un appel, en secondes, quand l'agent n'en donne pas (``timeout``). Indexer une
 # page sur CPU prend de l'ordre de 1,5 s par passage, et le premier appel peut charger les
 # modèles : le délai commun des outils (30 s) n'y suffit pas.
 TIMEOUT: Final = 300.0
-FILE_SUFFIXES: Final = frozenset({".md", ".markdown", ".txt"})
-_H1: Final = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
+# Calcul d'un passage, en secondes, mesuré le 03/11/2026 (BGE-M3, lots de 16) : de 1,5 à
+# 2 s sur CPU, environ 14 ms sur GPU. Sert seulement à prévenir l'humain qui approuve.
+SECONDS_PER_PASSAGE: Final[Mapping[str, float]] = {"cpu": 2.0, "cuda": 0.015}
 
 _EFFECTS: Final[Mapping[MemoryAction, tuple[SideEffects, bool]]] = {
     "search": ("none", True),
@@ -89,9 +105,17 @@ class MemoryTool:
         params: MemoryParams,
         store: MemoryStore,
         folders: Folders | None,
+        unreadable: Mapping[str, str] | None = None,
     ) -> None:
         self.params = params
         self.folders = folders
+        # Les formats que ce process ne sait pas lire, et pourquoi (un extra manque).
+        self.unreadable: Mapping[str, str] = dict(unreadable or {})
+        self.file_suffixes = tuple(
+            suffix
+            for suffix in (*TEXT_SUFFIXES, *WORD_SUFFIXES, *PDF_SUFFIXES)
+            if suffix not in self.unreadable
+        )
         models = shared_models(params.models)
         self.service = MemoryService(store, models, params.retrieval, params.chunking)
         declared = params.declared()
@@ -199,11 +223,59 @@ class MemoryTool:
             case "add_url":
                 return f" ({request.url}){where}"
             case "add_file":
-                return f" ({request.file}){where}"
+                file = cast(str, request.file)
+                return f" ({file}{self._file_cost(file)}){where}"
             case "update" | "delete" | "get":
                 return f" ({request.doc_id})"
             case _:
                 return where
+
+    def _file_cost(self, path: str) -> str:
+        """Ce que coûtera le fichier, pour l'humain qui approuve ; ne lève jamais.
+
+        La taille ; pour un texte, le nombre de passages (le texte découpé comme il
+        le sera) et, si le modèle est chargé, le temps de calcul. Un .docx ou un .pdf
+        n'est pas converti ici : sa taille seule. Ce qui sera refusé à l'exécution est
+        dit, sans rien décider : le fichier peut changer d'ici là.
+        """
+        try:
+            _, target = self._file_target(path)
+            if not target.is_file():
+                return " — introuvable pour l'instant"
+            size = target.stat().st_size
+            said = [_size(size)]
+            if size > MAX_FILE_BYTES:
+                return f", {said[0]} — trop gros : sera refusé"
+            if target.suffix.lower() in TEXT_SUFFIXES:
+                if size > MAX_TEXT_BYTES:
+                    return f", {said[0]} — trop long : sera refusé"
+                text = target.read_bytes().decode("utf-8").strip()
+                if len(text) > MAX_TEXT_CHARS:
+                    return f", {said[0]} — trop long : sera refusé"
+                chunking = self.params.chunking
+                passages = len(chunk_document("", text_title(text, target), text, chunking))
+                said.append(f"{passages} passage{'s' if passages > 1 else ''}")
+                duration = self._duration(passages)
+                if duration:
+                    said.append(duration)
+            return ", " + ", ".join(said)
+        except ToolError, OSError, UnicodeDecodeError:
+            return ""
+
+    def _duration(self, passages: int) -> str | None:
+        """Le temps de calcul, si le modèle est chargé sur un device dont on connaît la vitesse."""
+        device = self.service.models.embedder.device
+        if device is None:
+            return None
+        rate = SECONDS_PER_PASSAGE.get(device.partition(":")[0])
+        if rate is None:
+            return None
+        seconds = passages * rate
+        if seconds < 1:
+            return f"moins d'une seconde de calcul sur {device}"
+        if seconds < 90:
+            return f"~{seconds:.0f} s de calcul sur {device}"
+        return f"~{seconds / 60:.0f} min de calcul sur {device}"
 
     # --- Exécution ---------------------------------------------------------------------
 
@@ -238,9 +310,7 @@ class MemoryTool:
                 done = await service.add(page, kind="url", source=url, project=project, tags=tags)
                 return to_output(done)
             case "add_file":
-                address, extracted = await asyncio.to_thread(
-                    self._read_file, cast(str, request.file)
-                )
+                address, extracted = await self._read_file(cast(str, request.file))
                 done = await service.add(
                     extracted, kind="file", source=address, project=project, tags=tags
                 )
@@ -263,34 +333,22 @@ class MemoryTool:
         located = self.folders.locate(path)
         Folders.require(located, ("read",))
         target = self.folders.resolved(located)
-        if target.suffix.lower() not in FILE_SUFFIXES:
+        suffix = target.suffix.lower()
+        missing = self.unreadable.get(suffix)
+        if missing is not None:
+            raise ToolError(f"{located.address} : {missing}.")
+        if suffix not in self.file_suffixes:
             raise ToolError(
                 f"{located.address} : extension {target.suffix or 'absente'} refusée ; "
-                f"permises : {', '.join(sorted(FILE_SUFFIXES))}."
+                f"permises : {', '.join(self.file_suffixes)}."
             )
         return located, target
 
-    def _read_file(self, path: str) -> tuple[str, Extracted]:
+    async def _read_file(self, path: str) -> tuple[str, Extracted]:
         """Le fichier désigné « <dossier>/<chemin> » : son adresse, son titre, son texte."""
         located, target = self._file_target(path)
-        try:
-            if not target.is_file():
-                raise ToolError(f"{located.address} : fichier introuvable.")
-            with target.open("rb") as handle:
-                data = handle.read(MAX_FILE_BYTES + 1)
-        except OSError as exc:
-            raise ToolError(f"{located.address} : {exc.strerror or type(exc).__name__}.") from exc
-        if len(data) > MAX_FILE_BYTES:
-            raise ToolError(f"{located.address} dépasse {MAX_FILE_BYTES} octets.")
-        try:
-            text = data.decode("utf-8").strip()
-        except UnicodeDecodeError as exc:
-            raise ToolError(f"{located.address} n'est pas un fichier texte UTF-8.") from exc
-        if not text:
-            raise ToolError(f"{located.address} est vide.")
-        heading = _H1.search(text)
-        title = heading.group(1).strip() if heading else target.stem
-        return located.address, Extracted(title=title, text=text)
+        data = await asyncio.to_thread(_file_bytes, located.address, target)
+        return located.address, await extract(data, target, located.address)
 
     # --- Description et réglages -------------------------------------------------------
 
@@ -319,7 +377,8 @@ class MemoryTool:
                 "truncated se lit en entier avec get."
             )
         if self.folders is not None:
-            lines.append("add_file lit un fichier .md ou .txt « <dossier>/<chemin> » :")
+            formats = ", ".join(self.file_suffixes)
+            lines.append(f"add_file lit un fichier ({formats}) « <dossier>/<chemin> » :")
             lines.extend(self.folders.described())
         writes = [a for a in params.declared() if a not in READS]
         if writes:
@@ -380,13 +439,37 @@ def build(params: BaseModel, context: BuiltinContext) -> MemoryTool:
                 )
     store = MemoryStore(_store_path(params, context))
     folders = None
+    # Les formats qu'add_file ne pourra pas lire ici : refusés avant l'approbation.
+    missing = unreadable() if "add_file" in params.actions else {}
     if params.folders:
         specs = [
             FolderSpec.model_validate({"name": f.name, "path": f.path, "rights": ["read"]})
             for f in params.folders
         ]
         folders = Folders(mount(specs, context))
-    return MemoryTool(params, store, folders)
+    return MemoryTool(params, store, folders, missing)
+
+
+def _file_bytes(address: str, target: Path) -> bytes:
+    try:
+        if not target.is_file():
+            raise ToolError(f"{address} : fichier introuvable.")
+        with target.open("rb") as handle:
+            data = handle.read(MAX_FILE_BYTES + 1)
+    except OSError as exc:
+        raise ToolError(f"{address} : {exc.strerror or type(exc).__name__}.") from exc
+    if len(data) > MAX_FILE_BYTES:
+        raise ToolError(f"{address} dépasse {MAX_FILE_BYTES} octets.")
+    return data
+
+
+def _size(size: int) -> str:
+    """Une taille de fichier lisible : « 820 o », « 64 Ko », « 1,2 Mo »."""
+    if size < 1000:
+        return f"{size} o"
+    if size < 1_000_000:
+        return f"{size / 1000:.0f} Ko"
+    return f"{size / 1_000_000:.1f} Mo".replace(".", ",")
 
 
 def _store_path(params: MemoryParams, context: BuiltinContext) -> Path:

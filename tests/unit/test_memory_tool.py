@@ -8,7 +8,9 @@ dans un dossier temporaire ; ses appels passent par ``invoke`` et
 """
 
 import importlib.util
+import io
 import os
+import zipfile
 from collections.abc import Callable
 from importlib.machinery import ModuleSpec
 from pathlib import Path
@@ -18,7 +20,7 @@ import pytest
 from conftest import ConfigFactory, demo_agent
 from pydantic import JsonValue, ValidationError
 
-import loom_ia.tools_builtin.memory.tool as tool_module
+import loom_ia.tools_builtin.memory.files as files_module
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
@@ -27,6 +29,8 @@ from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.runtime.wiring import build_agent
 from loom_ia.tools_builtin import BuiltinContext, Protected, builtin_tool
 from loom_ia.tools_builtin.memory import MemoryTool, build
+from loom_ia.tools_builtin.memory.fake import FakeEmbedder
+from loom_ia.tools_builtin.memory.files import MAX_TEXT_CHARS, word_markdown
 from loom_ia.tools_builtin.memory_params import MemoryParams
 
 FAKE: Final = {"kind": "fake"}
@@ -215,16 +219,16 @@ async def test_a_file_add_file_cannot_read_is_not_put_to_a_human(
     memory: MemoryTool, workspace: Path
 ) -> None:
     """Dossier, droit et extension sont vérifiés avant l'approbation ; le contenu, à l'exécution."""
-    (workspace / "plaquette.docx").write_bytes(b"PK\x03\x04")
+    (workspace / "plaquette.odt").write_bytes(b"PK\x03\x04")
     allowed = memory.assess_call({"action": "add_file", "file": "workspace/cgv.md"})
     assert (allowed.approval, allowed.side_effects) == ("always", "reversible")
     assert allowed.reason is not None and "workspace/cgv.md" in allowed.reason
-    for file in ("workspace/plaquette.docx", "inconnu/cgv.md", "workspace/../hors.md"):
+    for file in ("workspace/plaquette.odt", "inconnu/cgv.md", "workspace/../hors.md"):
         found = memory.assess_call({"action": "add_file", "file": file})
         assert (found.approval, found.side_effects) == ("never", "none"), file
     # Refusé tout de suite à l'exécution, pour la même raison.
     await refused(
-        memory, r"extension \.docx refusée", action="add_file", file="workspace/plaquette.docx"
+        memory, r"extension \.odt refusée", action="add_file", file="workspace/plaquette.odt"
     )
     # Un fichier absent passe l'évaluation : il peut être déposé pendant l'attente.
     missing = memory.assess_call({"action": "add_file", "file": "workspace/a-venir.md"})
@@ -340,7 +344,8 @@ async def test_files_that_add_file_refuses(memory: MemoryTool, workspace: Path) 
     (workspace / ".env").write_text("SECRET=1", encoding="utf-8")
     (workspace / "id_rsa").write_text("clé", encoding="utf-8")
     (workspace / "cle.pem").write_text("clé", encoding="utf-8")
-    (workspace / "gros.txt").write_bytes(b"a" * (tool_module.MAX_FILE_BYTES + 1))
+    (workspace / "gros.txt").write_bytes(b"a" * (files_module.MAX_FILE_BYTES + 1))
+    (workspace / "long.txt").write_text("mot " * (MAX_TEXT_CHARS // 4 + 1), encoding="utf-8")
     (workspace / "latin1.txt").write_bytes("é".encode("latin-1"))
     (workspace / "vide.md").write_text("  ", encoding="utf-8")
     (workspace / "lien.md").symlink_to("/etc/hostname")
@@ -349,6 +354,7 @@ async def test_files_that_add_file_refuses(memory: MemoryTool, workspace: Path) 
         ("workspace/id_rsa", "extension absente refusée"),
         ("workspace/cle.pem", "extension .pem refusée"),
         ("workspace/gros.txt", "dépasse"),
+        ("workspace/long.txt", f"plus de {MAX_TEXT_CHARS} caractères"),
         ("workspace/latin1.txt", "pas un fichier texte UTF-8"),
         ("workspace/vide.md", "est vide"),
         ("workspace/absent.md", "fichier introuvable"),
@@ -357,6 +363,250 @@ async def test_files_that_add_file_refuses(memory: MemoryTool, workspace: Path) 
         ("ailleurs/x.md", "Dossier inconnu"),
     ):
         await refused(memory, match, action="add_file", file=file)
+
+
+# --- add_file : ce que dit l'approbation ----------------------------------------------
+
+
+def guide(sections: int) -> str:
+    """Un markdown d'une section par partie, chacune assez longue pour faire un passage."""
+    return "# Guide\n\n" + "\n\n".join(
+        f"## Partie {i}\n\n" + "Du texte utile au guide. " * 12 for i in range(sections)
+    )
+
+
+def test_the_approval_says_the_size_and_the_passages_of_a_text_file(
+    memory: MemoryTool, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (workspace / "guide.md").write_text(guide(5), encoding="utf-8")
+    found = memory.assess_call({"action": "add_file", "file": "workspace/guide.md"})
+    assert found.approval == "always" and found.reason is not None
+    assert "(workspace/guide.md, 2 Ko, 5 passages)" in found.reason
+    # Modèle pas encore chargé : on ne sait pas sur quel device, pas de durée.
+    assert "calcul" not in found.reason
+    monkeypatch.setattr(FakeEmbedder, "device", property(lambda _: "cpu"))
+    found = memory.assess_call({"action": "add_file", "file": "workspace/guide.md"})
+    assert found.reason is not None and "5 passages, ~10 s de calcul sur cpu)" in found.reason
+    monkeypatch.setattr(FakeEmbedder, "device", property(lambda _: "cuda:0"))
+    found = memory.assess_call({"action": "add_file", "file": "workspace/guide.md"})
+    assert found.reason is not None and "moins d'une seconde de calcul sur cuda:0" in found.reason
+    monkeypatch.setattr(FakeEmbedder, "device", property(lambda _: "mps"))
+    found = memory.assess_call({"action": "add_file", "file": "workspace/guide.md"})
+    assert found.reason is not None and "calcul" not in found.reason
+
+
+def test_a_long_computation_is_said_in_minutes(
+    memory: MemoryTool, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (workspace / "guide.md").write_text(guide(63), encoding="utf-8")
+    monkeypatch.setattr(FakeEmbedder, "device", property(lambda _: "cpu"))
+    found = memory.assess_call({"action": "add_file", "file": "workspace/guide.md"})
+    assert found.reason is not None and "63 passages, ~2 min de calcul sur cpu)" in found.reason
+
+
+def test_the_approval_says_what_will_be_refused_but_still_asks(
+    memory: MemoryTool, workspace: Path
+) -> None:
+    """Le fichier peut changer pendant l'attente : ce qu'on en voit informe, sans décider."""
+    (workspace / "long.txt").write_text("mot " * (MAX_TEXT_CHARS // 4 + 1), encoding="utf-8")
+    (workspace / "latin1.txt").write_bytes("é".encode("latin-1"))
+    for file, said in (
+        ("workspace/long.txt", "— trop long : sera refusé"),
+        ("workspace/a-venir.md", "— introuvable pour l'instant"),
+        ("workspace/latin1.txt", "(workspace/latin1.txt)"),
+    ):
+        found = memory.assess_call({"action": "add_file", "file": file})
+        assert (found.approval, found.side_effects) == ("always", "reversible"), file
+        assert found.reason is not None and said in found.reason, file
+
+
+def test_the_approval_gives_only_the_size_of_a_word_or_pdf_file(
+    memory: MemoryTool, workspace: Path
+) -> None:
+    """Un .docx ou un .pdf n'est pas converti pour évaluer l'appel : sa taille seule."""
+    (workspace / "plaquette.docx").write_bytes(b"PK\x03\x04" + b"x" * 64_000)
+    found = memory.assess_call({"action": "add_file", "file": "workspace/plaquette.docx"})
+    assert found.reason is not None and "(workspace/plaquette.docx, 64 Ko)" in found.reason
+
+
+# --- add_file : Word et PDF -----------------------------------------------------------
+
+WORD_NS: Final = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+WORD_STYLES: Final = (
+    '<w:style w:type="paragraph" w:styleId="Titre"><w:name w:val="Title"/></w:style>'
+    '<w:style w:type="paragraph" w:styleId="Titre1"><w:name w:val="heading 1"/></w:style>'
+)
+
+
+def paragraph(text: str, style: str | None = None) -> str:
+    props = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ""
+    return f"<w:p>{props}<w:r><w:t>{text}</w:t></w:r></w:p>"
+
+
+def docx(*body: str) -> bytes:
+    """Un .docx minimal : le corps, et les styles Titre et Titre 1."""
+    rels = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    parts = {
+        "[Content_Types].xml": "<Types/>",
+        "_rels/.rels": (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            f'<Relationship Id="r1" Type="{rels}/officeDocument" Target="word/document.xml"/>'
+            "</Relationships>"
+        ),
+        "word/document.xml": f"<w:document {WORD_NS}><w:body>{''.join(body)}</w:body></w:document>",
+        "word/_rels/document.xml.rels": (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            f'<Relationship Id="rS" Type="{rels}/styles" Target="styles.xml"/></Relationships>'
+        ),
+        "word/styles.xml": f"<w:styles {WORD_NS}>{WORD_STYLES}</w:styles>",
+    }
+    raw = io.BytesIO()
+    with zipfile.ZipFile(raw, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, text in parts.items():
+            archive.writestr(name, text)
+    return raw.getvalue()
+
+
+def test_word_blocks_become_markdown() -> None:
+    title, text = word_markdown(
+        [
+            {"type": "titre", "level": 0, "text": "Plaquette commerciale"},
+            {"type": "titre", "level": 1, "text": "**Offre**"},
+            {"type": "paragraphe", "text": "Un **agent** par artisan."},
+            {
+                "type": "liste",
+                "ordered": True,
+                "items": ["Cadrage", {"text": "Réalisation", "items": ["code", "tests"]}],
+            },
+            {"type": "tableau", "rows": [["Poste", "Prix"], ["Audit | conseil", "500\n€"]]},
+            {"type": "citation", "text": "Travail\nsoigné."},
+            {"type": "graphique", "title": "Ventes"},
+            {"type": "titre", "level": 2, "text": "Détail"},
+            {"type": "note", "text": "**Validité**\n3 mois."},
+        ]
+    )
+    assert title == "Plaquette commerciale"
+    assert text == (
+        "# Plaquette commerciale\n\n## Offre\n\nUn **agent** par artisan.\n\n"
+        "1. Cadrage\n2. Réalisation\n   - code\n   - tests\n\n"
+        "| Poste | Prix |\n|---|---|\n| Audit \\| conseil | 500 € |\n\n"
+        "> Travail\n> soigné.\n\n### Détail\n\n**Validité**\n3 mois."
+    )
+
+
+async def test_a_word_file_is_stored_with_its_sections(memory: MemoryTool, workspace: Path) -> None:
+    (workspace / "plaquette.docx").write_bytes(
+        docx(
+            paragraph("Plaquette commerciale", "Titre"),
+            paragraph("Offre", "Titre1"),
+            paragraph("Un agent de relance par artisan."),
+            paragraph("Tarifs", "Titre1"),
+            paragraph("Sur devis, après un audit gratuit."),
+        )
+    )
+    added = await call(memory, action="add_file", file="workspace/plaquette.docx")
+    assert added["title"] == "Plaquette commerciale"
+    doc = await call(memory, action="get", doc_id=added["doc_id"])
+    assert doc["source"] == "workspace/plaquette.docx" and doc["source_kind"] == "file"
+    assert doc["text"] == (
+        "# Plaquette commerciale\n\n## Offre\n\nUn agent de relance par artisan.\n\n"
+        "## Tarifs\n\nSur devis, après un audit gratuit."
+    )
+    [hit] = await call(memory, action="search", query="audit gratuit")
+    assert hit["doc_id"] == added["doc_id"]
+    # Le même fichier : rien de doublé ; modifié : le même document, remplacé.
+    again = await call(memory, action="add_file", file="workspace/plaquette.docx")
+    assert again["duplicate_of"] == added["doc_id"]
+    (workspace / "plaquette.docx").write_bytes(
+        docx(paragraph("Plaquette commerciale", "Titre"), paragraph("Nouvelle offre."))
+    )
+    changed = await call(memory, action="add_file", file="workspace/plaquette.docx")
+    assert changed["doc_id"] == added["doc_id"] and changed["updated"]
+
+
+async def test_a_word_file_without_title_is_named_after_the_file(
+    memory: MemoryTool, workspace: Path
+) -> None:
+    (workspace / "cgv-2026.docx").write_bytes(docx(paragraph("Acompte de 30 % à la commande.")))
+    added = await call(memory, action="add_file", file="workspace/cgv-2026.docx")
+    assert added["title"] == "cgv-2026"
+
+
+async def test_a_word_file_beyond_the_text_limit_is_refused(
+    memory: MemoryTool, workspace: Path
+) -> None:
+    # Un paragraphe seul plus long que la borne : coupé par le lecteur, donc refusé.
+    (workspace / "un-bloc.docx").write_bytes(docx(paragraph("mot " * (MAX_TEXT_CHARS // 4))))
+    many = [paragraph(f"Paragraphe {i} : " + "mot " * 100) for i in range(800)]
+    (workspace / "beaucoup.docx").write_bytes(docx(*many))
+    for file in ("workspace/un-bloc.docx", "workspace/beaucoup.docx"):
+        await refused(memory, f"plus de {MAX_TEXT_CHARS} caractères", action="add_file", file=file)
+
+
+def pdf_of(*pages: str) -> bytes:
+    """Un PDF d'essai : une page par texte ; un texte vide, une page sans texte."""
+    canvas_module = pytest.importorskip("reportlab.pdfgen.canvas", reason="extra 'pdf' absent")
+    pytest.importorskip("pypdf", reason="extra 'pdf' absent")
+    raw = io.BytesIO()
+    canvas: Any = canvas_module.Canvas(raw, invariant=1)
+    for text in pages:
+        if text:
+            for number, line in enumerate(text.splitlines()):
+                canvas.drawString(72, 760 - 14 * number, line)
+        else:
+            canvas.rect(72, 600, 200, 100, fill=1)
+        canvas.showPage()
+    canvas.save()
+    return raw.getvalue()
+
+
+async def test_a_pdf_gives_its_text_page_by_page(memory: MemoryTool, workspace: Path) -> None:
+    (workspace / "devis-martin.pdf").write_bytes(
+        pdf_of("Devis D-2026-042\nChauffe-eau 200 L", "Conditions\nAcompte de 30 %")
+    )
+    added = await call(memory, action="add_file", file="workspace/devis-martin.pdf")
+    assert added["title"] == "devis-martin"
+    doc = await call(memory, action="get", doc_id=added["doc_id"])
+    assert "Chauffe-eau 200 L" in doc["text"] and "Acompte de 30 %" in doc["text"]
+    assert doc["text"].index("Chauffe-eau") < doc["text"].index("Acompte")
+
+
+async def test_a_pdf_without_text_is_refused(memory: MemoryTool, workspace: Path) -> None:
+    (workspace / "scan.pdf").write_bytes(pdf_of("", ""))
+    await refused(memory, "aucun texte dans le PDF", action="add_file", file="workspace/scan.pdf")
+
+
+async def test_without_the_pdf_extra_a_pdf_is_refused_before_approval(
+    tmp_path: Path, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    said = "la lecture des .pdf demande l'extra loom-ia[pdf] (pypdf absent)"
+    monkeypatch.setattr(files_module, "_pdf_problem", lambda: said)
+    tool = mounted(tmp_path, project="documentation")
+    (workspace / "devis.pdf").write_bytes(b"%PDF-1.4")
+    assert assessed(tool, action="add_file", file="workspace/devis.pdf") == ("never", "none")
+    await refused(tool, r"extra loom-ia\[pdf\]", action="add_file", file="workspace/devis.pdf")
+    # Le modèle n'est pas invité à donner un PDF.
+    assert ".pdf" not in tool.spec.description and ".docx" in tool.spec.description
+
+
+def test_why_pdf_files_cannot_be_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    found = importlib.util.find_spec
+
+    def without(missing: str) -> Callable[[str], ModuleSpec | None]:
+        return lambda name: None if name == missing else found(name)
+
+    monkeypatch.setattr(files_module.importlib.util, "find_spec", without("pypdf"))
+    assert files_module.unreadable() == {
+        ".pdf": "la lecture des .pdf demande l'extra loom-ia[pdf] (pypdf absent)"
+    }
+    monkeypatch.setattr(files_module.importlib.util, "find_spec", without("autre"))
+
+    def old_pypdf(_: str) -> str:
+        return "6.1.0"
+
+    monkeypatch.setattr(files_module, "version", old_pypdf)
+    [problem] = files_module.unreadable().values()
+    assert problem.startswith("pypdf 6.1.0 : 6.14.2 ou plus attendu")
 
 
 async def test_an_imposed_project_is_not_an_argument(memory: MemoryTool) -> None:

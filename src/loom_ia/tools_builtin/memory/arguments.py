@@ -92,7 +92,10 @@ class MemoryArguments(BaseModel):
     url: Annotated[str | None, Field(description="Pour add_url : l'adresse http(s).")] = None
     file: Annotated[
         str | None,
-        Field(description="Pour add_file : « <dossier>/<chemin> » d'un fichier .md ou .txt."),
+        Field(
+            description="Pour add_file : « <dossier>/<chemin> » d'un fichier texte, Word ou PDF "
+            "(les formats lus sont dans la description de l'outil)."
+        ),
     ] = None
     n: Annotated[int, Field(ge=1, le=50, description="Pour list_docs : nombre de documents.")] = 20
 

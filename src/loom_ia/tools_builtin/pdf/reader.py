@@ -27,6 +27,8 @@ READ_DEADLINE: Final = 20.0
 MEMORY: Final = 1 << 30
 # Où chercher l'en-tête « %PDF- » : la norme tolère des octets avant lui.
 HEADER_WINDOW: Final = 1024
+# La note d'une page seule plus longue que le budget, coupée : ``loom.memory`` la refuse.
+PAGE_CUT: Final = "Une page plus longue que le budget a été coupée."
 _PAGES: Final = re.compile(r"\s*(\d+)\s*(?:(-)\s*(\d+)?)?\s*")
 
 
@@ -49,8 +51,14 @@ def page_range(said: str | None) -> tuple[int, int | None]:
     return first, last
 
 
-async def read(data: bytes, where: str, pages: str | None) -> dict[str, JsonValue]:
-    """Le texte des pages demandées, dans un budget de taille ; ``ToolError`` sinon."""
+async def read(
+    data: bytes, where: str, pages: str | None, budget: int = READ_CHARS
+) -> dict[str, JsonValue]:
+    """Le texte des pages demandées, dans un budget de taille ; ``ToolError`` sinon.
+
+    ``budget`` : celui d'un résultat d'outil par défaut ; ``loom.memory``, qui lit
+    le document entier, en donne un plus grand.
+    """
     first, last = page_range(pages)
     if b"%PDF-" not in data[:HEADER_WINDOW]:
         raise ToolError(f"{where} : pas un fichier PDF (en-tête %PDF- absent).")
@@ -59,7 +67,7 @@ async def read(data: bytes, where: str, pages: str | None) -> dict[str, JsonValu
     request = {
         "first": first,
         "last": last,
-        "budget": READ_CHARS,
+        "budget": budget,
         "memory": MEMORY,
         "seconds": int(READ_DEADLINE) + 1,
     }
@@ -96,10 +104,10 @@ async def read(data: bytes, where: str, pages: str | None) -> dict[str, JsonValu
     error = found.get("error")
     if isinstance(error, str):
         raise ToolError(f"{where} : {error}")
-    return _shaped(found)
+    return _shaped(found, budget)
 
 
-def _shaped(found: dict[str, JsonValue]) -> dict[str, JsonValue]:
+def _shaped(found: dict[str, JsonValue], budget: int) -> dict[str, JsonValue]:
     pages = cast(list[JsonValue], found["pages"])
     next_page = found.get("next_page")
     result: dict[str, JsonValue] = {
@@ -122,11 +130,11 @@ def _shaped(found: dict[str, JsonValue]) -> dict[str, JsonValue]:
         )
     if next_page is not None:
         notes.append(
-            f"Lecture coupée par la taille du résultat ({READ_CHARS} caractères) : la suite "
+            f"Lecture coupée par la taille du résultat ({budget} caractères) : la suite "
             f"commence page {next_page} (pages={next_page}-)."
         )
     if found.get("cut"):
-        notes.append("Une page plus longue que le budget a été coupée.")
+        notes.append(PAGE_CUT)
     if found.get("encrypted"):
         notes.append("PDF chiffré sans mot de passe d'ouverture : lu.")
     if notes:

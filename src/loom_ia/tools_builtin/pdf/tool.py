@@ -19,11 +19,9 @@ from loom_ia.tools_builtin._document.content import Prepared
 from loom_ia.tools_builtin._document.tool import DocumentTool
 from loom_ia.tools_builtin._folders import Folders, mount
 from loom_ia.tools_builtin.pdf import reader, writer
-from loom_ia.tools_builtin.pdf_params import PdfParams
+from loom_ia.tools_builtin.pdf_params import SAFE_PYPDF, PdfParams
 
 NAME: Final = "pdf"
-# Les versions antérieures bouclent sans fin sur des PDF forgés (CVE-2026-59935, -59937).
-SAFE_PYPDF: Final = (6, 14, 2)
 
 
 class PdfCall(DocumentCall):

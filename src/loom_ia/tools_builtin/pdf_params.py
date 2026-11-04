@@ -31,6 +31,10 @@ from loom_ia.tools_builtin._office_params import (
 from loom_ia.tools_builtin.local_files_params import FolderSpec
 
 REFERENCE: Final = "loom.pdf"
+# Plancher de pypdf pour lire un PDF : les versions antérieures bouclent sans fin sur des
+# PDF forgés (CVE-2026-59935, -59937). Ici, et non dans l'outil, pour que ``loom.memory``
+# le vérifie sans importer reportlab.
+SAFE_PYPDF: Final = (6, 14, 2)
 
 
 class PdfParams(BaseModel):
