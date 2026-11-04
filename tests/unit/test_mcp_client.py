@@ -44,6 +44,7 @@ from loom_ia.adapters.mcp import (
     session_factory,
     to_output,
 )
+from loom_ia.core import REPORTED, SETUP
 from loom_ia.core.model import (
     DEFAULT_TENANT,
     InlineDataBlock,
@@ -261,6 +262,75 @@ async def test_alias_filters_and_declarations(caplog: pytest.LogCaptureFixture) 
     excluded = source(math_server(), McpSelection(prefix="math", exclude=("noter",)))
     async with excluded.open(RUN) as tools:
         assert [tool.spec.name for tool in tools] == ["math__additionner"]
+
+
+def notes_server() -> FastMCP:
+    """Des outils de toutes les sortes : lecture, réversible, destructeur, non annoté."""
+    server = FastMCP("notes", log_level="WARNING")
+
+    @server.tool(annotations=READ_ONLY)
+    def lire() -> str:
+        """Lit."""
+        return ""
+
+    @server.tool(annotations=types.ToolAnnotations(destructiveHint=False))
+    def noter() -> str:
+        """Note."""
+        return ""
+
+    @server.tool(annotations=types.ToolAnnotations(destructiveHint=True))
+    def purger() -> str:
+        """Purge."""
+        return ""
+
+    @server.tool()
+    def effacer() -> str:
+        """Sans annotation : destructeur pour la spec MCP."""
+        return ""
+
+    @server.tool()
+    def archiver() -> str:
+        """Sans annotation, mais la config le fait approuver."""
+        return ""
+
+    @server.tool()
+    def compter() -> str:
+        """Sans annotation, mais la config dit qu'il ne fait rien."""
+        return ""
+
+    return server
+
+
+async def test_irreversible_tools_without_approval_are_said_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    selection = McpSelection(prefix="notes", tools={"compter": ToolOverrides(side_effects="none")})
+    chosen = source(notes_server(), selection, tools={"archiver": {"approval": "always"}})
+    with caplog.at_level(logging.WARNING, logger="loom_ia.adapters.mcp.source"):
+        async with chosen.open(RUN) as tools:
+            specs = {tool.spec.name: tool.spec for tool in tools}
+        async with chosen.open(RUN):
+            pass
+    assert specs["notes__effacer"].side_effects == "irreversible"
+    assert specs["notes__effacer"].approval == "never"
+    [record] = [r for r in caplog.records if "sans approbation" in r.getMessage()]
+    assert record.getMessage().startswith(
+        "Serveur MCP math : purger, effacer exécuté(s) sans approbation alors qu'irréversible(s)"
+    )
+    assert "approval: always" in record.getMessage()
+    # Un avertissement de montage, que ``loom validate`` reprend dans son rapport.
+    assert getattr(record, SETUP) and getattr(record, REPORTED)
+
+
+async def test_nothing_is_said_when_every_irreversible_tool_is_approved(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    approved = {name: {"approval": "always"} for name in ("purger", "effacer", "archiver")}
+    chosen = source(notes_server(), tools={**approved, "compter": {"side_effects": "reversible"}})
+    with caplog.at_level(logging.WARNING, logger="loom_ia.adapters.mcp.source"):
+        async with chosen.open(RUN):
+            pass
+    assert "sans approbation" not in caplog.text
 
 
 async def test_the_config_rewrites_what_the_model_reads() -> None:

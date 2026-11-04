@@ -97,7 +97,7 @@ from loom_ia.config.models import (
 )
 from loom_ia.config.references import Registry, resolve
 from loom_ia.config.telemetry import CaptureConfig, CaptureOverride
-from loom_ia.core import SETUP, TOLD
+from loom_ia.core import REPORTED, SETUP, TOLD
 from loom_ia.core.events import BudgetExceeded, Event, SessionCompacted
 from loom_ia.core.model import (
     CHARS_PER_TOKEN,
@@ -105,6 +105,7 @@ from loom_ia.core.model import (
     JUDGES_MODES,
     MCP_PREFIX_SEPARATOR,
     RESERVED_PREFIX,
+    Approval,
     Attachment,
     BudgetPeriod,
     Budgets,
@@ -769,10 +770,16 @@ async def _validate(args: argparse.Namespace, *, root: Path) -> int:
     """
     config = _config(args)
     # Ce que la commande imprime à sa place n'est pas redit par le log du
-    # montage (lot C du 23/10 : le collecteur non monté se lisait deux fois).
+    # montage (lot C du 23/10 : le collecteur non monté se lisait deux fois),
+    # ni ce que son rapport reprend (``REPORTED``).
     printed: set[str] = set()
     apply_logging(config).addFilter(
-        lambda record: not (getattr(record, SETUP, False) and record.getMessage() in printed)
+        lambda record: (
+            not (
+                getattr(record, REPORTED, False)
+                or (getattr(record, SETUP, False) and record.getMessage() in printed)
+            )
+        )
     )
     registry = load_registry(config)
     report = _Report(config=args.config, root=root)
@@ -1463,7 +1470,8 @@ async def _agent_lines(
     branches.extend(
         _Branch(name, (f"skill, {_skill_size(skill)}",)) for name, skill in skills.items()
     )
-    branches.extend(await _source_branches(spec.name, context.tools))
+    imposed: Mapping[str, Approval] = tenant.approvals if tenant is not None else {}
+    branches.extend(await _source_branches(spec.name, context.tools, report, imposed))
     contracts = [
         f"{target} : {_contract_line(contract, repairs=repairs)}"
         for target, contract, repairs in _contracts(spec)
@@ -3171,10 +3179,14 @@ def _budget_line(budgets: Budgets) -> str:
     return f"{' ; '.join(parts)} ; {budgets.on_exceed}"
 
 
-async def _source_branches(agent: str, tools: ToolExecutor) -> list[_Branch]:
+async def _source_branches(
+    agent: str, tools: ToolExecutor, report: _Report, imposed: Mapping[str, Approval]
+) -> list[_Branch]:
     """Ouvre les sources de l'agent — serveurs MCP, sources de paquet — et liste leurs outils.
 
     Ce qu'un serveur a écrit est rendu imprimable : il ne pilote pas le terminal.
+    Un outil MCP irréversible que rien ne soumet à une approbation — ni sa
+    déclaration, ni le client (``imposed``) — est un avertissement.
     """
     if not tools.sources:
         return []
@@ -3191,6 +3203,19 @@ async def _source_branches(agent: str, tools: ToolExecutor) -> list[_Branch]:
         if servers:
             found = [printable(spec.name) for spec in opened.tools.specs if spec.kind == "mcp"]
             branches.append(_Branch("MCP", tuple(_packed(found, _LISTED - 4))))
+            unguarded = [
+                printable(spec.name)
+                for spec in opened.tools.specs
+                if spec.kind == "mcp"
+                and spec.side_effects == "irreversible"
+                and imposed.get(spec.name, spec.approval) == "never"
+            ]
+            if unguarded:
+                report.warn(
+                    f"Agent {agent}",
+                    f"MCP {', '.join(unguarded)} : irréversible(s), sans approbation — "
+                    "approval: always ou side_effects dans mcp_servers[].tools",
+                )
         for name, source in packaged.items():
             mine = f"{source.prefix}{MCP_PREFIX_SEPARATOR}"
             found = [printable(s.name) for s in opened.tools.specs if s.name.startswith(mine)]

@@ -20,3 +20,10 @@ commande qui ne fait que lire le journal l'écarte de sa console — au test H7
 du 21/10, ``sessions show`` le répétait à chaque appel. ``validate``, ``run``
 et le service le disent toujours.
 """
+
+REPORTED: Final = "loom_reported"
+"""Clé ``extra`` d'un avertissement que ``loom validate`` reprend dans son rapport.
+
+``validate`` l'écarte de sa console, pour ne pas le dire deux fois ; ``run`` et
+le service, qui n'ont pas de rapport, le disent comme les autres.
+"""

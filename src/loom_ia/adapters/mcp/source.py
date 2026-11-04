@@ -6,6 +6,11 @@ préfixe (``serveur__outil``, ou ``alias__outil``) et leurs déclarations :
 annotations du serveur, puis ``mcp_servers[].tools``, puis la référence de
 l'agent, de la plus faible à la plus forte.
 
+Un outil irréversible — annoncé destructeur, ou sans annotation, ce que la
+spec MCP tient pour destructeur — qu'aucune déclaration ne soumet à une
+approbation est exécuté sans accord humain : c'est dit une fois, au premier
+listage des outils, avec ce qu'il faut écrire dans la config.
+
 Un outil dont le nom préfixé ne respecte pas le format des API (lettres,
 chiffres, ``_``, ``-``, 64 caractères au plus) est écarté avec un
 avertissement. La clé d'idempotence de l'appel part dans ``_meta``.
@@ -24,6 +29,7 @@ from loom_ia.adapters.mcp.convert import declared, description, input_schema, to
 from loom_ia.adapters.mcp.pool import McpPool
 from loom_ia.adapters.mcp.server import ConnectionLost, McpServer
 from loom_ia.adapters.mcp.transports import SessionFactory
+from loom_ia.core import REPORTED, SETUP
 from loom_ia.core.model import (
     MCP_PREFIX_SEPARATOR,
     McpServerSpec,
@@ -88,6 +94,15 @@ class McpTool:
         return to_output(result)
 
 
+def unguarded_spec(spec: ToolSpec) -> bool:
+    """Vrai si l'outil est irréversible et qu'aucune déclaration n'en fait approuver les appels.
+
+    L'approbation qu'un client impose (``tenants[].approvals``) n'est pas vue ici :
+    elle se décide au run.
+    """
+    return spec.side_effects == "irreversible" and spec.approval == "never"
+
+
 class McpSource:
     """Source d'outils : un serveur, tel qu'un agent le référence."""
 
@@ -111,6 +126,7 @@ class McpSource:
         # parce que lui seul sait pour qui il monte l'agent.
         self.pool_key = pool_key or spec.name
         self._warned = False
+        self._warned_unguarded = False
 
     @property
     def name(self) -> str:
@@ -145,7 +161,7 @@ class McpSource:
         if not self._warned:
             self._warn_unknown(names)
             self._warned = True
-        tools: list[Tool] = []
+        tools: list[McpTool] = []
         for tool in listed:
             if chosen.include is not None and tool.name not in chosen.include:
                 continue
@@ -154,7 +170,25 @@ class McpSource:
             spec = self._spec(tool)
             if spec is not None:
                 tools.append(McpTool(spec=spec, server=server, remote_name=tool.name))
-        return tools
+        if not self._warned_unguarded:
+            self._warn_unguarded(tools)
+            self._warned_unguarded = True
+        return list[Tool](tools)
+
+    def _warn_unguarded(self, tools: Sequence[McpTool]) -> None:
+        """Les outils irréversibles sans approbation : le dire, avec la ligne de config."""
+        unguarded = [tool.remote_name for tool in tools if unguarded_spec(tool.spec)]
+        if not unguarded:
+            return
+        logger.warning(
+            "Serveur MCP %s : %s exécuté(s) sans approbation alors qu'irréversible(s) — sans "
+            "annotation, la spec MCP tient un outil pour destructeur. Dans mcp_servers[].tools "
+            "ou la référence de l'agent : approval: always pour demander un accord, ou "
+            "side_effects: none | reversible pour dire ce qu'il fait vraiment.",
+            self.spec.name,
+            ", ".join(unguarded),
+            extra={SETUP: True, REPORTED: True},
+        )
 
     def _spec(self, tool: types.Tool) -> ToolSpec | None:
         side_effects, idempotent = declared(tool.annotations)

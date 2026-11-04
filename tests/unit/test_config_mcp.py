@@ -331,6 +331,61 @@ def test_validate_lists_the_mcp_tools(tmp_path: Path, capsys: pytest.CaptureFixt
     assert "  └ MCP math     indisponible : " in out
 
 
+NOTES = '''
+from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+mcp = FastMCP("notes", log_level="WARNING")
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def lire() -> str:
+    """Lit les notes."""
+    return ""
+
+
+@mcp.tool()
+def effacer() -> str:
+    """Efface une note (sans annotation)."""
+    return ""
+
+
+@mcp.tool()
+def purger() -> str:
+    """Purge les notes (sans annotation)."""
+    return ""
+
+
+mcp.run()
+'''
+
+
+def test_validate_warns_of_irreversible_mcp_tools_without_approval(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    notes = {
+        "name": "notes",
+        "transport": "stdio",
+        "command": sys.executable,
+        "args": ["serveurs/notes_srv.py"],
+        "connect_timeout": 20,
+        "tools": {"purger": {"side_effects": "reversible"}},
+    }
+    spec = agent(tools=[{"mcp": "time"}, {"mcp": "notes"}])
+    path = write(tmp_path, spec, mcp_servers=[*servers(), notes])
+    (tmp_path / "serveurs" / "notes_srv.py").write_text(NOTES, encoding="utf-8")
+    assert main(["--config", str(path), "validate"]) == 0
+    captured = capsys.readouterr()
+    assert "Agent assistant" in captured.out
+    assert (
+        "MCP notes__effacer : irréversible(s), sans approbation — approval: always ou "
+        "side_effects dans mcp_servers[].tools"
+    ) in " ".join(captured.out.split())
+    assert "notes__purger :" not in captured.out and "notes__lire :" not in captured.out
+    # Dit par le rapport, pas redit par le journal.
+    assert "sans approbation" not in captured.err
+
+
 def test_stream_shows_an_unavailable_server(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
