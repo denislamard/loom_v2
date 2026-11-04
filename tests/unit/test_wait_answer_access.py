@@ -359,7 +359,12 @@ def keyed(tmp_path: Path) -> Path:
     root["security"] = {
         **root["security"],
         "api_keys": [
-            {"id": "appli", "user": DEV, "hash": fingerprint(LANCEUR), "scopes": ["run", "read"]},
+            {
+                "id": "appli",
+                "user": DEV,
+                "hash": fingerprint(LANCEUR),
+                "scopes": ["run", "answer", "read"],
+            },
             {"id": "lecture", "user": DEV, "hash": fingerprint(LECTEUR), "scopes": ["read"]},
         ],
     }
@@ -375,7 +380,7 @@ async def http_serving(path: Path) -> AsyncGenerator[tuple[Loom, httpx2.AsyncCli
             yield loom, http
 
 
-def test_rest_answer_route_needs_run_not_approve(tmp_path: Path) -> None:
+def test_rest_answer_route_needs_answer_not_approve(tmp_path: Path) -> None:
     async def go() -> None:
         async with http_serving(keyed(tmp_path)) as (loom, http):
             appli = {"Authorization": f"Bearer {LANCEUR}"}

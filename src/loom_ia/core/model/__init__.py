@@ -155,6 +155,7 @@ from loom_ia.core.model.run_state import (
     Approved,
     Approver,
     CancelReason,
+    LimitedApprover,
     PendingApproval,
     PendingCall,
     PendingRepair,
@@ -167,6 +168,7 @@ from loom_ia.core.model.run_state import (
     finite_json,
     state_json,
     state_size,
+    takes,
 )
 from loom_ia.core.model.streaming import (
     INVALID_JSON_KEY,
@@ -308,6 +310,7 @@ __all__ = [
     "JudgeWhen",
     "JudgesMode",
     "KeepImages",
+    "LimitedApprover",
     "McpScope",
     "McpServerSpec",
     "McpTransport",
@@ -413,4 +416,5 @@ __all__ = [
     "sniff",
     "state_json",
     "state_size",
+    "takes",
 ]

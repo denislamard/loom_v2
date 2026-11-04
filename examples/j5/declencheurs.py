@@ -172,7 +172,7 @@ def pose(config: LoomConfig, agent: str) -> tuple[LoomConfig, dict[str, str]]:
             id="planificateur",
             hash=fingerprint(jetons["planificateur"]),
             user=DUPONT,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
         ),
         # Elle ne sait que lire : une porte lance, donc elle est refusée.
         ApiKey(
@@ -186,14 +186,14 @@ def pose(config: LoomConfig, agent: str) -> tuple[LoomConfig, dict[str, str]]:
             id="bureau",
             hash=fingerprint(jetons["bureau"]),
             user=DUPONT,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
             agents=(autre_que(agent),),
         ),
         ApiKey(
             id="martin",
             hash=fingerprint(jetons["martin"]),
             user=MARTIN,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
         ),
     )
     return config.model_copy(

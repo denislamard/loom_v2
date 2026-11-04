@@ -74,6 +74,7 @@ from loom_ia.access.api import (
     check_deletable_id,
     unpiloted,
 )
+from loom_ia.access.authz import AccessDenied, Actor
 from loom_ia.access.cli import memory as memory_cli
 from loom_ia.access.evals import evaluate
 from loom_ia.access.progress import SKIP_REASONS, Progress, describe_compaction, notes
@@ -512,6 +513,13 @@ def build_parser() -> argparse.ArgumentParser:
     serve.set_defaults(handler=cmd_serve)
 
     mcp = tenanted(commands.add_parser("mcp", help="sert les agents en MCP, sur stdio"))
+    mcp.add_argument(
+        "--user",
+        default=None,
+        metavar="UTILISATEUR",
+        help="utilisateur au nom duquel le serveur agit, déclaré dans security.users ; "
+        "le client est le sien",
+    )
     mcp.set_defaults(handler=cmd_mcp)
 
     keys = commands.add_parser("keys", help="clés d'API de l'accès REST")
@@ -3103,10 +3111,27 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         print(MISSING_EXTRA.format(what="'loom mcp'", extra="mcp"), file=sys.stderr)
         return REFUSED
 
+    tenant = _tenant(args)
+    if args.user is not None:
+        # Vérifié avant d'ouvrir le serveur : une erreur dite sur stderr, pas
+        # un protocole qui se ferme sans un mot.
+        try:
+            actor = Actor.of(config.security, args.user)
+        except AccessDenied as refused:
+            print(refused, file=sys.stderr)
+            return REFUSED
+        if tenant is not None and tenant != actor.tenant:
+            print(
+                f"--tenant {tenant} : {actor.user} agit pour le client {actor.tenant}",
+                file=sys.stderr,
+            )
+            return REFUSED
+        tenant = actor.tenant
+
     async def go() -> None:
         # Rien ne doit aller sur stdout : le protocole y passe.
         async with Loom(config) as loom:
-            await run_stdio(loom, tenant=_tenant(args) or DEFAULT_TENANT)
+            await run_stdio(loom, tenant=tenant or DEFAULT_TENANT, user=args.user)
 
     asyncio.run(go())
     return OK

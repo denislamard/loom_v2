@@ -67,7 +67,10 @@ class RunRequest(DomainModel):
     session_id: SessionId | None = None
     # Identifiant choisi par l'appelant, pour suivre le run dès son départ.
     run_id: RunId | None = None
-    user_id: str | None = None
+    # Utilisateur déclaré au nom duquel une passerelle agit (D-5) : réservé à une
+    # clé qui a ``act_as``, et borné aux rôles qu'elle endosse (``act_as_roles``).
+    # Sans lui, c'est l'utilisateur de la clé qui agit et qui signe.
+    as_user: str | None = None
     metadata: Shallow = Field(default_factory=dict[str, JsonValue])
     # Juges (#21) : ``auto`` selon leur ``when`` ; ``force``, tous (audit) ;
     # ``skip``, aucun — réservé aux clés de portée ``admin``.
@@ -76,10 +79,12 @@ class RunRequest(DomainModel):
     background: bool = False
 
     def context(self, tenant_id: TenantId) -> CallerContext:
-        """Contexte appelant du run ; le client vient de la clé, jamais du corps (#34)."""
-        return CallerContext(
-            tenant_id=tenant_id, user_id=self.user_id, metadata=dict(self.metadata)
-        )
+        """Contexte appelant du run ; le client vient de la clé, jamais du corps (#34).
+
+        Le lanceur non plus : c'est l'utilisateur de la clé, ou celui d'``as_user``,
+        que le SDK y inscrit (D-5).
+        """
+        return CallerContext(tenant_id=tenant_id, metadata=dict(self.metadata))
 
 
 class RunAccepted(DomainModel):
@@ -95,9 +100,10 @@ class Decision(DomainModel):
 
     # Appel visé ; sans lui, toutes les demandes en attente du run sont tranchées.
     call_id: str | None = None
-    # Identité de l'approbateur. Sans elle, c'est la clé d'API qui signe ;
-    # une passerelle la renseigne pour nommer l'humain qui a tranché.
-    by: str | None = None
+    # Utilisateur déclaré au nom duquel une passerelle agit (D-5) : réservé à une
+    # clé qui a ``act_as``, et borné aux rôles qu'elle endosse (``act_as_roles``).
+    # Sans lui, c'est l'utilisateur de la clé qui agit et qui signe.
+    as_user: str | None = None
     reason: str = ""
 
 
@@ -124,8 +130,10 @@ class Answer(DomainModel):
     # message libre qui répond à l'ensemble : l'un des deux.
     answers: list[list[str]] | None = None
     text: str | None = None
-    # Qui répond. Sans lui, c'est la clé d'API qui signe.
-    by: str | None = None
+    # Utilisateur déclaré au nom duquel une passerelle agit (D-5) : réservé à une
+    # clé qui a ``act_as``, et borné aux rôles qu'elle endosse (``act_as_roles``).
+    # Sans lui, c'est l'utilisateur de la clé qui agit et qui signe.
+    as_user: str | None = None
 
 
 class Answered(DomainModel):
@@ -149,7 +157,10 @@ class Decided(DomainModel):
 class Cancellation(DomainModel):
     """Qui demande l'arrêt d'un run (A5)."""
 
-    by: str | None = None
+    # Utilisateur déclaré au nom duquel une passerelle agit (D-5) : réservé à une
+    # clé qui a ``act_as``, et borné aux rôles qu'elle endosse (``act_as_roles``).
+    # Sans lui, c'est l'utilisateur de la clé qui agit et qui signe.
+    as_user: str | None = None
 
 
 class Cancelled(DomainModel):

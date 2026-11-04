@@ -95,14 +95,14 @@ def quatre(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
             id="complete",
             hash=fingerprint(jetons["complete"]),
             user=DUPONT,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
         ),
         # Supervision : elle voit passer les runs, elle ne lit pas le courrier.
         ApiKey(
             id="supervision",
             hash=fingerprint(jetons["supervision"]),
             user=DUPONT,
-            scopes=("run", "read"),
+            scopes=("run", "answer", "cancel", "read"),
             rate_limit=RateLimit(per_minute=120),
         ),
         # Limitée à un agent : elle ne peut rien lancer d'autre.
@@ -110,7 +110,7 @@ def quatre(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
             id="bureau",
             hash=fingerprint(jetons["bureau"]),
             user=DUPONT,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
             agents=(agent,),
         ),
         # Elle ne sait que lire : pas de `run`.
@@ -385,7 +385,7 @@ async def expiration(config: LoomConfig, agent: str, prefixe: str, controle: Con
         id="temporaire",
         hash=fingerprint(jeton),
         user=DUPONT,
-        scopes=("run", "read", "read_content"),
+        scopes=("run", "answer", "cancel", "read", "read_content"),
         expires=fin,
     )
     config = declarees(config, (key,))

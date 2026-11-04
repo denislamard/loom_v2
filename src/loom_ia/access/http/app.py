@@ -137,6 +137,7 @@ from loom_ia.access.api import (
     UnknownTrigger,
     traced_agents,
 )
+from loom_ia.access.authz import AccessDenied, Actor, can
 from loom_ia.access.http.auth import API_KEY_HEADER, Caller, identify, require, throttle
 from loom_ia.access.http.schemas import (
     AgentInfo,
@@ -232,7 +233,9 @@ def _open_warnings(config: LoomConfig, host: str | None = None) -> list[str]:
     de la config (``loom serve --host``) : c'est elle qui ouvre l'API, donc
     elle qui est jugée.
     """
-    if config.security.api_keys:
+    if config.security.api_keys or config.server.http.user is not None:
+        # Avec des clés, chacun présente la sienne ; avec ``server.http.user``, une
+        # instance locale agit au nom d'un utilisateur déclaré (D-1b).
         return []
     warnings: list[str] = []
     if config.tenants:
@@ -288,7 +291,7 @@ async def caller(
     requête elle-même, une instance ouverte n'en demandant aucune.
     """
     loom: Loom = request.app.state.loom
-    who = identify(loom.config.security, request)
+    who = identify(loom.config.security, request, loom.config.server.http.user)
     throttle(who, request.app.state.rates)
     return who
 
@@ -437,6 +440,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         logger.warning("Journal occupé sur %s : %s", request.url.path, exc)
         return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
+    @app.exception_handler(AccessDenied)
     @app.exception_handler(AgentNotAllowed)
     @app.exception_handler(UnknownTenant)
     async def _forbidden(request: Request, exc: Exception) -> JSONResponse:
@@ -472,13 +476,23 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     async def start(
         name: str, request: Request, response: Response, who: Who
     ) -> RunResult | RunAccepted:
-        require(who, "run", name)
+        # Avant le corps, seule la clé se juge : avec ``as_user``, c'est
+        # l'utilisateur endossé qui doit pouvoir lancer, pas la passerelle.
+        if who.key is not None and not who.key.allows(name):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, f"Clé non autorisée sur l'agent {name!r}"
+            )
         _published(loom, name, who.tenant)
         try:
             body, attachments = await run_request(request, loom.config.execution.attachments)
+            actor = _acting(loom, who, body.as_user)
+            if body.as_user is None:
+                # La clé agit pour son utilisateur : le refus se dit tôt, et dans
+                # ses mots. Le SDK vérifie ensuite toute la matrice.
+                require(who, "run", name)
             if body.judges == "skip":
                 # Se passer des juges retire un contrôle : réservé à l'administration.
-                require(who, "admin")
+                _administers(loom, who, actor, name, endorsed=body.as_user is not None)
             if body.background:
                 run_id = await loom.submit(
                     name,
@@ -488,6 +502,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
                     context=body.context(who.tenant),
                     run_id=body.run_id,
                     judges=body.judges,
+                    user=actor,
                 )
                 # Le run est inscrit au journal avant le retour de ``submit`` :
                 # l'état relu ici désigne un run qui existe déjà.
@@ -502,6 +517,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
                 context=body.context(who.tenant),
                 run_id=body.run_id,
                 judges=body.judges,
+                user=actor,
             )
         except (AttachmentError, StateRefused) as exc:
             # Une clé ``required`` du state sans valeur : la demande ne peut pas
@@ -531,6 +547,8 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         spec = _trigger(loom, name, who.tenant)
         # Le déclencheur nomme son agent : c'est sur lui que porte le droit,
         # et la liste `agents` d'une clé borne donc ce qu'elle peut déclencher.
+        # La charge est celle de la plateforme : pas d'as_user, c'est
+        # l'utilisateur de la clé qui lance.
         require(who, "run", spec.agent)
         delivery = request.headers.get(spec.delivery_header) if spec.delivery_header else None
         try:
@@ -539,6 +557,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
                 await _payload(request),
                 delivery_id=delivery,
                 tenant_id=who.tenant,
+                user=who.actor,
             )
         except (DeliveryRefused, StateRefused) as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
@@ -700,17 +719,20 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     async def approve(
         who: Who, run_id: RunId, body: Approval, session_id: SessionId | None = None
     ) -> Decided:
-        require(who, "approve")
-        state = await loom.state(run_id, session_id=session_id, tenant_id=who.tenant)
-        require(who, "approve", state.agent)
+        # Les droits de l'approbateur — approbateurs figés, self_approve, amend —
+        # dépendent de chaque demande : le SDK les vérifie, et c'est lui qui signe.
+        # Sans as_user, la clé se juge d'abord, dans ses mots.
+        actor = _acting(loom, who, body.as_user)
+        if body.as_user is None:
+            require(who, "approve")
         calls = await loom.approve(
             run_id,
             call_id=body.call_id,
-            by=body.by or _signature(who),
             reason=body.reason,
             arguments=body.arguments,
             session_id=session_id,
             tenant_id=who.tenant,
+            user=actor,
         )
         return Decided(run_id=run_id, calls=calls)
 
@@ -720,16 +742,16 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     async def reject(
         who: Who, run_id: RunId, body: Decision, session_id: SessionId | None = None
     ) -> Decided:
-        require(who, "approve")
-        state = await loom.state(run_id, session_id=session_id, tenant_id=who.tenant)
-        require(who, "approve", state.agent)
+        actor = _acting(loom, who, body.as_user)
+        if body.as_user is None:
+            require(who, "approve")
         calls = await loom.reject(
             run_id,
             call_id=body.call_id,
-            by=body.by or _signature(who),
             reason=body.reason,
             session_id=session_id,
             tenant_id=who.tenant,
+            user=actor,
         )
         return Decided(run_id=run_id, calls=calls)
 
@@ -739,19 +761,22 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     async def answer(
         who: Who, run_id: RunId, body: Answer, session_id: SessionId | None = None
     ) -> Answered:
-        # Répondre, c'est poursuivre la conversation : le droit de lancer l'agent,
-        # pas celui d'approuver (une réponse n'autorise rien).
-        require(who, "run")
-        state = await loom.state(run_id, session_id=session_id, tenant_id=who.tenant)
-        require(who, "run", state.agent)
+        # Répondre n'autorise rien : la permission ``answer``, sur l'agent qui
+        # demande (un sous-agent, s'il y en a un), que le SDK vérifie.
+        actor = _acting(loom, who, body.as_user)
+        if body.as_user is None:
+            require(who, "answer")
+        if actor is None:
+            state = await loom.state(run_id, session_id=session_id, tenant_id=who.tenant)
+            require(who, "answer", state.agent)
         call = await loom.answer(
             run_id,
             answers=body.answers,
             text=body.text,
             call_id=body.call_id,
-            by=body.by or _signature(who),
             session_id=session_id,
             tenant_id=who.tenant,
+            user=actor,
         )
         return Answered(run_id=run_id, call_id=call)
 
@@ -764,12 +789,14 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         body: Annotated[Cancellation | None, Body()] = None,
         session_id: SessionId | None = None,
     ) -> Cancelled:
-        state = await loom.state(run_id, session_id=session_id, tenant_id=who.tenant)
-        require(who, "run", state.agent)
-        by = body.by if body is not None else None
-        stopped = await loom.cancel(
-            run_id, session_id=session_id, by=by or _signature(who), tenant_id=who.tenant
-        )
+        as_user = body.as_user if body is not None else None
+        actor = _acting(loom, who, as_user)
+        if as_user is None:
+            require(who, "cancel")
+        if actor is None:
+            state = await loom.state(run_id, session_id=session_id, tenant_id=who.tenant)
+            require(who, "cancel", state.agent)
+        stopped = await loom.cancel(run_id, session_id=session_id, tenant_id=who.tenant, user=actor)
         return Cancelled(run_id=run_id, cancelled=stopped)
 
     @router.get(
@@ -920,13 +947,37 @@ async def _messages(events: AsyncGenerator[Event], who: Caller) -> AsyncGenerato
             yield sse(event, masked=who.masks)
 
 
-def _signature(who: Caller) -> str | None:
-    """Qui signe une décision faute de ``by`` dans le corps : la clé d'API.
+def _acting(loom: Loom, who: Caller, as_user: str | None) -> Actor | None:
+    """L'utilisateur au nom duquel la requête agit : celui de la clé, ou celui d'``as_user``.
 
-    Une instance ouverte n'a personne à nommer : l'audit tiendra à ce que
-    l'appelant a bien voulu dire.
+    ``as_user`` est réservé à une passerelle (``act_as``), qui n'exerce au nom
+    de l'utilisateur que les rôles qu'elle endosse ; sa clé la restreint encore
+    (D-5, D-5b). Une instance qui ne sait pas qui appelle ne peut endosser
+    personne : 403. Une instance ouverte, sans ``as_user``, n'a pas d'acteur.
     """
-    return who.key.id if who.key is not None else None
+    if as_user is None:
+        return who.actor
+    if who.actor is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "as_user : cette instance ne sait pas qui appelle (aucune clé d'API), elle "
+            "n'agit au nom de personne",
+        )
+    return who.actor.endorse(loom.config.security, as_user)
+
+
+def _administers(
+    loom: Loom, who: Caller, actor: Actor | None, agent: str, *, endorsed: bool
+) -> None:
+    """``admin`` : celle de l'utilisateur endossé, sinon celle de l'appelant."""
+    if not endorsed or actor is None:
+        require(who, "admin")
+        return
+    spec = next(spec for spec in loom.agents if spec.name == agent)
+    if not can(actor, "admin", agent=spec):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, f"{actor.signature} n'a pas la permission 'admin'"
+        )
 
 
 def _published(loom: Loom, name: str, tenant: TenantId) -> None:

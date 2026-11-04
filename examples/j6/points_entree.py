@@ -51,7 +51,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from importlib import invalidate_caches
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import yaml
 
@@ -80,6 +80,20 @@ CARNET = {
         "statut": "en attente",
     },
 }
+
+# Le rôle des exemples : tout, sauf agir au nom d'autrui (D-1).
+TOUTES: Final = [
+    "run",
+    "answer",
+    "cancel",
+    "approve",
+    "self_approve",
+    "amend",
+    "read",
+    "read_content",
+    "admin",
+]
+
 
 # Le module du paquet : une fabrique, une source, un outil. Ce que la source
 # vit est noté dans JOURNAL, que l'exemple relit.
@@ -244,6 +258,11 @@ def ecrit_config(dossier: Path, source: dict[str, Any], *, reel: bool = False) -
     }
     config: dict[str, Any] = {
         "version": 1,
+        # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur.
+        "security": {
+            "roles": [{"id": "owner", "permissions": TOUTES}],
+            "users": [{"id": "dev", "roles": ["owner"]}],
+        },
         "models": [m3.model_dump(mode="json", exclude_defaults=True) if reel else simule],
         "tool_sources": [source],
         "telemetry": {"logging": {"level": "WARNING"}},

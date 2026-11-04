@@ -648,15 +648,30 @@ def test_mcp_serves_on_stdio(
     server = pytest.importorskip("loom_ia.access.mcp_server", reason="extra 'mcp' absent")
     served: dict[str, Any] = {}
 
-    async def fake_stdio(loom: Any, tenant: str = "default") -> None:
+    async def fake_stdio(loom: Any, tenant: str = "default", user: str | None = None) -> None:
         served["agents"] = loom.names
         served["tenant"] = tenant
+        served["user"] = user
 
     monkeypatch.setattr(server, "run_stdio", fake_stdio)
     assert main(["--config", str(demo()), "mcp"]) == 0
-    assert served == {"agents": ("demo",), "tenant": "default"}
+    assert served == {"agents": ("demo",), "tenant": "default", "user": None}
     # Rien sur stdout : le protocole y passe.
     assert capsys.readouterr().out == ""
+    assert main(["--config", str(demo()), "mcp", "--user", "dev"]) == 0
+    assert served["user"] == "dev" and served["tenant"] == "default"
+
+
+def test_mcp_refuses_an_unknown_user_or_another_tenant(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``loom mcp --user`` : l'utilisateur est déclaré, et le client est le sien."""
+    pytest.importorskip("loom_ia.access.mcp_server", reason="extra 'mcp' absent")
+    assert main(["--config", str(demo()), "mcp", "--user", "fantome"]) == 2
+    assert "Utilisateur 'fantome' inconnu" in capsys.readouterr().err
+    path = demo(tenants=[{"id": "dupont"}, {"id": "martin"}])
+    assert main(["--config", str(path), "mcp", "--user", "dupont", "--tenant", "martin"]) == 2
+    assert "dupont agit pour le client dupont" in capsys.readouterr().err
 
 
 # --- Trancher une approbation depuis un autre terminal (J4.5) -----------------

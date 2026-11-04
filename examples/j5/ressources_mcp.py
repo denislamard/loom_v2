@@ -131,28 +131,28 @@ def quatre(config: LoomConfig, agent: str) -> tuple[LoomConfig, dict[str, str]]:
             id="dupont",
             hash=fingerprint(jetons["dupont"]),
             user=DUPONT,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
         ),
         # Elle voit passer les runs, elle ne lit pas le courrier (5.2a).
         ApiKey(
             id="supervision",
             hash=fingerprint(jetons["supervision"]),
             user=DUPONT,
-            scopes=("run", "read"),
+            scopes=("run", "answer", "cancel", "read"),
         ),
         # Limitée à l'agent qu'on ne lance pas : elle ne verra aucun run.
         ApiKey(
             id="bureau",
             hash=fingerprint(jetons["bureau"]),
             user=DUPONT,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
             agents=(autre_que(agent),),
         ),
         ApiKey(
             id="martin",
             hash=fingerprint(jetons["martin"]),
             user=MARTIN,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
         ),
     )
     mcp = config.server.mcp.model_copy(update={"http": True})
@@ -466,7 +466,7 @@ async def arret(scene: Scene) -> None:
     print(f"  cancel sur {bref(laisse)} → cancelled={arrete}")
     print(f"  {'':<2}le journal se clôt sur {close or '(pas encore)'}")
     if signe:
-        print(f"  {'':<2}signé par : {signe[0]} — la clé d'API, faute d'un `by`")
+        print(f"  {'':<2}signé par : {signe[0]} — l'utilisateur de la clé d'API")
     # Attendu **structurel** : avec de vrais modèles, l'arrêt tombe pendant le
     # premier appel ; en simulé le run peut finir avant que la requête MCP
     # n'arrive. Les deux issues sont justes — ce qui ne doit jamais varier,
@@ -475,7 +475,7 @@ async def arret(scene: Scene) -> None:
         "\n  la réponse de l'outil dit ce que le journal porte : "
         + controle.tient(
             f"cancelled={arrete} mais le journal se clôt sur {close!r}",
-            (arrete and close == "run.cancelled" and signe == ["dupont"])
+            (arrete and close == "run.cancelled" and signe == [DUPONT])
             or (not arrete and close == "run.completed" and not signe),
         )
     )
@@ -489,8 +489,8 @@ async def arret(scene: Scene) -> None:
         "  un run d'un autre client est introuvable : "
         + controle.tient("une clé a pu arrêter le run d'un autre client", bool(ailleurs.isError))
     )
-    print("\n  Arrêter un run qu'on peut lancer n'est pas une permission de plus :")
-    print("  c'est la portée `run` sur son agent, comme en REST.")
+    print("\n  Arrêter un run demande la permission `cancel` sur son agent, comme en REST ;")
+    print("  c'est l'utilisateur de la clé qui signe l'arrêt.")
 
 
 # --- Mise en route -----------------------------------------------------------

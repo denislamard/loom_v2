@@ -138,6 +138,8 @@ class PendingApproval(DomainModel):
     # et de ses sous-runs) en mêle plusieurs ; sans lui, on ne saurait de quel
     # run elle vient. ``approve`` se fait sur la racine de ce run.
     run_id: RunId | None = None
+    # Agent de ce run : c'est son ``access`` qui dit qui tranche (§ 5.2).
+    agent: str | None = None
     # Politique qui l'a exigée ; absente pour un outil en ``approval: always``.
     policy: str | None = None
     # Qui peut la trancher, figé à l'écriture (§ 5.3) : les rôles approbateurs
@@ -185,6 +187,29 @@ class Amendment(DomainModel):
 # passe par l'état PAUSED. Ce qu'il rend est écrit au journal comme une
 # décision ordinaire — l'audit de #17 vaut aussi pour les scripts.
 type Approver = Callable[[PendingApproval], Awaitable[ApprovalDecision]]
+
+
+@dataclass(frozen=True, slots=True)
+class LimitedApprover:
+    """Un approbateur en ligne qui ne tranche que certaines demandes (§ 6.2).
+
+    ``takes`` dit, avant que la demande ne soit écrite, s'il la prend ; celles
+    qu'il ne prend pas attendent comme sans approbateur en ligne — le run se
+    met en pause, et un approbateur habilité tranche par un autre accès. C'est
+    l'élicitation MCP, ou le script, de qui a lancé le run sans pouvoir tout
+    approuver.
+    """
+
+    decide: Approver
+    takes: Callable[[PendingApproval], bool]
+
+    async def __call__(self, pending: PendingApproval) -> ApprovalDecision:
+        return await self.decide(pending)
+
+
+def takes(approver: Approver, pending: PendingApproval) -> bool:
+    """Vrai si l'approbateur en ligne tranche cette demande ; un simple les prend toutes."""
+    return not isinstance(approver, LimitedApprover) or approver.takes(pending)
 
 
 class PendingRepair(DomainModel):

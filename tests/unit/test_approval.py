@@ -1718,3 +1718,67 @@ def test_a_subagent_request_follows_the_subagent_access_and_the_root_launcher(
             return await loom.export_session(SESSION)
 
     assert _decisions(asyncio.run(go())) == []
+
+
+# --- L'approbateur en ligne agit pour le lanceur (§ 6.2, lot 4) ---------------------------
+
+
+def test_an_inline_approver_takes_only_what_its_launcher_may_decide(
+    atelier: ConfigFactory, tmp_path: Path
+) -> None:
+    """Lot mixte : la recherche se tranche en ligne, l'envoi attend un approbateur figé."""
+    path = atelier(security=EQUIPE)
+    fichier = tmp_path / "agents" / "demo.yaml"
+    agent = yaml.safe_load(fichier.read_text(encoding="utf-8"))
+    agent["tools"] = [
+        {"python": "chercher", "approval": "always"},
+        *(tool for tool in agent["tools"] if tool.get("python") != "chercher"),
+    ]
+    agent["access"] = {"approve": {"tools": {"envoyer_email": ["approbateur"]}}}
+    fichier.write_text(yaml.safe_dump(agent), encoding="utf-8")
+    vues: list[str] = []
+
+    async def approbateur(demande: PendingApproval) -> ApprovalDecision:
+        vues.append(demande.tool_name)
+        return Approved(by="quelqu'un d'autre")
+
+    async def go() -> tuple[RunResult, list[Event]]:
+        async with Loom.from_config(path) as loom:
+            run = await loom.run(
+                "demo", DEMANDE, session_id=SESSION, approver=approbateur, user="denis"
+            )
+            return run, await loom.export_session(SESSION)
+
+    run, events = asyncio.run(go())
+    # On ne lui a présenté que ce que Denis peut trancher.
+    assert vues == ["chercher"]
+    assert run.status == RunStatus.PAUSED
+    assert [a.tool_name for a in run.pending_approvals] == ["envoyer_email"]
+    assert run.pending_approvals[0].agent == "demo"
+    [accord] = _decisions(events)
+    # C'est le lanceur qui signe, quoi qu'ait écrit l'approbateur.
+    assert accord.tool_name == "chercher" and accord.by == "denis" and accord.self_approved
+
+
+def test_an_inline_correction_without_amend_authorizes_nothing(atelier: ConfigFactory) -> None:
+    async def approbateur(demande: PendingApproval) -> ApprovalDecision:
+        return Approved(arguments={"destinataire": "ailleurs@example.com"})
+
+    security = {**EQUIPE, "users": [*EQUIPE["users"], {"id": "paul", "roles": ["solo"]}]}
+    security["roles"] = [
+        *EQUIPE["roles"],
+        {"id": "solo", "permissions": ["run", "approve", "self_approve", "read"]},
+    ]
+
+    async def go() -> list[Event]:
+        async with Loom.from_config(atelier(security=security)) as loom:
+            await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur, user="paul")
+            return await loom.export_session(SESSION)
+
+    events = asyncio.run(go())
+    [refus] = _decisions(events)
+    assert isinstance(refus, ApprovalRejected)
+    assert refus.by == "paul" and "il faut 'amend'" in refus.reason
+    assert "tool.called" not in [
+        e.type for e in events if e.facets.get("tool_name") == "envoyer_email"
+    ]

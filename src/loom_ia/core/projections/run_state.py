@@ -270,7 +270,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
         case RunClaimed(worker_id=worker, lease_until=until):
             update["claim"] = RunClaim(worker_id=worker, lease_until=until)
         case ApprovalRequested() as asked:
-            update["approvals"] = (*state.approvals, asked.as_pending(state.run_id))
+            update["approvals"] = (*state.approvals, asked.as_pending(state.run_id, state.agent))
         case ApprovalGranted(call_id=call_id) as granted:
             corriges = granted.arguments
             if corriges is not None:
@@ -306,7 +306,7 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 ),
             )
         case QuestionAsked() as asked:
-            update["questions"] = (*state.questions, asked.as_pending(state.run_id))
+            update["questions"] = (*state.questions, asked.as_pending(state.run_id, state.agent))
         case QuestionAnswered(call_id=call_id) as answered:
             update["questions"] = _answered(state, call_id, event, {"reply": answered.reply()})
         case QuestionExpired(call_id=call_id):

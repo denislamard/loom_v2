@@ -120,20 +120,20 @@ def quatre(config: LoomConfig) -> tuple[LoomConfig, dict[str, str]]:
             id="dupont",
             hash=fingerprint(jetons["dupont"]),
             user=DUPONT,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
         ),
         ApiKey(
             id="martin",
             hash=fingerprint(jetons["martin"]),
             user=MARTIN,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
         ),
         # Elle voit passer les runs, elle ne lit pas le courrier (5.2a).
         ApiKey(
             id="supervision",
             hash=fingerprint(jetons["supervision"]),
             user=DUPONT,
-            scopes=("run", "read"),
+            scopes=("run", "answer", "cancel", "read"),
         ),
         # Elle ne sait que lire : pas de `run`.
         ApiKey(

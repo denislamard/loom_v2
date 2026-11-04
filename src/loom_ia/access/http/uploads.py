@@ -65,7 +65,7 @@ RUN_BODY: Final[dict[str, Any]] = {
                         "message": {"type": "string", "minLength": 1},
                         "session_id": {"type": "string"},
                         "run_id": {"type": "string"},
-                        "user_id": {"type": "string"},
+                        "as_user": {"type": "string"},
                         "metadata": {"type": "string", "description": "Objet JSON"},
                         "judges": {"type": "string", "enum": list(JUDGES_MODES)},
                         "background": {"type": "boolean"},

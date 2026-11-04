@@ -292,7 +292,7 @@ def avec_cles(config: LoomConfig) -> tuple[LoomConfig, dict[TenantId, str]]:
             id=f"app-{tenant.split('-')[0]}",
             hash=fingerprint(cle),
             user=tenant,
-            scopes=("run", "read"),
+            scopes=("run", "answer", "cancel", "read"),
         )
         for tenant, cle in cles.items()
     )

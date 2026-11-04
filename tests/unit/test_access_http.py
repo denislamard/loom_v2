@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 import pytest
 import yaml
-from conftest import ANSWER, DEV, QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, DEV, OWNER, QUESTION, ConfigFactory, demo_agent
 from pydantic import ValidationError
 
 from loom_ia.access import Loom
@@ -382,18 +382,47 @@ async def test_an_owned_instance_is_closed_at_shutdown(demo: ConfigFactory) -> N
 APPROBATEUR = new_api_key()
 ADMIN = new_api_key()
 LECTEUR = new_api_key()
+PASSERELLE = new_api_key()
+# Une clé par personne, chacune son utilisateur (du même nom) : celui qui lance
+# n'est pas celui qui tranche. Les portées d'avant deviennent des permissions :
+# « run » ouvrait aussi répondre et arrêter ; « approve », corriger et trancher
+# ses propres demandes.
 CLES = {
+    "roles": [
+        OWNER,
+        {"id": "approbateur", "permissions": ["approve", "read", "read_content"]},
+        {"id": "passerelle", "permissions": ["read", "act_as"], "act_as_roles": ["approbateur"]},
+    ],
+    "users": [
+        *(
+            {"id": name, "roles": ["owner"]}
+            for name in ("atelier", "mme-durand", "console", "lecture")
+        ),
+        {"id": "denis", "roles": ["approbateur"]},
+        {"id": "app-crm", "roles": ["passerelle"]},
+    ],
     "api_keys": [
-        {"id": "atelier", "user": DEV, "hash": fingerprint(CLE), "scopes": ["run", "read"]},
+        {
+            "id": "atelier",
+            "user": "atelier",
+            "hash": fingerprint(CLE),
+            "scopes": ["run", "answer", "cancel", "read"],
+        },
         {
             "id": "mme-durand",
-            "user": DEV,
+            "user": "mme-durand",
             "hash": fingerprint(APPROBATEUR),
-            "scopes": ["run", "read", "approve"],
+            "scopes": ["run", "answer", "cancel", "read", "approve", "self_approve", "amend"],
         },
-        {"id": "console", "user": DEV, "hash": fingerprint(ADMIN), "scopes": ["read", "admin"]},
-        {"id": "lecture", "user": DEV, "hash": fingerprint(LECTEUR), "scopes": ["read"]},
-    ]
+        {
+            "id": "console",
+            "user": "console",
+            "hash": fingerprint(ADMIN),
+            "scopes": ["read", "admin"],
+        },
+        {"id": "lecture", "user": "lecture", "hash": fingerprint(LECTEUR), "scopes": ["read"]},
+        {"id": "app-crm", "user": "app-crm", "hash": fingerprint(PASSERELLE)},
+    ],
 }
 
 
@@ -437,7 +466,7 @@ async def test_an_approval_is_granted_over_rest(atelier: ConfigFactory) -> None:
     assert decided.status_code == 200
     assert decided.json() == {"run_id": paused["run_id"], "calls": [attente[0]["call_id"]]}
     assert finished.json()["status"] == "completed"
-    # Sans ``by`` dans le corps, c'est la clé d'API qui signe l'accord.
+    # C'est l'utilisateur de la clé qui signe l'accord.
     assert _by(events, "approval.granted") == ["mme-durand"]
 
 
@@ -482,24 +511,74 @@ async def test_corrected_arguments_without_a_call_are_a_422(atelier: ConfigFacto
     assert state.json()["status"] == "paused"
 
 
-async def test_the_body_names_the_human_behind_the_key(
+async def test_a_gateway_names_the_human_behind_its_key(
     atelier: ConfigFactory,
 ) -> None:
+    """``as_user`` (D-5) : la passerelle porte la décision, les droits de Denis valent."""
     async with serving(atelier(security=CLES)) as (loom, http):
-        entete = {"Authorization": f"Bearer {APPROBATEUR}"}
         started = await http.post(
-            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
+            "/v1/agents/demo/runs",
+            json={"message": "Relance."},
+            headers={"Authorization": f"Bearer {CLE}"},
         )
         run = started.json()
-        await http.post(
+        accord = await http.post(
             f"/v1/runs/{run['run_id']}/approve",
-            json={"by": "denis", "reason": "devis vérifié"},
-            headers=entete,
+            json={"as_user": "denis", "reason": "devis vérifié"},
+            headers={"Authorization": f"Bearer {PASSERELLE}"},
         )
         await loom.drain()
         events = await loom.export_session(SessionId(run["session_id"]))
 
-    assert _by(events, "approval.granted") == ["denis"]
+    assert accord.status_code == 200
+    [granted] = [e for e in events if e.type == "approval.granted"]
+    assert granted.facets["by"] == "denis" and granted.facets["via"] == "app-crm"
+
+
+async def test_a_free_signature_in_the_body_is_refused(atelier: ConfigFactory) -> None:
+    """Le ``by`` d'avant laissait toute clé signer au nom de n'importe qui (L-3) : retiré."""
+    async with serving(atelier(security=CLES)) as (_, http):
+        entete = {"Authorization": f"Bearer {APPROBATEUR}"}
+        started = await http.post(
+            "/v1/agents/demo/runs", json={"message": "Relance."}, headers=entete
+        )
+        refused = await http.post(
+            f"/v1/runs/{started.json()['run_id']}/approve",
+            json={"by": "denis"},
+            headers=entete,
+        )
+    assert refused.status_code == 422
+
+
+async def test_as_user_needs_act_as_and_the_endorsed_rights(atelier: ConfigFactory) -> None:
+    """Sans ``act_as``, pas d'as_user ; avec, seuls les rôles endossés comptent (D-5b)."""
+    async with serving(atelier(security=CLES)) as (_, http):
+        started = await http.post(
+            "/v1/agents/demo/runs",
+            json={"message": "Relance."},
+            headers={"Authorization": f"Bearer {CLE}"},
+        )
+        run_id = started.json()["run_id"]
+        sans_act_as = await http.post(
+            f"/v1/runs/{run_id}/approve",
+            json={"as_user": "denis"},
+            headers={"Authorization": f"Bearer {APPROBATEUR}"},
+        )
+        hors_roles = await http.post(
+            f"/v1/runs/{run_id}/approve",
+            json={"as_user": "mme-durand"},
+            headers={"Authorization": f"Bearer {PASSERELLE}"},
+        )
+        lancer = await http.post(
+            "/v1/agents/demo/runs",
+            json={"message": "Relance.", "as_user": "denis"},
+            headers={"Authorization": f"Bearer {PASSERELLE}"},
+        )
+    assert sans_act_as.status_code == 403 and "act_as" in sans_act_as.json()["detail"]
+    assert hors_roles.status_code == 403
+    assert "ne peut pas agir au nom de mme-durand" in hors_roles.json()["detail"]
+    # Denis est approbateur : par la passerelle, il ne peut pas lancer.
+    assert lancer.status_code == 403 and "'run'" in lancer.json()["detail"]
 
 
 async def test_an_approval_can_be_rejected_over_rest(atelier: ConfigFactory) -> None:

@@ -66,7 +66,14 @@ from typing import Final, NamedTuple, Self
 
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
 
-from loom_ia.access.authz import AccessDenied, Actor, Approvable, require, require_decision
+from loom_ia.access.authz import (
+    AccessDenied,
+    Actor,
+    Approvable,
+    can_decide,
+    require,
+    require_decision,
+)
 from loom_ia.adapters.models import create_model_client
 from loom_ia.adapters.queue import Handler
 from loom_ia.adapters.stores import PLAIN, JournalCodec, NotifyingEventStore, SealingCodec
@@ -103,6 +110,8 @@ from loom_ia.core.model import (
     DEFAULT_TENANT,
     SAFE_ID,
     Answerer,
+    ApprovalDecision,
+    Approved,
     Approver,
     ArtifactLocation,
     ArtifactOrigin,
@@ -112,12 +121,14 @@ from loom_ia.core.model import (
     CallerContext,
     CriterionScore,
     JudgesMode,
+    LimitedApprover,
     Message,
     ModelChunk,
     ModelSpec,
     PendingApproval,
     PendingQuestion,
     QuestionReply,
+    Rejected,
     RunId,
     RunKind,
     RunState,
@@ -133,6 +144,7 @@ from loom_ia.core.model import (
     new_run_id,
 )
 from loom_ia.core.model.base import DomainModel
+from loom_ia.core.model.question import NoAnswer
 from loom_ia.core.ports import (
     ArtifactNotFound,
     ArtifactStore,
@@ -1117,6 +1129,47 @@ def _decidable(
     return kept, signed
 
 
+def _for_launcher(actor: Actor, agent: str, approver: Approver) -> LimitedApprover:
+    """Un approbateur en ligne qui agit pour le lanceur ``actor`` (§ 6.2).
+
+    Il ne prend que les demandes que le lanceur peut trancher — c'est son
+    propre run : ``self_approve`` est exigé, et un agent qui l'interdit le
+    retire. Les autres attendent en pause. La décision est signée du lanceur,
+    quoi qu'ait écrit l'approbateur. Un accord qui corrige les arguments sans
+    ``amend`` n'autorise rien : il devient un refus, qui dit pourquoi.
+    """
+    inner = approver.takes if isinstance(approver, LimitedApprover) else None
+
+    def approvable(pending: PendingApproval) -> Approvable:
+        return Approvable(
+            agent=pending.agent or agent,
+            tool=pending.tool_name,
+            approvers=pending.approvers,
+            self_approval=pending.self_approval,
+            launcher=actor.user,
+        )
+
+    def takes_it(pending: PendingApproval) -> bool:
+        return (inner is None or inner(pending)) and can_decide(actor, approvable(pending))
+
+    async def decide(pending: PendingApproval) -> ApprovalDecision:
+        decided = await approver(pending)
+        amend = isinstance(decided, Approved) and decided.arguments is not None
+        try:
+            roles = require_decision(actor, approvable(pending), amend=amend)
+        except AccessDenied as refused:
+            return Rejected(reason=f"accord sans effet : {refused}", by=actor.user, via=actor.via)
+        return replace(
+            decided,
+            by=actor.user,
+            via=actor.via,
+            roles=tuple(role.id for role in roles),
+            self_approved=True,
+        )
+
+    return LimitedApprover(decide=decide, takes=takes_it)
+
+
 def _launcher(tree: Sequence[Event], state: RunState) -> str | None:
     """L'utilisateur qui a lancé le run racine de ``state`` (§ 4.4)."""
     for event in tree:
@@ -1722,6 +1775,42 @@ class Loom:
             return user
         return Actor.of(self.config.security, user)
 
+    def _in_line(
+        self,
+        actor: Actor | None,
+        agent: str,
+        approver: Approver | None,
+        answerer: Answerer | None,
+    ) -> tuple[Approver | None, Answerer | None]:
+        """L'approbateur et le répondeur en ligne, bornés aux droits du lanceur (§ 6.2, § 6.5).
+
+        Ils agissent pour qui a lancé le run : ils ne prennent que ce qu'il peut
+        trancher ou répondre, et c'est lui qui signe. Le reste attend un humain
+        habilité, par un autre accès.
+        """
+        if actor is None:
+            return approver, answerer
+        return (
+            None if approver is None else _for_launcher(actor, agent, approver),
+            None if answerer is None else self._answering_for(actor, agent, answerer),
+        )
+
+    def _answering_for(self, actor: Actor, agent: str, answerer: Answerer) -> Answerer:
+        """Le répondeur en ligne du lanceur : ``answer`` sur l'agent qui demande, sinon rien."""
+
+        async def answer(pending: PendingQuestion) -> QuestionReply | NoAnswer:
+            try:
+                require(actor, "answer", agent=self._agents.get(pending.agent or agent))
+            except AccessDenied as refused:
+                # La question reste posée : un utilisateur habilité y répondra.
+                return NoAnswer(reason=str(refused))
+            reply = await answerer(pending)
+            if isinstance(reply, QuestionReply):
+                return reply.model_copy(update={"by": actor.user, "via": actor.via})
+            return reply
+
+        return answer
+
     def _require_on_run(self, actor: Actor | None, permission: Permission, state: RunState) -> None:
         """Les droits de l'acteur sur l'agent d'un run existant, chez le client du run."""
         if actor is not None:
@@ -1791,7 +1880,11 @@ class Loom:
         pour chaque appel qui demande une approbation. Le run ne passe alors
         jamais en pause — c'est le mode des scripts, de la CLI et des tests.
         Sans lui, l'approbation est asynchrone : le run s'arrête en ``PAUSED``
-        et ``approve()`` le reprend.
+        et ``approve()`` le reprend. Avec ``user``, l'approbateur en ligne agit
+        pour lui (§ 6.2) : il ne tranche que ce que ses rôles lui permettent
+        — ``self_approve`` compris, puisqu'il a lancé le run —, laisse le reste
+        en pause, et c'est l'utilisateur qui signe. ``answerer`` de même : sans
+        ``answer`` sur l'agent qui demande, la question attend.
 
         Un run arrêté par ``cancel()`` rend son résultat, au statut
         ``CANCELLED`` : l'appelant n'est pas annulé, et ne reçoit pas
@@ -1805,6 +1898,7 @@ class Loom:
         """
         actor = self._actor(user)
         caller, who = await self._admitted(agent, context, tenant, actor)
+        approver, answerer = self._in_line(actor, agent, approver, answerer)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver, answerer=answerer)
         routed = await self._routed(agent, who.id, session_id, message, attachments, state, run_id)
         if routed is not None:
@@ -1970,6 +2064,7 @@ class Loom:
 
         actor = self._actor(user)
         caller, who = await self._admitted(agent, context, tenant, actor)
+        approver, answerer = self._in_line(actor, agent, approver, answerer)
         ctx = self.context(agent, who.id, on_chunk=on_chunk, approver=approver, answerer=answerer)
         # Une question de cet agent attend dans la session : le message y répond, et
         # le flux est celui du run qui l'a posée (wait_answer).
@@ -3484,8 +3579,13 @@ class Loom:
         *,
         delivery_id: str | None = None,
         tenant_id: TenantId | None = None,
+        user: str | Actor | None = None,
     ) -> Triggered:
         """Ouvre le run d'un déclencheur, depuis la charge reçue (H6).
+
+        ``user`` : l'utilisateur de la clé qui livre ; il faut ``run`` sur
+        l'agent du déclencheur, vérifié avant de chercher une livraison déjà
+        reçue. Il devient le lanceur du run.
 
         Le message est rendu depuis ``{{ payload.… }}``, plus ``{{ trigger }}``
         et ``{{ delivery }}``. Une variable absente donne une chaîne vide : une
@@ -3504,6 +3604,10 @@ class Loom:
         pas une réponse de modèle.
         """
         spec = self.trigger_spec(name)
+        actor = self._actor(user)
+        if actor is not None:
+            tenant_id = tenant_id or actor.tenant
+            require(actor, "run", agent=self._agents.get(spec.agent), tenant=tenant_id)
         tenant = tenant_id or DEFAULT_TENANT
         values: dict[str, JsonValue] = {
             "payload": payload,
@@ -3531,6 +3635,7 @@ class Loom:
                 run_id=run_id,
                 tenant=tenant,
                 trigger=name,
+                user=actor,
             )
         except RunExists:
             # Une livraison simultanée du même identifiant a ouvert le run

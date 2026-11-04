@@ -549,13 +549,13 @@ def _cles(config: LoomConfig) -> LoomConfig:
                     id="atelier",
                     hash=fingerprint(CLE_ATELIER),
                     user=DUPONT,
-                    scopes=("run", "read", "read_content"),
+                    scopes=("run", "answer", "cancel", "read", "read_content"),
                 ),
                 ApiKey(
                     id="supervision",
                     hash=fingerprint(CLE_SUPERVISION),
                     user=DUPONT,
-                    scopes=("run", "read"),
+                    scopes=("run", "answer", "cancel", "read"),
                 ),
             )
         }

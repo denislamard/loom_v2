@@ -68,6 +68,8 @@ class PendingQuestion(DomainModel):
     questions: tuple[Question, ...]
     # Run qui l'a posée : le run lui-même, ou le sous-run d'un sous-agent.
     run_id: RunId | None = None
+    # Agent de ce run : c'est son ``access`` qui dit qui lui répond (§ 5.2).
+    agent: str | None = None
     expire_at: datetime | None = None
     reply: QuestionReply | None = None
     expired: bool = False

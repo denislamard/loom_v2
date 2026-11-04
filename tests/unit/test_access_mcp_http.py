@@ -659,8 +659,8 @@ async def test_elicitation_is_never_asked_over_http(atelier: ConfigFactory) -> N
     assert not paused.isError and (paused.structuredContent or {})["status"] == "paused"
 
 
-async def test_cancel_by_mcp_signs_with_the_key(demo: ConfigFactory) -> None:
-    security, jetons = cles(atelier={"scopes": ["run", "read"]})
+async def test_cancel_by_mcp_signs_with_the_user_of_the_key(demo: ConfigFactory) -> None:
+    security, jetons = cles(atelier={"scopes": ["run", "cancel", "read"]})
     path = demo(storage=JOURNAL, security=security, server=MCP_HTTP)
     async with Loom.from_config(path) as loom:
         laisse = await loom.submit("demo", QUESTION)
@@ -668,15 +668,26 @@ async def test_cancel_by_mcp_signs_with_the_key(demo: ConfigFactory) -> None:
             arrete = await session.call_tool("cancel", {"run_id": laisse})
         events = await loom.events(laisse)
     assert (arrete.structuredContent or {})["cancelled"] is True
-    # Faute d'un `by`, c'est la clé d'API qui signe — comme en REST.
+    # C'est l'utilisateur de la clé qui signe — comme en REST (D-4, D-5).
     [stopped] = [event.payload for event in events if event.type == "run.cancelled"]
-    assert isinstance(stopped, RunCancelled) and stopped.by == "atelier"
+    assert isinstance(stopped, RunCancelled) and stopped.by == DEV
+
+
+async def test_cancel_needs_the_cancel_permission(demo: ConfigFactory) -> None:
+    """Arrêter n'est plus compris dans ``run`` : c'est la permission ``cancel``."""
+    security, jetons = cles(lanceur={"scopes": ["run", "read"]})
+    path = demo(storage=JOURNAL, security=security, server=MCP_HTTP)
+    async with Loom.from_config(path) as loom:
+        laisse = await loom.submit("demo", QUESTION)
+        async with parle(loom, jetons["lanceur"]) as session:
+            refus = await session.call_tool("cancel", {"run_id": laisse})
+    assert refus.isError and "portée 'cancel'" in texte(refus)
 
 
 async def test_cancel_needs_the_right_on_the_agent_of_the_run(demo: ConfigFactory) -> None:
     security, jetons = cles(
-        tout={"scopes": ["run", "read"]},
-        bureau={"scopes": ["run", "read"], "agents": ["autre"]},
+        tout={"scopes": ["run", "cancel", "read"]},
+        bureau={"scopes": ["run", "cancel", "read"], "agents": ["autre"]},
     )
     agents = [demo_agent(), demo_agent(name="autre")]
     path = demo(agents=agents, storage=JOURNAL, security=security, server=MCP_HTTP)
@@ -686,7 +697,7 @@ async def test_cancel_needs_the_right_on_the_agent_of_the_run(demo: ConfigFactor
             refus = await session.call_tool("cancel", {"run_id": laisse})
         async with parle(loom, jetons["tout"]) as session:
             arrete = await session.call_tool("cancel", {"run_id": laisse})
-    # Arrêter demande la portée `run` sur **l'agent du run**, pas sur un autre.
+    # Arrêter demande `cancel` sur **l'agent du run**, pas sur un autre.
     assert refus.isError and "non autorisée sur l'agent 'demo'" in texte(refus)
     assert (arrete.structuredContent or {})["cancelled"] is True
 

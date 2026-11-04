@@ -924,11 +924,12 @@ class ApprovalRequested(Payload):
     def event_status(self) -> EventStatus:
         return "warning"
 
-    def as_pending(self, run_id: RunId | None = None) -> PendingApproval:
+    def as_pending(self, run_id: RunId | None = None, agent: str | None = None) -> PendingApproval:
         """La demande telle qu'elle attend, dans l'état du run ou devant l'approbateur.
 
-        ``run_id`` : le run qui l'a écrite. L'événement ne le porte pas dans
-        son payload (il est dans l'enveloppe) ; qui le lit le donne.
+        ``run_id`` et ``agent`` : le run qui l'a écrite, et son agent.
+        L'événement ne les porte pas dans son payload (ils sont dans
+        l'enveloppe) ; qui le lit les donne.
         """
         return PendingApproval(
             call_id=self.call_id,
@@ -936,6 +937,7 @@ class ApprovalRequested(Payload):
             arguments=self.arguments,
             reason=self.reason,
             run_id=run_id,
+            agent=agent,
             policy=self.policy,
             approvers=self.approvers,
             self_approval=self.self_approval,
@@ -1038,9 +1040,13 @@ class QuestionAsked(Payload):
     def event_status(self) -> EventStatus:
         return "warning"
 
-    def as_pending(self, run_id: RunId | None = None) -> PendingQuestion:
+    def as_pending(self, run_id: RunId | None = None, agent: str | None = None) -> PendingQuestion:
         return PendingQuestion(
-            call_id=self.call_id, questions=self.questions, run_id=run_id, expire_at=self.expire_at
+            call_id=self.call_id,
+            questions=self.questions,
+            run_id=run_id,
+            agent=agent,
+            expire_at=self.expire_at,
         )
 
 

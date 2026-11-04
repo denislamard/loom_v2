@@ -201,10 +201,13 @@ def _security(declared: SecurityConfig) -> SecurityConfig:
                     id="atelier",
                     hash=fingerprint(CLE_ATELIER),
                     user="dev",
-                    scopes=("run", "read", "approve"),
+                    scopes=("run", "answer", "cancel", "read", "approve", "self_approve", "amend"),
                 ),
                 ApiKey(
-                    id="tableau", hash=fingerprint(CLE_TABLEAU), user="dev", scopes=("run", "read")
+                    id="tableau",
+                    hash=fingerprint(CLE_TABLEAU),
+                    user="dev",
+                    scopes=("run", "answer", "cancel", "read"),
                 ),
             )
         }

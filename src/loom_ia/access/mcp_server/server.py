@@ -71,6 +71,7 @@ from pydantic.json_schema import models_json_schema
 
 from loom_ia import __version__
 from loom_ia.access.api import JudgeSkip, JudgeVerdict, Loom, RunResult, UnknownRun
+from loom_ia.access.authz import AccessDenied, Actor
 from loom_ia.access.caller import Caller
 from loom_ia.access.mcp_server.attachments import ATTACHMENTS_INPUT, AttachmentReader
 from loom_ia.access.mcp_server.resources import ResourceReader
@@ -154,10 +155,6 @@ CANCEL_INPUT: Final[dict[str, Any]] = {
     "properties": {
         "run_id": {"type": "string", "description": "Identifiant du run à arrêter"},
         "session_id": {"type": "string", "description": "Journal du run, s'il en a un"},
-        "by": {
-            "type": "string",
-            "description": "Qui demande l'arrêt ; inscrit au journal",
-        },
     },
     "required": ["run_id"],
     "additionalProperties": False,
@@ -294,12 +291,17 @@ def create_server(
     name: str = SERVER_NAME,
     tenant: TenantId = DEFAULT_TENANT,
     callers: CallerSource | None = None,
+    user: str | None = None,
 ) -> Server[object, Any]:
     """Serveur MCP publiant les agents d'une instance, au nom d'un appelant.
 
     En **stdio** il n'y a pas de clé d'API, donc rien dans le protocole ne
     dirait au nom de qui une requête arrive : un serveur sert **un** client,
-    choisi à son lancement (``loom mcp --tenant``), et tout lui est permis.
+    choisi à son lancement. ``user`` (``loom mcp --user``) nomme l'utilisateur
+    au nom duquel il agit : le client est le sien, et ses droits valent comme
+    partout. Sans lui, tout est permis au client ``tenant`` (jusqu'au lot 5).
+    Un ``tenant`` qui n'est pas celui de l'utilisateur lève ``ValueError``.
+    Jamais le modèle ne choisit l'identité : aucun outil ne prend d'utilisateur.
 
     En **HTTP** (J5.2b), ``callers`` rend l'appelant de la requête en cours,
     tiré de sa clé : un même serveur sert alors tous les clients, publie à
@@ -317,6 +319,13 @@ def create_server(
                 "Renommer l'agent, ou le retirer du MCP (expose.mcp: false)."
             )
     fixed = Caller(without_key=tenant)
+    if user is not None:
+        fixed = Caller.acting(loom.config.security, user)
+        if tenant != DEFAULT_TENANT and tenant != fixed.tenant:
+            raise ValueError(
+                f"Client contradictoire : {user!r} agit pour {fixed.tenant!r}, pas pour {tenant!r}"
+            )
+        tenant = fixed.tenant
 
     def who() -> Caller:
         return fixed if callers is None else callers()
@@ -399,12 +408,18 @@ def create_server(
         run_id = RunId(str(run)) if run else None
         # Lire et lancer ne demandent pas la même chose : relire un run est
         # une lecture, faire travailler un agent en est une autre (#39).
-        needed: Permission = "read" if tool in (STATUS_TOOL, REPORT_TOOL) else "run"
+        needed: Permission = (
+            "read"
+            if tool in (STATUS_TOOL, REPORT_TOOL)
+            else "cancel"
+            if tool == CANCEL_TOOL
+            else "run"
+        )
         if not caller.may(needed):
             return _refused(f"Clé sans la portée {needed!r}")
         try:
             if tool == CANCEL_TOOL:
-                return await _cancel(loom, RunId(str(run)), session_id, arguments, caller)
+                return await _cancel(loom, RunId(str(run)), session_id, caller)
             if tool == REPORT_TOOL:
                 return await _report(loom, run_id, session_id, caller)
             if tool == STATUS_TOOL:
@@ -418,16 +433,23 @@ def create_server(
                 # et le rapport ne nomme que les agents que la clé peut lire.
                 shown = found.restricted(caller.allows)
                 return answer(shown.masked() if caller.masks else shown, ran=False)
-            if not caller.allows(tool):
+            if not caller.allows(tool, "run"):
                 return _refused(f"Clé non autorisée sur l'agent {tool!r}")
             _published(loom, tool, caller.tenant)
         except (UnknownAgent, UnknownRun) as exc:
             return _refused(str(exc.args[0]))
+        except AccessDenied as exc:
+            return _refused(str(exc))
         attachments = await attachments_of(caller).read(arguments.get("attachments"))
         message = str(arguments["message"])
         # Ce qu'une clé lance, elle le reçoit : la réponse d'un run n'est
         # jamais masquée, c'est la relecture qui demande la portée.
-        ran = await _run(server, loom, tool, message, attachments, session_id, caller.tenant)
+        try:
+            ran = await _run(
+                server, loom, tool, message, attachments, session_id, caller.tenant, caller.actor
+            )
+        except AccessDenied as exc:
+            return _refused(str(exc))
         return answer(ran)
 
     return server
@@ -441,8 +463,14 @@ async def _run(
     attachments: list[Attachment],
     session_id: SessionId | None,
     tenant: TenantId = DEFAULT_TENANT,
+    user: Actor | None = None,
 ) -> RunResult:
-    """Fait tourner le run ; suit sa progression et fait trancher, si le client le sait."""
+    """Fait tourner le run ; suit sa progression et fait trancher, si le client le sait.
+
+    Avec un utilisateur, l'élicitation agit pour lui, qui a lancé le run : elle
+    ne tranche que ce qu'il peut s'approuver, et le reste attend en pause
+    (§ 6.2) ; elle ne répond que s'il a ``answer``. C'est le SDK qui l'applique.
+    """
     ctx = server.request_context
     token = ctx.meta.progressToken if ctx.meta is not None else None
     approver = _elicited(ctx)
@@ -456,6 +484,7 @@ async def _run(
             approver=approver,
             tenant=tenant,
             answerer=answerer,
+            user=user,
         )
     # Sans session, le run a son identifiant d'avance ; avec, le message peut répondre
     # à une question qui attend, et le run suivi est alors celui qui l'a posée
@@ -472,6 +501,7 @@ async def _run(
         approver=approver,
         tenant=tenant,
         answerer=answerer,
+        user=user,
     ):
         if isinstance(item, Event) and run_id is None:
             run_id = item.root_run_id
@@ -605,10 +635,14 @@ def _question(asked: PendingApproval) -> str:
 
 
 async def run_stdio(
-    loom: Loom, *, name: str = SERVER_NAME, tenant: TenantId = DEFAULT_TENANT
+    loom: Loom,
+    *,
+    name: str = SERVER_NAME,
+    tenant: TenantId = DEFAULT_TENANT,
+    user: str | None = None,
 ) -> None:
     """Sert l'instance sur l'entrée et la sortie standard, jusqu'à la fin du flux."""
-    server = create_server(loom, name=name, tenant=tenant)
+    server = create_server(loom, name=name, tenant=tenant, user=user)
     async with stdio_server() as (reader, writer):
         await server.run(reader, writer, server.create_initialization_options())
 
@@ -762,40 +796,29 @@ async def _cancel(
     loom: Loom,
     run_id: RunId,
     session_id: SessionId | None,
-    arguments: dict[str, Any],
     caller: Caller,
 ) -> types.CallToolResult:
     """Arrête un run : l'agent du run décide du droit, comme en REST.
 
-    Arrêter un run qu'on peut lancer n'est pas une permission de plus : c'est
-    la portée ``run`` sur **son** agent, vérifiée après avoir lu de quel agent
-    il est. Un run déjà terminé n'est pas une erreur — il n'y avait rien à
-    arrêter, et la réponse le dit.
+    Il faut ``cancel`` sur **son** agent, vérifié après avoir lu de quel agent
+    il est ; c'est l'utilisateur de l'appelant qui signe l'arrêt — jamais un
+    nom que le modèle écrirait (D-5). Un run déjà terminé n'est pas une
+    erreur : il n'y avait rien à arrêter, et la réponse le dit.
     """
     state = await loom.state(run_id, session_id=session_id, tenant_id=caller.tenant)
-    if not caller.allows(state.agent):
+    if not caller.allows(state.agent, "cancel"):
         return _refused(f"Clé non autorisée sur l'agent {state.agent!r}")
-    by = arguments.get("by")
-    stopped = await loom.cancel(
-        run_id,
-        session_id=session_id,
-        by=str(by) if by else _signed(caller),
-        tenant_id=caller.tenant,
-    )
+    try:
+        stopped = await loom.cancel(
+            run_id, session_id=session_id, tenant_id=caller.tenant, user=caller.actor
+        )
+    except AccessDenied as exc:
+        return _refused(str(exc))
     said = "arrêté" if stopped else "déjà terminé, rien à arrêter"
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=f"Run {run_id} : {said}.")],
         structuredContent={"run_id": run_id, "cancelled": stopped},
     )
-
-
-def _signed(caller: Caller) -> str | None:
-    """Qui signe un arrêt faute d'un ``by`` : la clé d'API, sinon personne.
-
-    En stdio il n'y a pas de clé, donc personne à nommer : l'audit tiendra à
-    ce que l'appelant a bien voulu dire.
-    """
-    return caller.key.id if caller.key is not None else None
 
 
 def _refused(message: str) -> types.CallToolResult:

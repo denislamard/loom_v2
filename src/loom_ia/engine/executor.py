@@ -126,6 +126,7 @@ from loom_ia.core.model import (
     extension,
     has_inline_data,
     sniff,
+    takes,
 )
 from loom_ia.core.ports import (
     ArtifactStore,
@@ -751,14 +752,16 @@ class ToolExecutor:
                 yield _completed(call, ToolOutput.error(refused), started=None)
                 continue
             request = _request(prepared, asked, self.approval, self.approvers)
-            if approver is None:
+            pending = request.as_pending(state.run_id, state.agent)
+            if approver is None or not takes(approver, pending):
+                # Personne ici pour la trancher : elle attend, le run se met en pause.
                 held.append((prepared, request))
                 continue
             # Approbateur en ligne : il décide dans la boucle. La demande et sa
             # décision sont journalisées quand même — c'est le seul endroit où
             # l'on saura qui a validé quoi (#17).
             yield request
-            decided = await approver(request.as_pending(state.run_id))
+            decided = await approver(pending)
             yield _decision(request, decided)
             if isinstance(decided, Rejected):
                 text = _refused(request.tool_name, "rejected", decided.reason, decided.by)
@@ -845,14 +848,15 @@ class ToolExecutor:
                 yield _completed(item.call, ToolOutput.error(message), started=None)
                 continue
             request = _request(item, (message, None), self.approval, self.approvers)
-            if approver is None:
+            pending = request.as_pending(state.run_id, state.agent)
+            if approver is None or not takes(approver, pending):
                 held.append((item, request))
                 continue
             # L'approbateur tranche ici, mais l'appel ne peut plus repartir :
             # son lot est fini. Accordé, il repartira au tour suivant, avec
             # la décision au journal ; refusé, il se conclut en erreur.
             yield request
-            decided = await approver(request.as_pending(state.run_id))
+            decided = await approver(pending)
             yield _decision(request, decided)
             if isinstance(decided, Rejected):
                 text = _refused(request.tool_name, "rejected", decided.reason, decided.by)
@@ -904,7 +908,7 @@ class ToolExecutor:
             held.append(request)
             return
         yield request
-        reply = await answerer(request.as_pending(state.run_id))
+        reply = await answerer(request.as_pending(state.run_id, state.agent))
         if isinstance(reply, NoAnswer):
             if reply.expired:
                 # Close sans réponse (rejeu d'une expiration, éval sans humain).
@@ -933,8 +937,9 @@ class ToolExecutor:
             answers=reply.answers,
             text=reply.text,
             by=reply.by,
+            via=reply.via,
         )
-        pending = request.as_pending(state.run_id).model_copy(update={"reply": reply})
+        pending = request.as_pending(state.run_id, state.agent).model_copy(update={"reply": reply})
         yield _completed(call, questions.answered_output(pending), started=None)
 
     # --- Interne ---------------------------------------------------------

@@ -52,10 +52,15 @@ def presented(request: Request) -> str | None:
     return request.headers.get(API_KEY_HEADER)
 
 
-def identify(security: SecurityConfig, request: Request) -> Caller:
-    """Reconnaît l'appelant, ou refuse la requête."""
+def identify(security: SecurityConfig, request: Request, local_user: str | None = None) -> Caller:
+    """Reconnaît l'appelant, ou refuse la requête.
+
+    Sans clé déclarée, ``local_user`` (``server.http.user``, D-1b) est
+    l'appelant de toute requête : une instance locale qui sait au nom de qui
+    elle agit. Sans lui, l'instance est ouverte.
+    """
     if not security.api_keys:
-        return Caller()
+        return Caller() if local_user is None else Caller.acting(security, local_user)
     given = presented(request)
     if not given:
         raise HTTPException(

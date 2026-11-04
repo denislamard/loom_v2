@@ -108,7 +108,7 @@ def trois(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
             id="dupont",
             hash=fingerprint(jetons["dupont"]),
             user=DUPONT,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
         ),
         # Elle voit passer les runs, elle ne lit pas le courrier — et comme une
         # liste de runs ne porte aucun contenu, elle la lit entière.
@@ -116,14 +116,14 @@ def trois(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
             id="supervision",
             hash=fingerprint(jetons["supervision"]),
             user=DUPONT,
-            scopes=("run", "read"),
+            scopes=("run", "answer", "cancel", "read"),
             agents=(agent,),
         ),
         ApiKey(
             id="martin",
             hash=fingerprint(jetons["martin"]),
             user=MARTIN,
-            scopes=("run", "read", "read_content"),
+            scopes=("run", "answer", "cancel", "read", "read_content"),
         ),
     )
     return keys, jetons

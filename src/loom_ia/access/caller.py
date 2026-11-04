@@ -7,63 +7,94 @@ les mêmes règles : le client vient de l'**utilisateur de la clé** et de nulle
 part ailleurs, une permission manquante refuse, et sans ``read_content`` une
 relecture est masquée.
 
-Une clé identifie un utilisateur déclaré (D-4) : les permissions sont celles
-de ses rôles d'accès, que les ``scopes`` de la clé peuvent restreindre. Le
-contrôle complet — rôles bornés à des agents, listes ``access`` des agents,
-approbateurs d'une demande — est celui de ``access/authz.py`` ; les accès s'y
-branchent aux lots 3 (SDK) et 4 (REST, MCP).
+Une clé identifie un utilisateur déclaré (D-4) : son ``actor``, dont les
+permissions sont celles de ses rôles d'accès, que les ``scopes`` et les
+``agents`` de la clé restreignent. Les actions (lancer, trancher, répondre,
+arrêter) passent cet acteur au SDK, qui applique toute la matrice
+(``access/authz.py``) ; ``may`` et ``allows`` ne servent qu'aux contrôles de
+forme d'un accès — refuser tôt, filtrer une liste.
 
-Le MCP en **stdio** n'a pas de clé : rien dans le protocole ne dirait au nom de
-qui une requête arrive. Son appelant est donc sans clé, avec le client choisi
-au lancement (``loom mcp --tenant``), et tout lui est permis — c'est le process
-qui l'a lancé qui décide, pas le protocole.
+Sans clé, deux cas. Un utilisateur désigné — ``server.http.user`` pour une
+instance locale (D-1b), ``loom mcp --user`` en stdio — est l'acteur, et ses
+droits valent. Sinon l'appelant n'est personne : instance ouverte, ou MCP en
+stdio lancé sans utilisateur, où tout est permis — c'est le process qui l'a
+lancé qui décide, pas le protocole. Cette ouverture disparaît quand un
+utilisateur devient obligatoire (lot 5).
 """
 
 from dataclasses import dataclass
 from typing import Self
 
+from loom_ia.access.authz import Actor
 from loom_ia.config.models import ApiKey, Permission, SecurityConfig
 from loom_ia.core.model import DEFAULT_TENANT, TenantId
 
 
 @dataclass(frozen=True, slots=True)
 class Caller:
-    """Une clé reconnue et son utilisateur, ou personne — sur une instance ouverte ou en stdio."""
+    """Une clé reconnue et son utilisateur, un utilisateur désigné, ou personne."""
 
     key: ApiKey | None = None
-    # Utilisateur de la clé ; absent sans clé.
-    user: str | None = None
-    # Client de l'utilisateur de la clé.
-    key_tenant: TenantId = DEFAULT_TENANT
-    # Permissions de l'utilisateur, restreintes par la clé (D-4).
-    granted: frozenset[Permission] = frozenset()
-    # Client d'un appelant sans clé. `default` en REST sur une instance
+    # L'utilisateur au nom duquel la requête agit : celui de la clé, ou celui
+    # que l'instance désigne sans clé ; absent sur une instance ouverte.
+    actor: Actor | None = None
+    # Client d'un appelant sans acteur. `default` en REST sur une instance
     # ouverte ; le client choisi au lancement pour un serveur MCP en stdio.
     without_key: TenantId = DEFAULT_TENANT
 
     @classmethod
     def identified(cls, key: ApiKey, security: SecurityConfig) -> Self:
-        """L'appelant d'une clé reconnue : son utilisateur, son client, ses permissions.
+        """L'appelant d'une clé reconnue : son utilisateur, avec la clé qui le restreint.
 
         La config garantit que l'utilisateur de la clé est déclaré
         (``LoomConfig.check``).
         """
-        user = security.user(key.user)
-        granted = security.permissions_of(user.id)
-        if key.scopes is not None:
-            granted &= frozenset(key.scopes)
-        return cls(key=key, user=user.id, key_tenant=user.tenant, granted=granted)
+        return cls(key=key, actor=Actor.of(security, key.user, key=key))
+
+    @classmethod
+    def acting(cls, security: SecurityConfig, user: str) -> Self:
+        """L'appelant sans clé d'une instance qui désigne son utilisateur (D-1b, stdio)."""
+        return cls(actor=Actor.of(security, user))
+
+    @property
+    def user(self) -> str | None:
+        """Identifiant de l'utilisateur au nom duquel la requête agit, s'il y en a un."""
+        return None if self.actor is None else self.actor.user
 
     @property
     def tenant(self) -> TenantId:
         """Client au nom duquel cet appelant agit."""
-        return self.key_tenant if self.key is not None else self.without_key
+        return self.actor.tenant if self.actor is not None else self.without_key
+
+    @property
+    def granted(self) -> frozenset[Permission]:
+        """Permissions de l'utilisateur, tous agents confondus, restreintes par la clé (D-4)."""
+        if self.actor is None:
+            return frozenset()
+        mine: frozenset[Permission] = frozenset(
+            permission for role in self.actor.roles for permission in role.permissions
+        )
+        if self.key is not None and self.key.scopes is not None:
+            mine &= frozenset(self.key.scopes)
+        return mine
 
     def may(self, permission: Permission) -> bool:
-        return self.key is None or permission in self.granted
+        """L'un des rôles porte la permission, et la clé la laisse ; sans acteur, tout."""
+        return self.actor is None or permission in self.granted
 
-    def allows(self, agent: str) -> bool:
-        return self.key is None or self.key.allows(agent)
+    def allows(self, agent: str, permission: Permission = "read") -> bool:
+        """La clé laisse cet agent, et l'un des rôles y a la permission ; sans acteur, tout.
+
+        Les listes ``access`` d'un agent ne comptent pas ici : elles ne bornent
+        que ``run``, ``answer`` et ``cancel``, que le SDK vérifie en agissant.
+        """
+        if self.actor is None:
+            return True
+        if self.key is not None and not self.key.allows(agent):
+            return False
+        return any(
+            permission in role.permissions and role.allows(agent) for role in self.actor.roles
+        )
 
     @property
     def masks(self) -> bool:

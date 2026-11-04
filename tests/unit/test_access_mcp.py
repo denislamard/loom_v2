@@ -9,12 +9,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
-from conftest import ANSWER, PNG, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
+import yaml
+from conftest import ANSWER, DEV, PNG, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
-from loom_ia.core.events import Event, RunCancelled
+from loom_ia.core.events import ApprovalGranted, Event, RunCancelled
 from loom_ia.core.model import DEFAULT_TENANT, Attachment, Message, RunStatus, SessionId
 from loom_ia.testing import RunJournal
 
@@ -55,16 +56,17 @@ type ElicitAction = Literal["accept", "decline", "cancel"]
 
 @asynccontextmanager
 async def serving(
-    path: Path, *, elicitation: Elicitation | None = None
+    path: Path, *, elicitation: Elicitation | None = None, user: str | None = None
 ) -> AsyncGenerator[tuple[Loom, ClientSession]]:
     """Une instance servie en MCP, et un client branché dessus.
 
     Avec ``elicitation``, le client déclare la capacité : c'est ce que le
     serveur regarde pour faire trancher une approbation dans la boucle.
+    ``user`` : l'utilisateur au nom duquel le serveur agit (``loom mcp --user``).
     """
     async with Loom.from_config(path) as loom:
         async with connected(
-            create_server(loom), client_info=CLIENT, elicitation_callback=elicitation
+            create_server(loom, user=user), client_info=CLIENT, elicitation_callback=elicitation
         ) as client:
             yield loom, client
 
@@ -345,21 +347,24 @@ async def test_a_file_of_another_client_is_not_found(demo: ConfigFactory) -> Non
 async def test_cancel_stops_a_run_and_says_when_there_was_nothing_to_stop(
     demo: ConfigFactory,
 ) -> None:
-    async with serving(demo()) as (loom, client):
+    async with serving(demo(), user=DEV) as (loom, client):
         ran = await loom.run("demo", QUESTION)
         fini = await client.call_tool(CANCEL_TOOL, {"run_id": ran.run_id})
         laisse = await loom.submit("demo", QUESTION)
-        arrete = await client.call_tool(CANCEL_TOOL, {"run_id": laisse, "by": "l'artisan"})
+        # Le modèle ne choisit pas qui signe (D-5) : l'outil n'a pas de ``by``.
+        signe = await client.call_tool(CANCEL_TOOL, {"run_id": laisse, "by": "l'artisan"})
+        arrete = await client.call_tool(CANCEL_TOOL, {"run_id": laisse})
         events = await loom.events(laisse)
 
     # Un run déjà terminé n'est pas une erreur : il n'y avait rien à arrêter.
     assert fini.isError is not True
     assert fini.structuredContent == {"run_id": ran.run_id, "cancelled": False}
     assert "déjà terminé" in _text(fini.content)
+    assert signe.isError and "'by' was unexpected" in _text(signe.content)
     assert arrete.structuredContent == {"run_id": laisse, "cancelled": True}
-    # `by` est de l'audit, porté par la charge et non par une facette.
+    # C'est l'utilisateur du serveur qui signe l'arrêt, dans la charge et non en facette.
     [stopped] = [event.payload for event in events if event.type == "run.cancelled"]
-    assert isinstance(stopped, RunCancelled) and stopped.by == "l'artisan"
+    assert isinstance(stopped, RunCancelled) and stopped.by == DEV
 
 
 # --- Approbations : elicitation, ou pause (J4.5) ------------------------------
@@ -479,3 +484,87 @@ def _blob(result: ReadResourceResult) -> bytes:
     [content] = result.contents
     assert isinstance(content, BlobResourceContents)
     return base64.b64decode(content.blob)
+
+
+# --- L'élicitation agit pour l'utilisateur du serveur (§ 6.2, lot 4) ---------------------
+
+EQUIPE: dict[str, Any] = {
+    "roles": [
+        {"id": "gerant", "permissions": ["run", "cancel", "approve", "self_approve", "read"]},
+        {"id": "assistante", "permissions": ["run", "cancel", "read"]},
+    ],
+    "users": [
+        {"id": "denis", "roles": ["gerant"]},
+        {"id": "marie", "roles": ["assistante"]},
+    ],
+}
+
+
+def _asked(asked: list[str]) -> Elicitation:
+    """Client qui accorde tout ce qu'on lui demande, et note qu'on le lui a demandé."""
+
+    async def callback(
+        context: RequestContext[ClientSession, Any], params: ElicitRequestParams
+    ) -> ElicitResult:
+        asked.append(params.message)
+        return ElicitResult(action="accept", content={"decision": "accorder", "motif": ""})
+
+    return callback
+
+
+async def test_elicitation_decides_for_its_user_and_he_signs(atelier: ConfigFactory) -> None:
+    """Le lanceur s'approuve par le formulaire : ``self_approve``, et c'est lui qui signe."""
+    asked: list[str] = []
+    path = atelier(security=EQUIPE)
+    async with serving(path, elicitation=_asked(asked), user="denis") as (loom, client):
+        result = await client.call_tool("demo", {"message": "Relance."})
+        assert result.structuredContent is not None
+        events = await loom.events(result.structuredContent["run_id"])
+
+    assert len(asked) == 1 and result.structuredContent["status"] == "completed"
+    [granted] = [e.payload for e in events if isinstance(e.payload, ApprovalGranted)]
+    assert granted.by == "denis" and granted.roles == ("gerant",) and granted.self_approved
+
+
+async def test_elicitation_hands_over_what_its_user_cannot_decide(atelier: ConfigFactory) -> None:
+    """Marie n'approuve pas : on ne lui demande rien, le run attend un approbateur (L-5)."""
+    asked: list[str] = []
+    path = atelier(security=EQUIPE)
+    async with serving(path, elicitation=_asked(asked), user="marie") as (loom, client):
+        result = await client.call_tool("demo", {"message": "Relance."})
+        assert result.structuredContent is not None
+        run_id = result.structuredContent["run_id"]
+        events = await loom.events(run_id)
+        # Un approbateur habilité tranche ensuite, par un autre accès.
+        await loom.approve(run_id, user="denis")
+        await loom.drain()
+        done = await loom.result(run_id)
+
+    assert asked == []
+    assert result.structuredContent["status"] == "paused"
+    assert "approval.granted" not in [e.type for e in events]
+    assert done.status == RunStatus.COMPLETED
+
+
+async def test_an_agent_that_forbids_self_approval_is_never_elicited(
+    atelier: ConfigFactory, tmp_path: Path
+) -> None:
+    asked: list[str] = []
+    path = atelier(security=EQUIPE)
+    fichier = tmp_path / "agents" / "demo.yaml"
+    agent = yaml.safe_load(fichier.read_text(encoding="utf-8"))
+    fichier.write_text(yaml.safe_dump({**agent, "access": {"self_approval": False}}), "utf-8")
+    async with serving(path, elicitation=_asked(asked), user="denis") as (_, client):
+        result = await client.call_tool("demo", {"message": "Relance."})
+
+    assert asked == [] and (result.structuredContent or {})["status"] == "paused"
+
+
+async def test_a_server_user_without_run_cannot_launch(atelier: ConfigFactory) -> None:
+    security = {
+        "roles": [*EQUIPE["roles"], {"id": "lecteur", "permissions": ["read"]}],
+        "users": [*EQUIPE["users"], {"id": "lea", "roles": ["lecteur"]}],
+    }
+    async with serving(atelier(security=security), user="lea") as (_, client):
+        result = await client.call_tool("demo", {"message": "Relance."})
+    assert result.isError and "portée 'run'" in _text(result.content)

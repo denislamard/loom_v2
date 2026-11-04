@@ -60,7 +60,7 @@ async def test_multipart_attaches_images(demo: ConfigFactory) -> None:
         # Type inconnu du client : la signature décide.
         ("attachments", ("carte.jpg", JPEG, "application/octet-stream")),
     ]
-    fields = {"message": QUESTION, "user_id": "denis", "metadata": json.dumps({"canal": "web"})}
+    fields = {"message": QUESTION, "metadata": json.dumps({"canal": "web"})}
     async with rest(demo()) as (loom, http):
         posted = await http.post("/v1/agents/demo/runs", data=fields, files=files)
         body = posted.json()
@@ -74,7 +74,17 @@ async def test_multipart_attaches_images(demo: ConfigFactory) -> None:
     ]
     assert stored == PNG
     [started] = [e.payload for e in events if isinstance(e.payload, RunStarted)]
-    assert (started.context.user_id, started.context.metadata) == ("denis", {"canal": "web"})
+    # Le lanceur ne vient jamais du corps (D-5) : sur une instance ouverte, personne.
+    assert (started.context.user_id, started.context.metadata) == (None, {"canal": "web"})
+
+
+async def test_multipart_takes_no_free_user(demo: ConfigFactory) -> None:
+    """``user_id`` laissait le corps nommer le lanceur (L-4) : le champ n'existe plus."""
+    async with rest(demo()) as (_, http):
+        posted = await http.post(
+            "/v1/agents/demo/runs", data={"message": QUESTION, "user_id": "denis"}
+        )
+    assert posted.status_code == 422
 
 
 async def test_multipart_refusals(demo: ConfigFactory) -> None:

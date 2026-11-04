@@ -58,6 +58,8 @@ from loom_ia.core.model import (
     CallerContext,
     CriterionScore,
     Message,
+    PendingQuestion,
+    QuestionReply,
     RunId,
     RunStatus,
     SessionId,
@@ -1367,3 +1369,87 @@ async def test_answering_by_writing_in_the_session_needs_answer_too(tmp_path: Pa
     assert done.text == "Devis préparé."
     [reponse] = [e.payload for e in events if isinstance(e.payload, QuestionAnswered)]
     assert reponse.by == "marie"
+
+
+# --- Lot 4 : répondeur en ligne, déclencheurs, instance locale --------------------------
+
+
+async def test_an_inline_answerer_answers_only_for_a_launcher_who_may(tmp_path: Path) -> None:
+    vues: list[str] = []
+
+    async def repondeur(question: PendingQuestion) -> QuestionReply:
+        vues.append(question.call_id)
+        return QuestionReply(answers=(("Dupont",),), by="formulaire")
+
+    async with Loom.from_config(wait_answer_config(tmp_path)) as loom:
+        sans = await loom.run(
+            "demo", "Prépare un devis.", session_id=SessionId("a1"), user="luc", answerer=repondeur
+        )
+        avec = await loom.run(
+            "demo",
+            "Prépare un devis.",
+            session_id=SessionId("a2"),
+            user="marie",
+            answerer=repondeur,
+        )
+        events = await loom.export_session(SessionId("a2"))
+
+    # Luc n'a pas 'answer' : on ne lui demande rien, la question attend.
+    assert sans.status == RunStatus.PAUSED and len(vues) == 1
+    assert avec.text == "Devis préparé."
+    [reponse] = [e.payload for e in events if isinstance(e.payload, QuestionAnswered)]
+    assert reponse.by == "marie"
+
+
+async def test_a_trigger_runs_for_the_user_of_the_key(demo: ConfigFactory) -> None:
+    triggers = [{"name": "devis", "agent": "demo", "message": "{{ payload.q }}"}]
+    path = demo(security=BUREAU, storage=JOURNAL, triggers=triggers)
+    async with Loom.from_config(path) as loom:
+        with pytest.raises(AccessDenied, match="lea n'a pas la permission 'run'"):
+            await loom.trigger("devis", {"q": QUESTION}, user="lea")
+        opened = await loom.trigger("devis", {"q": QUESTION}, user="luc")
+        await loom.drain()
+        events = await loom.export_session(opened.session_id)
+    [started] = [e.payload for e in events if isinstance(e.payload, RunStarted)]
+    assert started.context.user_id == "luc"
+
+
+async def test_a_local_instance_acts_for_its_user(demo: ConfigFactory) -> None:
+    """``server.http.user`` (D-1b) : sans clé, l'API agit au nom de cet utilisateur."""
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    import httpx2
+
+    from loom_ia.access.http import create_app
+
+    path = demo(security=BUREAU, storage=JOURNAL, server={"http": {"user": "marie"}})
+    async with Loom.from_config(path) as loom:
+        transport = httpx2.ASGITransport(create_app(loom))
+        async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
+            ran = await http.post(
+                "/v1/agents/demo/runs", json={"message": QUESTION, "session_id": "l1"}
+            )
+            endosse = await http.post(
+                "/v1/agents/demo/runs", json={"message": QUESTION, "as_user": "lea"}
+            )
+        events = await loom.export_session(SessionId("l1"))
+    assert ran.status_code == 201
+    [started] = [e.payload for e in events if isinstance(e.payload, RunStarted)]
+    assert started.context.user_id == "marie"
+    # Marie n'a pas act_as : elle n'agit au nom de personne.
+    assert endosse.status_code == 403 and "act_as" in endosse.json()["detail"]
+
+
+async def test_a_local_user_without_run_is_refused_over_rest(demo: ConfigFactory) -> None:
+    pytest.importorskip("fastapi", reason="extra 'http' absent")
+    import httpx2
+
+    from loom_ia.access.http import create_app
+
+    path = demo(security=BUREAU, server={"http": {"user": "lea"}})
+    async with Loom.from_config(path) as loom:
+        transport = httpx2.ASGITransport(create_app(loom))
+        async with httpx2.AsyncClient(transport=transport, base_url="http://loom.test") as http:
+            refused = await http.post("/v1/agents/demo/runs", json={"message": QUESTION})
+            agents = await http.get("/v1/agents")
+    assert refused.status_code == 403
+    assert agents.status_code == 200

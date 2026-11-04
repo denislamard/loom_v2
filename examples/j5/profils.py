@@ -37,7 +37,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import yaml
 
@@ -53,6 +53,20 @@ CAS = ("provenance", "durcit", "assouplit")
 
 DUPONT = TenantId("dupont-plomberie")
 DEVIS = "D-2026-042"
+
+
+# Le rôle des exemples : tout, sauf agir au nom d'autrui (D-1).
+TOUTES: Final = [
+    "run",
+    "answer",
+    "cancel",
+    "approve",
+    "self_approve",
+    "amend",
+    "read",
+    "read_content",
+    "admin",
+]
 
 
 def shown(path: Path) -> str:
@@ -214,6 +228,11 @@ def _minuscule(dossier: Path) -> Path:
     (dossier / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
     config: dict[str, Any] = {
         "version": 1,
+        # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur.
+        "security": {
+            "roles": [{"id": "owner", "permissions": TOUTES}],
+            "users": [{"id": "dev", "roles": ["owner"]}],
+        },
         "imports": ["outils_un", "outils_deux"],
         "models": [{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": []}}],
         "execution": {"tools": {"timeout": 30, "offload_over": 1000}},

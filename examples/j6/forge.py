@@ -62,7 +62,7 @@ import sys
 import tempfile
 import textwrap
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import yaml
 
@@ -120,6 +120,19 @@ DEVIS_043 = [
 ]
 TOTAL_043 = {"total_ht": 269.35, "tva": 27.64, "total_ttc": 296.99}
 TVA_042 = {"10": 137.0, "20": 8.0}
+
+# Le rôle des exemples : tout, sauf agir au nom d'autrui (D-1).
+TOUTES: Final = [
+    "run",
+    "answer",
+    "cancel",
+    "approve",
+    "self_approve",
+    "amend",
+    "read",
+    "read_content",
+    "admin",
+]
 
 LIGNES: dict[str, Any] = {
     "type": "array",
@@ -432,6 +445,11 @@ def ecrit_config(dossier: Path, vm: Path, *, reel: bool, modele: str) -> tuple[P
         choisi = m3.model_dump(mode="json", exclude_defaults=True)
     config: dict[str, Any] = {
         "version": 1,
+        # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur.
+        "security": {
+            "roles": [{"id": "owner", "permissions": TOUTES}],
+            "users": [{"id": "dev", "roles": ["owner"]}],
+        },
         "models": [choisi],
         "tool_sources": [
             {

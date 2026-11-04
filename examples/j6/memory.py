@@ -67,7 +67,7 @@ import textwrap
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import yaml
 
@@ -145,6 +145,20 @@ SYSTEME = (
     "l'artisan le demande dans son message ; chaque écriture attend son accord, et un refus ne "
     "se discute pas. Réponds en une ou deux phrases."
 )
+
+
+# Le rôle des exemples : tout, sauf agir au nom d'autrui (D-1).
+TOUTES: Final = [
+    "run",
+    "answer",
+    "cancel",
+    "approve",
+    "self_approve",
+    "amend",
+    "read",
+    "read_content",
+    "admin",
+]
 
 
 def appel(action: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -309,11 +323,20 @@ def ecrit_config(
         "models": modeles,
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "telemetry": {"logging": {"level": "WARNING"}, "capture": {"raw_exchanges": True}},
+        # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur.
+        "security": {
+            "roles": [{"id": "owner", "permissions": TOUTES}],
+            "users": [{"id": "dev", "roles": ["owner"]}],
+        },
     }
     if clients:
         config["tenants"] = [
             {"id": client, "secrets": {"MEMOIRE_BASE": f"{client.upper()}_MEMOIRE"}}
             for client in CLIENTS
+        ]
+        # Un utilisateur par client : il n'y a plus de client `default`.
+        config["security"]["users"] = [
+            {"id": client, "roles": ["owner"], "tenant": client} for client in CLIENTS
         ]
     (base / "loom.yaml").write_text(
         yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8"
