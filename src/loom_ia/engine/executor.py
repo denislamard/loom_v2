@@ -98,6 +98,7 @@ from loom_ia.core.model import (
     ApprovalDecision,
     ApprovalSettings,
     Approver,
+    Approvers,
     ArtifactRefBlock,
     BeforeTool,
     CircuitBreaker,
@@ -357,6 +358,7 @@ class ToolExecutor:
         breakers: CircuitBreakers | None = None,
         circuits: Mapping[str, CircuitBreaker | None] | None = None,
         approval: ApprovalSettings | None = None,
+        approvers: Approvers | None = None,
         idempotency: IdempotencyStore | None = None,
         denied: Iterable[str] = (),
         imposed: Mapping[str, Approval] | None = None,
@@ -364,8 +366,10 @@ class ToolExecutor:
     ) -> None:
         self.default_timeout = default_timeout
         self.state_rules = state_rules or StateRules()
-        # Délai, effet d'une expiration et droit exigé (#17).
+        # Délai et effet d'une expiration (#17).
         self.approval = approval or ApprovalSettings()
+        # Qui tranche les demandes de cet agent : figé dans chacune (§ 5.3).
+        self.approvers = approvers or Approvers()
         # Outils retirés, et approbations imposées quoi qu'en dise leur
         # déclaration : posés par l'appelant sous le nom que voit le modèle,
         # donc préfixe compris pour un outil MCP. C'est ici qu'ils s'appliquent,
@@ -488,6 +492,7 @@ class ToolExecutor:
             breakers=self.breakers,
             circuits=self.circuits,
             approval=self.approval,
+            approvers=self.approvers,
             idempotency=self.idempotency,
             denied=self.denied,
             imposed=self.imposed,
@@ -745,7 +750,7 @@ class ToolExecutor:
             if refused is not None:
                 yield _completed(call, ToolOutput.error(refused), started=None)
                 continue
-            request = _request(prepared, asked, self.approval)
+            request = _request(prepared, asked, self.approval, self.approvers)
             if approver is None:
                 held.append((prepared, request))
                 continue
@@ -839,7 +844,7 @@ class ToolExecutor:
             if item.tool.spec.on_unknown == "error":
                 yield _completed(item.call, ToolOutput.error(message), started=None)
                 continue
-            request = _request(item, (message, None), self.approval)
+            request = _request(item, (message, None), self.approval, self.approvers)
             if approver is None:
                 held.append((item, request))
                 continue
@@ -1488,9 +1493,9 @@ async def _nobody(_: PendingQuestion) -> NoAnswer:
 
 
 def _request(
-    item: _Ready, asked: tuple[str, str | None], settings: ApprovalSettings
+    item: _Ready, asked: tuple[str, str | None], settings: ApprovalSettings, approvers: Approvers
 ) -> ApprovalRequested:
-    """Demande d'approbation d'un appel, prête à écrire."""
+    """Demande d'approbation d'un appel, prête à écrire, avec qui peut la trancher (§ 5.3)."""
     reason, policy = asked
     expire_at = (
         None
@@ -1503,6 +1508,8 @@ def _request(
         arguments=item.arguments,
         reason=reason,
         policy=policy,
+        approvers=approvers.of(item.call.name),
+        self_approval=approvers.self_approval,
         expire_at=expire_at,
     )
 
@@ -1517,6 +1524,9 @@ def _decision(
             tool_name=request.tool_name,
             by=decided.by,
             reason=decided.reason,
+            via=decided.via,
+            roles=decided.roles,
+            self_approved=decided.self_approved,
         )
     return ApprovalGranted(
         call_id=request.call_id,
@@ -1524,6 +1534,9 @@ def _decision(
         by=decided.by,
         reason=decided.reason,
         arguments=decided.arguments,
+        via=decided.via,
+        roles=decided.roles,
+        self_approved=decided.self_approved,
     )
 
 

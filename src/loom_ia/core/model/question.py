@@ -57,6 +57,8 @@ class QuestionReply(DomainModel):
     answers: tuple[tuple[str, ...], ...] | None = None
     text: str | None = None
     by: str | None = None
+    # Passerelle qui a porté la réponse (``as_user``, D-5).
+    via: str | None = None
 
 
 class PendingQuestion(DomainModel):

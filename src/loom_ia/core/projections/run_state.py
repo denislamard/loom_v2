@@ -286,6 +286,9 @@ def apply(state: RunState | None, event: Event) -> RunState:
                     by=granted.by,
                     reason=granted.reason,
                     arguments=corriges,
+                    via=granted.via,
+                    roles=granted.roles,
+                    self_approved=granted.self_approved,
                 ),
             )
         case ApprovalRejected(call_id=call_id) as refused:
@@ -293,7 +296,14 @@ def apply(state: RunState | None, event: Event) -> RunState:
                 state,
                 call_id,
                 event,
-                ApprovalOutcome(verdict="rejected", by=refused.by, reason=refused.reason),
+                ApprovalOutcome(
+                    verdict="rejected",
+                    by=refused.by,
+                    reason=refused.reason,
+                    via=refused.via,
+                    roles=refused.roles,
+                    self_approved=refused.self_approved,
+                ),
             )
         case QuestionAsked() as asked:
             update["questions"] = (*state.questions, asked.as_pending(state.run_id))

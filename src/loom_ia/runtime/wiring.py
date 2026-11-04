@@ -789,6 +789,7 @@ def build_agent(
                 **{declared.name: None for declared in config.tool_sources},
             },
             approval=spec.approval,
+            approvers=spec.access.approvers(),
             idempotency=idempotency,
             denied=denied,
             imposed=imposed,

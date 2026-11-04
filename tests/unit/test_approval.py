@@ -22,6 +22,7 @@ from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.events import (
     ApprovalGranted,
+    ApprovalRejected,
     ApprovalRequested,
     Event,
     EventDraft,
@@ -43,7 +44,9 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.projections import awaiting_in_session, fold
 from loom_ia.engine import cancellation
+from loom_ia.replay.book import ReplayBook
 from loom_ia.runtime import build_agent
+from loom_ia.testing import RunJournal
 
 type ConfigFactory = Callable[..., Path]
 
@@ -1321,3 +1324,163 @@ def test_inspect_says_why_an_approval_is_asked(
     assert (
         "motif     : la config exige une approbation pour chaque appel de cet outil (irréversible)"
     ) in out
+
+
+# --- Qui peut trancher, figé dans la demande ; l'audit de la décision (§ 5.3, § 7, lot 2) --
+
+
+APPROBATEURS: dict[str, Any] = {
+    "roles": [
+        {"id": "owner", "permissions": ["run", "approve", "self_approve", "read"]},
+        {"id": "approbateur", "permissions": ["approve", "read", "read_content"]},
+    ]
+}
+
+
+def avec_acces(path: Path, access: dict[str, Any]) -> Path:
+    """La config ``path``, dont l'agent ``demo`` déclare ce bloc ``access``."""
+    fichier = path.parent / "agents" / "demo.yaml"
+    agent = yaml.safe_load(fichier.read_text(encoding="utf-8"))
+    fichier.write_text(yaml.safe_dump({**agent, "access": access}), encoding="utf-8")
+    return path
+
+
+async def _en_pause(path: Path) -> tuple[RunResult, list[Event]]:
+    async with Loom.from_config(path) as loom:
+        run = await loom.run("demo", DEMANDE, session_id=SESSION)
+        return run, await loom.export_session(SESSION)
+
+
+def test_a_request_freezes_who_may_decide_it(atelier: ConfigFactory) -> None:
+    """La demande emporte les approbateurs de son outil et l'interdiction de l'agent."""
+    access = {
+        "approve": {"default": ["owner"], "tools": {"envoyer_email": ["approbateur"]}},
+        "self_approval": False,
+    }
+    path = avec_acces(atelier(security=APPROBATEURS), access)
+    run, events = asyncio.run(_en_pause(path))
+    [demande] = [e.payload for e in events if isinstance(e.payload, ApprovalRequested)]
+    assert demande.approvers == ("approbateur",) and not demande.self_approval
+    [attente] = run.pending_approvals
+    assert attente.approvers == ("approbateur",) and not attente.self_approval
+
+
+def test_a_changed_config_does_not_change_who_may_decide_a_waiting_request(
+    atelier: ConfigFactory,
+) -> None:
+    """Le journal fait foi, comme pour ``expire_at`` (D-8)."""
+    path = avec_acces(
+        atelier(security=APPROBATEURS),
+        {"approve": {"tools": {"envoyer_email": ["approbateur"]}}},
+    )
+    run, _ = asyncio.run(_en_pause(path))
+    avec_acces(path, {"approve": {"tools": {"envoyer_email": ["owner"]}}})
+
+    async def relue() -> PendingApproval:
+        async with Loom.from_config(path) as loom:
+            [attente] = (await loom.result(run.run_id, session_id=SESSION)).pending_approvals
+        return attente
+
+    assert asyncio.run(relue()).approvers == ("approbateur",)
+
+
+def test_without_access_lists_a_request_freezes_nothing_and_no_scope(
+    atelier: ConfigFactory,
+) -> None:
+    """Sans liste, tout rôle qui a ``approve`` ; le ``scope`` d'avant n'est plus écrit (L-2)."""
+    path = atelier()
+    run, _ = asyncio.run(_en_pause(path))
+    [attente] = run.pending_approvals
+    assert attente.approvers is None and attente.self_approval
+    ecrit = (path.parent / "data" / "default" / f"{SESSION}.jsonl").read_text(encoding="utf-8")
+    demande = next(
+        json.loads(ligne)["payload"]
+        for ligne in ecrit.splitlines()
+        if '"approval.requested"' in ligne
+    )
+    assert "scope" not in demande and demande["approvers"] is None
+
+
+def test_a_request_written_with_a_scope_still_reads(atelier: ConfigFactory) -> None:
+    """Un journal antérieur porte ``scope`` : ignoré à la lecture, comme tout champ inconnu."""
+    path = atelier()
+    run, _ = asyncio.run(_en_pause(path))
+    journal = path.parent / "data" / "default" / f"{SESSION}.jsonl"
+    lignes: list[str] = []
+    for ligne in journal.read_text(encoding="utf-8").splitlines():
+        event = json.loads(ligne)
+        if event["type"] == "approval.requested":
+            del event["payload"]["approvers"], event["payload"]["self_approval"]
+            event["payload"]["scope"] = "approve"
+        lignes.append(json.dumps(event))
+    journal.write_text("\n".join(lignes) + "\n", encoding="utf-8")
+
+    async def relue() -> PendingApproval:
+        async with Loom.from_config(path) as loom:
+            [attente] = (await loom.result(run.run_id, session_id=SESSION)).pending_approvals
+        return attente
+
+    attente = asyncio.run(relue())
+    assert attente.tool_name == "envoyer_email" and attente.approvers is None
+
+
+def test_a_decision_records_its_gateway_its_roles_and_self_approval(
+    atelier: ConfigFactory,
+) -> None:
+    """L'audit (§ 7) : qui, par quelle passerelle, à quel titre, et s'il s'approuvait."""
+
+    async def approbateur(demande: PendingApproval) -> ApprovalDecision:
+        return Approved(by="marie", via="app-crm", roles=("approbateur",), self_approved=True)
+
+    async def go() -> tuple[list[Event], RunResult]:
+        async with Loom.from_config(atelier()) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur)
+            return await loom.export_session(SESSION), run
+
+    events, _ = asyncio.run(go())
+    [accord] = [e for e in events if isinstance(e.payload, ApprovalGranted)]
+    assert isinstance(accord.payload, ApprovalGranted)
+    assert accord.payload.by == "marie" and accord.payload.via == "app-crm"
+    assert accord.payload.roles == ("approbateur",) and accord.payload.self_approved
+    assert accord.facets["via"] == "app-crm"
+    [run_id] = {e.run_id for e in events}
+    [tranchee] = fold([e for e in events if e.run_id == run_id], run_id).approvals
+    outcome = tranchee.outcome
+    assert outcome is not None and outcome.verdict == "granted"
+    assert (outcome.by, outcome.via, outcome.roles, outcome.self_approved) == (
+        "marie",
+        "app-crm",
+        ("approbateur",),
+        True,
+    )
+
+
+def test_a_refusal_records_the_same_audit(atelier: ConfigFactory) -> None:
+    async def approbateur(demande: PendingApproval) -> ApprovalDecision:
+        return Rejected(reason="non", by="alice", roles=("approbateur",))
+
+    async def go() -> list[Event]:
+        async with Loom.from_config(atelier()) as loom:
+            await loom.run("demo", DEMANDE, session_id=SESSION, approver=approbateur)
+            return await loom.export_session(SESSION)
+
+    [refus] = [e.payload for e in asyncio.run(go()) if isinstance(e.payload, ApprovalRejected)]
+    assert refus.by == "alice" and refus.roles == ("approbateur",)
+    assert refus.via is None and not refus.self_approved
+
+
+def test_a_replay_serves_the_decision_with_its_audit() -> None:
+    """Le rejeu rend la décision du journal telle quelle, audit compris : rien ne change."""
+    journal = RunJournal(agent="demo", session_id=SESSION)
+    accord = ApprovalGranted(
+        call_id="c1",
+        tool_name="envoyer_email",
+        by="marie",
+        via="app-crm",
+        roles=("approbateur",),
+        self_approved=True,
+    )
+    book = ReplayBook.of([journal.scope.draft(accord).to_event(1)])
+    assert book.recorded_decision(journal.run_id, "c1") == Approved(
+        by="marie", via="app-crm", roles=("approbateur",), self_approved=True
+    )

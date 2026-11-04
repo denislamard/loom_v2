@@ -1200,6 +1200,7 @@ def test_the_approvers_of_a_tool_fall_back_on_those_of_the_agent() -> None:
     access = agent_named(
         "x", approve={"default": ["gerant"], "tools": {"envoyer": ["approbateur"]}}
     ).access
-    assert access.approvers("envoyer") == ("approbateur",)
-    assert access.approvers("autre") == ("gerant",)
-    assert SECRETARIAT.access.approvers("envoyer") is None
+    assert access.approvers().of("envoyer") == ("approbateur",)
+    assert access.approvers().of("autre") == ("gerant",)
+    assert SECRETARIAT.access.approvers().of("envoyer") is None
+    assert not agent_named("y", self_approval=False).access.approvers().self_approval

@@ -156,6 +156,27 @@ class ApprovalSettings(DomainModel):
     on_expiry: ExpiryAction = "deny"
 
 
+class Approvers(DomainModel):
+    """Qui tranche les demandes d'approbation d'un agent, tel que chacune le fige (§ 5.3).
+
+    Tiré du bloc ``access`` de l'agent au montage : le moteur ne lit pas la
+    config. Chaque demande écrite emporte la liste de son outil et
+    ``self_approval`` ; une config changée ensuite ne change pas qui peut
+    trancher une demande déjà posée.
+    """
+
+    # Rôles approbateurs de toute demande ; ``None`` : tout rôle qui a ``approve``.
+    default: tuple[str, ...] | None = None
+    # Par outil, sous le nom que voit le modèle.
+    tools: dict[str, tuple[str, ...]] = Field(default_factory=dict[str, tuple[str, ...]])
+    # ``False`` : l'agent interdit l'auto-approbation (D-7b).
+    self_approval: bool = True
+
+    def of(self, tool: str) -> tuple[str, ...] | None:
+        """Les approbateurs d'un outil : les siens, à défaut ceux de l'agent."""
+        return self.tools.get(tool, self.default)
+
+
 class AskSettings(DomainModel):
     """Ce que le moteur fait d'une question à l'utilisateur (wait_answer)."""
 

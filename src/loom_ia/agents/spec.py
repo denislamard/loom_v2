@@ -52,6 +52,7 @@ from loom_ia.core.model import (
     TOOL_NAME_PATTERN,
     Approval,
     ApprovalSettings,
+    Approvers,
     Budgets,
     Criterion,
     DomainModel,
@@ -1063,13 +1064,17 @@ class AgentAccess(DomainModel):
                 _check_access_list(f"access.{key}", roles)
         return self
 
-    def approvers(self, tool: str) -> tuple[str, ...] | None:
-        """Rôles qui tranchent les demandes de cet outil ; ``None`` : tout rôle qui a ``approve``.
+    def approvers(self) -> Approvers:
+        """Qui tranche les demandes de l'agent, tel que le moteur le fige dans chacune (§ 5.3).
 
-        La liste de l'outil, à défaut celle de l'agent (``default``). Une
-        politique ``Pause`` sur n'importe quel outil suit la même règle (§ 5.2).
+        Par outil, la liste de l'outil, à défaut celle de l'agent (``default``) ;
+        une politique ``Pause`` sur n'importe quel outil suit la même règle (§ 5.2).
         """
-        return self.approve.tools.get(tool, self.approve.default)
+        return Approvers(
+            default=self.approve.default,
+            tools=dict(self.approve.tools),
+            self_approval=self.self_approval,
+        )
 
     def listed(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
         """Chaque liste déclarée, avec la permission qu'elle exige de ses rôles."""

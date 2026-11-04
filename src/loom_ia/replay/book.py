@@ -413,10 +413,23 @@ class ReplayBook:
     def recorded_decision(self, run_id: str, call_id: str) -> ApprovalDecision | None:
         """La décision d'approbation que le journal porte pour cet appel de ce run."""
         match self.approvals.get((run_id, call_id)):
-            case ApprovalGranted(by=by, reason=reason, arguments=arguments):
-                return Approved(by=by, reason=reason, arguments=arguments)
-            case ApprovalRejected(by=by, reason=reason):
-                return Rejected(reason=reason, by=by)
+            case ApprovalGranted() as granted:
+                return Approved(
+                    by=granted.by,
+                    reason=granted.reason,
+                    arguments=granted.arguments,
+                    via=granted.via,
+                    roles=granted.roles,
+                    self_approved=granted.self_approved,
+                )
+            case ApprovalRejected() as refused:
+                return Rejected(
+                    reason=refused.reason,
+                    by=refused.by,
+                    via=refused.via,
+                    roles=refused.roles,
+                    self_approved=refused.self_approved,
+                )
             case ApprovalExpired():
                 return Rejected(reason="demande expirée (au journal)", by="rejeu")
             case None:

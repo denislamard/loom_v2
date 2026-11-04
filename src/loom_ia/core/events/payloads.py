@@ -303,6 +303,8 @@ class RunCancelled(Payload):
     # Auteur de la demande, quand on le connaît (``user_id`` de l'appelant,
     # identifiant du worker, run parent).
     by: str | None = None
+    # Passerelle qui a porté la demande (``as_user``, D-5).
+    via: str | None = None
     iterations: NonNegativeInt = 0
     usage: Usage = Usage()
     cost_usd: NonNegativeFloat = 0.0
@@ -893,7 +895,7 @@ class ApprovalRequested(Payload):
     """
 
     category: ClassVar[EventCategory] = "approval"
-    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "scope")
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name",)
 
     content_fields: ClassVar[tuple[str, ...]] = (
         "arguments",
@@ -909,8 +911,13 @@ class ApprovalRequested(Payload):
     reason: str = ""
     # Politique qui l'a exigée ; absente pour un outil en ``approval: always``.
     policy: str | None = None
-    # Droit exigé de l'approbateur, côté REST (N2).
-    scope: str = "approve"
+    # Qui peut la trancher, figé ici (§ 5.3) : les rôles approbateurs de
+    # l'outil (``None`` : tout rôle qui a ``approve`` sur l'agent), et
+    # ``False`` si l'agent interdit l'auto-approbation (D-7b). Le ``scope`` des
+    # journaux antérieurs, que personne ne contrôlait (L-2), est ignoré à la
+    # lecture, comme tout champ inconnu.
+    approvers: tuple[str, ...] | None = None
+    self_approval: bool = True
     expire_at: datetime | None = None
 
     @property
@@ -930,7 +937,8 @@ class ApprovalRequested(Payload):
             reason=self.reason,
             run_id=run_id,
             policy=self.policy,
-            scope=self.scope,
+            approvers=self.approvers,
+            self_approval=self.self_approval,
             expire_at=self.expire_at,
         )
 
@@ -939,7 +947,7 @@ class ApprovalGranted(Payload):
     """Appel autorisé : il s'exécute, éventuellement avec d'autres arguments (#17)."""
 
     category: ClassVar[EventCategory] = "approval"
-    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by")
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by", "via")
 
     content_fields: ClassVar[tuple[str, ...]] = (
         "arguments",
@@ -954,13 +962,19 @@ class ApprovalGranted(Payload):
     reason: str = ""
     # Arguments corrigés par l'approbateur ; absents, ceux de la demande valent.
     arguments: dict[str, JsonValue] | None = None
+    # Passerelle qui a porté la décision (``as_user``, D-5).
+    via: str | None = None
+    # Rôles qui l'ont permise, figés pour l'audit : la config peut changer ensuite.
+    roles: tuple[str, ...] = ()
+    # L'approbateur est celui qui a lancé le run (``self_approve``, D-7).
+    self_approved: bool = False
 
 
 class ApprovalRejected(Payload):
     """Appel refusé : le motif part au modèle comme résultat d'erreur (#17)."""
 
     category: ClassVar[EventCategory] = "approval"
-    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by")
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by", "via")
 
     content_fields: ClassVar[tuple[str, ...]] = ("reason",)
     type: Literal["approval.rejected"] = "approval.rejected"
@@ -968,6 +982,10 @@ class ApprovalRejected(Payload):
     tool_name: str
     by: str | None = None
     reason: str = ""
+    # Audit (§ 7), comme pour un accord.
+    via: str | None = None
+    roles: tuple[str, ...] = ()
+    self_approved: bool = False
 
     @property
     def event_status(self) -> EventStatus:
@@ -1038,9 +1056,11 @@ class QuestionAnswered(Payload):
     answers: tuple[tuple[str, ...], ...] | None = None
     text: str | None = None
     by: str | None = None
+    # Passerelle qui a porté la réponse (``as_user``, D-5).
+    via: str | None = None
 
     def reply(self) -> QuestionReply:
-        return QuestionReply(answers=self.answers, text=self.text, by=self.by)
+        return QuestionReply(answers=self.answers, text=self.text, by=self.by, via=self.via)
 
 
 class QuestionExpired(Payload):

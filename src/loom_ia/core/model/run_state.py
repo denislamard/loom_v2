@@ -79,6 +79,11 @@ class Approved:
     by: str | None = None
     reason: str = ""
     arguments: dict[str, JsonValue] | None = None
+    # Audit (§ 7) : la passerelle qui a porté la décision, les rôles qui l'ont
+    # permise, et si l'approbateur est celui qui a lancé le run (D-7).
+    via: str | None = None
+    roles: tuple[str, ...] = ()
+    self_approved: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +92,10 @@ class Rejected:
 
     reason: str = ""
     by: str | None = None
+    # Audit (§ 7), comme pour un accord.
+    via: str | None = None
+    roles: tuple[str, ...] = ()
+    self_approved: bool = False
 
 
 type ApprovalDecision = Approved | Rejected
@@ -105,6 +114,11 @@ class ApprovalOutcome(DomainModel):
     reason: str = ""
     # Arguments corrigés en accordant ; absents, ceux de la demande valent.
     arguments: dict[str, JsonValue] | None = None
+    # Passerelle qui a porté la décision (``as_user``), rôles qui l'ont permise,
+    # et auto-approbation (§ 7) : absents des journaux antérieurs.
+    via: str | None = None
+    roles: tuple[str, ...] = ()
+    self_approved: bool = False
 
 
 class PendingApproval(DomainModel):
@@ -126,7 +140,11 @@ class PendingApproval(DomainModel):
     run_id: RunId | None = None
     # Politique qui l'a exigée ; absente pour un outil en ``approval: always``.
     policy: str | None = None
-    scope: str = "approve"
+    # Qui peut la trancher, figé à l'écriture (§ 5.3) : les rôles approbateurs
+    # (``None`` : tout rôle qui a ``approve`` sur l'agent), et ``False`` si
+    # l'agent interdit l'auto-approbation (D-7b).
+    approvers: tuple[str, ...] | None = None
+    self_approval: bool = True
     expire_at: datetime | None = None
     outcome: ApprovalOutcome | None = None
     # Un ``tool.called`` a été écrit depuis l'accord : il a servi à un lancement,
