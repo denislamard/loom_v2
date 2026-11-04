@@ -707,7 +707,7 @@ async def test_rest_answers_429_when_the_day_is_exhausted(demo: ConfigFactory) -
     path = demo(
         storage=JOURNAL,
         tenants=clients(budgets=AFTER_ONE),
-        security={"api_keys": [{"id": "app", "hash": fingerprint(cle), "tenant": DUPONT}]},
+        security={"api_keys": [{"id": "app", "hash": fingerprint(cle), "user": DUPONT}]},
     )
     async with Loom.from_config(path) as loom:
         transport = httpx2.ASGITransport(create_app(loom))
@@ -736,7 +736,7 @@ async def test_rest_answers_429_when_the_tenant_quota_is_reached(demo: ConfigFac
     path = demo(
         storage=JOURNAL,
         tenants=clients(quotas={"runs_per_minute": 1}),
-        security={"api_keys": [{"id": "app", "hash": fingerprint(cle), "tenant": DUPONT}]},
+        security={"api_keys": [{"id": "app", "hash": fingerprint(cle), "user": DUPONT}]},
     )
     async with Loom.from_config(path) as loom:
         transport = httpx2.ASGITransport(create_app(loom))
@@ -768,10 +768,10 @@ async def test_a_key_rate_limit_protects_the_server_even_on_a_read(demo: ConfigF
                 {
                     "id": "bridee",
                     "hash": fingerprint(bridee),
-                    "tenant": DUPONT,
+                    "user": DUPONT,
                     "rate_limit": {"per_minute": 2},
                 },
-                {"id": "libre", "hash": fingerprint(libre), "tenant": MARTIN},
+                {"id": "libre", "hash": fingerprint(libre), "user": MARTIN},
             ]
         },
     )

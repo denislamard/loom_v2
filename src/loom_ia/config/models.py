@@ -643,18 +643,124 @@ class TenantSpec(DomainModel):
         return not self.agents or agent in self.agents
 
 
-type Scope = Literal["run", "read", "read_content", "approve", "admin"]
+type Permission = Literal[
+    "run",
+    "answer",
+    "cancel",
+    "approve",
+    "self_approve",
+    "amend",
+    "read",
+    "read_content",
+    "admin",
+    "act_as",
+]
+# Ordre d'affichage (``loom validate``) et liste fermée des permissions (D-3).
+PERMISSIONS: Final[tuple[Permission, ...]] = (
+    "run",
+    "answer",
+    "cancel",
+    "approve",
+    "self_approve",
+    "amend",
+    "read",
+    "read_content",
+    "admin",
+    "act_as",
+)
+# Identifiants d'utilisateur et de rôle d'accès : le motif des noms d'agent. Ils
+# s'écrivent au journal (``by``) et sur la ligne de commande (``--user``).
+ACCESS_NAME_PATTERN: Final = AGENT_NAME_PATTERN
+# Adresses de la boucle locale : les seules où ``server.http.user`` est permis (D-1b).
+LOOPBACK_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+class AccessRole(DomainModel):
+    """Rôle d'accès : des permissions, éventuellement bornées à des agents (D-3).
+
+    À ne pas confondre avec les rôles LLM d'un agent (``roles:`` dans
+    ``agent.yaml``), qui délèguent à un modèle : un rôle d'accès dit ce qu'un
+    utilisateur peut faire sur loom, et ne se déclare que dans
+    ``security.roles``.
+    """
+
+    id: str = Field(pattern=ACCESS_NAME_PATTERN)
+    # Libellé affiché par ``loom validate``.
+    description: str = ""
+    permissions: tuple[Permission, ...] = Field(min_length=1)
+    # Agents auxquels le rôle est borné ; vide signifie tous.
+    agents: tuple[str, ...] = ()
+    # Rôles qu'une passerelle peut endosser (D-5b) : obligatoire avec
+    # ``act_as``, interdit sans. Ils restreignent les rôles effectifs de
+    # l'utilisateur au nom duquel elle agit.
+    act_as_roles: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        label = f"Rôle d'accès {self.id!r}"
+        _reject_doubles(f"{label} : permission", list(self.permissions))
+        _reject_doubles(f"{label} : agent", list(self.agents))
+        _reject_doubles(f"{label} : rôle endossable", list(self.act_as_roles))
+        for agent in self.agents:
+            if not re.fullmatch(AGENT_NAME_PATTERN, agent):
+                raise ValueError(f"{label} : nom d'agent invalide : {agent!r}")
+        if "self_approve" in self.permissions and "approve" not in self.permissions:
+            # self_approve étend approve aux demandes de ses propres runs (D-7) :
+            # seule, elle n'ouvrirait rien, et se lirait pourtant comme un droit.
+            raise ValueError(
+                f"{label} : 'self_approve' sans 'approve' — elle ne vaut que dans le même rôle "
+                "qu'approve"
+            )
+        if "act_as" in self.permissions and not self.act_as_roles:
+            # Une passerelle sans borne agirait au nom de n'importe qui, gérant compris (D-5b).
+            raise ValueError(
+                f"{label} : 'act_as' demande 'act_as_roles', les rôles que ce rôle peut endosser"
+            )
+        if self.act_as_roles and "act_as" not in self.permissions:
+            raise ValueError(f"{label} : 'act_as_roles' sans la permission 'act_as'")
+        if self.id in self.act_as_roles:
+            raise ValueError(f"{label} : un rôle ne s'endosse pas lui-même (act_as_roles)")
+        return self
+
+    def allows(self, agent: str) -> bool:
+        """Vrai si le rôle vaut pour cet agent."""
+        return not self.agents or agent in self.agents
+
+
+class UserSpec(DomainModel):
+    """Utilisateur : une personne ou un service qui agit sur loom (D-1, D-2).
+
+    Il porte les droits, par ses rôles d'accès, et le client au nom duquel il
+    agit. Une clé d'API ne fait que le reconnaître (D-4) : une personne garde
+    la même identité au journal, quel que soit l'accès qu'elle emprunte.
+    """
+
+    id: str = Field(pattern=ACCESS_NAME_PATTERN)
+    # Nom affiché (journal, CLI) ; l'identifiant sinon.
+    name: str | None = Field(default=None, min_length=1)
+    roles: tuple[str, ...] = Field(min_length=1)
+    # Client de l'utilisateur : celui de toutes ses clés.
+    tenant: TenantId = DEFAULT_TENANT
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        _reject_doubles(f"Utilisateur {self.id!r} : rôle", list(self.roles))
+        return self
 
 
 class ApiKey(DomainModel):
-    """Clé déclarée dans la config, par son empreinte seulement (#39)."""
+    """Clé déclarée dans la config, par son empreinte seulement (#39).
+
+    Elle identifie un utilisateur (D-4) : le client et les droits sont les
+    siens. ``scopes`` et ``agents`` ne peuvent que les restreindre.
+    """
 
     id: str = Field(min_length=1)
     # Empreinte donnée par ``loom keys create`` : ``sha256:`` et 64 chiffres hexadécimaux
     # minuscules, vérifiés au chargement.
     hash: str
-    # Client au nom duquel cette clé agit (L1) ; ``default`` en mono-client.
-    tenant: TenantId = DEFAULT_TENANT
+    # Utilisateur que cette clé identifie, déclaré dans ``security.users``.
+    user: str = Field(pattern=ACCESS_NAME_PATTERN)
     # Débit de cette clé, vérifié par l'accès HTTP (#39) ; ``null`` : aucun.
     rate_limit: RateLimit | None = None
     # Fin de validité (J5.2a) ; ``null`` : la clé ne périme pas. Une clé déjà
@@ -662,7 +768,9 @@ class ApiKey(DomainModel):
     # ``loom validate`` la signale. Une rotation, c'est deux clés déclarées en
     # même temps, l'ancienne portant sa date de fin.
     expires: AwareDatetime | None = None
-    scopes: tuple[Scope, ...] = ("run", "read")
+    # Permissions que la clé garde de celles de son utilisateur ; ``null`` :
+    # toutes. Une clé restreint, elle n'ajoute jamais (D-4).
+    scopes: tuple[Permission, ...] | None = None
     # Agents autorisés ; vide signifie tous.
     agents: tuple[str, ...] = ()
 
@@ -690,8 +798,51 @@ class ApiKey(DomainModel):
         return not self.agents or agent in self.agents
 
 
+# Ce que le message d'une config sans rôle ni utilisateur donne à recopier (D-1).
+MINIMAL_SECURITY: Final = """security:
+  roles:
+    - id: owner
+      permissions: [run, answer, cancel, approve, self_approve, amend, read, read_content, admin]
+  users:
+    - id: <votre identifiant>
+      roles: [owner]"""
+
+
 class SecurityConfig(DomainModel):
+    """Qui agit sur loom, et ce que chacun peut faire (D-1 à D-5).
+
+    Au moins un rôle et un utilisateur sont exigés (D-1) : le contrôle est
+    fait par ``LoomConfig.check``, pour que le message donne la config
+    minimale plutôt que l'erreur générique d'une liste vide.
+    """
+
+    roles: tuple[AccessRole, ...] = ()
+    users: tuple[UserSpec, ...] = ()
     api_keys: tuple[ApiKey, ...] = ()
+
+    def role(self, role_id: str) -> AccessRole:
+        """Rôle d'accès déclaré, par son identifiant."""
+        for role in self.roles:
+            if role.id == role_id:
+                return role
+        raise KeyError(role_id)
+
+    def user(self, user_id: str) -> UserSpec:
+        """Utilisateur déclaré, par son identifiant."""
+        for user in self.users:
+            if user.id == user_id:
+                return user
+        raise KeyError(user_id)
+
+    def roles_of(self, user_id: str) -> tuple[AccessRole, ...]:
+        """Rôles d'accès d'un utilisateur déclaré, dans l'ordre de sa déclaration."""
+        return tuple(self.role(role) for role in self.user(user_id).roles)
+
+    def permissions_of(self, user_id: str) -> frozenset[Permission]:
+        """Permissions que l'un au moins des rôles de l'utilisateur porte, tous agents confondus."""
+        return frozenset(
+            permission for role in self.roles_of(user_id) for permission in role.permissions
+        )
 
 
 class HttpServer(DomainModel):
@@ -710,6 +861,11 @@ class HttpServer(DomainModel):
     # servis, sauf en profil strict (``prod``) ; ``true`` / ``false`` tranchent
     # (test N2 du 23/10 : ils répondaient 200 sans clé à côté d'une API protégée).
     docs: bool | None = None
+    # Utilisateur au nom duquel une instance **locale sans clé** répond (D-1b) :
+    # l'usage local reste simple, et le journal nomme quelqu'un. Refusé hors de
+    # la boucle locale, avec des clés, avec le MCP HTTP, et en profil ``prod``
+    # (``LoomConfig.check``).
+    user: str | None = Field(default=None, pattern=ACCESS_NAME_PATTERN)
 
     @model_validator(mode="after")
     def _check_base_path(self) -> Self:
@@ -887,7 +1043,7 @@ class LoomConfig(DomainModel):
         compaction = self.sessions.compaction
         if compaction is not None:
             self._check_chain(f"Compaction ({COMPACTION_AGENT})", (compaction.model,))
-        _reject_doubles("Clé", [key.id for key in self.security.api_keys])
+        self._check_security()
         self._check_triggers()
         self._check_telemetry()
         if self.server.mcp.http and not self.security.api_keys:
@@ -1017,6 +1173,112 @@ class LoomConfig(DomainModel):
                 f"au-delà de sessions.state.max_total_bytes ({limits.max_total_bytes})"
             )
 
+    def _check_security(self) -> None:
+        """Rôles et utilisateurs obligatoires, et tout ce qui les cite déclaré (D-1 à D-5b).
+
+        Comme pour les clients, les agents ne sont contrôlés que lorsqu'il y en
+        a : la première validation ne connaît pas encore ``agents_dir``.
+        """
+        security = self.security
+        if not security.roles or not security.users:
+            missing = " ni ".join(
+                name
+                for name, given in (
+                    ("security.roles", security.roles),
+                    ("security.users", security.users),
+                )
+                if not given
+            )
+            raise ValueError(
+                f"Aucun {missing} : loom exige au moins un rôle d'accès et un utilisateur. "
+                f"Configuration minimale :\n{MINIMAL_SECURITY}"
+            )
+        _reject_doubles("Rôle d'accès", [role.id for role in security.roles])
+        _reject_doubles("Utilisateur", [user.id for user in security.users])
+        _reject_doubles("Clé", [key.id for key in security.api_keys])
+        roles = {role.id: role for role in security.roles}
+        agents = {agent.name for agent in self.agents}
+
+        def declared(label: str, role: str) -> AccessRole:
+            found = roles.get(role)
+            if found is None:
+                raise ValueError(
+                    f"{label} : rôle d'accès {role!r} non déclaré dans security.roles "
+                    f"(rôles : {', '.join(roles)})"
+                )
+            return found
+
+        for role in security.roles:
+            label = f"Rôle d'accès {role.id!r}"
+            for agent in role.agents if agents else ():
+                if agent not in agents:
+                    raise ValueError(
+                        f"{label} : agent {agent!r} non déclaré "
+                        f"(agents : {', '.join(sorted(agents)) or 'aucun'})"
+                    )
+            for endorsed in role.act_as_roles:
+                if "act_as" in declared(f"{label}, act_as_roles", endorsed).permissions:
+                    # Endosser un rôle qui endosse à son tour : une passerelle
+                    # agirait au nom de quelqu'un au nom de quelqu'un d'autre.
+                    raise ValueError(
+                        f"{label}, act_as_roles : {endorsed!r} a lui-même 'act_as' — "
+                        "on n'agit pas au nom d'autrui en chaîne"
+                    )
+        for user in security.users:
+            for role in user.roles:
+                declared(f"Utilisateur {user.id!r}", role)
+        users = {user.id for user in security.users}
+        for key in security.api_keys:
+            if key.user not in users:
+                raise ValueError(
+                    f"Clé {key.id!r} : utilisateur {key.user!r} non déclaré dans security.users "
+                    f"(utilisateurs : {', '.join(sorted(users))})"
+                )
+        self._check_local_user(users)
+        for agent in self.agents:
+            for permission, cited in agent.access.listed():
+                for role_id in cited:
+                    label = f"Agent {agent.name!r}, access"
+                    role = declared(label, role_id)
+                    if permission not in role.permissions:
+                        # Une liste ne donne rien : elle restreint ceux qui ont
+                        # déjà la permission. Un rôle sans elle n'y ferait rien.
+                        raise ValueError(
+                            f"{label} : le rôle {role_id!r} est cité pour {permission!r}, "
+                            "permission qu'il n'a pas"
+                        )
+                    if not role.allows(agent.name):
+                        raise ValueError(
+                            f"{label} : le rôle {role_id!r} est borné à d'autres agents "
+                            f"({', '.join(role.agents)})"
+                        )
+
+    def _check_local_user(self, users: set[str]) -> None:
+        """``server.http.user`` : une instance locale, sans clé, hors production (D-1b)."""
+        http = self.server.http
+        if http.user is None:
+            return
+        label = f"'server.http.user' ({http.user!r})"
+        if http.user not in users:
+            raise ValueError(
+                f"{label} : utilisateur non déclaré dans security.users "
+                f"(utilisateurs : {', '.join(sorted(users))})"
+            )
+        if http.host not in LOOPBACK_HOSTS:
+            raise ValueError(
+                f"{label} : réservé à une instance sur la boucle locale ; l'API écoute sur "
+                f"{http.host}, où chacun doit présenter sa clé"
+            )
+        if self.security.api_keys:
+            raise ValueError(
+                f"{label} : des clés sont déclarées — une requête sans clé serait refusée, "
+                "ou passerait au nom de cet utilisateur : choisir l'un ou l'autre"
+            )
+        if self.server.mcp.http:
+            raise ValueError(f"{label} : incompatible avec 'server.mcp.http', qui exige des clés")
+        # Le profil prod n'est connu qu'une fois le chargement fini (option,
+        # variable, fichier) : c'est le chargeur qui le refuse.
+
     def _check_triggers(self) -> None:
         """Déclencheurs nommés une fois, sur des agents qui existent, gabarits valides.
 
@@ -1070,10 +1332,10 @@ class LoomConfig(DomainModel):
         if not self.tenants:
             return
         declared = {tenant.id for tenant in self.tenants}
-        for key in self.security.api_keys:
-            if key.tenant not in declared:
+        for user in self.security.users:
+            if user.tenant not in declared:
                 raise ValueError(
-                    f"Clé {key.id!r} : client {key.tenant!r} non déclaré "
+                    f"Utilisateur {user.id!r} : client {user.tenant!r} non déclaré "
                     f"(clients : {', '.join(sorted(declared))})"
                 )
 

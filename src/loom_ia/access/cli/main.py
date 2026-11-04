@@ -89,10 +89,12 @@ from loom_ia.config.env_file import DISABLED, EnvFileReport, load_env_file
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.config.loader import PROFILE_ENV, chosen_profile
 from loom_ia.config.models import (
+    PERMISSIONS,
     PROFILES,
     BusStorage,
     EventsStorage,
     IdempotencyStorage,
+    Permission,
     QueueStorage,
 )
 from loom_ia.config.references import Registry, resolve
@@ -517,22 +519,25 @@ def build_parser() -> argparse.ArgumentParser:
     create = actions.add_parser("create", help="fabrique une clé et son empreinte")
     create.add_argument("id", help="nom de la clé dans la configuration")
     create.add_argument(
+        "--user",
+        required=True,
+        metavar="UTILISATEUR",
+        help="utilisateur que la clé identifie, déclaré dans security.users (D-4)",
+    )
+    create.add_argument(
         "--scope",
         action="append",
         default=None,
-        help="portée accordée (répétable ; défaut : run et read)",
+        choices=PERMISSIONS,
+        metavar="PERMISSION",
+        help="permission que la clé garde de celles de son utilisateur "
+        "(répétable ; défaut : toutes)",
     )
     create.add_argument(
         "--agent",
         action="append",
         default=None,
         help="agent autorisé (répétable ; défaut : tous)",
-    )
-    create.add_argument(
-        "--tenant",
-        default=None,
-        metavar="CLIENT",
-        help="client au nom duquel la clé agit (défaut : default)",
     )
     create.add_argument(
         "--expires",
@@ -1097,10 +1102,17 @@ def _telemetry_lines(config: LoomConfig) -> list[str]:
 
 def _access(report: _Report, config: LoomConfig) -> None:
     section = report.section("ACCÈS")
-    keys = [key.id for key in config.security.api_keys]
+    security = config.security
+    first, *more = _role_lines(config, report)
+    section.add("Rôles", first, more)
+    first, *more = _user_lines(config)
+    section.add("Comptes", first, more)
+    keys = [key.id for key in security.api_keys]
     if keys:
         first, *more = _packed(keys, _LISTED)
         section.add("Clés d'API", first, [*more, *_key_lines(config, report)])
+    elif config.server.http.user is not None:
+        section.add("Clés d'API", f"aucune : API REST locale, au nom de {config.server.http.user}")
     else:
         section.add("Clés d'API", "aucune")
         report.warn("Clés d'API", "aucune : API REST ouverte")
@@ -1309,12 +1321,67 @@ def _storage_line(declared: EventsStorage | IdempotencyStorage) -> str:
     return f"{declared.backend} ({declared.path})" if declared.path else declared.backend
 
 
+def _role_lines(config: LoomConfig, report: _Report) -> list[str]:
+    """Les permissions de chaque rôle d'accès ; ce qui cloche va aux avertissements (§ 8)."""
+    security = config.security
+    carried = {role for user in security.users for role in user.roles}
+    lines: list[str] = []
+    for role in security.roles:
+        details = [_listed(p for p in PERMISSIONS if p in role.permissions)]
+        if role.agents:
+            details.append(f"agents {_listed(role.agents)}")
+        if role.act_as_roles:
+            details.append(f"endosse {_listed(role.act_as_roles)}")
+        said = f" ({role.description})" if role.description else ""
+        lines.append(f"{role.id}{said} : {' · '.join(details)}")
+        subject = f"Rôle d'accès {role.id}"
+        if "approve" in role.permissions and "read_content" not in role.permissions:
+            # Approuver sans lire, c'est trancher à l'aveugle : les arguments
+            # de l'appel en attente lui sont masqués.
+            report.warn(subject, "peut approuver sans lire : ajouter 'read_content'")
+        if role.id not in carried:
+            report.warn(subject, "porté par aucun utilisateur")
+        for endorsed in role.act_as_roles:
+            if "approve" in security.role(endorsed).permissions:
+                report.warn(
+                    subject,
+                    f"endosse {endorsed}, qui approuve : la passerelle peut faire approuver "
+                    "au nom d'un utilisateur",
+                )
+    return lines
+
+
+def _user_lines(config: LoomConfig) -> list[str]:
+    """Les rôles de chaque utilisateur, et son client quand la config en nomme."""
+    lines: list[str] = []
+    for user in config.security.users:
+        said = f" ({user.name})" if user.name else ""
+        tenant = f" → {user.tenant}" if config.tenants else ""
+        lines.append(f"{user.id}{said} : {_listed(user.roles)}{tenant}")
+    return lines
+
+
 def _key_lines(config: LoomConfig, report: _Report) -> list[str]:
     """Ce que chaque clé d'API permet ; ce qui cloche va aux avertissements (J5.2a, #39)."""
     now = datetime.now(UTC)
+    security = config.security
     lines: list[str] = []
-    for key in config.security.api_keys:
-        details = [f"client {key.tenant}", f"portées {', '.join(key.scopes)}"]
+    for key in security.api_keys:
+        user = security.user(key.user)
+        details = [f"utilisateur {user.id}"]
+        if config.tenants:
+            details.append(f"client {user.tenant}")
+        if key.scopes is not None:
+            details.append(f"restreinte à {_listed(key.scopes)}")
+            # Une clé restreint, elle n'ajoute jamais (D-4) : une permission que
+            # l'utilisateur n'a pas ne lui donne rien.
+            missing = [p for p in key.scopes if p not in security.permissions_of(user.id)]
+            if missing:
+                report.warn(
+                    f"Clé d'API {key.id}",
+                    f"{_listed(missing)} : l'utilisateur {user.id} ne les a pas, la clé "
+                    "ne les donne pas",
+                )
         if key.agents:
             details.append(f"agents {_listed(key.agents)}")
         if key.rate_limit is not None:
@@ -1330,9 +1397,15 @@ def _key_lines(config: LoomConfig, report: _Report) -> list[str]:
                 etat = f"expire le {key.expires:%Y-%m-%d}"
             details.append(etat)
         lines.append(f"{key.id} : {', '.join(details)}")
-        if "approve" in key.scopes and "read_content" not in key.scopes:
-            # Approuver sans lire, c'est trancher à l'aveugle : les arguments
-            # de l'appel en attente lui sont masqués.
+        granted = security.permissions_of(user.id)
+        if key.scopes is not None:
+            granted &= frozenset(key.scopes)
+        if (
+            "approve" in granted
+            and "read_content" not in granted
+            and "read_content" in security.permissions_of(user.id)
+        ):
+            # Le rôle lit, la clé le lui retire : elle approuverait à l'aveugle.
             report.warn(f"Clé d'API {key.id}", "peut approuver sans lire : ajouter 'read_content'")
     return lines
 
@@ -1491,7 +1564,101 @@ async def _agent_lines(
         )
     if judges:
         branches.append(_Branch("juges", tuple(judges)))
+    asking = [
+        name
+        for name in context.tools.names
+        if (mounted := context.tools.get(name)) is not None
+        and imposed.get(name, mounted.spec.approval) == "always"
+    ]
+    # Sans liste ni durcissement, ce sont les permissions des rôles qui décident :
+    # rien à dire sous l'agent, mais les avertissements valent quand même.
+    if access := _access_lines(config, spec, asking, report):
+        branches.append(_Branch("accès", tuple(access)))
     return _tree(_agent_header(spec, chain), branches, indent=indent)
+
+
+def _able(config: LoomConfig, spec: AgentSpec, permission: Permission) -> set[str]:
+    """Utilisateurs qui ont cette permission sur l'agent, sa liste ``access`` comprise.
+
+    Un rôle compte s'il porte la permission, vaut pour l'agent, et figure
+    dans la liste de l'agent quand il y en a une (règles 2 et 3 du § 4.3).
+    """
+    access = spec.access
+    listed: tuple[str, ...] | None = {
+        "run": access.run,
+        "answer": access.answer,
+        "cancel": access.cancel,
+        "approve": access.approve.default,
+    }.get(permission)
+    return _holders(config, spec.name, permission, listed)
+
+
+def _holders(
+    config: LoomConfig, agent: str, permission: Permission, listed: tuple[str, ...] | None
+) -> set[str]:
+    security = config.security
+    return {
+        user.id
+        for user in security.users
+        for role in security.roles_of(user.id)
+        if permission in role.permissions
+        and role.allows(agent)
+        and (listed is None or role.id in listed)
+    }
+
+
+def _access_lines(
+    config: LoomConfig, spec: AgentSpec, asking: Sequence[str], report: _Report
+) -> list[str]:
+    """Qui lance, répond, arrête et approuve cet agent ; ce qui bloque va aux avertissements.
+
+    ``asking`` : les outils montés qui demandent une approbation à chaque appel.
+    """
+    access = spec.access
+    subject = f"Agent {spec.name}"
+    # Seules les listes déclarées se disent : sans elles, ce sont les
+    # permissions des rôles qui décident, et la ligne le dit une fois.
+    doing = [
+        f"{verb} {_listed(roles)}"
+        for verb, roles in (
+            ("lance", access.run),
+            ("répond", access.answer),
+            ("arrête", access.cancel),
+        )
+        if roles is not None
+    ]
+    lines = [" · ".join(doing)] if doing else []
+    approving: list[str] = []
+    if access.approve.default is not None:
+        approving.append(f"(défaut) {_listed(access.approve.default)}")
+    approving += [f"{tool} → {_listed(roles)}" for tool, roles in access.approve.tools.items()]
+    if approving:
+        lines.append(f"approuve {' · '.join(approving)}")
+    if not access.self_approval:
+        lines.append("auto-approbation interdite (l'agent)")
+    approvers = _able(config, spec, "approve")
+    for tool in asking:
+        listed = access.approve.tools.get(tool, access.approve.default)
+        if not _holders(config, spec.name, "approve", listed):
+            report.warn(
+                subject,
+                f"outil {tool} : aucun utilisateur ne peut trancher ses demandes, "
+                "elles expireront toutes",
+            )
+    for tool, roles in access.approve.tools.items():
+        if tool not in asking and not _holders(config, spec.name, "approve", roles):
+            report.warn(subject, f"access.approve.tools.{tool} : porté par aucun utilisateur")
+    launchers = _able(config, spec, "run")
+    if not access.self_approval and len(approvers) == 1 and approvers <= launchers:
+        # Le seul qui puisse approuver lance aussi : ses propres demandes
+        # n'auront personne pour les trancher.
+        (alone,) = approvers
+        report.warn(
+            subject,
+            f"auto-approbation interdite, et {alone} est le seul approbateur : ses propres "
+            "runs attendront sans fin",
+        )
+    return lines
 
 
 def _internal_line(loom: Loom, tenant_id: TenantId, spec: AgentSpec, *, indent: str) -> str:
@@ -2948,7 +3115,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
 def cmd_keys_create(args: argparse.Namespace) -> int:
     key = new_api_key()
-    scopes: list[str] = args.scope or ["run", "read"]
+    scopes: list[str] | None = args.scope
     agents: list[str] = args.agent or []
     try:
         expires = _deadline(args.expires)
@@ -2962,16 +3129,16 @@ def cmd_keys_create(args: argparse.Namespace) -> int:
     print("  api_keys:")
     print(f"    - id: {args.id}")
     print(f"      hash: {fingerprint(key)}")
-    if args.tenant:
-        print(f"      tenant: {args.tenant}")
-    print(f"      scopes: [{', '.join(scopes)}]")
+    print(f"      user: {args.user}")
+    if scopes is not None:
+        print(f"      scopes: [{', '.join(scopes)}]")
     if agents:
         print(f"      agents: [{', '.join(agents)}]")
     if args.rate_limit is not None:
         print(f"      rate_limit: {{per_minute: {args.rate_limit}}}")
     if expires is not None:
         print(f"      expires: {expires.isoformat().replace('+00:00', 'Z')}")
-    if "approve" in scopes and "read_content" not in scopes:
+    if scopes is not None and "approve" in scopes and "read_content" not in scopes:
         print(
             "\nCette clé peut approuver sans pouvoir lire : sans 'read_content', "
             "les arguments d'un appel en attente lui sont masqués.",

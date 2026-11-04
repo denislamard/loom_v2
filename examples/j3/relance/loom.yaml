@@ -145,3 +145,12 @@ storage:
 
 telemetry:
   logging: {level: WARNING, format: console}
+
+# Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur.
+security:
+  roles:
+    - id: owner
+      permissions: [run, answer, cancel, approve, self_approve, amend, read, read_content, admin]
+  users:
+    - id: dev
+      roles: [owner]

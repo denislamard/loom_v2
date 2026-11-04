@@ -161,6 +161,11 @@ def demo(tmp_path: Path) -> ConfigFactory:
         (tmp_path / "outils_acces.py").write_text(OUTILS, encoding="utf-8")
         config: dict[str, Any] = {
             "version": 1,
+            # Qui agit sur loom (D-1) : un rôle et un utilisateur.
+            "security": {
+                "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
+                "users": [{"id": "dev", "roles": ["owner"]}],
+            },
             "imports": ["outils_acces"],
             "models": [
                 {"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": SCRIPT}}

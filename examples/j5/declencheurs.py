@@ -48,7 +48,6 @@ from loom_ia.config import (
     ApiKey,
     ConfigError,
     LoomConfig,
-    SecurityConfig,
     fingerprint,
     load_config,
     new_api_key,
@@ -172,33 +171,36 @@ def pose(config: LoomConfig, agent: str) -> tuple[LoomConfig, dict[str, str]]:
         ApiKey(
             id="planificateur",
             hash=fingerprint(jetons["planificateur"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("run", "read", "read_content"),
         ),
         # Elle ne sait que lire : une porte lance, donc elle est refusée.
         ApiKey(
             id="lecture",
             hash=fingerprint(jetons["lecture"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("read", "read_content"),
         ),
         # Limitée à l'autre agent : la porte nomme le sien, donc refus.
         ApiKey(
             id="bureau",
             hash=fingerprint(jetons["bureau"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("run", "read", "read_content"),
             agents=(autre_que(agent),),
         ),
         ApiKey(
             id="martin",
             hash=fingerprint(jetons["martin"]),
-            tenant=MARTIN,
+            user=MARTIN,
             scopes=("run", "read", "read_content"),
         ),
     )
     return config.model_copy(
-        update={"security": SecurityConfig(api_keys=keys), "triggers": triggers}
+        update={
+            "security": config.security.model_copy(update={"api_keys": keys}),
+            "triggers": triggers,
+        }
     ), jetons
 
 

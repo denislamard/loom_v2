@@ -472,15 +472,24 @@ async def test_a_prompt_without_variables_is_left_alone(demo: ConfigFactory) -> 
 # --- Clés d'API et client (#34) ------------------------------------------------
 
 
-def test_a_key_names_the_tenant_it_acts_for(demo: ConfigFactory) -> None:
-    keys = [{"id": "app-dupont", "hash": "sha256:" + "0" * 64, "tenant": DUPONT}]
+def test_a_key_acts_for_the_tenant_of_its_user(demo: ConfigFactory) -> None:
+    """Le client d'une clé est celui de son utilisateur (D-4) : la clé ne le nomme plus."""
+    keys = [{"id": "app-dupont", "hash": "sha256:" + "0" * 64, "user": DUPONT}]
     config = load_config(demo(tenants=two(), security={"api_keys": keys}))
-    assert config.security.api_keys[0].tenant == DUPONT
+    key = config.security.api_keys[0]
+    assert config.security.user(key.user).tenant == DUPONT
 
 
-def test_a_key_on_an_undeclared_tenant_is_refused(demo: ConfigFactory) -> None:
-    keys = [{"id": "app", "hash": "sha256:" + "0" * 64, "tenant": "fantome"}]
-    with pytest.raises(ConfigError, match="client 'fantome' non déclaré"):
+def test_a_user_on_an_undeclared_tenant_is_refused(demo: ConfigFactory) -> None:
+    users = [{"id": "app", "roles": ["owner"], "tenant": "fantome"}]
+    with pytest.raises(ConfigError, match="Utilisateur 'app' : client 'fantome' non déclaré"):
+        load_config(demo(tenants=two(), security={"users": users}))
+
+
+def test_a_key_no_longer_names_a_tenant(demo: ConfigFactory) -> None:
+    """Pas de compatibilité (D-16) : l'ancienne clé ``tenant`` est un champ inconnu."""
+    keys = [{"id": "app", "hash": "sha256:" + "0" * 64, "user": DUPONT, "tenant": DUPONT}]
+    with pytest.raises(ConfigError, match=r"api_keys\[app\]\.tenant"):
         load_config(demo(tenants=two(), security={"api_keys": keys}))
 
 
@@ -728,8 +737,8 @@ async def test_a_key_only_ever_reads_its_own_tenant(demo: ConfigFactory) -> None
     cle_dupont, cle_martin = new_api_key(), new_api_key()
     security = {
         "api_keys": [
-            {"id": "app-dupont", "hash": fingerprint(cle_dupont), "tenant": DUPONT},
-            {"id": "app-martin", "hash": fingerprint(cle_martin), "tenant": MARTIN},
+            {"id": "app-dupont", "hash": fingerprint(cle_dupont), "user": DUPONT},
+            {"id": "app-martin", "hash": fingerprint(cle_martin), "user": MARTIN},
         ]
     }
     path = demo(
@@ -796,7 +805,7 @@ async def test_an_agent_closed_to_a_tenant_is_refused_over_rest(demo: ConfigFact
     path = demo(
         agents=agents,
         tenants=[{"id": DUPONT, "agents": ["autre"]}],
-        security={"api_keys": [{"id": "app", "hash": fingerprint(cle), "tenant": DUPONT}]},
+        security={"api_keys": [{"id": "app", "hash": fingerprint(cle), "user": DUPONT}]},
     )
     async with Loom.from_config(path) as loom:
         transport = httpx2.ASGITransport(create_app(loom))

@@ -46,6 +46,52 @@ def calculer(expr: str) -> str:
 
 type ConfigFactory = Callable[..., Path]
 
+# --- Qui agit sur loom (D-1) ------------------------------------------------------------
+
+# Toutes les permissions, sauf act_as (qui demande act_as_roles) : le rôle des configs
+# de test qui n'éprouvent pas les droits.
+EVERYTHING: list[str] = [
+    "run",
+    "answer",
+    "cancel",
+    "approve",
+    "self_approve",
+    "amend",
+    "read",
+    "read_content",
+    "admin",
+]
+OWNER: dict[str, Any] = {"id": "owner", "permissions": EVERYTHING}
+# Utilisateur des configs sans clients.
+DEV = "dev"
+
+
+# Le même bloc, à écrire tel quel dans un loom.yaml rédigé à la main.
+SECURITY_YAML = (
+    "security:\n"
+    f"  roles: [{{id: owner, permissions: [{', '.join(EVERYTHING)}]}}]\n"
+    f"  users: [{{id: {DEV}, roles: [owner]}}]\n"
+)
+
+
+def secured(config: dict[str, Any]) -> dict[str, Any]:
+    """La racine d'une config, avec son bloc ``security`` complété (D-1).
+
+    Ce que la config déclare déjà est gardé. Sans ``roles``, le rôle ``owner`` ;
+    sans ``users``, un utilisateur par client déclaré (de même identifiant, dans
+    ce client), ou ``dev`` quand la config n'en nomme aucun.
+    """
+    security: dict[str, Any] = dict(config.get("security") or {})
+    security.setdefault("roles", [OWNER])
+    declared: list[dict[str, Any]] = config.get("tenants") or []
+    tenants: list[str] = [tenant["id"] for tenant in declared]
+    security.setdefault(
+        "users",
+        [{"id": tenant, "roles": ["owner"], "tenant": tenant} for tenant in tenants]
+        or [{"id": DEV, "roles": ["owner"]}],
+    )
+    return {**config, "security": security}
+
 
 @pytest.fixture
 def demo(tmp_path: Path) -> ConfigFactory:
@@ -66,7 +112,7 @@ def demo(tmp_path: Path) -> ConfigFactory:
             "models": [MODEL],
             **root,
         }
-        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
         for agent in agents or [demo_agent()]:
             path = tmp_path / "agents" / f"{agent['name']}.yaml"
             path.write_text(yaml.safe_dump(agent), encoding="utf-8")
@@ -157,7 +203,7 @@ def tree(tmp_path: Path) -> ConfigFactory:
                 "tools": [{"python": "calculer"}],
             },
         ]
-        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
         for agent in agents:
             path = tmp_path / "agents" / f"{agent['name']}.yaml"
             path.write_text(yaml.safe_dump(agent), encoding="utf-8")
@@ -206,7 +252,7 @@ def atelier(tmp_path: Path) -> Callable[..., Path]:
             "telemetry": {"logging": {"level": "CRITICAL"}},
             **root,
         }
-        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
         agent: dict[str, Any] = {
             "name": "demo",
             "description": "Relance.",

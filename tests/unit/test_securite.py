@@ -12,13 +12,17 @@ stockage — un run ne se rejoue pas sans ce que le modèle a lu et répondu.
 """
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import ANSWER, QUESTION, ConfigFactory
+import yaml
+from conftest import ANSWER, DEV, EVERYTHING, OWNER, QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import JudgeVerdict, Loom, RunResult
+from loom_ia.access.caller import Caller
 from loom_ia.access.cli import main
 from loom_ia.config import ConfigError, load_config
 from loom_ia.config.keys import fingerprint, matches, new_api_key
@@ -195,22 +199,29 @@ def test_every_criterion_loses_its_reason_and_keeps_its_score() -> None:
 
 
 def test_a_key_without_a_date_never_expires() -> None:
-    key = ApiKey(id="app", hash=empreinte(new_api_key()))
+    key = ApiKey(id="app", user="dev", hash=empreinte(new_api_key()))
     assert key.expires is None and not key.expired()
 
 
 def test_a_key_expires_at_its_date() -> None:
     hier = datetime.now(UTC) - timedelta(days=1)
     demain = datetime.now(UTC) + timedelta(days=1)
-    assert ApiKey(id="a", hash=empreinte(new_api_key()), expires=hier).expired()
-    assert not ApiKey(id="b", hash=empreinte(new_api_key()), expires=demain).expired()
+    assert ApiKey(id="a", user="dev", hash=empreinte(new_api_key()), expires=hier).expired()
+    assert not ApiKey(id="b", user="dev", hash=empreinte(new_api_key()), expires=demain).expired()
 
 
 def test_an_expired_key_does_not_stop_the_config_from_loading(demo: ConfigFactory) -> None:
     # Un service qui redémarre la nuit ne doit pas tomber pour une clé périmée.
     cle = new_api_key()
     security = {
-        "api_keys": [{"id": "vieille", "hash": empreinte(cle), "expires": "2020-01-01T00:00:00Z"}]
+        "api_keys": [
+            {
+                "id": "vieille",
+                "user": DEV,
+                "hash": empreinte(cle),
+                "expires": "2020-01-01T00:00:00Z",
+            }
+        ]
     }
     config = load_config(demo(security=security))
     assert config.security.api_keys[0].expired()
@@ -218,7 +229,9 @@ def test_an_expired_key_does_not_stop_the_config_from_loading(demo: ConfigFactor
 
 def test_an_expiry_without_a_timezone_is_refused(demo: ConfigFactory) -> None:
     security = {
-        "api_keys": [{"id": "app", "hash": empreinte(new_api_key()), "expires": "2027-01-01"}]
+        "api_keys": [
+            {"id": "app", "user": DEV, "hash": empreinte(new_api_key()), "expires": "2027-01-01"}
+        ]
     }
     with pytest.raises(ConfigError):
         load_config(demo(security=security))
@@ -252,7 +265,7 @@ def test_an_expiry_without_a_timezone_is_refused(demo: ConfigFactory) -> None:
 )
 def test_a_malformed_fingerprint_is_refused_at_load(demo: ConfigFactory, fausse: str) -> None:
     """Sans cela, toute clé inconnue ferait un 500 au lieu d'un 401."""
-    security = {"api_keys": [{"id": "app", "hash": fausse}]}
+    security = {"api_keys": [{"id": "app", "user": DEV, "hash": fausse}]}
     with pytest.raises(ConfigError, match=r"security\.api_keys\[app\].*64 chiffres hexadécimaux"):
         load_config(demo(security=security))
 
@@ -269,7 +282,10 @@ def test_a_fingerprint_that_is_not_ascii_matches_nothing() -> None:
 def cles(**kinds: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """Déclare une clé par entrée et rend la config de sécurité et les jetons."""
     jetons = {name: new_api_key() for name in kinds}
-    keys = [{"id": name, "hash": empreinte(jetons[name]), **spec} for name, spec in kinds.items()]
+    keys = [
+        {"id": name, "user": DEV, "hash": empreinte(jetons[name]), **spec}
+        for name, spec in kinds.items()
+    ]
     return {"api_keys": keys}, jetons
 
 
@@ -596,7 +612,7 @@ def test_keys_create_prints_the_whole_block(capsys: pytest.CaptureFixture[str]) 
         "keys",
         "create",
         "app-dupont",
-        "--tenant",
+        "--user",
         "dupont-plomberie",
         "--scope",
         "run",
@@ -612,7 +628,7 @@ def test_keys_create_prints_the_whole_block(capsys: pytest.CaptureFixture[str]) 
     assert main(arguments) == 0
     out = capsys.readouterr().out
     assert "Clé        : lk_" in out
-    assert "      tenant: dupont-plomberie" in out
+    assert "      user: dupont-plomberie" in out
     assert "      scopes: [run, read]" in out
     assert "      agents: [relance]" in out
     assert "      rate_limit: {per_minute: 60}" in out
@@ -624,14 +640,17 @@ def test_keys_create_prints_the_whole_block(capsys: pytest.CaptureFixture[str]) 
 def test_keys_create_accepts_a_date_and_refuses_the_rest(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert main(["keys", "create", "app", "--expires", "2027-01-01"]) == 0
+    assert main(["keys", "create", "app", "--user", "dev", "--expires", "2027-01-01"]) == 0
     assert "expires: 2027-01-01T00:00:00Z" in capsys.readouterr().out
-    assert main(["keys", "create", "app", "--expires", "bientôt"]) == 2
+    assert main(["keys", "create", "app", "--user", "dev", "--expires", "bientôt"]) == 2
     assert "--expires" in capsys.readouterr().err
 
 
 def test_keys_create_warns_when_approve_cannot_read(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["keys", "create", "app", "--scope", "run", "--scope", "approve"]) == 0
+    assert (
+        main(["keys", "create", "app", "--user", "dev", "--scope", "run", "--scope", "approve"])
+        == 0
+    )
     assert "approuver sans pouvoir lire" in capsys.readouterr().err
 
 
@@ -644,31 +663,303 @@ def test_validate_shows_each_key_and_flags_an_expired_one(
             {
                 "id": "app",
                 "hash": empreinte(new_api_key()),
-                "tenant": "dupont-plomberie",
+                "user": "dupont-plomberie",
                 "scopes": ["run", "read", "read_content"],
                 "agents": ["demo"],
                 "rate_limit": {"per_minute": 60},
             },
             {
                 "id": "vieille",
+                "user": "default",
                 "hash": empreinte(new_api_key()),
                 "expires": "2020-01-01T00:00:00Z",
             },
             {
                 "id": "courte",
+                "user": "default",
                 "hash": empreinte(new_api_key()),
                 "expires": bientot.isoformat(),
             },
-            {"id": "aveugle", "hash": empreinte(new_api_key()), "scopes": ["read", "approve"]},
+            {
+                "id": "aveugle",
+                "user": "default",
+                "hash": empreinte(new_api_key()),
+                "scopes": ["read", "approve"],
+            },
         ]
     }
     config = demo(tenants=[{"id": "dupont-plomberie"}, {"id": "default"}], security=security)
     assert main(["--config", str(config), "validate"]) == 0
     out = capsys.readouterr().out
     assert "  Clés d'API   app, vieille, courte, aveugle\n" in out
-    assert "app : client dupont-plomberie, portées run, read, read_content" in out
+    assert (
+        "app : utilisateur dupont-plomberie, client dupont-plomberie, "
+        "restreinte à run, read, read_content" in out
+    )
     assert "agents demo" in out and "débit 60/min" in out
-    assert "vieille : client default, portées run, read, EXPIRÉE" in out
-    assert "courte : client default, portées run, read, expire dans 2 j" in out
+    assert "vieille : utilisateur default, client default, EXPIRÉE" in out
+    assert "courte : utilisateur default, client default, expire dans 2 j" in out
     assert "⚠ Clé d'API vieille  expirée\n" in out
     assert "⚠ Clé d'API aveugle  peut approuver sans lire : ajouter 'read_content'" in out
+
+
+# --- Utilisateurs et rôles d'accès (D-1 à D-7b, docs/loom_role_user.md, lot 0) -------
+
+
+def without(path: Path, *keys: str) -> Path:
+    """La config ``path`` réécrite sans ces clés de ``security`` (toutes, sans clé)."""
+    root = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if keys:
+        root["security"] = {k: v for k, v in root["security"].items() if k not in keys}
+    else:
+        del root["security"]
+    path.write_text(yaml.safe_dump(root), encoding="utf-8")
+    return path
+
+
+def test_a_config_without_role_nor_user_is_refused_with_the_minimal_block(
+    demo: ConfigFactory,
+) -> None:
+    """D-1 : plus de mode ouvert ; le refus donne la config minimale à recopier."""
+    with pytest.raises(ConfigError) as refus:
+        load_config(without(demo()))
+    message = str(refus.value)
+    assert "Aucun security.roles ni security.users" in message
+    assert "- id: owner" in message and "roles: [owner]" in message
+
+
+@pytest.mark.parametrize("missing", ["roles", "users"])
+def test_a_role_and_a_user_are_both_required(demo: ConfigFactory, missing: str) -> None:
+    with pytest.raises(ConfigError, match=f"Aucun security.{missing} :"):
+        load_config(without(demo(), missing))
+
+
+@pytest.mark.parametrize(
+    ("security", "message"),
+    [
+        (
+            {"users": [{"id": "marie", "roles": ["assistante"]}]},
+            "Utilisateur 'marie' : rôle d'accès 'assistante' non déclaré",
+        ),
+        (
+            {"api_keys": [{"id": "app", "user": "fantome", "hash": "sha256:" + "0" * 64}]},
+            "Clé 'app' : utilisateur 'fantome' non déclaré",
+        ),
+        (
+            {"roles": [OWNER, {"id": "solo", "permissions": ["self_approve"]}]},
+            "'self_approve' sans 'approve'",
+        ),
+        (
+            {"roles": [OWNER, {"id": "crm", "permissions": ["run", "act_as"]}]},
+            "'act_as' demande 'act_as_roles'",
+        ),
+        (
+            {"roles": [OWNER, {"id": "crm", "permissions": ["run"], "act_as_roles": ["owner"]}]},
+            "'act_as_roles' sans la permission 'act_as'",
+        ),
+        (
+            {
+                "roles": [
+                    OWNER,
+                    {"id": "a", "permissions": ["act_as"], "act_as_roles": ["b"]},
+                    {"id": "b", "permissions": ["act_as"], "act_as_roles": ["owner"]},
+                ]
+            },
+            "on n'agit pas au nom d'autrui en chaîne",
+        ),
+        (
+            {"roles": [OWNER, {"id": "compta", "permissions": ["read"], "agents": ["ailleurs"]}]},
+            "Rôle d'accès 'compta' : agent 'ailleurs' non déclaré",
+        ),
+        ({"roles": [OWNER, OWNER]}, "Rôle d'accès déclaré deux fois : owner"),
+        (
+            {"roles": [{"id": "owner", "permissions": ["run", "run"]}]},
+            "permission déclaré deux fois : run",
+        ),
+    ],
+)
+def test_what_the_security_block_cites_must_be_declared(
+    demo: ConfigFactory, security: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        load_config(demo(security=security))
+
+
+def test_an_unknown_permission_is_refused(demo: ConfigFactory) -> None:
+    roles = [{"id": "owner", "permissions": ["run", "delete"]}]
+    with pytest.raises(ConfigError, match=r"security\.roles\[owner\]\.permissions"):
+        load_config(demo(security={"roles": roles}))
+
+
+@pytest.mark.parametrize(
+    ("access", "message"),
+    [
+        ({"run": ["inconnu"]}, "rôle d'accès 'inconnu' non déclaré"),
+        ({"approve": {"default": ["lecteur"]}}, "'lecteur' est cité pour 'approve'"),
+        ({"approve": {"tools": {"calculer": ["lecteur"]}}}, "'lecteur' est cité pour 'approve'"),
+        ({"run": ["ailleurs"]}, "'ailleurs' est borné à d'autres agents"),
+        ({"answer": []}, "access.answer : liste vide"),
+        ({"cancel": ["owner", "owner"]}, "access.cancel : rôle cité deux fois : owner"),
+    ],
+)
+def test_the_access_of_an_agent_cites_roles_that_can(
+    demo: ConfigFactory, access: dict[str, Any], message: str
+) -> None:
+    """Une liste ``access`` restreint ceux qui ont déjà la permission (§ 5.2)."""
+    roles = [
+        OWNER,
+        {"id": "lecteur", "permissions": ["read"]},
+        {"id": "ailleurs", "permissions": ["run"], "agents": ["autre"]},
+    ]
+    path = demo(
+        agents=[demo_agent(access=access), demo_agent(name="autre")], security={"roles": roles}
+    )
+    with pytest.raises(ConfigError, match=re.escape(message)) as refus:
+        load_config(path)
+    # Le refus pointe le fichier de l'agent, pas la racine.
+    assert "demo.yaml" in str(refus.value)
+
+
+def test_the_access_of_an_agent_is_read_with_its_lists(demo: ConfigFactory) -> None:
+    access = {
+        "run": ["owner"],
+        "approve": {"default": ["owner"], "tools": {"calculer": ["owner"]}},
+        "self_approval": False,
+    }
+    config = load_config(demo(agents=[demo_agent(access=access)]))
+    declared = config.agents[0].access
+    assert declared.run == ("owner",) and declared.answer is None
+    assert declared.approve.tools == {"calculer": ("owner",)}
+    assert not declared.self_approval
+
+
+def test_the_approval_scope_of_an_agent_is_gone(demo: ConfigFactory) -> None:
+    """``approval.scope`` n'était contrôlé par personne (L-2) : retiré, sans transition (D-16)."""
+    path = demo(agents=[demo_agent(approval={"scope": "approve"})])
+    with pytest.raises(ConfigError, match=r"approval\.scope"):
+        load_config(path)
+
+
+def test_a_local_instance_without_keys_may_act_for_a_user(demo: ConfigFactory) -> None:
+    config = load_config(demo(server={"http": {"user": DEV}}))
+    assert config.server.http.user == DEV
+
+
+@pytest.mark.parametrize(
+    ("root", "message"),
+    [
+        ({"server": {"http": {"user": "fantome"}}}, "utilisateur non déclaré"),
+        (
+            {"server": {"http": {"user": DEV, "host": "0.0.0.0"}}},
+            "réservé à une instance sur la boucle locale",
+        ),
+        (
+            {
+                "server": {"http": {"user": DEV}},
+                "security": {
+                    "api_keys": [{"id": "app", "user": DEV, "hash": "sha256:" + "0" * 64}]
+                },
+            },
+            "des clés sont déclarées",
+        ),
+        (
+            {
+                "server": {"http": {"user": DEV}, "mcp": {"http": True}},
+                "security": {},
+            },
+            "incompatible avec 'server.mcp.http'",
+        ),
+    ],
+)
+def test_a_local_user_is_only_for_a_local_instance_without_keys(
+    demo: ConfigFactory, root: dict[str, Any], message: str
+) -> None:
+    """D-1b : ailleurs, chacun présente sa clé."""
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        load_config(demo(**root))
+
+
+def test_a_local_user_is_refused_in_production(demo: ConfigFactory) -> None:
+    path = demo(server={"http": {"user": DEV}})
+    with pytest.raises(ConfigError, match="refusé en profil 'prod'"):
+        load_config(path, profile="prod")
+
+
+def test_a_key_acts_with_the_permissions_of_its_user_restricted_by_its_scopes(
+    demo: ConfigFactory,
+) -> None:
+    """D-4 : la clé identifie, l'utilisateur porte les droits, la clé ne fait que restreindre."""
+    roles = [OWNER, {"id": "lecteur", "permissions": ["read", "read_content"]}]
+    users = [{"id": "marie", "roles": ["lecteur"]}, {"id": DEV, "roles": ["owner"]}]
+    keys = [
+        {"id": "toute", "user": DEV, "hash": "sha256:" + "0" * 64},
+        {"id": "bornee", "user": DEV, "hash": "sha256:" + "1" * 64, "scopes": ["read"]},
+        {"id": "marie", "user": "marie", "hash": "sha256:" + "2" * 64, "scopes": ["read", "run"]},
+    ]
+    security = load_config(
+        demo(security={"roles": roles, "users": users, "api_keys": keys})
+    ).security
+    toute, bornee, marie = (Caller.identified(key, security) for key in security.api_keys)
+    assert toute.granted == frozenset(EVERYTHING) and toute.may("approve")
+    assert bornee.granted == {"read"} and not bornee.may("run")
+    # La clé de marie demande run : son rôle ne l'a pas, la clé ne le donne pas.
+    assert marie.granted == {"read"} and marie.user == "marie"
+
+
+async def test_the_tenant_of_a_key_is_the_tenant_of_its_user(demo: ConfigFactory) -> None:
+    """Le client vient de l'utilisateur de la clé, jamais du corps d'une requête (#34, D-4)."""
+    cle = new_api_key()
+    keys = [{"id": "app", "user": "martin", "hash": empreinte(cle)}]
+    path = demo(tenants=[{"id": "default"}, {"id": "martin"}], security={"api_keys": keys})
+    security = load_config(path).security
+    assert Caller.identified(security.api_keys[0], security).tenant == "martin"
+
+
+def test_validate_shows_the_roles_the_users_and_the_access_of_each_agent(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    roles = [
+        OWNER,
+        {"id": "approbateur", "permissions": ["approve", "read"]},
+        {"id": "inutile", "permissions": ["read"]},
+    ]
+    users = [{"id": DEV, "name": "Denis", "roles": ["owner"]}, {"id": "paul", "roles": ["owner"]}]
+    access = {
+        "run": ["owner"],
+        "approve": {"default": ["owner"], "tools": {"envoyer": ["approbateur"]}},
+        "self_approval": False,
+    }
+    path = demo(agents=[demo_agent(access=access)], security={"roles": roles, "users": users})
+    assert main(["--config", str(path), "validate"]) == 0
+    out = capsys.readouterr().out
+    assert "  Rôles        owner : run, answer, cancel, approve, self_approve, amend, read," in out
+    assert "approbateur : approve, read\n" in out
+    assert "  Comptes      dev (Denis) : owner\n" in out and "paul : owner\n" in out
+    assert "└ accès        lance owner\n" in out
+    assert "approuve (défaut) owner · envoyer → approbateur\n" in out
+    assert "auto-approbation interdite (l'agent)\n" in out
+    warned = [line.split(None, 1)[1] for line in out.splitlines() if line.startswith("  ⚠ ")]
+    said = [" ".join(line.split()) for line in warned]
+    assert "Rôle d'accès approbateur peut approuver sans lire : ajouter 'read_content'" in said
+    assert "Rôle d'accès inutile porté par aucun utilisateur" in said
+    assert "Agent demo access.approve.tools.envoyer : porté par aucun utilisateur" in said
+
+
+def test_validate_says_when_nobody_can_approve_a_tool_that_asks(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    roles = [{"id": "owner", "permissions": ["run", "read", "read_content"]}]
+    agent = demo_agent(tools=[{"python": "calculer", "approval": "always"}])
+    path = demo(agents=[agent], security={"roles": roles}, storage=JOURNAL)
+    assert main(["--config", str(path), "validate"]) == 0
+    out = capsys.readouterr().out
+    assert "outil calculer : aucun utilisateur ne peut trancher ses demandes" in out
+
+
+def test_validate_says_when_the_only_approver_cannot_approve_his_own_runs(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    agent = demo_agent(access={"self_approval": False})
+    assert main(["--config", str(demo(agents=[agent])), "validate"]) == 0
+    out = capsys.readouterr().out
+    assert "dev est le seul approbateur : ses propres runs attendront sans fin" in out

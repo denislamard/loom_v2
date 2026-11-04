@@ -21,6 +21,7 @@ from typing import Any, Final, cast
 
 import pytest
 import yaml
+from conftest import secured
 
 from loom_ia.access.api import Loom
 from loom_ia.config import load_config
@@ -94,7 +95,9 @@ def write_config(
     }
     if tenants is not None:
         config["tenants"] = tenants
-    (base / "loom.yaml").write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    (base / "loom.yaml").write_text(
+        yaml.safe_dump(secured(config), allow_unicode=True), encoding="utf-8"
+    )
     agent = {
         "name": "assistant",
         "description": "Répond en s'appuyant sur la mémoire.",

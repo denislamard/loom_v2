@@ -6,13 +6,14 @@ elle-même n'existe qu'une fois, à sa création. Une instance sans clé
 déclarée est ouverte — c'est le cas de l'usage local ; ``create_app``
 prévient si elle écoute ailleurs que sur la machine.
 
-Portées vérifiées : ``run`` pour lancer un run, ``read`` pour lire agents,
+Permissions vérifiées : ``run`` pour lancer un run, ``read`` pour lire agents,
 statuts, événements et rapports, ``admin`` pour lancer un run sans ses juges
-(``judges: skip``, J3). Une clé peut en outre être limitée à certains agents.
+(``judges: skip``, J3). Ce sont celles des rôles de l'utilisateur de la clé,
+que la clé peut restreindre (``scopes``, ``agents``, D-4).
 
-Client (L1, #34) : une clé agit **au nom d'un client**, et c'est la seule
-chose qui le dit en REST — rien dans le corps d'une requête ne peut le
-changer. Toute lecture est donc bornée au client de la clé : on ne peut pas
+Client (L1, #34) : une clé agit **au nom du client de son utilisateur**, et
+c'est la seule chose qui le dit en REST — rien dans le corps d'une requête ne
+peut le changer. Toute lecture est donc bornée au client de la clé : on ne peut pas
 demander le journal d'un autre, faute de façon de le nommer.
 
 Débit (#39, J5.1b) : une clé peut porter un ``rate_limit``. Il protège le
@@ -23,10 +24,10 @@ par un 429 avec un ``Retry-After``.
 
 Expiration et contenu (J5.2a) : une clé peut porter une date de fin — elle
 est alors reconnue puis **refusée** (401), pour que le message dise « expirée »
-et non « inconnue ». Et la portée ``read_content`` décide de ce qu'une lecture
+et non « inconnue ». Et la permission ``read_content`` décide de ce qu'une lecture
 montre : sans elle, les routes répondent, mais privées de ce qu'un utilisateur
 a écrit et de ce qu'un modèle a répondu (§14.2). Ce qu'une clé **lance**, elle
-le reçoit : c'est la relecture qui demande la portée.
+le reçoit : c'est la relecture qui demande la permission.
 """
 
 import math
@@ -35,7 +36,7 @@ from typing import Final
 from fastapi import HTTPException, Request, status
 
 from loom_ia.access.caller import Caller
-from loom_ia.config.models import Scope, SecurityConfig
+from loom_ia.config.models import Permission, SecurityConfig
 from loom_ia.tenancy import RateWindow
 
 BEARER: Final = "bearer "
@@ -73,7 +74,7 @@ def identify(security: SecurityConfig, request: Request) -> Caller:
                 f"Clé {key.id!r} expirée le {key.expires:%Y-%m-%d %H:%M} UTC",
                 headers=_CHALLENGE,
             )
-        return Caller(key)
+        return Caller.identified(key, security)
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Clé d'API refusée", headers=_CHALLENGE)
 
 
@@ -94,9 +95,9 @@ def throttle(caller: Caller, window: RateWindow) -> None:
     )
 
 
-def require(caller: Caller, scope: Scope, agent: str | None = None) -> None:
-    """Vérifie la portée demandée, et l'agent visé s'il y en a un."""
-    if not caller.may(scope):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, f"Clé sans la portée {scope!r}")
+def require(caller: Caller, permission: Permission, agent: str | None = None) -> None:
+    """Vérifie la permission demandée, et l'agent visé s'il y en a un."""
+    if not caller.may(permission):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"Clé sans la portée {permission!r}")
     if agent is not None and not caller.allows(agent):
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"Clé non autorisée sur l'agent {agent!r}")

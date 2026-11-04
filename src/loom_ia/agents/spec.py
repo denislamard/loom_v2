@@ -1013,6 +1013,91 @@ def _conforms(validator: Validator, value: JsonValue, label: str) -> None:
         ) from None
 
 
+class ApproveAccess(DomainModel):
+    """Qui tranche les demandes d'approbation d'un agent (D-2, § 5.2).
+
+    Des rôles d'accès, déclarés dans ``security.roles`` de ``loom.yaml``. Sans
+    liste, tout rôle qui a la permission ``approve`` sur l'agent convient.
+    """
+
+    # Approbateurs de toute demande de l'agent, à défaut d'une liste par outil.
+    default: tuple[str, ...] | None = None
+    # Approbateurs par outil, sous le nom que voit le modèle (préfixe MCP compris),
+    # comme ``tenants[].tools_deny`` : c'est le ``tool_name`` de ``approval.requested``.
+    tools: dict[str, tuple[str, ...]] = Field(default_factory=dict[str, tuple[str, ...]])
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        if self.default is not None:
+            _check_access_list("access.approve.default", self.default)
+        for tool, roles in self.tools.items():
+            _check_access_list(f"access.approve.tools.{tool}", roles)
+        return self
+
+
+class AgentAccess(DomainModel):
+    """Ce que l'agent exige de qui agit sur lui (D-2, D-7b, § 5.2).
+
+    Il ne cite que des rôles d'accès : les utilisateurs se déclarent dans
+    ``loom.yaml``, une fois pour tous les agents. Une liste absente laisse
+    décider les permissions des rôles ; une liste présente restreint.
+    """
+
+    # Qui lance l'agent.
+    run: tuple[str, ...] | None = None
+    # Qui répond à ses questions (``loom.ask``).
+    answer: tuple[str, ...] | None = None
+    # Qui arrête ses runs.
+    cancel: tuple[str, ...] | None = None
+    approve: ApproveAccess = ApproveAccess()
+    # ``false`` interdit l'auto-approbation sur cet agent, même à un rôle qui a
+    # ``self_approve`` (D-7b). L'agent ne fait que durcir : ``true`` laisse
+    # décider les rôles, il n'ouvre rien.
+    self_approval: bool = True
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        for key in ("run", "answer", "cancel"):
+            roles: tuple[str, ...] | None = getattr(self, key)
+            if roles is not None:
+                _check_access_list(f"access.{key}", roles)
+        return self
+
+    def listed(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """Chaque liste déclarée, avec la permission qu'elle exige de ses rôles."""
+        pairs: list[tuple[str, tuple[str, ...]]] = [
+            (permission, roles)
+            for permission, roles in (
+                ("run", self.run),
+                ("answer", self.answer),
+                ("cancel", self.cancel),
+                ("approve", self.approve.default),
+            )
+            if roles is not None
+        ]
+        pairs += [("approve", roles) for roles in self.approve.tools.values()]
+        return tuple(pairs)
+
+
+def _check_access_list(label: str, roles: tuple[str, ...]) -> None:
+    """Une liste de rôles d'accès : non vide, sans doublon, des identifiants valides.
+
+    Une liste vide ne laisserait personne faire : c'est le contraire de ce
+    qu'on lit, puisqu'une liste absente laisse tout rôle qui a la permission.
+    """
+    if not roles:
+        raise ValueError(
+            f"{label} : liste vide — personne ne pourrait agir ; retirer la clé pour laisser "
+            "décider les permissions des rôles"
+        )
+    doubles = sorted({role for role in roles if roles.count(role) > 1})
+    if doubles:
+        raise ValueError(f"{label} : rôle cité deux fois : {', '.join(doubles)}")
+    for role in roles:
+        if not re.fullmatch(AGENT_NAME_PATTERN, role):
+            raise ValueError(f"{label} : identifiant de rôle invalide : {role!r}")
+
+
 class AgentSpec(DomainModel):
     name: str = Field(pattern=AGENT_NAME_PATTERN)
     description: str = ""
@@ -1027,9 +1112,12 @@ class AgentSpec(DomainModel):
     # pas de délai.
     timeout: PositiveFloat | None = None
     # Approbations de l'agent (#17) : délai laissé à l'approbateur, effet
-    # d'une demande périmée, droit exigé côté REST. Un outil les demande
-    # par sa déclaration (``approval: always``) ou par une politique.
+    # d'une demande périmée. Un outil les demande par sa déclaration
+    # (``approval: always``) ou par une politique ; qui les tranche, c'est
+    # ``access.approve``.
     approval: ApprovalSettings = ApprovalSettings()
+    # Qui lance, répond, arrête et approuve (D-2) : des rôles d'accès de loom.yaml.
+    access: AgentAccess = AgentAccess()
     # Contrat de la réponse finale (A7, E1) : réparée par l'orchestrateur.
     output: OutputContract | None = None
     # Juge de la réponse finale (E3, #21), après son contrat.

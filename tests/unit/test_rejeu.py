@@ -58,7 +58,17 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import ANSWER, HOSTILE, HOSTILE_SHOWN, MODEL, PNG, SCRIPT, ConfigFactory, demo_agent
+from conftest import (
+    ANSWER,
+    HOSTILE,
+    HOSTILE_SHOWN,
+    MODEL,
+    PNG,
+    SCRIPT,
+    ConfigFactory,
+    demo_agent,
+    secured,
+)
 from pydantic import JsonValue
 
 from loom_ia.access import Loom
@@ -193,7 +203,7 @@ def atelier(tmp_path: Path) -> ConfigFactory:
             "storage": {"events": {"backend": "jsonl", "path": "data"}},
             "telemetry": {"logging": {"level": "CRITICAL"}},
         }
-        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
         role = {
             "name": "rediger",
             "description": "Rédige la réponse finale.",
@@ -306,7 +316,7 @@ async def test_an_approval_is_decided_as_it_was(tmp_path: Path) -> None:
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "telemetry": {"logging": {"level": "CRITICAL"}},
     }
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     agent = {
         "name": "demo",
         "main": {"model": "F", "system": "Tu envoies."},
@@ -747,7 +757,7 @@ async def test_an_unfinished_run_is_refused(tmp_path: Path) -> None:
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "telemetry": {"logging": {"level": "CRITICAL"}},
     }
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     agent = {
         "name": "demo",
         "main": {"model": "F", "system": "Tu envoies."},
@@ -1147,7 +1157,7 @@ def variante(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "telemetry": {"logging": {"level": "CRITICAL"}},
     }
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     agent = {
         "name": "demo",
         "main": {"model": "MAIN", "system": "Tu calcules, fais rédiger, envoies."},
@@ -1684,7 +1694,7 @@ def etat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "telemetry": {"logging": {"level": "CRITICAL"}},
     }
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     agent = {
         "name": "demo",
         "main": {"model": "MAIN", "system": "Tu relances.", "context": ["session_state"]},

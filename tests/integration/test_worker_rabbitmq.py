@@ -95,6 +95,11 @@ def config_file(root: Path, *, tool: bool) -> Path:
     ]
     config: dict[str, Any] = {
         "version": 1,
+        # Qui agit sur loom (D-1) : un rôle et un utilisateur.
+        "security": {
+            "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
+            "users": [{"id": "dev", "roles": ["owner"]}],
+        },
         "models": models,
         "storage": {
             "events": {"backend": "jsonl", "path": "data"},

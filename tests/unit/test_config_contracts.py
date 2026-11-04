@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import QUESTION, ConfigFactory, demo_agent
+from conftest import QUESTION, ConfigFactory, demo_agent, secured
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -113,7 +113,7 @@ def test_schema_files_are_read_at_load(tmp_path: Path) -> None:
             }
         ],
     }
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     contract = {"schema_file": "schemas/relance.yaml", "max_chars": 500}
     agent = {
         "name": "demo",

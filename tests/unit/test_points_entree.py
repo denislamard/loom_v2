@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import secured
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -188,7 +189,9 @@ def config_file(
         ),
         **root,
     }
-    (base / "loom.yaml").write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    (base / "loom.yaml").write_text(
+        yaml.safe_dump(secured(config), allow_unicode=True), encoding="utf-8"
+    )
     agent: dict[str, Any] = {
         "name": "relance",
         "main": {"model": "FAKE", "system": "Tu relances."},

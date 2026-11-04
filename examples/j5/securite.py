@@ -45,7 +45,6 @@ from loom_ia.config import (
     ApiKey,
     ConfigError,
     LoomConfig,
-    SecurityConfig,
     fingerprint,
     load_config,
     new_api_key,
@@ -82,7 +81,9 @@ def agent_de(args: argparse.Namespace) -> str:
 
 
 def declarees(config: LoomConfig, keys: tuple[ApiKey, ...]) -> LoomConfig:
-    return config.model_copy(update={"security": SecurityConfig(api_keys=keys)})
+    return config.model_copy(
+        update={"security": config.security.model_copy(update={"api_keys": keys})}
+    )
 
 
 def quatre(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
@@ -93,14 +94,14 @@ def quatre(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
         ApiKey(
             id="complete",
             hash=fingerprint(jetons["complete"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("run", "read", "read_content"),
         ),
         # Supervision : elle voit passer les runs, elle ne lit pas le courrier.
         ApiKey(
             id="supervision",
             hash=fingerprint(jetons["supervision"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("run", "read"),
             rate_limit=RateLimit(per_minute=120),
         ),
@@ -108,7 +109,7 @@ def quatre(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
         ApiKey(
             id="bureau",
             hash=fingerprint(jetons["bureau"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("run", "read", "read_content"),
             agents=(agent,),
         ),
@@ -116,7 +117,7 @@ def quatre(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
         ApiKey(
             id="lecture",
             hash=fingerprint(jetons["lecture"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("read", "read_content"),
         ),
     )
@@ -125,7 +126,8 @@ def quatre(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
 
 def carte(key: ApiKey) -> str:
     """Ce qu'une clé permet, en une ligne."""
-    details = [f"portées {', '.join(key.scopes)}"]
+    scopes = ", ".join(key.scopes) if key.scopes is not None else "celles de l'utilisateur"
+    details = [f"portées {scopes}"]
     details.append(f"agents {', '.join(key.agents)}" if key.agents else "tous les agents")
     if key.rate_limit is not None:
         details.append(f"débit {key.rate_limit.per_minute}/min")
@@ -382,7 +384,7 @@ async def expiration(config: LoomConfig, agent: str, prefixe: str, controle: Con
     key = ApiKey(
         id="temporaire",
         hash=fingerprint(jeton),
-        tenant=DUPONT,
+        user=DUPONT,
         scopes=("run", "read", "read_content"),
         expires=fin,
     )

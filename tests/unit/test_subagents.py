@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import secured
 
 from loom_ia.access.api import Loom, RunResult
 from loom_ia.access.cli import main
@@ -511,7 +512,7 @@ def write(tmp_path: Path, **changes: Any) -> Path:
         "main": {"model": "CHILD", "system": "Tu vérifies."},
     }
     (tmp_path / "agents").mkdir(exist_ok=True)
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     for agent in (demo, child):
         path = tmp_path / "agents" / f"{agent['name']}.yaml"
         path.write_text(yaml.safe_dump(agent), encoding="utf-8")

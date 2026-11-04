@@ -154,8 +154,6 @@ class ApprovalSettings(DomainModel):
     # Ce qu'il advient d'une demande périmée : un « non » prudent par défaut,
     # personne n'ayant dit oui.
     on_expiry: ExpiryAction = "deny"
-    # Droit exigé de l'approbateur, côté REST (N2).
-    scope: str = "approve"
 
 
 class AskSettings(DomainModel):

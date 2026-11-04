@@ -52,7 +52,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import HOSTILE, HOSTILE_SHOWN
+from conftest import HOSTILE, HOSTILE_SHOWN, secured
 from pydantic import JsonValue, ValidationError
 
 from loom_ia.access import Loom
@@ -260,7 +260,7 @@ def labo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "telemetry": {"logging": {"level": "CRITICAL"}},
     }
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     agent = {
         "name": "demo",
         "main": {"model": "MAIN", "system": "Tu calcules et tu envoies."},
@@ -295,7 +295,11 @@ def suite(path: Path, **fields: Any) -> Path:
 def retouche(config: Path, target: Path, **root: Any) -> Path:
     """La config, complétée à sa racine, écrite à ``target`` (elle-même ou une copie)."""
     data = yaml.safe_load(config.read_text(encoding="utf-8"))
-    target.write_text(yaml.safe_dump({**data, **root}), encoding="utf-8")
+    merged = {**data, **root}
+    if "tenants" in root:
+        # Les utilisateurs suivent les clients déclarés (``secured``) : un par client.
+        merged["security"] = {k: v for k, v in merged["security"].items() if k != "users"}
+    target.write_text(yaml.safe_dump(secured(merged)), encoding="utf-8")
     return target
 
 
@@ -1031,23 +1035,25 @@ def test_an_isolated_config_keeps_the_logic_and_drops_the_world(tmp_path: Path) 
     from loom_ia.config import LoomConfig
 
     config = LoomConfig.model_validate(
-        {
-            "version": 1,
-            "storage": {
-                "events": {"backend": "jsonl", "path": "data"},
-                "idempotency": {"backend": "sqlite", "path": "data/keys.db"},
-            },
-            "telemetry": {"exporters": [{"type": "otel"}]},
-            "budgets": {"run": {"max_cost": 0.05}, "tenant": {"max_cost_per_day": 1.0}},
-            "tenants": [
-                {
-                    "id": "dupont",
-                    "quotas": {"runs_per_minute": 1},
-                    "budgets": {"tenant": {"max_cost_per_day": 0.5}},
-                    "storage": {"events": {"backend": "jsonl", "path": "data/dupont"}},
-                }
-            ],
-        }
+        secured(
+            {
+                "version": 1,
+                "storage": {
+                    "events": {"backend": "jsonl", "path": "data"},
+                    "idempotency": {"backend": "sqlite", "path": "data/keys.db"},
+                },
+                "telemetry": {"exporters": [{"type": "otel"}]},
+                "budgets": {"run": {"max_cost": 0.05}, "tenant": {"max_cost_per_day": 1.0}},
+                "tenants": [
+                    {
+                        "id": "dupont",
+                        "quotas": {"runs_per_minute": 1},
+                        "budgets": {"tenant": {"max_cost_per_day": 0.5}},
+                        "storage": {"events": {"backend": "jsonl", "path": "data/dupont"}},
+                    }
+                ],
+            }
+        )
     )
     pris = isolated(config, tmp_path)
     assert pris.storage.events.backend == "jsonl"

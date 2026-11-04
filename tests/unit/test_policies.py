@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import secured
 
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.agents import AgentSpec
@@ -393,7 +394,7 @@ def write_config(tmp_path: Path, policies: list[dict[str, Any]]) -> Path:
         "imports": ["politiques_test"],
         "models": [{"id": "FAKE", "sdk": "fake", "model": "fake-1"}],
     }
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     agent = {
         "name": "demo",
         "main": {"model": "FAKE", "system": "Tu réponds."},

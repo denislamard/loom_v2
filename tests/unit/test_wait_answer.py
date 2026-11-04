@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import secured
 
 from loom_ia.access.api import InvalidAnswer, Loom, QuestionStale, UnknownQuestion
 from loom_ia.adapters.stores import JsonlEventStore
@@ -92,7 +93,7 @@ def config(
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "telemetry": {"logging": {"level": "CRITICAL"}},
     }
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(root), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(root)), encoding="utf-8")
     tools: list[dict[str, Any]] = [
         {"python": "loom.ask", **(ask or {})},
         {"python": "envoyer", "side_effects": "irreversible", "approval": "always"},

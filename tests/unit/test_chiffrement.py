@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import QUESTION, ConfigFactory, demo_agent
+from conftest import QUESTION, ConfigFactory, demo_agent, secured
 
 from loom_ia.access import Loom
 from loom_ia.adapters.artifacts import InMemoryArtifactStore, SealingArtifactStore
@@ -804,7 +804,9 @@ def test_a_config_written_by_hand_reads_back(tmp_path: Path) -> None:
     models: []
     """
     (tmp_path / "agents").mkdir()
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(yaml.safe_load(raw)), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(
+        yaml.safe_dump(secured(yaml.safe_load(raw))), encoding="utf-8"
+    )
     config = load_config(tmp_path / "loom.yaml")
     assert config.storage.encryption is not None
     assert config.tenant_spec(MARTIN) is not None

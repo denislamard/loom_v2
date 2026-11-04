@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import SECURITY_YAML, secured
 from pydantic import ValidationError
 
 from loom_ia.access import Loom
@@ -33,6 +34,7 @@ from loom_ia.config import (
     load_config,
     resolve,
 )
+from loom_ia.config.models import AccessRole, SecurityConfig, UserSpec
 from loom_ia.core.events import ModelExchanged, ToolCompleted
 from loom_ia.core.model import SessionId, state_size
 from loom_ia.core.projections import session_state
@@ -71,7 +73,7 @@ def write(
     (base / "agents").mkdir(exist_ok=True)
     (base / "prompts").mkdir(exist_ok=True)
     config = {"version": 1, "models": [MODEL], **(root or {})}
-    (base / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (base / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     for name, spec in (agents if agents is not None else {"demo": AGENT}).items():
         (base / "agents" / f"{name}.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
     for name, text in (prompts or {}).items():
@@ -121,8 +123,12 @@ def test_load_resolves_paths_and_agents(tmp_path: Path) -> None:
 def test_config_can_be_written_in_python() -> None:
     config = LoomConfig(
         version=1,
-        models=(LoomConfig.model_validate({"version": 1, "models": [MODEL]}).models[0],),
+        models=(LoomConfig.model_validate(secured({"version": 1, "models": [MODEL]})).models[0],),
         agents=(AgentSpec.model_validate(AGENT),),
+        security=SecurityConfig(
+            roles=(AccessRole(id="owner", permissions=("run", "read")),),
+            users=(UserSpec(id="dev", roles=("owner",)),),
+        ),
     )
     assert config.agents[0].main.system == "Tu calcules."
     assert config.storage.events.backend == "memory"
@@ -370,7 +376,7 @@ def test_a_merge_key_may_be_overridden_and_the_same_key_may_repeat_elsewhere(
         "- &base {id: FAKE, sdk: fake, model: fake-1, max_tokens: 100}\n"
         "- <<: *base\n"
         "  id: AUTRE\n"
-        "  max_tokens: 200\n",
+        "  max_tokens: 200\n" + SECURITY_YAML,
         encoding="utf-8",
     )
     config = load_config(path)

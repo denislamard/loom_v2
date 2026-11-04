@@ -104,6 +104,11 @@ def write_config(root: Path, bus: dict[str, Any], *, tool: bool) -> Path:
     )
     config: dict[str, Any] = {
         "version": 1,
+        # Qui agit sur loom (D-1) : un rôle et un utilisateur.
+        "security": {
+            "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
+            "users": [{"id": "dev", "roles": ["owner"]}],
+        },
         "models": [{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": script}}],
         "storage": {"events": {"backend": "jsonl", "path": "data"}, "bus": bus},
         "telemetry": {"logging": {"level": "CRITICAL"}},

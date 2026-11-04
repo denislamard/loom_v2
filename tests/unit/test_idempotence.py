@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import secured
 from pydantic import JsonValue
 
 from loom_ia.access.api import Loom
@@ -2091,7 +2092,7 @@ def atelier(tmp_path: Path) -> Callable[..., Path]:
             "storage": storage,
             "telemetry": {"logging": {"level": "CRITICAL"}},
         }
-        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
         agent: dict[str, Any] = {
             "name": "demo",
             "description": "Relance.",

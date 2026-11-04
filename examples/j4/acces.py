@@ -162,7 +162,11 @@ def adjusted(config: LoomConfig, *, reel: bool) -> tuple[LoomConfig, str]:
         ]
     return (
         config.model_copy(
-            update={"models": tuple(models), "agents": agents, "security": _security()}
+            update={
+                "models": tuple(models),
+                "agents": agents,
+                "security": _security(config.security),
+            }
         ),
         base,
     )
@@ -184,17 +188,26 @@ def _envoi(spec: Any) -> Any:
     )
 
 
-def _security() -> SecurityConfig:
-    """Deux clés : l'une tranche, l'autre non. La config n'en garde que l'empreinte."""
-    return SecurityConfig(
-        api_keys=(
-            ApiKey(
-                id="atelier",
-                hash=fingerprint(CLE_ATELIER),
-                scopes=("run", "read", "approve"),
-            ),
-            ApiKey(id="tableau", hash=fingerprint(CLE_TABLEAU), scopes=("run", "read")),
-        )
+def _security(declared: SecurityConfig) -> SecurityConfig:
+    """Deux clés de l'utilisateur de la config : l'une tranche, l'autre non.
+
+    La config n'en garde que l'empreinte ; ses rôles et ses utilisateurs restent ceux
+    de ``loom.yaml`` (D-1).
+    """
+    return declared.model_copy(
+        update={
+            "api_keys": (
+                ApiKey(
+                    id="atelier",
+                    hash=fingerprint(CLE_ATELIER),
+                    user="dev",
+                    scopes=("run", "read", "approve"),
+                ),
+                ApiKey(
+                    id="tableau", hash=fingerprint(CLE_TABLEAU), user="dev", scopes=("run", "read")
+                ),
+            )
+        }
     )
 
 

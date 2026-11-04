@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from conftest import ConfigFactory, demo_agent
+from conftest import DEV, ConfigFactory, demo_agent
 
 from loom_ia.access import DeliveryRefused, Loom, Triggered, UnknownTrigger
 from loom_ia.config import ConfigError, load_config
@@ -31,7 +31,10 @@ CHARGE: dict[str, Any] = {"devis": {"numero": "D-2026-042"}, "client": "Mme Mart
 
 def cles(**kinds: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     jetons = {nom: new_api_key() for nom in kinds}
-    keys = [{"id": nom, "hash": fingerprint(jetons[nom]), **spec} for nom, spec in kinds.items()]
+    keys = [
+        {"id": nom, "user": DEV, "hash": fingerprint(jetons[nom]), **spec}
+        for nom, spec in kinds.items()
+    ]
     return {"api_keys": keys}, jetons
 
 
@@ -389,8 +392,8 @@ async def test_a_trigger_closed_to_the_client_is_unknown_and_the_list_is_the_cli
 ) -> None:
     """Fermé ou inconnu, un déclencheur répond pareil : ni son nom ni son agent ne sortent."""
     security, jetons = cles(
-        dupont={"scopes": ["run", "read"], "tenant": "dupont"},
-        martin={"scopes": ["run", "read"], "tenant": "martin"},
+        dupont={"scopes": ["run", "read"], "user": "dupont"},
+        martin={"scopes": ["run", "read"], "user": "martin"},
     )
     cloture = {**RELANCE, "name": "cloture-du-mois", "agent": "comptabilite"}
     path = demo(
@@ -443,8 +446,8 @@ async def test_a_key_without_run_learns_nothing_about_the_triggers(demo: ConfigF
 
 async def test_a_delivery_stays_with_the_tenant_of_its_key(demo: ConfigFactory) -> None:
     security, jetons = cles(
-        dupont={"scopes": ["run", "read"], "tenant": "dupont"},
-        martin={"scopes": ["run", "read"], "tenant": "martin"},
+        dupont={"scopes": ["run", "read"], "user": "dupont"},
+        martin={"scopes": ["run", "read"], "user": "martin"},
     )
     path = demo(
         storage=JOURNAL,

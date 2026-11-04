@@ -195,3 +195,17 @@ storage:
 
 telemetry:
   logging: {level: WARNING, format: console}
+
+# Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur.
+security:
+  roles:
+    - id: owner
+      permissions: [run, answer, cancel, approve, self_approve, amend, read, read_content, admin]
+  # Un utilisateur par client : une clé d'API agit au nom du client de son utilisateur.
+  users:
+    - id: dupont-plomberie
+      roles: [owner]
+      tenant: dupont-plomberie
+    - id: martin-chauffage
+      roles: [owner]
+      tenant: martin-chauffage

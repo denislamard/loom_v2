@@ -83,6 +83,11 @@ def atelier(tmp_path: Path) -> Path:
     (tmp_path / "pilote.py").write_text(PILOTE.replace("QUESTION", QUESTION), encoding="utf-8")
     config: dict[str, Any] = {
         "version": 1,
+        # Qui agit sur loom (D-1) : un rôle et un utilisateur.
+        "security": {
+            "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
+            "users": [{"id": "dev", "roles": ["owner"]}],
+        },
         "imports": ["outil_dormeur"],
         "models": [
             {

@@ -1503,7 +1503,6 @@ def _request(
         arguments=item.arguments,
         reason=reason,
         policy=policy,
-        scope=settings.scope,
         expire_at=expire_at,
     )
 

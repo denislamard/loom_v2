@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import secured
 
 from loom_ia.access.api import Loom
 from loom_ia.access.cli import main
@@ -83,7 +84,7 @@ def write(tmp_path: Path, spec: dict[str, Any], *, models: list[dict[str, Any]] 
     (tmp_path / "prompts" / "rediger.md").write_text("Tu rédiges.", encoding="utf-8")
     (tmp_path / "outils_roles.py").write_text(OUTILS, encoding="utf-8")
     config = {"version": 1, "imports": ["outils_roles"], "models": models}
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
     return tmp_path / "loom.yaml"
 

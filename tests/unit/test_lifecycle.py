@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import secured
 
 from loom_ia.access.api import Loom, UnknownSession
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
@@ -90,7 +91,7 @@ def patient(tmp_path: Path) -> ConfigFactory:
             "telemetry": {"logging": {"level": "CRITICAL"}},
             **root,
         }
-        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
         agent: dict[str, Any] = {
             "name": "demo",
             "description": "Attend.",
@@ -158,7 +159,7 @@ def delegating(tmp_path: Path) -> Path:
             "tools": [{"python": "attendre"}],
         },
     ]
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     for agent in agents:
         path = tmp_path / "agents" / f"{agent['name']}.yaml"
         path.write_text(yaml.safe_dump(agent), encoding="utf-8")

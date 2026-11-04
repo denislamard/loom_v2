@@ -829,6 +829,11 @@ def config_file(base: Path, vm_dir: Path) -> Path:
     ]
     config = {
         "version": 1,
+        # Qui agit sur loom (D-1) : un rôle et un utilisateur.
+        "security": {
+            "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
+            "users": [{"id": "dev", "roles": ["owner"]}],
+        },
         "models": [{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": script}}],
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "tool_sources": [
@@ -1322,6 +1327,11 @@ async def test_a_forged_file_goes_from_the_vm_to_a_folder_through_a_subagent(
     ]
     config = {
         "version": 1,
+        # Qui agit sur loom (D-1) : un rôle et un utilisateur.
+        "security": {
+            "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
+            "users": [{"id": "dev", "roles": ["owner"]}],
+        },
         "models": [
             {"id": "CHEF", "sdk": "fake", "model": "chef-1", "params": {"script": chef_script}},
             {"id": "FORGE", "sdk": "fake", "model": "forge-1", "params": {"script": FILE_SCRIPT}},

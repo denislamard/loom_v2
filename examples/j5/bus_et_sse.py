@@ -42,7 +42,6 @@ from loom_ia.config import (
     ApiKey,
     ConfigError,
     LoomConfig,
-    SecurityConfig,
     fingerprint,
     load_config,
     new_api_key,
@@ -193,10 +192,12 @@ def avec_une_cle(config: LoomConfig) -> tuple[LoomConfig, str]:
     key = ApiKey(
         id="suivi",
         hash=fingerprint(jeton),
-        tenant=DUPONT,
+        user=DUPONT,
         scopes=("read", "read_content"),
     )
-    return config.model_copy(update={"security": SecurityConfig(api_keys=(key,))}), jeton
+    return config.model_copy(
+        update={"security": config.security.model_copy(update={"api_keys": (key,)})}
+    ), jeton
 
 
 def sur_redis(config: LoomConfig) -> LoomConfig:

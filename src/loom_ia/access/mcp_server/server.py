@@ -77,7 +77,7 @@ from loom_ia.access.mcp_server.resources import ResourceReader
 from loom_ia.access.progress import Progress
 from loom_ia.agents.registry import UnknownAgent
 from loom_ia.config import ConfigError
-from loom_ia.config.models import Scope
+from loom_ia.config.models import Permission
 from loom_ia.core.events import Event
 from loom_ia.core.model import (
     DEFAULT_TENANT,
@@ -399,7 +399,7 @@ def create_server(
         run_id = RunId(str(run)) if run else None
         # Lire et lancer ne demandent pas la même chose : relire un run est
         # une lecture, faire travailler un agent en est une autre (#39).
-        needed: Scope = "read" if tool in (STATUS_TOOL, REPORT_TOOL) else "run"
+        needed: Permission = "read" if tool in (STATUS_TOOL, REPORT_TOOL) else "run"
         if not caller.may(needed):
             return _refused(f"Clé sans la portée {needed!r}")
         try:

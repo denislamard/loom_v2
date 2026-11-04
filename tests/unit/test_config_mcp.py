@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import secured
 from pydantic import ValidationError
 
 from loom_ia.access.api import Loom
@@ -106,7 +107,7 @@ def write(
         "models": [{"id": "FAKE", "sdk": "fake", "model": "f", "params": {"script": SCRIPT}}],
         "mcp_servers": servers() if mcp_servers is None else mcp_servers,
     }
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     (tmp_path / "agents" / "assistant.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
     return tmp_path / "loom.yaml"
 

@@ -50,7 +50,6 @@ from loom_ia.config import (
     ApiKey,
     ConfigError,
     LoomConfig,
-    SecurityConfig,
     fingerprint,
     load_config,
     new_api_key,
@@ -96,7 +95,9 @@ def bref(identifiant: str) -> str:
 
 
 def declarees(config: LoomConfig, keys: tuple[ApiKey, ...]) -> LoomConfig:
-    return config.model_copy(update={"security": SecurityConfig(api_keys=keys)})
+    return config.model_copy(
+        update={"security": config.security.model_copy(update={"api_keys": keys})}
+    )
 
 
 def trois(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
@@ -106,7 +107,7 @@ def trois(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
         ApiKey(
             id="dupont",
             hash=fingerprint(jetons["dupont"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("run", "read", "read_content"),
         ),
         # Elle voit passer les runs, elle ne lit pas le courrier — et comme une
@@ -114,14 +115,14 @@ def trois(agent: str) -> tuple[tuple[ApiKey, ...], dict[str, str]]:
         ApiKey(
             id="supervision",
             hash=fingerprint(jetons["supervision"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("run", "read"),
             agents=(agent,),
         ),
         ApiKey(
             id="martin",
             hash=fingerprint(jetons["martin"]),
-            tenant=MARTIN,
+            user=MARTIN,
             scopes=("run", "read", "read_content"),
         ),
     )

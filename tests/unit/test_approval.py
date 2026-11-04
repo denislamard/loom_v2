@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
+from conftest import secured
 
 from loom_ia.access.api import ApprovalStale, Loom, RunResult, UnknownApproval
 from loom_ia.access.cli import main
@@ -127,7 +128,7 @@ def atelier(tmp_path: Path) -> ConfigFactory:
             "telemetry": {"logging": {"level": "CRITICAL"}},
             **root,
         }
-        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
         envoi: dict[str, Any] = {"python": "envoyer_email", "side_effects": "irreversible"}
         if approval is not None:
             envoi["approval"] = approval

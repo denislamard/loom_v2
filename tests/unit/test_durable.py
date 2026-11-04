@@ -18,7 +18,7 @@ from typing import Any, Self
 
 import pytest
 import yaml
-from conftest import demo_agent
+from conftest import demo_agent, secured
 
 from loom_ia.access.api import Loom, RunResult, StreamItem
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
@@ -81,7 +81,7 @@ def durable(tmp_path: Path) -> ConfigFactory:
             **({"execution": execution} if execution else {}),
             **root,
         }
-        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
         agent: dict[str, Any] = {
             "name": "demo",
             "description": "Calcule.",

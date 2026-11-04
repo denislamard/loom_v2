@@ -51,7 +51,6 @@ from loom_ia.config import (
     ApiKey,
     ConfigError,
     LoomConfig,
-    SecurityConfig,
     fingerprint,
     load_config,
     new_api_key,
@@ -131,35 +130,35 @@ def quatre(config: LoomConfig, agent: str) -> tuple[LoomConfig, dict[str, str]]:
         ApiKey(
             id="dupont",
             hash=fingerprint(jetons["dupont"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("run", "read", "read_content"),
         ),
         # Elle voit passer les runs, elle ne lit pas le courrier (5.2a).
         ApiKey(
             id="supervision",
             hash=fingerprint(jetons["supervision"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("run", "read"),
         ),
         # Limitée à l'agent qu'on ne lance pas : elle ne verra aucun run.
         ApiKey(
             id="bureau",
             hash=fingerprint(jetons["bureau"]),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("run", "read", "read_content"),
             agents=(autre_que(agent),),
         ),
         ApiKey(
             id="martin",
             hash=fingerprint(jetons["martin"]),
-            tenant=MARTIN,
+            user=MARTIN,
             scopes=("run", "read", "read_content"),
         ),
     )
     mcp = config.server.mcp.model_copy(update={"http": True})
     server = config.server.model_copy(update={"mcp": mcp})
     return config.model_copy(
-        update={"security": SecurityConfig(api_keys=keys), "server": server}
+        update={"security": config.security.model_copy(update={"api_keys": keys}), "server": server}
     ), jetons
 
 

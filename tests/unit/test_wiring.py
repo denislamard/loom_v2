@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import pytest
 import yaml
+from conftest import secured
 
 from loom_ia.adapters.artifacts import InMemoryArtifactStore
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
@@ -67,7 +68,7 @@ def write(tmp_path: Path, *, root: dict[str, Any], agent: dict[str, Any]) -> Pat
     (tmp_path / "prompts" / "demo.md").write_text("Tu calcules.", encoding="utf-8")
     (tmp_path / "outils_wiring.py").write_text(OUTILS, encoding="utf-8")
     config = {"version": 1, "models": [MODEL], "imports": ["outils_wiring"], **root}
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     (tmp_path / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
     return tmp_path / "loom.yaml"
 

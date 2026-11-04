@@ -65,7 +65,7 @@ from loom_ia.access import Loom
 from loom_ia.adapters.models import ModelConfigError
 from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
-from loom_ia.config.models import ApiKey, ArtifactsStorage, IdempotencyStorage, SecurityConfig
+from loom_ia.config.models import ApiKey, ArtifactsStorage, IdempotencyStorage
 from loom_ia.core.events import ApprovalGranted
 from loom_ia.core.model import RunId, SessionId, TenantId, new_id
 from loom_ia.replay import Comparison, ReplayReport, ToolFate, fate_label
@@ -542,21 +542,23 @@ CLE_SUPERVISION = new_api_key()
 
 
 def _cles(config: LoomConfig) -> LoomConfig:
-    security = SecurityConfig(
-        api_keys=(
-            ApiKey(
-                id="atelier",
-                hash=fingerprint(CLE_ATELIER),
-                tenant=DUPONT,
-                scopes=("run", "read", "read_content"),
-            ),
-            ApiKey(
-                id="supervision",
-                hash=fingerprint(CLE_SUPERVISION),
-                tenant=DUPONT,
-                scopes=("run", "read"),
-            ),
-        )
+    security = config.security.model_copy(
+        update={
+            "api_keys": (
+                ApiKey(
+                    id="atelier",
+                    hash=fingerprint(CLE_ATELIER),
+                    user=DUPONT,
+                    scopes=("run", "read", "read_content"),
+                ),
+                ApiKey(
+                    id="supervision",
+                    hash=fingerprint(CLE_SUPERVISION),
+                    user=DUPONT,
+                    scopes=("run", "read"),
+                ),
+            )
+        }
     )
     return config.model_copy(update={"security": security})
 

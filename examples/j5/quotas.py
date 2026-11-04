@@ -51,7 +51,6 @@ from loom_ia.config import (
     ApiKey,
     ConfigError,
     LoomConfig,
-    SecurityConfig,
     fingerprint,
     load_config,
     new_api_key,
@@ -348,17 +347,23 @@ def avec_cles(config: LoomConfig) -> tuple[LoomConfig, dict[TenantId, str], str]
     cles = {DUPONT: new_api_key(), MARTIN: new_api_key()}
     bridee = new_api_key()
     keys = (
-        ApiKey(id="app-dupont", hash=fingerprint(cles[DUPONT]), tenant=DUPONT),
-        ApiKey(id="app-martin", hash=fingerprint(cles[MARTIN]), tenant=MARTIN),
+        ApiKey(id="app-dupont", hash=fingerprint(cles[DUPONT]), user=DUPONT),
+        ApiKey(id="app-martin", hash=fingerprint(cles[MARTIN]), user=MARTIN),
         ApiKey(
             id="lecture-dupont",
             hash=fingerprint(bridee),
-            tenant=DUPONT,
+            user=DUPONT,
             scopes=("read",),
             rate_limit=RateLimit(per_minute=PAR_CLE),
         ),
     )
-    return config.model_copy(update={"security": SecurityConfig(api_keys=keys)}), cles, bridee
+    return (
+        config.model_copy(
+            update={"security": config.security.model_copy(update={"api_keys": keys})}
+        ),
+        cles,
+        bridee,
+    )
 
 
 @asynccontextmanager

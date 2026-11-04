@@ -35,6 +35,7 @@ from typing import Any
 
 import pytest
 from conftest import (
+    DEV,
     HOSTILE,
     HOSTILE_SHOWN,
     MODEL,
@@ -42,6 +43,7 @@ from conftest import (
     TREE_ANSWER,
     TREE_QUESTION,
     ConfigFactory,
+    secured,
 )
 
 from loom_ia.access import Loom, UnknownRun
@@ -92,7 +94,7 @@ OTEL: dict[str, Any] = {"type": "otel", "endpoint_env": VARIABLE}
 
 
 def config_of(**telemetry: Any) -> LoomConfig:
-    return LoomConfig.model_validate({"version": 1, "telemetry": telemetry})
+    return LoomConfig.model_validate(secured({"version": 1, "telemetry": telemetry}))
 
 
 class Recueil:
@@ -186,19 +188,21 @@ def test_content_with_nowhere_to_go_is_refused(
     root: dict[str, Any], tenants: list[dict[str, Any]], named: str
 ) -> None:
     with pytest.raises(ValueError, match=f"capture 'content' \\({named}.*sans collecteur"):
-        LoomConfig.model_validate({"version": 1, "telemetry": root, "tenants": tenants})
+        LoomConfig.model_validate(secured({"version": 1, "telemetry": root, "tenants": tenants}))
 
 
 def test_a_tenant_overrides_the_capture_and_only_it() -> None:
     config = LoomConfig.model_validate(
-        {
-            "version": 1,
-            "telemetry": {"capture": {"exports": "content"}, "exporters": [{"type": "otel"}]},
-            "tenants": [
-                {"id": str(MARTIN), "telemetry": {"capture": {"exports": "metadata"}}},
-                {"id": str(DUPONT)},
-            ],
-        }
+        secured(
+            {
+                "version": 1,
+                "telemetry": {"capture": {"exports": "content"}, "exporters": [{"type": "otel"}]},
+                "tenants": [
+                    {"id": str(MARTIN), "telemetry": {"capture": {"exports": "metadata"}}},
+                    {"id": str(DUPONT)},
+                ],
+            }
+        )
     )
     assert config.capture_for(MARTIN).exports == "metadata"
     assert config.capture_for(DUPONT).exports == "content"
@@ -1037,16 +1041,19 @@ def _trace_keys() -> tuple[dict[str, Any], dict[str, str]]:
         "api_keys": [
             {
                 "id": "complete",
+                "user": DEV,
                 "hash": fingerprint(jetons["complete"]),
                 "scopes": ["run", "read", "read_content"],
             },
             {
                 "id": "supervision",
+                "user": DEV,
                 "hash": fingerprint(jetons["supervision"]),
                 "scopes": ["run", "read"],
             },
             {
                 "id": "parent",
+                "user": DEV,
                 "hash": fingerprint(jetons["parent"]),
                 "scopes": ["run", "read", "read_content"],
                 "agents": ["demo"],

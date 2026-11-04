@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import DEV, secured
 
 from loom_ia.access import Loom
 from loom_ia.access.api import SessionFile, UnknownSession
@@ -91,16 +92,17 @@ def atelier(tmp_path: Path) -> Path:
         "telemetry": {"logging": {"level": "CRITICAL"}},
         "security": {
             "api_keys": [
-                {"id": "lecteur", "hash": fingerprint(LECTEUR), "scopes": ["read"]},
+                {"id": "lecteur", "user": DEV, "hash": fingerprint(LECTEUR), "scopes": ["read"]},
                 {
                     "id": "contenu",
+                    "user": DEV,
                     "hash": fingerprint(CONTENU),
                     "scopes": ["read", "read_content"],
                 },
             ]
         },
     }
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     agent = {
         "name": "demo",
         "description": "Produit des fichiers.",

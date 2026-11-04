@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 import pytest
 import yaml
-from conftest import ANSWER, QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, DEV, QUESTION, ConfigFactory, demo_agent
 from pydantic import ValidationError
 
 from loom_ia.access import Loom
@@ -39,7 +39,7 @@ from loom_ia.access.http.schemas import Approval
 CLE = new_api_key()
 SECURITY = {
     "api_keys": [
-        {"id": "atelier", "hash": fingerprint(CLE), "scopes": ["run", "read"]},
+        {"id": "atelier", "user": DEV, "hash": fingerprint(CLE), "scopes": ["run", "read"]},
     ]
 }
 
@@ -300,9 +300,10 @@ async def test_scopes_and_agents_limit_a_key(demo: ConfigFactory) -> None:
     autre = new_api_key()
     security = {
         "api_keys": [
-            {"id": "lecture", "hash": fingerprint(lecture), "scopes": ["read"]},
+            {"id": "lecture", "user": DEV, "hash": fingerprint(lecture), "scopes": ["read"]},
             {
                 "id": "autre",
+                "user": DEV,
                 "hash": fingerprint(autre),
                 "scopes": ["run", "read"],
                 "agents": ["ailleurs"],
@@ -383,14 +384,15 @@ ADMIN = new_api_key()
 LECTEUR = new_api_key()
 CLES = {
     "api_keys": [
-        {"id": "atelier", "hash": fingerprint(CLE), "scopes": ["run", "read"]},
+        {"id": "atelier", "user": DEV, "hash": fingerprint(CLE), "scopes": ["run", "read"]},
         {
             "id": "mme-durand",
+            "user": DEV,
             "hash": fingerprint(APPROBATEUR),
             "scopes": ["run", "read", "approve"],
         },
-        {"id": "console", "hash": fingerprint(ADMIN), "scopes": ["read", "admin"]},
-        {"id": "lecture", "hash": fingerprint(LECTEUR), "scopes": ["read"]},
+        {"id": "console", "user": DEV, "hash": fingerprint(ADMIN), "scopes": ["read", "admin"]},
+        {"id": "lecture", "user": DEV, "hash": fingerprint(LECTEUR), "scopes": ["read"]},
     ]
 }
 
@@ -648,6 +650,7 @@ async def test_a_key_limited_to_agents_cannot_list_sessions(demo: ConfigFactory)
         "api_keys": [
             {
                 "id": "limitee",
+                "user": DEV,
                 "hash": fingerprint(limitee),
                 "scopes": ["run", "read"],
                 "agents": ["ailleurs"],
@@ -806,9 +809,10 @@ async def test_a_key_limited_to_agents_gets_only_its_runs(demo: ConfigFactory) -
     limitee = new_api_key()
     security = {
         "api_keys": [
-            {"id": "atelier", "hash": fingerprint(CLE), "scopes": ["run", "read"]},
+            {"id": "atelier", "user": DEV, "hash": fingerprint(CLE), "scopes": ["run", "read"]},
             {
                 "id": "limitee",
+                "user": DEV,
                 "hash": fingerprint(limitee),
                 "scopes": ["run", "read"],
                 "agents": ["autre"],
@@ -873,12 +877,17 @@ async def test_a_search_never_leaves_the_client_of_the_key(demo: ConfigFactory) 
     autre = new_api_key()
     security = {
         "api_keys": [
-            {"id": "atelier", "hash": fingerprint(CLE), "scopes": ["run", "read"]},
+            {
+                "id": "atelier",
+                "user": "default",
+                "hash": fingerprint(CLE),
+                "scopes": ["run", "read"],
+            },
             {
                 "id": "cabinet",
                 "hash": fingerprint(autre),
                 "scopes": ["run", "read"],
-                "tenant": "martin",
+                "user": "martin",
             },
         ]
     }

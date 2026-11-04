@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
-from conftest import PNG, QUESTION, TREE_ANSWER, TREE_QUESTION, ConfigFactory, demo_agent
+from conftest import DEV, PNG, QUESTION, TREE_ANSWER, TREE_QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.config import ConfigError, load_config
@@ -55,7 +55,10 @@ MCP_HTTP: dict[str, Any] = {"mcp": {"http": True}}
 def cles(**kinds: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """Une clé par entrée ; rend le bloc `security` et les jetons."""
     jetons = {nom: new_api_key() for nom in kinds}
-    keys = [{"id": nom, "hash": fingerprint(jetons[nom]), **spec} for nom, spec in kinds.items()]
+    keys = [
+        {"id": nom, "user": DEV, "hash": fingerprint(jetons[nom]), **spec}
+        for nom, spec in kinds.items()
+    ]
     return {"api_keys": keys}, jetons
 
 
@@ -335,8 +338,8 @@ async def test_a_declared_origin_passes(demo: ConfigFactory) -> None:
 async def test_one_server_serves_every_tenant(demo: ConfigFactory) -> None:
     """Ce que le stdio ne peut pas faire : deux clients sur le même serveur."""
     security, jetons = cles(
-        dupont={"scopes": ["run", "read", "read_content"], "tenant": DUPONT},
-        martin={"scopes": ["run", "read", "read_content"], "tenant": MARTIN},
+        dupont={"scopes": ["run", "read", "read_content"], "user": DUPONT},
+        martin={"scopes": ["run", "read", "read_content"], "user": MARTIN},
     )
     path = demo(
         storage=JOURNAL,
@@ -481,8 +484,8 @@ async def test_a_reread_is_masked_but_what_a_key_launches_it_receives(
 
 async def test_the_resources_serve_the_tenant_of_the_key(demo: ConfigFactory) -> None:
     security, jetons = cles(
-        dupont={"scopes": ["run", "read", "read_content"], "tenant": DUPONT},
-        martin={"scopes": ["run", "read", "read_content"], "tenant": MARTIN},
+        dupont={"scopes": ["run", "read", "read_content"], "user": DUPONT},
+        martin={"scopes": ["run", "read", "read_content"], "user": MARTIN},
     )
     path = demo(
         storage=JOURNAL,

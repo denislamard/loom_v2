@@ -8,7 +8,7 @@ from typing import Any
 
 import jsonschema
 import pytest
-from conftest import ANSWER, MODEL, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, DEV, MODEL, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import Loom
 from loom_ia.access.cli import main
@@ -211,8 +211,13 @@ async def test_skipping_the_judges_needs_the_admin_scope(demo: ConfigFactory) ->
     runner, admin = new_api_key(), new_api_key()
     security = {
         "api_keys": [
-            {"id": "atelier", "hash": fingerprint(runner), "scopes": ["run", "read"]},
-            {"id": "admin", "hash": fingerprint(admin), "scopes": ["run", "read", "admin"]},
+            {"id": "atelier", "user": DEV, "hash": fingerprint(runner), "scopes": ["run", "read"]},
+            {
+                "id": "admin",
+                "user": DEV,
+                "hash": fingerprint(admin),
+                "scopes": ["run", "read", "admin"],
+            },
         ]
     }
     url = "/v1/agents/demo/runs"
@@ -254,7 +259,13 @@ async def test_the_session_report_route(demo: ConfigFactory) -> None:
     lecteur = new_api_key()
     security = {
         "api_keys": [
-            {"id": "lecteur", "hash": fingerprint(lecteur), "scopes": ["read"], "agents": ["x"]}
+            {
+                "id": "lecteur",
+                "user": DEV,
+                "hash": fingerprint(lecteur),
+                "scopes": ["read"],
+                "agents": ["x"],
+            }
         ]
     }
     async with rest(judged(demo)) as (loom, http):

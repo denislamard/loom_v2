@@ -121,6 +121,13 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
         }
     )
     _check_variables(loaded, source=root)
+    if loaded.strict and loaded.server.http.user is not None:
+        # D-1b : en production, chaque appelant présente sa clé. Contrôlé ici et
+        # non dans ``LoomConfig.check`` : le profil actif n'y est pas encore posé.
+        raise ConfigError(
+            f"{root} : 'server.http.user' est refusé en profil 'prod', où chaque appelant "
+            "présente sa clé (security.api_keys)"
+        )
     return loaded
 
 

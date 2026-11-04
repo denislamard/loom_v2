@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 import yaml
+from conftest import secured
 from pydantic import JsonValue, ValidationError
 
 from loom_ia.access.cli import main
@@ -72,7 +73,7 @@ def write(
         config["agents"] = [spec]
     else:
         (tmp_path / "agents" / "agent.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
-    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "loom.yaml").write_text(yaml.safe_dump(secured(config)), encoding="utf-8")
     return tmp_path / "loom.yaml"
 
 

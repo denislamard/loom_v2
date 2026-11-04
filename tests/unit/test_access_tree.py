@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import TREE_ANSWER, TREE_QUESTION, ConfigFactory
+from conftest import DEV, TREE_ANSWER, TREE_QUESTION, ConfigFactory
 
 from loom_ia.access import JudgeVerdict, Loom
 from loom_ia.access.cli import main
@@ -309,8 +309,14 @@ def limited_to_the_parent() -> tuple[dict[str, Any], str, str]:
     scopes = ["run", "read", "read_content"]
     security = {
         "api_keys": [
-            {"id": "complete", "hash": fingerprint(complete), "scopes": scopes},
-            {"id": "parent", "hash": fingerprint(parent), "scopes": scopes, "agents": ["demo"]},
+            {"id": "complete", "user": DEV, "hash": fingerprint(complete), "scopes": scopes},
+            {
+                "id": "parent",
+                "user": DEV,
+                "hash": fingerprint(parent),
+                "scopes": scopes,
+                "agents": ["demo"],
+            },
         ]
     }
     return security, complete, parent

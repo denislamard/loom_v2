@@ -584,18 +584,39 @@ def test_keys_create_refuses_an_expiry_that_is_not_a_number(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """« ²j » passait ``isdigit`` et ``int`` le refusait : le refus nomme l'option."""
-    assert main(["keys", "create", "atelier", "--scope", "run", "--expires", "²j"]) == 2
+    assert (
+        main(["keys", "create", "atelier", "--user", "dev", "--scope", "run", "--expires", "²j"])
+        == 2
+    )
     assert "--expires" in capsys.readouterr().err
 
 
 def test_keys_create_gives_a_key_and_its_fingerprint(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["keys", "create", "atelier", "--scope", "run", "--agent", "demo"]) == 0
+    assert (
+        main(["keys", "create", "atelier", "--user", "dev", "--scope", "run", "--agent", "demo"])
+        == 0
+    )
     out = capsys.readouterr().out
     key = _field(out, "Clé        :")
     assert key.startswith("lk_")
     assert matches(key, _field(out, "hash:"))
-    assert "- id: atelier" in out
+    assert "- id: atelier" in out and "user: dev" in out
     assert "scopes: [run]" in out and "agents: [demo]" in out
+
+
+def test_keys_create_needs_the_user_the_key_identifies(capsys: pytest.CaptureFixture[str]) -> None:
+    """Une clé identifie un utilisateur (D-4) : sans lui, le bloc imprimé serait refusé."""
+    with pytest.raises(SystemExit):
+        main(["keys", "create", "atelier"])
+    assert "--user" in capsys.readouterr().err
+
+
+def test_keys_create_without_scope_keeps_every_permission_of_the_user(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Sans ``--scope``, pas de ligne ``scopes`` : la clé garde tout ce que son utilisateur a."""
+    assert main(["keys", "create", "atelier", "--user", "dev"]) == 0
+    assert "scopes:" not in capsys.readouterr().out
 
 
 def test_schema_is_valid_json(capsys: pytest.CaptureFixture[str]) -> None:
