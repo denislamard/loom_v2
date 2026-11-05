@@ -24,7 +24,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
@@ -51,10 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not given or (given[0] not in _COMMANDS and given[0] not in ("-h", "--help")):
         given.insert(0, "serve")
     args = _parser().parse_args(given)
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(asctime)s %(levelname)s %(name)s : %(message)s",
-    )
+    logging.basicConfig(level=getattr(logging, args.log_level), format=log_format(os.environ))
     if args.command == "status":
         return status(args.url, args.token_env)
     options = {
@@ -68,6 +65,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{PROGRAM} : {exc}", file=sys.stderr)
         return EXIT_SETTINGS
     return run(settings)
+
+
+def log_format(environ: Mapping[str, str]) -> str:
+    """Le format du journal ; sous systemd (``JOURNAL_STREAM``), sans l'heure, déjà notée."""
+    if "JOURNAL_STREAM" in environ:
+        return "%(levelname)s %(name)s : %(message)s"
+    return "%(asctime)s %(levelname)s %(name)s : %(message)s"
 
 
 def _parser() -> argparse.ArgumentParser:

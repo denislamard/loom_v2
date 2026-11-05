@@ -310,6 +310,8 @@ loginctl enable-linger denis      # pour qu'elle tourne hors session
 loom-mem-gpu status
 ```
 
+Sous systemd (variable `JOURNAL_STREAM`), les lignes du journal ne portent pas l'heure : journald la note déjà.
+
 ### 8.3 Qui relance quoi
 
 **C'est systemd qui relance l'application, pas nginx.** Un reverse proxy (nginx, Caddy) ne fait que relayer les requêtes : si l'application tombe, il répond 502 (Bad Gateway) ou 504 (délai), sans rien relancer. nginx est lui-même un service que systemd relance. On a donc deux unités, chacune avec son `Restart=`.
@@ -391,7 +393,7 @@ Derrière nginx :
 | 1 | **Fait le 05/11.** `protocol.py`, l'application `loom-mem-gpu` (`serve` et `status`), `ALGO`, l'exécutable, le contrat import-linter et le test d'isolement ; `tests/unit/test_memory_gpu_server.py` (44 essais). | `loom-mem-gpu` lancé à la main, puis `loom-mem-gpu status` et `curl`. |
 | 2 | **Fait le 05/11.** `remote.py`, `models.server` sans repli, les contrôles de config, `build()`, `settings()`, `_duration` ; `tests/unit/test_memory_remote.py` (34 essais, contre un vrai `loom-mem-gpu` aux modèles factices). | agent-mem avec `server` : une recherche et un `add_file` approuvé. |
 | 3 | **Fait le 05/11.** `server.fallback` (`FallbackSpec`, `ModelsSpec.fallback()`), le repli lot par lot et la nouvelle sonde après 30 s (`REPROBE`) ; seule `ServerUnavailable` (injoignable, chargement trop long, sans modèles) déclenche le repli ; avec repli, le montage exige l'extra `memory` ; 11 essais de plus dans `tests/unit/test_memory_remote.py`. | Arrêter l'application pendant un run, puis la relancer. |
-| 4 | Unité systemd documentée, essai en vrai du §11. | `systemctl --user`, `loom memory eval`. |
+| 4 | Unité systemd documentée (§8.2) ; journal sans heure en double sous systemd (fait le 05/11). Essai en vrai du §11 : à faire sur le poste. | `systemctl --user`, `loom memory eval`. |
 | 5 | Plus tard : réseau, VM cloud (§9). | — |
 | 6 | Doc : howto, configuration, CHANGELOG, formation, point 9 marqué « fait ». | — |
 

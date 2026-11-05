@@ -48,7 +48,7 @@ from loom_ia.tools_builtin.memory.protocol import (
     to_item,
 )
 from loom_ia.tools_builtin.memory.server import app as app_module
-from loom_ia.tools_builtin.memory.server import main, status
+from loom_ia.tools_builtin.memory.server import log_format, main, status
 from loom_ia.tools_builtin.memory.server.app import (
     EXIT_LOAD,
     EXIT_OK,
@@ -495,6 +495,11 @@ def test_main_serves_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     first, second = seen
     assert (first.device, first.offline, first.fp16) == ("cpu", True, False)
     assert (second.device, second.offline, second.fp16) == ("cuda", False, True)
+
+
+def test_under_systemd_the_log_lines_are_not_dated_twice() -> None:
+    assert log_format({"JOURNAL_STREAM": "8:12345"}) == "%(levelname)s %(name)s : %(message)s"
+    assert log_format({}).startswith("%(asctime)s ")
 
 
 def test_status_describes_a_ready_service(
