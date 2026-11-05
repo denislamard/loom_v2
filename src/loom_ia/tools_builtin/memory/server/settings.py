@@ -10,7 +10,6 @@ une différence près : le device vaut ``cuda`` par défaut. Une application
 L'application ne lit jamais ``loom.yaml`` : ses réglages sont les siens.
 """
 
-import ipaddress
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -19,8 +18,10 @@ from typing import Any, Final, Self, cast
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from loom_ia.tools_builtin.memory_params import ModelsSpec
+from loom_ia.tools_builtin.memory_params import ModelsSpec, is_loopback
 from loom_ia.tools_builtin.sql_params import ENV_NAME_PATTERN
+
+__all__ = ["ServiceSettings", "SettingsError", "is_loopback", "load_settings"]
 
 DEFAULT_HOST: Final = "127.0.0.1"
 DEFAULT_PORT: Final = 8765
@@ -78,16 +79,6 @@ class ServiceSettings(BaseModel):
         if not value:
             raise SettingsError(f"token_env : la variable {self.token_env} est absente ou vide")
         return value
-
-
-def is_loopback(host: str) -> bool:
-    """Vrai pour une adresse de la boucle locale (ou ``localhost``)."""
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host.strip("[]")).is_loopback
-    except ValueError:
-        return False
 
 
 def load_settings(config: Path | None, options: Mapping[str, Any]) -> ServiceSettings:

@@ -55,6 +55,7 @@ from loom_ia.tools_builtin.memory.files import (
     unreadable,
 )
 from loom_ia.tools_builtin.memory.models import shared_models
+from loom_ia.tools_builtin.memory.remote import APP, Target
 from loom_ia.tools_builtin.memory.service import (
     MIN_TITLE_CHARS,
     Extracted,
@@ -62,7 +63,13 @@ from loom_ia.tools_builtin.memory.service import (
     clean_project,
 )
 from loom_ia.tools_builtin.memory.store import MemoryStore
-from loom_ia.tools_builtin.memory_params import READS, MemoryAction, MemoryParams
+from loom_ia.tools_builtin.memory_params import (
+    READS,
+    MemoryAction,
+    MemoryParams,
+    ServerSpec,
+    server_url_problem,
+)
 
 # Délai d'un appel, en secondes, quand l'agent n'en donne pas (``timeout``). Indexer une
 # page sur CPU prend de l'ordre de 1,5 s par passage, et le premier appel peut charger les
@@ -106,9 +113,12 @@ class MemoryTool:
         store: MemoryStore,
         folders: Folders | None,
         unreadable: Mapping[str, str] | None = None,
+        target: Target | None = None,
     ) -> None:
         self.params = params
         self.folders = folders
+        # Où joindre loom-mem-gpu (``models.server``), une fois ses variables lues.
+        self.target = target
         # Les formats que ce process ne sait pas lire, et pourquoi (un extra manque).
         self.unreadable: Mapping[str, str] = dict(unreadable or {})
         self.file_suffixes = tuple(
@@ -116,7 +126,7 @@ class MemoryTool:
             for suffix in (*TEXT_SUFFIXES, *WORD_SUFFIXES, *PDF_SUFFIXES)
             if suffix not in self.unreadable
         )
-        models = shared_models(params.models)
+        models = shared_models(params.models, target)
         self.service = MemoryService(store, models, params.retrieval, params.chunking)
         declared = params.declared()
         effects: SideEffects = "none"
@@ -271,11 +281,12 @@ class MemoryTool:
         if rate is None:
             return None
         seconds = passages * rate
+        where = device if self.target is None else f"{device} ({APP})"
         if seconds < 1:
-            return f"moins d'une seconde de calcul sur {device}"
+            return f"moins d'une seconde de calcul sur {where}"
         if seconds < 90:
-            return f"~{seconds:.0f} s de calcul sur {device}"
-        return f"~{seconds / 60:.0f} min de calcul sur {device}"
+            return f"~{seconds:.0f} s de calcul sur {where}"
+        return f"~{seconds / 60:.0f} min de calcul sur {where}"
 
     # --- Exécution ---------------------------------------------------------------------
 
@@ -405,15 +416,18 @@ class MemoryTool:
         )
         places = (base, *(self.folders.places() if self.folders is not None else ()))
         models = params.models
-        described = (
-            "factices"
-            if models.kind == "fake"
-            else f"{models.embedder} + {models.reranker} ({models.device})"
-        )
-        return Settings(
-            places=places,
-            options=(("modèles", described), ("préchargement", "oui" if models.preload else "non")),
-        )
+        if models.kind == "fake":
+            described = "factices"
+        elif models.server is not None:
+            server = models.server
+            where = server.url if server.url is not None else f"${server.url_env}"
+            described = f"{models.embedder} + {models.reranker} ({APP} {where}, repli : aucun)"
+        else:
+            described = f"{models.embedder} + {models.reranker} ({models.device})"
+        options = [("modèles", described)]
+        if models.server is None:
+            options.append(("préchargement", "oui" if models.preload else "non"))
+        return Settings(places=places, options=tuple(options))
 
 
 # --- Fabrique --------------------------------------------------------------------------
@@ -423,7 +437,9 @@ def build(params: BaseModel, context: BuiltinContext) -> MemoryTool:
     """La fabrique de ``loom.memory`` : vérifie la base et les dossiers, n'ouvre rien."""
     if not isinstance(params, MemoryParams):
         raise TypeError(f"paramètres de {NAME} attendus, reçu {type(params).__name__}")
-    if params.models.kind == "bge-m3":
+    target = _server_target(params.models.server, context)
+    # Avec loom-mem-gpu, rien ne se calcule ici : ni torch ni transformers.
+    if params.models.kind == "bge-m3" and target is None:
         for module in ("torch", "transformers"):
             if importlib.util.find_spec(module) is None:
                 # Le montage nomme l'extra qui l'apporte (``Builtin.extra``).
@@ -447,7 +463,7 @@ def build(params: BaseModel, context: BuiltinContext) -> MemoryTool:
             for f in params.folders
         ]
         folders = Folders(mount(specs, context))
-    return MemoryTool(params, store, folders, missing)
+    return MemoryTool(params, store, folders, missing, target)
 
 
 def _file_bytes(address: str, target: Path) -> bytes:
@@ -470,6 +486,34 @@ def _size(size: int) -> str:
     if size < 1_000_000:
         return f"{size / 1000:.0f} Ko"
     return f"{size / 1_000_000:.1f} Mo".replace(".", ",")
+
+
+def _server_target(server: ServerSpec | None, context: BuiltinContext) -> Target | None:
+    """Où joindre loom-mem-gpu : ``url_env`` et ``token_env`` lus dans les secrets du client."""
+    if server is None:
+        return None
+    secrets: Mapping[str, str] = context.secrets if context.secrets is not None else os.environ
+
+    def read(name: str, what: str) -> str:
+        value = secrets.get(name, "").strip()
+        if not value:
+            raise ValueError(f"models.server : la variable {name} ({what}) est absente ou vide")
+        return value
+
+    url = server.url
+    if url is None:
+        assert server.url_env is not None
+        url = read(server.url_env, "url_env")
+        problem = server_url_problem(url)
+        if problem is not None:
+            raise ValueError(f"models.server : {server.url_env} vaut {url!r} — {problem}")
+    token = None if server.token_env is None else read(server.token_env, "token_env")
+    return Target(
+        url=url.strip().rstrip("/"),
+        token=token,
+        connect_timeout=server.connect_timeout,
+        read_timeout=server.read_timeout,
+    )
 
 
 def _store_path(params: MemoryParams, context: BuiltinContext) -> Path:

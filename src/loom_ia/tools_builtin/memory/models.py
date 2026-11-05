@@ -21,9 +21,12 @@ import threading
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from loom_ia.tools_builtin.memory_params import MODELS_EXTRA, ModelsSpec
+
+if TYPE_CHECKING:
+    from loom_ia.tools_builtin.memory.remote import Target
 
 log = logging.getLogger("loom_ia.memory")
 
@@ -354,26 +357,47 @@ class Models:
         self._preloading.start()
 
 
-_SHARED: Final[dict[tuple[str, str, str, bool, bool], Models]] = {}
+_SHARED: Final[dict[tuple[object, ...], Models]] = {}
 _GUARD: Final = threading.Lock()
 
 
-def shared_models(spec: ModelsSpec) -> Models:
+def shared_models(spec: ModelsSpec, target: Target | None = None) -> Models:
     """Les modèles du réglage, construits au premier appel puis partagés par le process.
 
     Rien n'est chargé ici : les poids le sont au premier calcul, ou par ``preload``.
-    Les modèles factices ne sont pas partagés : ils ne coûtent rien.
+    Les modèles factices ne sont pas partagés : ils ne coûtent rien. Avec
+    ``spec.server``, ``target`` dit où joindre ``loom-mem-gpu`` (``url_env`` et
+    ``token_env`` lus) : les modèles sont alors ses clients, une connexion par
+    application, et rien ne se charge dans ce process.
     """
     if spec.kind == "fake":
         from loom_ia.tools_builtin.memory.fake import FakeEmbedder, FakeReranker
 
         return Models(FakeEmbedder(), FakeReranker())
-    key = (spec.embedder, spec.reranker, spec.device, spec.fp16, spec.offline)
+    if spec.server is not None:
+        if target is None:
+            raise ValueError("models.server : l'adresse de loom-mem-gpu n'a pas été lue")
+        return _shared_remote(spec, target)
+    key = ("local", spec.embedder, spec.reranker, spec.device, spec.fp16, spec.offline)
     with _GUARD:
         found = _SHARED.get(key)
         if found is None:
             from loom_ia.tools_builtin.memory.bge_m3 import BgeM3Embedder, BgeReranker
 
             found = Models(BgeM3Embedder(spec), BgeReranker(spec))
+            _SHARED[key] = found
+        return found
+
+
+def _shared_remote(spec: ModelsSpec, target: Target) -> Models:
+    # ``target`` compte son jeton : deux clients aux jetons différents n'ont pas la même
+    # connexion.
+    key = ("remote", target, spec.embedder, spec.reranker)
+    with _GUARD:
+        found = _SHARED.get(key)
+        if found is None:
+            from loom_ia.tools_builtin.memory.remote import remote_models
+
+            found = Models(*remote_models(target, spec))
             _SHARED[key] = found
         return found

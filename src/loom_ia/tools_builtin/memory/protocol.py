@@ -92,6 +92,9 @@ class Health(_Wire):
 
 class ErrorBody(_Wire):
     error: str
+    # Sur un 503 : ``loading`` ou ``failed`` quand les modèles ne sont pas prêts ; absent
+    # quand la file est pleine.
+    state: State | None = None
 
 
 # --- Plafonds -------------------------------------------------------------------------

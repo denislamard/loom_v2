@@ -10,6 +10,7 @@ référence au chargement, sans importer l'outil, ni torch, ni transformers.
       folders:                                 # pour add_file seulement
       - { name: workspace, path: /home/denis/temp/agent/workspace }
       models: { device: cpu, preload: true, offline: true }
+      # ou, calcul confié à loom-mem-gpu : models: { server: { url: http://127.0.0.1:8765 } }
       retrieval: { rerank_candidates: 8 }
       actions:
         search: {}
@@ -31,15 +32,21 @@ relatif au fichier de config, ou ``path_env``, la variable qui le porte — lue
 dans les secrets du client, pour qu'un client ait sa base. L'outil crée le
 fichier s'il manque, jamais son dossier.
 
+``models.server`` confie les calculs à ``loom-mem-gpu``, qui garde les modèles
+en VRAM (``docs/loom-mem-gpu.md``) : ``device``, ``fp16``, ``offline`` et
+``preload`` se règlent alors sur l'application, et sont refusés ici.
+
 ``project`` fixé, le modèle n'a pas d'argument ``project`` : tout ce qu'il
 écrit va dans ce projet, et il ne lit, ne modifie ni ne supprime rien d'un
 autre. Sans lui, le modèle donne le projet à chaque écriture et peut filtrer
 ses recherches.
 """
 
+import ipaddress
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal, Self, cast
+from urllib.parse import urlsplit
 
 from pydantic import (
     AfterValidator,
@@ -48,6 +55,7 @@ from pydantic import (
     ConfigDict,
     Field,
     NonNegativeInt,
+    PositiveFloat,
     PositiveInt,
     WithJsonSchema,
     model_validator,
@@ -126,6 +134,73 @@ class MemoryFolder(BaseModel):
         return self
 
 
+def is_loopback(host: str) -> bool:
+    """Vrai pour une adresse de la boucle locale (ou ``localhost``)."""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def server_url_problem(url: str) -> str | None:
+    """Pourquoi l'adresse de ``loom-mem-gpu`` est refusée, ou ``None``.
+
+    ``http://`` sur la boucle locale seulement : l'accès par le réseau (https,
+    jeton obligatoire) viendra plus tard.
+    """
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port
+    except ValueError as exc:
+        return f"adresse illisible ({exc})"
+    if parts.scheme != "http" or not parts.hostname:
+        return "une adresse http://<hôte>:<port> est attendue"
+    if parts.path not in ("", "/") or parts.query or parts.fragment or parts.username:
+        return "seulement http://<hôte>:<port>, sans chemin ni paramètres"
+    if not is_loopback(parts.hostname):
+        return (
+            f"{parts.hostname} n'est pas la boucle locale (127.0.0.1, localhost, ::1) : "
+            "l'accès par le réseau viendra plus tard"
+        )
+    if port is None:
+        return "le port est attendu (http://127.0.0.1:8765)"
+    return None
+
+
+class ServerSpec(BaseModel):
+    """``loom-mem-gpu`` : l'application qui garde les modèles en VRAM et calcule pour loom."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # L'adresse, ou la variable qui la porte (lue dans les secrets du client).
+    url: str | None = None
+    url_env: str | None = Field(default=None, pattern=ENV_NAME_PATTERN)
+    # La variable qui porte le jeton, s'il en faut un ; jamais le jeton lui-même.
+    token_env: str | None = Field(default=None, pattern=ENV_NAME_PATTERN)
+    # Secondes : une application arrêtée ne bloque pas chaque appel ; un lot, au plus.
+    connect_timeout: PositiveFloat = 2.0
+    read_timeout: PositiveFloat = 60.0
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        if (self.url is None) == (self.url_env is None):
+            raise ValueError("server : donner 'url' ou 'url_env', l'un des deux")
+        if self.url is not None:
+            problem = server_url_problem(self.url)
+            if problem is not None:
+                raise ValueError(f"server.url {self.url!r} : {problem}")
+        return self
+
+    def secret_names(self) -> tuple[str, ...]:
+        return tuple(name for name in (self.url_env, self.token_env) if name is not None)
+
+
+# Ce que ``server`` règle sur l'application : refusé à côté de lui.
+_SET_BY_SERVER: Final = ("device", "fp16", "offline")
+
+
 class ModelsSpec(BaseModel):
     """Les modèles d'embedding et de reranking, partagés par tout le process."""
 
@@ -145,6 +220,28 @@ class ModelsSpec(BaseModel):
     # Lire les modèles dans le cache local de Hugging Face seulement : aucune requête vers le
     # Hub. Un modèle absent du cache fait échouer le chargement (``hf download`` l'y met).
     offline: bool = False
+    # Calculs confiés à loom-mem-gpu ; ``embedder`` et ``reranker`` sont alors les modèles
+    # qu'elle doit annoncer.
+    server: ServerSpec | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        if self.server is None:
+            return self
+        if self.kind == "fake":
+            raise ValueError("models : server ne sert que les vrais modèles (kind: bge-m3)")
+        given = [name for name in _SET_BY_SERVER if name in self.model_fields_set]
+        if given:
+            raise ValueError(
+                f"models : avec server, {', '.join(given)} se règle(nt) sur loom-mem-gpu "
+                "(ses options), pas ici"
+            )
+        if "preload" in self.model_fields_set:
+            raise ValueError(
+                "models : avec server, les modèles sont chargés par loom-mem-gpu à son "
+                "démarrage ; preload ne sert qu'au calcul dans loom"
+            )
+        return self
 
 
 class RetrievalSpec(BaseModel):
@@ -280,4 +377,6 @@ class MemoryParams(BaseModel):
 
     def secret_names(self) -> tuple[str, ...]:
         """Les variables que l'outil lit : un client peut les rediriger (``secrets``)."""
-        return () if self.store.path_env is None else (self.store.path_env,)
+        names = () if self.store.path_env is None else (self.store.path_env,)
+        server = self.models.server
+        return names if server is None else (*names, *server.secret_names())

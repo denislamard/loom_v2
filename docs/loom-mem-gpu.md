@@ -112,9 +112,10 @@ Dans `pyproject.toml`, section `[project.scripts]` : `loom-mem-gpu = "loom_ia.to
 ### 4.3 Ce que « dissocié » garantit
 
 - `memory/server` n'importe que `memory/models.py`, `memory/bge_m3.py`, `memory/protocol.py` et `memory_params.ModelsSpec`. Il n'importe ni la config, ni le runtime, ni access, ni engine, ni tenancy, ni sessions, ni agents.
-- Deux contrats import-linter le vérifient en CI :
-  - « Application loom-mem-gpu indépendante de loom » : `loom_ia.tools_builtin.memory.server` n'importe ni `loom_ia.access`, ni `runtime`, ni `config`, ni `engine`, ni `agents`, ni `tenancy`, ni `sessions`, ni `replay`, ni `telemetry`, ni `adapters` ;
-  - « loom n'importe pas l'application » : rien d'autre dans `loom_ia` n'importe `loom_ia.tools_builtin.memory.server`. Seul `protocol.py` est partagé avec `remote.py`.
+- Deux vérifications en CI :
+  - le contrat import-linter « Application loom-mem-gpu indépendante de loom » : `loom_ia.tools_builtin.memory.server` n'importe ni `loom_ia.access`, ni `runtime`, ni `config`, ni `engine`, ni `agents`, ni `tenancy`, ni `sessions`, ni `replay`, ni `telemetry`, ni `adapters` ;
+  - « loom n'importe pas l'application » : un test (`test_nothing_in_loom_imports_the_application`) parcourt les sources et refuse tout import de `loom_ia.tools_builtin.memory.server` hors de l'application elle-même ; un contrat import-linter l'aurait dit par une liste de modules à tenir à jour. Seul `protocol.py` est partagé avec `remote.py`.
+- À l'exécution, importer l'application charge aussi le paquet `memory` (son `__init__` monte l'outil : `core`, `tools`), mais rien des couches interdites, ni torch : un test le vérifie dans un process neuf.
 - L'application ne lit jamais `loom.yaml`. Elle se déploie seule (`pip install 'loom-ia[memory]'`), sans projet loom.
 - Le client et l'application viennent du même paquet : le protocole et l'algorithme sont alignés par construction. Un écart de version est détecté par `/v1/health` (§5.3).
 
@@ -144,7 +145,7 @@ loom-mem-gpu status   [--url http://127.0.0.1:8765] [--token-env VAR]
 1. Les réglages sont validés. En cas d'erreur, sortie avec le code 2.
 2. **Le port est ouvert avant tout chargement.** S'il est pris, sortie avec le code 3, sans rien charger : la VRAM n'est jamais occupée deux fois.
 3. Le serveur répond aussitôt. `/v1/health` renvoie 503 `{state: "loading"}` pendant le chargement.
-4. Les deux modèles se chargent dans un thread, puis font un passage d'essai (`LazyModel`). La VRAM occupée est journalisée (`torch.cuda.mem_get_info`). En cas d'échec, `/v1/health` renvoie 503 `{state: "failed", error}`, et l'application sort avec le code 4 au bout de quelques secondes, pour laisser à `status` le temps de lire l'erreur.
+4. Les deux modèles se chargent dans un thread, puis font un passage d'essai (`LazyModel`). La VRAM réservée par le process est journalisée (`torch.cuda.memory_reserved`). En cas d'échec, `/v1/health` renvoie 503 `{state: "failed", error}`, et l'application sort avec le code 4 au bout de quelques secondes, pour laisser à `status` le temps de lire l'erreur.
 5. `{state: "ready"}` : les modèles ne sont plus jamais déchargés.
 6. **SIGTERM ou SIGINT** : plus aucune requête n'est acceptée, celles en cours finissent (un lot au plus), puis sortie avec le code 0.
 
@@ -160,11 +161,12 @@ Les codes de sortie servent à systemd (§8) : il relance après un échec de ch
 
 - **`algo`** est une constante de `bge_m3.py`, à incrémenter dès que le calcul change : dense, lexical, troncature, normalisation, sigmoïde. Le client refuse un `algo` différent du sien : des vecteurs incompatibles n'entrent jamais en silence dans la base.
 - **Plafonds par requête** : au plus 32 textes (ou passages), 20 000 caractères chacun, et 2 Mo de corps de requête. `Content-Length` est vérifié **avant** la lecture du corps. Le client envoie des lots de 16 : il n'atteint jamais les plafonds.
-- **Erreurs** : 400 (JSON illisible), 401 (jeton absent ou faux), 404, 413 (plafond dépassé), 422 (champs invalides), 503 avec `Retry-After: 1` (chargement en cours, ou file d'attente pleine), 500 (`ModelRunError`, avec le message lisible actuel). Le corps est toujours `{error: "…"}`.
+- **Erreurs** : 400 (JSON illisible), 401 (jeton absent ou faux), 404, 413 (plafond dépassé), 422 (champs invalides), 503 avec `Retry-After: 1` (chargement en cours, ou file d'attente pleine), 500 (`ModelRunError`, avec le message lisible actuel). Le corps est toujours `{error: "…"}`. Sur un 503 dû aux modèles, il porte aussi `state: "loading" | "failed"` : le client distingue ainsi une application relancée (contact à refaire) d'une file pleine (nouvel essai), sans lire le texte du message.
 
 ### 5.4 Serveur HTTP : bibliothèque standard
 
-- `ThreadingHTTPServer` avec `daemon_threads = True` : un thread par requête. Les modèles sont synchrones, il n'y a pas d'asyncio.
+- `ThreadingHTTPServer`, un thread par requête. Les modèles sont synchrones, il n'y a pas d'asyncio. `daemon_threads = False` et `block_on_close = True` : à l'arrêt, `server_close` attend les requêtes en cours. `allow_reuse_port = False` : une seconde instance ne peut pas partager le port.
+- HTTP/1.0 : une connexion par requête. Aucune connexion inactive ne retarde l'arrêt ; sur la boucle locale, le coût est négligeable.
 - Un `timeout` de socket par requête (30 s), pour qu'un client muet ne garde pas de thread.
 - **File d'attente bornée** : un sémaphore de 32 requêtes à la fois. Au-delà, 503 avec `Retry-After`. Derrière, chaque modèle calcule un lot à la fois (verrou de `LazyModel`), et l'embedder et le reranker tournent en parallèle.
 - **Journal** : méthode, chemin, code, nombre de textes, durée. **Jamais le contenu des textes.** `log_message` de `BaseHTTPRequestHandler` est redirigé vers `logging`.
@@ -224,7 +226,7 @@ Seuls `embedder` et `reranker` restent au niveau de `models` dans les deux modes
 
 - `server` avec `kind: fake` : refusé.
 - `url` hors de la boucle locale : refusé (« réservé au lot réseau »). Cette règle sera remplacée au lot 5 (https et jeton obligatoires).
-- `server` avec `device`, `fp16` ou `offline` **donnés** au niveau de `models` (`model_fields_set`) : refusé. Message : « avec server, device, fp16 et offline se règlent sur loom-mem-gpu ; pour le repli dans loom, les mettre dans server.fallback ». Deux endroits pour une même décision finissent par se contredire.
+- `server` avec `device`, `fp16` ou `offline` **donnés** au niveau de `models` (`model_fields_set`) : refusé. Message : « avec server, device, fp16, offline se règle(nt) sur loom-mem-gpu (ses options), pas ici » ; le lot 3 y ajoutera « pour le repli dans loom, les mettre dans server.fallback ». Deux endroits pour une même décision finissent par se contredire.
 - `server` avec `preload` **donné** : refusé. Message : « avec server, les modèles sont chargés par loom-mem-gpu à son démarrage ; preload ne sert qu'au calcul dans loom ». Le repli ne précharge pas non plus (§7.4).
 - `secret_names()` renvoie aussi `url_env` et `token_env` : un client peut les rediriger (`tenants[].secrets`).
 - `build()` (`memory/tool.py`) ne vérifie torch et transformers que si un calcul local est possible : sans `server`, ou avec `server.fallback`.
@@ -350,7 +352,7 @@ Derrière nginx :
 | `tools_builtin/memory/bge_m3.py` | Constante `ALGO`. Calcul inchangé. |
 | `tools_builtin/memory/tool.py` | `build()` (torch seulement si un calcul local est possible), `_duration`, `settings()`. |
 | `tools_builtin/memory/service.py`, `retrieval.py`, `store.py`, `maintenance.py` | **Inchangés** : ils passent par `Models`. |
-| `pyproject.toml` | `[project.scripts]` `loom-mem-gpu`, deux contrats import-linter ; version inchangée (2.0.18). |
+| `pyproject.toml` | `[project.scripts]` `loom-mem-gpu`, un contrat import-linter ; version inchangée (2.0.18). |
 | `access/cli/` | **Inchangé.** |
 | Doc | Howto (chapitre mémoire), `configuration.md`, CHANGELOG, formation, point 9 de `loom-memory-points-en-suspens.md`. |
 
@@ -378,15 +380,15 @@ Derrière nginx :
   - annulation entre deux lots ;
   - `Retry-After`.
 - **Moteur** : `add_text` puis `search` avec `server` sans `fallback`, **sans torch importé**.
-- **Contrats d'import** : les deux du §4.3 ; `remote.py` n'importe pas torch.
+- **Isolement** : le contrat et le test du §4.3 ; importer l'application ne charge ni torch ni les couches interdites ; `remote.py` n'importe pas torch.
 - **Essai en vrai sur la 5060 Ti** (fonctionnel, sans campagne de mesures) : `loom memory eval` sur le même jeu doré, calcul dans loom puis par l'application : même ordre et scores proches.
 
 ## 12. Lots
 
 | Lot | Contenu | Testable par |
 |---|---|---|
-| 1 | `protocol.py`, l'application `loom-mem-gpu` (`serve` et `status`), `ALGO`, l'exécutable, les contrats import-linter. | `loom-mem-gpu` lancé à la main, puis `loom-mem-gpu status` et `curl`. |
-| 2 | `remote.py`, `models.server` sans repli, les contrôles de config, `build()`, `settings()`, `_duration`. | agent-mem avec `server` : une recherche et un `add_file` approuvé. |
+| 1 | **Fait le 05/11.** `protocol.py`, l'application `loom-mem-gpu` (`serve` et `status`), `ALGO`, l'exécutable, le contrat import-linter et le test d'isolement ; `tests/unit/test_memory_gpu_server.py` (44 essais). | `loom-mem-gpu` lancé à la main, puis `loom-mem-gpu status` et `curl`. |
+| 2 | **Fait le 05/11.** `remote.py`, `models.server` sans repli, les contrôles de config, `build()`, `settings()`, `_duration` ; `tests/unit/test_memory_remote.py` (34 essais, contre un vrai `loom-mem-gpu` aux modèles factices). | agent-mem avec `server` : une recherche et un `add_file` approuvé. |
 | 3 | `server.fallback` et la nouvelle sonde. | Arrêter l'application pendant un run, puis la relancer. |
 | 4 | Unité systemd documentée, essai en vrai du §11. | `systemctl --user`, `loom memory eval`. |
 | 5 | Plus tard : réseau, VM cloud (§9). | — |

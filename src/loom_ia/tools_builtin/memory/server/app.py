@@ -88,11 +88,19 @@ MODULES: Final = ("torch", "transformers")
 class _Reply(Exception):
     """Une réponse d'erreur : son code, son message, ses en-têtes."""
 
-    def __init__(self, status: HTTPStatus, message: str, *, retry: bool = False) -> None:
+    def __init__(
+        self,
+        status: HTTPStatus,
+        message: str,
+        *,
+        retry: bool = False,
+        state: State | None = None,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.message = message
         self.retry = retry
+        self.state: State | None = state
 
 
 # --- Les modèles servis --------------------------------------------------------------
@@ -329,10 +337,17 @@ class _Handler(BaseHTTPRequestHandler):
         health = self.models.host.health()
         if health.state == "loading":
             raise _Reply(
-                HTTPStatus.SERVICE_UNAVAILABLE, "modèles en cours de chargement", retry=True
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "modèles en cours de chargement",
+                retry=True,
+                state="loading",
             )
         if health.state == "failed":
-            raise _Reply(HTTPStatus.SERVICE_UNAVAILABLE, f"modèles non chargés : {health.error}")
+            raise _Reply(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                f"modèles non chargés : {health.error}",
+                state="failed",
+            )
 
     def _body(self) -> bytes:
         """Le corps, lu seulement si ``Content-Length`` est donné et sous le plafond."""
@@ -355,7 +370,8 @@ class _Handler(BaseHTTPRequestHandler):
     # --- Réponses --------------------------------------------------------------------
 
     def _refuse(self, reply: _Reply, started: float) -> None:
-        self._respond(reply.status, ErrorBody(error=reply.message), started, retry=reply.retry)
+        body = ErrorBody(error=reply.message, state=reply.state)
+        self._respond(reply.status, body, started, retry=reply.retry, exclude_none=True)
 
     def _respond(
         self,
