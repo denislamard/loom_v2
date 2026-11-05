@@ -23,6 +23,10 @@ Où la ligne s'écrit :
 
 Chaque accès pose le sien à son entrée (``through``, ``entering``) : un refus
 sorti du SDK dit ainsi s'il est venu par REST, MCP ou la CLI ; ``sdk`` sinon.
+Il y pose aussi ce que la requête vise, quand il le sait — la route ou l'outil
+(``action``), l'agent, le run : un refus décidé par l'accès, avant le SDK, le
+dit sans que chaque contrôle ait à le répéter. Ce qu'un refus nomme lui-même
+l'emporte.
 
 Le format ``json`` des logs met le détail sous ``audit`` ; le format console
 le met en fin de ligne. Une commande de la CLI qui affiche elle-même le refus
@@ -69,25 +73,46 @@ _ACCESS: ContextVar[Access] = ContextVar("loom_access", default="sdk")
 _FILE: ContextVar[Path | None] = ContextVar("loom_audit_file", default=None)
 
 
+class Aim(NamedTuple):
+    """Ce que la requête en cours vise, tel que l'accès le sait à son entrée."""
+
+    # La route (``POST /v1/runs/…/approve``) ou l'outil MCP.
+    action: str | None = None
+    agent: str | None = None
+    run_id: str | None = None
+
+
+# Un tuple nommé ne se modifie pas : un seul défaut partagé ne risque rien.
+_NOWHERE: Final = Aim()
+_AIM: ContextVar[Aim] = ContextVar("loom_audit_aim", default=_NOWHERE)
+
+
 @contextmanager
-def through(access: Access, config: LoomConfig | None = None) -> Generator[None]:
-    """Tout refus écrit dans ce bloc dit qu'il est arrivé par ``access``.
+def through(
+    access: Access, config: LoomConfig | None = None, aim: Aim | None = None
+) -> Generator[None]:
+    """Tout refus écrit dans ce bloc dit qu'il est arrivé par ``access``, et ce qu'il visait.
 
     Avec ``config``, il va aussi à son fichier d'audit.
     """
     token = _ACCESS.set(access)
     kept = _FILE.set(_path(config)) if config is not None else None
+    aimed = _AIM.set(aim) if aim is not None else None
     try:
         yield
     finally:
+        if aimed is not None:
+            _AIM.reset(aimed)
         if kept is not None:
             _FILE.reset(kept)
         _ACCESS.reset(token)
 
 
-def entering(access: Access, config: LoomConfig | None = None) -> None:
+def entering(access: Access, config: LoomConfig | None = None, aim: Aim | None = None) -> None:
     """Pose l'accès de la requête en cours, pour la tâche qui la sert (une route REST)."""
     _ACCESS.set(access)
+    if aim is not None:
+        _AIM.set(aim)
     if config is not None:
         writing_to(config)
 
@@ -114,18 +139,21 @@ def denied(
     """Écrit un refus : une ligne WARNING, son détail à part, et une ligne au fichier
     d'audit ; les champs absents sont omis.
 
-    Sans ``access``, celui de la requête en cours (``through``), ``sdk`` à défaut.
+    Sans ``access``, celui de la requête en cours (``through``), ``sdk`` à défaut ;
+    sans ``action``, ``agent`` ou ``run_id``, ce que la requête vise (``Aim``).
     """
+    aim = _AIM.get()
+    run_id = run_id or aim.run_id
     detail: dict[str, str] = {
         name: value
         for name, value in (
             ("access", access or _ACCESS.get()),
-            ("action", action),
+            ("action", action or aim.action),
             ("user", user),
             ("via", via),
             ("key", key),
             ("permission", permission),
-            ("agent", agent),
+            ("agent", agent or aim.agent),
             ("tenant_id", tenant),
             ("run_id", run_id),
             ("call_id", call_id),

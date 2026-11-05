@@ -1030,6 +1030,43 @@ def test_a_key_acts_with_the_permissions_of_its_user_restricted_by_its_scopes(
     assert marie.granted == {"read"} and marie.user == "marie"
 
 
+def test_a_refusal_of_an_access_says_whether_the_role_or_the_key_lacks(
+    demo: ConfigFactory,
+) -> None:
+    """``Caller.lacking`` : le message d'un refus de REST ou de MCP, dans les mots du SDK.
+
+    Au test REST du 05/11, « Clé sans la portée 'approve' » était dit à une
+    assistante dont la clé ne restreint rien : c'est son rôle qui n'approuve pas.
+    """
+    agents = [demo_agent(), demo_agent(name="secretariat")]
+    roles = [
+        OWNER,
+        {"id": "assistante", "permissions": ["run", "read"], "agents": ["secretariat"]},
+    ]
+    users = [{"id": "marie", "roles": ["assistante"]}, {"id": DEV, "roles": ["owner"]}]
+    keys = [
+        {"id": "marie", "user": "marie", "hash": "sha256:" + "0" * 64},
+        {"id": "lecture", "user": DEV, "hash": "sha256:" + "1" * 64, "scopes": ["read"]},
+        {"id": "demo", "user": DEV, "hash": "sha256:" + "2" * 64, "agents": ["demo"]},
+    ]
+    path = demo(agents=agents, security={"roles": roles, "users": users, "api_keys": keys})
+    security = load_config(path).security
+    marie, lecture, bornee = (Caller.identified(key, security) for key in security.api_keys)
+    assert marie.lacking("approve") == (
+        "marie n'a pas la permission 'approve' : aucun de ses rôles (assistante) ne la porte"
+    )
+    assert marie.lacking("run", "demo") == (
+        "marie n'a pas la permission 'run' sur l'agent demo : "
+        "ses rôles qui la portent sont bornés à d'autres agents"
+    )
+    assert lecture.lacking("run") == (
+        "dev n'a pas la permission 'run' : la clé lecture retire 'run' (scopes)"
+    )
+    assert bornee.lacking("read", "secretariat") == (
+        "dev n'a pas la permission 'read' sur l'agent secretariat : la clé demo est bornée à demo"
+    )
+
+
 async def test_the_tenant_of_a_key_is_the_tenant_of_its_user(demo: ConfigFactory) -> None:
     """Le client vient de l'utilisateur de la clé, jamais du corps d'une requête (#34, D-4)."""
     cle = new_api_key()

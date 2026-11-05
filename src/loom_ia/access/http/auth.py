@@ -9,7 +9,8 @@ ni l'autre, ``create_app`` refuse de la servir (D-1).
 Permissions vérifiées : ``run`` pour lancer un run, ``read`` pour lire agents,
 statuts, événements et rapports, ``admin`` pour lancer un run sans ses juges
 (``judges: skip``, J3). Ce sont celles des rôles de l'utilisateur de la clé,
-que la clé peut restreindre (``scopes``, ``agents``, D-4).
+que la clé peut restreindre (``scopes``, ``agents``, D-4) ; un refus dit
+lequel des deux manque.
 
 Client (L1, #34) : une clé agit **au nom du client de son utilisateur**, et
 c'est la seule chose qui le dit en REST — rien dans le corps d'une requête ne
@@ -65,12 +66,15 @@ def refusal(
     access: Access = "rest",
     permission: Permission | None = None,
     agent: str | None = None,
+    call_id: str | None = None,
     headers: dict[str, str] | None = None,
 ) -> HTTPException:
     """Le refus d'une requête, écrit au journal d'audit (D-9) : à lever par l'accès.
 
     ``actor`` nomme l'utilisateur refusé quand ce n'est pas celui de la clé :
-    l'utilisateur qu'une passerelle endosse (``as_user``).
+    l'utilisateur qu'une passerelle endosse (``as_user``). La route, l'agent et
+    le run viennent de ce que l'accès a posé à l'entrée de la requête, sauf à
+    les nommer ici.
     """
     who = actor if actor is not None else caller.actor if caller is not None else None
     audit.denied(
@@ -82,6 +86,7 @@ def refusal(
         permission=permission,
         agent=agent,
         tenant=who.tenant if who is not None else None,
+        call_id=call_id,
     )
     return HTTPException(code, detail, headers=headers)
 
@@ -155,18 +160,32 @@ def throttle(caller: Caller, window: RateWindow, *, access: Access = "rest") -> 
     )
 
 
-def require(caller: Caller, permission: Permission, agent: str | None = None) -> None:
-    """Vérifie la permission demandée, et l'agent visé s'il y en a un."""
+def require(
+    caller: Caller, permission: Permission, agent: str | None = None, *, call_id: str | None = None
+) -> None:
+    """Vérifie la permission demandée, et sur l'agent visé s'il y en a un.
+
+    Le refus dit ce qui manque — un rôle qui n'a pas la permission, ou une clé
+    qui la retire (``Caller.lacking``) — et la ligne d'audit, ce que la requête
+    visait : la route, l'agent et le run que l'accès a posés à son entrée
+    (``audit.Aim``), et ``call_id``, l'appel que le corps désigne.
+    """
     forbidden = status.HTTP_403_FORBIDDEN
     if not caller.may(permission):
         raise refusal(
-            forbidden, f"Clé sans la portée {permission!r}", caller=caller, permission=permission
-        )
-    if agent is not None and not caller.allows(agent):
-        raise refusal(
             forbidden,
-            f"Clé non autorisée sur l'agent {agent!r}",
+            caller.lacking(permission),
             caller=caller,
             permission=permission,
             agent=agent,
+            call_id=call_id,
+        )
+    if agent is not None and not caller.allows(agent, permission):
+        raise refusal(
+            forbidden,
+            caller.lacking(permission, agent),
+            caller=caller,
+            permission=permission,
+            agent=agent,
+            call_id=call_id,
         )

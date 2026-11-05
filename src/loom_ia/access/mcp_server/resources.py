@@ -131,7 +131,7 @@ class ResourceReader:
     async def read(self, raw: str) -> list[ReadResourceContents]:
         """Contenu de la ressource, ou une erreur MCP qui dit ce qui manque."""
         if not self._caller.may("read"):
-            raise self._denied("Clé sans la portée 'read'", "read")
+            raise self._denied(self._caller.lacking("read"), "read")
         # Un run d'une session nommée ne se retrouve pas par son seul
         # identifiant : la session s'ajoute en paramètre, comme en REST.
         uri, session = _split(raw)
@@ -161,8 +161,11 @@ class ResourceReader:
 
     async def _sessions(self) -> list[dict[str, Any]]:
         if not self._whole():
+            key = self._caller.key
+            bound = f"La clé {key.id}" if key is not None else "La clé"
             raise self._denied(
-                "Clé limitée à certains agents : la liste des sessions ne peut pas être filtrée",
+                f"{bound} est bornée à certains agents : la liste des sessions ne peut pas "
+                "être filtrée",
                 "read",
             )
         records = await self._loom.sessions(tenant_id=self._caller.tenant)
@@ -244,7 +247,7 @@ class ResourceReader:
         # une relecture masquée, ils ne se lisent pas (l'URI, elle, reste visible).
         if self._caller.masks:
             raise self._denied(
-                "Clé sans la portée 'read_content' : le contenu d'un fichier est masqué",
+                f"{self._caller.lacking('read_content')} — le contenu d'un fichier est masqué",
                 "read_content",
             )
         if not self._whole():
@@ -277,7 +280,7 @@ class ResourceReader:
 
     def _allowed(self, agent: str) -> None:
         if not self._caller.allows(agent):
-            raise self._denied(f"Clé non autorisée sur l'agent {agent!r}", "read", agent)
+            raise self._denied(self._caller.lacking("read", agent), "read", agent)
 
     def _denied(self, message: str, permission: Permission, agent: str | None = None) -> McpError:
         """Un refus d'accès : écrit au journal d'audit (D-9), puis rendu en erreur MCP."""

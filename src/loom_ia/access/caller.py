@@ -87,6 +87,28 @@ class Caller:
             permission in role.permissions and role.allows(agent) for role in self.actor.roles
         )
 
+    def lacking(self, permission: Permission, agent: str | None = None) -> str:
+        """Pourquoi cet appelant n'a pas ``permission`` (sur ``agent``) : ses rôles, ou sa clé.
+
+        Le message d'un refus de ``may`` ou d'``allows``, dans les mots du SDK
+        (``access/authz.py``) : un rôle qui n'a pas le droit et une clé qui le
+        retire ne se corrigent pas au même endroit.
+        """
+        where = f" sur l'agent {agent}" if agent is not None else ""
+        refused = f"{self.actor.signature} n'a pas la permission {permission!r}{where}"
+        holding = [role for role in self.actor.roles if permission in role.permissions]
+        if not holding:
+            roles = ", ".join(role.id for role in self.actor.roles) or "aucun"
+            return f"{refused} : aucun de ses rôles ({roles}) ne la porte"
+        if agent is not None and not any(role.allows(agent) for role in holding):
+            return f"{refused} : ses rôles qui la portent sont bornés à d'autres agents"
+        key = self.key
+        if key is not None and key.scopes is not None and permission not in key.scopes:
+            return f"{refused} : la clé {key.id} retire {permission!r} (scopes)"
+        if key is not None and agent is not None and not key.allows(agent):
+            return f"{refused} : la clé {key.id} est bornée à {', '.join(key.agents)}"
+        return refused
+
     @property
     def masks(self) -> bool:
         """Vrai si les lectures de cet appelant doivent être privées de contenu."""

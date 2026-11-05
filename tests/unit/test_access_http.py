@@ -327,9 +327,11 @@ async def test_scopes_and_agents_limit_a_key(demo: ConfigFactory) -> None:
         )
         listed = await http.get("/v1/agents", headers={"Authorization": f"Bearer {autre}"})
 
-    assert run.status_code == 403 and "portée 'run'" in run.json()["detail"]
+    assert run.status_code == 403 and "retire 'run'" in run.json()["detail"]
     assert read.status_code == 200
-    assert elsewhere.status_code == 403 and "agent 'demo'" in elsewhere.json()["detail"]
+    assert (
+        elsewhere.status_code == 403 and "sur l'agent demo : la clé" in elsewhere.json()["detail"]
+    )
     assert listed.json() == []
 
 
@@ -651,6 +653,64 @@ async def test_every_refusal_of_the_api_is_written_once(
         "app-crm",
     )
     assert audited(path) == [cle, portee_, endossement, sdk]
+
+
+async def test_a_refusal_says_whether_the_role_or_the_key_lacks_and_what_it_aimed_at(
+    atelier: ConfigFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Un refus de l'accès, avant le SDK, dit ce qui manque et sur quoi la requête portait.
+
+    Au test REST du 05/11, « Clé sans la portée 'approve' » était dit à une
+    assistante dont la clé ne restreint rien : c'est son rôle qui n'approuve pas.
+    Et sa ligne d'audit ne nommait ni la route, ni le run.
+    """
+    path = atelier(security=CLES)
+    async with serving(path) as (_, http):
+        started = await http.post(
+            "/v1/agents/demo/runs",
+            json={"message": "Relance."},
+            headers={"Authorization": f"Bearer {APPROBATEUR}"},
+        )
+        run_id = started.json()["run_id"]
+        with caplog.at_level(logging.WARNING, logger=AUDIT_LOGGER):
+            cle = await http.post(
+                f"/v1/runs/{run_id}/approve",
+                json={"call_id": "c-9"},
+                headers={"Authorization": f"Bearer {CLE}"},
+            )
+            role = await http.post(
+                "/v1/agents/demo/runs",
+                json={"message": "Relance."},
+                headers={"Authorization": f"Bearer {PASSERELLE}"},
+            )
+
+    assert (cle.status_code, cle.json()["detail"]) == (
+        403,
+        "atelier n'a pas la permission 'approve' : la clé atelier retire 'approve' (scopes)",
+    )
+    assert (role.status_code, role.json()["detail"]) == (
+        403,
+        "app-crm n'a pas la permission 'run' : aucun de ses rôles (passerelle) ne la porte",
+    )
+    par_cle, par_role = _refusals(caplog)
+    assert par_cle == {
+        "access": "rest",
+        "action": f"POST /v1/runs/{run_id}/approve",
+        "user": "atelier",
+        "key": "atelier",
+        "permission": "approve",
+        "tenant_id": "default",
+        "run_id": run_id,
+        "call_id": "c-9",
+        "reason": cle.json()["detail"],
+    }
+    assert (par_role["action"], par_role["agent"], par_role["permission"]) == (
+        "POST /v1/agents/demo/runs",
+        "demo",
+        "run",
+    )
+    assert "run_id" not in par_role
+    assert audited(path)[-2:] == [par_cle, par_role]
 
 
 async def test_an_approval_can_be_rejected_over_rest(atelier: ConfigFactory) -> None:

@@ -235,7 +235,7 @@ async def test_skipping_the_judges_needs_the_admin_scope(demo: ConfigFactory) ->
             url, data={"message": QUESTION, "judges": "skip"}, headers=_bearer(admin)
         )
 
-    assert refused.status_code == 403 and "portée 'admin'" in refused.json()["detail"]
+    assert refused.status_code == 403 and "retire 'admin'" in refused.json()["detail"]
     assert forced.status_code == 201 and forced.json()["status"] == "failed"
     for response in (skipped, form):
         body = response.json()
@@ -284,7 +284,10 @@ async def test_the_session_report_route(demo: ConfigFactory) -> None:
     # Même journal, servi avec une clé limitée à un autre agent.
     async with rest(judged(demo, security=security)) as (_, http):
         hidden = await http.get("/v1/sessions/atelier/report", headers=_bearer(lecteur))
-    assert hidden.status_code == 403 and "agent 'demo'" in hidden.json()["detail"]
+    assert (
+        hidden.status_code == 403
+        and "sur l'agent demo : la clé lecteur est bornée à x" in hidden.json()["detail"]
+    )
 
 
 # --- MCP ----------------------------------------------------------------------------

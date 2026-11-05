@@ -105,6 +105,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from fastapi.security import APIKeyHeader, HTTPBearer
 from fastapi.security.http import HTTPAuthorizationCredentials
 from pydantic import AwareDatetime, JsonValue, ValidationError
@@ -288,10 +289,23 @@ async def caller(
     """
     # Un refus qui sortira du SDK pendant cette requête dira qu'il est venu par REST.
     loom: Loom = request.app.state.loom
-    audit.entering("rest", loom.config)
+    audit.entering("rest", loom.config, _aim(request))
     who = identify(loom.config.security, request, loom.config.server.http.user)
     throttle(who, request.app.state.rates)
     return who
+
+
+def _aim(request: Request) -> audit.Aim:
+    """Ce que la requête vise, lu sur sa route : pour la ligne d'audit d'un refus (D-9)."""
+    route: object = request.scope.get("route")
+    template = route.path if isinstance(route, APIRoute) else ""
+    params = request.path_params
+    agent = params.get("name") if "/agents/{name}" in template else None
+    return audit.Aim(
+        action=f"{request.method} {request.url.path}",
+        agent=str(agent) if agent is not None else None,
+        run_id=str(params["run_id"]) if "run_id" in params else None,
+    )
 
 
 # L'appelant, injecté dans chaque route.
@@ -482,7 +496,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         if who.key is not None and not who.key.allows(name):
             raise refusal(
                 status.HTTP_403_FORBIDDEN,
-                f"Clé non autorisée sur l'agent {name!r}",
+                who.lacking("run", name),
                 caller=who,
                 permission="run",
                 agent=name,
@@ -729,7 +743,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         # Sans as_user, la clé se juge d'abord, dans ses mots.
         actor = _acting(loom, who, body.as_user)
         if body.as_user is None:
-            require(who, "approve")
+            require(who, "approve", call_id=body.call_id)
         calls = await loom.approve(
             run_id,
             call_id=body.call_id,
@@ -749,7 +763,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     ) -> Decided:
         actor = _acting(loom, who, body.as_user)
         if body.as_user is None:
-            require(who, "approve")
+            require(who, "approve", call_id=body.call_id)
         calls = await loom.reject(
             run_id,
             call_id=body.call_id,
@@ -770,7 +784,7 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         # demande (un sous-agent, s'il y en a un), que le SDK vérifie.
         actor = _acting(loom, who, body.as_user)
         if body.as_user is None:
-            require(who, "answer")
+            require(who, "answer", call_id=body.call_id)
         call = await loom.answer(
             run_id,
             answers=body.answers,
@@ -808,7 +822,8 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
             # la filtrer honnêtement demanderait de lire chaque journal.
             raise refusal(
                 status.HTTP_403_FORBIDDEN,
-                "Clé limitée à certains agents : la liste des sessions ne peut pas être filtrée",
+                f"La clé {who.key.id} est bornée à certains agents : la liste des sessions ne "
+                "peut pas être filtrée",
                 caller=who,
                 permission="read",
             )

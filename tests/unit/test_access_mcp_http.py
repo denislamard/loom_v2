@@ -17,7 +17,16 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
-from conftest import DEV, PNG, QUESTION, TREE_ANSWER, TREE_QUESTION, ConfigFactory, demo_agent
+from conftest import (
+    DEV,
+    PNG,
+    QUESTION,
+    TREE_ANSWER,
+    TREE_QUESTION,
+    ConfigFactory,
+    audited,
+    demo_agent,
+)
 
 from loom_ia.access import Loom
 from loom_ia.config import ConfigError, load_config
@@ -374,7 +383,7 @@ async def test_a_key_publishes_only_the_agents_it_may_launch(demo: ConfigFactory
     assert set(limites) == {"autre", "run_status", "run_report", "cancel"}
     # Et `approve` n'est jamais un outil MCP (#39).
     assert "approve" not in publies
-    assert refus.isError and "non autorisée sur l'agent 'demo'" in texte(refus)
+    assert refus.isError and "sur l'agent demo : la clé" in texte(refus)
 
 
 async def test_a_report_is_refused_for_an_agent_the_key_may_not_read(
@@ -398,7 +407,7 @@ async def test_a_report_is_refused_for_an_agent_the_key_may_not_read(
             statut = await session.call_tool("run_status", {"run_id": run_id, "session_id": "s1"})
     assert not complet.isError and (complet.structuredContent or {})["runs"]
     for refus in (par_run, par_session, statut):
-        assert refus.isError and "non autorisée sur l'agent 'demo'" in texte(refus)
+        assert refus.isError and "sur l'agent demo : la clé" in texte(refus)
 
 
 async def test_a_file_is_read_with_read_content_and_the_agents_of_its_session(
@@ -432,7 +441,7 @@ async def test_a_file_is_read_with_read_content_and_the_agents_of_its_session(
             with pytest.raises(McpError, match="read_content"):
                 await session.read_resource(AnyUrl(uri))
         async with parle(loom, jetons["bureau"]) as session:
-            with pytest.raises(McpError, match="non autorisée sur l'agent 'demo'"):
+            with pytest.raises(McpError, match="sur l'agent demo : la clé"):
                 await session.read_resource(AnyUrl(uri))
     [bloc] = entier.contents
     assert isinstance(bloc, BlobResourceContents) and base64.b64decode(bloc.blob) == PNG
@@ -453,9 +462,9 @@ async def test_launching_needs_run_and_reading_needs_read(demo: ConfigFactory) -
             lance = await session.call_tool("demo", {"message": QUESTION})
             run_id = (lance.structuredContent or {})["run_id"]
             sans_read = await session.call_tool("run_status", {"run_id": run_id})
-    assert sans_run.isError and "portée 'run'" in texte(sans_run)
+    assert sans_run.isError and "retire 'run'" in texte(sans_run)
     assert not lance.isError
-    assert sans_read.isError and "portée 'read'" in texte(sans_read)
+    assert sans_read.isError and "retire 'read'" in texte(sans_read)
 
 
 async def test_a_reread_is_masked_but_what_a_key_launches_it_receives(
@@ -527,7 +536,7 @@ async def test_reading_a_resource_needs_read_and_is_masked_without_read_content(
             run = lu(await session.read_resource(AnyUrl(f"{RUNS}/{run_id}?session_id=s1")))
         async with parle(loom, jetons["lancement"]) as session:
             vide = (await session.list_resources()).resources
-            with pytest.raises(McpError, match="portée 'read'"):
+            with pytest.raises(McpError, match="retire 'read'"):
                 await session.read_resource(AnyUrl(RUNS))
 
     reponse = (lance.structuredContent or {})["text"]
@@ -557,7 +566,7 @@ async def test_a_trace_resource_follows_the_scope_and_every_agent_of_the_tree(
         async with parle(loom, jetons["supervision"]) as session:
             nue = lu(await session.read_resource(uri))
         async with parle(loom, jetons["parent"]) as session:
-            with pytest.raises(McpError, match="non autorisée sur l'agent 'verificateur'"):
+            with pytest.raises(McpError, match="sur l'agent verificateur : la clé"):
                 await session.read_resource(uri)
 
     assert entiere["content"] is True and entiere["output"] == TREE_ANSWER
@@ -581,7 +590,7 @@ async def test_the_events_resource_follows_every_agent_of_the_tree(tree: ConfigF
         async with parle(loom, jetons["complete"]) as session:
             entier = lu(await session.read_resource(uri))
         async with parle(loom, jetons["parent"]) as session:
-            with pytest.raises(McpError, match="non autorisée sur l'agent 'verificateur'"):
+            with pytest.raises(McpError, match="sur l'agent verificateur : la clé"):
                 await session.read_resource(uri)
 
     assert {event["agent"] for event in entier} == {"demo", "verificateur"}
@@ -632,7 +641,7 @@ async def test_a_key_limited_to_agents_gets_runs_but_not_sessions(demo: ConfigFa
             page = lu(await session.read_resource(AnyUrl(RUNS)))
             with pytest.raises(McpError, match="ne peut pas être filtrée"):
                 await session.read_resource(AnyUrl(SESSIONS))
-            with pytest.raises(McpError, match="non autorisée sur l'agent 'demo'"):
+            with pytest.raises(McpError, match="sur l'agent demo : la clé"):
                 await session.read_resource(AnyUrl(f"{SESSIONS}/s-demo"))
     # L'index des sessions n'est pas listé à une clé qui ne peut pas le lire.
     assert listees == [RUNS]
@@ -681,7 +690,7 @@ async def test_cancel_needs_the_cancel_permission(demo: ConfigFactory) -> None:
         laisse = await loom.submit("demo", QUESTION, user=DEV)
         async with parle(loom, jetons["lanceur"]) as session:
             refus = await session.call_tool("cancel", {"run_id": laisse})
-    assert refus.isError and "portée 'cancel'" in texte(refus)
+    assert refus.isError and "retire 'cancel'" in texte(refus)
 
 
 async def test_cancel_needs_the_right_on_the_agent_of_the_run(demo: ConfigFactory) -> None:
@@ -698,8 +707,19 @@ async def test_cancel_needs_the_right_on_the_agent_of_the_run(demo: ConfigFactor
         async with parle(loom, jetons["tout"]) as session:
             arrete = await session.call_tool("cancel", {"run_id": laisse})
     # Arrêter demande `cancel` sur **l'agent du run**, pas sur un autre.
-    assert refus.isError and "non autorisée sur l'agent 'demo'" in texte(refus)
+    assert refus.isError and texte(refus) == (
+        "dev n'a pas la permission 'cancel' sur l'agent demo : la clé bureau est bornée à autre"
+    )
     assert (arrete.structuredContent or {})["cancelled"] is True
+    # Au fichier d'audit : l'outil, l'agent du run et le run visés (D-9).
+    [ligne] = audited(path)
+    assert (ligne["access"], ligne["action"], ligne["agent"], ligne["run_id"], ligne["key"]) == (
+        "mcp",
+        "cancel",
+        "demo",
+        laisse,
+        "bureau",
+    )
 
 
 def lu(result: ReadResourceResult) -> Any:

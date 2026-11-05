@@ -348,7 +348,7 @@ async def test_sse_refuses_the_whole_tree_to_a_key_without_every_agent(tree: Con
 
     assert whole.status_code == 200 and "verificateur" in whole.text
     assert refused.status_code == 403 and resumed.status_code == 403
-    assert "non autorisée sur l'agent 'verificateur'" in refused.json()["detail"]
+    assert "sur l'agent verificateur : la clé" in refused.json()["detail"]
     assert "event:" not in refused.text
     # Sans les sous-runs, le flux ne montre que le run de `demo` : il reste permis.
     assert alone.status_code == 200 and "verificateur" not in alone.text
@@ -402,7 +402,7 @@ async def test_sse_stops_when_a_forbidden_subagent_joins_a_stream_in_flight(
     names = [line[6:].strip() for line in lines if line.startswith("event:")]
     assert response.status_code == 200
     assert names == ["run.started", "message.user", "error"]
-    assert "non autorisée sur l'agent 'verificateur'" in lines[lines.index("event: error") + 1]
+    assert "sur l'agent verificateur : la clé" in lines[lines.index("event: error") + 1]
 
 
 async def test_a_reread_names_only_the_agents_the_key_may_read(tree: ConfigFactory) -> None:

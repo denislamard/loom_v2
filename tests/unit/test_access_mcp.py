@@ -98,6 +98,11 @@ async def test_a_refusal_over_mcp_is_written_with_its_access(
     assert refused.isError
     [refus] = [getattr(r, AUDIT) for r in caplog.records if r.name == AUDIT_LOGGER]
     assert (refus["access"], refus["user"], refus["permission"]) == ("mcp", "lucie", "run")
+    # Ce que l'appel visait : l'outil, son agent ; et ce qui manque, le rôle et non la clé.
+    assert (refus["action"], refus["agent"]) == ("demo", "demo")
+    assert refus["reason"] == (
+        "lucie n'a pas la permission 'run' : aucun de ses rôles (lecteur) ne la porte"
+    )
     assert audited(path) == [refus]
 
 
@@ -611,4 +616,4 @@ async def test_a_server_user_without_run_cannot_launch(atelier: ConfigFactory) -
     }
     async with serving(atelier(security=security), user="lea") as (_, client):
         result = await client.call_tool("demo", {"message": "Relance."})
-    assert result.isError and "portée 'run'" in _text(result.content)
+    assert result.isError and "aucun de ses rôles (lecteur) ne la porte" in _text(result.content)
