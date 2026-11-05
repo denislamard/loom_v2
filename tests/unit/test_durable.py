@@ -310,24 +310,47 @@ def test_recover_reads_a_busy_session_in_linear_time(
     assert elapsed < 1, f"balayage de 4 000 runs en {elapsed:.2f} s"
 
 
-def test_the_result_of_a_run_with_many_subruns_reads_in_linear_time() -> None:
-    """2 000 sous-runs : chacun était cherché dans tout l'arbre, pour ses approbations."""
+def _subruns(count: int) -> tuple[RunState, list[Event]]:
+    """Un run racine et ``count`` sous-runs finis : son état et son journal."""
     parent = RunJournal(agent="demo", session_id=SESSION)
     parent.start(QUESTION)
     drafts = parent.take()
-    for _ in range(2_000):
+    for _ in range(count):
         enfant = RunJournal(agent="demo", session_id=SESSION, root_run_id=parent.run_id)
         enfant.start(QUESTION, parent_run_id=parent.run_id, depth=1)
         enfant.model_turn(Message.assistant(ANSWER)).complete()
         drafts += enfant.take()
     events = [draft.to_event(seq) for seq, draft in enumerate(drafts, start=1)]
-    state = fold(events, parent.run_id)
+    return fold(events, parent.run_id), events
 
-    start = time.perf_counter()
-    result = RunResult.of(state, events)
-    elapsed = time.perf_counter() - start
-    assert not state.finished and result.pending_approvals == ()
-    assert elapsed < 1, f"résultat d'un run à 2 000 sous-runs en {elapsed:.2f} s"
+
+def _reading(count: int) -> float:
+    """Le meilleur de trois temps de ``RunResult.of`` sur un run à ``count`` sous-runs."""
+    state, events = _subruns(count)
+    assert not state.finished and RunResult.of(state, events).pending_approvals == ()
+    times: list[float] = []
+    for _ in range(3):
+        start = time.perf_counter()
+        RunResult.of(state, events)
+        times.append(time.perf_counter() - start)
+    return min(times)
+
+
+def test_the_result_of_a_run_with_many_subruns_reads_in_linear_time() -> None:
+    """Chaque sous-run était cherché dans tout l'arbre, pour ses approbations.
+
+    On compare deux tailles plutôt qu'un temps : 4 fois plus de sous-runs, 4 fois
+    plus de temps si la lecture est linéaire, 16 fois si elle est quadratique.
+    Mesuré le 05/11 : un rapport de 4,0 à 4,3 aujourd'hui, de 10 à 11 avec la
+    recherche d'avant. Un seuil en secondes (1 s pour 2 000 sous-runs) échouait
+    sur un runner de CI chargé, sous couverture, à 1,04 s, sans rien de quadratique.
+    """
+    small = _reading(500)
+    large = _reading(2_000)
+    assert large / small < 7, (
+        f"4 fois plus de sous-runs, {large / small:.1f} fois plus de temps "
+        f"({small:.3f} s, puis {large:.3f} s)"
+    )
 
 
 def test_recover_reads_past_a_session_marker(durable: ConfigFactory) -> None:
