@@ -251,6 +251,7 @@ Seuls `embedder` et `reranker` restent au niveau de `models` dans les deux modes
 |---|---|---|
 | Connexion refusée, délai de connexion dépassé, 502 ou 504 (proxy, lot 5) | `ModelLoadError` : « loom-mem-gpu injoignable (http://127.0.0.1:8765) : le démarrer (systemctl --user start loom-mem-gpu), ou ajouter models.server.fallback pour calculer dans loom. » | Calcul local, avec les mêmes `BgeM3Embedder` et `BgeReranker` qu'aujourd'hui, réglés par `server.fallback` et chargés au premier repli (environ 4,5 Go de RAM sur CPU). Une ligne d'avertissement dans le journal, une seule fois. |
 | 503 `loading` | Attente, au plus 60 s (constante), en surveillant `cancel`. Ensuite, comme « injoignable ». | Pareil : l'application arrive, on ne se replie pas tout de suite. |
+| 503 `failed` (l'application n'a pas chargé ses modèles) | `ModelLoadError` avec son erreur. | Repli : l'application est là, mais ne peut pas calculer. |
 | 503 file pleine | Nouvel essai après `Retry-After`, tant que `read_timeout` le permet. | Pareil. |
 | 401 | `ModelLoadError` : jeton refusé. Pas de repli : c'est une erreur de config. | Pareil. |
 | Écart de modèle ou d'`algo` | `ModelLoadError`. Pas de repli. | Pareil. |
@@ -389,7 +390,7 @@ Derrière nginx :
 |---|---|---|
 | 1 | **Fait le 05/11.** `protocol.py`, l'application `loom-mem-gpu` (`serve` et `status`), `ALGO`, l'exécutable, le contrat import-linter et le test d'isolement ; `tests/unit/test_memory_gpu_server.py` (44 essais). | `loom-mem-gpu` lancé à la main, puis `loom-mem-gpu status` et `curl`. |
 | 2 | **Fait le 05/11.** `remote.py`, `models.server` sans repli, les contrôles de config, `build()`, `settings()`, `_duration` ; `tests/unit/test_memory_remote.py` (34 essais, contre un vrai `loom-mem-gpu` aux modèles factices). | agent-mem avec `server` : une recherche et un `add_file` approuvé. |
-| 3 | `server.fallback` et la nouvelle sonde. | Arrêter l'application pendant un run, puis la relancer. |
+| 3 | **Fait le 05/11.** `server.fallback` (`FallbackSpec`, `ModelsSpec.fallback()`), le repli lot par lot et la nouvelle sonde après 30 s (`REPROBE`) ; seule `ServerUnavailable` (injoignable, chargement trop long, sans modèles) déclenche le repli ; avec repli, le montage exige l'extra `memory` ; 11 essais de plus dans `tests/unit/test_memory_remote.py`. | Arrêter l'application pendant un run, puis la relancer. |
 | 4 | Unité systemd documentée, essai en vrai du §11. | `systemctl --user`, `loom memory eval`. |
 | 5 | Plus tard : réseau, VM cloud (§9). | — |
 | 6 | Doc : howto, configuration, CHANGELOG, formation, point 9 marqué « fait ». | — |

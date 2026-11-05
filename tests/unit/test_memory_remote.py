@@ -9,6 +9,7 @@ erreurs lisibles —, puis l'outil monté sans torch, qui range et retrouve un
 document par elle.
 """
 
+import logging
 import sys
 import threading
 import time
@@ -32,12 +33,18 @@ from loom_ia.tools_builtin.memory.models import (
     ModelCancelled,
     ModelLoadError,
     ModelRunError,
+    Models,
     shared_models,
 )
 from loom_ia.tools_builtin.memory.remote import Connection, RemoteEmbedder, RemoteReranker, Target
 from loom_ia.tools_builtin.memory.server import app as app_module
 from loom_ia.tools_builtin.memory.server.app import Host
-from loom_ia.tools_builtin.memory_params import MemoryParams, ModelsSpec, ServerSpec
+from loom_ia.tools_builtin.memory_params import (
+    FallbackSpec,
+    MemoryParams,
+    ModelsSpec,
+    ServerSpec,
+)
 
 SERVED: Final = ModelsSpec(server=ServerSpec(url="http://127.0.0.1:8765"))
 CONTEXT: Final = ToolContext(
@@ -447,3 +454,218 @@ def test_the_approval_says_where_the_file_will_be_computed(
     reason = tool.assess_call(arguments).reason
     assert reason is not None
     assert "moins d'une seconde de calcul sur cuda:0 (loom-mem-gpu)" in reason
+
+
+# --- Repli (server.fallback) ---------------------------------------------------------
+
+WITH_FALLBACK: Final = ModelsSpec(
+    server=ServerSpec(url="http://127.0.0.1:8765", fallback=FallbackSpec(device="cpu"))
+)
+
+
+class Local:
+    """Les modèles du repli, factices : on compte ce qu'ils calculent."""
+
+    def __init__(self) -> None:
+        self.embedder = BgeLike(device="cpu")
+        self.reranker = RerankerLike()
+        self.specs: list[ModelsSpec] = []
+        self.loads = 0
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        local = self
+
+        class Loading(BgeLike):
+            def load(self) -> None:
+                local.loads += 1
+
+        self.embedder = Loading(device="cpu")
+
+        def shared(spec: ModelsSpec, target: Target | None = None) -> Models:
+            self.specs.append(spec)
+            return Models(self.embedder, self.reranker)
+
+        monkeypatch.setattr(remote_module, "shared_models", shared)
+
+
+def free_port() -> int:
+    import socket
+
+    with socket.socket() as free:
+        free.bind(("127.0.0.1", 0))
+        return int(free.getsockname()[1])
+
+
+def fallback_client(url: str, spec: ModelsSpec = WITH_FALLBACK) -> RemoteEmbedder:
+    connection = Connection(Target(url, connect_timeout=1.0, read_timeout=5.0), spec)
+    return RemoteEmbedder(connection, spec)
+
+
+def test_the_fallback_takes_the_local_settings() -> None:
+    spec = ModelsSpec.model_validate(
+        {
+            "embedder": "/modeles/bge-m3",
+            "server": {
+                "url": "http://127.0.0.1:8765",
+                "fallback": {"device": "cuda", "offline": True},
+            },
+        }
+    )
+    local = spec.fallback()
+    assert local is not None and local.server is None
+    assert (local.embedder, local.device, local.fp16, local.offline) == (
+        "/modeles/bge-m3",
+        "cuda",
+        True,
+        True,
+    )
+    every_default = ModelsSpec.model_validate(
+        {"server": {"url": "http://127.0.0.1:8765", "fallback": {}}}
+    ).fallback()
+    assert every_default is not None and every_default.device == "auto"
+    assert SERVED.fallback() is None and ModelsSpec().fallback() is None
+    with pytest.raises(ValidationError, match="pattern"):
+        ModelsSpec.model_validate(
+            {"server": {"url": "http://127.0.0.1:8765", "fallback": {"device": "gpu"}}}
+        )
+    with pytest.raises(ValidationError, match=r"les mettre dans server\.fallback"):
+        ModelsSpec.model_validate({"device": "cuda", "server": {"url": "http://127.0.0.1:8765"}})
+
+
+def test_an_absent_application_is_replaced_by_the_local_models(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    local = Local()
+    local.install(monkeypatch)
+    embedder = fallback_client(f"http://127.0.0.1:{free_port()}")
+    with caplog.at_level(logging.WARNING, logger="loom_ia.memory"):
+        first = embedder.embed_documents([f"mot{i}" for i in range(20)])
+        second = embedder.embed_query("devis")
+    assert len(first) == 20 and len(second.dense) == 1024
+    assert local.embedder.batches == [16, 4, 1]
+    assert local.specs[0].device == "cpu" and local.specs[0].server is None
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "injoignable" in warnings[0].getMessage()
+    assert "calcul dans ce process (device cpu)" in warnings[0].getMessage()
+    assert embedder.device == "cpu" and not embedder.connection.served
+
+
+def test_the_application_takes_over_again_once_it_answers(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(remote_module, "REPROBE", 0.2)
+    local = Local()
+    local.install(monkeypatch)
+    port = free_port()
+    embedder = fallback_client(f"http://127.0.0.1:{port}")
+    embedder.embed_query("avant")
+    assert local.embedder.batches == [1]
+    host = bge_host()
+    host.load()
+    service = app_module.Service(host, None)
+    service.bind("127.0.0.1", port)
+    serving = threading.Thread(target=service.serve_forever, daemon=True)
+    serving.start()
+    try:
+        # Avant le délai, le repli continue sans ressayer.
+        embedder.embed_query("pendant")
+        assert local.embedder.batches == [1, 1]
+        time.sleep(0.25)
+        with caplog.at_level(logging.INFO, logger="loom_ia.memory"):
+            embedder.embed_query("après")
+        assert isinstance(host.embedder, BgeLike) and host.embedder.batches == [1]
+        assert local.embedder.batches == [1, 1]
+        assert "répond de nouveau" in caplog.text
+        assert embedder.connection.served and embedder.device == "cuda:0"
+    finally:
+        service.stop()
+        serving.join(timeout=5)
+        service.close()
+
+
+def test_an_application_without_models_is_replaced_too(
+    serve: Callable[..., Running], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local = Local()
+    local.install(monkeypatch)
+    running = serve(bge_host(embedder=Unloadable()))
+    embedder = fallback_client(url(running))
+    assert len(embedder.embed_query("devis").dense) == 1024
+    assert local.embedder.batches == [1]
+
+
+@pytest.mark.parametrize(
+    ("host", "token", "error", "said"),
+    [
+        (lambda: bge_host(embedder=BgeLike(name="BAAI/autre")), None, ModelLoadError, "sert"),
+        (lambda: bge_host(embedder=Failing()), None, ModelRunError, "out of memory"),
+        (bge_host, "s3cret", ModelLoadError, "jeton"),
+    ],
+)
+def test_errors_that_are_not_an_outage_are_not_replaced(
+    serve: Callable[..., Running],
+    monkeypatch: pytest.MonkeyPatch,
+    host: Callable[[], Host],
+    token: str | None,
+    error: type[Exception],
+    said: str,
+) -> None:
+    local = Local()
+    local.install(monkeypatch)
+    embedder = fallback_client(url(serve(host(), token=token)))
+    with pytest.raises(error, match=said):
+        embedder.embed_query("devis")
+    assert local.embedder.batches == [] and local.specs == []
+
+
+def test_loading_falls_back_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    local = Local()
+    local.install(monkeypatch)
+    embedder = fallback_client(f"http://127.0.0.1:{free_port()}")
+    embedder.load()
+    assert local.loads == 1
+
+
+def test_the_reranker_falls_back_with_the_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
+    local = Local()
+    local.install(monkeypatch)
+    connection = Connection(
+        Target(f"http://127.0.0.1:{free_port()}", connect_timeout=1.0), WITH_FALLBACK
+    )
+    reranker = RemoteReranker(connection, WITH_FALLBACK)
+    passages = ["devis chauffe-eau", "rien"]
+    assert reranker.score("devis", passages) == FakeReranker().score("devis", passages)
+    assert local.reranker.batches == [2]
+
+
+def test_a_fallback_needs_the_memory_extra_at_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import loom_ia.tools_builtin.memory.tool as tool_module
+
+    def absent(_name: str) -> None:
+        return None
+
+    monkeypatch.setattr(tool_module.importlib.util, "find_spec", absent)
+    with pytest.raises(ImportError, match="torch"):
+        mounted(tmp_path, {"url": "http://127.0.0.1:8765", "fallback": {"device": "cpu"}})
+    # Sans repli, rien ne se calcule ici : l'extra n'est pas exigé.
+    mounted(tmp_path, {"url": "http://127.0.0.1:8765"})
+
+
+def test_validate_names_the_fallback_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import loom_ia.tools_builtin.memory.tool as tool_module
+
+    real = tool_module.importlib.util.find_spec
+
+    def found(name: str) -> object:
+        return object() if name in ("torch", "transformers") else real(name)
+
+    monkeypatch.setattr(tool_module.importlib.util, "find_spec", found)
+    tool = mounted(tmp_path, {"url": "http://127.0.0.1:8765", "fallback": {"device": "cuda"}})
+    assert dict(tool.settings().options)["modèles"].endswith(
+        "(loom-mem-gpu http://127.0.0.1:8765, repli : cuda)"
+    )

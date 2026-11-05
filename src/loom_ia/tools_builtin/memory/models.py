@@ -392,7 +392,7 @@ def shared_models(spec: ModelsSpec, target: Target | None = None) -> Models:
 def _shared_remote(spec: ModelsSpec, target: Target) -> Models:
     # ``target`` compte son jeton : deux clients aux jetons différents n'ont pas la même
     # connexion.
-    key = ("remote", target, spec.embedder, spec.reranker)
+    key = ("remote", target, spec.embedder, spec.reranker, spec.fallback())
     with _GUARD:
         found = _SHARED.get(key)
         if found is None:

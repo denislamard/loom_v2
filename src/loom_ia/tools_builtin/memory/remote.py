@@ -12,19 +12,28 @@ une ``Connection`` : un client HTTP et ce que l'application a dit d'elle.
   plus ``READY_WAIT`` secondes.
 - **Calcul** : une requête par lot de ``BATCH`` textes ; ``cancel`` est
   regardé entre deux lots, comme en local.
-- **Erreurs** : injoignable → ``ModelLoadError`` qui dit comment la démarrer ;
-  file pleine (503) → nouvel essai après ``Retry-After`` ; 500 →
-  ``ModelRunError``. Après une coupure, le premier contact est refait : une
-  application relancée peut ne plus être la même version.
+- **Erreurs** : injoignable → ``ServerUnavailable`` (une ``ModelLoadError``)
+  qui dit comment la démarrer ; file pleine (503) → nouvel essai après
+  ``Retry-After`` ; 500 → ``ModelRunError``. Après une coupure, le premier
+  contact est refait : une application relancée peut ne plus être la même
+  version.
+- **Repli** (``server.fallback``) : quand l'application est indisponible —
+  injoignable, encore en chargement après ``READY_WAIT``, ou sans modèles —,
+  le lot est calculé dans ce process par les modèles locaux, chargés au
+  premier repli. Une ligne d'avertissement, une seule fois ; l'application
+  est ressayée au premier lot après ``REPROBE`` secondes, et reprend la main
+  dès qu'elle répond. Un jeton refusé, des modèles qui ne sont pas les bons,
+  un calcul en échec ne se replient pas : ce sont des erreurs, pas une panne.
 
-torch n'est jamais importé : un poste sans l'extra ``memory`` calcule par
-l'application. Le client ignore les proxys de l'environnement (``trust_env``) :
+Sans repli, torch n'est jamais importé : un poste sans l'extra ``memory``
+calcule par l'application. Le client ignore les proxys de l'environnement (``trust_env``) :
 la boucle locale ne passe pas par eux.
 """
 
+import logging
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Final
 
@@ -36,8 +45,10 @@ from loom_ia.tools_builtin.memory.models import (
     Embedding,
     ModelLoadError,
     ModelRunError,
+    Models,
     checkpoint,
     first_line,
+    shared_models,
 )
 from loom_ia.tools_builtin.memory.protocol import (
     BATCH,
@@ -52,7 +63,11 @@ from loom_ia.tools_builtin.memory.protocol import (
 )
 from loom_ia.tools_builtin.memory_params import ModelsSpec
 
+log = logging.getLogger("loom_ia.memory")
+
 APP: Final = "loom-mem-gpu"
+# Après un repli, l'application est ressayée au premier lot passé ce délai, en secondes.
+REPROBE: Final = 30.0
 # Attente d'une application en cours de chargement, en secondes, et pas de la sonde.
 READY_WAIT: Final = 60.0
 READY_POLL: Final = 1.0
@@ -76,6 +91,13 @@ class _Unreachable(Exception):
     """L'application ne répond pas (connexion refusée, délai, coupure)."""
 
 
+class ServerUnavailable(ModelLoadError):
+    """L'application ne peut pas calculer : injoignable, en chargement trop long, sans modèles.
+
+    Le seul cas qui déclenche le repli.
+    """
+
+
 class Connection:
     """Le client HTTP de l'application et ce qu'elle a dit d'elle, partagés par les deux modèles."""
 
@@ -85,12 +107,49 @@ class Connection:
         self._lock = threading.Lock()
         self._client: httpx2.Client | None = None
         self._health: Health | None = None
+        # Le repli : ses modèles (construits au premier repli), et jusqu'à quand l'application
+        # est tenue pour absente (``None`` : elle calcule).
+        self._fallback = spec.fallback()
+        self._local: Models | None = None
+        self._down_until: float | None = None
 
     @property
     def device(self) -> str | None:
-        """Le device annoncé au dernier contact ; ``None`` avant."""
-        health = self._health
-        return None if health is None else health.device
+        """Où calcule le prochain lot : le device annoncé par l'application, ou celui du repli."""
+        if self.served:
+            health = self._health
+            return None if health is None else health.device
+        return None if self._local is None else self._local.embedder.device
+
+    @property
+    def served(self) -> bool:
+        """Vrai si le prochain lot ira à l'application (pas de repli en cours)."""
+        with self._lock:
+            return self._down_until is None or time.monotonic() >= self._down_until
+
+    @property
+    def local(self) -> Models:
+        """Les modèles du repli ; ``ValueError`` sans ``server.fallback``."""
+        if self._fallback is None:
+            raise ValueError("models.server : pas de repli (server.fallback)")
+        with self._lock:
+            if self._local is None:
+                self._local = shared_models(self._fallback)
+            return self._local
+
+    def run[R](self, remote: Callable[[], R], local: Callable[[Models], R]) -> R:
+        """Un lot : par l'application, ou dans ce process quand elle est indisponible."""
+        if self._fallback is None:
+            return remote()
+        if not self.served:
+            return local(self.local)
+        try:
+            found = remote()
+        except ServerUnavailable as exc:
+            self._went_down(exc)
+            return local(self.local)
+        self._came_back()
+        return found
 
     def ensure(self, cancel: threading.Event | None = None) -> Health:
         """Le premier contact, fait une fois : l'application est-elle celle qu'on attend ?"""
@@ -104,11 +163,11 @@ class Connection:
             if found.state == "ready":
                 break
             if found.state == "failed":
-                raise ModelLoadError(
+                raise ServerUnavailable(
                     f"{APP} ({self.target.url}) n'a pas chargé ses modèles : {found.error}"
                 )
             if time.monotonic() >= deadline:
-                raise ModelLoadError(
+                raise ServerUnavailable(
                     f"{APP} ({self.target.url}) charge encore ses modèles après "
                     f"{READY_WAIT:.0f} s : réessayer, ou lire son journal "
                     "(journalctl --user -u loom-mem-gpu)"
@@ -163,6 +222,28 @@ class Connection:
                 self._client = None
 
     # --- Interne ---------------------------------------------------------------------
+
+    def _went_down(self, exc: ServerUnavailable) -> None:
+        with self._lock:
+            first = self._down_until is None
+            self._down_until = time.monotonic() + REPROBE
+        if first:
+            fallback = self._fallback
+            assert fallback is not None
+            log.warning(
+                "%s ; calcul dans ce process (device %s) — %s ressayée dans %.0f s",
+                exc,
+                fallback.device,
+                APP,
+                REPROBE,
+            )
+
+    def _came_back(self) -> None:
+        with self._lock:
+            back = self._down_until is not None
+            self._down_until = None
+        if back:
+            log.info("%s (%s) répond de nouveau : les calculs y retournent", APP, self.target.url)
 
     def _fetch_health(self) -> Health:
         try:
@@ -222,10 +303,11 @@ class Connection:
                 )
             return self._client
 
-    def _unreachable(self, exc: Exception) -> ModelLoadError:
-        return ModelLoadError(
+    def _unreachable(self, exc: Exception) -> ServerUnavailable:
+        return ServerUnavailable(
             f"{APP} injoignable ({self.target.url} : {exc}) : le démarrer "
-            f"(systemctl --user start {APP}, ou « {APP} » dans un terminal)"
+            f"(systemctl --user start {APP}, ou « {APP} » dans un terminal), ou ajouter "
+            "models.server.fallback pour calculer dans loom"
         )
 
 
@@ -277,7 +359,7 @@ class RemoteEmbedder:
         return self.connection.device
 
     def load(self) -> None:
-        self.connection.ensure()
+        self.connection.run(self.connection.ensure, lambda local: local.embedder.load())
 
     def embed_documents(
         self, texts: Sequence[str], cancel: threading.Event | None = None
@@ -285,13 +367,21 @@ class RemoteEmbedder:
         found: list[Embedding] = []
         for batch in _batches(list(texts)):
             checkpoint(cancel)
-            answer = self.connection.post(
-                "/v1/embed", EmbedRequest(texts=list(batch)), EmbedResponse, cancel
+            found.extend(
+                self.connection.run(
+                    lambda batch=batch: self._remote(batch, cancel),
+                    lambda local, batch=batch: local.embedder.embed_documents(batch, cancel),
+                )
             )
-            if len(answer.items) != len(batch):
-                raise ModelRunError(f"{APP} : {len(answer.items)} vecteurs pour {len(batch)}")
-            found.extend(_decoded(answer))
         return found
+
+    def _remote(self, batch: Sequence[str], cancel: threading.Event | None) -> list[Embedding]:
+        answer = self.connection.post(
+            "/v1/embed", EmbedRequest(texts=list(batch)), EmbedResponse, cancel
+        )
+        if len(answer.items) != len(batch):
+            raise ModelRunError(f"{APP} : {len(answer.items)} vecteurs pour {len(batch)}")
+        return _decoded(answer)
 
     def embed_query(self, text: str, cancel: threading.Event | None = None) -> Embedding:
         return self.embed_documents([text], cancel)[0]
@@ -313,7 +403,7 @@ class RemoteReranker:
         return self.connection.device
 
     def load(self) -> None:
-        self.connection.ensure()
+        self.connection.run(self.connection.ensure, lambda local: local.reranker.load())
 
     def score(
         self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
@@ -321,16 +411,23 @@ class RemoteReranker:
         found: list[float] = []
         for batch in _batches(list(passages)):
             checkpoint(cancel)
-            answer = self.connection.post(
-                "/v1/score",
-                ScoreRequest(query=query, passages=list(batch)),
-                ScoreResponse,
-                cancel,
+            found.extend(
+                self.connection.run(
+                    lambda batch=batch: self._remote(query, batch, cancel),
+                    lambda local, batch=batch: local.reranker.score(query, batch, cancel),
+                )
             )
-            if len(answer.scores) != len(batch):
-                raise ModelRunError(f"{APP} : {len(answer.scores)} scores pour {len(batch)}")
-            found.extend(answer.scores)
         return found
+
+    def _remote(
+        self, query: str, batch: Sequence[str], cancel: threading.Event | None
+    ) -> list[float]:
+        answer = self.connection.post(
+            "/v1/score", ScoreRequest(query=query, passages=list(batch)), ScoreResponse, cancel
+        )
+        if len(answer.scores) != len(batch):
+            raise ModelRunError(f"{APP} : {len(answer.scores)} scores pour {len(batch)}")
+        return answer.scores
 
 
 def _decoded(answer: EmbedResponse) -> list[Embedding]:

@@ -169,6 +169,20 @@ def server_url_problem(url: str) -> str | None:
     return None
 
 
+_DEVICE_PATTERN: Final = r"^(auto|cpu|mps|cuda(:[0-9]+)?)$"
+
+
+class FallbackSpec(BaseModel):
+    """Le repli dans loom quand ``loom-mem-gpu`` ne répond pas : où calculer, et comment."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # Mêmes valeurs et mêmes défauts que dans ``models``.
+    device: str = Field(default="auto", pattern=_DEVICE_PATTERN)
+    fp16: bool = True
+    offline: bool = False
+
+
 class ServerSpec(BaseModel):
     """``loom-mem-gpu`` : l'application qui garde les modèles en VRAM et calcule pour loom."""
 
@@ -182,6 +196,9 @@ class ServerSpec(BaseModel):
     # Secondes : une application arrêtée ne bloque pas chaque appel ; un lot, au plus.
     connect_timeout: PositiveFloat = 2.0
     read_timeout: PositiveFloat = 60.0
+    # Calcul dans ce process quand l'application ne répond pas ; absent : pas de repli, une
+    # erreur qui dit comment la démarrer.
+    fallback: FallbackSpec | None = None
 
     @model_validator(mode="after")
     def _check(self) -> Self:
@@ -212,7 +229,7 @@ class ModelsSpec(BaseModel):
     embedder: str = Field(default="BAAI/bge-m3", min_length=1)
     reranker: str = Field(default="BAAI/bge-reranker-v2-m3", min_length=1)
     # ``auto`` : cuda si la carte est prise en charge, sinon mps, sinon cpu.
-    device: str = Field(default="auto", pattern=r"^(auto|cpu|mps|cuda(:[0-9]+)?)$")
+    device: str = Field(default="auto", pattern=_DEVICE_PATTERN)
     # Demi-précision sur GPU ; sans effet sur CPU, qui calcule en float32.
     fp16: bool = True
     # Charger les modèles en tâche de fond dès le montage de l'agent, au lieu du premier appel.
@@ -234,7 +251,7 @@ class ModelsSpec(BaseModel):
         if given:
             raise ValueError(
                 f"models : avec server, {', '.join(given)} se règle(nt) sur loom-mem-gpu "
-                "(ses options), pas ici"
+                "(ses options) ; pour le repli dans loom, les mettre dans server.fallback"
             )
         if "preload" in self.model_fields_set:
             raise ValueError(
@@ -242,6 +259,20 @@ class ModelsSpec(BaseModel):
                 "démarrage ; preload ne sert qu'au calcul dans loom"
             )
         return self
+
+    def fallback(self) -> ModelsSpec | None:
+        """Les modèles du repli dans loom, réglés par ``server.fallback`` ; ``None`` sans repli."""
+        if self.server is None or self.server.fallback is None:
+            return None
+        found = self.server.fallback
+        return ModelsSpec(
+            kind=self.kind,
+            embedder=self.embedder,
+            reranker=self.reranker,
+            device=found.device,
+            fp16=found.fp16,
+            offline=found.offline,
+        )
 
 
 class RetrievalSpec(BaseModel):

@@ -55,7 +55,7 @@ from loom_ia.tools_builtin.memory.files import (
     unreadable,
 )
 from loom_ia.tools_builtin.memory.models import shared_models
-from loom_ia.tools_builtin.memory.remote import APP, Target
+from loom_ia.tools_builtin.memory.remote import APP, RemoteEmbedder, Target
 from loom_ia.tools_builtin.memory.service import (
     MIN_TITLE_CHARS,
     Extracted,
@@ -281,7 +281,9 @@ class MemoryTool:
         if rate is None:
             return None
         seconds = passages * rate
-        where = device if self.target is None else f"{device} ({APP})"
+        embedder = self.service.models.embedder
+        served = isinstance(embedder, RemoteEmbedder) and embedder.connection.served
+        where = f"{device} ({APP})" if served else device
         if seconds < 1:
             return f"moins d'une seconde de calcul sur {where}"
         if seconds < 90:
@@ -421,7 +423,8 @@ class MemoryTool:
         elif models.server is not None:
             server = models.server
             where = server.url if server.url is not None else f"${server.url_env}"
-            described = f"{models.embedder} + {models.reranker} ({APP} {where}, repli : aucun)"
+            fallback = "aucun" if server.fallback is None else server.fallback.device
+            described = f"{models.embedder} + {models.reranker} ({APP} {where}, repli : {fallback})"
         else:
             described = f"{models.embedder} + {models.reranker} ({models.device})"
         options = [("modèles", described)]
@@ -438,8 +441,9 @@ def build(params: BaseModel, context: BuiltinContext) -> MemoryTool:
     if not isinstance(params, MemoryParams):
         raise TypeError(f"paramètres de {NAME} attendus, reçu {type(params).__name__}")
     target = _server_target(params.models.server, context)
-    # Avec loom-mem-gpu, rien ne se calcule ici : ni torch ni transformers.
-    if params.models.kind == "bge-m3" and target is None:
+    # Avec loom-mem-gpu sans repli, rien ne se calcule ici : ni torch ni transformers.
+    local = target is None or params.models.fallback() is not None
+    if params.models.kind == "bge-m3" and local:
         for module in ("torch", "transformers"):
             if importlib.util.find_spec(module) is None:
                 # Le montage nomme l'extra qui l'apporte (``Builtin.extra``).
