@@ -10,6 +10,7 @@ une approbation, et c'est ce qu'il faut pour éprouver les chemins d'un run qui
 s'arrête en attendant un humain (J4.5).
 """
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -69,12 +70,27 @@ OWNER: dict[str, Any] = {"id": "owner", "permissions": EVERYTHING}
 DEV = "dev"
 
 
+# Fichier des refus (D-9), relatif au dossier de la config : celui de l'essai.
+AUDIT_FILE = "audit.jsonl"
+
+
 # Le même bloc, à écrire tel quel dans un loom.yaml rédigé à la main.
 SECURITY_YAML = (
     "security:\n"
     f"  roles: [{{id: owner, permissions: [{', '.join(EVERYTHING)}]}}]\n"
     f"  users: [{{id: {DEV}, roles: [owner]}}]\n"
+    f"  audit: {{path: {AUDIT_FILE}}}\n"
 )
+
+
+def audited(config: Path) -> list[dict[str, str]]:
+    """Les lignes du fichier d'audit d'une config écrite par ``secured`` (D-9), sans leur heure."""
+    path = config.parent / AUDIT_FILE
+    if not path.exists():
+        return []
+    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert all(isinstance(line.pop("ts"), str) for line in lines)
+    return lines
 
 
 def secured(config: dict[str, Any]) -> dict[str, Any]:
@@ -82,7 +98,8 @@ def secured(config: dict[str, Any]) -> dict[str, Any]:
 
     Ce que la config déclare déjà est gardé. Sans ``roles``, le rôle ``owner`` ;
     sans ``users``, un utilisateur par client déclaré (de même identifiant, dans
-    ce client), ou ``dev`` quand la config n'en nomme aucun.
+    ce client), ou ``dev`` quand la config n'en nomme aucun ; sans ``audit``,
+    ``audit.jsonl`` à côté de la config.
 
     Une API REST sans clé agit au nom de ``dev`` (``server.http.user``, D-1b)
     quand c'est permis : sans client déclaré, sans MCP HTTP, sur la boucle
@@ -91,6 +108,7 @@ def secured(config: dict[str, Any]) -> dict[str, Any]:
     """
     security: dict[str, Any] = dict(config.get("security") or {})
     security.setdefault("roles", [OWNER])
+    security.setdefault("audit", {"path": AUDIT_FILE})
     declared: list[dict[str, Any]] = config.get("tenants") or []
     tenants: list[str] = [tenant["id"] for tenant in declared]
     security.setdefault(

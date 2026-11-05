@@ -778,6 +778,8 @@ def _config(args: argparse.Namespace, path: Path | None = None) -> LoomConfig:
     report = DISABLED if args.no_env_file else load_env_file(given, env_file=args.env_file)
     args.env_report = report
     config = load_config(given, profile=args.profile)
+    # Les refus de la commande s'écrivent au fichier d'audit de cette config (D-9).
+    audit.writing_to(config)
     if config.strict and (warning := report.prod_warning()) is not None:
         print(f"Avertissement : {warning}", file=sys.stderr)
     return config
@@ -1129,6 +1131,13 @@ def _access(report: _Report, config: LoomConfig) -> None:
     section.add("Rôles", first, more)
     first, *more = _user_lines(config)
     section.add("Comptes", first, more)
+    if security.audit is not None:
+        kept = security.audit.retention_days
+        section.add(
+            "Refus",
+            f"{report.shown(security.audit.path)} · "
+            + (f"lignes effacées après {kept} jour(s)" if kept else "aucune rétention"),
+        )
     keys = [key.id for key in security.api_keys]
     if keys:
         first, *more = _packed(keys, _LISTED)
@@ -3026,6 +3035,12 @@ def cmd_retention(args: argparse.Namespace) -> int:
         f"{len(report.swept)} session(s) {faites}, {report.events} événement(s) ; "
         f"{report.kept} gardée(s) sur {report.scanned} regardée(s)."
     )
+    if report.audit is not None:
+        lignes = "seraient effacées" if report.dry_run else "effacées"
+        print(
+            f"Audit : {report.audit.days} jour(s) — {report.audit.removed} ligne(s) {lignes} "
+            f"sur {report.audit.scanned}."
+        )
     if report.dry_run:
         print("Essai à blanc : rien n'a été supprimé. Ajouter --yes pour effacer.")
     return OK

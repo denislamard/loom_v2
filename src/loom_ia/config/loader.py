@@ -115,6 +115,7 @@ def load_config(path: str | Path, *, profile: str | None = None) -> LoomConfig:
             "storage": _absolute_storage(config.storage, base_dir),
             "sessions": _absolute_sessions(config, base_dir / config.prompts_dir, source=root),
             "server": _absolute_server(config, base_dir),
+            "security": _absolute_security(config, base_dir),
             "mcp_servers": tuple(_launched_from(server, base_dir) for server in servers),
             "tool_sources": sources,
             "tenants": tuple(_absolute_tenant(tenant, base_dir) for tenant in config.tenants),
@@ -484,6 +485,16 @@ def _absolute_storage(storage: StorageConfig, base_dir: Path) -> StorageConfig:
             update={"path": base_dir / storage.idempotency.path}
         )
     return storage.model_copy(update=update) if update else storage
+
+
+def _absolute_security(config: LoomConfig, base_dir: Path) -> object:
+    """Fichier des refus d'accès, rapporté au dossier de la config."""
+    audit = config.security.audit
+    if audit is None:
+        return config.security
+    return config.security.model_copy(
+        update={"audit": audit.model_copy(update={"path": base_dir / audit.path})}
+    )
 
 
 def _absolute_server(config: LoomConfig, base_dir: Path) -> object:

@@ -5,12 +5,13 @@ from loom_ia.config.env_file import EnvFileReport, load_env_file
 from loom_ia.config.errors import ConfigError
 from loom_ia.config.keys import fingerprint, new_api_key
 from loom_ia.config.loader import load_config
-from loom_ia.config.models import ApiKey, LoomConfig, SecurityConfig, TenantSpec
+from loom_ia.config.models import ApiKey, AuditConfig, LoomConfig, SecurityConfig, TenantSpec
 from loom_ia.config.references import Registry, import_modules, resolve
 from loom_ia.config.schema import agent_json_schema, config_json_schema
 
 __all__ = [
     "ApiKey",
+    "AuditConfig",
     "ConfigError",
     "EnvFileReport",
     "LoomConfig",

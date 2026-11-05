@@ -21,6 +21,7 @@ from conftest import (
     OWNER,
     QUESTION,
     ConfigFactory,
+    audited,
     demo_agent,
 )
 
@@ -710,6 +711,8 @@ def test_a_refusal_in_the_cli_is_said_once_and_written_once(
     )
     assert (personne["access"], personne["action"]) == ("cli", "approve")
     assert "user" not in personne and personne["reason"].startswith("Au nom de qui ?")
+    # Ce qui en reste après la commande : le fichier d'audit de la config.
+    assert audited(Path(path)) == [droits, personne]
 
 
 def test_a_command_without_user_says_how_to_name_one(

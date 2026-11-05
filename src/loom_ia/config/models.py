@@ -798,27 +798,47 @@ class ApiKey(DomainModel):
         return not self.agents or agent in self.agents
 
 
+class AuditConfig(DomainModel):
+    """Le fichier où chaque refus d'accès est écrit (D-9, ``access/audit.py``).
+
+    Une ligne JSON par refus, ajoutée par tous les accès — SDK, REST, MCP,
+    CLI — de tous les processus qui partagent la config. ``path`` est relatif
+    au fichier de config. ``retention_days`` borne l'âge des lignes, que
+    ``loom retention`` efface au-delà ; ``null`` (le défaut) les garde toutes.
+    """
+
+    path: Path
+    retention_days: PositiveInt | None = None
+
+
+# Le bloc d'audit que les messages de config donnent à recopier (D-9).
+MINIMAL_AUDIT: Final = """  audit:
+    path: data/audit.jsonl"""
+
 # Ce que le message d'une config sans rôle ni utilisateur donne à recopier (D-1).
-MINIMAL_SECURITY: Final = """security:
+MINIMAL_SECURITY: Final = f"""security:
   roles:
     - id: owner
       permissions: [run, answer, cancel, approve, self_approve, amend, read, read_content, admin]
   users:
     - id: <votre identifiant>
-      roles: [owner]"""
+      roles: [owner]
+{MINIMAL_AUDIT}"""
 
 
 class SecurityConfig(DomainModel):
     """Qui agit sur loom, et ce que chacun peut faire (D-1 à D-5).
 
-    Au moins un rôle et un utilisateur sont exigés (D-1) : le contrôle est
-    fait par ``LoomConfig.check``, pour que le message donne la config
-    minimale plutôt que l'erreur générique d'une liste vide.
+    Au moins un rôle et un utilisateur sont exigés (D-1), et le fichier des
+    refus (D-9) : le contrôle est fait par ``LoomConfig.check``, pour que le
+    message donne la config minimale plutôt que l'erreur générique d'un champ
+    manquant.
     """
 
     roles: tuple[AccessRole, ...] = ()
     users: tuple[UserSpec, ...] = ()
     api_keys: tuple[ApiKey, ...] = ()
+    audit: AuditConfig | None = None
 
     def role(self, role_id: str) -> AccessRole:
         """Rôle d'accès déclaré, par son identifiant."""
@@ -1193,6 +1213,7 @@ class LoomConfig(DomainModel):
                 f"Aucun {missing} : loom exige au moins un rôle d'accès et un utilisateur. "
                 f"Configuration minimale :\n{MINIMAL_SECURITY}"
             )
+        self._check_audit(security.audit)
         _reject_doubles("Rôle d'accès", [role.id for role in security.roles])
         _reject_doubles("Utilisateur", [user.id for user in security.users])
         _reject_doubles("Clé", [key.id for key in security.api_keys])
@@ -1252,6 +1273,28 @@ class LoomConfig(DomainModel):
                             f"{label} : le rôle {role_id!r} est borné à d'autres agents "
                             f"({', '.join(role.agents)})"
                         )
+
+    def _check_audit(self, audit: AuditConfig | None) -> None:
+        """Le fichier des refus : obligatoire, et hors des dossiers de clients du journal."""
+        if audit is None:
+            raise ValueError(
+                "Aucun security.audit : loom exige le fichier où il écrit les refus d'accès. "
+                f"Par exemple, sous security :\n{MINIMAL_AUDIT}"
+            )
+        journals = [self.storage.events] + [
+            tenant.storage.events for tenant in self.tenants if tenant.storage is not None
+        ]
+        for events in journals:
+            if events.backend != "jsonl" or events.path is None:
+                continue
+            # Un ``.jsonl`` dans le dossier d'un client s'y lirait comme une session.
+            folder = audit.path.parent
+            if folder != events.path and folder.parent == events.path:
+                raise ValueError(
+                    f"security.audit.path ({audit.path}) est dans le dossier d'un client du "
+                    f"journal ({folder}) : il s'y lirait comme "
+                    f"une session — le mettre ailleurs, par exemple {events.path / 'audit.jsonl'}"
+                )
 
     def _check_local_user(self, users: set[str]) -> None:
         """``server.http.user`` : une instance locale, sans clé, hors production (D-1b)."""

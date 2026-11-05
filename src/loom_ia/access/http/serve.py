@@ -276,6 +276,10 @@ def watched(config: LoomConfig, env_file: Path | None = None) -> Watched:
         written_dirs, written_files = _written(storage)
         dirs += [d for d in written_dirs if d not in dirs]
         files += [f for f in written_files if f not in files]
+    audit = config.security.audit
+    if audit is not None and audit.path not in files:
+        # Le fichier des refus (D-9) : un refus écrit ne doit pas relancer le service.
+        files.append(audit.path)
     for folder in dirs:
         for root in roots:
             if root.is_relative_to(folder):

@@ -258,10 +258,12 @@ def ecrit_config(dossier: Path, source: dict[str, Any], *, reel: bool = False) -
     }
     config: dict[str, Any] = {
         "version": 1,
-        # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur.
+        # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur ;
+        # où s'écrivent les refus d'accès (D-9).
         "security": {
             "roles": [{"id": "owner", "permissions": TOUTES}],
             "users": [{"id": "dev", "roles": ["owner"]}],
+            "audit": {"path": "data/audit.jsonl"},
         },
         "models": [m3.model_dump(mode="json", exclude_defaults=True) if reel else simule],
         "tool_sources": [source],

@@ -228,10 +228,12 @@ def _minuscule(dossier: Path) -> Path:
     (dossier / "agents" / "demo.yaml").write_text(yaml.safe_dump(agent), encoding="utf-8")
     config: dict[str, Any] = {
         "version": 1,
-        # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur.
+        # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur ;
+        # où s'écrivent les refus d'accès (D-9).
         "security": {
             "roles": [{"id": "owner", "permissions": TOUTES}],
             "users": [{"id": "dev", "roles": ["owner"]}],
+            "audit": {"path": "data/audit.jsonl"},
         },
         "imports": ["outils_un", "outils_deux"],
         "models": [{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": []}}],

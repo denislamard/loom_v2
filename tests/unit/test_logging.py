@@ -96,7 +96,10 @@ def test_json_format_is_one_object_per_line() -> None:
 
 
 def test_a_refusal_keeps_its_detail_in_both_formats() -> None:
-    """Le journal d'audit (D-9) : le détail sous ``audit`` en json, dans le message en console."""
+    """Le journal d'audit (D-9) : le détail sous ``audit`` en json, en fin de ligne en console.
+
+    Il ne s'y écrit qu'une fois : ni le message json, ni la ligne console ne le répètent.
+    """
     stream = io.StringIO()
     configure_logging(format="json", stream=stream)
     denied("Clé d'API refusée", access="rest", tenant="default", run_id="r-7", permission="approve")
@@ -110,11 +113,15 @@ def test_a_refusal_keeps_its_detail_in_both_formats() -> None:
         "reason": "Clé d'API refusée",
     }
     assert (payload["tenant_id"], payload["run_id"]) == ("default", "r-7")
+    assert payload["message"] == "Accès refusé — Clé d'API refusée"
 
     stream = io.StringIO()
     configure_logging(format="console", stream=stream)
-    denied("Clé d'API refusée", access="mcp", key="crm")
-    assert "Accès refusé — Clé d'API refusée [access=mcp key=crm]" in stream.getvalue()
+    denied("Clé d'API refusée", access="mcp", key="crm", tenant="default", run_id="r-7")
+    [line] = stream.getvalue().splitlines()
+    assert line.endswith(
+        "Accès refusé — Clé d'API refusée [access=mcp key=crm tenant_id=default run_id=r-7]"
+    )
 
 
 def test_json_format_includes_exception() -> None:

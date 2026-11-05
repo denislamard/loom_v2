@@ -331,7 +331,7 @@ Budgets par défaut de tous les agents. Le même bloc sert dans `tenants[].budge
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `logging.level` | Niveau des logs techniques (distincts du journal) ; vaut aussi pour ceux du SDK OpenTelemetry (logger `opentelemetry`), affichés dans le même format. Les refus d'accès sont écrits en WARNING sur le logger `loom_ia.access.audit` : au-dessus de `WARNING`, ils ne le sont plus. | niveau `logging` (`DEBUG`, `INFO`, `WARNING`, `ERROR`…) | `INFO` | `logging: {level: WARNING}` |
+| `logging.level` | Niveau des logs techniques (distincts du journal) ; vaut aussi pour ceux du SDK OpenTelemetry (logger `opentelemetry`), affichés dans le même format. Les refus d'accès sont écrits en WARNING sur le logger `loom_ia.access.audit` : au-dessus de `WARNING`, ils ne le sont plus là, mais toujours dans `security.audit.path`. | niveau `logging` (`DEBUG`, `INFO`, `WARNING`, `ERROR`…) | `INFO` | `logging: {level: WARNING}` |
 | `logging.format` | Format des logs. | `console`, `json` | `console` | |
 | `capture.exports` | Ce qui part vers les collecteurs : l'enveloppe seule (`metadata`), ou aussi le contenu masqué (`content`, refusé sans `exporters`). Le journal garde tout, toujours. | `metadata`, `content` | `metadata` | |
 | `capture.raw_exchanges` | Écrit au journal chaque échange HTTP avec le fournisseur (`model.exchanged`) : débogage, vérification du prompt envoyé. | booléen | `false` | `capture: {raw_exchanges: true}` |
@@ -373,7 +373,7 @@ Sans cette liste, seul le client `default` existe ; avec elle, la liste est ferm
 
 ## `security`
 
-**Obligatoire** : au moins un rôle d'accès et un utilisateur. Sans eux, le chargement s'arrête et le message donne la configuration minimale à recopier. Toute action (lancer, répondre, arrêter, approuver, lire) est faite au nom d'un utilisateur déclaré ; c'est lui qui signe au journal, et son client est celui du run.
+**Obligatoire** : au moins un rôle d'accès, un utilisateur, et le fichier des refus (`audit.path`). Sans eux, le chargement s'arrête et le message donne le bloc à recopier. Toute action (lancer, répondre, arrêter, approuver, lire) est faite au nom d'un utilisateur déclaré ; c'est lui qui signe au journal, et son client est celui du run.
 
 ```yaml
 security:
@@ -383,6 +383,8 @@ security:
   users:
     - id: denis
       roles: [owner]
+  audit:
+    path: data/audit.jsonl
 ```
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
@@ -406,8 +408,16 @@ security:
 | `api_keys[].agents` | Agents accessibles à cette clé ; restreint aussi. | liste | `[]` : tous | `agents: [relance]` |
 | `api_keys[].rate_limit.per_minute` | Requêtes par minute (REST et MCP HTTP) ; au-delà, 429. | entier > 0 | bloc absent : aucune limite | `rate_limit: {per_minute: 60}` |
 | `api_keys[].expires` | Fin de validité ; une clé expirée est refusée à l'appel. | date-heure avec fuseau | `null` : ne périme pas | `expires: 2027-01-01T00:00:00Z` |
+| `audit.path` | Fichier où chaque refus d'accès est ajouté, une ligne JSON par refus, par tous les accès (SDK, REST, MCP, CLI) et tous les processus de la config, quel que soit `telemetry.logging.level`. Relatif au fichier de config ; refusé dans le dossier d'un client d'un journal `jsonl`, où il se lirait comme une session. | chemin | **obligatoire** | `audit: {path: data/audit.jsonl}` |
+| `audit.retention_days` | Âge au-delà duquel `loom retention --yes` efface les lignes du fichier (un balayage de tous les clients ; `--tenant` n'y touche pas). | entier > 0, `null` | `null` : tout est gardé | `audit: {path: data/audit.jsonl, retention_days: 365}` |
 
 `api_keys[].tenant` n'existe plus (2.0.17) : le client vient de l'utilisateur.
+
+**Le fichier des refus** (`audit.path`) : une ligne par refus — `ts` (UTC), puis ce qui est connu parmi `access` (`sdk`, `rest`, `mcp`, `cli`), `action`, `user`, `via`, `key` (son id, jamais son secret), `permission`, `agent`, `tenant_id`, `run_id`, `call_id`, et `reason`, le message dit à l'appelant. Les actions réussies n'y sont pas : elles sont au journal de session. Le fichier s'écrit sous verrou `flock` ; s'il ne peut pas l'être, le refus reste ce qu'il est et une ligne ERROR le dit.
+
+```json
+{"ts": "2026-11-05T10:21:22.410+00:00", "access": "cli", "action": "approve", "user": "marie", "permission": "approve", "agent": "agent", "tenant_id": "default", "run_id": "01a1ab39-…", "call_id": "toolu_01Fd…", "reason": "marie ne peut pas trancher la demande word de l'agent agent : aucun de ses rôles (assistante) n'a 'approve' sur cet agent"}
+```
 
 **Permissions** (liste fermée) :
 

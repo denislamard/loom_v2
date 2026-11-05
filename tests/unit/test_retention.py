@@ -403,3 +403,84 @@ def _vieillie(tmp_path: Path, session: SessionId, *, tenant: TenantId = DEFAULT_
         for seq, draft in enumerate(scribe.take(), start=1)
     ]
     (root / f"{session}.jsonl").write_text("\n".join(lignes) + "\n", encoding="utf-8")
+
+
+# --- Le fichier d'audit (D-9) ---------------------------------------------------
+
+
+def refus(jours: int, user: str = "lucie") -> str:
+    """Une ligne du fichier d'audit, écrite il y a ``jours`` jours."""
+    ts = (datetime.now(UTC) - timedelta(days=jours)).isoformat(timespec="milliseconds")
+    return json.dumps({"ts": ts, "access": "cli", "action": "run", "user": user, "reason": "x"})
+
+
+def audit(days: int | None = 30) -> dict[str, Any]:
+    """``security.audit`` à côté de la config, borné à ``days`` jours."""
+    return {"audit": {"path": "audit.jsonl", "retention_days": days}}
+
+
+async def test_the_audit_file_keeps_what_is_younger_than_its_bound(
+    demo: ConfigFactory, tmp_path: Path
+) -> None:
+    config = load_config(demo(storage=journal(tmp_path), security=audit()))
+    lignes = [refus(90, "vieux"), "pas du json", refus(1, "recent")]
+    (tmp_path / "audit.jsonl").write_text("\n".join(lignes) + "\n", encoding="utf-8")
+    async with Loom(config) as loom:
+        essai = await loom.apply_retention()
+        assert essai.audit is not None
+        assert (essai.audit.days, essai.audit.scanned, essai.audit.removed) == (30, 3, 1)
+        assert len((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()) == 3
+        fait = await loom.apply_retention(dry_run=False)
+    assert fait.audit is not None and fait.audit.removed == 1
+    # Une ligne qui ne se date pas reste : on n'efface pas ce qu'on ne sait pas dater.
+    assert (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines() == lignes[1:]
+
+
+async def test_without_a_bound_the_audit_file_is_not_read(
+    demo: ConfigFactory, tmp_path: Path
+) -> None:
+    config = load_config(demo(storage=journal(tmp_path), security=audit(days=None)))
+    (tmp_path / "audit.jsonl").write_text(refus(900) + "\n", encoding="utf-8")
+    async with Loom(config) as loom:
+        report = await loom.apply_retention(dry_run=False)
+    assert report.audit is None
+    assert len((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()) == 1
+
+
+async def test_a_sweep_of_one_client_leaves_the_audit_file(
+    demo: ConfigFactory, tmp_path: Path
+) -> None:
+    """Le fichier mêle tous les clients : balayer l'un d'eux n'y touche pas."""
+    config = load_config(demo(storage=journal(tmp_path), security=audit(), tenants=deux_clients()))
+    (tmp_path / "audit.jsonl").write_text(refus(90) + "\n", encoding="utf-8")
+    async with Loom(config) as loom:
+        report = await loom.apply_retention(tenant_id=MARTIN, dry_run=False)
+    assert report.audit is None
+    assert len((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()) == 1
+
+
+async def test_a_missing_audit_file_is_swept_as_empty(demo: ConfigFactory, tmp_path: Path) -> None:
+    config = load_config(demo(storage=journal(tmp_path), security=audit()))
+    async with Loom(config) as loom:
+        report = await loom.apply_retention(dry_run=False)
+    assert report.audit is not None and (report.audit.scanned, report.audit.removed) == (0, 0)
+    assert not (tmp_path / "audit.jsonl").exists()
+
+
+def test_the_command_says_what_goes_from_the_audit_file(
+    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = demo(storage=journal(tmp_path), security=audit())
+    (tmp_path / "audit.jsonl").write_text(refus(90) + "\n" + refus(1) + "\n", encoding="utf-8")
+    assert main(["--config", str(path), "retention"]) == 0
+    assert "Audit : 30 jour(s) — 1 ligne(s) seraient effacées sur 2." in capsys.readouterr().out
+    assert main(["--config", str(path), "retention", "--yes"]) == 0
+    assert "Audit : 30 jour(s) — 1 ligne(s) effacées sur 2." in capsys.readouterr().out
+    assert len((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_a_bound_of_zero_days_for_the_audit_file_is_refused(
+    demo: ConfigFactory, tmp_path: Path
+) -> None:
+    with pytest.raises(ConfigError, match=r"security\.audit\.retention_days"):
+        load_config(demo(security=audit(days=0)))

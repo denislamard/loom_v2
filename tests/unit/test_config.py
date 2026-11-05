@@ -34,7 +34,7 @@ from loom_ia.config import (
     load_config,
     resolve,
 )
-from loom_ia.config.models import AccessRole, SecurityConfig, UserSpec
+from loom_ia.config.models import AccessRole, AuditConfig, SecurityConfig, UserSpec
 from loom_ia.core.events import ModelExchanged, ToolCompleted
 from loom_ia.core.model import SessionId, state_size
 from loom_ia.core.projections import session_state
@@ -128,6 +128,7 @@ def test_config_can_be_written_in_python() -> None:
         security=SecurityConfig(
             roles=(AccessRole(id="owner", permissions=("run", "read")),),
             users=(UserSpec(id="dev", roles=("owner",)),),
+            audit=AuditConfig(path=Path("audit.jsonl")),
         ),
     )
     assert config.agents[0].main.system == "Tu calcules."

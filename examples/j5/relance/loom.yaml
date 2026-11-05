@@ -209,3 +209,6 @@ security:
     - id: martin-chauffage
       roles: [owner]
       tenant: martin-chauffage
+  # Chaque refus d'accès y est écrit, une ligne JSON par refus (D-9).
+  audit:
+    path: data/audit.jsonl   # ignoré par git

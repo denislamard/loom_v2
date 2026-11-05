@@ -12,6 +12,7 @@ stockage — un run ne se rejoue pas sans ce que le modèle a lu et répondu.
 """
 
 import json
+import logging
 import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -20,9 +21,20 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import ANSWER, DEV, EVERYTHING, OWNER, QUESTION, ConfigFactory, demo_agent
+from conftest import (
+    ANSWER,
+    AUDIT_FILE,
+    DEV,
+    EVERYTHING,
+    OWNER,
+    QUESTION,
+    ConfigFactory,
+    demo_agent,
+    secured,
+)
 
 from loom_ia.access import JudgeVerdict, Loom, RunResult, UnknownSession
+from loom_ia.access.audit import AUDIT_LOGGER
 from loom_ia.access.authz import (
     AccessDenied,
     Actor,
@@ -750,6 +762,102 @@ def test_a_role_and_a_user_are_both_required(demo: ConfigFactory, missing: str) 
         load_config(without(demo(), missing))
 
 
+# --- Le fichier des refus (D-9) ---------------------------------------------------------
+
+
+def test_a_config_without_audit_file_is_refused_with_the_block_to_copy(
+    demo: ConfigFactory,
+) -> None:
+    """Comme les rôles et les utilisateurs : loom ne démarre pas sans savoir où écrire les refus."""
+    with pytest.raises(ConfigError) as refus:
+        load_config(without(demo(), "audit"))
+    message = str(refus.value)
+    assert "Aucun security.audit :" in message
+    assert "audit:\n    path: data/audit.jsonl" in message
+    with pytest.raises(ConfigError, match=r"security\.audit\.path"):
+        load_config(demo(security={"audit": {"retention_days": 30}}))
+
+
+def test_the_minimal_block_carries_the_audit_file(demo: ConfigFactory) -> None:
+    with pytest.raises(ConfigError) as refus:
+        load_config(without(demo()))
+    assert "  audit:\n    path: data/audit.jsonl" in str(refus.value)
+
+
+def test_the_audit_file_is_read_from_the_config_folder(demo: ConfigFactory) -> None:
+    path = demo(security={"audit": {"path": "data/refus.jsonl", "retention_days": 365}})
+    audit = load_config(path).security.audit
+    assert audit is not None
+    assert (audit.path, audit.retention_days) == (path.parent / "data" / "refus.jsonl", 365)
+
+
+@pytest.mark.parametrize(
+    ("storage", "tenants", "path"),
+    [
+        ({"events": {"backend": "jsonl", "path": "data"}}, None, "data/default/audit.jsonl"),
+        (
+            {"events": {"backend": "jsonl", "path": "data"}},
+            [{"id": "dupont", "storage": {"events": {"backend": "jsonl", "path": "d"}}}],
+            "d/dupont/audit.jsonl",
+        ),
+    ],
+)
+def test_an_audit_file_in_a_client_folder_of_the_journal_is_refused(
+    demo: ConfigFactory, storage: dict[str, Any], tenants: list[dict[str, Any]] | None, path: str
+) -> None:
+    """Un ``.jsonl`` dans le dossier d'un client s'y lirait comme une session."""
+    root: dict[str, Any] = {"storage": storage, "security": {"audit": {"path": path}}}
+    if tenants is not None:
+        root["tenants"] = tenants
+    with pytest.raises(ConfigError, match="dans le dossier d'un client du journal"):
+        load_config(demo(**root))
+
+
+def test_an_audit_file_beside_the_client_folders_is_kept(demo: ConfigFactory) -> None:
+    storage = {"events": {"backend": "jsonl", "path": "data"}}
+    path = demo(storage=storage, security={"audit": {"path": "data/audit.jsonl"}})
+    assert load_config(path).security.audit is not None
+
+
+async def test_a_refusal_of_the_sdk_is_written_to_the_audit_file(demo: ConfigFactory) -> None:
+    """Une ligne par refus, ``ts`` puis le détail ; les logs ont beau se taire."""
+    path = demo(security=BUREAU, telemetry={"logging": {"level": "CRITICAL"}})
+    async with Loom.from_config(path) as loom:
+        with pytest.raises(AccessDenied):
+            await loom.run("demo", QUESTION, user="lea")
+        # Demander si l'on peut n'écrit rien : rien n'est tenté.
+        assert not await loom.can("lea", "run", agent="demo")
+    [ligne] = (path.parent / AUDIT_FILE).read_text(encoding="utf-8").splitlines()
+    written = json.loads(ligne)
+    assert next(iter(written)) == "ts"
+    assert datetime.fromisoformat(written.pop("ts")).tzinfo is not None
+    assert written == {
+        "access": "sdk",
+        "action": "run",
+        "user": "lea",
+        "permission": "run",
+        "agent": "demo",
+        "tenant_id": "default",
+        "reason": "lea n'a pas la permission 'run' sur l'agent demo : "
+        "aucun de ses rôles (lecteur) ne la porte",
+    }
+
+
+async def test_an_audit_file_that_cannot_be_written_leaves_the_refusal_as_it_is(
+    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = demo(security={**BUREAU, "audit": {"path": "dossier"}})
+    (path.parent / "dossier").mkdir()
+    async with Loom.from_config(path) as loom:
+        with caplog.at_level(logging.WARNING, logger=AUDIT_LOGGER):
+            with pytest.raises(AccessDenied, match="lea n'a pas la permission 'run'"):
+                await loom.run("demo", QUESTION, user="lea")
+    [warning, error] = [r for r in caplog.records if r.name == AUDIT_LOGGER]
+    assert warning.levelno == logging.WARNING
+    assert error.levelno == logging.ERROR
+    assert "Refus non écrit dans le fichier d'audit" in error.getMessage()
+
+
 @pytest.mark.parametrize(
     ("security", "message"),
     [
@@ -1341,7 +1449,7 @@ def wait_answer_config(tmp_path: Path) -> Path:
 
     path = asking(tmp_path)
     root = yaml.safe_load(path.read_text(encoding="utf-8"))
-    root["security"] = BUREAU
+    root["security"] = secured({"security": BUREAU})["security"]
     path.write_text(yaml.safe_dump(root), encoding="utf-8")
     return path
 
@@ -1453,3 +1561,14 @@ async def test_a_local_user_without_run_is_refused_over_rest(demo: ConfigFactory
             agents = await http.get("/v1/agents")
     assert refused.status_code == 403
     assert agents.status_code == 200
+
+
+def test_validate_names_the_audit_file_and_its_bound(
+    demo: ConfigFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--config", str(demo()), "validate", "--no-keys"]) == 0
+    assert "  Refus        ./audit.jsonl · aucune rétention\n" in capsys.readouterr().out
+    borne = demo(security={"audit": {"path": "data/audit.jsonl", "retention_days": 365}})
+    assert main(["--config", str(borne), "validate", "--no-keys"]) == 0
+    out = capsys.readouterr().out
+    assert "  Refus        ./data/audit.jsonl · lignes effacées après 365 jour(s)\n" in out

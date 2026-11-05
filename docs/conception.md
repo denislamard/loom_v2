@@ -1188,7 +1188,7 @@ user= ─────┘    effectifs, via)    └─ approve / reject ───
 - **Approbateur en ligne.** Celui d'un script ou l'élicitation MCP agit pour le lanceur : il ne prend que ce que le lanceur peut trancher (`LimitedApprover.takes`), le reste attend en pause et un approbateur habilité tranche ailleurs ; c'est le lanceur qui signe.
 - **CLI.** L'identité y est déclarative : la commande lit et écrit le journal elle-même, ses droits sont un garde-fou contre l'erreur, pas une sécurité. Pour la sécurité : les droits du système de fichiers, ou le passage par REST.
 - **Sans contrôle** : le rejeu (il sert les décisions du journal), les évaluations et le banc d'essai (chemin interne, `UNCHECKED`) — ils éprouvent un agent, ils n'agissent au nom de personne.
-- **Refus** : `AccessDenied` (une `PermissionError`) dans le SDK, 403 en REST, un résultat d'erreur en MCP, « Accès refusé : … » et code 2 en CLI ; le message nomme l'utilisateur, l'action, l'agent et ce qui manque. Rien n'est écrit au journal de session pour une tentative refusée : chacune donne une ligne WARNING sur le logger `loom_ia.access.audit` — accès, action, utilisateur, passerelle, clé, permission, agent, client, run, motif —, écrite une fois, là où le refus quitte `Loom` ou, pour ce que `Loom` ne voit pas (clé inconnue, débit, restriction d'une clé, `as_user`), à l'accès (D-9).
+- **Refus** : `AccessDenied` (une `PermissionError`) dans le SDK, 403 en REST, un résultat d'erreur en MCP, « Accès refusé : … » et code 2 en CLI ; le message nomme l'utilisateur, l'action, l'agent et ce qui manque. Rien n'est écrit au journal de session pour une tentative refusée : chacune donne une ligne WARNING sur le logger `loom_ia.access.audit` — accès, action, utilisateur, passerelle, clé, permission, agent, client, run, motif —, écrite une fois, là où le refus quitte `Loom` ou, pour ce que `Loom` ne voit pas (clé inconnue, débit, restriction d'une clé, `as_user`), à l'accès, et la même ligne au fichier `security.audit.path`, obligatoire, que `loom retention` borne à `security.audit.retention_days` (D-9).
 
 **Essai de bout en bout (05/11)** — Marie lance, Paul (gérant) approuve, Lucie (lecture) est refusée ; Paul s'approuve lui-même, puis l'agent l'interdit et Denis, second gérant, tranche à sa place ; en REST, une passerelle lance au nom de Marie mais ne peut pas approuver au nom de Paul. Le déroulé complet est dans `fonctions.md`, point 52.
 
@@ -1549,6 +1549,9 @@ security:                             # obligatoire depuis 2.0.17 (§16.4)
       agents: [relance_devis]
       rate_limit: {per_minute: 60}      # débit de la clé (5.1b)
       expires: 2027-01-01T00:00:00Z     # fin de validité (5.2a) ; date avec fuseau
+  audit:                              # obligatoire : un refus d'accès par ligne (D-9)
+    path: data/audit.jsonl
+    retention_days: 365               # loom retention efface au-delà ; absent : tout est gardé
 
 server:
   http: {host: 127.0.0.1, port: 8000, base_path: /loom, max_body_bytes: 134217728}  # plafond d'un corps (413)

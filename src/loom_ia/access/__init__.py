@@ -4,6 +4,7 @@
 from loom_ia.access.api import (
     AgentNotAllowed,
     ApprovalStale,
+    AuditSwept,
     ClaimConflict,
     DeliveryRefused,
     JudgeSkip,
@@ -55,6 +56,7 @@ __all__ = [
     "Actor",
     "AgentNotAllowed",
     "ApprovalStale",
+    "AuditSwept",
     "BudgetExhausted",
     "ClaimConflict",
     "DeliveryRefused",

@@ -43,6 +43,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import Receive, Scope, Send
 
+from loom_ia.access import audit
 from loom_ia.access.api import Loom
 from loom_ia.access.caller import Caller
 from loom_ia.access.http.auth import identify, throttle
@@ -96,6 +97,7 @@ class McpHttp:
         self, loom: Loom, *, name: str = SERVER_NAME, rates: RateWindow | None = None
     ) -> None:
         config = loom.config
+        self.config = config
         self.security: SecurityConfig = config.security
         # Fenêtre du débit des clés : celle de l'application REST qui le monte,
         # pour qu'une clé soit bridée sur toutes ses requêtes, quel qu'en soit l'accès.
@@ -115,8 +117,9 @@ class McpHttp:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
-            caller = identify(self.security, Request(scope, receive), access="mcp")
-            throttle(caller, self.rates, access="mcp")
+            with audit.through("mcp", self.config):
+                caller = identify(self.security, Request(scope, receive), access="mcp")
+                throttle(caller, self.rates, access="mcp")
         except HTTPException as refus:
             # Un 401 ou un 429 ordinaire, pas une erreur d'outil : le LLM du
             # client n'a pas à interpréter un refus d'authentification ou de débit.

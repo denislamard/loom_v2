@@ -161,10 +161,11 @@ def demo(tmp_path: Path) -> ConfigFactory:
         (tmp_path / "outils_acces.py").write_text(OUTILS, encoding="utf-8")
         config: dict[str, Any] = {
             "version": 1,
-            # Qui agit sur loom (D-1) : un rôle et un utilisateur.
+            # Qui agit sur loom (D-1) : un rôle et un utilisateur ; où vont les refus (D-9).
             "security": {
                 "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
                 "users": [{"id": "dev", "roles": ["owner"]}],
+                "audit": {"path": "audit.jsonl"},
             },
             # loom serve sans clé : au nom de dev, sur la boucle locale (D-1b).
             "server": {"http": {"user": "dev"}},

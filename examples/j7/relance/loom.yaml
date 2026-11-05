@@ -87,6 +87,9 @@ security:
   users:
     - id: dev
       roles: [owner]
+  # Chaque refus d'accès y est écrit, une ligne JSON par refus (D-9).
+  audit:
+    path: data/audit.jsonl   # ignoré par git
 
 # Sans clé d'API, l'API REST de cette machine agit au nom de dev (D-1b).
 server:

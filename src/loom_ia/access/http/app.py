@@ -287,8 +287,8 @@ async def caller(
     requête elle-même, une instance locale n'en demandant aucune (D-1b).
     """
     # Un refus qui sortira du SDK pendant cette requête dira qu'il est venu par REST.
-    audit.entering("rest")
     loom: Loom = request.app.state.loom
+    audit.entering("rest", loom.config)
     who = identify(loom.config.security, request, loom.config.server.http.user)
     throttle(who, request.app.state.rates)
     return who
@@ -445,7 +445,8 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         # c'est une demande que cette clé n'a pas le droit de faire. Un refus de
         # droits qui n'est pas passé par le SDK (as_user) s'écrit ici (D-9).
         if isinstance(exc, AccessDenied):
-            audit.refused(exc, access="rest", action=f"{request.method} {request.url.path}")
+            with audit.through("rest", app.state.loom.config):
+                audit.refused(exc, action=f"{request.method} {request.url.path}")
         return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_403_FORBIDDEN)
 
     @app.exception_handler(UnusableId)

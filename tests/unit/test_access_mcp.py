@@ -11,7 +11,17 @@ from typing import Any, Literal
 
 import pytest
 import yaml
-from conftest import ANSWER, DEV, OWNER, PNG, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
+from conftest import (
+    ANSWER,
+    DEV,
+    OWNER,
+    PNG,
+    QUESTION,
+    TREE_QUESTION,
+    ConfigFactory,
+    audited,
+    demo_agent,
+)
 
 from loom_ia.access import AccessDenied, Loom
 from loom_ia.access.audit import AUDIT_LOGGER
@@ -88,6 +98,7 @@ async def test_a_refusal_over_mcp_is_written_with_its_access(
     assert refused.isError
     [refus] = [getattr(r, AUDIT) for r in caplog.records if r.name == AUDIT_LOGGER]
     assert (refus["access"], refus["user"], refus["permission"]) == ("mcp", "lucie", "run")
+    assert audited(path) == [refus]
 
 
 async def test_a_stdio_server_acts_for_a_named_user(demo: ConfigFactory) -> None:

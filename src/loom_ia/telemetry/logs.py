@@ -23,7 +23,7 @@ import json
 import logging
 import sys
 from datetime import UTC, datetime
-from typing import Final, Literal, TextIO, get_args
+from typing import Final, Literal, TextIO, cast, get_args
 
 from loom_ia.core import AUDIT
 
@@ -77,6 +77,14 @@ class ConsoleFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         line = super().format(record)
         context = _context(record)
+        audit: object = getattr(record, AUDIT, None)
+        if isinstance(audit, dict):
+            # Le détail d'un refus d'accès (``access/audit.py``) : il porte déjà le
+            # client et le run, et son motif est le message.
+            detail = cast(dict[str, object], audit)
+            context = {key: value for key, value in detail.items() if key != "reason"} | {
+                key: value for key, value in context.items() if key not in detail
+            }
         if not context:
             return printable(line)
         suffix = " ".join(f"{key}={value}" for key, value in context.items())

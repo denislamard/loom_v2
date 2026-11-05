@@ -430,6 +430,16 @@ class SessionSwept(DomainModel):
     keys: NonNegativeInt | None = None
 
 
+class AuditSwept(DomainModel):
+    """Les lignes du fichier d'audit que la rétention a retirées, ou retirerait (D-9)."""
+
+    # La borne lue : ``security.audit.retention_days``.
+    days: PositiveInt
+    # Lignes lues, et celles plus vieilles que la borne.
+    scanned: NonNegativeInt = 0
+    removed: NonNegativeInt = 0
+
+
 class RetentionReport(DomainModel):
     """Ce qu'un balayage a fait, ou ferait (5.5c).
 
@@ -447,6 +457,9 @@ class RetentionReport(DomainModel):
     scanned: NonNegativeInt = 0
     kept: NonNegativeInt = 0
     swept: tuple[SessionSwept, ...] = ()
+    # Le fichier d'audit, balayé avec tous les clients quand sa borne est déclarée ;
+    # ``None`` sinon. Il les mêle tous : un balayage borné à un client n'y touche pas.
+    audit: AuditSwept | None = None
 
     @property
     def events(self) -> int:
@@ -2874,7 +2887,24 @@ class Loom:
                         tenant,
                     )
         return RetentionReport(
-            dry_run=dry_run, days=days, scanned=scanned, kept=kept, swept=tuple(swept)
+            dry_run=dry_run,
+            days=days,
+            scanned=scanned,
+            kept=kept,
+            swept=tuple(swept),
+            audit=await self._sweep_audit(moment, dry_run=dry_run) if tenant_id is None else None,
+        )
+
+    async def _sweep_audit(self, moment: datetime, *, dry_run: bool) -> AuditSwept | None:
+        """Les lignes du fichier d'audit plus vieilles que ``security.audit.retention_days``."""
+        declared = self._config.security.audit
+        if declared is None or declared.retention_days is None:
+            return None
+        swept = await asyncio.to_thread(
+            audit.sweep, declared.path, declared.retention_days, now=moment, dry_run=dry_run
+        )
+        return AuditSwept(
+            days=declared.retention_days, scanned=swept.scanned, removed=swept.removed
         )
 
     async def _sweep(

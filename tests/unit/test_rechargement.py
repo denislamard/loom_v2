@@ -63,7 +63,8 @@ def test_the_config_folder_is_watched_but_not_what_loom_writes(demo: ConfigFacto
     spec = watched(config)
     assert spec.roots == (base,)
     assert spec.dirs == (base / "data", base / "data" / ".artifacts")
-    assert spec.files == (base / "cles.db",)
+    # Le fichier des refus (D-9) est écrit par loom, lui aussi.
+    assert spec.files == (base / "cles.db", base / "audit.jsonl")
 
     for counted in ("loom.yaml", "agents/demo.yaml", "prompts/demo.md", "outils_acces.py"):
         assert spec.counts(base / counted), counted
@@ -74,6 +75,7 @@ def test_the_config_folder_is_watched_but_not_what_loom_writes(demo: ConfigFacto
         "data/default/s.jsonl",
         "data/.artifacts/default/s/rapport.md",
         "cles.db",
+        "audit.jsonl",
         "cles.db-wal",
         "cles.db-shm",
         "cles.db-journal",
@@ -151,6 +153,8 @@ def test_what_is_present_leaves_out_data_and_noise(demo: ConfigFactory) -> None:
     (base / "data" / ".artifacts" / "rapport.md").write_text("x", encoding="utf-8")
     (base / "__pycache__").mkdir()
     (base / "__pycache__" / "outils_acces.cpython-314.pyc").write_bytes(b"")
+    # Le fichier des refus (D-9), à côté de la config : un refus ne relance rien.
+    (base / "audit.jsonl").write_text("{}\n", encoding="utf-8")
     spec = watched(load_config(path))
     assert {p.relative_to(base).as_posix() for p in spec.present()} == {
         "loom.yaml",
@@ -171,7 +175,7 @@ def test_the_watched_line_names_what_is_left_out(demo: ConfigFactory) -> None:
     )
     spec = watched(config)
     # Les fichiers sous data/ y sont déjà : la ligne ne les répète pas.
-    assert spec.describe() == f"{spec.roots[0]} (sauf data/)"
+    assert spec.describe() == f"{spec.roots[0]} (sauf data/, audit.jsonl)"
     assert Watched(roots=spec.roots, dirs=(), files=()).describe() == str(spec.roots[0])
 
 

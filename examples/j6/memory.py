@@ -323,10 +323,12 @@ def ecrit_config(
         "models": modeles,
         "storage": {"events": {"backend": "jsonl", "path": "data"}},
         "telemetry": {"logging": {"level": "WARNING"}, "capture": {"raw_exchanges": True}},
-        # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur.
+        # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur ;
+        # où s'écrivent les refus d'accès (D-9).
         "security": {
             "roles": [{"id": "owner", "permissions": TOUTES}],
             "users": [{"id": "dev", "roles": ["owner"]}],
+            "audit": {"path": "data/audit.jsonl"},
         },
     }
     if clients:

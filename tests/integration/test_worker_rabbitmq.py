@@ -95,10 +95,11 @@ def config_file(root: Path, *, tool: bool) -> Path:
     ]
     config: dict[str, Any] = {
         "version": 1,
-        # Qui agit sur loom (D-1) : un rôle et un utilisateur.
+        # Qui agit sur loom (D-1) : un rôle et un utilisateur ; où vont les refus (D-9).
         "security": {
             "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
             "users": [{"id": "dev", "roles": ["owner"]}],
+            "audit": {"path": "audit.jsonl"},
         },
         "models": models,
         "storage": {

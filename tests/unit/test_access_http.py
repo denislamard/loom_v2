@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 import pytest
 import yaml
-from conftest import ANSWER, DEV, OWNER, QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, DEV, OWNER, QUESTION, ConfigFactory, audited, demo_agent
 from pydantic import ValidationError
 
 from loom_ia.access import Loom
@@ -600,8 +600,12 @@ def _refusals(caplog: pytest.LogCaptureFixture) -> list[dict[str, str]]:
 async def test_every_refusal_of_the_api_is_written_once(
     atelier: ConfigFactory, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Clé inconnue, clé sans la portée, ``as_user`` refusé, droits du SDK : une ligne chacun."""
-    async with serving(atelier(security=CLES)) as (_, http):
+    """Clé inconnue, clé sans la portée, ``as_user`` refusé, droits du SDK : une ligne chacun.
+
+    Au fichier d'audit, la même ligne pour chacun, sans le message (D-9).
+    """
+    path = atelier(security=CLES)
+    async with serving(path) as (_, http):
         started = await http.post(
             "/v1/agents/demo/runs",
             json={"message": "Relance."},
@@ -646,6 +650,7 @@ async def test_every_refusal_of_the_api_is_written_once(
         "app-crm",
         "app-crm",
     )
+    assert audited(path) == [cle, portee_, endossement, sdk]
 
 
 async def test_an_approval_can_be_rejected_over_rest(atelier: ConfigFactory) -> None:

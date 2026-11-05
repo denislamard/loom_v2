@@ -390,13 +390,13 @@ def create_server(
 
     @server.read_resource()
     async def read_resource(uri: AnyUrl) -> list[ReadResourceContents]:
-        with audit.through("mcp"):
+        with audit.through("mcp", loom.config):
             return await reader(who()).read(str(uri))
 
     @server.call_tool()
     async def call_tool(tool: str, arguments: dict[str, Any]) -> types.CallToolResult:
         # Un refus qui sortira du SDK pendant cet appel dira qu'il est venu par MCP.
-        with audit.through("mcp"):
+        with audit.through("mcp", loom.config):
             return await called(tool, arguments)
 
     async def called(tool: str, arguments: dict[str, Any]) -> types.CallToolResult:

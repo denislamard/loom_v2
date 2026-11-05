@@ -25,22 +25,33 @@ Chaque accès pose le sien à son entrée (``through``, ``entering``) : un refus
 sorti du SDK dit ainsi s'il est venu par REST, MCP ou la CLI ; ``sdk`` sinon.
 
 Le format ``json`` des logs met le détail sous ``audit`` ; le format console
-le dit dans le message. Une commande de la CLI qui affiche elle-même le refus
-écarte la ligne de son terminal (``TOLD``) : le refus se lit une fois. Ce sont
-des logs : ils suivent ``telemetry.logging`` (un niveau au-dessus de WARNING
-les tait) et ne durent que ce que dure leur destination — un service qui les
-garde les envoie à un collecteur.
+le met en fin de ligne. Une commande de la CLI qui affiche elle-même le refus
+écarte la ligne de son terminal (``TOLD``) : le refus se lit une fois. Ces
+logs suivent ``telemetry.logging`` (un niveau au-dessus de WARNING les tait).
+
+Ce qui dure, c'est le fichier ``security.audit.path`` : chaque refus y ajoute
+une ligne JSON — ``ts`` puis le détail, sans le message —, quel que soit le
+niveau des logs, et quel que soit le processus qui refuse : l'écriture se fait
+sous verrou ``flock``. Chaque accès dit où écrire à son entrée (``through``,
+``entering``, ``writing_to``) ; une méthode de ``Loom`` le dit elle-même, pour
+le SDK appelé directement. ``loom retention`` en efface les lignes plus
+vieilles que ``security.audit.retention_days`` (``sweep``).
 """
 
+import fcntl
 import functools
 import inspect
+import json
 import logging
-from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
+from collections.abc import AsyncGenerator, Callable, Coroutine, Generator, Mapping
 from contextlib import aclosing, contextmanager
 from contextvars import ContextVar
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Final, Literal, NamedTuple
 
 from loom_ia.access.authz import AccessDenied
+from loom_ia.config import LoomConfig
 from loom_ia.core import AUDIT, TOLD
 
 # Logger des refus : à router à part (fichier, collecteur) pour en garder la trace.
@@ -54,21 +65,36 @@ logger = logging.getLogger(AUDIT_LOGGER)
 # accès (``through``), lu par le refus qui sort de ``Loom``. Le SDK appelé
 # directement n'en pose aucun.
 _ACCESS: ContextVar[Access] = ContextVar("loom_access", default="sdk")
+# Le fichier où la requête en cours écrit ses refus (``security.audit.path``).
+_FILE: ContextVar[Path | None] = ContextVar("loom_audit_file", default=None)
 
 
 @contextmanager
-def through(access: Access) -> Generator[None]:
-    """Tout refus écrit dans ce bloc dit qu'il est arrivé par ``access``."""
+def through(access: Access, config: LoomConfig | None = None) -> Generator[None]:
+    """Tout refus écrit dans ce bloc dit qu'il est arrivé par ``access``.
+
+    Avec ``config``, il va aussi à son fichier d'audit.
+    """
     token = _ACCESS.set(access)
+    kept = _FILE.set(_path(config)) if config is not None else None
     try:
         yield
     finally:
+        if kept is not None:
+            _FILE.reset(kept)
         _ACCESS.reset(token)
 
 
-def entering(access: Access) -> None:
+def entering(access: Access, config: LoomConfig | None = None) -> None:
     """Pose l'accès de la requête en cours, pour la tâche qui la sert (une route REST)."""
     _ACCESS.set(access)
+    if config is not None:
+        writing_to(config)
+
+
+def writing_to(config: LoomConfig) -> None:
+    """Les refus qui suivent vont au fichier de ``config`` : une commande, sa config lue."""
+    _FILE.set(_path(config))
 
 
 def denied(
@@ -85,7 +111,8 @@ def denied(
     run_id: str | None = None,
     call_id: str | None = None,
 ) -> None:
-    """Écrit un refus : une ligne WARNING, son détail à part ; les champs absents sont omis.
+    """Écrit un refus : une ligne WARNING, son détail à part, et une ligne au fichier
+    d'audit ; les champs absents sont omis.
 
     Sans ``access``, celui de la requête en cours (``through``), ``sdk`` à défaut.
     """
@@ -106,13 +133,14 @@ def denied(
         )
         if value is not None
     }
-    said = " ".join(f"{name}={value}" for name, value in detail.items() if name != "reason")
     logger.warning(
-        "Accès refusé — %s [%s]",
+        "Accès refusé — %s",
         reason,
-        said,
         extra={AUDIT: detail, "tenant_id": tenant, "run_id": run_id, TOLD: True},
     )
+    path = _FILE.get()
+    if path is not None:
+        _write(path, detail)
 
 
 def refused(
@@ -152,11 +180,12 @@ def audited[**P, R](
 
     @functools.wraps(method)
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        try:
-            return await method(*args, **kwargs)
-        except AccessDenied as error:
-            _where(signature, args, kwargs).refused(error, method.__name__)
-            raise
+        with _owned_by(args):
+            try:
+                return await method(*args, **kwargs)
+            except AccessDenied as error:
+                _where(signature, args, kwargs).refused(error, method.__name__)
+                raise
 
     return wrapper
 
@@ -175,7 +204,8 @@ def audited_stream[**P, T](
                 async for item in items:
                     yield item
         except AccessDenied as error:
-            _where(signature, args, kwargs).refused(error, method.__name__)
+            with _owned_by(args):
+                _where(signature, args, kwargs).refused(error, method.__name__)
             raise
 
     return wrapper
@@ -222,3 +252,88 @@ def _where(
         run_id=named("run_id"),
         call_id=named("call_id"),
     )
+
+
+class Swept(NamedTuple):
+    """Ce qu'un balayage du fichier d'audit a lu, et retiré ou retirerait."""
+
+    scanned: int = 0
+    removed: int = 0
+
+
+def sweep(path: Path, days: int, *, now: datetime, dry_run: bool) -> Swept:
+    """Retire du fichier d'audit les lignes plus vieilles que ``days`` jours.
+
+    Une ligne dont l'heure ne se lit pas est gardée : on n'efface pas ce qu'on ne
+    sait pas dater. Le fichier est réécrit en place, sous le verrou que prennent
+    les écritures : un refus écrit pendant le balayage n'est pas perdu.
+    """
+    if not path.is_file():
+        return Swept()
+    limit = now - timedelta(days=days)
+    with path.open("r+", encoding="utf-8") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            lines = fh.readlines()
+            kept = [line for line in lines if not _older(line, limit)]
+            removed = len(lines) - len(kept)
+            if removed and not dry_run:
+                fh.seek(0)
+                fh.writelines(kept)
+                fh.truncate()
+                fh.flush()
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+    return Swept(scanned=len(lines), removed=removed)
+
+
+def _older(line: str, limit: datetime) -> bool:
+    try:
+        written: object = json.loads(line).get("ts")
+        when = datetime.fromisoformat(written) if isinstance(written, str) else None
+    except ValueError, AttributeError:
+        return False
+    return when is not None and when.tzinfo is not None and when < limit
+
+
+def _path(config: LoomConfig) -> Path | None:
+    audit = config.security.audit
+    return audit.path if audit is not None else None
+
+
+@contextmanager
+def _owned_by(args: tuple[object, ...]) -> Generator[None]:
+    """Les refus d'une méthode de ``Loom`` vont au fichier de sa config."""
+    config: object = getattr(args[0], "config", None) if args else None
+    path = _path(config) if isinstance(config, LoomConfig) else None
+    if path is None:
+        yield
+        return
+    token = _FILE.set(path)
+    try:
+        yield
+    finally:
+        _FILE.reset(token)
+
+
+def _write(path: Path, detail: Mapping[str, str]) -> None:
+    """Ajoute une ligne au fichier d'audit, sous verrou : plusieurs processus y écrivent.
+
+    Un fichier qu'on ne peut pas écrire ne change rien au refus, qui est déjà
+    décidé : il le dit en ERROR, et la ligne WARNING reste.
+    """
+    line = json.dumps(
+        {"ts": datetime.now(UTC).isoformat(timespec="milliseconds"), **detail},
+        ensure_ascii=False,
+    )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                fh.write(line + "\n")
+                fh.flush()
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+    except OSError as error:
+        logger.error("Refus non écrit dans le fichier d'audit %s : %s", path, error)

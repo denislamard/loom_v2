@@ -193,7 +193,7 @@ Les conditions 5 à 8 portent sur **le même rôle**. Sinon, un rôle annexe qui
 
 ## 5. Configuration
 
-### 5.1 `loom.yaml` : rôles et utilisateurs (obligatoires)
+### 5.1 `loom.yaml` : rôles, utilisateurs et fichier des refus (obligatoires)
 
 **Config minimale** (artisan seul), que le message d'erreur du chargement donne à recopier :
 
@@ -205,6 +205,8 @@ security:
   users:
     - id: denis
       roles: [owner]
+  audit:
+    path: data/audit.jsonl
 ```
 
 **Config complète** (exemple) :
@@ -242,6 +244,10 @@ security:
       hash: sha256:…
       user: denis
       scopes: [run, read]                 # facultatif : restreint (une clé MCP qui n'approuve pas)
+
+  audit:
+    path: data/audit.jsonl                # obligatoire : un refus par ligne (D-9, § 7)
+    retention_days: 365                   # facultatif : loom retention efface au-delà ; absent : tout est gardé
 
 server:
   http:
@@ -476,7 +482,7 @@ La clé nomme son utilisateur, qui doit avoir `run` sur l'agent du déclencheur.
 
 Règle d'écriture (2.0.17, comme `run.started.state` et les facettes `judges` et `trigger`) : un champ nouveau qui ne dit rien de plus que sa valeur par défaut n'est pas écrit. Absent, il se relit à sa valeur par défaut, exactement comme dans un journal antérieur.
 
-**Tentatives refusées.** Elles ne sont **pas** écrites au journal de session : un refus ne change rien au run, et le journal raconte le run. Chacune donne une ligne WARNING sur le logger `loom_ia.access.audit` (`access/audit.py`) : accès, action, utilisateur, passerelle, clé, permission, agent, client, run, appel, motif — sous `audit` au format `json`. Le span OpenTelemetry `loom.access.denied` n'est pas fait : les exports de loom sont tirés du journal, il n'y a pas de traceur en direct où l'accrocher. Un journal d'audit durable (un magasin par client, `loom audit`) reste possible, sur le même point d'écriture.
+**Tentatives refusées.** Elles ne sont **pas** écrites au journal de session : un refus ne change rien au run, et le journal raconte le run. Chacune donne une ligne WARNING sur le logger `loom_ia.access.audit` (`access/audit.py`) : accès, action, utilisateur, passerelle, clé, permission, agent, client, run, appel, motif — sous `audit` au format `json`. La même ligne, sans le message, est ajoutée au fichier `security.audit.path`, **obligatoire** dans la config : il garde les refus de tous les accès et de tous les processus, quel que soit le niveau des logs, et la CLI, qui retire la ligne WARNING de son terminal, y laisse donc sa trace. Il s'écrit sous verrou `flock` ; `loom retention --yes` en efface les lignes plus vieilles que `security.audit.retention_days`. Le span OpenTelemetry `loom.access.denied` n'est pas fait : les exports de loom sont tirés du journal, il n'y a pas de traceur en direct où l'accrocher.
 
 **Affichage.** `loom inspect` et le déroulé affichent `par marie (via app-crm)` et `auto-approuvé par denis`. `via` devient une facette, pour retrouver tout ce qu'une passerelle a porté.
 
@@ -571,7 +577,7 @@ Ordre de grandeur, sans prototype : 1 nouveau module, environ 17 fichiers modifi
 | **D-7** | Auto-approbation | Permission `self_approve`, dans le même rôle qu'`approve` | Validée 04/11 |
 | **D-7b** | Durcissement par l'agent | `access.self_approval: false` ; retire, n'ouvre jamais | Validée 04/11 |
 | **D-8** | Approbateurs figés ou relus | Rôles approbateurs et `self_approval` figés dans la demande ; rôles des utilisateurs relus | À confirmer |
-| **D-9** | Tentatives refusées | Log WARNING sur `loom_ia.access.audit`, pas au journal de session ; pas de span | Réalisée 05/11 |
+| **D-9** | Tentatives refusées | Log WARNING sur `loom_ia.access.audit` et une ligne au fichier `security.audit.path` (obligatoire, rétention `retention_days`), pas au journal de session ; pas de span | Réalisée 05/11 |
 | **D-10** | Utilisateur en CLI | `--user` / `LOOM_USER` obligatoire | Validée 04/11 (par D-1) |
 | **D-11** | Élicitation MCP | Le lanceur tranche ce que ses rôles permettent ; le reste en pause | À confirmer |
 | **D-12** | Granularité d'approbation | L'outil, en v1 | À confirmer |

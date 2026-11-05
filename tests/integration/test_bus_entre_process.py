@@ -104,10 +104,11 @@ def write_config(root: Path, bus: dict[str, Any], *, tool: bool) -> Path:
     )
     config: dict[str, Any] = {
         "version": 1,
-        # Qui agit sur loom (D-1) : un rôle et un utilisateur.
+        # Qui agit sur loom (D-1) : un rôle et un utilisateur ; où vont les refus (D-9).
         "security": {
             "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
             "users": [{"id": "dev", "roles": ["owner"]}],
+            "audit": {"path": "audit.jsonl"},
         },
         # L'API REST de l'essai, sans clé : au nom de dev, sur la boucle locale (D-1b).
         "server": {"http": {"user": "dev"}},

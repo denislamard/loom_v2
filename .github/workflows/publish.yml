@@ -84,7 +84,8 @@ jobs:
               params:
                 script:
                   - text: ok
-          # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur.
+          # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur ;
+          # où s'écrivent les refus d'accès (D-9).
           security:
             roles:
               - id: owner
@@ -92,6 +93,8 @@ jobs:
             users:
               - id: dev
                 roles: [owner]
+            audit:
+              path: audit.jsonl
           YAML
           cat > "$smoke/cfg/agents/smoke.yaml" <<'YAML'
           name: smoke
