@@ -395,7 +395,7 @@ Derrière nginx :
 | 3 | **Fait le 05/11.** `server.fallback` (`FallbackSpec`, `ModelsSpec.fallback()`), le repli lot par lot et la nouvelle sonde après 30 s (`REPROBE`) ; seule `ServerUnavailable` (injoignable, chargement trop long, sans modèles) déclenche le repli ; avec repli, le montage exige l'extra `memory` ; 11 essais de plus dans `tests/unit/test_memory_remote.py`. | Arrêter l'application pendant un run, puis la relancer. |
 | 4 | Unité systemd documentée (§8.2) ; journal sans heure en double sous systemd (fait le 05/11). Essai en vrai du §11 : à faire sur le poste. | `systemctl --user`, `loom memory eval`. |
 | 5 | Plus tard : réseau, VM cloud (§9). | — |
-| 6 | Doc : howto, configuration, CHANGELOG, formation, point 9 marqué « fait ». | — |
+| 6 | **Fait le 05/11.** CHANGELOG (2.0.18), guide : exemple 29.4 et annexe des extras, formation : exercice 5.6 (encadré), README (extra `memory`), point 9 de `loom-memory-points-en-suspens.md` marqué fait. `configuration.md` inchangé : il ne décrit pas les paramètres de `loom.memory`, que le guide porte. | — |
 
 ## 13. Risques
 

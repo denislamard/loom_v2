@@ -3110,6 +3110,112 @@ uv run loom --config memoire/loom.yaml memory export memoire sauvegarde-dupont.j
 - **Piège** : `models.device: cuda` forcé sur une carte que la version installée de torch ne prend pas en charge fait échouer le chargement, avec la raison (architecture de la carte, aucun GPU vu, carte absente). `auto` se replie sur le CPU avec un avertissement.
 - **Non exécuté ici** : la recherche par le sens réelle (`search`), qui demande les vrais modèles.
 
+### Exemple 29.4 : garder les modèles en VRAM avec `loom-mem-gpu`
+
+> **Non exécuté ici sur une carte** : il faut un GPU et l'extra `memory`. Les sorties ci-dessous viennent des essais de `loom-mem-gpu` (modèles factices qui se présentent comme BGE-M3) ; les messages et l'affichage sont ceux du code.
+
+#### Pourquoi
+
+Avec les vrais modèles, chaque commande `loom` est un process neuf, qui recharge BGE-M3 et son reranker : de l'ordre de 15 s sur GPU, pour une recherche qui calcule en moins d'une seconde. Et chaque process occupe sa propre copie en mémoire du GPU, rendue à la sortie. `models.preload` n'y change rien : il charge plus tôt, pas moins souvent.
+
+#### Objectif
+
+Charger les modèles une seule fois, dans une application qui les garde en mémoire du GPU, et y envoyer les calculs de tous les process loom ; prévoir un repli dans loom quand elle est arrêtée.
+
+#### Mise en place
+
+`loom-mem-gpu` est un exécutable installé avec loom-ia. C'est une petite application à part : elle ne lit pas `loom.yaml`, ne voit aucune base (la mémoire reste dans loom) et ne garde rien ; elle calcule les vecteurs et les scores des textes qu'on lui envoie. Elle demande l'extra `memory`, dans le même venv que les agents (même version de loom : elle le vérifie).
+
+```bash
+uv run loom-mem-gpu --offline
+```
+
+Elle écoute sur `127.0.0.1:8765` (boucle locale seulement), charge les modèles sur `cuda` (son défaut : elle refuse de retomber en silence sur le CPU ; `--device cpu` le demande), puis attend. `--offline` lit les modèles dans le cache de Hugging Face, comme `models.offline`. Ses réglages : options, ou un YAML aux mêmes clés (`--config`) ; `--max-vram-fraction 0.3` la plafonne à côté d'un LLM local.
+
+Dans l'agent, `models` désigne l'application au lieu de régler les modèles :
+
+```yaml
+  - python: loom.memory
+    store: {path: memoire.db}
+    project: clients
+    models:
+      server:
+        url: http://127.0.0.1:8765
+        fallback: {device: cuda, offline: true}   # repli dans loom ; sans cette ligne, pas de repli
+    actions: [search, get, list_docs, add_text, update, delete]
+```
+
+Lecture de la référence :
+
+- `server.url` : l'adresse de l'application, `http://` sur la boucle locale avec son port. `url_env` la lit dans les secrets du client à la place ; `token_env`, de même, le jeton qu'elle exige si on lui en a donné un (`--token-env`).
+- Avec `server`, `device`, `fp16`, `offline` et `preload` sont **refusés** au niveau de `models` : ils se règlent sur l'application. Ceux du repli vont dans `server.fallback`.
+- `server.fallback` : quand l'application est arrêtée (ou encore en chargement après 60 s, ou sans modèles), le calcul se fait dans le process, avec ces réglages. Avec un repli, l'extra `memory` est exigé au montage ; sans repli, loom n'importe même pas torch.
+- `embedder` et `reranker` restent à leur place : ce sont les modèles que l'application doit annoncer.
+
+#### Exécution
+
+Dans un second terminal :
+
+```bash
+uv run loom-mem-gpu status
+```
+
+```text
+http://127.0.0.1:8765 : ready (protocole 1, loom 2.0.18)
+  embedder  BAAI/bge-m3 (dim 1024, bge-m3/1)
+  reranker  BAAI/bge-reranker-v2-m3
+  device    cuda:0, fp16, VRAM réservée … Mo
+```
+
+(La VRAM réservée dépend de la carte et des lots déjà calculés.) `loom validate` montre l'application à la place du device :
+
+```text
+                   modèles : BAAI/bge-m3 + BAAI/bge-reranker-v2-m3 (loom-mem-gpu http://127.0.0.1:8765, repli : cuda)
+```
+
+Les commandes `loom` s'utilisent comme avant ; la première recherche n'attend plus le chargement. Arrêtez l'application (Ctrl+C) : avec un repli, la commande suivante charge les modèles dans son process, et le journal le dit une fois :
+
+```text
+loom-mem-gpu injoignable (http://127.0.0.1:8765 : [Errno 111] Connection refused) : … ; calcul dans ce process (device cuda) — loom-mem-gpu ressayée dans 30 s
+```
+
+Sans repli, l'appel échoue avec la commande pour la démarrer : « loom-mem-gpu injoignable (…) : le démarrer (systemctl --user start loom-mem-gpu, ou « loom-mem-gpu » dans un terminal), ou ajouter models.server.fallback pour calculer dans loom ».
+
+Pour qu'elle tourne sans terminal ouvert, une unité systemd utilisateur, `~/.config/systemd/user/loom-mem-gpu.service` :
+
+```ini
+[Unit]
+Description=loom-mem-gpu — modèles de la mémoire de loom gardés en VRAM
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+ExecStart=/chemin/du/projet/.venv/bin/loom-mem-gpu --device cuda --offline
+Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+Restart=on-failure
+RestartSec=5
+# Réglages refusés (2) ou port pris (3) : relancer ne changerait rien.
+RestartPreventExitStatus=2 3
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now loom-mem-gpu
+journalctl --user -u loom-mem-gpu -f
+```
+
+#### À retenir
+
+- `loom-mem-gpu` charge les modèles une fois pour tous les process loom ; `models.server` y envoie les calculs. La base, les projets, les clients et les approbations restent dans loom : l'application ne fait que calculer.
+- Au premier appel, loom vérifie que l'application calcule comme il le ferait (protocole, algorithme, modèles, dimension) : une application d'une autre version de loom est refusée plutôt que de mêler deux sortes de vecteurs dans une base. Mettez-la à jour avec les agents.
+- Le repli (`server.fallback`) ne joue que sur une panne de l'application ; un jeton refusé, d'autres modèles ou un calcul en échec restent des erreurs. L'application reprend la main dès qu'elle répond (ressayée toutes les 30 s).
+- C'est systemd qui la relance (`Restart=on-failure`), jamais un proxy. Ses codes de sortie le guident : 2 réglages refusés ou extra absent, 3 port pris (une autre instance tourne), 4 modèles non chargés.
+- **Piège** : un serveur de LLM local comme vLLM réserve 90 % de la carte par défaut. Démarrez `loom-mem-gpu` d'abord (de l'ordre de 3 à 4 Go), et réglez `--gpu-memory-utilization` sur ce qui reste.
+- **Piège** : avec `server`, laisser `device`, `offline` ou `preload` sous `models` fait refuser la configuration ; le message dit de les mettre dans `server.fallback`.
+
 ---
 
 ## 30. Projet de synthèse : `relance/`
@@ -4406,7 +4512,7 @@ Variable d'environnement de l'exporteur absente : simple WARNING (« ce collecte
 
 ### `loom.memory` et ses extras
 
-Les vrais modèles de `loom.memory` viennent de l'extra `memory` (torch et transformers), absent de `all`. Sous Linux, le torch de PyPI est la version CUDA (plusieurs Go) : sur une machine sans carte, installer d'abord torch depuis l'index CPU de PyTorch. `add_url` demande l'extra `memory-web` ; il analyse le HTML sans lxml, qui, installé, changerait la lecture des classeurs par `loom.excel`.
+Les vrais modèles de `loom.memory` viennent de l'extra `memory` (torch et transformers), absent de `all`. Sous Linux, le torch de PyPI est la version CUDA (plusieurs Go) : sur une machine sans carte, installer d'abord torch depuis l'index CPU de PyTorch. `add_url` demande l'extra `memory-web` ; il analyse le HTML sans lxml, qui, installé, changerait la lecture des classeurs par `loom.excel`. Un poste qui confie ses calculs à `loom-mem-gpu` (`models.server`, sans repli) n'a pas besoin de l'extra `memory` : c'est l'application qui le demande (exemple 29.4).
 
 ### Sorties qui surprennent
 

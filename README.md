@@ -68,7 +68,7 @@ Le paquet s'appelle `loom-ia`. Il s'importe sous le nom `loom_ia` et installe la
 | `office` | L'outil fourni `loom.excel`, qui écrit des classeurs Excel |
 | `pdf` | L'outil fourni `loom.pdf`, qui écrit des PDF et en lit le texte (`loom.word`, pour les documents Word, n'a besoin d'aucun extra) |
 | `sql` | L'outil fourni `loom.sql`, qui lit et modifie des bases SQLite ou Postgres |
-| `memory` | Les vrais modèles de l'outil fourni `loom.memory`, la mémoire long terme (BGE-M3 et son reranker : torch et transformers, plusieurs Go) ; sans lui, l'outil tourne avec des modèles factices |
+| `memory` | Les vrais modèles de l'outil fourni `loom.memory`, la mémoire long terme (BGE-M3 et son reranker : torch et transformers, plusieurs Go) ; sans lui, l'outil tourne avec des modèles factices. C'est aussi ce que demande `loom-mem-gpu`, l'application qui garde ces modèles en mémoire du GPU pour tous les process loom (`models.server`) : un poste qui lui confie ses calculs s'en passe |
 | `memory-web` | L'action `add_url` de `loom.memory`, qui mémorise une page web |
 | `all` | Tous les extras, sauf `memory` et `memory-web` |
 

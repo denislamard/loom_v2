@@ -4,7 +4,7 @@
 
 Ce document recense ce qui restait à faire après ces tests. Pour chaque point : ce qui a été observé, la cause dans le code, la correction proposée, les effets de bord à surveiller et les tests à ajouter.
 
-**Les points 1 à 7 sont faits en 2.0.17** (04/11/2026) : la section « Fait en 2.0.17 » ci-dessous dit en quoi la réalisation s'écarte de la proposition, et pourquoi. Les points 8 et 9 restent ouverts.
+**Les points 1 à 7 sont faits en 2.0.17** (04/11/2026) : la section « Fait en 2.0.17 » ci-dessous dit en quoi la réalisation s'écarte de la proposition, et pourquoi. Le point 9 est fait le 05/11/2026 (2.0.18), sur le GPU du poste : voir `docs/loom-mem-gpu.md`. Le point 8 reste ouvert.
 
 ---
 
@@ -20,7 +20,7 @@ Ce document recense ce qui restait à faire après ces tests. Pour chaque point 
 | 6 | Texte d'interface résiduel dans `add_url` | Qualité d'extraction | Basse | Faible | Fait (2.0.17) |
 | 7 | Outils MCP non annotés : irréversibles mais sans approbation | Sécurité | Haute | Moyen (effets de bord) | Avertissement fait (2.0.17) ; défaut inchangé |
 | 8 | Tests non joués en vrai | Validation | Moyenne | Faible | Ouvert, liste mise à jour |
-| 9 | Serveur de modèles : une seule copie en VRAM, locale ou sur une VM cloud, avec repli sur le CPU | Fonctionnalité / performance | Haute | Élevé | Ouvert |
+| 9 | Serveur de modèles : une seule copie en VRAM, locale ou sur une VM cloud, avec repli sur le CPU | Fonctionnalité / performance | Haute | Élevé | Fait (2.0.18) en local : `loom-mem-gpu` ; VM cloud plus tard |
 
 Les limites connues et acceptées sont listées à la fin. Elles ne sont pas à corriger, seulement à garder en tête.
 
@@ -346,6 +346,8 @@ Ces cas sont couverts par les tests automatiques, mais n'ont pas été joués av
 ---
 
 ## 9. Serveur de modèles : une seule copie en VRAM, locale ou sur une VM cloud, avec repli sur le CPU
+
+> **Fait le 05/11/2026 (2.0.18), en local** : l'application `loom-mem-gpu` et la clé `models.server` de `loom.memory`. La conception retenue est dans `docs/loom-mem-gpu.md` ; elle s'écarte de la proposition ci-dessous sur plusieurs points : une application à part plutôt qu'une sous-commande `loom memory models serve`, bibliothèque standard plutôt que Starlette, `models.server` à la place de `kind: remote`, le repli sous `server.fallback` (`{device, fp16, offline}`, absent par défaut) plutôt que `fallback: cpu`, `preload` refusé avec `server`, BGE-M3 seul. L'accès par le réseau (VM cloud : https, jeton obligatoire, TLS) reste à faire.
 
 ### Besoin
 
