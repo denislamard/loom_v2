@@ -2,7 +2,9 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.17 - non publiée
+## 2.0.18 - non publiée
+
+## 2.0.17 - publiée
 
 ### Mémoire `loom.memory` : ce que les tests du 03/11 ont montré
 - **Une question reste avec sa réponse** (découpage) : un paragraphe qui annonce la suite — une question, une phrase qui finit par « : », une étiquette (« **Règles générales** ») — ne termine plus un passage : il passe en tête du suivant, avec ce qu'il annonce ; seul, il garde sa suite jusqu'à `max_chars`. Une telle annonce en fin de section passe en tête de la section suivante (l'étiquette d'une page web posée au-dessus d'un titre : « Contact », « Engagements »). Sur la page de test, deux questions de la FAQ étaient séparées de leur réponse ; à test-mem-7, la réponse ne passait que de justesse (0,18 pour un `min_score` de 0,1).
