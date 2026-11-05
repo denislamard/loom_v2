@@ -72,7 +72,7 @@ CONFIG, SESSION = sys.argv[1], sys.argv[2]
 
 async def main() -> None:
     async with Loom.from_config(CONFIG) as loom:
-        run = await loom.submit("demo", "QUESTION", session_id=SESSION)
+        run = await loom.submit("demo", "QUESTION", session_id=SESSION, user="dev")
         print(run, flush=True)
         await loom.drain()
 
@@ -109,6 +109,8 @@ def write_config(root: Path, bus: dict[str, Any], *, tool: bool) -> Path:
             "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
             "users": [{"id": "dev", "roles": ["owner"]}],
         },
+        # L'API REST de l'essai, sans clé : au nom de dev, sur la boucle locale (D-1b).
+        "server": {"http": {"user": "dev"}},
         "models": [{"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": script}}],
         "storage": {"events": {"backend": "jsonl", "path": "data"}, "bus": bus},
         "telemetry": {"logging": {"level": "CRITICAL"}},

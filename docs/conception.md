@@ -105,6 +105,9 @@ loom-ia s'utilise de trois façons, qui partagent le même moteur : comme **libr
 | **Artefact** | Un fichier (image, PDF, gros résultat) stocké hors du journal et désigné par une référence |
 | **Client** (`tenant`) | Un espace isolé : config, secrets, sessions, budgets, traces |
 | **Approbation** | Une validation humaine demandée avant un outil sensible |
+| **Utilisateur** | Une personne ou un service qui agit sur loom : il lance, répond, arrête, approuve, et signe chaque action au journal. Il a des rôles d'accès et un client (2.0.17) |
+| **Rôle d'accès** | Un ensemble nommé de permissions (`run`, `approve`, `self_approve`…), éventuellement borné à des agents. À ne pas confondre avec le rôle LLM d'un agent (2.0.17) |
+| **Lanceur** | L'utilisateur qui a ouvert le run racine : c'est par rapport à lui qu'une approbation est une auto-approbation (2.0.17) |
 
 ## 3. Parcours fonctionnels
 
@@ -145,6 +148,7 @@ L'artisan écrit : « Relance M. Dupont pour le devis 2026-042. »
 - En Python, l'approbation est asynchrone par défaut ; un « approbateur en ligne » (callback) sert aux scripts et aux tests (#28).
 - Une décision s'écrit dans le span de la demande qu'elle tranche, quel que soit le canal : une décision venue de l'extérieur n'a pas d'étape à elle, et les deux chemins se lisent de la même façon (4.5).
 - Une approbation ne passe jamais par un outil MCP : un LLM client ne peut pas valider lui-même une action sensible (#39).
+- Depuis 2.0.17, seul un utilisateur habilité tranche : un rôle à lui qui a `approve` sur l'agent et figure parmi les approbateurs de la demande (`access.approve`) ; pour son propre run, il lui faut aussi `self_approve`, et l'agent peut l'interdire à tous (`access.self_approval: false`). Exemple : Marie (assistante) lance une relance, Paul (gérant) l'approuve ; Lucie (lecture seule) est refusée (§16.4).
 
 ### 3.5 Arrière-plan et reprise
 
@@ -174,7 +178,7 @@ L'artisan écrit : « Relance M. Dupont pour le devis 2026-042. »
 | Observabilité | Traces hiérarchiques, schéma versionné, masquage, exports, API de lecture, rejeu | K1–K7 |
 | Multi-clients | Isolation, secrets, quotas | L1–L3 |
 | Configuration | YAML validé, construction en Python, profils, contrôles de cohérence | M1–M5 |
-| Accès | Python, HTTP REST, MCP, CLI, clés API | N1–N5 |
+| Accès | Python, HTTP REST, MCP, CLI, clés API ; utilisateurs, rôles d'accès et matrice des droits | N1–N7 |
 | Qualité | Évals, faux modèles et outils, non-régression par traces | O1–O3 |
 
 ## 5. Points d'accès
@@ -336,14 +340,14 @@ Event
 | `judge.evaluated` | juge, cible, modèle juge, notes par critère (note, seuil, bloquant, motif), `passed`, `blocked`, tentative, politique, call_id |
 | `budget.exceeded` | portée (`run`, `session`), limite (`max_cost`, `max_tokens`, `max_calls`), plafond, consommation, action (`warn`, `stop`), politique |
 | `policy.decided` | politique, point, décision, motif, call_id, tentative et `tools` (`Retry`), arguments ou réponse remplacés, `error` |
-| `approval.requested` / `.granted` / `.rejected` / `.expired` | tool_name, call_id, arguments, auteur, motif, scope, expire_at |
+| `approval.requested` / `.granted` / `.rejected` / `.expired` | tool_name, call_id, arguments, auteur, motif, expire_at ; depuis 2.0.17, la demande fige `approvers` (rôles d'accès qui peuvent trancher) et `self_approval` (écrit s'il vaut `false`), et la décision porte `by` (utilisateur), `via` (passerelle), `roles` (rôles qui l'ont permise) et `self_approved` ; `scope` n'est plus écrit, il se lit dans les anciens journaux |
 | `artifact.stored` | uri, type MIME, taille, nom, origine (`attachment`, `tool_output`, `offload`), call_id |
 | `session.snapshot` | historique matérialisé, up_to_seq, messages, tokens estimés |
 | `session.compacted` | résumé, up_to_seq, tours gardés, tokens avant/après, coût, fidélité |
 | `session.trimmed` | up_to_seq, messages retirés, motif |
 | `step.started` / `.completed` | step_no, état, effet, durée, statut |
 | `run.transitioned` | from, to, step_no, cause |
-| `run.cancelled` | motif, auteur, itérations, usage, coût |
+| `run.cancelled` | motif, auteur (et `via` depuis 2.0.17), itérations, usage, coût |
 | `run.transitioned` avec `to_state=paused`, puis `running` | pause et reprise : il n'y a pas de type `run.paused` ni `run.resumed` |
 | `run.claimed` | worker_id, lease_until |
 | `run.completed` / `.failed` / `.cancelled` | itérations, usage total, coût total, erreur ; `data` et `unverified` (réponse finale) |
@@ -513,7 +517,7 @@ ToolOutput
 **Approbation** (#17) : une politique peut exiger une approbation sur n'importe quel outil, mais ne peut la lever que si l'outil n'est pas en `always` (seule la config admin le peut). Déroulé :
 
 ```
-Pause → approval.requested (outil, arguments, motif, scope requis, expire_at)
+Pause → approval.requested (outil, arguments, motif, approbateurs figés, expire_at)
       → approval.granted  (arguments éventuellement modifiés → Replace)
       | approval.rejected (→ Deny : motif renvoyé au modèle)
       | approval.expired  (→ Deny ou Fail, configurable)
@@ -529,7 +533,7 @@ passée est expirée à la reprise, qu'un travail différé ait tourné ou non ;
 il ne retient ni `drain()` ni la fermeture. Un appel refusé n'est **jamais**
 appelé : pas de `tool.called`, seulement un `tool.completed` en erreur.
 
-L'identité de l'approbateur est enregistrée. Canaux : API REST (scope `approve`), elicitation MCP, API Python ; jamais un outil MCP.
+L'identité de l'approbateur est enregistrée. Canaux : API REST (scope `approve`), elicitation MCP, API Python ; jamais un outil MCP. Depuis 2.0.17, l'exécuteur fige dans la demande les approbateurs de l'agent pour cet outil (`access.approve`) et son interdiction d'auto-approbation, et demande à un approbateur en ligne s'il prend l'appel (`takes`) avant de le lui soumettre : sinon l'appel attend en pause, dans le même lot que ceux qu'il a tranchés (§16.4).
 
 **Reprise d'un appel interrompu** (#18, #26) :
 
@@ -1015,7 +1019,7 @@ ne relit rien. Un bus en panne n'échoue pas une écriture. Magasin d'idempotenc
 ### 12.2 Pause en mode librairie
 
 - Un agent qui peut se mettre en pause (outil en `approval: always | policy`, ou politique qui peut renvoyer `Pause`) exige un `EventStore` durable (JSONL au minimum) : erreur de config, avertissement seulement en profil dev (#28). La garde suit les mêmes déclarations pour les outils MCP et de paquet — `tools` du serveur ou de la source, puis la référence de l'agent, puis `tenants[].approvals`, qui l'emporte —, sans connexion réseau, et vaut par client : un client au journal en mémoire sous une racine durable est refusé, l'inverse est accepté.
-- **Réalisation (phase 4.3a) :** le contrôle est une erreur de chargement, les profils arrivant en J5. `Loom.approve()` et `Loom.reject()` écrivent la décision et mettent un travail `resume` en file ; `run(..., approver=…)` décide dans la boucle, sans passer par `PAUSED`, et journalise quand même la demande et sa décision. Réglages sur l'agent : `approval: {expires_in, on_expiry, scope}`, `expires_in` valant 24 h par défaut — rien d'autre ne borne l'attente d'un humain, et `null` la rend explicitement illimitée.
+- **Réalisation (phase 4.3a) :** le contrôle est une erreur de chargement, les profils arrivant en J5. `Loom.approve()` et `Loom.reject()` écrivent la décision et mettent un travail `resume` en file ; `run(..., approver=…)` décide dans la boucle, sans passer par `PAUSED`, et journalise quand même la demande et sa décision. Réglages sur l'agent : `approval: {expires_in, on_expiry, scope}` (`scope` retirée en 2.0.17 au profit d'`access.approve`, §16.4), `expires_in` valant 24 h par défaut — rien d'autre ne borne l'attente d'un humain, et `null` la rend explicitement illimitée.
 - Approbation asynchrone (défaut) : `run()` renvoie `RunResult(status=paused, run_id, pending_approvals)` ; plus tard, `await loom.approve(run_id, décision)` écrit la décision et met un `resume` en file.
 - Approbateur en ligne : `run(..., approver=callback)` appelle le callback dans le process, sans état `PAUSED` durable (scripts, CLI, tests).
 - Un job `expire_approval` est planifié dès la demande.
@@ -1133,7 +1137,7 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 ### 16.1 Clés API
 
 - Préfixe identifiable (`lk_...`), stockées hachées, jamais dans les logs (#39).
-- Rattachées à un client, avec des scopes (`run`, `read`, `read_content`, `approve`, `admin`) et la liste des agents autorisés.
+- Rattachées à un client, avec des scopes (`run`, `read`, `read_content`, `approve`, `admin`) et la liste des agents autorisés. Depuis 2.0.17, une clé identifie un **utilisateur** (`user`), qui porte les droits et le client ; ses `scopes` et ses `agents` ne font que restreindre (§16.4).
 - Rotation, révocation et limitation de débit par clé.
 - En V2, les clés sont déclarées hachées dans la config ; `loom keys create` affiche la clé une seule fois et donne le hash (#50).
 - Portées vérifiées : `run` (lancer), `read` (agents, statuts, événements, rapports) et, depuis 3.6, `admin` pour lancer un run sans ses juges (`judges: skip`).
@@ -1144,7 +1148,7 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 
 - `approve` n'est jamais exposé comme outil MCP ; la validation passe par l'elicitation (un humain répond) ou par l'API REST.
 - En HTTP : clé dans l'en-tête `Authorization`, validation de l'en-tête `Origin` (imposée par la spec MCP), écoute sur `localhost` seulement en local.
-- En stdio : pas d'authentification, mais un profil local restreint.
+- En stdio : pas d'authentification, mais un profil local restreint. Depuis 2.0.17, le serveur agit au nom d'un utilisateur nommé à son lancement (`loom mcp --user`), dont les droits valent (§16.4).
 - La spec MCP recommande OAuth pour les serveurs distants : il faudra vérifier que les clients visés acceptent une clé dans l'en-tête.
 - Les sorties des agents sont renvoyées à un LLM tiers : risque d'injection de prompt à garder en tête.
 
@@ -1159,6 +1163,34 @@ Le rejeu est toujours possible, puisque le journal contient les réponses des mo
 **Réalisation (phase 5.1a) :** port `SecretProvider` (`secrets(tenant_id) -> Mapping[str, str]` : la table d'un client, telle qu'elle descend aux adaptateurs) et adaptateur `EnvironmentSecrets`, qui résout la redirection `secrets` d'un client sur l'environnement. Ce qu'un client ne redirige pas y est lu tel quel ; une redirection vers une variable absente vaut **vide**, jamais le secret commun. La table d'un client (celle qui part aussi aux fabriques de paquets tiers) ne contient que ce que la config nomme et ce que les clients redirigent, copiée au premier accès (une variable changée après la création de `Loom` n'y paraît pas) et en lecture seule, pas l'environnement entier : en multi-clients, un plugin qui lit une variable que la config ne nomme pas ne la trouve pas, et la lui donner demande une redirection `secrets: {X: X}` ; sans clients déclarés, c'est l'environnement, en lecture seule. Le client d'une requête REST vient de sa **clé d'API** et de nulle part ailleurs ; en MCP stdio, où il n'y a pas de clé, un serveur sert un client, choisi à son lancement. Chiffrement : J5.5 ; RLS : faite en 5.3a, avec le journal Postgres (§11.1).
 
 **Réalisation (phase 5.5b — le sceau ; détails : `fonctions.md`, point 30) :** `storage.encryption: {keys: [NOM_DU_SECRET]}` scelle la charge de chaque événement et les octets de chaque fichier, en AES-256-GCM. Port `Cipher`/`Keyring` (`core/ports/cipher.py`), codec de ligne (`adapters/stores/codec.py`, partagé par les trois journaux qui sérialisent), enrobage `SealingArtifactStore`, adaptateur `AesGcmCipher` et trousseau `SecretKeyring` dans l'extra **`crypto`**. La **clé vient des secrets du client** : le sceau se déclare à la racine — un client ne le surcharge pas —, et ce qui lui est propre est sa clé, par la redirection de 5.1a. Effacer sa variable rend son journal illisible pour de bon (*crypto-shredding*) sans toucher au voisin ; deux clients qui partagent une clé sont **dits** au chargement, comme un client qui n'en a plus. **Rotation :** avec `keys: [NEUVE, ANCIENNE]`, un client dont la variable de la clé de tête (`NEUVE`) est absente ou vide est refusé **en entier**, écriture comme lecture, même si `ANCIENNE` est là — il ne scelle jamais en silence avec l'ancienne — ; sa session reste listable et supprimable. Poser la variable de tête pour tous les clients avant de mettre la nouvelle clé devant dans `keys` ; un secret de queue absent reste toléré, il ne sert qu'à ouvrir. L'enveloppe du journal reste en clair, donc les requêtes filtrent comme avant, et lister comme supprimer une session ne demandent pas la clé — c'est ce que le RGPD exige. Un magasin d'idempotence **partagé** (`sqlite`, `postgres`, `redis`), lui, garde en clair les résultats qu'il mémorise ; le magasin `journal` les range dans le journal, donc sous le sceau.
+
+### 16.4 Utilisateurs et rôles d'accès (2.0.17)
+
+Conception et décisions : `docs/loom_role_user.md` ; référence des clés : `configuration.md` (`security`, `server.http.user`, `access`) ; réalisation : `fonctions.md`, point 52.
+
+- **Personne n'agit sans nom.** Toute config déclare au moins un rôle d'accès et un utilisateur (`security.roles`, `security.users`) ; sans eux, le chargement s'arrête en donnant la config minimale. Chaque action — lancer, répondre, arrêter, approuver — est faite au nom d'un utilisateur déclaré, qui la signe au journal (`by`, et `via` pour une passerelle) ; son client est celui du run. Le mode ouvert a disparu : une API REST sans clé n'agit qu'au nom de `server.http.user`, sur la boucle locale, sans MCP HTTP et hors `prod`, et sinon ne démarre pas.
+- **Une seule matrice, pour tous les accès** (`access/authz.py`) : `Actor` résolu par l'accès — clé d'API, `as_user` d'une passerelle, `--user` / `LOOM_USER`, `user=` —, et des règles qui testent des **permissions**, jamais des noms de rôles. Le contrôle est dans `Loom` : REST, MCP, CLI et SDK passent par lui, ce qui ferme le trou par lequel la CLI et le SDK échappaient à tout contrôle.
+
+```
+clé d'API ─┐                       ┌─ run, answer, cancel ── rôle effectif qui porte la permission,
+as_user ───┼─→ Actor (utilisateur, ─┤                         vaut pour l'agent, figure dans access.<action>
+--user ────┤    client, rôles      │                         (si l'agent en déclare), et que la clé laisse
+user= ─────┘    effectifs, via)    └─ approve / reject ──── UN rôle qui porte approve, vaut pour l'agent,
+                                                              figure parmi les approbateurs figés,
+                                                              + amend pour corriger,
+                                                              + self_approve si c'est le lanceur,
+                                                                sur un agent qui ne l'interdit pas
+```
+
+- **Le même rôle pour toute la décision.** Les conditions d'une approbation portent sur un seul rôle : un rôle annexe qui aurait `self_approve` n'ouvre pas l'auto-approbation sur des demandes où il n'est pas approbateur.
+- **Figé, ou relu.** Les approbateurs et l'interdiction d'auto-approbation sont figés dans `approval.requested`, comme `expire_at` : une config changée pendant l'attente ne change pas qui peut trancher une demande déjà posée, et une interface peut dire « en attente de : gérant » sans la config. Les rôles des utilisateurs, eux, sont relus : un utilisateur qui perd `gerant` perd aussitôt le droit de trancher. On fige des rôles, pas des personnes.
+- **Passerelle.** Une application qui authentifie elle-même ses utilisateurs appelle loom avec une seule clé et dit au nom de qui elle agit (`as_user`). Il lui faut `act_as`, et elle n'exerce au nom de l'utilisateur que les rôles de son `act_as_roles` : une passerelle bornée à `assistante` n'obtient jamais les pouvoirs d'un gérant en passant par lui. Pas d'endossement en chaîne. Le MCP n'a pas d'`as_user` : un modèle ne choisit jamais l'identité.
+- **Approbateur en ligne.** Celui d'un script ou l'élicitation MCP agit pour le lanceur : il ne prend que ce que le lanceur peut trancher (`LimitedApprover.takes`), le reste attend en pause et un approbateur habilité tranche ailleurs ; c'est le lanceur qui signe.
+- **CLI.** L'identité y est déclarative : la commande lit et écrit le journal elle-même, ses droits sont un garde-fou contre l'erreur, pas une sécurité. Pour la sécurité : les droits du système de fichiers, ou le passage par REST.
+- **Sans contrôle** : le rejeu (il sert les décisions du journal), les évaluations et le banc d'essai (chemin interne, `UNCHECKED`) — ils éprouvent un agent, ils n'agissent au nom de personne.
+- **Refus** : `AccessDenied` (une `PermissionError`) dans le SDK, 403 en REST, un résultat d'erreur en MCP, « Accès refusé : … » et code 2 en CLI ; le message nomme l'utilisateur, l'action, l'agent et ce qui manque. Rien n'est écrit au journal pour une tentative refusée.
+
+**Essai de bout en bout (05/11)** — Marie lance, Paul (gérant) approuve, Lucie (lecture) est refusée ; Paul s'approuve lui-même, puis l'agent l'interdit et Denis, second gérant, tranche à sa place ; en REST, une passerelle lance au nom de Marie mais ne peut pas approuver au nom de Paul. Le déroulé complet est dans `fonctions.md`, point 52.
 
 ## 17. Configuration
 
@@ -1257,7 +1289,11 @@ stream_output: after_guards           # live | after_guards ; défaut : after_gu
 output: {...}                         # OutputSpec (réponse finale, A7)
 judge: {...}                          # JudgeSpec (on_output)
 budget: {...}                         # surcharge des défauts
-approval: {expires_in: 86400, on_expiry: deny, scope: approve}
+approval: {expires_in: 86400, on_expiry: deny}
+access:                               # qui lance, répond, arrête et approuve (2.0.17, §16.4) ; des rôles d'accès
+  run: [gerant, assistante]           # absent : tout rôle qui a `run`
+  approve: {default: [gerant], tools: {envoyer_email: [approbateur, gerant]}}
+  self_approval: false                # durcit : personne ne tranche ses propres runs
 state:                                # state de la session (2.0.6) : les seules clés qu'elle peut porter
   devis_courant:
     schema: {type: string, pattern: "^D-[0-9]{4}-[0-9]{3}$"}   # JSON Schema, contrôlé au chargement
@@ -1492,18 +1528,31 @@ tenants:                              # sans cette section, seul `default` exist
     storage: null                     # isolation physique (TenantRouter)
     telemetry: {capture: {exports: content}}     # sa capture des exports (6.1a)
 
-security:
+security:                             # obligatoire depuis 2.0.17 (§16.4)
+  roles:
+    - id: gerant
+      permissions: [run, answer, cancel, approve, self_approve, amend, read, read_content, admin]
+    - id: passerelle
+      permissions: [run, answer, cancel, read, read_content, act_as]
+      act_as_roles: [assistante]        # ce qu'elle exerce au nom d'autrui (as_user)
+    - id: assistante
+      permissions: [run, answer, cancel, read, read_content]
+  users:
+    - {id: denis, roles: [gerant], tenant: dupont-plomberie}
+    - {id: marie, roles: [assistante], tenant: dupont-plomberie}
+    - {id: dupont-app, roles: [passerelle], tenant: dupont-plomberie}
   api_keys:
     - id: dupont-app
-      tenant: dupont-plomberie
+      user: dupont-app                  # la clé identifie, l'utilisateur porte droits et client
       hash: "sha256:…"                  # de `loom keys create` : sha256: + 64 chiffres hexa minuscules
-      scopes: [run, read, approve]
+      scopes: [run, read, act_as]       # restreint, n'ajoute jamais
       agents: [relance_devis]
       rate_limit: {per_minute: 60}      # débit de la clé (5.1b)
       expires: 2027-01-01T00:00:00Z     # fin de validité (5.2a) ; date avec fuseau
 
 server:
   http: {host: 127.0.0.1, port: 8000, base_path: /loom, max_body_bytes: 134217728}  # plafond d'un corps (413)
+  # http: {user: denis}             # sans clé : instance locale au nom de denis (2.0.17)
   mcp:
     http: true                      # monte le MCP sous <base_path>/mcp (exige des clés)
     allowed_origins: []             # Origin acceptés ; absent = client natif, il passe
@@ -1530,6 +1579,8 @@ triggers:                           # portes d'entrée déclarées (H6, 5.4c)
 
 **Réalisation (phase 5.2b) :** `server.mcp.http`, `allowed_origins` et `allowed_hosts` sont débloqués — `LATER_MCP_ACCESS` se vide. `http: true` sans `security.api_keys` est une erreur de chargement : le MCP publie des outils, il ne s'ouvre pas sans clé.
 
+**Réalisation (2.0.17) :** `security.roles` et `security.users` deviennent obligatoires ; `api_keys[].user` remplace `api_keys[].tenant`, et `scopes` ne fait plus que restreindre ; `server.http.user` sert une instance locale sans clé ; `access` apparaît dans un agent, et `approval.scope` disparaît. Contrôles au chargement : §16.4 et `configuration.md`.
+
 **Réalisation (phase 5.4c) :** `triggers` apparaît. Une porte porte un `name` (dernier segment de la route : minuscules, chiffres, `_` et `-`), un `agent`, un `message` (gabarit), et deux réglages optionnels — `session` (gabarit aussi, pour rassembler les livraisons d'un même sujet) et `delivery_header`. Contrôles au chargement : noms uniques, agent déclaré, gabarits analysables. Un agent **non publié en REST** est accepté : une porte déclarée n'est pas l'API ouverte, et c'est la façon de n'ouvrir un agent qu'à un planificateur. Une porte ne nomme **pas** de client — il vient de la clé (#34).
 
 ### 17.9 Profils et contrôles
@@ -1540,7 +1591,7 @@ triggers:                           # portes d'entrée déclarées (H6, 5.4c)
 
 - **Trois états, pas deux.** Sans `profile`, loom se comporte **exactement** comme avant : les avertissements restent des avertissements et les deux erreurs restent des erreurs. `prod` durcit les premiers, `dev` assouplit les secondes. Aucune config existante ne change de comportement en s'installant.
 - **Le profil se choisit à trois endroits**, du plus fort au plus faible : `--profile`, `LOOM_PROFILE`, puis `profile:` dans le fichier. `chosen_profile` rend l'arbitrage **et sa provenance**, que `loom validate` et `loom serve` impriment : un profil qu'on ne voit pas est un profil qu'on oublie. Un profil inconnu est refusé en nommant d'où il vient.
-- **Ce que `prod` durcit** (une erreur de chargement là où c'était un avertissement) : juge corrélé et juge bloquant échantillonné (3.3), modèle sans tarif sous un budget en dollars (#010 ; budgets de run, de session et de client), secours à fenêtre plus petite (#10), service éparpillé dont les fichiers ne suivent pas (5.3c), API REST sans clé déclarée (#39), et `judges="skip"` (qui retire un contrôle).
+- **Ce que `prod` durcit** (une erreur de chargement là où c'était un avertissement) : juge corrélé et juge bloquant échantillonné (3.3), modèle sans tarif sous un budget en dollars (#010 ; budgets de run, de session et de client), secours à fenêtre plus petite (#10), service éparpillé dont les fichiers ne suivent pas (5.3c), API REST sans clé déclarée (#39 ; depuis 2.0.17, c'est `server.http.user` que `prod` refuse, une API sans clé ni utilisateur local ne démarrant plus nulle part), et `judges="skip"` (qui retire un contrôle).
 - **Ce que `dev` assouplit** : un agent qui peut se mettre en pause (outil Python, MCP ou de paquet, ou approbation de client) sur un journal non durable (#28) — perdre un run en pause à la fermeture est le prix d'un essai sur une machine, pas en service.
 - **`when.profiles` d'un juge** est débloqué : ailleurs, le juge est **sauté et le journal le dit** (`guard.checked`, `outcome: skipped`, `reason: other_profile`), plutôt que de ne pas être monté. Un juge déclaré ne disparaît pas en silence parce qu'on a changé de profil ; et c'est cohérent avec `when.tenants`, évalué lui aussi à l'exécution.
 - **Un seul endroit décide** : `runtime.announce(config, warnings)` logue ou lève selon le profil. Les fonctions qui *trouvent* les avertissements n'ont pas changé — elles rendent toujours une liste de phrases.
@@ -1583,6 +1634,8 @@ async with loom:
     await loom.approve(res.run_id, decision)
 ```
 
+Depuis 2.0.17, chaque action nomme son utilisateur : `run(…, user="marie")`, `approve(run_id, user="paul")` (§16.4).
+
 - `run()` accepte `session_id`, `tenant`, des pièces jointes, `judges` (`auto`, `force`, `skip` ; depuis 3.3) et un `approver` optionnel ; il renvoie un `RunResult` (statut, réponse, `run_id`, approbations en attente). Depuis 3.6, le `RunResult` porte aussi `unverified`, la consommation ventilée du run et de ses sous-runs (`report`), les verdicts des juges (`verdicts`) et, pour un échec, son type (`error_type`) à part de son message (`error`) ; REST et MCP rendent ce même résultat. `artifacts` liste aussi les fichiers des sous-runs. Une session dont l'historique est illisible lève `SessionUnreadable` **avant** d'ouvrir le run : rien n'est écrit.
 - `stream()` renvoie un itérateur d'événements (durables et éphémères).
 - `report(run_id)` ou `report(session_id=…)` rend la consommation d'un run (et de ses sous-runs) ou d'une session : total, par run, par rôle, par modèle (depuis 3.4).
@@ -1592,6 +1645,7 @@ async with loom:
 - `compact(session_id)` résume une session à la demande et `drain()` attend les tâches de fond (depuis 4.1b) ; `aclose()` les attend aussi, dans la limite d'`execution.shutdown_timeout`.
 - **State de session (2.0.6) :** `run()`, `stream()` et `submit()` prennent `state={clé: valeur}` — `None` efface une clé —, écrit dans le `run.started` après contrôle. Une écriture refusée (clé non déclarée, schéma, taille), un agent qui ne déclare pas de state, ou une clé `required` restée sans valeur lèvent `StateRefused` (`loom_ia.engine`, une `ValueError`, `problems` : un motif par clé) **avant** d'ouvrir le run : rien n'est écrit, pas même la compaction de sécurité. `session_state(session_id, tenant_id=…)` relit le state de la session — ce qui est écrit, sans valeurs par défaut ; `UnknownSession` pour une session vide, `SessionUnreadable` pour une session illisible. Le `RunResult` ne porte pas de state.
 - **Consommation (5.1b) :** `consumption(tenant_id, period="day" | "month")` rend ce qu'un client a dépensé sur la fenêtre en cours, ce qu'il lui reste sur chaque plafond et la date de remise à zéro ; elle relit le journal, donc elle vaut aussi pour un client sans budget. `run()`, `stream()` et `submit()` lèvent `BudgetExhausted` (enveloppe de la période épuisée) ou `QuotaExceeded` (runs par minute) **avant** d'ouvrir le run : rien n'est écrit.
+- **Utilisateurs (2.0.17) :** `user=` est obligatoire sur `run`, `stream`, `submit`, `resume`, `approve`, `reject`, `answer`, `cancel` et `trigger` (un identifiant déclaré, ou un `Actor` résolu par un accès) ; `by=` est retiré. Le client est celui de l'utilisateur, qui devient le lanceur du run. `can(user, permission, agent=…, run_id=…, call_id=…)` dit si l'action passerait, sans rien écrire. Un refus lève `AccessDenied`, avant toute écriture.
 - **Client (5.1a) :** `run()`, `stream()` et `submit()` prennent `tenant=`, raccourci de `CallerContext(tenant_id=…)` ; toutes les lectures prennent `tenant_id=`. `tenants` liste les clients de l'instance, `tenant(id)` rend ce qu'un client surcharge, et `context(agent, tenant_id)` monte l'agent **pour ce client**. Un agent fermé à un client lève `AgentNotAllowed` ; un client non déclaré, `UnknownTenant`.
 - **Déclencheurs (5.4c) :** `triggers` liste les portes déclarées, `trigger_spec(nom)` en rend une, et `trigger(nom, charge, delivery_id=…, tenant_id=…)` ouvre son run en arrière-plan et rend un `Triggered` — la porte, le run, sa session, son statut, et `repeated` si cette livraison avait déjà été reçue. La route REST s'y adosse.
 - **Listes et recherche (5.4a) :** `runs(agent=…, status=…, since=…, until=…, limit=…, sessions=…)` rend une `RunPage` — les runs du client repliés au journal, du plus récent au plus ancien, avec ce que la page a coûté (`scanned`) et si une borne l'a arrêtée (`truncated`). `query(EventQuery)` interroge le journal ; l'ordre est celui de l'écriture au journal et `after` reprend la pagination après l'événement indiqué (voir `GET /v1/events`, 18.2). Les deux accès REST (18.2) s'y adossent. `runs(limit=N)` continue de lire tant qu'une session restante peut porter un run plus récent que le dernier de la page ; `truncated` reste vrai si des sessions restent non lues.
@@ -1610,8 +1664,9 @@ app.mount("/loom", loom.asgi_app(rest=True, mcp=True))
 | `POST` | `/v1/agents/{name}/runs` | Lancer un run (synchrone, ou `background: true`) | `run` |
 | `GET` | `/v1/runs/{id}` | Statut et résultat | `read` |
 | `GET` | `/v1/runs/{id}/events` | Streaming SSE | `read` |
-| `POST` | `/v1/runs/{id}/approve` · `/reject` | Validation humaine | `approve` |
-| `POST` | `/v1/runs/{id}/cancel` | Annulation | `run` |
+| `POST` | `/v1/runs/{id}/approve` · `/reject` | Validation humaine | `approve` (+ `self_approve`, `amend`) |
+| `POST` | `/v1/runs/{id}/answer` | Réponse à une question `loom.ask` | `answer` |
+| `POST` | `/v1/runs/{id}/cancel` | Annulation | `cancel` (`run` avant 2.0.17) |
 | `GET` | `/v1/sessions` | Lister les sessions | `read` |
 | `GET` | `/v1/sessions/{id}` | Fiche : runs et approbations en attente | `read` |
 | `GET` | `/v1/sessions/{id}/events` | Journal entier en JSONL | `read` |
@@ -1631,8 +1686,9 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - **Résultat (3.6) :** celui de l'API Python (`RunResult`, voir 18.1), en JSON. Un run échoué garde le code 201 (`status: failed`, `error_type`, `error`). Le champ `judges` du corps règle les juges du run ; `skip` demande la portée `admin`.
 - **Rapport de session (3.6) :** `GET /v1/sessions/{id}/report`, la consommation de toute la session (portée `read`, droit sur chaque agent de la session).
 - **Arrière-plan (4.5) :** `background: true` rend 202 et `{run_id, session_id, status}` — le run est inscrit au journal avant la réponse, donc lisible et suivable aussitôt.
-- **Décisions (4.5) :** `approve` et `reject` prennent un `call_id` optionnel (sans lui, tout ce que le run attend est tranché), un motif, et pour un accord des arguments corrigés. L'approbateur inscrit au journal est **l'identifiant de la clé d'API**, qu'un `by` dans le corps remplace : une passerelle nomme ainsi l'humain qui a tranché.
-- **Client (5.1a) :** il vient de la **clé d'API**, et de nulle part ailleurs — rien dans le corps d'une requête ne le change. Toute lecture est donc bornée au client de la clé : la session d'un autre est « introuvable », pas « interdite », puisqu'on n'a aucun moyen d'apprendre qu'elle existe. Lancer un agent publié mais fermé à ce client donne 404, identique à un agent inconnu — la liste du 404 ne nomme que les agents de ce client —, tandis qu'une clé limitée à certains agents reçoit 403. Sans clé déclarée, l'instance agit pour `default` : si la config nomme ses clients et pas `default`, tout est refusé, et `create_app` le dit au démarrage.
+- **Décisions (4.5) :** `approve` et `reject` prennent un `call_id` optionnel (sans lui, tout ce que le run attend est tranché), un motif, et pour un accord des arguments corrigés. L'approbateur inscrit au journal est **l'identifiant de la clé d'API**, qu'un `by` dans le corps remplace : une passerelle nomme ainsi l'humain qui a tranché. Depuis 2.0.17, c'est l'utilisateur de la clé, et `by` est remplacé par `as_user`, réservé à une passerelle qui a `act_as` ; sans `call_id`, seules les demandes que l'utilisateur peut trancher le sont, et s'il n'en reste aucune, 403.
+- **Utilisateurs (2.0.17) :** l'acteur d'une requête est l'utilisateur de sa clé, ou celui d'`as_user` (corps des lancements, multipart compris, et de `answer`, `approve`, `reject`, `cancel`) ; `user_id` et `by` sont retirés. Un refus de droits donne 403. Sans clé, l'instance agit au nom de `server.http.user` ; sans clé ni utilisateur local, `create_app` refuse de démarrer (`ConfigError`), de même pour un utilisateur local servi hors de la boucle locale.
+- **Client (5.1a) :** il vient de la **clé d'API**, et de nulle part ailleurs — rien dans le corps d'une requête ne le change. Toute lecture est donc bornée au client de la clé : la session d'un autre est « introuvable », pas « interdite », puisqu'on n'a aucun moyen d'apprendre qu'elle existe. Lancer un agent publié mais fermé à ce client donne 404, identique à un agent inconnu — la liste du 404 ne nomme que les agents de ce client —, tandis qu'une clé limitée à certains agents reçoit 403. Sans clé déclarée, l'instance agit pour `default` : si la config nomme ses clients et pas `default`, tout est refusé, et `create_app` le dit au démarrage. (Depuis 2.0.17, sans clé, le client est celui de `server.http.user`.)
 - **Contenu et expiration (5.2a) :** une clé expirée est reconnue puis refusée (401, avec sa date). Sans la portée `read_content`, les **relectures** sont masquées — `GET /runs/{id}`, le SSE d'un run, l'export JSONL d'une session, la fiche d'une session — tandis que la réponse d'un `POST …/runs` ne l'est jamais : ce qu'une clé lance, elle le reçoit. Une clé qui lance en arrière-plan et relit son résultat a donc besoin de `read_content`, et une clé qui approuve aussi, faute de voir ce qu'elle tranche.
 - **Débit et budgets (5.1b) :** un client qui a épuisé son enveloppe de la période, ou dépassé ses runs par minute, reçoit **429** avec un `Retry-After` — quelques secondes pour un débit, la bascule de la fenêtre pour une journée épuisée. Le `rate_limit` d'une **clé** donne le même 429, mais il compte toutes ses requêtes, lectures comprises, et vaut avant même que la demande ne soit servie.
 - **Sessions (4.5) :** la liste est refusée à une clé limitée à certains agents — elle ne dit pas de quels agents sont les runs d'une session, et la filtrer honnêtement demanderait de lire chaque journal. La fiche et l'export vérifient le droit sur chaque agent rencontré ; l'effacement, irréversible et commun à tous les agents de la session, demande `admin`.
@@ -1648,22 +1704,22 @@ OpenAPI est généré, ce qui permet de générer le client de l'interface.
 - Traces et sessions exposées en ressources en lecture seule (`loom://runs/{id}`, et depuis 6.2c la trace en spans : `loom://traces/{run_id}{?session_id}`).
 - Transports : stdio (local, `loom mcp`) et HTTP, monté dans la même application que l'API REST.
 - Limites : notifications de progression seulement, pas de flux d'événements complet.
-- **Approbations (4.5) :** `approve` n'est jamais un outil MCP (16.2). Si le client déclare l'`elicitation`, chaque demande part en formulaire (accorder ou refuser, avec un motif) et la réponse est tranchée **dans la boucle** : le run ne passe pas par `PAUSED`, et le journal garde qui a décidé (`mcp:<client>`, faute d'identité plus précise sur stdio). Un formulaire ne corrige pas les arguments d'un appel : cela reste à l'API. Sinon, le run s'arrête en pause et l'outil **rend la main aussitôt, sans erreur** : le texte dit ce qui attend, le résultat structuré porte `run_id` et `pending_approvals`, un humain tranche ailleurs, et `run_status` relit le run. En MCP HTTP, l'élicitation n'est pas employée : le run se met en pause, comme sans elle.
+- **Approbations (4.5) :** `approve` n'est jamais un outil MCP (16.2). Si le client déclare l'`elicitation`, chaque demande part en formulaire (accorder ou refuser, avec un motif) et la réponse est tranchée **dans la boucle** : le run ne passe pas par `PAUSED`, et le journal garde qui a décidé (`mcp:<client>`, faute d'identité plus précise sur stdio ; depuis 2.0.17, le lanceur, qui ne tranche que ce que ses rôles permettent — le reste attend en pause). Un formulaire ne corrige pas les arguments d'un appel : cela reste à l'API. Sinon, le run s'arrête en pause et l'outil **rend la main aussitôt, sans erreur** : le texte dit ce qui attend, le résultat structuré porte `run_id` et `pending_approvals`, un humain tranche ailleurs, et `run_status` relit le run. En MCP HTTP, l'élicitation n'est pas employée : le run se met en pause, comme sans elle.
 - **Pièces jointes :** argument `attachments` de l'outil d'un agent : image en base64, ou lien `artifact://` (fichier déjà rangé, même client) ou `file://` (seulement sous `server.mcp.file_roots`, vide par défaut). Le résultat structuré liste les fichiers du run.
 - **Progression :** si le client fournit un `progressToken`, le déroulé du run (appels d'outils, fichiers, sous-agents et leurs appels) lui arrive en notifications de progression. Un outil inconnu ou refusé (arguments refusés par le schéma, référence `result:` invalide, politique, approbation) s'y lit `· outil : refusé — <motif>` (motif coupé à 160 caractères), comme dans `loom run --stream` ; une vraie panne d'outil reste `fait (erreur)`.
 - **Résultat (3.6) :** le texte est la réponse ; le résultat structuré est celui de l'API Python (`unverified`, usage, coût, ventilation, verdicts). Une réponse non vérifiée est suivie d'un second texte qui le dit. Un run échoué est un résultat d'erreur (`isError`) dont le texte dit en clair ce qui l'a arrêté (« Échec de l'agent … : … ») ; son type est dans `error_type`. Les juges suivent leur `when` (pas de forçage par MCP).
 - **State de session (2.0.6) :** l'outil d'un agent ne pose pas de state (D5) : son schéma refuse un argument `state`. Un run que le state refuse — une clé `required` sans valeur dans la session — rend un résultat d'erreur (`isError`) dont le texte est le refus (« State refusé : … »), sans résultat structuré ni notification de progression : aucun run n'est ouvert, rien n'est écrit. Ce résultat vient du SDK `mcp`, qui rend en erreur toute exception de l'outil : le serveur ne traite pas `StateRefused` lui-même.
 - **Rapport (3.6) :** outil `run_report` (`run_id` ou `session_id`) : consommation d'un run et de ses sous-runs, ou d'une session, en texte et en structuré.
-- **Client (5.1a) :** en stdio il n'y a pas de clé, donc rien dans le protocole ne dirait au nom de qui une requête arrive : **un serveur sert un client**, choisi à son lancement (`loom mcp --tenant`, `create_server(loom, tenant=…)`). Tout ce qu'il publie, lance et relit porte ce client-là.
+- **Client (5.1a) :** en stdio il n'y a pas de clé, donc rien dans le protocole ne dirait au nom de qui une requête arrive : **un serveur sert un client**, choisi à son lancement (`loom mcp --tenant`, `create_server(loom, tenant=…)`). Tout ce qu'il publie, lance et relit porte ce client-là. Depuis 2.0.17, il sert un **utilisateur** : `loom mcp --user` (ou `LOOM_USER`), `create_server(loom, user=…)` obligatoire ; le client est le sien, et ses droits valent.
 - **HTTP (5.2b) :** monté sous `<base_path>/mcp` dans l'application REST, et il exige des clés. La clé est lue **à chaque requête**, avant le protocole (401 ordinaire si elle manque, est inconnue ou a expiré), si bien qu'un **seul serveur sert tous les clients** : `list_tools` ne publie que les agents ouverts à cette clé-là, `call_tool` exige `run` pour lancer et `read` pour relire, et `run_status` est masqué sans `read_content`. `Origin` et `Host` sont validés (spec MCP) : 403 pour une origine inconnue, 421 pour un hôte étranger.
 - **Ressources (5.4b, #32) :** le journal en lecture seule, sous `loom://`. Deux index se **listent** — `loom://runs` (la page de `Loom.runs()`, 5.4a) et `loom://sessions` — et le reste se construit d'un **gabarit**, puisqu'on ne peut pas énumérer les runs d'un client sans ouvrir chaque journal : `loom://runs/{run_id}{?session_id}` et `…/events`, `loom://sessions/{session_id}` et `…/events`, `loom://artifacts/{client}/{session}/{fichier}`. La session est un paramètre et non un segment, exactement comme en REST. Un fichier se lit aussi sous l'URI que le journal publie (`artifact://…`) : un `resource_link` rendu par loom n'est plus un lien mort, et c'est la réponse au manque relevé en 2.5 — les octets d'un fichier du run ne se téléchargeaient nulle part. Ils sont bornés par `execution.attachments.max_bytes`, faute d'une borne de lecture à part. Les règles sont celles des routes de lecture : `read` pour lire, masquage sans `read_content`, et `loom://sessions` refusé à une clé limitée à certains agents, là où `loom://runs` se filtre honnêtement. Le serveur déclare `subscribe: false` — pas d'abonnement, la limite « progression seulement » n'a pas changé.
-- **Arrêt (5.4b, A5) :** outil `cancel` (`run_id`, `session_id`, `by`). Arrêter un run qu'on peut lancer n'est pas une permission de plus : c'est la portée `run` sur **son** agent, vérifiée après avoir lu de quel agent il est, comme en REST. Un run déjà terminé n'est pas une erreur — `cancelled: false`, et le texte le dit. Faute d'un `by`, c'est l'identifiant de la clé d'API qui signe la décision au journal ; en stdio il n'y a personne à nommer.
+- **Arrêt (5.4b, A5) :** outil `cancel` (`run_id`, `session_id`, `by` — retiré en 2.0.17 : l'utilisateur du serveur ou de la clé signe, avec la permission `cancel`). Arrêter un run qu'on peut lancer n'est pas une permission de plus : c'est la portée `run` sur **son** agent, vérifiée après avoir lu de quel agent il est, comme en REST. Un run déjà terminé n'est pas une erreur — `cancelled: false`, et le texte le dit. Faute d'un `by`, c'est l'identifiant de la clé d'API qui signe la décision au journal ; en stdio il n'y a personne à nommer.
 
 ### 18.4 CLI
 
-Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `replay` (6.2a et 6.2b), `inspect` (6.2c : l'arbre lisible d'un run, `--full`, `--json`), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 2.0.15, `answer` répond de même à une question du modèle (`loom.ask`) ; `run` affiche la question en attente sur stdout et sort en 0, et un `run --session` sans `--run-id` y répond par son message. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --period day|month` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`. Depuis 5.2a, `keys create` prend `--tenant`, `--expires` (date ISO ou durée : `90j`, `12h`) et `--rate-limit`, et imprime le bloc YAML complet ; `validate` montre une ligne par clé — client, portées, agents, débit, état de l'expiration — et signale une clé qui approuve sans pouvoir lire. Depuis 5.4b, `validate` et `serve` annoncent les ressources MCP quand le serveur HTTP est monté : elles ne dépendent d'aucun réglage, et c'est la clé de la requête qui dit ce qu'une lecture en voit. Depuis 5.5a, `--profile` est une option **globale** (elle l'emporte sur `LOOM_PROFILE` et sur le fichier), et `validate` comme `serve` impriment le profil actif, sa provenance et ce qu'il change. Depuis 5.4c, `validate` liste les **portes** déclarées avec leur route, leur agent, leur session et leur en-tête de livraison — et signale celle qui n'en a pas, dont une relivraison rouvrirait un run ; `serve` imprime l'adresse de chaque porte, celle qu'on donne au planificateur de la plateforme. Depuis 6.4a, `serve --reload` (#48) relance le **process** qui sert à chaque changement d'un fichier de la config, rien n'étant rechargé à chaud : un superviseur garde la socket — partagée, une requête de la relève attend dans sa file — et surveille le dossier de la config sauf ce que loom y écrit (journaux, fichiers, bases SQLite, ceux de chaque client) et le bruit d'usage ; un **nouveau** process charge la config et monte chaque agent pour chaque client (clients de modèle jamais appelés : une clé absente ne bloque pas) pendant que l'ancien sert ; s'il échoue, il dit pourquoi et l'ancien continue ; sinon il prend la main une fois l'ancien sourd, et l'ancien finit ses requêtes et ses runs comme sur un Ctrl+C. Refusé en profil `prod`. `watchfiles` vient avec l'extra `http`. Depuis 2.0.6, `run --state CLE=VALEUR` (répétable) pose du state à l'ouverture du run — la valeur se lit en JSON (`3`, `true`, `null` qui efface, `"texte"`), sinon elle est prise telle quelle ; une clé donnée deux fois donne le code 2 (« --state : clé donnée deux fois : … »), un state refusé aussi (« Demande refusée : State refusé : … ») —, et `state <session> [--tenant]` imprime le state d'une session en JSON, sans les valeurs par défaut (code 1 pour une session inconnue).
+Dans le noyau, avec `argparse`. Commandes mentionnées dans la conception : `loom serve` (extra `http`, `--reload` en dev), `loom worker`, `loom mcp`, et les commandes de la fonction N4 : lancer un run, rejouer, inspecter une trace, valider la config. Réalisées : `validate`, `run`, `resume`, `serve`, `mcp`, `keys create`, `schema`, `report` (consommation d'un run ou d'une session, 3.4), `replay` (6.2a et 6.2b), `inspect` (6.2c : l'arbre lisible d'un run, `--full`, `--json`), `sessions list | export | delete` (F7, 4.1a), `approve` et `reject` (4.5) — la décision met un travail de reprise en file dans l'instance de la commande, qui la pilote et affiche la réponse ; `--no-wait` écrit et sort. Depuis 2.0.15, `answer` répond de même à une question du modèle (`loom.ask`) ; `run` affiche la question en attente sur stdout et sort en 0, et un `run --session` sans `--run-id` y répond par son message. Depuis 5.1a, `--tenant` dit au nom de quel client agir (`run`, `resume`, `approve`, `reject`, `mcp`), et `validate` montre les clients avec ce que chacun surcharge, puis monte les agents **par client**. Depuis 5.1b, `report --period day|month` rend la consommation d'un client sur la fenêtre en cours — dépense, plafonds, reste et remise à zéro —, `validate` montre aussi le budget et le quota de chaque client, et `--tenant` s'applique enfin à `report` et aux trois `sessions`. Depuis 5.2a, `keys create` prend `--tenant`, `--expires` (date ISO ou durée : `90j`, `12h`) et `--rate-limit`, et imprime le bloc YAML complet ; `validate` montre une ligne par clé — client, portées, agents, débit, état de l'expiration — et signale une clé qui approuve sans pouvoir lire. Depuis 5.4b, `validate` et `serve` annoncent les ressources MCP quand le serveur HTTP est monté : elles ne dépendent d'aucun réglage, et c'est la clé de la requête qui dit ce qu'une lecture en voit. Depuis 5.5a, `--profile` est une option **globale** (elle l'emporte sur `LOOM_PROFILE` et sur le fichier), et `validate` comme `serve` impriment le profil actif, sa provenance et ce qu'il change. Depuis 5.4c, `validate` liste les **portes** déclarées avec leur route, leur agent, leur session et leur en-tête de livraison — et signale celle qui n'en a pas, dont une relivraison rouvrirait un run ; `serve` imprime l'adresse de chaque porte, celle qu'on donne au planificateur de la plateforme. Depuis 6.4a, `serve --reload` (#48) relance le **process** qui sert à chaque changement d'un fichier de la config, rien n'étant rechargé à chaud : un superviseur garde la socket — partagée, une requête de la relève attend dans sa file — et surveille le dossier de la config sauf ce que loom y écrit (journaux, fichiers, bases SQLite, ceux de chaque client) et le bruit d'usage ; un **nouveau** process charge la config et monte chaque agent pour chaque client (clients de modèle jamais appelés : une clé absente ne bloque pas) pendant que l'ancien sert ; s'il échoue, il dit pourquoi et l'ancien continue ; sinon il prend la main une fois l'ancien sourd, et l'ancien finit ses requêtes et ses runs comme sur un Ctrl+C. Refusé en profil `prod`. `watchfiles` vient avec l'extra `http`. Depuis 2.0.6, `run --state CLE=VALEUR` (répétable) pose du state à l'ouverture du run — la valeur se lit en JSON (`3`, `true`, `null` qui efface, `"texte"`), sinon elle est prise telle quelle ; une clé donnée deux fois donne le code 2 (« --state : clé donnée deux fois : … »), un state refusé aussi (« Demande refusée : State refusé : … ») —, et `state <session> [--tenant]` imprime le state d'une session en JSON, sans les valeurs par défaut (code 1 pour une session inconnue). Depuis 2.0.17, `--user` (sinon `LOOM_USER`, qui peut se poser dans le `.env` du projet) est obligatoire sur `run`, `resume`, `approve`, `reject`, `answer` et `mcp` — sans lui, « Au nom de qui ? … », code 2 — ; `--by` est retiré ; un `--tenant` qui n'est pas celui de l'utilisateur est refusé ; un refus de droits dit « Accès refusé : … » (code 2). `keys create` prend `--user` à la place de `--tenant`, et `validate` a une section ACCÈS : rôles, comptes, clés et leur utilisateur, accès de chaque agent, avec ses avertissements (§16.4).
 
-**Codes de sortie :** 0 (réussi), 1 (run échoué ou erreur d'exécution, dont `JournalCorrupted`), 2 (refus : usage, config, extra manquant, agent / approbation / run / client inconnu, `AgentNotAllowed`, `UnusableId`, `SessionUnreadable`, `JournalBusy`, `OSError`), le refus tient en une ligne de `stderr`, sans trace. `--version` rend la version, et `python -m loom_ia` vaut `loom`. **`serve --host`** remplace l'adresse de la config, et c'est l'adresse **servie** qui décide si une API sans clé est « ouverte » (avertissement en dev, refus en prod) : `--host 0.0.0.0` sur une config en `127.0.0.1` est jugé comme tel, et inversement.
+**Codes de sortie :** 0 (réussi), 1 (run échoué ou erreur d'exécution, dont `JournalCorrupted`), 2 (refus : usage, config, extra manquant, agent / approbation / run / client inconnu, `AgentNotAllowed`, `UnusableId`, `SessionUnreadable`, `JournalBusy`, `OSError`), le refus tient en une ligne de `stderr`, sans trace. `--version` rend la version, et `python -m loom_ia` vaut `loom`. **`serve --host`** remplace l'adresse de la config, et c'est l'adresse **servie** qui décide si une API sans clé est « ouverte » (avertissement en dev, refus en prod ; depuis 2.0.17, refus partout : un utilisateur local n'est servi que sur la boucle locale) : `--host 0.0.0.0` sur une config en `127.0.0.1` est jugé comme tel, et inversement.
 
 ## 19. Projet
 

@@ -67,7 +67,7 @@ SESSION = sys.argv[2]
 
 async def main() -> None:
     async with Loom.from_config(CONFIG) as loom:
-        run_id = await loom.submit("demo", "QUESTION", session_id=SESSION)
+        run_id = await loom.submit("demo", "QUESTION", session_id=SESSION, user="dev")
         print(run_id, flush=True)
         await loom.drain()
 

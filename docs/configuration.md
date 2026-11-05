@@ -1,6 +1,6 @@
 # loom_v2 — Clés de configuration : `loom.yaml` et `agent.yaml`
 
-Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.py`, `agents/spec.py`, `core/model/*`), identique au paquet publié sur PyPI.
+Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.py`, `agents/spec.py`, `core/model/*`), identique au paquet publié sur PyPI. Les rubriques [`security`](#security), [`server`](#server) (`http.user`), [`access`](#access) et [`approval`](#approval) sont relevées en 2.0.17, qui ajoute les utilisateurs et les rôles d'accès (conception : `docs/loom_role_user.md`).
 
 **Règles générales**
 
@@ -10,6 +10,7 @@ Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.p
 - La config ne porte **jamais un secret** : les clés `*_env` nomment la variable d'environnement qui le contient.
 - « **obligatoire** » dans la colonne *Défaut* : la clé doit être écrite, sinon le chargement s'arrête.
 - `null` dans la colonne *Défaut* : la fonction est inactive tant que la clé n'est pas donnée.
+- **Rôle d'accès** et **rôle LLM** sont deux choses : un rôle d'accès (`security.roles` de `loom.yaml`) dit ce qu'un utilisateur peut faire sur loom ; un rôle LLM (`roles` d'un agent) délègue un travail à un modèle.
 
 ## Rubriques
 
@@ -33,7 +34,7 @@ Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.p
 | [`budgets`](#budgets) | Budgets par défaut des agents |
 | [`telemetry`](#telemetry) | Logs, capture, masquage, collecteurs |
 | [`tenants`](#tenants) | Clients et leurs surcharges |
-| [`security`](#security) | Clés d'API |
+| [`security`](#security) | Rôles d'accès, utilisateurs, clés d'API (obligatoire) |
 | [`server`](#server) | Serveurs HTTP et MCP |
 | [`triggers`](#triggers) | Déclencheurs (webhooks) |
 | [`agents`](#agents-en-ligne) | Agents écrits directement dans `loom.yaml` |
@@ -49,6 +50,7 @@ Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.p
 | [`main`](#main) | L'orchestrateur |
 | [`max_iterations`](#max_iterations) | Tours de boucle au plus |
 | [`timeout`](#timeout) | Délai maximal d'un run |
+| [`access`](#access) | Qui lance, répond, arrête et approuve |
 | [`approval`](#approval) | Règles des approbations |
 | [`output`](#output) | Contrat de la réponse finale |
 | [`judge`](#judge) | Juge de la réponse finale |
@@ -77,7 +79,7 @@ Blocs partagés, décrits une fois : [contrat de sortie](#bloc-contrat-de-sortie
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `profile` | Profil actif. `prod` change les avertissements en erreurs (approbation sans journal durable, budget en dollars sur un modèle sans tarif, juge corrélé, juge bloquant échantillonné…), refuse `serve --reload` et `judges: skip`, et avertit si des variables viennent du `.env`. `dev` change en avertissements certains refus (approbation avec un journal en mémoire). L'option `--profile` puis la variable `LOOM_PROFILE` l'emportent sur le fichier. | `dev`, `prod` | `null` : aucun profil, rien n'est durci ni assoupli | `profile: dev` |
+| `profile` | Profil actif. `prod` change les avertissements en erreurs (approbation sans journal durable, budget en dollars sur un modèle sans tarif, juge corrélé, juge bloquant échantillonné…), refuse `serve --reload`, `judges: skip` et `server.http.user`, et avertit si des variables viennent du `.env`. `dev` change en avertissements certains refus (approbation avec un journal en mémoire). L'option `--profile` puis la variable `LOOM_PROFILE` l'emportent sur le fichier. | `dev`, `prod` | `null` : aucun profil, rien n'est durci ni assoupli | `profile: dev` |
 
 ## `profiles`
 
@@ -356,7 +358,7 @@ Sans cette liste, seul le client `default` existe ; avec elle, la liste est ferm
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `id` | Identifiant du client (`--tenant`, clé d'API). | texte non vide | **obligatoire** | `id: dupont-plomberie` |
+| `id` | Identifiant du client, que portent ses utilisateurs (`security.users[].tenant`). | texte non vide | **obligatoire** | `id: dupont-plomberie` |
 | `agents` | Agents que ce client peut lancer. | liste de noms d'agents | `[]` : tous | `agents: [relance]` |
 | `tools_deny` | Outils retirés à ce client, sous le nom vu par le modèle (préfixe compris) : outil, rôle ou sous-agent. | liste de noms | `[]` | `tools_deny: [crm__supprimer]` |
 | `models` | Remplacement de modèles, partout (orchestrateur, rôles, juges, secours, compaction) ; les deux doivent être déclarés. | `{id_config: id_client}` | `{}` | `models: {HAIKU: SONNET}` |
@@ -371,24 +373,87 @@ Sans cette liste, seul le client `default` existe ; avec elle, la liste est ferm
 
 ## `security`
 
-| Clé | Rôle et impact | Valeurs | Défaut | Exemple |
-|---|---|---|---|---|
-| `api_keys` | Clés d'API de l'accès REST et MCP HTTP ; sans clé valide, 401. Obligatoire avec `server.mcp.http: true`. | liste | `[]` | voir ci-dessous |
-| `api_keys[].id` | Nom de la clé ; unique. | texte | **obligatoire** | `id: crm` |
-| `api_keys[].hash` | Empreinte donnée par `loom keys create` (jamais la clé). | `sha256:` + 64 hexadécimaux minuscules | **obligatoire** | |
-| `api_keys[].tenant` | Client au nom duquel la clé agit ; doit être déclaré si `tenants` existe. | id de client | `default` | `tenant: dupont-plomberie` |
-| `api_keys[].scopes` | Droits : lancer/annuler/webhooks, lire, lire le contenu, approuver, administrer (suppression, `judges: skip`). | liste de `run`, `read`, `read_content`, `approve`, `admin` | `[run, read]` | `scopes: [run, read, approve]` |
-| `api_keys[].agents` | Agents accessibles à cette clé. | liste | `[]` : tous | `agents: [relance]` |
-| `api_keys[].rate_limit.per_minute` | Requêtes par minute (REST et MCP HTTP) ; au-delà, 429. | entier > 0 | bloc absent : aucune limite | `rate_limit: {per_minute: 60}` |
-| `api_keys[].expires` | Fin de validité ; une clé expirée est refusée à l'appel. | date-heure avec fuseau | `null` : ne périme pas | `expires: 2027-01-01T00:00:00Z` |
+**Obligatoire** : au moins un rôle d'accès et un utilisateur. Sans eux, le chargement s'arrête et le message donne la configuration minimale à recopier. Toute action (lancer, répondre, arrêter, approuver, lire) est faite au nom d'un utilisateur déclaré ; c'est lui qui signe au journal, et son client est celui du run.
 
 ```yaml
 security:
+  roles:
+    - id: owner
+      permissions: [run, answer, cancel, approve, self_approve, amend, read, read_content, admin]
+  users:
+    - id: denis
+      roles: [owner]
+```
+
+| Clé | Rôle et impact | Valeurs | Défaut | Exemple |
+|---|---|---|---|---|
+| `roles` | Rôles d'accès. loom n'en fournit aucun : la matrice des droits se déclare. | liste, au moins un | **obligatoire** | voir ci-dessous |
+| `roles[].id` | Identifiant du rôle, cité par les utilisateurs, `act_as_roles` et les `access` des agents ; unique. | `^[A-Za-z0-9_-]{1,64}$` | **obligatoire** | `id: gerant` |
+| `roles[].description` | Libellé affiché par `loom validate`. | texte | `""` | `description: Gérant` |
+| `roles[].permissions` | Ce que le rôle permet (tableau ci-dessous). `self_approve` exige `approve` dans le même rôle. | liste, au moins une | **obligatoire** | `permissions: [run, read]` |
+| `roles[].agents` | Agents auxquels le rôle est borné : il ne vaut pour aucun autre. | liste de noms d'agents | `[]` : tous | `agents: [secretariat]` |
+| `roles[].act_as_roles` | Rôles que ce rôle peut endosser au nom d'un autre utilisateur (passerelle, `as_user`). Obligatoire avec `act_as`, refusé sans ; ne peut citer ni le rôle lui-même ni un rôle qui a `act_as`. | liste de rôles | `[]` | `act_as_roles: [assistante]` |
+| `users` | Utilisateurs : personnes ou services. | liste, au moins un | **obligatoire** | voir ci-dessous |
+| `users[].id` | Identifiant de l'utilisateur, écrit au journal (`by`) et donné par `--user`, `LOOM_USER`, `user=`, `as_user` ; unique. | `^[A-Za-z0-9_-]{1,64}$` | **obligatoire** | `id: marie` |
+| `users[].name` | Nom affiché par `loom validate`. | texte non vide | `null` : l'identifiant | `name: Marie Durand` |
+| `users[].roles` | Rôles d'accès de l'utilisateur, déclarés dans `roles` ; ses permissions sont celles que l'un d'eux porte. | liste, au moins un | **obligatoire** | `roles: [assistante]` |
+| `users[].tenant` | Client au nom duquel l'utilisateur agit, et celui de toutes ses clés ; doit être déclaré si `tenants` existe. | id de client | `default` | `tenant: dupont-plomberie` |
+| `api_keys` | Clés d'API de l'accès REST et MCP HTTP ; sans clé valide, 401. Obligatoire avec `server.mcp.http: true`. Sans clé, `loom serve` exige `server.http.user`. | liste | `[]` | voir ci-dessous |
+| `api_keys[].id` | Nom de la clé ; unique. | texte | **obligatoire** | `id: crm` |
+| `api_keys[].hash` | Empreinte donnée par `loom keys create` (jamais la clé). | `sha256:` + 64 hexadécimaux minuscules | **obligatoire** | |
+| `api_keys[].user` | Utilisateur que la clé identifie : les droits et le client sont les siens. | id d'utilisateur | **obligatoire** | `user: app-crm` |
+| `api_keys[].scopes` | Permissions que la clé **garde** de celles de son utilisateur ; elle restreint, elle n'ajoute jamais. | liste de permissions | `null` : toutes celles de l'utilisateur | `scopes: [run, read]` |
+| `api_keys[].agents` | Agents accessibles à cette clé ; restreint aussi. | liste | `[]` : tous | `agents: [relance]` |
+| `api_keys[].rate_limit.per_minute` | Requêtes par minute (REST et MCP HTTP) ; au-delà, 429. | entier > 0 | bloc absent : aucune limite | `rate_limit: {per_minute: 60}` |
+| `api_keys[].expires` | Fin de validité ; une clé expirée est refusée à l'appel. | date-heure avec fuseau | `null` : ne périme pas | `expires: 2027-01-01T00:00:00Z` |
+
+`api_keys[].tenant` n'existe plus (2.0.17) : le client vient de l'utilisateur.
+
+**Permissions** (liste fermée) :
+
+| Permission | Ce qu'elle ouvre |
+|---|---|
+| `run` | Lancer un run, continuer une session, reprendre un run (`loom resume`), appeler un déclencheur |
+| `answer` | Répondre à une question `loom.ask` (route `answer`, `loom answer`, ou message dans la session) |
+| `cancel` | Arrêter un run |
+| `approve` | Accorder ou refuser une demande d'approbation posée par le run **d'un autre** |
+| `self_approve` | Avec `approve` **dans le même rôle** : trancher aussi les demandes de **ses propres** runs |
+| `amend` | Corriger les arguments d'un appel en l'accordant |
+| `read` | Agents, statuts, événements, rapports, sessions |
+| `read_content` | Le contenu des lectures (messages, réponses, arguments) ; sans elle, les relectures sont masquées |
+| `admin` | `judges: skip`, effacement d'une session |
+| `act_as` | Agir au nom d'un utilisateur déclaré du même client (`as_user`), avec les seuls rôles d'`act_as_roles` |
+
+**Qui peut faire une action** sur un agent : un utilisateur déclaré, du client du run ou de la session ; l'un de ses rôles porte la permission et n'est pas borné à d'autres agents ; si l'agent restreint l'action (`access.run`, `access.answer`, `access.cancel`), ce même rôle est dans la liste ; une clé d'API ne fait que restreindre (`scopes`, `agents`).
+
+**Qui peut trancher une approbation** : un rôle de l'utilisateur, un seul, qui porte `approve`, vaut pour l'agent, figure parmi les approbateurs que la demande a figés (`access.approve`, sinon tout rôle qui a `approve`), porte `amend` si la décision corrige les arguments, et — si l'utilisateur a lancé le run racine — porte aussi `self_approve`, sur un agent qui n'interdit pas l'auto-approbation (`access.self_approval: false`). Les approbateurs sont figés dans la demande ; les rôles de l'utilisateur sont relus dans la config du moment.
+
+```yaml
+security:
+  roles:
+    - id: gerant
+      description: Gérant — lance, approuve, administre
+      permissions: [run, answer, cancel, approve, self_approve, amend, read, read_content, admin]
+    - id: approbateur
+      permissions: [approve, read, read_content]   # on ne tranche pas ce qu'on ne voit pas
+    - id: assistante
+      permissions: [run, answer, cancel, read, read_content]
+      agents: [secretariat]
+    - id: passerelle
+      permissions: [run, answer, cancel, read, read_content, act_as]
+      act_as_roles: [assistante, approbateur]
+  users:
+    - {id: denis, name: Denis Lamard, roles: [gerant]}
+    - {id: marie, roles: [assistante]}
+    - {id: app-crm, roles: [passerelle], tenant: dupont-plomberie}
   api_keys:
     - id: crm
-      hash: sha256:<empreinte donnée par loom keys create>
-      tenant: dupont-plomberie
-      scopes: [run, read]
+      hash: sha256:<empreinte donnée par loom keys create --user app-crm>
+      user: app-crm
+    - id: denis-mcp
+      hash: sha256:<empreinte>
+      user: denis
+      scopes: [run, read]                           # une clé MCP qui n'approuve pas
 ```
 
 ## `server`
@@ -399,15 +464,16 @@ security:
 | `http.port` | Port d'écoute (`--port` l'emporte). | 1 à 65535 | `8000` | `port: 8080` |
 | `http.base_path` | Préfixe commun des routes ; commence par `/`. | chemin | `""` | `base_path: /loom` |
 | `http.max_body_bytes` | Plafond d'un corps de requête ; au-delà, 413. Par MCP, le SDK plafonne déjà à 4 Mio. | entier > 0 | `134217728` (128 Mio) | |
+| `http.user` | Utilisateur au nom duquel une instance **sans clé** répond à toute requête : un usage local qui nomme quelqu'un au journal. Refusé hors de la boucle locale (`127.0.0.1`, `localhost`, `::1` ; `loom serve --host` est jugé aussi), avec des clés, avec `mcp.http` et en profil `prod`. Sans clé ni `http.user`, `loom serve` refuse de démarrer. | id d'utilisateur | `null` | `http: {user: denis}` |
 | `http.docs` | Sert `/docs`, `/redoc` et `/openapi.json`, qui se lisent **sans clé** et décrivent toutes les routes. `null` : servis, sauf en profil `prod`. | booléen, `null` | `null` | `http: {docs: false}` |
-| `mcp.http` | Monte le serveur MCP dans l'application REST, sous `<base_path>/mcp` ; exige des clés d'API et l'extra `mcp`. | booléen | `false` | `mcp: {http: true}` |
+| `mcp.http` | Monte le serveur MCP dans l'application REST, sous `<base_path>/mcp` ; exige des clés d'API et l'extra `mcp`. L'acteur est l'utilisateur de la clé : un outil MCP ne prend jamais d'utilisateur. | booléen | `false` | `mcp: {http: true}` |
 | `mcp.file_roots` | Dossiers où un lien `file://` joint à un appel MCP peut être lu. | liste de chemins | `[]` : liens `file://` refusés | `file_roots: [partage/]` |
 | `mcp.allowed_origins` | Origines acceptées par le transport MCP HTTP (protection DNS rebinding) ; une requête sans `Origin` passe. | liste d'origines | `[]` | `allowed_origins: [https://app.exemple.fr]` |
 | `mcp.allowed_hosts` | Hôtes acceptés en plus de l'adresse d'écoute (derrière un domaine ou un proxy). | liste d'hôtes | `[]` | `allowed_hosts: [loom.exemple.fr]` |
 
 ## `triggers`
 
-Portes d'entrée pour un appelant qui ne connaît pas l'API de loom (CRM, planificateur…) : `POST /v1/hooks/<name>`, avec une clé d'API qui donne le client.
+Portes d'entrée pour un appelant qui ne connaît pas l'API de loom (CRM, planificateur…) : `POST /v1/hooks/<name>`, avec une clé d'API dont l'utilisateur donne le client et doit avoir `run` sur l'agent.
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
@@ -490,13 +556,38 @@ L'orchestrateur, qui mène le run.
 |---|---|---|---|---|
 | `timeout` | Délai maximal d'un run (s), en temps de pilotage cumulé (l'attente en file, une pause, le temps avant une reprise ne comptent pas). Dépassé : `run.failed` (`error_type: timeout`) ; c'est une clôture, `loom resume` ne le relance pas, même avec un délai relevé. | nombre > 0 | `null` : pas de délai | `timeout: 300` |
 
+## `access`
+
+Ce que l'agent exige de qui agit sur lui. Il ne cite que des rôles d'accès de `security.roles` (les utilisateurs se déclarent une fois, dans `loom.yaml`). Une liste absente laisse décider les permissions des rôles ; une liste présente **restreint** : chaque rôle cité doit porter la permission et valoir pour l'agent, sinon le chargement s'arrête.
+
+| Clé | Rôle et impact | Valeurs | Défaut | Exemple |
+|---|---|---|---|---|
+| `access.run` | Rôles qui lancent l'agent. | liste de rôles d'accès | `null` : tout rôle qui a `run` | `run: [gerant]` |
+| `access.answer` | Rôles qui répondent à ses questions (`loom.ask`). | liste de rôles d'accès | `null` : tout rôle qui a `answer` | `answer: [gerant, assistante]` |
+| `access.cancel` | Rôles qui arrêtent ses runs. | liste de rôles d'accès | `null` : tout rôle qui a `cancel` | `cancel: [gerant]` |
+| `access.approve.default` | Approbateurs de toute demande de l'agent, à défaut d'une liste pour l'outil. | liste de rôles d'accès | `null` : tout rôle qui a `approve` | `default: [gerant]` |
+| `access.approve.tools` | Approbateurs par outil, sous le nom que voit le modèle (préfixe MCP compris, comme `tenants[].tools_deny`). Une politique `Pause` suit la même règle. | `{outil: [rôles]}` | `{}` | `tools: {envoyer_email: [approbateur, gerant]}` |
+| `access.self_approval` | `false` interdit l'auto-approbation sur cet agent, même à un rôle qui a `self_approve` : un run se fait trancher par un autre. `true` laisse décider les rôles, il n'ouvre rien. `loom validate` avertit si le lanceur serait le seul approbateur possible. | booléen | `true` | `self_approval: false` |
+
+Les approbateurs et `self_approval` sont **figés dans la demande** (`approval.requested`) : une config changée pendant l'attente ne change pas qui peut trancher une demande déjà posée. Les demandes d'un sous-agent suivent l'`access` du sous-agent.
+
+```yaml
+access:
+  run: [gerant]
+  approve:
+    default: [gerant]
+    tools: {envoyer_email: [approbateur, gerant]}
+  self_approval: false
+```
+
 ## `approval`
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
 | `approval.expires_in` | Délai laissé à l'approbateur (s) ; `null` : attente sans fin. | nombre > 0, `null` | `86400` (24 h) | `approval: {expires_in: 3600}` |
 | `approval.on_expiry` | Sort d'une demande périmée : refus de l'appel (`deny`) ou échec du run (`fail`). | `deny`, `fail` | `deny` | |
-| `approval.scope` | Portée exigée de la clé d'API qui approuve, côté REST. | nom de portée | `approve` | |
+
+`approval.scope` n'existe plus (2.0.17) : qui tranche se déclare dans [`access.approve`](#access).
 
 Un outil demande l'approbation par `approval: always` (dans `tools` ou dans les surcharges), ou par une politique qui rend `Pause`. Une approbation exige un journal durable (`jsonl`, `sqlite`, `postgres`) ; en profil `dev`, un simple avertissement.
 

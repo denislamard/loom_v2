@@ -166,6 +166,8 @@ def demo(tmp_path: Path) -> ConfigFactory:
                 "roles": [{"id": "owner", "permissions": ["run", "read", "read_content"]}],
                 "users": [{"id": "dev", "roles": ["owner"]}],
             },
+            # loom serve sans clé : au nom de dev, sur la boucle locale (D-1b).
+            "server": {"http": {"user": "dev"}},
             "imports": ["outils_acces"],
             "models": [
                 {"id": "FAKE", "sdk": "fake", "model": "fake-1", "params": {"script": SCRIPT}}
@@ -267,12 +269,13 @@ def test_a_broken_config_leaves_the_old_process_serving(
         "pas rechargé après la correction",
     )
 
-    # La config qui passe en prod : refusée, comme au lancement.
+    # La config qui passe en prod : refusée, comme au lancement. L'utilisateur local
+    # (server.http.user) l'est avant --reload : la prod exige une clé par appelant.
     root = config.read_text(encoding="utf-8")
     refused = server.said.count("Rechargement refusé")
     config.write_text(f"profile: prod\n{root}", encoding="utf-8")
     server.until(lambda: server.said.count("Rechargement refusé") > refused, "prod pas refusé")
-    assert "Config refusée : --reload est refusé en profil prod" in server.said
+    assert "'server.http.user' est refusé en profil 'prod'" in server.said
     assert server.agents() == {"demo": "Répond enfin aux questions de calcul."}
     assert server.stop() == 0
 

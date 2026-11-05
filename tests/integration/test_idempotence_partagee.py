@@ -76,7 +76,7 @@ CONFIG, SESSION = sys.argv[1], sys.argv[2]
 
 async def main() -> None:
     async with Loom.from_config(CONFIG) as loom:
-        result = await loom.run("demo", "DEMANDE", session_id=SESSION)
+        result = await loom.run("demo", "DEMANDE", session_id=SESSION, user="dev")
         print(json.dumps({"status": str(result.status), "texte": result.text or ""}), flush=True)
 
 

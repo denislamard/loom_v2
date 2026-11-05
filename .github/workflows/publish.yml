@@ -84,6 +84,14 @@ jobs:
               params:
                 script:
                   - text: ok
+          # Qui agit sur loom (D-1) : au moins un rôle d'accès et un utilisateur.
+          security:
+            roles:
+              - id: owner
+                permissions: [run, answer, cancel, approve, self_approve, amend, read, read_content, admin]
+            users:
+              - id: dev
+                roles: [owner]
           YAML
           cat > "$smoke/cfg/agents/smoke.yaml" <<'YAML'
           name: smoke
@@ -105,7 +113,7 @@ jobs:
           "$loom" --config cfg/loom.yaml validate | tee validate.txt
           grep -q "✓ 1 agent monté" validate.txt
           grep -q "forge · loom-ia $version" validate.txt
-          "$loom" --config cfg/loom.yaml run smoke "bonjour" 2> /dev/null | tee run.txt
+          "$loom" --config cfg/loom.yaml run smoke "bonjour" --user dev 2> /dev/null | tee run.txt
           grep -qx "ok" run.txt
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
