@@ -6,6 +6,7 @@ Le client parle à l'application ASGI en direct : pas de serveur, pas de port.
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -19,10 +20,12 @@ from conftest import ANSWER, DEV, OWNER, QUESTION, ConfigFactory, demo_agent
 from pydantic import ValidationError
 
 from loom_ia.access import Loom
+from loom_ia.access.audit import AUDIT_LOGGER
 from loom_ia.adapters.bus import InMemoryBus
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.keys import fingerprint, new_api_key
+from loom_ia.core import AUDIT
 from loom_ia.core.events import Event, EventDraft, RunClaimed, RunScope
 from loom_ia.core.model import DEFAULT_TENANT, Message, RunStatus, SessionId, new_run_id
 from loom_ia.core.ports import JournalBusy
@@ -587,6 +590,62 @@ async def test_as_user_needs_act_as_and_the_endorsed_rights(atelier: ConfigFacto
     assert "ne peut pas agir au nom de mme-durand" in hors_roles.json()["detail"]
     # Denis est approbateur : par la passerelle, il ne peut pas lancer.
     assert lancer.status_code == 403 and "'run'" in lancer.json()["detail"]
+
+
+def _refusals(caplog: pytest.LogCaptureFixture) -> list[dict[str, str]]:
+    """Le détail de chaque refus écrit au journal d'audit (D-9), dans l'ordre."""
+    return [getattr(record, AUDIT) for record in caplog.records if record.name == AUDIT_LOGGER]
+
+
+async def test_every_refusal_of_the_api_is_written_once(
+    atelier: ConfigFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Clé inconnue, clé sans la portée, ``as_user`` refusé, droits du SDK : une ligne chacun."""
+    async with serving(atelier(security=CLES)) as (_, http):
+        started = await http.post(
+            "/v1/agents/demo/runs",
+            json={"message": "Relance."},
+            headers={"Authorization": f"Bearer {CLE}"},
+        )
+        run_id = started.json()["run_id"]
+        with caplog.at_level(logging.WARNING, logger=AUDIT_LOGGER):
+            inconnue = await http.get("/v1/agents", headers={"Authorization": "Bearer lk_faux"})
+            portee = await http.post(
+                f"/v1/runs/{run_id}/approve", json={}, headers={"Authorization": f"Bearer {CLE}"}
+            )
+            endosse = await http.post(
+                f"/v1/runs/{run_id}/approve",
+                json={"as_user": "mme-durand"},
+                headers={"Authorization": f"Bearer {PASSERELLE}"},
+            )
+            droits = await http.post(
+                "/v1/agents/demo/runs",
+                json={"message": "Relance.", "as_user": "denis"},
+                headers={"Authorization": f"Bearer {PASSERELLE}"},
+            )
+
+    assert [r.status_code for r in (inconnue, portee, endosse, droits)] == [401, 403, 403, 403]
+    cle, portee_, endossement, sdk = _refusals(caplog)
+    assert (cle["access"], cle["reason"]) == ("rest", "Clé d'API refusée")
+    assert "user" not in cle
+    assert (portee_["user"], portee_["key"], portee_["permission"]) == (
+        "atelier",
+        "atelier",
+        "approve",
+    )
+    assert (endossement["access"], endossement["user"], endossement["permission"]) == (
+        "rest",
+        "app-crm",
+        "act_as",
+    )
+    # Refusé par le SDK, au nom de Denis porté par la passerelle : écrit une fois, par REST.
+    assert (sdk["access"], sdk["action"], sdk["user"], sdk["via"], sdk["key"]) == (
+        "rest",
+        "run",
+        "denis",
+        "app-crm",
+        "app-crm",
+    )
 
 
 async def test_an_approval_can_be_rejected_over_rest(atelier: ConfigFactory) -> None:

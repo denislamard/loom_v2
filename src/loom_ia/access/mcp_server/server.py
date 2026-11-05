@@ -70,6 +70,7 @@ from pydantic import AnyUrl
 from pydantic.json_schema import models_json_schema
 
 from loom_ia import __version__
+from loom_ia.access import audit
 from loom_ia.access.api import JudgeSkip, JudgeVerdict, Loom, RunResult, UnknownRun
 from loom_ia.access.authz import AccessDenied, Actor
 from loom_ia.access.caller import Caller
@@ -389,10 +390,16 @@ def create_server(
 
     @server.read_resource()
     async def read_resource(uri: AnyUrl) -> list[ReadResourceContents]:
-        return await reader(who()).read(str(uri))
+        with audit.through("mcp"):
+            return await reader(who()).read(str(uri))
 
     @server.call_tool()
     async def call_tool(tool: str, arguments: dict[str, Any]) -> types.CallToolResult:
+        # Un refus qui sortira du SDK pendant cet appel dira qu'il est venu par MCP.
+        with audit.through("mcp"):
+            return await called(tool, arguments)
+
+    async def called(tool: str, arguments: dict[str, Any]) -> types.CallToolResult:
         caller = who()
         session = arguments.get("session_id")
         session_id = SessionId(str(session)) if session else None
@@ -408,7 +415,7 @@ def create_server(
             else "run"
         )
         if not caller.may(needed):
-            return _refused(f"Clé sans la portée {needed!r}")
+            return _denied(caller, f"Clé sans la portée {needed!r}", needed)
         try:
             if tool == CANCEL_TOOL:
                 return await _cancel(loom, RunId(str(run)), session_id, caller)
@@ -419,18 +426,24 @@ def create_server(
                     RunId(str(run)), session_id=session_id, tenant_id=caller.tenant
                 )
                 if not caller.allows(found.agent):
-                    return _refused(f"Clé non autorisée sur l'agent {found.agent!r}")
+                    return _denied(
+                        caller,
+                        f"Clé non autorisée sur l'agent {found.agent!r}",
+                        "read",
+                        found.agent,
+                    )
                 # Relire, c'est lire le journal : sans `read_content`, le
                 # statut et les coûts passent, la correspondance non (J5.2a) ;
                 # et le rapport ne nomme que les agents que la clé peut lire.
                 shown = found.restricted(caller.allows)
                 return answer(shown.masked() if caller.masks else shown, ran=False)
             if not caller.allows(tool, "run"):
-                return _refused(f"Clé non autorisée sur l'agent {tool!r}")
+                return _denied(caller, f"Clé non autorisée sur l'agent {tool!r}", "run", tool)
             _published(loom, tool, caller.tenant)
         except (UnknownAgent, UnknownRun) as exc:
             return _refused(str(exc.args[0]))
         except AccessDenied as exc:
+            audit.refused(exc, access="mcp", action=tool)
             return _refused(str(exc))
         attachments = await attachments_of(caller).read(arguments.get("attachments"))
         message = str(arguments["message"])
@@ -441,6 +454,7 @@ def create_server(
                 server, loom, tool, message, attachments, session_id, caller.tenant, caller.actor
             )
         except AccessDenied as exc:
+            audit.refused(exc, access="mcp", action=tool)
             return _refused(str(exc))
         return answer(ran)
 
@@ -776,7 +790,7 @@ async def _report(
         return _refused(f"Session {session_id} inconnue")
     for agent in dict.fromkeys(run.agent for run in report.runs):
         if not caller.allows(agent):
-            return _refused(f"Clé non autorisée sur l'agent {agent!r}")
+            return _denied(caller, f"Clé non autorisée sur l'agent {agent!r}", "read", agent)
     return types.CallToolResult(
         content=[types.TextContent(type="text", text="\n".join(render(report)))],
         structuredContent=report.model_dump(mode="json"),
@@ -798,12 +812,15 @@ async def _cancel(
     """
     state = await loom.state(run_id, session_id=session_id, tenant_id=caller.tenant)
     if not caller.allows(state.agent, "cancel"):
-        return _refused(f"Clé non autorisée sur l'agent {state.agent!r}")
+        return _denied(
+            caller, f"Clé non autorisée sur l'agent {state.agent!r}", "cancel", state.agent
+        )
     try:
         stopped = await loom.cancel(
             run_id, session_id=session_id, tenant_id=caller.tenant, user=caller.actor
         )
     except AccessDenied as exc:
+        audit.refused(exc, access="mcp", action=CANCEL_TOOL)
         return _refused(str(exc))
     said = "arrêté" if stopped else "déjà terminé, rien à arrêter"
     return types.CallToolResult(
@@ -815,6 +832,23 @@ async def _cancel(
 def _always(caller: Caller) -> CallerSource:
     """L'appelant de toutes les requêtes d'un serveur en stdio : son utilisateur."""
     return lambda: caller
+
+
+def _denied(
+    caller: Caller, message: str, permission: Permission, agent: str | None = None
+) -> types.CallToolResult:
+    """Un refus d'accès : écrit au journal d'audit (D-9), puis rendu comme une erreur d'outil."""
+    audit.denied(
+        message,
+        access="mcp",
+        user=caller.user,
+        via=caller.actor.via,
+        key=caller.key.id if caller.key is not None else None,
+        permission=permission,
+        agent=agent,
+        tenant=caller.tenant,
+    )
+    return _refused(message)
 
 
 def _refused(message: str) -> types.CallToolResult:

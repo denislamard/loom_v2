@@ -62,10 +62,12 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Final, NamedTuple, Self
+from typing import Final, Literal, NamedTuple, Self
 
 from pydantic import AwareDatetime, Field, JsonValue, NonNegativeInt, PositiveInt, ValidationError
 
+from loom_ia.access import audit
+from loom_ia.access.audit import audited, audited_stream
 from loom_ia.access.authz import (
     AccessDenied,
     Actor,
@@ -1107,15 +1109,18 @@ def _decidable(
     tenant: TenantId,
     *,
     amend: bool,
-) -> tuple[list[tuple[RunState, PendingApproval]], dict[tuple[RunId, str], _Signed]]:
-    """Les demandes que l'acteur peut trancher, et la signature de chacune (§ 4.4).
+) -> _Decidable:
+    """Les demandes que l'acteur peut trancher, la signature de chacune, et les autres (§ 4.4).
 
     Une seule demande visée, ou aucune qu'il puisse trancher parmi celles qui
     attendent : ``AccessDenied``, avec le motif de la première — un succès vide
-    laisserait croire que le run n'attendait rien.
+    laisserait croire que le run n'attendait rien. Sinon, celles qu'il ne peut
+    pas trancher sont laissées de côté, et rendues avec leur refus
+    (``skipped``) : c'est à qui agit de les écrire au journal d'audit.
     """
     kept: list[tuple[RunState, PendingApproval]] = []
     signed: dict[tuple[RunId, str], _Signed] = {}
+    skipped: list[tuple[PendingApproval, AccessDenied]] = []
     refused: AccessDenied | None = None
     for owner, request in asked:
         launcher = _launcher(tree, owner)
@@ -1130,6 +1135,7 @@ def _decidable(
             roles = require_decision(actor, approvable, tenant=tenant, amend=amend)
         except AccessDenied as error:
             refused = refused or error
+            skipped.append((request, error))
             continue
         kept.append((owner, request))
         signed[owner.run_id, request.call_id] = _Signed(
@@ -1140,7 +1146,15 @@ def _decidable(
         )
     if refused is not None and not kept:
         raise refused
-    return kept, signed
+    return _Decidable(kept, signed, tuple(skipped))
+
+
+class _Decidable(NamedTuple):
+    """Ce que ``_decidable`` rend : les demandes gardées, leurs signatures, les écartées."""
+
+    kept: list[tuple[RunState, PendingApproval]]
+    signed: dict[tuple[RunId, str], _Signed]
+    skipped: tuple[tuple[PendingApproval, AccessDenied], ...]
 
 
 def _for_launcher(actor: Actor, agent: str, approver: Approver) -> LimitedApprover:
@@ -1841,6 +1855,7 @@ class Loom:
             )
         return judges
 
+    @audited
     async def run(
         self,
         agent: str,
@@ -2031,6 +2046,7 @@ class Loom:
         writer = await self._writer(state.context.tenant_id, state.session_id)
         return await self._result(await self._piloted(ctx, state, writer))
 
+    @audited_stream
     async def stream(
         self,
         agent: str,
@@ -2119,6 +2135,7 @@ class Loom:
             # Le run est terminé : une erreur de la boucle ressort ici.
             await task
 
+    @audited
     async def resume(
         self,
         run_id: RunId,
@@ -3049,6 +3066,7 @@ class Loom:
                 del self._held[key]
             mine.set()
 
+    @audited
     async def cancel(
         self,
         run_id: RunId,
@@ -3139,6 +3157,7 @@ class Loom:
                 return False
             return True
 
+    @audited
     async def approve(
         self,
         run_id: RunId,
@@ -3184,6 +3203,7 @@ class Loom:
             session_id=session_id,
             tenant_id=tenant_id,
             actor=self._actor(user),
+            action="approve",
             amend=arguments is not None,
             payload=lambda asked, signed: ApprovalGranted(
                 call_id=asked.call_id,
@@ -3197,6 +3217,7 @@ class Loom:
             ),
         )
 
+    @audited
     async def reject(
         self,
         run_id: RunId,
@@ -3221,6 +3242,7 @@ class Loom:
             session_id=session_id,
             tenant_id=tenant_id,
             actor=self._actor(user),
+            action="reject",
             payload=lambda asked, signed: ApprovalRejected(
                 call_id=asked.call_id,
                 tool_name=asked.tool_name,
@@ -3241,6 +3263,7 @@ class Loom:
         tenant_id: TenantId | None,
         payload: Callable[[PendingApproval, _Signed], ApprovalGranted | ApprovalRejected],
         actor: Actor,
+        action: Literal["approve", "reject"],
         amend: bool = False,
     ) -> tuple[str, ...]:
         """Écrit une décision d'approbation, puis remet la racine en file.
@@ -3268,7 +3291,11 @@ class Loom:
             ]
         if call_id is not None and not decided:
             raise UnknownApproval(run_id, call_id)
-        decided, signatures = _decidable(actor, decided, tree, tenant, amend=amend)
+        decided, signatures, skipped = _decidable(actor, decided, tree, tenant, amend=amend)
+        for asked, error in skipped:
+            # Une décision sur tout le run n'en prend que ce que l'acteur peut trancher :
+            # celles qu'il ne peut pas sont des refus, même si l'appel réussit.
+            audit.refused(error, action=action, tenant=tenant, run_id=run_id, call_id=asked.call_id)
         # Une demande périmée ne se tranche plus, même si personne n'est encore
         # venu écrire son expiration : seules les autres reçoivent la décision.
         now = datetime.now(UTC)
@@ -3338,6 +3365,7 @@ class Loom:
             )
         return tuple(asked.call_id for _, asked in decided)
 
+    @audited
     async def answer(
         self,
         run_id: RunId,
@@ -3482,6 +3510,7 @@ class Loom:
             raise UnknownQuestion(run_id, call_id) from None
         return root, question.call_id
 
+    @audited
     async def submit(
         self,
         agent: str,
@@ -3567,6 +3596,7 @@ class Loom:
                 return spec
         raise UnknownTrigger(name, [spec.name for spec in self.config.triggers])
 
+    @audited
     async def trigger(
         self,
         name: str,

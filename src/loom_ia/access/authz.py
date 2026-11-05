@@ -28,7 +28,31 @@ from loom_ia.core.model import TenantId
 
 
 class AccessDenied(PermissionError):
-    """L'acteur n'a pas le droit de faire ce qu'il demande ; le message dit ce qui manque."""
+    """L'acteur n'a pas le droit de faire ce qu'il demande ; le message dit ce qui manque.
+
+    Il porte aussi, à part, de qui et de quoi il s'agit — utilisateur, passerelle,
+    clé, permission, agent —, pour que le journal d'audit le dise sans relire le
+    message (``access/audit.py``). ``audited`` est posé quand il y est écrit :
+    un refus qui traverse plusieurs couches n'y figure qu'une fois.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        actor: Actor | None = None,
+        user: str | None = None,
+        permission: str | None = None,
+        agent: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.user = actor.user if actor is not None else user
+        self.via = actor.via if actor is not None else None
+        self.key = actor.key.id if actor is not None and actor.key is not None else None
+        self.tenant: str | None = actor.tenant if actor is not None else None
+        self.permission = permission
+        self.agent = agent
+        self.audited = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,9 +83,11 @@ class Actor:
             declared = security.user(user)
         except KeyError:
             known = ", ".join(sorted(u.id for u in security.users))
-            raise AccessDenied(f"Utilisateur {user!r} inconnu (utilisateurs : {known})") from None
+            raise AccessDenied(
+                f"Utilisateur {user!r} inconnu (utilisateurs : {known})", user=user
+            ) from None
         if key is not None and key.user != declared.id:
-            raise AccessDenied(f"La clé {key.id!r} identifie {key.user!r}, pas {user!r}")
+            raise AccessDenied(f"La clé {key.id!r} identifie {key.user!r}, pas {user!r}", user=user)
         return cls(
             user=declared.id,
             tenant=declared.tenant,
@@ -81,15 +107,23 @@ class Actor:
         """
         if self.via is not None:
             raise AccessDenied(
-                f"{self.user} agit déjà au nom de {self.via} : on n'endosse pas en chaîne"
+                f"{self.user} agit déjà au nom de {self.via} : on n'endosse pas en chaîne",
+                actor=self,
+                permission="act_as",
             )
         gateways = [role for role in self.roles if "act_as" in role.permissions]
         if not gateways or not _kept_by_key(self.key, "act_as"):
-            raise AccessDenied(f"{self.user} n'agit pas au nom d'autrui (permission 'act_as')")
+            raise AccessDenied(
+                f"{self.user} n'agit pas au nom d'autrui (permission 'act_as')",
+                actor=self,
+                permission="act_as",
+            )
         target = Actor.of(security, user)
         if target.tenant != self.tenant:
             raise AccessDenied(
-                f"{self.user} agit pour le client {self.tenant}, {user} est chez {target.tenant}"
+                f"{self.user} agit pour le client {self.tenant}, {user} est chez {target.tenant}",
+                actor=self,
+                permission="act_as",
             )
         endorsable = {endorsed for role in gateways for endorsed in role.act_as_roles}
         roles = tuple(role for role in target.roles if role.id in endorsable)
@@ -97,7 +131,9 @@ class Actor:
             raise AccessDenied(
                 f"{self.user} ne peut pas agir au nom de {user} : aucun de ses rôles "
                 f"({_listed(r.id for r in target.roles)}) n'est parmi ceux qu'il endosse "
-                f"({_listed(sorted(endorsable))})"
+                f"({_listed(sorted(endorsable))})",
+                actor=self,
+                permission="act_as",
             )
         return Actor(
             user=target.user, tenant=target.tenant, roles=roles, via=self.user, key=self.key
@@ -147,22 +183,26 @@ def require(
     """
     if permission in ("approve", "self_approve", "amend"):
         raise ValueError(f"{permission!r} dépend de la demande : require_decision")
-    _same_tenant(actor, tenant)
+    name = agent.name if agent is not None else None
+    _same_tenant(actor, tenant, permission, name)
     where = f"sur l'agent {agent.name}" if agent is not None else "hors d'un agent"
     refused = f"{actor.signature} n'a pas la permission {permission!r} {where}"
+
+    def denied(reason: str) -> AccessDenied:
+        return AccessDenied(f"{refused} : {reason}", actor=actor, permission=permission, agent=name)
+
     holding = [role for role in actor.roles if permission in role.permissions]
     if not holding:
-        raise AccessDenied(f"{refused} : aucun de ses rôles ({_roles(actor)}) ne la porte")
-    name = agent.name if agent is not None else None
+        raise denied(f"aucun de ses rôles ({_roles(actor)}) ne la porte")
     holding = [role for role in holding if _covers(role, name)]
     if not holding:
-        raise AccessDenied(f"{refused} : ses rôles qui la portent sont bornés à des agents")
+        raise denied("ses rôles qui la portent sont bornés à des agents")
     listed = _listed_for(agent, permission)
     if listed is not None:
         holding = [role for role in holding if role.id in listed]
         if not holding:
-            raise AccessDenied(f"{refused} : l'agent la réserve aux rôles {_listed(listed)}")
-    _check_key(actor, refused, (permission,), name)
+            raise denied(f"l'agent la réserve aux rôles {_listed(listed)}")
+    _check_key(actor, refused, (permission,), name, permission)
     return tuple(holding)
 
 
@@ -177,46 +217,51 @@ def require_decision(
     arguments. Accorder et refuser demandent le même droit : refuser, c'est
     aussi trancher.
     """
-    _same_tenant(actor, tenant)
+    _same_tenant(actor, tenant, "approve", asked.agent)
     refused = (
         f"{actor.signature} ne peut pas trancher la demande {asked.tool} de l'agent {asked.agent}"
     )
+
+    def denied(
+        reason: str, permission: Permission = "approve", *, joined: str = " : "
+    ) -> AccessDenied:
+        return AccessDenied(
+            f"{refused}{joined}{reason}", actor=actor, permission=permission, agent=asked.agent
+        )
+
     candidates = [
         role for role in actor.roles if "approve" in role.permissions and _covers(role, asked.agent)
     ]
     if not candidates:
-        raise AccessDenied(
-            f"{refused} : aucun de ses rôles ({_roles(actor)}) n'a 'approve' sur cet agent"
-        )
+        raise denied(f"aucun de ses rôles ({_roles(actor)}) n'a 'approve' sur cet agent")
     if asked.approvers is not None:
         candidates = [role for role in candidates if role.id in asked.approvers]
         if not candidates:
-            raise AccessDenied(
-                f"{refused} : elle n'est tranchable que par {_listed(asked.approvers)}"
-            )
+            raise denied(f"elle n'est tranchable que par {_listed(asked.approvers)}")
     needed: list[Permission] = ["approve"]
     own = asked.launcher is not None and asked.launcher == actor.user
     if own:
         if not asked.self_approval:
-            raise AccessDenied(
-                f"{refused} : c'est son propre run, et l'agent interdit l'auto-approbation"
+            raise denied(
+                "c'est son propre run, et l'agent interdit l'auto-approbation", "self_approve"
             )
         candidates = [role for role in candidates if "self_approve" in role.permissions]
         if not candidates:
-            raise AccessDenied(
-                f"{refused} : c'est son propre run — il faut 'self_approve' dans un rôle "
-                "qui l'approuve"
+            raise denied(
+                "c'est son propre run — il faut 'self_approve' dans un rôle qui l'approuve",
+                "self_approve",
             )
         needed.append("self_approve")
     if amend:
         candidates = [role for role in candidates if "amend" in role.permissions]
         if not candidates:
-            raise AccessDenied(
-                f"{refused} en corrigeant ses arguments : il faut 'amend' dans un rôle "
-                "qui l'approuve"
+            raise denied(
+                "en corrigeant ses arguments : il faut 'amend' dans un rôle qui l'approuve",
+                "amend",
+                joined=" ",
             )
         needed.append("amend")
-    _check_key(actor, refused, needed, asked.agent)
+    _check_key(actor, refused, needed, asked.agent, "approve")
     return tuple(candidates)
 
 
@@ -246,11 +291,16 @@ def can_decide(
     return True
 
 
-def _same_tenant(actor: Actor, tenant: TenantId | None) -> None:
+def _same_tenant(
+    actor: Actor, tenant: TenantId | None, permission: Permission, agent: str | None
+) -> None:
     """Règle 1 : l'acteur n'agit que chez son client."""
     if tenant is not None and tenant != actor.tenant:
         raise AccessDenied(
-            f"{actor.signature} agit pour le client {actor.tenant}, pas pour {tenant}"
+            f"{actor.signature} agit pour le client {actor.tenant}, pas pour {tenant}",
+            actor=actor,
+            permission=permission,
+            agent=agent,
         )
 
 
@@ -280,7 +330,11 @@ def _kept_by_key(key: ApiKey | None, permission: Permission) -> bool:
 
 
 def _check_key(
-    actor: Actor, refused: str, permissions: Sequence[Permission], agent: str | None
+    actor: Actor,
+    refused: str,
+    permissions: Sequence[Permission],
+    agent: str | None,
+    permission: Permission,
 ) -> None:
     """Règle 4 : la clé qui a identifié la requête restreint, elle n'ajoute jamais (D-4)."""
     key = actor.key
@@ -288,9 +342,19 @@ def _check_key(
         return
     removed = [p for p in permissions if not _kept_by_key(key, p)]
     if removed:
-        raise AccessDenied(f"{refused} : la clé {key.id} retire {_listed(removed)} (scopes)")
+        raise AccessDenied(
+            f"{refused} : la clé {key.id} retire {_listed(removed)} (scopes)",
+            actor=actor,
+            permission=permission,
+            agent=agent,
+        )
     if key.agents and (agent is None or agent not in key.agents):
-        raise AccessDenied(f"{refused} : la clé {key.id} est bornée à {_listed(key.agents)}")
+        raise AccessDenied(
+            f"{refused} : la clé {key.id} est bornée à {_listed(key.agents)}",
+            actor=actor,
+            permission=permission,
+            agent=agent,
+        )
 
 
 def _roles(actor: Actor) -> str:

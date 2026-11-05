@@ -4,6 +4,7 @@
 import asyncio
 import io
 import json
+import logging
 import sys
 from datetime import UTC, datetime, timedelta
 from importlib.util import find_spec
@@ -17,12 +18,14 @@ from conftest import (
     HOSTILE,
     HOSTILE_SHOWN,
     MODEL,
+    OWNER,
     QUESTION,
     ConfigFactory,
     demo_agent,
 )
 
 from loom_ia.access.api import Loom
+from loom_ia.access.audit import AUDIT_LOGGER
 from loom_ia.access.cli import main
 from loom_ia.access.cli.main import (  # pyright: ignore[reportPrivateUsage]
     USER_ENV,
@@ -34,6 +37,7 @@ from loom_ia.access.cli.main import (  # pyright: ignore[reportPrivateUsage]
 from loom_ia.adapters.stores import JsonlEventStore
 from loom_ia.config.keys import matches
 from loom_ia.config.models import QueueStorage
+from loom_ia.core import AUDIT
 from loom_ia.core.events import Event, EventDraft, RunClaimed
 from loom_ia.core.model import DEFAULT_TENANT, Message, RunStatus, SessionId, ToolOutput
 from loom_ia.core.ports import JournalBusy, JournalCorrupted
@@ -661,6 +665,51 @@ def test_mcp_serves_on_stdio(
     path = demo(tenants=[{"id": "dupont"}])
     assert main(["--config", str(path), "mcp", "--user", "dupont"]) == 0
     assert served["user"] == "dupont"
+
+
+class _Kept(logging.Handler):
+    """Garde les refus écrits au journal d'audit, quoi que la CLI fasse de ses logs."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.WARNING)
+        self.kept: list[dict[str, str]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.kept.append(getattr(record, AUDIT))
+
+
+def test_a_refusal_in_the_cli_is_said_once_and_written_once(
+    atelier: ConfigFactory, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D-9 : au journal d'audit, par la CLI ; au terminal, une seule fois."""
+    roles = [OWNER, {"id": "lecteur", "permissions": ["read"]}]
+    users = [{"id": DEV, "roles": ["owner"]}, {"id": "lucie", "roles": ["lecteur"]}]
+    path = str(atelier(security={"roles": roles, "users": users}))
+    run_id = _paused(Path(path), capsys)
+    kept = _Kept()
+    journal = logging.getLogger(AUDIT_LOGGER)
+    # La config de l'atelier ne logue que CRITICAL : le journal d'audit est mis à part.
+    journal.addHandler(kept)
+    journal.setLevel(logging.WARNING)
+    try:
+        assert main(["--config", path, "approve", run_id, "--user", "lucie"]) == 2
+        monkeypatch.delenv(USER_ENV)
+        assert main(["--config", path, "approve", run_id]) == 2
+    finally:
+        journal.removeHandler(kept)
+        journal.setLevel(logging.NOTSET)
+
+    err = capsys.readouterr().err
+    assert err.count("Accès refusé") == 1 and "Accès refusé —" not in err
+    droits, personne = kept.kept
+    assert (droits["access"], droits["action"], droits["user"], droits["run_id"]) == (
+        "cli",
+        "approve",
+        "lucie",
+        run_id,
+    )
+    assert (personne["access"], personne["action"]) == ("cli", "approve")
+    assert "user" not in personne and personne["reason"].startswith("Au nom de qui ?")
 
 
 def test_a_command_without_user_says_how_to_name_one(

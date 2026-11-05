@@ -112,6 +112,7 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.routing import Route
 
 from loom_ia import __version__
+from loom_ia.access import audit
 from loom_ia.access.api import (
     RUNS_LIMIT,
     RUNS_MAX,
@@ -138,7 +139,7 @@ from loom_ia.access.api import (
     traced_agents,
 )
 from loom_ia.access.authz import AccessDenied, Actor, can
-from loom_ia.access.http.auth import API_KEY_HEADER, Caller, identify, require, throttle
+from loom_ia.access.http.auth import API_KEY_HEADER, Caller, identify, refusal, require, throttle
 from loom_ia.access.http.schemas import (
     AgentInfo,
     Answer,
@@ -285,6 +286,8 @@ async def caller(
     Les deux schémas sont là pour le document OpenAPI ; la clé se relit sur la
     requête elle-même, une instance locale n'en demandant aucune (D-1b).
     """
+    # Un refus qui sortira du SDK pendant cette requête dira qu'il est venu par REST.
+    audit.entering("rest")
     loom: Loom = request.app.state.loom
     who = identify(loom.config.security, request, loom.config.server.http.user)
     throttle(who, request.app.state.rates)
@@ -439,7 +442,10 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
     @app.exception_handler(UnknownTenant)
     async def _forbidden(request: Request, exc: Exception) -> JSONResponse:
         # Le client vient de la clé : ce n'est pas une demande mal formée,
-        # c'est une demande que cette clé n'a pas le droit de faire.
+        # c'est une demande que cette clé n'a pas le droit de faire. Un refus de
+        # droits qui n'est pas passé par le SDK (as_user) s'écrit ici (D-9).
+        if isinstance(exc, AccessDenied):
+            audit.refused(exc, access="rest", action=f"{request.method} {request.url.path}")
         return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_403_FORBIDDEN)
 
     @app.exception_handler(UnusableId)
@@ -473,8 +479,12 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         # Avant le corps, seule la clé se juge : avec ``as_user``, c'est
         # l'utilisateur endossé qui doit pouvoir lancer, pas la passerelle.
         if who.key is not None and not who.key.allows(name):
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN, f"Clé non autorisée sur l'agent {name!r}"
+            raise refusal(
+                status.HTTP_403_FORBIDDEN,
+                f"Clé non autorisée sur l'agent {name!r}",
+                caller=who,
+                permission="run",
+                agent=name,
             )
         _published(loom, name, who.tenant)
         try:
@@ -795,9 +805,11 @@ def create_app(loom: Loom, *, own: bool = False, host: str | None = None) -> Fas
         if who.key is not None and who.key.agents:
             # La liste ne dit pas de quels agents sont les runs d'une session :
             # la filtrer honnêtement demanderait de lire chaque journal.
-            raise HTTPException(
+            raise refusal(
                 status.HTTP_403_FORBIDDEN,
                 "Clé limitée à certains agents : la liste des sessions ne peut pas être filtrée",
+                caller=who,
+                permission="read",
             )
         return await loom.sessions(tenant_id=who.tenant)
 
@@ -954,8 +966,13 @@ def _administers(loom: Loom, who: Caller, actor: Actor, agent: str, *, endorsed:
         return
     spec = next(spec for spec in loom.agents if spec.name == agent)
     if not can(actor, "admin", agent=spec):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, f"{actor.signature} n'a pas la permission 'admin'"
+        raise refusal(
+            status.HTTP_403_FORBIDDEN,
+            f"{actor.signature} n'a pas la permission 'admin'",
+            caller=who,
+            actor=actor,
+            permission="admin",
+            agent=agent,
         )
 
 

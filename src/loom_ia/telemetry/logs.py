@@ -25,6 +25,8 @@ import sys
 from datetime import UTC, datetime
 from typing import Final, Literal, TextIO, get_args
 
+from loom_ia.core import AUDIT
+
 type LogFormat = Literal["console", "json"]
 
 CONTEXT_FIELDS: Final = ("run_id", "span_id", "tenant_id")
@@ -95,6 +97,10 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         payload.update(_context(record))
+        audit: object = getattr(record, AUDIT, None)
+        if audit is not None:
+            # Le détail d'un refus d'accès (``access/audit.py``).
+            payload["audit"] = audit
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         if record.stack_info:

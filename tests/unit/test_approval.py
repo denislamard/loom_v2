@@ -18,11 +18,13 @@ from pydantic import JsonValue
 
 from loom_ia.access import AccessDenied
 from loom_ia.access.api import UNCHECKED, ApprovalStale, Loom, RunResult, UnknownApproval
+from loom_ia.access.audit import AUDIT_LOGGER
 from loom_ia.access.cli import main
 from loom_ia.access.evals import received_arguments
 from loom_ia.access.progress import describe
 from loom_ia.adapters.stores import InMemoryEventStore, JsonlEventStore
 from loom_ia.config import ConfigError, load_config
+from loom_ia.core import AUDIT
 from loom_ia.core.events import (
     ApprovalGranted,
     ApprovalRejected,
@@ -1405,7 +1407,11 @@ def test_a_changed_config_does_not_change_who_may_decide_a_waiting_request(
 def test_without_access_lists_a_request_freezes_nothing_and_no_scope(
     atelier: ConfigFactory,
 ) -> None:
-    """Sans liste, tout rôle qui a ``approve`` ; le ``scope`` d'avant n'est plus écrit (L-2)."""
+    """Sans liste, tout rôle qui a ``approve`` ; rien n'est écrit qui ne restreigne (L-2).
+
+    Ni le ``scope`` d'avant, ni ``approvers`` à ``null``, ni ``self_approval`` à
+    ``true`` : absents, ils se relisent à leur valeur par défaut.
+    """
     path = atelier()
     run, _ = asyncio.run(_en_pause(path))
     [attente] = run.pending_approvals
@@ -1416,7 +1422,7 @@ def test_without_access_lists_a_request_freezes_nothing_and_no_scope(
         for ligne in ecrit.splitlines()
         if '"approval.requested"' in ligne
     )
-    assert "scope" not in demande and demande["approvers"] is None
+    assert not {"scope", "approvers", "self_approval"} & set(demande)
 
 
 def test_a_request_written_with_a_scope_still_reads(atelier: ConfigFactory) -> None:
@@ -1428,7 +1434,6 @@ def test_a_request_written_with_a_scope_still_reads(atelier: ConfigFactory) -> N
     for ligne in journal.read_text(encoding="utf-8").splitlines():
         event = json.loads(ligne)
         if event["type"] == "approval.requested":
-            del event["payload"]["approvers"], event["payload"]["self_approval"]
             event["payload"]["scope"] = "approve"
         lignes.append(json.dumps(event))
     journal.write_text("\n".join(lignes) + "\n", encoding="utf-8")
@@ -1820,3 +1825,143 @@ def test_an_inline_correction_without_amend_authorizes_nothing(atelier: ConfigFa
     assert "tool.called" not in [
         e.type for e in events if e.facets.get("tool_name") == "envoyer_email"
     ]
+
+
+# --- Journal d'audit des refus (D-9) ---------------------------------------------------
+
+
+def _refusals(caplog: pytest.LogCaptureFixture) -> list[dict[str, str]]:
+    """Le détail de chaque refus écrit au journal d'audit, dans l'ordre."""
+    return [
+        getattr(record, AUDIT)
+        for record in caplog.records
+        if record.name == AUDIT_LOGGER and record.levelno == logging.WARNING
+    ]
+
+
+def test_a_refused_decision_is_written_once_with_who_and_what(
+    atelier: ConfigFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Rien au journal de session, une ligne au journal d'audit : qui, quoi, pourquoi."""
+
+    async def go() -> RunResult:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            with caplog.at_level(logging.WARNING, logger=AUDIT_LOGGER):
+                with pytest.raises(AccessDenied):
+                    await loom.approve(run.run_id, session_id=SESSION, user="marie")
+            return run
+
+    run = asyncio.run(go())
+    [refus] = _refusals(caplog)
+    assert refus == {
+        "access": "sdk",
+        "action": "approve",
+        "user": "marie",
+        "permission": "approve",
+        "agent": "demo",
+        "tenant_id": "default",
+        "run_id": run.run_id,
+        "reason": refus["reason"],
+    }
+    assert "aucun de ses rôles (assistante) n'a 'approve'" in refus["reason"]
+
+
+def test_asking_whether_one_may_writes_nothing(
+    atelier: ConfigFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``can`` répond sans agir : ce n'est pas une tentative."""
+
+    async def go() -> bool:
+        async with Loom.from_config(atelier(security=EQUIPE)) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            with caplog.at_level(logging.WARNING, logger=AUDIT_LOGGER):
+                return await loom.can("marie", "approve", run_id=run.run_id, session_id=SESSION)
+
+    assert not asyncio.run(go())
+    assert _refusals(caplog) == []
+
+
+def test_a_decision_on_the_whole_run_writes_what_it_left_aside(
+    atelier: ConfigFactory, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Sans ``call_id``, l'appel réussit pour ce qu'Alice peut trancher : le reste est un refus."""
+    path = atelier(security=EQUIPE)
+    fichier = tmp_path / "agents" / "demo.yaml"
+    agent = yaml.safe_load(fichier.read_text(encoding="utf-8"))
+    agent["tools"] = [
+        {"python": "chercher", "approval": "always"},
+        *(tool for tool in agent["tools"] if tool.get("python") != "chercher"),
+    ]
+    agent["access"] = {
+        "approve": {"tools": {"chercher": ["gerant"], "envoyer_email": ["approbateur"]}}
+    }
+    fichier.write_text(yaml.safe_dump(agent), encoding="utf-8")
+
+    async def go() -> tuple[tuple[str, ...], dict[str, str]]:
+        async with Loom.from_config(path) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            calls = {a.tool_name: a.call_id for a in run.pending_approvals}
+            with caplog.at_level(logging.WARNING, logger=AUDIT_LOGGER):
+                granted = await loom.approve(run.run_id, session_id=SESSION, user="alice")
+            return granted, calls
+
+    granted, calls = asyncio.run(go())
+    assert granted == (calls["envoyer_email"],)
+    [refus] = _refusals(caplog)
+    assert (refus["action"], refus["user"], refus["call_id"]) == (
+        "approve",
+        "alice",
+        calls["chercher"],
+    )
+    assert "n'est tranchable que par gerant" in refus["reason"]
+
+
+# --- Ce que le journal écrit d'une approbation : rien qui ne dise quelque chose ---------
+
+
+def _written(path: Path, kind: str) -> list[dict[str, Any]]:
+    """Les événements ``kind`` tels qu'écrits dans le journal JSONL de la session."""
+    ecrit = (path.parent / "data" / "default" / f"{SESSION}.jsonl").read_text(encoding="utf-8")
+    return [event for line in ecrit.splitlines() if (event := json.loads(line))["type"] == kind]
+
+
+def test_a_decision_without_gateway_writes_neither_via_nor_its_defaults(
+    atelier: ConfigFactory,
+) -> None:
+    """Sans passerelle ni auto-approbation : ni ``via`` (ni sa facette), ni ``self_approved``."""
+    path = atelier(security=EQUIPE)
+
+    async def go() -> None:
+        async with Loom.from_config(path) as loom:
+            run = await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+            await loom.approve(run.run_id, session_id=SESSION, user="alice")
+            await loom.drain()
+
+    asyncio.run(go())
+    [accord] = _written(path, "approval.granted")
+    assert accord["payload"]["by"] == "alice" and accord["payload"]["roles"] == ["approbateur"]
+    assert not {"via", "self_approved"} & set(accord["payload"])
+    assert "via" not in accord["facets"]
+    [started, *_] = _written(path, "run.started")
+    assert "via" not in started["payload"]["context"]
+
+
+def test_what_restricts_a_request_is_written_with_it(
+    atelier: ConfigFactory, tmp_path: Path
+) -> None:
+    """Approbateurs listés, auto-approbation interdite : figés dans la demande, donc écrits."""
+    path = atelier(security=EQUIPE)
+    fichier = tmp_path / "agents" / "demo.yaml"
+    agent = yaml.safe_load(fichier.read_text(encoding="utf-8"))
+    agent["access"] = {"approve": {"default": ["gerant"]}, "self_approval": False}
+    fichier.write_text(yaml.safe_dump(agent), encoding="utf-8")
+
+    async def go() -> None:
+        async with Loom.from_config(path) as loom:
+            await loom.run("demo", DEMANDE, session_id=SESSION, user="marie")
+
+    asyncio.run(go())
+    [demande] = _written(path, "approval.requested")
+    assert demande["payload"]["approvers"] == ["gerant"]
+    assert demande["payload"]["self_approval"] is False

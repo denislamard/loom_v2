@@ -3,6 +3,7 @@
 
 import base64
 import json
+import logging
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,11 +11,13 @@ from typing import Any, Literal
 
 import pytest
 import yaml
-from conftest import ANSWER, DEV, PNG, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
+from conftest import ANSWER, DEV, OWNER, PNG, QUESTION, TREE_QUESTION, ConfigFactory, demo_agent
 
 from loom_ia.access import AccessDenied, Loom
+from loom_ia.access.audit import AUDIT_LOGGER
 from loom_ia.adapters.stores import InMemoryEventStore
 from loom_ia.config import ConfigError, load_config
+from loom_ia.core import AUDIT
 from loom_ia.core.events import ApprovalGranted, Event, RunCancelled
 from loom_ia.core.model import DEFAULT_TENANT, Attachment, Message, RunStatus, SessionId
 from loom_ia.testing import RunJournal
@@ -69,6 +72,22 @@ async def serving(
             create_server(loom, user=user), client_info=CLIENT, elicitation_callback=elicitation
         ) as client:
             yield loom, client
+
+
+async def test_a_refusal_over_mcp_is_written_with_its_access(
+    demo: ConfigFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """D-9 : un outil refusé à l'utilisateur du serveur laisse une ligne au journal d'audit."""
+    roles = [OWNER, {"id": "lecteur", "permissions": ["read"]}]
+    users = [{"id": DEV, "roles": ["owner"]}, {"id": "lucie", "roles": ["lecteur"]}]
+    path = demo(security={"roles": roles, "users": users})
+    with caplog.at_level(logging.WARNING, logger=AUDIT_LOGGER):
+        async with serving(path, user="lucie") as (_, client):
+            refused = await client.call_tool("demo", {"message": QUESTION})
+
+    assert refused.isError
+    [refus] = [getattr(r, AUDIT) for r in caplog.records if r.name == AUDIT_LOGGER]
+    assert (refus["access"], refus["user"], refus["permission"]) == ("mcp", "lucie", "run")
 
 
 async def test_a_stdio_server_acts_for_a_named_user(demo: ConfigFactory) -> None:
@@ -354,12 +373,16 @@ async def test_a_file_of_another_client_is_not_found(demo: ConfigFactory) -> Non
 
 
 async def test_cancel_stops_a_run_and_says_when_there_was_nothing_to_stop(
-    demo: ConfigFactory,
+    atelier: ConfigFactory,
 ) -> None:
-    async with serving(demo(), user=DEV) as (loom, client):
-        ran = await loom.run("demo", QUESTION, user=DEV)
-        fini = await client.call_tool(CANCEL_TOOL, {"run_id": ran.run_id})
-        laisse = await loom.submit("demo", QUESTION, user=DEV)
+    # Des runs en pause, sur une approbation : celui qu'on arrête attend encore quand
+    # l'arrêt arrive. Un run soumis à la file pouvait finir avant lui (essai instable).
+    async with serving(atelier(), user=DEV) as (loom, client):
+        ran = await loom.run("demo", "Relance.", session_id=SessionId("s-fini"), user=DEV)
+        await loom.approve(ran.run_id, session_id=SessionId("s-fini"), user=DEV)
+        await loom.drain()
+        fini = await client.call_tool(CANCEL_TOOL, {"run_id": ran.run_id, "session_id": "s-fini"})
+        laisse = (await loom.run("demo", "Relance.", user=DEV)).run_id
         # Le modèle ne choisit pas qui signe (D-5) : l'outil n'a pas de ``by``.
         signe = await client.call_tool(CANCEL_TOOL, {"run_id": laisse, "by": "l'artisan"})
         arrete = await client.call_tool(CANCEL_TOOL, {"run_id": laisse})

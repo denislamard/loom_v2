@@ -55,6 +55,7 @@ from typing import Final, TextIO, cast
 from pydantic import JsonValue
 
 from loom_ia import __version__
+from loom_ia.access import audit
 from loom_ia.access.api import (
     AgentNotAllowed,
     InvalidAnswer,
@@ -196,7 +197,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        return int(args.handler(args))
+        # Un refus qui sortira du SDK pendant la commande dira qu'il est venu par la CLI.
+        with audit.through("cli"):
+            return int(args.handler(args))
     except ConfigError as error:
         print(f"Configuration : {error}", file=sys.stderr)
         return REFUSED
@@ -208,9 +211,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return REFUSED
     except AccessDenied as error:
         # Avant ValueError : un refus de droits n'est pas une demande mal formée.
+        # Au journal d'audit s'il n'y est pas déjà (refusé avant le SDK : --user,
+        # --tenant) ; la console, elle, ne le dit qu'une fois (TOLD).
+        audit.refused(error, access="cli", action=_command(args))
         print(f"Accès refusé : {error}", file=sys.stderr)
         return REFUSED
     except MissingUser as error:
+        audit.denied(str(error), access="cli", action=_command(args))
         print(str(error), file=sys.stderr)
         return REFUSED
     except ValueError as error:
@@ -3359,6 +3366,12 @@ class MissingUser(Exception):
     """Une commande qui agit sans dire au nom de qui : ni ``--user``, ni ``LOOM_USER``."""
 
 
+def _command(args: argparse.Namespace) -> str:
+    """La commande lancée, telle que le journal d'audit la nomme : ``approve``, ``keys create``."""
+    names = [getattr(args, name, None) for name in ("command", "action")]
+    return " ".join(name for name in names if isinstance(name, str)) or "loom"
+
+
 def _acting(args: argparse.Namespace, config: LoomConfig) -> tuple[Actor, TenantId]:
     """L'utilisateur de la commande et son client (D-10).
 
@@ -3377,7 +3390,9 @@ def _acting(args: argparse.Namespace, config: LoomConfig) -> tuple[Actor, Tenant
     actor = Actor.of(config.security, user)
     tenant = _tenant(args)
     if tenant is not None and tenant != actor.tenant:
-        raise AccessDenied(f"--tenant {tenant} : {actor.user} agit pour le client {actor.tenant}")
+        raise AccessDenied(
+            f"--tenant {tenant} : {actor.user} agit pour le client {actor.tenant}", actor=actor
+        )
     return actor, actor.tenant
 
 

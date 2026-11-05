@@ -115,8 +115,8 @@ class McpHttp:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
-            caller = identify(self.security, Request(scope, receive))
-            throttle(caller, self.rates)
+            caller = identify(self.security, Request(scope, receive), access="mcp")
+            throttle(caller, self.rates, access="mcp")
         except HTTPException as refus:
             # Un 401 ou un 429 ordinaire, pas une erreur d'outil : le LLM du
             # client n'a pas à interpréter un refus d'authentification ou de débit.

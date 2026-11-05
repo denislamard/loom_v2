@@ -35,6 +35,9 @@ from typing import Final
 
 from fastapi import HTTPException, Request, status
 
+from loom_ia.access import audit
+from loom_ia.access.audit import Access
+from loom_ia.access.authz import Actor
 from loom_ia.access.caller import Caller
 from loom_ia.config.models import Permission, SecurityConfig
 from loom_ia.tenancy import RateWindow
@@ -52,27 +55,68 @@ def presented(request: Request) -> str | None:
     return request.headers.get(API_KEY_HEADER)
 
 
-def identify(security: SecurityConfig, request: Request, local_user: str | None = None) -> Caller:
+def refusal(
+    code: int,
+    detail: str,
+    *,
+    caller: Caller | None = None,
+    actor: Actor | None = None,
+    key: str | None = None,
+    access: Access = "rest",
+    permission: Permission | None = None,
+    agent: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> HTTPException:
+    """Le refus d'une requête, écrit au journal d'audit (D-9) : à lever par l'accès.
+
+    ``actor`` nomme l'utilisateur refusé quand ce n'est pas celui de la clé :
+    l'utilisateur qu'une passerelle endosse (``as_user``).
+    """
+    who = actor if actor is not None else caller.actor if caller is not None else None
+    audit.denied(
+        detail,
+        access=access,
+        user=who.user if who is not None else None,
+        via=who.via if who is not None else None,
+        key=caller.key.id if caller is not None and caller.key is not None else key,
+        permission=permission,
+        agent=agent,
+        tenant=who.tenant if who is not None else None,
+    )
+    return HTTPException(code, detail, headers=headers)
+
+
+def identify(
+    security: SecurityConfig,
+    request: Request,
+    local_user: str | None = None,
+    *,
+    access: Access = "rest",
+) -> Caller:
     """Reconnaît l'appelant, ou refuse la requête.
 
     Sans clé déclarée, ``local_user`` (``server.http.user``, D-1b) est
     l'appelant de toute requête : une instance locale qui sait au nom de qui
     elle agit. ``create_app`` refuse une instance qui n'a ni l'un ni l'autre ;
-    appelé quand même, c'est un 401.
+    appelé quand même, c'est un 401. ``access`` dit, au journal d'audit, par
+    où la requête est arrivée (REST, ou le MCP qu'il monte).
     """
+    unauthorized = status.HTTP_401_UNAUTHORIZED
     if not security.api_keys:
         if local_user is None:
-            raise HTTPException(
-                status.HTTP_401_UNAUTHORIZED,
+            raise refusal(
+                unauthorized,
                 "Instance sans clé d'API ni utilisateur local : personne au nom de qui agir",
+                access=access,
                 headers=_CHALLENGE,
             )
         return Caller.acting(security, local_user)
     given = presented(request)
     if not given:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
+        raise refusal(
+            unauthorized,
             "Clé d'API absente : en-tête 'Authorization: Bearer …' ou 'X-API-Key'",
+            access=access,
             headers=_CHALLENGE,
         )
     for key in security.api_keys:
@@ -81,16 +125,18 @@ def identify(security: SecurityConfig, request: Request, local_user: str | None 
         if key.expired():
             # Reconnue, puis refusée : « expirée » se corrige, « inconnue »
             # envoie chercher au mauvais endroit.
-            raise HTTPException(
-                status.HTTP_401_UNAUTHORIZED,
+            raise refusal(
+                unauthorized,
                 f"Clé {key.id!r} expirée le {key.expires:%Y-%m-%d %H:%M} UTC",
+                key=key.id,
+                access=access,
                 headers=_CHALLENGE,
             )
         return Caller.identified(key, security)
-    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Clé d'API refusée", headers=_CHALLENGE)
+    raise refusal(unauthorized, "Clé d'API refusée", access=access, headers=_CHALLENGE)
 
 
-def throttle(caller: Caller, window: RateWindow) -> None:
+def throttle(caller: Caller, window: RateWindow, *, access: Access = "rest") -> None:
     """Compte la requête de cette clé, ou refuse en 429 avec son ``Retry-After``."""
     key = caller.key
     if key is None or key.rate_limit is None:
@@ -99,17 +145,28 @@ def throttle(caller: Caller, window: RateWindow) -> None:
     if waiting is None:
         return
     seconds = max(1, math.ceil(waiting))
-    raise HTTPException(
+    raise refusal(
         status.HTTP_429_TOO_MANY_REQUESTS,
         f"Clé {key.id!r} : {key.rate_limit.per_minute} requêtes par minute dépassées, "
         f"réessayer dans {seconds} s",
+        caller=caller,
+        access=access,
         headers={"Retry-After": str(seconds)},
     )
 
 
 def require(caller: Caller, permission: Permission, agent: str | None = None) -> None:
     """Vérifie la permission demandée, et l'agent visé s'il y en a un."""
+    forbidden = status.HTTP_403_FORBIDDEN
     if not caller.may(permission):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, f"Clé sans la portée {permission!r}")
+        raise refusal(
+            forbidden, f"Clé sans la portée {permission!r}", caller=caller, permission=permission
+        )
     if agent is not None and not caller.allows(agent):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, f"Clé non autorisée sur l'agent {agent!r}")
+        raise refusal(
+            forbidden,
+            f"Clé non autorisée sur l'agent {agent!r}",
+            caller=caller,
+            permission=permission,
+            agent=agent,
+        )

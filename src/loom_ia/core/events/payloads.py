@@ -106,6 +106,17 @@ def _no_inline_data(message: Message | None, label: str) -> None:
         raise ValueError(INLINE_REFUSED.format(label=label))
 
 
+def _with_via(facets: dict[str, FacetValue], via: str | None) -> dict[str, FacetValue]:
+    """La facette ``via`` d'une décision, seulement quand une passerelle l'a portée.
+
+    Comme ``judges`` et ``trigger`` : une facette sans valeur n'aide aucune
+    recherche, et les journaux sans passerelle s'écrivent comme avant.
+    """
+    if via is not None:
+        facets["via"] = via
+    return facets
+
+
 class Payload(DomainModel):
     category: ClassVar[EventCategory]
     facet_fields: ClassVar[tuple[str, ...]] = ()
@@ -303,8 +314,8 @@ class RunCancelled(Payload):
     # Auteur de la demande, quand on le connaît (``user_id`` de l'appelant,
     # identifiant du worker, run parent).
     by: str | None = None
-    # Passerelle qui a porté la demande (``as_user``, D-5).
-    via: str | None = None
+    # Passerelle qui a porté la demande (``as_user``, D-5) ; absente sans passerelle.
+    via: str | None = Field(default=None, exclude_if=lambda value: value is None)
     iterations: NonNegativeInt = 0
     usage: Usage = Usage()
     cost_usd: NonNegativeFloat = 0.0
@@ -913,11 +924,13 @@ class ApprovalRequested(Payload):
     policy: str | None = None
     # Qui peut la trancher, figé ici (§ 5.3) : les rôles approbateurs de
     # l'outil (``None`` : tout rôle qui a ``approve`` sur l'agent), et
-    # ``False`` si l'agent interdit l'auto-approbation (D-7b). Le ``scope`` des
-    # journaux antérieurs, que personne ne contrôlait (L-2), est ignoré à la
-    # lecture, comme tout champ inconnu.
-    approvers: tuple[str, ...] | None = None
-    self_approval: bool = True
+    # ``False`` si l'agent interdit l'auto-approbation (D-7b). Chacun n'est
+    # écrit que s'il restreint : absent, il se relit à sa valeur par défaut,
+    # comme dans un journal d'avant 2.0.17. Le ``scope`` des journaux
+    # antérieurs, que personne ne contrôlait (L-2), est ignoré à la lecture,
+    # comme tout champ inconnu.
+    approvers: tuple[str, ...] | None = Field(default=None, exclude_if=lambda value: value is None)
+    self_approval: bool = Field(default=True, exclude_if=lambda value: value)
     expire_at: datetime | None = None
 
     @property
@@ -949,7 +962,7 @@ class ApprovalGranted(Payload):
     """Appel autorisé : il s'exécute, éventuellement avec d'autres arguments (#17)."""
 
     category: ClassVar[EventCategory] = "approval"
-    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by", "via")
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by")
 
     content_fields: ClassVar[tuple[str, ...]] = (
         "arguments",
@@ -965,18 +978,22 @@ class ApprovalGranted(Payload):
     # Arguments corrigés par l'approbateur ; absents, ceux de la demande valent.
     arguments: dict[str, JsonValue] | None = None
     # Passerelle qui a porté la décision (``as_user``, D-5).
-    via: str | None = None
+    via: str | None = Field(default=None, exclude_if=lambda value: value is None)
     # Rôles qui l'ont permise, figés pour l'audit : la config peut changer ensuite.
-    roles: tuple[str, ...] = ()
+    roles: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     # L'approbateur est celui qui a lancé le run (``self_approve``, D-7).
-    self_approved: bool = False
+    # Ces trois champs ne sont écrits que s'ils disent quelque chose.
+    self_approved: bool = Field(default=False, exclude_if=lambda value: not value)
+
+    def facets(self) -> dict[str, FacetValue]:
+        return _with_via(super().facets(), self.via)
 
 
 class ApprovalRejected(Payload):
     """Appel refusé : le motif part au modèle comme résultat d'erreur (#17)."""
 
     category: ClassVar[EventCategory] = "approval"
-    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by", "via")
+    facet_fields: ClassVar[tuple[str, ...]] = ("tool_name", "by")
 
     content_fields: ClassVar[tuple[str, ...]] = ("reason",)
     type: Literal["approval.rejected"] = "approval.rejected"
@@ -984,10 +1001,13 @@ class ApprovalRejected(Payload):
     tool_name: str
     by: str | None = None
     reason: str = ""
-    # Audit (§ 7), comme pour un accord.
-    via: str | None = None
-    roles: tuple[str, ...] = ()
-    self_approved: bool = False
+    # Audit (§ 7), comme pour un accord : écrits seulement s'ils disent quelque chose.
+    via: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    roles: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    self_approved: bool = Field(default=False, exclude_if=lambda value: not value)
+
+    def facets(self) -> dict[str, FacetValue]:
+        return _with_via(super().facets(), self.via)
 
     @property
     def event_status(self) -> EventStatus:
@@ -1062,8 +1082,8 @@ class QuestionAnswered(Payload):
     answers: tuple[tuple[str, ...], ...] | None = None
     text: str | None = None
     by: str | None = None
-    # Passerelle qui a porté la réponse (``as_user``, D-5).
-    via: str | None = None
+    # Passerelle qui a porté la réponse (``as_user``, D-5) ; absente sans passerelle.
+    via: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     def reply(self) -> QuestionReply:
         return QuestionReply(answers=self.answers, text=self.text, by=self.by, via=self.via)

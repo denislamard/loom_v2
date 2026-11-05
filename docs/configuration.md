@@ -331,7 +331,7 @@ Budgets par défaut de tous les agents. Le même bloc sert dans `tenants[].budge
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `logging.level` | Niveau des logs techniques (distincts du journal) ; vaut aussi pour ceux du SDK OpenTelemetry (logger `opentelemetry`), affichés dans le même format. | niveau `logging` (`DEBUG`, `INFO`, `WARNING`, `ERROR`…) | `INFO` | `logging: {level: WARNING}` |
+| `logging.level` | Niveau des logs techniques (distincts du journal) ; vaut aussi pour ceux du SDK OpenTelemetry (logger `opentelemetry`), affichés dans le même format. Les refus d'accès sont écrits en WARNING sur le logger `loom_ia.access.audit` : au-dessus de `WARNING`, ils ne le sont plus. | niveau `logging` (`DEBUG`, `INFO`, `WARNING`, `ERROR`…) | `INFO` | `logging: {level: WARNING}` |
 | `logging.format` | Format des logs. | `console`, `json` | `console` | |
 | `capture.exports` | Ce qui part vers les collecteurs : l'enveloppe seule (`metadata`), ou aussi le contenu masqué (`content`, refusé sans `exporters`). Le journal garde tout, toujours. | `metadata`, `content` | `metadata` | |
 | `capture.raw_exchanges` | Écrit au journal chaque échange HTTP avec le fournisseur (`model.exchanged`) : débogage, vérification du prompt envoyé. | booléen | `false` | `capture: {raw_exchanges: true}` |

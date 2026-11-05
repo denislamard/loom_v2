@@ -54,6 +54,7 @@ from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.shared.exceptions import McpError
 from pydantic import AnyUrl
 
+from loom_ia.access import audit
 from loom_ia.access.api import Loom, UnknownRun, UnknownSession, traced_agents
 from loom_ia.access.caller import Caller
 from loom_ia.access.resources import (
@@ -65,6 +66,7 @@ from loom_ia.access.resources import (
     TEMPLATES,
     TRACES,
 )
+from loom_ia.config.models import Permission
 from loom_ia.core.events import Event, redacted_all
 from loom_ia.core.model import (
     ARTIFACT_SCHEME,
@@ -129,7 +131,7 @@ class ResourceReader:
     async def read(self, raw: str) -> list[ReadResourceContents]:
         """Contenu de la ressource, ou une erreur MCP qui dit ce qui manque."""
         if not self._caller.may("read"):
-            raise _refused("Clé sans la portée 'read'")
+            raise self._denied("Clé sans la portée 'read'", "read")
         # Un run d'une session nommée ne se retrouve pas par son seul
         # identifiant : la session s'ajoute en paramètre, comme en REST.
         uri, session = _split(raw)
@@ -159,8 +161,9 @@ class ResourceReader:
 
     async def _sessions(self) -> list[dict[str, Any]]:
         if not self._whole():
-            raise _refused(
-                "Clé limitée à certains agents : la liste des sessions ne peut pas être filtrée"
+            raise self._denied(
+                "Clé limitée à certains agents : la liste des sessions ne peut pas être filtrée",
+                "read",
             )
         records = await self._loom.sessions(tenant_id=self._caller.tenant)
         return [record.model_dump(mode="json") for record in records]
@@ -240,7 +243,10 @@ class ResourceReader:
         # Les octets d'un fichier sont du contenu : sans ``read_content``, comme
         # une relecture masquée, ils ne se lisent pas (l'URI, elle, reste visible).
         if self._caller.masks:
-            raise _refused("Clé sans la portée 'read_content' : le contenu d'un fichier est masqué")
+            raise self._denied(
+                "Clé sans la portée 'read_content' : le contenu d'un fichier est masqué",
+                "read_content",
+            )
         if not self._whole():
             # Un fichier se lit comme la session qui le porte : chacun de ses agents.
             try:
@@ -271,7 +277,22 @@ class ResourceReader:
 
     def _allowed(self, agent: str) -> None:
         if not self._caller.allows(agent):
-            raise _refused(f"Clé non autorisée sur l'agent {agent!r}")
+            raise self._denied(f"Clé non autorisée sur l'agent {agent!r}", "read", agent)
+
+    def _denied(self, message: str, permission: Permission, agent: str | None = None) -> McpError:
+        """Un refus d'accès : écrit au journal d'audit (D-9), puis rendu en erreur MCP."""
+        caller = self._caller
+        audit.denied(
+            message,
+            access="mcp",
+            user=caller.user,
+            via=caller.actor.via,
+            key=caller.key.id if caller.key is not None else None,
+            permission=permission,
+            agent=agent,
+            tenant=caller.tenant,
+        )
+        return _refused(message)
 
     def _shown(self, events: Sequence[Event]) -> list[dict[str, Any]]:
         """Événements en JSON, privés de leur contenu sans ``read_content``."""

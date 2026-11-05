@@ -12,6 +12,6 @@ class CallerContext(DomainModel):
     # Utilisateur au nom duquel le run est lancé : le lanceur, dont dépend
     # l'auto-approbation (D-7).
     user_id: str | None = None
-    # Passerelle qui l'a lancé en son nom (``as_user``, D-5).
-    via: str | None = None
+    # Passerelle qui l'a lancé en son nom (``as_user``, D-5) ; absente sans passerelle.
+    via: str | None = Field(default=None, exclude_if=lambda value: value is None)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)

@@ -27,3 +27,10 @@ REPORTED: Final = "loom_reported"
 ``validate`` l'écarte de sa console, pour ne pas le dire deux fois ; ``run`` et
 le service, qui n'ont pas de rapport, le disent comme les autres.
 """
+
+AUDIT: Final = "loom_audit"
+"""Clé ``extra`` du détail d'un refus d'accès (``access/audit.py``, D-9).
+
+Qui, quoi, par quel accès, pourquoi : le format ``json`` des logs le rend sous
+``audit``, pour qu'un collecteur le filtre sans relire le message.
+"""

@@ -331,7 +331,7 @@ Précisions :
 # approval.requested
 call_id: toolu_01…
 tool_name: envoyer_email
-approvers: [approbateur, gerant]        # nouveau ; absent : tout rôle qui a `approve` sur l'agent
+approvers: [approbateur, gerant]        # nouveau ; écrit seulement si l'agent en liste (absent : tout rôle qui a `approve`)
 self_approval: false                    # nouveau ; écrit seulement si l'agent l'interdit
 scope: approve                          # lu dans les anciens journaux, plus écrit
 ```
@@ -461,20 +461,22 @@ La clé nomme son utilisateur, qui doit avoir `run` sur l'agent du déclencheur.
 | --- | --- | --- |
 | `run.started` | `context.user_id` | Acteur résolu (clé, `as_user`, `--user`, `user=`), plus jamais libre |
 | `run.started` | `context.via` | **Nouveau** : passerelle, si `as_user` |
-| `approval.requested` | `approvers` | **Nouveau** : rôles figés |
+| `approval.requested` | `approvers` | **Nouveau** : rôles figés ; écrit seulement si l'agent en liste |
 | `approval.requested` | `self_approval` | **Nouveau** : écrit seulement s'il vaut `false` |
 | `approval.requested` | `scope` | Lu dans les anciens journaux, plus écrit |
 | `approval.granted` / `.rejected` | `by` | Identifiant d'utilisateur |
-| `approval.granted` / `.rejected` | `via` | **Nouveau** : passerelle |
-| `approval.granted` / `.rejected` | `roles` | **Nouveau** : rôle(s) qui ont permis la décision |
-| `approval.granted` / `.rejected` | `self` | **Nouveau** : `true` si l'approbateur est le lanceur (auto-approbation) |
+| `approval.granted` / `.rejected` | `via` | **Nouveau** : passerelle ; absent sans passerelle, facette comprise |
+| `approval.granted` / `.rejected` | `roles` | **Nouveau** : rôle(s) qui ont permis la décision ; absent si vide |
+| `approval.granted` / `.rejected` | `self_approved` | **Nouveau** : `true` si l'approbateur est le lanceur (auto-approbation) ; absent sinon |
 | `question.answered`, `run.cancelled` | `by` / `via` | Même traitement |
 
 **Compatibilité de lecture.**
 - Un ancien journal se relit et se rejoue à l'identique : tous les champs nouveaux sont facultatifs.
 - **L'inverse est faux.** `DomainModel` refuse les champs inconnus (`extra="forbid"`, `core/model/base.py:10`). Une 2.0.17 ne lira pas une session écrite par la nouvelle version : `by` vaut toujours un utilisateur, et `approvers` sera presque toujours présent. C'est sans retour, comme pour `wait_answer`, et à annoncer pour un journal partagé par des workers de versions différentes.
 
-**Tentatives refusées.** Elles ne sont **pas** écrites au journal de session : un refus ne change rien au run, et le journal raconte le run. Elles sont journalisées en WARNING et notées dans un span OpenTelemetry `loom.access.denied` (utilisateur, via, action, agent, motif).
+Règle d'écriture (2.0.17, comme `run.started.state` et les facettes `judges` et `trigger`) : un champ nouveau qui ne dit rien de plus que sa valeur par défaut n'est pas écrit. Absent, il se relit à sa valeur par défaut, exactement comme dans un journal antérieur.
+
+**Tentatives refusées.** Elles ne sont **pas** écrites au journal de session : un refus ne change rien au run, et le journal raconte le run. Chacune donne une ligne WARNING sur le logger `loom_ia.access.audit` (`access/audit.py`) : accès, action, utilisateur, passerelle, clé, permission, agent, client, run, appel, motif — sous `audit` au format `json`. Le span OpenTelemetry `loom.access.denied` n'est pas fait : les exports de loom sont tirés du journal, il n'y a pas de traceur en direct où l'accrocher. Un journal d'audit durable (un magasin par client, `loom audit`) reste possible, sur le même point d'écriture.
 
 **Affichage.** `loom inspect` et le déroulé affichent `par marie (via app-crm)` et `auto-approuvé par denis`. `via` devient une facette, pour retrouver tout ce qu'une passerelle a porté.
 
@@ -569,7 +571,7 @@ Ordre de grandeur, sans prototype : 1 nouveau module, environ 17 fichiers modifi
 | **D-7** | Auto-approbation | Permission `self_approve`, dans le même rôle qu'`approve` | Validée 04/11 |
 | **D-7b** | Durcissement par l'agent | `access.self_approval: false` ; retire, n'ouvre jamais | Validée 04/11 |
 | **D-8** | Approbateurs figés ou relus | Rôles approbateurs et `self_approval` figés dans la demande ; rôles des utilisateurs relus | À confirmer |
-| **D-9** | Tentatives refusées | Log WARNING + span `loom.access.denied`, pas au journal de session | À confirmer |
+| **D-9** | Tentatives refusées | Log WARNING sur `loom_ia.access.audit`, pas au journal de session ; pas de span | Réalisée 05/11 |
 | **D-10** | Utilisateur en CLI | `--user` / `LOOM_USER` obligatoire | Validée 04/11 (par D-1) |
 | **D-11** | Élicitation MCP | Le lanceur tranche ce que ses rôles permettent ; le reste en pause | À confirmer |
 | **D-12** | Granularité d'approbation | L'outil, en v1 | À confirmer |

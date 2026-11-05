@@ -11,6 +11,7 @@ import pytest
 from conftest import HOSTILE, HOSTILE_SHOWN
 
 # Importer un sous-module exécute d'abord loom_ia/__init__.py (NullHandler).
+from loom_ia.access.audit import AUDIT_LOGGER, denied
 from loom_ia.telemetry import configure_logging
 
 ROOT = logging.getLogger("loom_ia")
@@ -92,6 +93,28 @@ def test_json_format_is_one_object_per_line() -> None:
 
     assert second["message"] == "retry 2"
     assert "run_id" not in second
+
+
+def test_a_refusal_keeps_its_detail_in_both_formats() -> None:
+    """Le journal d'audit (D-9) : le détail sous ``audit`` en json, dans le message en console."""
+    stream = io.StringIO()
+    configure_logging(format="json", stream=stream)
+    denied("Clé d'API refusée", access="rest", tenant="default", run_id="r-7", permission="approve")
+    payload = json.loads(stream.getvalue())
+    assert payload["logger"] == AUDIT_LOGGER and payload["level"] == "WARNING"
+    assert payload["audit"] == {
+        "access": "rest",
+        "permission": "approve",
+        "tenant_id": "default",
+        "run_id": "r-7",
+        "reason": "Clé d'API refusée",
+    }
+    assert (payload["tenant_id"], payload["run_id"]) == ("default", "r-7")
+
+    stream = io.StringIO()
+    configure_logging(format="console", stream=stream)
+    denied("Clé d'API refusée", access="mcp", key="crm")
+    assert "Accès refusé — Clé d'API refusée [access=mcp key=crm]" in stream.getvalue()
 
 
 def test_json_format_includes_exception() -> None:
