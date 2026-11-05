@@ -1,6 +1,6 @@
 [project]
 name = "loom-ia"
-version = "2.0.17"
+version = "2.0.18"
 description = "Moteur d'agents IA en Python asynchrone : rôles délégués à des modèles, outils Python et MCP, runs journalisés, rejouables et reprenables, en librairie Python, API REST ou serveur MCP."
 readme = "README.md"
 authors = [
@@ -144,6 +144,9 @@ Issues = "https://github.com/denislamard/loom_v2/issues"
 
 [project.scripts]
 loom = "loom_ia.access.cli:main"
+# L'application qui garde les modèles de loom.memory en VRAM (docs/loom-mem-gpu.md) :
+# installée quels que soient les extras ; sans l'extra memory, elle dit lequel installer.
+loom-mem-gpu = "loom_ia.tools_builtin.memory.server:main"
 
 # La source d'outils « forge » (J6.4c) : la sandbox Firecracker, déclarée dans
 # tool_sources ; son module n'est importé que si un agent la référence.
@@ -266,6 +269,23 @@ forbidden_modules = [
     "loom_ia.tools",
     "loom_ia.tools_builtin",
     "loom_ia.usage",
+]
+
+[[tool.importlinter.contracts]]
+name = "Application loom-mem-gpu indépendante de loom"
+type = "forbidden"
+source_modules = ["loom_ia.tools_builtin.memory.server"]
+forbidden_modules = [
+    "loom_ia.access",
+    "loom_ia.adapters",
+    "loom_ia.agents",
+    "loom_ia.config",
+    "loom_ia.engine",
+    "loom_ia.replay",
+    "loom_ia.runtime",
+    "loom_ia.sessions",
+    "loom_ia.telemetry",
+    "loom_ia.tenancy",
 ]
 
 [[tool.importlinter.contracts]]

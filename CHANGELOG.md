@@ -2,6 +2,8 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.0.18 - non publiée
+
 ## 2.0.17 - publiée
 
 ### Mémoire `loom.memory` : ce que les tests du 03/11 ont montré

@@ -42,6 +42,10 @@ from loom_ia.tools_builtin.memory.models import (
 )
 from loom_ia.tools_builtin.memory_params import ModelsSpec
 
+# Version du calcul : dense, lexical, troncature, normalisation, sigmoïde du reranker.
+# À incrémenter dès que l'un d'eux change : loom-mem-gpu l'annonce, et un client d'une
+# autre version refuse ses vecteurs plutôt que d'en mêler deux sortes dans une base.
+ALGO: Final = "bge-m3/1"
 # Dimension du dense des modèles de la famille BGE-M3 : la base l'inscrit avant tout calcul.
 DENSE_DIM: Final = 1024
 BATCH: Final = 16
