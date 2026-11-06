@@ -235,7 +235,7 @@ def test_a_cancelled_call_stops_between_two_batches(serve: Callable[..., Running
     ("host", "said"),
     [
         (lambda: bge_host(embedder=BgeLike(name="BAAI/autre")), "sert embedder 'BAAI/autre'"),
-        (lambda: bge_host(algo="bge-m3/2"), "sert algorithme 'bge-m3/2'"),
+        (lambda: bge_host(algo="bge-m3/0"), "sert algorithme 'bge-m3/0'"),
     ],
 )
 def test_an_application_that_computes_otherwise_is_refused(
@@ -669,3 +669,135 @@ def test_validate_names_the_fallback_device(
     assert dict(tool.settings().options)["modèles"].endswith(
         "(loom-mem-gpu http://127.0.0.1:8765, repli : cuda)"
     )
+
+
+# --- Un seul calcul, deux chemins ----------------------------------------------------
+#
+# Ces essais gardent l'équivalence du calcul local et du calcul par loom-mem-gpu : un
+# changement qui ferait diverger les deux chemins (lots, coupe des textes, demi-précision,
+# méthode appelée par l'application) les casse.
+
+
+def same_calls(embedder: Any, reranker: Any, long_text: str) -> tuple[Any, ...]:
+    """Les mêmes appels, dans le même ordre (le faux tokenizer numérote les mots vus)."""
+    texts = [f"devis {i} chauffe-eau" for i in range(20)] + [long_text]
+    documents = embedder.embed_documents(texts)
+    query = embedder.embed_query("devis chauffe-eau")
+    scores = reranker.score("devis chauffe-eau", [*texts, long_text + " fin"])
+    return documents, query, scores
+
+
+def test_local_and_application_compute_the_same(monkeypatch: pytest.MonkeyPatch) -> None:
+    from test_memory_models import Fakes, install
+
+    from loom_ia.tools_builtin.memory.bge_m3 import BgeM3Embedder, BgeReranker
+
+    install(monkeypatch, Fakes())
+    cpu = ModelsSpec(device="cpu")
+    # Plus long que MAX_CHARS : les deux chemins le coupent au même endroit.
+    long_text = " ".join(f"mot{i}" for i in range(5000))
+    assert len(long_text) > bge_m3.MAX_CHARS
+    local = same_calls(BgeM3Embedder(cpu), BgeReranker(cpu), long_text)
+
+    host = Host(
+        embedder=BgeM3Embedder(cpu),
+        reranker=BgeReranker(cpu),
+        algo=bge_m3.ALGO,
+        fp16=cpu.fp16,
+    )
+    host.load()
+    running = Running(host)
+    try:
+        embedder, reranker = client(running)
+        remote = same_calls(embedder, reranker, long_text)
+    finally:
+        running.close()
+
+    local_documents, local_query, local_scores = local
+    documents, query, scores = remote
+    # Le dense voyage en float32, comme la base le range ; le lexical et les scores, tels quels.
+    assert [d.dense for d in documents] == [array("f", d.dense).tolist() for d in local_documents]
+    assert [d.sparse for d in documents] == [d.sparse for d in local_documents]
+    assert query.dense == array("f", local_query.dense).tolist()
+    assert query.sparse == local_query.sparse
+    assert scores == local_scores
+    # Le texte long a bien été coupé, des deux côtés : pas tous ses mots.
+    assert len(local_documents[-1].sparse.indices) < 5000
+
+
+def test_a_text_longer_than_the_cap_is_cut_not_refused(serve: Callable[..., Running]) -> None:
+    host = bge_host()
+    embedder, reranker = client(serve(host))
+    long_text = "x" * (bge_m3.MAX_CHARS + 5000)
+    assert len(embedder.embed_query(long_text).dense) == 1024
+    assert len(reranker.score(long_text, [long_text])) == 1
+
+
+def test_the_heaviest_request_fits_under_the_body_cap() -> None:
+    from loom_ia.tools_builtin.memory.protocol import MAX_BODY_BYTES, MAX_CHARS, MAX_TEXTS
+
+    # Une question et MAX_TEXTS passages, chaque caractère échappé en JSON (\\u00XX).
+    assert (MAX_TEXTS + 1) * MAX_CHARS * 6 + 1024 <= MAX_BODY_BYTES
+    assert MAX_CHARS == bge_m3.MAX_CHARS
+
+
+def test_half_precision_is_decided_in_one_place() -> None:
+    assert bge_m3.half_precision(True, "cuda:0")
+    assert not bge_m3.half_precision(True, "cpu")
+    assert not bge_m3.half_precision(True, "mps")
+    assert not bge_m3.half_precision(False, "cuda")
+    # /v1/health le dit avec la même règle.
+    host = bge_host(embedder=BgeLike(device="cuda:0"), fp16=True)
+    host.load()
+    assert host.health().fp16 is True
+    host = bge_host(embedder=BgeLike(device="cpu"), fp16=True)
+    host.load()
+    assert host.health().fp16 is False
+
+
+# --- Listes de champs parallèles à ModelsSpec ----------------------------------------
+#
+# Les réglages de loom-mem-gpu et ceux du repli reprennent des champs de ModelsSpec. Un
+# champ ajouté à ModelsSpec doit être repris, ou écarté ici avec sa raison.
+
+SERVICE_TAKES: Final = {"embedder", "reranker", "device", "fp16", "offline"}
+SERVICE_LEAVES: Final = {
+    "kind": "l'application ne sert que BGE-M3",
+    "preload": "l'application charge toujours ses modèles au démarrage",
+    "server": "l'application est le serveur",
+}
+FALLBACK_TAKES: Final = {"device", "fp16", "offline"}
+FALLBACK_LEAVES: Final = {
+    "kind": "repris de models",
+    "embedder": "repris de models : les mêmes modèles que l'application",
+    "reranker": "repris de models : les mêmes modèles que l'application",
+    "preload": "refusé avec server : le repli charge au premier repli",
+    "server": "le repli calcule dans le process",
+}
+
+
+def test_every_models_field_is_taken_or_left_on_purpose() -> None:
+    from loom_ia.tools_builtin.memory.server.settings import ServiceSettings
+
+    fields = set(ModelsSpec.model_fields)
+    assert fields == SERVICE_TAKES | set(SERVICE_LEAVES)
+    assert fields == FALLBACK_TAKES | set(FALLBACK_LEAVES)
+    assert SERVICE_TAKES <= set(ServiceSettings.model_fields)
+    assert set(FallbackSpec.model_fields) == FALLBACK_TAKES
+    # Mêmes défauts que ModelsSpec, sauf le device de l'application (cuda, voulu).
+    models = ModelsSpec()
+    service = ServiceSettings()
+    for name in SERVICE_TAKES - {"device"}:
+        assert getattr(service, name) == getattr(models, name), name
+    assert service.device == "cuda"
+    fallback = FallbackSpec()
+    for name in FALLBACK_TAKES:
+        assert getattr(fallback, name) == getattr(models, name), name
+
+
+def test_every_service_setting_has_its_option() -> None:
+    from loom_ia.tools_builtin.memory.server import _parser  # pyright: ignore[reportPrivateUsage]
+    from loom_ia.tools_builtin.memory.server.settings import ServiceSettings
+
+    serve = _parser().parse_args(["serve"])
+    assert set(ServiceSettings.model_fields) <= set(vars(serve))

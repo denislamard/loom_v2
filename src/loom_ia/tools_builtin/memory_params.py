@@ -169,7 +169,12 @@ def server_url_problem(url: str) -> str | None:
     return None
 
 
-_DEVICE_PATTERN: Final = r"^(auto|cpu|mps|cuda(:[0-9]+)?)$"
+# Le device des modèles, et les défauts des réglages de calcul : une seule définition pour
+# ``models``, ``server.fallback`` et les réglages de loom-mem-gpu.
+DEVICE_PATTERN: Final = r"^(auto|cpu|mps|cuda(:[0-9]+)?)$"
+DEFAULT_DEVICE: Final = "auto"
+DEFAULT_FP16: Final = True
+DEFAULT_OFFLINE: Final = False
 
 
 class FallbackSpec(BaseModel):
@@ -178,9 +183,9 @@ class FallbackSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     # Mêmes valeurs et mêmes défauts que dans ``models``.
-    device: str = Field(default="auto", pattern=_DEVICE_PATTERN)
-    fp16: bool = True
-    offline: bool = False
+    device: str = Field(default=DEFAULT_DEVICE, pattern=DEVICE_PATTERN)
+    fp16: bool = DEFAULT_FP16
+    offline: bool = DEFAULT_OFFLINE
 
 
 class ServerSpec(BaseModel):
@@ -229,14 +234,14 @@ class ModelsSpec(BaseModel):
     embedder: str = Field(default="BAAI/bge-m3", min_length=1)
     reranker: str = Field(default="BAAI/bge-reranker-v2-m3", min_length=1)
     # ``auto`` : cuda si la carte est prise en charge, sinon mps, sinon cpu.
-    device: str = Field(default="auto", pattern=_DEVICE_PATTERN)
+    device: str = Field(default=DEFAULT_DEVICE, pattern=DEVICE_PATTERN)
     # Demi-précision sur GPU ; sans effet sur CPU, qui calcule en float32.
-    fp16: bool = True
+    fp16: bool = DEFAULT_FP16
     # Charger les modèles en tâche de fond dès le montage de l'agent, au lieu du premier appel.
     preload: bool = False
     # Lire les modèles dans le cache local de Hugging Face seulement : aucune requête vers le
     # Hub. Un modèle absent du cache fait échouer le chargement (``hf download`` l'y met).
-    offline: bool = False
+    offline: bool = DEFAULT_OFFLINE
     # Calculs confiés à loom-mem-gpu ; ``embedder`` et ``reranker`` sont alors les modèles
     # qu'elle doit annoncer.
     server: ServerSpec | None = None

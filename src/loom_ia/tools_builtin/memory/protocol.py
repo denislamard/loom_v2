@@ -29,11 +29,16 @@ from loom_ia.tools_builtin.memory import bge_m3
 from loom_ia.tools_builtin.memory.models import Embedding, SparseVec
 
 PROTOCOL: Final = 1
-# Textes (ou passages) au plus par requête, caractères au plus par texte, octets au plus
-# par corps de requête (lu seulement après ce contrôle).
+# Le nom de l'application, dans ses messages comme dans ceux du client.
+APP: Final = "loom-mem-gpu"
+# Textes (ou passages) au plus par requête ; caractères au plus par texte, la borne que
+# les modèles appliquent eux-mêmes (le client coupe avant d'envoyer, rien n'est donc
+# refusé) ; octets au plus par corps de requête, lu seulement après ce contrôle. Le corps
+# le plus lourd — une question et MAX_TEXTS passages, tout en caractères échappés en
+# JSON (6 octets) — tient sous MAX_BODY_BYTES.
 MAX_TEXTS: Final = 32
-MAX_CHARS: Final = 20_000
-MAX_BODY_BYTES: Final = 2_000_000
+MAX_CHARS: Final = bge_m3.MAX_CHARS
+MAX_BODY_BYTES: Final = 4_000_000
 # Textes par requête du client : les lots de BGE-M3. Un appel annulé s'arrête au suivant.
 BATCH: Final = bge_m3.BATCH
 

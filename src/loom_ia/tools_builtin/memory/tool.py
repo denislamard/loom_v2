@@ -55,7 +55,8 @@ from loom_ia.tools_builtin.memory.files import (
     unreadable,
 )
 from loom_ia.tools_builtin.memory.models import shared_models
-from loom_ia.tools_builtin.memory.remote import APP, RemoteEmbedder, Target
+from loom_ia.tools_builtin.memory.protocol import APP
+from loom_ia.tools_builtin.memory.remote import RemoteEmbedder, Target
 from loom_ia.tools_builtin.memory.service import (
     MIN_TITLE_CHARS,
     Extracted,

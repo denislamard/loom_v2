@@ -18,7 +18,7 @@ from typing import Any, Final, Self, cast
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from loom_ia.tools_builtin.memory_params import ModelsSpec, is_loopback
+from loom_ia.tools_builtin.memory_params import DEVICE_PATTERN, ModelsSpec, is_loopback
 from loom_ia.tools_builtin.sql_params import ENV_NAME_PATTERN
 
 __all__ = ["ServiceSettings", "SettingsError", "is_loopback", "load_settings"]
@@ -39,7 +39,8 @@ class ServiceSettings(BaseModel):
 
     host: str = DEFAULT_HOST
     port: int = Field(default=DEFAULT_PORT, ge=1, le=65535)
-    device: str = Field(default="cuda", pattern=r"^(auto|cpu|mps|cuda(:[0-9]+)?)$")
+    # Le seul défaut qui diffère de ``models`` : ``cuda``, pas ``auto``.
+    device: str = Field(default="cuda", pattern=DEVICE_PATTERN)
     fp16: bool = True
     offline: bool = False
     embedder: str = Field(default=_DEFAULT_MODELS.embedder, min_length=1)

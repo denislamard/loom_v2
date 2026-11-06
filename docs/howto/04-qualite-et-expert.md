@@ -3162,7 +3162,7 @@ uv run loom-mem-gpu status
 
 ```text
 http://127.0.0.1:8765 : ready (protocole 1, loom 2.0.18)
-  embedder  BAAI/bge-m3 (dim 1024, bge-m3/1)
+  embedder  BAAI/bge-m3 (dim 1024, bge-m3/2)
   reranker  BAAI/bge-reranker-v2-m3
   device    cuda:0, fp16, VRAM réservée … Mo
 ```

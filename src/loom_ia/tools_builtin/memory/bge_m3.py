@@ -45,10 +45,16 @@ from loom_ia.tools_builtin.memory_params import ModelsSpec
 # Version du calcul : dense, lexical, troncature, normalisation, sigmoïde du reranker.
 # À incrémenter dès que l'un d'eux change : loom-mem-gpu l'annonce, et un client d'une
 # autre version refuse ses vecteurs plutôt que d'en mêler deux sortes dans une base.
-ALGO: Final = "bge-m3/1"
+ALGO: Final = "bge-m3/2"
 # Dimension du dense des modèles de la famille BGE-M3 : la base l'inscrit avant tout calcul.
 DENSE_DIM: Final = 1024
 BATCH: Final = 16
+# Caractères lus au plus par texte (question, passage), ici comme par loom-mem-gpu : bien
+# au-delà de ce que lit le tokenizer (1024 tokens, environ 4 caractères chacun en
+# français), la coupe ne change le calcul que pour un texte dont les tokens feraient en
+# moyenne plus de 19 caractères. Elle donne aux deux chemins la même borne : sans elle,
+# un texte plus long passait ici et était refusé par l'application (413).
+MAX_CHARS: Final = 20_000
 MAX_TOKENS: Final = 1024
 MAX_PAIR_TOKENS: Final = 512
 SPARSE_HEAD: Final = "sparse_linear.pt"
@@ -73,6 +79,21 @@ def _from_hub(offline: bool) -> Generator[None]:
         raise ModelNotCached(first_line(exc)) from exc
 
 
+def half_precision(fp16: bool, device: str) -> bool:
+    """Demi-précision : demandée (``fp16``) et sur une carte ; jamais sur CPU ni mps."""
+    return fp16 and device.startswith("cuda")
+
+
+def clipped(text: str) -> str:
+    """Le texte borné à ``MAX_CHARS`` caractères, comme le lisent les deux chemins."""
+    return text[:MAX_CHARS]
+
+
+def batches[T](items: Sequence[T]) -> list[Sequence[T]]:
+    """Les lots de ``BATCH`` éléments : ceux du calcul local et des requêtes à l'application."""
+    return [items[i : i + BATCH] for i in range(0, len(items), BATCH)]
+
+
 def _placed(module: Any, device: str, half: bool) -> Any:
     # Demi-précision avant le transfert : la carte ne reçoit jamais les poids en float32,
     # deux fois plus lourds (2,2 Go pour BGE-M3), ce qui ferait déborder une petite carte.
@@ -81,10 +102,6 @@ def _placed(module: Any, device: str, half: bool) -> Any:
     module = module.to(device)
     module.eval()
     return module
-
-
-def _batches[T](items: Sequence[T]) -> list[Sequence[T]]:
-    return [items[i : i + BATCH] for i in range(0, len(items), BATCH)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,10 +119,10 @@ class _Encoder:
         found: list[Embedding] = []
         torch = self.torch
         with torch.inference_mode():
-            for batch in _batches(texts):
+            for batch in batches(texts):
                 checkpoint(cancel)
                 inputs = self.tokenizer(
-                    list(batch),
+                    [clipped(text) for text in batch],
                     padding=True,
                     truncation=True,
                     max_length=MAX_TOKENS,
@@ -148,11 +165,11 @@ class _PairScorer:
         found: list[float] = []
         torch = self.torch
         with torch.inference_mode():
-            for batch in _batches(passages):
+            for batch in batches(passages):
                 checkpoint(cancel)
                 inputs = self.tokenizer(
-                    [query] * len(batch),
-                    list(batch),
+                    [clipped(query)] * len(batch),
+                    [clipped(passage) for passage in batch],
                     padding=True,
                     truncation="only_second",
                     max_length=MAX_PAIR_TOKENS,
@@ -194,7 +211,7 @@ class BgeM3Embedder:
         torch, transformers = _modules()
         name = self._spec.embedder
         offline = self._spec.offline
-        half = self._spec.fp16 and device.startswith("cuda")
+        half = half_precision(self._spec.fp16, device)
         with _from_hub(offline):
             tokenizer = transformers.AutoTokenizer.from_pretrained(name, local_files_only=offline)
             model = transformers.AutoModel.from_pretrained(name, local_files_only=offline)
@@ -255,7 +272,7 @@ class BgeReranker:
         torch, transformers = _modules()
         name = self._spec.reranker
         offline = self._spec.offline
-        half = self._spec.fp16 and device.startswith("cuda")
+        half = half_precision(self._spec.fp16, device)
         with _from_hub(offline):
             tokenizer = transformers.AutoTokenizer.from_pretrained(name, local_files_only=offline)
             model = transformers.AutoModelForSequenceClassification.from_pretrained(

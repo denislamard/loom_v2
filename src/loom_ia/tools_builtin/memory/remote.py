@@ -51,7 +51,7 @@ from loom_ia.tools_builtin.memory.models import (
     shared_models,
 )
 from loom_ia.tools_builtin.memory.protocol import (
-    BATCH,
+    APP,
     PROTOCOL,
     EmbedRequest,
     EmbedResponse,
@@ -65,7 +65,6 @@ from loom_ia.tools_builtin.memory_params import ModelsSpec
 
 log = logging.getLogger("loom_ia.memory")
 
-APP: Final = "loom-mem-gpu"
 # Après un repli, l'application est ressayée au premier lot passé ce délai, en secondes.
 REPROBE: Final = 30.0
 # Attente d'une application en cours de chargement, en secondes, et pas de la sonde.
@@ -335,10 +334,6 @@ def _sleep(seconds: float, cancel: threading.Event | None) -> None:
     checkpoint(cancel)
 
 
-def _batches[T](items: Sequence[T]) -> list[Sequence[T]]:
-    return [items[i : i + BATCH] for i in range(0, len(items), BATCH)]
-
-
 class RemoteEmbedder:
     """BGE-M3 calculé par ``loom-mem-gpu`` : dense et lexical."""
 
@@ -365,7 +360,7 @@ class RemoteEmbedder:
         self, texts: Sequence[str], cancel: threading.Event | None = None
     ) -> list[Embedding]:
         found: list[Embedding] = []
-        for batch in _batches(list(texts)):
+        for batch in bge_m3.batches(list(texts)):
             checkpoint(cancel)
             found.extend(
                 self.connection.run(
@@ -376,9 +371,9 @@ class RemoteEmbedder:
         return found
 
     def _remote(self, batch: Sequence[str], cancel: threading.Event | None) -> list[Embedding]:
-        answer = self.connection.post(
-            "/v1/embed", EmbedRequest(texts=list(batch)), EmbedResponse, cancel
-        )
+        # Coupés comme les modèles le font : l'application ne refuse jamais un texte long.
+        texts = [bge_m3.clipped(text) for text in batch]
+        answer = self.connection.post("/v1/embed", EmbedRequest(texts=texts), EmbedResponse, cancel)
         if len(answer.items) != len(batch):
             raise ModelRunError(f"{APP} : {len(answer.items)} vecteurs pour {len(batch)}")
         return _decoded(answer)
@@ -409,7 +404,7 @@ class RemoteReranker:
         self, query: str, passages: Sequence[str], cancel: threading.Event | None = None
     ) -> list[float]:
         found: list[float] = []
-        for batch in _batches(list(passages)):
+        for batch in bge_m3.batches(list(passages)):
             checkpoint(cancel)
             found.extend(
                 self.connection.run(
@@ -422,9 +417,10 @@ class RemoteReranker:
     def _remote(
         self, query: str, batch: Sequence[str], cancel: threading.Event | None
     ) -> list[float]:
-        answer = self.connection.post(
-            "/v1/score", ScoreRequest(query=query, passages=list(batch)), ScoreResponse, cancel
+        request = ScoreRequest(
+            query=bge_m3.clipped(query), passages=[bge_m3.clipped(p) for p in batch]
         )
+        answer = self.connection.post("/v1/score", request, ScoreResponse, cancel)
         if len(answer.scores) != len(batch):
             raise ModelRunError(f"{APP} : {len(answer.scores)} scores pour {len(batch)}")
         return answer.scores

@@ -155,12 +155,12 @@ Les codes de sortie servent à systemd (§8) : il relance après un échec de ch
 
 | Point d'accès | Entrée | Sortie |
 |---|---|---|
-| `GET /v1/health` | — | 200 `{protocol: 1, state: "ready", algo: "bge-m3/1", embedder, reranker, dim: 1024, device: "cuda:0", fp16: true, vram_used_mb, max_texts: 32, max_chars: 20000, loom: "2.0.18"}`. 503 `{state: "loading" \| "failed", error?}`. |
+| `GET /v1/health` | — | 200 `{protocol: 1, state: "ready", algo: "bge-m3/2", embedder, reranker, dim: 1024, device: "cuda:0", fp16: true, vram_used_mb, max_texts: 32, max_chars: 20000, loom: "2.0.18"}`. 503 `{state: "loading" \| "failed", error?}`. |
 | `POST /v1/embed` | `{texts: [str, …]}` | `{items: [{dense: "<base64 float32 LE>", sparse: {indices: [int], values: [float]}}]}` |
 | `POST /v1/score` | `{query: str, passages: [str, …]}` | `{scores: [float]}`, entre 0 et 1 |
 
 - **`algo`** est une constante de `bge_m3.py`, à incrémenter dès que le calcul change : dense, lexical, troncature, normalisation, sigmoïde. Le client refuse un `algo` différent du sien : des vecteurs incompatibles n'entrent jamais en silence dans la base.
-- **Plafonds par requête** : au plus 32 textes (ou passages), 20 000 caractères chacun, et 2 Mo de corps de requête. `Content-Length` est vérifié **avant** la lecture du corps. Le client envoie des lots de 16 : il n'atteint jamais les plafonds.
+- **Plafonds par requête** : au plus 32 textes (ou passages), 20 000 caractères chacun (`bge_m3.MAX_CHARS`), et 4 Mo de corps de requête — de quoi porter le corps le plus lourd, une question et 32 passages de 20 000 caractères tous échappés en JSON. `Content-Length` est vérifié **avant** la lecture du corps. Le client envoie des lots de 16 et coupe chaque texte à 20 000 caractères, comme les modèles le font eux-mêmes dans les deux chemins : il n'atteint jamais les plafonds.
 - **Erreurs** : 400 (JSON illisible), 401 (jeton absent ou faux), 404, 413 (plafond dépassé), 422 (champs invalides), 503 avec `Retry-After: 1` (chargement en cours, ou file d'attente pleine), 500 (`ModelRunError`, avec le message lisible actuel). Le corps est toujours `{error: "…"}`. Sur un 503 dû aux modèles, il porte aussi `state: "loading" | "failed"` : le client distingue ainsi une application relancée (contact à refaire) d'une file pleine (nouvel essai), sans lire le texte du message.
 
 ### 5.4 Serveur HTTP : bibliothèque standard
@@ -339,7 +339,7 @@ Le lot 5 reprend les règles du point 9 de `loom-memory-points-en-suspens.md` :
 Derrière nginx :
 
 - `proxy_read_timeout` au-dessus de `read_timeout` ;
-- `client_max_body_size` à 2 Mo, comme le plafond de l'application ;
+- `client_max_body_size` à 4 Mo, comme le plafond de l'application ;
 - n'ouvrir que le port HTTPS ;
 - garder en tête la localisation des données chez le fournisseur (RGPD).
 
@@ -396,6 +396,7 @@ Derrière nginx :
 | 4 | Unité systemd documentée (§8.2) ; journal sans heure en double sous systemd (fait le 05/11). Essai en vrai du §11 : à faire sur le poste. | `systemctl --user`, `loom memory eval`. |
 | 5 | Plus tard : réseau, VM cloud (§9). | — |
 | 6 | **Fait le 05/11.** CHANGELOG (2.0.18), guide : exemple 29.4 et annexe des extras, formation : exercice 5.6 (encadré), README (extra `memory`), point 9 de `loom-memory-points-en-suspens.md` marqué fait. `configuration.md` inchangé : il ne décrit pas les paramètres de `loom.memory`, que le guide porte. | — |
+| 7 | **Fait le 05/11 — un seul calcul, deux chemins.** Revue des doublons entre calcul local et loom-mem-gpu : règle de la demi-précision (`bge_m3.half_precision`), lots (`bge_m3.batches`), coupe des textes à 20 000 caractères dans les deux chemins (`bge_m3.MAX_CHARS`, `clipped` ; avant, un texte plus long passait en local et était refusé par l'application), nom de l'application (`protocol.APP`), motif et défauts du device (`memory_params.DEVICE_PATTERN`, `DEFAULT_*`) ; corps de requête porté à 4 Mo ; `ALGO` passe à `bge-m3/2` (la coupe touche la troncature). Essais : équivalence du calcul local et du calcul par l'application sur les vraies classes (faux torch), coupe, corps le plus lourd, demi-précision, listes de champs parallèles à `ModelsSpec`, options de l'application. | |
 
 ## 13. Risques
 

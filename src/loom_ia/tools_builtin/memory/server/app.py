@@ -178,7 +178,7 @@ class Host:
             reranker=self.reranker.model_name,
             dim=self.embedder.dim,
             device=device,
-            fp16=self.fp16 and device is not None and device.startswith("cuda"),
+            fp16=device is not None and bge_m3.half_precision(self.fp16, device),
             vram_used_mb=self.vram_used_mb(),
             max_texts=MAX_TEXTS,
             max_chars=MAX_CHARS,

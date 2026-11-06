@@ -30,7 +30,7 @@ from typing import Any, Final
 
 from pydantic import ValidationError
 
-from loom_ia.tools_builtin.memory.protocol import Health
+from loom_ia.tools_builtin.memory.protocol import APP, Health
 from loom_ia.tools_builtin.memory.server.app import EXIT_SETTINGS, run
 from loom_ia.tools_builtin.memory.server.settings import (
     DEFAULT_HOST,
@@ -39,7 +39,7 @@ from loom_ia.tools_builtin.memory.server.settings import (
     load_settings,
 )
 
-PROGRAM: Final = "loom-mem-gpu"
+PROGRAM: Final = APP
 EXIT_NOT_READY: Final = 1
 STATUS_TIMEOUT: Final = 5.0
 _COMMANDS: Final = ("serve", "status")
