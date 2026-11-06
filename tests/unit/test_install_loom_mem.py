@@ -199,13 +199,21 @@ def test_the_first_install_writes_the_unit_and_starts_it(machine: Machine, port:
         "Environment=LOOM_MEM_GPU_RERANKER=BAAI/bge-reranker-v2-m3",
         "# Environment=LOOM_MEM_GPU_TOKEN_ENV=LOOM_MEM_GPU_TOKEN",
         "# Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3",
+        "Environment=LOOM_MEM_GPU_LOG_LEVEL=INFO",
         "Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
         "# Environment=HF_HOME=",
         "# Environment=CUDA_VISIBLE_DEVICES=0",
+        "# Environment=OMP_NUM_THREADS=4",
+        "#   HF_TOKEN=",
         "EnvironmentFile=-%h/.config/loom-mem-gpu/env",
     ):
         assert f"\n{line}" in unit, line
     assert "RestartPreventExitStatus=2 3" in unit
+    # Chaque variable dit ce qu'elle fait : la ligne d'avant est un commentaire.
+    lines = unit.splitlines()
+    for index, line in enumerate(lines):
+        if line.removeprefix("# ").startswith("Environment="):
+            assert lines[index - 1].startswith("# ") and "Environment=" not in lines[index - 1]
     # Le fichier du jeton n'est jamais créé par le script.
     assert not machine.env_file.parent.exists()
     assert "prêt" in done.out and "ready" in done.out

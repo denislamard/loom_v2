@@ -63,6 +63,7 @@ from loom_ia.tools_builtin.memory.server.settings import (
     ServiceSettings,
     SettingsError,
     as_environment,
+    describe,
     env_name,
     is_loopback,
     load_settings,
@@ -216,21 +217,25 @@ def test_the_settings_become_the_lines_of_the_unit_and_come_back() -> None:
     assert "Environment=LOOM_MEM_GPU_PORT=8800" in lines
     assert "Environment=LOOM_MEM_GPU_FP16=true" in lines
     assert 'Environment="LOOM_MEM_GPU_EMBEDDER=/data/mes modèles/bge 100%%"' in lines
-    commented = [line for line in lines if line.startswith("#")]
-    assert [line.split()[1] for line in commented] == [
-        "Environment=LOOM_MEM_GPU_TOKEN_ENV=LOOM_MEM_GPU_TOKEN",
-        "Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3",
+    assert [line for line in lines if line.startswith("# Environment=")] == [
+        "# Environment=LOOM_MEM_GPU_TOKEN_ENV=LOOM_MEM_GPU_TOKEN",
+        "# Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3",
     ]
-    environ = dict(_as_systemd_reads_it(line) for line in lines if not line.startswith("#"))
+    environ = dict(_as_systemd_reads_it(line) for line in lines if line.startswith("Environment"))
     assert load_settings(None, {}, environ) == settings
 
 
-def test_every_setting_has_its_variable_in_the_unit() -> None:
-    # Un réglage ajouté sans défaut doit avoir son exemple (sinon KeyError ici).
+def test_every_setting_has_its_variable_in_the_unit_with_what_it_does() -> None:
+    # Un réglage ajouté sans description ou, sans défaut, sans exemple : refusé ici.
     lines = as_environment(ServiceSettings())
-    assert len(lines) == len(ServiceSettings.model_fields)
-    for field, line in zip(ServiceSettings.model_fields, lines, strict=True):
-        assert f"{env_name(field)}=" in line
+    assert len(lines) == 2 * len(ServiceSettings.model_fields)
+    for field, comment, line in zip(
+        ServiceSettings.model_fields, lines[::2], lines[1::2], strict=True
+    ):
+        assert comment.startswith(f"# {describe(field)}"), field
+        assert line.removeprefix("# ").startswith(f"Environment={env_name(field)}="), field
+    unset = [c for c in lines[::2] if c.endswith("— non réglé par défaut")]
+    assert len(unset) == 2
 
 
 def test_the_token_is_read_from_its_variable_never_given() -> None:
@@ -608,6 +613,30 @@ def test_main_reads_the_variables_and_options_win(
     monkeypatch.setenv("LOOM_MEM_GPU_PROT", "8803")
     assert main(["serve", "--check"]) == EXIT_SETTINGS
     assert "LOOM_MEM_GPU_PROT" in capsys.readouterr().err
+
+
+def test_the_log_level_is_a_setting_like_the_others(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[ServiceSettings] = []
+
+    def fake_run(settings: ServiceSettings) -> int:
+        seen.append(settings)
+        return EXIT_OK
+
+    levels: list[object] = []
+
+    def fake_config(**kwargs: object) -> None:
+        levels.append(kwargs["level"])
+
+    monkeypatch.setattr("loom_ia.tools_builtin.memory.server.run", fake_run)
+    monkeypatch.setattr(logging, "basicConfig", fake_config)
+    assert main([]) == EXIT_OK
+    monkeypatch.setenv("LOOM_MEM_GPU_LOG_LEVEL", "WARNING")
+    assert main([]) == EXIT_OK
+    assert main(["--log-level", "DEBUG"]) == EXIT_OK
+    assert [s.log_level for s in seen] == ["INFO", "WARNING", "DEBUG"]
+    assert levels == ["INFO", "WARNING", "DEBUG"]  # appliqué au journal
+    monkeypatch.setenv("LOOM_MEM_GPU_LOG_LEVEL", "BAVARD")
+    assert main([]) == EXIT_SETTINGS
 
 
 def test_under_systemd_the_log_lines_are_not_dated_twice() -> None:

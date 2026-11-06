@@ -3189,14 +3189,18 @@ uv run install-loom-mem --offline --linger    # installe, démarre, attend « re
 journalctl --user -u loom-mem-gpu -f
 ```
 
-Il fait valider les options par l'application (`loom-mem-gpu serve --check --env`), refuse un port déjà pris par autre chose que ce service, écrit `~/.config/systemd/user/loom-mem-gpu.service` et démarre le service. Dans l'unité, chaque réglage est une variable écrite avec sa valeur, défauts compris :
+Il fait valider les options par l'application (`loom-mem-gpu serve --check --env`), refuse un port déjà pris par autre chose que ce service, écrit `~/.config/systemd/user/loom-mem-gpu.service` et démarre le service. Dans l'unité, chaque réglage est une variable écrite avec sa valeur, défauts compris, sous la ligne qui dit ce qu'elle fait ; les variables non réglées sont en commentaire :
 
 ```ini
+# port d'écoute ; un autre port : changer aussi models.server.url des agents
 Environment=LOOM_MEM_GPU_PORT=8765
-Environment=LOOM_MEM_GPU_DEVICE=cuda
+# true : modèles lus dans le cache local de Hugging Face seulement, sans réseau
 Environment=LOOM_MEM_GPU_OFFLINE=true
-# Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3  (part de la carte permise, à côté d'un LLM local)
+# part de la carte permise, entre 0 et 1, à côté d'un LLM local (cuda) — non réglé par défaut
+# Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3
 ```
+
+`systemctl --user cat loom-mem-gpu.service` montre tout : les réglages de l'application, ceux de torch et de Hugging Face (`PYTORCH_CUDA_ALLOC_CONF`, `HF_HOME`, `CUDA_VISIBLE_DEVICES`, `OMP_NUM_THREADS`) et la place du jeton.
 
 On le relance pour changer une option : la différence est montrée et le service redémarré une fois ; relancé à l'identique, il ne touche à rien. `--linger` le laisse tourner hors session ; `--uninstall` le retire.
 

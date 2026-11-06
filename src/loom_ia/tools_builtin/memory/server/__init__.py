@@ -40,9 +40,11 @@ from loom_ia.tools_builtin.memory.server.app import EXIT_SETTINGS, preflight, ru
 from loom_ia.tools_builtin.memory.server.settings import (
     DEFAULT_HOST,
     DEFAULT_PORT,
+    LOG_LEVELS,
     ServiceSettings,
     SettingsError,
     as_environment,
+    describe,
     load_settings,
 )
 
@@ -58,19 +60,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not given or (given[0] not in _COMMANDS and given[0] not in ("-h", "--help")):
         given.insert(0, "serve")
     args = _parser().parse_args(given)
-    logging.basicConfig(level=getattr(logging, args.log_level), format=log_format(os.environ))
     if args.command == "status":
+        logging.basicConfig(level=args.log_level, format=log_format(os.environ))
         return status(args.url, args.token_env)
     options = {
         key: value
         for key, value in vars(args).items()
-        if key not in ("command", "config", "log_level", "check", "env") and value is not None
+        if key not in ("command", "config", "check", "env") and value is not None
     }
     try:
         settings = load_settings(args.config, options, os.environ)
     except SettingsError as exc:
         print(f"{PROGRAM} : {exc}", file=sys.stderr)
         return EXIT_SETTINGS
+    # Le niveau est un réglage comme un autre (option, LOOM_MEM_GPU_LOG_LEVEL, fichier).
+    logging.basicConfig(level=settings.log_level, format=log_format(os.environ))
     if args.check or args.env:
         return check(settings, environment=args.env)
     return run(settings)
@@ -113,9 +117,9 @@ def _parser() -> argparse.ArgumentParser:
     serve = commands.add_parser("serve", help="charge les modèles et les sert (par défaut)")
     # Sans valeur par défaut : seule une option donnée l'emporte sur le fichier --config.
     serve.add_argument("--config", type=Path, help="fichier YAML, aux mêmes clés que les options")
-    serve.add_argument("--host", help=f"adresse d'écoute, boucle locale (défaut : {DEFAULT_HOST})")
-    serve.add_argument("--port", type=int, help=f"port (défaut : {DEFAULT_PORT})")
-    serve.add_argument("--device", help="cuda (défaut), cuda:N, cpu ou auto")
+    serve.add_argument("--host", help=f"{describe('host')} (défaut : {DEFAULT_HOST})")
+    serve.add_argument("--port", type=int, help=f"{describe('port')} (défaut : {DEFAULT_PORT})")
+    serve.add_argument("--device", help=f"{describe('device')} (défaut : cuda)")
     serve.add_argument(
         "--no-fp16", dest="fp16", action="store_const", const=False, help="float32 sur la carte"
     )
@@ -123,14 +127,14 @@ def _parser() -> argparse.ArgumentParser:
         "--offline",
         action="store_const",
         const=True,
-        help="modèles lus dans le cache local de Hugging Face seulement",
+        help="modèles lus dans le cache local de Hugging Face seulement, sans réseau",
     )
-    serve.add_argument("--embedder", help="modèle BGE-M3 (nom Hugging Face ou dossier)")
-    serve.add_argument("--reranker", help="reranker à classifieur de paires")
-    serve.add_argument("--token-env", help="variable qui porte le jeton exigé des clients")
-    serve.add_argument(
-        "--max-vram-fraction", type=float, help="part de la carte permise, entre 0 et 1"
-    )
+    serve.add_argument("--embedder", help=describe("embedder"))
+    serve.add_argument("--reranker", help=describe("reranker"))
+    serve.add_argument("--token-env", help=describe("token_env"))
+    serve.add_argument("--max-vram-fraction", type=float, help=describe("max_vram_fraction"))
+    # Sans défaut ici : LOOM_MEM_GPU_LOG_LEVEL ou le fichier peuvent le donner.
+    serve.add_argument("--log-level", choices=LOG_LEVELS, help=f"{describe('log_level')} (INFO)")
     serve.add_argument(
         "--check",
         action="store_true",
@@ -146,10 +150,7 @@ def _parser() -> argparse.ArgumentParser:
         "--url", default=f"http://{DEFAULT_HOST}:{DEFAULT_PORT}", help="adresse de l'application"
     )
     status_parser.add_argument("--token-env", help="variable qui porte le jeton")
-    for command in (serve, status_parser):
-        command.add_argument(
-            "--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR")
-        )
+    status_parser.add_argument("--log-level", default="INFO", choices=LOG_LEVELS)
     return parser
 
 

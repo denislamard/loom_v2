@@ -151,33 +151,56 @@ if [[ -n "${HF_HOME:-}" ]]; then
     fi
     hf_home="Environment=$hf_home"
 else
-    hf_home="# Environment=HF_HOME=/chemin/du/cache  (défaut : ~/.cache/huggingface)"
+    hf_home="# Environment=HF_HOME=/chemin/du/cache"
 fi
 
 unit() {
     cat <<EOF
 # Écrit par install-loom-mem : le relancer plutôt que modifier ce fichier à la main.
-# Changer un réglage : systemctl --user edit $UNIT_NAME (surcharge gardée au rejeu),
-# puis systemctl --user restart $UNIT_NAME.
+#
+# Toutes les variables qu'on peut régler sont ci-dessous : avec leur valeur (par défaut,
+# ou donnée à install-loom-mem), ou en commentaire quand elles ne sont pas réglées.
+# Changer un réglage sans toucher à ce fichier :
+#   systemctl --user edit $UNIT_NAME      puis, dans la surcharge :
+#     [Service]
+#     Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3
+#   systemctl --user restart $UNIT_NAME
+# La surcharge l'emporte sur ce fichier et survit aux rejeux d'install-loom-mem.
+# Voir l'ensemble : systemctl --user cat $UNIT_NAME
 [Unit]
 Description=loom-mem-gpu — modèles de la mémoire de loom gardés en VRAM
+# Au plus 5 démarrages en 5 minutes ; au-delà, systemd abandonne (status : failed).
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
+# Sans option : chaque réglage vient de sa variable LOOM_MEM_GPU_* (une option l'emporterait).
 ExecStart="$APP" serve
-# Réglages de loom-mem-gpu, valeurs par défaut comprises.
+
+# --- loom-mem-gpu ---
 $settings
-# torch et les modèles.
+
+# --- torch, Hugging Face et CUDA (lus par ces bibliothèques, pas par loom-mem-gpu) ---
+# Allocation de la VRAM par torch : moins de fragmentation quand la taille des lots varie.
 Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Cache des modèles Hugging Face (défaut : ~/.cache/huggingface) ; le service ne lit pas ~/.bashrc.
 $hf_home
-# Environment=CUDA_VISIBLE_DEVICES=0  (une seule carte parmi plusieurs)
-# Le jeton : LOOM_MEM_GPU_TOKEN=… dans ce fichier facultatif, que install-loom-mem ne crée
-# pas, avec LOOM_MEM_GPU_TOKEN_ENV=LOOM_MEM_GPU_TOKEN. Ses variables l'emportent sur Environment=.
+# Cartes visibles par torch : 0 = la première ; avec plusieurs cartes, en choisir une.
+# Environment=CUDA_VISIBLE_DEVICES=0
+# Threads de calcul avec LOOM_MEM_GPU_DEVICE=cpu (défaut : tous les cœurs).
+# Environment=OMP_NUM_THREADS=4
+
+# --- Secrets : jamais dans ce fichier (systemctl show le lit) ---
+# Fichier facultatif, à créer soi-même (chmod 600) ; install-loom-mem ne le crée pas.
+# Ses lignes NOM=valeur l'emportent sur les Environment= ci-dessus :
+#   LOOM_MEM_GPU_TOKEN=…    le jeton exigé des clients, avec LOOM_MEM_GPU_TOKEN_ENV=LOOM_MEM_GPU_TOKEN
+#   HF_TOKEN=…              pour télécharger un modèle Hugging Face privé seulement
 EnvironmentFile=-%h/.config/loom-mem-gpu/env
+
+# Relancé s'il tombe, 5 s après ; pas après un réglage refusé (2) ni un port pris (3) :
+# relancer ne changerait rien.
 Restart=on-failure
 RestartSec=5
-# Réglages refusés (2) ou port pris (3) : relancer ne changerait rien.
 RestartPreventExitStatus=2 3
 
 [Install]

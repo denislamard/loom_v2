@@ -16,7 +16,7 @@ L'application ne lit jamais ``loom.yaml`` : ses réglages sont les siens.
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Final, Self, cast
+from typing import Any, Final, Literal, Self, cast, get_args
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -26,9 +26,11 @@ from loom_ia.tools_builtin.sql_params import ENV_NAME_PATTERN
 
 __all__ = [
     "ENV_PREFIX",
+    "LOG_LEVELS",
     "ServiceSettings",
     "SettingsError",
     "as_environment",
+    "describe",
     "env_name",
     "is_loopback",
     "load_settings",
@@ -37,11 +39,10 @@ __all__ = [
 DEFAULT_HOST: Final = "127.0.0.1"
 DEFAULT_PORT: Final = 8765
 ENV_PREFIX: Final = "LOOM_MEM_GPU_"
-# Les réglages sans défaut, écrits en commentaire dans l'unité, avec un exemple.
-_EXAMPLES: Final = {
-    "token_env": ("LOOM_MEM_GPU_TOKEN", "la variable qui porte le jeton, jamais le jeton ici"),
-    "max_vram_fraction": ("0.3", "part de la carte permise, à côté d'un LLM local"),
-}
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
+LOG_LEVELS: Final[tuple[str, ...]] = get_args(LogLevel)
+# Les réglages sans défaut, écrits en commentaire dans l'unité, avec cette valeur d'exemple.
+_EXAMPLES: Final = {"token_env": "LOOM_MEM_GPU_TOKEN", "max_vram_fraction": "0.3"}
 _DEFAULT_MODELS: Final = ModelsSpec()
 
 
@@ -54,18 +55,56 @@ class ServiceSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    host: str = DEFAULT_HOST
-    port: int = Field(default=DEFAULT_PORT, ge=1, le=65535)
+    # Chaque ``description`` sert deux fois : l'aide de l'option, le commentaire de la
+    # variable dans l'unité systemd (``as_environment``).
+    host: str = Field(
+        default=DEFAULT_HOST,
+        description="adresse d'écoute : la boucle locale seulement (127.0.0.1, localhost, ::1)",
+    )
+    port: int = Field(
+        default=DEFAULT_PORT,
+        ge=1,
+        le=65535,
+        description="port d'écoute ; un autre port : changer aussi models.server.url des agents",
+    )
     # Le seul défaut qui diffère de ``models`` : ``cuda``, pas ``auto``.
-    device: str = Field(default="cuda", pattern=DEVICE_PATTERN)
-    fp16: bool = True
-    offline: bool = False
-    embedder: str = Field(default=_DEFAULT_MODELS.embedder, min_length=1)
-    reranker: str = Field(default=_DEFAULT_MODELS.reranker, min_length=1)
-    # Variable qui porte le jeton ; jamais le jeton lui-même (il serait visible dans ``ps``).
-    token_env: str | None = Field(default=None, pattern=ENV_NAME_PATTERN)
-    # Part de la mémoire de la carte que l'application peut prendre (torch).
-    max_vram_fraction: float | None = Field(default=None, gt=0.0, le=1.0)
+    device: str = Field(
+        default="cuda",
+        pattern=DEVICE_PATTERN,
+        description="cuda (la carte), cuda:N (la carte N), cpu ou auto",
+    )
+    fp16: bool = Field(
+        default=True, description="true : demi-précision sur la carte ; false : float32"
+    )
+    offline: bool = Field(
+        default=False,
+        description="true : modèles lus dans le cache local de Hugging Face seulement, sans réseau",
+    )
+    embedder: str = Field(
+        default=_DEFAULT_MODELS.embedder,
+        min_length=1,
+        description="modèle de la famille BGE-M3 : nom Hugging Face ou dossier local",
+    )
+    reranker: str = Field(
+        default=_DEFAULT_MODELS.reranker,
+        min_length=1,
+        description="reranker à classifieur de paires : nom Hugging Face ou dossier local",
+    )
+    # Jamais le jeton lui-même : il serait visible dans ``ps`` et ``systemctl show``.
+    token_env: str | None = Field(
+        default=None,
+        pattern=ENV_NAME_PATTERN,
+        description="nom de la variable qui porte le jeton exigé des clients (pas le jeton)",
+    )
+    max_vram_fraction: float | None = Field(
+        default=None,
+        gt=0.0,
+        le=1.0,
+        description="part de la carte permise, entre 0 et 1, à côté d'un LLM local (cuda)",
+    )
+    log_level: LogLevel = Field(
+        default="INFO", description="niveau du journal : DEBUG, INFO, WARNING ou ERROR"
+    )
 
     @model_validator(mode="after")
     def _check(self) -> Self:
@@ -97,6 +136,13 @@ class ServiceSettings(BaseModel):
         if not value:
             raise SettingsError(f"token_env : la variable {self.token_env} est absente ou vide")
         return value
+
+
+def describe(field: str) -> str:
+    """Ce que fait un réglage, en une ligne : l'aide de l'option, le commentaire de l'unité."""
+    description = ServiceSettings.model_fields[field].description
+    assert description is not None, field
+    return description
 
 
 def env_name(field: str) -> str:
@@ -145,19 +191,19 @@ def load_settings(
 
 
 def as_environment(settings: ServiceSettings) -> list[str]:
-    """Les réglages en lignes ``Environment=`` d'une unité systemd, un par variable.
+    """Les réglages en lignes ``Environment=`` d'une unité systemd, une par variable.
 
-    Un réglage sans valeur est écrit en commentaire, avec un exemple. Les valeurs
-    sont échappées pour systemd (``%`` ; guillemets si espace).
+    Chaque variable est précédée d'un commentaire qui dit ce qu'elle fait. Un réglage
+    sans valeur est écrit en commentaire, avec une valeur d'exemple. Les valeurs sont
+    échappées pour systemd (``%`` doublé ; guillemets si espace).
     """
     lines: list[str] = []
     for field, value in settings.model_dump().items():
-        name = env_name(field)
+        lines.append(f"# {describe(field)}{' — non réglé par défaut' if value is None else ''}")
         if value is None:
-            example, why = _EXAMPLES[field]
-            lines.append(f"# {_unit_line(name, example)}  ({why})")
+            lines.append(f"# {_unit_line(env_name(field), _EXAMPLES[field])}")
         else:
-            lines.append(_unit_line(name, _text(value)))
+            lines.append(_unit_line(env_name(field), _text(value)))
     return lines
 
 
