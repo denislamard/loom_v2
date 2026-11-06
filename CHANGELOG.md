@@ -2,6 +2,8 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
+## 2.0.19 - non publiée
+
 ## 2.0.18 - publiée
 
 ### Mémoire `loom.memory` : `loom-mem-gpu`, les modèles gardés en VRAM

@@ -2,7 +2,7 @@
 """``Vm`` contre un faux firecracker : vm.env, verrou de run.sh, démarrage, arrêt, vsock.
 
 Le boot n'est pas éprouvé ici (pas de KVM) : c'est ce que fait
-``scripts/firecracker/essai_vm.py`` sur une vraie VM.
+``tests/firecracker/essai_vm.py`` sur une vraie VM.
 """
 
 import asyncio

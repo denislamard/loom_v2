@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Essai d'une vraie VM : boot, le verrou de run.sh, execd, des jobs, l'arrêt — hors de loom.
 
-    uv run python scripts/firecracker/essai_vm.py <dossier-vm>
-    uv run python scripts/firecracker/essai_vm.py <dossier-vm> --garder
-    uv run python scripts/firecracker/essai_vm.py <dossier-vm> --attente 60
+    uv run python tests/firecracker/essai_vm.py <dossier-vm>
+    uv run python tests/firecracker/essai_vm.py <dossier-vm> --garder
+    uv run python tests/firecracker/essai_vm.py <dossier-vm> --attente 60
 
 Le dossier est celui que ``make_vm.sh`` a construit (``vm.env``, ``run.sh``),
 avec execd dans l'image. La VM n'est arrêtée à la fin que si ce script l'a

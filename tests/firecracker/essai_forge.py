@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Essai de la source ``forge`` sur une vraie VM : sans agent ni modèle.
 
-    uv run python scripts/firecracker/essai_forge.py <dossier-vm>
-    uv run python scripts/firecracker/essai_forge.py <dossier-vm> --garder
+    uv run python tests/firecracker/essai_forge.py <dossier-vm>
+    uv run python tests/firecracker/essai_forge.py <dossier-vm> --garder
 
 La source est fabriquée par sa fabrique, comme loom le fait au montage, avec
 un catalogue dans un dossier temporaire effacé à la fin. L'essai joue deux
