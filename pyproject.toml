@@ -157,6 +157,11 @@ forge = "loom_ia.adapters.firecracker.forge:forge_source"
 requires = ["uv_build>=0.11.14,<0.12.0"]
 build-backend = "uv_build"
 
+# Installés dans le bin du venv avec le paquet : install-loom-mem, l'aide à l'installation
+# du service loom-mem-gpu (docs/loom-mem-gpu.md). Seul scripts/bin/ l'est, pas scripts/.
+[tool.uv.build-backend.data]
+scripts = "scripts/bin"
+
 [dependency-groups]
 dev = [
     "httpx2>=2.13.0",

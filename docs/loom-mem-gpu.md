@@ -280,22 +280,40 @@ Avec `server`, `preload` est refusé (§6.3) :
 
 L'application doit tourner dans un venv qui a l'extra `memory`, avec **la même version de loom** que les agents (`algo` le vérifie de toute façon). Le `.venv` de `loom_v2` n'a pas torch. Celui d'agent-mem (`/home/denis/temp/agent-mem/.venv`) a tout ce qu'il faut, et pointe sur `loom_v2` en éditable.
 
-### 8.2 Unité systemd utilisateur (exemple, à poser à la main)
+### 8.2 Unité systemd utilisateur : `install-loom-mem`
 
-`~/.config/systemd/user/loom-mem-gpu.service` :
+L'aide à l'installation est livrée avec loom-ia : `scripts/bin/install-loom-mem` est installé dans le bin du venv, à côté de `loom-mem-gpu` (`[tool.uv.build-backend.data] scripts = "scripts/bin"`, en installation normale comme en éditable). Le service lance le `loom-mem-gpu` de ce venv.
+
+```
+install-loom-mem [--port N] [--device D] [--offline] [--no-fp16]
+                 [--max-vram-fraction F] [--linger] [--dry-run]
+install-loom-mem --uninstall [--dry-run]
+```
+
+Ce qu'il fait, dans l'ordre :
+
+1. **Prérequis** : `systemctl --user` répond ; `loom-mem-gpu` est à côté du script ; les réglages et l'extra `memory` sont validés **par l'application elle-même** (`loom-mem-gpu serve --check`, sans rien charger ni ouvrir : aucune règle recopiée dans le script) ; avec `--device cuda`, `nvidia-smi` voit une carte. Un refus : code 2, rien n'est écrit.
+2. **Port** : pris par autre chose que ce service (une instance lancée à la main, un autre programme), code 3, rien n'est écrit. Le script ne tue jamais un process qu'il n'a pas lancé.
+3. **Unité** `~/.config/systemd/user/loom-mem-gpu.service` (nom fixe : une seule instance), avec `PYTORCH_CUDA_ALLOC_CONF`, et `HF_HOME` s'il est défini dans le shell (le service ne lit pas `~/.bashrc`).
+4. `daemon-reload`, `enable`, `restart` (qui arrête l'ancien process avant d'en lancer un) ; puis attente de `ready` (`loom-mem-gpu status`, 180 s au plus, `LOOM_MEM_READY_WAIT`). Un service en échec : la fin de son journal, code 1.
+
+**Rejeu.** Unité identique et service actif : rien ne change, le service garde ses modèles en VRAM (« déjà installé et actif, unité à jour »). Unité différente : la différence est montrée, l'unité réécrite, le service redémarré une fois. `--dry-run` montre l'unité et les commandes sans rien faire ; `--linger` lance `loginctl enable-linger` (sinon, le script dit seulement qu'il faut le faire pour que le service tourne hors session). `--uninstall` : `disable --now`, unité retirée, `daemon-reload` ; rejoué, « rien à désinstaller ».
+
+L'unité écrite, par exemple pour `install-loom-mem --offline` :
 
 ```ini
+# Écrit par install-loom-mem : le relancer plutôt que modifier ce fichier à la main.
 [Unit]
 Description=loom-mem-gpu — modèles de la mémoire de loom gardés en VRAM
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-ExecStart=/home/denis/temp/agent-mem/.venv/bin/loom-mem-gpu --device cuda --offline
+ExecStart="/home/denis/temp/agent-mem/.venv/bin/loom-mem-gpu" serve --device cuda --offline
 Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 Restart=on-failure
 RestartSec=5
-# Erreur de config (2) ou port pris (3) : relancer ne changerait rien.
+# Réglages refusés (2) ou port pris (3) : relancer ne changerait rien.
 RestartPreventExitStatus=2 3
 
 [Install]
@@ -303,10 +321,7 @@ WantedBy=default.target
 ```
 
 ```
-systemctl --user daemon-reload
-systemctl --user enable --now loom-mem-gpu
 journalctl --user -u loom-mem-gpu -f
-loginctl enable-linger denis      # pour qu'elle tourne hors session
 loom-mem-gpu status
 ```
 
@@ -324,7 +339,7 @@ Le proxy ne servira qu'au lot 5. Sur le poste, loom parle directement à `127.0.
 
 | Ce qu'on change | Où | Effet |
 |---|---|---|
-| Device, fp16, offline, plafond de VRAM | Options de l'unité ou `--config` | `systemctl --user restart loom-mem-gpu`. Les process loom attendent pendant le chargement (503 `loading`, 60 s au plus). |
+| Port, device, fp16, offline, plafond de VRAM | Relancer `install-loom-mem` avec les nouvelles options | Différence montrée, unité réécrite, service redémarré une fois. Les process loom attendent pendant le chargement (503 `loading`, 60 s au plus). Avec un autre port, changer aussi `models.server.url` des agents. |
 | Calcul dans loom ou par l'application, repli | `models` de `loom.memory` dans `agent.yaml` | Pris en compte au prochain process loom, ou par `serve --reload`. |
 
 ## 9. Lot 5, plus tard : l'application sur une VM cloud
@@ -397,6 +412,7 @@ Derrière nginx :
 | 5 | Plus tard : réseau, VM cloud (§9). | — |
 | 6 | **Fait le 05/11.** CHANGELOG (2.0.18), guide : exemple 29.4 et annexe des extras, formation : exercice 5.6 (encadré), README (extra `memory`), point 9 de `loom-memory-points-en-suspens.md` marqué fait. `configuration.md` inchangé : il ne décrit pas les paramètres de `loom.memory`, que le guide porte. | — |
 | 7 | **Fait le 05/11 — un seul calcul, deux chemins.** Revue des doublons entre calcul local et loom-mem-gpu : règle de la demi-précision (`bge_m3.half_precision`), lots (`bge_m3.batches`), coupe des textes à 20 000 caractères dans les deux chemins (`bge_m3.MAX_CHARS`, `clipped` ; avant, un texte plus long passait en local et était refusé par l'application), nom de l'application (`protocol.APP`), motif et défauts du device (`memory_params.DEVICE_PATTERN`, `DEFAULT_*`) ; corps de requête porté à 4 Mo ; `ALGO` passe à `bge-m3/2` (la coupe touche la troncature). Essais : équivalence du calcul local et du calcul par l'application sur les vraies classes (faux torch), coupe, corps le plus lourd, demi-précision, listes de champs parallèles à `ModelsSpec`, options de l'application. | |
+| 8 | **Fait le 06/11 — aide à l'installation.** `install-loom-mem` (bash, `scripts/bin/`, installé dans le bin du venv avec le paquet) : prérequis, validation par `loom-mem-gpu serve --check` (nouveau, qui partage `preflight` avec le démarrage), port pris par un autre refusé, unité au nom fixe, rejeu sans redémarrage si rien ne change, `--dry-run`, `--linger`, `--uninstall` (§8.2). `tests/unit/test_install_loom_mem.py` : le vrai script, dans un faux venv, avec de faux systemctl, loginctl, nvidia-smi ; shellcheck sans remarque. | `install-loom-mem --dry-run`, puis sans. |
 
 ## 13. Risques
 

@@ -3181,31 +3181,15 @@ loom-mem-gpu injoignable (http://127.0.0.1:8765 : [Errno 111] Connection refused
 
 Sans repli, l'appel échoue avec la commande pour la démarrer : « loom-mem-gpu injoignable (…) : le démarrer (systemctl --user start loom-mem-gpu, ou « loom-mem-gpu » dans un terminal), ou ajouter models.server.fallback pour calculer dans loom ».
 
-Pour qu'elle tourne sans terminal ouvert, une unité systemd utilisateur, `~/.config/systemd/user/loom-mem-gpu.service` :
-
-```ini
-[Unit]
-Description=loom-mem-gpu — modèles de la mémoire de loom gardés en VRAM
-StartLimitIntervalSec=300
-StartLimitBurst=5
-
-[Service]
-ExecStart=/chemin/du/projet/.venv/bin/loom-mem-gpu --device cuda --offline
-Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-Restart=on-failure
-RestartSec=5
-# Réglages refusés (2) ou port pris (3) : relancer ne changerait rien.
-RestartPreventExitStatus=2 3
-
-[Install]
-WantedBy=default.target
-```
+Pour qu'elle tourne sans terminal ouvert, en service systemd utilisateur, `install-loom-mem` l'installe. Il est livré avec loom-ia, dans le bin du venv, et installe le `loom-mem-gpu` de ce venv :
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user enable --now loom-mem-gpu
+uv run install-loom-mem --offline --dry-run   # montre l'unité et les commandes, sans rien faire
+uv run install-loom-mem --offline --linger    # installe, démarre, attend « ready »
 journalctl --user -u loom-mem-gpu -f
 ```
+
+Il fait valider les options par l'application (`loom-mem-gpu serve --check`), refuse un port déjà pris par autre chose que ce service, écrit `~/.config/systemd/user/loom-mem-gpu.service` et démarre le service. On le relance pour changer une option : la différence est montrée et le service redémarré une fois ; relancé à l'identique, il ne touche à rien. `--linger` le laisse tourner hors session ; `--uninstall` le retire.
 
 #### À retenir
 
@@ -3213,6 +3197,8 @@ journalctl --user -u loom-mem-gpu -f
 - Au premier appel, loom vérifie que l'application calcule comme il le ferait (protocole, algorithme, modèles, dimension) : une application d'une autre version de loom est refusée plutôt que de mêler deux sortes de vecteurs dans une base. Mettez-la à jour avec les agents.
 - Le repli (`server.fallback`) ne joue que sur une panne de l'application ; un jeton refusé, d'autres modèles ou un calcul en échec restent des erreurs. L'application reprend la main dès qu'elle répond (ressayée toutes les 30 s).
 - C'est systemd qui la relance (`Restart=on-failure`), jamais un proxy. Ses codes de sortie le guident : 2 réglages refusés ou extra absent, 3 port pris (une autre instance tourne), 4 modèles non chargés.
+- `install-loom-mem` se rejoue sans risque : l'unité a un nom fixe, une seule instance tourne.
+- **Piège** : une instance lancée à la main dans un terminal tient le port ; `install-loom-mem` le dit et s'arrête (code 3). Fermez-la d'abord.
 - **Piège** : un serveur de LLM local comme vLLM réserve 90 % de la carte par défaut. Démarrez `loom-mem-gpu` d'abord (de l'ordre de 3 à 4 Go), et réglez `--gpu-memory-utilization` sur ce qui reste.
 - **Piège** : avec `server`, laisser `device`, `offline` ou `preload` sous `models` fait refuser la configuration ; le message dit de les mettre dans `server.fallback`.
 

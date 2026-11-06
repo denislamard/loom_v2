@@ -502,21 +502,31 @@ def missing_modules() -> list[str]:
     return [name for name in MODULES if importlib.util.find_spec(name) is None]
 
 
-def run(settings: ServiceSettings) -> int:
-    """Lance l'application jusqu'à son arrêt ; rend le code de sortie."""
+def preflight(settings: ServiceSettings) -> str | None:
+    """Ce qui empêcherait de démarrer, vu sans rien charger ni ouvrir ; ``None`` si rien.
+
+    Le jeton (``token_env``) doit être lu, et l'extra ``memory`` installé. ``run`` le
+    vérifie avant d'ouvrir le port, ``serve --check`` (l'aide à l'installation) aussi.
+    """
     try:
-        token = settings.token()
+        settings.token()
     except SettingsError as exc:
-        log.error("%s", exc)
-        return EXIT_SETTINGS
+        return str(exc)
     missing = missing_modules()
     if missing:
-        log.error(
-            "dépendance(s) absente(s) : %s — installer l'extra : loom-ia[memory]",
-            ", ".join(missing),
+        return (
+            f"dépendance(s) absente(s) : {', '.join(missing)} — installer l'extra : loom-ia[memory]"
         )
+    return None
+
+
+def run(settings: ServiceSettings) -> int:
+    """Lance l'application jusqu'à son arrêt ; rend le code de sortie."""
+    problem = preflight(settings)
+    if problem is not None:
+        log.error("%s", problem)
         return EXIT_SETTINGS
-    service = Service(bge_host(settings), token)
+    service = Service(bge_host(settings), settings.token())
     try:
         service.bind(settings.host, settings.port)
     except PortTaken as exc:

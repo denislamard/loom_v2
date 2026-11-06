@@ -31,10 +31,11 @@ from typing import Any, Final
 from pydantic import ValidationError
 
 from loom_ia.tools_builtin.memory.protocol import APP, Health
-from loom_ia.tools_builtin.memory.server.app import EXIT_SETTINGS, run
+from loom_ia.tools_builtin.memory.server.app import EXIT_SETTINGS, preflight, run
 from loom_ia.tools_builtin.memory.server.settings import (
     DEFAULT_HOST,
     DEFAULT_PORT,
+    ServiceSettings,
     SettingsError,
     load_settings,
 )
@@ -57,14 +58,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     options = {
         key: value
         for key, value in vars(args).items()
-        if key not in ("command", "config", "log_level") and value is not None
+        if key not in ("command", "config", "log_level", "check") and value is not None
     }
     try:
         settings = load_settings(args.config, options)
     except SettingsError as exc:
         print(f"{PROGRAM} : {exc}", file=sys.stderr)
         return EXIT_SETTINGS
+    if args.check:
+        return check(settings)
     return run(settings)
+
+
+def check(settings: ServiceSettings) -> int:
+    """``serve --check`` : les réglages et les dépendances, sans rien charger ni ouvrir."""
+    problem = preflight(settings)
+    if problem is not None:
+        print(f"{PROGRAM} : {problem}", file=sys.stderr)
+        return EXIT_SETTINGS
+    print(
+        f"{PROGRAM} : réglages valides — {settings.host}:{settings.port}, "
+        f"device {settings.device}, {'fp16' if settings.fp16 else 'float32'}"
+        f"{', hors ligne' if settings.offline else ''}"
+    )
+    return 0
 
 
 def log_format(environ: Mapping[str, str]) -> str:
@@ -100,6 +117,11 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument("--token-env", help="variable qui porte le jeton exigé des clients")
     serve.add_argument(
         "--max-vram-fraction", type=float, help="part de la carte permise, entre 0 et 1"
+    )
+    serve.add_argument(
+        "--check",
+        action="store_true",
+        help="valide les réglages et les dépendances, sans charger ni écouter (code 0 ou 2)",
     )
     status_parser = commands.add_parser("status", help="dit si l'application est prête")
     status_parser.add_argument(

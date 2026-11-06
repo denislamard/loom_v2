@@ -497,6 +497,29 @@ def test_main_serves_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (second.device, second.offline, second.fp16) == ("cuda", False, True)
 
 
+def test_check_validates_without_loading_or_listening(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def never(_settings: ServiceSettings) -> Host:
+        raise AssertionError("--check ne charge rien")
+
+    monkeypatch.setattr(app_module, "bge_host", never)
+    monkeypatch.setattr(app_module, "missing_modules", list)
+    assert main(["serve", "--check", "--device", "cpu", "--port", "8800", "--offline"]) == 0
+    assert "réglages valides — 127.0.0.1:8800, device cpu, fp16, hors ligne" in (
+        capsys.readouterr().out
+    )
+    # Un mauvais réglage, l'extra absent, un jeton introuvable : code 2, comme run.
+    assert main(["serve", "--check", "--device", "gpu"]) == EXIT_SETTINGS
+    monkeypatch.setattr(app_module, "missing_modules", lambda: ["torch"])
+    assert main(["serve", "--check"]) == EXIT_SETTINGS
+    assert "loom-ia[memory]" in capsys.readouterr().err
+    monkeypatch.setattr(app_module, "missing_modules", list)
+    monkeypatch.delenv("MEM_GPU_TOKEN", raising=False)
+    assert main(["serve", "--check", "--token-env", "MEM_GPU_TOKEN"]) == EXIT_SETTINGS
+    assert "MEM_GPU_TOKEN" in capsys.readouterr().err
+
+
 def test_under_systemd_the_log_lines_are_not_dated_twice() -> None:
     assert log_format({"JOURNAL_STREAM": "8:12345"}) == "%(levelname)s %(name)s : %(message)s"
     assert log_format({}).startswith("%(asctime)s ")
