@@ -615,6 +615,18 @@ def test_main_reads_the_variables_and_options_win(
     assert "LOOM_MEM_GPU_PROT" in capsys.readouterr().err
 
 
+def test_version_says_what_loom_checks(capsys: pytest.CaptureFixture[str]) -> None:
+    from loom_ia import __version__
+    from loom_ia.tools_builtin.memory.bge_m3 import ALGO
+    from loom_ia.tools_builtin.memory.protocol import PROTOCOL
+
+    with pytest.raises(SystemExit) as done:
+        main(["--version"])
+    assert done.value.code == 0
+    out = capsys.readouterr().out
+    assert out.strip() == f"loom-mem-gpu {__version__} (protocole {PROTOCOL}, {ALGO})"
+
+
 def test_the_log_level_is_a_setting_like_the_others(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[ServiceSettings] = []
 

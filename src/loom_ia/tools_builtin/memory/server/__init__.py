@@ -35,7 +35,9 @@ from typing import Any, Final
 
 from pydantic import ValidationError
 
-from loom_ia.tools_builtin.memory.protocol import APP, Health
+from loom_ia import __version__
+from loom_ia.tools_builtin.memory.bge_m3 import ALGO
+from loom_ia.tools_builtin.memory.protocol import APP, PROTOCOL, Health
 from loom_ia.tools_builtin.memory.server.app import EXIT_SETTINGS, preflight, run
 from loom_ia.tools_builtin.memory.server.settings import (
     DEFAULT_HOST,
@@ -57,7 +59,7 @@ _COMMANDS: Final = ("serve", "status")
 def main(argv: Sequence[str] | None = None) -> int:
     given = list(sys.argv[1:] if argv is None else argv)
     # ``serve`` est la commande par défaut : ``loom-mem-gpu --device cuda`` sert.
-    if not given or (given[0] not in _COMMANDS and given[0] not in ("-h", "--help")):
+    if not given or (given[0] not in _COMMANDS and given[0] not in ("-h", "--help", "--version")):
         given.insert(0, "serve")
     args = _parser().parse_args(given)
     if args.command == "status":
@@ -112,6 +114,12 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
         description="Garde BGE-M3 et son reranker en VRAM et les sert aux process loom.",
+    )
+    # Ce que loom compare à la connexion : protocole et algorithme (mêmes vecteurs).
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"{PROGRAM} {__version__} (protocole {PROTOCOL}, {ALGO})",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     serve = commands.add_parser("serve", help="charge les modèles et les sert (par défaut)")
