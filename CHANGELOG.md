@@ -4,6 +4,11 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.19 - non publiée
 
+### Commandes livrées avec le paquet
+- **`create-loom-project`** et **`view-loom-journal`** (anciens `scripts/init_loom` et `scripts/journal_html`, renommés) : installés dans le bin du venv avec le paquet, depuis `scripts/bin/`, comme `install-loom-mem`. `view-loom-journal` commence par `#!python` : l'installeur y écrit le Python du venv (`/usr/bin/env python3` prenait celui du système, parfois trop ancien pour sa syntaxe 3.12) ; depuis le dépôt : `uv run python scripts/bin/view-loom-journal`. Hors de tout projet : `uvx --from loom-ia create-loom-project mon-projet agent system`.
+- Les essais sur une vraie VM `essai_vm.py` et `essai_forge.py` passent de `scripts/firecracker/` à `tests/firecracker/`, à côté des tests contre le faux VMM.
+- Essais : les trois commandes de `scripts/bin`, exécutables, avec leur interpréteur, et leur nom dans leur aide (`tests/unit/test_install_loom_mem.py`).
+
 ## 2.0.18 - publiée
 
 ### Mémoire `loom.memory` : `loom-mem-gpu`, les modèles gardés en VRAM

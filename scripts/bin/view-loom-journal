@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!python
 """Page HTML lisible d'un journal Loom (.jsonl).
 
 Pour chaque échange (un run racine) :
@@ -20,7 +20,7 @@ L'entrée exacte de chaque tour vient des échanges bruts
 partir des événements du journal, sans prompt système ni liste d'outils.
 
 Usage :
-    scripts/journal_html data/default/session-05.jsonl [-o rapport.html]
+    view-loom-journal data/default/session-05.jsonl [-o rapport.html]
 """
 
 from __future__ import annotations
@@ -1170,7 +1170,9 @@ document.querySelectorAll("[data-tout]").forEach(function (b) {{
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Journal Loom (.jsonl) -> page HTML lisible")
+    ap = argparse.ArgumentParser(
+        prog="view-loom-journal", description="Journal Loom (.jsonl) -> page HTML lisible"
+    )
     ap.add_argument("journal", type=Path, help="fichier .jsonl d'une session")
     ap.add_argument(
         "-o", "--sortie", type=Path, help="fichier HTML à écrire (défaut : à côté du journal)"

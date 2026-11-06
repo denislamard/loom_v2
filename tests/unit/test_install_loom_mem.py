@@ -425,9 +425,40 @@ def test_unknown_options_and_missing_values_are_refused(machine: Machine) -> Non
     assert machine.run("--port", "huit").code == 2
 
 
-def test_the_script_is_installed_with_the_package() -> None:
+BIN: Final = SCRIPT.parent
+# Les commandes livrées dans le bin du venv, et leur interpréteur. ``#!python`` : le
+# Python du venv, que l'installeur écrit à la place (``/usr/bin/env python3`` serait
+# celui du système, peut-être trop ancien).
+COMMANDS: Final = {
+    "install-loom-mem": "#!/usr/bin/env bash",
+    "create-loom-project": "#!/usr/bin/env bash",
+    "view-loom-journal": "#!python",
+}
+
+
+def test_the_commands_are_installed_with_the_package() -> None:
     import tomllib
 
     pyproject = tomllib.loads((SCRIPT.parents[2] / "pyproject.toml").read_text(encoding="utf-8"))
     assert pyproject["tool"]["uv"]["build-backend"]["data"]["scripts"] == "scripts/bin"
-    assert os.access(SCRIPT, os.X_OK)
+    assert sorted(path.name for path in BIN.iterdir()) == sorted(COMMANDS)
+    for name, first_line in COMMANDS.items():
+        command = BIN / name
+        assert os.access(command, os.X_OK), name
+        assert command.read_text(encoding="utf-8").splitlines()[0] == first_line, name
+
+
+def test_the_commands_say_their_own_name() -> None:
+    journal = subprocess.run(
+        [sys.executable, str(BIN / "view-loom-journal"), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert journal.returncode == 0, journal.stderr
+    assert journal.stdout.startswith("usage: view-loom-journal")
+    project = subprocess.run(
+        ["bash", str(BIN / "create-loom-project")], capture_output=True, text=True, check=False
+    )
+    assert project.returncode == 2  # sans arguments : l'usage
+    assert "create-loom-project <projet> <agent> <prompt>" in project.stdout + project.stderr
