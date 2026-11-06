@@ -3189,7 +3189,25 @@ uv run install-loom-mem --offline --linger    # installe, démarre, attend « re
 journalctl --user -u loom-mem-gpu -f
 ```
 
-Il fait valider les options par l'application (`loom-mem-gpu serve --check`), refuse un port déjà pris par autre chose que ce service, écrit `~/.config/systemd/user/loom-mem-gpu.service` et démarre le service. On le relance pour changer une option : la différence est montrée et le service redémarré une fois ; relancé à l'identique, il ne touche à rien. `--linger` le laisse tourner hors session ; `--uninstall` le retire.
+Il fait valider les options par l'application (`loom-mem-gpu serve --check --env`), refuse un port déjà pris par autre chose que ce service, écrit `~/.config/systemd/user/loom-mem-gpu.service` et démarre le service. Dans l'unité, chaque réglage est une variable écrite avec sa valeur, défauts compris :
+
+```ini
+Environment=LOOM_MEM_GPU_PORT=8765
+Environment=LOOM_MEM_GPU_DEVICE=cuda
+Environment=LOOM_MEM_GPU_OFFLINE=true
+# Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3  (part de la carte permise, à côté d'un LLM local)
+```
+
+On le relance pour changer une option : la différence est montrée et le service redémarré une fois ; relancé à l'identique, il ne touche à rien. `--linger` le laisse tourner hors session ; `--uninstall` le retire.
+
+Pour changer un réglage sans le relancer, une surcharge :
+
+```bash
+systemctl --user edit loom-mem-gpu.service      # [Service] puis Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3
+systemctl --user restart loom-mem-gpu.service
+```
+
+La surcharge l'emporte sur l'unité, et `install-loom-mem` n'y touche jamais. Le jeton, s'il en faut un, va dans `~/.config/loom-mem-gpu/env` (`LOOM_MEM_GPU_TOKEN=…`, à créer soi-même), jamais dans l'unité, avec `LOOM_MEM_GPU_TOKEN_ENV=LOOM_MEM_GPU_TOKEN` en surcharge.
 
 #### À retenir
 
@@ -3199,6 +3217,7 @@ Il fait valider les options par l'application (`loom-mem-gpu serve --check`), re
 - C'est systemd qui la relance (`Restart=on-failure`), jamais un proxy. Ses codes de sortie le guident : 2 réglages refusés ou extra absent, 3 port pris (une autre instance tourne), 4 modèles non chargés.
 - `install-loom-mem` se rejoue sans risque : l'unité a un nom fixe, une seule instance tourne.
 - **Piège** : une instance lancée à la main dans un terminal tient le port ; `install-loom-mem` le dit et s'arrête (code 3). Fermez-la d'abord.
+- **Piège** : une variable `LOOM_MEM_GPU_*` mal nommée (`LOOM_MEM_GPU_PROT`) arrête le service (code 2, sans relance) ; `journalctl --user -u loom-mem-gpu` dit laquelle. Les `LOOM_MEM_GPU_*` de votre shell, elles, n'entrent jamais dans l'unité : seules les options d'`install-loom-mem` comptent.
 - **Piège** : un serveur de LLM local comme vLLM réserve 90 % de la carte par défaut. Démarrez `loom-mem-gpu` d'abord (de l'ordre de 3 à 4 Go), et réglez `--gpu-memory-utilization` sur ce qui reste.
 - **Piège** : avec `server`, laisser `device`, `offline` ou `preload` sous `models` fait refuser la configuration ; le message dit de les mettre dans `server.fallback`.
 

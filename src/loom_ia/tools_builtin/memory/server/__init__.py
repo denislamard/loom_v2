@@ -2,7 +2,12 @@
 """``loom-mem-gpu`` : une petite application à part, qui garde BGE-M3 et son reranker en VRAM.
 
     loom-mem-gpu [serve] [--device cuda] [--offline] [--port 8765] [--config f.yaml] …
+    loom-mem-gpu serve --check [--env]
     loom-mem-gpu status  [--url http://127.0.0.1:8765] [--token-env VAR]
+
+Chaque réglage a sa variable (``port`` → ``LOOM_MEM_GPU_PORT``) : une option donnée
+l'emporte sur la variable, la variable sur ``--config``. ``serve --check --env``
+écrit les réglages en lignes ``Environment=`` pour l'unité systemd.
 
 Les process loom lui confient leurs calculs (``models.server`` de
 ``loom.memory``) au lieu de charger les modèles chacun. Elle ne lit jamais
@@ -37,6 +42,7 @@ from loom_ia.tools_builtin.memory.server.settings import (
     DEFAULT_PORT,
     ServiceSettings,
     SettingsError,
+    as_environment,
     load_settings,
 )
 
@@ -58,24 +64,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     options = {
         key: value
         for key, value in vars(args).items()
-        if key not in ("command", "config", "log_level", "check") and value is not None
+        if key not in ("command", "config", "log_level", "check", "env") and value is not None
     }
     try:
-        settings = load_settings(args.config, options)
+        settings = load_settings(args.config, options, os.environ)
     except SettingsError as exc:
         print(f"{PROGRAM} : {exc}", file=sys.stderr)
         return EXIT_SETTINGS
-    if args.check:
-        return check(settings)
+    if args.check or args.env:
+        return check(settings, environment=args.env)
     return run(settings)
 
 
-def check(settings: ServiceSettings) -> int:
-    """``serve --check`` : les réglages et les dépendances, sans rien charger ni ouvrir."""
+def check(settings: ServiceSettings, *, environment: bool = False) -> int:
+    """``serve --check`` : les réglages et les dépendances, sans rien charger ni ouvrir.
+
+    Avec ``environment`` (``--env``), les réglages en lignes ``Environment=`` au lieu
+    du message.
+    """
     problem = preflight(settings)
     if problem is not None:
         print(f"{PROGRAM} : {problem}", file=sys.stderr)
         return EXIT_SETTINGS
+    if environment:
+        print("\n".join(as_environment(settings)))
+        return 0
     print(
         f"{PROGRAM} : réglages valides — {settings.host}:{settings.port}, "
         f"device {settings.device}, {'fp16' if settings.fp16 else 'float32'}"
@@ -122,6 +135,11 @@ def _parser() -> argparse.ArgumentParser:
         "--check",
         action="store_true",
         help="valide les réglages et les dépendances, sans charger ni écouter (code 0 ou 2)",
+    )
+    serve.add_argument(
+        "--env",
+        action="store_true",
+        help="comme --check, puis écrit les réglages en lignes Environment= (unité systemd)",
     )
     status_parser = commands.add_parser("status", help="dit si l'application est prête")
     status_parser.add_argument(

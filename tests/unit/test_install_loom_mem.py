@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """``install-loom-mem`` : l'aide à l'installation du service loom-mem-gpu, rejouée sans doublon.
 
-Le script tourne pour de vrai (bash), dans un faux venv où ``loom-mem-gpu`` est un
-remplaçant, avec de faux ``systemctl``, ``journalctl``, ``loginctl`` et ``nvidia-smi``
-qui notent leurs appels. Ce qui est éprouvé : l'unité écrite, le rejeu sans
-redémarrage, la différence montrée, le port pris par un autre, la validation déléguée
-à l'application, le dry-run et la désinstallation.
+Le script tourne pour de vrai (bash), dans un faux venv où ``loom-mem-gpu serve``
+lance le vrai ``main`` (sans l'extra ``memory`` exigé), avec de faux ``systemctl``,
+``journalctl``, ``loginctl`` et ``nvidia-smi`` qui notent leurs appels. Ce qui est
+éprouvé : l'unité écrite (réglages en variables), le rejeu sans redémarrage, la
+différence montrée, le port pris par un autre, les surcharges respectées, la
+validation déléguée à l'application, le dry-run et la désinstallation.
 """
 
 import os
@@ -13,7 +14,8 @@ import shutil
 import socket
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -29,14 +31,12 @@ SCRIPT: Final = Path(__file__).resolve().parents[2] / "scripts" / "bin" / "insta
 FAKE_APP: Final = """#!/usr/bin/env bash
 echo "loom-mem-gpu $*" >>"$STATE/calls"
 if [[ "$1" == serve ]]; then
-    for arg in "$@"; do
-        if [[ "$arg" == bogus ]]; then
-            echo "loom-mem-gpu : réglages refusés (options) : device : pattern" >&2
-            exit 2
-        fi
-    done
-    echo "loom-mem-gpu : réglages valides"
-    exit 0
+    exec "$PYTHON" -c '
+import sys
+from loom_ia.tools_builtin.memory.server import app, main
+app.missing_modules = list
+sys.exit(main(sys.argv[1:]))
+' "$@"
 fi
 if [[ "$1" == status ]]; then
     [[ -f "$STATE/ready" ]] || exit 1
@@ -49,8 +49,13 @@ exit 9
 FAKE_SYSTEMCTL: Final = """#!/usr/bin/env bash
 echo "systemctl $*" >>"$STATE/calls"
 shift  # --user
+UNIT="$HOME/.config/systemd/user/loom-mem-gpu.service"
 case "$1" in
     show-environment) exit 0 ;;
+    show)  # -p Environment --value : l'unité et ses surcharges, sur une ligne
+        cat "$UNIT" "$UNIT.d"/*.conf 2>/dev/null \
+            | sed -n 's/^Environment=//p' | tr -d '"' | tr '\\n' ' '
+        echo ;;
     is-active) [[ -f "$STATE/active" ]] ;;
     is-enabled) [[ -f "$STATE/enabled" ]] ;;
     is-failed) [[ -f "$STATE/failed" ]] ;;
@@ -104,6 +109,8 @@ class Machine:
         self._write(self.stubs / "nvidia-smi", FAKE_NVIDIA_SMI)
         self._write(self.stubs / "journalctl", FAKE_JOURNALCTL)
         self.unit = self.home / ".config" / "systemd" / "user" / "loom-mem-gpu.service"
+        self.dropins = self.unit.parent / "loom-mem-gpu.service.d"
+        self.env_file = self.home / ".config" / "loom-mem-gpu" / "env"
 
     @staticmethod
     def _write(path: Path, text: str) -> None:
@@ -117,6 +124,7 @@ class Machine:
             "USER": "denis",
             "STATE": str(self.state),
             "LOOM_MEM_READY_WAIT": "4",
+            "PYTHON": sys.executable,
             **(extra or {}),
         }
         done = subprocess.run(
@@ -148,18 +156,29 @@ def machine(tmp_path: Path) -> Machine:
 
 @pytest.fixture
 def port() -> int:
+    return free_port()
+
+
+def free_port() -> int:
     with socket.socket() as free:
         free.bind(("127.0.0.1", 0))
         return int(free.getsockname()[1])
 
 
+@contextmanager
+def held(port: int) -> Generator[int]:
+    """Le port écouté : par le service, ou par un autre programme."""
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", port))
+        listener.listen()
+        yield port
+
+
 @pytest.fixture
 def taken(port: int) -> Iterator[int]:
     """Le port tenu par un autre programme."""
-    with socket.socket() as other:
-        other.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        other.bind(("127.0.0.1", port))
-        other.listen()
+    with held(port):
         yield port
 
 
@@ -168,9 +187,27 @@ def test_the_first_install_writes_the_unit_and_starts_it(machine: Machine, port:
     assert done.code == 0, done.err
     unit = machine.unit.read_text(encoding="utf-8")
     app = machine.venv_bin / "loom-mem-gpu"
-    assert f'ExecStart="{app}" serve --device cuda --port {port} --offline' in unit
-    assert "Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in unit
+    # Tous les réglages en variables, défauts compris ; ExecStart sans option.
+    assert f'ExecStart="{app}" serve\n' in unit
+    for line in (
+        "Environment=LOOM_MEM_GPU_HOST=127.0.0.1",
+        f"Environment=LOOM_MEM_GPU_PORT={port}",
+        "Environment=LOOM_MEM_GPU_DEVICE=cuda",
+        "Environment=LOOM_MEM_GPU_FP16=true",
+        "Environment=LOOM_MEM_GPU_OFFLINE=true",
+        "Environment=LOOM_MEM_GPU_EMBEDDER=BAAI/bge-m3",
+        "Environment=LOOM_MEM_GPU_RERANKER=BAAI/bge-reranker-v2-m3",
+        "# Environment=LOOM_MEM_GPU_TOKEN_ENV=LOOM_MEM_GPU_TOKEN",
+        "# Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3",
+        "Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
+        "# Environment=HF_HOME=",
+        "# Environment=CUDA_VISIBLE_DEVICES=0",
+        "EnvironmentFile=-%h/.config/loom-mem-gpu/env",
+    ):
+        assert f"\n{line}" in unit, line
     assert "RestartPreventExitStatus=2 3" in unit
+    # Le fichier du jeton n'est jamais créé par le script.
+    assert not machine.env_file.parent.exists()
     assert "prêt" in done.out and "ready" in done.out
     assert "pour qu'il tourne sans session : --linger" in done.out
 
@@ -197,7 +234,8 @@ def test_a_changed_setting_shows_the_difference_and_restarts_once(
     done = machine.run("--port", str(port), "--max-vram-fraction", "0.3")
     assert done.code == 0, done.err
     assert "l'unité change" in done.out
-    assert "+ExecStart=" in done.out and "--max-vram-fraction 0.3" in done.out
+    assert "-# Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3" in done.out
+    assert "+Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3" in done.out
     assert machine.systemd() == [
         "systemctl --user daemon-reload",
         "systemctl --user enable loom-mem-gpu.service",
@@ -219,7 +257,7 @@ def test_the_settings_are_validated_by_the_application(machine: Machine, port: i
     assert done.code == 2
     assert "réglages refusés" in done.err
     assert not machine.unit.exists()
-    assert any(c.endswith("--check") for c in machine.calls())
+    assert any(c.endswith("--check --env") for c in machine.calls())
 
 
 def test_cuda_without_a_card_is_refused(machine: Machine, port: int) -> None:
@@ -265,6 +303,112 @@ def test_the_model_cache_of_the_shell_follows_into_the_unit(machine: Machine, po
     done = machine.run("--port", str(port), extra={"HF_HOME": "/data/hf"})
     assert done.code == 0, done.err
     assert "Environment=HF_HOME=/data/hf" in machine.unit.read_text(encoding="utf-8")
+
+
+def test_a_model_cache_with_spaces_is_escaped_for_systemd(machine: Machine, port: int) -> None:
+    done = machine.run("--port", str(port), extra={"HF_HOME": '/data/mes "hf" 100%'})
+    assert done.code == 0, done.err
+    unit = machine.unit.read_text(encoding="utf-8")
+    assert '\nEnvironment="HF_HOME=/data/mes \\"hf\\" 100%%"\n' in unit
+
+
+def test_overrides_without_a_port_leave_the_port_alone(machine: Machine, port: int) -> None:
+    # Le cas courant : un fichier avec le seul jeton, une surcharge sans Environment=.
+    machine.env_file.parent.mkdir(parents=True)
+    machine.env_file.write_text("LOOM_MEM_GPU_TOKEN=s3cret\n", encoding="utf-8")
+    machine.dropins.mkdir(parents=True)
+    (machine.dropins / "override.conf").write_text("[Service]\nNice=5\n", encoding="utf-8")
+    done = machine.run("--port", str(port))
+    assert done.code == 0, done.err
+    assert "l'emporte" not in done.out and "prêt" in done.out
+    assert f"loom-mem-gpu status --url http://127.0.0.1:{port}" in machine.calls()
+
+
+def test_the_variables_of_the_shell_do_not_leak_into_the_unit(machine: Machine, port: int) -> None:
+    shell = {"LOOM_MEM_GPU_PORT": "9999", "LOOM_MEM_GPU_DEVICE": "cpu", "LOOM_MEM_GPU_PROT": "1"}
+    done = machine.run("--port", str(port), extra=shell)
+    assert done.code == 0, done.err
+    unit = machine.unit.read_text(encoding="utf-8")
+    assert f"Environment=LOOM_MEM_GPU_PORT={port}\n" in unit
+    assert "Environment=LOOM_MEM_GPU_DEVICE=cuda\n" in unit
+
+
+def test_a_port_set_by_systemctl_edit_is_kept_and_followed(machine: Machine, port: int) -> None:
+    assert machine.run("--port", str(port)).code == 0
+    unit = machine.unit.read_text(encoding="utf-8")
+    other = free_port()
+    machine.dropins.mkdir()
+    override = machine.dropins / "override.conf"
+    override.write_text(f"[Service]\nEnvironment=LOOM_MEM_GPU_PORT={other}\n", encoding="utf-8")
+    machine.calls()
+    with held(other):  # le service redémarré par l'utilisateur écoute le port de la surcharge
+        done = machine.run("--port", str(port))
+    assert done.code == 0, done.err
+    assert f"le port {other}" in done.out and "rien à faire" in done.out
+    calls = machine.calls()
+    assert f"loom-mem-gpu status --url http://127.0.0.1:{other}" in calls
+    assert not [c for c in calls if " restart" in c or " daemon-reload" in c]
+    assert machine.unit.read_text(encoding="utf-8") == unit
+    assert override.read_text(encoding="utf-8").endswith(f"={other}\n")
+
+
+def test_the_environment_file_port_wins_and_is_never_written(machine: Machine, port: int) -> None:
+    other = free_port()
+    machine.env_file.parent.mkdir(parents=True)
+    text = f"LOOM_MEM_GPU_PORT={other}\nLOOM_MEM_GPU_TOKEN=s3cret\n"
+    machine.env_file.write_text(text, encoding="utf-8")
+    done = machine.run("--port", str(port))
+    assert done.code == 0, done.err
+    assert f"loom-mem-gpu status --url http://127.0.0.1:{other}" in machine.calls()
+    assert machine.env_file.read_text(encoding="utf-8") == text
+    assert "s3cret" not in machine.unit.read_text(encoding="utf-8")
+    # Rejoué pendant que le service tient ce port : c'est le sien, rien à faire.
+    with held(other):
+        again = machine.run("--port", str(port))
+    assert again.code == 0, again.err
+    assert "rien à faire" in again.out
+    assert machine.systemd() == []
+
+
+def test_an_older_unit_with_options_is_migrated_without_a_port_clash(
+    machine: Machine, port: int
+) -> None:
+    app = machine.venv_bin / "loom-mem-gpu"
+    machine.unit.parent.mkdir(parents=True)
+    machine.unit.write_text(
+        f'[Service]\nExecStart="{app}" serve --device cuda --port {port}\n', encoding="utf-8"
+    )
+    (machine.state / "active").touch()
+    with held(port):  # l'ancienne unité tourne sur son port
+        done = machine.run("--port", str(port))
+    assert done.code == 0, done.err
+    assert "l'unité change" in done.out
+    assert f'+ExecStart="{app}" serve' in done.out
+    assert machine.systemd() == [
+        "systemctl --user daemon-reload",
+        "systemctl --user enable loom-mem-gpu.service",
+        "systemctl --user restart loom-mem-gpu.service",
+    ]
+
+
+def test_uninstall_keeps_what_the_user_wrote(machine: Machine, port: int) -> None:
+    assert machine.run("--port", str(port)).code == 0
+    machine.dropins.mkdir()
+    (machine.dropins / "override.conf").write_text("[Service]\n", encoding="utf-8")
+    machine.env_file.parent.mkdir(parents=True)
+    machine.env_file.write_text("LOOM_MEM_GPU_TOKEN=s3cret\n", encoding="utf-8")
+    done = machine.run("--uninstall")
+    assert done.code == 0, done.err
+    assert "surcharges gardées" in done.out and "fichier d'environnement gardé" in done.out
+    assert (machine.dropins / "override.conf").exists() and machine.env_file.exists()
+
+
+def test_without_user_in_the_environment_the_account_is_asked(machine: Machine, port: int) -> None:
+    import getpass
+
+    done = machine.run("--port", str(port), "--dry-run", "--linger", extra={"USER": ""})
+    assert done.code == 0, done.err
+    assert f"[dry-run] loginctl enable-linger {getpass.getuser()}" in done.out
 
 
 def test_unknown_options_and_missing_values_are_refused(machine: Machine) -> None:

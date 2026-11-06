@@ -62,6 +62,8 @@ from loom_ia.tools_builtin.memory.server.app import (
 from loom_ia.tools_builtin.memory.server.settings import (
     ServiceSettings,
     SettingsError,
+    as_environment,
+    env_name,
     is_loopback,
     load_settings,
 )
@@ -159,6 +161,76 @@ def test_a_bad_file_says_why(tmp_path: Path, text: str, said: str) -> None:
 def test_a_missing_file_is_named(tmp_path: Path) -> None:
     with pytest.raises(SettingsError, match=r"absent\.yaml"):
         load_settings(tmp_path / "absent.yaml", {})
+
+
+def test_variables_sit_between_the_file_and_the_options(tmp_path: Path) -> None:
+    config = tmp_path / "f.yaml"
+    config.write_text("device: cpu\nport: 9000\noffline: false\n", encoding="utf-8")
+    environ = {
+        "LOOM_MEM_GPU_PORT": "9100",
+        "LOOM_MEM_GPU_OFFLINE": "true",
+        "LOOM_MEM_GPU_FP16": "false",
+        "LOOM_MEM_GPU_DEVICE": " ",  # vide : comme absente
+    }
+    settings = load_settings(config, {"port": 9200}, environ)
+    assert (settings.device, settings.port, settings.offline, settings.fp16) == (
+        "cpu",
+        9200,
+        True,
+        False,
+    )
+    assert load_settings(config, {}, environ).port == 9100
+    # Sans ``environ``, aucune variable n'est lue.
+    assert load_settings(None, {}) == ServiceSettings()
+
+
+def test_a_bad_variable_is_named() -> None:
+    with pytest.raises(SettingsError, match=r"environnement.*port \(LOOM_MEM_GPU_PORT\)"):
+        load_settings(None, {}, {"LOOM_MEM_GPU_PORT": "huit"})
+
+
+def test_an_unknown_variable_is_refused_but_not_the_token_one() -> None:
+    with pytest.raises(SettingsError, match="inconnue : LOOM_MEM_GPU_PROT"):
+        load_settings(None, {}, {"LOOM_MEM_GPU_PROT": "9000"})
+    environ = {
+        "LOOM_MEM_GPU_TOKEN_ENV": "LOOM_MEM_GPU_TOKEN",
+        "LOOM_MEM_GPU_TOKEN": "s3cret",
+        "HF_HOME": "/data/hf",
+    }
+    settings = load_settings(None, {}, environ)
+    assert settings.token(environ) == "s3cret"
+
+
+def _as_systemd_reads_it(line: str) -> tuple[str, str]:
+    """Une ligne ``Environment=`` telle que systemd la lit : guillemets, ``%%``."""
+    value = line.removeprefix("Environment=")
+    if value.startswith('"'):
+        value = value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    name, _, text = value.replace("%%", "%").partition("=")
+    return name, text
+
+
+def test_the_settings_become_the_lines_of_the_unit_and_come_back() -> None:
+    settings = ServiceSettings(port=8800, offline=True, embedder="/data/mes modèles/bge 100%")
+    lines = as_environment(settings)
+    assert "Environment=LOOM_MEM_GPU_PORT=8800" in lines
+    assert "Environment=LOOM_MEM_GPU_FP16=true" in lines
+    assert 'Environment="LOOM_MEM_GPU_EMBEDDER=/data/mes modèles/bge 100%%"' in lines
+    commented = [line for line in lines if line.startswith("#")]
+    assert [line.split()[1] for line in commented] == [
+        "Environment=LOOM_MEM_GPU_TOKEN_ENV=LOOM_MEM_GPU_TOKEN",
+        "Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3",
+    ]
+    environ = dict(_as_systemd_reads_it(line) for line in lines if not line.startswith("#"))
+    assert load_settings(None, {}, environ) == settings
+
+
+def test_every_setting_has_its_variable_in_the_unit() -> None:
+    # Un réglage ajouté sans défaut doit avoir son exemple (sinon KeyError ici).
+    lines = as_environment(ServiceSettings())
+    assert len(lines) == len(ServiceSettings.model_fields)
+    for field, line in zip(ServiceSettings.model_fields, lines, strict=True):
+        assert f"{env_name(field)}=" in line
 
 
 def test_the_token_is_read_from_its_variable_never_given() -> None:
@@ -518,6 +590,24 @@ def test_check_validates_without_loading_or_listening(
     monkeypatch.delenv("MEM_GPU_TOKEN", raising=False)
     assert main(["serve", "--check", "--token-env", "MEM_GPU_TOKEN"]) == EXIT_SETTINGS
     assert "MEM_GPU_TOKEN" in capsys.readouterr().err
+    # --env : les mêmes vérifications, puis les lignes de l'unité au lieu du message.
+    assert main(["serve", "--check", "--env", "--port", "8800"]) == 0
+    out = capsys.readouterr().out
+    assert "Environment=LOOM_MEM_GPU_PORT=8800" in out and "réglages valides" not in out
+    assert main(["serve", "--env", "--device", "gpu"]) == EXIT_SETTINGS
+
+
+def test_main_reads_the_variables_and_options_win(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(app_module, "missing_modules", list)
+    monkeypatch.setenv("LOOM_MEM_GPU_DEVICE", "cpu")
+    monkeypatch.setenv("LOOM_MEM_GPU_PORT", "8801")
+    assert main(["serve", "--check", "--port", "8802"]) == 0
+    assert "127.0.0.1:8802, device cpu" in capsys.readouterr().out
+    monkeypatch.setenv("LOOM_MEM_GPU_PROT", "8803")
+    assert main(["serve", "--check"]) == EXIT_SETTINGS
+    assert "LOOM_MEM_GPU_PROT" in capsys.readouterr().err
 
 
 def test_under_systemd_the_log_lines_are_not_dated_twice() -> None:

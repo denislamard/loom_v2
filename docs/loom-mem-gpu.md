@@ -104,7 +104,7 @@ src/loom_ia/tools_builtin/memory/
     __init__.py        main() : point d'entrée de l'exécutable loom-mem-gpu
     __main__.py        python -m loom_ia.tools_builtin.memory.server
     app.py             les points d'accès (http.server)
-    settings.py        réglages de l'application : options, variable du jeton, YAML facultatif
+    settings.py        réglages de l'application : options, variables LOOM_MEM_GPU_*, YAML facultatif
 ```
 
 Dans `pyproject.toml`, section `[project.scripts]` : `loom-mem-gpu = "loom_ia.tools_builtin.memory.server:main"`. L'exécutable est installé avec loom-ia quels que soient les extras. Sans torch, il s'arrête en disant : « installer l'extra : loom-ia[memory] ».
@@ -129,12 +129,16 @@ loom-mem-gpu [serve]  [--host 127.0.0.1] [--port 8765]
                       [--embedder BAAI/bge-m3] [--reranker BAAI/bge-reranker-v2-m3]
                       [--token-env VAR] [--max-vram-fraction F]
                       [--config fichier.yaml]
+loom-mem-gpu serve --check [--env]
 loom-mem-gpu status   [--url http://127.0.0.1:8765] [--token-env VAR]
 ```
 
+- **Chaque réglage a sa variable** : `LOOM_MEM_GPU_` suivi du nom de la clé en majuscules (`LOOM_MEM_GPU_HOST`, `_PORT`, `_DEVICE`, `_FP16`, `_OFFLINE`, `_EMBEDDER`, `_RERANKER`, `_TOKEN_ENV`, `_MAX_VRAM_FRACTION`). Ordre de priorité : option donnée, puis variable, puis `--config`, puis défaut. Une variable vide compte comme absente ; une variable `LOOM_MEM_GPU_*` inconnue (une faute de frappe, `LOOM_MEM_GPU_PROT`) est refusée au démarrage, code 2, sauf celle que nomme `token_env`. Une valeur refusée nomme sa variable : « port (LOOM_MEM_GPU_PORT) : … ». Le préfixe est donc réservé à l'application : côté loom, `url_env` et `token_env` prennent d'autres noms (`MEM_GPU_URL`, `MEM_GPU_TOKEN`), sans quoi l'application lancée à la main dans le même shell refuserait de démarrer.
+- **`serve --check`** valide les réglages et les dépendances sans rien charger ni écouter (code 0 ou 2) ; **`--env`** fait de même, puis écrit les réglages en lignes `Environment=` d'unité systemd, un réglage par ligne, défauts compris ; un réglage sans défaut (`token_env`, `max_vram_fraction`) y est en commentaire, avec un exemple. Les valeurs sont échappées pour systemd (`%` doublé, guillemets si espace). C'est ce qu'écrit `install-loom-mem` (§8.2).
+
 - **Les réglages des modèles** sont validés par le même `ModelsSpec` qu'aujourd'hui (mêmes motifs, même `resolve_device`). **Une seule différence : le device vaut `cuda` par défaut**, au lieu d'`auto`. Une application « gpu » qui retomberait en silence sur le CPU serait un piège. Si la carte ne convient pas, le refus est clair (`UnsupportedDevice`). `--device cpu` reste permis.
 - **`--embedder` et `--reranker`** acceptent un autre nom Hugging Face ou un dossier local, mais **de même nature** : un modèle de la famille BGE-M3 (avec `sparse_linear.pt`) et un reranker à classifieur de paires. C'est exactement ce que loom accepte déjà en calcul local.
-- **`--config`** : un YAML facultatif, avec les mêmes clés que les options (`host`, `port`, `device`, `fp16`, `offline`, `embedder`, `reranker`, `token_env`, `max_vram_fraction`). Une option donnée l'emporte sur le fichier. Pour changer un réglage, on modifie le fichier ou l'unité systemd, puis on relance.
+- **`--config`** : un YAML facultatif, avec les mêmes clés que les options (`host`, `port`, `device`, `fp16`, `offline`, `embedder`, `reranker`, `token_env`, `max_vram_fraction`). Une option donnée, ou une variable `LOOM_MEM_GPU_*`, l'emporte sur le fichier. Pour changer un réglage, on modifie le fichier ou l'unité systemd (sa surcharge, §8.2), puis on relance.
 - **Le jeton** est lu dans la variable que nomme `--token-env`, jamais passé en argument (il serait visible dans `ps`). Il est facultatif sur la boucle locale et comparé en temps constant (`hmac.compare_digest`).
 - **`--max-vram-fraction`** appelle `torch.cuda.set_per_process_memory_fraction`. C'est facultatif : ça plafonne l'application à côté d'un LLM local. Dépasser le plafond donne une erreur de calcul (500), pas un débordement sur le LLM.
 - **`--host`** : la boucle locale seulement, tant que le lot 5 n'est pas fait. Toute autre adresse est refusée au démarrage.
@@ -292,25 +296,43 @@ install-loom-mem --uninstall [--dry-run]
 
 Ce qu'il fait, dans l'ordre :
 
-1. **Prérequis** : `systemctl --user` répond ; `loom-mem-gpu` est à côté du script ; les réglages et l'extra `memory` sont validés **par l'application elle-même** (`loom-mem-gpu serve --check`, sans rien charger ni ouvrir : aucune règle recopiée dans le script) ; avec `--device cuda`, `nvidia-smi` voit une carte. Un refus : code 2, rien n'est écrit.
-2. **Port** : pris par autre chose que ce service (une instance lancée à la main, un autre programme), code 3, rien n'est écrit. Le script ne tue jamais un process qu'il n'a pas lancé.
-3. **Unité** `~/.config/systemd/user/loom-mem-gpu.service` (nom fixe : une seule instance), avec `PYTORCH_CUDA_ALLOC_CONF`, et `HF_HOME` s'il est défini dans le shell (le service ne lit pas `~/.bashrc`).
+1. **Prérequis** : `systemctl --user` répond ; `loom-mem-gpu` est à côté du script ; les réglages et l'extra `memory` sont validés **par l'application elle-même** (`loom-mem-gpu serve --check --env`, sans rien charger ni ouvrir : aucune règle ni valeur par défaut recopiée dans le script), qui rend les lignes `Environment=` de l'unité ; avec `--device cuda`, `nvidia-smi` voit une carte. Un refus : code 2, rien n'est écrit. Les `LOOM_MEM_GPU_*` du shell qui lance le script sont ignorées : l'unité ne dépend que des options.
+2. **Port** : celui de `--port`, sauf si une surcharge (`systemctl --user edit`) ou le fichier d'environnement en donne un autre, qui l'emporte (le script le dit). Pris par autre chose que ce service (une instance lancée à la main, un autre programme) : code 3, rien n'est écrit. Le port du service en place est lu dans l'unité chargée (`systemctl --user show -p Environment`), ou dans le `--port` d'un `ExecStart` d'avant les variables. Le script ne tue jamais un process qu'il n'a pas lancé.
+3. **Unité** `~/.config/systemd/user/loom-mem-gpu.service` (nom fixe : une seule instance) : `ExecStart` sans option, **tous les réglages en variables `LOOM_MEM_GPU_*`, défauts compris**, `PYTORCH_CUDA_ALLOC_CONF`, `HF_HOME` s'il est défini dans le shell (le service ne lit pas `~/.bashrc` ; sinon en commentaire), `CUDA_VISIBLE_DEVICES` en commentaire, et `EnvironmentFile=-%h/.config/loom-mem-gpu/env` (le `-` : fichier facultatif ; le script ne le crée ni ne le lit, sauf pour un `LOOM_MEM_GPU_PORT`).
 4. `daemon-reload`, `enable`, `restart` (qui arrête l'ancien process avant d'en lancer un) ; puis attente de `ready` (`loom-mem-gpu status`, 180 s au plus, `LOOM_MEM_READY_WAIT`). Un service en échec : la fin de son journal, code 1.
 
-**Rejeu.** Unité identique et service actif : rien ne change, le service garde ses modèles en VRAM (« déjà installé et actif, unité à jour »). Unité différente : la différence est montrée, l'unité réécrite, le service redémarré une fois. `--dry-run` montre l'unité et les commandes sans rien faire ; `--linger` lance `loginctl enable-linger` (sinon, le script dit seulement qu'il faut le faire pour que le service tourne hors session). `--uninstall` : `disable --now`, unité retirée, `daemon-reload` ; rejoué, « rien à désinstaller ».
+**Rejeu.** Unité identique et service actif : rien ne change, le service garde ses modèles en VRAM (« déjà installé et actif, unité à jour »). Unité différente : la différence est montrée, l'unité réécrite, le service redémarré une fois. `--dry-run` montre l'unité et les commandes sans rien faire ; `--linger` lance `loginctl enable-linger` (sinon, le script dit seulement qu'il faut le faire pour que le service tourne hors session). `--uninstall` : `disable --now`, unité retirée, `daemon-reload` ; les surcharges et le fichier d'environnement sont gardés (le script le dit) ; rejoué, « rien à désinstaller ». Une unité d'avant les variables (options dans `ExecStart`) est reconnue : la différence est montrée, l'unité réécrite, le service redémarré une fois, sans conflit de port.
 
 L'unité écrite, par exemple pour `install-loom-mem --offline` :
 
 ```ini
 # Écrit par install-loom-mem : le relancer plutôt que modifier ce fichier à la main.
+# Changer un réglage : systemctl --user edit loom-mem-gpu.service (surcharge gardée au rejeu),
+# puis systemctl --user restart loom-mem-gpu.service.
 [Unit]
 Description=loom-mem-gpu — modèles de la mémoire de loom gardés en VRAM
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-ExecStart="/home/denis/temp/agent-mem/.venv/bin/loom-mem-gpu" serve --device cuda --offline
+ExecStart="/home/denis/temp/agent-mem/.venv/bin/loom-mem-gpu" serve
+# Réglages de loom-mem-gpu, valeurs par défaut comprises.
+Environment=LOOM_MEM_GPU_HOST=127.0.0.1
+Environment=LOOM_MEM_GPU_PORT=8765
+Environment=LOOM_MEM_GPU_DEVICE=cuda
+Environment=LOOM_MEM_GPU_FP16=true
+Environment=LOOM_MEM_GPU_OFFLINE=true
+Environment=LOOM_MEM_GPU_EMBEDDER=BAAI/bge-m3
+Environment=LOOM_MEM_GPU_RERANKER=BAAI/bge-reranker-v2-m3
+# Environment=LOOM_MEM_GPU_TOKEN_ENV=LOOM_MEM_GPU_TOKEN  (la variable qui porte le jeton, jamais le jeton ici)
+# Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3  (part de la carte permise, à côté d'un LLM local)
+# torch et les modèles.
 Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Environment=HF_HOME=/chemin/du/cache  (défaut : ~/.cache/huggingface)
+# Environment=CUDA_VISIBLE_DEVICES=0  (une seule carte parmi plusieurs)
+# Le jeton : LOOM_MEM_GPU_TOKEN=… dans ce fichier facultatif, que install-loom-mem ne crée
+# pas, avec LOOM_MEM_GPU_TOKEN_ENV=LOOM_MEM_GPU_TOKEN. Ses variables l'emportent sur Environment=.
+EnvironmentFile=-%h/.config/loom-mem-gpu/env
 Restart=on-failure
 RestartSec=5
 # Réglages refusés (2) ou port pris (3) : relancer ne changerait rien.
@@ -327,6 +349,23 @@ loom-mem-gpu status
 
 Sous systemd (variable `JOURNAL_STREAM`), les lignes du journal ne portent pas l'heure : journald la note déjà.
 
+**Surcharge.** `systemctl --user edit loom-mem-gpu.service` ouvre `~/.config/systemd/user/loom-mem-gpu.service.d/override.conf` ; on y met les seules lignes à changer :
+
+```ini
+[Service]
+Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3
+```
+
+puis `systemctl --user restart loom-mem-gpu.service`. `systemctl --user cat loom-mem-gpu.service` montre l'unité et ses surcharges. Le script ne touche jamais aux surcharges : un rejeu laisse l'unité telle quelle si ses options n'ont pas changé, et la surcharge continue de l'emporter.
+
+**Jeton.** Il ne va jamais dans l'unité (lisible par `systemctl show`). Dans `~/.config/loom-mem-gpu/env`, à créer soi-même (`chmod 600`) :
+
+```
+LOOM_MEM_GPU_TOKEN=…
+```
+
+et, en surcharge, `Environment=LOOM_MEM_GPU_TOKEN_ENV=LOOM_MEM_GPU_TOKEN`. Côté loom, `models.server.token_env` nomme la variable qui porte le même jeton.
+
 ### 8.3 Qui relance quoi
 
 **C'est systemd qui relance l'application, pas nginx.** Un reverse proxy (nginx, Caddy) ne fait que relayer les requêtes : si l'application tombe, il répond 502 (Bad Gateway) ou 504 (délai), sans rien relancer. nginx est lui-même un service que systemd relance. On a donc deux unités, chacune avec son `Restart=`.
@@ -340,6 +379,8 @@ Le proxy ne servira qu'au lot 5. Sur le poste, loom parle directement à `127.0.
 | Ce qu'on change | Où | Effet |
 |---|---|---|
 | Port, device, fp16, offline, plafond de VRAM | Relancer `install-loom-mem` avec les nouvelles options | Différence montrée, unité réécrite, service redémarré une fois. Les process loom attendent pendant le chargement (503 `loading`, 60 s au plus). Avec un autre port, changer aussi `models.server.url` des agents. |
+| N'importe quel réglage, sans réinstaller | `systemctl --user edit loom-mem-gpu.service` (une ligne `Environment=LOOM_MEM_GPU_…=…`), puis `systemctl --user restart loom-mem-gpu.service` | La surcharge l'emporte sur l'unité et survit aux rejeux du script. Une variable mal nommée : le service s'arrête, code 2, sans relance ; `journalctl --user -u loom-mem-gpu` dit laquelle. |
+| Le jeton | `~/.config/loom-mem-gpu/env`, et `LOOM_MEM_GPU_TOKEN_ENV` en surcharge | Au prochain `restart`. Jamais dans l'unité. |
 | Calcul dans loom ou par l'application, repli | `models` de `loom.memory` dans `agent.yaml` | Pris en compte au prochain process loom, ou par `serve --reload`. |
 
 ## 9. Lot 5, plus tard : l'application sur une VM cloud
@@ -413,6 +454,7 @@ Derrière nginx :
 | 6 | **Fait le 05/11.** CHANGELOG (2.0.18), guide : exemple 29.4 et annexe des extras, formation : exercice 5.6 (encadré), README (extra `memory`), point 9 de `loom-memory-points-en-suspens.md` marqué fait. `configuration.md` inchangé : il ne décrit pas les paramètres de `loom.memory`, que le guide porte. | — |
 | 7 | **Fait le 05/11 — un seul calcul, deux chemins.** Revue des doublons entre calcul local et loom-mem-gpu : règle de la demi-précision (`bge_m3.half_precision`), lots (`bge_m3.batches`), coupe des textes à 20 000 caractères dans les deux chemins (`bge_m3.MAX_CHARS`, `clipped` ; avant, un texte plus long passait en local et était refusé par l'application), nom de l'application (`protocol.APP`), motif et défauts du device (`memory_params.DEVICE_PATTERN`, `DEFAULT_*`) ; corps de requête porté à 4 Mo ; `ALGO` passe à `bge-m3/2` (la coupe touche la troncature). Essais : équivalence du calcul local et du calcul par l'application sur les vraies classes (faux torch), coupe, corps le plus lourd, demi-précision, listes de champs parallèles à `ModelsSpec`, options de l'application. | |
 | 8 | **Fait le 06/11 — aide à l'installation.** `install-loom-mem` (bash, `scripts/bin/`, installé dans le bin du venv avec le paquet) : prérequis, validation par `loom-mem-gpu serve --check` (nouveau, qui partage `preflight` avec le démarrage), port pris par un autre refusé, unité au nom fixe, rejeu sans redémarrage si rien ne change, `--dry-run`, `--linger`, `--uninstall` (§8.2). `tests/unit/test_install_loom_mem.py` : le vrai script, dans un faux venv, avec de faux systemctl, loginctl, nvidia-smi ; shellcheck sans remarque. | `install-loom-mem --dry-run`, puis sans. |
+| 9 | **Fait le 06/11 — réglages en variables.** Une variable `LOOM_MEM_GPU_*` par réglage (`settings.env_name`), lue entre `--config` et les options ; variable inconnue refusée ; `serve --check --env` écrit les lignes `Environment=` (`settings.as_environment`). `install-loom-mem` écrit tous les réglages dans l'unité, défauts compris, `ExecStart` sans option, `EnvironmentFile` facultatif pour le jeton ; respecte le port d'une surcharge ou du fichier d'environnement ; ignore les `LOOM_MEM_GPU_*` de son shell ; reconnaît l'unité d'avant ; garde surcharges et fichier à la désinstallation ; `$USER` absent toléré (§5.1, §8.2, §8.4). Essais : priorité et refus des variables, aller-retour des lignes `Environment=` par la lecture de systemd, une variable par réglage, `--env` ; côté script, le faux `loom-mem-gpu serve` lance le vrai `main`. | `install-loom-mem --dry-run`, puis `systemctl --user edit`. |
 
 ## 13. Risques
 
