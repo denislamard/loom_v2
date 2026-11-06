@@ -123,7 +123,10 @@ def status(url: str, token_env: str | None) -> int:
             return EXIT_SETTINGS
         request.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(request, timeout=STATUS_TIMEOUT) as response:
+        # Sans proxy : HTTP_PROXY détournerait aussi la boucle locale (le client de loom
+        # les ignore de même, ``trust_env=False``).
+        direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with direct.open(request, timeout=STATUS_TIMEOUT) as response:
             body: bytes = response.read()
     except urllib.error.HTTPError as exc:
         body = exc.read()

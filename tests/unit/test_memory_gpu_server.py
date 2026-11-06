@@ -526,6 +526,17 @@ def test_status_of_a_loading_or_absent_service_is_1(
     assert "injoignable" in capsys.readouterr().err
 
 
+def test_status_ignores_the_proxies_of_the_environment(
+    started: Callable[..., Service], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    host, port = started().address
+    assert status(f"http://{host}:{port}", None) == 0
+
+
 def test_status_sends_the_token(
     started: Callable[..., Service], monkeypatch: pytest.MonkeyPatch
 ) -> None:
