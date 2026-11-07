@@ -2,7 +2,7 @@
 
 Les versions sont listées de la plus récente à la plus ancienne. Une ligne marquée ⚠ change un comportement visible.
 
-## 2.0.19 - non publiée
+## 2.0.19 - publiée
 
 ### Mémoire `loom.memory` : un service `loom-mem-gpu` partagé par les agents du poste
 - ⚠ **`install-loom-mem` installe le service dans un environnement à lui** (`~/.local/share/loom-mem-gpu/venv`), et non plus dans le venv de l'agent : créé avec uv (requis) depuis la même source de loom-ia que l'agent qui l'installe (éditable, archive, git ou index), avec le même Python et la même version de torch (une étiquette locale, `+cpu`, vient de l'index de PyTorch). Un `uv sync` ou un venv supprimé dans un agent ne fait plus tomber le service. L'environnement est gardé s'il répond, refait s'il est incomplet, retiré si son installation échoue. Une unité d'avant (dans le venv d'un agent) est reprise comme une première installation.
