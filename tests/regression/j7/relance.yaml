@@ -1,4 +1,4 @@
-# Corpus de non-régression : l'agent relance de examples/j7/relance, dont la session
+# Corpus de non-régression : l'agent relance de tests/examples/j7/relance, dont la session
 # tient un state — posé par chaque cas à l'ouverture de son run, et par chercher_devis
 # (from). Modèles simulés. Chaque journal de journaux/ doit se rejouer à l'identique
 # (tests/regression/test_regression.py), avec le state qu'il porte. Le rejeu sert à chaque
@@ -7,7 +7,7 @@
 # contrôlent le state que chaque run laisse.
 # Réenregistrer, après un changement voulu, et relire le diff :
 #   uv run loom eval tests/regression/j7/relance.yaml --export tests/regression/j7/journaux/
-config: ../../../examples/j7/relance/loom.yaml
+config: ../../examples/j7/relance/loom.yaml
 agent: relance
 cases:
   # Seule la signature est posée : le ton vaut cordial par défaut, sans être écrit.

@@ -1,8 +1,8 @@
-# Corpus de non-régression (J6.3b) : l'agent relance de examples/j3/relance, modèles simulés.
+# Corpus de non-régression (J6.3b) : l'agent relance de tests/examples/j3/relance, modèles simulés.
 # Chaque journal de journaux/ doit se rejouer à l'identique (tests/regression/test_regression.py).
 # Réenregistrer, après un changement voulu, et relire le diff :
 #   uv run loom eval tests/regression/j3/relance.yaml --export tests/regression/j3/journaux/
-config: ../../../examples/j3/relance/loom.yaml
+config: ../../examples/j3/relance/loom.yaml
 agent: relance
 cases:
   - name: relance-042
