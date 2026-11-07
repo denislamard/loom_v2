@@ -285,17 +285,20 @@ Avec `server`, `preload` est refusé (§6.3) :
 
 L'application doit tourner dans un venv qui a l'extra `memory`, avec **la même version de loom** que les agents (`algo` le vérifie de toute façon). Le `.venv` de `loom_v2` n'a pas torch. Celui d'agent-mem (`/home/denis/temp/agent-mem/.venv`) a tout ce qu'il faut, et pointe sur `loom_v2` en éditable.
 
-Au lot 10 (§8.5), le service quitte le venv de l'agent pour un environnement à lui, partagé par tous les agents du poste.
+Depuis le lot 10 (§8.5), le service ne tourne plus dans le venv d'un agent : `install-loom-mem` lui crée un environnement à lui (`~/.local/share/loom-mem-gpu/venv`), depuis la même source de loom-ia que l'agent qui l'installe, partagé par tous les agents du poste.
 
 ### 8.2 Unité systemd utilisateur : `install-loom-mem`
 
-L'aide à l'installation est livrée avec loom-ia : `scripts/bin/install-loom-mem` est installé dans le bin du venv, à côté de `loom-mem-gpu` (`[tool.uv.build-backend.data] scripts = "scripts/bin"`, en installation normale comme en éditable). Le service lance le `loom-mem-gpu` de ce venv.
+L'aide à l'installation est livrée avec loom-ia : `scripts/bin/install-loom-mem` est installé dans le bin du venv, à côté de `loom-mem-gpu` (`[tool.uv.build-backend.data] scripts = "scripts/bin"`, en installation normale comme en éditable). Le service lance le `loom-mem-gpu` de son environnement à lui (§8.5.1), et l'agent qui l'installe est inscrit au registre (§8.5.2).
 
 ```
-install-loom-mem [--port N] [--device D] [--offline] [--no-fp16]
-                 [--max-vram-fraction F] [--linger] [--dry-run]
-install-loom-mem --uninstall [--dry-run]
+install-loom-mem [--port N] [--device D] [--offline] [--no-fp16] [--max-vram-fraction F]
+                 [--reconfigure] [--upgrade] [--linger] [--dry-run]
+install-loom-mem --list
+install-loom-mem --uninstall [--all] [--dry-run]
 ```
+
+Le partage entre agents (annonce, réglages repris de l'unité, `--reconfigure`, `--upgrade`, désinstallation par le dernier) : §8.5.3 et §8.5.4.
 
 Ce qu'il fait, dans l'ordre :
 
@@ -304,7 +307,7 @@ Ce qu'il fait, dans l'ordre :
 3. **Unité** `~/.config/systemd/user/loom-mem-gpu.service` (nom fixe : une seule instance) : `ExecStart` sans option, **tous les réglages en variables `LOOM_MEM_GPU_*`, défauts compris**, `PYTORCH_CUDA_ALLOC_CONF`, `HF_HOME` s'il est défini dans le shell (le service ne lit pas `~/.bashrc` ; sinon en commentaire), `CUDA_VISIBLE_DEVICES` et `OMP_NUM_THREADS` en commentaire, chaque variable avec la ligne qui dit ce qu'elle fait, et `EnvironmentFile=-%h/.config/loom-mem-gpu/env` (le `-` : fichier facultatif ; le script ne le crée ni ne le lit, sauf pour un `LOOM_MEM_GPU_PORT`).
 4. `daemon-reload`, `enable`, `restart` (qui arrête l'ancien process avant d'en lancer un) ; puis attente de `ready` (`loom-mem-gpu status`, 180 s au plus, `LOOM_MEM_READY_WAIT`). Un service en échec : la fin de son journal, code 1.
 
-**Rejeu.** Unité identique et service actif : rien ne change, le service garde ses modèles en VRAM (« déjà installé et actif, unité à jour »). Unité différente : la différence est montrée, l'unité réécrite, le service redémarré une fois. `--dry-run` montre l'unité et les commandes sans rien faire ; `--linger` lance `loginctl enable-linger` (sinon, le script dit seulement qu'il faut le faire pour que le service tourne hors session). `--uninstall` : `disable --now`, unité retirée, `daemon-reload` ; les surcharges et le fichier d'environnement sont gardés (le script le dit) ; rejoué, « rien à désinstaller ». Une unité d'avant les variables (options dans `ExecStart`) est reconnue : la différence est montrée, l'unité réécrite, le service redémarré une fois, sans conflit de port.
+**Rejeu.** Unité identique et service actif : rien ne change, le service garde ses modèles en VRAM (« déjà installé et actif, unité à jour »). Unité différente : la différence est montrée, l'unité réécrite, le service redémarré une fois (avec d'autres agents inscrits : refus sans `--reconfigure`, §8.5.3). `--dry-run` montre l'unité et les commandes sans rien faire ; `--linger` lance `loginctl enable-linger` (sinon, le script dit seulement qu'il faut le faire pour que le service tourne hors session). `--uninstall` : `disable --now`, unité retirée, `daemon-reload` ; les surcharges et le fichier d'environnement sont gardés (le script le dit) ; rejoué, « rien à désinstaller ». Une unité d'avant les variables (options dans `ExecStart`) est reconnue : la différence est montrée, l'unité réécrite, le service redémarré une fois, sans conflit de port.
 
 L'unité écrite, par exemple pour `install-loom-mem --offline` :
 
@@ -320,6 +323,7 @@ L'unité écrite, par exemple pour `install-loom-mem --offline` :
 #   systemctl --user restart loom-mem-gpu.service
 # La surcharge l'emporte sur ce fichier et survit aux rejeux d'install-loom-mem.
 # Voir l'ensemble : systemctl --user cat loom-mem-gpu.service
+# Les agents qui l'utilisent : install-loom-mem --list
 [Unit]
 Description=loom-mem-gpu — modèles de la mémoire de loom gardés en VRAM
 # Au plus 5 démarrages en 5 minutes ; au-delà, systemd abandonne (status : failed).
@@ -327,8 +331,9 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-# Sans option : chaque réglage vient de sa variable LOOM_MEM_GPU_* (une option l'emporterait).
-ExecStart="/home/denis/temp/agent-mem/.venv/bin/loom-mem-gpu" serve
+# L'environnement du service, à part des agents. Sans option : chaque réglage vient de
+# sa variable LOOM_MEM_GPU_* (une option l'emporterait).
+ExecStart="/home/denis/.local/share/loom-mem-gpu/venv/bin/loom-mem-gpu" serve
 
 # --- loom-mem-gpu ---
 # adresse d'écoute : la boucle locale seulement (127.0.0.1, localhost, ::1)
@@ -415,12 +420,14 @@ Le proxy ne servira qu'au lot 5. Sur le poste, loom parle directement à `127.0.
 
 | Ce qu'on change | Où | Effet |
 |---|---|---|
-| Port, device, fp16, offline, plafond de VRAM | Relancer `install-loom-mem` avec les nouvelles options | Différence montrée, unité réécrite, service redémarré une fois. Les process loom attendent pendant le chargement (503 `loading`, 60 s au plus). Avec un autre port, changer aussi `models.server.url` des agents. |
+| Port, device, fp16, offline, plafond de VRAM | Relancer `install-loom-mem` avec les nouvelles options (les autres réglages gardent leur valeur) ; avec d'autres agents inscrits, ajouter `--reconfigure` | Différence montrée, unité réécrite, service redémarré une fois. Les process loom attendent pendant le chargement (503 `loading`, 60 s au plus). Avec un autre port, changer aussi `models.server.url` des agents. Sans `--reconfigure`, avec d'autres agents : refus, rien n'est écrit. |
+| La version de loom du service | `install-loom-mem --upgrade` depuis l'agent dont la source doit servir | Environnement du service réinstallé, service redémarré une fois ; les agents d'une autre identité sont nommés, ils calculent dans leur process (§7.3) jusqu'à leur mise à jour. |
+| Qui utilise le service | `install-loom-mem --list` | Lecture seule : état, port, identité, source, agents (« disparu » si son venv n'existe plus). |
 | N'importe quel réglage, sans réinstaller | `systemctl --user edit loom-mem-gpu.service` (une ligne `Environment=LOOM_MEM_GPU_…=…`), puis `systemctl --user restart loom-mem-gpu.service` | La surcharge l'emporte sur l'unité et survit aux rejeux du script. Une variable mal nommée : le service s'arrête, code 2, sans relance ; `journalctl --user -u loom-mem-gpu` dit laquelle. |
 | Le jeton | `~/.config/loom-mem-gpu/env`, et `LOOM_MEM_GPU_TOKEN_ENV` en surcharge | Au prochain `restart`. Jamais dans l'unité. |
 | Calcul dans loom ou par l'application, repli | `models` de `loom.memory` dans `agent.yaml` | Pris en compte au prochain process loom, ou par `serve --reload`. |
 
-### 8.5 Plusieurs agents sur le poste : un service partagé (lot 10, spécifié le 07/11)
+### 8.5 Plusieurs agents sur le poste : un service partagé (lot 10, fait le 07/11)
 
 **Constat (07/11).** Le service tourne depuis le venv de l'agent qui l'a installé (`ExecStart` dans `agent-mem/.venv`). Trois effets :
 
@@ -518,7 +525,7 @@ Le nom fixe de l'unité (une seule instance), le port pris par un autre programm
 | J1 | Cette spécification. |
 | J2 | **Fait le 07/11.** Environnement du service (§8.5.1), registre (§8.5.2), `--list`, et la désinstallation par le dernier agent (§8.5.4, avancée de J3 : sans elle, `--uninstall` aurait laissé environnement et registre). Essais : faux `uv` dans le poste factice ; source éditable, archive, git, index ; torch épinglé, étiquette locale par l'index de PyTorch ; environnement gardé, refait s'il est incomplet, retiré si l'installation échoue ; rejeu sans doublon ; second agent inscrit sans redémarrage ; agent disparu purgé ; deux installations ensemble ; chemin à tabulation refusé ; désinstallation non dernière sans arrêt, dernière qui retire tout. |
 | J3 | **Fait le 07/11.** Partage (§8.5.3) : annonce, réglages repris de l'unité (et `HF_HOME`), `--reconfigure`, identité et `--upgrade` (agents d'une autre identité nommés) ; `--uninstall --all` (§8.5.4) ; options incompatibles refusées. Essais : option non donnée qui garde sa valeur ; réglage partagé refusé puis `--reconfigure` ; seul agent sans `--reconfigure` ; `HF_HOME` de l'unité gardé ; identité différente refusée puis `--upgrade` ; seul agent réinstallé ; même identité, autre version : gardé ; `--upgrade` à identité égale ; `--all`. |
-| J4 | Guide (29.4), CHANGELOG (2.0.19), double vérification (lint, types, tous les essais deux fois, contre-épreuves) ; essai chez Denis avec deux agents (agent-mem et un second fait par `create-loom-project`). |
+| J4 | **Fait le 07/11** (sauf l'essai chez Denis). Guide (29.4), CHANGELOG (2.0.19), §8.1, §8.2, §8.4, double vérification (lint, types, tous les essais deux fois, contre-épreuves) ; essai chez Denis avec deux agents (agent-mem et un second fait par `create-loom-project`). |
 
 ## 9. Lot 5, plus tard : l'application sur une VM cloud
 
@@ -592,7 +599,7 @@ Derrière nginx :
 | 7 | **Fait le 05/11 — un seul calcul, deux chemins.** Revue des doublons entre calcul local et loom-mem-gpu : règle de la demi-précision (`bge_m3.half_precision`), lots (`bge_m3.batches`), coupe des textes à 20 000 caractères dans les deux chemins (`bge_m3.MAX_CHARS`, `clipped` ; avant, un texte plus long passait en local et était refusé par l'application), nom de l'application (`protocol.APP`), motif et défauts du device (`memory_params.DEVICE_PATTERN`, `DEFAULT_*`) ; corps de requête porté à 4 Mo ; `ALGO` passe à `bge-m3/2` (la coupe touche la troncature). Essais : équivalence du calcul local et du calcul par l'application sur les vraies classes (faux torch), coupe, corps le plus lourd, demi-précision, listes de champs parallèles à `ModelsSpec`, options de l'application. | |
 | 8 | **Fait le 06/11 — aide à l'installation.** `install-loom-mem` (bash, `scripts/bin/`, installé dans le bin du venv avec le paquet) : prérequis, validation par `loom-mem-gpu serve --check` (nouveau, qui partage `preflight` avec le démarrage), port pris par un autre refusé, unité au nom fixe, rejeu sans redémarrage si rien ne change, `--dry-run`, `--linger`, `--uninstall` (§8.2). `tests/unit/test_install_loom_mem.py` : le vrai script, dans un faux venv, avec de faux systemctl, loginctl, nvidia-smi ; shellcheck sans remarque. | `install-loom-mem --dry-run`, puis sans. |
 | 9 | **Fait le 06/11 — réglages en variables.** Une variable `LOOM_MEM_GPU_*` par réglage (`settings.env_name`), lue entre `--config` et les options ; variable inconnue refusée ; `serve --check --env` écrit les lignes `Environment=` (`settings.as_environment`). `install-loom-mem` écrit tous les réglages dans l'unité, défauts compris, `ExecStart` sans option, `EnvironmentFile` facultatif pour le jeton ; respecte le port d'une surcharge ou du fichier d'environnement ; ignore les `LOOM_MEM_GPU_*` de son shell ; reconnaît l'unité d'avant ; garde surcharges et fichier à la désinstallation ; `$USER` absent toléré (§5.1, §8.2, §8.4). Chaque variable de l'unité est précédée de ce qu'elle fait (la `description` du champ, partagée avec `--help`) ; `LOOM_MEM_GPU_LOG_LEVEL` (le niveau du journal, jusque-là option seule) ; `--version` (version, protocole et algorithme, ce que loom compare à la connexion) ; `OMP_NUM_THREADS`, `HF_TOKEN` (fichier d'environnement) en commentaire. Essais : priorité et refus des variables, aller-retour des lignes `Environment=` par la lecture de systemd, une variable et sa description par réglage, niveau du journal appliqué, `--env` ; côté script, le faux `loom-mem-gpu serve` lance le vrai `main`. | `install-loom-mem --dry-run`, puis `systemctl --user edit`. |
-| 10 | **Spécifié le 07/11 — un service partagé par les agents du poste** (§8.5) : un environnement propre au service (`~/.local/share/loom-mem-gpu/venv`, même source que l'agent qui l'installe), un registre des agents (`~/.local/state/loom-mem-gpu/agents`, TSV, sous `flock`), l'annonce du partage, réglages repris de l'unité (`--reconfigure`), identité comparée (`--upgrade`), désinstallation par le dernier agent seulement (`--uninstall --all` pour forcer), `--list`. Pas de migration. Jalons J2 à J4 (§8.5.7). | Deux agents sur le poste : agent-mem et un second fait par `create-loom-project`. |
+| 10 | **Fait le 07/11 — un service partagé par les agents du poste** (§8.5) : un environnement propre au service (`~/.local/share/loom-mem-gpu/venv`, même source de loom-ia, même Python et même torch que l'agent qui l'installe), un registre des agents (`~/.local/state/loom-mem-gpu/agents`, TSV, sous `flock`, agents disparus retirés), l'annonce du partage, réglages repris de l'unité (`--reconfigure`), identité comparée (`--upgrade`), désinstallation par le dernier agent seulement (`--uninstall --all` pour forcer), `--list`. Pas de migration : une unité sans registre est traitée comme une première installation. Jalons J1 à J4 (§8.5.7) ; `tests/unit/test_install_loom_mem.py` (55 essais, faux `uv`). | Deux agents sur le poste : agent-mem et un second fait par `create-loom-project`. |
 
 ## 13. Risques
 

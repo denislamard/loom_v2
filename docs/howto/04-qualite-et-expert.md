@@ -3181,11 +3181,12 @@ loom-mem-gpu injoignable (http://127.0.0.1:8765 : [Errno 111] Connection refused
 
 Sans repli, l'appel échoue avec la commande pour la démarrer : « loom-mem-gpu injoignable (…) : le démarrer (systemctl --user start loom-mem-gpu, ou « loom-mem-gpu » dans un terminal), ou ajouter models.server.fallback pour calculer dans loom ».
 
-Pour qu'elle tourne sans terminal ouvert, en service systemd utilisateur, `install-loom-mem` l'installe. Il est livré avec loom-ia, dans le bin du venv, et installe le `loom-mem-gpu` de ce venv :
+Pour qu'elle tourne sans terminal ouvert, en service systemd utilisateur, `install-loom-mem` l'installe. Il est livré avec loom-ia, dans le bin du venv de l'agent ; le service, lui, tourne dans un environnement à lui (`~/.local/share/loom-mem-gpu/venv`), créé avec uv depuis la même source de loom-ia que l'agent : un `uv sync` ou un venv supprimé dans un agent ne le touche pas. Il faut donc uv sur le poste :
 
 ```bash
 uv run install-loom-mem --offline --dry-run   # montre l'unité et les commandes, sans rien faire
 uv run install-loom-mem --offline --linger    # installe, démarre, attend « ready »
+uv run install-loom-mem --list                # le service, son identité, les agents qui l'utilisent
 journalctl --user -u loom-mem-gpu -f
 ```
 
@@ -3202,7 +3203,17 @@ Environment=LOOM_MEM_GPU_OFFLINE=true
 
 `systemctl --user cat loom-mem-gpu.service` montre tout : les réglages de l'application, ceux de torch et de Hugging Face (`PYTORCH_CUDA_ALLOC_CONF`, `HF_HOME`, `CUDA_VISIBLE_DEVICES`, `OMP_NUM_THREADS`) et la place du jeton.
 
-On le relance pour changer une option : la différence est montrée et le service redémarré une fois ; relancé à l'identique, il ne touche à rien. `--linger` le laisse tourner hors session ; `--uninstall` le retire.
+On le relance pour changer une option : les options non données gardent leur valeur, la différence est montrée et le service redémarré une fois ; relancé à l'identique, il ne touche à rien. `--linger` le laisse tourner hors session.
+
+Un seul service sert tous les agents du poste : il ne fait que calculer, chaque agent garde sa base. Un second agent qui lance `install-loom-mem` (depuis son venv) l'apprend, et s'inscrit sans redémarrer le service :
+
+```
+install-loom-mem : loom-mem-gpu est déjà installé, partagé avec :
+  /home/denis/agent-mem/.venv   loom 2.0.19   inscrit le 2026-11-07
+install-loom-mem : agent ajouté : /home/denis/agent-b/.venv (loom 2.0.19) ; le service n'est pas redémarré
+```
+
+Ce qui touche les autres agents demande d'être explicite : un réglage qui change est refusé (la différence est montrée) sauf avec `--reconfigure` ; un loom-mem-gpu d'une autre identité (protocole, algorithme : `loom-mem-gpu --version`) aussi, sauf avec `--upgrade`, qui réinstalle l'environnement du service depuis la source de cet agent. `--uninstall` retire l'agent ; le service n'est retiré qu'avec le dernier (`--uninstall --all` pour tout retirer).
 
 Pour changer un réglage sans le relancer, une surcharge :
 
@@ -3216,10 +3227,11 @@ La surcharge l'emporte sur l'unité, et `install-loom-mem` n'y touche jamais. Le
 #### À retenir
 
 - `loom-mem-gpu` charge les modèles une fois pour tous les process loom ; `models.server` y envoie les calculs. La base, les projets, les clients et les approbations restent dans loom : l'application ne fait que calculer.
-- Au premier appel, loom vérifie que l'application calcule comme il le ferait (protocole, algorithme, modèles, dimension) : une application d'une autre version de loom est refusée plutôt que de mêler deux sortes de vecteurs dans une base. Mettez-la à jour avec les agents.
+- Au premier appel, loom vérifie que l'application calcule comme il le ferait (protocole, algorithme, modèles, dimension) : une application d'une autre version de loom est refusée plutôt que de mêler deux sortes de vecteurs dans une base. Mettez-la à jour avec les agents (`install-loom-mem --upgrade`).
 - Le repli (`server.fallback`) ne joue que sur une panne de l'application ; un jeton refusé, d'autres modèles ou un calcul en échec restent des erreurs. L'application reprend la main dès qu'elle répond (ressayée toutes les 30 s).
 - C'est systemd qui la relance (`Restart=on-failure`), jamais un proxy. Ses codes de sortie le guident : 2 réglages refusés ou extra absent, 3 port pris (une autre instance tourne), 4 modèles non chargés.
-- `install-loom-mem` se rejoue sans risque : l'unité a un nom fixe, une seule instance tourne.
+- `install-loom-mem` se rejoue sans risque : l'unité a un nom fixe, une seule instance tourne, et un agent n'est inscrit qu'une fois.
+- Plusieurs agents, un service : `--list` montre qui l'utilise ; `--reconfigure` et `--upgrade` changent ce qu'ils partagent ; seul le dernier `--uninstall` arrête le service.
 - **Piège** : une instance lancée à la main dans un terminal tient le port ; `install-loom-mem` le dit et s'arrête (code 3). Fermez-la d'abord.
 - **Piège** : une variable `LOOM_MEM_GPU_*` mal nommée (`LOOM_MEM_GPU_PROT`) arrête le service (code 2, sans relance) ; `journalctl --user -u loom-mem-gpu` dit laquelle. Les `LOOM_MEM_GPU_*` de votre shell, elles, n'entrent jamais dans l'unité : seules les options d'`install-loom-mem` comptent.
 - **Piège** : un serveur de LLM local comme vLLM réserve 90 % de la carte par défaut. Démarrez `loom-mem-gpu` d'abord (de l'ordre de 3 à 4 Go), et réglez `--gpu-memory-utilization` sur ce qui reste.
