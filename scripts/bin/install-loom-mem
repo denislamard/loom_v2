@@ -11,9 +11,17 @@
 # (~/.local/state/loom-mem-gpu/agents). Conception : docs/loom-mem-gpu.md (§8.2, §8.5).
 #
 #   install-loom-mem [--port N] [--device D] [--offline] [--no-fp16]
-#                    [--max-vram-fraction F] [--linger] [--dry-run]
+#                    [--max-vram-fraction F] [--reconfigure] [--upgrade]
+#                    [--linger] [--dry-run]
 #   install-loom-mem --list
-#   install-loom-mem --uninstall [--dry-run]
+#   install-loom-mem --uninstall [--all] [--dry-run]
+#
+# Service déjà installé : le script dit avec quels agents il est partagé. Les réglages
+# repartent de ceux de l'unité, et une option non donnée garde sa valeur. Si d'autres
+# agents sont inscrits, un réglage qui change est refusé (la différence est montrée),
+# sauf avec --reconfigure ; une identité différente (protocole, algorithme : loom-mem-gpu
+# --version) aussi, sauf avec --upgrade, qui réinstalle l'environnement du service depuis
+# la source de cet agent. --upgrade sert aussi à suivre un changement de dépendances.
 #
 # Les réglages vont dans l'unité en variables LOOM_MEM_GPU_*, toutes écrites avec leur
 # valeur (par défaut ou donnée ici) ; ExecStart lance « loom-mem-gpu serve » sans option.
@@ -27,7 +35,8 @@
 # service garde ses modèles. Unité différente : la différence est montrée, l'unité
 # réécrite, le service redémarré. Un port déjà pris par autre chose que ce service arrête
 # le script avant toute écriture ; il ne tue jamais un process qu'il n'a pas lancé.
-# --uninstall retire l'agent du registre ; le service n'est retiré qu'avec le dernier.
+# --uninstall retire l'agent du registre ; le service n'est retiré qu'avec le dernier
+# (--all : tout, quels que soient les agents inscrits).
 #
 # Codes de sortie : 0 fait (ou rien à faire), 1 échec (environnement ou démarrage),
 # 2 options ou prérequis refusés, 3 port déjà pris.
@@ -61,15 +70,18 @@ readonly REGISTRY="$STATE_DIR/agents"
 readonly LOCK_FILE="$STATE_DIR/lock"
 readonly TORCH_INDEX="https://download.pytorch.org/whl" # torch à étiquette locale (+cpu…)
 
-port=""
-device="cuda"
+port=""   # options données seulement : les autres réglages viennent de l'unité, ou du défaut
+device=""
 offline=0
 no_fp16=0
 vram_fraction=""
 linger=0
 dry_run=0
 uninstall=0
+all=0
 list=0
+reconfigure=0
+upgrade=0
 
 say() { printf '%s : %s\n' "$PROG" "$*"; }
 fail() {
@@ -97,12 +109,19 @@ while [[ $# -gt 0 ]]; do
         --linger) linger=1; shift ;;
         --dry-run) dry_run=1; shift ;;
         --uninstall) uninstall=1; shift ;;
+        --all) all=1; shift ;;
         --list) list=1; shift ;;
+        --reconfigure) reconfigure=1; shift ;;
+        --upgrade) upgrade=1; shift ;;
         -h | --help) usage; exit 0 ;;
         *) fail 2 "option inconnue : $1 (voir --help)" ;;
     esac
 done
 ((list + uninstall <= 1)) || fail 2 "--list et --uninstall ne vont pas ensemble"
+((!all || uninstall)) || fail 2 "--all ne va qu'avec --uninstall"
+if ((list || uninstall)) && ((reconfigure || upgrade)); then
+    fail 2 "--reconfigure et --upgrade vont avec une installation, pas avec --list ni --uninstall"
+fi
 
 run() { # une commande qui change quelque chose : affichée, pas lancée, avec --dry-run
     if ((dry_run)); then
@@ -230,6 +249,25 @@ print_agents() { # les lignes du registre sur l'entrée, une par agent, lisibles
     done
 }
 
+others=() # les agents inscrits, vivants, autres que celui-ci : ceux qu'un changement touche
+read_others() {
+    local path loom since
+    others=()
+    while IFS=$'\t' read -r path loom since; do
+        [[ -n "$path" && "$path" != "$AGENT_VENV" ]] && agent_alive "$path" \
+            && others+=("$path"$'\t'"$loom"$'\t'"$since")
+    done < <(registry_entries)
+    return 0 # le dernier test de la boucle n'est pas le statut de la fonction (set -e)
+}
+
+identity_of() { # $1 un loom-mem-gpu : « (protocole N, algorithme) », ce que loom compare
+    { "$1" --version 2>/dev/null || true; } | sed -n 's/^loom-mem-gpu [^ ]* //p'
+}
+
+loom_of() { # $1 un loom-mem-gpu : sa version de loom
+    { "$1" --version 2>/dev/null || true; } | sed -n 's/^loom-mem-gpu \([^ ]*\) .*/\1/p'
+}
+
 take_lock() { # une installation ou désinstallation à la fois (rien avec --dry-run)
     ((dry_run)) && return 0
     command -v flock >/dev/null 2>&1 || fail 2 "flock introuvable (paquet util-linux)"
@@ -306,7 +344,16 @@ if ((uninstall)); then
         exit 0
     fi
     take_lock
-    registry_update retrait "$AGENT_VENV"
+    if ((all)); then
+        entries="$(registry_entries)"
+        if [[ -n "$entries" ]]; then
+            say "désinstallation complète (--all), agents touchés :"
+            printf '%s\n' "$entries" | print_agents
+        fi
+        remaining_count=0
+    else
+        registry_update retrait "$AGENT_VENV"
+    fi
     if ((remaining_count > 0)); then
         if ((was_registered)); then
             say "agent retiré : $AGENT_VENV"
@@ -324,7 +371,11 @@ if ((uninstall)); then
     fi
     run rm -f "$REGISTRY"
     [[ ! -d "$SERVICE_VENV" ]] || run rm -rf "$SERVICE_VENV"
-    say "désinstallé (dernier agent) : service arrêté, unité, registre et environnement du service retirés"
+    if ((all)); then
+        say "désinstallé (--all) : service arrêté, unité, registre et environnement du service retirés"
+    else
+        say "désinstallé (dernier agent) : service arrêté, unité, registre et environnement du service retirés"
+    fi
     [[ ! -d "$DROPIN_DIR" ]] || say "surcharges gardées (à retirer à la main si besoin) : $DROPIN_DIR"
     [[ ! -f "$ENV_FILE" ]] || say "fichier d'environnement gardé : $ENV_FILE"
     ((dry_run)) && say "dry-run : rien n'a été modifié"
@@ -334,28 +385,59 @@ fi
 # --- Installation ---------------------------------------------------------------------
 
 [[ -x "$APP" ]] || fail 2 "loom-mem-gpu introuvable à côté de ce script ($APP) : réinstaller loom-ia"
-port="${port:-$DEFAULT_PORT}"
-[[ "$port" =~ ^[0-9]+$ ]] || fail 2 "--port : un nombre est attendu ($port)"
+[[ -z "$port" || "$port" =~ ^[0-9]+$ ]] || fail 2 "--port : un nombre est attendu ($port)"
 
-options=(--device "$device")
-[[ "$port" == "$DEFAULT_PORT" ]] || options+=(--port "$port")
+# Les options données seulement : un réglage non donné garde la valeur de l'unité en
+# place, ou prend le défaut de l'application s'il n'y a pas encore d'unité.
+options=()
+[[ -z "$device" ]] || options+=(--device "$device")
+[[ -z "$port" ]] || options+=(--port "$port")
 ((offline)) && options+=(--offline)
 ((no_fp16)) && options+=(--no-fp16)
 [[ -z "$vram_fraction" ]] || options+=(--max-vram-fraction "$vram_fraction")
 
+current=""
+[[ -f "$UNIT_FILE" ]] && current="$(cat "$UNIT_FILE")"
+
+unit_settings() { # $1 texte d'une unité : ses NOM=valeur LOOM_MEM_GPU_*, un par ligne
+    # Lues comme systemd les lit : guillemets et barres obliques inverses, % doublé.
+    "$AGENT_VENV/bin/python" -I -c '
+import re, sys
+
+for line in sys.stdin.read().splitlines():
+    if not line.startswith("Environment="):
+        continue
+    value = line[len("Environment="):]
+    if len(value) >= 2 and value[0] == value[-1] == "\"":
+        value = re.sub(r"\\(.)", r"\1", value[1:-1])
+    value = value.replace("%%", "%")
+    if value.startswith("LOOM_MEM_GPU_"):
+        print(value)
+' <<<"$1"
+}
+unit_vars=()
+[[ -z "$current" ]] || mapfile -t unit_vars < <(unit_settings "$current")
+
 # Les réglages et les dépendances, validés par l'application elle-même, qui les rend en
-# lignes Environment= : aucune règle ni valeur par défaut recopiée ici. Sans les
-# LOOM_MEM_GPU_* de ce shell : l'unité ne dépend que des options.
+# lignes Environment= : aucune règle ni valeur par défaut recopiée ici. Ceux de l'unité
+# en place passent en variables, les options données les remplacent. Sans les
+# LOOM_MEM_GPU_* de ce shell : l'unité ne dépend que de l'unité en place et des options.
 mapfile -t shell_vars < <(compgen -e | grep '^LOOM_MEM_GPU_' || true)
 check_settings() { # $1 le loom-mem-gpu qui valide : les lignes Environment= sur la sortie
-    env "${shell_vars[@]/#/-u}" "$1" serve "${options[@]}" --check --env
+    env "${shell_vars[@]/#/-u}" "${unit_vars[@]}" "$1" serve "${options[@]}" --check --env
 }
 # 1er temps : par le loom-mem-gpu de l'agent, avant de créer quoi que ce soit.
 settings="$(check_settings "$APP")" || fail 2 "réglages refusés (voir ci-dessus)"
 
-if [[ "$device" == cuda* ]]; then
+setting() { # $1 nom court (PORT, DEVICE) : sa valeur dans les lignes rendues
+    sed -n "s/^Environment=LOOM_MEM_GPU_$1=//p" <<<"$settings" | head -n 1
+}
+port="$(setting PORT)"
+effective_device="$(setting DEVICE)"
+
+if [[ "$effective_device" == cuda* ]]; then
     if ! { command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; }; then
-        fail 2 "--device $device : nvidia-smi ne voit aucune carte (pilote NVIDIA ?)"
+        fail 2 "device $effective_device : nvidia-smi ne voit aucune carte (pilote NVIDIA ?)"
     fi
 fi
 
@@ -378,6 +460,11 @@ case "${agent_source%%$'\t'*}" in
 esac
 
 take_lock
+read_others
+if [[ -f "$UNIT_FILE" ]] && ((${#others[@]})); then
+    say "loom-mem-gpu est déjà installé, partagé avec :"
+    printf '%s\n' "${others[@]}" | print_agents
+fi
 
 service_env_ok() { [[ -x "$SERVICE_APP" ]] && "$SERVICE_APP" --version >/dev/null 2>&1; }
 
@@ -409,15 +496,6 @@ install_service_env() { # crée l'environnement du service (s'il manque ou ne r�
     fi
 }
 
-if ! service_env_ok; then
-    install_service_env
-fi
-# 2e temps : par le loom-mem-gpu du service, celui qui tournera (extra memory compris).
-if ((!dry_run)) || service_env_ok; then
-    settings="$(check_settings "$SERVICE_APP")" \
-        || fail 2 "réglages refusés par l'environnement du service (voir ci-dessus)"
-fi
-
 # Le cache des modèles : celui du shell, si on l'a déplacé (le service ne lit pas ~/.bashrc).
 if [[ -n "${HF_HOME:-}" ]]; then
     # Échappé pour systemd, comme les réglages de l'application : % doublé, guillemets
@@ -429,7 +507,9 @@ if [[ -n "${HF_HOME:-}" ]]; then
     fi
     hf_home="Environment=$hf_home"
 else
-    hf_home="# Environment=HF_HOME=/chemin/du/cache"
+    # Sinon celui de l'unité en place (un autre agent l'a donné), sinon en commentaire.
+    hf_home="$(grep -m 1 -E '^Environment="?HF_HOME=' <<<"$current" || true)"
+    [[ -n "$hf_home" ]] || hf_home="# Environment=HF_HOME=/chemin/du/cache"
 fi
 
 unit() {
@@ -488,9 +568,54 @@ WantedBy=default.target
 EOF
 }
 
+changed=1
+refuse_shared_change() { # un réglage qui change, d'autres agents inscrits : refus
+    wanted="$(unit)"
+    changed=1
+    [[ "$current" == "$wanted" ]] && changed=0
+    if ((changed)) && [[ -n "$current" ]] && ((${#others[@]})) && ((!reconfigure)); then
+        say "l'unité change :"
+        diff -u <(printf '%s\n' "$current") <(printf '%s\n' "$wanted") \
+            --label "$UNIT_FILE (actuelle)" --label "$UNIT_FILE (nouvelle)" || true
+        fail 2 "le service est partagé avec d'autres agents (ci-dessus) : ce changement les concerne tous ; relancer avec --reconfigure pour l'appliquer"
+    fi
+}
+refuse_shared_change
+
+# L'environnement du service : gardé s'il répond avec la même identité que cet agent ;
+# sinon réinstallé depuis la source de cet agent, mais pas sans --upgrade si d'autres
+# agents s'en servent.
+env_changed=0
+agent_identity="$(identity_of "$APP")"
+if service_env_ok; then
+    service_identity="$(identity_of "$SERVICE_APP")"
+    service_loom="$(loom_of "$SERVICE_APP")"
+    if ((upgrade)); then
+        say "--upgrade : environnement du service réinstallé (loom $service_loom → $agent_loom)"
+        install_service_env
+        env_changed=1
+    elif [[ "$service_identity" != "$agent_identity" ]]; then
+        if ((${#others[@]})); then
+            fail 2 "identité différente : le service a loom $service_loom $service_identity, cet agent loom $agent_loom $agent_identity ; les agents inscrits (ci-dessus) s'en servent : relancer avec --upgrade pour réinstaller le service depuis cet agent"
+        fi
+        say "identité différente, aucun autre agent : environnement du service réinstallé ($service_identity → $agent_identity)"
+        install_service_env
+        env_changed=1
+    elif [[ "$service_loom" != "$agent_loom" ]]; then
+        say "environnement du service gardé : loom $service_loom, même identité $service_identity que loom $agent_loom de cet agent (--upgrade pour le mettre à jour)"
+    fi
+else
+    install_service_env
+    env_changed=1
+fi
+# 2e temps : par le loom-mem-gpu du service, celui qui tournera (extra memory compris).
+if ((!dry_run)) || service_env_ok; then
+    settings="$(check_settings "$SERVICE_APP")" \
+        || fail 2 "réglages refusés par l'environnement du service (voir ci-dessus)"
+    refuse_shared_change
+fi
+
 wanted="$(unit)"
-current=""
-[[ -f "$UNIT_FILE" ]] && current="$(cat "$UNIT_FILE")"
 active=0
 systemctl --user is-active --quiet "$UNIT_NAME" && active=1
 
@@ -531,12 +656,13 @@ register_agent() { # inscrit cet agent (ou met sa version à jour) et le dit s'i
     ((was_registered)) || say "agent inscrit : $AGENT_VENV (loom $agent_loom)"
 }
 
-changed=1
-[[ "$current" == "$wanted" ]] && changed=0
-
-if ((changed == 0 && active)); then
-    register_agent
-    say "déjà installé et actif, unité à jour : rien à faire"
+if ((changed == 0 && active && !env_changed)); then
+    registry_update ajout "$AGENT_VENV" "$agent_loom"
+    if ((was_registered)); then
+        say "déjà installé et actif, unité à jour : rien à faire"
+    else
+        say "agent ajouté : $AGENT_VENV (loom $agent_loom) ; le service n'est pas redémarré"
+    fi
     systemctl --user is-enabled --quiet "$UNIT_NAME" || run systemctl --user enable "$UNIT_NAME"
     "$SERVICE_APP" status --url "http://127.0.0.1:$port" || true
     exit 0
@@ -571,6 +697,16 @@ if ((linger)); then
 elif command -v loginctl >/dev/null 2>&1 \
     && [[ "$(loginctl show-user "$ME" -p Linger --value 2>/dev/null || true)" != "yes" ]]; then
     say "le service s'arrête avec la session ; pour qu'il tourne sans session : --linger"
+fi
+
+# Après --upgrade : les agents d'une autre identité calculeront dans leur process (§7.3).
+if ((env_changed)); then
+    for entry in "${others[@]}"; do
+        path="${entry%%$'\t'*}"
+        if [[ "$(identity_of "$path/bin/loom-mem-gpu")" != "$agent_identity" ]]; then
+            say "  $path : autre identité, ses calculs se feront dans son process jusqu'à sa mise à jour"
+        fi
+    done
 fi
 
 if ((dry_run)); then

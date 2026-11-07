@@ -44,8 +44,15 @@ DIRECT_URLS: Final[dict[str, dict[str, object]]] = {
     },
 }
 
+# Un fichier ``identity`` dans le venv remplace ce que dit ``--version`` (autre loom, autre
+# algorithme) ; sinon ``serve`` et ``--version`` lancent le vrai ``main``.
 FAKE_APP: Final = """#!/usr/bin/env bash
 echo "loom-mem-gpu $*" >>"$STATE/calls"
+identity="$(dirname "$0")/../identity"
+if [[ "$1" == --version && -f "$identity" ]]; then
+    cat "$identity"
+    exit 0
+fi
 if [[ "$1" == serve || "$1" == --version ]]; then
     exec "$PYTHON" -c '
 import sys
@@ -666,7 +673,9 @@ def test_a_second_agent_with_the_same_settings_is_registered_without_restart(
     with held(port):
         done = machine.run("--port", str(port), agent=second)
     assert done.code == 0, done.err
-    assert f"agent inscrit : {second}" in done.out and "rien à faire" in done.out
+    assert "loom-mem-gpu est déjà installé, partagé avec :" in done.out
+    assert f"  {machine.agent}   loom {LOOM}" in done.out
+    assert f"agent ajouté : {second} (loom {LOOM}) ; le service n'est pas redémarré" in done.out
     assert machine.systemd() == []
     assert [row[0] for row in machine.agents()] == [str(machine.agent), str(second)]
 
@@ -777,6 +786,171 @@ def test_uninstall_dry_run_changes_nothing(machine: Machine, port: int) -> None:
     assert f"[dry-run] rm -rf {machine.service_venv}" in done.out
     assert machine.unit.exists() and machine.service_app.exists()
     assert machine.registry.read_text(encoding="utf-8") == before
+
+
+# --- Partage (§8.5.3) ----------------------------------------------------------------
+
+
+def identity() -> str:
+    """Ce que dit ``loom-mem-gpu --version`` après la version : protocole, algorithme."""
+    from loom_ia.tools_builtin.memory.bge_m3 import ALGO
+    from loom_ia.tools_builtin.memory.protocol import PROTOCOL
+
+    return f"(protocole {PROTOCOL}, {ALGO})"
+
+
+@pytest.fixture
+def shared(machine: Machine, port: int) -> Iterator[Path]:
+    """Le service installé par le premier agent (--offline), et un second agent prêt."""
+    assert machine.run("--port", str(port), "--offline").code == 0
+    second = machine.make_agent(machine.root / "agent-b")
+    machine.calls()
+    with held(port):  # le service tient son port
+        yield second
+
+
+def test_an_option_not_given_keeps_the_value_in_place(
+    machine: Machine, port: int, shared: Path
+) -> None:
+    unit = machine.unit.read_text(encoding="utf-8")
+    done = machine.run(agent=shared)  # ni --port ni --offline
+    assert done.code == 0, done.err
+    assert machine.unit.read_text(encoding="utf-8") == unit
+    assert "Environment=LOOM_MEM_GPU_OFFLINE=true\n" in unit
+    assert f"Environment=LOOM_MEM_GPU_PORT={port}\n" in unit
+    assert machine.systemd() == []
+
+
+def test_a_shared_setting_that_changes_is_refused_then_reconfigured(
+    machine: Machine, port: int, shared: Path
+) -> None:
+    unit = machine.unit.read_text(encoding="utf-8")
+    done = machine.run("--max-vram-fraction", "0.3", agent=shared)
+    assert done.code == 2
+    assert "+Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3" in done.out
+    assert "relancer avec --reconfigure" in done.err
+    assert machine.unit.read_text(encoding="utf-8") == unit
+    assert [row[0] for row in machine.agents()] == [str(machine.agent)]  # pas inscrit
+    assert machine.systemd() == []
+    accepted = machine.run("--max-vram-fraction", "0.3", "--reconfigure", agent=shared)
+    assert accepted.code == 0, accepted.err
+    assert "Environment=LOOM_MEM_GPU_MAX_VRAM_FRACTION=0.3\n" in machine.unit.read_text(
+        encoding="utf-8"
+    )
+    assert machine.systemd() == [
+        "systemctl --user daemon-reload",
+        "systemctl --user enable loom-mem-gpu.service",
+        "systemctl --user restart loom-mem-gpu.service",
+    ]
+    assert [row[0] for row in machine.agents()] == [str(machine.agent), str(shared)]
+
+
+def test_the_only_agent_changes_settings_without_reconfigure(machine: Machine, port: int) -> None:
+    assert machine.run("--port", str(port)).code == 0
+    done = machine.run("--max-vram-fraction", "0.3")  # le port reste celui de l'unité
+    assert done.code == 0, done.err
+    assert "l'unité change" in done.out and "--reconfigure" not in done.err
+    assert f"Environment=LOOM_MEM_GPU_PORT={port}\n" in machine.unit.read_text(encoding="utf-8")
+
+
+def test_the_model_cache_of_the_unit_is_kept_when_the_shell_has_none(
+    machine: Machine, port: int
+) -> None:
+    assert machine.run("--port", str(port), extra={"HF_HOME": "/data/hf"}).code == 0
+    second = machine.make_agent(machine.root / "agent-b")
+    with held(port):
+        done = machine.run(agent=second)  # son shell n'a pas HF_HOME
+    assert done.code == 0, done.err
+    assert "Environment=HF_HOME=/data/hf\n" in machine.unit.read_text(encoding="utf-8")
+
+
+def test_another_identity_is_refused_then_upgraded(
+    machine: Machine, port: int, shared: Path
+) -> None:
+    (machine.service_venv / "identity").write_text(
+        "loom-mem-gpu 2.0.18 (protocole 1, bge-m3/1)\n", encoding="utf-8"
+    )
+    (machine.agent / "identity").write_text(  # le premier agent aussi, resté en 2.0.18
+        "loom-mem-gpu 2.0.18 (protocole 1, bge-m3/1)\n", encoding="utf-8"
+    )
+    done = machine.run(agent=shared)
+    assert done.code == 2
+    assert "identité différente" in done.err and "bge-m3/1" in done.err
+    assert identity() in done.err and "--upgrade" in done.err
+    assert uv_calls(machine.calls()) == []
+    upgraded = machine.run("--upgrade", agent=shared)
+    assert upgraded.code == 0, upgraded.err
+    assert "--upgrade : environnement du service réinstallé (loom 2.0.18 → 2.0.19)" in upgraded.out
+    assert f"{machine.agent} : autre identité" in upgraded.out
+    assert not (machine.service_venv / "identity").exists()  # environnement refait
+    calls = machine.calls()
+    assert len(uv_calls(calls)) == 2
+    assert "systemctl --user restart loom-mem-gpu.service" in calls  # unité identique
+
+
+def test_another_identity_with_no_other_agent_is_reinstalled(machine: Machine, port: int) -> None:
+    assert machine.run("--port", str(port)).code == 0
+    (machine.service_venv / "identity").write_text(
+        "loom-mem-gpu 2.0.18 (protocole 1, bge-m3/1)\n", encoding="utf-8"
+    )
+    machine.calls()
+    with held(port):
+        done = machine.run()
+    assert done.code == 0, done.err
+    assert (
+        "identité différente, aucun autre agent : environnement du service réinstallé" in done.out
+    )
+    assert len(uv_calls(machine.calls())) == 2
+
+
+def test_the_same_identity_keeps_the_environment_whatever_the_version(
+    machine: Machine, port: int, shared: Path
+) -> None:
+    (machine.service_venv / "identity").write_text(
+        f"loom-mem-gpu 2.0.18 {identity()}\n", encoding="utf-8"
+    )
+    done = machine.run(agent=shared)
+    assert done.code == 0, done.err
+    assert f"environnement du service gardé : loom 2.0.18, même identité {identity()}" in done.out
+    assert uv_calls(machine.calls()) == []
+
+
+def test_upgrade_at_the_same_identity_reinstalls_and_restarts(
+    machine: Machine, port: int, shared: Path
+) -> None:
+    done = machine.run("--upgrade", agent=shared)
+    assert done.code == 0, done.err
+    calls = machine.calls()
+    assert len(uv_calls(calls)) == 2
+    assert "systemctl --user restart loom-mem-gpu.service" in calls
+    assert "autre identité" not in done.out
+
+
+def test_uninstall_all_removes_everything_and_names_the_agents(
+    machine: Machine, port: int, shared: Path
+) -> None:
+    assert machine.run(agent=shared).code == 0
+    done = machine.run("--uninstall", "--all")
+    assert done.code == 0, done.err
+    assert "désinstallation complète (--all), agents touchés :" in done.out
+    assert str(machine.agent) in done.out and str(shared) in done.out
+    assert not machine.unit.exists() and not machine.service_venv.exists()
+    assert not machine.registry.exists()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--all",),
+        ("--upgrade", "--uninstall"),
+        ("--reconfigure", "--list"),
+        ("--list", "--uninstall"),
+    ],
+)
+def test_options_that_do_not_go_together_are_refused(
+    machine: Machine, args: tuple[str, ...]
+) -> None:
+    assert machine.run(*args).code == 2
 
 
 BIN: Final = SCRIPT.parent
