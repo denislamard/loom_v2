@@ -31,7 +31,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.util import find_spec
-from typing import Any
+from typing import Any, Final
 
 import pytest
 from conftest import (
@@ -846,17 +846,65 @@ async def test_a_burst_of_spans_is_not_dropped_by_the_otel_queue() -> None:
     assert len(lent.get_finished_spans()) == 5_000
 
 
+def _closed() -> Any:
+    """Un collecteur en mémoire qui ne prend rien tant qu'on ne l'ouvre pas (``opened.set()``)."""
+    from opentelemetry.sdk.trace.export import SpanExportResult
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    class Closed(InMemorySpanExporter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.opened = threading.Event()
+
+        def export(self, spans: Sequence[Any]) -> SpanExportResult:
+            self.opened.wait(30)
+            return super().export(spans)
+
+    return Closed()
+
+
+# Ce qu'un collecteur fermé laisse passer d'un envoi : le lot que le fil du SDK a déjà
+# sorti de la file (OTEL_BSP_MAX_EXPORT_BATCH_SIZE, 512 par défaut), plus la file.
+BATCH: Final = 512
+
+
 @sans_otel
 async def test_the_otel_queue_size_variable_still_rules(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``OTEL_BSP_MAX_QUEUE_SIZE`` posé, c'est lui qui borne la file."""
+    """``OTEL_BSP_MAX_QUEUE_SIZE`` posé, c'est lui qui borne la file.
+
+    Le collecteur ne prend rien pendant l'envoi : quel que soit le moment où le fil du
+    SDK sort son premier lot, au plus ce lot et la file (600) passent. Avec un collecteur
+    seulement lent, le fil pouvait vider la file au fur et à mesure et rien ne débordait
+    (vu sur la CI, et 10 fois sur 40 sur une machine chargée).
+    """
     from loom_ia.adapters.telemetry.otel import OtelSpanSink
 
     monkeypatch.setenv("OTEL_BSP_MAX_QUEUE_SIZE", "600")
-    lent = _slow(0.05)
-    sink = OtelSpanSink(lent, schedule_delay=0.01)
-    sink.export([_span(i) for i in range(1_000)])
+    closed = _closed()
+    sink = OtelSpanSink(closed, schedule_delay=0.01)
+    sink.export([_span(i) for i in range(2_000)])
+    closed.opened.set()
     await sink.aclose(30)
-    assert len(lent.get_finished_spans()) < 1_000
+    assert len(closed.get_finished_spans()) <= BATCH + 600
+
+
+@sans_otel
+async def test_without_the_variable_the_loom_queue_keeps_a_closed_burst(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """La contre-épreuve : sans la variable, la file de loom (32 768) garde une rafale de 5 000.
+
+    Celle du SDK (2 048) n'en laisserait passer qu'un lot et la file.
+    """
+    from loom_ia.adapters.telemetry.otel import OtelSpanSink
+
+    monkeypatch.delenv("OTEL_BSP_MAX_QUEUE_SIZE", raising=False)
+    closed = _closed()
+    sink = OtelSpanSink(closed, schedule_delay=0.01)
+    sink.export([_span(i) for i in range(5_000)])
+    closed.opened.set()
+    await sink.aclose(30)
+    assert len(closed.get_finished_spans()) == 5_000
 
 
 @sans_otel
