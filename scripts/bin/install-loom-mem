@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# install-loom-mem — installe loom-mem-gpu en service systemd utilisateur.
+# install-loom-mem — installe loom-mem-gpu en service systemd utilisateur, partagé par les
+# agents du poste.
 #
-# Livré avec loom-ia (installé dans le bin du venv, à côté de loom-mem-gpu) : le service
-# lance le loom-mem-gpu de ce venv. Conception : docs/loom-mem-gpu.md (§8).
+# Livré avec loom-ia (installé dans le bin du venv d'un agent). Le service ne tourne pas
+# dans ce venv : il a son environnement à lui (~/.local/share/loom-mem-gpu/venv), créé
+# avec uv depuis la même source de loom-ia que l'agent qui l'installe, et qu'aucun uv sync
+# d'agent ne touche. Chaque agent qui l'installe est inscrit au registre
+# (~/.local/state/loom-mem-gpu/agents). Conception : docs/loom-mem-gpu.md (§8.2, §8.5).
 #
 #   install-loom-mem [--port N] [--device D] [--offline] [--no-fp16]
 #                    [--max-vram-fraction F] [--linger] [--dry-run]
+#   install-loom-mem --list
 #   install-loom-mem --uninstall [--dry-run]
 #
 # Les réglages vont dans l'unité en variables LOOM_MEM_GPU_*, toutes écrites avec leur
@@ -18,13 +23,14 @@
 # Les LOOM_MEM_GPU_* du shell qui lance ce script sont ignorées : seules ses options comptent.
 #
 # Rejouable sans risque : l'unité a un nom fixe (loom-mem-gpu.service), donc une seule
-# instance. Unité identique : rien ne change, le service garde ses modèles. Unité
-# différente : la différence est montrée, l'unité réécrite, le service redémarré. Un port
-# déjà pris par autre chose que ce service (instance lancée à la main, autre programme)
-# arrête le script avant toute écriture ; il ne tue jamais un process qu'il n'a pas lancé.
+# instance ; un agent n'est inscrit qu'une fois. Unité identique : rien ne change, le
+# service garde ses modèles. Unité différente : la différence est montrée, l'unité
+# réécrite, le service redémarré. Un port déjà pris par autre chose que ce service arrête
+# le script avant toute écriture ; il ne tue jamais un process qu'il n'a pas lancé.
+# --uninstall retire l'agent du registre ; le service n'est retiré qu'avec le dernier.
 #
-# Codes de sortie : 0 fait (ou rien à faire), 1 échec du démarrage, 2 options ou
-# prérequis refusés, 3 port déjà pris.
+# Codes de sortie : 0 fait (ou rien à faire), 1 échec (environnement ou démarrage),
+# 2 options ou prérequis refusés, 3 port déjà pris.
 #
 # LOOM_MEM_READY_WAIT : attente maximale du chargement des modèles, en secondes (180).
 
@@ -40,10 +46,20 @@ readonly ME
 BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly BIN_DIR
 readonly APP="$BIN_DIR/loom-mem-gpu"
+# Le venv de l'agent qui lance ce script : la clé de son inscription au registre.
+AGENT_VENV="$(cd "$BIN_DIR/.." && pwd -P)"
+readonly AGENT_VENV
 readonly UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 readonly UNIT_FILE="$UNIT_DIR/$UNIT_NAME"
 readonly DROPIN_DIR="$UNIT_FILE.d"
 readonly ENV_FILE="$HOME/.config/loom-mem-gpu/env" # %h/.config/loom-mem-gpu/env dans l'unité
+readonly DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/loom-mem-gpu"
+readonly SERVICE_VENV="$DATA_DIR/venv"
+readonly SERVICE_APP="$SERVICE_VENV/bin/loom-mem-gpu"
+readonly STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/loom-mem-gpu"
+readonly REGISTRY="$STATE_DIR/agents"
+readonly LOCK_FILE="$STATE_DIR/lock"
+readonly TORCH_INDEX="https://download.pytorch.org/whl" # torch à étiquette locale (+cpu…)
 
 port=""
 device="cuda"
@@ -53,6 +69,7 @@ vram_fraction=""
 linger=0
 dry_run=0
 uninstall=0
+list=0
 
 say() { printf '%s : %s\n' "$PROG" "$*"; }
 fail() {
@@ -62,8 +79,8 @@ fail() {
     exit "$code"
 }
 
-usage() {
-    sed -n '4,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+usage() { # l'en-tête de ce fichier, sans les dièses
+    awk 'NR >= 4 && /^#/ { sub(/^# ?/, ""); print; next } NR >= 4 { exit }' "${BASH_SOURCE[0]}"
 }
 
 value_of() { # l'option $1 attend une valeur : $2
@@ -80,10 +97,12 @@ while [[ $# -gt 0 ]]; do
         --linger) linger=1; shift ;;
         --dry-run) dry_run=1; shift ;;
         --uninstall) uninstall=1; shift ;;
+        --list) list=1; shift ;;
         -h | --help) usage; exit 0 ;;
         *) fail 2 "option inconnue : $1 (voir --help)" ;;
     esac
 done
+((list + uninstall <= 1)) || fail 2 "--list et --uninstall ne vont pas ensemble"
 
 run() { # une commande qui change quelque chose : affichée, pas lancée, avec --dry-run
     if ((dry_run)); then
@@ -93,25 +112,222 @@ run() { # une commande qui change quelque chose : affichée, pas lancée, avec -
     fi
 }
 
+# --- Le venv d'un agent ou du service : ce qu'il contient --------------------------
+
+dist_info() { # $1 venv, $2 nom de distribution (loom_ia, torch) : son dossier .dist-info
+    local found
+    for found in "$1"/lib/python*/site-packages/"$2"-*.dist-info; do
+        [[ -d "$found" ]] && printf '%s' "$found" && return 0
+    done
+    return 0
+}
+
+dist_version() { # $1 dossier .dist-info : la version du paquet (pas torch.__version__)
+    sed -n 's/^Version: *//p' "$1/METADATA" | head -n 1
+}
+
+python_version() { # $1 venv : majeure.mineure, lue dans pyvenv.cfg
+    sed -nE 's/^version(_info)?[[:space:]]*=[[:space:]]*([0-9]+\.[0-9]+).*/\2/p' "$1/pyvenv.cfg" \
+        | head -n 1
+}
+
+source_of() { # $1 venv : d'où vient loom-ia (« editable|path|url<TAB>où », ou « index »)
+    local info
+    info="$(dist_info "$1" loom_ia)"
+    [[ -n "$info" && -f "$info/direct_url.json" ]] || { printf 'index\n'; return 0; }
+    "$1/bin/python" -I -c '
+import json, sys
+from urllib.parse import unquote, urlparse
+
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+url = d.get("url", "")
+if url.startswith("file://"):
+    kind = "editable" if d.get("dir_info", {}).get("editable") else "path"
+    print(kind + "\t" + unquote(urlparse(url).path))
+elif "vcs_info" in d:
+    vcs = d["vcs_info"]
+    commit = vcs.get("commit_id")
+    print("url\t" + vcs["vcs"] + "+" + url + ("@" + commit if commit else ""))
+else:
+    print("url\t" + url)
+' "$info/direct_url.json"
+}
+
+source_label() { # $1 sortie de source_of, $2 version : la source, lisible
+    local kind="${1%%$'\t'*}" where="${1#*$'\t'}"
+    case "$kind" in
+        editable) printf -- '-e %s' "$where" ;;
+        path | url) printf '%s' "$where" ;;
+        *) printf 'loom-ia==%s (index)' "$2" ;;
+    esac
+}
+
+# --- Le registre des agents --------------------------------------------------------
+
+registry_entries() { # les lignes « venv<TAB>loom<TAB>inscrit le », sans l'en-tête
+    [[ -f "$REGISTRY" ]] || return 0
+    { grep -v -e '^#' -e '^[[:space:]]*$' "$REGISTRY" || true; }
+}
+
+registry_write() { # l'entrée standard devient le registre, d'un coup (temporaire puis mv)
+    local tmp
+    mkdir -p "$STATE_DIR"
+    tmp="$(mktemp "$STATE_DIR/agents.XXXXXX")"
+    {
+        printf '# Agents qui utilisent loom-mem-gpu. Écrit par install-loom-mem : ne pas modifier à la main.\n'
+        printf '# venv\tloom\tinscrit le\n'
+        cat
+    } >"$tmp"
+    mv -f "$tmp" "$REGISTRY"
+}
+
+agent_alive() { [[ -f "$1/pyvenv.cfg" ]]; }
+
+# registry_update <ajout|retrait> <venv> [version] : réécrit le registre (sauf --dry-run),
+# en retirant les agents disparus. Résultat dans was_registered, remaining (agents gardés,
+# une ligne chacun) et remaining_count.
+was_registered=0
+remaining=""
+remaining_count=0
+registry_update() {
+    local action="$1" venv="$2" version="${3:-}" path loom since out=""
+    was_registered=0
+    remaining=""
+    remaining_count=0
+    while IFS=$'\t' read -r path loom since; do
+        [[ -n "$path" ]] || continue
+        if [[ "$path" == "$venv" ]]; then
+            was_registered=1
+            [[ "$action" == retrait ]] && continue
+            loom="$version" # même agent : sa version à jour, sa date d'inscription gardée
+        elif ! agent_alive "$path"; then
+            say "agent disparu, retiré : $path"
+            continue
+        fi
+        out+="$path"$'\t'"$loom"$'\t'"$since"$'\n'
+        remaining+="$path"$'\t'"$loom"$'\t'"$since"$'\n'
+        remaining_count=$((remaining_count + 1))
+    done < <(registry_entries)
+    if [[ "$action" == ajout ]] && ((!was_registered)); then
+        out+="$venv"$'\t'"$version"$'\t'"$(date -Iseconds)"$'\n'
+        remaining+="$venv"$'\t'"$version"$'\t'"$(date -Iseconds)"$'\n'
+        remaining_count=$((remaining_count + 1))
+    fi
+    if ((dry_run)); then
+        printf '  [dry-run] écrire %s (%d agent(s))\n' "$REGISTRY" "$remaining_count"
+    else
+        printf '%s' "$out" | registry_write
+    fi
+}
+
+print_agents() { # les lignes du registre sur l'entrée, une par agent, lisibles
+    local path loom since mark
+    while IFS=$'\t' read -r path loom since; do
+        [[ -n "$path" ]] || continue
+        mark=""
+        agent_alive "$path" || mark="   (disparu)"
+        printf '  %s   loom %s   inscrit le %s%s\n' "$path" "$loom" "${since%%T*}" "$mark"
+    done
+}
+
+take_lock() { # une installation ou désinstallation à la fois (rien avec --dry-run)
+    ((dry_run)) && return 0
+    command -v flock >/dev/null 2>&1 || fail 2 "flock introuvable (paquet util-linux)"
+    mkdir -p "$STATE_DIR"
+    exec 9>"$LOCK_FILE"
+    flock -w 900 9 || fail 2 "une autre installation de loom-mem-gpu ne se termine pas (verrou $LOCK_FILE)"
+}
+
 # --- Prérequis ----------------------------------------------------------------------
 
 command -v systemctl >/dev/null 2>&1 || fail 2 "systemctl introuvable : systemd est requis"
 systemctl --user show-environment >/dev/null 2>&1 \
     || fail 2 "systemctl --user ne répond pas : pas de session systemd utilisateur"
+[[ -f "$AGENT_VENV/pyvenv.cfg" ]] \
+    || fail 2 "à lancer depuis le bin du venv d'un agent ($AGENT_VENV n'a pas de pyvenv.cfg)"
+[[ "$AGENT_VENV" != *$'\t'* && "$AGENT_VENV" != *$'\n'* ]] \
+    || fail 2 "le chemin du venv contient une tabulation ou un saut de ligne : refusé ($AGENT_VENV)"
 
-# --- Désinstallation ----------------------------------------------------------------
+last_port() { # la dernière valeur de LOOM_MEM_GPU_PORT dans le texte lu sur l'entrée
+    { grep -oE "LOOM_MEM_GPU_PORT=[\"']?[0-9]+" || true; } | tail -n 1 | grep -oE '[0-9]+$' || true
+}
+
+file_port() { # LOOM_MEM_GPU_PORT du fichier d'environnement, qui l'emporte sur Environment=
+    [[ -f "$ENV_FILE" ]] || return 0
+    # Un grep sans résultat n'est pas une erreur (set -e, pipefail).
+    { grep -E '^[[:space:]]*LOOM_MEM_GPU_PORT=' "$ENV_FILE" || true; } | last_port
+}
+
+loaded_port() { # le port de l'unité chargée (surcharges comprises), sinon celui du fichier
+    local found
+    found="$(file_port)"
+    [[ -n "$found" ]] || found="$({ systemctl --user show "$UNIT_NAME" -p Environment --value 2>/dev/null || true; } | last_port)"
+    printf '%s' "${found:-$DEFAULT_PORT}"
+}
+
+# --- Liste ------------------------------------------------------------------------------
+
+if ((list)); then
+    if [[ ! -f "$UNIT_FILE" ]]; then
+        say "loom-mem-gpu n'est pas installé ($UNIT_FILE absent)"
+    else
+        if systemctl --user is-active --quiet "$UNIT_NAME"; then
+            state="actif"
+        elif systemctl --user is-failed --quiet "$UNIT_NAME"; then
+            state="en échec"
+        else
+            state="arrêté"
+        fi
+        identity="environnement absent"
+        if [[ -x "$SERVICE_APP" ]]; then
+            identity="$("$SERVICE_APP" --version 2>/dev/null || true)"
+            identity="loom ${identity#loom-mem-gpu }"
+        fi
+        printf 'loom-mem-gpu : %s, http://127.0.0.1:%s, %s\n' "$state" "$(loaded_port)" "$identity"
+        if [[ -d "$SERVICE_VENV" ]]; then
+            service_info="$(dist_info "$SERVICE_VENV" loom_ia)"
+            service_version=""
+            [[ -z "$service_info" ]] || service_version="$(dist_version "$service_info")"
+            printf '  source : %s   environnement : %s\n' \
+                "$(source_label "$(source_of "$SERVICE_VENV")" "$service_version")" "$SERVICE_VENV"
+        fi
+    fi
+    entries="$(registry_entries)"
+    printf 'agents (%d) :\n' "$(printf '%s' "$entries" | grep -c . || true)"
+    printf '%s\n' "$entries" | print_agents
+    exit 0
+fi
+
+# --- Désinstallation : seulement par le dernier agent -------------------------------
 
 if ((uninstall)); then
-    if [[ ! -f "$UNIT_FILE" ]]; then
+    if [[ ! -f "$UNIT_FILE" && ! -f "$REGISTRY" && ! -d "$SERVICE_VENV" ]]; then
         say "rien à désinstaller ($UNIT_FILE absent)"
         exit 0
     fi
-    run systemctl --user disable --now "$UNIT_NAME"
-    run rm -f "$UNIT_FILE"
-    run systemctl --user daemon-reload
-    say "désinstallé : service arrêté, $UNIT_FILE retiré"
+    take_lock
+    registry_update retrait "$AGENT_VENV"
+    if ((remaining_count > 0)); then
+        if ((was_registered)); then
+            say "agent retiré : $AGENT_VENV"
+        else
+            say "cet agent n'est pas inscrit ($AGENT_VENV) : rien n'est fait"
+        fi
+        say "service gardé, encore utilisé par :"
+        printf '%s' "$remaining" | print_agents
+        exit 0
+    fi
+    if [[ -f "$UNIT_FILE" ]]; then
+        run systemctl --user disable --now "$UNIT_NAME"
+        run rm -f "$UNIT_FILE"
+        run systemctl --user daemon-reload
+    fi
+    run rm -f "$REGISTRY"
+    [[ ! -d "$SERVICE_VENV" ]] || run rm -rf "$SERVICE_VENV"
+    say "désinstallé (dernier agent) : service arrêté, unité, registre et environnement du service retirés"
     [[ ! -d "$DROPIN_DIR" ]] || say "surcharges gardées (à retirer à la main si besoin) : $DROPIN_DIR"
     [[ ! -f "$ENV_FILE" ]] || say "fichier d'environnement gardé : $ENV_FILE"
+    ((dry_run)) && say "dry-run : rien n'a été modifié"
     exit 0
 fi
 
@@ -131,13 +347,75 @@ options=(--device "$device")
 # lignes Environment= : aucune règle ni valeur par défaut recopiée ici. Sans les
 # LOOM_MEM_GPU_* de ce shell : l'unité ne dépend que des options.
 mapfile -t shell_vars < <(compgen -e | grep '^LOOM_MEM_GPU_' || true)
-settings="$(env "${shell_vars[@]/#/-u}" "$APP" serve "${options[@]}" --check --env)" \
-    || fail 2 "réglages refusés (voir ci-dessus)"
+check_settings() { # $1 le loom-mem-gpu qui valide : les lignes Environment= sur la sortie
+    env "${shell_vars[@]/#/-u}" "$1" serve "${options[@]}" --check --env
+}
+# 1er temps : par le loom-mem-gpu de l'agent, avant de créer quoi que ce soit.
+settings="$(check_settings "$APP")" || fail 2 "réglages refusés (voir ci-dessus)"
 
 if [[ "$device" == cuda* ]]; then
     if ! { command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; }; then
         fail 2 "--device $device : nvidia-smi ne voit aucune carte (pilote NVIDIA ?)"
     fi
+fi
+
+# Ce que l'environnement du service recevra : la source de loom-ia de cet agent, son
+# Python, sa version de torch.
+agent_info="$(dist_info "$AGENT_VENV" loom_ia)"
+[[ -n "$agent_info" ]] || fail 2 "loom-ia introuvable dans $AGENT_VENV"
+agent_loom="$(dist_version "$agent_info")"
+torch_info="$(dist_info "$AGENT_VENV" torch)"
+[[ -n "$torch_info" ]] || fail 2 "torch absent de $AGENT_VENV : installer loom-ia avec l'extra memory"
+torch_version="$(dist_version "$torch_info")"
+agent_python="$(python_version "$AGENT_VENV")"
+[[ -n "$agent_python" ]] || fail 2 "version de Python illisible dans $AGENT_VENV/pyvenv.cfg"
+agent_source="$(source_of "$AGENT_VENV")"
+case "${agent_source%%$'\t'*}" in
+    editable) loom_requirement=(-e "${agent_source#*$'\t'}[memory]") ;;
+    path) loom_requirement=("${agent_source#*$'\t'}[memory]") ;;
+    url) loom_requirement=("loom-ia[memory] @ ${agent_source#*$'\t'}") ;;
+    *) loom_requirement=("loom-ia[memory]==$agent_loom") ;;
+esac
+
+take_lock
+
+service_env_ok() { [[ -x "$SERVICE_APP" ]] && "$SERVICE_APP" --version >/dev/null 2>&1; }
+
+install_service_env() { # crée l'environnement du service (s'il manque ou ne répond pas)
+    local service_python="$SERVICE_VENV/bin/python" torch_pin="$torch_version"
+    command -v uv >/dev/null 2>&1 \
+        || fail 2 "uv introuvable : il crée l'environnement du service (https://docs.astral.sh/uv/)"
+    [[ "$SERVICE_VENV" == */loom-mem-gpu/venv ]] || fail 2 "environnement du service inattendu : $SERVICE_VENV"
+    say "environnement du service : $SERVICE_VENV"
+    say "  source $(source_label "$agent_source" "$agent_loom"), torch $torch_version, Python $agent_python"
+    [[ ! -e "$SERVICE_VENV" ]] || run rm -rf "$SERVICE_VENV" # incomplet : on repart de zéro
+    run mkdir -p "$DATA_DIR"
+    if ! run uv venv --quiet --python "$agent_python" "$SERVICE_VENV"; then
+        fail 1 "uv venv a échoué : environnement du service non créé"
+    fi
+    if [[ "$torch_version" == *+* ]]; then
+        # Étiquette locale (2.15.0+cpu) : l'index de PyTorch, pour torch seul d'abord.
+        if ! run uv pip install --quiet --python "$service_python" "torch==$torch_version" \
+            --index-url "$TORCH_INDEX/${torch_version#*+}"; then
+            run rm -rf "$SERVICE_VENV"
+            fail 1 "torch $torch_version n'a pas pu être installé dans l'environnement du service"
+        fi
+        torch_pin="${torch_version%%+*}" # déjà satisfait par la version installée
+    fi
+    if ! run uv pip install --quiet --python "$service_python" "${loom_requirement[@]}" \
+        "torch==$torch_pin"; then
+        run rm -rf "$SERVICE_VENV"
+        fail 1 "loom-ia n'a pas pu être installé dans l'environnement du service"
+    fi
+}
+
+if ! service_env_ok; then
+    install_service_env
+fi
+# 2e temps : par le loom-mem-gpu du service, celui qui tournera (extra memory compris).
+if ((!dry_run)) || service_env_ok; then
+    settings="$(check_settings "$SERVICE_APP")" \
+        || fail 2 "réglages refusés par l'environnement du service (voir ci-dessus)"
 fi
 
 # Le cache des modèles : celui du shell, si on l'a déplacé (le service ne lit pas ~/.bashrc).
@@ -167,6 +445,7 @@ unit() {
 #   systemctl --user restart $UNIT_NAME
 # La surcharge l'emporte sur ce fichier et survit aux rejeux d'install-loom-mem.
 # Voir l'ensemble : systemctl --user cat $UNIT_NAME
+# Les agents qui l'utilisent : install-loom-mem --list
 [Unit]
 Description=loom-mem-gpu — modèles de la mémoire de loom gardés en VRAM
 # Au plus 5 démarrages en 5 minutes ; au-delà, systemd abandonne (status : failed).
@@ -174,8 +453,9 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-# Sans option : chaque réglage vient de sa variable LOOM_MEM_GPU_* (une option l'emporterait).
-ExecStart="$APP" serve
+# L'environnement du service, à part des agents. Sans option : chaque réglage vient de
+# sa variable LOOM_MEM_GPU_* (une option l'emporterait).
+ExecStart="$SERVICE_APP" serve
 
 # --- loom-mem-gpu ---
 $settings
@@ -214,24 +494,16 @@ current=""
 active=0
 systemctl --user is-active --quiet "$UNIT_NAME" && active=1
 
-last_port() { # la dernière valeur de LOOM_MEM_GPU_PORT dans le texte lu sur l'entrée
-    { grep -oE "LOOM_MEM_GPU_PORT=[\"']?[0-9]+" || true; } | tail -n 1 | grep -oE '[0-9]+$' || true
-}
-
-file_port() { # LOOM_MEM_GPU_PORT du fichier d'environnement, qui l'emporte sur Environment=
-    [[ -f "$ENV_FILE" ]] || return 0
-    # Un grep sans résultat n'est pas une erreur (set -e, pipefail).
-    { grep -E '^[[:space:]]*LOOM_MEM_GPU_PORT=' "$ENV_FILE" || true; } | last_port
-}
-
 # Le port que ce service occupe aujourd'hui, s'il tourne : celui de l'unité chargée
 # (surcharges comprises), ou --port dans un ExecStart d'avant les variables.
-loaded_port="$({ systemctl --user show "$UNIT_NAME" -p Environment --value 2>/dev/null || true; } | last_port)"
-if [[ -z "$loaded_port" && "$current" =~ --port[[:space:]]+([0-9]+) ]]; then
-    loaded_port="${BASH_REMATCH[1]}"
-fi
 current_port="$(file_port)"
-current_port="${current_port:-${loaded_port:-$DEFAULT_PORT}}"
+if [[ -z "$current_port" ]]; then
+    current_port="$({ systemctl --user show "$UNIT_NAME" -p Environment --value 2>/dev/null || true; } | last_port)"
+fi
+if [[ -z "$current_port" && "$current" =~ --port[[:space:]]+([0-9]+) ]]; then
+    current_port="${BASH_REMATCH[1]}"
+fi
+current_port="${current_port:-$DEFAULT_PORT}"
 
 # Le port que le service prendra : --port, sauf surcharge (systemctl --user edit) ou
 # fichier d'environnement, qui l'emportent.
@@ -254,13 +526,19 @@ if port_open "$port" && ! ((active && current_port == port)); then
     fail 3 "le port $port est déjà pris, et pas par ce service (une instance lancée à la main ? un autre programme ?) : la fermer, ou choisir --port"
 fi
 
+register_agent() { # inscrit cet agent (ou met sa version à jour) et le dit s'il est nouveau
+    registry_update ajout "$AGENT_VENV" "$agent_loom"
+    ((was_registered)) || say "agent inscrit : $AGENT_VENV (loom $agent_loom)"
+}
+
 changed=1
 [[ "$current" == "$wanted" ]] && changed=0
 
 if ((changed == 0 && active)); then
+    register_agent
     say "déjà installé et actif, unité à jour : rien à faire"
     systemctl --user is-enabled --quiet "$UNIT_NAME" || run systemctl --user enable "$UNIT_NAME"
-    "$APP" status --url "http://127.0.0.1:$port" || true
+    "$SERVICE_APP" status --url "http://127.0.0.1:$port" || true
     exit 0
 fi
 
@@ -283,6 +561,7 @@ if ((changed)); then
     run systemctl --user daemon-reload
 fi
 
+register_agent
 run systemctl --user enable "$UNIT_NAME"
 # restart démarre un service arrêté, et arrête l'ancien process avant d'en lancer un.
 run systemctl --user restart "$UNIT_NAME"
@@ -302,8 +581,8 @@ fi
 say "service démarré, chargement des modèles (au plus ${READY_WAIT} s)…"
 deadline=$((SECONDS + READY_WAIT))
 while ((SECONDS < deadline)); do
-    if "$APP" status --url "http://127.0.0.1:$port" >/dev/null 2>&1; then
-        "$APP" status --url "http://127.0.0.1:$port"
+    if "$SERVICE_APP" status --url "http://127.0.0.1:$port" >/dev/null 2>&1; then
+        "$SERVICE_APP" status --url "http://127.0.0.1:$port"
         say "prêt"
         exit 0
     fi
