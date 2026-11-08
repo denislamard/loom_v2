@@ -184,7 +184,7 @@ Document refusé :
 
 ### Limites du premier lot, à documenter
 
-- Pas d'image (pas de logo), pas d'en-tête de page personnalisé, pas de lien cliquable.
+- Pas d'image (pas de logo), pas d'en-tête de page personnalisé, pas de lien cliquable. *(Images : depuis 2.0.20, avec `images: true` ; voir `docs/outil-word-images-analyse.md`.)*
 - On écrit un document neuf, ou on en lit un ; on ne modifie pas un document existant, et on ne remplit pas un modèle (.dotx) ni un formulaire PDF.
 - Lecture d'un .docx : ni images, ni en-têtes et pieds de page, ni commentaires, ni zones de texte.
 - Lecture d'un PDF : le texte que contient le fichier, sans OCR ; la mise en page des tableaux n'est pas reconstituée.
@@ -326,7 +326,7 @@ Le moteur, le journal et ses événements, `wiring`, la config des agents qui n'
 | D-3 | L'extra | (a) `pdf` séparé, `word` sans extra (prototype) ; (b) tout dans `office` | (a) : 32 Mo que n'a pas à installer qui n'utilise qu'`excel` |
 | D-4 | Polices du PDF | (a) polices standard, avertissement pour un caractère absent (prototype) ; (b) embarquer une police libre (DejaVu, environ 700 Ko dans le paquet) ; (c) convertir le .docx par LibreOffice | (a) pour ce lot ; (b) si un vrai besoin apparaît. (c) exigerait LibreOffice et perdrait la reproductibilité |
 | D-5 | Lecture des PDF | (a) process à part, borné, tué à l'échéance (prototype) ; (b) un fil d'exécution, comme la lecture d'un classeur | (a) : pypdf a eu deux boucles sans fin cette année, et un fil ne s'arrête pas |
-| D-6 | Le vocabulaire | Les 7 blocs, les types de colonne d'`excel`, `**` et `*` (prototype) ; ou y ajouter dès ce lot images, en-têtes de page, liens | Le prototype tel quel ; la suite après un essai réel (§ D-10) |
+| D-6 | Le vocabulaire | Les 7 blocs, les types de colonne d'`excel`, `**` et `*` (prototype) ; ou y ajouter dès ce lot images, en-têtes de page, liens | Le prototype tel quel ; la suite après un essai réel (§ D-10) — **Images : tranchée le 08/11/2026** (bloc `image`, `images: true`, 2.0.20) ; analyse : `docs/outil-word-images-analyse.md`. En-têtes de page et liens : toujours ouverts. |
 | D-7 | Style | Figé dans le code (prototype, comme `excel`) ; ou un `theme` sur la référence | Figé : la constance est l'argument de l'outil |
 | D-8 | Le partage avec `excel` | (a) `_values.py` et `_office_params.py`, `excel` les importe (prototype) ; (b) copier ce qu'il faut, `excel` intact | (a) : un seul vocabulaire de colonnes, un seul refus de `delete` ; `excel` est prouvé inchangé |
 | D-9 | La lecture | Dans le vocabulaire de l'écriture, par blocs et plan (Word), par pages et champs de formulaire (PDF) | Oui |

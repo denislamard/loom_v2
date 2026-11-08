@@ -49,8 +49,12 @@ def height(chart: ChartOut) -> int:
     return min(20 * CM, max(6 * CM, int(1.4 * CM + 0.6 * CM * len(chart.categories))))
 
 
-def anchor(relation: str, number: int, chart: ChartOut) -> str:
-    """Le paragraphe qui porte le graphique, à la largeur du texte."""
+def anchor(relation: str, number: int, chart: ChartOut, drawing: int | None = None) -> str:
+    """Le paragraphe qui porte le graphique, à la largeur du texte.
+
+    ``drawing`` : l'identifiant du dessin, unique dans le document (images comprises) ;
+    sans image, le numéro du graphique.
+    """
     name = escape(chart.title or f"Graphique {number}", {'"': "&quot;"})
     return (
         '<w:p><w:pPr><w:keepNext/><w:spacing w:before="120" w:after="60"/><w:jc w:val="center"/>'
@@ -58,7 +62,8 @@ def anchor(relation: str, number: int, chart: ChartOut) -> str:
         f'<wp:inline xmlns:wp="{_WP}" distT="0" distB="0" distL="0" distR="0">'
         f'<wp:extent cx="{WIDTH}" cy="{height(chart)}"/>'
         '<wp:effectExtent l="0" t="0" r="0" b="0"/>'
-        f'<wp:docPr id="{number}" name="{name}"/><wp:cNvGraphicFramePr/>'
+        f'<wp:docPr id="{number if drawing is None else drawing}" name="{name}"/>'
+        "<wp:cNvGraphicFramePr/>"
         f'<a:graphic xmlns:a="{_A}"><a:graphicData uri="{_C}">'
         f'<c:chart xmlns:c="{_C}" xmlns:r="{_R}" r:id="{relation}"/>'
         "</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"

@@ -14,6 +14,7 @@ l'importe pour valider la référence au chargement, sans importer l'outil.
         rights: [ write, overwrite ]   # remplacer un fichier : approbation par défaut
       timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
       charts: true                     # le bloc graphique ; false par défaut
+      images: true                     # le bloc image ; false par défaut
 
 Les dossiers suivent la forme de ``loom.local_files`` (``name``, ``path``,
 ``rights``, ``approval``) ; le droit ``delete`` n'a pas de sens ici et est refusé.
@@ -50,6 +51,8 @@ class WordParams(BaseModel):
     timezone: str = DEFAULT_TIMEZONE
     # Le bloc graphique : environ 500 tokens de plus par appel au modèle, d'où false.
     charts: bool = False
+    # Le bloc image : environ 230 tokens de plus par appel au modèle, d'où false.
+    images: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> Self:

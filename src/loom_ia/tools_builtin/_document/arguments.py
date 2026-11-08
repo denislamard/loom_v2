@@ -11,9 +11,18 @@ Pydantic seulement : ni disque, ni bibliothèque de rendu.
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Annotated, ClassVar, Final, Literal, Self, cast
+from functools import cache
+from typing import Annotated, Any, ClassVar, Final, Literal, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    ValidationError,
+    create_model,
+    model_validator,
+)
 
 from loom_ia.core.ports import ToolError
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Scalar
@@ -26,6 +35,11 @@ MAX_TABLE_ROWS: Final = 500
 MAX_CATEGORIES: Final = 50
 MAX_SLICES: Final = 12
 MAX_SERIES: Final = 6
+# Images : par image, pour tout le document, nombre de blocs, pixels d'une image.
+MAX_IMAGE_BYTES: Final = 10_000_000
+MAX_IMAGES_BYTES: Final = 40_000_000
+MAX_IMAGES: Final = 50
+MAX_PIXELS: Final = 40_000_000
 MAX_SOURCE_BYTES: Final = 20_000_000
 MAX_OUTPUT_BYTES: Final = 50_000_000
 MAX_WARNINGS: Final = 20
@@ -142,6 +156,17 @@ class Chart(_Model):
         return self
 
 
+type ImageWidth = Literal["pleine_largeur", "moitie", "petite"]
+
+
+class Image(_Model):
+    type: Literal["image"]
+    path: str
+    width: ImageWidth = "pleine_largeur"
+    caption: str | None = None
+    alt: str | None = None
+
+
 # Les blocs que le modèle voit sans ``charts`` : le bloc ``graphique`` coûte
 # environ 500 tokens par appel au modèle, payés seulement là où il sert. Le nom
 # ``Block`` est celui du schéma : sans ``charts``, il reste celui d'avant les graphiques.
@@ -149,9 +174,19 @@ type Block = Annotated[
     Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak,
     Field(discriminator="type"),
 ]
-# Tous les blocs : ce qu'une écriture porte, et ce que voit un outil monté avec ``charts``.
+# Avec ``charts`` : le nom reste celui d'avant les images, qui est dans le schéma.
 type AnyBlock = Annotated[
     Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak | Chart,
+    Field(discriminator="type"),
+]
+# Avec ``images``, puis avec les deux.
+type ImageBlock = Annotated[
+    Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak | Image,
+    Field(discriminator="type"),
+]
+# Tous les blocs : ce qu'une écriture porte, quel que soit l'outil.
+type EveryBlock = Annotated[
+    Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak | Chart | Image,
     Field(discriminator="type"),
 ]
 
@@ -164,7 +199,7 @@ class WriteArguments(_Model):
 
     path: str
     title: str | None
-    blocks: list[AnyBlock]
+    blocks: list[EveryBlock]
     overwrite: bool = False
 
 
@@ -232,21 +267,46 @@ class DocumentCall(_Model):
         return WriteArguments(
             path=self.path,
             title=self.title,
-            blocks=cast(list[AnyBlock], self.blocks),
+            blocks=cast(list[EveryBlock], self.blocks),
             overwrite=bool(self.overwrite),
         )
 
 
-class WithCharts(DocumentCall):
-    """Le même appel, avec le bloc ``graphique`` : un outil monté avec ``charts``.
+# Les blocs du schéma selon les réglages de l'outil (``charts``, ``images``).
+_BLOCKS: Final[Mapping[tuple[bool, bool], object]] = {
+    (True, False): AnyBlock,
+    (False, True): ImageBlock,
+    (True, True): EveryBlock,
+}
 
-    Chaque format l'hérite avant son propre appel (``WordChartCall(WithCharts, WordCall)``).
+
+@cache
+def variant(base: type[DocumentCall], *, charts: bool, images: bool) -> type[DocumentCall]:
+    """L'appel d'un format (``WordCall``…), ``blocks`` élargi aux blocs des réglages.
+
+    Sans réglage, ``base`` lui-même : le schéma reste celui d'avant les graphiques.
+    Le nom du modèle ne paraît pas dans le schéma allégé (``input_schema``).
     """
+    if not (charts or images):
+        return base
+    blocks: Any = _BLOCKS[charts, images]
+    suffix = ("Chart" if charts else "") + ("Image" if images else "")
+    return create_model(
+        f"{base.__name__.removesuffix('Call')}{suffix}Call",
+        __base__=base,
+        __module__=base.__module__,
+        blocks=(
+            Annotated[
+                list[blocks] | None,
+                Field(max_length=MAX_BLOCKS, description=BLOCKS_SAID),
+            ],
+            None,
+        ),
+    )
 
-    blocks: Annotated[  # pyright: ignore[reportIncompatibleVariableOverride]
-        list[AnyBlock] | None,
-        Field(max_length=MAX_BLOCKS, description=BLOCKS_SAID),
-    ] = None
+
+# Le même appel, avec le bloc ``graphique`` (tests du vocabulaire commun).
+WithCharts: Final = variant(DocumentCall, charts=True, images=False)
 
 
 def parse(

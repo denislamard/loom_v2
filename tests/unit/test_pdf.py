@@ -14,7 +14,7 @@ import sys
 import time
 import zlib
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -23,6 +23,7 @@ pytest.importorskip("reportlab", reason="extra 'pdf' absent")
 pytest.importorskip("pypdf", reason="extra 'pdf' absent")
 
 from conftest import ConfigFactory, demo_agent
+from image_files import png
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen.canvas import Canvas
 
@@ -134,6 +135,7 @@ def test_the_spec_names_the_folders_and_the_reading(tool: PdfTool) -> None:
     assert settings.options == (
         ("fuseau", "Europe/Paris"),
         ("graphiques", "non"),
+        ("images", "non"),
         ("lecture des PDF", "oui, process à part (20 s, 1 Gio)"),
     )
 
@@ -636,4 +638,41 @@ async def test_a_chart_is_drawn_in_the_pdf(charted: PdfTool, disk: Path) -> None
     for said in ("TTC par client", "Julien Barre", "18 034,17 €", "Facturé", "60,0 %"):
         assert said in text, said
     again = await call(tool, path="sortie/graphiques2.pdf", blocks=blocks)
+    assert again["sha256"] == result["sha256"]
+
+
+# --- Images ---------------------------------------------------------------------------
+
+PHOTO: Final = Path(__file__).parents[1] / "examples" / "j2" / "files" / "photo.jpg"
+
+
+async def test_images_in_a_pdf(disk: Path) -> None:
+    shots = disk / "maquettes"
+    shots.mkdir()
+    (shots / "depot.png").write_bytes(png(390, 844, color=6))
+    (shots / "photo.jpg").write_bytes(PHOTO.read_bytes())
+    plain = make(disk, {"name": "sortie", "path": "sortie", "rights": ["write"]})
+    assert "Image ('type': 'image')" not in plain.spec.description
+    tool = make(
+        disk,
+        {"name": "maquettes", "path": "maquettes", "rights": ["read"]},
+        {"name": "sortie", "path": "sortie", "rights": ["write"]},
+        images=True,
+    )
+    assert "Image ('type': 'image')" in tool.spec.description
+    blocks = [
+        {"type": "image", "path": "maquettes/depot.png", "caption": "Écran 1"},
+        {"type": "image", "path": "maquettes/photo.jpg", "width": "moitie", "alt": "Chantier"},
+        {"type": "image", "path": "maquettes/depot.png", "width": "petite", "alt": "Rappel"},
+    ]
+    result = await call(tool, path="sortie/cdc.pdf", title="Cahier", blocks=blocks)
+    assert (result["images"], result["pages"], result["warnings"]) == (3, 2, [])
+    found = PdfReader(disk / "sortie" / "cdc.pdf")
+    # Trois images posées, dans leurs pixels ; la même image deux fois.
+    drawn: list[Any] = [
+        cast(Any, image).image.size for page in found.pages for image in page.images
+    ]
+    assert drawn == [(390, 844), (2016, 1512), (390, 844)]
+    assert "Écran 1" in found.pages[0].extract_text()
+    again = await call(tool, path="sortie/cdc2.pdf", title="Cahier", blocks=blocks)
     assert again["sha256"] == result["sha256"]

@@ -22,11 +22,12 @@ from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.units import cm
+from reportlab.lib.units import cm, mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import (
     Flowable,
+    Image,
     KeepTogether,
     ListFlowable,
     ListItem,
@@ -43,6 +44,7 @@ from loom_ia.tools_builtin._document.content import (
     BreakOut,
     ChartOut,
     HeadingOut,
+    ImageOut,
     Inline,
     ListOut,
     NoteOut,
@@ -302,7 +304,28 @@ def _flowables(blocks: Iterable[BlockOut]) -> list[Flowable]:
                 found.append(PageBreak())
             case ChartOut():
                 found.append(_chart(block))
+            case ImageOut():
+                found.append(_image(block))
     return found
+
+
+def _image(block: ImageOut) -> Flowable:
+    """L'image centrée, à la taille décidée pour les deux formats, et sa légende dessous.
+
+    reportlab lit l'image avec Pillow, qu'il installe lui-même (extra ``pdf``).
+    """
+    picture = Image(
+        io.BytesIO(block.picture.data),
+        width=block.width / 100 * mm,
+        height=block.height / 100 * mm,
+    )
+    picture.hAlign = "CENTER"
+    after = (
+        Paragraph(_markup(block.caption), CAPTION)
+        if block.caption
+        else Paragraph("", ParagraphStyle("ApresImage", parent=BODY, spaceAfter=6, leading=6))
+    )
+    return KeepTogether([picture, after])
 
 
 CHART_TITLE: Final = ParagraphStyle(
@@ -366,6 +389,8 @@ def _said(block: BlockOut) -> str:
             names = "".join(name for name, _ in block.series)
             caption = plain(block.caption) if block.caption else ""
             return (block.title or "") + "".join(block.categories) + names + caption
+        case ImageOut(caption=caption):
+            return plain(caption) if caption else ""
 
 
 def render(prepared: Prepared) -> tuple[bytes, int, list[str]]:

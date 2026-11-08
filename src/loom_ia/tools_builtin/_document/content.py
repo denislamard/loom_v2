@@ -5,7 +5,9 @@ Ce que décide le style maison sans dépendre du format : les valeurs d'une
 colonne typée écrites à la française (``1 250,50 €``, ``02/10/2026``,
 ``15,0 %``), leur alignement, la ligne de total calculée par l'outil (un
 document n'a pas de formules), la largeur relative des colonnes. Chaque format
-(``word``, ``pdf``) ne fait plus que poser ces éléments sur la page.
+(``word``, ``pdf``) ne fait plus que poser ces éléments sur la page. La taille
+d'une image dans la page aussi (``placed``) ; ses octets sont lus avant, par
+l'outil, et ``prepare`` ne touche jamais au disque.
 
 Dans un texte, ``**gras**`` et ``*italique*`` marquent l'emphase ; un saut de
 ligne reste un saut de ligne dans le même paragraphe.
@@ -14,13 +16,15 @@ ligne reste un saut de ligne dans le même paragraphe.
 import datetime as dt
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 from zoneinfo import ZoneInfo
 
 from loom_ia.tools_builtin._document.arguments import (
     MAX_CATEGORIES,
+    MAX_IMAGES,
+    MAX_IMAGES_BYTES,
     MAX_ITEMS,
     MAX_SERIES,
     MAX_SLICES,
@@ -30,6 +34,8 @@ from loom_ia.tools_builtin._document.arguments import (
     Chart,
     ChartKind,
     Heading,
+    Image,
+    ImageWidth,
     Item,
     ListBlock,
     Note,
@@ -40,6 +46,7 @@ from loom_ia.tools_builtin._document.arguments import (
     Table,
     WriteArguments,
 )
+from loom_ia.tools_builtin._document.picture import Picture
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Stored, convert
 
 MAX_TITLE: Final = 300
@@ -154,6 +161,22 @@ class ChartOut:
     caption: Inline | None
 
 
+@dataclass(frozen=True, slots=True)
+class ImageOut:
+    """Une image posée dans le texte : ses octets, sa taille dans la page, ses textes.
+
+    ``source`` : l'adresse du fichier lu (« <dossier>/<chemin> »), que garde le .docx.
+    """
+
+    picture: Picture
+    source: str
+    # Largeur et hauteur dans la page, en centièmes de millimètre.
+    width: int
+    height: int
+    alt: str
+    caption: Inline | None
+
+
 type BlockOut = (
     TitleOut
     | HeadingOut
@@ -164,6 +187,7 @@ type BlockOut = (
     | QuoteOut
     | BreakOut
     | ChartOut
+    | ImageOut
 )
 
 
@@ -176,8 +200,19 @@ class Prepared:
     warnings: tuple[str, ...]
 
 
-def prepare(arguments: WriteArguments, zone: ZoneInfo) -> Prepared:
-    """Valide le document entier ; ``ToolError`` qui liste toutes les fautes trouvées."""
+# Ce qu'a donné la lecture de chaque image, par chemin tel que donné : l'image, ou ce
+# qui l'empêche (droit, fichier absent, format…). Lue par l'outil, avant ``prepare``.
+type Pictures = Mapping[str, Picture | str]
+NO_PICTURES: Final[Pictures] = {}
+
+
+def prepare(
+    arguments: WriteArguments, zone: ZoneInfo, pictures: Pictures = NO_PICTURES
+) -> Prepared:
+    """Valide le document entier ; ``ToolError`` qui liste toutes les fautes trouvées.
+
+    Sans disque : les images sont lues avant, par l'outil (``pictures``).
+    """
     problems = Problems()
     blocks: list[BlockOut] = []
     title = arguments.title.strip() if arguments.title else None
@@ -222,6 +257,11 @@ def prepare(arguments: WriteArguments, zone: ZoneInfo) -> Prepared:
                 blocks.append(QuoteOut(inline(text), source))
             case PageBreak():
                 blocks.append(BreakOut())
+            case Image():
+                found = _image(block, pictures, where, problems)
+                if found is not None:
+                    blocks.append(found)
+    _check_images(arguments, pictures, problems)
     if not any(not isinstance(b, BreakOut) for b in blocks):
         problems.error("document vide : ni titre, ni bloc de contenu")
     problems.raise_if_any()
@@ -449,6 +489,85 @@ def _check_chart(
             problems.error(f"{where} : une valeur négative n'a pas de secteur")
         elif values and not any(values):
             problems.error(f"{where} : toutes les valeurs sont nulles")
+
+
+# --- Images ----------------------------------------------------------------------------
+
+# La largeur d'une image dans la page, en centièmes de millimètre : la largeur utile
+# (17 cm), sa moitié, et celle d'un logo.
+IMAGE_WIDTHS: Final[Mapping[ImageWidth, int]] = {
+    "pleine_largeur": 17_000,
+    "moitie": 8_500,
+    "petite": 4_000,
+}
+# La hauteur au plus : la page utile (25,7 cm), moins la place d'une légende.
+MAX_IMAGE_HEIGHT: Final = 21_000
+# En deçà, une image s'affiche agrandie au-delà de ses pixels : floue à l'impression.
+MIN_PPI: Final = 96
+
+
+def _image(block: Image, pictures: Pictures, where: str, problems: Problems) -> ImageOut | None:
+    path = block.path.strip()
+    caption = _text(block.caption, f"{where}, caption", problems) or None
+    alt = _text(block.alt, f"{where}, alt", problems)
+    found = pictures.get(block.path)
+    if not isinstance(found, Picture):
+        problems.error(f"{where} : {found or 'image non lue'}")
+        return None
+    width, height = placed(block.width, found.width, found.height)
+    ppi = found.width / (width / 2_540)
+    if ppi < MIN_PPI:
+        problems.warn(
+            f"{where} : {path}, {found.width} x {found.height} pixels sur {_cm(width)} cm "
+            f"({ppi:.0f} pixels par pouce) : floue à l'impression ; une image plus grande, ou "
+            "une largeur plus petite"
+        )
+    if found.orientation in (5, 6, 7, 8):
+        problems.warn(
+            f"{where} : {path} est une photo prise de côté (orientation EXIF "
+            f"{found.orientation}) : elle peut s'afficher couchée ; la redresser avant"
+        )
+    if found.animated:
+        problems.warn(f"{where} : {path} est animée : seule sa première image s'affiche")
+    if not alt and caption is None:
+        problems.warn(
+            f"{where} : ni alt ni caption : l'image n'a pas de texte pour qui ne la voit pas"
+        )
+    return ImageOut(
+        picture=found,
+        source=path,
+        width=width,
+        height=height,
+        alt=alt or caption or "",
+        caption=inline(caption) if caption else None,
+    )
+
+
+def _cm(hundredths: int) -> str:
+    return f"{hundredths / 1000:.1f}".replace(".", ",")
+
+
+def placed(wanted: ImageWidth, pixels_wide: int, pixels_high: int) -> tuple[int, int]:
+    """Largeur et hauteur dans la page (centièmes de mm) : la largeur demandée, les
+    proportions de l'image, la hauteur bornée à celle de la page."""
+    width = IMAGE_WIDTHS[wanted]
+    height = round(width * pixels_high / pixels_wide)
+    if height > MAX_IMAGE_HEIGHT:
+        width, height = round(MAX_IMAGE_HEIGHT * pixels_wide / pixels_high), MAX_IMAGE_HEIGHT
+    return width, height
+
+
+def _check_images(arguments: WriteArguments, pictures: Pictures, problems: Problems) -> None:
+    """Les bornes du document : nombre d'images, octets des images distinctes."""
+    count = sum(1 for block in arguments.blocks if isinstance(block, Image))
+    if count > MAX_IMAGES:
+        problems.error(f"{count} images, au-delà de {MAX_IMAGES}")
+    distinct = {p.digest: len(p.data) for p in pictures.values() if isinstance(p, Picture)}
+    if sum(distinct.values()) > MAX_IMAGES_BYTES:
+        problems.error(
+            f"images de {sum(distinct.values())} octets en tout, au-delà de {MAX_IMAGES_BYTES} "
+            "— des images plus légères (JPEG pour une photo)"
+        )
 
 
 def _totals(

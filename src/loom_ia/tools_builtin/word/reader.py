@@ -16,8 +16,10 @@ Ce qui revient au modèle reprend le vocabulaire de l'écriture : ``titre``
 (``level`` 1 à 3 et plus, 0 pour le titre du document), ``paragraphe``,
 ``liste`` (``items`` : textes, ou ``{text, items}``), ``tableau`` (``rows``).
 L'emphase revient en ``**gras**`` et ``*italique*`` : ce qui est lu peut être
-réécrit tel quel. Les images, en-têtes, pieds de page et commentaires ne sont
-pas lus ; le résultat le dit.
+réécrit tel quel. Avec ``images``, une image du corps revient en bloc ``image``
+(``path`` : l'adresse du fichier lu à l'écriture, gardée dans le nom du dessin) ;
+sans, elle est comptée. Les en-têtes, pieds de page et commentaires ne sont pas
+lus ; le résultat le dit.
 """
 
 import io
@@ -34,7 +36,14 @@ from xml.etree.ElementTree import Element, ParseError, XMLPullParser
 from pydantic import JsonValue
 
 from loom_ia.core.ports import ToolError
-from loom_ia.tools_builtin._document.arguments import MAX_SOURCE_BYTES, READ_CHARS
+from loom_ia.tools_builtin._document.arguments import (
+    MAX_IMAGE_BYTES,
+    MAX_SOURCE_BYTES,
+    READ_CHARS,
+    ImageWidth,
+)
+from loom_ia.tools_builtin._document.content import IMAGE_WIDTHS, placed
+from loom_ia.tools_builtin._document.picture import dimensions
 
 READABLE: Final = (".docx", ".docm", ".dotx")
 # Formats qui ne sont pas un zip OOXML : le dire plutôt que « pas un zip ».
@@ -156,6 +165,8 @@ class _Package:
     comments: bool
     # Identifiant de relation → partie d'un graphique (``word/charts/chartN.xml``).
     charts: dict[str, str] = field(default_factory=dict[str, str])
+    # Identifiant de relation → partie d'une image (``word/media/imageN.png``).
+    media: dict[str, str] = field(default_factory=dict[str, str])
 
 
 def _open(data: bytes, where: str) -> _Package:
@@ -192,6 +203,7 @@ def _open(data: bytes, where: str) -> _Package:
         title=_title(archive, names, where),
         comments="comments" in related,
         charts=_relations(archive, names, body, by_id="chart"),
+        media=_relations(archive, names, body, by_id="image"),
     )
 
 
@@ -346,19 +358,26 @@ class _Reading:
     pending: dict[str, JsonValue] | None = None
     # Sa numérotation : deux listes voisines (puces, puis numéros) restent deux listes.
     pending_id: str | None = None
+    # Avec ``images`` : les images rendues en blocs.
+    pictures: bool = False
+    # La dernière image rendue : un paragraphe de légende qui la suit devient sa caption.
+    last_image: dict[str, JsonValue] | None = None
 
 
-def read(data: bytes, where: str, start: int, budget: int = READ_CHARS) -> dict[str, JsonValue]:
+def read(
+    data: bytes, where: str, start: int, budget: int = READ_CHARS, *, images: bool = False
+) -> dict[str, JsonValue]:
     """Les blocs du document à partir de ``start``, dans un budget de taille.
 
     ``budget`` : celui d'un résultat d'outil par défaut ; ``loom.memory``, qui lit
-    le document entier, en donne un plus grand.
+    le document entier, en donne un plus grand. ``images`` : les images du corps
+    reviennent en blocs ``image`` (un outil monté avec ``images``) ; sinon, comptées.
     """
     deadline = time.monotonic() + READ_DEADLINE
     with _guarded(where):
         package = _open(data, where)
         with package.archive:
-            reading = _Reading(start=start, budget=budget)
+            reading = _Reading(start=start, budget=budget, pictures=images)
             _walk(package, reading, deadline, where)
     result: dict[str, JsonValue] = {
         "title": package.title,
@@ -450,8 +469,24 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
         reading.images -= 1
         _emit(reading, _chart(package, chart_id))
     text = _markdown(_segments(element))
+    pictures = _pictures(package, element) if reading.pictures else []
+    if text.strip() and reading.last_image is not None and reading.pending is None and not pictures:
+        if _style_name(package.styles, style_id) == "caption":
+            # La légende de l'image qui précède : sa caption, pas un bloc.
+            image, reading.last_image = reading.last_image, None
+            if image.get("alt") == text:
+                del image["alt"]
+            image["caption"] = text
+            return
+    reading.last_image = None
+    for picture in pictures:
+        _close_list(reading)
+        reading.images -= 1
+        _emit(reading, picture)
+        reading.last_image = picture
     if not text.strip():
         return
+    reading.last_image = None
     title, heading, styled_list = _style_meaning(package.styles, style_id)
     if numbering is None and styled_list is not None:
         numbering = (styled_list, 0)
@@ -585,6 +620,62 @@ def _float(value: str | None) -> JsonValue:
     if number is None or number != number or number in (float("inf"), float("-inf")):
         return None
     return int(number) if number.is_integer() and abs(number) < 2**53 else number
+
+
+_WP_NS: Final = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+_PIC_NS: Final = "{http://schemas.openxmlformats.org/drawingml/2006/picture}"
+_EMBED: Final = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
+_EMU: Final = 360
+
+
+def _pictures(package: _Package, element: Element) -> list[dict[str, JsonValue]]:
+    """Les images d'un paragraphe, dans le vocabulaire de l'écriture.
+
+    ``path`` est l'adresse du fichier que l'outil a lu à l'écriture (le nom du dessin) ;
+    une image insérée ailleurs n'en a pas. ``width`` est celle des trois qui donne la
+    taille lue, d'après les pixels de l'image ; la plus proche sinon.
+    """
+    found: list[dict[str, JsonValue]] = []
+    for drawing in element.iter():
+        if _local(drawing.tag) != "drawing":
+            continue
+        for frame in drawing:
+            if frame.tag not in {f"{_WP_NS}inline", f"{_WP_NS}anchor"}:
+                continue
+            blip = next(frame.iter(f"{_DRAWING_NS}blip"), None)
+            if blip is None or next(frame.iter(f"{_PIC_NS}pic"), None) is None:
+                continue
+            properties = frame.find(f"{_WP_NS}docPr")
+            name = (properties.get("name") if properties is not None else None) or ""
+            alt = (properties.get("descr") if properties is not None else None) or ""
+            block: dict[str, JsonValue] = {"type": "image"}
+            if "/" in name and not name.startswith("/"):
+                block["path"] = name[:MAX_CELL_CHARS]
+            block["width"] = _width(package, frame, blip.get(_EMBED, ""))
+            if alt.strip():
+                block["alt"] = alt.strip()[:MAX_CELL_CHARS]
+            found.append(block)
+    return found
+
+
+def _width(package: _Package, frame: Element, relation: str) -> ImageWidth:
+    extent = frame.find(f"{_WP_NS}extent")
+    shown = _float(extent.get("cx") if extent is not None else None)
+    width = (shown if isinstance(shown, int | float) else 0) / _EMU
+    part = package.media.get(relation)
+    pixels: tuple[int, int] | None = None
+    if part is not None:
+        try:
+            info = package.archive.getinfo(part)
+            if info.file_size <= MAX_IMAGE_BYTES:
+                pixels = dimensions(package.archive.read(info))
+        except KeyError:
+            pixels = None
+    if pixels is not None:
+        for wanted in IMAGE_WIDTHS:
+            if abs(placed(wanted, *pixels)[0] - width) <= 2:
+                return wanted
+    return min(IMAGE_WIDTHS, key=lambda wanted: abs(IMAGE_WIDTHS[wanted] - width))
 
 
 def _style_meaning(
@@ -740,6 +831,8 @@ def _close_list(reading: _Reading) -> None:
 def _emit(
     reading: _Reading, block: dict[str, JsonValue], heading: tuple[int, str] | None = None
 ) -> None:
+    # Une légende ne se rattache qu'à l'image qui la précède immédiatement.
+    reading.last_image = None
     index = reading.count
     reading.count += 1
     if heading is not None and len(reading.outline) < MAX_OUTLINE:
@@ -791,6 +884,16 @@ def _notes(package: _Package, reading: _Reading, start: int) -> list[JsonValue]:
         )
     if reading.images:
         notes.append(f"{reading.images} image(s) ou forme(s) non lue(s).")
+    sourceless = sum(
+        1
+        for block in reading.blocks
+        if isinstance(block, dict) and block.get("type") == "image" and "path" not in block
+    )
+    if sourceless:
+        notes.append(
+            f"{sourceless} image(s) sans fichier source (pas de path) : pour réécrire le "
+            "document, donner un path vers un fichier d'un dossier read, ou retirer le bloc."
+        )
     if reading.revisions:
         notes.append(
             "Modifications suivies présentes : le texte inséré est rendu, le texte supprimé omis."

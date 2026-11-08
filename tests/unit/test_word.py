@@ -15,11 +15,12 @@ import re
 import subprocess
 import zipfile
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 from xml.etree import ElementTree
 
 import pytest
 from conftest import MODEL, ConfigFactory, demo_agent
+from image_files import jpeg, png
 
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
@@ -31,6 +32,7 @@ from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.engine import begin_run, drive
 from loom_ia.runtime import build_agent
 from loom_ia.tools_builtin import BuiltinContext
+from loom_ia.tools_builtin._document.arguments import MAX_IMAGE_BYTES
 from loom_ia.tools_builtin.word import WordTool, build
 from loom_ia.tools_builtin.word import reader as reader_module
 from loom_ia.tools_builtin.word.writer import FIXED_DATE
@@ -181,6 +183,7 @@ def test_settings_for_validate(tool: WordTool) -> None:
     assert settings.options == (
         ("fuseau", "Europe/Paris"),
         ("graphiques", "non"),
+        ("images", "non"),
         ("lecture des documents", "oui"),
     )
 
@@ -583,7 +586,10 @@ def test_validate_shows_the_folders(
     assert main(["--config", str(path), "validate"]) == 0
     out = capsys.readouterr().out
     assert "loom.word" in out
-    assert "fuseau : Europe/Paris · graphiques : non · lecture des documents : oui" in out
+    assert (
+        "fuseau : Europe/Paris · graphiques : non · images : non · lecture des documents : oui"
+        in out
+    )
 
 
 async def test_overwrite_needs_its_right(disk: Path) -> None:
@@ -787,3 +793,259 @@ async def test_libreoffice_reads_the_chart(charted: WordTool, disk: Path, soffic
     classes = sorted(set(re.findall(r'chart:class="chart:(\w+)"', "".join(objects))))
     assert classes == ["bar", "circle"]
     assert "18034.17" in "".join(objects)
+
+
+# --- Images ---------------------------------------------------------------------------
+
+A: Final = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+WP: Final = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+PHOTO: Final = Path(__file__).parents[1] / "examples" / "j2" / "files" / "photo.jpg"
+
+
+@pytest.fixture
+def imaged(disk: Path) -> WordTool:
+    """Monté avec ``images`` et ``charts`` ; des maquettes à lire, l'une sous approbation."""
+    shots = disk / "maquettes"
+    shots.mkdir()
+    (shots / "depot.png").write_bytes(png(390, 844))
+    (shots / "tableau.png").write_bytes(png(1600, 900, color=6))
+    (shots / "photo.jpg").write_bytes(PHOTO.read_bytes())
+    (disk / "secret").mkdir()
+    (disk / "secret" / "plan.png").write_bytes(png(800, 600))
+    return make(
+        disk,
+        {"name": "maquettes", "path": "maquettes", "rights": ["read"]},
+        {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]},
+        {"name": "valide", "path": "valide", "rights": ["write"]},
+        {"name": "secret", "path": "secret", "rights": ["read"], "approval": {"read": "always"}},
+        charts=True,
+        images=True,
+    )
+
+
+CDC: Final[dict[str, Any]] = {
+    "title": "Cahier des charges",
+    "blocks": [
+        {"type": "titre", "text": "Écrans"},
+        {
+            "type": "image",
+            "path": "maquettes/depot.png",
+            "caption": "Écran 1 — Dépôt de la demande",
+        },
+        {"type": "image", "path": "maquettes/tableau.png", "width": "moitie", "alt": "Tableau"},
+        {
+            "type": "graphique",
+            "categories": ["sept.", "oct."],
+            "series": [{"name": "Demandes", "values": [12, 18]}],
+        },
+        {"type": "image", "path": "maquettes/photo.jpg", "width": "moitie", "caption": "Photo"},
+        # La même image, une deuxième fois : stockée une seule fois.
+        {"type": "image", "path": "maquettes/depot.png", "width": "petite", "alt": "Rappel"},
+    ],
+}
+
+
+def test_images_are_off_unless_asked(tool: WordTool, imaged: WordTool) -> None:
+    assert '"image"' not in json.dumps(tool.spec.input_schema)
+    assert "Image ('type': 'image')" not in tool.spec.description
+    assert '"image"' in json.dumps(imaged.spec.input_schema)
+    assert "Image ('type': 'image')" in imaged.spec.description
+    assert ("images", "oui") in imaged.settings().options
+    # Le chemin garde son suffixe dans le schéma, quels que soient les réglages.
+    for mounted in (tool, imaged):
+        properties = cast(dict[str, Any], mounted.spec.input_schema["properties"])
+        assert properties["path"]["description"] == "« <dossier>/<chemin>.docx »"
+
+
+async def test_without_images_an_image_is_refused(tool: WordTool, imaged: WordTool) -> None:
+    arguments: dict[str, Any] = {"path": "sortie/a.docx", "blocks": [CDC["blocks"][1]]}
+    assert list(bounded_validator(tool.spec.input_schema).iter_errors(arguments))
+    assert not list(bounded_validator(imaged.spec.input_schema).iter_errors(arguments))
+    with pytest.raises(ToolError, match="Arguments invalides"):
+        await call(tool, **arguments)
+
+
+async def test_images_are_parts_of_the_archive(imaged: WordTool, disk: Path) -> None:
+    result = await call(imaged, path="sortie/cdc.docx", **CDC)
+    assert (result["blocks"], result["images"], result["warnings"]) == (6, 4, [])
+    path = disk / "sortie" / "cdc.docx"
+    with zipfile.ZipFile(path) as archive:
+        media = {i.filename: i for i in archive.infolist() if i.filename.startswith("word/media/")}
+        types = part(path, "[Content_Types].xml")
+        relations = part(path, "word/_rels/document.xml.rels")
+        # Une image n'est pas recompressée.
+        assert {i.compress_type for i in media.values()} == {zipfile.ZIP_STORED}
+        assert archive.read("word/media/image3.jpeg") == PHOTO.read_bytes()
+    assert sorted(media) == [
+        "word/media/image1.png",
+        "word/media/image2.png",
+        "word/media/image3.jpeg",
+    ]
+    defaults = {
+        d.get("Extension"): d.get("ContentType") for d in types if d.tag.endswith("Default")
+    }
+    assert (defaults["png"], defaults["jpeg"]) == ("image/png", "image/jpeg")
+    targets = {r.get("Id"): r.get("Target") for r in relations}
+    body = part(path, "word/document.xml")
+    embeds = [b.get(f"{{{_R}}}embed") for b in body.iter(f"{A}blip")]
+    assert [targets[e] for e in embeds if e] == [
+        "media/image1.png", "media/image2.png", "media/image3.jpeg", "media/image1.png",
+    ]  # fmt: skip
+    # Un identifiant par dessin, graphique compris ; le nom garde l'adresse du fichier lu.
+    drawn = [(d.get("id"), d.get("name"), d.get("descr")) for d in body.iter(f"{WP}docPr")]
+    assert drawn == [
+        ("1", "maquettes/depot.png", "Écran 1 — Dépôt de la demande"),
+        ("2", "maquettes/tableau.png", "Tableau"),
+        ("3", "Graphique 1", None),
+        ("4", "maquettes/photo.jpg", "Photo"),
+        ("5", "maquettes/depot.png", "Rappel"),
+    ]
+    # Les proportions en EMU (360 par centième de mm) ; la maquette bornée en hauteur.
+    sizes = [(e.get("cx"), e.get("cy")) for e in body.iter(f"{WP}extent")]
+    assert sizes[0] == (str(9_704 * 360), str(21_000 * 360))
+    assert sizes[1] == (str(8_500 * 360), str(4_781 * 360))
+    # La légende reste avec son image.
+    assert styles_of(body)[2:5] == ["", "Caption", ""]
+    again = await call(imaged, path="sortie/cdc2.docx", **CDC)
+    assert again["sha256"] == result["sha256"]
+
+
+async def test_a_document_without_image_is_unchanged(imaged: WordTool, disk: Path) -> None:
+    from loom_ia.tools_builtin.word.writer import CONTENT_TYPES, DOCUMENT_RELS
+
+    await call(imaged, path="sortie/devis.docx", **DEVIS)
+    with zipfile.ZipFile(disk / "sortie" / "devis.docx") as archive:
+        assert not [n for n in archive.namelist() if "media" in n]
+        assert archive.read("[Content_Types].xml").decode() == CONTENT_TYPES
+        assert archive.read("word/_rels/document.xml.rels").decode() == DOCUMENT_RELS
+
+
+async def test_image_faults_are_said_together(imaged: WordTool, disk: Path) -> None:
+    shots = disk / "maquettes"
+    (shots / "note.png").write_bytes(b"%PDF-1.7 pas une image")
+    (shots / "coupee.png").write_bytes(png(100, 100)[:-20])
+    (shots / "lourde.jpg").write_bytes(jpeg(10, 10) + bytes(MAX_IMAGE_BYTES))
+    (shots / "dehors.png").symlink_to(disk / "modeles")
+    (disk / "sortie" / "a.png").write_bytes(png(10, 10))
+    (disk / "valide" / "b.png").write_bytes(png(10, 10))
+    blocks = [
+        {"type": "image", "path": path, "alt": "x"}
+        for path in (
+            "valide/b.png",
+            "inconnu/c.png",
+            "maquettes/absente.png",
+            "maquettes/dehors.png",
+            "maquettes/note.png",
+            "maquettes/coupee.png",
+            "maquettes/lourde.jpg",
+            "sortie/a.png",
+        )
+    ]
+    with pytest.raises(ToolError) as caught:
+        await call(imaged, path="sortie/x.docx", blocks=blocks)
+    assert str(caught.value).splitlines() == [
+        "Document refusé :",
+        "- bloc 1 (image) : Droit read refusé sur valide/b.png (dossier valide : write)",
+        "- bloc 2 (image) : Dossier inconnu : 'inconnu'. Dossiers permis : maquettes, sortie, "
+        "valide, secret",
+        "- bloc 3 (image) : maquettes/absente.png : fichier introuvable",
+        "- bloc 4 (image) : Chemin refusé : maquettes/dehors.png mène hors des dossiers permis",
+        "- bloc 5 (image) : maquettes/note.png : format non reconnu : PNG ou JPEG attendu (le "
+        "format se lit dans le fichier, pas dans son nom)",
+        "- bloc 6 (image) : maquettes/coupee.png : PNG tronqué (fichier incomplet)",
+        f"- bloc 7 (image) : maquettes/lourde.jpg dépasse {MAX_IMAGE_BYTES} octets",
+    ]
+    assert not (disk / "sortie" / "x.docx").exists()
+
+
+def test_assess_counts_the_reads_of_images(imaged: WordTool) -> None:
+    free = imaged.assess_call({"path": "sortie/a.docx", **CDC})
+    assert (free.approval, free.side_effects) == ("never", "reversible")
+    blocks: list[Any] = [
+        *CDC["blocks"],
+        {"type": "image", "path": "secret/plan.png", "alt": "Plan"},
+    ]
+    asked = imaged.assess_call({"path": "sortie/a.docx", "blocks": blocks})
+    assert (asked.approval, asked.side_effects) == ("always", "reversible")
+    assert asked.reason == (
+        "écrire le fichier sortie/a.docx, avec 4 image(s) lue(s) dans maquettes, secret — la "
+        "config exige une approbation pour lire dans secret"
+    )
+    # Une image d'un dossier sans read : l'appel sera refusé, il n'a aucun effet.
+    refused_call = imaged.assess_call(
+        {"path": "sortie/a.docx", "blocks": [{"type": "image", "path": "valide/b.png"}]}
+    )
+    assert refused_call.side_effects == "none"
+
+
+async def test_images_read_back_and_rewrite_the_same_file(imaged: WordTool) -> None:
+    written = await call(imaged, path="sortie/cdc.docx", **CDC)
+    found = await call(imaged, action="read", path="sortie/cdc.docx")
+    images = [b for b in found["blocks"] if b["type"] == "image"]
+    assert images == [
+        {
+            "type": "image",
+            "path": "maquettes/depot.png",
+            "width": "pleine_largeur",
+            "caption": "Écran 1 — Dépôt de la demande",
+        },
+        {"type": "image", "path": "maquettes/tableau.png", "width": "moitie", "alt": "Tableau"},
+        {"type": "image", "path": "maquettes/photo.jpg", "width": "moitie", "caption": "Photo"},
+        {"type": "image", "path": "maquettes/depot.png", "width": "petite", "alt": "Rappel"},
+    ]
+    assert "notes" not in found
+    # Relu puis réécrit tel quel : le même fichier.
+    blocks = [b for b in found["blocks"] if b.get("level") != 0]
+    again = await call(imaged, path="sortie/cdc2.docx", title=found["title"], blocks=blocks)
+    assert again["sha256"] == written["sha256"]
+
+
+async def test_without_images_reading_counts_them(tool: WordTool, imaged: WordTool) -> None:
+    await call(imaged, path="sortie/cdc.docx", **CDC)
+    found = await call(tool, action="read", path="sortie/cdc.docx")
+    assert not [b for b in found["blocks"] if b["type"] == "image"]
+    assert "4 image(s) ou forme(s) non lue(s)." in found["notes"]
+
+
+async def test_an_image_from_elsewhere_has_no_path(imaged: WordTool, disk: Path) -> None:
+    await call(imaged, path="sortie/cdc.docx", **CDC)
+    source = disk / "sortie" / "cdc.docx"
+    edited = disk / "sortie" / "ailleurs.docx"
+    with zipfile.ZipFile(source) as old, zipfile.ZipFile(edited, "w") as new:
+        for item in old.infolist():
+            data = old.read(item)
+            if item.filename == "word/document.xml":
+                data = re.sub(rb'name="maquettes/[^"]+"', b'name="Image 1"', data)
+            new.writestr(item, data)
+    found = await call(imaged, action="read", path="sortie/ailleurs.docx")
+    images = [b for b in found["blocks"] if b["type"] == "image"]
+    assert [("path" in b, b["width"]) for b in images] == [
+        (False, "pleine_largeur"), (False, "moitie"), (False, "moitie"), (False, "petite"),
+    ]  # fmt: skip
+    assert "4 image(s) sans fichier source (pas de path)" in " ".join(found["notes"])
+
+
+async def test_libreoffice_shows_the_images(imaged: WordTool, disk: Path, soffice: str) -> None:
+    await call(imaged, path="sortie/cdc.docx", **CDC)
+    out = disk / "converti"
+    convert(soffice, disk / "sortie" / "cdc.docx", out, "odt")
+    with zipfile.ZipFile(out / "cdc.odt") as archive:
+        pictures = [n for n in archive.namelist() if n.startswith("Pictures/")]
+        content = archive.read("content.xml").decode()
+    # Trois images distinctes (et l'aperçu du graphique), quatre cadres et leur texte
+    # alternatif. LibreOffice renomme le second cadre de la même image (« Image… »).
+    assert len([n for n in pictures if not n.startswith("Pictures/Object")]) == 3
+    descriptions = re.findall(r"<svg:desc>([^<]*)</svg:desc>", content)
+    assert descriptions == ["Écran 1 — Dépôt de la demande", "Tableau", "Photo", "Rappel"]
+    assert len(re.findall(r'draw:name="maquettes/', content)) == 3
+
+
+def test_validate_shows_images(
+    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "sortie").mkdir()
+    folders = [{"name": "sortie", "path": "sortie", "rights": ["read", "write"]}]
+    path = demo(agents=[word_agent(folders=folders, charts=True, images=True)], storage=JSONL)
+    assert main(["--config", str(path), "validate"]) == 0
+    said = capsys.readouterr().out
+    assert "graphiques : oui · images : oui · lecture des documents : oui" in said

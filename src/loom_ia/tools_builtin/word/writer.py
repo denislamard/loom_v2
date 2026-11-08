@@ -4,7 +4,9 @@
 Sans bibliothèque : un .docx est un zip de quelques parties XML, que ce module
 écrit lui-même. Le style est figé ici — A4, marges de 2 cm, Calibri 11, titres
 bleu nuit, tableaux à en-tête bleu pâle et ligne de total en gras, numéros de
-page en pied — et le document est en français (correcteur, césure).
+page en pied — et le document est en français (correcteur, césure). Une image
+est une partie ``word/media`` rangée telle quelle, une seule fois par image
+distincte (``word/image.py``).
 
 Deux documents identiques donnent le même fichier, octet pour octet : les
 dates des propriétés et de l'archive sont fixées, et rien ne dépend de
@@ -15,6 +17,7 @@ WordprocessingML, que Word, contrairement à LibreOffice, applique strictement.
 import io
 import zipfile
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from typing import Final
 from xml.sax.saxutils import escape, quoteattr
 
@@ -23,6 +26,7 @@ from loom_ia.tools_builtin._document.content import (
     BreakOut,
     ChartOut,
     HeadingOut,
+    ImageOut,
     Inline,
     ListOut,
     NoteOut,
@@ -32,7 +36,8 @@ from loom_ia.tools_builtin._document.content import (
     TableOut,
     TitleOut,
 )
-from loom_ia.tools_builtin.word import chart
+from loom_ia.tools_builtin._document.picture import Picture
+from loom_ia.tools_builtin.word import chart, image
 
 ZIP_DATE: Final = (2000, 1, 1, 0, 0, 0)
 FIXED_DATE: Final = "2000-01-01T00:00:00Z"
@@ -95,21 +100,30 @@ DOCUMENT_RELS: Final = (
 )
 
 
-def _with_charts(count: int) -> tuple[str, str]:
-    """Types de contenu et relations du corps : ceux d'un document sans graphique, à
-    l'octet près, plus une partie et une relation par graphique."""
-    if not count:
+def _parts_listed(charts: int, media: list[Picture]) -> tuple[str, str]:
+    """Types de contenu et relations du corps : ceux d'un document sans graphique ni
+    image, à l'octet près, plus une partie et une relation par graphique et par image."""
+    if not charts and not media:
         return CONTENT_TYPES, DOCUMENT_RELS
+    formats = sorted({picture.format for picture in media})
+    defaults = "".join(f'<Default Extension="{fmt}" ContentType="image/{fmt}"/>' for fmt in formats)
     types = "".join(
         f'<Override PartName="/word/charts/chart{n}.xml" ContentType="{_CHART_TYPE}"/>'
-        for n in range(1, count + 1)
+        for n in range(1, charts + 1)
     )
     relations = "".join(
         f'<Relationship Id="rIdChart{n}" Type="{_TYPE}/chart" Target="charts/chart{n}.xml"/>'
-        for n in range(1, count + 1)
+        for n in range(1, charts + 1)
+    ) + "".join(
+        f'<Relationship Id="rIdImage{n}" Type="{_TYPE}/image" '
+        f'Target="media/image{n}.{picture.extension}"/>'
+        for n, picture in enumerate(media, start=1)
     )
+    xml_default = '<Default Extension="xml" ContentType="application/xml"/>'
     return (
-        CONTENT_TYPES.replace("</Types>", types + "</Types>"),
+        CONTENT_TYPES.replace(xml_default, xml_default + defaults).replace(
+            "</Types>", types + "</Types>"
+        ),
         DOCUMENT_RELS.replace("</Relationships>", relations + "</Relationships>"),
     )
 
@@ -378,11 +392,26 @@ def _table(table: TableOut) -> str:
 _JC: Final = {"left": "left", "center": "center", "right": "right"}
 
 
-def _body(blocks: Iterable[BlockOut]) -> tuple[str, list[bool], list[ChartOut]]:
-    """Le corps du document ; pour chaque liste, si elle est numérotée ; les graphiques."""
+@dataclass(slots=True)
+class _Body:
+    """Le corps écrit, et ce qu'il demande à l'archive : numérotations, graphiques, images."""
+
+    xml: str = ""
+    lists: list[bool] = field(default_factory=list[bool])
+    charts: list[ChartOut] = field(default_factory=list[ChartOut])
+    # Les images distinctes, dans l'ordre où elles paraissent la première fois.
+    media: list[Picture] = field(default_factory=list[Picture])
+    # Les dessins (graphiques et images) : chacun son identifiant, unique dans le document.
+    drawings: int = 0
+
+
+def _body(blocks: Iterable[BlockOut]) -> _Body:
+    """Le corps du document, ses listes, ses graphiques et ses images."""
+    found = _Body()
     said = ""
-    lists: list[bool] = []
-    charts: list[ChartOut] = []
+    lists = found.lists
+    charts = found.charts
+    stored: dict[str, int] = {}
     for block in blocks:
         match block:
             case TitleOut(runs=runs):
@@ -415,12 +444,25 @@ def _body(blocks: Iterable[BlockOut]) -> tuple[str, list[bool], list[ChartOut]]:
             case ChartOut():
                 charts.append(block)
                 number = len(charts)
-                said += chart.anchor(f"rIdChart{number}", number, block)
+                found.drawings += 1
+                said += chart.anchor(f"rIdChart{number}", number, block, found.drawings)
                 if block.caption:
                     said += _paragraph("Caption", _runs(block.caption))
                 else:
                     said += _paragraph("Normal", "", '<w:spacing w:after="120"/>')
-    return said, lists, charts
+            case ImageOut(picture=picture, caption=caption):
+                if picture.digest not in stored:
+                    found.media.append(picture)
+                    stored[picture.digest] = len(found.media)
+                found.drawings += 1
+                relation = f"rIdImage{stored[picture.digest]}"
+                said += image.inline(relation, found.drawings, block, keep_next=bool(caption))
+                if caption:
+                    said += _paragraph("Caption", _runs(caption))
+                else:
+                    said += _paragraph("Normal", "", '<w:spacing w:after="120"/>')
+    found.xml = said
+    return found
 
 
 def _list_item(number: int, level: int, runs: Inline) -> str:
@@ -428,8 +470,8 @@ def _list_item(number: int, level: int, runs: Inline) -> str:
     return _paragraph("ListParagraph", _runs(runs), numbering)
 
 
-def _document(blocks: Iterable[BlockOut]) -> tuple[str, list[bool], list[ChartOut]]:
-    body, lists, charts = _body(blocks)
+def _document(blocks: Iterable[BlockOut]) -> tuple[str, _Body]:
+    body = _body(blocks)
     section = (
         '<w:sectPr><w:footerReference w:type="default" r:id="rId4"/>'
         f'<w:pgSz w:w="{PAGE_WIDTH}" w:h="{PAGE_HEIGHT}"/>'
@@ -439,17 +481,16 @@ def _document(blocks: Iterable[BlockOut]) -> tuple[str, list[bool], list[ChartOu
     )
     return (
         _HEAD + f"<w:document xmlns:w={quoteattr(_W)} xmlns:r={quoteattr(_R)}>"
-        f"<w:body>{body}{section}</w:body></w:document>",
-        lists,
-        charts,
+        f"<w:body>{body.xml}{section}</w:body></w:document>",
+        body,
     )
 
 
 def render(prepared: Prepared) -> bytes:
     """Le fichier .docx, le même octet pour octet pour un même document."""
-    document, lists, charts = _document(prepared.blocks)
-    types, relations = _with_charts(len(charts))
-    parts = (
+    document, body = _document(prepared.blocks)
+    types, relations = _parts_listed(len(body.charts), body.media)
+    parts: tuple[tuple[str, str | bytes], ...] = (
         ("[Content_Types].xml", types),
         ("_rels/.rels", PACKAGE_RELS),
         ("docProps/core.xml", _core(prepared.title)),
@@ -457,16 +498,23 @@ def render(prepared: Prepared) -> bytes:
         ("word/document.xml", document),
         ("word/_rels/document.xml.rels", relations),
         ("word/styles.xml", STYLES),
-        ("word/numbering.xml", _numbering(lists)),
+        ("word/numbering.xml", _numbering(body.lists)),
         ("word/settings.xml", SETTINGS),
         ("word/footer1.xml", FOOTER),
-        *((f"word/charts/chart{n}.xml", chart.part(c)) for n, c in enumerate(charts, start=1)),
+        *((f"word/charts/chart{n}.xml", chart.part(c)) for n, c in enumerate(body.charts, start=1)),
+        *(
+            (f"word/media/image{n}.{p.extension}", p.data)
+            for n, p in enumerate(body.media, start=1)
+        ),
     )
     raw = io.BytesIO()
     with zipfile.ZipFile(raw, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name, text in parts:
+        for name, content in parts:
             entry = zipfile.ZipInfo(name, date_time=ZIP_DATE)
-            entry.compress_type = zipfile.ZIP_DEFLATED
+            # Une image est déjà compressée : rangée telle quelle, sans temps perdu.
+            entry.compress_type = (
+                zipfile.ZIP_STORED if isinstance(content, bytes) else zipfile.ZIP_DEFLATED
+            )
             entry.external_attr = 0o600 << 16
-            archive.writestr(entry, text.encode("utf-8"))
+            archive.writestr(entry, content if isinstance(content, bytes) else content.encode())
     return raw.getvalue()

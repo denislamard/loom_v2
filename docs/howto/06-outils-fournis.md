@@ -1000,7 +1000,11 @@ Configuration : Agent 'assistant', outil 'loom.pdf' : Outil fourni 'loom.pdf' : 
 tools:
   - python: loom.word
     charts: true                     # le bloc graphique ; false par défaut
+    images: true                     # le bloc image ; false par défaut
     folders:
+    - name: maquettes                # les images à mettre dans les documents
+      path: maquettes
+      rights: [ read ]
     - name: sortie
       path: sortie
       rights: [ read, write ]
@@ -1015,7 +1019,7 @@ tools:
     timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
 ```
 
-Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, et `charts`, qui donne au modèle le bloc `graphique` (voir « Des graphiques »). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
+Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `charts`, qui donne au modèle le bloc `graphique` (voir « Des graphiques »), et `images`, qui lui donne le bloc `image` (voir « Des images »). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
 
 `loom validate` montre les dossiers, puis le fuseau, les graphiques et la lecture :
 
@@ -1023,14 +1027,16 @@ Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la 
 …
 AGENTS
   assistant · SIMULE · 2 outils Python
-  ├ word         sortie → ./sortie
+  ├ word         maquettes → ./maquettes
+  │              read
+  │              sortie → ./sortie
   │              read, write
-  │              fuseau : Europe/Paris · graphiques : oui · lecture des documents : oui
+  │              fuseau : Europe/Paris · graphiques : oui · images : oui · lecture des documents : oui
   └ pdf          recus → ./recus
                  read
                  sortie → ./sortie
                  read, write · overwrite*
-                 fuseau : Europe/Paris · graphiques : non · lecture des PDF : oui, process à part (20 s, 1 Gio)
+                 fuseau : Europe/Paris · graphiques : non · images : non · lecture des PDF : oui, process à part (20 s, 1 Gio)
 
   * = approbation requise
 …
@@ -1151,6 +1157,52 @@ Document refusé :
 
 La description dit aussi au modèle de ne jamais dessiner un graphique en caractères (`█`, `#`). Sans `charts`, un bloc `graphique` est refusé par le moteur avant d'atteindre l'outil, puisque le schéma ne le connaît pas (« ne correspond à aucune des variantes autorisées »).
 
+#### Des images
+
+Avec `images: true`, l'outil a un bloc de plus : `image`, pour un logo sur un devis, une photo de chantier dans un rapport, une capture d'écran dans une procédure. Comme `charts`, il n'est pas actif par défaut : environ 230 tokens par outil et par appel de modèle (849 caractères de description et de schéma). Sans `images`, ce que voit le modèle est exactement ce qu'il voyait avant.
+
+L'image est un fichier PNG ou JPEG d'un dossier qui a le droit `read` ; l'outil la lit lui-même, le modèle n'en envoie jamais le contenu :
+
+```json
+{"path": "sortie/cahier-des-charges.docx", "title": "Cahier des charges — Demandes de congés",
+ "blocks": [
+  {"type": "titre", "text": "Écrans"},
+  {"type": "image", "path": "maquettes/depot-demande.png",
+   "caption": "Écran 1 — Dépôt de la demande par le manager"},
+  {"type": "image", "path": "maquettes/tableau-de-bord.png", "width": "moitie",
+   "alt": "Tableau de bord : les demandes du mois, par équipe"}]}
+```
+
+- **`path`** : « `<dossier>/<chemin>` », avec les règles de tous les chemins de l'outil (dossier déclaré, pas de `..`, ni fichier caché, ni lien qui sort du dossier). Le dossier doit avoir le droit `read`.
+- **`width`** : `pleine_largeur` (17 cm, la largeur du texte ; par défaut), `moitie` (8,5 cm) ou `petite` (4 cm, un logo). La hauteur suit les proportions de l'image ; une image plus haute que 21 cm (une capture de téléphone) y est ramenée, sa largeur suit.
+- **`caption`** : la légende, sous l'image, dans le style des légendes de tableau, sur la même page qu'elle ; `**gras**` et `*italique*` permis.
+- **`alt`** : le texte alternatif, ce que montre l'image pour qui ne la voit pas (lecteur d'écran) ; sans lui, la légende en tient lieu.
+
+L'image est centrée, dans le flux du texte : ni position flottante, ni habillage. Le format se lit dans le fichier, jamais dans son nom. Dans le `.docx`, une image est rangée telle quelle, une seule fois même si elle sert deux fois ; le fichier reste le même, octet pour octet, pour un même appel. Dans le PDF, elle est posée à la même taille ; reportlab la lit avec Pillow, qui vient avec l'extra `pdf`. Un PDF n'a pas de texte alternatif.
+
+Le résultat compte les images (`"images": 2`, à côté de `"blocks"`). Quatre cas ne sont qu'avertis :
+
+```json
+["bloc 7 (image) : maquettes/logo.png, 120 x 60 pixels sur 4,0 cm (76 pixels par pouce) : floue à l'impression ; une image plus grande, ou une largeur plus petite",
+ "bloc 9 (image) : photos/cuisine.jpg est une photo prise de côté (orientation EXIF 6) : elle peut s'afficher couchée ; la redresser avant"]
+```
+
+et une image animée (seule la première image s'affiche), une image sans `alt` ni `caption`. Une photo de téléphone prise de côté garde ses pixels couchés et dit son orientation dans ses métadonnées (EXIF), que ni LibreOffice ni reportlab n'appliquent.
+
+Les fautes d'image sont dites avec celles du document, au numéro du bloc, et rien n'est écrit :
+
+```text
+Document refusé :
+- bloc 2 (image) : Dossier inconnu : 'images'. Dossiers permis : maquettes, sortie
+- bloc 3 (image) : maquettes/absente.png : fichier introuvable
+- bloc 4 (image) : maquettes/note.png : format non reconnu : PNG ou JPEG attendu (le format se lit dans le fichier, pas dans son nom)
+- bloc 5 (image) : maquettes/coupee.png : PNG tronqué (fichier incomplet)
+```
+
+Sont aussi refusés : un GIF, un WebP ou un SVG (« la convertir en PNG ») ; un PNG abîmé (l'outil vérifie chaque bloc et compte ses pixels) ; un JPEG sans fin d'image, ou d'un codage que Word n'affiche pas (sans perte, arithmétique) ; une image de dimension nulle. **Bornes** : 10 Mo par image, 40 Mo d'images distinctes par document, 50 images, 40 millions de pixels par image.
+
+**Approbation** : l'appel exerce le droit `read` sur chaque dossier d'image, en plus du droit d'écrire. Un dossier sous `approval: { read: always }` fait attendre l'appel, et le motif le dit : « écrire le fichier sortie/a.docx, avec 2 image(s) lue(s) dans maquettes, photos — la config exige une approbation pour lire dans photos ».
+
 #### Lire un document Word
 
 Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossier qui a le droit `read`, et le rend **dans le vocabulaire de l'écriture** : ce qu'il lit peut être réécrit tel quel. Le devis ci-dessus, relu :
@@ -1180,6 +1232,7 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 - **Tableaux** : les cellules en texte, telles qu'affichées ; une cellule fusionnée laisse les suivantes vides.
 - **Coupe** : au-delà de 40 000 caractères, `"truncated": true`, `"next_start"` (le bloc où reprendre, avec `start`) et `"outline"`, le plan entier avec l'indice de chaque titre, pour aller droit à une section.
 - **Graphiques** : un graphique du `.docx` revient en bloc `graphique`, à sa place, avec ses libellés et ses séries (ce que Word garde dans le graphique) ; un type que l'outil n'écrit pas (aires, nuage de points…) revient avec son nom technique en `kind`. Le rapport ci-dessus, relu : `{"type": "graphique", "kind": "barres_horizontales", "title": "Total TTC par client", "categories": ["Julien Barre", "Chauffage Lemaire Rénovation", "Guillot SARL"], "series": [{"name": "Total TTC", "values": [18034.17, 16247.36, 14709.17]}]}`. La lecture rend les graphiques même sans `charts` ; une note dit alors que l'outil n'en écrit pas, et de les retirer avant de réécrire le document.
+- **Images** : avec `images: true`, une image revient en bloc `image`, à sa place : `{"type": "image", "path": "maquettes/depot-demande.png", "width": "pleine_largeur", "caption": "Écran 1 — Dépôt de la demande par le manager"}`. `path` est le fichier que l'outil a lu en écrivant le document : il le garde dans le nom de l'image (visible dans le volet de sélection de Word). Relu puis réécrit tel quel, le document redonne le même fichier, tant que les images sont là. Une image insérée ailleurs revient sans `path`, avec sa largeur et son texte alternatif, et une note le dit : pour réécrire le document, lui donner un fichier, ou retirer le bloc. La légende qui suit l'image revient en `caption`. Sans `images`, les images sont seulement comptées.
 - **Notes** : les images non lues (un graphique n'en est pas une), les modifications suivies (le texte inséré est rendu, le texte supprimé ou déplacé omis), les commentaires présents.
 
 #### Lire un PDF
@@ -1206,13 +1259,14 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 
 #### À savoir
 
-- **Pas d'image** (pas de logo), pas d'en-tête de page personnalisé, pas de lien cliquable.
+- **Images** (avec `images: true`) : PNG et JPEG, en ligne et centrées, à trois largeurs ; ni habillage, ni rognage, ni rotation, ni image dans un tableau ou une note. L'orientation EXIF d'une photo n'est pas appliquée. `pdf` ne relit pas les images d'un PDF.
+- Pas d'en-tête de page personnalisé, pas de lien cliquable.
 - **Graphiques** : quatre types, ni aires, ni nuage de points, ni barres empilées, ni deux axes ; `from_table` ne vise que le dernier tableau qui précède ; pas de classeur dans le `.docx`. `pdf` ne relit pas un graphique : un PDF n'en garde que le dessin, dont le texte donne les libellés.
 - **On écrit un document neuf, ou on en lit un** : on ne modifie pas un document existant, et on ne remplit ni un modèle `.dotx` ni un formulaire PDF.
-- **La lecture d'un `.docx` ne voit pas** les images, les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
+- **La lecture d'un `.docx` ne voit pas** les images sans `images: true` (ni, avec, celles d'un tableau ou d'une zone de texte), les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
 - **Le style ne se règle pas**, comme pour `excel`.
 - **Rejeu** : comme pour `excel`, le rejeu sert le résultat du journal sans réécrire le fichier ; en rejeu en variante, un outil qui ne fait que lire est exécuté, un outil qui peut écrire ne l'est jamais.
-- **Coût** : environ 1,6 k tokens par outil et par appel de modèle, description et schéma compris ; environ 500 de plus avec `charts: true`.
+- **Coût** : environ 1,6 k tokens par outil et par appel de modèle, description et schéma compris ; environ 500 de plus avec `charts: true`, environ 230 avec `images: true`.
 
 ### `loom.sql` : des bases SQLite et Postgres, avec des droits par table
 

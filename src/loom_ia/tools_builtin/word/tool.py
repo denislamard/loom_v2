@@ -13,7 +13,6 @@ from loom_ia.tools_builtin._document.arguments import (
     READ_CHARS,
     DocumentCall,
     ReadArguments,
-    WithCharts,
 )
 from loom_ia.tools_builtin._document.content import Prepared
 from loom_ia.tools_builtin._document.tool import DocumentTool
@@ -36,17 +35,11 @@ class WordCall(DocumentCall):
     ] = None
 
 
-# ``blocks`` élargi au bloc graphique : voulu, comme dans ``WithCharts``.
-class WordChartCall(WithCharts, WordCall):  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Les arguments de ``word`` avec le bloc graphique (``charts: true``)."""
-
-
 class WordTool(DocumentTool):
     """L'outil ``word`` monté avec ses dossiers et son fuseau."""
 
     NAME: ClassVar[str] = NAME
     CALL: ClassVar[type[DocumentCall]] = WordCall
-    CHART_CALL: ClassVar[type[DocumentCall]] = WordChartCall
     SUFFIX: ClassVar[str] = ".docx"
     LABEL: ClassVar[str] = "document Word"
 
@@ -57,16 +50,19 @@ class WordTool(DocumentTool):
         unsafe: str | None = None,
         *,
         charts: bool = False,
+        images: bool = False,
     ) -> None:
         # Pourquoi les documents ne se lisent pas ici (version d'expat).
         self._unsafe = unsafe
-        super().__init__(space, zone, charts=charts)
+        super().__init__(space, zone, charts=charts, images=images)
 
     def _render(self, prepared: Prepared) -> tuple[bytes, dict[str, JsonValue], list[str]]:
         return writer.render(prepared), {}, []
 
     async def _read(self, request: ReadArguments, where: str, data: bytes) -> dict[str, JsonValue]:
-        found = await asyncio.to_thread(reader.read, data, where, request.start or 0)
+        found = await asyncio.to_thread(
+            reader.read, data, where, request.start or 0, images=self._images
+        )
         if not self._charts:
             _warn_charts(found)
         return found
@@ -121,4 +117,6 @@ def build(params: BaseModel, context: BuiltinContext) -> WordTool:
         raise TypeError(f"paramètres de {NAME} attendus, reçu {type(params).__name__}")
     space = Folders(mount(params.folders, context))
     unsafe = reader.xml_safety() if any("read" in f.rights for f in space.folders) else None
-    return WordTool(space, ZoneInfo(params.timezone), unsafe, charts=params.charts)
+    return WordTool(
+        space, ZoneInfo(params.timezone), unsafe, charts=params.charts, images=params.images
+    )

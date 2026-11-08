@@ -53,6 +53,8 @@ class PdfParams(BaseModel):
     timezone: str = DEFAULT_TIMEZONE
     # Le bloc graphique : environ 500 tokens de plus par appel au modèle, d'où false.
     charts: bool = False
+    # Le bloc image : environ 230 tokens de plus par appel au modèle, d'où false.
+    images: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> Self:

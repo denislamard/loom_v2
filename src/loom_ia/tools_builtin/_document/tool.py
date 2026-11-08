@@ -12,7 +12,7 @@ sa description en dit.
 import asyncio
 import hashlib
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import ClassVar, Final
 from zoneinfo import ZoneInfo
 
@@ -25,6 +25,9 @@ from loom_ia.tools_builtin import Settings
 from loom_ia.tools_builtin._document.arguments import (
     MAX_BLOCKS,
     MAX_CATEGORIES,
+    MAX_IMAGE_BYTES,
+    MAX_IMAGES,
+    MAX_IMAGES_BYTES,
     MAX_ITEMS,
     MAX_OUTPUT_BYTES,
     MAX_SLICES,
@@ -32,13 +35,18 @@ from loom_ia.tools_builtin._document.arguments import (
     MAX_TABLE_COLUMNS,
     MAX_TABLE_ROWS,
     DocumentCall,
+    Image,
     ReadArguments,
     WriteArguments,
     input_schema,
     parse,
+    variant,
 )
-from loom_ia.tools_builtin._document.content import Prepared, prepare
+from loom_ia.tools_builtin._document.content import Pictures, Prepared, prepare
+from loom_ia.tools_builtin._document.picture import Picture, PictureError
+from loom_ia.tools_builtin._document.picture import parse as parse_picture
 from loom_ia.tools_builtin._folders import Folders, Located, write_bytes
+from loom_ia.tools_builtin.local_files_params import Right
 
 # Le mode d'emploi de l'écriture, commun aux formats ; il ne part qu'à qui peut écrire.
 WRITING_HELP: Final = (
@@ -71,25 +79,36 @@ CHART_HELP: Final = (
     "graphique dessiné en caractères.",
 )
 
+# Le bloc image, seulement pour un outil monté avec ``images``.
+IMAGE_HELP: Final = (
+    "Image ('type': 'image') : path, un fichier PNG ou JPEG d'un dossier qui a le droit "
+    "read ; width : pleine_largeur (par défaut), moitie, ou petite (un logo) ; caption, la "
+    "légende dessous ; alt, ce que montre l'image pour qui ne la voit pas (la légende sinon). "
+    "L'image est centrée, dans ses proportions ; l'outil la lit lui-même, ne jamais en "
+    f"envoyer le contenu. {MAX_IMAGES} images au plus.",
+)
+
 
 class DocumentTool(ABC):
     """Un outil de document monté avec ses dossiers et son fuseau."""
 
     NAME: ClassVar[str]
-    # Les arguments sans le bloc graphique, puis avec (outil monté avec ``charts``).
+    # Les arguments du format, sans graphique ni image : ``variant`` les élargit.
     CALL: ClassVar[type[DocumentCall]]
-    CHART_CALL: ClassVar[type[DocumentCall]]
     # Le suffixe écrit (« .docx ») et le nom du fichier pour le modèle (« document Word »).
     SUFFIX: ClassVar[str]
     LABEL: ClassVar[str]
     MAX_SOURCE: ClassVar[int] = MAX_SOURCE_BYTES
 
-    def __init__(self, space: Folders, zone: ZoneInfo, *, charts: bool = False) -> None:
+    def __init__(
+        self, space: Folders, zone: ZoneInfo, *, charts: bool = False, images: bool = False
+    ) -> None:
         self._space = space
         self._zone = zone
         self._charts = charts
-        # Le schéma vu par le modèle n'a le bloc graphique que s'il sert.
-        self._call = self.CHART_CALL if charts else self.CALL
+        self._images = images
+        # Le schéma vu par le modèle n'a les blocs graphique et image que s'ils servent.
+        self._call = variant(self.CALL, charts=charts, images=images)
         folders = space.folders
         # Le pire de ses appels ; un outil qui ne fait que lire n'en a aucun, et se
         # rejoue donc en variante (une lecture sans effet s'y exécute).
@@ -123,7 +142,10 @@ class DocumentTool(ABC):
             request = parse(self._call, arguments)
             if isinstance(request, ReadArguments):
                 return self._assess_read(self._source(request.path))
-            return self._assess_write(request, self._output(request))
+            reads: list[tuple[Located, Right]] = [
+                (self._image_source(path), "read") for path in _image_paths(request)
+            ]
+            return self._assess_write(request, self._output(request), reads)
         except ToolError:
             # L'appel sera refusé à l'exécution, pour la même raison : aucun effet.
             return CallAssessment(side_effects="none")
@@ -141,19 +163,30 @@ class DocumentTool(ABC):
         )
 
     @staticmethod
-    def _assess_write(request: WriteArguments, located: Located) -> CallAssessment:
-        rights = ("write", "overwrite") if request.overwrite else ("write",)
-        asking = Folders.asked(located, rights)
+    def _assess_write(
+        request: WriteArguments,
+        located: Located,
+        reads: Iterable[tuple[Located, Right]] = (),
+    ) -> CallAssessment:
+        """Les droits de la sortie, et le droit read de chaque image lue."""
+        rights: tuple[Right, ...] = ("write", "overwrite") if request.overwrite else ("write",)
+        asking: list[tuple[Located, Right]] = [
+            (located, right) for right in Folders.asked(located, rights)
+        ]
+        images = list(reads)
+        asking.extend(pair for pair in images if Folders.asked(pair[0], (pair[1],)))
         effects: SideEffects = "irreversible" if request.overwrite else "reversible"
         if not asking:
             return CallAssessment(side_effects=effects, idempotent=True)
+        folders = sorted({source.folder.name for source, _ in images})
         return CallAssessment(
             approval="always",
             side_effects=effects,
             idempotent=True,
             reason=f"écrire le fichier {located.address}"
             + (", en remplaçant le fichier s'il existe" if request.overwrite else "")
-            + f" — {Folders.rule((located, right) for right in asking)}",
+            + (f", avec {len(images)} image(s) lue(s) dans {', '.join(folders)}" if images else "")
+            + f" — {Folders.rule(asking)}",
         )
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
@@ -177,6 +210,12 @@ class DocumentTool(ABC):
         Folders.require(located, ("write", "overwrite") if request.overwrite else ("write",))
         return located
 
+    def _image_source(self, path: str) -> Located:
+        """Le fichier d'une image : un dossier qui a le droit read, sans rien lire."""
+        located = self._space.locate(path)
+        Folders.require(located, ("read",))
+        return located
+
     def _source(self, path: str) -> Located:
         self._check_readable(path)
         located = self._space.locate(path)
@@ -186,7 +225,7 @@ class DocumentTool(ABC):
     # --- Exécution ----------------------------------------------------------------------
 
     def _write(self, request: WriteArguments, located: Located) -> dict[str, JsonValue]:
-        prepared = prepare(request, self._zone)
+        prepared = prepare(request, self._zone, self._pictures(request))
         data, facts, warnings = self._render(prepared)
         if len(data) > MAX_OUTPUT_BYTES:
             raise ToolError(f"Fichier de {len(data)} octets, au-delà de {MAX_OUTPUT_BYTES}.")
@@ -200,21 +239,49 @@ class DocumentTool(ABC):
             "sha256": hashlib.sha256(data).hexdigest(),
             **facts,
             "blocks": len(request.blocks),
+            **({"images": len(list(_image_blocks(request)))} if self._images else {}),
             "warnings": list[JsonValue]([*prepared.warnings, *warnings]),
         }
 
-    def _load(self, located: Located) -> bytes:
+    def _pictures(self, request: WriteArguments) -> Pictures:
+        """Chaque image du document, lue et reconnue, ou ce qui l'en empêche.
+
+        Les fautes ne sont pas levées : ``prepare`` les dit avec celles du document,
+        au bloc où l'image est demandée. La lecture s'arrête quand les images lues
+        dépassent la borne du document : les suivantes ne sont pas lues.
+        """
+        found: dict[str, Picture | str] = {}
+        total = 0
+        for path in _image_paths(request):
+            if total > MAX_IMAGES_BYTES:
+                found[path] = f"{path} non lue : les images précédentes dépassent déjà la borne"
+                continue
+            try:
+                data = self._load(self._image_source(path), MAX_IMAGE_BYTES)
+                picture = parse_picture(data)
+            except ToolError as exc:
+                found[path] = str(exc).rstrip(".")
+                continue
+            except PictureError as exc:
+                found[path] = f"{path} : {exc}"
+                continue
+            total += len(data)
+            found[path] = picture
+        return found
+
+    def _load(self, located: Located, limit: int | None = None) -> bytes:
+        bound = self.MAX_SOURCE if limit is None else limit
         target = self._space.resolved(located)
         if not target.is_file():
             raise ToolError(f"{located.address} : fichier introuvable.")
         try:
             with target.open("rb") as handle:
                 # Un fichier qui grossit entre-temps reste borné.
-                data = handle.read(self.MAX_SOURCE + 1)
+                data = handle.read(bound + 1)
         except OSError as exc:
             raise ToolError(f"{located.address} : {exc.strerror or type(exc).__name__}.") from exc
-        if len(data) > self.MAX_SOURCE:
-            raise ToolError(f"{located.address} dépasse {self.MAX_SOURCE} octets.")
+        if len(data) > bound:
+            raise ToolError(f"{located.address} dépasse {bound} octets.")
         return data
 
     # --- Ce que chaque format fournit -----------------------------------------------------
@@ -240,7 +307,11 @@ class DocumentTool(ABC):
         return ()
 
     def _options(self) -> tuple[tuple[str, str], ...]:
-        return (("fuseau", self._zone.key), ("graphiques", "oui" if self._charts else "non"))
+        return (
+            ("fuseau", self._zone.key),
+            ("graphiques", "oui" if self._charts else "non"),
+            ("images", "oui" if self._images else "non"),
+        )
 
     def _description(self) -> str:
         space = self._space
@@ -262,6 +333,7 @@ class DocumentTool(ABC):
                 "remplacé qu'avec overwrite=true (droit overwrite).",
                 *WRITING_HELP,
                 *(CHART_HELP if self._charts else ()),
+                *(IMAGE_HELP if self._images else ()),
                 *self._writing_notes(),
                 f"Bornes : {MAX_BLOCKS} blocs, {MAX_ITEMS} éléments par liste. Résultat : le "
                 "chemin écrit et les avertissements ; jamais le contenu.",
@@ -273,3 +345,12 @@ class DocumentTool(ABC):
         else:
             lines.append("Lecture (action=read) : aucun dossier n'a le droit read.")
         return "\n".join(lines)
+
+
+def _image_blocks(request: WriteArguments) -> Iterable[Image]:
+    return (block for block in request.blocks if isinstance(block, Image))
+
+
+def _image_paths(request: WriteArguments) -> list[str]:
+    """Les chemins des images, chacun une fois, dans l'ordre du document."""
+    return list(dict.fromkeys(block.path for block in _image_blocks(request)))

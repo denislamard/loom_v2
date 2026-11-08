@@ -5,25 +5,33 @@ Sans dépendance : ce que ces essais couvrent vaut pour les deux formats, qui
 ne font ensuite que poser le contenu préparé sur la page.
 """
 
+import hashlib
+import re
+import zlib
 from typing import Any, Final
 from zoneinfo import ZoneInfo
 
 import pytest
+from image_files import chunk, jpeg, png
 from pydantic import ValidationError
 
 from loom_ia.core.ports import ToolError
 from loom_ia.tools_builtin._document.arguments import (
+    MAX_IMAGES,
+    MAX_IMAGES_BYTES,
     DocumentCall,
     ReadArguments,
     WithCharts,
     WriteArguments,
     parse,
+    variant,
 )
 from loom_ia.tools_builtin._document.content import (
     NBSP,
     BreakOut,
     ChartOut,
     HeadingOut,
+    ImageOut,
     ListOut,
     NoteOut,
     ParagraphOut,
@@ -36,6 +44,8 @@ from loom_ia.tools_builtin._document.content import (
     inline,
     prepare,
 )
+from loom_ia.tools_builtin._document.picture import Picture, PictureError, dimensions
+from loom_ia.tools_builtin._document.picture import parse as parse_picture
 from loom_ia.tools_builtin.pdf_params import PdfParams
 from loom_ia.tools_builtin.word_params import WordParams
 
@@ -450,3 +460,180 @@ def test_a_chart_without_its_table_says_one_fault(blocks: list[dict[str, Any]]) 
 def test_chart_arguments_refused(chart: dict[str, Any], said: str) -> None:
     with pytest.raises(ToolError, match=said):
         parse(WithCharts, {"path": "s/a", "blocks": [chart]})
+
+
+# --- Images ------------------------------------------------------------------------------
+
+EVERY: Final = variant(DocumentCall, charts=True, images=True)
+
+
+def with_pictures(pictures: dict[str, Picture | str], *blocks: dict[str, Any]) -> Prepared:
+    request = parse(EVERY, {"path": "s/a", "blocks": list(blocks)})
+    assert isinstance(request, WriteArguments)
+    return prepare(request, PARIS, pictures)
+
+
+def test_png_and_jpeg_are_recognised_by_their_bytes() -> None:
+    found = parse_picture(png(390, 844))
+    assert (found.format, found.width, found.height, found.extension) == ("png", 390, 844, "png")
+    assert found.digest == hashlib.sha256(found.data).hexdigest()
+    for color, depth in ((0, 1), (3, 4), (4, 16), (6, 8)):
+        assert parse_picture(png(33, 7, color=color, depth=depth)).width == 33
+    assert parse_picture(png(333, 111, interlace=1)).height == 111
+    assert parse_picture(png(10, 10, extra=chunk(b"acTL", bytes(8)))).animated
+    photo = parse_picture(jpeg(4032, 3024, orientation=6))
+    assert (photo.format, photo.width, photo.height, photo.orientation) == ("jpeg", 4032, 3024, 6)
+    assert parse_picture(jpeg(800, 600, sof=0xC2)).orientation == 1
+    # EXIF gros-boutiste, bourrage et marqueur isolé ; une orientation hors de 1 à 8 vaut 1.
+    assert parse_picture(jpeg(800, 600, orientation=8, big=True, padded=True)).orientation == 8
+    assert parse_picture(jpeg(800, 600, orientation=9)).orientation == 1
+    exif_less = jpeg(800, 600, orientation=6).replace(b"II*\x00", b"XX*\x00")
+    assert parse_picture(exif_less).orientation == 1
+    assert dimensions(png(390, 844)) == (390, 844) and dimensions(jpeg(80, 60)) == (80, 60)
+    for unknown in (b"GIF89a", jpeg(80, 60)[:30], png(10, 10)[:12] + b"tEXt"):
+        assert dimensions(unknown) is None
+
+
+@pytest.mark.parametrize(
+    ("data", "said"),
+    [
+        (b"", "fichier vide"),
+        (b"GIF89a" + bytes(20), "GIF : la convertir en PNG"),
+        (b"RIFF\x00\x00\x00\x00WEBPVP8 ", "WebP : Word ne l'affiche pas partout"),
+        (b'<svg xmlns="http://www.w3.org/2000/svg"/>', "SVG : la convertir en PNG"),
+        (b"%PDF-1.7", "format non reconnu : PNG ou JPEG attendu"),
+        (png(10, 10)[:-30], "PNG tronqué"),
+        (png(10, 10).replace(b"IDAT", b"IDAX", 1), "PNG abîmé"),
+        (png(0, 10), "dimension nulle"),
+        (png(10, 10, color=3, palette=False), "palette absente"),
+        (
+            png(10, 10)[:33] + chunk(b"IDAT", zlib.compress(b"\x00" * 5)) + chunk(b"IEND", b""),
+            "pixels manquants",
+        ),
+        (png(8000, 6000, color=0, depth=1), "au-delà de 40 millions"),
+        (jpeg(800, 600)[:-40], "JPEG tronqué"),
+        (jpeg(800, 600, sof=0xC9), "codage que Word n'affiche pas"),
+        (jpeg(0, 600), "dimension nulle"),
+        (jpeg(8000, 6000), "8000 x 6000 pixels, au-delà de 40 millions"),
+        (jpeg(800, 600)[:-2], "JPEG tronqué (fin de l'image absente)"),
+        (png(10, 10)[:33] + chunk(b"IDAT", b"pas du zlib") + chunk(b"IEND", b""), "illisibles"),
+        (b"\xff\xd8\xff\xe0\x00\x04\x00\x00\x00\x00\x00\x00", "JPEG abîmé (segment illisible)"),
+        (b"\xff\xd8\xff\xd9\x00\x00", "fin d'image avant les pixels"),
+        (b"\xff\xd8\xff\xda\x00\x02\xff\xd9", "dimensions absentes"),
+        (b"\xff\xd8\xff\xc0\x00\x05\x08\x00\x01\xff\xd9", "JPEG abîmé (en-tête)"),
+        (png(10, 10)[:8] + chunk(b"tEXt", b"a") + png(10, 10)[8:], "en-tête absent"),
+        (png(10, 10)[:8] + chunk(b"IHDR", bytes(12)) + png(10, 10)[33:], "PNG abîmé (en-tête)"),
+    ],
+)
+def test_pictures_refused(data: bytes, said: str) -> None:
+    with pytest.raises(PictureError, match=re.escape(said)):
+        parse_picture(data)
+
+
+def test_an_image_keeps_its_proportions_within_the_page() -> None:
+    wide, tall = parse_picture(png(1600, 900)), parse_picture(png(390, 844))
+    found = with_pictures(
+        {"m/large.png": wide, "m/haute.png": tall},
+        {"type": "image", "path": "m/large.png", "caption": "Écran **1**", "alt": "Accueil"},
+        {"type": "image", "path": "m/large.png", "width": "moitie", "caption": "Bis"},
+        {"type": "image", "path": "m/large.png", "width": "petite", "alt": "Logo"},
+        {"type": "image", "path": "m/haute.png", "caption": "Téléphone"},
+    )
+    images = [b for b in found.blocks if isinstance(b, ImageOut)]
+    assert [(i.width, i.height) for i in images] == [
+        (17_000, 9_562),
+        (8_500, 4_781),
+        (4_000, 2_250),
+        # Bornée à la hauteur de la page : la largeur suit les proportions.
+        (9_704, 21_000),
+    ]
+    assert images[0].caption == (Run("Écran "), Run("1", bold=True))
+    # Le texte alternatif : alt, ou la légende.
+    assert [i.alt for i in images] == ["Accueil", "Bis", "Logo", "Téléphone"]
+    assert images[0].source == "m/large.png" and found.warnings == ()
+
+
+def test_image_warnings() -> None:
+    found = with_pictures(
+        {
+            "m/logo.png": parse_picture(png(120, 60)),
+            "m/photo.jpg": parse_picture(jpeg(4032, 3024, orientation=6)),
+            "m/anim.png": parse_picture(png(800, 600, extra=chunk(b"acTL", bytes(8)))),
+        },
+        {"type": "image", "path": "m/logo.png", "caption": "Logo"},
+        {"type": "image", "path": "m/photo.jpg", "alt": "Chantier"},
+        {"type": "image", "path": "m/anim.png", "width": "petite"},
+    )
+    said = "\n".join(found.warnings)
+    assert "bloc 1 (image) : m/logo.png, 120 x 60 pixels sur 17,0 cm (18 pixels par pouce)" in said
+    assert "bloc 2 (image) : m/photo.jpg est une photo prise de côté (orientation EXIF 6)" in said
+    assert "bloc 3 (image) : m/anim.png est animée" in said
+    assert "bloc 3 (image) : ni alt ni caption" in said
+
+
+def test_image_faults_join_the_document_faults() -> None:
+    said = refused_with(
+        {"m/a.png": "Droit read refusé sur m/a.png (dossier m : write)", "m/b.png": "x"},
+        {"type": "titre", "text": ""},
+        {"type": "image", "path": "m/a.png"},
+        {"type": "image", "path": "m/inconnue.png"},
+    )
+    assert said.splitlines() == [
+        "Document refusé :",
+        "- bloc 1 (titre) : texte vide",
+        "- bloc 2 (image) : Droit read refusé sur m/a.png (dossier m : write)",
+        "- bloc 3 (image) : image non lue",
+    ]
+
+
+def test_images_are_bounded_per_document() -> None:
+    small = parse_picture(png(10, 10))
+    heavy = Picture("png", 10, 10, bytes(MAX_IMAGES_BYTES // 2 + 1), "a")
+    heavier = Picture("png", 10, 10, bytes(MAX_IMAGES_BYTES // 2 + 1), "b")
+    said = refused_with(
+        {"m/a.png": heavy, "m/b.png": heavier, "m/c.png": small},
+        *([{"type": "image", "path": "m/c.png", "alt": "c"}] * (MAX_IMAGES + 1)),
+        {"type": "image", "path": "m/a.png", "alt": "a"},
+        {"type": "image", "path": "m/b.png", "alt": "b"},
+    )
+    assert f"{MAX_IMAGES + 3} images, au-delà de {MAX_IMAGES}" in said
+    assert f"au-delà de {MAX_IMAGES_BYTES}" in said
+
+
+def refused_with(pictures: dict[str, Picture | str], *blocks: dict[str, Any]) -> str:
+    with pytest.raises(ToolError) as caught:
+        with_pictures(pictures, *blocks)
+    return str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("image", "said"),
+    [
+        ({"type": "image"}, "path"),
+        ({"type": "image", "path": "m/a.png", "width": "12cm"}, "width"),
+        ({"type": "image", "path": "m/a.png", "height": 3}, "height"),
+    ],
+)
+def test_image_arguments_refused(image: dict[str, Any], said: str) -> None:
+    with pytest.raises(ToolError, match=said):
+        parse(EVERY, {"path": "s/a", "blocks": [image]})
+
+
+def test_variants_add_only_what_is_asked() -> None:
+    assert variant(DocumentCall, charts=False, images=False) is DocumentCall
+    assert variant(DocumentCall, charts=True, images=False) is WithCharts
+    image: dict[str, Any] = {"type": "image", "path": "m/a.png"}
+    chart: dict[str, Any] = {
+        "type": "graphique",
+        "categories": ["a"],
+        "series": [{"name": "s", "values": [1]}],
+    }
+    for charts, images in ((False, False), (True, False), (False, True), (True, True)):
+        model = variant(DocumentCall, charts=charts, images=images)
+        for block, allowed in ((image, images), (chart, charts)):
+            try:
+                parse(model, {"path": "s/a", "blocks": [block]})
+            except ToolError:
+                assert not allowed
+            else:
+                assert allowed
