@@ -6,7 +6,7 @@ Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.p
 
 - Une clé inconnue est **refusée** au chargement (`loom validate`, code 2), avec le chemin de la clé.
 - Une clé **écrite deux fois** dans le même objet est refusée de même, avec ses deux lignes : YAML garderait la seconde en silence. Surcharger une clé fusionnée (`<<: *ancre`) reste permis.
-- Les chemins sont relatifs au **dossier de `loom.yaml`** ; un `system_file`, un `skill_file` ou un modèle de document (`templates` de `loom.word` et `loom.pdf`) est relatif à `prompts_dir`, et doit rester dans ce dossier.
+- Les chemins sont relatifs au **dossier de `loom.yaml`** ; un `system_file`, un `skill_file`, un modèle de document (`templates` de `loom.word` et `loom.pdf`) ou un fichier de style (`style` de `loom.word`, d'un modèle, et ses logos) est relatif à `prompts_dir`, et doit rester dans ce dossier.
 - La config ne porte **jamais un secret** : les clés `*_env` nomment la variable d'environnement qui le contient.
 - « **obligatoire** » dans la colonne *Défaut* : la clé doit être écrite, sinon le chargement s'arrête.
 - `null` dans la colonne *Défaut* : la fonction est inactive tant que la clé n'est pas donnée.
@@ -116,7 +116,7 @@ profiles:
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `prompts_dir` | Base des `system_file` (`main`, rôles, compaction), des `skill_file` des outils et des modèles de document (`templates` de `loom.word` et `loom.pdf`, lus au chargement). Un prompt introuvable arrête le chargement, comme un fichier qui en sort (`..`, chemin absolu, lien symbolique) : ce dossier est fermé aux outils fournis, un autre ne l'est pas forcément. | chemin | `prompts` | `prompts_dir: prompts/` |
+| `prompts_dir` | Base des `system_file` (`main`, rôles, compaction), des `skill_file` des outils, des modèles de document (`templates` de `loom.word` et `loom.pdf`) et des styles de `loom.word` (`style`, avec leurs logos), lus au chargement. Un prompt introuvable arrête le chargement, comme un fichier qui en sort (`..`, chemin absolu, lien symbolique) : ce dossier est fermé aux outils fournis, un autre ne l'est pas forcément. | chemin | `prompts` | `prompts_dir: prompts/` |
 
 ## `models`
 

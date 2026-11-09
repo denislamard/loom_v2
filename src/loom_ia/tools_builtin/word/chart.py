@@ -49,18 +49,29 @@ def height(chart: ChartOut) -> int:
     return min(20 * CM, max(6 * CM, int(1.4 * CM + 0.6 * CM * len(chart.categories))))
 
 
-def anchor(relation: str, number: int, chart: ChartOut, drawing: int | None = None) -> str:
+def anchor(
+    relation: str,
+    number: int,
+    chart: ChartOut,
+    drawing: int | None = None,
+    width: int | None = None,
+) -> str:
     """Le paragraphe qui porte le graphique, à la largeur du texte.
 
     ``drawing`` : l'identifiant du dessin, unique dans le document (images comprises) ;
-    sans image, le numéro du graphique.
+    sans image, le numéro du graphique. ``width`` : la place disponible, en EMU, quand
+    elle est moindre que la page (une colonne) : le graphique s'y réduit, dans ses
+    proportions.
     """
     name = escape(chart.title or f"Graphique {number}", {'"': "&quot;"})
+    cx, cy = WIDTH, height(chart)
+    if width is not None and width < cx:
+        cx, cy = width, cy * width // cx
     return (
         '<w:p><w:pPr><w:keepNext/><w:spacing w:before="120" w:after="60"/><w:jc w:val="center"/>'
         "</w:pPr><w:r><w:drawing>"
         f'<wp:inline xmlns:wp="{_WP}" distT="0" distB="0" distL="0" distR="0">'
-        f'<wp:extent cx="{WIDTH}" cy="{height(chart)}"/>'
+        f'<wp:extent cx="{cx}" cy="{cy}"/>'
         '<wp:effectExtent l="0" t="0" r="0" b="0"/>'
         f'<wp:docPr id="{number if drawing is None else drawing}" name="{name}"/>'
         "<wp:cNvGraphicFramePr/>"

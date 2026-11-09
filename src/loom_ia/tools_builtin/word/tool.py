@@ -3,6 +3,7 @@
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Annotated, ClassVar, Final
 from zoneinfo import ZoneInfo
 
@@ -16,9 +17,23 @@ from loom_ia.tools_builtin._document.arguments import (
     ReadArguments,
 )
 from loom_ia.tools_builtin._document.content import Prepared
+from loom_ia.tools_builtin._document.picture import PictureError
+from loom_ia.tools_builtin._document.picture import parse as parse_picture
 from loom_ia.tools_builtin._document.tool import DocumentTool
 from loom_ia.tools_builtin._folders import Folders, mount
 from loom_ia.tools_builtin._office_params import read_templates
+from loom_ia.tools_builtin._style_params import (
+    HOUSE,
+    Style,
+    StyleRef,
+    StyleSpec,
+    check_charte,
+    check_layout,
+    logos,
+    merged,
+    resolve,
+    unsafe_fonts,
+)
 from loom_ia.tools_builtin._templates import Template
 from loom_ia.tools_builtin.word import reader, writer
 from loom_ia.tools_builtin.word_params import REFERENCE, WordParams
@@ -38,6 +53,23 @@ class WordCall(DocumentCall):
     ] = None
 
 
+@dataclass(frozen=True, slots=True)
+class Styles:
+    """Les styles résolus d'un outil : la charte, et charte + disposition par modèle."""
+
+    default: Style = HOUSE
+    by_template: Mapping[str, Style] = field(default_factory=dict[str, Style])
+    # Ce que ``loom validate`` en dit.
+    said: tuple[tuple[str, str], ...] = ()
+
+    def of(self, template: str | None) -> Style:
+        """Le style d'un document : celui de son modèle, sinon la charte."""
+        return self.by_template.get(template or "", self.default)
+
+
+NO_STYLES: Final = Styles()
+
+
 class WordTool(DocumentTool):
     """L'outil ``word`` monté avec ses dossiers et son fuseau."""
 
@@ -55,13 +87,15 @@ class WordTool(DocumentTool):
         charts: bool = False,
         images: bool = False,
         templates: Mapping[str, Template] | None = None,
+        styles: Styles = NO_STYLES,
     ) -> None:
         # Pourquoi les documents ne se lisent pas ici (version d'expat).
         self._unsafe = unsafe
+        self._styles = styles
         super().__init__(space, zone, charts=charts, images=images, templates=templates)
 
     def _render(self, prepared: Prepared) -> tuple[bytes, dict[str, JsonValue], list[str]]:
-        return writer.render(prepared), {}, []
+        return writer.render(prepared, self._styles.of(prepared.template)), {}, []
 
     async def _read(self, request: ReadArguments, where: str, data: bytes) -> dict[str, JsonValue]:
         found = await asyncio.to_thread(
@@ -96,7 +130,7 @@ class WordTool(DocumentTool):
         reading = (
             f"non ({self._unsafe})" if self._unsafe else "oui" if reads else "aucun dossier read"
         )
-        return (*super()._options(), ("lecture des documents", reading))
+        return (*super()._options(), ("lecture des documents", reading), *self._styles.said)
 
 
 def _warn_charts(found: dict[str, JsonValue]) -> None:
@@ -126,11 +160,76 @@ def build(params: BaseModel, context: BuiltinContext) -> WordTool:
         raise TypeError(f"paramètres de {NAME} attendus, reçu {type(params).__name__}")
     space = Folders(mount(params.folders, context))
     unsafe = reader.xml_safety() if any("read" in f.rights for f in space.folders) else None
+    templates = read_templates(params.templates, REFERENCE)
     return WordTool(
         space,
         ZoneInfo(params.timezone),
         unsafe,
         charts=params.charts,
         images=params.images,
-        templates=read_templates(params.templates, REFERENCE),
+        templates=templates,
+        styles=read_styles(params, templates),
     )
+
+
+def read_styles(params: WordParams, templates: Mapping[str, Template]) -> Styles:
+    """Les styles de l'outil, vérifiés et résolus une fois, au montage.
+
+    Le chargeur de config a lu les fichiers (``spec``) et leurs logos ; une référence
+    construite en Python sans passer par lui garde ``file`` : c'est une faute de montage.
+    Les logos sont reconnus ici (PNG ou JPEG) : une faute se voit dès ``loom validate``.
+    """
+    charte = _spec(params.style, f"{REFERENCE}.style")
+    if charte is not None:
+        check_charte(charte, f"{REFERENCE}.style")
+    layouts: dict[str, StyleSpec] = {}
+    for name, ref in params.templates.items():
+        where = f"{REFERENCE}.templates[{name}].style"
+        spec = _spec(ref.style, where)
+        if spec is not None:
+            check_layout(spec, templates[name], where)
+            layouts[name] = spec
+    declared = [spec for spec in (charte, *layouts.values()) if spec is not None]
+    if not declared:
+        return NO_STYLES
+    fonts: list[str] = []
+    for spec in declared:
+        fonts += unsafe_fonts(spec)
+        for band, logo in logos(spec):
+            if logo.data is None:
+                raise ValueError(f"{REFERENCE} : logo de {band} ({logo.file}) non lu")
+            try:
+                parse_picture(logo.data)
+            except PictureError as exc:
+                raise ValueError(f"{REFERENCE} : logo de {band} : {exc}") from None
+    said = [
+        (
+            "style",
+            ("charte" if charte is not None else "style maison")
+            + (f" ; disposition : {', '.join(layouts)}" if layouts else ""),
+        )
+    ]
+    if fonts:
+        said.append(
+            (
+                "polices",
+                f"{', '.join(dict.fromkeys(fonts))} : hors des polices de tous les postes, "
+                "remplacée(s) chez qui ne les a pas",
+            )
+        )
+    return Styles(
+        default=resolve(merged(charte)),
+        by_template={name: resolve(merged(charte, spec)) for name, spec in layouts.items()},
+        said=tuple(said),
+    )
+
+
+def _spec(ref: StyleRef | None, where: str) -> StyleSpec | None:
+    if ref is None:
+        return None
+    if ref.spec is None:
+        raise ValueError(
+            f"{where} ({ref.file}) non lu — les styles se lisent au chargement de la config "
+            "(load_config), ou se donnent par leur contenu (spec)"
+        )
+    return ref.spec

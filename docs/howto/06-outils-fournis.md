@@ -1001,6 +1001,7 @@ tools:
   - python: loom.word
     charts: true                     # le bloc graphique ; false par défaut
     images: true                     # le bloc image ; false par défaut
+    style: styles/charte.yaml        # la charte des documents (facultatif)
     templates:                       # modèles de document, relatifs à prompts_dir
       devis: devis.md
     folders:
@@ -1021,9 +1022,9 @@ tools:
     timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
 ```
 
-Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `charts`, qui donne au modèle le bloc `graphique` (voir « Des graphiques »), `images`, qui lui donne le bloc `image` (voir « Des images »), et `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
+Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `charts`, qui donne au modèle le bloc `graphique` (voir « Des graphiques »), `images`, qui lui donne le bloc `image` (voir « Des images »), `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), et `style`, la charte des documents de `loom.word` (voir « Des styles de document »). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
 
-`loom validate` montre les dossiers, puis le fuseau, les graphiques, les images, les modèles et la lecture :
+`loom validate` montre les dossiers, puis le fuseau, les graphiques, les images, les modèles, la lecture et, s'il y en a un, le style :
 
 ```text
 …
@@ -1033,7 +1034,7 @@ AGENTS
   │              read
   │              sortie → ./sortie
   │              read, write
-  │              fuseau : Europe/Paris · graphiques : oui · images : oui · modèles : devis · lecture des documents : oui
+  │              fuseau : Europe/Paris · graphiques : oui · images : oui · modèles : devis · lecture des documents : oui · style : charte
   └ pdf          recus → ./recus
                  read
                  sortie → ./sortie
@@ -1290,6 +1291,113 @@ tools[loom.word].templates[devis] — modèle devis : section donnée deux fois 
 ```
 
 Sans `templates`, rien ne change : ni action ni champ `template`, ni ligne dans la description. Un outil à modèles doit avoir un dossier `write`.
+
+#### Des styles de document
+
+Depuis loom-ia 2.0.20, pour `loom.word`. Sans style, l'outil écrit tous ses documents dans son style maison : Calibri, titres bleu nuit, tableaux à grille. Une facture d'artisan demande autre chose : son logo, ses couleurs, l'émetteur et le client côte à côte, des titres de section qu'on ne voit pas, un récapitulatif étroit à droite, les mentions légales en pied de page. **Le style se décrit dans des fichiers de l'agent**, en YAML, et l'outil n'en fixe rien : il pose les mêmes blocs, à la manière que le style décrit.
+
+Deux fichiers, relatifs à `prompts_dir` et lus au chargement comme un modèle :
+
+- **la charte**, sur l'outil (`style:`) : elle vaut pour tous ses documents ;
+- **la disposition** d'un modèle de document (`templates.<nom>.style`) : elle complète la charte, clé par clé, pour les documents qui suivent ce modèle, et dispose ses sections.
+
+```yaml
+  - python: loom.word
+    style: styles/charte.yaml                # la charte (facultatif)
+    templates:
+      facture:
+        file: templates/modele-facture.md
+        style: styles/facture.yaml           # la disposition du modèle (facultatif)
+      courrier: templates/modele-courrier.md # la charte seule
+    folders: …
+```
+
+**Le modèle de langage n'en voit rien** : ni le schéma ni la description ne changent, et `action: template` ne rend que le modèle. Il écrit les mêmes blocs et les mêmes titres de section qu'avant ; le style ne coûte aucun token. Un document qui suit un modèle prend la charte complétée de sa disposition ; un document libre (`aucun`), ou un outil sans modèles, la charte ; un outil sans `style`, le style maison, le même fichier qu'avant, octet pour octet.
+
+**La charte.** Les clés sont en anglais, comme la config ; les valeurs d'une liste fermée, en français. Toutes sont facultatives : une clé absente garde la valeur du style maison.
+
+| Clé | Ce qu'elle règle | Valeurs |
+| --- | --- | --- |
+| `page` | Format, orientation, marges | `size` : `A4`, `A5`, `Letter` ; `orientation` : `portrait`, `paysage` ; `margins` : `top`, `bottom`, `left`, `right`, en cm (0,5 à 5) |
+| `fonts` | Polices du corps et des titres | `body: {name, size}` (7 à 16 pt) ; `headings: {name}` |
+| `colors` | Couleurs nommées, reprises ailleurs par leur nom | `text`, `primary` (titres), `accent` (titre 3, encadré, titre discret), `muted` (légendes, en-tête, pied), `rule` (filets fins) ; six chiffres hexadécimaux |
+| `paragraphs` | Le corps du texte | `line` (interligne, 1 à 3), `after` (espace après, en pt), `justify` |
+| `title` | Le titre du document | `size`, `color`, `align` (`gauche`, `centre`, `droite`), `uppercase`, `rule` (filet dessous) |
+| `headings` | Titres de niveaux 1 à 3 | par niveau (`1:`, `2:`, `3:`) : `size`, `color`, `uppercase` ; `numbering` : `aucune`, `decimale` (1., 2.1, 2.1.3), `article` (« Article 1 – ») |
+| `tables` | Les tableaux | `borders` : `grille`, `filets`, `horizontales`, `aucune` ; `header: {fill, color}` ; `bands` (fond d'une ligne sur deux) ; `size` (pt) ; `width` : `pleine`, `contenu` ; `align` |
+| `note` | L'encadré | `fill`, `border` |
+| `captions` | Les légendes | `numbered` : « Tableau 1 — », « Figure 1 — » (images et graphiques) |
+| `images` | Les images | `grid` : deux images `moitie` qui se suivent se posent côte à côte, chacune avec sa légende |
+| `header`, `footer` | En-tête, pied de page | `left`, `center`, `right` : un texte, avec `{page}`, `{pages}`, `{titre}` ; `lines` : des lignes centrées (4 au plus : des mentions légales) ; `logo: {file, width, position}` (PNG ou JPEG, largeur en cm) ; `first_page` : `false` pour une première page sans |
+| `watermark` | Filigrane | un texte (« BROUILLON ») ; `""` dans une disposition retire celui de la charte |
+
+Une couleur se donne en hexadécimal ou par son nom dans la charte (`color: accent`). `width: contenu` : un tableau étroit — la moitié de la page au plus, un récapitulatif — prend sa largeur, aligné selon `align` ; un plus large garde toute la largeur. Un pied de page déclaré remplace celui de la maison : pour garder les numéros, les écrire (`right: "Page {page} / {pages}"`). Aucune date n'est permise dans un en-tête ou un pied de page : deux documents identiques donneraient deux fichiers, et la date d'un document est son contenu.
+
+```yaml
+# prompts/styles/charte.yaml
+fonts: { body: { name: Arial, size: 10 } }
+colors: { primary: 0B5D3B, accent: C0392B }
+title: { size: 22, align: droite, uppercase: true, rule: false }
+headings:
+  1: { size: 13, uppercase: true }
+tables: { borders: filets, header: { fill: E8F1EC } }
+header:
+  logo: { file: images/logo.png, width: 3.5 }
+  right: "{titre}"
+footer:
+  lines:
+  - "Dupont Plomberie SARL au capital de 8 000 € · 12 rue des Lilas, 69003 Lyon · SIRET 812 345 678 00021"
+  - "TVA FR41 812345678 · Assurance décennale MAAF Pro, contrat 123456, France métropolitaine"
+  right: "Page {page} / {pages}"
+```
+
+**La disposition.** Les mêmes clés, qui complètent la charte, plus `sections` : la mise en page de chaque section du modèle, par son titre (comparé comme le plan : sans numérotation, casse ni accents), et `beside` : des sections posées côte à côte.
+
+| Clé d'une section | Effet |
+| --- | --- |
+| `title` | `visible` (par défaut) ; `masque` : relu, jamais imprimé ; `discret` : petit, couleur d'accent |
+| `align` | `gauche`, `centre`, `droite`, `justifie` : les paragraphes et listes de la section |
+| `size` | `petit` : le texte de la section deux points plus petit (conditions, mentions) |
+| `box` | La section dans un cadre |
+| `columns` | Le texte sur 2 ou 3 colonnes, équilibrées |
+| `page_break` | La section commence une page |
+| `landscape` | La section sur des pages en paysage |
+| `cover` | Page de garde : la première section du modèle, avec le titre du document, centrée, sans en-tête ni pied de page, suivie d'une nouvelle page |
+| `space_before` | Un espace avant la section, en cm (l'adresse d'un courrier dans la fenêtre de l'enveloppe) |
+| `tables` | Les tableaux de la section : les clés de `tables` de la charte |
+
+```yaml
+# prompts/styles/facture.yaml
+beside:
+- { sections: [Émetteur, Client], widths: [55, 45] }   # en %, 100 en tout
+sections:
+  Émetteur: { title: masque }
+  Client: { title: masque, box: true }
+  Description: { title: masque, tables: { width: contenu, align: droite } }
+  Informations de paiement: { title: discret }
+  Conditions et termes: { title: discret, size: petit, align: justifie }
+```
+
+La facture garde son plan : le modèle de langage écrit `# Émetteur`, `# Client`… comme avant, l'outil vérifie le plan, et le style pose l'émetteur et le client côte à côte, sans leurs titres, le client encadré, les prestations en pleine largeur et le récapitulatif à droite. Les sections de `beside` doivent se suivre dans le plan ; une section facultative absente laisse l'autre seule, en pleine largeur. Une section côte à côte n'a ni `columns`, ni `landscape`, ni `cover`, et `page_break` et `space_before` vont à la première de la ligne. Une page de garde n'a ni `landscape`, ni `columns`, ni `box`.
+
+**La relecture** rend les blocs, jamais la mise en page, que le style repose à la réécriture : les titres masqués reviennent en titres, les sections côte à côte ou encadrées en blocs dans l'ordre, les images d'une grille en blocs `image`, une légende numérotée sans son numéro (« Avant », non « Figure 1 — Avant »), un titre numéroté sans le sien. Le plan d'un document relu est celui de son modèle.
+
+Une faute de style arrête le chargement, et `loom validate` la dit, avec le style de chaque outil :
+
+```text
+tools[loom.word].templates[facture].style : section(s) hors du modèle facture : « Annexes » (plan : Émetteur · Client · Description · Informations de paiement · Conditions et termes)
+tools[loom.word].style.header.logo — logo introuvable : …/prompts/images/logo.png
+```
+
+```text
+  ├ word         sortie → ./sortie
+  │              read, write
+  │              fuseau : Europe/Paris · … · style : charte ; disposition : facture
+```
+
+Une police hors des polices de tous les postes (Arial, Calibri, Cambria, Georgia, Times New Roman, Verdana, Tahoma, Trebuchet MS, Garamond, Courier New) s'affiche dans une police de remplacement chez qui ne l'a pas : Word ne l'embarque pas. `loom validate` le signale (`polices : Inter : hors des polices de tous les postes, remplacée(s) chez qui ne les a pas`).
+
+Les styles ne servent qu'à `loom.word` pour l'instant : `style` est refusé sur `loom.pdf`, qui écrit dans son style maison.
 
 #### Lire un document Word
 

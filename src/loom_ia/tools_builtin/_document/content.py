@@ -130,6 +130,9 @@ class TableOut:
     # La part de la largeur utile de chaque colonne ; leur somme vaut 1.
     widths: tuple[float, ...]
     caption: Inline | None
+    # La largeur que le contenu demande, en part de la largeur utile (1 au plus) : celle
+    # d'un tableau qu'un style veut à sa largeur naturelle (``width: contenu``).
+    natural: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +179,8 @@ class ImageOut:
     height: int
     alt: str
     caption: Inline | None
+    # La largeur demandée : une grille d'images (style) pose côte à côte les « moitie ».
+    wanted: ImageWidth = "pleine_largeur"
 
 
 type BlockOut = (
@@ -375,7 +380,7 @@ def _table(
         tuple(display(value, column.type) for value, column in zip(cells, columns, strict=True))
         for cells in stored
     )
-    widths = _widths(headers, [*shown, *([total] if total else [])])
+    widths, natural = _widths(headers, [*shown, *([total] if total else [])])
     caption = _text(block.caption, f"{where}, caption", problems) or None
     found = TableOut(
         headers=tuple(headers),
@@ -384,6 +389,7 @@ def _table(
         total=total,
         widths=widths,
         caption=inline(caption) if caption else None,
+        natural=natural,
     )
     return found, stored
 
@@ -569,6 +575,7 @@ def _image(block: Image, pictures: Pictures, where: str, problems: Problems) -> 
         height=height,
         alt=alt or caption or "",
         caption=inline(caption) if caption else None,
+        wanted=block.width,
     )
 
 
@@ -683,8 +690,11 @@ def _align(kind: ColumnType) -> Align:
     return "center" if kind in CENTERED else "left"
 
 
-def _widths(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> tuple[float, ...]:
-    """La part de la largeur utile de chaque colonne, d'après ce qu'elle contient.
+def _widths(
+    headers: Sequence[str], rows: Sequence[Sequence[str]]
+) -> tuple[tuple[float, ...], float]:
+    """La part de la largeur utile de chaque colonne, d'après ce qu'elle contient ; et la
+    part de la page que le tableau demande (1 au plus).
 
     Chaque colonne a un **plancher** : son mot d'en-tête le plus long, en gras, et sa
     valeur la plus longue si elle est courte (``SHORT_VALUE_CHARS``) ; ni l'un ni
@@ -706,16 +716,17 @@ def _widths(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> tuple[floa
         want = min(MAX_COLUMN_CHARS, max(MIN_COLUMN_CHARS, wanted)) + COLUMN_PADDING
         floors.append(floor)
         wants.append(max(want, floor))
+    natural = min(1.0, sum(wants) / PAGE_CHARS)
     if sum(wants) <= PAGE_CHARS:
         # Tout tient : chaque colonne selon ce qu'elle veut.
-        return tuple(want / sum(wants) for want in wants)
+        return tuple(want / sum(wants) for want in wants), natural
     if sum(floors) >= PAGE_CHARS:
         # Même les planchers débordent : la page se partage selon eux.
-        return tuple(floor / sum(floors) for floor in floors)
+        return tuple(floor / sum(floors) for floor in floors), natural
     spare = PAGE_CHARS - sum(floors)
     extra = [want - floor for want, floor in zip(wants, floors, strict=True)]
     shares = [floor + spare * more / sum(extra) for floor, more in zip(floors, extra, strict=True)]
-    return tuple(share / PAGE_CHARS for share in shares)
+    return tuple(share / PAGE_CHARS for share in shares), natural
 
 
 def display(value: Stored, kind: ColumnType) -> str:

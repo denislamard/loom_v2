@@ -16,10 +16,14 @@ Ce qui revient au modèle reprend le vocabulaire de l'écriture : ``titre``
 (``level`` 1 à 3 et plus, 0 pour le titre du document), ``paragraphe``,
 ``liste`` (``items`` : textes, ou ``{text, items}``), ``tableau`` (``rows``).
 L'emphase revient en ``**gras**`` et ``*italique*`` : ce qui est lu peut être
-réécrit tel quel. Avec ``images``, une image du corps revient en bloc ``image``
-(``path`` : l'adresse du fichier lu à l'écriture, gardée dans le nom du dessin) ;
-sans, elle est comptée. Les en-têtes, pieds de page et commentaires ne sont pas
-lus ; le résultat le dit.
+réécrit tel quel. Ce qu'un style de document a posé ne revient pas, puisque le style
+le repose à la réécriture : un tableau de disposition (style « loom layout » : des
+sections côte à côte, un encadré, une grille d'images) rend les blocs de ses
+cellules, dans l'ordre ; une légende numérotée (« Figure 2 — Avant ») rend son texte
+sans le numéro ; un titre masqué revient en titre. Avec ``images``, une image du
+corps revient en bloc ``image`` (``path`` : l'adresse du fichier lu à l'écriture,
+gardée dans le nom du dessin) ; sans, elle est comptée. Les en-têtes, pieds de page
+et commentaires ne sont pas lus ; le résultat le dit.
 """
 
 import io
@@ -75,6 +79,12 @@ _CP_CATEGORY: Final = (
     "{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}category"
 )
 _FALSE: Final = frozenset({"0", "false", "off"})
+# Le nom du style de tableau de disposition qu'écrit l'outil (``word/style.py``).
+LAYOUT_STYLE: Final = "loom layout"
+# Un tableau de disposition dans un autre (une grille d'images dans une colonne) : borné.
+MAX_LAYOUT_DEPTH: Final = 4
+# Ce qui sépare le numéro d'une légende de son texte (« Figure 2 — Avant »).
+_CAPTION_SEPARATORS: Final = " \u2014\u2013-:."
 # Sous-arbres d'un paragraphe qui ne sont pas son texte.
 _SKIPPED: Final = frozenset(
     {"del", "delText", "moveFrom", "instrText", "drawing", "pict", "object", "footnoteReference",
@@ -155,6 +165,9 @@ class _Style:
     outline: int | None
     # La numérotation que le style porte (un style de liste), ou ``None``.
     num_id: str | None
+    # Le style annule la numérotation de son parent (``numId 0``) : un titre masqué
+    # d'un document aux titres numérotés, l'en-tête de table des matières de Word.
+    numbering_off: bool = False
 
 
 @dataclass(slots=True)
@@ -162,6 +175,8 @@ class _Package:
     archive: zipfile.ZipFile
     body: str
     styles: dict[str, _Style]
+    # Les styles de tableau de disposition (identifiants) : leurs cellules sont des blocs.
+    layouts: frozenset[str]
     # numId → numéroté (vrai) ou à puces, par niveau.
     numbering: dict[str, dict[int, bool]]
     title: str | None
@@ -201,10 +216,12 @@ def _open(data: bytes, where: str) -> _Package:
     title, category = _properties(archive, names, where)
     styles_part = related.get("styles")
     numbering_part = related.get("numbering")
+    styles_root = _whole(archive, styles_part, where) if styles_part else None
     return _Package(
         archive=archive,
         body=body,
-        styles=_styles(_whole(archive, styles_part, where)) if styles_part else {},
+        styles=_styles(styles_root),
+        layouts=_layouts(styles_root),
         numbering=_numbering(_whole(archive, numbering_part, where)) if numbering_part else {},
         title=title,
         category=category,
@@ -286,6 +303,7 @@ def _styles(root: Element | None) -> dict[str, _Style]:
         properties = _child(style, "pPr")
         outline = None
         num_id: str | None = None
+        off = False
         if properties is not None:
             level = _child(properties, "outlineLvl")
             value = _attribute(level, "val") if level is not None else None
@@ -295,13 +313,31 @@ def _styles(root: Element | None) -> dict[str, _Style]:
                 number = _child(numbering, "numId")
                 value = _attribute(number, "val") if number is not None else None
                 num_id = value if value not in (None, "0") else None
+                off = value == "0"
         found[style_id] = _Style(
             name=name.lower(),
             based_on=_attribute(based, "val") if based is not None else None,
             outline=outline,
             num_id=num_id,
+            numbering_off=off,
         )
     return found
+
+
+def _layouts(root: Element | None) -> frozenset[str]:
+    """Les styles de tableau de disposition : nommés « loom layout »."""
+    if root is None:
+        return frozenset()
+    found: set[str] = set()
+    for style in root:
+        if _local(style.tag) != "style" or _attribute(style, "type") != "table":
+            continue
+        name_element = _child(style, "name")
+        name = (_attribute(name_element, "val") if name_element is not None else None) or ""
+        style_id = _attribute(style, "styleId")
+        if style_id is not None and name.lower() == LAYOUT_STYLE:
+            found.add(style_id)
+    return frozenset(found)
 
 
 def _numbering(root: Element | None) -> dict[str, dict[int, bool]]:
@@ -458,19 +494,31 @@ def _walk(package: _Package, reading: _Reading, deadline: float, where: str) -> 
     _close_list(reading)
 
 
-def _block(package: _Package, reading: _Reading, element: Element) -> None:
+def _block(package: _Package, reading: _Reading, element: Element, depth: int = 0) -> None:
     match _local(element.tag):
         case "p":
             _paragraph(package, reading, element)
+        case "tbl" if depth < MAX_LAYOUT_DEPTH and _is_layout(package, element):
+            # Un tableau de disposition : ses cellules, dans l'ordre, sont des blocs.
+            for row in element:
+                for cell in row if _local(row.tag) == "tr" else ():
+                    for child in cell if _local(cell.tag) == "tc" else ():
+                        _block(package, reading, child, depth + 1)
         case "tbl":
             _close_list(reading)
             _emit(reading, {"type": "tableau", "rows": _table(package, reading, element)})
         case "sdt":
             content = _child(element, "sdtContent")
             for child in list(content) if content is not None else []:
-                _block(package, reading, child)
+                _block(package, reading, child, depth)
         case _:
             return
+
+
+def _is_layout(package: _Package, table: Element) -> bool:
+    properties = _child(table, "tblPr")
+    style = _child(properties, "tblStyle") if properties is not None else None
+    return style is not None and _attribute(style, "val") in package.layouts
 
 
 def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
@@ -496,7 +544,7 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
         _close_list(reading)
         reading.images -= 1
         _emit(reading, _chart(package, chart_id))
-    text = _markdown(_segments(element))
+    text = _markdown(_segments(_without_number(element)))
     pictures = _pictures(package, element) if reading.pictures else []
     if text.strip() and reading.last_image is not None and reading.pending is None and not pictures:
         if _style_name(package.styles, style_id) == "caption":
@@ -550,6 +598,46 @@ _KIND: Final = {
     "quote source": "citation",
     "note": "note",
 }
+
+
+def _without_number(paragraph: Element) -> Element:
+    """Une légende numérotée sans son numéro : ce qui suit le champ ``SEQ`` (« Figure 2 »).
+
+    Le numéro vient du style (``captions.numbered``) : relu, il se doublerait à la
+    réécriture. Un champ simple (``fldSimple``) ou complexe (``fldChar``) ; un paragraphe
+    sans champ ``SEQ`` est rendu tel quel.
+    """
+    children = list(paragraph)
+    after: int | None = None
+    sequence = False
+    for index, child in enumerate(children):
+        name = _local(child.tag)
+        if name == "fldSimple" and (_attribute(child, "instr") or "").split()[:1] == ["SEQ"]:
+            after = index + 1
+            break
+        if name == "r":
+            for part in child:
+                if _local(part.tag) == "instrText" and (part.text or "").split()[:1] == ["SEQ"]:
+                    sequence = True
+                elif (
+                    sequence
+                    and _local(part.tag) == "fldChar"
+                    and _attribute(part, "fldCharType") == "end"
+                ):
+                    after = index + 1
+            if after is not None:
+                break
+    if after is None:
+        return paragraph
+    kept = Element(paragraph.tag)
+    kept.extend(children[after:])
+    # Le séparateur (« — ») ouvre le texte qui suit le numéro.
+    for node in kept.iter():
+        if _local(node.tag) == "t" and node.text:
+            node.text = node.text.lstrip(_CAPTION_SEPARATORS)
+            if node.text:
+                break
+    return kept
 
 
 def _style_name(styles: dict[str, _Style], style_id: str | None) -> str:
@@ -719,6 +807,9 @@ def _style_meaning(
     title = False
     outline: int | None = None
     listed: str | None = None
+    # Un style qui annule la numérotation (``numId 0``) arrête la recherche : celle d'un
+    # style parent ne s'applique plus (B-4).
+    cancelled = False
     current = style_id
     while current is not None and current not in seen and len(seen) < 20:
         seen.add(current)
@@ -732,7 +823,9 @@ def _style_meaning(
         if outline is None and style.name.startswith("heading "):
             number = style.name.removeprefix("heading ")
             outline = int(number) - 1 if number.isdigit() and number != "0" else None
-        listed = listed or style.num_id
+        if not cancelled:
+            listed = listed or style.num_id
+            cancelled = listed is None and style.numbering_off
         current = style.based_on
     return title, outline, listed
 

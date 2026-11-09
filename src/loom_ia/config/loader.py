@@ -37,6 +37,14 @@ from loom_ia.core.model import (
 )
 from loom_ia.core.template import Template, TemplateError
 from loom_ia.tools_builtin._office_params import TemplateRef
+from loom_ia.tools_builtin._style_params import (
+    MAX_LOGO_BYTES,
+    MAX_STYLE_CHARS,
+    StyleRef,
+    StyleSpec,
+    check_charte,
+    check_layout,
+)
 from loom_ia.tools_builtin._templates import parse as parse_template
 
 AGENT_SUFFIXES = (".yaml", ".yml")
@@ -358,8 +366,13 @@ def _with_tool_skills(spec: AgentSpec, prompts_dir: Path, *, source: Path) -> Ag
             update={"tools": _with_skills(tool.tools, prompts_dir, _ref_label(tool), source=source)}
         )
         if isinstance(tool, McpTools | SourceTools)
-        else _templates_read(
-            _skill_read(tool, prompts_dir, f"tools[{tool.python}]", source=source),
+        else _styles_read(
+            _templates_read(
+                _skill_read(tool, prompts_dir, f"tools[{tool.python}]", source=source),
+                prompts_dir,
+                f"tools[{tool.python}]",
+                source=source,
+            ),
             prompts_dir,
             f"tools[{tool.python}]",
             source=source,
@@ -400,8 +413,107 @@ def _templates_read(
             raise ConfigError(f"{where} — modèle illisible : {exc}", source=source) from exc
         except ValueError as exc:
             raise ConfigError(f"{where} — {exc} : {path}", source=source) from exc
-        read[name] = TemplateRef(text=text)
+        read[name] = TemplateRef(text=text, style=ref.style)
     return declared.model_copy(update={"templates": read})
+
+
+def _styles_read(
+    declared: PythonTool, prompts_dir: Path, label: str, *, source: Path
+) -> PythonTool:
+    """Les styles d'un outil ``loom.word``, lus : sa charte et la disposition de ses modèles.
+
+    Chaque fichier YAML, relatif à ``prompts_dir`` et contenu dans ce dossier, est lu
+    une fois au chargement avec ses logos, et validé ici : une faute (clé inconnue,
+    section hors du plan du modèle, logo absent) se voit dès ``loom validate``. Les
+    modèles sont déjà lus (``_templates_read``) : la disposition se compare à leur plan.
+    """
+    charte = cast(object, getattr(declared, "style", None))
+    templates = cast(object, getattr(declared, "templates", None))
+    update: dict[str, object] = {}
+    if isinstance(charte, StyleRef):
+        where = f"{label}.style"
+        spec = _style_read(charte, prompts_dir, where, source=source)
+        try:
+            check_charte(spec, where)
+        except ValueError as exc:
+            raise ConfigError(str(exc), source=source) from exc
+        update["style"] = StyleRef(spec=spec)
+    if isinstance(templates, dict) and templates:
+        read: dict[str, TemplateRef] = {}
+        for name, ref in cast(dict[str, TemplateRef], templates).items():
+            if ref.style is None:
+                read[name] = ref
+                continue
+            where = f"{label}.templates[{name}].style"
+            spec = _style_read(ref.style, prompts_dir, where, source=source)
+            try:
+                check_layout(spec, parse_template(name, ref.text or ""), where)
+            except ValueError as exc:
+                raise ConfigError(str(exc), source=source) from exc
+            read[name] = ref.model_copy(update={"style": StyleRef(spec=spec)})
+        update["templates"] = read
+    return declared.model_copy(update=update) if update else declared
+
+
+def _style_read(ref: StyleRef, prompts_dir: Path, where: str, *, source: Path) -> StyleSpec:
+    """Un fichier de style lu et validé, ses logos lus ; ou le style donné en Python."""
+    if ref.spec is not None:
+        return _logos_read(ref.spec, prompts_dir, where, source=source)
+    file = cast(Path, ref.file)
+    path = _within_prompts(prompts_dir, file, where, source=source)
+    if not path.is_file():
+        raise ConfigError(
+            f"{where} — style introuvable : {path}{_hint(prompts_dir, file)}", source=source
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigError(f"{where} — style illisible : {exc}", source=source) from exc
+    if len(text) > MAX_STYLE_CHARS:
+        raise ConfigError(
+            f"{where} — style de {len(text)} caractères, au-delà de {MAX_STYLE_CHARS} : {path}",
+            source=source,
+        )
+    try:
+        data = load_yaml(text)
+    except (yaml.YAMLError, DuplicateKey) as exc:
+        raise ConfigError(f"{where} — YAML invalide : {exc} : {path}", source=source) from exc
+    try:
+        spec = StyleSpec.model_validate(data if data is not None else {})
+    except ValidationError as exc:
+        error = from_validation(exc, root=None, data=data)
+        lines = "\n".join(f"{where}.{line}" for line in error.reason.splitlines())
+        raise ConfigError(f"{lines}\n({path})", source=source) from exc
+    return _logos_read(spec, prompts_dir, where, source=source)
+
+
+def _logos_read(spec: StyleSpec, prompts_dir: Path, where: str, *, source: Path) -> StyleSpec:
+    """Les logos d'un style, lus : leurs octets à la place de leur fichier."""
+    bands: dict[str, object] = {}
+    for band in ("header", "footer"):
+        given = getattr(spec, band)
+        if given is None or given.logo is None or given.logo.file is None:
+            continue
+        label = f"{where}.{band}.logo"
+        path = _within_prompts(prompts_dir, given.logo.file, label, source=source)
+        if not path.is_file():
+            raise ConfigError(
+                f"{label} — logo introuvable : {path}{_hint(prompts_dir, given.logo.file)}",
+                source=source,
+            )
+        try:
+            size = path.stat().st_size
+            if size > MAX_LOGO_BYTES:
+                raise ConfigError(
+                    f"{label} — logo de {size} octets, au-delà de {MAX_LOGO_BYTES} : {path}",
+                    source=source,
+                )
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ConfigError(f"{label} — logo illisible : {exc}", source=source) from exc
+        logo = given.logo.model_copy(update={"file": None, "data": data})
+        bands[band] = given.model_copy(update={"logo": logo})
+    return spec.model_copy(update=bands) if bands else spec
 
 
 def _ref_label(ref: McpTools | SourceTools) -> str:

@@ -31,13 +31,21 @@ def _attribute(text: str) -> str:
 
 def inline(relation: str, drawing: int, image: ImageOut, *, keep_next: bool) -> str:
     """Le paragraphe centré qui porte l'image ; ``keep_next`` la garde avec sa légende."""
-    cx, cy = image.width * EMU, image.height * EMU
-    name = _attribute(image.source)
-    descr = _attribute(image.alt)
     keep = "<w:keepNext/>" if keep_next else ""
     return (
         f'<w:p><w:pPr>{keep}<w:spacing w:before="120" w:after="60"/><w:jc w:val="center"/>'
-        "</w:pPr><w:r><w:drawing>"
+        "</w:pPr>"
+        + run(relation, drawing, image.width * EMU, image.height * EMU, image.source, image.alt)
+        + "</w:p>"
+    )
+
+
+def run(relation: str, drawing: int, cx: int, cy: int, name_text: str, alt: str) -> str:
+    """Le segment qui porte une image en ligne, de ``cx`` sur ``cy`` EMU (un logo, une photo)."""
+    name = _attribute(name_text)
+    descr = _attribute(alt)
+    return (
+        "<w:r><w:drawing>"
         f'<wp:inline xmlns:wp="{_WP}" distT="0" distB="0" distL="0" distR="0">'
         f'<wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>'
         f'<wp:docPr id="{drawing}" name="{name}" descr="{descr}"/>'
@@ -51,5 +59,5 @@ def inline(relation: str, drawing: int, image: ImageOut, *, keep_next: bool) -> 
         "<a:stretch><a:fillRect/></a:stretch></pic:blipFill>"
         f'<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
         '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
-        "</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"
+        "</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"
     )

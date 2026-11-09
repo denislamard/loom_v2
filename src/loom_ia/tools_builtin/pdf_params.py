@@ -18,7 +18,8 @@ Les dossiers suivent la forme de ``loom.local_files`` (``name``, ``path``,
 ``rights``, ``approval``) ; le droit ``delete`` n'a pas de sens ici et est refusé.
 """
 
-from typing import Annotated, Final, Self
+from collections.abc import Mapping
+from typing import Annotated, Final, Self, cast
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
@@ -36,6 +37,11 @@ REFERENCE: Final = "loom.pdf"
 # PDF forgés (CVE-2026-59935, -59937). Ici, et non dans l'outil, pour que ``loom.memory``
 # le vérifie sans importer reportlab.
 SAFE_PYPDF: Final = (6, 14, 2)
+
+
+def _mapping(value: object) -> Mapping[object, object]:
+    """``value`` s'il est une table (le YAML d'un outil, d'un modèle), sinon une table vide."""
+    return cast(Mapping[object, object], value) if isinstance(value, Mapping) else {}
 
 
 class PdfParams(BaseModel):
@@ -58,6 +64,21 @@ class PdfParams(BaseModel):
     images: bool = False
     # Les modèles de document, par nom : fichiers relatifs à prompts_dir, lus au chargement.
     templates: Templates = {}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_style(cls, value: object) -> object:
+        """Les styles ne servent qu'à ``loom.word`` pour l'instant : le dire, pas « extra »."""
+        templates = _mapping(value).get("templates")
+        styled = "style" in _mapping(value) or any(
+            "style" in _mapping(ref) for ref in _mapping(templates).values()
+        )
+        if styled:
+            raise ValueError(
+                "style : les styles de document ne servent qu'à loom.word pour l'instant "
+                "(loom.pdf écrit dans son style maison) ; retirer style"
+            )
+        return value
 
     @model_validator(mode="after")
     def _check(self) -> Self:

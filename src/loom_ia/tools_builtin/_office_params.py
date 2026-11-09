@@ -5,8 +5,8 @@ Leurs dossiers suivent la forme de ``loom.local_files`` (``name``, ``path``,
 ``rights``, ``approval``), sans le droit ``delete`` : ces outils ne suppriment
 rien. Leur fuseau est un nom IANA, vérifié au chargement.
 
-Module léger — Pydantic, ``local_files_params`` et ``_templates`` (la
-bibliothèque standard) seulement — : la config
+Module léger — Pydantic, ``local_files_params``, ``_templates`` (la bibliothèque
+standard) et ``_style_params`` seulement — : la config
 l'importe pour valider une référence, sans importer aucun des outils.
 """
 
@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, model_validator
 
+from loom_ia.tools_builtin._style_params import StyleField
 from loom_ia.tools_builtin._templates import MAX_TEMPLATES, Template, check_name
 from loom_ia.tools_builtin._templates import parse as parse_template
 from loom_ia.tools_builtin.local_files_params import FolderSpec
@@ -108,6 +109,8 @@ class TemplateRef(BaseModel):
 
     file: Path | None = None
     text: str | None = None
+    # La disposition du modèle (``loom.word``) : un fichier de style, lu au chargement.
+    style: StyleField = None
 
     @model_validator(mode="after")
     def _one(self) -> Self:

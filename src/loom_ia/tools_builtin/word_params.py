@@ -15,8 +15,12 @@ l'importe pour valider la référence au chargement, sans importer l'outil.
       timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
       charts: true                     # le bloc graphique ; false par défaut
       images: true                     # le bloc image ; false par défaut
+      style: styles/charte.yaml        # la charte (facultatif), relative à prompts_dir
       templates:                       # modèles de document, relatifs à prompts_dir
         cahier-des-charges: modele-cdc.md
+        facture:                       # un modèle et sa disposition (facultatif)
+          file: modele-facture.md
+          style: styles/facture.yaml
 
 Les dossiers suivent la forme de ``loom.local_files`` (``name``, ``path``,
 ``rights``, ``approval``) ; le droit ``delete`` n'a pas de sens ici et est refusé.
@@ -33,6 +37,7 @@ from loom_ia.tools_builtin._office_params import (
     checked_folders,
     no_delete,
 )
+from loom_ia.tools_builtin._style_params import StyleField
 from loom_ia.tools_builtin.local_files_params import FolderSpec
 
 REFERENCE: Final = "loom.word"
@@ -58,6 +63,9 @@ class WordParams(BaseModel):
     images: bool = False
     # Les modèles de document, par nom : fichiers relatifs à prompts_dir, lus au chargement.
     templates: Templates = {}
+    # La charte : un fichier de style relatif à prompts_dir, lu au chargement ; la
+    # disposition d'un modèle se déclare sur le modèle (templates.<nom>.style).
+    style: StyleField = None
 
     @model_validator(mode="after")
     def _check(self) -> Self:
