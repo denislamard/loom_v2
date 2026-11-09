@@ -62,6 +62,7 @@ Référence relevée dans le schéma Pydantic de loom-ia 2.0.9 (`config/models.p
 | [`policies`](#policies) | Politiques (hooks) |
 | [`max_depth`](#max_depth) | Profondeur des sous-agents |
 | [`state`](#state) | Clés du state de session |
+| [`execution`](#execution-agent) | Ordre des appels d'outils propre à l'agent |
 
 Blocs partagés, décrits une fois : [contrat de sortie](#bloc-contrat-de-sortie-output), [surcharges d'outil](#bloc-surcharges-doutil-tools), [réglages `llm`](#bloc-réglages-llm), [budgets](#budgets), [stockage](#storage).
 
@@ -307,6 +308,7 @@ storage:
 | `tools.timeout` | Délai par défaut d'un outil (s), sauf délai propre à l'outil. | nombre > 0, `null` (sans limite) | `30` | `tools: {timeout: 60}` |
 | `tools.validate_arguments` | Contrôle des arguments par le schéma de l'outil ; une erreur repart au modèle. | booléen | `true` | |
 | `tools.offload_over` | Taille d'un résultat (caractères) au-delà de laquelle il est déporté en artefact. | entier > 0, `null` (jamais) | `50000` | |
+| `tools.order` | Ordre des appels d'un même tour. `effects` : les appels sans effet qui se suivent partent ensemble ; un appel à effet (`side_effects` autre que `none`, ou l'évaluation de l'appel par l'outil) attend que ceux qui le précèdent dans la réponse soient finis, et ceux qui le suivent l'attendent ; un appel qui attend une approbation retient de même ceux qui le suivent. `free` : tous partent ensemble (comportement d'avant 2.0.20). Réglable par agent (`execution.tools.order` de l'agent). | `effects`, `free` | `effects` | `tools: {order: free}` |
 | `attachments.max_bytes` | Taille maximale d'une pièce jointe. | entier > 0 | `5242880` (5 Mio) | |
 | `attachments.types` | Types MIME acceptés en entrée d'un run ; **images seulement**. | liste parmi `image/jpeg`, `image/png`, `image/gif`, `image/webp` | les quatre | `types: [image/png]` |
 | `attachments.max_files` | Pièces jointes par run ; borne aussi un envoi REST. | entier > 0 | `10` | |
@@ -661,7 +663,7 @@ Liste d'outils, sous trois formes, dans l'ordre de déclaration.
 | `skill` | Mode d'emploi ajouté **à la suite** de la description : quand se servir de l'outil, comment choisir entre ses options. Part avec chaque appel de modèle de l'agent ; au-delà de 8 000 caractères, un avertissement. Pas de `{{ variables }}`. Exclusif de `skill_file`. | texte non vide | `null` | `skill: Une liste par onglet.` |
 | `skill_file` | Le même dans un fichier, relatif à `prompts_dir` et contenu dans ce dossier, lu au chargement. | chemin | `null` | `skill_file: excel.md` |
 | `timeout` | Délai de l'outil (s). | nombre > 0 | celui de l'outil, sinon `execution.tools.timeout` | `timeout: 60` |
-| `side_effects` | Nature de ses effets ; un outil sans effet ou idempotent est relancé sans risque à la reprise. | `none`, `reversible`, `irreversible` | celui de l'outil, sinon `none` | `side_effects: irreversible` |
+| `side_effects` | Nature de ses effets ; un outil sans effet ou idempotent est relancé sans risque à la reprise ; un outil à effet attend ses voisins dans l'ordre des appels d'un tour (`execution.tools.order`). Un outil Python qui ne déclare ses effets ni ici ni dans `@tool` passe pour sans effet, et `loom validate` le signale. | `none`, `reversible`, `irreversible` | celui de l'outil, sinon `none` | `side_effects: irreversible` |
 | `approval` | Approbation : jamais, toujours (pause du run), ou selon une politique. | `never`, `always`, `policy` | celui de l'outil, sinon `never` | `approval: always` |
 | `idempotent` | L'outil reçoit une clé d'idempotence ; un appel déjà fait n'est pas refait à la reprise. | booléen | celui de l'outil, sinon `false` | `idempotent: true` |
 | `offload_over` | Seuil de déport du résultat (caractères). | entier > 0 | celui de l'outil, sinon `execution.tools.offload_over` | `offload_over: 20000` |
@@ -726,6 +728,7 @@ roles:
 | `name` | Nom de l'outil vu par l'orchestrateur ; unique. | `^[A-Za-z0-9_-]{1,64}$` | le nom de l'agent | `name: chercher_web` |
 | `description` | Description de l'outil. | texte | celle de l'agent (l'une des deux est exigée) | |
 | `budget_share` | Part de ce qui reste au budget du run parent au moment de l'appel ; exige un budget de run. | ]0, 1] | `null` : budget propre de l'agent | `budget_share: 0.3` |
+| `side_effects` | Effets du sous-agent, ceux des outils de son agent. Ils décident de l'ordre des appels d'un tour : à `none`, deux sous-agents d'une même réponse tournent ensemble ; sinon, l'un après l'autre. | `none`, `reversible`, `irreversible` | `irreversible` | `side_effects: none` |
 
 ## `policies`
 
@@ -817,6 +820,14 @@ main:
 ---
 
 # Blocs partagés
+
+<a id="execution-agent"></a>
+
+## `execution`
+
+| Clé | Rôle et impact | Valeurs | Défaut | Exemple |
+|---|---|---|---|---|
+| `tools.order` | Ordre des appels d'un même tour pour cet agent ; remplace `execution.tools.order` de `loom.yaml`. Seule clé réglable par agent. | `effects`, `free` | `null` : celui de `loom.yaml` | `execution: {tools: {order: free}}` |
 
 ## Bloc contrat de sortie (`output`)
 

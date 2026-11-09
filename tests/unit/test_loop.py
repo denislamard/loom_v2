@@ -447,11 +447,12 @@ async def test_resume_after_a_crash_during_the_tool_batch(store: EventStore) -> 
         await crashed
 
     interrupted = await journal(store, run)
+    # L'appel à effet part d'abord, seul ; la lecture qui le suit attend sa fin (ordre des appels).
     assert kinds(interrupted)[-4:] == [
         "step:tool_batch",
         "tool.called",
-        "tool.called",
         "tool.completed",
+        "tool.called",
     ]
 
     model = scripted(Message.assistant("Fait."))
@@ -1096,11 +1097,16 @@ async def test_a_policy_failure_closes_the_subrun_waiting_for_an_approval(
     sub = delegating("verifier", "verificateur", agents)
     # Dans le même lot, un outil dont le résultat fait échouer le run, et un enfant qui s'arrête
     # sur une approbation : le lot va à son terme, le parent échoue, l'enfant attend toujours.
+    # Les deux partent ensemble (``order: free``) : dans l'ordre, l'échec arrêterait la
+    # chaîne avant l'enfant, qui ne serait jamais lancé.
     model = scripted(
         tool_call_message(("c1", "calculer", {"expr": "1+1"}), ("c2", "verifier", {"message": "?"}))
     )
     ctx = context(
-        store, model, tools=ToolExecutor([calculer, sub]), policies=unbounded(coupe_au_resultat)
+        store,
+        model,
+        tools=ToolExecutor([calculer, sub], order="free"),
+        policies=unbounded(coupe_au_resultat),
     )
 
     state = await drive(ctx, (await begin_run(ctx, "?")).run_id)
@@ -1127,7 +1133,8 @@ async def test_a_failing_subrun_closes_its_own_open_subruns(store: EventStore) -
     agents["verificateur"] = context(
         store,
         child_model,
-        tools=ToolExecutor([calculer, controler]),
+        # Ensemble, comme au test d'avant : sinon l'échec arrêterait la chaîne avant l'enfant.
+        tools=ToolExecutor([calculer, controler], order="free"),
         policies=unbounded(coupe_au_resultat),
     )
     verifier = delegating("verifier", "verificateur", agents, max_depth=2)

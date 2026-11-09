@@ -768,6 +768,10 @@ class SubAgentRef(DomainModel):
     description: str | None = None
     # Part de ce qui reste au budget du run appelant au moment de l'appel (J4).
     budget_share: float | None = Field(default=None, gt=0.0, le=1.0)
+    # Effets du sous-agent, ceux des outils de son agent : ``irreversible`` par
+    # défaut. Ils décident de l'ordre des appels d'un même tour : déclaré
+    # ``none``, il tourne en même temps que les autres appels sans effet.
+    side_effects: SideEffects = "irreversible"
 
     @model_validator(mode="before")
     @classmethod
@@ -1111,6 +1115,17 @@ def _check_access_list(label: str, roles: tuple[str, ...]) -> None:
             raise ValueError(f"{label} : identifiant de rôle invalide : {role!r}")
 
 
+class AgentToolsExecution(DomainModel):
+    """Exécution des outils propre à l'agent ; ``None`` garde le réglage de la racine."""
+
+    # Ordre des appels d'un même tour (``execution.tools.order`` de loom.yaml).
+    order: Literal["effects", "free"] | None = None
+
+
+class AgentExecution(DomainModel):
+    tools: AgentToolsExecution = AgentToolsExecution()
+
+
 class AgentSpec(DomainModel):
     name: str = Field(pattern=AGENT_NAME_PATTERN)
     description: str = ""
@@ -1152,6 +1167,8 @@ class AgentSpec(DomainModel):
     max_depth: PositiveInt = 1
     # State de la session (option C) : les clés qu'elle peut porter (D6).
     state: dict[str, StateKey] = Field(default_factory=dict[str, StateKey])
+    # Exécution des outils : remplace, clé par clé, ``execution.tools`` de loom.yaml.
+    execution: AgentExecution = AgentExecution()
 
     @model_validator(mode="after")
     def _check_state(self) -> Self:

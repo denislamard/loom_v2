@@ -489,6 +489,10 @@ class ToolsExecution(DomainModel):
     validate_arguments: bool = True
     # Au-delà, en caractères, le résultat est déporté (#16) ; ``null`` le désactive.
     offload_over: PositiveInt | None = 50_000
+    # Ordre des appels d'un même tour : ``effects``, un appel à effet attend ceux
+    # qui le précèdent et ceux qui le suivent l'attendent ; ``free``, tous
+    # partent ensemble (avant 2.0.20).
+    order: Literal["effects", "free"] = "effects"
 
 
 class ExecutionConfig(DomainModel):

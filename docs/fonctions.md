@@ -6,7 +6,7 @@
 
 - **A1** Lancer un run à partir d'une demande (texte et pièces jointes) et obtenir une réponse finale.
 - **A2** Boucle agentique : l'orchestrateur choisit les outils et recommence jusqu'à pouvoir répondre.
-- **A3** Plusieurs appels d'outils en parallèle dans un même tour.
+- **A3** Plusieurs appels d'outils en parallèle dans un même tour ; un appel à effet attend ceux qui le précèdent, et ceux qui le suivent l'attendent (2.0.20).
 - **A4** Arrêts : réponse obtenue, max d'itérations, budget, outil terminal, pause pour validation humaine. En dernier recours, une réponse forcée sans outils.
 - **A5** `[V2]` Annuler un run en cours.
 - **A6** `[V2]` Timeout global du run.
@@ -647,7 +647,7 @@ ToolOutput
         | approval.expired  (→ Deny ou Fail, configurable)
   ```
 
-- **Lot parallèle :** les appels qui ne demandent pas d'approbation s'exécutent, puis le run passe en `PAUSED` pour les autres.
+- **Lot parallèle :** les appels qui précèdent un appel à approuver s'exécutent ; ceux qui le suivent l'attendent (tous s'il a un effet, les appels à effet sinon), et ceux qui exigent une approbation la demandent dans la même pause ; puis le run passe en `PAUSED`. Avec `execution.tools.order: free`, tous les appels qui ne demandent pas d'approbation s'exécutent avant la pause, comme avant 2.0.20.
 - **Audit :** l'identité de l'approbateur (clé API ou utilisateur) est enregistrée. Depuis 2.0.17, c'est toujours un utilisateur déclaré, avec sa passerelle et les rôles qui l'ont permis (#52).
 - **Canal :** l'API REST (scope `approve`) ou l'elicitation MCP, jamais un outil MCP (point 39). Depuis 2.0.17, la permission `approve` d'un rôle de l'utilisateur, sur tous les accès (#52).
 

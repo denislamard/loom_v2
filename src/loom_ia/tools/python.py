@@ -25,6 +25,12 @@ nombre, modèle Pydantic…) donne un bloc JSON, recopié dans ``data``.
 
 Une fonction synchrone s'exécute dans un thread : un timeout rend la main au
 moteur, mais ne peut pas interrompre le thread.
+
+Effets de bord (``side_effects``) : sans déclaration, l'outil passe pour sans
+effet (``none``). Un outil qui écrit doit le dire : c'est ce qui le fait
+approuver par une politique, attendre ses voisins dans l'ordre des appels d'un
+tour, et ne pas relancer à la reprise. ``loom validate`` signale un outil qui
+ne déclare rien (``declares_effects``).
 """
 
 import asyncio
@@ -103,7 +109,7 @@ class FunctionTool[**P, R]:
         *,
         name: str | None = None,
         description: str | None = None,
-        side_effects: SideEffects = "none",
+        side_effects: SideEffects | None = None,
         approval: Approval = "never",
         idempotent: bool = False,
         on_unknown: UnknownState = "error",
@@ -111,6 +117,8 @@ class FunctionTool[**P, R]:
         offload_over: int | None = None,
     ) -> None:
         self.fn = fn
+        # Sans déclaration, l'outil passe pour sans effet : ``loom validate`` le signale.
+        self.declares_effects = side_effects is not None
         self._is_async = inspect.iscoroutinefunction(fn)
         tool_name = name or fn.__name__
         text = description if description is not None else inspect.getdoc(fn)
@@ -125,7 +133,7 @@ class FunctionTool[**P, R]:
             description=text,
             input_schema=cast(dict[str, JsonValue], schema),
             kind=self.kind,
-            side_effects=side_effects,
+            side_effects=side_effects or "none",
             approval=approval,
             idempotent=idempotent,
             on_unknown=on_unknown,
@@ -196,7 +204,7 @@ def tool[**P, R](
     *,
     name: str | None = None,
     description: str | None = None,
-    side_effects: SideEffects = "none",
+    side_effects: SideEffects | None = None,
     approval: Approval = "never",
     idempotent: bool = False,
     on_unknown: UnknownState = "error",
@@ -211,7 +219,7 @@ def tool[**P, R](
     *,
     name: str | None = None,
     description: str | None = None,
-    side_effects: SideEffects = "none",
+    side_effects: SideEffects | None = None,
     approval: Approval = "never",
     idempotent: bool = False,
     on_unknown: UnknownState = "error",

@@ -11,9 +11,20 @@ qu'elle a transmis et ce que le champ attend : le modèle ne reconnaîtrait
 pas une valeur qu'il n'a pas écrite.
 
 ``tool.called`` n'est écrit que pour un appel réellement lancé : c'est la
-marque qu'un effet de bord a peut-être eu lieu. Tous les ``tool.called`` du
-lot sont écrits avant la première exécution, puis chaque ``tool.completed``
-dès que son outil répond.
+marque qu'un effet de bord a peut-être eu lieu. Il est écrit juste avant le
+lancement, puis chaque ``tool.completed`` dès que son outil répond.
+
+Ordre des appels (``order: effects``, par défaut) : les appels d'une réponse
+partent par segments, dans l'ordre où le modèle les a écrits. Les appels sans
+effet qui se suivent forment un segment et partent ensemble ; un appel à effet
+(``side_effects``, ou l'évaluation de l'appel) forme un segment à lui seul : il
+attend que tout ce qui le précède soit soldé, et ce qui le suit l'attend. Un
+appel qui attend un humain (approbation) retient de même ceux qui le suivent :
+ils restent en attente, sans événement, et partent au lot suivant ; ceux qui
+exigent une approbation la demandent dans la même pause. La chaîne s'arrête sur
+un run délégué en pause, un effet inconnu qu'un humain tranchera, et une
+politique ``after_tool`` qui fait échouer le run. Avec ``order: free``, tous
+les appels partent ensemble, comme avant 2.0.20.
 
 Un outil délégué (rôle) produit aussi des événements pendant son appel. Ils
 passent par la même file que les résultats : ils précèdent toujours le
@@ -64,7 +75,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from types import MappingProxyType
-from typing import Final, Protocol, cast
+from typing import Final, Literal, Protocol, cast
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
 from jsonschema.protocols import Validator
@@ -79,6 +90,7 @@ from loom_ia.core.events import (
     ArtifactStored,
     CircuitOpened,
     IdempotencyReused,
+    PolicyDecided,
     QuestionAnswered,
     QuestionAsked,
     QuestionExpired,
@@ -172,6 +184,10 @@ from loom_ia.engine.writer import SessionWriter
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOOL_TIMEOUT: Final = 30.0
+
+# Ordre des appels d'un même tour : ``effects``, un appel à effet attend ceux qui
+# le précèdent et ceux qui le suivent l'attendent ; ``free``, tous partent ensemble.
+type CallOrder = Literal["effects", "free"]
 
 UNKNOWN_STATE: Final = (
     "État inconnu : l'exécution de cet outil a été interrompue et il a peut-être "
@@ -364,8 +380,10 @@ class ToolExecutor:
         denied: Iterable[str] = (),
         imposed: Mapping[str, Approval] | None = None,
         state_rules: StateRules | None = None,
+        order: CallOrder = "effects",
     ) -> None:
         self.default_timeout = default_timeout
+        self.order: CallOrder = order
         self.state_rules = state_rules or StateRules()
         # Délai et effet d'une expiration (#17).
         self.approval = approval or ApprovalSettings()
@@ -498,6 +516,7 @@ class ToolExecutor:
             denied=self.denied,
             imposed=self.imposed,
             state_rules=self.state_rules,
+            order=self.order,
         )
         copy._tools = dict(self._tools)
         copy._validators = dict(self._validators)
@@ -644,6 +663,8 @@ class ToolExecutor:
                 view = replace(view, on_chunk=on_chunk)
         ready: list[_Ready] = []
         held: list[tuple[_Ready, ApprovalRequested]] = []
+        # Appels qui attendent un humain, et ce qu'ils retiennent derrière eux.
+        blocked = _Blocked()
         # Questions à l'utilisateur sans répondeur en ligne : écrites après le lot.
         held_questions: list[QuestionAsked] = []
         for call in state.pending_calls:
@@ -667,6 +688,20 @@ class ToolExecutor:
                 # modèle ; sinon la question s'écrit, et le run attendra.
                 async for event in self._ask(call, prepared, state, answerer, held_questions):
                     yield event
+                continue
+            ordered = self.order == "effects"
+            if (
+                ordered
+                and blocked.holds(prepared)
+                and state.approval(call.call_id) is None
+                and not _always_asked(prepared, self.imposed)
+            ):
+                # Un appel qui le précède attend un humain : celui-ci partira après
+                # lui, à un lot suivant. Rien n'est écrit pour lui d'ici là, pas même
+                # ses politiques, qui tourneront une fois, à son lancement. Celui qui
+                # demande de toute façon une approbation la demande dès maintenant :
+                # l'humain tranche tout le tour en une fois.
+                blocked.hold(prepared)
                 continue
             # Un appel repris a été lancé avec ces arguments-là, remplacés par une
             # politique le cas échéant (``_before_tool``) : ce sont eux qui disent
@@ -705,7 +740,11 @@ class ToolExecutor:
                     _retry_safe(prepared.tool, launched_with)
                     and _retry_safe(prepared.tool, prepared.arguments)
                 ):
-                    ready.append(replace(prepared, approved=call.started and not settled.launched))
+                    admitted = replace(prepared, approved=call.started and not settled.launched)
+                    if ordered and blocked.holds(admitted):
+                        blocked.hold(admitted)
+                    else:
+                        ready.append(admitted)
                     continue
             # Reprise d'un appel dont l'effet est peut-être produit (#18) :
             # il n'est pas relancé de lui-même. L'outil dit ce qu'il advient
@@ -742,7 +781,10 @@ class ToolExecutor:
                 )
             )
             if asked is None:
-                ready.append(prepared)
+                if ordered and blocked.holds(prepared):
+                    blocked.hold(prepared)
+                else:
+                    ready.append(prepared)
                 continue
             # Le même appel déjà refusé dans ce run : on ne le redemande pas.
             # Au test D12 du 18/10, Haiku a relancé à l'identique un appel que
@@ -756,6 +798,7 @@ class ToolExecutor:
             if approver is None or not takes(approver, pending):
                 # Personne ici pour la trancher : elle attend, le run se met en pause.
                 held.append((prepared, request))
+                blocked.hold(prepared)
                 continue
             # Approbateur en ligne : il décide dans la boucle. La demande et sa
             # décision sont journalisées quand même — c'est le seul endroit où
@@ -773,21 +816,12 @@ class ToolExecutor:
                     yield _completed(call, ToolOutput.error(problem), started=None)
                     continue
                 prepared = replace(prepared, arguments=decided.arguments)
-            ready.append(prepared)
-
-        for item in ready:
-            yield ToolCalled(
-                call_id=item.call.call_id,
-                tool_name=item.call.name,
-                tool_kind=item.tool.spec.kind,
-                arguments=item.call.arguments,
-                refs=item.refs,
-                resumed=item.call.started,
-                child_run_id=item.child_run_id,
-            )
-        children = {i.call.call_id: i.child_run_id for i in ready if i.child_run_id is not None}
-        if children:
-            view = replace(view, children=children)
+            # Accordé en ligne, mais un appel d'avant attend un humain : il partira
+            # après lui. L'accord est au journal, il ne sera pas redemandé.
+            if ordered and blocked.holds(prepared):
+                blocked.hold(prepared)
+            else:
+                ready.append(prepared)
 
         # Appels dont l'effet est d'état inconnu, et le motif à en dire.
         inconnus: dict[str, str] = {}
@@ -814,24 +848,67 @@ class ToolExecutor:
                     _completed(item.call, _cancelled(item.call.name, exc, state), started=began)
                 )
 
-        tasks = [asyncio.create_task(execute(item)) for item in ready]
-        for task in tasks:
-            task.add_done_callback(crashed)
+        # Ordre des appels (barrière sur les effets) : les appels sans effet d'un
+        # même segment partent ensemble ; un appel à effet attend que tout ce qui
+        # le précède dans la réponse soit soldé, et ce qui le suit l'attend. Le
+        # ``tool.called`` d'un segment s'écrit juste avant son lancement : un
+        # appel pas encore parti n'en a pas, et une reprise le lancera sans
+        # le croire d'effet inconnu.
+        segments = _segments(ready) if self.order == "effects" else [ready] if ready else []
+        tasks: list[asyncio.Task[None]] = []
+        launched: dict[str, _Ready] = {}
+        children: dict[str, RunId] = {}
         try:
-            remaining = len(tasks)
-            while remaining:
-                event = await queue.get()
-                if isinstance(event, _Crashed):
-                    raise event.error
-                # Un appel se solde par un résultat, une attente, ou un effet
-                # d'état inconnu : un run délégué en pause ne rend pas de
-                # résultat, et le lot l'attendrait indéfiniment.
-                if isinstance(event, ToolCompleted | Waiting | _Unknown):
-                    remaining -= 1
-                if isinstance(event, _Unknown):
-                    inconnus[event.call_id] = event.message
-                    continue
-                yield event
+            for segment in segments:
+                for item in segment:
+                    yield ToolCalled(
+                        call_id=item.call.call_id,
+                        tool_name=item.call.name,
+                        tool_kind=item.tool.spec.kind,
+                        arguments=item.call.arguments,
+                        refs=item.refs,
+                        resumed=item.call.started,
+                        child_run_id=item.child_run_id,
+                    )
+                    launched[item.call.call_id] = item
+                    if item.child_run_id is not None:
+                        children[item.call.call_id] = item.child_run_id
+                if children:
+                    view = replace(view, children=dict(children))
+                started = [asyncio.create_task(execute(item)) for item in segment]
+                for task in started:
+                    task.add_done_callback(crashed)
+                tasks.extend(started)
+                remaining = len(started)
+                # Un appel laissé en suspens (run délégué en pause, effet inconnu
+                # qu'un humain tranchera) n'est pas soldé : la chaîne s'arrête là,
+                # et les appels suivants restent en attente, sans ``tool.called``.
+                # Une politique ``after_tool`` qui fait échouer le run l'arrête
+                # aussi : pas d'effet de plus dans un run qui va échouer.
+                suspended = False
+                while remaining:
+                    event = await queue.get()
+                    if isinstance(event, _Crashed):
+                        raise event.error
+                    # Un appel se solde par un résultat, une attente, ou un effet
+                    # d'état inconnu : un run délégué en pause ne rend pas de
+                    # résultat, et le lot l'attendrait indéfiniment.
+                    if isinstance(event, ToolCompleted | Waiting | _Unknown):
+                        remaining -= 1
+                    if isinstance(event, Waiting) or (
+                        isinstance(event, Decided)
+                        and isinstance(event.payload, PolicyDecided)
+                        and event.payload.decision == "fail"
+                    ):
+                        suspended = True
+                    if isinstance(event, _Unknown):
+                        inconnus[event.call_id] = event.message
+                        if launched[event.call_id].tool.spec.on_unknown != "error":
+                            suspended = True
+                        continue
+                    yield event
+                if suspended:
+                    break
         finally:
             stopping = True
             for task in tasks:
@@ -841,7 +918,6 @@ class ToolExecutor:
         # Un appel d'état inconnu n'a ni résultat ni conclusion : c'est son
         # outil qui dit ce qu'il advient (#18). L'erreur revient au modèle ;
         # la pause demande une approbation, comme la règle de reprise.
-        launched = {item.call.call_id: item for item in ready}
         for call_id, message in inconnus.items():
             item = launched[call_id]
             if item.tool.spec.on_unknown == "error":
@@ -1441,6 +1517,76 @@ async def _delegated(
             state,
         )
     return output, consumption, exchange
+
+
+def _writes(item: _Ready) -> bool:
+    """Vrai si l'appel a un effet : l'évaluation de l'appel, sinon la déclaration de l'outil.
+
+    Ce qui sert à approuver et à reprendre sert aussi à ordonner : un outil qui
+    écrit sans le déclarer passe pour une lecture.
+    """
+    found = assessed(item.tool, item.arguments)
+    effects = item.tool.spec.side_effects if found is None else found.side_effects
+    return effects != "none"
+
+
+def _segments(ready: list[_Ready]) -> list[list[_Ready]]:
+    """Les appels prêts, en segments à lancer l'un après l'autre, dans l'ordre de la réponse.
+
+    Un appel à effet forme un segment à lui seul ; les appels sans effet qui se
+    suivent en forment un, et partent ensemble.
+    """
+    segments: list[list[_Ready]] = []
+    reading = False
+    for item in ready:
+        if _writes(item):
+            segments.append([item])
+            reading = False
+        elif reading:
+            segments[-1].append(item)
+        else:
+            segments.append([item])
+            reading = True
+    return segments
+
+
+class _Blocked:
+    """Ce que les appels en attente d'un humain retiennent derrière eux.
+
+    Un appel à effet en attente retient tous ceux qui le suivent ; un appel sans
+    effet en attente retient seulement les appels à effet qui le suivent. Un
+    appel retenu retient à son tour, de la même façon.
+    """
+
+    __slots__ = ("any", "writer")
+
+    def __init__(self) -> None:
+        self.any = False
+        self.writer = False
+
+    def hold(self, item: _Ready) -> None:
+        """Cet appel attend (un humain, ou un appel d'avant) : il retient ce qui le suit."""
+        self.any = True
+        self.writer = self.writer or _writes(item)
+
+    def holds(self, item: _Ready) -> bool:
+        """Vrai si cet appel doit attendre un appel d'avant."""
+        return self.writer or (self.any and _writes(item))
+
+
+def _always_asked(item: _Ready, imposed: Mapping[str, Approval]) -> bool:
+    """Vrai si l'appel demande une approbation quoi que disent les politiques.
+
+    La même règle que ``_asks_approval`` sans politique : la consigne de
+    l'appelant, sinon l'évaluation de l'appel, sinon la déclaration.
+    """
+    spec = item.tool.spec
+    if (forced := imposed.get(spec.name)) is not None:
+        return forced == "always"
+    found = assessed(item.tool, item.arguments)
+    if found is not None:
+        return found.approval == "always"
+    return spec.approval == "always"
 
 
 def _retry_safe(tool: AnyTool, arguments: Mapping[str, JsonValue]) -> bool:

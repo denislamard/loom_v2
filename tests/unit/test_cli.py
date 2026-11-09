@@ -68,7 +68,7 @@ def test_validate_puts_the_verdict_first_and_the_warnings_last(
     assert main(["--config", str(path), "validate"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith(f"loom validate · {path}")
-    assert lines[0].endswith("✓ 1 agent monté · ⚠ 3 avertissements")
+    assert lines[0].endswith("✓ 1 agent monté · ⚠ 4 avertissements")
     assert lines[1] == f"Racine : {path.parent.resolve()}"
     titles = [line for line in lines if line and line == line.upper() and not line[0].isspace()]
     assert titles == [
@@ -83,6 +83,8 @@ def test_validate_puts_the_verdict_first_and_the_warnings_last(
         "  ⚠ Bus memory   les nouvelles ne sortent pas de ce process",
         "  ⚠ Chiffrement  aucun : contenus en clair au repos",
         "  ⚠ Rétention    aucune : rien ne s'efface",
+        "  ⚠ Agent demo   outil calculer : side_effects non déclaré, compté comme sans effet "
+        "(none s'il ne fait que lire)",
     ]
 
 

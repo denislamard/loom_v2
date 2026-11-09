@@ -48,6 +48,7 @@ from loom_ia.core.model import (
     RunId,
     RunState,
     RunStatus,
+    SideEffects,
     TextBlock,
     ToolOutput,
     ToolSpec,
@@ -102,6 +103,9 @@ class SubAgentDefinition:
     budget_share: float | None = None
     # Limites du run de l'agent appelant (sa config) ; s'y ajoute sa propre part reçue.
     parent_budget: RunBudget | None = None
+    # Effets du sous-agent, ceux des outils de son agent ; ils décident de l'ordre
+    # des appels d'un même tour. ``irreversible`` à défaut de déclaration.
+    side_effects: SideEffects = "irreversible"
 
 
 # États dans lesquels un enfant attend quelqu'un : son parent attend avec lui.
@@ -121,8 +125,9 @@ class AgentTool(DelegatedTool):
             input_schema=MESSAGE_SCHEMA,
             kind="agent",
             # Reprendre l'enfant plutôt que le relancer : l'appel peut toujours
-            # être repris. Ses effets sont ceux des outils de l'enfant.
-            side_effects="irreversible",
+            # être repris. Ses effets sont ceux des outils de l'enfant, tels que
+            # la référence les déclare.
+            side_effects=definition.side_effects,
             idempotent=True,
         )
 

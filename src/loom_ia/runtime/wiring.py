@@ -781,6 +781,7 @@ def build_agent(
             validate_arguments=execution.validate_arguments,
             artifacts=artifacts,
             offload_over=execution.offload_over,
+            order=spec.execution.tools.order or execution.order,
             breakers=breakers,
             circuits={
                 **{server.name: server.circuit_breaker for server in config.mcp_servers},
@@ -1627,6 +1628,7 @@ def _subagent_definition(
         max_depth=spec.max_depth,
         budget_share=ref.budget_share,
         parent_budget=config.budget_of(spec.name).run,
+        side_effects=ref.side_effects,
     )
 
 

@@ -171,7 +171,7 @@ from loom_ia.runtime.sources import PackagedSource, installed
 from loom_ia.telemetry import BUILTIN_PATTERNS, Trace, render_trace
 from loom_ia.telemetry.logs import printable
 from loom_ia.tenancy import BudgetExhausted, QuotaExceeded, Tenant, UnknownTenant
-from loom_ia.tools import innermost
+from loom_ia.tools import FunctionTool, innermost
 from loom_ia.tools_builtin import Grant, Place, Settings, ShowsSettings, is_builtin
 from loom_ia.usage import UsageReport, amount
 from loom_ia.usage import describe as describe_budget
@@ -1516,7 +1516,9 @@ def _counted(count: int, word: str) -> str:
     return f"{count} {word}{'s' if count > 1 else ''}"
 
 
-def _agent_header(spec: AgentSpec, chain: Callable[[tuple[str, ...]], str]) -> str:
+def _agent_header(
+    spec: AgentSpec, chain: Callable[[tuple[str, ...]], str], order: str = "effects"
+) -> str:
     """« agent · HAIKU · 6 outils Python · sous-agent : forgeron »."""
     parts = [
         spec.name,
@@ -1534,6 +1536,9 @@ def _agent_header(spec: AgentSpec, chain: Callable[[tuple[str, ...]], str]) -> s
         parts.append(f"rôle{'s' if len(roles) > 1 else ''} : {', '.join(roles)}")
     if spec.timeout is not None:
         parts.append(f"délai {spec.timeout:g} s")
+    if order == "free":
+        # Le défaut (``effects``) ne se dit pas : seul l'écart se voit.
+        parts.append("appels d'un tour tous ensemble (order: free)")
     return " · ".join(parts)
 
 
@@ -1571,6 +1576,19 @@ async def _agent_lines(
         if (skill := skills.pop(name, None)) is not None:
             lines.append(f"skill, {_skill_size(skill)}")
         branches.append(_Branch(name, tuple(lines)))
+        found = innermost(context.tools.get(name))
+        if (
+            declared.side_effects is None
+            and isinstance(found, FunctionTool)
+            and not found.declares_effects
+        ):
+            # Sans déclaration, l'outil passe pour une lecture : s'il écrit, une lecture
+            # du même tour peut le doubler, et une politique ou la reprise le croient sûr.
+            report.warn(
+                f"Agent {spec.name}",
+                f"outil {name} : side_effects non déclaré, compté comme sans effet "
+                "(none s'il ne fait que lire)",
+            )
     branches.extend(
         _Branch(name, (f"skill, {_skill_size(skill)}",)) for name, skill in skills.items()
     )
@@ -1605,7 +1623,8 @@ async def _agent_lines(
     # rien à dire sous l'agent, mais les avertissements valent quand même.
     if access := _access_lines(config, spec, asking, report):
         branches.append(_Branch("accès", tuple(access)))
-    return _tree(_agent_header(spec, chain), branches, indent=indent)
+    header = _agent_header(spec, chain, context.tools.order)
+    return _tree(header, branches, indent=indent)
 
 
 def _able(config: LoomConfig, spec: AgentSpec, permission: Permission) -> set[str]:
