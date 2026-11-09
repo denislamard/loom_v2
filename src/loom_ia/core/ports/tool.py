@@ -15,6 +15,7 @@ que loom appelle avec ce que la config déclare pour elle.
 """
 
 import hashlib
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -105,6 +106,11 @@ class ToolContext:
     # Vrai si le run tient le state de la session : un run racine ordinaire d'un
     # agent qui en déclare un (D3). Faux dans un sous-run et hors moteur.
     keeps_state: bool = False
+    # Levé quand le moteur rend la main sans attendre l'outil : délai dépassé, run
+    # annulé (B-2). Un outil qui travaille dans un thread le regarde entre deux
+    # étapes, et s'arrête : Python ne sait pas arrêter un thread de l'extérieur.
+    # Absent hors moteur.
+    cancelled: threading.Event | None = field(default=None, compare=False)
 
     @property
     def idempotency_key(self) -> str:

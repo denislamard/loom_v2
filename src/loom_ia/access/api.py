@@ -86,6 +86,7 @@ from loom_ia.config import ConfigError, LoomConfig, load_config
 from loom_ia.config.compaction import COMPACTION_AGENT
 from loom_ia.config.models import Permission, TriggerSpec
 from loom_ia.config.references import Registry
+from loom_ia.core import tool_threads
 from loom_ia.core.closing import Closing
 from loom_ia.core.events import (
     ApprovalExpired,
@@ -1451,6 +1452,11 @@ class Loom:
         models: Mapping[str, ModelClient] | None = None,
     ) -> None:
         self._config = config
+        # Le pool des outils synchrones de l'instance (B-2, D-4) : ses threads sont des
+        # démons, que ``aclose`` attend au plus ``execution.tools.grace`` secondes.
+        self._threads = tool_threads.ToolThreads(
+            config.execution.tools.threads, grace=config.execution.tools.grace
+        )
         # Outils servis à part, posés sur chaque agent monté (sous-agents
         # compris) : c'est ainsi qu'une éval double ou refuse un outil à effets
         # de bord (J6.3a). Sans lui, chaque outil s'exécute.
@@ -2204,6 +2210,7 @@ class Loom:
                 breakers=self._breakers,
                 tenant=tenant,
                 provided=self._models,
+                threads=self._threads,
             )
             if self._intercept is not None:
                 built.context.tools.replay = self._intercept
@@ -2964,6 +2971,9 @@ class Loom:
         for built in self._built.values():
             with closing:
                 await built.aclose()
+        # Les outils encore au travail : attendus au plus ``grace``, en le disant (D-5).
+        with closing:
+            await self._threads.aclose()
         if self._mcp is not None:
             with closing:
                 await self._mcp.aclose()

@@ -493,6 +493,12 @@ class ToolsExecution(DomainModel):
     # qui le précèdent et ceux qui le suivent l'attendent ; ``free``, tous
     # partent ensemble (avant 2.0.20).
     order: Literal["effects", "free"] = "effects"
+    # Threads du pool des outils synchrones (``loom-outil``), à part de celui
+    # d'asyncio, qui sert le journal et les fichiers (B-2). Un pool par process.
+    threads: PositiveInt = 16
+    # Après un délai dépassé, attente au plus du travail en thread d'un appel à
+    # effet avant de lancer les appels suivants du tour ; ``null`` : sans borne.
+    grace: PositiveFloat | None = 30.0
 
 
 class ExecutionConfig(DomainModel):

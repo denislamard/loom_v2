@@ -17,6 +17,10 @@ ouverts et refermés dans la même tâche, quelle que soit celle qui l'utilise.
 - **Cache des outils**, vidé sur ``notifications/tools/list_changed`` et à
   chaque nouvelle connexion.
 - **Fermeture après inactivité** (``idle_timeout``), pour la portée ``shared``.
+- **Appel abandonné** (délai dépassé, run annulé) : le serveur en est prévenu
+  par ``notifications/cancelled`` (B-2, D-6). Le SDK ne le fait pas de lui-même ;
+  un serveur qui respecte la notification arrête l'appel, les autres le
+  finissent, et l'effet reste d'état inconnu pour le modèle.
 """
 
 import asyncio
@@ -41,6 +45,8 @@ logger = logging.getLogger(__name__)
 BACKOFF: Final = (1.0, 2.0, 5.0, 10.0, 30.0)
 # Délai laissé à une session pour se fermer proprement.
 CLOSE_TIMEOUT: Final = 5.0
+# Délai laissé à l'envoi de ``notifications/cancelled`` au serveur (B-2, D-6).
+CANCEL_TIMEOUT: Final = 2.0
 # Message que le SDK met dans l'erreur d'une requête à laquelle un serveur HTTP
 # répond 404 : la session est inconnue ou expirée (spécification MCP). Le code
 # qu'il y joint est 32600, et non -32600 (``INVALID_REQUEST``) : seul le message
@@ -163,6 +169,8 @@ class McpServer:
         self._last_used = clock()
         self._idle_task: asyncio.Task[None] | None = None
         self._closed = False
+        # Annulations en route vers le serveur : gardées le temps de l'envoi.
+        self._cancelling: set[asyncio.Task[None]] = set()
 
     @property
     def name(self) -> str:
@@ -187,8 +195,17 @@ class McpServer:
         attempt = 1
         while True:
             async with self._use() as session:
+                # L'identifiant que ``call_tool`` va prendre : le SDK ne le rend pas, mais
+                # il le tire de ce compteur avant tout ``await`` (mcp 1.x, ``send_request``).
+                request_id = _next_request_id(session)
                 try:
                     return await session.call_tool(name, arguments, meta=meta)
+                except asyncio.CancelledError:
+                    # Délai dépassé, run annulé : le serveur continuerait l'appel. On le
+                    # prévient (``notifications/cancelled``) ; il s'arrête s'il la respecte.
+                    if request_id is not None:
+                        self._cancel_remote(session, request_id, name)
+                    raise
                 except Exception as exc:
                     if not is_connection_lost(exc):
                         raise
@@ -206,6 +223,33 @@ class McpServer:
                     f"Connexion au serveur MCP {self.name} perdue pendant l'appel : {lost!r}"
                 ) from lost
             attempt += 1
+
+    def _cancel_remote(self, session: ClientSession, request_id: int, name: str) -> None:
+        """Prévient le serveur que loom abandonne la requête ; sans attendre, sans lever.
+
+        L'envoi part dans une tâche à part : la tâche de l'appel est annulée, et
+        une seconde annulation (fin du lot) couperait un envoi fait en ligne.
+        """
+        notification = types.ClientNotification(
+            types.CancelledNotification(
+                params=types.CancelledNotificationParams(
+                    requestId=request_id, reason="délai dépassé ou run annulé côté loom"
+                )
+            )
+        )
+
+        async def send() -> None:
+            try:
+                async with asyncio.timeout(CANCEL_TIMEOUT):
+                    await session.send_notification(notification)
+            except Exception as exc:
+                logger.debug(
+                    "Annulation de %s non transmise au serveur MCP %s : %r", name, self.name, exc
+                )
+
+        task = asyncio.create_task(send(), name=f"mcp-cancel:{self.name}")
+        self._cancelling.add(task)
+        task.add_done_callback(self._cancelling.discard)
 
     async def on_message(
         self,
@@ -358,3 +402,14 @@ def _innermost(error: BaseException) -> BaseException:
         return error
     inner = cast(tuple[BaseException, ...], error.exceptions)  # pyright: ignore[reportUnknownMemberType]
     return _innermost(inner[0]) if inner else cast(BaseException, error)
+
+
+def _next_request_id(session: ClientSession) -> int | None:
+    """L'identifiant de la prochaine requête de la session, ou ``None`` si le SDK a changé.
+
+    ``BaseSession.send_request`` le lit puis l'incrémente, avant tout ``await`` :
+    lu juste avant ``call_tool``, sans ``await`` entre les deux, c'est celui de
+    l'appel. Un SDK qui ne l'exposerait plus prive seulement de l'annulation.
+    """
+    found = getattr(session, "_request_id", None)
+    return found if isinstance(found, int) else None

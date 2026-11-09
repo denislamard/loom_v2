@@ -23,8 +23,12 @@ nombre, modèle Pydantic…) donne un bloc JSON, recopié dans ``data``.
         '''Trace la série.'''
         return Image(tracer_png(serie))
 
-Une fonction synchrone s'exécute dans un thread : un timeout rend la main au
-moteur, mais ne peut pas interrompre le thread.
+Une fonction synchrone s'exécute dans un thread du pool des outils
+(``in_thread``) : un délai dépassé rend la main au moteur, mais ne peut pas
+interrompre le thread, qui va au bout. Le moteur le suit : un appel à effet est
+alors d'état inconnu, et les appels suivants du tour attendent sa fin réelle.
+Une fonction qui travaille par étapes peut regarder ``ToolContext.cancelled``,
+levé au délai et à l'annulation, et s'arrêter d'elle-même.
 
 Effets de bord (``side_effects``) : sans déclaration, l'outil passe pour sans
 effet (``none``). Un outil qui écrit doit le dire : c'est ce qui le fait
@@ -33,7 +37,6 @@ tour, et ne pas relancer à la reprise. ``loom validate`` signale un outil qui
 ne déclare rien (``declares_effects``).
 """
 
-import asyncio
 import inspect
 import types
 from collections.abc import Awaitable, Callable
@@ -68,6 +71,7 @@ from loom_ia.core.model import (
     sniff,
 )
 from loom_ia.core.ports import ToolContext, ToolError
+from loom_ia.core.tool_threads import in_thread
 
 _JSON: TypeAdapter[Any] = TypeAdapter(Any)
 
@@ -172,7 +176,7 @@ class FunctionTool[**P, R]:
         if self._is_async:
             result = await cast(Awaitable[object], fn(**kwargs))
         else:
-            result = await asyncio.to_thread(fn, **kwargs)
+            result = await in_thread(fn, **kwargs)
         return to_output(result)
 
     def __repr__(self) -> str:

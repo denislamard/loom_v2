@@ -23,7 +23,6 @@ lecture d'un fichier de leur format : importer ``loom_ia.tools_builtin.pdf``
 importe reportlab.
 """
 
-import asyncio
 import importlib
 import importlib.util
 import re
@@ -35,6 +34,7 @@ from typing import Any, Final, cast
 from pydantic import JsonValue
 
 from loom_ia.core.ports import ToolError
+from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools_builtin.memory.service import Extracted
 from loom_ia.tools_builtin.pdf_params import SAFE_PYPDF
 
@@ -95,7 +95,7 @@ async def extract(data: bytes, path: Path, address: str) -> Extracted:
     """Le titre et le texte markdown du fichier ; ``ToolError`` qui dit pourquoi sinon."""
     suffix = path.suffix.lower()
     if suffix in WORD_SUFFIXES:
-        extracted = await asyncio.to_thread(_from_word, data, path, address)
+        extracted = await in_thread(_from_word, data, path, address)
     elif suffix in PDF_SUFFIXES:
         extracted = await _from_pdf(data, path, address)
     else:

@@ -17,7 +17,6 @@ outil forgé, un sous-agent. Le fichier est relu dans le stockage d'artefacts
 par son nom, parmi ceux de la conversation seulement (``ToolContext.files``).
 """
 
-import asyncio
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Final, Literal, cast
@@ -26,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
+from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools import to_output
 from loom_ia.tools_builtin import BuiltinContext, Settings
 from loom_ia.tools_builtin._folders import TEMP_PREFIX, Folder, Folders, Located, mount, write_bytes
@@ -187,10 +187,10 @@ class LocalFilesTool:
         self._check_rights(request, located)
         if request.file is not None:
             data = await _copied(request.file, context)
-            result = await asyncio.to_thread(self._copy, data, located, request.overwrite)
+            result = await in_thread(self._copy, data, located, request.overwrite)
             return to_output(result)
         # Lire et écrire sur le disque bloque : hors de la boucle asyncio.
-        result = await asyncio.to_thread(self._perform, request, located)
+        result = await in_thread(self._perform, request, located)
         return to_output(result)
 
     # --- Chemins et droits ------------------------------------------------------

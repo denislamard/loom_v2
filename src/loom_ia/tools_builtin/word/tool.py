@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """L'outil ``word`` monté : écrire et lire des .docx ; et sa fabrique."""
 
-import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Annotated, ClassVar, Final
@@ -10,6 +9,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field, JsonValue
 
 from loom_ia.core.ports import ToolError
+from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools_builtin import BuiltinContext
 from loom_ia.tools_builtin._document.arguments import (
     READ_CHARS,
@@ -101,7 +101,7 @@ class WordTool(DocumentTool):
         return writer.render(prepared, self._styles.of(prepared.template)), {}, []
 
     async def _read(self, request: ReadArguments, where: str, data: bytes) -> dict[str, JsonValue]:
-        found = await asyncio.to_thread(
+        found = await in_thread(
             reader.read,
             data,
             where,

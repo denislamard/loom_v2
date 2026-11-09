@@ -1090,3 +1090,76 @@ async def test_a_working_stdio_server_keeps_its_stderr_on_ours(
     finally:
         await server.aclose()
     capsys.readouterr()
+
+
+# --- Appel abandonné : le serveur en est prévenu (B-2, D-6) -------------------------
+
+
+def slow_server(done: list[str]) -> FastMCP:
+    server = FastMCP("lent", log_level="WARNING")
+
+    @server.tool()
+    async def ecrire(texte: str) -> str:
+        """Écrit après 0,5 s."""
+        await asyncio.sleep(0.5)
+        done.append(texte)
+        return "écrit"
+
+    return server
+
+
+async def test_an_abandoned_call_is_cancelled_on_the_server() -> None:
+    """Sans ``notifications/cancelled``, le serveur allait au bout : l'écriture avait lieu."""
+    done: list[str] = []
+    tools = McpSource(
+        spec(name="lent", scope="run"),
+        McpSelection(prefix="lent"),
+        factory=memory(slow_server(done)),
+    )
+    async with tools.open(RUN) as opened:
+        [ecrire] = opened
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.1):
+                await ecrire.invoke({"texte": "v2"}, CALL)
+        await asyncio.sleep(0.8)
+    assert done == []
+
+
+async def test_a_call_that_finishes_sends_no_cancellation() -> None:
+    done: list[str] = []
+    tools = McpSource(
+        spec(name="lent", scope="run"),
+        McpSelection(prefix="lent"),
+        factory=memory(slow_server(done)),
+    )
+    async with tools.open(RUN) as opened:
+        [ecrire] = opened
+        result = await ecrire.invoke({"texte": "v2"}, CALL)
+    assert (result.as_text, done) == ("écrit", ["v2"])
+
+
+async def test_the_engine_says_the_remote_effect_is_unknown() -> None:
+    """Le modèle lit que le serveur a été prévenu, et que l'effet est d'état inconnu."""
+    from test_call_order import awaiting
+
+    from loom_ia.core.events import ToolCompleted
+    from loom_ia.core.model import PendingCall
+    from loom_ia.engine import ToolExecutor
+    from loom_ia.engine.executor import REMOTE_EFFECT
+
+    done: list[str] = []
+    tools = McpSource(
+        spec(
+            name="lent",
+            scope="run",
+            tools={"ecrire": {"timeout": 0.1, "side_effects": "reversible"}},
+        ),
+        McpSelection(prefix="lent"),
+        factory=memory(slow_server(done)),
+    )
+    executor = ToolExecutor(sources=[tools])
+    async with executor.opened(RUN) as opened:
+        state = awaiting(PendingCall(call_id="c", name="lent__ecrire", arguments={"texte": "v2"}))
+        events = [e async for e in opened.tools.run_batch(state)]
+    [completed] = [e for e in events if isinstance(e, ToolCompleted)]
+    assert completed.output.as_text == REMOTE_EFFECT.format(limit=0.1)

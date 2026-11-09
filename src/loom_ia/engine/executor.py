@@ -82,6 +82,7 @@ from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
 from pydantic import JsonValue
 
+from loom_ia.core import tool_threads
 from loom_ia.core.bounded_regex import RegexTimeout, bounded_validator
 from loom_ia.core.events import (
     ApprovalGranted,
@@ -188,6 +189,34 @@ DEFAULT_TOOL_TIMEOUT: Final = 30.0
 # Ordre des appels d'un même tour : ``effects``, un appel à effet attend ceux qui
 # le précèdent et ceux qui le suivent l'attendent ; ``free``, tous partent ensemble.
 type CallOrder = Literal["effects", "free"]
+
+# Un délai dépassé sur un appel à effet (B-2) : son travail continue en thread…
+LATE_EFFECT: Final = (
+    "Délai dépassé : pas de réponse en {limit:g} s, et l'outil n'a pas pu être "
+    "arrêté. Son effet est d'état inconnu : il a peut-être eu lieu, ou aura lieu "
+    "plus tard. Il n'a pas été relancé ; vérifie avant de le rappeler."
+)
+
+# … ou le serveur MCP a été prévenu, sans qu'on sache s'il s'arrête (D-6) …
+REMOTE_EFFECT: Final = (
+    "Délai dépassé : pas de réponse en {limit:g} s. Le serveur a été prévenu de "
+    "l'abandon de l'appel, mais il a pu en produire tout ou partie de l'effet, ou "
+    "le produire encore : son effet est d'état inconnu. Il n'a pas été relancé ; "
+    "vérifie avant de le rappeler."
+)
+
+# … ou l'outil a été arrêté en cours de route (outil asynchrone).
+STOPPED_EFFECT: Final = (
+    "Délai dépassé : pas de réponse en {limit:g} s. L'outil a été arrêté en cours "
+    "de route : il a pu produire tout ou partie de son effet, qui est d'état "
+    "inconnu. Il n'a pas été relancé ; vérifie avant de le rappeler."
+)
+
+NOT_RUN: Final = (
+    "Non exécuté : l'appel à {tool}, qui le précède dans ta réponse, a dépassé son "
+    "délai et travaille encore. Cet appel n'est pas parti ; refais-le une fois "
+    "l'effet de {tool} vérifié."
+)
 
 UNKNOWN_STATE: Final = (
     "État inconnu : l'exécution de cet outil a été interrompue et il a peut-être "
@@ -381,9 +410,16 @@ class ToolExecutor:
         imposed: Mapping[str, Approval] | None = None,
         state_rules: StateRules | None = None,
         order: CallOrder = "effects",
+        grace: float | None = tool_threads.DEFAULT_GRACE,
+        threads: tool_threads.ToolThreads | None = None,
     ) -> None:
         self.default_timeout = default_timeout
         self.order: CallOrder = order
+        # Attente au plus du travail en thread d'un appel à effet, après son délai (B-2).
+        self.grace = grace
+        # Pool des outils synchrones (D-4) : celui de l'instance ``Loom``, sinon le sien.
+        # Ses threads ne naissent qu'au premier travail.
+        self.threads = threads if threads is not None else tool_threads.ToolThreads()
         self.state_rules = state_rules or StateRules()
         # Délai et effet d'une expiration (#17).
         self.approval = approval or ApprovalSettings()
@@ -517,6 +553,8 @@ class ToolExecutor:
             imposed=self.imposed,
             state_rules=self.state_rules,
             order=self.order,
+            grace=self.grace,
+            threads=self.threads,
         )
         copy._tools = dict(self._tools)
         copy._validators = dict(self._validators)
@@ -834,10 +872,13 @@ class ToolExecutor:
         # Posé avant que le lot annule ses tâches : toute autre annulation vient de l'outil.
         stopping = False
 
+        # Travail en thread d'appels à effet qui ont dépassé leur délai (B-2).
+        lingering: dict[str, tool_threads.CallThreads] = {}
+
         async def execute(item: _Ready) -> None:
             began = time.perf_counter()
             try:
-                await self._execute(item, view, queue.put_nowait, policies, tally)
+                await self._execute(item, view, queue.put_nowait, policies, tally, lingering)
             except asyncio.CancelledError as exc:
                 if stopping:
                     raise
@@ -859,7 +900,15 @@ class ToolExecutor:
         launched: dict[str, _Ready] = {}
         children: dict[str, RunId] = {}
         try:
-            for segment in segments:
+            for position, segment in enumerate(segments):
+                still = await self._lingering(lingering)
+                if still is not None:
+                    # Un effet tourne encore après son délai : les appels suivants
+                    # ne partent pas, et le modèle apprend pourquoi.
+                    for later in (i for s in segments[position:] for i in s):
+                        text = NOT_RUN.format(tool=still)
+                        yield _completed(later.call, ToolOutput.error(text), started=None)
+                    break
                 for item in segment:
                     yield ToolCalled(
                         call_id=item.call.call_id,
@@ -946,6 +995,22 @@ class ToolExecutor:
             yield request
         for question in held_questions:
             yield question
+
+    async def _lingering(self, lingering: dict[str, tool_threads.CallThreads]) -> str | None:
+        """Attend le travail encore en cours d'appels à effet ; le nom de l'outil s'il dure.
+
+        L'attente est bornée par ``grace`` ; sans borne (``None``), elle dure le
+        temps qu'il faut. Un travail fini est oublié.
+        """
+        for call_id, threads in list(lingering.items()):
+            running = threads.running
+            if running:
+                waited = [asyncio.wrap_future(future) for future in running]
+                _, pending = await asyncio.wait(waited, timeout=self.grace)
+                if pending:
+                    return threads.name
+            del lingering[call_id]
+        return None
 
     async def _ask(
         self,
@@ -1152,15 +1217,21 @@ class ToolExecutor:
         emit: Callable[[ToolEvent | _Unknown], None],
         policies: Policies | None = None,
         tally: BatchTally | None = None,
+        lingering: dict[str, tool_threads.CallThreads] | None = None,
     ) -> None:
         """Exécute un appel ; ses événements et son résultat partent dans la file du lot.
 
         ``tally`` : le state que le lot laissera, compté dans l'ordre des appels.
+        ``lingering`` : reçoit le travail en thread d'un appel à effet qui a dépassé
+        son délai et tourne encore (B-2) ; la chaîne l'attendra.
         """
+        if lingering is None:
+            lingering = {}
         tool, call, state = item.tool, item.call, view.state
         spec = tool.spec
         delegated = isinstance(tool, DelegatedTool)
         timeout = spec.timeout if spec.timeout is not None or delegated else self.default_timeout
+        threads = tool_threads.CallThreads(spec.name, self.threads)
         context = ToolContext(
             tenant_id=state.context.tenant_id,
             session_id=state.session_id,
@@ -1187,6 +1258,7 @@ class ToolExecutor:
             ),
             results=_RunResults(view.results),
             keeps_state=bool(self.state_rules) and keeps_state(state),
+            cancelled=threads.cancelled,
         )
         started = time.perf_counter()
         consumption: Consumption | None = None
@@ -1204,12 +1276,33 @@ class ToolExecutor:
                 produced, tool, context, emit, timeout, state
             )
         else:
-            try:
-                output = await _invoked(tool, item.arguments, context, timeout, state)
-            except UnknownEffect as unknown:
-                # Ni résultat ni attente : le lot décidera, après coup.
-                emit(_Unknown(call_id=call.call_id, message=unknown.message))
-                return
+            with tool_threads.tracking(threads):
+                try:
+                    output = await _invoked(
+                        tool,
+                        item.arguments,
+                        context,
+                        timeout,
+                        state,
+                        effects=_writes(item),
+                        threads=threads,
+                    )
+                except UnknownEffect as unknown:
+                    # Ni résultat ni attente : le lot décidera, après coup.
+                    if threads.running:
+                        threads.abandon()
+                        lingering[call.call_id] = threads
+                    emit(_Unknown(call_id=call.call_id, message=unknown.message))
+                    return
+                except asyncio.CancelledError:
+                    # Arrêt du lot (annulation, délai du run) : l'outil en est prévenu
+                    # (``ToolContext.cancelled``), mais le thread, lui, continue.
+                    threads.abandon()
+                    raise
+                if threads.running:
+                    # Délai dépassé sur un appel sans effet : son travail continue, sans
+                    # conséquence sur l'ordre ; sa fin tardive se dira dans les logs.
+                    threads.abandon()
         if isinstance(output, Waiting):
             # Rien à contrôler ni à conclure : l'appel reste en suspens, et
             # le parent attend avec son enfant (H4).
@@ -1450,14 +1543,36 @@ async def _invoked(
     context: ToolContext,
     limit: float | None,
     state: RunState,
+    *,
+    effects: bool = False,
+    threads: tool_threads.CallThreads | None = None,
 ) -> ToolOutput:
-    """Exécute un outil ordinaire avec son délai ; toute erreur devient un résultat d'erreur."""
+    """Exécute un outil ordinaire avec son délai ; toute erreur devient un résultat d'erreur.
+
+    Un délai dépassé sur un appel à effet n'est pas un échec : l'effet a pu avoir
+    lieu, ou aura lieu (un thread ne s'arrête pas, un serveur MCP continue). Il
+    est d'état inconnu (``UnknownEffect``), et l'outil dit ce qu'il en advient
+    (``on_unknown``), comme à la reprise d'un appel interrompu (B-2).
+    """
     scope = asyncio.timeout(limit)
     try:
         async with scope:
             return await tool.invoke(arguments, context)
     except TimeoutError as exc:
         if scope.expired():
+            if threads is not None:
+                # L'outil qui regarde ``ToolContext.cancelled`` s'arrête de lui-même (D-8).
+                threads.cancelled.set()
+            if effects:
+                working = threads is not None and bool(threads.running)
+                said = (
+                    LATE_EFFECT
+                    if working
+                    else REMOTE_EFFECT
+                    if tool.spec.kind == "mcp"
+                    else STOPPED_EFFECT
+                )
+                raise UnknownEffect(said.format(limit=limit)) from None
             return ToolOutput.error(f"Délai dépassé : pas de réponse en {limit:g} s.")
         # TimeoutError levée par l'outil lui-même.
         return _unexpected(tool.spec.name, exc, state)

@@ -58,7 +58,7 @@ from loom_ia.engine.delegated import (
     RunView,
     Waiting,
 )
-from loom_ia.engine.executor import CallOrder, ToolEvent
+from loom_ia.engine.executor import STOPPED_EFFECT, CallOrder, ToolEvent
 from loom_ia.policies import policy
 from loom_ia.testing import RunJournal, assert_replays, tool_call_message
 
@@ -297,9 +297,12 @@ async def test_a_timed_out_write_does_not_stop_the_chain() -> None:
 
     events = await collect(executor, awaiting(ecrire("w", "v2", delai=1.0), lire("r")))
 
-    assert results(events)["w"].startswith("Délai dépassé")
+    # Un délai dépassé sur une écriture est un état inconnu (B-2) : décidé après le lot,
+    # comme tout état inconnu, son résultat vient en dernier au journal. L'outil est
+    # asynchrone : il a été arrêté en cours de route.
+    assert results(events)["w"] == STOPPED_EFFECT.format(limit=0.02)
     assert results(events)["r"] == "v1"
-    assert trace(events) == ["called w", "completed w", "called r", "completed r"]
+    assert trace(events) == ["called w", "called r", "completed r", "completed w"]
 
 
 async def test_an_unknown_effect_said_to_the_model_does_not_stop_the_chain() -> None:

@@ -14,6 +14,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx2
 
 from loom_ia.core.ports import ToolError
+from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools import tool
 
 MAX_BYTES: Final = 5_000_000  # au-delà, on ne lit pas la suite de la page
@@ -41,7 +42,7 @@ async def fetch_page(url: str) -> str:
     page = await download(url)
     # Décoder et analyser une grosse page prend jusqu'à une seconde ou deux : hors de
     # la boucle asyncio, pour ne pas figer le moteur ni les outils lancés en parallèle.
-    return await asyncio.to_thread(
+    return await in_thread(
         _render, page.body, page.charset, page.media_type, page.url, page.truncated
     )
 

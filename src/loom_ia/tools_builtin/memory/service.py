@@ -28,6 +28,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from loom_ia.core.ports import ToolError
+from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools_builtin.memory.chunk import chunk_document, content_hash
 from loom_ia.tools_builtin.memory.models import ModelError, Models
 from loom_ia.tools_builtin.memory.records import (
@@ -80,7 +81,7 @@ class MemoryService:
                 return
             embedder = self.models.embedder
             try:
-                await asyncio.to_thread(
+                await in_thread(
                     self.store.ensure, embedder.model_name, embedder.dim, check=check_model
                 )
             except ModelMismatchError as exc:
@@ -106,7 +107,7 @@ class MemoryService:
         if not query:
             raise ToolError("'query' est vide.")
         await self.start()
-        index = await asyncio.to_thread(self._current_index)
+        index = await in_thread(self._current_index)
         pool = selected(index, clean_project(project), clean_tags(tags))
         if not pool:
             return []
@@ -119,7 +120,7 @@ class MemoryService:
 
     async def get(self, doc_id: str, *, project: str | None) -> Document:
         await self.start()
-        doc = await asyncio.to_thread(self.store.get, doc_id.strip())
+        doc = await in_thread(self.store.get, doc_id.strip())
         if doc is None or (project is not None and doc.project != project):
             where = f" dans le projet {project!r}" if project is not None else ""
             raise ToolError(f"Document inconnu{where} : {doc_id}.")
@@ -127,12 +128,12 @@ class MemoryService:
 
     async def list_docs(self, *, project: str | None, n: int = 20) -> list[DocSummary]:
         await self.start()
-        docs = await asyncio.to_thread(self.store.list_documents, clean_project(project), n)
+        docs = await in_thread(self.store.list_documents, clean_project(project), n)
         return [DocSummary.of(doc) for doc in docs]
 
     async def projects(self) -> dict[str, int]:
         await self.start()
-        return await asyncio.to_thread(self.store.project_counts)
+        return await in_thread(self.store.project_counts)
 
     # --- Écriture ---------------------------------------------------------------------
 
@@ -157,12 +158,10 @@ class MemoryService:
             raise ToolError("'project' est obligatoire pour mémoriser.")
         await self.start()
         replaced = (
-            None
-            if source is None
-            else await asyncio.to_thread(self.store.find_by_source, source, place)
+            None if source is None else await in_thread(self.store.find_by_source, source, place)
         )
         digest = content_hash(text)
-        same = await asyncio.to_thread(self.store.find_by_hash, digest, place)
+        same = await in_thread(self.store.find_by_hash, digest, place)
         if same is not None:
             # Déjà là (le même texte, ou la même source inchangée) : rien à écrire.
             return IngestResult(
@@ -201,7 +200,7 @@ class MemoryService:
         if not text:
             raise ToolError("Contenu vide : 'delete' supprime un document.")
         digest = content_hash(text)
-        same = await asyncio.to_thread(self.store.find_by_hash, digest, old.project)
+        same = await in_thread(self.store.find_by_hash, digest, old.project)
         if same is not None and same.doc_id != old.doc_id:
             raise ToolError(
                 f"Ce texte est déjà celui du document {same.doc_id} (« {same.title} ») : "
@@ -225,7 +224,7 @@ class MemoryService:
 
     async def delete(self, doc_id: str, *, project: str | None) -> DocSummary:
         doc = await self.get(doc_id, project=project)
-        await asyncio.to_thread(self.store.delete, doc.doc_id)
+        await in_thread(self.store.delete, doc.doc_id)
         return DocSummary.of(doc)
 
     async def index_document(self, doc: Document) -> int:
@@ -235,7 +234,7 @@ class MemoryService:
         embedder = self.models.embedder
         embeddings = await self._model(lambda cancel: embedder.embed_documents(texts, cancel))
         try:
-            await asyncio.to_thread(self.store.write, doc, chunks, embeddings)
+            await in_thread(self.store.write, doc, chunks, embeddings)
         except sqlite3.IntegrityError as exc:
             # Un autre appel vient d'écrire le même contenu ou la même source.
             raise ToolError(f"Écriture concurrente du même document ({exc}) : réessayer.") from exc
@@ -259,7 +258,7 @@ class MemoryService:
         """
         cancel = threading.Event()
         try:
-            return await asyncio.to_thread(fn, cancel)
+            return await in_thread(fn, cancel)
         except asyncio.CancelledError:
             cancel.set()
             raise

@@ -620,6 +620,26 @@ autrement que `journal` ou `memory` est refusé au chargement.
   relancer, et la réservation périmée que le magasin rend à l'outil. Une approbation accordée fait
   reprendre la réservation, donc l'appel repart une fois et une seule.
 
+**Réalisation (2.0.20, B-2) :** un délai dépassé sur un appel à effet est, lui aussi, un état
+inconnu. Python n'arrête pas un thread, un outil asynchrone est coupé à son `await`, un serveur MCP
+finit ce qu'il a commencé : l'effet a pu avoir lieu, ou aura lieu. `on_unknown` s'applique comme à
+la reprise, avec un texte qui dit ce qui s'est passé : le travail continue en thread, l'outil a été
+arrêté en cours de route, ou le serveur MCP a été prévenu (`notifications/cancelled`). Un appel
+sans effet garde « Délai dépassé ».
+
+- Les outils synchrones tournent dans le pool de l'instance (`execution.tools.threads`, threads
+  `loom-outil`, démons), et non dans celui d'asyncio, qui sert le journal JSONL et les fichiers :
+  des outils bloqués n'arrêtent plus le journal ni les autres runs. `in_thread` remplace
+  `asyncio.to_thread` dans les outils ; il suit le travail de l'appel.
+- Tant que le travail d'un appel à effet tourne après son délai, la chaîne d'appels du tour
+  l'attend, au plus `execution.tools.grace` secondes ; au-delà, les appels suivants reviennent au
+  modèle sans être lancés (« Non exécuté »). Une fin tardive se dit dans les logs.
+- `ToolContext.cancelled` (un `threading.Event`) se lève au délai et à l'annulation : un outil
+  qui travaille par étapes le regarde, et s'arrête.
+- À sa fermeture, `Loom` attend les outils encore au travail au plus `grace` secondes, en disant
+  lesquels ; au-delà, le process s'arrête sans eux.
+- Un outil `on_unknown: pause` avec un délai exige un journal durable, comme une approbation.
+
 **Réalisation (phase 5.3a) :** magasin `postgres`, même instruction unique, même arbitrage par la
 base. Ce qui change est la portée : deux workers sur deux machines partagent leurs clés, là où
 `sqlite` demande un fichier commun. Pas de politique de lignes sur cette table — `get(key)` ne

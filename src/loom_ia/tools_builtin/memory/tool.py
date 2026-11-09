@@ -20,7 +20,6 @@ est chargé —, mais n'en décide rien : le fichier peut changer pendant
 l'attente, et l'exécution refait tout.
 """
 
-import asyncio
 import importlib.util
 import os
 from collections.abc import Mapping
@@ -31,6 +30,7 @@ from pydantic import BaseModel, JsonValue
 
 from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
+from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools import to_output
 from loom_ia.tools_builtin import (
     BuiltinContext,
@@ -361,7 +361,7 @@ class MemoryTool:
     async def _read_file(self, path: str) -> tuple[str, Extracted]:
         """Le fichier désigné « <dossier>/<chemin> » : son adresse, son titre, son texte."""
         located, target = self._file_target(path)
-        data = await asyncio.to_thread(_file_bytes, located.address, target)
+        data = await in_thread(_file_bytes, located.address, target)
         return located.address, await extract(data, target, located.address)
 
     # --- Description et réglages -------------------------------------------------------

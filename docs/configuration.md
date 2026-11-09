@@ -305,10 +305,12 @@ storage:
 
 | Clé | Rôle et impact | Valeurs | Défaut | Exemple |
 |---|---|---|---|---|
-| `tools.timeout` | Délai par défaut d'un outil (s), sauf délai propre à l'outil. | nombre > 0, `null` (sans limite) | `30` | `tools: {timeout: 60}` |
+| `tools.timeout` | Délai par défaut d'un outil (s), sauf délai propre à l'outil. Dépassé, un appel sans effet rend « Délai dépassé » ; un appel à effet est d'état inconnu, et son outil dit ce qu'il en advient (`on_unknown`) : son travail a pu avoir lieu, ou aura lieu. | nombre > 0, `null` (sans limite) | `30` | `tools: {timeout: 60}` |
 | `tools.validate_arguments` | Contrôle des arguments par le schéma de l'outil ; une erreur repart au modèle. | booléen | `true` | |
 | `tools.offload_over` | Taille d'un résultat (caractères) au-delà de laquelle il est déporté en artefact. | entier > 0, `null` (jamais) | `50000` | |
 | `tools.order` | Ordre des appels d'un même tour. `effects` : les appels sans effet qui se suivent partent ensemble ; un appel à effet (`side_effects` autre que `none`, ou l'évaluation de l'appel par l'outil) attend que ceux qui le précèdent dans la réponse soient finis, et ceux qui le suivent l'attendent ; un appel qui attend une approbation retient de même ceux qui le suivent. `free` : tous partent ensemble (comportement d'avant 2.0.20). Réglable par agent (`execution.tools.order` de l'agent). | `effects`, `free` | `effects` | `tools: {order: free}` |
+| `tools.threads` | Threads du pool des outils synchrones de l'instance (`loom-outil`), à part de celui d'asyncio qui sert le journal et les fichiers. Un appel qui trouve tous les threads pris attend son tour ; son délai court. | entier > 0 | `16` | `tools: {threads: 32}` |
+| `tools.grace` | Après un délai dépassé sur un appel à effet dont le travail continue en thread, attente au plus de sa fin avant les appels suivants du tour (au-delà, ils reviennent au modèle sans être lancés) ; et, à la fermeture de l'instance, attente au plus des outils encore au travail, avant de s'arrêter sans eux. | nombre > 0, `null` (sans borne) | `30` | `tools: {grace: 10}` |
 | `attachments.max_bytes` | Taille maximale d'une pièce jointe. | entier > 0 | `5242880` (5 Mio) | |
 | `attachments.types` | Types MIME acceptés en entrée d'un run ; **images seulement**. | liste parmi `image/jpeg`, `image/png`, `image/gif`, `image/webp` | les quatre | `types: [image/png]` |
 | `attachments.max_files` | Pièces jointes par run ; borne aussi un envoi REST. | entier > 0 | `10` | |

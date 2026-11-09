@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """L'outil ``excel`` monté : ses dossiers, son fuseau, son recalcul ; et sa fabrique."""
 
-import asyncio
 import hashlib
 import shutil
 from collections.abc import Iterable, Mapping
@@ -14,6 +13,7 @@ from pydantic import BaseModel, JsonValue
 
 from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
+from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools import to_output
 from loom_ia.tools_builtin import BuiltinContext, Settings
 from loom_ia.tools_builtin._document.arguments import MAX_CATEGORIES, MAX_SLICES
@@ -160,12 +160,12 @@ class ExcelTool:
         request = parse(arguments, self._call)
         if isinstance(request, ReadArguments):
             source = self._workbook(request.path)
-            found = await asyncio.to_thread(self._perform_read, request, source)
+            found = await in_thread(self._perform_read, request, source)
             return to_output(found)
         located = self._output(request)
         sources = {data.path: self._source(data.path) for _, data in _with_data(request)}
         # openpyxl, le disque et LibreOffice bloquent : hors de la boucle asyncio.
-        result = await asyncio.to_thread(self._perform, request, located, sources)
+        result = await in_thread(self._perform, request, located, sources)
         return to_output(result)
 
     # --- Chemins ------------------------------------------------------------------------

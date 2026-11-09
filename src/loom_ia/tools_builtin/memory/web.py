@@ -28,12 +28,12 @@ les importe qu'à la première page convertie. L'analyse passe par
 changerait la façon dont openpyxl lit les classeurs de ``loom.excel``.
 """
 
-import asyncio
 import importlib
 import re
 from typing import Any, Final
 
 from loom_ia.core.ports import ToolError
+from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools_builtin.fetch_page import decode, download, is_html
 from loom_ia.tools_builtin.memory.service import Extracted
 
@@ -63,7 +63,7 @@ async def fetch_markdown(url: str) -> Extracted:
             raise ToolError(f"Aucun contenu dans {page.url}.")
         return Extracted(title=page.url, text=stripped)
 
-    return await asyncio.to_thread(convert)
+    return await in_thread(convert)
 
 
 def extract_from_html(html: str, url: str) -> Extracted:

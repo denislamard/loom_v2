@@ -185,8 +185,9 @@ async def test_mounting_builds_one_source_per_reference(tmp_path: Path) -> None:
     built = build_agent(config, "assistant", InMemoryEventStore())
     sources = built.context.tools.sources
     assert [(s.name, s.required) for s in sources] == [("time", False), ("math", False)]
-    # Sans pool fourni, l'agent possède le sien pour la portée shared.
-    assert len(built.owned) == 1
+    # Sans pool fourni, l'agent possède le sien pour la portée shared, et son pool de
+    # threads d'outils (B-2), faute de celui d'une instance ``Loom``.
+    assert [type(owned).__name__ for owned in built.owned] == ["McpPool", "ToolThreads"]
     await built.aclose()
 
 

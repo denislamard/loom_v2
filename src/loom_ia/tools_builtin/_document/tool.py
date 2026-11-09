@@ -9,7 +9,6 @@ refusés, écriture atomique, fichier existant remplacé seulement avec
 sa description en dit.
 """
 
-import asyncio
 import hashlib
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
@@ -20,6 +19,7 @@ from pydantic import JsonValue
 
 from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
+from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools import to_output
 from loom_ia.tools_builtin import Settings
 from loom_ia.tools_builtin._document.arguments import (
@@ -228,12 +228,12 @@ class DocumentTool(ABC):
             return to_output(self._template(request.name))
         if isinstance(request, ReadArguments):
             source = self._source(request.path)
-            data = await asyncio.to_thread(self._load, source)
+            data = await in_thread(self._load, source)
             found = await self._read(request, source.address, data)
             return to_output({"path": source.address, **found})
         located = self._output(request)
         # Le rendu et le disque bloquent : hors de la boucle asyncio.
-        result = await asyncio.to_thread(self._write, request, located)
+        result = await in_thread(self._write, request, located)
         return to_output(result)
 
     # --- Chemins ------------------------------------------------------------------------

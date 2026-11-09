@@ -139,6 +139,7 @@ from loom_ia.core.ports import (
 )
 from loom_ia.core.state_extract import Extraction, ModelKey
 from loom_ia.core.template import Template
+from loom_ia.core.tool_threads import ToolThreads
 from loom_ia.engine import (
     AgentResolver,
     AgentTool,
@@ -598,6 +599,7 @@ def build_agent(
     tenant: Tenant | None = None,
     models: Callable[[ModelSpec], ModelClient] | None = None,
     provided: Mapping[str, ModelClient] | None = None,
+    threads: ToolThreads | None = None,
 ) -> Agent:
     """Assemble l'agent ``name`` de la config.
 
@@ -616,7 +618,8 @@ def build_agent(
     l'agent a les siens, communs à ses sous-agents. ``idempotency`` : magasin
     partagé (#49) ; sans lui, chaque appel reçoit celui de son journal.
     ``tenant`` : le client pour qui l'agent est monté (L1) ; ses secrets
-    remplacent alors ``environ``.
+    remplacent alors ``environ``. ``threads`` : le pool des outils synchrones de
+    l'instance (B-2, D-4) ; sans lui, l'agent a le sien, commun à ses sous-agents.
     """
     spec = AgentRegistry.from_config(config).get(name)
     known = registry if registry is not None else load_registry(config)
@@ -649,6 +652,13 @@ def build_agent(
 
     clients: dict[str, ModelClient] = {}
     breakers = breakers if breakers is not None else CircuitBreakers()
+    # Sans pool de l'instance, l'agent a le sien, qu'il ferme avec lui.
+    own_threads = (
+        ToolThreads(config.execution.tools.threads, grace=config.execution.tools.grace)
+        if threads is None
+        else None
+    )
+    threads = threads if threads is not None else own_threads
 
     # Échanges bruts (6.1b) : ceux de ce client de loom, pour tous ses modèles.
     capture = config.capture_for(tenant_id)
@@ -728,7 +738,7 @@ def build_agent(
             else None
         ),
     )
-    owned: tuple[_Closable, ...] = ()
+    owned: tuple[_Closable, ...] = () if own_threads is None else (own_threads,)
     if spec.subagents and agents is None:
         nested = _SubAgents(
             config,
@@ -740,6 +750,7 @@ def build_agent(
             idempotency=idempotency,
             breakers=breakers,
             tenant=tenant,
+            threads=threads,
         )
         agents = nested
         owned = (*owned, nested)
@@ -782,6 +793,8 @@ def build_agent(
             artifacts=artifacts,
             offload_over=execution.offload_over,
             order=spec.execution.tools.order or execution.order,
+            grace=execution.grace,
+            threads=threads,
             breakers=breakers,
             circuits={
                 **{server.name: server.circuit_breaker for server in config.mcp_servers},
@@ -1124,6 +1137,16 @@ def _check_durable_journal(
             if name not in obligatoires
         ]
         pausing = sorted({b.name for b in policies.bound if "pause" in b.policy.decisions})
+        # Un outil à ``on_unknown: pause`` qui dépasse son délai fait attendre un humain
+        # (B-2) : il faut un délai, le sien ou celui de l'exécution.
+        unknown = [
+            t.spec.name
+            for t in tools
+            if t.spec.on_unknown == "pause"
+            and t.spec.kind not in {"role", "agent"}
+            and (t.spec.timeout or config.execution.tools.timeout) is not None
+            and t.spec.name not in obligatoires
+        ]
         # Un outil qui évalue ses appels n'en approuve que certains : le dire.
         by_call = {
             t.spec.name for t in tools if _assesses_approval(t) and t.spec.name not in forced
@@ -1139,6 +1162,7 @@ def _check_durable_journal(
                 for name in obligatoires
             ),
             *(f"politique {name!r} qui peut rendre Pause" for name in pausing),
+            *(f"outil {name!r} en on_unknown: pause, avec un délai" for name in unknown),
         ]
         if causes:
             # Assoupli en dev seulement : sur une machine, perdre un run en
@@ -1647,9 +1671,11 @@ class _SubAgents:
         idempotency: IdempotencyStore | None,
         breakers: CircuitBreakers,
         tenant: Tenant | None = None,
+        threads: ToolThreads | None = None,
     ) -> None:
         self._config = config
         self._store = store
+        self._threads = threads
         self._registry = registry
         self._environ = environ
         self._mcp_pool = mcp_pool
@@ -1674,6 +1700,7 @@ class _SubAgents:
                 agents=self,
                 breakers=self._breakers,
                 tenant=self._tenant,
+                threads=self._threads,
             )
             self._built[name] = built
         return built.context

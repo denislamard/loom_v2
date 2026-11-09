@@ -42,6 +42,7 @@ from zoneinfo import ZoneInfo
 from pydantic import JsonValue
 
 from loom_ia.core.ports import ToolError
+from loom_ia.core.tool_threads import in_thread
 from loom_ia.tools_builtin import Place
 from loom_ia.tools_builtin.sql.analysis import Analysis, Catalog, is_forbidden
 from loom_ia.tools_builtin.sql.arguments import ParamValue, Statement
@@ -223,7 +224,7 @@ class SqliteDatabase:
                 conn.close()
 
         try:
-            return await asyncio.to_thread(read)
+            return await in_thread(read)
         except sqlite3.Error as exc:
             raise ToolError(f"Base {self.spec.name} : {exc}.") from exc
 
@@ -269,7 +270,7 @@ class SqliteDatabase:
             finally:
                 conn.close()
 
-        task = asyncio.ensure_future(asyncio.to_thread(run))
+        task = asyncio.ensure_future(in_thread(run))
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
