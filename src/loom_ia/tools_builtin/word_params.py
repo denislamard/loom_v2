@@ -15,6 +15,7 @@ l'importe pour valider la référence au chargement, sans importer l'outil.
       timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
       charts: true                     # le bloc graphique ; false par défaut
       images: true                     # le bloc image ; false par défaut
+      extra_blocks: true               # signature, sommaire, liste à cocher ; false par défaut
       style: styles/charte.yaml        # la charte (facultatif), relative à prompts_dir
       templates:                       # modèles de document, relatifs à prompts_dir
         cahier-des-charges: modele-cdc.md
@@ -61,6 +62,9 @@ class WordParams(BaseModel):
     charts: bool = False
     # Le bloc image : environ 230 tokens de plus par appel au modèle, d'où false.
     images: bool = False
+    # Les blocs signature et sommaire, et la liste à cocher : environ 220 tokens de plus
+    # par appel au modèle, d'où false.
+    extra_blocks: bool = False
     # Les modèles de document, par nom : fichiers relatifs à prompts_dir, lus au chargement.
     templates: Templates = {}
     # La charte : un fichier de style relatif à prompts_dir, lu au chargement ; la

@@ -35,6 +35,7 @@ from loom_ia.tools_builtin._document.content import (
     BlockOut,
     BreakOut,
     ChartOut,
+    ContentsOut,
     HeadingOut,
     ImageOut,
     Inline,
@@ -43,6 +44,7 @@ from loom_ia.tools_builtin._document.content import (
     ParagraphOut,
     Prepared,
     QuoteOut,
+    SignatureOut,
     TableOut,
     TitleOut,
     plain,
@@ -72,6 +74,8 @@ _TYPE: Final = "http://schemas.openxmlformats.org/officeDocument/2006/relationsh
 _CT: Final = "application/vnd.openxmlformats-officedocument.wordprocessingml"
 _HEAD: Final = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 
+# L'espace laissé pour une signature, sous « Signature : » (2 cm).
+SIGN_SPACE: Final = 1134
 # Un centimètre en vingtièmes de point (twips) ; un twip en EMU ; l'écart entre deux
 # colonnes de texte, entre deux cellules côte à côte, et la marge d'un encadré.
 CM: Final = 567
@@ -269,6 +273,9 @@ class _Body:
     used: set[str] = field(default_factory=set[str])
     # Les légendes numérotées : le dernier numéro, par sorte (« Tableau », « Figure »).
     numbers: dict[str, int] = field(default_factory=dict[str, int])
+    # Le sommaire : ses entrées (niveau, texte, signet), et le signet de chaque titre repris.
+    toc: list[tuple[int, str, str]] = field(default_factory=list[tuple[int, str, str]])
+    marks: dict[int, tuple[int, str]] = field(default_factory=dict[int, tuple[int, str]])
 
     def picture(self, picture: Picture) -> int:
         """Le numéro de la partie qui porte l'image : chaque image distincte une fois."""
@@ -484,9 +491,27 @@ def _blocks(
                     "Title", _runs(runs), '<w:jc w:val="center"/>' if section.cover else ""
                 )
             case HeadingOut(level=level, runs=runs):
-                said += _paragraph(_heading_style(body, level, section), _runs(runs))
+                content = _runs(runs)
+                mark = body.marks.get(id(block))
+                if mark is not None:
+                    number, name = mark
+                    content = (
+                        f'<w:bookmarkStart w:id="{number}" w:name="{name}"/>{content}'
+                        f'<w:bookmarkEnd w:id="{number}"/>'
+                    )
+                said += _paragraph(_heading_style(body, level, section), content)
             case ParagraphOut(runs=runs):
                 said += _paragraph("Normal", _runs(runs, size=size), align)
+            case ListOut(entries=entries, checkboxes=True):
+                body.used.update((look.CHECK, look.CHECK_2))
+                for entry in entries:
+                    said += _checkbox(look.CHECK, entry.checked, entry.runs, size)
+                    said += "".join(
+                        _checkbox(look.CHECK_2, checked, child, size)
+                        for child, checked in zip(
+                            entry.children, entry.children_checked, strict=True
+                        )
+                    )
             case ListOut(ordered=ordered, entries=entries):
                 body.lists.append(ordered)
                 number = len(body.lists)
@@ -530,7 +555,129 @@ def _blocks(
                     said += _paragraph("Normal", "", _AFTER_TABLE)
             case ImageOut():
                 said += _image(body, block, width)
+            case SignatureOut():
+                said += _signature(body, block, width)
+            case ContentsOut():
+                said += _contents(body, width)
     return said
+
+
+def _checkbox(style: str, checked: bool, runs: Inline, size: int | None) -> str:
+    """Un élément de liste à cocher : la case (☒ ou ☐), une tabulation, le texte."""
+    box = (
+        f'<w:r><w:rPr><w:rFonts w:ascii="{look.CHECK_FONT}" w:hAnsi="{look.CHECK_FONT}" '
+        f'w:cs="{look.CHECK_FONT}"/>{_size(size)}</w:rPr>'
+        f"<w:t>{look.CHECKED if checked else look.UNCHECKED}</w:t></w:r><w:r><w:tab/></w:r>"
+    )
+    return _paragraph(style, box + _runs(runs, size=size))
+
+
+def _signature(body: _Body, block: SignatureOut, width: int) -> str:
+    """La zone de signature : une colonne par signataire, sans cadre.
+
+    Au style de tableau « loom signature », que la relecture reconnaît : elle rend le
+    bloc ``signature``, et non un tableau.
+    """
+    body.used.update((look.SIGNATURE, look.SIGNER, look.MENTION))
+    count = len(block.signers)
+    widths = [width // count] * count
+    widths[-1] += width - sum(widths)
+    said = (
+        f'<w:tbl><w:tblPr><w:tblStyle w:val="{look.SIGNATURE}"/>'
+        f'<w:tblW w:w="{width}" w:type="dxa"/><w:tblLayout w:type="fixed"/>'
+        '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
+        '<w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar>'
+        '<w:tblLook w:val="0000" w:firstRow="0" w:lastRow="0" w:firstColumn="0" '
+        'w:lastColumn="0" w:noHBand="1" w:noVBand="1"/></w:tblPr><w:tblGrid>'
+        + "".join(f'<w:gridCol w:w="{cell}"/>' for cell in widths)
+        + "</w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr>"
+    )
+    for index, (signer, cell) in enumerate(zip(block.signers, widths, strict=True)):
+        gap = (
+            f'<w:tcMar><w:right w:w="{CELL_GAP}" w:type="dxa"/></w:tcMar>'
+            if index < count - 1
+            else ""
+        )
+        content = _paragraph(look.SIGNER, _run(signer))
+        if block.mention:
+            content += _paragraph(look.MENTION, _run(block.mention))
+        content += _paragraph("Normal", _run("Date :"), '<w:spacing w:after="60"/>')
+        content += _paragraph("Normal", _run("Signature :"), f'<w:spacing w:after="{SIGN_SPACE}"/>')
+        said += f'<w:tc><w:tcPr><w:tcW w:w="{cell}" w:type="dxa"/>{gap}</w:tcPr>{content}</w:tc>'
+    return said + "</w:tr></w:tbl>" + _paragraph("Normal", "", _AFTER_TABLE)
+
+
+def _contents(body: _Body, width: int) -> str:
+    """Le sommaire : un champ ``TOC`` que Word met à jour à l'ouverture (``dirty``), avec
+    ses entrées déjà écrites — les titres, et leurs numéros s'ils sont numérotés — pour
+    qu'il se lise avant toute mise à jour. Les numéros de page (``toc.pages``) sont des
+    champs ``PAGEREF`` vers le signet de chaque titre : seul le traitement de texte connaît
+    les pages, et LibreOffice les écrit à « Mettre à jour l'index »."""
+    style = body.style
+    body.used.update((look.TOC_HEADING, *look.TOC_LEVELS[: style.toc_levels]))
+    pages = style.toc_pages
+    switches = f' TOC \\o "1-{style.toc_levels}" \\h \\z \\u' + ("" if pages else " \\n")
+    begin = (
+        '<w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r>'
+        f'<w:r><w:instrText xml:space="preserve">{switches} </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+    )
+    end = '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+    tabs = (
+        f'<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="{width}"/></w:tabs>' if pages else ""
+    )
+    said = _paragraph(look.TOC_HEADING, _run("Sommaire"))
+    if not body.toc:
+        return said + _paragraph(look.TOC_LEVELS[0], begin + end)
+    for index, (level, label, mark) in enumerate(body.toc):
+        page = (
+            '<w:r><w:tab/></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f'<w:r><w:instrText xml:space="preserve"> PAGEREF {mark} \\h </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+            if pages
+            else ""
+        )
+        entry = f'<w:hyperlink w:anchor="{mark}" w:history="1">{_run(label)}{page}</w:hyperlink>'
+        said += _paragraph(
+            look.TOC_LEVELS[level - 1],
+            (begin if index == 0 else "") + entry + (end if index == len(body.toc) - 1 else ""),
+            tabs,
+        )
+    return said
+
+
+def _toc_entries(body: _Body, blocks: Sequence[BlockOut]) -> None:
+    """Les entrées du sommaire, s'il y en a un : les titres repris (jusqu'à ``toc.levels``,
+    sauf un titre de section masqué), leur numéro tel que Word l'écrira, et un signet."""
+    if not any(isinstance(block, ContentsOut) for block in blocks):
+        return
+    style = body.style
+    counters = [0, 0, 0]
+    for block in blocks:
+        if not isinstance(block, HeadingOut):
+            continue
+        text = plain(block.runs)
+        hidden = block.level == 1 and style.section(text).title == "masque"
+        numbered = style.numbering != "aucune" and not hidden
+        if numbered:
+            counters[block.level - 1] += 1
+            counters[block.level :] = [0] * (3 - block.level)
+        if block.level > style.toc_levels or hidden:
+            continue
+        label = text
+        if numbered:
+            label = f"{_heading_number(style.numbering, counters[: block.level])} {text}"
+        name = f"_Toc_loom_{len(body.toc) + 1}"
+        body.marks[id(block)] = (len(body.toc) + 1, name)
+        body.toc.append((block.level, label, name))
+
+
+def _heading_number(numbering: str, counters: Sequence[int]) -> str:
+    """Le numéro d'un titre, comme la numérotation de ``word/style.py`` l'écrit."""
+    if len(counters) == 1:
+        return f"Article {counters[0]} \u2013" if numbering == "article" else f"{counters[0]}."
+    return ".".join(str(number) for number in counters)
 
 
 def _heading_style(body: _Body, level: int, section: SectionLook) -> str:
@@ -854,6 +1001,7 @@ def _band_parts(
 def render(prepared: Prepared, style: Style = HOUSE) -> bytes:
     """Le fichier .docx, le même octet pour octet pour un même document et un même style."""
     body = _Body(style, plain(_title_runs(prepared)))
+    _toc_entries(body, prepared.blocks)
     document, bands = _document(prepared, body)
     body_media = len(body.media)
     band_parts, listed = _band_parts(body, bands)

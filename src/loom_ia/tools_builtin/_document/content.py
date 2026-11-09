@@ -33,6 +33,8 @@ from loom_ia.tools_builtin._document.arguments import (
     MAX_TEXT,
     Chart,
     ChartKind,
+    CheckList,
+    Contents,
     Heading,
     Image,
     ImageWidth,
@@ -43,6 +45,7 @@ from loom_ia.tools_builtin._document.arguments import (
     Paragraph,
     Problems,
     Quote,
+    Signature,
     Table,
     WriteArguments,
 )
@@ -113,12 +116,30 @@ class ParagraphOut:
 class Entry:
     runs: Inline
     children: tuple[Inline, ...] = ()
+    # Une liste à cocher : l'élément est coché, et chacun de ses sous-éléments.
+    checked: bool = False
+    children_checked: tuple[bool, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class ListOut:
     ordered: bool
     entries: tuple[Entry, ...]
+    # Une liste à cocher (``extra_blocks``) : une case devant chaque élément.
+    checkboxes: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SignatureOut:
+    """La zone de signature : un libellé par signataire, et la mention qu'ils écrivent."""
+
+    signers: tuple[str, ...]
+    mention: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ContentsOut:
+    """Le sommaire : la table des matières, tirée des titres par le format."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +215,8 @@ type BlockOut = (
     | BreakOut
     | ChartOut
     | ImageOut
+    | SignatureOut
+    | ContentsOut
 )
 
 
@@ -273,7 +296,17 @@ def prepare(
                 found = _image(block, pictures, where, problems)
                 if found is not None:
                     blocks.append(found)
+            case Signature():
+                blocks.append(_signature(block, where, problems))
+            case Contents():
+                if any(isinstance(b, ContentsOut) for b in blocks):
+                    problems.error(f"{where} : un seul sommaire par document")
+                blocks.append(ContentsOut())
     _check_images(arguments, pictures, problems)
+    if any(isinstance(b, ContentsOut) for b in blocks) and not any(
+        isinstance(b, HeadingOut) for b in blocks
+    ):
+        problems.warn("sommaire : le document n'a aucun titre, le sommaire sera vide")
     if template is not None:
         _check_plan(blocks, template, problems)
     if not any(not isinstance(b, BreakOut) for b in blocks):
@@ -318,24 +351,70 @@ def _clean(text: str, where: str, problems: Problems) -> None:
         problems.error(f"{where} : caractère de contrôle U+{ord(found.group()):04X} refusé")
 
 
+# Une case, en tête d'un élément de liste à cocher : « [x] » cochée, « [ ] » vide.
+_CHECKBOX: Final = re.compile(r"^\[([ xX])\]\s+")
+MAX_SIGNER: Final = 80
+MAX_MENTION: Final = 200
+
+
 def _list(block: ListBlock, where: str, problems: Problems) -> ListOut:
     entries: list[Entry] = []
     count = 0
+    checkboxes = isinstance(block, CheckList) and block.checkboxes
+    if checkboxes and block.ordered:
+        problems.error(f"{where} : une liste à cocher n'est pas numérotée (ordered)")
+
+    def item_text(text: str, at: str) -> tuple[Inline, bool]:
+        said = _text(text, at, problems, required=True)
+        if not checkboxes:
+            return inline(said), False
+        found = _CHECKBOX.match(said)
+        if found is None:
+            problems.error(
+                f"{at} : dans une liste à cocher (checkboxes), chaque élément commence par "
+                "[x] (coché) ou [ ] (vide)"
+            )
+            return inline(said), False
+        return inline(said[found.end() :]), found.group(1) != " "
+
     for number, item in enumerate(block.items, start=1):
         at = f"{where}, élément {number}"
         if isinstance(item, Item):
-            children = tuple(
-                inline(_text(child, f"{at}.{sub}", problems, required=True))
-                for sub, child in enumerate(item.items, start=1)
-            )
+            children = [
+                item_text(child, f"{at}.{sub}") for sub, child in enumerate(item.items, start=1)
+            ]
             count += len(children)
-            entries.append(Entry(inline(_text(item.text, at, problems, required=True)), children))
+            runs, checked = item_text(item.text, at)
+            entries.append(
+                Entry(
+                    runs,
+                    tuple(child for child, _ in children),
+                    checked,
+                    tuple(mark for _, mark in children) if checkboxes else (),
+                )
+            )
         else:
-            entries.append(Entry(inline(_text(item, at, problems, required=True))))
+            runs, checked = item_text(item, at)
+            entries.append(Entry(runs, checked=checked))
         count += 1
     if count > MAX_ITEMS:
         problems.error(f"{where} : {count} éléments, au-delà de {MAX_ITEMS}")
-    return ListOut(block.ordered, tuple(entries))
+    return ListOut(block.ordered, tuple(entries), checkboxes)
+
+
+def _signature(block: Signature, where: str, problems: Problems) -> SignatureOut:
+    signers: list[str] = []
+    for number, signer in enumerate(block.signers, start=1):
+        said = _text(signer, f"{where}, signataire {number}", problems, required=True)
+        if len(said) > MAX_SIGNER:
+            problems.error(
+                f"{where}, signataire {number} : {len(said)} caractères, au-delà de {MAX_SIGNER}"
+            )
+        signers.append(said)
+    mention = _text(block.mention, f"{where}, mention", problems) or None
+    if mention is not None and len(mention) > MAX_MENTION:
+        problems.error(f"{where}, mention : {len(mention)} caractères, au-delà de {MAX_MENTION}")
+    return SignatureOut(tuple(signers), mention)
 
 
 def _table(

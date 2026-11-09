@@ -68,7 +68,8 @@ class PdfParams(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _no_style(cls, value: object) -> object:
-        """Les styles ne servent qu'à ``loom.word`` pour l'instant : le dire, pas « extra »."""
+        """Styles et ``extra_blocks`` ne servent qu'à ``loom.word`` pour l'instant : le dire,
+        plutôt qu'un champ « extra » refusé sans explication."""
         templates = _mapping(value).get("templates")
         styled = "style" in _mapping(value) or any(
             "style" in _mapping(ref) for ref in _mapping(templates).values()
@@ -77,6 +78,11 @@ class PdfParams(BaseModel):
             raise ValueError(
                 "style : les styles de document ne servent qu'à loom.word pour l'instant "
                 "(loom.pdf écrit dans son style maison) ; retirer style"
+            )
+        if "extra_blocks" in _mapping(value):
+            raise ValueError(
+                "extra_blocks : la signature, le sommaire et la liste à cocher ne servent "
+                "qu'à loom.word pour l'instant ; retirer extra_blocks"
             )
         return value
 

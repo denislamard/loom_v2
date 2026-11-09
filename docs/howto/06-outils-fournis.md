@@ -1001,6 +1001,7 @@ tools:
   - python: loom.word
     charts: true                     # le bloc graphique ; false par défaut
     images: true                     # le bloc image ; false par défaut
+    extra_blocks: true               # signature, sommaire, liste à cocher ; false par défaut
     style: styles/charte.yaml        # la charte des documents (facultatif)
     templates:                       # modèles de document, relatifs à prompts_dir
       devis: devis.md
@@ -1022,7 +1023,7 @@ tools:
     timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
 ```
 
-Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `charts`, qui donne au modèle le bloc `graphique` (voir « Des graphiques »), `images`, qui lui donne le bloc `image` (voir « Des images »), `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), et `style`, la charte des documents de `loom.word` (voir « Des styles de document »). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
+Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `charts`, qui donne au modèle le bloc `graphique` (voir « Des graphiques »), `images`, qui lui donne le bloc `image` (voir « Des images »), `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), `style`, la charte des documents de `loom.word` (voir « Des styles de document »), et `extra_blocks`, qui donne à `loom.word` la signature, le sommaire et la liste à cocher (voir « Signature, sommaire, liste à cocher »). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
 
 `loom validate` montre les dossiers, puis le fuseau, les graphiques, les images, les modèles, la lecture et, s'il y en a un, le style :
 
@@ -1034,7 +1035,7 @@ AGENTS
   │              read
   │              sortie → ./sortie
   │              read, write
-  │              fuseau : Europe/Paris · graphiques : oui · images : oui · modèles : devis · lecture des documents : oui · style : charte
+  │              fuseau : Europe/Paris · graphiques : oui · images : oui · modèles : devis · lecture des documents : oui · signature, sommaire, cases à cocher : oui · style : charte
   └ pdf          recus → ./recus
                  read
                  sortie → ./sortie
@@ -1328,6 +1329,7 @@ Deux fichiers, relatifs à `prompts_dir` et lus au chargement comme un modèle :
 | `note` | L'encadré | `fill`, `border` |
 | `captions` | Les légendes | `numbered` : « Tableau 1 — », « Figure 1 — » (images et graphiques) |
 | `images` | Les images | `grid` : deux images `moitie` qui se suivent se posent côte à côte, chacune avec sa légende |
+| `toc` | Le bloc `sommaire` (`extra_blocks`) | `levels` : les niveaux de titre repris (1 à 3, 2 par défaut) ; `pages` : `false` pour des liens sans numéros de page |
 | `header`, `footer` | En-tête, pied de page | `left`, `center`, `right` : un texte, avec `{page}`, `{pages}`, `{titre}` ; `lines` : des lignes centrées (4 au plus : des mentions légales) ; `logo: {file, width, position}` (PNG ou JPEG, largeur en cm) ; `first_page` : `false` pour une première page sans |
 | `watermark` | Filigrane | un texte (« BROUILLON ») ; `""` dans une disposition retire celui de la charte |
 
@@ -1398,6 +1400,34 @@ tools[loom.word].style.header.logo — logo introuvable : …/prompts/images/log
 Une police hors des polices de tous les postes (Arial, Calibri, Cambria, Georgia, Times New Roman, Verdana, Tahoma, Trebuchet MS, Garamond, Courier New) s'affiche dans une police de remplacement chez qui ne l'a pas : Word ne l'embarque pas. `loom validate` le signale (`polices : Inter : hors des polices de tous les postes, remplacée(s) chez qui ne les a pas`).
 
 Les styles ne servent qu'à `loom.word` pour l'instant : `style` est refusé sur `loom.pdf`, qui écrit dans son style maison.
+
+#### Signature, sommaire, liste à cocher
+
+Depuis loom-ia 2.0.20, pour `loom.word`, avec `extra_blocks: true` (`false` par défaut). Trois blocs qu'aucun style ne peut faire exister, parce qu'ils sont du contenu : une zone de signature, un sommaire, une liste à cocher. Ils couvrent les devis à signer, les PV, les contrats, les rapports et les listes de contrôle. Ils coûtent environ 230 tokens par appel de modèle (598 caractères de schéma, 262 de description), d'où leur clé à part.
+
+```yaml
+  - python: loom.word
+    extra_blocks: true
+    folders: …
+```
+
+```json
+{"type": "signature", "signers": ["Le client", "L'entreprise"], "mention": "Bon pour accord"}
+{"type": "sommaire"}
+{"type": "liste", "checkboxes": true,
+ "items": ["[x] Coupure d'eau faite", {"text": "[x] Fuite localisée", "items": ["[ ] Canalisation"]}]}
+```
+
+- **`signature`** : une colonne par signataire (4 au plus, 80 caractères chacun), sans cadre : le libellé en gras, la mention en italique (200 caractères au plus), « Date : », « Signature : » et 2 cm pour signer.
+- **`sommaire`** : la table des matières, tirée des titres du document, un seul par document. Ses entrées sont écrites par l'outil (les titres, avec leur numéro si la charte numérote les titres ; un titre de section masqué n'y est pas), dans un champ que Word met à jour à l'ouverture. Les numéros de page ne sont connus que du traitement de texte : Word les écrit à la mise à jour, LibreOffice à « Outils > Mettre à jour > Index ». La charte règle le sommaire : `toc: {levels: 2, pages: true}` (les niveaux de titre repris, 1 à 3 ; `pages: false` pour des liens sans numéros de page).
+- **Liste à cocher** : `checkboxes: true` sur une `liste`, et chaque élément, sous-éléments compris, commence par `[x]` (coché) ou `[ ]` (vide), la convention markdown. Une case ☒ ou ☐ se pose devant. Une liste à cocher n'est pas numérotée.
+
+```text
+Document refusé :
+- bloc 2 (liste), élément 1 : dans une liste à cocher (checkboxes), chaque élément commence par [x] (coché) ou [ ] (vide)
+```
+
+La relecture rend ces blocs tels qu'écrits : `signature` avec ses signataires et sa mention, `sommaire` (ses entrées ne reviennent pas), la liste à cocher avec ses `[x]` et `[ ]`. Un document relu se réécrit tel quel. Un outil sans `extra_blocks` qui lit un tel document le dit dans `notes`, avant une réécriture que le schéma refuserait. `loom validate` ajoute `signature, sommaire, cases à cocher : oui`. `loom.pdf` refuse `extra_blocks` pour l'instant.
 
 #### Lire un document Word
 

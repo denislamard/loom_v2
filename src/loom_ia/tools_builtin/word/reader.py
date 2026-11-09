@@ -20,15 +20,18 @@ réécrit tel quel. Ce qu'un style de document a posé ne revient pas, puisque l
 le repose à la réécriture : un tableau de disposition (style « loom layout » : des
 sections côte à côte, un encadré, une grille d'images) rend les blocs de ses
 cellules, dans l'ordre ; une légende numérotée (« Figure 2 — Avant ») rend son texte
-sans le numéro ; un titre masqué revient en titre. Avec ``images``, une image du
-corps revient en bloc ``image`` (``path`` : l'adresse du fichier lu à l'écriture,
-gardée dans le nom du dessin) ; sans, elle est comptée. Les en-têtes, pieds de page
-et commentaires ne sont pas lus ; le résultat le dit.
+sans le numéro ; un titre masqué revient en titre. Une zone de signature revient en
+bloc ``signature``, un sommaire en bloc ``sommaire`` (ses entrées ne reviennent pas),
+une liste à cocher en ``liste`` avec ``checkboxes`` et ses cases en [x] ou [ ]. Avec
+``images``, une image du corps revient en bloc ``image`` (``path`` : l'adresse du
+fichier lu à l'écriture, gardée dans le nom du dessin) ; sans, elle est comptée. Les
+en-têtes, pieds de page et commentaires ne sont pas lus ; le résultat le dit.
 """
 
 import io
 import json
 import posixpath
+import re
 import time
 import zipfile
 from collections.abc import Generator, Iterator
@@ -81,6 +84,14 @@ _CP_CATEGORY: Final = (
 _FALSE: Final = frozenset({"0", "false", "off"})
 # Le nom du style de tableau de disposition qu'écrit l'outil (``word/style.py``).
 LAYOUT_STYLE: Final = "loom layout"
+# Les styles des blocs d'``extra_blocks`` (``word/style.py``), par leur nom.
+SIGNATURE_STYLE: Final = "loom signature"
+SIGNER_STYLE: Final = "loom signer"
+MENTION_STYLE: Final = "loom mention"
+CHECK_STYLES: Final = {"loom checkbox": 0, "loom checkbox 2": 1}
+# Une case cochée (☒, ☑, ✓, ✔) ou vide (☐), en tête d'un élément de liste à cocher.
+_CHECKED: Final = frozenset("\u2612\u2611\u2713\u2714")
+_BOXES: Final = _CHECKED | {"\u2610"}
 # Un tableau de disposition dans un autre (une grille d'images dans une colonne) : borné.
 MAX_LAYOUT_DEPTH: Final = 4
 # Ce qui sépare le numéro d'une légende de son texte (« Figure 2 — Avant »).
@@ -175,8 +186,8 @@ class _Package:
     archive: zipfile.ZipFile
     body: str
     styles: dict[str, _Style]
-    # Les styles de tableau de disposition (identifiants) : leurs cellules sont des blocs.
-    layouts: frozenset[str]
+    # Les styles de tableau, par identifiant : leur nom (« loom layout »…), en minuscules.
+    tables: dict[str, str]
     # numId → numéroté (vrai) ou à puces, par niveau.
     numbering: dict[str, dict[int, bool]]
     title: str | None
@@ -221,7 +232,7 @@ def _open(data: bytes, where: str) -> _Package:
         archive=archive,
         body=body,
         styles=_styles(styles_root),
-        layouts=_layouts(styles_root),
+        tables=_table_styles(styles_root),
         numbering=_numbering(_whole(archive, numbering_part, where)) if numbering_part else {},
         title=title,
         category=category,
@@ -324,20 +335,20 @@ def _styles(root: Element | None) -> dict[str, _Style]:
     return found
 
 
-def _layouts(root: Element | None) -> frozenset[str]:
-    """Les styles de tableau de disposition : nommés « loom layout »."""
+def _table_styles(root: Element | None) -> dict[str, str]:
+    """Les styles de tableau : leur nom, par identifiant (« loom layout », « loom signature »)."""
     if root is None:
-        return frozenset()
-    found: set[str] = set()
+        return {}
+    found: dict[str, str] = {}
     for style in root:
         if _local(style.tag) != "style" or _attribute(style, "type") != "table":
             continue
         name_element = _child(style, "name")
         name = (_attribute(name_element, "val") if name_element is not None else None) or ""
         style_id = _attribute(style, "styleId")
-        if style_id is not None and name.lower() == LAYOUT_STYLE:
-            found.add(style_id)
-    return frozenset(found)
+        if style_id is not None:
+            found[style_id] = name.lower()
+    return found
 
 
 def _numbering(root: Element | None) -> dict[str, dict[int, bool]]:
@@ -411,6 +422,8 @@ class _Reading:
     pictures: bool = False
     # La dernière image rendue : un paragraphe de légende qui la suit devient sa caption.
     last_image: dict[str, JsonValue] | None = None
+    # Dans un sommaire : ses entrées ne sont pas des blocs, le bloc ``sommaire`` est rendu.
+    in_toc: bool = False
 
 
 def read(
@@ -498,7 +511,11 @@ def _block(package: _Package, reading: _Reading, element: Element, depth: int = 
     match _local(element.tag):
         case "p":
             _paragraph(package, reading, element)
-        case "tbl" if depth < MAX_LAYOUT_DEPTH and _is_layout(package, element):
+        case "tbl" if _table_style(package, element) == SIGNATURE_STYLE:
+            _close_list(reading)
+            reading.in_toc = False
+            _emit(reading, _signature(package, element))
+        case "tbl" if depth < MAX_LAYOUT_DEPTH and _table_style(package, element) == LAYOUT_STYLE:
             # Un tableau de disposition : ses cellules, dans l'ordre, sont des blocs.
             for row in element:
                 for cell in row if _local(row.tag) == "tr" else ():
@@ -506,6 +523,7 @@ def _block(package: _Package, reading: _Reading, element: Element, depth: int = 
                         _block(package, reading, child, depth + 1)
         case "tbl":
             _close_list(reading)
+            reading.in_toc = False
             _emit(reading, {"type": "tableau", "rows": _table(package, reading, element)})
         case "sdt":
             content = _child(element, "sdtContent")
@@ -515,10 +533,33 @@ def _block(package: _Package, reading: _Reading, element: Element, depth: int = 
             return
 
 
-def _is_layout(package: _Package, table: Element) -> bool:
+def _table_style(package: _Package, table: Element) -> str | None:
+    """Le nom du style d'un tableau, en minuscules ; ``None`` sans style."""
     properties = _child(table, "tblPr")
     style = _child(properties, "tblStyle") if properties is not None else None
-    return style is not None and _attribute(style, "val") in package.layouts
+    style_id = _attribute(style, "val") if style is not None else None
+    return package.tables.get(style_id or "")
+
+
+def _signature(package: _Package, table: Element) -> dict[str, JsonValue]:
+    """La zone de signature : le libellé de chaque signataire, et la mention."""
+    signers: list[JsonValue] = []
+    mention: str | None = None
+    for paragraph in table.iter():
+        if _local(paragraph.tag) != "p":
+            continue
+        properties = _child(paragraph, "pPr")
+        style = _child(properties, "pStyle") if properties is not None else None
+        name = _style_name(package.styles, _attribute(style, "val") if style is not None else None)
+        text = "".join(piece for piece, _, _ in _segments(paragraph)).strip()
+        if name == SIGNER_STYLE and text:
+            signers.append(text)
+        elif name == MENTION_STYLE and text and mention is None:
+            mention = text
+    found: dict[str, JsonValue] = {"type": "signature", "signers": signers}
+    if mention is not None:
+        found["mention"] = mention
+    return found
 
 
 def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
@@ -540,11 +581,24 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
         direct = _child(properties, "outlineLvl")
         value = _attribute(direct, "val") if direct is not None else None
         outline = int(value) if value is not None and value.isdigit() else None
+    name = _style_name(package.styles, style_id)
+    if name == "toc heading" or _TOC_ENTRY.match(name):
+        # Le sommaire : son titre et ses entrées viennent des titres du document ; un
+        # seul bloc ``sommaire`` les remplace.
+        if not reading.in_toc:
+            _close_list(reading)
+            _emit(reading, {"type": "sommaire"})
+            reading.in_toc = True
+        return
+    reading.in_toc = False
     for chart_id in _chart_ids(element):
         _close_list(reading)
         reading.images -= 1
         _emit(reading, _chart(package, chart_id))
     text = _markdown(_segments(_without_number(element)))
+    if name in CHECK_STYLES and text[:1] in _BOXES:
+        _checkbox(reading, text, CHECK_STYLES[name])
+        return
     pictures = _pictures(package, element) if reading.pictures else []
     if text.strip() and reading.last_image is not None and reading.pending is None and not pictures:
         if _style_name(package.styles, style_id) == "caption":
@@ -588,6 +642,25 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
             reading,
             {"type": _KIND.get(_style_name(package.styles, style_id), "paragraphe"), "text": text},
         )
+
+
+# Une entrée de sommaire (« toc 1 » à « toc 9 »).
+_TOC_ENTRY: Final = re.compile(r"^toc [1-9]$")
+
+
+def _checkbox(reading: _Reading, text: str, level: int) -> None:
+    """Un élément de liste à cocher : « [x] » ou « [ ] » à la place de la case."""
+    mark = "[x]" if text[0] in _CHECKED else "[ ]"
+    item = f"{mark} {text[1:].lstrip()}"
+    if reading.pending is not None and reading.pending_id != _CHECKLIST:
+        _close_list(reading)
+    if reading.pending is None:
+        reading.pending = {"type": "liste", "ordered": False, "checkboxes": True, "items": []}
+    reading.pending_id = _CHECKLIST
+    _list_item(reading, item, level, False)
+
+
+_CHECKLIST: Final = "checkboxes"
 
 
 # Les styles qui disent un autre bloc que le paragraphe : ceux qu'écrit l'outil, et

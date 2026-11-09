@@ -7,7 +7,9 @@ en Python (``spec``). Les documents écrits sont relus dans leur XML, et par l'o
 LibreOffice, s'il est là, vérifie le rendu.
 """
 
+import hashlib
 import io
+import json
 import re
 import subprocess
 import zipfile
@@ -24,7 +26,7 @@ from loom_ia.access.cli import main
 from loom_ia.agents.spec import PythonTool, builtin_settings
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.model import DEFAULT_TENANT, RunId, SessionId
-from loom_ia.core.ports import ToolContext
+from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.tools_builtin import BuiltinContext
 from loom_ia.tools_builtin._style_params import (
     HOUSE,
@@ -703,3 +705,187 @@ async def test_libreoffice_lays_out_the_report(tmp_path: Path, soffice: str) -> 
     assert "1. Contexte" in pages[1].extract_text()
     assert "Figure 2 — Après" in pages[1].extract_text()
     assert "Tableau 1 — Pression mesurée" in pages[2].extract_text()
+
+
+# --- Étape 2 : signature, sommaire, liste à cocher (extra_blocks) ----------------------------
+
+LIVRAISON: Final[list[dict[str, Any]]] = [
+    {"type": "titre", "text": "Contrôles"},
+    {
+        "type": "liste",
+        "checkboxes": True,
+        "items": [
+            "[x] Coupure d'eau faite",
+            {"text": "[X] Fuite localisée", "items": ["[x] Raccord", "[ ] Canalisation"]},
+            "[ ] Pièce disponible",
+        ],
+    },
+    {"type": "signature", "signers": ["Le client", "L'entreprise"], "mention": "Bon pour accord"},
+]
+SOMMAIRE: Final[list[dict[str, Any]]] = [
+    {"type": "titre", "text": "Page de garde"},
+    {"type": "sommaire"},
+    {"type": "titre", "text": "Contexte"},
+    {"type": "titre", "text": "Photos", "level": 2},
+    {"type": "titre", "text": "Détail", "level": 3},
+    {"type": "titre", "text": "Mesures"},
+    {"type": "titre", "text": "Conditions générales"},
+]
+
+
+def extra(tmp_path: Path, **params: Any) -> WordTool:
+    return make(tmp_path, extra_blocks=True, **params)
+
+
+async def test_extra_blocks_are_off_unless_declared(tmp_path: Path) -> None:
+    plain = make(tmp_path)
+    tool = extra(tmp_path)
+    schema = json.dumps(plain.spec.input_schema)
+    assert "signature" not in schema and "checkboxes" not in schema
+    assert "Sommaire ('type': 'sommaire')" not in plain.spec.description
+    assert "Sommaire ('type': 'sommaire')" in tool.spec.description
+    assert '"sommaire"' in json.dumps(tool.spec.input_schema)
+    # Le coût : schéma et description, à quelques caractères près de la mesure de l'analyse.
+    grown = len(json.dumps(tool.spec.input_schema, ensure_ascii=False, separators=(",", ":")))
+    grown += len(tool.spec.description)
+    before = len(json.dumps(plain.spec.input_schema, ensure_ascii=False, separators=(",", ":")))
+    before += len(plain.spec.description)
+    assert 800 < grown - before < 880
+    assert ("signature, sommaire, cases à cocher", "oui") in tool.settings().options
+    with pytest.raises(ToolError, match=r"blocks\.0 : Input tag 'signature'"):
+        await call(plain, path="sortie/a.docx", blocks=LIVRAISON[2:])
+
+
+async def test_a_checklist_and_a_signature(tmp_path: Path) -> None:
+    tool = extra(tmp_path)
+    path = await write(tool, "livraison", LIVRAISON, title="PV de livraison")
+    document = part(path, "word/document.xml")
+    check_order(document)
+    assert document.count('<w:pStyle w:val="LoomCheck"/>') == 3
+    assert document.count('<w:pStyle w:val="LoomCheck2"/>') == 2
+    assert document.count("☒") == 3 and document.count("☐") == 2
+    assert "[x]" not in document and "numPr" not in document
+    signature = re.search(r'<w:tblStyle w:val="LoomSignature"/>.*?</w:tbl>', document)
+    assert signature is not None
+    assert signature.group().count('<w:pStyle w:val="LoomSigner"/>') == 2
+    assert signature.group().count("Bon pour accord") == 2
+    styles = part(path, "word/styles.xml")
+    assert '<w:name w:val="loom signature"/>' in styles
+    assert '<w:name w:val="loom checkbox 2"/>' in styles
+    read = await call(tool, action="read", path="sortie/livraison.docx")
+    assert read["blocks"][2:] == [
+        {
+            "type": "liste",
+            "ordered": False,
+            "checkboxes": True,
+            "items": [
+                "[x] Coupure d'eau faite",
+                {"text": "[x] Fuite localisée", "items": ["[x] Raccord", "[ ] Canalisation"]},
+                "[ ] Pièce disponible",
+            ],
+        },
+        {
+            "type": "signature",
+            "signers": ["Le client", "L'entreprise"],
+            "mention": "Bon pour accord",
+        },
+    ]
+    # Relu puis réécrit tel quel : le même fichier.
+    again = await call(
+        tool, path="sortie/encore.docx", title="PV de livraison", blocks=read["blocks"][1:]
+    )
+    assert again["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+async def test_what_the_extra_blocks_refuse(tmp_path: Path) -> None:
+    tool = extra(tmp_path)
+    for blocks, said in (
+        (
+            [{"type": "liste", "checkboxes": True, "items": ["Fait"]}],
+            r"élément 1 : dans une liste à cocher \(checkboxes\), chaque élément commence par",
+        ),
+        (
+            [{"type": "liste", "checkboxes": True, "ordered": True, "items": ["[x] a"]}],
+            "une liste à cocher n'est pas numérotée",
+        ),
+        ([{"type": "signature", "signers": [" "]}], "signataire 1 : texte vide"),
+        ([{"type": "signature", "signers": ["x" * 81]}], "81 caractères, au-delà de 80"),
+        ([{"type": "sommaire"}, {"type": "sommaire"}], "un seul sommaire par document"),
+    ):
+        with pytest.raises(ToolError, match=said):
+            await call(tool, path="sortie/a.docx", blocks=blocks)
+    with pytest.raises(ToolError, match=r"signers : List should have at most 4 items"):
+        await call(tool, path="sortie/a.docx", blocks=[{"type": "signature", "signers": ["a"] * 5}])
+    alone = await call(tool, path="sortie/b.docx", blocks=[{"type": "sommaire"}])
+    assert alone["warnings"] == ["sommaire : le document n'a aucun titre, le sommaire sera vide"]
+
+
+async def test_the_contents_lists_the_headings(tmp_path: Path) -> None:
+    layout = {"sections": {"Page de garde": {"title": "masque", "cover": True}}}
+    md = "# Page de garde\n# Contexte\n# Mesures\n# Conditions générales\n"
+    tool = extra(
+        tmp_path,
+        style={"spec": {"headings": {"numbering": "decimale"}}},
+        templates={"rapport": {"text": md, "style": {"spec": layout}}},
+    )
+    path = await write(tool, "rapport", SOMMAIRE, title="Rapport", template="rapport")
+    document = part(path, "word/document.xml")
+    check_order(document)
+    assert '<w:fldChar w:fldCharType="begin" w:dirty="true"/>' in document
+    assert ' TOC \\o "1-2" \\h \\z \\u </w:instrText>' in document
+    labels = re.findall(r'<w:hyperlink w:anchor="(_Toc_loom_\d)" w:history="1"><w:r><w:t '
+                        r'xml:space="preserve">([^<]*)</w:t>', document)  # fmt: skip
+    # Le titre masqué n'y est pas ; un titre de niveau 3, non plus (levels : 2).
+    assert labels == [
+        ("_Toc_loom_1", "1. Contexte"),
+        ("_Toc_loom_2", "1.1 Photos"),
+        ("_Toc_loom_3", "2. Mesures"),
+        ("_Toc_loom_4", "3. Conditions générales"),
+    ]
+    for mark, _ in labels:
+        assert f'<w:bookmarkStart w:id="{mark[-1]}" w:name="{mark}"/>' in document
+        assert f" PAGEREF {mark} \\h " in document
+    assert document.count('<w:fldChar w:fldCharType="end"/>') == 5
+    read = await call(tool, action="read", path="sortie/rapport.docx")
+    assert {"type": "sommaire"} in read["blocks"]
+    assert [b["type"] for b in read["blocks"]].count("sommaire") == 1
+    assert not any(b.get("text", "").startswith("1. ") for b in read["blocks"])
+
+
+async def test_the_charte_sets_the_contents(tmp_path: Path) -> None:
+    tool = extra(tmp_path, style={"spec": {"toc": {"levels": 1, "pages": False}}})
+    path = await write(tool, "d", SOMMAIRE)
+    document = part(path, "word/document.xml")
+    assert ' TOC \\o "1-1" \\h \\z \\u \\n </w:instrText>' in document
+    assert "PAGEREF" not in document and 'w:leader="dot"' not in document
+    assert len(re.findall("<w:hyperlink ", document)) == 4
+    # Sans numérotation, l'entrée est le titre seul.
+    assert '<w:t xml:space="preserve">Contexte</w:t></w:r></w:hyperlink>' in document
+
+
+async def test_a_tool_without_extra_blocks_says_so_when_reading(tmp_path: Path) -> None:
+    await write(extra(tmp_path), "livraison", [*LIVRAISON, *SOMMAIRE[1:3]])
+    read = await call(make(tmp_path), action="read", path="sortie/livraison.docx")
+    assert read["notes"] == [
+        "Lu : liste à cocher, signature, sommaire ; cet outil n'en écrit pas : les retirer "
+        "avant de réécrire le document (ou extra_blocks: true dans la config de l'outil)."
+    ]
+
+
+def test_pdf_has_no_extra_blocks_yet() -> None:
+    folders = [{"name": "s", "path": "s", "rights": ["write"]}]
+    with pytest.raises(ValidationError, match=r"extra_blocks : la signature, le sommaire"):
+        PdfParams.model_validate({"folders": folders, "extra_blocks": True})
+
+
+async def test_libreoffice_prints_the_extra_blocks(tmp_path: Path, soffice: str) -> None:
+    pypdf = pytest.importorskip("pypdf")
+    tool = extra(tmp_path, style={"spec": {"headings": {"numbering": "decimale"}}})
+    path = await write(tool, "d", [*SOMMAIRE[1:], *LIVRAISON], title="Rapport")
+    text = "".join(
+        page.extract_text()
+        for page in pypdf.PdfReader(convert(soffice, path, tmp_path / "pdf", "pdf")).pages
+    )
+    assert "Sommaire" in text and "2. Mesures" in text
+    assert "Coupure d'eau faite" in text and "Canalisation" in text
+    assert text.count("Bon pour accord") == 2 and "Signature :" in text

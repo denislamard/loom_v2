@@ -82,6 +82,13 @@ CHART_HELP: Final = (
     "graphique dessiné en caractères.",
 )
 
+# Signature, sommaire et liste à cocher, seulement pour un outil monté avec ``extra_blocks``.
+EXTRA_HELP: Final = (
+    "Signature ('type': 'signature') : signers (« Le client », « L'entreprise » ; 4 au plus), "
+    "mention (« Bon pour accord »). Sommaire ('type': 'sommaire') : la table des matières, "
+    "tirée des titres. Liste à cocher : checkboxes, chaque élément commence par [x] ou [ ].",
+)
+
 # Le bloc image, seulement pour un outil monté avec ``images``.
 IMAGE_HELP: Final = (
     "Image ('type': 'image') : path, un fichier PNG ou JPEG d'un dossier qui a le droit "
@@ -111,11 +118,13 @@ class DocumentTool(ABC):
         charts: bool = False,
         images: bool = False,
         templates: Mapping[str, Template] | None = None,
+        extra: bool = False,
     ) -> None:
         self._space = space
         self._zone = zone
         self._charts = charts
         self._images = images
+        self._extra = extra
         self._templates = dict(templates or {})
         folders = space.folders
         if self._templates and not any("write" in f.rights for f in folders):
@@ -125,7 +134,11 @@ class DocumentTool(ABC):
         # Le schéma vu par le modèle n'a les blocs graphique et image, et les modèles,
         # que s'ils servent.
         self._call = variant(
-            self.CALL, charts=charts, images=images, templates=tuple(self._templates)
+            self.CALL,
+            charts=charts,
+            images=images,
+            templates=tuple(self._templates),
+            extra=extra,
         )
         # Le pire de ses appels ; un outil qui ne fait que lire n'en a aucun, et se
         # rejoue donc en variante (une lecture sans effet s'y exécute).
@@ -391,6 +404,7 @@ class DocumentTool(ABC):
                 *WRITING_HELP,
                 *(CHART_HELP if self._charts else ()),
                 *(IMAGE_HELP if self._images else ()),
+                *(EXTRA_HELP if self._extra else ()),
                 *self._templates_help(),
                 *self._writing_notes(),
                 f"Bornes : {MAX_BLOCKS} blocs, {MAX_ITEMS} éléments par liste. Résultat : le "

@@ -33,6 +33,24 @@ HEADER: Final = "Header"
 LAYOUT: Final = "LoomLayout"
 # Le nom du style de tableau de disposition : la relecture le reconnaît.
 LAYOUT_NAME: Final = "loom layout"
+# Les blocs d'``extra_blocks`` : leurs styles, que la relecture reconnaît par leur nom.
+SIGNATURE: Final = "LoomSignature"
+SIGNATURE_NAME: Final = "loom signature"
+SIGNER: Final = "LoomSigner"
+SIGNER_NAME: Final = "loom signer"
+MENTION: Final = "LoomMention"
+MENTION_NAME: Final = "loom mention"
+CHECK: Final = "LoomCheck"
+CHECK_2: Final = "LoomCheck2"
+CHECK_NAMES: Final = {CHECK: "loom checkbox", CHECK_2: "loom checkbox 2"}
+# La case : la police de symboles de Windows (LibreOffice en prend une autre qui l'a).
+CHECK_FONT: Final = "Segoe UI Symbol"
+CHECKED: Final = "\u2612"
+UNCHECKED: Final = "\u2610"
+# Le sommaire : les styles intégrés de Word (« TOC Heading », « toc 1 »…), qu'il reprend
+# à la mise à jour du champ.
+TOC_HEADING: Final = "TOCHeading"
+TOC_LEVELS: Final = ("TOC1", "TOC2", "TOC3")
 _JC: Final = {"gauche": "left", "centre": "center", "droite": "right", "justifie": "both"}
 
 
@@ -218,7 +236,63 @@ def styles_xml(style: Style, used: Iterable[str] = ()) -> str:
             f'<w:style w:type="table" w:styleId="{LAYOUT}"><w:name w:val="{LAYOUT_NAME}"/>'
             "<w:tblPr/></w:style>"
         )
-    return said + "</w:styles>"
+    return said + _extra_styles(style, wanted) + "</w:styles>"
+
+
+def _extra_styles(style: Style, wanted: set[str]) -> str:
+    """Les styles des blocs d'``extra_blocks`` que le document emploie."""
+    said = ""
+    if SIGNATURE in wanted:
+        said += (
+            f'<w:style w:type="table" w:styleId="{SIGNATURE}"><w:name w:val="{SIGNATURE_NAME}"/>'
+            "<w:tblPr/></w:style>"
+        )
+    if SIGNER in wanted:
+        said += _style(
+            SIGNER,
+            SIGNER_NAME,
+            paragraph='<w:keepNext/><w:spacing w:before="240" w:after="60"/>',
+            run="<w:b/><w:bCs/>",
+        )
+    if MENTION in wanted:
+        said += _style(
+            MENTION,
+            MENTION_NAME,
+            paragraph='<w:keepNext/><w:spacing w:after="60"/>',
+            run="<w:i/><w:iCs/>",
+        )
+    for check, level in ((CHECK, 0), (CHECK_2, 1)):
+        if check in wanted:
+            left = 680 + 340 * level
+            said += _style(
+                check,
+                CHECK_NAMES[check],
+                based="ListParagraph",
+                paragraph=f'<w:tabs><w:tab w:val="left" w:pos="{left}"/></w:tabs>'
+                f'<w:ind w:left="{left}" w:hanging="340"/>',
+            )
+    if TOC_HEADING in wanted:
+        look = style.levels[0]
+        said += _style(
+            TOC_HEADING,
+            "TOC Heading",
+            next_style="Normal",
+            paragraph='<w:keepNext/><w:spacing w:before="240" w:after="120"/>',
+            run=f"{_fonts(style.heading_font)}<w:b/><w:bCs/>"
+            + ("<w:caps/>" if look.uppercase else "")
+            + f'<w:color w:val="{look.color}"/>{_size(look.size)}',
+        )
+    for level, toc in enumerate(TOC_LEVELS):
+        if toc in wanted:
+            said += _style(
+                toc,
+                f"toc {level + 1}",
+                next_style="Normal",
+                paragraph=f'<w:spacing w:before="{60 if level == 0 else 0}" w:after="40"/>'
+                + (f'<w:ind w:left="{284 * level}"/>' if level else ""),
+                run="<w:b/><w:bCs/>" if level == 0 else "",
+            )
+    return said
 
 
 # --- Numérotations -----------------------------------------------------------------

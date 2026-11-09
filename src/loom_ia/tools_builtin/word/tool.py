@@ -88,11 +88,14 @@ class WordTool(DocumentTool):
         images: bool = False,
         templates: Mapping[str, Template] | None = None,
         styles: Styles = NO_STYLES,
+        extra_blocks: bool = False,
     ) -> None:
         # Pourquoi les documents ne se lisent pas ici (version d'expat).
         self._unsafe = unsafe
         self._styles = styles
-        super().__init__(space, zone, charts=charts, images=images, templates=templates)
+        super().__init__(
+            space, zone, charts=charts, images=images, templates=templates, extra=extra_blocks
+        )
 
     def _render(self, prepared: Prepared) -> tuple[bytes, dict[str, JsonValue], list[str]]:
         return writer.render(prepared, self._styles.of(prepared.template)), {}, []
@@ -108,6 +111,8 @@ class WordTool(DocumentTool):
         )
         if not self._charts:
             _warn_charts(found)
+        if not self._extra:
+            _warn_extra(found)
         return found
 
     def _check_readable(self, path: str) -> None:
@@ -130,7 +135,13 @@ class WordTool(DocumentTool):
         reading = (
             f"non ({self._unsafe})" if self._unsafe else "oui" if reads else "aucun dossier read"
         )
-        return (*super()._options(), ("lecture des documents", reading), *self._styles.said)
+        extra = (("signature, sommaire, cases à cocher", "oui"),) if self._extra else ()
+        return (
+            *super()._options(),
+            ("lecture des documents", reading),
+            *extra,
+            *self._styles.said,
+        )
 
 
 def _warn_charts(found: dict[str, JsonValue]) -> None:
@@ -154,6 +165,32 @@ def _warn_charts(found: dict[str, JsonValue]) -> None:
         )
 
 
+def _warn_extra(found: dict[str, JsonValue]) -> None:
+    """Une signature, un sommaire ou une liste à cocher lus par un outil qui n'en écrit pas.
+
+    Comme pour les graphiques : le dire avant une réécriture, que le schéma refuserait.
+    """
+    blocks = found.get("blocks")
+    if not isinstance(blocks, list):
+        return
+    kinds = sorted(
+        {
+            "liste à cocher" if block.get("checkboxes") else str(block.get("type"))
+            for block in blocks
+            if isinstance(block, dict)
+            and (block.get("type") in ("signature", "sommaire") or block.get("checkboxes"))
+        }
+    )
+    if not kinds:
+        return
+    notes = found.setdefault("notes", list[JsonValue]())
+    if isinstance(notes, list):
+        notes.append(
+            f"Lu : {', '.join(kinds)} ; cet outil n'en écrit pas : les retirer avant de "
+            "réécrire le document (ou extra_blocks: true dans la config de l'outil)."
+        )
+
+
 def build(params: BaseModel, context: BuiltinContext) -> WordTool:
     """La fabrique de ``loom.word`` : les dossiers comme ``local_files``."""
     if not isinstance(params, WordParams):
@@ -169,6 +206,7 @@ def build(params: BaseModel, context: BuiltinContext) -> WordTool:
         images=params.images,
         templates=templates,
         styles=read_styles(params, templates),
+        extra_blocks=params.extra_blocks,
     )
 
 

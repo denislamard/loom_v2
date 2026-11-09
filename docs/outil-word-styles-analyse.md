@@ -14,7 +14,7 @@ Le besoin vient des essais de factures du POC shaper.ia (journaux `fac-01` à `f
 2. **La disposition**, un fichier YAML par modèle de document : section par section, titre masqué ou discret, sections côte à côte, encadré, petit texte, colonnes, paysage, page de garde.
 3. **Trois blocs nouveaux** que le modèle de langage peut envoyer : `signature`, `sommaire`, et les cases à cocher (`liste` avec `checkboxes`).
 
-Les couches 1 et 2 **ne coûtent rien en jetons** : le modèle de langage écrit les mêmes blocs et les mêmes titres de section qu'aujourd'hui, et c'est le style qui les pose. La couche 3 coûte environ 220 jetons par appel, payés seulement là où elle est activée. Sans `style`, rien ne change, à l'octet près : le schéma, la description et chaque fichier écrit.
+Les couches 1 et 2 **ne coûtent rien en jetons** : le modèle de langage écrit les mêmes blocs et les mêmes titres de section qu'aujourd'hui, et c'est le style qui les pose. La couche 3 coûte environ 220 jetons par appel, payés seulement là où elle est activée (230 mesurés à la mise en œuvre). Sans `style`, rien ne change, à l'octet près : le schéma, la description et chaque fichier écrit.
 
 | Point | Constat | Preuve |
 | --- | --- | --- |
@@ -347,7 +347,27 @@ Codée sur un clone de `9ae0492`, déposée dans ton dépôt sans commit.
 
 **Instabilité vue en route :** `test_memory_gpu_server.py::test_the_log_never_holds_the_texts` a échoué une fois, quand les deux suites (extras et noyau) tournaient ensemble sur la machine. Il passe seul, trois fois sur trois, avec tout son fichier, et la suite complète relancée seule est verte. Il est sans lien avec ce lot.
 
-### Étape 2 : les trois blocs (`extra_blocks`)
+### Étape 2 : les trois blocs (`extra_blocks`), 9 novembre 2026
 
-À coder : `signature`, `sommaire` (avec `toc.levels` et `toc.pages` dans la charte, D-7) et `liste` avec `checkboxes`, ainsi que leur relecture.
+Codée sur la même base, à la suite de l'étape 1, et déposée sans commit.
+
+- **Tests :** 4 242 verts avec tous les extras (4 234 plus 8), et 3 232 en noyau seul (+7, car le test de rendu LibreOffice demande pypdf). Les 8 nouvelles fonctions sont dans `tests/unit/test_word_styles.py`.
+- **Qualité :** pyright strict à 0, ruff propre, les 6 contrats d'import tenus.
+- **Sans `extra_blocks`, rien ne change :** les empreintes de `9ae0492` (12 documents, 8 schémas, 8 descriptions) sont encore identiques.
+- **Coût mesuré :** 860 caractères, environ 230 tokens par appel (598 de schéma, 262 de description), contre 811 estimés dans l'analyse.
+
+| Bloc | Écrit | Relu |
+| --- | --- | --- |
+| `signature` | Tableau « loom signature », une colonne par signataire : libellé (« loom signer »), mention (« loom mention »), « Date : », « Signature : », 2 cm | `{"type": "signature", "signers": […], "mention": …}` |
+| `sommaire` | « TOC Heading » « Sommaire », puis un champ `TOC` `dirty` aux entrées préremplies (numéro et titre, lien vers un signet `_Toc_loom_n`, `PAGEREF`) | `{"type": "sommaire"}`, une fois ; les entrées d'un sommaire de Word aussi |
+| Liste à cocher | ☒ / ☐ et une tabulation, styles « loom checkbox » et « loom checkbox 2 » | `liste` avec `checkboxes: true`, éléments en `[x]` / `[ ]` |
+
+**Ce qui diffère de l'analyse :**
+
+- Le sommaire n'a pas de champ dans le bloc : sa profondeur et ses numéros de page viennent de la charte (`toc`, D-7).
+- Un outil sans `extra_blocks` qui relit ces blocs le dit dans `notes`, comme pour les graphiques.
+- La liste à cocher n'est pas numérotée.
+- La liste, la signature et le sommaire relus puis réécrits redonnent le même fichier.
+
+**À vérifier sur ton poste (Word) :** le sommaire du rapport joint se met à jour à l'ouverture et écrit les numéros de page (D-7), et les cases s'affichent en Segoe UI Symbol.
 

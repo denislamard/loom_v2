@@ -39,10 +39,12 @@ from reportlab.platypus import (
 )
 from reportlab.platypus.flowables import HRFlowable
 
+from loom_ia.core.ports import ToolError
 from loom_ia.tools_builtin._document.content import (
     BlockOut,
     BreakOut,
     ChartOut,
+    ContentsOut,
     HeadingOut,
     ImageOut,
     Inline,
@@ -51,6 +53,7 @@ from loom_ia.tools_builtin._document.content import (
     ParagraphOut,
     Prepared,
     QuoteOut,
+    SignatureOut,
     TableOut,
     TitleOut,
     plain,
@@ -306,6 +309,11 @@ def _flowables(blocks: Iterable[BlockOut]) -> list[Flowable]:
                 found.append(_chart(block))
             case ImageOut():
                 found.append(_image(block))
+            case SignatureOut() | ContentsOut():
+                # ``extra_blocks`` est refusé sur loom.pdf : ces blocs n'arrivent pas ici.
+                raise ToolError(
+                    "signature et sommaire ne s'écrivent qu'en Word (loom.word) pour l'instant."
+                )
     return found
 
 
@@ -391,6 +399,10 @@ def _said(block: BlockOut) -> str:
             return (block.title or "") + "".join(block.categories) + names + caption
         case ImageOut(caption=caption):
             return plain(caption) if caption else ""
+        case SignatureOut(signers=signers, mention=mention):
+            return "".join(signers) + (mention or "")
+        case ContentsOut():
+            return ""
 
 
 def render(prepared: Prepared) -> tuple[bytes, int, list[str]]:

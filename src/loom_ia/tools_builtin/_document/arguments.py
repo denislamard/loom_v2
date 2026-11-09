@@ -83,6 +83,12 @@ class ListBlock(_Model):
     ordered: bool = False
 
 
+class CheckList(ListBlock):
+    """Une liste, à cocher (``checkboxes``) : chaque élément commence par [x] ou [ ]."""
+
+    checkboxes: bool = False
+
+
 class Column(_Model):
     header: Annotated[str, Field(min_length=1)]
     type: ColumnType = "texte"
@@ -168,6 +174,19 @@ class Image(_Model):
     alt: str | None = None
 
 
+MAX_SIGNERS: Final = 4
+
+
+class Signature(_Model):
+    type: Literal["signature"]
+    signers: Annotated[list[str], Field(min_length=1, max_length=MAX_SIGNERS)]
+    mention: str | None = None
+
+
+class Contents(_Model):
+    type: Literal["sommaire"]
+
+
 # Les blocs que le modèle voit sans ``charts`` : le bloc ``graphique`` coûte
 # environ 500 tokens par appel au modèle, payés seulement là où il sert. Le nom
 # ``Block`` est celui du schéma : sans ``charts``, il reste celui d'avant les graphiques.
@@ -185,9 +204,26 @@ type ImageBlock = Annotated[
     Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak | Image,
     Field(discriminator="type"),
 ]
-# Tous les blocs : ce qu'une écriture porte, quel que soit l'outil.
+# Graphiques et images ensemble ; le nom reste celui d'avant les trois blocs de
+# ``extra_blocks``, qui est dans le schéma.
 type EveryBlock = Annotated[
     Heading | Paragraph | ListBlock | Table | Note | Quote | PageBreak | Chart | Image,
+    Field(discriminator="type"),
+]
+# Tous les blocs : ce qu'une écriture porte, quel que soit l'outil. Une liste à cocher
+# (``CheckList``) y passe comme liste : elle en est une.
+type WrittenBlock = Annotated[
+    Heading
+    | Paragraph
+    | ListBlock
+    | Table
+    | Note
+    | Quote
+    | PageBreak
+    | Chart
+    | Image
+    | Signature
+    | Contents,
     Field(discriminator="type"),
 ]
 
@@ -200,7 +236,7 @@ class WriteArguments(_Model):
 
     path: str
     title: str | None
-    blocks: list[EveryBlock]
+    blocks: list[WrittenBlock]
     overwrite: bool = False
     # Le modèle suivi (son nom) ou ``aucun`` ; ``None`` : l'outil n'a pas de modèles.
     template: str | None = None
@@ -281,11 +317,63 @@ class DocumentCall(_Model):
         return WriteArguments(
             path=self.path,
             title=self.title,
-            blocks=cast(list[EveryBlock], self.blocks),
+            blocks=cast(list[WrittenBlock], self.blocks),
             overwrite=bool(self.overwrite),
             template=template,
         )
 
+
+# Avec ``extra_blocks`` : la liste peut se cocher, signature et sommaire s'ajoutent.
+type ExtraBlock = Annotated[
+    Heading | Paragraph | CheckList | Table | Note | Quote | PageBreak | Signature | Contents,
+    Field(discriminator="type"),
+]
+type ExtraChartBlock = Annotated[
+    Heading
+    | Paragraph
+    | CheckList
+    | Table
+    | Note
+    | Quote
+    | PageBreak
+    | Chart
+    | Signature
+    | Contents,
+    Field(discriminator="type"),
+]
+type ExtraImageBlock = Annotated[
+    Heading
+    | Paragraph
+    | CheckList
+    | Table
+    | Note
+    | Quote
+    | PageBreak
+    | Image
+    | Signature
+    | Contents,
+    Field(discriminator="type"),
+]
+type ExtraEveryBlock = Annotated[
+    Heading
+    | Paragraph
+    | CheckList
+    | Table
+    | Note
+    | Quote
+    | PageBreak
+    | Chart
+    | Image
+    | Signature
+    | Contents,
+    Field(discriminator="type"),
+]
+_EXTRA_BLOCKS: Final[Mapping[tuple[bool, bool], object]] = {
+    (False, False): ExtraBlock,
+    (True, False): ExtraChartBlock,
+    (False, True): ExtraImageBlock,
+    (True, True): ExtraEveryBlock,
+}
 
 # Les blocs du schéma selon les réglages de l'outil (``charts``, ``images``).
 _BLOCKS: Final[Mapping[tuple[bool, bool], object]] = {
@@ -311,19 +399,21 @@ def variant(
     charts: bool,
     images: bool,
     templates: tuple[str, ...] = (),
+    extra: bool = False,
 ) -> type[DocumentCall]:
     """L'appel d'un format (``WordCall``…), élargi aux réglages de l'outil.
 
-    ``charts``, ``images`` : ``blocks`` gagne leurs blocs. ``templates`` (les noms des
-    modèles déclarés) : l'action ``template`` et le champ ``template``, obligatoire à
-    l'écriture. Sans réglage, ``base`` lui-même : le schéma reste celui d'avant. Le nom
-    du modèle ne paraît pas dans le schéma allégé (``input_schema``).
+    ``charts``, ``images``, ``extra`` (``extra_blocks``) : ``blocks`` gagne leurs blocs.
+    ``templates`` (les noms des modèles déclarés) : l'action ``template`` et le champ
+    ``template``, obligatoire à l'écriture. Sans réglage, ``base`` lui-même : le schéma
+    reste celui d'avant. Le nom du modèle ne paraît pas dans le schéma allégé
+    (``input_schema``).
     """
-    if not (charts or images or templates):
+    if not (charts or images or templates or extra):
         return base
     fields: dict[str, Any] = {}
-    if charts or images:
-        blocks: Any = _BLOCKS[charts, images]
+    if charts or images or extra:
+        blocks: Any = (_EXTRA_BLOCKS if extra else _BLOCKS)[charts, images]
         fields["blocks"] = (
             Annotated[
                 list[blocks] | None,
@@ -349,6 +439,7 @@ def variant(
         ("Chart" if charts else "")
         + ("Image" if images else "")
         + ("Template" if templates else "")
+        + ("Extra" if extra else "")
     )
     return create_model(
         f"{base.__name__.removesuffix('Call')}{suffix}Call",

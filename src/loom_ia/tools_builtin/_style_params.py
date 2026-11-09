@@ -236,6 +236,13 @@ class ImagesSpec(_Spec):
     grid: bool | None = None
 
 
+class TocSpec(_Spec):
+    """Le bloc ``sommaire`` : les niveaux de titre qu'il reprend, ses numéros de page."""
+
+    levels: Annotated[int, Field(ge=1, le=3)] | None = None
+    pages: bool | None = None
+
+
 class LogoSpec(_Spec):
     """Un logo : son fichier (relatif à ``prompts_dir``), puis ses octets, lus au chargement."""
 
@@ -307,6 +314,7 @@ class StyleSpec(_Spec):
     note: NoteSpec | None = None
     captions: CaptionsSpec | None = None
     images: ImagesSpec | None = None
+    toc: TocSpec | None = None
     header: BandSpec | None = None
     footer: BandSpec | None = None
     # Un texte ; "" retire le filigrane de la charte (une facture définitive).
@@ -568,6 +576,10 @@ class Style:
     note_border: str = HOUSE_ACCENT
     captions_numbered: bool = False
     images_grid: bool = False
+    # Le sommaire : les niveaux de titre repris, et leurs numéros de page (que le
+    # traitement de texte calcule : Word à l'ouverture, LibreOffice à la mise à jour).
+    toc_levels: int = 2
+    toc_pages: bool = True
     header: Band | None = None
     footer: Band | None = Band(center="Page {page} / {pages}")
     watermark: str | None = None
@@ -689,6 +701,8 @@ def resolve(spec: StyleSpec) -> Style:
         note_border=color(note.border, "accent"),
         captions_numbered=bool(spec.captions and spec.captions.numbered),
         images_grid=bool(spec.images and spec.images.grid),
+        toc_levels=spec.toc.levels if spec.toc and spec.toc.levels else house.toc_levels,
+        toc_pages=spec.toc.pages if spec.toc and spec.toc.pages is not None else True,
         header=_band(spec.header, None),
         footer=_band(spec.footer, house.footer),
         watermark=spec.watermark or None,
