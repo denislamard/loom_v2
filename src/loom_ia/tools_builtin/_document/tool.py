@@ -37,6 +37,7 @@ from loom_ia.tools_builtin._document.arguments import (
     DocumentCall,
     Image,
     ReadArguments,
+    TemplateArguments,
     WriteArguments,
     input_schema,
     parse,
@@ -46,6 +47,8 @@ from loom_ia.tools_builtin._document.content import Pictures, Prepared, prepare
 from loom_ia.tools_builtin._document.picture import Picture, PictureError
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
 from loom_ia.tools_builtin._folders import Folders, Located, write_bytes
+from loom_ia.tools_builtin._templates import NONE as NO_TEMPLATE
+from loom_ia.tools_builtin._templates import Template
 from loom_ia.tools_builtin.local_files_params import Right
 
 # Le mode d'emploi de l'écriture, commun aux formats ; il ne part qu'à qui peut écrire.
@@ -101,15 +104,29 @@ class DocumentTool(ABC):
     MAX_SOURCE: ClassVar[int] = MAX_SOURCE_BYTES
 
     def __init__(
-        self, space: Folders, zone: ZoneInfo, *, charts: bool = False, images: bool = False
+        self,
+        space: Folders,
+        zone: ZoneInfo,
+        *,
+        charts: bool = False,
+        images: bool = False,
+        templates: Mapping[str, Template] | None = None,
     ) -> None:
         self._space = space
         self._zone = zone
         self._charts = charts
         self._images = images
-        # Le schéma vu par le modèle n'a les blocs graphique et image que s'ils servent.
-        self._call = variant(self.CALL, charts=charts, images=images)
+        self._templates = dict(templates or {})
         folders = space.folders
+        if self._templates and not any("write" in f.rights for f in folders):
+            raise ValueError(
+                "templates : des modèles de document, mais aucun dossier n'a le droit write"
+            )
+        # Le schéma vu par le modèle n'a les blocs graphique et image, et les modèles,
+        # que s'ils servent.
+        self._call = variant(
+            self.CALL, charts=charts, images=images, templates=tuple(self._templates)
+        )
         # Le pire de ses appels ; un outil qui ne fait que lire n'en a aucun, et se
         # rejoue donc en variante (une lecture sans effet s'y exécute).
         effects: SideEffects = (
@@ -140,6 +157,9 @@ class DocumentTool(ABC):
         """Approbation et effets de cet appel : les droits qu'il exerce, dossier par dossier."""
         try:
             request = parse(self._call, arguments)
+            if isinstance(request, TemplateArguments):
+                # Un modèle vient de la config : rien n'est lu sur le disque.
+                return CallAssessment(side_effects="none", idempotent=True)
             if isinstance(request, ReadArguments):
                 return self._assess_read(self._source(request.path))
             reads: list[tuple[Located, Right]] = [
@@ -191,6 +211,8 @@ class DocumentTool(ABC):
 
     async def invoke(self, arguments: dict[str, JsonValue], context: ToolContext) -> ToolOutput:
         request = parse(self._call, arguments)
+        if isinstance(request, TemplateArguments):
+            return to_output(self._template(request.name))
         if isinstance(request, ReadArguments):
             source = self._source(request.path)
             data = await asyncio.to_thread(self._load, source)
@@ -225,7 +247,12 @@ class DocumentTool(ABC):
     # --- Exécution ----------------------------------------------------------------------
 
     def _write(self, request: WriteArguments, located: Located) -> dict[str, JsonValue]:
-        prepared = prepare(request, self._zone, self._pictures(request))
+        followed = (
+            self._templates[request.template]
+            if request.template is not None and request.template != NO_TEMPLATE
+            else None
+        )
+        prepared = prepare(request, self._zone, self._pictures(request), followed)
         data, facts, warnings = self._render(prepared)
         if len(data) > MAX_OUTPUT_BYTES:
             raise ToolError(f"Fichier de {len(data)} octets, au-delà de {MAX_OUTPUT_BYTES}.")
@@ -240,7 +267,21 @@ class DocumentTool(ABC):
             **facts,
             "blocks": len(request.blocks),
             **({"images": len(list(_image_blocks(request)))} if self._images else {}),
+            **({"template": request.template} if self._templates else {}),
             "warnings": list[JsonValue]([*prepared.warnings, *warnings]),
+        }
+
+    def _template(self, name: str) -> dict[str, JsonValue]:
+        """Un modèle déclaré : sa description, son plan, et ses consignes, telles qu'écrites."""
+        template = self._templates[name]
+        return {
+            "template": name,
+            "description": template.description,
+            "plan": [
+                f"{section.title} (facultatif)" if section.optional else section.title
+                for section in template.sections
+            ],
+            "text": template.text,
         }
 
     def _pictures(self, request: WriteArguments) -> Pictures:
@@ -311,7 +352,23 @@ class DocumentTool(ABC):
             ("fuseau", self._zone.key),
             ("graphiques", "oui" if self._charts else "non"),
             ("images", "oui" if self._images else "non"),
+            ("modèles", ", ".join(self._templates) or "aucun"),
         )
+
+    def _templates_help(self) -> list[str]:
+        """Les modèles déclarés : leur nom et leur description, jamais leur texte."""
+        if not self._templates:
+            return []
+        return [
+            "Modèles de document : à l'écriture, 'template' nomme le modèle suivi, ou aucun "
+            "pour un document libre ; les titres de niveau 1 du document suivent alors le "
+            "plan du modèle, dans l'ordre. Avant d'écrire, lire le modèle : action=template, "
+            "template=<nom> (ses consignes et son plan).",
+            *(
+                f"- {name}" + (f" : {template.description}" if template.description else "")
+                for name, template in self._templates.items()
+            ),
+        ]
 
     def _description(self) -> str:
         space = self._space
@@ -334,6 +391,7 @@ class DocumentTool(ABC):
                 *WRITING_HELP,
                 *(CHART_HELP if self._charts else ()),
                 *(IMAGE_HELP if self._images else ()),
+                *self._templates_help(),
                 *self._writing_notes(),
                 f"Bornes : {MAX_BLOCKS} blocs, {MAX_ITEMS} éléments par liste. Résultat : le "
                 "chemin écrit et les avertissements ; jamais le contenu.",

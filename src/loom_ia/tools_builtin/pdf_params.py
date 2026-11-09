@@ -24,6 +24,7 @@ from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Fie
 
 from loom_ia.tools_builtin._office_params import (
     DEFAULT_TIMEZONE,
+    Templates,
     check_timezone,
     checked_folders,
     no_delete,
@@ -55,6 +56,8 @@ class PdfParams(BaseModel):
     charts: bool = False
     # Le bloc image : environ 230 tokens de plus par appel au modèle, d'où false.
     images: bool = False
+    # Les modèles de document, par nom : fichiers relatifs à prompts_dir, lus au chargement.
+    templates: Templates = {}
 
     @model_validator(mode="after")
     def _check(self) -> Self:

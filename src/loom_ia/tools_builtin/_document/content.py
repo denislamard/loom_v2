@@ -47,6 +47,7 @@ from loom_ia.tools_builtin._document.arguments import (
     WriteArguments,
 )
 from loom_ia.tools_builtin._document.picture import Picture
+from loom_ia.tools_builtin._templates import Template, plan_faults
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Stored, convert
 
 MAX_TITLE: Final = 300
@@ -198,6 +199,8 @@ class Prepared:
     title: str | None
     blocks: tuple[BlockOut, ...]
     warnings: tuple[str, ...]
+    # Le modèle suivi, que le document garde dans ses propriétés ; ``None`` sans modèle.
+    template: str | None = None
 
 
 # Ce qu'a donné la lecture de chaque image, par chemin tel que donné : l'image, ou ce
@@ -207,11 +210,15 @@ NO_PICTURES: Final[Pictures] = {}
 
 
 def prepare(
-    arguments: WriteArguments, zone: ZoneInfo, pictures: Pictures = NO_PICTURES
+    arguments: WriteArguments,
+    zone: ZoneInfo,
+    pictures: Pictures = NO_PICTURES,
+    template: Template | None = None,
 ) -> Prepared:
     """Valide le document entier ; ``ToolError`` qui liste toutes les fautes trouvées.
 
-    Sans disque : les images sont lues avant, par l'outil (``pictures``).
+    Sans disque : les images sont lues avant, par l'outil (``pictures``). ``template`` :
+    le modèle que le document dit suivre ; ses titres de niveau 1 doivent suivre son plan.
     """
     problems = Problems()
     blocks: list[BlockOut] = []
@@ -262,10 +269,32 @@ def prepare(
                 if found is not None:
                     blocks.append(found)
     _check_images(arguments, pictures, problems)
+    if template is not None:
+        _check_plan(blocks, template, problems)
     if not any(not isinstance(b, BreakOut) for b in blocks):
         problems.error("document vide : ni titre, ni bloc de contenu")
     problems.raise_if_any()
-    return Prepared(title=title, blocks=tuple(blocks), warnings=tuple(problems.warnings))
+    return Prepared(
+        title=title,
+        blocks=tuple(blocks),
+        warnings=tuple(problems.warnings),
+        template=template.name if template is not None else None,
+    )
+
+
+def _check_plan(blocks: Sequence[BlockOut], template: Template, problems: Problems) -> None:
+    """Les titres de niveau 1 du document, comparés au plan du modèle."""
+    headings = [
+        plain(block.runs) for block in blocks if isinstance(block, HeadingOut) and block.level == 1
+    ]
+    faults = plan_faults(template, headings)
+    for fault in faults:
+        problems.error(f"modèle {template.name} : {fault}")
+    if faults:
+        problems.error(
+            f"modèle {template.name}, plan attendu (titres de niveau 1, dans l'ordre) : "
+            f"{template.outline()}"
+        )
 
 
 def _text(text: str | None, where: str, problems: Problems, *, required: bool = False) -> str:

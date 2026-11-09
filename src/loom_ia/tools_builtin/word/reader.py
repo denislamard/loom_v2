@@ -71,6 +71,9 @@ _NAMESPACES: Final = (
 )
 _REL_NS: Final = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 _DC_TITLE: Final = "{http://purl.org/dc/elements/1.1/}title"
+_CP_CATEGORY: Final = (
+    "{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}category"
+)
 _FALSE: Final = frozenset({"0", "false", "off"})
 # Sous-arbres d'un paragraphe qui ne sont pas son texte.
 _SKIPPED: Final = frozenset(
@@ -162,6 +165,8 @@ class _Package:
     # numId → numéroté (vrai) ou à puces, par niveau.
     numbering: dict[str, dict[int, bool]]
     title: str | None
+    # La catégorie du document : le modèle suivi, pour un document écrit avec un modèle.
+    category: str | None
     comments: bool
     # Identifiant de relation → partie d'un graphique (``word/charts/chartN.xml``).
     charts: dict[str, str] = field(default_factory=dict[str, str])
@@ -193,6 +198,7 @@ def _open(data: bytes, where: str) -> _Package:
     if archive.getinfo(body).file_size > MAX_BODY:
         raise ToolError(f"{where} : corps de {archive.getinfo(body).file_size} octets, refusé.")
     related = _relations(archive, names, body)
+    title, category = _properties(archive, names, where)
     styles_part = related.get("styles")
     numbering_part = related.get("numbering")
     return _Package(
@@ -200,7 +206,8 @@ def _open(data: bytes, where: str) -> _Package:
         body=body,
         styles=_styles(_whole(archive, styles_part, where)) if styles_part else {},
         numbering=_numbering(_whole(archive, numbering_part, where)) if numbering_part else {},
-        title=_title(archive, names, where),
+        title=title,
+        category=category,
         comments="comments" in related,
         charts=_relations(archive, names, body, by_id="chart"),
         media=_relations(archive, names, body, by_id="image"),
@@ -324,15 +331,21 @@ def _numbering(root: Element | None) -> dict[str, dict[int, bool]]:
     return found
 
 
-def _title(archive: zipfile.ZipFile, names: set[str], where: str) -> str | None:
+def _properties(
+    archive: zipfile.ZipFile, names: set[str], where: str
+) -> tuple[str | None, str | None]:
+    """Le titre et la catégorie du document (où l'écriture range le modèle suivi)."""
     if "docProps/core.xml" not in names:
-        return None
+        return None, None
     root = _whole(archive, "docProps/core.xml", where)
     if root is None:
-        return None
-    element = root.find(_DC_TITLE)
-    text = (element.text or "").strip() if element is not None else ""
-    return text[:MAX_CELL_CHARS] or None
+        return None, None
+    said: list[str | None] = []
+    for tag in (_DC_TITLE, _CP_CATEGORY):
+        element = root.find(tag)
+        text = (element.text or "").strip() if element is not None else ""
+        said.append(text[:MAX_CELL_CHARS] or None)
+    return said[0], said[1]
 
 
 # --- Corps ---------------------------------------------------------------------------
@@ -365,13 +378,21 @@ class _Reading:
 
 
 def read(
-    data: bytes, where: str, start: int, budget: int = READ_CHARS, *, images: bool = False
+    data: bytes,
+    where: str,
+    start: int,
+    budget: int = READ_CHARS,
+    *,
+    images: bool = False,
+    templates: tuple[str, ...] | None = None,
 ) -> dict[str, JsonValue]:
     """Les blocs du document à partir de ``start``, dans un budget de taille.
 
     ``budget`` : celui d'un résultat d'outil par défaut ; ``loom.memory``, qui lit
     le document entier, en donne un plus grand. ``images`` : les images du corps
     reviennent en blocs ``image`` (un outil monté avec ``images``) ; sinon, comptées.
+    ``templates`` : les modèles de l'outil ; le modèle que le document dit suivre revient
+    alors en ``template``. Sans modèles (``None``), il n'est pas rendu.
     """
     deadline = time.monotonic() + READ_DEADLINE
     with _guarded(where):
@@ -389,7 +410,14 @@ def read(
     if reading.next_start is not None:
         result["next_start"] = reading.next_start
         result["outline"] = _bounded(reading.outline)
+    if templates is not None and package.category is not None:
+        result["template"] = package.category
     notes = _notes(package, reading, start)
+    if templates is not None and package.category not in (None, *templates):
+        notes.append(
+            f"Le document dit suivre le modèle « {package.category} », que cet outil ne "
+            "déclare pas : pour le réécrire, nommer un modèle déclaré, ou aucun."
+        )
     if notes:
         result["notes"] = notes
     return result

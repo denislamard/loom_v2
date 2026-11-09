@@ -1001,6 +1001,8 @@ tools:
   - python: loom.word
     charts: true                     # le bloc graphique ; false par défaut
     images: true                     # le bloc image ; false par défaut
+    templates:                       # modèles de document, relatifs à prompts_dir
+      devis: devis.md
     folders:
     - name: maquettes                # les images à mettre dans les documents
       path: maquettes
@@ -1019,9 +1021,9 @@ tools:
     timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
 ```
 
-Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `charts`, qui donne au modèle le bloc `graphique` (voir « Des graphiques »), et `images`, qui lui donne le bloc `image` (voir « Des images »). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
+Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `charts`, qui donne au modèle le bloc `graphique` (voir « Des graphiques »), `images`, qui lui donne le bloc `image` (voir « Des images »), et `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
 
-`loom validate` montre les dossiers, puis le fuseau, les graphiques et la lecture :
+`loom validate` montre les dossiers, puis le fuseau, les graphiques, les images, les modèles et la lecture :
 
 ```text
 …
@@ -1031,12 +1033,12 @@ AGENTS
   │              read
   │              sortie → ./sortie
   │              read, write
-  │              fuseau : Europe/Paris · graphiques : oui · images : oui · lecture des documents : oui
+  │              fuseau : Europe/Paris · graphiques : oui · images : oui · modèles : devis · lecture des documents : oui
   └ pdf          recus → ./recus
                  read
                  sortie → ./sortie
                  read, write · overwrite*
-                 fuseau : Europe/Paris · graphiques : non · images : non · lecture des PDF : oui, process à part (20 s, 1 Gio)
+                 fuseau : Europe/Paris · graphiques : non · images : non · modèles : aucun · lecture des PDF : oui, process à part (20 s, 1 Gio)
 
   * = approbation requise
 …
@@ -1203,6 +1205,92 @@ Sont aussi refusés : un GIF, un WebP ou un SVG (« la convertir en PNG ») ; un
 
 **Approbation** : l'appel exerce le droit `read` sur chaque dossier d'image, en plus du droit d'écrire. Un dossier sous `approval: { read: always }` fait attendre l'appel, et le motif le dit : « écrire le fichier sortie/a.docx, avec 2 image(s) lue(s) dans maquettes, photos — la config exige une approbation pour lire dans photos ».
 
+#### Des modèles de document
+
+Avec `templates`, l'outil connaît les modèles des documents que l'agent écrit : un devis, un rapport d'intervention, un cahier des charges. Chaque modèle est un fichier markdown du dossier des prompts (`prompts_dir`), lu au chargement comme un `skill_file`. Le modèle de langage n'en voit que le nom et une ligne de description, et lit le texte quand il en a besoin. À l'écriture, **l'outil vérifie que le document suit le plan du modèle**, et refuse un document qui s'en écarte. Un skill est une consigne que le modèle de langage peut oublier ; un modèle, l'outil le fait respecter.
+
+```yaml
+  - python: loom.word
+    templates:                       # relatifs à prompts_dir
+      devis: devis.md
+      rapport-intervention: rapport-intervention.md
+    folders: …
+```
+
+Un modèle s'écrit comme un skill. **Ses titres `#` sont les sections du document**, dans l'ordre, et le texte sous un titre est la consigne de la section :
+
+```markdown
+---
+description: Devis de travaux pour un particulier.
+---
+Fichier : sortie/devis-<numéro>.docx ; title : « Devis n° <numéro> — <objet> ».
+
+# Objet des travaux
+Une liste des travaux ; en sous-liste, les fournitures.
+
+# Détail du devis
+Un tableau : Désignation, Quantité (entier), Montant HT (montant_eur), TVA (pourcentage), avec la somme des montants.
+
+# Conditions de paiement
+Une liste numérotée : l'acompte à la signature, le solde.
+
+# Remarques (facultatif)
+Ce qui ne rentre pas ailleurs : accès au chantier, délais.
+```
+
+- **`description`** (facultative, 200 caractères au plus) : la ligne que la description de l'outil montre pour ce modèle ; seule clé lue de l'en-tête.
+- **« (facultatif) »** en fin de titre : la section peut manquer.
+- **Seuls les titres `#` comptent** : un `##` reste de la consigne, et un `#` dans un bloc de code est ignoré. Un modèle sans titre `#` n'a que des consignes, et son plan n'est pas vérifié.
+- **Ce qui se répète** (un écran, une exigence, un lot de travaux) n'est pas une section : c'est du contenu d'une section, sous des titres de niveau 2, que le plan ne vérifie pas.
+- **Noms** : minuscules, chiffres et tirets, 40 caractères au plus, et pas `aucun`. **Bornes** : 20 modèles par outil, 20 000 caractères par modèle.
+
+La description de l'outil gagne ces lignes, et le schéma l'action `template` et le champ `template` :
+
+```text
+Modèles de document : à l'écriture, 'template' nomme le modèle suivi, ou aucun pour un document libre ; les titres de niveau 1 du document suivent alors le plan du modèle, dans l'ordre. Avant d'écrire, lire le modèle : action=template, template=<nom> (ses consignes et son plan).
+- devis : Devis de travaux pour un particulier.
+```
+
+**Lire un modèle**, sans effet ni approbation (le texte vient de la config, rien n'est lu sur le disque) :
+
+```json
+{"action": "template", "template": "devis"}
+```
+
+```json
+{"template": "devis", "description": "Devis de travaux pour un particulier.",
+ "plan": ["Objet des travaux", "Détail du devis", "Conditions de paiement", "Remarques (facultatif)"],
+ "text": "---\ndescription: Devis de travaux pour un particulier.\n---\nFichier : sortie/devis-<numéro>.docx ; …"}
+```
+
+**Écrire** : `template` est obligatoire, le nom d'un modèle déclaré, ou `aucun` pour un document libre.
+
+```text
+Arguments invalides :
+- (racine) : Value error, write attend 'template' : le modèle suivi, ou aucun pour un document libre
+```
+
+Avec un modèle, les titres de niveau 1 du document doivent être ses sections : toutes celles qui ne sont pas facultatives, aucune autre, pas deux fois, dans l'ordre. La comparaison ignore la numérotation (« 2. », « 2.3 - », « b) », « IV. »), la casse, les accents, les espaces et l'emphase : « 2. Détail du devis » est la section « Détail du devis ». Les titres de niveau 2 et 3 sont libres. Un écart est refusé avec les autres fautes du document, et le plan attendu suit, pour que le modèle de langage se corrige même s'il n'a pas lu le modèle :
+
+```text
+Document refusé :
+- modèle devis : section(s) absente(s) : « Détail du devis »
+- modèle devis, plan attendu (titres de niveau 1, dans l'ordre) : Objet des travaux · Détail du devis · Conditions de paiement · Remarques (facultatif)
+```
+
+Une section en trop (« section hors du modèle « Annexe » »), donnée deux fois, ou à la mauvaise place (« « Conditions de paiement » avant « Détail du devis » : le modèle les met dans l'autre ordre ») est refusée de même. Une section libre se déclare : `# Annexes (facultatif)`. Le résultat d'une écriture gagne `"template": "devis"` (ou `"aucun"`).
+
+Le `.docx` garde le modèle suivi dans sa **catégorie** (Fichier > Informations > Propriétés dans Word), que LibreOffice garde aussi ; la relecture le rend (voir « Lire un document Word »). Un document libre, `aucun`, est le même fichier qu'un document écrit par un outil sans modèles. `pdf` vérifie le plan de la même façon, mais un PDF ne garde pas son modèle.
+
+Un fichier de modèle introuvable, hors du dossier des prompts, ou mal formé arrête le chargement, et `loom validate` le dit :
+
+```text
+tools[loom.word].templates[devis] — modèle introuvable : …/prompts/prompts/devis.md — le chemin est relatif à prompts_dir : écrire devis.md
+tools[loom.word].templates[devis] — modèle devis : section donnée deux fois : 4. Remarques : …/prompts/devis.md
+```
+
+Sans `templates`, rien ne change : ni action ni champ `template`, ni ligne dans la description. Un outil à modèles doit avoir un dossier `write`.
+
 #### Lire un document Word
 
 Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossier qui a le droit `read`, et le rend **dans le vocabulaire de l'écriture** : ce qu'il lit peut être réécrit tel quel. Le devis ci-dessus, relu :
@@ -1233,6 +1321,7 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 - **Coupe** : au-delà de 40 000 caractères, `"truncated": true`, `"next_start"` (le bloc où reprendre, avec `start`) et `"outline"`, le plan entier avec l'indice de chaque titre, pour aller droit à une section.
 - **Graphiques** : un graphique du `.docx` revient en bloc `graphique`, à sa place, avec ses libellés et ses séries (ce que Word garde dans le graphique) ; un type que l'outil n'écrit pas (aires, nuage de points…) revient avec son nom technique en `kind`. Le rapport ci-dessus, relu : `{"type": "graphique", "kind": "barres_horizontales", "title": "Total TTC par client", "categories": ["Julien Barre", "Chauffage Lemaire Rénovation", "Guillot SARL"], "series": [{"name": "Total TTC", "values": [18034.17, 16247.36, 14709.17]}]}`. La lecture rend les graphiques même sans `charts` ; une note dit alors que l'outil n'en écrit pas, et de les retirer avant de réécrire le document.
 - **Images** : avec `images: true`, une image revient en bloc `image`, à sa place : `{"type": "image", "path": "maquettes/depot-demande.png", "width": "pleine_largeur", "caption": "Écran 1 — Dépôt de la demande par le manager"}`. `path` est le fichier que l'outil a lu en écrivant le document : il le garde dans le nom de l'image (visible dans le volet de sélection de Word). Relu puis réécrit tel quel, le document redonne le même fichier, tant que les images sont là. Une image insérée ailleurs revient sans `path`, avec sa largeur et son texte alternatif, et une note le dit : pour réécrire le document, lui donner un fichier, ou retirer le bloc. La légende qui suit l'image revient en `caption`. Sans `images`, les images sont seulement comptées.
+- **Modèle** : avec `templates`, un document écrit avec un modèle le rend (`"template": "devis"`), pour qu'une réécriture le reprenne. S'il dit suivre un modèle que l'outil ne déclare pas, une note le dit. Sans `templates`, rien n'est rendu.
 - **Notes** : les images non lues (un graphique n'en est pas une), les modifications suivies (le texte inséré est rendu, le texte supprimé ou déplacé omis), les commentaires présents.
 
 #### Lire un PDF
@@ -1263,10 +1352,11 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 - Pas d'en-tête de page personnalisé, pas de lien cliquable.
 - **Graphiques** : quatre types, ni aires, ni nuage de points, ni barres empilées, ni deux axes ; `from_table` ne vise que le dernier tableau qui précède ; pas de classeur dans le `.docx`. `pdf` ne relit pas un graphique : un PDF n'en garde que le dessin, dont le texte donne les libellés.
 - **On écrit un document neuf, ou on en lit un** : on ne modifie pas un document existant, et on ne remplit ni un modèle `.dotx` ni un formulaire PDF.
+- **Modèles de document** (avec `templates`) : seuls les titres de niveau 1 sont vérifiés, ni les sous-parties, ni les tableaux attendus, ni les textes fixes. La consigne d'un modèle sur l'apparence (alignement, police) ne peut pas être suivie : le style est celui de l'outil.
 - **La lecture d'un `.docx` ne voit pas** les images sans `images: true` (ni, avec, celles d'un tableau ou d'une zone de texte), les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
 - **Le style ne se règle pas**, comme pour `excel`.
 - **Rejeu** : comme pour `excel`, le rejeu sert le résultat du journal sans réécrire le fichier ; en rejeu en variante, un outil qui ne fait que lire est exécuté, un outil qui peut écrire ne l'est jamais.
-- **Coût** : environ 1,6 k tokens par outil et par appel de modèle, description et schéma compris ; environ 500 de plus avec `charts: true`, environ 230 avec `images: true`.
+- **Coût** : environ 1,6 k tokens par outil et par appel de modèle, description et schéma compris ; environ 500 de plus avec `charts: true`, environ 230 avec `images: true`, environ 130 avec `templates` et 30 de plus par modèle déclaré (son nom et sa description). Le texte d'un modèle ne coûte qu'à sa lecture.
 
 ### `loom.sql` : des bases SQLite et Postgres, avec des droits par table
 

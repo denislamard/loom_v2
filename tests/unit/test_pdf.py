@@ -136,6 +136,7 @@ def test_the_spec_names_the_folders_and_the_reading(tool: PdfTool) -> None:
         ("fuseau", "Europe/Paris"),
         ("graphiques", "non"),
         ("images", "non"),
+        ("modèles", "aucun"),
         ("lecture des PDF", "oui, process à part (20 s, 1 Gio)"),
     )
 
@@ -676,3 +677,18 @@ async def test_images_in_a_pdf(disk: Path) -> None:
     assert "Écran 1" in found.pages[0].extract_text()
     again = await call(tool, path="sortie/cdc2.pdf", title="Cahier", blocks=blocks)
     assert again["sha256"] == result["sha256"]
+
+
+async def test_a_pdf_follows_its_template(disk: Path) -> None:
+    tool = make(
+        disk,
+        {"name": "sortie", "path": "sortie", "rights": ["write"]},
+        templates={"rapport": {"text": "# Contexte\n# Travaux réalisés"}},
+    )
+    assert "- rapport" in tool.spec.description
+    blocks: list[Any] = [{"type": "titre", "text": "Travaux réalisés"}]
+    with pytest.raises(ToolError, match="section\\(s\\) absente\\(s\\) : « Contexte »"):
+        await call(tool, path="sortie/r.pdf", template="rapport", blocks=blocks)
+    blocks.insert(0, {"type": "titre", "text": "Contexte"})
+    written = await call(tool, path="sortie/r.pdf", template="rapport", blocks=blocks)
+    assert (written["template"], written["pages"]) == ("rapport", 1)

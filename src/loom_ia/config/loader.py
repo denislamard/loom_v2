@@ -36,6 +36,8 @@ from loom_ia.core.model import (
     checked_skill,
 )
 from loom_ia.core.template import Template, TemplateError
+from loom_ia.tools_builtin._office_params import TemplateRef
+from loom_ia.tools_builtin._templates import parse as parse_template
 
 AGENT_SUFFIXES = (".yaml", ".yml")
 # Début du message d'un contrôle qui porte sur un agent (``LoomConfig.check``).
@@ -356,10 +358,50 @@ def _with_tool_skills(spec: AgentSpec, prompts_dir: Path, *, source: Path) -> Ag
             update={"tools": _with_skills(tool.tools, prompts_dir, _ref_label(tool), source=source)}
         )
         if isinstance(tool, McpTools | SourceTools)
-        else _skill_read(tool, prompts_dir, f"tools[{tool.python}]", source=source)
+        else _templates_read(
+            _skill_read(tool, prompts_dir, f"tools[{tool.python}]", source=source),
+            prompts_dir,
+            f"tools[{tool.python}]",
+            source=source,
+        )
         for tool in spec.tools
     )
     return spec.model_copy(update={"tools": tools})
+
+
+def _templates_read(
+    declared: PythonTool, prompts_dir: Path, label: str, *, source: Path
+) -> PythonTool:
+    """Les modèles de document d'un outil fourni (``loom.word``, ``loom.pdf``), lus.
+
+    Comme un ``skill_file`` : chaque fichier, relatif à ``prompts_dir`` et contenu dans
+    ce dossier, est lu une fois au chargement, et son texte rangé à la place du chemin.
+    Son plan est vérifié ici (``templates.parse``) : une faute se voit dès ``loom validate``.
+    """
+    templates = cast(object, getattr(declared, "templates", None))
+    if not isinstance(templates, dict) or not templates:
+        return declared
+    read: dict[str, TemplateRef] = {}
+    for name, ref in cast(dict[str, TemplateRef], templates).items():
+        if ref.file is None:
+            read[name] = ref
+            continue
+        where = f"{label}.templates[{name}]"
+        path = _within_prompts(prompts_dir, ref.file, where, source=source)
+        if not path.is_file():
+            raise ConfigError(
+                f"{where} — modèle introuvable : {path}{_hint(prompts_dir, ref.file)}",
+                source=source,
+            )
+        try:
+            text = path.read_text(encoding="utf-8")
+            parse_template(name, text)
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ConfigError(f"{where} — modèle illisible : {exc}", source=source) from exc
+        except ValueError as exc:
+            raise ConfigError(f"{where} — {exc} : {path}", source=source) from exc
+        read[name] = TemplateRef(text=text)
+    return declared.model_copy(update={"templates": read})
 
 
 def _ref_label(ref: McpTools | SourceTools) -> str:

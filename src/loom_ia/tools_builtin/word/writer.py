@@ -287,8 +287,12 @@ def _numbering(lists: Iterable[bool]) -> str:
     return said + "</w:numbering>"
 
 
-def _core(title: str | None) -> str:
+def _core(title: str | None, template: str | None = None) -> str:
     named = f"<dc:title>{escape(title)}</dc:title>" if title else ""
+    # Le modèle suivi : la catégorie du document (Fichier > Propriétés dans Word) ;
+    # absente sans modèle, pour qu'un document sans modèle ne change pas.
+    if template:
+        named += f"<cp:category>{escape(template)}</cp:category>"
     return (
         _HEAD + '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/'
         'metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" '
@@ -493,7 +497,7 @@ def render(prepared: Prepared) -> bytes:
     parts: tuple[tuple[str, str | bytes], ...] = (
         ("[Content_Types].xml", types),
         ("_rels/.rels", PACKAGE_RELS),
-        ("docProps/core.xml", _core(prepared.title)),
+        ("docProps/core.xml", _core(prepared.title, prepared.template)),
         ("docProps/app.xml", APP),
         ("word/document.xml", document),
         ("word/_rels/document.xml.rels", relations),

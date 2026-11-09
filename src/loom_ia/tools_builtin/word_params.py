@@ -15,6 +15,8 @@ l'importe pour valider la référence au chargement, sans importer l'outil.
       timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
       charts: true                     # le bloc graphique ; false par défaut
       images: true                     # le bloc image ; false par défaut
+      templates:                       # modèles de document, relatifs à prompts_dir
+        cahier-des-charges: modele-cdc.md
 
 Les dossiers suivent la forme de ``loom.local_files`` (``name``, ``path``,
 ``rights``, ``approval``) ; le droit ``delete`` n'a pas de sens ici et est refusé.
@@ -26,6 +28,7 @@ from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Fie
 
 from loom_ia.tools_builtin._office_params import (
     DEFAULT_TIMEZONE,
+    Templates,
     check_timezone,
     checked_folders,
     no_delete,
@@ -53,6 +56,8 @@ class WordParams(BaseModel):
     charts: bool = False
     # Le bloc image : environ 230 tokens de plus par appel au modèle, d'où false.
     images: bool = False
+    # Les modèles de document, par nom : fichiers relatifs à prompts_dir, lus au chargement.
+    templates: Templates = {}
 
     @model_validator(mode="after")
     def _check(self) -> Self:

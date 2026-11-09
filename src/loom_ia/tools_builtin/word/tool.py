@@ -2,6 +2,7 @@
 """L'outil ``word`` monté : écrire et lire des .docx ; et sa fabrique."""
 
 import asyncio
+from collections.abc import Mapping
 from typing import Annotated, ClassVar, Final
 from zoneinfo import ZoneInfo
 
@@ -17,8 +18,10 @@ from loom_ia.tools_builtin._document.arguments import (
 from loom_ia.tools_builtin._document.content import Prepared
 from loom_ia.tools_builtin._document.tool import DocumentTool
 from loom_ia.tools_builtin._folders import Folders, mount
+from loom_ia.tools_builtin._office_params import read_templates
+from loom_ia.tools_builtin._templates import Template
 from loom_ia.tools_builtin.word import reader, writer
-from loom_ia.tools_builtin.word_params import WordParams
+from loom_ia.tools_builtin.word_params import REFERENCE, WordParams
 
 NAME: Final = "word"
 
@@ -51,17 +54,23 @@ class WordTool(DocumentTool):
         *,
         charts: bool = False,
         images: bool = False,
+        templates: Mapping[str, Template] | None = None,
     ) -> None:
         # Pourquoi les documents ne se lisent pas ici (version d'expat).
         self._unsafe = unsafe
-        super().__init__(space, zone, charts=charts, images=images)
+        super().__init__(space, zone, charts=charts, images=images, templates=templates)
 
     def _render(self, prepared: Prepared) -> tuple[bytes, dict[str, JsonValue], list[str]]:
         return writer.render(prepared), {}, []
 
     async def _read(self, request: ReadArguments, where: str, data: bytes) -> dict[str, JsonValue]:
         found = await asyncio.to_thread(
-            reader.read, data, where, request.start or 0, images=self._images
+            reader.read,
+            data,
+            where,
+            request.start or 0,
+            images=self._images,
+            templates=tuple(self._templates) if self._templates else None,
         )
         if not self._charts:
             _warn_charts(found)
@@ -118,5 +127,10 @@ def build(params: BaseModel, context: BuiltinContext) -> WordTool:
     space = Folders(mount(params.folders, context))
     unsafe = reader.xml_safety() if any("read" in f.rights for f in space.folders) else None
     return WordTool(
-        space, ZoneInfo(params.timezone), unsafe, charts=params.charts, images=params.images
+        space,
+        ZoneInfo(params.timezone),
+        unsafe,
+        charts=params.charts,
+        images=params.images,
+        templates=read_templates(params.templates, REFERENCE),
     )

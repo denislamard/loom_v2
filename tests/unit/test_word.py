@@ -184,6 +184,7 @@ def test_settings_for_validate(tool: WordTool) -> None:
         ("fuseau", "Europe/Paris"),
         ("graphiques", "non"),
         ("images", "non"),
+        ("modèles", "aucun"),
         ("lecture des documents", "oui"),
     )
 
@@ -587,8 +588,8 @@ def test_validate_shows_the_folders(
     out = capsys.readouterr().out
     assert "loom.word" in out
     assert (
-        "fuseau : Europe/Paris · graphiques : non · images : non · lecture des documents : oui"
-        in out
+        "fuseau : Europe/Paris · graphiques : non · images : non · modèles : aucun · "
+        "lecture des documents : oui" in out
     )
 
 
@@ -1048,4 +1049,170 @@ def test_validate_shows_images(
     path = demo(agents=[word_agent(folders=folders, charts=True, images=True)], storage=JSONL)
     assert main(["--config", str(path), "validate"]) == 0
     said = capsys.readouterr().out
-    assert "graphiques : oui · images : oui · lecture des documents : oui" in said
+    assert "graphiques : oui · images : oui · modèles : aucun · lecture des documents : oui" in said
+
+
+# --- Modèles de document -----------------------------------------------------------------
+
+RAPPORT_MD: Final = """---
+description: Rapport d'intervention chez un client.
+---
+Sobre et factuel.
+
+# Contexte
+Le client, le site, la demande.
+
+# Photos (facultatif)
+# Travaux réalisés
+"""
+
+
+def rapport(*titles: str) -> list[Any]:
+    return [
+        b
+        for t in titles
+        for b in ({"type": "titre", "text": t}, {"type": "paragraphe", "text": "Fait."})
+    ]
+
+
+@pytest.fixture
+def modeled(disk: Path) -> WordTool:
+    return make(
+        disk,
+        {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]},
+        templates={"rapport": {"text": RAPPORT_MD}, "note": {"text": "Une note courte."}},
+    )
+
+
+def test_templates_are_off_unless_declared(tool: WordTool, modeled: WordTool) -> None:
+    assert "template" not in json.dumps(tool.spec.input_schema)
+    assert "Modèles de document" not in tool.spec.description
+    assert ("modèles", "aucun") in tool.settings().options
+    assert "Modèles de document" in modeled.spec.description
+    assert "- rapport : Rapport d'intervention chez un client." in modeled.spec.description
+    # Le texte d'un modèle ne part pas dans la description : seulement son nom.
+    assert "Le client, le site, la demande." not in modeled.spec.description
+    assert ("modèles", "rapport, note") in modeled.settings().options
+
+
+async def test_a_template_is_read_from_the_tool(modeled: WordTool) -> None:
+    found = await call(modeled, action="template", template="rapport")
+    assert found == {
+        "template": "rapport",
+        "description": "Rapport d'intervention chez un client.",
+        "plan": ["Contexte", "Photos (facultatif)", "Travaux réalisés"],
+        "text": RAPPORT_MD,
+    }
+    assessed = modeled.assess_call({"action": "template", "template": "rapport"})
+    assert (assessed.approval, assessed.side_effects) == ("never", "none")
+
+
+async def test_a_document_follows_its_template(modeled: WordTool, disk: Path) -> None:
+    with pytest.raises(ToolError, match="write attend 'template'"):
+        await call(modeled, path="sortie/r.docx", blocks=rapport("Contexte"))
+    with pytest.raises(ToolError) as caught:
+        await call(
+            modeled,
+            path="sortie/r.docx",
+            template="rapport",
+            blocks=rapport("Travaux réalisés", "Bilan"),
+        )
+    assert str(caught.value).splitlines() == [
+        "Document refusé :",
+        "- modèle rapport : section hors du modèle « Bilan »",
+        "- modèle rapport : section(s) absente(s) : « Contexte »",
+        "- modèle rapport, plan attendu (titres de niveau 1, dans l'ordre) : Contexte · Photos "
+        "(facultatif) · Travaux réalisés",
+    ]
+    assert not (disk / "sortie" / "r.docx").exists()
+    written = await call(
+        modeled,
+        path="sortie/r.docx",
+        template="rapport",
+        blocks=rapport("1. Contexte", "2. Travaux réalisés"),
+    )
+    assert written["template"] == "rapport"
+    core = part(disk / "sortie" / "r.docx", "docProps/core.xml")
+    category = "{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}category"
+    assert core.findtext(category) == "rapport"
+    # Relu, le document dit son modèle : une réécriture le reprend.
+    found = await call(modeled, action="read", path="sortie/r.docx")
+    assert found["template"] == "rapport" and "notes" not in found
+
+
+async def test_a_free_document_has_no_template(
+    modeled: WordTool, tool: WordTool, disk: Path
+) -> None:
+    free = await call(modeled, path="sortie/libre.docx", template="aucun", **DEVIS)
+    plain = await call(tool, path="sortie/devis.docx", **DEVIS)
+    # Un document libre est le même fichier qu'un document écrit sans modèles.
+    assert free["sha256"] == plain["sha256"] and free["template"] == "aucun"
+    assert "template" not in plain
+    found = await call(modeled, action="read", path="sortie/libre.docx")
+    assert "template" not in found
+
+
+async def test_reading_a_template_the_tool_does_not_know(
+    modeled: WordTool, tool: WordTool, disk: Path
+) -> None:
+    other = make(
+        disk,
+        {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]},
+        templates={"offre": {"text": "# Besoin"}},
+    )
+    await call(other, path="sortie/o.docx", template="offre", blocks=rapport("Besoin"))
+    found = await call(modeled, action="read", path="sortie/o.docx")
+    assert found["template"] == "offre"
+    assert (
+        "Le document dit suivre le modèle « offre », que cet outil ne déclare pas"
+        in found["notes"][0]
+    )
+    # Un outil sans modèles ne dit rien des modèles.
+    plain = await call(tool, action="read", path="sortie/o.docx")
+    assert "template" not in plain and "notes" not in plain
+
+
+def test_templates_need_a_folder_to_write(disk: Path) -> None:
+    with pytest.raises(ValueError, match="aucun dossier n'a le droit write"):
+        make(
+            disk,
+            {"name": "modeles", "path": "modeles", "rights": ["read"]},
+            templates={"r": {"text": "# A"}},
+        )
+    with pytest.raises(ValueError, match=r"modèle r \(r\.md\) non lu"):
+        make(
+            disk, {"name": "sortie", "path": "sortie", "rights": ["write"]}, templates={"r": "r.md"}
+        )
+
+
+def test_templates_are_read_when_the_config_loads(
+    demo: ConfigFactory, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "sortie").mkdir()
+    folders = [{"name": "sortie", "path": "sortie", "rights": ["read", "write"]}]
+    path = demo(
+        agents=[word_agent(folders=folders, templates={"rapport": "rapport.md"})], storage=JSONL
+    )
+    with pytest.raises(ConfigError, match=r"templates\[rapport\] — modèle introuvable"):
+        load_config(path)
+    (tmp_path / "prompts" / "rapport.md").write_text(RAPPORT_MD, encoding="utf-8")
+    load_config(path)
+    assert main(["--config", str(path), "validate"]) == 0
+    assert (
+        "images : non · modèles : rapport · lecture des documents : oui" in capsys.readouterr().out
+    )
+    for given, said in (
+        ("../secret.md", "le fichier doit être dans le dossier des prompts"),
+        ("prompts/rapport.md", "le chemin est relatif à prompts_dir : écrire rapport.md"),
+    ):
+        path = demo(
+            agents=[word_agent(folders=folders, templates={"rapport": given})], storage=JSONL
+        )
+        with pytest.raises(ConfigError, match=re.escape(said)):
+            load_config(path)
+    (tmp_path / "prompts" / "casse.md").write_text("# A\n# a", encoding="utf-8")
+    path = demo(
+        agents=[word_agent(folders=folders, templates={"rapport": "casse.md"})], storage=JSONL
+    )
+    with pytest.raises(ConfigError, match="section donnée deux fois"):
+        load_config(path)

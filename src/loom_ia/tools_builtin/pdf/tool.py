@@ -17,8 +17,9 @@ from loom_ia.tools_builtin._document.arguments import (
 from loom_ia.tools_builtin._document.content import Prepared
 from loom_ia.tools_builtin._document.tool import DocumentTool
 from loom_ia.tools_builtin._folders import Folders, mount
+from loom_ia.tools_builtin._office_params import read_templates
 from loom_ia.tools_builtin.pdf import reader, writer
-from loom_ia.tools_builtin.pdf_params import SAFE_PYPDF, PdfParams
+from loom_ia.tools_builtin.pdf_params import REFERENCE, SAFE_PYPDF, PdfParams
 
 NAME: Final = "pdf"
 
@@ -93,4 +94,10 @@ def build(params: BaseModel, context: BuiltinContext) -> PdfTool:
                 f"pypdf {version('pypdf')} : {'.'.join(map(str, SAFE_PYPDF))} ou plus attendu "
                 "(boucles sans fin sur des PDF forgés) — mettre à jour loom-ia[pdf]"
             )
-    return PdfTool(space, ZoneInfo(params.timezone), charts=params.charts, images=params.images)
+    return PdfTool(
+        space,
+        ZoneInfo(params.timezone),
+        charts=params.charts,
+        images=params.images,
+        templates=read_templates(params.templates, REFERENCE),
+    )

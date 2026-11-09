@@ -8,7 +8,7 @@ ne font ensuite que poser le contenu préparé sur la page.
 import hashlib
 import re
 import zlib
-from typing import Any, Final
+from typing import Any, Final, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -21,8 +21,10 @@ from loom_ia.tools_builtin._document.arguments import (
     MAX_IMAGES_BYTES,
     DocumentCall,
     ReadArguments,
+    TemplateArguments,
     WithCharts,
     WriteArguments,
+    input_schema,
     parse,
     variant,
 )
@@ -46,6 +48,9 @@ from loom_ia.tools_builtin._document.content import (
 )
 from loom_ia.tools_builtin._document.picture import Picture, PictureError, dimensions
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
+from loom_ia.tools_builtin._templates import key as template_key
+from loom_ia.tools_builtin._templates import parse as parse_template
+from loom_ia.tools_builtin._templates import plan_faults
 from loom_ia.tools_builtin.pdf_params import PdfParams
 from loom_ia.tools_builtin.word_params import WordParams
 
@@ -637,3 +642,145 @@ def test_variants_add_only_what_is_asked() -> None:
                 assert not allowed
             else:
                 assert allowed
+
+
+# --- Modèles de document ---------------------------------------------------------------
+
+RAPPORT: Final = """---
+description: Rapport d'intervention chez un client.
+---
+Consignes générales : sobre et factuel.
+
+# Contexte
+Le client, le site, la demande.
+
+# Constat
+## Une sous-partie : pas une section
+```
+# Pas une section non plus : dans un bloc de code
+```
+
+# Photos (facultatif)
+# Travaux réalisés
+# Suite à donner
+"""
+
+
+def test_a_template_is_its_headings() -> None:
+    found = parse_template("rapport", RAPPORT)
+    assert found.description == "Rapport d'intervention chez un client."
+    assert [(s.title, s.optional) for s in found.sections] == [
+        ("Contexte", False),
+        ("Constat", False),
+        ("Photos", True),
+        ("Travaux réalisés", False),
+        ("Suite à donner", False),
+    ]
+    assert found.outline() == (
+        "Contexte · Constat · Photos (facultatif) · Travaux réalisés · Suite à donner"
+    )
+    assert found.text == RAPPORT
+    # Sans titre, un modèle n'a que des consignes : aucun plan à vérifier.
+    assert parse_template("libre", "Écrire court.").sections == ()
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "said"),
+    [
+        ("Rapport", "# A", "minuscules, chiffres et tirets"),
+        ("aucun", "# A", "pas « aucun »"),
+        ("r", "", "vide"),
+        ("r", "---\ndescription: x\n# A", "jamais fermé"),
+        ("r", "---\nauteur: moi\n---\n# A", "seule « description » est lue"),
+        ("r", "# Constat\n# 2. constat", "section donnée deux fois"),
+        ("r", "#   \n", "titre de section vide"),
+        ("r", "x" * 20_001, "au-delà de 20000"),
+    ],
+)
+def test_templates_refused(name: str, text: str, said: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(said)):
+        parse_template(name, text)
+
+
+@pytest.mark.parametrize(
+    ("heading", "found"),
+    [
+        ("1. Contexte et Objectifs", "contexte et objectifs"),
+        ("2.3 - Périmètre", "perimetre"),
+        ("4) DONNÉES", "donnees"),
+        ("a) Rôles", "roles"),
+        ("IV. Intégrations", "integrations"),
+        ("**Constat** :", "constat"),
+        ("Mix : produits", "mix : produits"),
+    ],
+)
+def test_headings_are_compared_loosely(heading: str, found: str) -> None:
+    assert template_key(heading) == found
+
+
+def test_the_plan_of_a_document() -> None:
+    template = parse_template("rapport", RAPPORT)
+    assert (
+        plan_faults(template, ["1. Contexte", "2. Constat", "Travaux réalisés", "Suite à donner"])
+        == []
+    )
+    assert plan_faults(
+        template, ["Contexte", "Annexe", "Travaux réalisés", "Constat", "Constat"]
+    ) == [
+        "section hors du modèle « Annexe »",
+        "section donnée deux fois « Constat »",
+        "section(s) absente(s) : « Suite à donner »",
+        "« Travaux réalisés » avant « Constat » : le modèle les met dans l'autre ordre",
+    ]
+    assert plan_faults(parse_template("libre", "Écrire court."), ["N'importe quoi"]) == []
+
+
+def test_prepare_checks_the_plan_of_the_template() -> None:
+    template = parse_template("rapport", RAPPORT)
+    request = parse(
+        DocumentCall, {"path": "s/a", "blocks": [{"type": "titre", "text": "Contexte"}]}
+    )
+    assert isinstance(request, WriteArguments)
+    with pytest.raises(ToolError) as caught:
+        prepare(request, PARIS, template=template)
+    assert str(caught.value).splitlines() == [
+        "Document refusé :",
+        "- modèle rapport : section(s) absente(s) : « Constat », « Travaux réalisés », "
+        "« Suite à donner »",
+        "- modèle rapport, plan attendu (titres de niveau 1, dans l'ordre) : Contexte · Constat · "
+        "Photos (facultatif) · Travaux réalisés · Suite à donner",
+    ]
+    whole: list[Any] = [
+        {"type": "titre", "text": t}
+        for t in ("Contexte", "Constat", "Travaux réalisés", "Suite à donner")
+    ]
+    request = parse(DocumentCall, {"path": "s/a", "blocks": whole})
+    assert isinstance(request, WriteArguments)
+    assert prepare(request, PARIS, template=template).template == "rapport"
+    assert prepare(request, PARIS).template is None
+
+
+def test_templates_add_an_action_and_a_field() -> None:
+    model = variant(DocumentCall, charts=False, images=False, templates=("rapport", "devis"))
+    schema = input_schema(model)
+    properties = cast(dict[str, Any], schema["properties"])
+    assert properties["template"]["anyOf"][0]["enum"] == ["rapport", "devis", "aucun"]
+    assert "required" not in schema
+    blocks: list[Any] = [{"type": "paragraphe", "text": "x"}]
+    assert parse(model, {"action": "template", "template": "devis"}) == TemplateArguments(
+        name="devis"
+    )
+    written = parse(model, {"path": "s/a", "blocks": blocks, "template": "aucun"})
+    assert isinstance(written, WriteArguments) and written.template == "aucun"
+    for arguments, said in (
+        ({"path": "s/a", "blocks": blocks}, "write attend 'template'"),
+        ({"path": "s/a", "blocks": blocks, "template": "facture"}, "template"),
+        ({"blocks": blocks, "template": "aucun"}, "write attend 'path'"),
+        ({"action": "template"}, "action template attend 'template'"),
+        ({"action": "template", "template": "aucun"}, "action template attend 'template'"),
+        ({"action": "template", "template": "devis", "path": "s/a"}, "path ne sert pas à template"),
+        ({"action": "template", "template": "devis", "title": "T"}, "title ne sert pas à template"),
+        ({"action": "read", "path": "s/a", "template": "devis"}, "template ne sert pas à read"),
+    ):
+        with pytest.raises(ToolError, match=re.escape(said)):
+            parse(model, cast(dict[str, Any], arguments))

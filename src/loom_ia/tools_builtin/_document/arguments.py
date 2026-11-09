@@ -25,6 +25,7 @@ from pydantic import (
 )
 
 from loom_ia.core.ports import ToolError
+from loom_ia.tools_builtin._templates import NONE as NO_TEMPLATE
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Scalar
 
 MAX_BLOCKS: Final = 1_000
@@ -201,6 +202,8 @@ class WriteArguments(_Model):
     title: str | None
     blocks: list[EveryBlock]
     overwrite: bool = False
+    # Le modèle suivi (son nom) ou ``aucun`` ; ``None`` : l'outil n'a pas de modèles.
+    template: str | None = None
 
 
 class ReadArguments(_Model):
@@ -211,7 +214,15 @@ class ReadArguments(_Model):
     pages: str | None = None
 
 
+class TemplateArguments(_Model):
+    """La lecture d'un modèle de document déclaré (``action: template``)."""
+
+    name: str
+
+
 type Action = Literal["write", "read"]
+# Les actions d'un outil monté avec des modèles de document.
+type TemplatedAction = Literal["write", "read", "template"]
 
 BLOCKS_SAID: Final = "Pour write : les blocs, dans l'ordre."
 
@@ -257,7 +268,10 @@ class DocumentCall(_Model):
             raise ValueError("write attend 'blocks', le contenu du document")
         return self
 
-    def request(self) -> WriteArguments | ReadArguments:
+    def request(self) -> WriteArguments | ReadArguments | TemplateArguments:
+        template = cast(str | None, getattr(self, "template", None))
+        if cast(str, self.action) == "template":
+            return TemplateArguments(name=cast(str, template))
         if self.action == "read":
             return ReadArguments(
                 path=self.path,
@@ -269,6 +283,7 @@ class DocumentCall(_Model):
             title=self.title,
             blocks=cast(list[EveryBlock], self.blocks),
             overwrite=bool(self.overwrite),
+            template=template,
         )
 
 
@@ -280,29 +295,96 @@ _BLOCKS: Final[Mapping[tuple[bool, bool], object]] = {
 }
 
 
-@cache
-def variant(base: type[DocumentCall], *, charts: bool, images: bool) -> type[DocumentCall]:
-    """L'appel d'un format (``WordCall``…), ``blocks`` élargi aux blocs des réglages.
+ACTION_SAID: Final = (
+    "write (par défaut) : écrire ; read : lire un fichier (droit read) ; template : lire "
+    "un modèle de document."
+)
+TEMPLATE_SAID: Final = (
+    "Pour write : le modèle suivi, ou aucun (document libre) ; pour template : le modèle à lire."
+)
 
-    Sans réglage, ``base`` lui-même : le schéma reste celui d'avant les graphiques.
-    Le nom du modèle ne paraît pas dans le schéma allégé (``input_schema``).
+
+@cache
+def variant(
+    base: type[DocumentCall],
+    *,
+    charts: bool,
+    images: bool,
+    templates: tuple[str, ...] = (),
+) -> type[DocumentCall]:
+    """L'appel d'un format (``WordCall``…), élargi aux réglages de l'outil.
+
+    ``charts``, ``images`` : ``blocks`` gagne leurs blocs. ``templates`` (les noms des
+    modèles déclarés) : l'action ``template`` et le champ ``template``, obligatoire à
+    l'écriture. Sans réglage, ``base`` lui-même : le schéma reste celui d'avant. Le nom
+    du modèle ne paraît pas dans le schéma allégé (``input_schema``).
     """
-    if not (charts or images):
+    if not (charts or images or templates):
         return base
-    blocks: Any = _BLOCKS[charts, images]
-    suffix = ("Chart" if charts else "") + ("Image" if images else "")
-    return create_model(
-        f"{base.__name__.removesuffix('Call')}{suffix}Call",
-        __base__=base,
-        __module__=base.__module__,
-        blocks=(
+    fields: dict[str, Any] = {}
+    if charts or images:
+        blocks: Any = _BLOCKS[charts, images]
+        fields["blocks"] = (
             Annotated[
                 list[blocks] | None,
                 Field(max_length=MAX_BLOCKS, description=BLOCKS_SAID),
             ],
             None,
-        ),
+        )
+    validators: dict[str, Any] = {}
+    if templates:
+        names: Any = cast(Any, Literal)[(*templates, NO_TEMPLATE)]
+        fields["action"] = (
+            Annotated[TemplatedAction, Field(description=ACTION_SAID)],
+            "write",
+        )
+        fields["template"] = (Annotated[names | None, Field(description=TEMPLATE_SAID)], None)
+        # Lire un modèle ne vise aucun fichier : ``path`` n'est demandé que par write et read.
+        fields["path"] = (
+            Annotated[str | None, Field(description=base.model_fields["path"].description)],
+            None,
+        )
+        validators["_template_of_the_action"] = model_validator(mode="after")(_template_rule)
+    suffix = (
+        ("Chart" if charts else "")
+        + ("Image" if images else "")
+        + ("Template" if templates else "")
     )
+    return create_model(
+        f"{base.__name__.removesuffix('Call')}{suffix}Call",
+        __base__=base,
+        __module__=base.__module__,
+        __validators__=validators,
+        **fields,
+    )
+
+
+def _template_rule[M: DocumentCall](self: M) -> M:
+    """Avec des modèles : write nomme le sien (ou aucun), template nomme celui à lire."""
+    action = cast(str, self.action)
+    template = cast(str | None, getattr(self, "template", None))
+    path = cast(str | None, self.path)
+    if action != "template" and path is None:
+        raise ValueError(f"{action} attend 'path'")
+    if action == "template" and path is not None:
+        raise ValueError("path ne sert pas à template")
+    if action == "write" and template is None:
+        raise ValueError(
+            "write attend 'template' : le modèle suivi, ou aucun pour un document libre"
+        )
+    if action == "read" and template is not None:
+        raise ValueError("template ne sert pas à read")
+    if action == "template":
+        if template is None or template == NO_TEMPLATE:
+            raise ValueError("action template attend 'template' : le nom du modèle à lire")
+        stray = sorted(
+            name
+            for name in (*self.READ_FIELDS, "title", "blocks", "overwrite")
+            if getattr(self, name) not in (None, False)
+        )
+        if stray:
+            raise ValueError(f"{', '.join(stray)} ne sert pas à template")
+    return self
 
 
 # Le même appel, avec le bloc ``graphique`` (tests du vocabulaire commun).
@@ -311,7 +393,7 @@ WithCharts: Final = variant(DocumentCall, charts=True, images=False)
 
 def parse(
     model: type[DocumentCall], arguments: Mapping[str, JsonValue]
-) -> WriteArguments | ReadArguments:
+) -> WriteArguments | ReadArguments | TemplateArguments:
     """Les arguments validés ; ``ToolError`` qui dit chaque champ fautif (10 au plus)."""
     try:
         return model.model_validate(dict(arguments)).request()
