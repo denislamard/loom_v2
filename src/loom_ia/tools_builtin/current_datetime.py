@@ -13,7 +13,7 @@ from loom_ia.tools import tool
 _JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 
 
-@tool
+@tool(side_effects="none")
 def current_datetime(
     part: Annotated[
         Literal["date", "time", "both"],

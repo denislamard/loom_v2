@@ -30,7 +30,7 @@ HEADERS: Final = {
 TIMEOUT: Final = httpx2.Timeout(15.0, connect=5.0)
 
 
-@tool(timeout=45, offload_over=20_000)
+@tool(side_effects="none", timeout=45, offload_over=20_000)
 async def fetch_page(url: str) -> str:
     """Lit une page web publique (http ou https) et renvoie son adresse finale, son titre,
     son texte sans le HTML, puis la liste des liens qu'elle contient.

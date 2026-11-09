@@ -239,7 +239,7 @@ L'échec est le même des deux côtés : l'essai de la forge Firecracker déjà 
 
 - **B-3 — Des threads d'outils bloqués arrêtent le journal et les autres runs du process.** Le pool d'asyncio est partagé entre les outils synchrones et les écritures du journal JSONL et des fichiers. Démontré : six appels bloqués retardent de 5 s les `tool.completed` du même lot, et un run voisin du même `Loom` passe de 0,02 s à 4,73 s. Le délai de l'outil ne protège pas : il libère le run, pas le thread. Corrigé par le pool à part.
 - **B-4 — Un outil MCP continue après son délai.** Le SDK MCP n'envoie pas `notifications/cancelled` quand l'attente est annulée ; le serveur va au bout, et écrit après que le modèle a lu « Délai dépassé ». Démontré avec FastMCP (outils asynchrone et synchrone). Le prototype le dit au modèle (état inconnu) ; arrêter le serveur relève de D-6.
-- **B-5 — `loom validate` avertit pour `loom.current_datetime` et `loom.fetch_page`** (lot de l'ordre des appels, D-6, dans `741f887`). Ces deux outils fournis sont écrits avec `@tool` sans `side_effects` : l'avertissement prévu pour les outils de l'utilisateur les touche aussi, et tout agent qui s'en sert le reçoit (démontré sur l'agent `shaper` du POC). Les tests ne l'ont pas vu : aucun ne monte un outil fourni écrit avec `@tool`. Correctif : `@tool(side_effects="none")` sur les deux (deux lignes), et `is_builtin` exclu du contrôle de `loom validate` par prudence, avec un test sur `loom.current_datetime`. Indépendant de B-2 : il peut passer avant.
+- **B-5 — `loom validate` avertit pour `loom.current_datetime` et `loom.fetch_page`** (lot de l'ordre des appels, D-6, dans `741f887`). Ces deux outils fournis sont écrits avec `@tool` sans `side_effects` : l'avertissement prévu pour les outils de l'utilisateur les touche aussi, et tout agent qui s'en sert le reçoit (démontré sur l'agent `shaper` du POC). Les tests ne l'ont pas vu : aucun ne monte un outil fourni écrit avec `@tool`. Correctif : `@tool(side_effects="none")` sur les deux (deux lignes), et `is_builtin` exclu du contrôle de `loom validate` par prudence, avec un test sur `loom.current_datetime`. Indépendant de B-2 : corrigé à part, après `c91a989`.
 - **B-2 lui-même** était connu (`docs/loom_testing.md`, l. 331 : « le délai rend la main au run mais Python ne peut pas interrompre le thread ») ; ses conséquences ne l'étaient pas : l'effet en double, l'ordre, le pool, la fin du process.
 
 ## Effets de bord
@@ -354,7 +354,7 @@ Tests existants modifiés : `test_call_order.py::test_a_timed_out_write_does_not
 
 **Reste à faire, hors de ce lot** :
 
-- **B-5** (`loom validate` et les outils fournis `loom.current_datetime`, `loom.fetch_page`) : deux lignes, en attente de ta décision.
+- **B-5** (`loom validate` et les outils fournis `loom.current_datetime`, `loom.fetch_page`) : corrigé à part, sur `c91a989` (CHANGELOG 2.0.20, section de l'ordre des appels).
 - **Les outils de l'utilisateur** qui appellent eux-mêmes `asyncio.to_thread` : `in_thread` est public (`loom_ia.core.tool_threads`), à dire dans le guide.
 - **`docs/loom_testing.md`, l. 331** (« Python ne peut pas interrompre le thread ») : la note reste vraie, mais ses conséquences sont maintenant traitées ; à compléter au prochain passage.
 

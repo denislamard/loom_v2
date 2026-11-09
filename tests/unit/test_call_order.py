@@ -1041,3 +1041,34 @@ def test_validate_takes_the_declaration_of_the_reference(
     assert "side_effects non déclaré" not in out
     # L'écart au défaut se voit dans l'en-tête de l'agent.
     assert "appels d'un tour tous ensemble (order: free)" in out
+
+
+def test_validate_says_nothing_about_the_provided_tools(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B-5 : ``loom.current_datetime`` et ``loom.fetch_page`` déclarent leurs effets."""
+    path = atelier(tmp_path, order="effects", approval=None)
+    fichier = tmp_path / "agents" / "demo.yaml"
+    spec = yaml.safe_load(fichier.read_text(encoding="utf-8"))
+    spec["tools"] = [
+        {"python": "lire", "side_effects": "none"},
+        {"python": "ecrire"},
+        {"python": "loom.current_datetime"},
+        {"python": "loom.fetch_page"},
+    ]
+    fichier.write_text(yaml.safe_dump(spec), encoding="utf-8")
+
+    assert main(["--config", str(path), "validate"]) == 0
+
+    assert "side_effects non déclaré" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("name", ["current_datetime", "fetch_page"])
+def test_the_provided_function_tools_declare_their_effects(name: str) -> None:
+    import importlib
+
+    from loom_ia.tools import FunctionTool
+
+    found = getattr(importlib.import_module(f"loom_ia.tools_builtin.{name}"), name)
+    assert isinstance(found, FunctionTool)
+    assert (found.declares_effects, found.spec.side_effects) == (True, "none")

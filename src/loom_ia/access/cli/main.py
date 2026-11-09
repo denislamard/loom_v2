@@ -1579,6 +1579,7 @@ async def _agent_lines(
         found = innermost(context.tools.get(name))
         if (
             declared.side_effects is None
+            and not is_builtin(declared.python)
             and isinstance(found, FunctionTool)
             and not found.declares_effects
         ):
