@@ -17,10 +17,19 @@ from test_call_order import atelier, awaiting
 from loom_ia.access.api import Loom
 from loom_ia.config import ConfigError
 from loom_ia.core.events import ApprovalRequested, ToolCompleted
-from loom_ia.core.model import PendingCall, SideEffects, TenantId, UnknownState
+from loom_ia.core.model import PendingCall, RunState, SideEffects, TenantId, UnknownState
 from loom_ia.core.ports import ToolContext
+from loom_ia.core.tool_threads import ToolThreads
 from loom_ia.engine import ToolExecutor
-from loom_ia.engine.executor import LATE_EFFECT, NOT_RUN, STOPPED_EFFECT, AnyTool, ToolEvent
+from loom_ia.engine.executor import (
+    LATE_EFFECT,
+    NOT_RUN,
+    NOT_RUN_SINCE,
+    NOT_STARTED,
+    STOPPED_EFFECT,
+    AnyTool,
+    ToolEvent,
+)
 from loom_ia.tools import tool
 
 
@@ -74,6 +83,83 @@ def results(events: list[ToolEvent]) -> dict[str, str]:
 
 def libere_dans(disque: Disque, secondes: float) -> None:
     threading.Timer(secondes, disque.libre.set).start()
+
+
+async def tour(executor: ToolExecutor, run: RunState, *calls: PendingCall) -> list[ToolEvent]:
+    """Un lot de plus dans le même run : le tour suivant du modèle."""
+    async with asyncio.timeout(5):
+        state = run.model_copy(update={"pending_calls": calls})
+        return [e async for e in executor.run_batch(state)]
+
+
+async def test_a_late_write_last_of_its_batch_is_awaited_by_the_next_batch_of_its_run() -> None:
+    disque = Disque()
+    libere_dans(disque, 0.3)
+    executor = ToolExecutor(outils(disque))
+    run = awaiting()
+
+    premier = await tour(executor, run, appel("w", "ecrire", texte="v2"))
+    second = await tour(executor, run, appel("r", "lire"))
+
+    assert results(premier) == {"w": LATE_EFFECT.format(limit=0.05)}
+    assert results(second) == {"r": "v2"}
+
+
+async def test_past_the_grace_the_next_batch_of_the_run_is_returned_without_running() -> None:
+    disque = Disque()
+    executor = ToolExecutor(outils(disque), grace=0.1)
+    run = awaiting()
+
+    await tour(executor, run, appel("w", "ecrire", texte="v2"))
+    second = await tour(executor, run, appel("r", "lire"))
+    disque.libre.set()
+    await asyncio.sleep(0.05)
+    troisieme = await tour(executor, run, appel("r2", "lire"))
+
+    assert results(second) == {"r": NOT_RUN_SINCE.format(tool="ecrire")}
+    assert results(troisieme) == {"r2": "v2"}
+
+
+async def test_a_late_write_holds_only_its_own_run() -> None:
+    disque = Disque()
+    executor = ToolExecutor(outils(disque), grace=5)
+
+    await tour(executor, awaiting(), appel("w", "ecrire", texte="v2"))
+    autre = await tour(executor, awaiting(), appel("r", "lire"))
+    disque.libre.set()
+
+    assert results(autre) == {"r": "v1"}
+
+
+async def test_a_call_whose_deadline_passes_before_it_gets_a_thread_did_nothing() -> None:
+    parti = threading.Event()
+
+    @tool(side_effects="none", timeout=5)
+    def long_calcul() -> str:
+        """Occupe le seul thread."""
+        time.sleep(0.3)
+        return "fini"
+
+    @tool(side_effects="reversible", timeout=0.1, on_unknown="pause")
+    def ecrire() -> str:
+        """Écrit, instantanément."""
+        parti.set()
+        return "écrit"
+
+    pool = ToolThreads(1)
+    un = ToolExecutor([long_calcul, ecrire], threads=pool)
+    autre = ToolExecutor([long_calcul, ecrire], threads=pool)
+    occupe = asyncio.create_task(collect(un, appel("c", "long_calcul")))
+    await asyncio.sleep(0.05)
+
+    events = await collect(autre, appel("w", "ecrire"))
+    await occupe
+    await asyncio.sleep(0.05)
+
+    assert results(events) == {"w": NOT_STARTED.format(limit=0.1)}
+    assert not any(isinstance(e, ApprovalRequested) for e in events)
+    assert not parti.is_set()
+    pool.close(0)
 
 
 async def test_a_sync_tool_runs_in_the_tools_pool() -> None:

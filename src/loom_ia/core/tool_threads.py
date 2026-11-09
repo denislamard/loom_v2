@@ -180,6 +180,12 @@ class CallThreads:
     def running(self) -> list[Future[object]]:
         return [future for future in self.futures if not future.done()]
 
+    @property
+    def never_started(self) -> bool:
+        """Vrai si l'appel a confié du travail au pool, et qu'aucun n'a démarré : tout a été
+        annulé dans la file, faute de thread libre avant le délai."""
+        return bool(self.futures) and all(future.cancelled() for future in self.futures)
+
     def abandon(self) -> None:
         """L'appel rend la main sans attendre son travail : l'annulation est signalée, et
         ce qui finit ensuite le dit dans les logs."""
@@ -235,5 +241,12 @@ async def in_thread[**P, R](fn: Callable[P, R], /, *args: P.args, **kwargs: P.kw
     call = functools.partial(context.run, fn, *args, **kwargs)
     future = threads.pool.submit(call, threads.name)
     threads.futures.append(future)
-    result = await asyncio.wrap_future(future)
+    try:
+        result = await asyncio.wrap_future(future)
+    except asyncio.CancelledError:
+        # Délai dépassé ou lot arrêté : un travail encore dans la file n'en partira pas
+        # (``cancel`` échoue sur un travail lancé, qui va au bout). Fait ici, et non par
+        # le rappel d'``asyncio`` : le moteur le sait avant de juger l'effet.
+        future.cancel()
+        raise
     return result  # pyright: ignore[reportReturnType]

@@ -358,3 +358,25 @@ Tests existants modifiés : `test_call_order.py::test_a_timed_out_write_does_not
 - **Les outils de l'utilisateur** qui appellent eux-mêmes `asyncio.to_thread` : `in_thread` est public (`loom_ia.core.tool_threads`), à dire dans le guide.
 - **`docs/loom_testing.md`, l. 331** (« Python ne peut pas interrompre le thread ») : la note reste vraie, mais ses conséquences sont maintenant traitées ; à compléter au prochain passage.
 
+### 9 novembre 2026 : deux défauts trouvés à la revue
+
+La revue de `c91a989` a trouvé deux cas que le lot laissait passer. Corrigés sur `bb36b36`, sans commit.
+
+| Défaut | Ce qui se passait | Ce qui est fait | Où |
+| --- | --- | --- | --- |
+| Un effet en retard, **dernier de son lot** | `_lingering` n'attendait qu'entre les segments d'un même lot. Une écriture seule dans sa réponse dépassait son délai ; au tour suivant, la relecture partait aussitôt et rendait « v1 », puis le thread écrivait « v2 » | L'exécuteur garde, par run, le travail encore en cours à la fin d'un lot (`_late`) ; le lot suivant du run l'attend avant son premier segment, au plus `grace`. Au-delà, ses appels reçoivent `NOT_RUN_SINCE` (« l'appel à X d'un tour précédent… »), sans `tool.called`. Un autre run n'attend pas ; `order: free` non plus. Le travail fini est oublié au lot suivant de n'importe quel run | `engine/executor.py` |
+| Un appel **qui n'a jamais eu de thread** | Le pool plein (un seul thread pour l'essai, 16 pris en production), un appel à effet attendait dans la file et dépassait son délai : `STOPPED_EFFECT`, et la pause avec `on_unknown: pause`. Son travail, annulé par le rappel d'asyncio *après* le jugement de l'effet, ne partait pas : l'état était connu | `in_thread` retire le travail de la file dès l'annulation (`future.cancel()`, sans effet sur un travail lancé) ; `CallThreads.never_started` : du travail confié au pool, tout annulé avant de démarrer. `_invoked` rend alors une erreur ordinaire, `NOT_STARTED` (« l'outil n'a pas démarré en N s, tous les threads des outils étant pris. Il n'a rien fait ; tu peux le rappeler. ») | `core/tool_threads.py`, `engine/executor.py` |
+
+**Essais** : 4 de plus dans `tests/unit/test_tool_threads.py` (17). Les trois premiers échouent sur `bb36b36` ; le troisième y passe aussi, il garde que la correction n'étend pas l'attente aux autres runs.
+
+| Essai | Ce qu'il montre |
+| --- | --- |
+| `test_a_late_write_last_of_its_batch_is_awaited_by_the_next_batch_of_its_run` | Tour 1 : l'écriture en retard (`LATE_EFFECT`) ; tour 2 : la relecture rend « v2 » |
+| `test_past_the_grace_the_next_batch_of_the_run_is_returned_without_running` | Grâce de 0,1 s : la relecture du tour 2 reçoit `NOT_RUN_SINCE` ; au tour 3, le thread fini, elle rend « v2 » |
+| `test_a_late_write_holds_only_its_own_run` | Grâce de 5 s : la lecture d'un autre run rend « v1 » tout de suite |
+| `test_a_call_whose_deadline_passes_before_it_gets_a_thread_did_nothing` | Pool d'un thread occupé 0,3 s, écriture `on_unknown: pause` de délai 0,1 s : `NOT_STARTED`, pas de pause, et l'outil ne part jamais, même le thread libéré |
+
+**Mesures** : tous les extras, 4 504 réussis, 203 sautés, 1 échec (l'essai de la forge Firecracker, le même) ; noyau seul, 3 492 réussis, 416 sautés. pyright strict : 0 erreur ; `ruff check .` et `ruff format --check .` : rien à redire ; `lint-imports` : 6 contrats tenus sur 6.
+
+**Restent, mineurs, hors de cette correction** : `_work` ne rend pas son jeton de thread libre quand il saute un travail annulé (le pool peut créer un thread de plus que nécessaire, jamais au-delà de sa taille) ; le compteur `cancelled` de `ToolThreads.close` n'est pas utilisé ; la découpe en segments regarde les arguments avant la politique `before_tool`.
+

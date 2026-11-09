@@ -218,6 +218,20 @@ NOT_RUN: Final = (
     "l'effet de {tool} vérifié."
 )
 
+# … ou l'appel en retard est d'un tour précédent du run : le lot suivant l'attend aussi.
+NOT_RUN_SINCE: Final = (
+    "Non exécuté : l'appel à {tool} d'un tour précédent a dépassé son délai et "
+    "travaille encore. Cet appel n'est pas parti ; refais-le une fois l'effet de "
+    "{tool} vérifié."
+)
+
+# Un délai dépassé avant même que l'outil démarre : tous les threads des outils étaient
+# pris, et le travail, annulé dans la file, n'a rien fait.
+NOT_STARTED: Final = (
+    "Délai dépassé : l'outil n'a pas démarré en {limit:g} s, tous les threads des outils "
+    "étant pris. Il n'a rien fait ; tu peux le rappeler."
+)
+
 UNKNOWN_STATE: Final = (
     "État inconnu : l'exécution de cet outil a été interrompue et il a peut-être "
     "produit son effet. Il n'a pas été relancé automatiquement ; vérifie avant de "
@@ -420,6 +434,9 @@ class ToolExecutor:
         # Pool des outils synchrones (D-4) : celui de l'instance ``Loom``, sinon le sien.
         # Ses threads ne naissent qu'au premier travail.
         self.threads = threads if threads is not None else tool_threads.ToolThreads()
+        # Travail en thread d'appels à effet qui ont dépassé leur délai, et qui tournait
+        # encore à la fin de leur lot, par run : le lot suivant du run l'attend.
+        self._late: dict[RunId, dict[str, tool_threads.CallThreads]] = {}
         self.state_rules = state_rules or StateRules()
         # Délai et effet d'une expiration (#17).
         self.approval = approval or ApprovalSettings()
@@ -559,6 +576,8 @@ class ToolExecutor:
         copy._tools = dict(self._tools)
         copy._validators = dict(self._validators)
         copy.replay = self.replay
+        # Le même travail en retard : ses runs sont ceux de cet exécuteur.
+        copy._late = self._late
         return copy
 
     def add(self, tool: AnyTool) -> None:
@@ -872,8 +891,15 @@ class ToolExecutor:
         # Posé avant que le lot annule ses tâches : toute autre annulation vient de l'outil.
         stopping = False
 
-        # Travail en thread d'appels à effet qui ont dépassé leur délai (B-2).
-        lingering: dict[str, tool_threads.CallThreads] = {}
+        # Travail en thread d'appels à effet qui ont dépassé leur délai (B-2) : ceux
+        # d'un lot précédent du run d'abord, que la chaîne attend avant tout lancement.
+        for run_id, late in list(self._late.items()):
+            if not any(threads.running for threads in late.values()):
+                del self._late[run_id]  # fini depuis, ou run qui n'a pas eu de lot suivant
+        lingering: dict[str, tool_threads.CallThreads] = (
+            self._late.pop(state.run_id, {}) if self.order == "effects" else {}
+        )
+        carried = set(lingering)
 
         async def execute(item: _Ready) -> None:
             began = time.perf_counter()
@@ -905,8 +931,10 @@ class ToolExecutor:
                 if still is not None:
                     # Un effet tourne encore après son délai : les appels suivants
                     # ne partent pas, et le modèle apprend pourquoi.
+                    late_call, tool_name = still
+                    said = NOT_RUN_SINCE if late_call in carried else NOT_RUN
                     for later in (i for s in segments[position:] for i in s):
-                        text = NOT_RUN.format(tool=still)
+                        text = said.format(tool=tool_name)
                         yield _completed(later.call, ToolOutput.error(text), started=None)
                     break
                 for item in segment:
@@ -963,6 +991,11 @@ class ToolExecutor:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            # Ce qui tourne encore à la fin du lot, le lot suivant du run l'attendra :
+            # sinon, une lecture du tour suivant doublerait l'écriture en retard.
+            running = {key: late for key, late in lingering.items() if late.running}
+            if running:
+                self._late[state.run_id] = running
 
         # Un appel d'état inconnu n'a ni résultat ni conclusion : c'est son
         # outil qui dit ce qu'il advient (#18). L'erreur revient au modèle ;
@@ -996,8 +1029,10 @@ class ToolExecutor:
         for question in held_questions:
             yield question
 
-    async def _lingering(self, lingering: dict[str, tool_threads.CallThreads]) -> str | None:
-        """Attend le travail encore en cours d'appels à effet ; le nom de l'outil s'il dure.
+    async def _lingering(
+        self, lingering: dict[str, tool_threads.CallThreads]
+    ) -> tuple[str, str] | None:
+        """Attend le travail encore en cours d'appels à effet ; l'appel et son outil s'il dure.
 
         L'attente est bornée par ``grace`` ; sans borne (``None``), elle dure le
         temps qu'il faut. Un travail fini est oublié.
@@ -1008,7 +1043,7 @@ class ToolExecutor:
                 waited = [asyncio.wrap_future(future) for future in running]
                 _, pending = await asyncio.wait(waited, timeout=self.grace)
                 if pending:
-                    return threads.name
+                    return call_id, threads.name
             del lingering[call_id]
         return None
 
@@ -1563,6 +1598,10 @@ async def _invoked(
             if threads is not None:
                 # L'outil qui regarde ``ToolContext.cancelled`` s'arrête de lui-même (D-8).
                 threads.cancelled.set()
+                if threads.never_started:
+                    # Tout son travail attendait un thread, et a été annulé dans la
+                    # file : rien n'a eu lieu, l'effet est connu.
+                    return ToolOutput.error(NOT_STARTED.format(limit=limit))
             if effects:
                 working = threads is not None and bool(threads.running)
                 said = (
