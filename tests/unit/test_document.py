@@ -784,3 +784,20 @@ def test_templates_add_an_action_and_a_field() -> None:
     ):
         with pytest.raises(ToolError, match=re.escape(said)):
             parse(model, cast(dict[str, Any], arguments))
+
+
+def test_windows_line_endings_are_line_breaks() -> None:
+    """B-3 : ``prepare`` ramène \\r\\n et \\r à \\n, pour ``word`` comme pour ``pdf``."""
+    found = prepared(
+        {"type": "paragraphe", "text": "un\r\ndeux\rtrois"},
+        {"type": "note", "title": "A\r\nB", "text": "c\r\nd"},
+        {
+            "type": "graphique",
+            "categories": ["x\r\ny"],
+            "series": [{"name": "s\r\nt", "values": [1]}],
+        },
+        title="T\r\nU",
+    )
+    said = repr(found)
+    assert "\\r" not in said
+    assert "un\\ndeux\\ntrois" in said and "T\\nU" in said

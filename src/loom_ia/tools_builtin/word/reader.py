@@ -96,6 +96,9 @@ _BOXES: Final = _CHECKED | {"\u2610"}
 MAX_LAYOUT_DEPTH: Final = 4
 # Ce qui sépare le numéro d'une légende de son texte (« Figure 2 — Avant »).
 _CAPTION_SEPARATORS: Final = " \u2014\u2013-:."
+# La version de secours d'un contenu « compatible » (``mc:AlternateContent``) : Word y
+# range le même dessin en VML, que ``mc:Choice`` porte déjà ; il ne compte pas deux fois.
+_MC_FALLBACK: Final = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
 # Sous-arbres d'un paragraphe qui ne sont pas son texte.
 _SKIPPED: Final = frozenset(
     {"del", "delText", "moveFrom", "instrText", "drawing", "pict", "object", "footnoteReference",
@@ -478,6 +481,9 @@ def _walk(package: _Package, reading: _Reading, deadline: float, where: str) -> 
     body_depth: int | None = None
     body: Element | None = None
     seen = 0
+    # Dans un ``mc:Fallback`` : ses dessins sont ceux du ``mc:Choice`` qui précède ; ils ne
+    # sont pas comptés (B-2).
+    fallback = 0
     with package.archive.open(package.body) as stream:
         while chunk := stream.read(1 << 16):
             parser.feed(chunk)
@@ -485,13 +491,17 @@ def _walk(package: _Package, reading: _Reading, deadline: float, where: str) -> 
                 if event == "start":
                     depth += 1
                     name = _local(element.tag)
-                    if name == "body" and body_depth is None:
+                    if element.tag == _MC_FALLBACK:
+                        fallback += 1
+                    elif name == "body" and body_depth is None:
                         body_depth, body = depth, element
-                    elif name in {"drawing", "pict"}:
+                    elif name in {"drawing", "pict"} and not fallback:
                         reading.images += 1
                     elif name in {"ins", "del", "moveFrom", "moveTo"}:
                         reading.revisions += 1
                     continue
+                if element.tag == _MC_FALLBACK:
+                    fallback -= 1
                 depth -= 1
                 if body is not None and body_depth is not None and depth == body_depth:
                     seen += 1

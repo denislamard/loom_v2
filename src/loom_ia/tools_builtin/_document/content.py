@@ -250,7 +250,7 @@ def prepare(
     """
     problems = Problems()
     blocks: list[BlockOut] = []
-    title = arguments.title.strip() if arguments.title else None
+    title = lines(arguments.title).strip() if arguments.title else None
     if title is not None:
         if len(title) > MAX_TITLE:
             problems.error(f"titre : {len(title)} caractères, au-delà de {MAX_TITLE}")
@@ -335,8 +335,14 @@ def _check_plan(blocks: Sequence[BlockOut], template: Template, problems: Proble
         )
 
 
+def lines(text: str) -> str:
+    """Les fins de ligne ramenées à ``\\n`` : un ``\\r\\n`` ou un ``\\r`` venu du modèle (un
+    texte collé d'un document Windows) laisserait un ``\\r`` brut dans le document (B-3)."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _text(text: str | None, where: str, problems: Problems, *, required: bool = False) -> str:
-    said = (text or "").strip()
+    said = lines(text or "").strip()
     if required and not said:
         problems.error(f"{where} : texte vide")
     if len(said) > MAX_TEXT:
@@ -421,7 +427,7 @@ def _table(
     block: Table, where: str, problems: Problems, zone: ZoneInfo
 ) -> tuple[TableOut, list[list[Stored]]]:
     columns = block.columns
-    headers = [column.header.strip() for column in columns]
+    headers = [lines(column.header).strip() for column in columns]
     if len(columns) > MAX_TABLE_COLUMNS:
         problems.error(
             f"{where} : {len(columns)} colonnes, au-delà de {MAX_TABLE_COLUMNS} — une page "
@@ -448,6 +454,7 @@ def _table(
             value = row[index] if index < len(row) else None
             at = f"{where}, ligne {number}, « {column.header} »"
             if isinstance(value, str):
+                value = lines(value)
                 _clean(value, at, problems)
             cells.append(convert(value, column.type, at, problems, zone))
         stored.append(cells)
@@ -496,7 +503,7 @@ def _chart(
         kind: ColumnType = block.value_type or "decimal"
         if kind not in NUMERIC:
             problems.error(f"{where} : value_type {kind} : un graphique porte des nombres")
-        categories = [str(label) for label in block.categories or []]
+        categories = [lines(str(label)) for label in block.categories or []]
         series: list[tuple[str, tuple[float | None, ...]]] = []
         for number, given in enumerate(block.series or [], start=1):
             at = f"{where}, série {number} « {given.name} »"
@@ -505,7 +512,7 @@ def _chart(
                     f"{at} : {len(given.values)} valeurs pour {len(categories)} libellés"
                 )
             values = [_numeric(convert(value, kind, at, problems, zone)) for value in given.values]
-            series.append((given.name.strip(), tuple(values)))
+            series.append((lines(given.name).strip(), tuple(values)))
     if found:
         _check_chart(block.kind, categories, series, where, problems)
     for label in categories:

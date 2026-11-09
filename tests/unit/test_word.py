@@ -1216,3 +1216,51 @@ def test_templates_are_read_when_the_config_loads(
     )
     with pytest.raises(ConfigError, match="section donnée deux fois"):
         load_config(path)
+
+
+# --- B-2 et B-3 ----------------------------------------------------------------------------
+
+
+def test_a_shape_and_its_fallback_count_once() -> None:
+    """B-2 : Word range une forme deux fois, en dessin (``mc:Choice``) et en VML de secours
+    (``mc:Fallback``) ; la relecture ne la compte qu'une fois."""
+    mc = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+    shape = (
+        f'<w:r><mc:AlternateContent {mc}><mc:Choice Requires="wps"><w:drawing/></mc:Choice>'
+        "<mc:Fallback><w:pict/></mc:Fallback></mc:AlternateContent></w:r>"
+    )
+    body = (
+        f"<w:p>{shape}<w:r><w:t>Une zone de texte, puis une image.</w:t></w:r></w:p>"
+        f"<w:p><w:r><w:drawing/></w:r></w:p><w:p>{shape}</w:p>"
+    )
+    found = reader_module.read(docx(body), "d.docx", 0)
+    assert found["blocks"] == [{"type": "paragraphe", "text": "Une zone de texte, puis une image."}]
+    assert found["notes"] == ["3 image(s) ou forme(s) non lue(s)."]
+
+
+async def test_windows_line_endings_become_line_breaks(tool: WordTool, disk: Path) -> None:
+    """B-3 : un \\r\\n ou un \\r venu du modèle est un saut de ligne, pas un \\r dans le XML."""
+    await call(
+        tool,
+        path="sortie/crlf.docx",
+        title="Devis\r\nn° 12",
+        blocks=[
+            {"type": "paragraphe", "text": "ligne 1\r\nligne 2\rligne 3"},
+            {"type": "liste", "items": ["a\r\nb"]},
+            {
+                "type": "tableau",
+                "columns": [{"header": "Dési\r\ngnation"}, {"header": "Note"}],
+                "rows": [["Pose\r\nfinition", "ok"]],
+            },
+        ],
+    )
+    with zipfile.ZipFile(disk / "sortie" / "crlf.docx") as archive:
+        assert b"\r" not in archive.read("word/document.xml")
+        assert b"\r" not in archive.read("docProps/core.xml")
+    found = await call(tool, action="read", path="sortie/crlf.docx")
+    assert found["blocks"][:3] == [
+        {"type": "titre", "level": 0, "text": "Devis\nn° 12"},
+        {"type": "paragraphe", "text": "ligne 1\nligne 2\nligne 3"},
+        {"type": "liste", "ordered": False, "items": ["a\nb"]},
+    ]
+    assert found["blocks"][3]["rows"] == [["Dési\ngnation", "Note"], ["Pose\nfinition", "ok"]]

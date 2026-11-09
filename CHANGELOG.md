@@ -4,6 +4,11 @@ Les versions sont listées de la plus récente à la plus ancienne. Une ligne ma
 
 ## 2.0.20 - non publiée
 
+### Documents `loom.word` et `loom.pdf` : deux corrections (B-2, B-3)
+- **Corrigé (B-2)** : la relecture d'un `.docx` comptait deux fois une forme ou une zone de texte de Word, rangée en dessin (`mc:Choice`) et en VML de secours (`mc:Fallback`) : « 2 image(s) ou forme(s) non lue(s) » pour une seule. Ce qui est dans un `mc:Fallback` n'est plus compté.
+- **Corrigé (B-3)** : un `\r\n` ou un `\r` venu du modèle (un texte collé d'un document Windows) laissait un `\r` brut dans le document ; la relecture rendait une ligne vide de trop, et LibreOffice une espace en fin de ligne. La préparation (`_document/content.py`, `lines`) les ramène à `\n` dans le titre, les textes, les en-têtes et cellules de tableau, les libellés et séries d'un graphique : un saut de ligne, pour `word` comme pour `pdf`. Un document sans `\r` est inchangé, à l'octet.
+- Essais : `tests/unit/test_word.py` (`test_a_shape_and_its_fallback_count_once`, `test_windows_line_endings_become_line_breaks`), `test_document.py` (`test_windows_line_endings_are_line_breaks`). Constatés dans `docs/outil-word-images-analyse.md`.
+
 ### Documents `loom.word` : signature, sommaire, liste à cocher (styles, étape 2)
 - **`extra_blocks: true`** dans la référence de `loom.word` (`false` par défaut ; environ 230 tokens par appel de modèle : 598 caractères de schéma, 262 de description) : trois blocs de plus. Sans lui, la description et le schéma de `word` sont ceux d'avant, à l'octet.
 - **`signature`** (`signers`, 1 à 4 libellés de 80 caractères au plus ; `mention`, 200 au plus) : une colonne par signataire, sans cadre, au style de tableau « loom signature » : le libellé, la mention, « Date : », « Signature : » et 2 cm pour signer.
