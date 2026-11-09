@@ -80,29 +80,38 @@ def authorizer(
     def allowed(table: str | None, right: SqlRight) -> bool:
         return right in rights.get((table or "").lower(), frozenset())
 
-    # Tables lues par une vue permise : ``count(*)`` sur la vue les lit ensuite d'un bloc,
-    # sans origine (``READ(table, '', 'main', None)``, essayé le 26/10).
-    through_views: set[str] = set()
+    # ``count(*)`` sur une vue permise relit ensuite d'un bloc une table de la vue, sans
+    # origine : ``SELECT(origine : la vue)``, puis aussitôt ``READ(table, '', base, None)``.
+    # La base est « main » depuis SQLite 3.47, absente en 3.45 et 3.46 ; ``count(*)`` sur la
+    # table seule donne aussi ``READ(table, '', None, None)``. Seul ce qui suit directement
+    # la vue passe donc, pour une table qu'elle a lue (essayé du 3.45 au 3.53, le 09/11).
+    read_by: dict[str, set[str]] = {}
+    after: str | None = None  # la vue du ``SELECT`` qui précède, s'il en est une
 
     def decide(
         action: int, arg1: str | None, arg2: str | None, db: str | None, origin: str | None
     ) -> int:
+        nonlocal after
+        source = (origin or "").lower()
+        view, after = after, None
         if action in _ALWAYS:
+            if action == sqlite3.SQLITE_SELECT and source in read_by:
+                after = source
             return sqlite3.SQLITE_OK
         if action == sqlite3.SQLITE_FUNCTION:
             return sqlite3.SQLITE_DENY if is_forbidden(arg2 or "") else sqlite3.SQLITE_OK
-        source = (origin or "").lower()
         if action == sqlite3.SQLITE_READ:
             if source in objects.triggers:
                 return sqlite3.SQLITE_OK
             if source in objects.views and allowed(source, "select"):
-                through_views.add((arg1 or "").lower())
+                read_by.setdefault(source, set()).add((arg1 or "").lower())
                 return sqlite3.SQLITE_OK
             if (
-                origin is None
-                and db == "main"
+                view is not None
+                and origin is None
+                and db in ("main", None)
                 and arg2 == ""
-                and (arg1 or "").lower() in through_views
+                and (arg1 or "").lower() in read_by[view]
             ):
                 return sqlite3.SQLITE_OK
             if db is None and (arg1 or "").lower() in ctes:

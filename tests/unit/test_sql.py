@@ -880,6 +880,46 @@ def test_the_authorizer_lets_through_what_the_config_grants(base: Path) -> None:
     assert rows(base, "SELECT count(*) FROM audit") == [(1,)]
 
 
+# ``SELECT count(*) FROM v_audit``, tel que SQLite le soumet à l'authorizer : la vue lit
+# ses colonnes, puis ``count(*)`` relit la table d'un bloc, sans origine. Cette dernière
+# lecture porte la base « main » depuis SQLite 3.47, aucune en 3.45 et 3.46 (la CI).
+_COUNT_THROUGH_VIEW: Final = [
+    (sqlite3.SQLITE_SELECT, None, None, None, None),
+    (sqlite3.SQLITE_READ, "audit", "id", "main", "v_audit"),
+    (sqlite3.SQLITE_READ, "audit", "msg", "main", "v_audit"),
+    (sqlite3.SQLITE_FUNCTION, None, "count", None, None),
+    (sqlite3.SQLITE_SELECT, None, None, None, "v_audit"),
+]
+
+
+@pytest.mark.parametrize("db", ["main", None], ids=["sqlite-3.47+", "sqlite-3.45-3.46"])
+def test_counting_a_granted_view_reads_its_table_whatever_the_sqlite_version(
+    db: str | None,
+) -> None:
+    only_view = Catalog(
+        dialect="sqlite",
+        rights={"v_audit": {"select": "never"}},
+        functions=frozenset(),
+        allow_full_table=False,
+    )
+    objects = Objects(views=frozenset({"v_audit"}), triggers=frozenset())
+    whole_table = (sqlite3.SQLITE_READ, "audit", "", db, None)
+    # ``SELECT count(*) FROM audit`` : la table seule, sans la vue devant.
+    count_table = [
+        (sqlite3.SQLITE_SELECT, None, None, None, None),
+        (sqlite3.SQLITE_FUNCTION, None, "count", None, None),
+        (sqlite3.SQLITE_READ, "audit", "", None, None),
+    ]
+
+    decide = authorizer(only_view, objects, frozenset(), write=False)
+    through_view = [decide(*call) for call in [*_COUNT_THROUGH_VIEW, whole_table]]
+    # Même authorizer (un appel, deux instructions) : la vue lue avant n'ouvre pas la table.
+    then_alone = [decide(*call) for call in count_table]
+
+    assert through_view == [sqlite3.SQLITE_OK] * len(through_view)
+    assert then_alone[-1] == sqlite3.SQLITE_DENY
+
+
 # --- Approbation ------------------------------------------------------------------------
 
 
