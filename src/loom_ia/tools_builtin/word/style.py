@@ -76,6 +76,11 @@ FIELD_VALUE: Final = "LoomFieldValue"
 HYPERLINK: Final = "Hyperlink"
 FOOTNOTE_TEXT: Final = "FootnoteText"
 FOOTNOTE_REFERENCE: Final = "FootnoteReference"
+# Les lignes d'un groupe et de son sous-total, et le récapitulatif de TVA : un style de
+# paragraphe à leur nom, que la relecture reconnaît.
+TABLE_GROUP: Final = "LoomTableGroup"
+TABLE_SUBTOTAL: Final = "LoomTableSubtotal"
+INVOICE_TOTALS: Final = "LoomInvoiceTotals"
 TOC_HEADING: Final = "TOCHeading"
 TOC_LEVELS: Final = ("TOC1", "TOC2", "TOC3")
 # Le corps du texte, quand le style ``paragraph`` dit autre chose que ``text``.
@@ -342,6 +347,9 @@ WORD_IDS: Final[Mapping[str, str]] = {
     "footnote": FOOTNOTE_TEXT,
     "fields": FIELD_VALUE,
     "fields_label": FIELD_LABEL,
+    "table_group": TABLE_GROUP,
+    "table_subtotal": TABLE_SUBTOTAL,
+    "invoice_totals": INVOICE_TOTALS,
 }
 
 
@@ -441,7 +449,7 @@ def _character(style_id: str, name: str, run: str) -> str:
 
 def _extra_styles(style: Style, wanted: set[str]) -> str:
     """Les styles des blocs signature, toc, code et champs, de la liste à cocher, du lien et
-    des notes, que le document emploie."""
+    des notes, des groupes de tableau et du récapitulatif de TVA, que le document emploie."""
     said = ""
     if CODE in wanted:
         said += _named(
@@ -460,6 +468,34 @@ def _extra_styles(style: Style, wanted: set[str]) -> str:
         said += _named(style, FIELD_VALUE, "loom field value", "fields")
         said += _named(
             style, FIELD_LABEL, "loom field label", "fields_label", based=FIELD_VALUE, stop="fields"
+        )
+    if TABLE_GROUP in wanted:
+        said += _named(
+            style,
+            TABLE_GROUP,
+            "loom table group",
+            "table_group",
+            based="TableText",
+            stop="table",
+            mechanics=[("keepNext", "<w:keepNext/>")],
+        )
+    if TABLE_SUBTOTAL in wanted:
+        said += _named(
+            style,
+            TABLE_SUBTOTAL,
+            "loom table subtotal",
+            "table_subtotal",
+            based="TableText",
+            stop="table",
+        )
+    if INVOICE_TOTALS in wanted:
+        said += _named(
+            style,
+            INVOICE_TOTALS,
+            "loom invoice totals",
+            "invoice_totals",
+            based="TableText",
+            stop="table",
         )
     if HYPERLINK in wanted:
         said += _character(HYPERLINK, "Hyperlink", run_xml(style.between("link", "text")))

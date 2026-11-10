@@ -750,6 +750,8 @@ def test_the_files_first_then_the_bases() -> None:
         ({"title": {"size": 20}, "headings": {}}, "format de la 2.0 : title → document_title"),
         ({"header": {"logo": {"file": "logo.png"}}}, "logo : le fichier seul depuis 2.1.0"),
         ({"sections": {"A": {"box": True}}}, "sections : la disposition des sections"),
+        ({"labels": {"tax": "TVA"}}, r"labels\.tax 'TVA' : \{rate\} \(le taux\)"),
+        ({"labels": {"tax": "TVA {taux}"}}, r"labels\.tax 'TVA \{taux\}'"),
     ],
 )  # fmt: skip
 def test_a_style_file_is_checked(given: dict[str, Any], said: str) -> None:
@@ -1347,3 +1349,65 @@ async def test_fields_and_code_cost_only_when_declared(tmp_path: Path) -> None:
         "Lu : code (1) ; cet outil n'en écrit pas : les retirer avant de réécrire le document "
         "(ou blocks: [code] dans la config de l'outil)."
     ]
+
+
+# --- Les calculs (lot 6) ----------------------------------------------------------------
+
+CALCULATED_BLOCKS: Final[list[dict[str, Any]]] = [
+    {
+        "type": "table",
+        "columns": [
+            {"header": "Désignation"},
+            {"header": "Qté", "type": "integer"},
+            {"header": "PU HT", "type": "amount_eur"},
+            {"header": "TVA", "type": "percent"},
+            {"header": "Montant HT", "type": "amount_eur", "compute": "{Qté} * {PU HT}"},
+        ],
+        "rows": [
+            {"group": "Lot 1", "rows": [["Dépose", 1, 180, 0.1]]},
+            {"group": "Lot 2", "rows": [["Mitigeur", 2, 89.99, 0.2]]},
+        ],
+        "totals": {"Montant HT": "sum"},
+    },
+    {"type": "invoice_totals", "from_table": {"amount": "Montant HT", "rate": "TVA"}},
+]
+
+
+async def test_the_styles_of_calculated_tables(tmp_path: Path) -> None:
+    charte = {
+        "table_group": {"fill": "EAF1DD", "color": "C00000"},
+        "table_subtotal": {"border_top": "1pt 1F3864"},
+        "invoice_totals": {"position": "center"},
+        "labels": {"tax": "TVA {rate}"},
+    }
+    tool = make(tmp_path, blocks=("invoice_totals",), style={"spec": charte})
+    path = await write(tool, "facture", CALCULATED_BLOCKS)
+    document = part(path, "word/document.xml")
+    styles = part(path, "word/styles.xml")
+    check_order(document)
+    check_order(styles)
+    # Le groupe : son fond sur la cellule, sa couleur dans son style, gardé avec la suite.
+    assert document.count('w:fill="EAF1DD"') == 2
+    group = word_style(styles, "LoomTableGroup")
+    assert '<w:color w:val="C00000"/>' in group and "<w:keepNext/>" in group
+    assert "<w:i/>" in word_style(styles, "LoomTableSubtotal")
+    # Le sous-total : son filet en haut de chaque cellule.
+    assert document.count('<w:top w:val="single" w:sz="8" w:space="0" w:color="1F3864"/>') == 10
+    # Le récapitulatif : étroit, au centre ; le libellé de TVA sans sa base.
+    invoice = document[document.index('<w:pStyle w:val="LoomInvoiceTotals"/>') - 2000 :]
+    assert '<w:jc w:val="center"/><w:tblBorders>' in invoice
+    assert ">TVA 10\u00a0%</w:t>" in document and "sur 180" not in document
+
+
+def test_invoice_totals_cost_only_when_declared(tmp_path: Path) -> None:
+    plain = make(tmp_path)
+    tool = make(tmp_path, blocks=("image", "invoice_totals"))
+    said = "Récapitulatif de TVA ('type': 'invoice_totals')"
+    assert said not in plain.spec.description and said in tool.spec.description
+
+    def cost(mounted: WordTool) -> int:
+        schema = json.dumps(mounted.spec.input_schema, ensure_ascii=False, separators=(",", ":"))
+        return len(schema) + len(mounted.spec.description)
+
+    # 745 caractères mesurés (§ 23 de l'analyse).
+    assert 710 < cost(tool) - cost(plain) < 780

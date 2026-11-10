@@ -915,13 +915,48 @@ class _Body:
         def heading_align(index: int) -> str:
             return header.align or block.align[index]
 
-        data: list[list[Paragraph]] = [
-            [cell(text, header, "header", heading_align(i)) for i, text in enumerate(block.headers)]
-        ]
-        for cells in block.cells:
+        data: list[list[Paragraph | str]] = []
+        if block.headers:
             data.append(
-                [cell(text, tables, "body", block.align[i]) for i, text in enumerate(cells)]
+                [
+                    cell(text, header, "header", heading_align(i))
+                    for i, text in enumerate(block.headers)
+                ]
             )
+        # Les lignes de données à fond alterné, et les lignes de groupe, de sous-total ou en
+        # gras, par leur place dans le tableau.
+        banded: list[int] = []
+        marked: list[tuple[str, int]] = []
+        looks = {
+            "group": _merged(tables, style.between("table_group", "table")),
+            "subtotal": _merged(tables, style.between("table_subtotal", "table")),
+            "total": total,
+        }
+        band = 0
+        for kind, cells in zip(
+            block.kinds or ("body",) * len(block.cells), block.cells, strict=True
+        ):
+            if kind == "group":
+                data.append([cell(cells[0], looks[kind], kind, "left"), *[""] * (len(widths) - 1)])
+                marked.append((kind, len(data) - 1))
+                band = 0
+                continue
+            if kind == "body":
+                if band % 2 == 1:
+                    banded.append(len(data))
+                band += 1
+                data.append(
+                    [cell(text, tables, "body", block.align[i]) for i, text in enumerate(cells)]
+                )
+                continue
+            line = looks[kind]
+            data.append(
+                [
+                    cell(plain(text), line, kind, line.align or block.align[i])
+                    for i, text in enumerate(cells)
+                ]
+            )
+            marked.append((kind, len(data) - 1))
         if block.total is not None:
             data.append(
                 [
@@ -938,18 +973,31 @@ class _Body:
             ("RIGHTPADDING", (0, 0), (-1, -1), horizontal),
         ]
         commands += _table_lines(tables)
-        if (fill := _color(header.fill)) is not None:
+        if block.headers and (fill := _color(header.fill)) is not None:
             commands.append(("BACKGROUND", (0, 0), (-1, 0), fill))
         if (bands := _color(tables.bands)) is not None:
-            for row in range(2, len(block.rows) + 1, 2):
+            for row in banded:
                 commands.append(("BACKGROUND", (0, row), (-1, row), bands))
         if block.total is not None:
             if (fill := _color(total.fill)) is not None:
                 commands.append(("BACKGROUND", (0, -1), (-1, -1), fill))
             if (rule := _rule(total.border_top)) is not None:
                 commands.append(("LINEABOVE", (0, -1), (-1, -1), rule[0], rule[1]))
+        for kind, row in marked:
+            line = looks[kind]
+            if kind == "group":
+                commands.append(("SPAN", (0, row), (-1, row)))
+            if (fill := _color(line.fill)) is not None:
+                commands.append(("BACKGROUND", (0, row), (-1, row), fill))
+            if kind != "group" and (rule := _rule(line.border_top)) is not None:
+                commands.append(("LINEABOVE", (0, row), (-1, row), rule[0], rule[1]))
         position = tables.position or "left"
-        found = Table(data, colWidths=widths, repeatRows=1, hAlign=cast(Any, position.upper()))
+        found = Table(
+            data,
+            colWidths=widths,
+            repeatRows=1 if block.headers else 0,
+            hAlign=cast(Any, position.upper()),
+        )
         found.setStyle(TableStyle(commands))
         found.spaceBefore = tables.space_before or 0
         said: list[Flowable] = [found]

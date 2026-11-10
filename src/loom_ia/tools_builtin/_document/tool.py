@@ -95,7 +95,10 @@ WRITING_HELP: Final = (
     "k€), percent (fraction : 0.15 pour 15 %), date (AAAA-MM-JJ), datetime (ISO 8601), "
     "year, boolean. L'outil écrit les valeurs à la française (1 250,50 €) : donner des "
     "nombres, sans unité ni dans la valeur ni dans l'en-tête. 'totals' : en-tête → sum, "
-    "average, count, min ou max, calculés par l'outil.",
+    "average, count, min ou max, calculés par l'outil. Colonne calculée : compute, une "
+    'formule sur les nombres de la ligne ("{Qté} * {PU HT}", + - * / et parenthèses), '
+    "absente des lignes. Groupes (un lot) : rows en [{group, rows}], sous-total par groupe "
+    "si totals. Ne rien calculer soi-même.",
     "Décrire ce que SONT les blocs, jamais leur apparence : police, tailles, couleurs, "
     "marges, sauts de page et numéros de page sont décidés par le style.",
 )
@@ -134,6 +137,12 @@ OPTIONAL_HELP: Final[Mapping[str, str]] = {
     "code": (
         "Code ('type': 'code') : text, du texte préformaté (code, commande, journal), écrit "
         f"tel quel, sans balisage ; {MAX_CODE_LINES} lignes au plus."
+    ),
+    "invoice_totals": (
+        "Récapitulatif de TVA ('type': 'invoice_totals') : from_table {amount : en-tête des "
+        "montants HT, amount_eur ; rate : en-tête des taux, percent}, du tableau qui le "
+        "précède ; paid : l'acompte déjà versé. L'outil écrit le total HT, la TVA de chaque "
+        "taux, le total TTC et le net à payer."
     ),
 }
 

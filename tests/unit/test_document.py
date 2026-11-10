@@ -53,6 +53,7 @@ from loom_ia.tools_builtin._document.content import (
 )
 from loom_ia.tools_builtin._document.picture import Picture, PictureError, dimensions
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
+from loom_ia.tools_builtin._style_params import FRENCH, LABELS, Labels
 from loom_ia.tools_builtin._templates import fixed_paragraphs
 from loom_ia.tools_builtin._templates import key as template_key
 from loom_ia.tools_builtin._templates import parse as parse_template
@@ -666,6 +667,10 @@ def test_variants_add_only_what_is_asked() -> None:
         "checkboxes": {"type": "list", "checkboxes": True, "items": ["[x] a"]},
         "fields": {"type": "fields", "items": [["Nom", ""]]},
         "code": {"type": "code", "text": "x = 1"},
+        "invoice_totals": {
+            "type": "invoice_totals",
+            "from_table": {"amount": "Montant", "rate": "TVA"},
+        },
     }
     for chosen in ((), ("chart",), ("image", "toc"), ("signature", "checkboxes"), tuple(examples)):
         model = variant(DocumentCall, blocks=chosen)
@@ -1124,3 +1129,240 @@ def test_text_cells_of_a_table_are_rich() -> None:
     # Le texte seul, pour la largeur des colonnes et ce qui n'a pas d'emphase.
     assert table.rows[0][0] == "Pose, voir fiche et Objet"
     assert referenced(found.blocks) == {1}
+
+
+# --- Les calculs (lot 6) ----------------------------------------------------------------
+
+CALCULATED: Final = variant(DocumentCall, blocks=("invoice_totals", "chart"))
+PRICES: Final[list[dict[str, Any]]] = [
+    {"header": "Désignation"},
+    {"header": "Qté", "type": "integer"},
+    {"header": "PU HT", "type": "amount_eur"},
+    {"header": "TVA", "type": "percent"},
+    {"header": "Montant HT", "type": "amount_eur", "compute": "{Qté} * {PU HT}"},
+]
+# La facture du § 11.2 de l'analyse : deux lots, deux taux.
+LOTS: Final[list[dict[str, Any]]] = [
+    {
+        "group": "Lot 1 \u2013 Salle de bains",
+        "rows": [["Dépose baignoire", 1, 180, 0.1], ["Receveur extra-plat", 1, 1250.5, 0.1]],
+    },
+    {"group": "Lot 2 \u2013 *Cuisine*", "rows": [["Mitigeur", 2, 89.99, 0.2]]},
+]
+
+
+def calculated(*blocks: dict[str, Any], labels: Labels = FRENCH) -> Prepared:
+    request = parse(CALCULATED, {"path": "s/a", "blocks": list(blocks)})
+    assert isinstance(request, WriteArguments)
+    return prepare(request, PARIS, labels=labels)
+
+
+def calculation_refused(match: str, *blocks: dict[str, Any]) -> str:
+    with pytest.raises(ToolError, match=match) as caught:
+        calculated(*blocks)
+    return str(caught.value)
+
+
+def test_a_computed_column() -> None:
+    found = calculated(
+        {
+            "type": "table",
+            "columns": [
+                *PRICES[:3],
+                {"header": "Montant HT", "type": "amount_eur", "compute": "{Qté} * {PU HT}"},
+                {"header": "Demi", "type": "integer", "compute": "{Qté} / 2"},
+                {"header": "Remise", "type": "amount_eur", "compute": "-0.1 * ({Montant HT})"},
+            ],
+            # Les lignes ne donnent pas les colonnes calculées.
+            "rows": [["Joint", 3, 0.125], ["Tube", 1, 10], ["Forfait", None, 50]],
+            "totals": {"Montant HT": "sum"},
+        }
+    )
+    [table] = found.blocks
+    assert isinstance(table, TableOut)
+    # Un montant au centime dès la lecture, au demi supérieur : 0,125 € s'écrit 0,13 €, et
+    # c'est ce que la ligne multiplie. Un entier, à l'unité : 3 / 2 fait 2.
+    assert table.rows[0] == ("Joint", "3", f"0,13{NBSP}€", f"0,39{NBSP}€", "2", f"-0,04{NBSP}€")
+    assert table.rows[1] == ("Tube", "1", f"10,00{NBSP}€", f"10,00{NBSP}€", "1", f"-1,00{NBSP}€")
+    # Une colonne citée vide : la cellule calculée l'est aussi.
+    assert table.rows[2] == ("Forfait", "", f"50,00{NBSP}€", "", "", "")
+    assert table.total == ("Total", "", "", f"10,39{NBSP}€", "", "")
+    assert table.kinds == ()
+
+
+@pytest.mark.parametrize(
+    ("compute", "said"),
+    [
+        ("{Prix} * 2", "colonne inconnue « Prix » (colonnes : Désignation, Qté, PU HT, TVA, "
+         "Montant HT)"),
+        ("{Désignation} * 2", "« Désignation » n'est pas une colonne de nombres"),
+        ("{Qté} ** 2", "formule '{Qté} ** 2' : seuls + - * / ( ), des nombres et des {colonnes}"),
+        ("__import__('os')", "formule \"__import__('os')\" : seuls + - * / ( ), des nombres"),
+        ("Qté * 2", "(une colonne s'écrit entre accolades : {Qté})"),
+        ("{Montant HT} + 1", "la formule cite sa propre colonne"),
+        ("{Qté} * " + "1" * 200, "formule de 208 caractères, au-delà de 200"),
+        ("{Qté} / ({PU HT} - 180)", "ligne 1, « Montant HT » : division par zéro"),
+    ],
+)  # fmt: skip
+def test_formula_faults(compute: str, said: str) -> None:
+    columns = [*PRICES[:4], {"header": "Montant HT", "type": "amount_eur", "compute": compute}]
+    calculation_refused(
+        re.escape(said), {"type": "table", "columns": columns, "rows": [["a", 1, 180, 0.1]]}
+    )
+
+
+def test_a_computed_column_is_one_of_numbers_given_after_its_sources() -> None:
+    said = calculation_refused(
+        "Document refusé",
+        {
+            "type": "table",
+            "columns": [
+                {"header": "A", "type": "integer", "compute": "{B} + 1"},
+                {"header": "B", "type": "integer", "compute": "2"},
+                {"header": "C", "compute": "1"},
+            ],
+            "rows": [["de trop"]],
+        },
+    )
+    assert "« B » est calculée plus loin : une formule prend les colonnes données" in said
+    assert "« C » : une colonne calculée est une colonne de nombres" in said
+    assert "ligne 1 : 1 valeurs pour 0 colonnes données (A, B, C : calculée par l'outil)" in said
+
+
+def test_groups_and_their_subtotals() -> None:
+    found = calculated(
+        {"type": "table", "columns": PRICES, "rows": LOTS, "totals": {"Montant HT": "sum"}},
+        {
+            "type": "chart",
+            "from_table": {"categories": "Désignation", "values": ["Montant HT"]},
+        },
+    )
+    table, chart = found.blocks
+    assert isinstance(table, TableOut) and isinstance(chart, ChartOut)
+    assert table.kinds == ("group", "body", "body", "subtotal", "group", "body", "subtotal")
+    # Une ligne de groupe : son libellé, avec son emphase, dans une seule cellule.
+    assert table.cells[0] == ((Run("Lot 1 \u2013 Salle de bains"),),)
+    assert table.cells[4] == ((Run("Lot 2 \u2013 "), Run("Cuisine", italic=True)),)
+    euros = f"{NBSP}€"
+    assert table.rows[3] == ("Sous-total", "", "", "", f"1{NBSP}430,50{euros}")
+    assert table.rows[5][4] == f"179,98{euros}"
+    assert table.rows[6] == ("Sous-total", "", "", "", f"179,98{euros}")
+    assert table.total == ("Total", "", "", "", f"1{NBSP}610,48{euros}")
+    # Un graphique tiré d'un tableau à groupes prend toutes ses lignes.
+    assert chart.categories == ("Dépose baignoire", "Receveur extra-plat", "Mitigeur")
+
+
+def test_groups_without_totals_have_no_subtotal() -> None:
+    found = calculated({"type": "table", "columns": PRICES, "rows": LOTS})
+    [table] = found.blocks
+    assert isinstance(table, TableOut)
+    assert table.kinds == ("group", "body", "body", "group", "body") and table.total is None
+
+
+def test_group_faults() -> None:
+    lot = {"group": "Lot", "rows": [["a", 1, 1, 0.1]]}
+    said = calculation_refused(
+        "Document refusé",
+        {"type": "table", "columns": PRICES, "rows": [lot, ["b", 1, 1, 0.1]]},
+        {"type": "table", "columns": PRICES, "rows": [lot] * 21},
+        {"type": "table", "columns": PRICES, "rows": [{"group": "Vide", "rows": []}]},
+        {"type": "table", "columns": PRICES, "rows": [{"group": "[x](https://a.fr)", "rows": []}]},
+    )
+    for part in (
+        "bloc 1 (table) : des groupes ({group, rows}) et des lignes simples mêlés",
+        "bloc 2 (table) : 21 groupes, au-delà de 20",
+        "bloc 3 (table), groupe 1 « Vide » : aucune ligne",
+        "bloc 4 (table), groupe 1 : ni lien, ni note",
+    ):
+        assert part in said, part
+    calculation_refused(
+        "501 lignes, au-delà de 500",
+        {"type": "table", "columns": PRICES, "rows": [{"group": "a", "rows": [["x"]] * 501}]},
+    )
+
+
+def test_the_invoice_totals_of_the_analysis() -> None:
+    """Le § 11.2 : 1 430,50 € à 10 % et 179,98 € à 20 % donnent 143,05 € et 36,00 € de
+    TVA, et 1 789,53 € TTC ; l'acompte, puis le net à payer."""
+    found = calculated(
+        {"type": "table", "columns": PRICES, "rows": LOTS, "totals": {"Montant HT": "sum"}},
+        {
+            "type": "invoice_totals",
+            "from_table": {"amount": "Montant HT", "rate": "TVA"},
+            "paid": "500",
+        },
+    )
+    invoice = found.blocks[1]
+    assert isinstance(invoice, TableOut)
+    euros = f"{NBSP}€"
+    assert invoice.rows == (
+        ("Total HT", f"1{NBSP}610,48{euros}"),
+        (f"TVA 10{NBSP}% sur 1{NBSP}430,50{euros}", f"143,05{euros}"),
+        (f"TVA 20{NBSP}% sur 179,98{euros}", f"36,00{euros}"),
+        ("Total TTC", f"1{NBSP}789,53{euros}"),
+        ("Acompte versé", f"500,00{euros}"),
+        ("Net à payer", f"1{NBSP}289,53{euros}"),
+    )
+    assert invoice.kinds == ("body", "body", "body", "total", "body", "total")
+    assert invoice.headers == () and invoice.style == "invoice_totals"
+    # Ce que la relecture retrouve : les colonnes, l'acompte.
+    assert json.loads(invoice.data or "") == {"amount": "Montant HT", "rate": "TVA", "paid": 500}
+
+
+def test_invoice_totals_in_english_and_with_a_reduced_rate() -> None:
+    labels = Labels(language="en", **{**LABELS["en"]})
+    found = calculated(
+        {
+            "type": "table",
+            "columns": PRICES,
+            "rows": [["Joint", 3, 1.333, 0.055], ["Pose", 1, 100, 0.2]],
+        },
+        {"type": "invoice_totals", "from_table": {"amount": "Montant HT", "rate": "TVA"}},
+        labels=labels,
+    )
+    invoice = found.blocks[1]
+    assert isinstance(invoice, TableOut)
+    # 3 fois 1,33 = 3,99 ; 5,5 % de 3,99 = 0,21945, soit 0,22 ; les taux dans l'ordre.
+    assert invoice.rows == (
+        ("Total excl. VAT", "€103.99"),
+        ("VAT 5.5% on €3.99", "€0.22"),
+        ("VAT 20% on €100.00", "€20.00"),
+        ("Total incl. VAT", "€124.21"),
+    )
+
+
+def test_invoice_totals_faults() -> None:
+    columns = [*PRICES[:3], {"header": "TVA"}, PRICES[4]]
+    said = calculation_refused(
+        "Document refusé",
+        {"type": "invoice_totals", "from_table": {"amount": "Montant HT", "rate": "TVA"}},
+        {"type": "table", "columns": PRICES, "rows": [["a", 1, 10, None]]},
+        {"type": "invoice_totals", "from_table": {"amount": "Montant", "rate": "TVA"}},
+        {
+            "type": "invoice_totals",
+            "from_table": {"amount": "Montant HT", "rate": "TVA"},
+            "paid": -10,
+        },
+        {"type": "table", "columns": columns, "rows": [["a", 1, 10, "10 %"]]},
+        {"type": "invoice_totals", "from_table": {"amount": "Qté", "rate": "TVA"}},
+    )
+    for part in (
+        "bloc 1 (invoice_totals) : from_table, mais aucun tableau ne précède le récapitulatif",
+        "bloc 3 (invoice_totals) : from_table, colonne(s) inconnue(s) du tableau précédent : "
+        "Montant (colonnes : Désignation, Qté, PU HT, TVA, Montant HT)",
+        "bloc 4 (invoice_totals) : ligne 1 du tableau, un montant sans taux de TVA",
+        "bloc 4 (invoice_totals) : aucun montant dans « Montant HT »",
+        "bloc 6 (invoice_totals) : « Qté » : des montants HT, amount_eur (ici integer)",
+        "bloc 6 (invoice_totals) : « TVA » : des taux de TVA, percent (ici text)",
+    ):
+        assert part in said, part
+    refused_paid = calculation_refused(
+        "acompte",
+        {"type": "table", "columns": PRICES, "rows": [["a", 1, 10, 0.2]]},
+        {
+            "type": "invoice_totals",
+            "from_table": {"amount": "Montant HT", "rate": "TVA"},
+            "paid": -10,
+        },
+    )
+    assert "paid : un acompte versé se donne en positif" in refused_paid

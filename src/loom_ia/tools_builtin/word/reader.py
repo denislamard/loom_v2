@@ -31,7 +31,11 @@ champs (tableau « loom fields ») en bloc ``fields``, du code (style « loom co
 ``code``. Dans un texte, un lien revient en ``[texte](adresse)``, une note de bas de
 page (ou de fin) en ``^[texte]``, un renvoi à un titre (un champ ``REF``, ou un lien
 interne, vers un signet de ce titre) en ``§[Titre]`` ; dans un tableau, l'emphase d'une
-ligne d'en-tête ou d'une ligne toute en gras (un total) ne revient pas. Avec
+ligne d'en-tête ou d'une ligne toute en gras (un total) ne revient pas. Un tableau à
+groupes revient en ``{group, rows}``, sans ses sous-totaux, que l'outil recalcule ; un
+récapitulatif de TVA, en bloc ``invoice_totals`` (ce que l'outil en a gardé dans sa
+description). Avec ``shown`` (``loom.memory``), tout cela revient tel qu'affiché, en
+lignes de tableau. Avec
 ``images``, une image du corps revient en bloc ``image`` (``path`` : l'adresse du
 fichier lu à l'écriture, gardée dans le nom du dessin) ; sans, elle est comptée. Les
 en-têtes, pieds de page et commentaires ne sont pas lus ; le résultat le dit.
@@ -95,6 +99,11 @@ _FALSE: Final = frozenset({"0", "false", "off"})
 # Le nom du style de tableau de disposition qu'écrit l'outil (``word/style.py``).
 LAYOUT_STYLE: Final = "loom layout"
 FIELDS_STYLE: Final = "loom fields"
+# Les lignes d'un groupe et de son sous-total, et le récapitulatif de TVA : le style de
+# paragraphe de leurs cellules.
+GROUP_STYLE: Final = "loom table group"
+SUBTOTAL_STYLE: Final = "loom table subtotal"
+INVOICE_STYLE: Final = "loom invoice totals"
 # Les styles des blocs signature et toc, et de la liste à cocher (``word/style.py``), par leur nom.
 SIGNATURE_STYLE: Final = "loom signature"
 SIGNER_STYLE: Final = "loom signer"
@@ -510,6 +519,9 @@ class _Reading:
     where: list[int | None] = field(default_factory=list[int | None])
     # Les signets des titres : le texte du titre, que vise un renvoi à ce signet.
     anchors: dict[str, str] = field(default_factory=dict[str, str])
+    # Ce qui s'affiche, plutôt que ce qui se réécrit : les groupes, leurs sous-totaux et le
+    # récapitulatif de TVA en lignes de tableau.
+    shown: bool = False
 
 
 def read(
@@ -521,6 +533,7 @@ def read(
     images: bool = False,
     templates: Mapping[str, Template] | None = None,
     styles: frozenset[str] = frozenset(),
+    shown: bool = False,
 ) -> dict[str, JsonValue]:
     """Les blocs du document à partir de ``start``, dans un budget de taille.
 
@@ -530,6 +543,8 @@ def read(
     ``templates`` : les modèles de l'outil ; un document qui en suit un revient par
     sections (``template``, ``sections``). Sans modèles (``None``), il revient à plat.
     ``styles`` : les styles proposés au modèle de langage, rendus dans ``style``.
+    ``shown`` : les tableaux tels qu'affichés (``loom.memory``, qui indexe le texte et ne
+    réécrit rien).
     """
     deadline = time.monotonic() + READ_DEADLINE
     with _guarded(where):
@@ -537,7 +552,12 @@ def read(
         with package.archive:
             followed = (templates or {}).get(package.category or "")
             reading = _Reading(
-                start=start, budget=budget, pictures=images, template=followed, proposed=styles
+                start=start,
+                budget=budget,
+                pictures=images,
+                template=followed,
+                proposed=styles,
+                shown=shown,
             )
             _walk(package, reading, deadline, where)
     reading.blocks = [_resolved(block, reading.anchors) for block in reading.blocks]
@@ -702,6 +722,11 @@ def _block(package: _Package, reading: _Reading, element: Element, depth: int = 
             reading.in_toc = False
             _marks_in(reading, element)
             _emit(reading, _signature(package, element))
+        case "tbl" if not reading.shown and (invoice := _invoice(package, element)) is not None:
+            _close_list(reading)
+            reading.in_toc = False
+            _marks_in(reading, element)
+            _emit(reading, invoice)
         case "tbl" if _table_style(package, element) == FIELDS_STYLE:
             _close_list(reading)
             reading.in_toc = False
@@ -742,19 +767,56 @@ def _table_style(package: _Package, table: Element) -> str | None:
 
 
 def _table_style_name(package: _Package, reading: _Reading, table: Element) -> str | None:
-    """Le style proposé d'un tableau : celui du texte de sa première ligne de données."""
+    """Le style proposé d'un tableau : celui du texte de sa première ligne de données (pas
+    d'une ligne de groupe ni de sous-total)."""
     rows = [row for row in table if _local(row.tag) == "tr"]
-    for row in rows[1:2]:
-        for paragraph in row.iter():
-            if _local(paragraph.tag) != "p":
-                continue
+    for row in rows[1:]:
+        name = _row_style(package, row)
+        if name in (GROUP_STYLE, SUBTOTAL_STYLE):
+            continue
+        return name if name in reading.proposed else None
+    return None
+
+
+def _row_style(package: _Package, row: Element) -> str:
+    """Le nom du style de paragraphe d'une ligne de tableau : celui de son premier
+    paragraphe ; « » sans paragraphe ni style."""
+    for paragraph in row.iter():
+        if _local(paragraph.tag) == "p":
             properties = _child(paragraph, "pPr")
             style = _child(properties, "pStyle") if properties is not None else None
-            name = _style_name(
+            return _style_name(
                 package.styles, _attribute(style, "val") if style is not None else None
             )
-            return name if name in reading.proposed else None
-    return None
+    return ""
+
+
+def _invoice(package: _Package, table: Element) -> dict[str, JsonValue] | None:
+    """Un récapitulatif de TVA écrit par l'outil : le bloc ``invoice_totals`` que sa
+    description garde (ses colonnes, l'acompte) ; ``None`` pour un autre tableau, ou un
+    récapitulatif dont la description manque."""
+    rows = [row for row in table if _local(row.tag) == "tr"]
+    if not rows or _row_style(package, rows[0]) != INVOICE_STYLE:
+        return None
+    properties = _child(table, "tblPr")
+    described = _child(properties, "tblDescription") if properties is not None else None
+    try:
+        data = json.loads(_attribute(described, "val") or "") if described is not None else None
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    found = cast(dict[str, JsonValue], data)
+    amount, rate, paid = found.get("amount"), found.get("rate"), found.get("paid")
+    if not isinstance(amount, str) or not isinstance(rate, str):
+        return None
+    said: dict[str, JsonValue] = {
+        "type": "invoice_totals",
+        "from_table": {"amount": amount, "rate": rate},
+    }
+    if isinstance(paid, int | float) and not isinstance(paid, bool):
+        said["paid"] = paid
+    return said
 
 
 def _fields(package: _Package, table: Element) -> dict[str, JsonValue]:
@@ -1320,8 +1382,14 @@ def _table(package: _Package, reading: _Reading, element: Element) -> list[JsonV
     et ses renvois compris ; l'emphase d'une ligne d'en-tête, ou d'une ligne toute en gras
     (un total), est celle de son style, que la réécriture repose : elle ne revient pas."""
     rows: list[JsonValue] = []
+    # Le groupe en cours : ses lignes, jusqu'à son sous-total ou au groupe suivant.
+    group: list[JsonValue] | None = None
     for row in element:
         if _local(row.tag) != "tr":
+            continue
+        kind = "" if reading.shown else _row_style(package, row)
+        if kind == SUBTOTAL_STYLE:
+            group = None
             continue
         tiles = [
             [
@@ -1332,6 +1400,11 @@ def _table(package: _Package, reading: _Reading, element: Element) -> list[JsonV
             for cell in row
             if _local(cell.tag) == "tc"
         ]
+        if kind == GROUP_STYLE:
+            group = []
+            label = _cell_markdown(tiles[0], emphasis=True) if tiles else ""
+            rows.append({"group": label, "rows": group})
+            continue
         properties = _child(row, "trPr")
         plain = (properties is not None and _child(properties, "tblHeader") is not None) or (
             _all_bold([segment for tile in tiles for lines in tile for segment in lines])
@@ -1357,7 +1430,7 @@ def _table(package: _Package, reading: _Reading, element: Element) -> list[JsonV
                 reading.cut += 1
             cells.append(text)
             cells.extend("" for _ in range(min(span, MAX_COLUMNS) - 1))
-        rows.append(cells[:MAX_COLUMNS])
+        (group if group is not None else rows).append(cells[:MAX_COLUMNS])
     return rows
 
 

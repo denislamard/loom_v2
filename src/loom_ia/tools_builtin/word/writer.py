@@ -34,7 +34,7 @@ import re
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 from xml.sax.saxutils import escape, quoteattr
 
 from loom_ia.tools_builtin._document.content import (
@@ -489,16 +489,24 @@ def _table(
         '<w:top w:w="40" w:type="dxa"/><w:left w:w="85" w:type="dxa"/>'
         '<w:bottom w:w="40" w:type="dxa"/><w:right w:w="85" w:type="dxa"/>'
         '</w:tblCellMar><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" '
-        'w:firstColumn="0" w:lastColumn="0" w:noHBand="1" w:noVBand="1"/></w:tblPr>'
-        "<w:tblGrid>" + "".join(f'<w:gridCol w:w="{w}"/>' for w in widths) + "</w:tblGrid>"
+        'w:firstColumn="0" w:lastColumn="0" w:noHBand="1" w:noVBand="1"/>'
+        # Ce que la relecture retrouve d'un tableau calculé (le récapitulatif de TVA).
+        + (f"<w:tblDescription w:val={quoteattr(table.data)}/>" if table.data else "")
+        + "</w:tblPr><w:tblGrid>"
+        + "".join(f'<w:gridCol w:w="{w}"/>' for w in widths)
+        + "</w:tblGrid>"
     )
 
-    # Ce que l'en-tête et le total écrivent en plus du tableau (gras, couleur…).
-    written = {
+    # Ce que l'en-tête et le total écrivent en plus du tableau (gras, couleur…) ; le
+    # sous-total d'un groupe le doit à son style de paragraphe.
+    written: dict[str, Mapping[str, Any]] = {
         "header": style.between("table_header", "table"),
         "total": style.between("table_total", "table"),
+        "subtotal": {},
         "body": {},
     }
+    subtotal = style.look("table_subtotal")
+    lines = {"header": header, "total": total, "subtotal": subtotal}
 
     def row(cells: Sequence[str | Inline], kind: str = "body", band: bool = False) -> str:
         props = (
@@ -508,17 +516,20 @@ def _table(
         )
         said = f"<w:tr>{props}"
         own = written[kind]
-        line_look = header if kind == "header" else total if kind == "total" else None
+        line_look = lines.get(kind)
+        paragraph_style = cell_style
+        if kind == "subtotal":
+            body.used.add(look.TABLE_SUBTOTAL)
+            paragraph_style = look.TABLE_SUBTOTAL
         for index, text in enumerate(cells):
             filled = line_look.fill if line_look is not None else tables.bands if band else None
-            top = (
-                f"<w:tcBorders><w:top {_border(total.border_top)}/></w:tcBorders>"
-                if kind == "total" and total.border_top is not None
-                else ""
-            )
+            ruled = line_look.border_top if line_look is not None and kind != "header" else None
+            top = f"<w:tcBorders><w:top {_border(ruled)}/></w:tcBorders>" if ruled else ""
             align = (line_look.align if line_look is not None else None) or table.align[index]
             if align == "justify":
                 align = table.align[index]
+            if not isinstance(text, str) and kind != "body":
+                text = plain(text)
             if isinstance(text, str):
                 runs = {prop: value for prop, value in own.items() if prop != "size"}
                 props = look.run_xml(runs) + _size(size or _half(own.get("size")))
@@ -528,13 +539,36 @@ def _table(
             said += (
                 f'<w:tc><w:tcPr><w:tcW w:w="{widths[index]}" w:type="dxa"/>{top}'
                 f'{_cell_fill(filled)}<w:vAlign w:val="center"/></w:tcPr>'
-                + _paragraph(cell_style, content, f'<w:jc w:val="{_JC[align]}"/>')
+                + _paragraph(paragraph_style, content, f'<w:jc w:val="{_JC[align]}"/>')
                 + "</w:tc>"
             )
         return said + "</w:tr>"
 
-    said += row(table.headers, "header")
-    said += "".join(row(cells, band=index % 2 == 1) for index, cells in enumerate(table.cells))
+    def group_row(label: Inline) -> str:
+        """La ligne d'un groupe : une cellule sur toute la largeur, gardée avec la suite."""
+        body.used.add(look.TABLE_GROUP)
+        grouped = style.look("table_group")
+        return (
+            "<w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc><w:tcPr>"
+            f'<w:tcW w:w="{full}" w:type="dxa"/><w:gridSpan w:val="{len(widths)}"/>'
+            f'{_cell_fill(grouped.fill)}<w:vAlign w:val="center"/></w:tcPr>'
+            + _paragraph(look.TABLE_GROUP, _runs(body, label))
+            + "</w:tc></w:tr>"
+        )
+
+    if table.headers:
+        said += row(table.headers, "header")
+    kinds = table.kinds or ("body",) * len(table.cells)
+    band = 0
+    for kind, cells in zip(kinds, table.cells, strict=True):
+        if kind == "group":
+            said += group_row(cells[0])
+            band = 0
+        elif kind == "body":
+            said += row(cells, band=band % 2 == 1)
+            band += 1
+        else:
+            said += row(cells, kind)
     if table.total is not None:
         said += row(table.total, "total")
     said += "</w:tbl>"
@@ -735,6 +769,8 @@ def _blocks(body: _Body, blocks: Sequence[BlockOut], width: int, layout: _Layout
             case TableOut():
                 name = block.style or layout.styles.get("table") or "table"
                 text = body.word(name)
+                if text == look.INVOICE_TOTALS:
+                    body.used.add(text)
                 said += _table(
                     body, block, width, style.look(name), cell_style=text, caption=caption
                 )

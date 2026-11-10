@@ -123,7 +123,7 @@ def _too_long(address: str) -> str:
 
 def _from_word(data: bytes, path: Path, address: str) -> Extracted:
     reader: Any = importlib.import_module("loom_ia.tools_builtin.word.reader")
-    found = cast(dict[str, JsonValue], reader.read(data, address, 0, MAX_TEXT_CHARS))
+    found = cast(dict[str, JsonValue], reader.read(data, address, 0, MAX_TEXT_CHARS, shown=True))
     blocks = cast(list[JsonValue], found["blocks"])
     # Coupé à la borne : la suite manque (``truncated``), ou un bloc seul l'a dépassée.
     if found.get("truncated") or any(cast(dict[str, JsonValue], b).get("cut") for b in blocks):

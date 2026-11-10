@@ -28,6 +28,7 @@ from loom_ia.core.model import DEFAULT_TENANT, RunId, SessionId
 from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.runtime.wiring import build_agent
 from loom_ia.tools_builtin import BuiltinContext, Protected, builtin_tool
+from loom_ia.tools_builtin._document.arguments import WriteArguments
 from loom_ia.tools_builtin.memory import MemoryTool, build
 from loom_ia.tools_builtin.memory.fake import FakeEmbedder
 from loom_ia.tools_builtin.memory.files import MAX_TEXT_CHARS, word_markdown
@@ -525,6 +526,39 @@ async def test_a_word_file_is_stored_with_its_sections(memory: MemoryTool, works
     )
     changed = await call(memory, action="add_file", file="workspace/plaquette.docx")
     assert changed["doc_id"] == added["doc_id"] and changed["updated"]
+
+
+async def test_a_word_invoice_is_stored_as_it_shows(memory: MemoryTool, workspace: Path) -> None:
+    """Une facture de ``loom.word`` : ses lots, ses sous-totaux et son récapitulatif de TVA,
+    tels qu'affichés (la relecture d'outil les rend pour réécrire, pas pour lire)."""
+    from zoneinfo import ZoneInfo
+
+    from loom_ia.tools_builtin._document.arguments import DocumentCall, parse, variant
+    from loom_ia.tools_builtin._document.content import prepare
+    from loom_ia.tools_builtin.word.writer import render
+
+    columns: list[JsonValue] = [
+        {"header": "Désignation"},
+        {"header": "TVA", "type": "percent"},
+        {"header": "Montant HT", "type": "amount_eur"},
+    ]
+    blocks: list[JsonValue] = [
+        {
+            "type": "table",
+            "columns": columns,
+            "rows": [{"group": "Lot cuisine", "rows": [["Mitigeur", 0.2, 179.98]]}],
+            "totals": {"Montant HT": "sum"},
+        },
+        {"type": "invoice_totals", "from_table": {"amount": "Montant HT", "rate": "TVA"}},
+    ]
+    model = variant(DocumentCall, blocks=("invoice_totals",))
+    request = parse(model, {"path": "w/f.docx", "title": "Facture", "blocks": blocks})
+    assert isinstance(request, WriteArguments)
+    (workspace / "facture.docx").write_bytes(render(prepare(request, ZoneInfo("Europe/Paris"))))
+    added = await call(memory, action="add_file", file="workspace/facture.docx")
+    text = (await call(memory, action="get", doc_id=added["doc_id"]))["text"]
+    for said in ("| Lot cuisine |", "| Sous-total |", "| Total TTC | 215,98 € |"):
+        assert said in text, said
 
 
 async def test_a_word_file_without_title_is_named_after_the_file(

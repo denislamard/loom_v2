@@ -100,12 +100,21 @@ class CheckList(ListBlock):
 class Column(_Model):
     header: Annotated[str, Field(min_length=1)]
     type: ColumnType = "text"
+    # Une colonne calculée par l'outil, ligne par ligne : les lignes ne la donnent pas.
+    compute: str | None = None
+
+
+class Group(_Model):
+    """Un groupe de lignes (un lot, une pièce) : son libellé, puis ses lignes."""
+
+    group: Annotated[str, Field(min_length=1)]
+    rows: list[list[Scalar]]
 
 
 class Table(_Model):
     type: Literal["table"]
     columns: Annotated[list[Column], Field(min_length=1)]
-    rows: list[list[Scalar]]
+    rows: list[list[Scalar] | Group]
     totals: dict[str, Aggregate] | None = None
     caption: str | None = None
 
@@ -213,6 +222,20 @@ class Code(_Model):
     text: str
 
 
+class TaxColumns(_Model):
+    """Les colonnes du tableau qui précède, par en-tête : les montants HT et leurs taux de
+    TVA (l'aide du bloc les décrit)."""
+
+    amount: str
+    rate: str
+
+
+class InvoiceTotals(_Model):
+    type: Literal["invoice_totals"]
+    from_table: TaxColumns
+    paid: Scalar | None = None
+
+
 # Les blocs que le modèle voit sans bloc facultatif.
 type Block = Annotated[
     Heading | Paragraph | ListBlock | Table | Note | Quote,
@@ -232,7 +255,8 @@ type WrittenBlock = Annotated[
     | Signature
     | Contents
     | Fields
-    | Code,
+    | Code
+    | InvoiceTotals,
     Field(discriminator="type"),
 ]
 
@@ -282,6 +306,7 @@ def block_union(blocks: Iterable[str], styles: Proposed = ()) -> object:
             ("toc", Contents),
             ("fields", Fields),
             ("code", Code),
+            ("invoice_totals", InvoiceTotals),
         )
         if name in chosen
     ]
@@ -434,6 +459,7 @@ _SUFFIXES: Final[Mapping[str, str]] = {
     "checkboxes": "Checkboxes",
     "fields": "Fields",
     "code": "Code",
+    "invoice_totals": "InvoiceTotals",
 }
 
 

@@ -16,14 +16,24 @@ de liste, une note, une citation, une cellule de texte et la valeur d'un champ p
 aussi un lien (``[texte](https://…)``), une note de bas de page (``^[texte]``) et un renvoi
 à un titre du document (``§[Titre]``) : ``rich``. Un titre, une légende, un libellé n'ont
 que l'emphase, et un bloc ``code`` n'a aucun balisage.
+
+Les calculs sont ceux de l'outil, jamais du modèle de langage, en ``Decimal`` et arrondis
+au demi supérieur : une colonne calculée (``compute`` : ``+ - * /``, des nombres et des
+``{colonnes}`` de la ligne, lus par ``ast``, jamais par ``eval``), le sous-total de chaque
+groupe de lignes, et le récapitulatif de TVA d'une facture (``invoice_totals`` : la TVA de
+chaque taux sur le total HT de ce taux). Un montant en euros s'arrondit au centime dès la
+lecture : ce que le document additionne est ce qu'il affiche.
 """
 
+import ast
 import dataclasses
 import datetime as dt
+import json
 import math
 import re
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Final, Literal
 from zoneinfo import ZoneInfo
 
@@ -44,11 +54,14 @@ from loom_ia.tools_builtin._document.arguments import (
     ChartKind,
     CheckList,
     Code,
+    Column,
     Contents,
     Fields,
+    Group,
     Heading,
     Image,
     ImageWidth,
+    InvoiceTotals,
     Item,
     ListBlock,
     Note,
@@ -65,7 +78,7 @@ from loom_ia.tools_builtin._document.arguments import (
 from loom_ia.tools_builtin._document.picture import Picture
 from loom_ia.tools_builtin._style_params import FRENCH, Labels, Language
 from loom_ia.tools_builtin._templates import Template, fixed_paragraphs, key
-from loom_ia.tools_builtin._values import Aggregate, ColumnType, Stored, convert
+from loom_ia.tools_builtin._values import Aggregate, ColumnType, Scalar, Stored, convert
 
 MAX_TITLE: Final = 300
 # Largeur d'une colonne, en caractères, pour en tirer la part de la page.
@@ -201,6 +214,16 @@ class TableOut:
     # d'un tableau qu'un style veut à sa largeur naturelle (``width: content``).
     natural: float = 1.0
     style: str | None = None
+    # La sorte de chaque ligne de ``cells`` (une ligne de groupe n'a qu'une cellule, son
+    # libellé) ; vide : toutes des lignes de données.
+    kinds: tuple[RowKind, ...] = ()
+    # Ce que la relecture retrouve d'un tableau que l'outil calcule (le récapitulatif de
+    # TVA : ses colonnes, l'acompte), en JSON.
+    data: str | None = None
+
+
+# Une ligne de tableau : de données, de groupe, de sous-total, de total (en gras).
+type RowKind = Literal["body", "group", "subtotal", "total"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -491,6 +514,10 @@ def _blocks(
                 blocks.append(
                     _chart(block, state.last_table, where, problems, zone, state.labels.language)
                 )
+            case InvoiceTotals():
+                invoice = _invoice(block, where, state)
+                if invoice is not None:
+                    blocks.append(invoice)
             case Note():
                 text = _text(block.text, where, problems, required=True)
                 note_title = _text(block.title, f"{where}, title", problems) or None
@@ -662,7 +689,7 @@ def _signature(block: Signature, where: str, problems: Problems) -> SignatureOut
 
 
 def _table(block: Table, where: str, state: _State) -> tuple[TableOut, list[list[Stored]]]:
-    problems, zone, labels = state.problems, state.zone, state.labels
+    problems, labels = state.problems, state.labels
     columns = block.columns
     headers = [lines(column.header).strip() for column in columns]
     if len(columns) > MAX_TABLE_COLUMNS:
@@ -676,46 +703,55 @@ def _table(block: Table, where: str, state: _State) -> tuple[TableOut, list[list
     for header in headers:
         _clean(header, where, problems)
         _bare(header, f"{where}, en-tête « {header} »", problems)
-    if len(block.rows) > MAX_TABLE_ROWS:
+    formulas = _formulas(columns, headers, where, problems)
+    groups = _groups(block, where, problems)
+    count = sum(len(rows) for _, _, rows in groups)
+    if count > MAX_TABLE_ROWS:
         problems.error(
-            f"{where} : {len(block.rows)} lignes, au-delà de {MAX_TABLE_ROWS} — un tableau "
+            f"{where} : {count} lignes, au-delà de {MAX_TABLE_ROWS} — un tableau "
             "plus long se lit mieux dans un classeur (excel)"
         )
-    stored: list[list[Stored]] = []
-    for number, row in enumerate(block.rows, start=1):
-        if len(row) > len(columns):
-            problems.error(
-                f"{where}, ligne {number} : {len(row)} valeurs pour {len(columns)} colonnes"
-            )
-        cells: list[Stored] = []
-        for index, column in enumerate(columns):
-            value = row[index] if index < len(row) else None
-            at = f"{where}, ligne {number}, « {column.header} »"
-            if isinstance(value, str):
-                value = lines(value)
-                _clean(value, at, problems)
-            cells.append(convert(value, column.type, at, problems, zone))
-        stored.append(cells)
-    total = _totals(block, stored, where, problems, labels)
-    if block.totals and not block.rows:
+    given = [index for index, column in enumerate(columns) if column.compute is None]
+    members = [
+        [
+            _row(row, columns, given, formulas, f"{at}, ligne {number}", state)
+            for number, row in enumerate(rows, start=1)
+        ]
+        for _, at, rows in groups
+    ]
+    stored = [row for rows in members for row in rows]
+    _check_totals(block, where, problems)
+    total = _total_row(block, stored, labels.total, labels.language) if block.totals else None
+    if block.totals and not stored:
         problems.warn(f"{where} : aucune ligne, la ligne de total n'est pas écrite")
         total = None
+
     # Une cellule de texte prend le balisage d'un paragraphe ; une cellule typée est une
     # valeur.
-    parts = tuple(
-        tuple(
-            rich(value, f"{where}, ligne {number}, « {column.header} »", state)
+    def cells(row: Sequence[Stored], at: str) -> tuple[Inline, ...]:
+        return tuple(
+            rich(value, f"{at}, « {column.header} »", state)
             if column.type == "text" and isinstance(value, str)
             else _plain_cell(display(value, column.type, labels.language))
             for value, column in zip(row, columns, strict=True)
         )
-        for number, row in enumerate(stored, start=1)
-    )
-    shown = tuple(tuple(plain(cell) for cell in row) for row in parts)
-    widths, natural = _widths(headers, [*shown, *([total] if total else [])])
+
+    found: list[tuple[RowKind, tuple[Inline, ...]]] = []
+    for (label, at, _), rows in zip(groups, members, strict=True):
+        if label is not None:
+            found.append(("group", (inline(label),)))
+        for number, row in enumerate(rows, start=1):
+            found.append(("body", cells(row, f"{at}, ligne {number}")))
+        if label is not None and block.totals and rows:
+            subtotal = _total_row(block, rows, labels.subtotal, labels.language)
+            found.append(("subtotal", tuple(_plain_cell(cell) for cell in subtotal)))
+    shown = tuple(tuple(plain(cell) for cell in row) for _, row in found)
+    measured = [row for (kind, _), row in zip(found, shown, strict=True) if kind != "group"]
+    widths, natural = _widths(headers, [*measured, *([total] if total else [])])
     caption = _text(block.caption, f"{where}, caption", problems) or None
     _bare(caption or "", f"{where}, caption", problems)
-    found = TableOut(
+    grouped = any(label is not None for label, _, _ in groups)
+    table = TableOut(
         headers=tuple(headers),
         align=tuple(_align(column.type) for column in columns),
         rows=shown,
@@ -723,9 +759,356 @@ def _table(block: Table, where: str, state: _State) -> tuple[TableOut, list[list
         widths=widths,
         caption=inline(caption) if caption else None,
         natural=natural,
-        cells=parts,
+        cells=tuple(row for _, row in found),
+        kinds=tuple(kind for kind, _ in found) if grouped else (),
     )
-    return found, stored
+    return table, stored
+
+
+MAX_GROUPS: Final = 20
+MAX_GROUP_LABEL: Final = 200
+
+
+def _groups(
+    block: Table, where: str, problems: Problems
+) -> list[tuple[str | None, str, list[list[Scalar]]]]:
+    """Les lignes du tableau, par groupe : le libellé du groupe (``None`` sans groupe), sa
+    place dans les messages, ses lignes. Pas de lignes simples entre des groupes."""
+    groups = [row for row in block.rows if isinstance(row, Group)]
+    simple = [row for row in block.rows if not isinstance(row, Group)]
+    if not groups:
+        return [(None, where, simple)]
+    if simple:
+        problems.error(
+            f"{where} : des groupes ({{group, rows}}) et des lignes simples mêlés — toutes les "
+            "lignes dans des groupes, ou aucun groupe"
+        )
+    if len(groups) > MAX_GROUPS:
+        problems.error(f"{where} : {len(groups)} groupes, au-delà de {MAX_GROUPS}")
+    found: list[tuple[str | None, str, list[list[Scalar]]]] = []
+    for number, group in enumerate(groups, start=1):
+        at = f"{where}, groupe {number}"
+        label = _text(group.group, at, problems, required=True)
+        _bare(label, at, problems)
+        if len(label) > MAX_GROUP_LABEL:
+            problems.error(f"{at} : {len(label)} caractères, au-delà de {MAX_GROUP_LABEL}")
+        if not group.rows:
+            problems.error(f"{at} « {label} » : aucune ligne")
+        found.append((label, f"{at} « {label} »", group.rows))
+    return found
+
+
+def _row(
+    row: Sequence[Scalar],
+    columns: Sequence[Column],
+    given: Sequence[int],
+    formulas: Mapping[int, _Formula],
+    at: str,
+    state: _State,
+) -> list[Stored]:
+    """Une ligne : ses valeurs, dans l'ordre des colonnes données, puis celles que l'outil
+    calcule ; un montant en euros arrondi au centime."""
+    problems = state.problems
+    if len(row) > len(given):
+        computed = [column.header for column in columns if column.compute is not None]
+        problems.error(
+            f"{at} : {len(row)} valeurs pour {len(given)} colonnes"
+            + (f" données ({', '.join(computed)} : calculée par l'outil)" if computed else "")
+        )
+    cells: list[Stored] = [None] * len(columns)
+    for position, index in enumerate(given):
+        column = columns[index]
+        value = row[position] if position < len(row) else None
+        place = f"{at}, « {column.header} »"
+        if isinstance(value, str):
+            value = lines(value)
+            _clean(value, place, problems)
+        converted = convert(value, column.type, place, problems, state.zone)
+        cells[index] = _cents(converted) if column.type == "amount_eur" else converted
+    for index, formula in formulas.items():
+        place = f"{at}, « {columns[index].header} »"
+        cells[index] = _computed(formula, cells, columns[index].type, place, problems)
+    return cells
+
+
+# --- Calculs ---------------------------------------------------------------------------
+
+MAX_FORMULA: Final = 200
+CENT: Final = Decimal("0.01")
+# Ce qu'un calcul garde de décimales, par type de colonne : ce que le document écrit.
+_QUANTUM: Final[Mapping[ColumnType, Decimal]] = {
+    "integer": Decimal(1),
+    "decimal": CENT,
+    "amount_eur": CENT,
+    "amount_keur": Decimal(1),
+    "percent": Decimal("0.001"),
+}
+# Une colonne citée dans une formule : son en-tête entre accolades.
+_REFERENCE: Final = re.compile(r"\{([^{}]*)\}")
+_PLACEHOLDER: Final = re.compile(r"c\d+")
+_OPERATIONS: Final[Mapping[type[ast.operator], Callable[[Decimal, Decimal], Decimal]]] = {
+    ast.Add: lambda first, second: first + second,
+    ast.Sub: lambda first, second: first - second,
+    ast.Mult: lambda first, second: first * second,
+    ast.Div: lambda first, second: first / second,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _Formula:
+    """Une formule lue : son arbre (chaque colonne citée devient ``c0``, ``c1``…), et la
+    colonne de chacune."""
+
+    tree: ast.expr
+    sources: tuple[int, ...]
+
+
+def _formulas(
+    columns: Sequence[Column], headers: Sequence[str], where: str, problems: Problems
+) -> dict[int, _Formula]:
+    """Les colonnes calculées, dans l'ordre : leur formule lue et vérifiée."""
+    found: dict[int, _Formula] = {}
+    for index, column in enumerate(columns):
+        if column.compute is None:
+            continue
+        at = f"{where}, « {headers[index]} »"
+        if column.type not in NUMERIC:
+            problems.error(
+                f"{at} : une colonne calculée est une colonne de nombres (integer, decimal, "
+                f"amount_eur, amount_keur ou percent ; ici {column.type})"
+            )
+        formula = _formula(column.compute, index, columns, headers, at, problems)
+        if formula is not None:
+            found[index] = formula
+    return found
+
+
+def _formula(
+    text: str,
+    index: int,
+    columns: Sequence[Column],
+    headers: Sequence[str],
+    at: str,
+    problems: Problems,
+) -> _Formula | None:
+    said = lines(text).strip()
+    if len(said) > MAX_FORMULA:
+        problems.error(f"{at} : formule de {len(said)} caractères, au-delà de {MAX_FORMULA}")
+        return None
+    sources: list[int] = []
+    faults: list[str] = []
+
+    def named(found: re.Match[str]) -> str:
+        header = found.group(1).strip()
+        if header not in headers:
+            faults.append(f"colonne inconnue « {header} » (colonnes : {', '.join(headers)})")
+            return "0"
+        position = headers.index(header)
+        if columns[position].type not in NUMERIC:
+            faults.append(f"« {header} » n'est pas une colonne de nombres")
+        elif position == index:
+            faults.append("la formule cite sa propre colonne")
+        elif columns[position].compute is not None and position > index:
+            faults.append(
+                f"« {header} » est calculée plus loin : une formule prend les colonnes "
+                "données, ou celles calculées avant elle"
+            )
+        sources.append(position)
+        return f"c{len(sources) - 1}"
+
+    written = _REFERENCE.sub(named, said)
+    for fault in dict.fromkeys(faults):
+        problems.error(f"{at} : {fault}")
+    try:
+        tree = ast.parse(written, mode="eval").body
+    except SyntaxError, ValueError:
+        tree = None
+    if tree is None or not _allowed(tree, len(sources)):
+        problems.error(
+            f"{at} : formule {said!r} : seuls + - * / ( ), des nombres et des {{colonnes}} "
+            "(une colonne s'écrit entre accolades : {Qté})"
+        )
+        return None
+    return None if faults else _Formula(tree, tuple(sources))
+
+
+def _allowed(node: ast.expr, count: int) -> bool:
+    """Seulement les quatre opérations, le signe, des nombres et les colonnes citées."""
+    match node:
+        case ast.BinOp(left=left, op=op, right=right):
+            return type(op) in _OPERATIONS and _allowed(left, count) and _allowed(right, count)
+        case ast.UnaryOp(op=ast.USub() | ast.UAdd(), operand=operand):
+            return _allowed(operand, count)
+        case ast.Constant(value=value):
+            return (
+                isinstance(value, int | float)
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            )
+        case ast.Name(id=name):
+            return _PLACEHOLDER.fullmatch(name) is not None and int(name[1:]) < count
+        case _:
+            return False
+
+
+def _computed(
+    formula: _Formula, cells: Sequence[Stored], kind: ColumnType, at: str, problems: Problems
+) -> Stored:
+    """La valeur d'une colonne calculée, arrondie à ce que le document écrit ; vide si une
+    colonne citée l'est."""
+    values: list[Decimal] = []
+    for position in formula.sources:
+        value = cells[position]
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            return None
+        values.append(Decimal(str(value)))
+    try:
+        result = _evaluated(formula.tree, values).quantize(
+            _QUANTUM.get(kind, CENT), rounding=ROUND_HALF_UP
+        )
+    except ZeroDivisionError:
+        problems.error(f"{at} : division par zéro")
+        return None
+    except InvalidOperation:
+        problems.error(f"{at} : résultat hors des nombres qu'un document écrit")
+        return None
+    return int(result) if kind == "integer" else float(result)
+
+
+def _evaluated(node: ast.expr, values: Sequence[Decimal]) -> Decimal:
+    match node:
+        case ast.BinOp(left=left, op=op, right=right):
+            first, second = _evaluated(left, values), _evaluated(right, values)
+            if isinstance(op, ast.Div) and second == 0:
+                raise ZeroDivisionError
+            return _OPERATIONS[type(op)](first, second)
+        case ast.UnaryOp(op=ast.USub(), operand=operand):
+            return -_evaluated(operand, values)
+        case ast.UnaryOp(operand=operand):
+            return _evaluated(operand, values)
+        case ast.Constant(value=value):
+            return Decimal(str(value))
+        case ast.Name(id=name):
+            return values[int(name[1:])]
+        case _:  # écarté par ``_allowed``
+            raise InvalidOperation
+
+
+def _cents(value: Stored) -> Stored:
+    """Un montant au centime, au demi supérieur ; le même s'il y est déjà."""
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return value
+    try:
+        rounded = Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return value
+    return value if float(rounded) == value else float(rounded)
+
+
+def _decimal(value: Stored) -> Decimal:
+    return Decimal(str(value))
+
+
+# --- Le récapitulatif de TVA -------------------------------------------------------------
+
+
+def _invoice(block: InvoiceTotals, where: str, state: _State) -> TableOut | None:
+    """Total HT, la TVA de chaque taux (sur le total HT de ce taux, au centime), Total TTC,
+    et, avec ``paid``, l'acompte versé et le net à payer : tirés du tableau qui précède."""
+    problems, labels = state.problems, state.labels
+    language = labels.language
+    if state.last_table is None:
+        problems.error(f"{where} : from_table, mais aucun tableau ne précède le récapitulatif")
+        return None
+    table, stored = state.last_table
+    headers = [column.header.strip() for column in table.columns]
+    amount, rate = block.from_table.amount.strip(), block.from_table.rate.strip()
+    unknown = [name for name in (amount, rate) if name not in headers]
+    if unknown:
+        problems.error(
+            f"{where} : from_table, colonne(s) inconnue(s) du tableau précédent : "
+            f"{', '.join(unknown)} (colonnes : {', '.join(headers)})"
+        )
+        return None
+    amount_at, rate_at = headers.index(amount), headers.index(rate)
+    kinds = (table.columns[amount_at].type, table.columns[rate_at].type)
+    if kinds[0] != "amount_eur":
+        problems.error(f"{where} : « {amount} » : des montants HT, amount_eur (ici {kinds[0]})")
+    if kinds[1] != "percent":
+        problems.error(f"{where} : « {rate} » : des taux de TVA, percent (ici {kinds[1]})")
+    if kinds != ("amount_eur", "percent"):
+        return None
+    bases: dict[Decimal, Decimal] = {}
+    for place, row in zip(_places(table), stored, strict=False):
+        value, taxed = row[amount_at], row[rate_at]
+        if value is None:
+            continue
+        if taxed is None:
+            problems.error(f"{where} : {place} du tableau, un montant sans taux de TVA")
+            continue
+        found = _decimal(taxed)
+        bases[found] = bases.get(found, Decimal(0)) + _decimal(value)
+    if not bases:
+        problems.error(f"{where} : aucun montant dans « {amount} »")
+        return None
+    excluded = sum(bases.values(), Decimal(0))
+    found_lines: list[tuple[str, Decimal, RowKind]] = [(labels.total_excl_tax, excluded, "body")]
+    taxes = Decimal(0)
+    for taxed in sorted(bases):
+        tax = (bases[taxed] * taxed).quantize(CENT, rounding=ROUND_HALF_UP)
+        taxes += tax
+        label = labels.tax.format(
+            rate=_rate(taxed, language), base=display(float(bases[taxed]), "amount_eur", language)
+        )
+        found_lines.append((label, tax, "body"))
+    included = excluded + taxes
+    found_lines.append((labels.total_incl_tax, included, "total"))
+    data: dict[str, str | int | float] = {"amount": amount, "rate": rate}
+    if block.paid is not None:
+        paid = convert(block.paid, "amount_eur", f"{where}, paid", problems, state.zone)
+        if isinstance(paid, int | float) and not isinstance(paid, bool):
+            if paid < 0:
+                problems.error(f"{where}, paid : un acompte versé se donne en positif")
+            data["paid"] = paid
+            deposit = _decimal(_cents(paid))
+            found_lines.append((labels.paid, deposit, "body"))
+            found_lines.append((labels.due, included - deposit, "total"))
+    rows = tuple(
+        (label, display(float(value), "amount_eur", language)) for label, value, _ in found_lines
+    )
+    widths, natural = _widths(("", ""), rows)
+    return TableOut(
+        headers=(),
+        align=("left", "right"),
+        rows=rows,
+        total=None,
+        widths=widths,
+        caption=None,
+        cells=tuple(tuple(_plain_cell(cell) for cell in row) for row in rows),
+        natural=natural,
+        style="invoice_totals",
+        kinds=tuple(kind for *_, kind in found_lines),
+        data=json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
+def _places(table: Table) -> list[str]:
+    """La place de chaque ligne d'un tableau, dans l'ordre : « ligne 3 », ou « groupe 2
+    « Cuisine », ligne 1 »."""
+    groups = [row for row in table.rows if isinstance(row, Group)]
+    if not groups:
+        return [f"ligne {number}" for number in range(1, len(table.rows) + 1)]
+    return [
+        f"groupe {index} « {lines(group.group).strip()} », ligne {number}"
+        for index, group in enumerate(groups, start=1)
+        for number in range(1, len(group.rows) + 1)
+    ]
+
+
+def _rate(rate: Decimal, language: Language) -> str:
+    """Un taux de TVA tel qu'un libellé l'écrit : « 10 % », « 5,5 % » (« 10% » en anglais)."""
+    said = f"{(rate * 100).normalize():f}"
+    return f"{said}%" if language == "en" else f"{said.replace('.', ',')}{NBSP}%"
 
 
 # --- Graphiques ----------------------------------------------------------------------------
@@ -944,14 +1327,10 @@ def _check_images(arguments: WriteArguments, pictures: Pictures, problems: Probl
         )
 
 
-def _totals(
-    block: Table, stored: list[list[Stored]], where: str, problems: Problems, labels: Labels
-) -> tuple[str, ...] | None:
-    totals = block.totals or {}
-    if not totals:
-        return None
+def _check_totals(block: Table, where: str, problems: Problems) -> None:
+    """Un total vise une colonne du tableau, et un agrégat qui va à son type."""
     headers = [column.header for column in block.columns]
-    for header, aggregate in totals.items():
+    for header, aggregate in (block.totals or {}).items():
         if header not in headers:
             problems.error(f"{where} : total sur une colonne inconnue {header!r}")
             continue
@@ -962,15 +1341,23 @@ def _totals(
             )
         elif aggregate in {"min", "max"} and kind not in ORDERED_TYPES:
             problems.error(f"{where} : {aggregate} sur « {header} », colonne {kind} : sans ordre")
+
+
+def _total_row(
+    block: Table, stored: Sequence[Sequence[Stored]], label: str, language: Language
+) -> tuple[str, ...]:
+    """La ligne de total (ou de sous-total) de ces lignes : un agrégat par colonne qui en a
+    un, ``label`` à la place de la première sans."""
+    totals = block.totals or {}
     labelled = _total_label(block)
     cells: list[str] = []
     for index, column in enumerate(block.columns):
         aggregate = totals.get(column.header)
         values = [row[index] for row in stored if row[index] is not None]
         if aggregate is not None:
-            cells.append(_aggregate(aggregate, values, column.type, labels.language))
+            cells.append(_aggregate(aggregate, values, column.type, language))
         else:
-            cells.append(labels.total if index == labelled else "")
+            cells.append(label if index == labelled else "")
     return tuple(cells)
 
 

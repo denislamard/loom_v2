@@ -1049,3 +1049,44 @@ async def test_a_pdf_without_notes_has_no_notes_heading(tool: PdfTool, disk: Pat
     await call(tool, path="sortie/devis.pdf", **DEVIS)
     text = PdfReader(disk / "sortie" / "devis.pdf").pages[0].extract_text()
     assert "Notes" not in text
+
+
+# --- Les calculs (lot 6) ----------------------------------------------------------------
+
+INVOICE: Final[list[dict[str, Any]]] = [
+    {
+        "type": "table",
+        "columns": [
+            {"header": "Désignation"},
+            {"header": "Qté", "type": "integer"},
+            {"header": "PU HT", "type": "amount_eur"},
+            {"header": "TVA", "type": "percent"},
+            {"header": "Montant HT", "type": "amount_eur", "compute": "{Qté} * {PU HT}"},
+        ],
+        "rows": [
+            {
+                "group": "Lot 1 Salle de bains",
+                "rows": [["Dépose", 1, 180, 0.1], ["Receveur", 1, 1250.5, 0.1]],
+            },
+            {"group": "Lot 2 Cuisine", "rows": [["Mitigeur", 2, 89.99, 0.2]]},
+        ],
+        "totals": {"Montant HT": "sum"},
+    },
+    {"type": "invoice_totals", "from_table": {"amount": "Montant HT", "rate": "TVA"}, "paid": 500},
+]
+
+
+async def test_an_invoice_in_a_pdf(disk: Path) -> None:
+    tool = make(
+        disk, SORTIE, blocks=["invoice_totals"], style={"spec": {"table_group": {"fill": "EAF1DD"}}}
+    )
+    written = await call(tool, path="sortie/f.pdf", title="Facture", blocks=INVOICE)
+    assert written["warnings"] == []
+    page = PdfReader(disk / "sortie" / "f.pdf").pages[0]
+    # Le texte, ses espaces insécables lues en espaces.
+    text = page.extract_text().replace("\u00a0", " ")
+    for said in ("Lot 1 Salle de bains", "Sous-total", "1 430,50 €", "179,98 €",
+                 "TVA 20 % sur 179,98 €", "1 789,53 €", "Net à payer", "1 289,53 €"):  # fmt: skip
+        assert said in text, said
+    # Le fond des lignes de groupe (EAF1DD).
+    assert b".917647 .945098 .866667 rg" in drawn(page)

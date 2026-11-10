@@ -560,8 +560,8 @@ def test_the_keys_of_2_0_say_the_new_form(demo: ConfigFactory, old: str, said: s
         (["chart", "chart"], "bloc nommé deux fois : chart"),
         (
             ["graphique"],
-            "Input should be 'chart', 'image', 'signature', 'toc', 'checkboxes', 'fields' "
-            "or 'code'",
+            "Input should be 'chart', 'image', 'signature', 'toc', 'checkboxes', 'fields', "
+            "'code' or 'invoice_totals'",
         ),
     ],
 )
@@ -1621,3 +1621,136 @@ async def test_libreoffice_shows_notes_and_references(disk: Path, soffice: str) 
     text = (out / "riche.txt").read_text(encoding="utf-8-sig")
     # Le renvoi recalculé par LibreOffice : « 2 » ; l'appel de la note, son numéro.
     assert "Une note1 et le détail en 2." in text and "2.1 Conditions" in text
+
+
+# --- Les calculs (lot 6) ----------------------------------------------------------------
+
+PRICES: Final[list[dict[str, Any]]] = [
+    {"header": "Désignation"},
+    {"header": "Qté", "type": "integer"},
+    {"header": "PU HT", "type": "amount_eur"},
+    {"header": "TVA", "type": "percent"},
+    {"header": "Montant HT", "type": "amount_eur", "compute": "{Qté} * {PU HT}"},
+]
+INVOICE: Final[list[dict[str, Any]]] = [
+    {
+        "type": "table",
+        "columns": PRICES,
+        "rows": [
+            {
+                "group": "Lot 1 \u2013 Salle de bains",
+                "rows": [
+                    ["Dépose baignoire", 1, 180, 0.1],
+                    ["Receveur **extra-plat**", 1, 1250.5, 0.1],
+                ],
+            },
+            {"group": "Lot 2 \u2013 *Cuisine*", "rows": [["Mitigeur", 2, 89.99, 0.2]]},
+        ],
+        "totals": {"Montant HT": "sum"},
+    },
+    {"type": "invoice_totals", "from_table": {"amount": "Montant HT", "rate": "TVA"}, "paid": 500},
+]
+
+
+def invoicing_tool(disk: Path, **params: Any) -> WordTool:
+    return make(
+        disk,
+        {"name": "modeles", "path": "modeles", "rights": ["read"]},
+        {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]},
+        blocks=["invoice_totals"],
+        **params,
+    )
+
+
+async def test_an_invoice_is_calculated_read_back_and_rewritten(disk: Path) -> None:
+    tool = invoicing_tool(disk)
+    written = await call(tool, path="sortie/f.docx", title="Facture", blocks=INVOICE)
+    path = disk / "sortie" / "f.docx"
+    with zipfile.ZipFile(path) as archive:
+        document = archive.read("word/document.xml").decode()
+        styles = archive.read("word/styles.xml").decode()
+    # Les lignes de groupe : une cellule sur les cinq colonnes ; deux sous-totaux.
+    assert document.count('<w:pStyle w:val="LoomTableGroup"/>') == 2
+    assert document.count('<w:gridSpan w:val="5"/>') == 2
+    assert document.count('<w:pStyle w:val="LoomTableSubtotal"/>') == 10
+    for name in ("loom table group", "loom table subtotal", "loom invoice totals"):
+        assert f'<w:name w:val="{name}"/>' in styles, name
+    texts = "".join(t.text or "" for t in part(path, "word/document.xml").iter(f"{W}t"))
+    euros = "\u00a0€"
+    for said in (
+        f"179,98{euros}",
+        f"1\u00a0430,50{euros}",
+        f"TVA 10\u00a0% sur 1\u00a0430,50{euros}",
+        f"143,05{euros}",
+        f"1\u00a0789,53{euros}",
+        "Net à payer",
+        f"1\u00a0289,53{euros}",
+    ):
+        assert said in texts, said
+    # Le récapitulatif garde ses colonnes et l'acompte, pour la relecture.
+    assert (
+        '<w:tblDescription w:val=\'{"amount":"Montant HT","rate":"TVA","paid":500}\'/>'
+    ) in document
+    found = await call(tool, action="read", path="sortie/f.docx")
+    table, invoice = found["blocks"][1:]
+    # Les groupes reviennent, sans leurs sous-totaux, que l'outil recalcule.
+    assert table["rows"] == [
+        ["Désignation", "Qté", "PU HT", "TVA", "Montant HT"],
+        {
+            "group": "Lot 1 \u2013 Salle de bains",
+            "rows": [
+                ["Dépose baignoire", "1", "180,00\u00a0€", "10,0\u00a0%", "180,00\u00a0€"],
+                ["Receveur **extra-plat**", "1", "1\u00a0250,50\u00a0€", "10,0\u00a0%",
+                 "1\u00a0250,50\u00a0€"],
+            ],
+        },
+        {
+            "group": "Lot 2 \u2013 *Cuisine*",
+            "rows": [["Mitigeur", "2", "89,99\u00a0€", "20,0\u00a0%", "179,98\u00a0€"]],
+        },
+        ["Total", "", "", "", "1\u00a0610,48\u00a0€"],
+    ]  # fmt: skip
+    assert invoice == INVOICE[1]
+    # Réécrit : les lignes relues, sans la colonne calculée ; le même fichier.
+    rows = [
+        {"group": group["group"], "rows": [row[:4] for row in group["rows"]]}
+        for group in table["rows"][1:-1]
+    ]
+    again = await call(
+        tool,
+        path="sortie/f2.docx",
+        title="Facture",
+        blocks=[{**INVOICE[0], "rows": rows}, invoice],
+    )
+    assert again["sha256"] == written["sha256"]
+
+
+async def test_memory_reads_the_invoice_as_shown(disk: Path) -> None:
+    await call(invoicing_tool(disk), path="sortie/f.docx", title="Facture", blocks=INVOICE)
+    data = (disk / "sortie" / "f.docx").read_bytes()
+    found = cast(Any, reader_module.read(data, "f", 0, shown=True))
+    table, invoice = found["blocks"][1:]
+    assert table["rows"][1] == ["Lot 1 \u2013 Salle de bains", "", "", "", ""]
+    assert table["rows"][4] == ["Sous-total", "", "", "", "1\u00a0430,50\u00a0€"]
+    assert invoice["type"] == "table" and invoice["rows"][-1] == [
+        "Net à payer",
+        "1\u00a0289,53\u00a0€",
+    ]
+
+
+async def test_reading_an_invoice_without_the_block_says_so(disk: Path) -> None:
+    await call(invoicing_tool(disk), path="sortie/f.docx", title="Facture", blocks=INVOICE)
+    found = await call(rich_tool(disk), action="read", path="sortie/f.docx")
+    assert found["notes"] == [
+        "Lu : invoice_totals (1) ; cet outil n'en écrit pas : les retirer avant de réécrire le "
+        "document (ou blocks: [invoice_totals] dans la config de l'outil)."
+    ]
+
+
+async def test_libreoffice_prints_the_invoice(disk: Path, soffice: str) -> None:
+    await call(invoicing_tool(disk), path="sortie/f.docx", title="Facture", blocks=INVOICE)
+    out = disk / "converti"
+    convert(soffice, disk / "sortie" / "f.docx", out, "txt:Text (encoded):UTF8")
+    text = (out / "f.txt").read_text(encoding="utf-8-sig")
+    for said in ("Lot 2 \u2013 Cuisine", "Sous-total", "Total TTC", "1\u00a0789,53\u00a0€"):
+        assert said in text, said

@@ -14,7 +14,8 @@ l'importe pour valider la référence au chargement, sans importer l'outil.
         rights: [ write, overwrite ]   # remplacer un fichier : approbation par défaut
       timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
       blocks: [chart, image]           # les blocs facultatifs : chart, image, signature, toc,
-                                       # checkboxes, fields, code ; aucun par défaut
+                                       # checkboxes, fields, code, invoice_totals ; aucun par
+                                       # défaut
       style: styles/charte.yaml        # la charte (facultatif), relative à resources_dir
       templates:                       # modèles de document, relatifs à resources_dir ; le
         facture: templates/facture.yaml  # style d'un modèle se nomme dans son fichier
@@ -58,7 +59,8 @@ class WordParams(BaseModel):
     timezone: str = DEFAULT_TIMEZONE
     # Les blocs facultatifs, chacun payé en tokens à chaque appel au modèle : chart
     # (environ 430), image (environ 190), signature, toc et checkboxes (environ 190 à eux
-    # trois), fields (environ 115), code (environ 75). Aucun par défaut.
+    # trois), fields (environ 115), code (environ 75), invoice_totals (environ 185). Aucun
+    # par défaut.
     blocks: Blocks = ()
     # Les modèles de document, par nom : fichiers relatifs à resources_dir, lus au chargement.
     templates: Templates = {}

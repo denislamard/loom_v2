@@ -902,7 +902,7 @@ Chaque lot est livrable seul, testé, avec sa documentation.
 | **3. Les modèles en YAML et les sections (Word)** (fait, § 20) | Le format du modèle, `sections` dans l'appel, titres écrits par l'outil, `show_title`, `styles`, disposition, texte fixe, signets, relecture ; styles proposés au modèle de langage | Corrige ce qu'ont montré les essais du 10 novembre |
 | **4. La parité du PDF** (fait, § 21) | Le même style et les mêmes modèles en reportlab, polices TrueType, notes de fin, `checkboxes`, `signature`, `toc` | Clôt la rupture : les quatre premiers lots forment la 2.1.0 (O-5) |
 | **5. Le texte enrichi** (fait, § 22) | `fields`, `code`, liens, notes de bas de page, renvois, emphase dans les cellules, listes à trois niveaux (Word et PDF) | Ajouts sans rupture |
-| **6. Les calculs** | Colonnes calculées, groupes et sous-totaux, `invoice_totals` | Le cœur du devis et de la facture |
+| **6. Les calculs** (fait, § 23) | Colonnes calculées, groupes et sous-totaux, `invoice_totals` | Le cœur du devis et de la facture |
 | **7. L'émargement** | `attendance` | Indépendant des autres ajouts |
 
 Pour comparer, les deux commits des styles du 9 novembre (`d8f025d`, `0f38f5f`) font +4 186 / −354 lignes, docs et tests compris. Ce chantier en vaut, à vue de nez, trois fois plus.
@@ -1257,6 +1257,46 @@ Les documents sans lien, note, renvoi, champ, code ni troisième niveau sont ide
 - `test_pdf.py` : 54 (2 de plus) : liens, notes de fin, renvois, trois niveaux, champs et code dans un PDF ; pas de « Notes » sans notes.
 - `test_memory_tool.py` : les champs et le code en markdown (un essai complété).
 - Suite complète : 4 413 réussis, 201 sautés (26 de plus qu'au lot 4). ruff, format, `lint-imports` (6 contrats) et pyright passent sans erreur.
+
+## 23. Ce qui est écrit : le lot 6 (10 novembre 2026)
+
+Codé sans commit sur `a1d4bb9` (le lot 5). La section `2.1.1 - non publiée` du CHANGELOG a un paragraphe de plus.
+
+**Ce qui change**
+
+- **Les colonnes calculées (§ 8.9)** : `Column.compute`. `content.py` lit la formule : chaque `{colonne}` devient un nom (`c0`, `c1`…), l'arbre d'`ast` n'admet que les quatre opérations, le signe, des nombres finis et ces noms, puis il est évalué en `Decimal` et arrondi au demi supérieur. Les lignes donnent les autres colonnes, dans l'ordre ; les colonnes calculées se calculent de gauche à droite.
+- **Les groupes (§ 8.8)** : `Table.rows` prend `list[Scalar] | Group`. `TableOut` gagne `kinds` (la sorte de chaque ligne : données, groupe, sous-total, en gras) ; une ligne de groupe n'a qu'une cellule, son libellé. Les totaux se vérifient une fois (`_check_totals`) et se calculent par groupe et pour le tableau (`_total_row`).
+- **`invoice_totals` (§ 8.10)** : un bloc facultatif, préparé en `TableOut` sans en-tête, au style `invoice_totals`, ses lignes fortes en `total` ; `data` garde ses colonnes et l'acompte, que Word écrit dans `tblDescription`.
+- **Word** : la ligne de groupe est une cellule sur toute la largeur (`gridSpan`), au fond de `table_group`, au style de paragraphe « loom table group » (son gras, `keepNext`) ; le sous-total, au style « loom table subtotal » (son italique), son filet en haut de chaque cellule ; le récapitulatif, au style « loom invoice totals ». **PDF** : `SPAN` pour la ligne de groupe, les fonds et les filets par ligne ; un tableau sans en-tête ne répète rien.
+- **La relecture** reconnaît ces lignes et ce tableau par leurs styles de paragraphe ; `read(..., shown=True)` rend ce qui s'affiche, pour `loom.memory`.
+
+**Écarts avec l'analyse, à valider**
+
+1. **Un montant en euros s'arrondit au centime dès la lecture**, au demi supérieur, pas seulement un montant calculé : sinon la base de la TVA et les totaux pourraient s'écarter de ce que le tableau affiche (1,004 € + 1,004 € s'affichaient 1,00 € + 1,00 € = 2,01 €). Seuls changent les documents qui donnent des montants au-delà du centime.
+2. **L'arrondi d'une colonne calculée suit tous les types** : au centime pour `amount_eur` et `decimal`, à l'unité pour `integer` et `amount_keur`, au millième pour `percent` (ce que chacun écrit) ; l'analyse ne disait que les deux premiers.
+3. **Une formule peut citer une colonne calculée avant elle** (`{Montant HT} * (1 + {TVA})`), pas après elle ni elle-même. Une colonne citée vide laisse la cellule calculée vide, sans faute.
+4. **La ligne de TVA dit sa base** : « TVA 10 % sur 1 430,50 € ». Le libellé `tax` prend `{rate}` et `{base}` (« TVA {rate} sur {base} » ; « VAT {rate} on {base} »), vérifiés au chargement ; `tax: "TVA {rate}"` retire la base. Les taux vont du plus petit au plus grand.
+5. **Le récapitulatif** : pas d'en-tête ; le total HT en texte courant, le total TTC et le net à payer au style `table_total` (gras, filet au-dessus). L'acompte s'écrit en positif ; un acompte négatif est refusé.
+6. **La relecture du récapitulatif** lit ce que l'outil a gardé dans la description du tableau (le « texte de remplacement » de Word, en JSON : `{"amount":"Montant HT","rate":"TVA","paid":500}`), pas les montants : un acompte corrigé à la main dans Word ne revient pas. Une description absente ou illisible rend un tableau ordinaire.
+7. **`loom.memory` lit ce qui s'affiche** (`shown`) : il indexe les montants, que le bloc `invoice_totals` ne porterait pas.
+8. **Le sous-total** s'écrit « Sous-total » (`labels.subtotal`), sans le nom du groupe ; les lignes à fond alterné repartent à chaque groupe. Le libellé d'un groupe a l'emphase, ni lien ni note, 200 caractères au plus.
+9. **Le style des lignes de sous-total** est un style de paragraphe (son italique), quand l'en-tête et le total gardent leur mise en forme directe : ceux-là ne changent pas, à l'octet près.
+10. **Dans un tableau à groupes, une faute dit son groupe** : « groupe 2 « Lot 2 – Cuisine », ligne 3 ».
+11. **Le coût dépasse l'estimation** (§ 12.2) : +551 caractères pour tous (350 à 450 estimés), dont 314 de schéma (`compute`, le groupe) et 237 de description ; `invoice_totals` +745 (environ 500 estimés), dont 462 de schéma.
+12. **Constaté, hors du lot** : une valeur relue d'un document en anglais (« €1,250.50 ») ne se relit pas en nombre (`_values.convert`, commun à `excel`) ; la réécriture d'un tel tableau relu demande les nombres.
+
+**Non-régression (§ 14)**
+
+Les documents sans calcul sont identiques, octet pour octet, au lot 5, en Word comme en PDF : les 17 documents et la relecture du script d'empreintes, `DEVIS_SHA256` et `HOUSE_STYLES_SHA256`. La facture du § 11.2, écrite avec son modèle (émetteur, client encadré à côté, prestations, total, conditions), donne les montants du § 11.2 : 180,00 €, 1 250,50 € et 179,98 € ; 1 430,50 € et 179,98 € de sous-totaux ; 1 610,48 € HT ; 143,05 € et 36,00 € de TVA ; 1 789,53 € TTC. Le `.docx` passe les schémas XSD de l'ISO/IEC 29500 ; LibreOffice et le PDF de l'outil donnent la même page. Relue puis réécrite, la facture redonne le même fichier.
+
+**Essais**
+
+- `test_document.py` : 141 (16 de plus) : une colonne calculée (arrondis au centime et à l'unité, montant arrondi à la lecture, colonne citée vide, total sur une colonne calculée) ; huit formules refusées (colonne inconnue, pas de nombres, puissance, appel de fonction, nom sans accolades, colonne qui se cite, formule trop longue, division par zéro) ; ordre et type des colonnes calculées, valeurs de trop ; groupes et sous-totaux, et le graphique qui en est tiré ; groupes sans total ; fautes de groupe ; le récapitulatif du § 11.2, avec l'acompte ; en anglais, avec un taux réduit ; ses fautes ; la variante avec `invoice_totals`.
+- `test_word.py` : 76 (4 de plus) : une facture calculée (lignes de groupe, sous-totaux, styles, description du récapitulatif), relue et réécrite au même fichier ; lue telle qu'affichée ; un outil sans `invoice_totals` le dit ; LibreOffice l'imprime.
+- `test_word_styles.py` : 74 (4 de plus) : les styles des groupes, du sous-total et du récapitulatif pris à la charte, `labels.tax` sans sa base, l'ordre du schéma ; deux `labels.tax` refusés ; le coût d'`invoice_totals`.
+- `test_pdf.py` : 55 (1 de plus) : une facture calculée en PDF (groupes, sous-totaux, récapitulatif, fond des groupes).
+- `test_memory_tool.py` : 58 (1 de plus) : une facture de `loom.word` indexée telle qu'affichée.
+- Suite complète : 4 439 réussis, 201 sautés (26 de plus qu'au lot 5). ruff, format, `lint-imports` (6 contrats) et pyright passent sans erreur.
 
 ## Sources
 

@@ -1022,7 +1022,7 @@ tools:
     timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
 ```
 
-Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `blocks`, la liste des blocs facultatifs que voit le modèle — `chart` (voir « Des graphiques »), `image` (voir « Des images »), `signature`, `toc` et `checkboxes` (voir « Signature, sommaire, liste à cocher »), `fields` et `code` (voir « Des champs et du code ») —, `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), et `style`, la charte des documents (voir « Des styles de document »). Depuis loom-ia 2.1.0, `loom.pdf` a les mêmes : un même fichier de style et les mêmes modèles servent aux deux outils, la facture en Word pour l'artisan, en PDF pour l'envoi. Depuis loom-ia 2.1.0, `blocks` remplace `charts`, `images` et `extra_blocks`, refusés au chargement avec la forme qui les remplace (`charts → blocks: [chart]`). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
+Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `blocks`, la liste des blocs facultatifs que voit le modèle — `chart` (voir « Des graphiques »), `image` (voir « Des images »), `signature`, `toc` et `checkboxes` (voir « Signature, sommaire, liste à cocher »), `fields` et `code` (voir « Des champs et du code »), `invoice_totals` (voir « Des calculs ») —, `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), et `style`, la charte des documents (voir « Des styles de document »). Depuis loom-ia 2.1.0, `loom.pdf` a les mêmes : un même fichier de style et les mêmes modèles servent aux deux outils, la facture en Word pour l'artisan, en PDF pour l'envoi. Depuis loom-ia 2.1.0, `blocks` remplace `charts`, `images` et `extra_blocks`, refusés au chargement avec la forme qui les remplace (`charts → blocks: [chart]`). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
 
 `loom validate` montre les dossiers, puis le fuseau, les blocs facultatifs, les modèles, la lecture et, s'il y en a un, le style :
 
@@ -1071,7 +1071,7 @@ Un appel décrit le document entier. Celui-ci, tiré d'un run réel (modèle sim
 ```
 
 - **Blocs** : `heading` (`level` 1 à 3), `paragraph`, `list` (à puces, ou numérotée avec `ordered` ; un élément `{text, items}` porte une sous-liste), `table`, `note` (ce que le lecteur doit retenir, une mise en garde ; un `title` facultatif), `quote` (avec sa `source`). Un saut de page n'est pas un bloc depuis loom-ia 2.1.0 : c'est de la mise en page, que décide le style. `title`, à côté des blocs, est le titre du document : en tête, et dans ses propriétés.
-- **Tableaux** : les types de colonne de `loom.excel` (`text`, `integer`, `decimal`, `amount_eur`, `amount_keur`, `percent`, `date`, `datetime`, `year`, `boolean`), avec la même conversion tolérante (`1 250,50`, `02/10/2026`, `15%`, `oui`). Une ligne plus courte que les colonnes est complétée de cellules vides. `totals` ajoute une ligne de total **calculée par l'outil** — un document n'a pas de formules — : `sum`, `average`, `count`, `min` ou `max`. `caption` est la légende, sous le tableau. 8 colonnes et 500 lignes au plus : au-delà, un classeur (`excel`) se lit mieux.
+- **Tableaux** : les types de colonne de `loom.excel` (`text`, `integer`, `decimal`, `amount_eur`, `amount_keur`, `percent`, `date`, `datetime`, `year`, `boolean`), avec la même conversion tolérante (`1 250,50`, `02/10/2026`, `15%`, `oui`). Une ligne plus courte que les colonnes est complétée de cellules vides. `totals` ajoute une ligne de total **calculée par l'outil** — un document n'a pas de formules — : `sum`, `average`, `count`, `min` ou `max`. `caption` est la légende, sous le tableau. 8 colonnes et 500 lignes au plus : au-delà, un classeur (`excel`) se lit mieux. Une colonne peut être calculée par l'outil (`compute`), et les lignes rangées en groupes, chacun avec son sous-total (voir « Des calculs »).
 - **Texte** : `**gras**`, `*italique*`, `<u>souligné</u>`, et `\n` pour aller à la ligne dans le même paragraphe ; ils se combinent (`**<u>mot</u>**`). Rien d'autre : un `#` ou un `-` en tête reste du texte, `2 * 3 * 4` aussi, comme une balise seule ou non refermée, et toute autre balise (`<b>`, `<br>`).
 - **Liens, notes, renvois** (depuis loom-ia 2.1.1) : `[texte](https://…)` pour un lien (`https`, `http` ou `mailto` ; un autre schéma est refusé, et `[voir](page 2)`, sans schéma, reste du texte), `^[texte]` pour une note de bas de page (500 caractères par note, 100 par document, pas de note dans une note), `§[Titre]` pour renvoyer à un titre du document, comparé comme le plan d'un modèle (sans numéro, casse, accents ni emphase). `\^[` et `\§[` s'écrivent tels quels. Ils vont dans un paragraphe, un élément de liste, une note, une citation, une valeur de `fields` et une cellule de texte d'un tableau, qui prend aussi l'emphase ; un titre, une légende, un en-tête de colonne et un libellé n'ont que l'emphase, et le texte fixe d'un modèle n'a que les liens. Dans le `.docx`, un lien prend le style `link` ; une note est une note de bas de page de Word ; un renvoi est le numéro du titre visé (« 2.1 ») si le style numérote les titres, dans un champ que Word recalcule, et sinon le titre entre guillemets (« Travaux »), en lien vers lui. Dans le PDF, les notes vont en fin de document, sous le titre « Notes » (`labels.notes`), et chaque appel mène à sa note ; liens et renvois sont cliquables.
 - **Listes** : trois niveaux depuis loom-ia 2.1.1 : `{text, items}` s'imbrique deux fois. Les puces : •, –, ▪ ; les numéros : 1., a), i. Une liste à cocher en a deux.
@@ -1123,6 +1123,55 @@ Sont aussi refusés : un tableau de plus de 8 colonnes ou de 500 lignes, un en-t
 ```
 
 Les polices standard du PDF couvrent le français et l'Europe de l'Ouest, plus les symboles grecs et mathématiques (`≥`, `α`, `€`, `œ`, `« »` passent) ; un emoji ou un idéogramme s'imprime en carré noir. Une police embarquée (`fonts`, voir « Des styles de document ») a ses propres caractères : l'avertissement dit ceux qu'elle n'a pas.
+
+#### Des calculs
+
+Depuis loom-ia 2.1.1. Un devis, une facture : le modèle de langage donne les quantités, les prix et les taux, l'outil calcule les montants, les sous-totaux et la TVA. Il ne fait aucune addition lui-même, et sa description le lui dit (« Ne rien calculer soi-même »). Les colonnes calculées et les groupes sont dans le vocabulaire de tous les agents qui ont `loom.word` ou `loom.pdf` ; le récapitulatif de TVA se déclare (`blocks: [invoice_totals]`).
+
+```yaml
+  - python: loom.word
+    blocks: [fields, invoice_totals]
+    folders: …
+```
+
+```json
+{"type": "table",
+ "columns": [{"header": "Désignation"}, {"header": "Qté", "type": "integer"},
+             {"header": "PU HT", "type": "amount_eur"}, {"header": "TVA", "type": "percent"},
+             {"header": "Montant HT", "type": "amount_eur", "compute": "{Qté} * {PU HT}"}],
+ "rows": [{"group": "Lot 1 – Salle de bains", "rows": [["Dépose baignoire", 1, 180, 0.1], ["Receveur extra-plat", 1, 1250.5, 0.1]]},
+          {"group": "Lot 2 – Cuisine", "rows": [["Mitigeur", 2, 89.99, 0.2]]}],
+ "totals": {"Montant HT": "sum"}}
+{"type": "invoice_totals", "from_table": {"amount": "Montant HT", "rate": "TVA"}, "paid": 500}
+```
+
+L'outil écrit : les montants (180,00 €, 1 250,50 € et 179,98 €), un sous-total par lot (1 430,50 € et 179,98 €), le total (1 610,48 €), puis le récapitulatif :
+
+```text
+Total HT                        1 610,48 €
+TVA 10 % sur 1 430,50 €           143,05 €
+TVA 20 % sur 179,98 €              36,00 €
+Total TTC                       1 789,53 €
+Acompte versé                     500,00 €
+Net à payer                     1 289,53 €
+```
+
+- **Une colonne calculée** (`compute`) : une formule faite de `+ - * /`, de parenthèses, de nombres (`0.5`, avec un point) et des `{colonnes}` de nombres de la même ligne, citées par leur en-tête. Rien d'autre : ni fonction, ni puissance, ni nom ; la formule est lue par l'arbre syntaxique de Python (`ast`), jamais exécutée. Les lignes ne donnent pas les colonnes calculées : leurs valeurs suivent l'ordre des autres colonnes. Une formule cite les colonnes données, ou une colonne calculée avant elle. Le calcul se fait en décimal, arrondi au demi supérieur à ce que la colonne écrit : au centime pour `amount_eur` et `decimal`, à l'unité pour `integer` et `amount_keur`. Une colonne citée vide laisse la cellule calculée vide. Une colonne calculée peut porter un total.
+- **Un montant en euros s'arrondit au centime dès la lecture**, au demi supérieur : ce que le document additionne est ce qu'il affiche (0,125 € s'écrit 0,13 € et compte pour 0,13 €).
+- **Des groupes** : `rows` en `[{group, rows}]`, 20 groupes au plus, toutes les lignes dans des groupes ou aucune. Chaque groupe a sa ligne, sur toute la largeur du tableau (style `table_group`), gardée avec la suivante ; avec `totals`, une ligne de sous-total à la fin de chaque groupe (style `table_subtotal`, libellé `labels.subtotal`), puis le total général. Un graphique tiré du tableau prend toutes ses lignes.
+- **Le récapitulatif de TVA** (`invoice_totals`) prend ses données du tableau qui le précède, comme un graphique : `amount`, l'en-tête des montants HT (`amount_eur`), et `rate`, celui des taux (`percent`). La TVA de chaque taux se calcule sur le total HT de ce taux, arrondi au centime, au demi supérieur ; les taux vont du plus petit au plus grand. `paid`, l'acompte déjà versé, ajoute la ligne « Acompte versé » et le net à payer. Le tableau a le style `invoice_totals` : étroit, à droite, le total TTC et le net à payer en gras (`table_total`). Les libellés viennent de `labels` : `labels: { tax: "TVA {rate}" }` retire la base de la ligne de TVA. Une mention comme « TVA non applicable, art. 293 B du CGI » n'est pas un calcul : elle va dans une section au texte fixe du modèle. Il coûte environ 185 tokens par appel de modèle (745 caractères), les colonnes calculées et les groupes environ 140 pour tous (551).
+
+```text
+Document refusé :
+- bloc 1 (table), « Montant HT » : formule '{Qté} ** 2' : seuls + - * / ( ), des nombres et des {colonnes} (une colonne s'écrit entre accolades : {Qté})
+- bloc 1 (table), « Remise » : colonne inconnue « Prix » (colonnes : Désignation, Qté, PU HT, TVA, Montant HT, Remise)
+- bloc 1 (table), groupe 2 « Lot 2 – Cuisine », ligne 1, « Montant HT » : division par zéro
+- bloc 2 (invoice_totals) : groupe 2 « Lot 2 – Cuisine », ligne 3 du tableau, un montant sans taux de TVA
+```
+
+La règle d'arrondi de la TVA (par taux, sur le total HT de chaque taux) est la pratique courante ; elle est à confirmer avec un expert-comptable avant la première facture réelle.
+
+À la relecture, un tableau à groupes revient en `{"group": …, "rows": […]}`, sans ses sous-totaux, que l'outil recalcule ; la colonne calculée revient avec ses valeurs, à retirer des lignes avant de réécrire. Le récapitulatif revient en bloc `invoice_totals`, ses colonnes et l'acompte compris : l'outil les garde dans la description du tableau (« Texte de remplacement » dans Word). `loom.memory`, qui indexe ce que le document affiche, lit les groupes, les sous-totaux et le récapitulatif en lignes de tableau.
 
 #### Des graphiques
 
@@ -1439,7 +1488,7 @@ tools.0.loom.word.templates.facture — le modèle nomme son style dans son fich
 
 **Le modèle de langage n'en voit rien**, sauf les styles qui lui sont proposés (plus bas) : ni le schéma ni la description ne changent, et le style ne coûte aucun token. Un document qui suit un modèle prend `default.yaml`, la charte, puis le style du modèle ; un document libre (`none`), ou un outil sans modèles, s'arrête à la charte ; un outil sans `style` écrit dans `default.yaml` seul, le même fichier qu'avant, octet pour octet.
 
-**Les fichiers d'abord, l'héritage ensuite.** Chaque style complète le même style des fichiers précédents, propriété par propriété : une charte qui écrit `heading1: { color: brand }` garde la taille, le gras et les espacements de `default.yaml`. Puis chaque style prend les propriétés de sa base (`text`, sauf `quote_source`, qui part de `quote`, et `table_header` et `table_total`, qui partent de `table`), déjà complétée par les fichiers, puis les siennes : la police de `text` vaut pour les titres sans être répétée.
+**Les fichiers d'abord, l'héritage ensuite.** Chaque style complète le même style des fichiers précédents, propriété par propriété : une charte qui écrit `heading1: { color: brand }` garde la taille, le gras et les espacements de `default.yaml`. Puis chaque style prend les propriétés de sa base (`text`, sauf `quote_source`, qui part de `quote`, `fields_label`, qui part de `fields`, et `table_header`, `table_total`, `table_group`, `table_subtotal` et `invoice_totals`, qui partent de `table`), déjà complétée par les fichiers, puis les siennes : la police de `text` vaut pour les titres sans être répétée.
 
 ```yaml
 # prompts/styles/charte.yaml
@@ -1470,6 +1519,8 @@ footer:                    # « Page n / N » vient de default.yaml
 | `paragraph`, `list`, `note`, `caption` | Les blocs du même nom ; `caption` est la légende d'un tableau, d'une image, d'un graphique |
 | `quote`, `quote_source` | Une citation et sa source |
 | `table`, `table_header`, `table_total` | Le tableau, sa ligne d'en-tête, sa ligne de total |
+| `table_group`, `table_subtotal` | La ligne d'un groupe, celle de son sous-total |
+| `invoice_totals` | Le récapitulatif de TVA (étroit, à droite) |
 | `box` | Le cadre d'une section encadrée (`box: true`) |
 | `toc` | Le titre du sommaire (il part de `heading1`), ses niveaux, ses numéros de page |
 | `signature`, `signature_mention` | Le libellé d'un signataire, la mention (« Bon pour accord ») |
@@ -1514,7 +1565,7 @@ footer:                    # « Page n / N » vient de default.yaml
 | `page` | `size` : `A4`, `A5`, `Letter` ; `orientation` : `portrait`, `landscape` ; `margins`, ou `margin_top`, `margin_bottom`, `margin_left`, `margin_right`, en cm (0,5 à 5) |
 | `numbering` | La numérotation des titres : `none`, `decimal` (1., 2.1, 2.1.3), `article` (« Article 1 – ») |
 | `language` | `fr` ou `en` : la langue déclarée du document (correcteur, césure), l'écriture des nombres et des dates (« 1 250,50 € », « 10/11/2026 » ; « €1,250.50 », « 11/10/2026 »), les libellés |
-| `labels` | Les libellés que l'outil écrit, un par un : `table` (Tableau), `figure` (Figure), `contents` (Sommaire), `date` (Date :), `signature` (Signature :), `article` (Article), `total` (Total), `notes` (Notes, le titre des notes de fin d'un PDF) |
+| `labels` | Les libellés que l'outil écrit, un par un : `table` (Tableau), `figure` (Figure), `contents` (Sommaire), `date` (Date :), `signature` (Signature :), `article` (Article), `total` (Total), `notes` (Notes, le titre des notes de fin d'un PDF), `subtotal` (Sous-total), `total_excl_tax` (Total HT), `tax` (TVA {rate} sur {base} : `{rate}`, le taux, obligatoire ; `{base}`, le montant HT de ce taux), `total_incl_tax` (Total TTC), `paid` (Acompte versé), `due` (Net à payer) |
 | `image` | `grid` : deux images `half` qui se suivent se posent côte à côte, chacune avec sa légende |
 | `chart` | `colors` : la couleur de chaque série, dans l'ordre (12 au plus) ; `text`, `grid`, `title` : le texte, la grille, le titre |
 | `fonts` | Les fichiers TrueType d'une police, que le PDF embarque : `fonts: { Inter: { regular: fonts/Inter-Regular.ttf, bold: …, italic: …, bold_italic: … } }` (voir plus bas) |
@@ -1672,7 +1723,7 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 ```
 
 - **Titres** : `level` 0 pour le titre du document (style « Titre »), 1 et plus pour les titres de section. Un document écrit ailleurs est reconnu par ses niveaux de plan ou ses styles de titre, quelle que soit la langue de Word.
-- **Tableaux** : les cellules en texte, telles qu'affichées, avec leur emphase, leurs liens et leurs notes ; une cellule fusionnée laisse les suivantes vides. L'emphase de la ligne d'en-tête, ou d'une ligne toute en gras (un total), ne revient pas : c'est celle du style.
+- **Tableaux** : les cellules en texte, telles qu'affichées, avec leur emphase, leurs liens et leurs notes ; une cellule fusionnée laisse les suivantes vides. Les groupes et le récapitulatif de TVA : voir « Des calculs ». L'emphase de la ligne d'en-tête, ou d'une ligne toute en gras (un total), ne revient pas : c'est celle du style.
 - **Liens, notes, renvois** : un lien revient en `[texte](adresse)` (vers un autre schéma, un fichier, son texte seul) ; une note de bas de page en `^[…]`, à sa place, et aussi une note de fin d'un document écrit ailleurs ; un renvoi en `§[Titre]`, le titre visé, qu'il soit un champ (« Insertion > Renvoi » de Word) ou un lien vers un signet de ce titre ; vers un autre signet, son texte. Un `^[` ou un `§[` du texte revient échappé (`\^[`), pour ne pas se réécrire en note. Une liste revient sur ses trois niveaux.
 - **Coupe** : au-delà de 40 000 caractères, `"truncated": true`, `"next_start"` (le bloc où reprendre, avec `start`) et `"outline"`, le plan entier avec l'indice de chaque titre, pour aller droit à une section.
 - **Graphiques** : un graphique du `.docx` revient en bloc `chart`, à sa place, avec ses libellés et ses séries (ce que Word garde dans le graphique) ; un type que l'outil n'écrit pas (aires, nuage de points…) revient avec son nom technique en `kind`. Le rapport ci-dessus, relu : `{"type": "chart", "kind": "horizontal_bar", "title": "Total TTC par client", "categories": ["Julien Barre", "Chauffage Lemaire Rénovation", "Guillot SARL"], "series": [{"name": "Total TTC", "values": [18034.17, 16247.36, 14709.17]}]}`. La lecture rend les graphiques même sans `chart` dans `blocks` ; une note dit alors que l'outil n'en écrit pas, et de les retirer avant de réécrire le document.
@@ -1712,7 +1763,7 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 - **La lecture d'un `.docx` ne voit pas** les images sans `image` dans `blocks` (ni, avec, celles d'un tableau ou d'une zone de texte), les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
 - **PDF** : un bloc qui ne tient pas dans une page (une ligne de tableau très haute) est refusé : le découper. Une section côte à côte ou encadrée, une note longue continuent sur la page suivante.
 - **Rejeu** : comme pour `excel`, le rejeu sert le résultat du journal sans réécrire le fichier ; en rejeu en variante, un outil qui ne fait que lire est exécuté, un outil qui peut écrire ne l'est jamais.
-- **Coût** : environ 1,4 k tokens par outil et par appel de modèle, description et schéma compris ; environ 430 de plus avec `chart`, environ 190 avec `image`, environ 200 avec `signature`, `toc` et `checkboxes` ensemble, environ 115 avec `fields`, environ 75 avec `code`, environ 250 avec `templates` (dont le champ `sections`) et 30 de plus par modèle déclaré (son nom et sa description), environ 80 pour un premier style proposé dans la charte. Le texte d'un modèle et ses styles proposés ne coûtent qu'à sa lecture.
+- **Coût** : environ 1,5 k tokens par outil et par appel de modèle, description et schéma compris ; environ 430 de plus avec `chart`, environ 190 avec `image`, environ 200 avec `signature`, `toc` et `checkboxes` ensemble, environ 115 avec `fields`, environ 75 avec `code`, environ 185 avec `invoice_totals`, environ 250 avec `templates` (dont le champ `sections`) et 30 de plus par modèle déclaré (son nom et sa description), environ 80 pour un premier style proposé dans la charte. Le texte d'un modèle et ses styles proposés ne coûtent qu'à sa lecture.
 
 ### `loom.sql` : des bases SQLite et Postgres, avec des droits par table
 

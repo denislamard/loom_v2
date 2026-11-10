@@ -126,6 +126,9 @@ BASES: Final[Mapping[str, str | None]] = {
     "table": "text",
     "table_header": "table",
     "table_total": "table",
+    "table_group": "table",
+    "table_subtotal": "table",
+    "invoice_totals": "table",
     "box": "text",
     "toc": "text",
     "signature": "text",
@@ -191,7 +194,15 @@ LABEL_KEYS: Final = (
     "article",
     "total",
     "notes",
+    "subtotal",
+    "total_excl_tax",
+    "tax",
+    "total_incl_tax",
+    "paid",
+    "due",
 )
+# Les champs du libellé d'une ligne de TVA : le taux (obligatoire) et sa base.
+TAX_FIELDS: Final = frozenset({"rate", "base"})
 LABELS: Final[Mapping[Language, Mapping[str, str]]] = {
     "fr": {
         "table": "Tableau",
@@ -202,6 +213,12 @@ LABELS: Final[Mapping[Language, Mapping[str, str]]] = {
         "article": "Article",
         "total": "Total",
         "notes": "Notes",
+        "subtotal": "Sous-total",
+        "total_excl_tax": "Total HT",
+        "tax": "TVA {rate} sur {base}",
+        "total_incl_tax": "Total TTC",
+        "paid": "Acompte versé",
+        "due": "Net à payer",
     },
     "en": {
         "table": "Table",
@@ -212,6 +229,12 @@ LABELS: Final[Mapping[Language, Mapping[str, str]]] = {
         "article": "Article",
         "total": "Total",
         "notes": "Notes",
+        "subtotal": "Subtotal",
+        "total_excl_tax": "Total excl. VAT",
+        "tax": "VAT {rate} on {base}",
+        "total_incl_tax": "Total incl. VAT",
+        "paid": "Deposit paid",
+        "due": "Amount due",
     },
 }
 
@@ -376,6 +399,17 @@ class PageSpec(_Spec):
     margin_right: Annotated[float, Field(ge=0.5, le=5)] | None = None
 
 
+def _tax_label(label: str) -> str:
+    """Le libellé d'une ligne de TVA : {rate} (le taux), et au besoin {base} (sa base)."""
+    fields = set(re.findall(r"\{([^{}]*)\}", label))
+    if "rate" not in fields or not fields <= TAX_FIELDS:
+        raise ValueError(
+            f"labels.tax {label!r} : {{rate}} (le taux), et au besoin {{base}} (le montant HT "
+            "de ce taux), sans autre champ — ex. « TVA {rate} »"
+        )
+    return label
+
+
 class LabelsSpec(_Spec):
     table: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     figure: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
@@ -385,6 +419,14 @@ class LabelsSpec(_Spec):
     article: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     total: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     notes: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
+    subtotal: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
+    total_excl_tax: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
+    tax: (
+        Annotated[str, Field(min_length=1, max_length=MAX_LABEL), AfterValidator(_tax_label)] | None
+    ) = None
+    total_incl_tax: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
+    paid: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
+    due: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
 
 
 class ImageSpec(_Spec):
@@ -700,6 +742,12 @@ class Labels:
     article: str = "Article"
     total: str = "Total"
     notes: str = "Notes"
+    subtotal: str = "Sous-total"
+    total_excl_tax: str = "Total HT"
+    tax: str = "TVA {rate} sur {base}"
+    total_incl_tax: str = "Total TTC"
+    paid: str = "Acompte versé"
+    due: str = "Net à payer"
 
 
 FRENCH: Final = Labels()
