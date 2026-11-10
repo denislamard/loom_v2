@@ -221,6 +221,16 @@ def substitutions(style: Style) -> dict[str, str]:
     return said
 
 
+def _on_draw(canvas: Canvas, name: str, callback: Callable[[Canvas, str, str], None]) -> None:
+    """Le rappel d'un ``<onDraw name=…>`` : reportlab 5 le cherche par ``getNamedCB`` ;
+    avant (4.4, la borne basse), par un attribut du canevas."""
+    named = getattr(canvas, "setNamedCB", None)
+    if named is not None:
+        named(name, callback)
+    else:
+        setattr(canvas, name, callback)
+
+
 def _covers(font: str, char: str) -> bool:
     found: Any = pdfmetrics.getFont(font)
     if isinstance(found, TTFont):
@@ -400,7 +410,7 @@ class _Contents(Flowable):
             drawPageNumbers(canv, self.levels[level], [(page, None)], aW, aH, " . ")
 
         if self.numbered:
-            canvas.setNamedCB("loom_toc_page", end)
+            _on_draw(canvas, "loom_toc_page", end)
         rows: list[list[Flowable]] = []
         for level, label, key in self.entries:
             text = f'<a href="#{key}">{escape(label)}</a>'
@@ -1538,7 +1548,7 @@ def _build(
 
     def on_page(cover: bool) -> Callable[[Canvas, Any], None]:
         def draw(canvas: Canvas, document: Any) -> None:
-            cast(Any, canvas).setNamedCB(MARK, mark)
+            _on_draw(canvas, MARK, mark)
             page = canvas.getPageNumber()
             bands.draw(
                 canvas,
