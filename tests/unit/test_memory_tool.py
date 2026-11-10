@@ -483,6 +483,8 @@ def test_word_blocks_become_markdown() -> None:
             {"type": "chart", "title": "Ventes"},
             {"type": "heading", "level": 2, "text": "Détail"},
             {"type": "note", "text": "**Validité**\n3 mois."},
+            {"type": "fields", "items": [["Client", "M. **Dupont**^[Gérant.]"], ["Date", ""]]},
+            {"type": "code", "text": "SELECT 1;\n  -- fin"},
         ]
     )
     assert title == "Plaquette commerciale"
@@ -490,7 +492,8 @@ def test_word_blocks_become_markdown() -> None:
         "# Plaquette commerciale\n\n## Offre\n\nUn **agent** par artisan.\n\n"
         "1. Cadrage\n2. Réalisation\n   - code\n   - tests\n\n"
         "| Poste | Prix |\n|---|---|\n| Audit \\| conseil | 500 € |\n\n"
-        "> Travail\n> soigné.\n\n### Détail\n\n**Validité**\n3 mois."
+        "> Travail\n> soigné.\n\n### Détail\n\n**Validité**\n3 mois.\n\n"
+        "**Client** : M. **Dupont**^[Gérant.]\n**Date** :\n\n```\nSELECT 1;\n  -- fin\n```"
     )
 
 

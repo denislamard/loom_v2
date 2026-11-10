@@ -919,7 +919,7 @@ async def test_an_embedded_font(disk: Path) -> None:
     bold = (FONTS / "Caladea-Bold.ttf").read_bytes()
     style = {"fonts": {"Caladea": {"regular": regular, "bold": bold}}, "text": {"font": "Caladea"}}
     tool = make(disk, SORTIE, style={"spec": style})
-    assert ("polices", "Caladea : embarquée") in tool.settings().options
+    assert ("polices", "Caladea : embarquée ; Courier New → Courier") in tool.settings().options
     blocks = [{"type": "paragraph", "text": "Un **devis** et *une* note 🙂."}]
     first = await call(tool, path="sortie/a.pdf", title="Devis", blocks=blocks)
     second = await call(tool, path="sortie/b.pdf", title="Devis", blocks=blocks)
@@ -982,7 +982,7 @@ def test_fonts_are_read_when_the_config_loads(demo: ConfigFactory, tmp_path: Pat
     assert isinstance(declared, PythonTool)
     params = PdfParams.model_validate(builtin_settings(declared, PdfParams))
     mounted = build(params, BuiltinContext(base_dir=tmp_path))
-    assert ("polices", "Caladea : embarquée") in mounted.settings().options
+    assert ("polices", "Caladea : embarquée ; Courier New → Courier") in mounted.settings().options
     # Le format de la 2.0 : fonts nommait les polices du corps et des titres.
     (prompts / "styles" / "charte.yaml").write_text("fonts: { body: Arial }\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="fonts → font, sur text et sur chaque titre"):
@@ -991,4 +991,61 @@ def test_fonts_are_read_when_the_config_loads(demo: ConfigFactory, tmp_path: Pat
 
 def test_validate_says_how_the_pdf_writes_the_fonts(disk: Path) -> None:
     tool = make(disk, SORTIE, style={"spec": {"heading1": {"font": "Georgia"}}})
-    assert ("polices", "Calibri → Helvetica ; Georgia → Times") in tool.settings().options
+    assert (
+        "polices",
+        "Calibri → Helvetica ; Courier New → Courier ; Georgia → Times",
+    ) in tool.settings().options
+
+
+# --- Le texte enrichi (lot 5) -------------------------------------------------------------
+
+RICH: Final[list[dict[str, Any]]] = [
+    {"type": "heading", "text": "Objet"},
+    {
+        "type": "paragraph",
+        "text": "Voir [le site](https://example.com/a?b=1)^[Par [courriel](mailto:a@b.fr), "
+        "voir §[Détail].] et le détail en §[Détail].",
+    },
+    {"type": "heading", "text": "Détail", "level": 2},
+    {
+        "type": "list",
+        "ordered": True,
+        "items": [{"text": "un", "items": [{"text": "sous", "items": ["fin"]}]}],
+    },
+    {
+        "type": "table",
+        "columns": [{"header": "Désignation"}],
+        "rows": [["**Pose**^[Certifiée.] voir [fiche](https://example.com/f)"]],
+    },
+    {"type": "fields", "items": [["Client", "M. **Dupont**"], ["Signature", ""]]},
+    {"type": "code", "text": "def f():\n    return  1"},
+]
+
+
+async def test_rich_text_in_a_pdf(disk: Path) -> None:
+    tool = make(disk, SORTIE, blocks=["fields", "code"], style={"spec": {"numbering": "decimal"}})
+    written = await call(tool, path="sortie/riche.pdf", title="Devis", blocks=RICH)
+    assert written["warnings"] == []
+    reader = PdfReader(disk / "sortie" / "riche.pdf")
+    text = "\n".join(page.extract_text() for page in reader.pages)
+    # Le renvoi : le numéro du titre visé ; les notes, en fin de document, sous « Notes ».
+    assert "le détail en 1.1." in text
+    notes = text[text.index("Notes") :]
+    assert "1 Par courriel, voir 1.1." in notes and "2 Certifiée." in notes
+    # Trois niveaux numérotés : 1., a), i. ; le code garde ses espaces.
+    for said in ("1.", "a)", "i.", "Client", "Dupont", "Signature", "return  1"):
+        assert said in text, said
+    links: list[Any] = []
+    for page in reader.pages:
+        for annotation in cast(list[Any], page.get("/Annots") or []):
+            action = annotation.get_object().get("/A")
+            links.append(action.get("/URI") if action is not None else "interne")
+    # Les liens externes, et les liens internes (appels de note, renvois) vers leur ancre.
+    assert {"https://example.com/a?b=1", "mailto:a@b.fr", "https://example.com/f"} <= set(links)
+    assert links.count("interne") >= 4
+
+
+async def test_a_pdf_without_notes_has_no_notes_heading(tool: PdfTool, disk: Path) -> None:
+    await call(tool, path="sortie/devis.pdf", **DEVIS)
+    text = PdfReader(disk / "sortie" / "devis.pdf").pages[0].extract_text()
+    assert "Notes" not in text

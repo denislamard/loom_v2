@@ -558,7 +558,11 @@ def test_the_keys_of_2_0_say_the_new_form(demo: ConfigFactory, old: str, said: s
     ("blocks", "said"),
     [
         (["chart", "chart"], "bloc nommé deux fois : chart"),
-        (["graphique"], "Input should be 'chart', 'image', 'signature', 'toc' or 'checkboxes'"),
+        (
+            ["graphique"],
+            "Input should be 'chart', 'image', 'signature', 'toc', 'checkboxes', 'fields' "
+            "or 'code'",
+        ),
     ],
 )
 def test_blocks_are_known_and_named_once(demo: ConfigFactory, blocks: list[str], said: str) -> None:
@@ -1394,3 +1398,226 @@ async def test_windows_line_endings_become_line_breaks(tool: WordTool, disk: Pat
         {"type": "list", "ordered": False, "items": ["a\nb"]},
     ]
     assert found["blocks"][3]["rows"] == [["Dési\ngnation", "Note"], ["Pose\nfinition", "ok"]]
+
+
+# --- Le texte enrichi (lot 5) -----------------------------------------------------------
+
+RICH: Final[list[dict[str, Any]]] = [
+    {"type": "heading", "text": "Objet"},
+    {
+        "type": "paragraph",
+        "text": "Voir [le site](https://example.com/devis?a=1&b=2) et [**le guide**]"
+        "(https://example.com/guide). Une note^[Par virement, voir [ici](mailto:a@b.fr) et "
+        "§[Conditions].] et le détail en §[Travaux]. Tels quels : \\^[x] et \\§[y].",
+    },
+    {"type": "heading", "text": "Travaux"},
+    {
+        "type": "list",
+        "items": [
+            "Dépose",
+            {
+                "text": "Pose^[Certifiée.]",
+                "items": [{"text": "receveur", "items": ["extra-plat", "*antidérapant*"]}, "paroi"],
+            },
+        ],
+    },
+    {
+        "type": "list",
+        "ordered": True,
+        "items": [{"text": "un", "items": [{"text": "a", "items": ["i", "ii"]}]}, "deux"],
+    },
+    {"type": "fields", "items": [["Client", "M. **Dupont**"], ["Signature", ""]]},
+    {"type": "code", "text": "def total(lignes):\n    return sum(lignes)  # HT\n\n\tfin"},
+    {"type": "heading", "text": "Conditions", "level": 2},
+    {"type": "paragraph", "text": "Voir [notre site](https://example.com/devis?a=1&b=2)."},
+]
+
+
+def rich_tool(disk: Path, **params: Any) -> WordTool:
+    return make(
+        disk,
+        {"name": "modeles", "path": "modeles", "rights": ["read"]},
+        {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]},
+        blocks=["fields", "code"],
+        **params,
+    )
+
+
+async def test_rich_text_is_written_read_back_and_rewritten(disk: Path) -> None:
+    tool = rich_tool(disk)
+    written = await call(tool, path="sortie/riche.docx", title="Devis", blocks=RICH)
+    path = disk / "sortie" / "riche.docx"
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+        document = archive.read("word/document.xml").decode()
+        relations = archive.read("word/_rels/document.xml.rels").decode()
+        notes = archive.read("word/footnotes.xml").decode()
+        note_relations = archive.read("word/_rels/footnotes.xml.rels").decode()
+        settings = archive.read("word/settings.xml").decode()
+        types = archive.read("[Content_Types].xml").decode()
+    assert "word/footnotes.xml" in names and "footnotes+xml" in types
+    assert '<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>' in settings
+    # Un lien : une relation externe par adresse, la même pour ses deux emplois.
+    assert relations.count('TargetMode="External"') == 2
+    assert 'Target="https://example.com/devis?a=1&amp;b=2"' in relations
+    assert document.count('<w:hyperlink r:id="rIdLink1"') == 2
+    # Les notes : leur appel dans le corps, leur texte (et ses liens) à part.
+    assert document.count("<w:footnoteReference") == 2
+    assert 'w:id="2"' in notes and "Certifiée." in notes
+    assert 'Target="mailto:a@b.fr"' in note_relations
+    # Un renvoi sans numérotation : le titre entre guillemets, en lien vers son signet.
+    assert '<w:bookmarkStart w:id="2002" w:name="_Ref_loom_2"/>' in document
+    assert '<w:hyperlink w:anchor="_Ref_loom_2" w:history="1">' in document
+    assert "\u00ab\u00a0Travaux\u00a0\u00bb" in document
+    # Les champs : un tableau « loom fields » ; le code : un paragraphe, ses lignes en sauts.
+    assert '<w:tblStyle w:val="LoomFields"/>' in document
+    assert document.count('<w:pStyle w:val="LoomCode"/>') == 1
+    found = await call(tool, action="read", path="sortie/riche.docx")
+    blocks = [b for b in found["blocks"] if b.get("level") != 0]
+    expected = [
+        {**block, "ordered": block.get("ordered", False)} if block["type"] == "list" else block
+        for block in RICH
+    ]
+    expected = [
+        {"type": "heading", "level": block.get("level", 1), "text": block["text"]}
+        if block["type"] == "heading"
+        else block
+        for block in expected
+    ]
+    assert blocks == expected
+    again = await call(tool, path="sortie/riche2.docx", title="Devis", blocks=blocks)
+    assert again["sha256"] == written["sha256"]
+
+
+@pytest.mark.parametrize(
+    ("numbering", "said"),
+    [
+        (
+            "decimal",
+            '<w:fldSimple w:instr=" REF _Ref_loom_3 \\n \\t \\h "><w:r>'
+            '<w:t xml:space="preserve">2.1</w:t></w:r></w:fldSimple>',
+        ),
+        # Un article : son numéro en lien (LibreOffice récrirait le champ « Article 2 » et son
+        # tiret).
+        (
+            "article",
+            '<w:hyperlink w:anchor="_Ref_loom_2" w:history="1"><w:r>'
+            '<w:t xml:space="preserve">2</w:t></w:r></w:hyperlink>',
+        ),
+    ],
+)
+async def test_a_reference_to_a_numbered_heading_is_its_number(
+    disk: Path, numbering: str, said: str
+) -> None:
+    tool = rich_tool(disk, style={"spec": {"numbering": numbering}})
+    target = "Détail" if numbering == "decimal" else "Travaux"
+    await call(
+        tool,
+        path="sortie/n.docx",
+        blocks=[
+            {"type": "heading", "text": "Objet"},
+            {"type": "paragraph", "text": f"Voir §[{target}]."},
+            {"type": "heading", "text": "Travaux"},
+            {"type": "heading", "text": "Détail", "level": 2},
+        ],
+    )
+    with zipfile.ZipFile(disk / "sortie" / "n.docx") as archive:
+        assert said in archive.read("word/document.xml").decode()
+    found = await call(tool, action="read", path="sortie/n.docx")
+    assert {"type": "paragraph", "text": f"Voir §[{target}]."} in found["blocks"]
+
+
+async def test_a_document_without_rich_text_has_no_footnotes(disk: Path) -> None:
+    await call(rich_tool(disk), path="sortie/a.docx", **DEVIS)
+    with zipfile.ZipFile(disk / "sortie" / "a.docx") as archive:
+        assert "word/footnotes.xml" not in archive.namelist()
+        assert "footnotePr" not in archive.read("word/settings.xml").decode()
+        assert "hyperlink" not in archive.read("word/_rels/document.xml.rels").decode()
+
+
+async def test_reads_links_notes_and_references_from_elsewhere(disk: Path) -> None:
+    """Un document d'ailleurs : un renvoi en champ complexe (celui qu'écrit Word) ou en lien
+    interne, vers un signet de titre ; une note de fin ; un lien hors des schémas permis
+    revient en texte ; un renvoi vers un signet qui n'est pas un titre, son texte."""
+    hyperlink = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+    rels = "http://schemas.openxmlformats.org/package/2006/relationships"
+    r = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    styles = '<w:style w:type="paragraph" w:styleId="T1"><w:name w:val="heading 1"/></w:style>'
+    body = (
+        '<w:p><w:pPr><w:pStyle w:val="T1"/></w:pPr><w:bookmarkStart w:id="1" w:name="_Ref1"/>'
+        '<w:r><w:t>Garantie</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>'
+        '<w:p><w:r><w:t xml:space="preserve">Voir </w:t></w:r>'
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> REF _Ref1 \\r \\h </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r>'
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+        '<w:r><w:t xml:space="preserve">, </w:t></w:r>'
+        '<w:hyperlink w:anchor="_Ref1"><w:r><w:t>ici</w:t></w:r></w:hyperlink>'
+        '<w:r><w:t xml:space="preserve">, </w:t></w:r>'
+        '<w:hyperlink w:anchor="_Autre"><w:r><w:t>là</w:t></w:r></w:hyperlink>'
+        '<w:r><w:t xml:space="preserve">, </w:t></w:r>'
+        '<w:hyperlink r:id="rL1"><w:r><w:t>le site</w:t></w:r></w:hyperlink>'
+        '<w:r><w:t xml:space="preserve">, </w:t></w:r>'
+        '<w:hyperlink r:id="rL2"><w:r><w:t>le fichier</w:t></w:r></w:hyperlink>'
+        '<w:r><w:endnoteReference w:id="1"/></w:r><w:r><w:t>.</w:t></w:r>'
+        '<w:bookmarkStart w:id="2" w:name="_Autre"/><w:bookmarkEnd w:id="2"/></w:p>'
+    )
+    data = docx(
+        body.replace("<w:hyperlink r:id", f"<w:hyperlink {r} r:id"),
+        styles=styles,
+        extra={
+            "word/endnotes.xml": f"<w:endnotes {NS}>"
+            '<w:endnote w:type="separator" w:id="0"><w:p><w:r><w:separator/></w:r></w:p>'
+            '</w:endnote><w:endnote w:id="1"><w:p><w:r><w:endnoteRef/></w:r>'
+            '<w:r><w:t xml:space="preserve"> Une note de fin.</w:t></w:r></w:p></w:endnote>'
+            "</w:endnotes>",
+        },
+    )
+    # Les relations du corps : ses styles, ses notes de fin, ses deux liens.
+    data = _replace(
+        data,
+        "word/_rels/document.xml.rels",
+        f'<Relationships xmlns="{rels}">'
+        '<Relationship Id="rS" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+        'relationships/styles" Target="styles.xml"/>'
+        '<Relationship Id="rE" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+        'relationships/endnotes" Target="endnotes.xml"/>'
+        f'<Relationship Id="rL1" Type="{hyperlink}" Target="https://a.fr" '
+        'TargetMode="External"/>'
+        f'<Relationship Id="rL2" Type="{hyperlink}" Target="file:///C:/devis.pdf" '
+        'TargetMode="External"/></Relationships>',
+    )
+    (disk / "modeles" / "ailleurs.docx").write_bytes(data)
+    found = await call(rich_tool(disk), action="read", path="modeles/ailleurs.docx")
+    assert found["blocks"][1] == {
+        "type": "paragraph",
+        "text": "Voir §[Garantie], §[Garantie], là, [le site](https://a.fr), le fichier"
+        "^[Une note de fin.].",
+    }
+
+
+async def test_table_emphasis_reads_back_except_header_and_total(disk: Path) -> None:
+    tool = rich_tool(disk)
+    table = {
+        "type": "table",
+        "columns": [{"header": "Désignation"}, {"header": "Montant", "type": "amount_eur"}],
+        "rows": [["**Pose** de la [paroi](https://a.fr)^[Verre trempé.]", 10]],
+        "totals": {"Montant": "sum"},
+    }
+    await call(tool, path="sortie/t.docx", blocks=[table])
+    found = await call(tool, action="read", path="sortie/t.docx")
+    assert found["blocks"][0]["rows"] == [
+        ["Désignation", "Montant"],
+        ["**Pose** de la [paroi](https://a.fr)^[Verre trempé.]", "10,00\u00a0€"],
+        ["Total", "10,00\u00a0€"],
+    ]
+
+
+async def test_libreoffice_shows_notes_and_references(disk: Path, soffice: str) -> None:
+    tool = rich_tool(disk, style={"spec": {"numbering": "decimal"}})
+    await call(tool, path="sortie/riche.docx", title="Devis", blocks=RICH)
+    out = disk / "converti"
+    convert(soffice, disk / "sortie" / "riche.docx", out, "txt:Text (encoded):UTF8")
+    text = (out / "riche.txt").read_text(encoding="utf-8-sig")
+    # Le renvoi recalculé par LibreOffice : « 2 » ; l'appel de la note, son numéro.
+    assert "Une note1 et le détail en 2." in text and "2.1 Conditions" in text

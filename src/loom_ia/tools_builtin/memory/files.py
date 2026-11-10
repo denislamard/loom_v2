@@ -159,6 +159,18 @@ def word_markdown(blocks: Sequence[JsonValue]) -> tuple[str | None, str]:
                     parts.append(table)
             case "quote":
                 parts.append("\n".join(f"> {line}" for line in text.splitlines()))
+            case "fields":
+                parts.append(
+                    "\n".join(
+                        f"**{label}** : {value}".rstrip()
+                        for label, value in (
+                            cast(list[str], pair)
+                            for pair in cast(list[JsonValue], block.get("items") or [])
+                        )
+                    )
+                )
+            case "code":
+                parts.append(f"```\n{block.get('text') or ''}\n```")
             case _:
                 # Paragraphe, note, bloc coupé ; un graphique n'a pas de texte.
                 if text:

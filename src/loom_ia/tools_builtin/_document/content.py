@@ -11,20 +11,27 @@ d'une image dans la page aussi (``placed``) ; ses octets sont lus avant, par
 l'outil, et ``prepare`` ne touche jamais au disque.
 
 Dans un texte, ``**gras**``, ``*italique*`` et ``<u>souligné</u>`` marquent l'emphase ;
-un saut de ligne reste un saut de ligne dans le même paragraphe.
+un saut de ligne reste un saut de ligne dans le même paragraphe. Un paragraphe, un élément
+de liste, une note, une citation, une cellule de texte et la valeur d'un champ prennent
+aussi un lien (``[texte](https://…)``), une note de bas de page (``^[texte]``) et un renvoi
+à un titre du document (``§[Titre]``) : ``rich``. Un titre, une légende, un libellé n'ont
+que l'emphase, et un bloc ``code`` n'a aucun balisage.
 """
 
 import dataclasses
 import datetime as dt
 import math
 import re
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Final, Literal
 from zoneinfo import ZoneInfo
 
 from loom_ia.tools_builtin._document.arguments import (
     MAX_CATEGORIES,
+    MAX_CODE_LINES,
+    MAX_FIELD_LABEL,
+    MAX_FIELD_VALUE,
     MAX_IMAGES,
     MAX_IMAGES_BYTES,
     MAX_ITEMS,
@@ -36,7 +43,9 @@ from loom_ia.tools_builtin._document.arguments import (
     Chart,
     ChartKind,
     CheckList,
+    Code,
     Contents,
+    Fields,
     Heading,
     Image,
     ImageWidth,
@@ -47,6 +56,7 @@ from loom_ia.tools_builtin._document.arguments import (
     Problems,
     Quote,
     Signature,
+    SubItem,
     Table,
     WriteArguments,
     WrittenBlock,
@@ -54,7 +64,7 @@ from loom_ia.tools_builtin._document.arguments import (
 )
 from loom_ia.tools_builtin._document.picture import Picture
 from loom_ia.tools_builtin._style_params import FRENCH, Labels, Language
-from loom_ia.tools_builtin._templates import Template, fixed_paragraphs
+from loom_ia.tools_builtin._templates import Template, fixed_paragraphs, key
 from loom_ia.tools_builtin._values import Aggregate, ColumnType, Stored, convert
 
 MAX_TITLE: Final = 300
@@ -88,12 +98,21 @@ type Align = Literal["left", "center", "right"]
 
 @dataclass(frozen=True, slots=True)
 class Run:
-    """Un segment de texte et son emphase ; ``\\n`` y est un saut de ligne."""
+    """Un segment de texte et son emphase ; ``\\n`` y est un saut de ligne.
+
+    ``link`` : l'adresse d'un lien. ``note`` : une note de bas de page, son texte ; la
+    marque n'a pas de texte à elle (``text`` vide), le format la numérote. ``ref`` : un
+    renvoi, le rang du titre visé parmi les titres du document (1 pour le premier) ;
+    ``text`` est ce titre, que le format écrit, ou remplace par son numéro.
+    """
 
     text: str
     bold: bool = False
     italic: bool = False
     underline: bool = False
+    link: str | None = None
+    note: tuple[Run, ...] | None = None
+    ref: int | None = None
 
 
 type Inline = tuple[Run, ...]
@@ -122,11 +141,12 @@ class ParagraphOut:
 
 @dataclass(frozen=True, slots=True)
 class Entry:
+    """Un élément de liste, et sa sous-liste (trois niveaux en tout)."""
+
     runs: Inline
-    children: tuple[Inline, ...] = ()
-    # Une liste à cocher : l'élément est coché, et chacun de ses sous-éléments.
+    children: tuple[Entry, ...] = ()
+    # Une liste à cocher : l'élément est coché.
     checked: bool = False
-    children_checked: tuple[bool, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +156,20 @@ class ListOut:
     # Une liste à cocher (``blocks: [checkboxes]``) : une case devant chaque élément.
     checkboxes: bool = False
     style: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FieldsOut:
+    """Des libellés et leurs valeurs ; une valeur vide laisse une ligne à remplir."""
+
+    items: tuple[tuple[str, Inline], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CodeOut:
+    """Du texte préformaté : ses lignes telles quelles, espaces comprises."""
+
+    text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +194,9 @@ class TableOut:
     # La part de la largeur utile de chaque colonne ; leur somme vaut 1.
     widths: tuple[float, ...]
     caption: Inline | None
+    # Les cellules des lignes, en segments (l'emphase, les liens, les notes d'une colonne
+    # de texte) ; ``rows`` en garde le texte seul.
+    cells: tuple[tuple[Inline, ...], ...]
     # La largeur que le contenu demande, en part de la largeur utile (1 au plus) : celle
     # d'un tableau qu'un style veut à sa largeur naturelle (``width: content``).
     natural: float = 1.0
@@ -223,6 +260,8 @@ type BlockOut = (
     | ImageOut
     | SignatureOut
     | ContentsOut
+    | FieldsOut
+    | CodeOut
 )
 
 
@@ -278,6 +317,10 @@ class _State:
     # Le niveau du dernier titre, et le dernier tableau écrit : la source d'un graphique.
     level: int = 0
     last_table: tuple[Table, list[list[Stored]]] | None = None
+    # Les titres du document qu'un renvoi peut viser, et ceux qui ne s'impriment pas.
+    targets: Targets = field(default_factory=lambda: Targets({}, frozenset(), ()))
+    # Les notes de bas de page déjà écrites.
+    notes: int = 0
 
 
 def prepare(
@@ -297,6 +340,7 @@ def prepare(
     ``allowed`` : les styles proposés que les blocs peuvent choisir.
     """
     state = _State(Problems(), zone, pictures, labels, allowed)
+    state.targets = _targets(arguments, template)
     problems = state.problems
     blocks: list[BlockOut] = []
     title = lines(arguments.title).strip() if arguments.title else None
@@ -304,6 +348,7 @@ def prepare(
         if len(title) > MAX_TITLE:
             problems.error(f"title : {len(title)} caractères, au-delà de {MAX_TITLE}")
         _clean(title, "title", problems)
+        _bare(title, "title", problems)
         blocks.append(TitleOut(inline(title)))
     sections: list[SectionOut] | None = None
     if template is None:
@@ -320,6 +365,8 @@ def prepare(
         problems.warn("sommaire : le document n'a aucun titre, le sommaire sera vide")
     if not blocks:
         problems.error("document vide : ni titre, ni bloc de contenu")
+    if state.notes > MAX_NOTES:
+        problems.error(f"{state.notes} notes de bas de page, au-delà de {MAX_NOTES}")
     problems.raise_if_any()
     return Prepared(
         title=title,
@@ -381,7 +428,11 @@ def _sections(arguments: WriteArguments, template: Template, state: _State) -> l
     for section in template.sections:
         fixed = section.spec.text
         if fixed is not None:
-            blocks: list[BlockOut] = [ParagraphOut(inline(p)) for p in fixed_paragraphs(fixed)]
+            at = f"section « {section.name} », texte fixe"
+            blocks: list[BlockOut] = [
+                ParagraphOut(rich(text, at, state, allow=LINKS_ONLY))
+                for text in fixed_paragraphs(fixed)
+            ]
         elif section.position in given:
             state.level = 1
             label = f"section « {section.name} », bloc"
@@ -413,6 +464,7 @@ def _blocks(
         match block:
             case Heading():
                 text = _text(block.text, where, problems, required=True)
+                _bare(text, where, problems)
                 if in_section and block.level == 1:
                     problems.error(
                         f"{where} : le niveau 1 est le titre de la section, que l'outil écrit ; "
@@ -427,12 +479,12 @@ def _blocks(
                 blocks.append(HeadingOut(block.level, inline(text), style))
             case Paragraph():
                 text = _text(block.text, where, problems, required=True)
-                blocks.append(ParagraphOut(inline(text), style))
+                blocks.append(ParagraphOut(rich(text, where, state), style))
             case ListBlock():
-                found = _list(block, where, problems)
+                found = _list(block, where, state)
                 blocks.append(dataclasses.replace(found, style=style) if style else found)
             case Table():
-                table, stored = _table(block, where, problems, zone, state.labels)
+                table, stored = _table(block, where, state)
                 blocks.append(dataclasses.replace(table, style=style) if style else table)
                 state.last_table = (block, stored)
             case Chart():
@@ -442,11 +494,17 @@ def _blocks(
             case Note():
                 text = _text(block.text, where, problems, required=True)
                 note_title = _text(block.title, f"{where}, title", problems) or None
-                blocks.append(NoteOut(note_title, inline(text), style))
+                _bare(note_title or "", f"{where}, title", problems)
+                blocks.append(NoteOut(note_title, rich(text, where, state), style))
             case Quote():
                 text = _text(block.text, where, problems, required=True)
                 source = _text(block.source, f"{where}, source", problems) or None
-                blocks.append(QuoteOut(inline(text), source, style))
+                _bare(source or "", f"{where}, source", problems)
+                blocks.append(QuoteOut(rich(text, where, state), source, style))
+            case Fields():
+                blocks.append(_fields(block, where, state))
+            case Code():
+                blocks.append(_code(block, where, problems))
             case Image():
                 found_image = _image(block, state.pictures, where, problems)
                 if found_image is not None:
@@ -510,49 +568,82 @@ MAX_SIGNER: Final = 80
 MAX_MENTION: Final = 200
 
 
-def _list(block: ListBlock, where: str, problems: Problems) -> ListOut:
-    entries: list[Entry] = []
+def _list(block: ListBlock, where: str, state: _State) -> ListOut:
+    problems = state.problems
     count = 0
     checkboxes = isinstance(block, CheckList) and block.checkboxes
     if checkboxes and block.ordered:
         problems.error(f"{where} : une liste à cocher n'est pas numérotée (ordered)")
 
-    def item_text(text: str, at: str) -> tuple[Inline, bool]:
-        said = _text(text, at, problems, required=True)
-        if not checkboxes:
-            return inline(said), False
-        found = _CHECKBOX.match(said)
-        if found is None:
-            problems.error(
-                f"{at} : dans une liste à cocher (checkboxes), chaque élément commence par "
-                "[x] (coché) ou [ ] (vide)"
-            )
-            return inline(said), False
-        return inline(said[found.end() :]), found.group(1) != " "
-
-    for number, item in enumerate(block.items, start=1):
-        at = f"{where}, élément {number}"
-        if isinstance(item, Item):
-            children = [
-                item_text(child, f"{at}.{sub}") for sub, child in enumerate(item.items, start=1)
-            ]
-            count += len(children)
-            runs, checked = item_text(item.text, at)
-            entries.append(
-                Entry(
-                    runs,
-                    tuple(child for child, _ in children),
-                    checked,
-                    tuple(mark for _, mark in children) if checkboxes else (),
-                )
-            )
-        else:
-            runs, checked = item_text(item, at)
-            entries.append(Entry(runs, checked=checked))
+    def entry(item: str | Item | SubItem, at: str, depth: int) -> Entry:
+        nonlocal count
         count += 1
+        text = item if isinstance(item, str) else item.text
+        said = _text(text, at, problems, required=True)
+        checked = False
+        if checkboxes:
+            found = _CHECKBOX.match(said)
+            if found is None:
+                problems.error(
+                    f"{at} : dans une liste à cocher (checkboxes), chaque élément commence par "
+                    "[x] (coché) ou [ ] (vide)"
+                )
+            else:
+                said, checked = said[found.end() :], found.group(1) != " "
+        children: list[Entry] = []
+        if not isinstance(item, str):
+            if checkboxes and depth == 1:
+                problems.error(f"{at} : une liste à cocher a deux niveaux")
+            children = [
+                entry(child, f"{at}.{sub}", depth + 1)
+                for sub, child in enumerate(item.items, start=1)
+            ]
+        return Entry(rich(said, at, state), tuple(children), checked)
+
+    entries = [
+        entry(item, f"{where}, élément {number}", 0)
+        for number, item in enumerate(block.items, start=1)
+    ]
     if count > MAX_ITEMS:
         problems.error(f"{where} : {count} éléments, au-delà de {MAX_ITEMS}")
     return ListOut(block.ordered, tuple(entries), checkboxes)
+
+
+def _fields(block: Fields, where: str, state: _State) -> FieldsOut:
+    """Des libellés et leurs valeurs : un libellé est du texte simple ; une valeur prend le
+    balisage d'un paragraphe, et vide, elle laisse une ligne à remplir."""
+    problems = state.problems
+    items: list[tuple[str, Inline]] = []
+    for number, (label, value) in enumerate(block.items, start=1):
+        at = f"{where}, paire {number}"
+        said = _text(label, f"{at}, libellé", problems, required=True)
+        _bare(said, f"{at}, libellé", problems)
+        if len(said) > MAX_FIELD_LABEL:
+            problems.error(f"{at}, libellé : {len(said)} caractères, au-delà de {MAX_FIELD_LABEL}")
+        shown = _text(value, f"{at}, valeur", problems)
+        if len(shown) > MAX_FIELD_VALUE:
+            problems.error(f"{at}, valeur : {len(shown)} caractères, au-delà de {MAX_FIELD_VALUE}")
+        items.append((said, rich(shown, f"{at}, valeur", state) if shown else ()))
+    return FieldsOut(tuple(items))
+
+
+# Les lignes vides (ou d'espaces) au début d'un texte.
+_BLANK_START: Final = re.compile(r"\A(?:[ \t]*\n)+")
+
+
+def _code(block: Code, where: str, problems: Problems) -> CodeOut:
+    """Du texte préformaté : ni balisage ni espaces retirées ; les lignes vides du début et
+    de la fin seules sont ôtées (et les espaces qui finissent la dernière)."""
+    text = _BLANK_START.sub("", lines(block.text).rstrip())
+    if not text.strip():
+        problems.error(f"{where} : texte vide")
+    count = text.count("\n") + 1
+    if count > MAX_CODE_LINES:
+        problems.error(f"{where} : {count} lignes, au-delà de {MAX_CODE_LINES}")
+    if len(text) > MAX_TEXT:
+        problems.error(f"{where} : {len(text)} caractères, au-delà de {MAX_TEXT}")
+    _clean(text, where, problems)
+    return CodeOut(text)
 
 
 def _signature(block: Signature, where: str, problems: Problems) -> SignatureOut:
@@ -570,9 +661,8 @@ def _signature(block: Signature, where: str, problems: Problems) -> SignatureOut
     return SignatureOut(tuple(signers), mention)
 
 
-def _table(
-    block: Table, where: str, problems: Problems, zone: ZoneInfo, labels: Labels
-) -> tuple[TableOut, list[list[Stored]]]:
+def _table(block: Table, where: str, state: _State) -> tuple[TableOut, list[list[Stored]]]:
+    problems, zone, labels = state.problems, state.zone, state.labels
     columns = block.columns
     headers = [lines(column.header).strip() for column in columns]
     if len(columns) > MAX_TABLE_COLUMNS:
@@ -585,6 +675,7 @@ def _table(
         problems.error(f"{where} : en-tête donné deux fois : {', '.join(doubles)}")
     for header in headers:
         _clean(header, where, problems)
+        _bare(header, f"{where}, en-tête « {header} »", problems)
     if len(block.rows) > MAX_TABLE_ROWS:
         problems.error(
             f"{where} : {len(block.rows)} lignes, au-delà de {MAX_TABLE_ROWS} — un tableau "
@@ -609,15 +700,21 @@ def _table(
     if block.totals and not block.rows:
         problems.warn(f"{where} : aucune ligne, la ligne de total n'est pas écrite")
         total = None
-    shown = tuple(
+    # Une cellule de texte prend le balisage d'un paragraphe ; une cellule typée est une
+    # valeur.
+    parts = tuple(
         tuple(
-            display(value, column.type, labels.language)
-            for value, column in zip(cells, columns, strict=True)
+            rich(value, f"{where}, ligne {number}, « {column.header} »", state)
+            if column.type == "text" and isinstance(value, str)
+            else _plain_cell(display(value, column.type, labels.language))
+            for value, column in zip(row, columns, strict=True)
         )
-        for cells in stored
+        for number, row in enumerate(stored, start=1)
     )
+    shown = tuple(tuple(plain(cell) for cell in row) for row in parts)
     widths, natural = _widths(headers, [*shown, *([total] if total else [])])
     caption = _text(block.caption, f"{where}, caption", problems) or None
+    _bare(caption or "", f"{where}, caption", problems)
     found = TableOut(
         headers=tuple(headers),
         align=tuple(_align(column.type) for column in columns),
@@ -626,6 +723,7 @@ def _table(
         widths=widths,
         caption=inline(caption) if caption else None,
         natural=natural,
+        cells=parts,
     )
     return found, stored
 
@@ -670,6 +768,7 @@ def _chart(
         _clean(label, where, problems)
     title = _text(block.title, f"{where}, title", problems) or None
     caption = _text(block.caption, f"{where}, caption", problems) or None
+    _bare(caption or "", f"{where}, caption", problems)
     return ChartOut(
         kind=block.kind,
         title=title,
@@ -782,6 +881,7 @@ MIN_PPI: Final = 96
 def _image(block: Image, pictures: Pictures, where: str, problems: Problems) -> ImageOut | None:
     path = block.path.strip()
     caption = _text(block.caption, f"{where}, caption", problems) or None
+    _bare(caption or "", f"{where}, caption", problems)
     alt = _text(block.alt, f"{where}, alt", problems)
     found = pictures.get(block.path)
     if not isinstance(found, Picture):
@@ -1094,4 +1194,307 @@ def inline(text: str) -> Inline:
 
 
 def plain(runs: Inline) -> str:
+    """Le texte seul : sans emphase ni marque de note ; un renvoi par le titre visé."""
     return "".join(run.text for run in runs)
+
+
+def _plain_cell(text: str) -> Inline:
+    return (Run(text),) if text else ()
+
+
+def runs_of(block: BlockOut) -> Iterator[Inline]:
+    """Les textes en segments d'un bloc : paragraphe, éléments de liste (sous-listes
+    comprises), note, citation, valeurs de champs, cellules d'un tableau."""
+    match block:
+        case ParagraphOut(runs=runs) | NoteOut(runs=runs) | QuoteOut(runs=runs):
+            yield runs
+        case ListOut(entries=entries):
+            pending = list(entries)
+            while pending:
+                entry = pending.pop(0)
+                yield entry.runs
+                pending[:0] = entry.children
+        case FieldsOut(items=items):
+            yield from (value for _, value in items)
+        case TableOut(cells=cells):
+            yield from (cell for row in cells for cell in row)
+        case _:
+            pass
+
+
+def referenced(blocks: Iterable[BlockOut]) -> frozenset[int]:
+    """Les rangs des titres qu'un renvoi vise, notes comprises."""
+    found: set[int] = set()
+
+    def visit(runs: Inline) -> None:
+        for run in runs:
+            if run.ref is not None:
+                found.add(run.ref)
+            if run.note is not None:
+                visit(run.note)
+
+    for block in blocks:
+        for runs in runs_of(block):
+            visit(runs)
+    return frozenset(found)
+
+
+# --- Liens, notes, renvois -------------------------------------------------------------------
+
+# L'ancre d'un titre que vise un renvoi, dans les deux formats : « _Ref » (un signet caché
+# de Word), puis le rang du titre.
+REF_MARK: Final = "_Ref_loom_"
+# Les guillemets d'un renvoi à un titre sans numéro, par langue.
+QUOTES: Final[Mapping[str, tuple[str, str]]] = {
+    "fr": ("\u00ab\u00a0", "\u00a0\u00bb"),
+    "en": ("\u201c", "\u201d"),
+}
+MAX_NOTES: Final = 100
+MAX_NOTE: Final = 500
+# Les schémas d'un lien : une adresse web, ou un courriel.
+LINK_SCHEMES: Final = ("https", "http", "mailto")
+type Markup = Literal["link", "note", "ref"]
+EVERYTHING: Final[frozenset[Markup]] = frozenset({"link", "note", "ref"})
+LINKS_ONLY: Final[frozenset[Markup]] = frozenset({"link"})
+_LINK: Final = re.compile(r"\[([^\[\]\n]+)\]\(([^()\s]+)\)")
+_SCHEME: Final = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*):")
+# Ce qui, dans un titre ou une légende, serait un lien, une note ou un renvoi.
+_MARKUP: Final = re.compile(r"(?<!\\)\^\[|(?<!\\)§\[|\[[^\[\]\n]+\]\([^()\s]+\)")
+# Les marques de place : un caractère d'usage privé par lien, note ou renvoi, le temps de
+# lire l'emphase autour d'eux.
+_PLACE: Final = 0xF0000
+
+
+@dataclass(frozen=True, slots=True)
+class Targets:
+    """Les titres du document qu'un renvoi peut viser : leur rang, par clé (``key``), et
+    leur texte ; les sections dont le nom ne s'imprime pas ; tous les titres, pour le dire."""
+
+    by_key: Mapping[str, tuple[int, str] | None]
+    hidden: frozenset[str]
+    titles: tuple[str, ...]
+
+
+def _targets(arguments: WriteArguments, template: Template | None) -> Targets:
+    """Les titres du document, dans l'ordre où ils seront écrits : ceux des blocs d'un
+    document libre ; pour un modèle, le nom de chaque section imprimée, puis ses titres.
+    Deux titres de même clé : aucun renvoi ne sait lequel viser (``None``)."""
+    titles: list[str] = []
+    hidden: set[str] = set()
+
+    def headings(written: Sequence[WrittenBlock]) -> None:
+        titles.extend(
+            plain(inline(lines(block.text).strip()))
+            for block in written
+            if isinstance(block, Heading)
+        )
+
+    if template is None:
+        headings(arguments.blocks)
+    else:
+        given: dict[int, list[WrittenBlock]] = {}
+        for name, written in (arguments.sections or {}).items():
+            section = template.section(name)
+            if section is not None and section.position not in given:
+                given[section.position] = written
+        for section in template.sections:
+            if not section.spec.show_title:
+                hidden.add(section.key)
+            if section.fixed or section.position in given:
+                if section.spec.show_title:
+                    titles.append(section.name)
+                headings(given.get(section.position, []))
+    by_key: dict[str, tuple[int, str] | None] = {}
+    for rank, title in enumerate(titles, start=1):
+        found = key(title)
+        by_key[found] = None if found in by_key else (rank, title)
+    return Targets(by_key, frozenset(hidden), tuple(titles))
+
+
+def _bare(text: str, where: str, problems: Problems) -> None:
+    """Un titre, une légende, un libellé : ni lien, ni note, ni renvoi."""
+    if _MARKUP.search(text):
+        problems.error(f"{where} : ni lien, ni note (^[…]), ni renvoi (§[…]) ici")
+
+
+def rich(text: str, where: str, state: _State, *, allow: frozenset[Markup] = EVERYTHING) -> Inline:
+    """Le texte d'un paragraphe, d'un élément de liste, d'une note, d'une citation, d'une
+    cellule : l'emphase (``inline``), et ce que ``allow`` permet — un lien
+    ``[texte](https://…)``, une note ``^[texte]``, un renvoi ``§[Titre]``. Une faute
+    (note non refermée, schéma de lien refusé, titre inconnu) est dite avec ``where``.
+
+    ``\\^[`` et ``\\§[`` s'écrivent tels quels. Un ``[texte](…)`` sans schéma (« (voir) »)
+    reste du texte ; un schéma autre que https, http et mailto est refusé.
+    """
+    problems = state.problems
+    places: list[Run | tuple[str, Inline]] = []
+    said: list[str] = []
+    position = 0
+    while position < len(text):
+        char = text[position]
+        rest = text[position:]
+        if char == "\\" and rest[1:3] in ("^[", "§["):
+            said.append(rest[1:3])
+            position += 3
+            continue
+        if ord(char) >= _PLACE:
+            problems.error(f"{where} : caractère réservé U+{ord(char):04X}")
+            position += 1
+            continue
+        if rest.startswith("^[") and "note" in allow:
+            end = _closing(text, position + 1)
+            if end is None:
+                problems.error(
+                    f"{where} : « ^[ » sans « ] » : une note se ferme par ] (\\^[ pour écrire "
+                    "^[ tel quel)"
+                )
+                said.append("^[")
+                position += 2
+                continue
+            content = text[position + 2 : end].strip()
+            if not content:
+                problems.error(f"{where} : note vide (^[])")
+            elif len(content) > MAX_NOTE:
+                problems.error(
+                    f"{where} : note de {len(content)} caractères, au-delà de {MAX_NOTE}"
+                )
+            if "^[" in content.replace("\\^[", ""):
+                problems.error(f"{where} : pas de note dans une note")
+            inner = rich(content, f"{where}, note", state, allow=allow - {"note"})
+            state.notes += 1
+            places.append(Run("", note=inner))
+            said.append(chr(_PLACE + len(places) - 1))
+            position = end + 1
+            continue
+        if rest.startswith("§[") and "ref" in allow:
+            end = text.find("]", position + 2)
+            if end < 0:
+                problems.error(
+                    f"{where} : « §[ » sans « ] » : un renvoi se ferme par ] (\\§[ pour écrire "
+                    "§[ tel quel)"
+                )
+                said.append("§[")
+                position += 2
+                continue
+            target = _target(text[position + 2 : end], where, state)
+            places.append(target)
+            said.append(chr(_PLACE + len(places) - 1))
+            position = end + 1
+            continue
+        found = _LINK.match(text, position) if char == "[" and "link" in allow else None
+        if found is not None:
+            address = found.group(2)
+            scheme = _SCHEME.match(address)
+            if scheme is not None:
+                if scheme.group(1).lower() not in LINK_SCHEMES:
+                    problems.error(
+                        f"{where} : lien {address!r} : seuls https, http et mailto sont permis"
+                    )
+                places.append((address, inline(found.group(1))))
+                said.append(chr(_PLACE + len(places) - 1))
+                position = found.end()
+                continue
+        said.append(char)
+        position += 1
+    runs = inline("".join(said))
+    if not places:
+        return runs
+    return _merged(_expanded(runs, places))
+
+
+def _closing(text: str, opening: int) -> int | None:
+    """La place du ``]`` qui ferme le ``[`` en ``opening`` (les crochets d'un lien dans une
+    note s'y emboîtent) ; ``None`` sans lui."""
+    depth = 0
+    for index in range(opening, len(text)):
+        if text[index] == "[":
+            depth += 1
+        elif text[index] == "]":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _target(written: str, where: str, state: _State) -> Run:
+    """Le renvoi à un titre : comparé comme les sections d'un modèle (sans numérotation,
+    casse, accents ni emphase)."""
+    targets = state.targets
+    wanted = key(plain(inline(written)))
+    found = targets.by_key.get(wanted)
+    if found is not None:
+        rank, title = found
+        return Run(title, ref=rank)
+    if wanted in targets.by_key:
+        state.problems.error(f"{where} : renvoi §[{written}] : deux titres de ce nom")
+    elif wanted in targets.hidden:
+        state.problems.error(
+            f"{where} : renvoi §[{written}] : cette section n'imprime pas son titre "
+            "(show_title: false), un renvoi ne peut pas la viser"
+        )
+    else:
+        known = " · ".join(targets.titles) or "aucun"
+        state.problems.error(
+            f"{where} : renvoi §[{written}] : aucun titre de ce nom (titres : {known})"
+        )
+    return Run(written)
+
+
+def _expanded(runs: Inline, places: Sequence[Run | tuple[str, Inline]]) -> list[Run]:
+    """Les segments, chaque marque de place remplacée par son lien, sa note ou son renvoi,
+    dans l'emphase qui l'entoure."""
+    found: list[Run] = []
+    for run in runs:
+        piece = ""
+        for char in run.text:
+            index = ord(char) - _PLACE
+            if index < 0:
+                piece += char
+                continue
+            if piece:
+                found.append(dataclasses.replace(run, text=piece))
+                piece = ""
+            place = places[index]
+            if isinstance(place, Run):
+                found.append(
+                    dataclasses.replace(
+                        place, bold=run.bold, italic=run.italic, underline=run.underline
+                    )
+                    if place.ref is not None
+                    else place
+                )
+                continue
+            address, label = place
+            found.extend(
+                Run(
+                    part.text,
+                    bold=part.bold or run.bold,
+                    italic=part.italic or run.italic,
+                    underline=part.underline or run.underline,
+                    link=address,
+                )
+                for part in label
+            )
+        if piece:
+            found.append(dataclasses.replace(run, text=piece))
+    return found
+
+
+def _merged(runs: Sequence[Run]) -> Inline:
+    """Les segments voisins de même emphase et même lien, réunis."""
+    merged: list[Run] = []
+    for run in runs:
+        last = merged[-1] if merged else None
+        if (
+            last is not None
+            and run.note is None
+            and run.ref is None
+            and last.note is None
+            and last.ref is None
+            and (last.bold, last.italic, last.underline, last.link)
+            == (run.bold, run.italic, run.underline, run.link)
+        ):
+            merged[-1] = dataclasses.replace(last, text=last.text + run.text)
+        else:
+            merged.append(run)
+    return tuple(run for run in merged if run.text or run.note is not None)

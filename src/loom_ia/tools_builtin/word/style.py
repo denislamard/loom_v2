@@ -66,6 +66,16 @@ CHECKED: Final = "\u2612"
 UNCHECKED: Final = "\u2610"
 # Le sommaire : les styles intégrés de Word (« TOC Heading », « toc 1 »…), qu'il reprend
 # à la mise à jour du champ.
+# Le bloc code, les champs (un tableau sans bordure, son libellé, sa valeur), le lien, la
+# note de bas de page (son texte, son appel).
+CODE: Final = "LoomCode"
+FIELDS: Final = "LoomFields"
+FIELDS_NAME: Final = "loom fields"
+FIELD_LABEL: Final = "LoomFieldLabel"
+FIELD_VALUE: Final = "LoomFieldValue"
+HYPERLINK: Final = "Hyperlink"
+FOOTNOTE_TEXT: Final = "FootnoteText"
+FOOTNOTE_REFERENCE: Final = "FootnoteReference"
 TOC_HEADING: Final = "TOCHeading"
 TOC_LEVELS: Final = ("TOC1", "TOC2", "TOC3")
 # Le corps du texte, quand le style ``paragraph`` dit autre chose que ``text``.
@@ -328,6 +338,10 @@ WORD_IDS: Final[Mapping[str, str]] = {
     "signature_mention": MENTION,
     "header": HEADER,
     "footer": "Footer",
+    "code": CODE,
+    "footnote": FOOTNOTE_TEXT,
+    "fields": FIELD_VALUE,
+    "fields_label": FIELD_LABEL,
 }
 
 
@@ -417,9 +431,43 @@ def styles_xml(style: Style, used: Iterable[str] = (), custom: Iterable[str] = (
     return said + _extra_styles(style, wanted) + _custom(style, custom) + "</w:styles>"
 
 
+def _character(style_id: str, name: str, run: str) -> str:
+    """Un style de caractère : le lien, l'appel de note."""
+    return (
+        f'<w:style w:type="character" w:styleId="{style_id}"><w:name w:val="{name}"/>'
+        f"<w:qFormat/><w:rPr>{run}</w:rPr></w:style>"
+    )
+
+
 def _extra_styles(style: Style, wanted: set[str]) -> str:
-    """Les styles des blocs signature et toc, et de la liste à cocher, que le document emploie."""
+    """Les styles des blocs signature, toc, code et champs, de la liste à cocher, du lien et
+    des notes, que le document emploie."""
     said = ""
+    if CODE in wanted:
+        said += _named(
+            style,
+            CODE,
+            "loom code",
+            "code",
+            mechanics=[("keepLines", "<w:keepLines/>")],
+        )
+    if FIELDS in wanted:
+        said += (
+            f'<w:style w:type="table" w:styleId="{FIELDS}"><w:name w:val="{FIELDS_NAME}"/>'
+            "<w:tblPr/></w:style>"
+        )
+    if FIELD_VALUE in wanted:
+        said += _named(style, FIELD_VALUE, "loom field value", "fields")
+        said += _named(
+            style, FIELD_LABEL, "loom field label", "fields_label", based=FIELD_VALUE, stop="fields"
+        )
+    if HYPERLINK in wanted:
+        said += _character(HYPERLINK, "Hyperlink", run_xml(style.between("link", "text")))
+    if FOOTNOTE_TEXT in wanted:
+        said += _named(style, FOOTNOTE_TEXT, "footnote text", "footnote")
+        said += _character(
+            FOOTNOTE_REFERENCE, "footnote reference", '<w:vertAlign w:val="superscript"/>'
+        )
     if SIGNATURE in wanted:
         said += (
             f'<w:style w:type="table" w:styleId="{SIGNATURE}"><w:name w:val="{SIGNATURE_NAME}"/>'
@@ -459,10 +507,11 @@ def _extra_styles(style: Style, wanted: set[str]) -> str:
 
 # --- Numérotations -----------------------------------------------------------------
 
-# Puces et numéros : deux niveaux, la sous-liste en retrait.
+# Puces et numéros : deux niveaux, la sous-liste en retrait ; un troisième pour une liste
+# qui en a un (une définition à part : les documents à deux niveaux restent les mêmes).
 _LEVELS: Final = {
-    False: (("bullet", "•"), ("bullet", "\u2013")),
-    True: (("decimal", "%1."), ("lowerLetter", "%2)")),
+    False: (("bullet", "•"), ("bullet", "\u2013"), ("bullet", "\u25aa")),
+    True: (("decimal", "%1."), ("lowerLetter", "%2)"), ("lowerRoman", "%3.")),
 }
 
 
@@ -473,9 +522,9 @@ def _heading_texts(numbering: Numbering, article: str) -> tuple[str, str, str]:
     return (first, "%1.%2", "%1.%2.%3")
 
 
-def _abstract(number: int, ordered: bool) -> str:
+def _abstract(number: int, ordered: bool, depth: int = 2) -> str:
     said = f'<w:abstractNum w:abstractNumId="{number}"><w:multiLevelType w:val="hybridMultilevel"/>'
-    for level, (kind, text) in enumerate(_LEVELS[ordered]):
+    for level, (kind, text) in enumerate(_LEVELS[ordered][:depth]):
         left = 720 * (level + 1)
         said += (
             f'<w:lvl w:ilvl="{level}"><w:start w:val="1"/><w:numFmt w:val="{kind}"/>'
@@ -498,19 +547,29 @@ def _heading_abstract(numbering: Numbering, article: str) -> str:
     return said + "</w:abstractNum>"
 
 
+# Les définitions à trois niveaux : à puces, numérotée.
+_DEEP: Final = 3
+
+
 def numbering_xml(
-    lists: Iterable[bool], headings: Numbering = "none", article: str = "Article"
+    lists: Iterable[tuple[bool, bool]], headings: Numbering = "none", article: str = "Article"
 ) -> str:
-    """Une numérotation par liste : chaque liste numérotée repart de 1. Les définitions
-    (``abstractNum``) précèdent toutes les numérotations (``num``) : Word l'exige."""
+    """Une numérotation par liste (numérotée ?, à trois niveaux ?) : chaque liste numérotée
+    repart de 1. Les définitions (``abstractNum``) précèdent toutes les numérotations
+    (``num``) : Word l'exige."""
+    lists = list(lists)
     said = _HEAD + f'<w:numbering xmlns:w="{_W}">' + _abstract(0, False) + _abstract(1, True)
     if headings != "none":
         said += _heading_abstract(headings, article)
-    for number, ordered in enumerate(lists, start=1):
-        said += f'<w:num w:numId="{number}"><w:abstractNumId w:val="{int(ordered)}"/>'
+    for ordered in (False, True):
+        if (ordered, True) in lists:
+            said += _abstract(_DEEP + int(ordered), ordered, depth=3)
+    for number, (ordered, deep) in enumerate(lists, start=1):
+        definition = int(ordered) + (_DEEP if deep else 0)
+        said += f'<w:num w:numId="{number}"><w:abstractNumId w:val="{definition}"/>'
         said += "".join(
             f'<w:lvlOverride w:ilvl="{level}"><w:startOverride w:val="1"/></w:lvlOverride>'
-            for level in range(2)
+            for level in range(3 if deep else 2)
         )
         said += "</w:num>"
     if headings != "none":

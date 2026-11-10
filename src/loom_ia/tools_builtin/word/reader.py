@@ -26,7 +26,12 @@ signet de la suivante ; son titre,
 que l'outil écrit, ne revient pas, ni une section au texte fixe ; un style proposé au
 modèle de langage revient dans ``style``. Une zone de signature revient en
 bloc ``signature``, un sommaire en bloc ``sommaire`` (ses entrées ne reviennent pas),
-une liste à cocher en ``liste`` avec ``checkboxes`` et ses cases en [x] ou [ ]. Avec
+une liste à cocher en ``liste`` avec ``checkboxes`` et ses cases en [x] ou [ ], des
+champs (tableau « loom fields ») en bloc ``fields``, du code (style « loom code ») en bloc
+``code``. Dans un texte, un lien revient en ``[texte](adresse)``, une note de bas de
+page (ou de fin) en ``^[texte]``, un renvoi à un titre (un champ ``REF``, ou un lien
+interne, vers un signet de ce titre) en ``§[Titre]`` ; dans un tableau, l'emphase d'une
+ligne d'en-tête ou d'une ligne toute en gras (un total) ne revient pas. Avec
 ``images``, une image du corps revient en bloc ``image`` (``path`` : l'adresse du
 fichier lu à l'écriture, gardée dans le nom du dessin) ; sans, elle est comptée. Les
 en-têtes, pieds de page et commentaires ne sont pas lus ; le résultat le dit.
@@ -53,7 +58,7 @@ from loom_ia.tools_builtin._document.arguments import (
     READ_CHARS,
     ImageWidth,
 )
-from loom_ia.tools_builtin._document.content import IMAGE_WIDTHS, placed
+from loom_ia.tools_builtin._document.content import IMAGE_WIDTHS, LINK_SCHEMES, placed
 from loom_ia.tools_builtin._document.picture import dimensions
 from loom_ia.tools_builtin._templates import Template, key
 
@@ -89,6 +94,7 @@ _CP_CATEGORY: Final = (
 _FALSE: Final = frozenset({"0", "false", "off"})
 # Le nom du style de tableau de disposition qu'écrit l'outil (``word/style.py``).
 LAYOUT_STYLE: Final = "loom layout"
+FIELDS_STYLE: Final = "loom fields"
 # Les styles des blocs signature et toc, et de la liste à cocher (``word/style.py``), par leur nom.
 SIGNATURE_STYLE: Final = "loom signature"
 SIGNER_STYLE: Final = "loom signer"
@@ -106,9 +112,15 @@ _CAPTION_SEPARATORS: Final = " \u2014\u2013-:."
 _MC_FALLBACK: Final = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
 # Sous-arbres d'un paragraphe qui ne sont pas son texte.
 _SKIPPED: Final = frozenset(
-    {"del", "delText", "moveFrom", "instrText", "drawing", "pict", "object", "footnoteReference",
-     "endnoteReference", "commentReference", "pPr", "rPr", "fldChar"}
+    {"del", "delText", "moveFrom", "drawing", "pict", "object", "commentReference", "pPr", "rPr"}
 )  # fmt: skip
+# Un segment de texte : son texte, gras, italique, souligné ; ou déjà en balisage (un lien,
+# une note, un renvoi : ``raw``), que l'emphase n'enveloppe pas.
+type _Segment = tuple[str, bool, bool, bool, bool]
+# Un renvoi lu avant de connaître les titres du document : le signet qu'il vise et le texte
+# qu'il affiche, entre deux caractères qu'un XML ne peut pas porter ; remplacé à la fin de
+# la lecture par ``§[Titre]``, ou par son texte si le signet n'est pas celui d'un titre.
+_PENDING_REF: Final = re.compile("\x00([^\x00\x01]*)\x01([^\x00]*)\x00")
 
 
 def check_suffix(path: str) -> None:
@@ -206,6 +218,18 @@ class _Package:
     charts: dict[str, str] = field(default_factory=dict[str, str])
     # Identifiant de relation → partie d'une image (``word/media/imageN.png``).
     media: dict[str, str] = field(default_factory=dict[str, str])
+    # De quoi lire les liens et les notes du corps.
+    inline: _Inline | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _Inline:
+    """Ce que demande le texte enrichi d'une partie : l'adresse de ses liens (par relation),
+    et le texte des notes du document (« f3 » : la note de bas de page 3, « e1 » : la note
+    de fin 1)."""
+
+    links: Mapping[str, str]
+    notes: Mapping[str, str]
 
 
 def _open(data: bytes, where: str) -> _Package:
@@ -236,6 +260,7 @@ def _open(data: bytes, where: str) -> _Package:
     styles_part = related.get("styles")
     numbering_part = related.get("numbering")
     styles_root = _whole(archive, styles_part, where) if styles_part else None
+    notes = _note_texts(archive, names, related, where)
     return _Package(
         archive=archive,
         body=body,
@@ -247,7 +272,50 @@ def _open(data: bytes, where: str) -> _Package:
         comments="comments" in related,
         charts=_relations(archive, names, body, by_id="chart"),
         media=_relations(archive, names, body, by_id="image"),
+        inline=_Inline(_external(archive, names, body), notes),
     )
+
+
+def _external(archive: zipfile.ZipFile, names: set[str], part: str) -> dict[str, str]:
+    """Les liens d'une partie : l'adresse de chacun, par identifiant de relation."""
+    folder, _, file = part.rpartition("/")
+    rels = f"{folder}/_rels/{file}.rels" if folder else f"_rels/{file}.rels"
+    if rels not in names or archive.getinfo(rels).file_size > MAX_PART:
+        return {}
+    return {
+        relation.get("Id", ""): relation.get("Target", "")
+        for relation in _parse(archive.read(rels)).iter(f"{_REL_NS}Relationship")
+        if relation.get("TargetMode") == "External"
+        and relation.get("Type", "").endswith("/hyperlink")
+    }
+
+
+def _note_texts(
+    archive: zipfile.ZipFile, names: set[str], related: Mapping[str, str], where: str
+) -> dict[str, str]:
+    """Le texte de chaque note de bas de page et de fin (sans ses séparateurs), ses liens
+    et ses renvois compris, ses paragraphes en lignes."""
+    found: dict[str, str] = {}
+    for kind, prefix in (("footnotes", "f"), ("endnotes", "e")):
+        part = related.get(kind)
+        root = _whole(archive, part, where) if part else None
+        if part is None or root is None:
+            continue
+        inline = _Inline(_external(archive, names, part), {})
+        for note in root:
+            if _local(note.tag) not in ("footnote", "endnote"):
+                continue
+            if _attribute(note, "type") not in (None, "normal"):
+                continue
+            lines = (
+                _markdown(_segments(paragraph, inline))
+                for paragraph in note.iter()
+                if _local(paragraph.tag) == "p"
+            )
+            text = "\n".join(line for line in lines if line)
+            if text:
+                found[f"{prefix}{_attribute(note, 'id')}"] = text
+    return found
 
 
 def _whole(archive: zipfile.ZipFile, name: str, where: str) -> Element | None:
@@ -440,6 +508,8 @@ class _Reading:
     seen: set[int] = field(default_factory=set[int])
     # La section de chaque bloc rendu (``None`` hors des sections).
     where: list[int | None] = field(default_factory=list[int | None])
+    # Les signets des titres : le texte du titre, que vise un renvoi à ce signet.
+    anchors: dict[str, str] = field(default_factory=dict[str, str])
 
 
 def read(
@@ -470,6 +540,7 @@ def read(
                 start=start, budget=budget, pictures=images, template=followed, proposed=styles
             )
             _walk(package, reading, deadline, where)
+    reading.blocks = [_resolved(block, reading.anchors) for block in reading.blocks]
     result: dict[str, JsonValue] = {
         "title": package.title,
         "start": start,
@@ -500,6 +571,23 @@ def read(
     if notes:
         result["notes"] = notes
     return result
+
+
+def _resolved(value: JsonValue, anchors: Mapping[str, str]) -> JsonValue:
+    """Les renvois lus, une fois les titres connus : ``§[Titre]`` vers un titre, le texte
+    affiché vers un autre signet."""
+
+    def replaced(found: re.Match[str]) -> str:
+        title = anchors.get(found.group(1))
+        return f"§[{title}]" if title else found.group(2)
+
+    if isinstance(value, str):
+        return _PENDING_REF.sub(replaced, value) if "\x00" in value else value
+    if isinstance(value, list):
+        return [_resolved(item, anchors) for item in value]
+    if isinstance(value, dict):
+        return {name: _resolved(item, anchors) for name, item in value.items()}
+    return value
 
 
 def _by_section(
@@ -614,6 +702,11 @@ def _block(package: _Package, reading: _Reading, element: Element, depth: int = 
             reading.in_toc = False
             _marks_in(reading, element)
             _emit(reading, _signature(package, element))
+        case "tbl" if _table_style(package, element) == FIELDS_STYLE:
+            _close_list(reading)
+            reading.in_toc = False
+            _marks_in(reading, element)
+            _emit(reading, _fields(package, element))
         case "tbl" if depth < MAX_LAYOUT_DEPTH and _table_style(package, element) == LAYOUT_STYLE:
             # Un tableau de disposition : ses cellules, dans l'ordre, sont des blocs.
             for row in element:
@@ -662,6 +755,26 @@ def _table_style_name(package: _Package, reading: _Reading, table: Element) -> s
             )
             return name if name in reading.proposed else None
     return None
+
+
+def _fields(package: _Package, table: Element) -> dict[str, JsonValue]:
+    """Des champs : le libellé et la valeur de chaque ligne (la valeur avec son emphase,
+    ses liens, ses notes)."""
+    items: list[JsonValue] = []
+    for row in table:
+        cells = (
+            [cell for cell in row if _local(cell.tag) == "tc"] if _local(row.tag) == "tr" else []
+        )
+        if len(cells) < 2:
+            continue
+        value = "\n".join(
+            said
+            for paragraph in cells[1].iter()
+            if _local(paragraph.tag) == "p"
+            and (said := _markdown(_segments(paragraph, package.inline)))
+        )
+        items.append([_cell_text(cells[0]), value])
+    return {"type": "fields", "items": items}
 
 
 def _signature(package: _Package, table: Element) -> dict[str, JsonValue]:
@@ -718,7 +831,14 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
         _close_list(reading)
         reading.images -= 1
         _emit(reading, _chart(package, chart_id))
-    text = _markdown(_segments(_without_number(element)))
+    if _kind(package.styles, style_id) == "code":
+        # Un bloc de code : un paragraphe, ses lignes séparées par des sauts de ligne.
+        _close_list(reading)
+        code = "".join(text for text, *_ in _segments(element))
+        if code.strip():
+            _emit(reading, {"type": "code", "text": code})
+        return
+    text = _markdown(_segments(_without_number(element), package.inline))
     if name in CHECK_STYLES and text[:1] in _BOXES:
         _checkbox(reading, text, CHECK_STYLES[name])
         return
@@ -745,6 +865,12 @@ def _paragraph(package: _Package, reading: _Reading, element: Element) -> None:
         numbering = (styled_list, 0)
     level = outline if outline is not None else heading
     own = name if name in reading.proposed else None
+    if level is not None and level < 9 and not title:
+        # Les signets d'un titre : un renvoi vers l'un d'eux est un renvoi à ce titre.
+        said = "".join(text for text, *_ in _segments(_without_number(element))).strip()
+        for mark in element.iter():
+            if _local(mark.tag) == "bookmarkStart":
+                reading.anchors.setdefault(_attribute(mark, "name") or "", said)
     if title:
         _close_list(reading)
         _emit(reading, {"type": "heading", "level": 0, "text": text}, heading=(0, text))
@@ -790,6 +916,7 @@ _CHECKLIST: Final = "checkboxes"
 # Les styles qui disent un autre bloc que le paragraphe : ceux qu'écrit l'outil, et
 # leurs équivalents intégrés de Word.
 _KIND: Final = {
+    "loom code": "code",
     "quote": "quote",
     "intense quote": "quote",
     "quote source": "quote",
@@ -1027,42 +1154,132 @@ def _style_meaning(
     return title, outline, listed
 
 
-def _segments(element: Element) -> list[tuple[str, bool, bool, bool]]:
-    """Le texte d'un paragraphe, en segments (texte, gras, italique, souligné), dans l'ordre."""
-    found: list[tuple[str, bool, bool, bool]] = []
+def _segments(element: Element, inline: _Inline | None = None) -> list[_Segment]:
+    """Le texte d'un paragraphe, en segments (texte, gras, italique, souligné), dans
+    l'ordre. Avec ``inline`` : un lien, une note, un renvoi en balisage (``raw``) ; sans,
+    le texte qu'ils affichent (une note, rien)."""
+    found: list[_Segment] = []
+    # Les champs complexes ouverts (``fldChar``) : leur instruction, et ce qu'affiche un
+    # renvoi (``REF``), qui ne revient pas tel quel.
+    fields: list[_Field] = []
 
-    def walk(node: Element, bold: bool, italic: bool, underline: bool) -> None:
+    def emit(segment: _Segment, out: list[_Segment]) -> None:
+        showing = next((f for f in reversed(fields) if f.result), None)
+        if showing is not None and _ref_target(showing.instr) is not None:
+            showing.shown.append(segment[0])
+        else:
+            out.append(segment)
+
+    def inner(node: Element, emphasis: tuple[bool, bool, bool]) -> list[_Segment]:
+        said: list[_Segment] = []
+        for child in node:
+            walk(child, *emphasis, said)
+        return said
+
+    def walk(node: Element, bold: bool, italic: bool, underline: bool, out: list[_Segment]) -> None:
         name = _local(node.tag)
         if name in _SKIPPED:
             return
-        if name == "r":
-            properties = _child(node, "rPr")
-            if properties is not None:
-                bold = _on(_child(properties, "b"))
-                italic = _on(_child(properties, "i"))
-                underline = _underlined(_child(properties, "u"))
-        elif name == "t":
-            found.append((node.text or "", bold, italic, underline))
-            return
-        elif name == "tab":
-            found.append(("\t", bold, italic, underline))
-            return
-        elif name in {"br", "cr"}:
-            if _attribute(node, "type") != "page":
-                found.append(("\n", bold, italic, underline))
-            return
-        elif name == "noBreakHyphen":
-            found.append(("-", bold, italic, underline))
-            return
-        elif name is None and node.tag.endswith("}AlternateContent"):
-            # Le choix d'un logiciel récent (zone de texte, forme) : rien de lisible ici.
-            return
+        match name:
+            case "fldChar":
+                kind = _attribute(node, "fldCharType")
+                if kind == "begin":
+                    fields.append(_Field())
+                elif kind == "separate" and fields:
+                    fields[-1].result = True
+                elif kind == "end" and fields:
+                    done = fields.pop()
+                    target = _ref_target(done.instr)
+                    if target is not None:
+                        emit(_reference(target, "".join(done.shown), inline), out)
+                return
+            case "instrText":
+                if fields and not fields[-1].result:
+                    fields[-1].instr += node.text or ""
+                return
+            case "footnoteReference" | "endnoteReference":
+                said = inline.notes.get(f"{name[0]}{_attribute(node, 'id')}") if inline else None
+                if said:
+                    emit((f"^[{said}]", False, False, False, True), out)
+                return
+            case "fldSimple":
+                target = _ref_target(_attribute(node, "instr") or "")
+                if target is not None:
+                    shown = "".join(text for text, *_ in inner(node, (bold, italic, underline)))
+                    emit(_reference(target, shown, inline), out)
+                    return
+            case "hyperlink" if inline is not None:
+                label = inner(node, (bold, italic, underline))
+                address = inline.links.get(node.get(_R_ID) or "")
+                anchor = _attribute(node, "anchor")
+                if address is not None and _linkable(address) and _markdown(label):
+                    emit((f"[{_markdown(label)}]({address})", False, False, False, True), out)
+                elif address is None and anchor:
+                    shown = "".join(text for text, *_ in label)
+                    emit(_reference(anchor, shown, inline), out)
+                else:
+                    for segment in label:
+                        emit(segment, out)
+                return
+            case "r":
+                properties = _child(node, "rPr")
+                if properties is not None:
+                    bold = _on(_child(properties, "b"))
+                    italic = _on(_child(properties, "i"))
+                    underline = _underlined(_child(properties, "u"))
+            case "t":
+                emit((node.text or "", bold, italic, underline, False), out)
+                return
+            case "tab":
+                emit(("\t", bold, italic, underline, False), out)
+                return
+            case "br" | "cr":
+                if _attribute(node, "type") != "page":
+                    emit(("\n", bold, italic, underline, False), out)
+                return
+            case "noBreakHyphen":
+                emit(("-", bold, italic, underline, False), out)
+                return
+            case None if node.tag.endswith("}AlternateContent"):
+                # Le choix d'un logiciel récent (zone de texte, forme) : rien de lisible ici.
+                return
+            case _:
+                pass
         for child in node:
-            walk(child, bold, italic, underline)
+            walk(child, bold, italic, underline, out)
 
     for child in element:
-        walk(child, False, False, False)
+        walk(child, False, False, False, found)
     return found
+
+
+@dataclass(slots=True)
+class _Field:
+    """Un champ complexe en cours : son instruction ; passé son séparateur, ce qu'il
+    affiche."""
+
+    instr: str = ""
+    result: bool = False
+    shown: list[str] = field(default_factory=list[str])
+
+
+def _ref_target(instruction: str) -> str | None:
+    """Le signet que vise un champ ``REF`` ; ``None`` pour un autre champ."""
+    parts = instruction.split()
+    return parts[1] if len(parts) > 1 and parts[0].upper() == "REF" else None
+
+
+def _reference(target: str, shown: str, inline: _Inline | None) -> _Segment:
+    """Un renvoi : en attente des titres (``_resolved``) ; sans ``inline``, son texte."""
+    if inline is None:
+        return (shown, False, False, False, False)
+    return (f"\x00{target}\x01{shown}\x00", False, False, False, True)
+
+
+def _linkable(address: str) -> bool:
+    """Une adresse qu'un lien peut réécrire : https, http ou mailto."""
+    scheme, colon, _ = address.partition(":")
+    return bool(colon) and scheme.lower() in LINK_SCHEMES
 
 
 def _underlined(element: Element | None) -> bool:
@@ -1070,16 +1287,21 @@ def _underlined(element: Element | None) -> bool:
     return element is not None and _attribute(element, "val") not in (None, "none")
 
 
-def _markdown(segments: list[tuple[str, bool, bool, bool]]) -> str:
-    """Les segments joints, l'emphase en ``**``, ``*`` et ``<u>`` comme à l'écriture."""
-    merged: list[tuple[str, bool, bool, bool]] = []
-    for text, bold, italic, underline in segments:
-        if merged and merged[-1][1:] == (bold, italic, underline):
-            merged[-1] = (merged[-1][0] + text, bold, italic, underline)
+def _markdown(segments: list[_Segment]) -> str:
+    """Les segments joints, l'emphase en ``**``, ``*`` et ``<u>`` comme à l'écriture ; un
+    ``^[`` ou un ``§[`` du texte échappé, pour ne pas se relire en note ou en renvoi."""
+    merged: list[_Segment] = []
+    for segment in segments:
+        if merged and not segment[4] and not merged[-1][4] and merged[-1][1:] == segment[1:]:
+            merged[-1] = (merged[-1][0] + segment[0], *segment[1:])
         else:
-            merged.append((text, bold, italic, underline))
+            merged.append(segment)
     said: list[str] = []
-    for text, bold, italic, underline in merged:
+    for text, bold, italic, underline, raw in merged:
+        if raw:
+            said.append(text)
+            continue
+        text = text.replace("^[", "\\^[").replace("§[", "\\§[")
         core = text.strip()
         if not core or not (bold or italic or underline):
             said.append(text)
@@ -1094,10 +1316,27 @@ def _markdown(segments: list[tuple[str, bool, bool, bool]]) -> str:
 
 
 def _table(package: _Package, reading: _Reading, element: Element) -> list[JsonValue]:
+    """Les lignes d'un tableau : chaque cellule en texte, son emphase, ses liens, ses notes
+    et ses renvois compris ; l'emphase d'une ligne d'en-tête, ou d'une ligne toute en gras
+    (un total), est celle de son style, que la réécriture repose : elle ne revient pas."""
     rows: list[JsonValue] = []
     for row in element:
         if _local(row.tag) != "tr":
             continue
+        tiles = [
+            [
+                _segments(paragraph, package.inline)
+                for paragraph in cell.iter()
+                if _local(paragraph.tag) == "p"
+            ]
+            for cell in row
+            if _local(cell.tag) == "tc"
+        ]
+        properties = _child(row, "trPr")
+        plain = (properties is not None and _child(properties, "tblHeader") is not None) or (
+            _all_bold([segment for tile in tiles for lines in tile for segment in lines])
+        )
+        texts = iter(_cell_markdown(tile, emphasis=not plain) for tile in tiles)
         cells: list[JsonValue] = []
         for cell in row:
             if _local(cell.tag) != "tc":
@@ -1111,7 +1350,8 @@ def _table(package: _Package, reading: _Reading, element: Element) -> list[JsonV
                 span = int(value) if value is not None and value.isdigit() else 1
                 vertical = _child(properties, "vMerge")
                 merged = vertical is not None and _attribute(vertical, "val") != "restart"
-            text = "" if merged else _cell_text(cell)
+            text = next(texts)
+            text = "" if merged else text
             if len(text) > MAX_CELL_CHARS:
                 text = text[:MAX_CELL_CHARS] + "…"
                 reading.cut += 1
@@ -1119,6 +1359,25 @@ def _table(package: _Package, reading: _Reading, element: Element) -> list[JsonV
             cells.extend("" for _ in range(min(span, MAX_COLUMNS) - 1))
         rows.append(cells[:MAX_COLUMNS])
     return rows
+
+
+def _all_bold(segments: list[_Segment]) -> bool:
+    """Tout le texte (hors liens, notes, renvois) en gras ; et du texte."""
+    shown = [segment for segment in segments if not segment[4] and segment[0].strip()]
+    return bool(shown) and all(segment[1] for segment in shown)
+
+
+def _cell_markdown(paragraphs: list[list[_Segment]], *, emphasis: bool) -> str:
+    """Le texte d'une cellule, ses paragraphes en lignes ; sans ``emphasis``, sans
+    l'emphase."""
+    lines: list[str] = []
+    for segments in paragraphs:
+        if not emphasis:
+            segments = [(text, False, False, False, raw) for text, *_, raw in segments]
+        said = _markdown(segments)
+        if said:
+            lines.append(said)
+    return "\n".join(lines)
 
 
 def _cell_text(cell: Element) -> str:
@@ -1141,15 +1400,16 @@ def _list_item(
             {"type": "list", "ordered": ordered, "items": []}, style
         )
     items = cast(list[JsonValue], pending["items"])
-    if level == 0 or not items:
-        items.append(text)
-        return
-    # Une sous-liste : sous l'élément précédent (au-delà d'un niveau, aplatie).
-    last = items[-1]
-    if isinstance(last, str):
-        items[-1] = {"text": last, "items": [text]}
-    else:
-        cast(list[JsonValue], cast(dict[str, JsonValue], last)["items"]).append(text)
+    # Une sous-liste : sous l'élément précédent, trois niveaux en tout (au-delà, aplatie
+    # au troisième).
+    for _ in range(min(level, 2)):
+        if not items:
+            break
+        last = items[-1]
+        if isinstance(last, str):
+            last = items[-1] = {"text": last, "items": []}
+        items = cast(list[JsonValue], cast(dict[str, JsonValue], last)["items"])
+    items.append(text)
 
 
 def _styled(block: dict[str, JsonValue], style: str | None) -> dict[str, JsonValue]:

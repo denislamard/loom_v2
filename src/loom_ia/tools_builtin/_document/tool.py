@@ -27,6 +27,8 @@ from loom_ia.tools_builtin import Settings
 from loom_ia.tools_builtin._document.arguments import (
     MAX_BLOCKS,
     MAX_CATEGORIES,
+    MAX_CODE_LINES,
+    MAX_FIELDS,
     MAX_IMAGE_BYTES,
     MAX_IMAGES,
     MAX_IMAGES_BYTES,
@@ -79,13 +81,16 @@ from loom_ia.tools_builtin.local_files_params import Right
 # Le mode d'emploi de l'écriture, commun aux formats ; il ne part qu'à qui peut écrire.
 WRITING_HELP: Final = (
     "Blocs ('blocks', dans l'ordre ; 'type' en tête de chacun) : heading (text, level 1 à 3), "
-    "paragraph (text), list (items : textes, ou {text, items} pour une sous-liste ; "
-    "ordered pour une liste numérotée), table (columns {header, type}, rows : une liste "
-    f"de valeurs par ligne, totals, caption ; {MAX_TABLE_COLUMNS} colonnes et "
+    "paragraph (text), list (items : textes, ou {text, items} pour une sous-liste, trois "
+    "niveaux au plus ; ordered pour une liste numérotée), table (columns {header, type}, "
+    f"rows : une liste de valeurs par ligne, totals, caption ; {MAX_TABLE_COLUMNS} colonnes et "
     f"{MAX_TABLE_ROWS} lignes au plus), note (text, title : ce que le lecteur doit retenir, "
     "une mise en garde), quote (text, source). 'title' : le titre du document, en tête. "
-    "Dans un texte : **gras**, *italique*, <u>souligné</u>, et \\n pour aller à la ligne "
-    "dans le même paragraphe ; pas d'autre balisage (ni #, ni -, ni |, ni autre balise).",
+    "Dans un texte (paragraphe, élément de liste, note, citation, cellule de texte) : "
+    "**gras**, *italique*, <u>souligné</u>, \\n pour aller à la ligne dans le même "
+    "paragraphe, [texte](https://…) pour un lien, ^[texte] pour une note de bas de page, "
+    "§[Titre] pour renvoyer à un titre du document ; pas d'autre balisage (ni #, ni -, ni |, "
+    "ni autre balise). Un titre, une légende : l'emphase seule.",
     "Types de colonne : text, integer, decimal, amount_eur, amount_keur (valeur déjà en "
     "k€), percent (fraction : 0.15 pour 15 %), date (AAAA-MM-JJ), datetime (ISO 8601), "
     "year, boolean. L'outil écrit les valeurs à la française (1 250,50 €) : donner des "
@@ -120,6 +125,15 @@ OPTIONAL_HELP: Final[Mapping[str, str]] = {
     "toc": "Sommaire ('type': 'toc') : la table des matières, tirée des titres.",
     "checkboxes": (
         "Liste à cocher : checkboxes sur une list, chaque élément commence par [x] ou [ ]."
+    ),
+    "fields": (
+        "Champs ('type': 'fields') : items, des paires [libellé, valeur] ([\"Référence\", "
+        '"D-2026-042"]) ; une valeur vide laisse une ligne à remplir à la main. '
+        f"{MAX_FIELDS} paires au plus."
+    ),
+    "code": (
+        "Code ('type': 'code') : text, du texte préformaté (code, commande, journal), écrit "
+        f"tel quel, sans balisage ; {MAX_CODE_LINES} lignes au plus."
     ),
 }
 

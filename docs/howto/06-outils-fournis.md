@@ -1022,7 +1022,7 @@ tools:
     timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
 ```
 
-Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `blocks`, la liste des blocs facultatifs que voit le modèle — `chart` (voir « Des graphiques »), `image` (voir « Des images »), `signature`, `toc` et `checkboxes` (voir « Signature, sommaire, liste à cocher ») —, `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), et `style`, la charte des documents (voir « Des styles de document »). Depuis loom-ia 2.1.0, `loom.pdf` a les mêmes : un même fichier de style et les mêmes modèles servent aux deux outils, la facture en Word pour l'artisan, en PDF pour l'envoi. Depuis loom-ia 2.1.0, `blocks` remplace `charts`, `images` et `extra_blocks`, refusés au chargement avec la forme qui les remplace (`charts → blocks: [chart]`). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
+Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `blocks`, la liste des blocs facultatifs que voit le modèle — `chart` (voir « Des graphiques »), `image` (voir « Des images »), `signature`, `toc` et `checkboxes` (voir « Signature, sommaire, liste à cocher »), `fields` et `code` (voir « Des champs et du code ») —, `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), et `style`, la charte des documents (voir « Des styles de document »). Depuis loom-ia 2.1.0, `loom.pdf` a les mêmes : un même fichier de style et les mêmes modèles servent aux deux outils, la facture en Word pour l'artisan, en PDF pour l'envoi. Depuis loom-ia 2.1.0, `blocks` remplace `charts`, `images` et `extra_blocks`, refusés au chargement avec la forme qui les remplace (`charts → blocks: [chart]`). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
 
 `loom validate` montre les dossiers, puis le fuseau, les blocs facultatifs, les modèles, la lecture et, s'il y en a un, le style :
 
@@ -1072,7 +1072,9 @@ Un appel décrit le document entier. Celui-ci, tiré d'un run réel (modèle sim
 
 - **Blocs** : `heading` (`level` 1 à 3), `paragraph`, `list` (à puces, ou numérotée avec `ordered` ; un élément `{text, items}` porte une sous-liste), `table`, `note` (ce que le lecteur doit retenir, une mise en garde ; un `title` facultatif), `quote` (avec sa `source`). Un saut de page n'est pas un bloc depuis loom-ia 2.1.0 : c'est de la mise en page, que décide le style. `title`, à côté des blocs, est le titre du document : en tête, et dans ses propriétés.
 - **Tableaux** : les types de colonne de `loom.excel` (`text`, `integer`, `decimal`, `amount_eur`, `amount_keur`, `percent`, `date`, `datetime`, `year`, `boolean`), avec la même conversion tolérante (`1 250,50`, `02/10/2026`, `15%`, `oui`). Une ligne plus courte que les colonnes est complétée de cellules vides. `totals` ajoute une ligne de total **calculée par l'outil** — un document n'a pas de formules — : `sum`, `average`, `count`, `min` ou `max`. `caption` est la légende, sous le tableau. 8 colonnes et 500 lignes au plus : au-delà, un classeur (`excel`) se lit mieux.
-- **Texte** : `**gras**`, `*italique*`, `<u>souligné</u>`, et `\n` pour aller à la ligne dans le même paragraphe ; ils se combinent (`**<u>mot</u>**`). Rien d'autre : un `#` ou un `-` en tête reste du texte, `2 * 3 * 4` aussi, comme une balise seule ou non refermée, et toute autre balise (`<b>`, `<br>`). Les cellules de tableau sont du texte simple.
+- **Texte** : `**gras**`, `*italique*`, `<u>souligné</u>`, et `\n` pour aller à la ligne dans le même paragraphe ; ils se combinent (`**<u>mot</u>**`). Rien d'autre : un `#` ou un `-` en tête reste du texte, `2 * 3 * 4` aussi, comme une balise seule ou non refermée, et toute autre balise (`<b>`, `<br>`).
+- **Liens, notes, renvois** (depuis loom-ia 2.1.1) : `[texte](https://…)` pour un lien (`https`, `http` ou `mailto` ; un autre schéma est refusé, et `[voir](page 2)`, sans schéma, reste du texte), `^[texte]` pour une note de bas de page (500 caractères par note, 100 par document, pas de note dans une note), `§[Titre]` pour renvoyer à un titre du document, comparé comme le plan d'un modèle (sans numéro, casse, accents ni emphase). `\^[` et `\§[` s'écrivent tels quels. Ils vont dans un paragraphe, un élément de liste, une note, une citation, une valeur de `fields` et une cellule de texte d'un tableau, qui prend aussi l'emphase ; un titre, une légende, un en-tête de colonne et un libellé n'ont que l'emphase, et le texte fixe d'un modèle n'a que les liens. Dans le `.docx`, un lien prend le style `link` ; une note est une note de bas de page de Word ; un renvoi est le numéro du titre visé (« 2.1 ») si le style numérote les titres, dans un champ que Word recalcule, et sinon le titre entre guillemets (« Travaux »), en lien vers lui. Dans le PDF, les notes vont en fin de document, sous le titre « Notes » (`labels.notes`), et chaque appel mène à sa note ; liens et renvois sont cliquables.
+- **Listes** : trois niveaux depuis loom-ia 2.1.1 : `{text, items}` s'imbrique deux fois. Les puces : •, –, ▪ ; les numéros : 1., a), i. Une liste à cocher en a deux.
 
 Le document produit : A4 portrait, marges de 2 cm, titre bleu nuit souligné d'un filet, titres de section bleu nuit, tableaux à en-tête bleu pâle répété d'une page à l'autre, ligne de total en gras sous un filet, nombres alignés à droite et dates centrées, notes en encadré gris à filet bleu, citations en retrait, « Page n / N » en pied. Le `.docx` est en Calibri 11 et déclaré en français (correcteur, césure). Le PDF reprend la même page, du même style (`default.yaml`, voir « Des styles de document »), en Helvetica 11, la police standard du PDF qui remplace Calibri, non embarquée : le fichier reste léger. Depuis loom-ia 2.1.0 ; avant, le PDF avait son propre style maison, en Helvetica 10,5.
 
@@ -1105,6 +1107,13 @@ Document refusé :
 - bloc 1 (heading) : texte vide
 - bloc 2 (table), ligne 1, « Montant HT » : 'environ 800' n'est pas une valeur amount_eur
 - bloc 2 (table) : sum sur « Désignation », colonne text : pas un nombre
+```
+
+Un renvoi à un titre que le document n'a pas donne la liste de ses titres :
+
+```text
+Document refusé :
+- bloc 3 (paragraph) : renvoi §[Garantie] : aucun titre de ce nom (titres : Objet des travaux · Conditions de paiement)
 ```
 
 Sont aussi refusés : un tableau de plus de 8 colonnes ou de 500 lignes, un en-tête en double, un total sur une colonne inconnue, un caractère de contrôle, un document sans contenu. Trois points ne sont qu'avertis, dans `warnings` : un titre qui saute un niveau, un pourcentage plus grand que 1, et, pour un PDF, un caractère que ses polices n'ont pas :
@@ -1464,6 +1473,10 @@ footer:                    # « Page n / N » vient de default.yaml
 | `box` | Le cadre d'une section encadrée (`box: true`) |
 | `toc` | Le titre du sommaire (il part de `heading1`), ses niveaux, ses numéros de page |
 | `signature`, `signature_mention` | Le libellé d'un signataire, la mention (« Bon pour accord ») |
+| `fields`, `fields_label` | La valeur et le libellé des champs (`fields_label` part de `fields`) |
+| `code` | Un bloc de code |
+| `link` | Un lien : sa couleur, son soulignement |
+| `footnote` | Le texte d'une note de bas de page (d'une note de fin dans le PDF) |
 | `header`, `footer` | Le haut et le bas de page |
 | `watermark` | Le filigrane : un texte en travers de chaque page (`watermark: BROUILLON` suffit) |
 
@@ -1490,6 +1503,7 @@ footer:                    # « Page n / N » vient de default.yaml
 | `header`, `footer` | `left`, `center`, `right` : un texte, avec `{page}`, `{pages}`, `{title}` ; `lines` : des lignes centrées (4 au plus : des mentions légales) ; `logo` (PNG ou JPEG, relatif à `resources_dir`), `logo_width` (en cm), `logo_position` ; `first_page` : `false` pour une première page sans |
 | `caption` | `numbered` : « Tableau 1 — », « Figure 1 — » |
 | `toc` | `levels` : les niveaux de titre repris (1 à 3) ; `page_numbers` : `false` pour des liens sans numéros de page |
+| `fields` | `label_width` : la largeur des libellés, en cm (1 à 10) |
 | `watermark` | `text` |
 
 **Les réglages** ne sont pas des styles :
@@ -1500,7 +1514,7 @@ footer:                    # « Page n / N » vient de default.yaml
 | `page` | `size` : `A4`, `A5`, `Letter` ; `orientation` : `portrait`, `landscape` ; `margins`, ou `margin_top`, `margin_bottom`, `margin_left`, `margin_right`, en cm (0,5 à 5) |
 | `numbering` | La numérotation des titres : `none`, `decimal` (1., 2.1, 2.1.3), `article` (« Article 1 – ») |
 | `language` | `fr` ou `en` : la langue déclarée du document (correcteur, césure), l'écriture des nombres et des dates (« 1 250,50 € », « 10/11/2026 » ; « €1,250.50 », « 11/10/2026 »), les libellés |
-| `labels` | Les libellés que l'outil écrit, un par un : `table` (Tableau), `figure` (Figure), `contents` (Sommaire), `date` (Date :), `signature` (Signature :), `article` (Article), `total` (Total) |
+| `labels` | Les libellés que l'outil écrit, un par un : `table` (Tableau), `figure` (Figure), `contents` (Sommaire), `date` (Date :), `signature` (Signature :), `article` (Article), `total` (Total), `notes` (Notes, le titre des notes de fin d'un PDF) |
 | `image` | `grid` : deux images `half` qui se suivent se posent côte à côte, chacune avec sa légende |
 | `chart` | `colors` : la couleur de chaque série, dans l'ordre (12 au plus) ; `text`, `grid`, `title` : le texte, la grille, le titre |
 | `fonts` | Les fichiers TrueType d'une police, que le PDF embarque : `fonts: { Inter: { regular: fonts/Inter-Regular.ttf, bold: …, italic: …, bold_italic: … } }` (voir plus bas) |
@@ -1612,6 +1626,26 @@ Document refusé :
 
 La relecture rend ces blocs tels qu'écrits : `signature` avec ses signataires et sa mention, `toc` (ses entrées ne reviennent pas), la liste à cocher avec ses `[x]` et `[ ]`. Un document relu se réécrit tel quel. Un outil qui ne les déclare pas et lit un tel document le dit dans `notes` (« Lu : signature (1), toc (1) ; cet outil n'en écrit pas : … (ou blocks: [signature, toc] dans la config de l'outil) »), avant une réécriture que le schéma refuserait. `loom validate` les liste dans `blocs`.
 
+#### Des champs et du code
+
+Depuis loom-ia 2.1.1, pour `loom.word` et `loom.pdf`, avec `fields` et `code` dans `blocks` (aucun par défaut). Ils coûtent, par appel de modèle : `fields` environ 115 tokens, `code` environ 75 (458 et 303 caractères de description et de schéma).
+
+```yaml
+  - python: loom.word
+    blocks: [fields, code]
+    folders: …
+```
+
+```json
+{"type": "fields", "items": [["Référence", "D-2026-042"], ["Client", "M. **Dupont**"], ["Bon pour accord", ""]]}
+{"type": "code", "text": "SELECT * FROM demandes\nWHERE statut = 'ouverte';"}
+```
+
+- **`fields`** : des paires [libellé, valeur], en deux colonnes sans filet : la référence et la date d'un document, les coordonnées d'un client, un bon pour accord. Le libellé (80 caractères au plus) a le style `fields_label` (en gras), la valeur (500 caractères) le style `fields` et le texte enrichi d'un paragraphe ; une valeur vide laisse une ligne à remplir à la main, au trait des tableaux. La colonne des libellés fait `label_width` cm (4 par défaut, la moitié de la page au plus). 30 paires au plus.
+- **`code`** : du texte préformaté (du code, une commande, un journal), écrit tel quel, espaces comprises, sans balisage ni correcteur, au style `code` (Courier New 9 sur fond gris). Les lignes vides du début et de la fin sont ôtées ; 200 lignes au plus. Dans le `.docx`, un paragraphe dont les lignes sont des sauts de ligne ; dans le PDF, une ligne trop longue se poursuit à la suivante.
+
+La relecture les rend tels qu'écrits : le tableau « loom fields » en `fields`, le paragraphe « loom code » en `code`. Un outil qui ne les déclare pas le dit dans `notes`, comme pour les blocs précédents.
+
 #### Lire un document Word
 
 Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossier qui a le droit `read`, et le rend **dans le vocabulaire de l'écriture** : ce qu'il lit peut être réécrit tel quel. Le devis ci-dessus, relu :
@@ -1638,7 +1672,8 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 ```
 
 - **Titres** : `level` 0 pour le titre du document (style « Titre »), 1 et plus pour les titres de section. Un document écrit ailleurs est reconnu par ses niveaux de plan ou ses styles de titre, quelle que soit la langue de Word.
-- **Tableaux** : les cellules en texte, telles qu'affichées ; une cellule fusionnée laisse les suivantes vides.
+- **Tableaux** : les cellules en texte, telles qu'affichées, avec leur emphase, leurs liens et leurs notes ; une cellule fusionnée laisse les suivantes vides. L'emphase de la ligne d'en-tête, ou d'une ligne toute en gras (un total), ne revient pas : c'est celle du style.
+- **Liens, notes, renvois** : un lien revient en `[texte](adresse)` (vers un autre schéma, un fichier, son texte seul) ; une note de bas de page en `^[…]`, à sa place, et aussi une note de fin d'un document écrit ailleurs ; un renvoi en `§[Titre]`, le titre visé, qu'il soit un champ (« Insertion > Renvoi » de Word) ou un lien vers un signet de ce titre ; vers un autre signet, son texte. Un `^[` ou un `§[` du texte revient échappé (`\^[`), pour ne pas se réécrire en note. Une liste revient sur ses trois niveaux.
 - **Coupe** : au-delà de 40 000 caractères, `"truncated": true`, `"next_start"` (le bloc où reprendre, avec `start`) et `"outline"`, le plan entier avec l'indice de chaque titre, pour aller droit à une section.
 - **Graphiques** : un graphique du `.docx` revient en bloc `chart`, à sa place, avec ses libellés et ses séries (ce que Word garde dans le graphique) ; un type que l'outil n'écrit pas (aires, nuage de points…) revient avec son nom technique en `kind`. Le rapport ci-dessus, relu : `{"type": "chart", "kind": "horizontal_bar", "title": "Total TTC par client", "categories": ["Julien Barre", "Chauffage Lemaire Rénovation", "Guillot SARL"], "series": [{"name": "Total TTC", "values": [18034.17, 16247.36, 14709.17]}]}`. La lecture rend les graphiques même sans `chart` dans `blocks` ; une note dit alors que l'outil n'en écrit pas, et de les retirer avant de réécrire le document.
 - **Images** : avec `image` dans `blocks`, une image revient en bloc `image`, à sa place : `{"type": "image", "path": "maquettes/depot-demande.png", "width": "full", "caption": "Écran 1 — Dépôt de la demande par le manager"}`. `path` est le fichier que l'outil a lu en écrivant le document : il le garde dans le nom de l'image (visible dans le volet de sélection de Word). Relu puis réécrit tel quel, le document redonne le même fichier, tant que les images sont là. Une image insérée ailleurs revient sans `path`, avec sa largeur et son texte alternatif, et une note le dit : pour réécrire le document, lui donner un fichier, ou retirer le bloc. La légende qui suit l'image revient en `caption`. Sans lui, les images sont seulement comptées.
@@ -1677,7 +1712,7 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 - **La lecture d'un `.docx` ne voit pas** les images sans `image` dans `blocks` (ni, avec, celles d'un tableau ou d'une zone de texte), les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
 - **PDF** : un bloc qui ne tient pas dans une page (une ligne de tableau très haute) est refusé : le découper. Une section côte à côte ou encadrée, une note longue continuent sur la page suivante.
 - **Rejeu** : comme pour `excel`, le rejeu sert le résultat du journal sans réécrire le fichier ; en rejeu en variante, un outil qui ne fait que lire est exécuté, un outil qui peut écrire ne l'est jamais.
-- **Coût** : environ 1,4 k tokens par outil et par appel de modèle, description et schéma compris ; environ 430 de plus avec `chart`, environ 190 avec `image`, environ 200 avec `signature`, `toc` et `checkboxes` ensemble, environ 250 avec `templates` (dont le champ `sections`) et 30 de plus par modèle déclaré (son nom et sa description), environ 80 pour un premier style proposé dans la charte. Le texte d'un modèle et ses styles proposés ne coûtent qu'à sa lecture.
+- **Coût** : environ 1,4 k tokens par outil et par appel de modèle, description et schéma compris ; environ 430 de plus avec `chart`, environ 190 avec `image`, environ 200 avec `signature`, `toc` et `checkboxes` ensemble, environ 115 avec `fields`, environ 75 avec `code`, environ 250 avec `templates` (dont le champ `sections`) et 30 de plus par modèle déclaré (son nom et sa description), environ 80 pour un premier style proposé dans la charte. Le texte d'un modèle et ses styles proposés ne coûtent qu'à sa lecture.
 
 ### `loom.sql` : des bases SQLite et Postgres, avec des droits par table
 

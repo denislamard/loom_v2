@@ -133,6 +133,11 @@ BASES: Final[Mapping[str, str | None]] = {
     "header": "text",
     "footer": "text",
     "watermark": "text",
+    "code": "text",
+    "link": "text",
+    "footnote": "text",
+    "fields": "text",
+    "fields_label": "fields",
 }
 # Les propriétés propres à certains styles, et ceux (avec leurs dérivés) qui les portent.
 _OWNERS: Final[Mapping[str, frozenset[str]]] = {
@@ -145,6 +150,7 @@ _OWNERS: Final[Mapping[str, frozenset[str]]] = {
     "levels": frozenset({"toc"}),
     "page_numbers": frozenset({"toc"}),
     "text": frozenset({"watermark"}),
+    "label_width": frozenset({"fields"}),
 }
 # Les réglages : des clés du fichier qui ne sont pas des styles.
 SETTINGS: Final = frozenset(
@@ -176,7 +182,16 @@ OLD_KEYS: Final[Mapping[str, str]] = {
 }
 
 # Les libellés que l'outil écrit dans le document, par langue.
-LABEL_KEYS: Final = ("table", "figure", "contents", "date", "signature", "article", "total")
+LABEL_KEYS: Final = (
+    "table",
+    "figure",
+    "contents",
+    "date",
+    "signature",
+    "article",
+    "total",
+    "notes",
+)
 LABELS: Final[Mapping[Language, Mapping[str, str]]] = {
     "fr": {
         "table": "Tableau",
@@ -186,6 +201,7 @@ LABELS: Final[Mapping[Language, Mapping[str, str]]] = {
         "signature": "Signature :",
         "article": "Article",
         "total": "Total",
+        "notes": "Notes",
     },
     "en": {
         "table": "Table",
@@ -195,6 +211,7 @@ LABELS: Final[Mapping[Language, Mapping[str, str]]] = {
         "signature": "Signature:",
         "article": "Article",
         "total": "Total",
+        "notes": "Notes",
     },
 }
 
@@ -343,6 +360,8 @@ class Props(_Spec):
     levels: Annotated[int, Field(ge=1, le=3)] | None = None
     page_numbers: bool | None = None
     text: Annotated[str, Field(max_length=40)] | None = None
+    # Les champs : la largeur de la colonne des libellés, en cm.
+    label_width: Annotated[float, Field(ge=1, le=10)] | None = None
     # Le sens d'un style à toi : il est proposé au modèle de langage, sur son type de bloc.
     description: Annotated[str, Field(min_length=1, max_length=MAX_STYLE_DESCRIPTION)] | None = None
 
@@ -365,6 +384,7 @@ class LabelsSpec(_Spec):
     signature: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     article: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
     total: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
+    notes: Annotated[str, Field(min_length=1, max_length=MAX_LABEL)] | None = None
 
 
 class ImageSpec(_Spec):
@@ -661,6 +681,7 @@ class Look:
     levels: int | None = None
     page_numbers: bool | None = None
     text: str | None = None
+    label_width: float | None = None
 
 
 _LOOK_FIELDS: Final = frozenset(Look.__dataclass_fields__)
@@ -678,6 +699,7 @@ class Labels:
     signature: str = "Signature :"
     article: str = "Article"
     total: str = "Total"
+    notes: str = "Notes"
 
 
 FRENCH: Final = Labels()

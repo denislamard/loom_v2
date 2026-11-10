@@ -98,13 +98,15 @@ def check_timezone(name: str) -> None:
 
 # Chacun coûte des tokens à chaque appel du modèle : il n'est dans le schéma et la
 # description que si la config de l'outil le nomme dans ``blocks``.
-type OptionalBlock = Literal["chart", "image", "signature", "toc", "checkboxes"]
+type OptionalBlock = Literal["chart", "image", "signature", "toc", "checkboxes", "fields", "code"]
 OPTIONAL_BLOCKS: Final[tuple[OptionalBlock, ...]] = (
     "chart",
     "image",
     "signature",
     "toc",
     "checkboxes",
+    "fields",
+    "code",
 )
 # Les clés d'avant ``blocks`` (2.0.x), refusées avec la forme qui les remplace.
 OLD_KEYS: Final[Mapping[str, str]] = {
@@ -137,7 +139,7 @@ def no_old_keys(value: object) -> object:
     if found:
         raise ValueError(
             f"{' ; '.join(found)} : les blocs facultatifs se nomment dans une seule liste, "
-            "blocks (chart, image, signature, toc, checkboxes)"
+            f"blocks ({', '.join(OPTIONAL_BLOCKS)})"
         )
     return value
 

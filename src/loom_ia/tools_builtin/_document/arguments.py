@@ -71,11 +71,18 @@ class Paragraph(_Model):
     text: str
 
 
-class Item(_Model):
-    """Un élément de liste qui porte une sous-liste (un niveau)."""
+class SubItem(_Model):
+    """Un élément de sous-liste qui porte à son tour une sous-liste : le troisième niveau."""
 
     text: str
     items: list[str]
+
+
+class Item(_Model):
+    """Un élément de liste qui porte une sous-liste (deux niveaux en dessous au plus)."""
+
+    text: str
+    items: list[str | SubItem]
 
 
 class ListBlock(_Model):
@@ -184,6 +191,28 @@ class Contents(_Model):
     type: Literal["toc"]
 
 
+MAX_FIELDS: Final = 30
+MAX_FIELD_LABEL: Final = 80
+MAX_FIELD_VALUE: Final = 500
+MAX_CODE_LINES: Final = 200
+
+
+class Fields(_Model):
+    """Des libellés et leurs valeurs : une paire est une liste de deux textes (plutôt
+    qu'un tuple, que tous les fournisseurs n'acceptent pas dans un schéma)."""
+
+    type: Literal["fields"]
+    items: Annotated[
+        list[Annotated[list[str], Field(min_length=2, max_length=2)]],
+        Field(min_length=1, max_length=MAX_FIELDS),
+    ]
+
+
+class Code(_Model):
+    type: Literal["code"]
+    text: str
+
+
 # Les blocs que le modèle voit sans bloc facultatif.
 type Block = Annotated[
     Heading | Paragraph | ListBlock | Table | Note | Quote,
@@ -192,7 +221,18 @@ type Block = Annotated[
 # Tous les blocs : ce qu'une écriture porte, quel que soit l'outil. Une liste à cocher
 # (``CheckList``) y passe comme liste : elle en est une.
 type WrittenBlock = Annotated[
-    Heading | Paragraph | ListBlock | Table | Note | Quote | Chart | Image | Signature | Contents,
+    Heading
+    | Paragraph
+    | ListBlock
+    | Table
+    | Note
+    | Quote
+    | Chart
+    | Image
+    | Signature
+    | Contents
+    | Fields
+    | Code,
     Field(discriminator="type"),
 ]
 
@@ -240,6 +280,8 @@ def block_union(blocks: Iterable[str], styles: Proposed = ()) -> object:
             ("image", Image),
             ("signature", Signature),
             ("toc", Contents),
+            ("fields", Fields),
+            ("code", Code),
         )
         if name in chosen
     ]
@@ -390,6 +432,8 @@ _SUFFIXES: Final[Mapping[str, str]] = {
     "signature": "Signature",
     "toc": "Toc",
     "checkboxes": "Checkboxes",
+    "fields": "Fields",
+    "code": "Code",
 }
 
 

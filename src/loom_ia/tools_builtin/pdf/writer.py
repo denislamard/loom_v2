@@ -28,7 +28,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from typing import Any, Final, cast
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
@@ -61,9 +61,14 @@ from reportlab.platypus.tableofcontents import drawPageNumbers
 
 from loom_ia.core.ports import ToolError
 from loom_ia.tools_builtin._document.content import (
+    QUOTES,
+    REF_MARK,
     BlockOut,
     ChartOut,
+    CodeOut,
     ContentsOut,
+    Entry,
+    FieldsOut,
     HeadingOut,
     ImageOut,
     Inline,
@@ -77,6 +82,7 @@ from loom_ia.tools_builtin._document.content import (
     TableOut,
     TitleOut,
     plain,
+    referenced,
 )
 from loom_ia.tools_builtin._style_params import (
     PDF_FALLBACK,
@@ -129,6 +135,13 @@ _ALIGN: Final = {"left": TA_LEFT, "center": TA_CENTER, "right": TA_RIGHT, "justi
 _PLACEHOLDER: Final = re.compile(r"\{(page|pages|title)\}")
 # Le rappel qui note la page d'un titre du sommaire, quand il se dessine.
 MARK: Final = "loom_mark"
+# L'ancre d'une note, en fin de document : ``NOTE_MARK`` et son numéro.
+NOTE_MARK: Final = "loom_note_"
+# Les puces des trois niveaux d'une liste, et la numérotation de chaque niveau (1., a), i.).
+BULLETS: Final = ("\u2022", "\u2013", "\u25aa")
+NUMBERS: Final = (("1", "%s."), ("a", "%s)"), ("i", "%s."))
+# Une puce qu'une police n'a pas (le carré du troisième niveau) : la première, plus petite.
+SMALL_BULLET: Final = 0.7
 _LOOK_FIELDS: Final = frozenset(f.name for f in fields(Look))
 
 
@@ -455,6 +468,14 @@ class _Body:
         self.heading_numbers: dict[int, str] = {}
         self.toc: list[tuple[int, str, str]] = []
         self.marks: dict[int, str] = {}
+        # Les renvois : le rang de chaque titre, ceux qu'un renvoi vise, leur numéro.
+        self.ranks: dict[int, int] = {}
+        self.targeted = referenced(prepared.blocks)
+        self.ref_numbers: dict[int, str] = {}
+        # Les notes, numérotées dans l'ordre où le texte les appelle ; écrites en fin de
+        # document.
+        self.notes: list[Inline] = []
+        self._note_numbers: dict[int, int] = {}
         self._headings(prepared.blocks)
 
     # --- styles
@@ -501,19 +522,42 @@ class _Body:
 
     def text(self, runs: Inline, pstyle: ParagraphStyle, look: Look, *, prefix: str = "") -> str:
         """Le balisage de ``Paragraph`` : le texte échappé, l'emphase en ``<b>``, ``<i>``,
-        ``<u>`` ; ses caractères comptés pour la police."""
+        ``<u>`` ; un lien dans le style ``link`` ; l'appel d'une note, en exposant, vers
+        la note ; un renvoi : le numéro du titre visé (ou son titre entre guillemets), vers
+        lui. Ses caractères comptés pour la police."""
         said = escape(prefix)
         seen = self.fonts.setdefault(pstyle.fontName, set())
         seen.update(prefix)
         for run in runs:
-            seen.update(run.text)
-            piece = escape(run.text).replace("\n", "<br/>").replace("\t", "&nbsp;" * 4)
+            if run.note is not None:
+                number = self._note_numbers.get(id(run))
+                if number is None:
+                    self.notes.append(run.note)
+                    number = self._note_numbers[id(run)] = len(self.notes)
+                seen.update(str(number))
+                said += f'<a href="#{NOTE_MARK}{number}"><super>{number}</super></a>'
+                continue
+            text = run.text
+            if run.ref is not None:
+                number = self.ref_numbers.get(run.ref)
+                opening, closing = QUOTES[self.style.language]
+                text = number if number is not None else f"{opening}{text}{closing}"
+            seen.update(text)
+            piece = escape(text).replace("\n", "<br/>").replace("\t", "&nbsp;" * 4)
             if run.underline:
                 piece = f"<u>{piece}</u>"
             if run.italic:
                 piece = f"<i>{piece}</i>"
             if run.bold:
                 piece = f"<b>{piece}</b>"
+            if run.link is not None:
+                link = self.style.look("link")
+                if link.underline:
+                    piece = f"<u>{piece}</u>"
+                color = f' color="#{link.color}"' if link.color and link.color != "none" else ""
+                piece = f"<a href={quoteattr(run.link)}{color}>{piece}</a>"
+            elif run.ref is not None:
+                piece = f'<a href="#{REF_MARK}{run.ref}">{piece}</a>'
             said += piece
         return f"<u>{said}</u>" if look.underline else said
 
@@ -587,9 +631,12 @@ class _Body:
         toc = any(isinstance(block, ContentsOut) for block in blocks)
         levels = style.look("toc").levels or 2
         counters = [0, 0, 0]
+        rank = 0
         for block in blocks:
             if not isinstance(block, HeadingOut):
                 continue
+            rank += 1
+            self.ranks[id(block)] = rank
             number = ""
             if style.numbering != "none":
                 counters[block.level - 1] += 1
@@ -598,6 +645,8 @@ class _Body:
                     style.numbering, counters[: block.level], style.labels.article
                 )
                 self.heading_numbers[id(block)] = number
+                if rank in self.targeted:
+                    self.ref_numbers[rank] = ".".join(str(n) for n in counters[: block.level])
             if toc and block.level <= levels:
                 label = plain(block.runs)
                 key = f"_Toc_loom_{len(self.toc) + 1}"
@@ -608,6 +657,8 @@ class _Body:
         name, look = self.look(f"heading{block.level}", block.style, layout)
         number = self.heading_numbers.get(id(block))
         key = self.marks.get(id(block))
+        rank = self.ranks.get(id(block), 0)
+        target = f'<a name="{REF_MARK}{rank}"/>' if rank in self.targeted else ""
         found = self.paragraph(
             name,
             look,
@@ -618,8 +669,23 @@ class _Body:
             prefix=f"{number} " if number else "",
             # L'ancre du lien du sommaire, et sa page notée quand le titre se dessine (aussi
             # dans des colonnes, où le document ne voit pas passer le titre).
-            anchor=f'<a name="{key}"/><onDraw name="{MARK}" label="{key}"/>' if key else "",
+            anchor=target
+            + (f'<a name="{key}"/><onDraw name="{MARK}" label="{key}"/>' if key else ""),
         )
+        return found
+
+    def endnotes(self, width: float) -> list[Flowable]:
+        """Les notes, en fin de document : sous un titre (``labels.notes``) au style des
+        titres de premier niveau, chacune dans le style ``footnote``, après son numéro."""
+        if not self.notes:
+            return []
+        style = self.style
+        label = (_run(style.labels.notes),)
+        found = [self.paragraph("heading1", style.look("heading1"), label, width, keep=True)]
+        look = style.look("footnote")
+        for number, runs in enumerate(self.notes, start=1):
+            anchor = f'<a name="{NOTE_MARK}{number}"/><super>{number}</super> '
+            found.append(self.paragraph("footnote", look, runs, width, anchor=anchor))
         return found
 
     def contents(self, width: float, pages: Mapping[str, int]) -> list[Flowable]:
@@ -719,45 +785,48 @@ class _Body:
                     found.append(self.signature(block, width))
                 case ContentsOut():
                     found.extend(self.contents(width, self.pages))
+                case FieldsOut():
+                    found.extend(self.fields(block, width))
+                case CodeOut():
+                    found.append(self.code(block, width))
         return found
 
     def list(self, block: ListOut, width: float, layout: _Layout) -> Flowable:
+        """Une liste et ses sous-listes : puce ou numéro à chaque niveau (1., a), i.)."""
         del width
         name, look = self.look("list", block.style, layout)
         pstyle = self.paragraph_style(name, look, align=layout.align)
-        bullets: dict[str, Any] = {
-            "bulletFontName": self.typefaces.name(look.font),
-            "bulletFontSize": pstyle.fontSize,
-            "bulletColor": pstyle.textColor,
-        }
-        items: list[ListItem] = []
-        for entry in block.entries:
-            content: list[Flowable] = [Paragraph(self.text(entry.runs, pstyle, look), pstyle)]
-            if entry.children:
-                content.append(
-                    ListFlowable(
-                        [
-                            Paragraph(self.text(child, pstyle, look), pstyle)
-                            for child in entry.children
-                        ],
-                        bulletType="a" if block.ordered else "bullet",
-                        start=None if block.ordered else "\u2013",
-                        bulletFormat="%s)" if block.ordered else None,
-                        leftIndent=LIST_INDENT,
-                        bulletDedent=LIST_HANG,
-                        **bullets,
-                    )
-                )
-            items.append(ListItem(content))
-        found = ListFlowable(
-            cast(list[Flowable], items),
-            bulletType="1" if block.ordered else "bullet",
-            start=None if block.ordered else "\u2022",
-            bulletFormat="%s." if block.ordered else None,
-            leftIndent=LIST_INDENT,
-            bulletDedent=LIST_HANG,
-            **bullets,
-        )
+        font = self.typefaces.name(look.font)
+
+        def level(entries: Sequence[Entry], depth: int) -> ListFlowable:
+            items: list[Flowable | ListItem] = []
+            for entry in entries:
+                paragraph = Paragraph(self.text(entry.runs, pstyle, look), pstyle)
+                if depth == 0 or entry.children:
+                    content: list[Flowable] = [paragraph]
+                    if entry.children:
+                        content.append(level(entry.children, depth + 1))
+                    items.append(ListItem(content))
+                else:
+                    items.append(paragraph)
+            bullet = BULLETS[depth]
+            size = pstyle.fontSize
+            if not block.ordered and not _covers(font, bullet):
+                bullet, size = BULLETS[0], size * SMALL_BULLET
+            kind, form = NUMBERS[depth]
+            return ListFlowable(
+                cast(list[Flowable], items),
+                bulletType=kind if block.ordered else "bullet",
+                start=None if block.ordered else bullet,
+                bulletFormat=form if block.ordered else None,
+                leftIndent=LIST_INDENT,
+                bulletDedent=LIST_HANG,
+                bulletFontName=font,
+                bulletFontSize=size,
+                bulletColor=pstyle.textColor,
+            )
+
+        found = level(block.entries, 0)
         # Après la liste, l'espace d'un paragraphe : celui du texte.
         found.spaceAfter = self.style.look("text").space_after or 0
         return found
@@ -787,13 +856,13 @@ class _Body:
                     "",
                 ]
             )
-            for child, checked in zip(entry.children, entry.children_checked, strict=True):
+            for child in entry.children:
                 rows.append(
                     [
                         "",
                         "",
-                        _Check(checked, size, color),
-                        Paragraph(self.text(child, pstyle, look), pstyle),
+                        _Check(child.checked, size, color),
+                        Paragraph(self.text(child.runs, pstyle, look), pstyle),
                     ]
                 )
         table = Table(
@@ -835,11 +904,13 @@ class _Body:
         full = width if full_width else min(width, narrow)
         widths = [part * full for part in block.widths]
 
-        def cell(text: str, look: Look, kind: str, align: str) -> Paragraph:
+        def cell(text: str | Inline, look: Look, kind: str, align: str) -> Paragraph:
             if align == "justify":
                 align = "left"
             pstyle = self.paragraph_style(f"{name}-{kind}", look, align=align, bare=True)
-            return Paragraph(self.plain(text, pstyle), pstyle)
+            if isinstance(text, str):
+                return Paragraph(self.plain(text, pstyle), pstyle)
+            return Paragraph(self.text(text, pstyle, look), pstyle)
 
         def heading_align(index: int) -> str:
             return header.align or block.align[index]
@@ -847,7 +918,7 @@ class _Body:
         data: list[list[Paragraph]] = [
             [cell(text, header, "header", heading_align(i)) for i, text in enumerate(block.headers)]
         ]
-        for cells in block.rows:
+        for cells in block.cells:
             data.append(
                 [cell(text, tables, "body", block.align[i]) for i, text in enumerate(cells)]
             )
@@ -887,6 +958,47 @@ class _Body:
         else:
             said.append(self.after(style.look("text")))
         return said
+
+    def fields(self, block: FieldsOut, width: float) -> list[Flowable]:
+        """Des libellés et leurs valeurs, en deux colonnes sans filet (le libellé large de
+        ``label_width``) ; une valeur vide est une ligne à remplir, au trait des tableaux."""
+        style = self.style
+        look = style.look("fields")
+        label_look = style.look("fields_label")
+        vstyle = self.paragraph_style("fields", look, bare=True)
+        lstyle = self.paragraph_style("fields_label", label_look, bare=True)
+        label = min((look.label_width or 4) * cm, width / 2)
+        commands: list[tuple[Any, ...]] = [
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), CELL_GAP / 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), look.space_after or 0),
+        ]
+        line = _rule(style.look("table").line)
+        rows: list[list[Flowable]] = []
+        for index, (name, value) in enumerate(block.items):
+            # Une valeur vide garde la hauteur d'une ligne : la ligne à remplir.
+            shown = self.text(value, vstyle, look) or "\u00a0"
+            rows.append([Paragraph(self.plain(name, lstyle), lstyle), Paragraph(shown, vstyle)])
+            if not value and line is not None:
+                commands.append(("LINEBELOW", (1, index), (1, index), line[0], line[1]))
+        table = Table(rows, colWidths=[label, width - label], hAlign="LEFT")
+        table.setStyle(TableStyle(commands))
+        return [table, self.after(style.look("text"))]
+
+    def code(self, block: CodeOut, width: float) -> Flowable:
+        """Du code : ses lignes telles quelles (les espaces gardées, une ligne trop longue
+        reprise à la suivante), dans le style ``code`` et son cadre (un fond)."""
+        look = self.style.look("code")
+        framed = _framed(look)
+        pstyle = self.paragraph_style("code", look, bare=framed)
+        self.fonts.setdefault(pstyle.fontName, set()).update(block.text)
+        lines = (_spaced(line) for line in block.text.split("\n"))
+        found: Flowable = Paragraph("<br/>".join(lines), pstyle)
+        if framed:
+            found = self.frame([found], look, width)
+        return found
 
     def image_flowable(self, block: ImageOut, width: float) -> Flowable:
         """L'image, à la taille décidée pour les deux formats, réduite à la place qu'elle a."""
@@ -1131,6 +1243,16 @@ def _table_lines(tables: Look) -> list[tuple[Any, ...]]:
         if rule is not None:
             commands.append((command, (0, row), (-1, row), rule[0], rule[1]))
     return commands
+
+
+def _spaced(line: str) -> str:
+    """Une ligne de code, ses espaces gardées : celles du début, et celles d'une série (la
+    dernière reste une espace, où la ligne peut se couper) ; une tabulation, quatre."""
+    said = escape(line.replace("\t", "    "))
+    return _SPACES.sub(lambda found: "&nbsp;" * len(found.group()), said)
+
+
+_SPACES: Final = re.compile(r"^ +| (?= )")
 
 
 def _heading_number(numbering: str, counters: Sequence[int], article: str) -> str:
@@ -1405,6 +1527,12 @@ def _build(
         elif unit.page_break:
             story.append(PageBreak())
         story += unit.flowables
+    # Les notes, après la dernière section : sur une page à elles après une page de garde.
+    if body.notes:
+        if current == "cover":
+            story += [NextPageTemplate("portrait"), PageBreak()]
+            current = "portrait"
+        story += body.endnotes(text_width(current == "landscape"))
     buffer = io.BytesIO()
     document = BaseDocTemplate(
         buffer,

@@ -30,8 +30,12 @@ from loom_ia.tools_builtin._document.arguments import (
     variant,
 )
 from loom_ia.tools_builtin._document.content import (
+    MAX_NOTES,
     NBSP,
     ChartOut,
+    CodeOut,
+    Entry,
+    FieldsOut,
     HeadingOut,
     ImageOut,
     ListOut,
@@ -45,6 +49,7 @@ from loom_ia.tools_builtin._document.content import (
     display,
     inline,
     prepare,
+    referenced,
 )
 from loom_ia.tools_builtin._document.picture import Picture, PictureError, dimensions
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
@@ -659,6 +664,8 @@ def test_variants_add_only_what_is_asked() -> None:
         "signature": {"type": "signature", "signers": ["Le client"]},
         "toc": {"type": "toc"},
         "checkboxes": {"type": "list", "checkboxes": True, "items": ["[x] a"]},
+        "fields": {"type": "fields", "items": [["Nom", ""]]},
+        "code": {"type": "code", "text": "x = 1"},
     }
     for chosen in ((), ("chart",), ("image", "toc"), ("signature", "checkboxes"), tuple(examples)):
         model = variant(DocumentCall, blocks=chosen)
@@ -934,3 +941,186 @@ def test_windows_line_endings_are_line_breaks() -> None:
     said = repr(found)
     assert "\\r" not in said
     assert "un\\ndeux\\ntrois" in said and "T\\nU" in said
+
+
+# --- Le texte enrichi (lot 5) -------------------------------------------------------------
+
+
+def rich_prepared(*blocks: dict[str, Any], template: Any = None, **arguments: Any) -> Prepared:
+    """Le document préparé, champs, code et listes à cocher compris ; avec ``template``,
+    par sections."""
+    names = (template.name,) if template is not None else ()
+    model = variant(DocumentCall, blocks=("fields", "code", "checkboxes"), templates=names)
+    if template is not None:
+        arguments["template"] = template.name
+    request = written(model, **({"blocks": list(blocks)} if blocks else {}), **arguments)
+    return prepare(request, PARIS, template=template)
+
+
+def rich_refused(match: str, *blocks: dict[str, Any], **arguments: Any) -> str:
+    with pytest.raises(ToolError, match=match) as caught:
+        rich_prepared(*blocks, **arguments)
+    return str(caught.value)
+
+
+def test_links_notes_and_references_in_a_text() -> None:
+    found = rich_prepared(
+        {"type": "heading", "text": "Objet"},
+        {
+            "type": "paragraph",
+            "text": "Voir [le site](https://example.com/a?b=1) et **[le guide](mailto:a@b.fr)**"
+            ", une note^[Par **virement**, voir [ici](http://x.fr).] et §[travaux prévus]. "
+            "Tels quels : \\^[pas une note], \\§[pas un renvoi], [voir](page 2).",
+        },
+        {"type": "heading", "text": "Travaux *prévus*", "level": 2},
+    )
+    paragraph = found.blocks[1]
+    assert isinstance(paragraph, ParagraphOut)
+    assert paragraph.runs == (
+        Run("Voir "),
+        Run("le site", link="https://example.com/a?b=1"),
+        Run(" et "),
+        Run("le guide", bold=True, link="mailto:a@b.fr"),
+        Run(", une note"),
+        Run("", note=(Run("Par "), Run("virement", bold=True), Run(", voir "),
+                      Run("ici", link="http://x.fr"), Run("."))),
+        Run(" et "),
+        # Le renvoi : le titre visé, tel qu'il s'écrit, et son rang parmi les titres.
+        Run("Travaux prévus", ref=2),
+        Run(". Tels quels : ^[pas une note], §[pas un renvoi], [voir](page 2)."),
+    )  # fmt: skip
+    assert referenced(found.blocks) == {2}
+
+
+@pytest.mark.parametrize(
+    ("text", "said"),
+    [
+        ("[x](ftp://a.fr)", "lien 'ftp://a.fr' : seuls https, http et mailto sont permis"),
+        ("une ^[note sans fin", "« ^[ » sans « ] »"),
+        ("^[une ^[note] dans une note]", "pas de note dans une note"),
+        ("^[" + "x" * 501 + "]", "501 caractères, au-delà de 500"),
+        ("§[Inconnu]", "renvoi §[Inconnu] : aucun titre de ce nom (titres : Objet · Objet)"),
+        ("§[objet]", "renvoi §[objet] : deux titres de ce nom"),
+    ],
+)
+def test_rich_text_faults_are_said(text: str, said: str) -> None:
+    rich_refused(
+        re.escape(said),
+        {"type": "heading", "text": "Objet"},
+        {"type": "heading", "text": "Objet"},
+        {"type": "paragraph", "text": text},
+    )
+
+
+def test_titles_captions_and_labels_take_emphasis_only() -> None:
+    said = rich_refused(
+        "Document refusé",
+        {"type": "heading", "text": "Voir ^[note]"},
+        {"type": "note", "title": "§[Voir]", "text": "x"},
+        {
+            "type": "table",
+            "columns": [{"header": "[A](https://a.fr)"}],
+            "rows": [["x"]],
+            "caption": "Une ^[note]",
+        },
+        {"type": "fields", "items": [["Nom^[x]", "y"]]},
+        title="Le [titre](https://a.fr)",
+    )
+    for where in ("title", "bloc 1 (heading)", "bloc 2 (note), title", "bloc 3 (table), caption",
+                  "bloc 4 (fields), paire 1, libellé"):  # fmt: skip
+        assert f"{where} : ni lien, ni note" in said, where
+
+
+def test_notes_are_bounded_per_document() -> None:
+    text = " ".join(["x^[n]"] * (MAX_NOTES + 1))
+    rich_refused(f"{MAX_NOTES + 1} notes de bas de page, au-delà de {MAX_NOTES}",
+                 {"type": "paragraph", "text": text})  # fmt: skip
+
+
+def test_references_follow_the_sections_of_a_template() -> None:
+    template = parse_template(
+        "note", "sections:\n  À:\n    show_title: false\n  Message:\n  Suite:\n"
+    )
+    paragraph = [{"type": "paragraph", "text": "Voir §[Message] et §[Détail]."}]
+    found = rich_prepared(
+        template=template,
+        sections={
+            "À": [{"type": "paragraph", "text": "x"}],
+            "Message": [{"type": "heading", "text": "Détail", "level": 2}],
+            "Suite": paragraph,
+        },
+    )
+    # Les titres dans l'ordre : Message (imprimé), Détail, Suite ; « À » ne s'imprime pas.
+    last = found.blocks[-1]
+    assert isinstance(last, ParagraphOut)
+    assert [run.ref for run in last.runs if run.ref] == [1, 2]
+    hidden = [{"type": "paragraph", "text": "§[À]"}]
+    sections = {"À": hidden, "Message": [{"type": "paragraph", "text": "y"}], "Suite": hidden}
+    with pytest.raises(ToolError, match="cette section n'imprime pas son titre"):
+        rich_prepared(template=template, sections=sections)
+
+
+def test_lists_have_three_levels() -> None:
+    found = rich_prepared(
+        {"type": "list", "items": ["a", {"text": "b", "items": [{"text": "c", "items": ["d"]}]}]},
+        {"type": "list", "checkboxes": True, "items": [{"text": "[x] a", "items": ["[ ] b"]}]},
+    )
+    deep, checks = found.blocks
+    assert isinstance(deep, ListOut) and isinstance(checks, ListOut)
+    assert deep.entries == (
+        Entry((Run("a"),)),
+        Entry((Run("b"),), (Entry((Run("c"),), (Entry((Run("d"),)),)),)),
+    )
+    assert checks.entries == (Entry((Run("a"),), (Entry((Run("b"),)),), checked=True),)
+    rich_refused(
+        "une liste à cocher a deux niveaux",
+        {"type": "list", "checkboxes": True,
+         "items": [{"text": "[x] a", "items": [{"text": "[ ] b", "items": ["[ ] c"]}]}]},
+    )  # fmt: skip
+    # Un quatrième niveau ne passe pas le schéma.
+    with pytest.raises(ToolError):
+        rich_prepared({"type": "list", "items": [{"text": "a", "items": [
+            {"text": "b", "items": [{"text": "c", "items": ["d"]}]}]}]})  # fmt: skip
+
+
+def test_fields_and_code() -> None:
+    found = rich_prepared(
+        {"type": "fields", "items": [["Client", "M. **Dupont**^[Gérant.]"], ["Signature", ""]]},
+        {"type": "code", "text": "\n \n  x = 1\n\n\ty = 2  \n\n"},
+    )
+    fields, code = found.blocks
+    assert fields == FieldsOut(
+        (
+            ("Client", (Run("M. "), Run("Dupont", bold=True), Run("", note=(Run("Gérant."),)))),
+            ("Signature", ()),
+        )
+    )
+    # Les lignes vides du début et de la fin retirées ; le reste tel quel.
+    assert code == CodeOut("  x = 1\n\n\ty = 2")
+    rich_refused("201 lignes, au-delà de 200", {"type": "code", "text": "x\n" * 201})
+    rich_refused(r"bloc 1 \(code\) : texte vide", {"type": "code", "text": " \n "})
+    rich_refused(
+        "31",
+        {"type": "fields", "items": [["a", "b"]] * 31},
+    )
+
+
+def test_text_cells_of_a_table_are_rich() -> None:
+    found = rich_prepared(
+        {"type": "heading", "text": "Objet"},
+        {
+            "type": "table",
+            "columns": [{"header": "Désignation"}, {"header": "Prix", "type": "amount_eur"}],
+            "rows": [["**Pose**, voir [fiche](https://a.fr)^[Du fabricant.] et §[Objet]", 10]],
+        },
+    )
+    table = found.blocks[1]
+    assert isinstance(table, TableOut)
+    assert table.cells[0] == (
+        (Run("Pose", bold=True), Run(", voir "), Run("fiche", link="https://a.fr"),
+         Run("", note=(Run("Du fabricant."),)), Run(" et "), Run("Objet", ref=1)),
+        (Run(f"10,00{NBSP}€"),),
+    )  # fmt: skip
+    # Le texte seul, pour la largeur des colonnes et ce qui n'a pas d'emphase.
+    assert table.rows[0][0] == "Pose, voir fiche et Objet"
+    assert referenced(found.blocks) == {1}

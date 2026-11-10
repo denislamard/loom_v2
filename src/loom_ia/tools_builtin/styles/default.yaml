@@ -58,6 +58,11 @@ table:
 table_header: { bold: true, fill: D9E1F2, align: center }
 table_total: { bold: true, border_top: 1.5pt 1F3864 }
 box: { border: 0.75pt 1F3864 }
+code: { font: Courier New, size: 9, fill: F2F2F2, line_spacing: 1, indent: 0.3 }
+link: { color: 0563C1, underline: true }
+footnote: { size: 9, line_spacing: 1, space_after: 0 }
+fields: { label_width: 4, space_after: 2 }
+fields_label: { bold: true }
 
 toc: { base: heading1, space_before: 12, space_after: 6, levels: 2, page_numbers: true }
 signature: { bold: true, space_before: 12, space_after: 3 }

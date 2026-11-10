@@ -108,8 +108,8 @@ class WordTool(DocumentTool):
 
 def _warn_unwritten(found: dict[str, JsonValue], blocks: tuple[str, ...]) -> None:
     """Des blocs lus que cet outil n'écrit pas (un graphique, une signature, un sommaire, une
-    liste à cocher) : le dire avant une réécriture, que le schéma refuserait sans dire
-    pourquoi."""
+    liste à cocher, des champs, du code) : le dire avant une réécriture, que le schéma
+    refuserait sans dire pourquoi."""
     read = found.get("blocks")
     if not isinstance(read, list):
         return
@@ -118,7 +118,9 @@ def _warn_unwritten(found: dict[str, JsonValue], blocks: tuple[str, ...]) -> Non
         if not isinstance(block, dict):
             continue
         name = "checkboxes" if block.get("checkboxes") else str(block.get("type"))
-        if name in ("chart", "signature", "toc", "checkboxes") and name not in blocks:
+        if name in ("chart", "signature", "toc", "checkboxes", "fields", "code") and (
+            name not in blocks
+        ):
             missing[name] = missing.get(name, 0) + 1
     if not missing:
         return

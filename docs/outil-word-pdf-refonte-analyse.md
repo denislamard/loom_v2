@@ -901,7 +901,7 @@ Chaque lot est livrable seul, testé, avec sa documentation.
 | **2. Le style hors du code (Word)** (fait, § 19) | `default.yaml`, le format de style (styles nommés, `base`, cascade, couleurs, `language`, `labels`), le chargeur, `word/style.py` piloté par le style ; Word sans charte identique à l'octet ; test sans valeur visuelle | La base de tout le reste |
 | **3. Les modèles en YAML et les sections (Word)** (fait, § 20) | Le format du modèle, `sections` dans l'appel, titres écrits par l'outil, `show_title`, `styles`, disposition, texte fixe, signets, relecture ; styles proposés au modèle de langage | Corrige ce qu'ont montré les essais du 10 novembre |
 | **4. La parité du PDF** (fait, § 21) | Le même style et les mêmes modèles en reportlab, polices TrueType, notes de fin, `checkboxes`, `signature`, `toc` | Clôt la rupture : les quatre premiers lots forment la 2.1.0 (O-5) |
-| **5. Le texte enrichi** | `fields`, `code`, liens, notes de bas de page, renvois, emphase dans les cellules, listes à trois niveaux (Word et PDF) | Ajouts sans rupture |
+| **5. Le texte enrichi** (fait, § 22) | `fields`, `code`, liens, notes de bas de page, renvois, emphase dans les cellules, listes à trois niveaux (Word et PDF) | Ajouts sans rupture |
 | **6. Les calculs** | Colonnes calculées, groupes et sous-totaux, `invoice_totals` | Le cœur du devis et de la facture |
 | **7. L'émargement** | `attendance` | Indépendant des autres ajouts |
 
@@ -1217,6 +1217,46 @@ Les documents Word sont identiques, octet pour octet, au lot 3 : les 17 document
   - ce que `loom validate` dit des polices.
 - `test_word_styles.py` : `loom.pdf` prend les styles et les trois blocs (deux essais réécrits).
 - Suite complète : 4 387 réussis, 201 sautés (8 de plus qu'au lot 3). ruff, format, `lint-imports` (6 contrats) et pyright passent sans erreur.
+
+## 22. Ce qui est écrit : le lot 5 (10 novembre 2026)
+
+Codé sans commit sur `8075e94` (le lot 4). Le CHANGELOG ouvre une section `2.1.1 - non publiée` : les lots 5 à 7 vont en 2.1.x (O-5).
+
+**Ce qui change**
+
+- **Le texte enrichi (§ 8.3 à 8.5)** : `content.py` lit les liens, les notes et les renvois avec l'emphase (`rich`) : chaque lien, note ou renvoi prend la place d'un caractère réservé le temps de lire l'emphase autour de lui, qui peut donc l'envelopper (`**[le guide](https://…)**`). Un `Run` gagne `link`, `note` (les segments de la note) et `ref` (le rang du titre visé). Les titres visés sont connus avant les blocs, dans l'ordre où ils seront écrits : ceux du document libre, ou, pour un modèle, le nom de chaque section imprimée puis ses titres. Un titre, une légende, un en-tête de colonne, un libellé de champ, la source d'une citation, le titre d'une note ou du document n'ont que l'emphase.
+- **Word** : `w:hyperlink` et une relation externe par adresse et par partie (le corps, les notes) ; `footnotes.xml`, ses deux séparateurs et `footnotePr` dans les réglages, seulement s'il y a des notes ; un signet `_Ref_loom_<rang>` sur chaque titre visé (identifiants à partir de 2000) ; un renvoi en champ `REF` ou en lien interne. Les styles `Hyperlink`, `FootnoteText`, `FootnoteReference`, `LoomCode`, `LoomFields` (tableau), `LoomFieldValue` et `LoomFieldLabel` ne sont écrits que s'ils servent. La numérotation gagne deux définitions à trois niveaux (puces, numéros), écrites seulement pour une liste qui descend au troisième.
+- **PDF** : `<a href>` pour un lien, `<a href="#…">` vers une ancre pour un appel de note et un renvoi ; les notes en fin de document (O-6) ; les champs en `Table` ; le code en `Paragraph` aux espaces insécables ; les listes en `ListFlowable` imbriqués.
+- **Les cellules** (§ 8.6) : une colonne de texte est préparée comme un paragraphe ; `TableOut.cells` porte les segments, `rows` garde le texte seul (largeur des colonnes, relecture).
+- **`fields` et `code`** (§ 8.1, 8.2) : deux blocs facultatifs de `blocks`, leurs styles dans `default.yaml`, `label_width` propre à `fields`.
+- **La relecture** : les notes (de bas de page et de fin) sont lues avant le corps ; un renvoi lu avant son titre attend la fin de la lecture, qui le remplace par `§[Titre]` (le signet est celui d'un titre) ou par son texte (un autre signet). Le champ complexe de Word (« Insertion > Renvoi ») est lu comme le champ simple de l'outil.
+
+**Écarts avec l'analyse, à valider**
+
+1. **Le code est un seul paragraphe**, ses lignes séparées par des sauts de ligne (`w:br`), plutôt qu'un paragraphe par ligne (§ 8.2) : un bloc reste un bloc à la relecture (deux blocs de code qui se suivent ne fusionnent pas), et `keepLines` le garde sur une page quand il y tient. Dans le PDF, un `Paragraph` aux espaces insécables plutôt que `XPreformatted` : une ligne trop longue passe à la suivante au lieu de sortir du cadre.
+2. **Le champ `REF` est `\n \t \h`**, plutôt que `\r \h` (§ 8.5) : `\n` donne le numéro sans son point final (« 2 » et non « 2. »), `\t` sans le texte du niveau (« 2 » et non « Article 2 – »), ce qui se lit dans une phrase (« voir l'article 2 »). LibreOffice ignore `\t` : pour un titre d'article (`numbering: article`, niveau 1), le renvoi est son numéro en lien, que Word ne recalcule pas si l'on insère un article à la main. Les niveaux 2 et 3 restent en champ.
+3. **Notes et renvois vont aussi dans les cellules et les valeurs de `fields`**, pas seulement les liens et l'emphase (§ 8.6) ; le § 8.4 le disait déjà pour les notes.
+4. **Le texte fixe d'un modèle n'a que les liens** : ni note ni renvoi, que l'analyse ne prévoyait pas.
+5. **Les notes de fin du PDF** sont sous « Notes » (`labels.notes`, un libellé de plus), au style `heading1` mais sans numéro ni place au sommaire ; chaque note commence par son numéro en exposant. Après une page de garde seule, elles ouvrent une page.
+6. **La relecture des cellules** : l'emphase d'une ligne d'en-tête (`tblHeader`) ou d'une ligne toute en gras (un total, ou l'en-tête d'un document écrit ailleurs) ne revient pas : c'est celle du style, et la réécriture la doublerait.
+7. **La relecture va au-delà de l'outil** : un renvoi de Word vers un signet de titre (champ `REF` simple ou complexe, lien interne) revient en `§[Titre]`, une note de fin en `^[…]` (réécrite en note de bas de page) ; un lien vers un autre schéma (un fichier) revient en texte ; un `^[` ou un `§[` du texte revient échappé.
+8. **Une liste à cocher garde deux niveaux** (« une liste à cocher a deux niveaux »).
+9. **La puce du troisième niveau** est ▪ dans Word ; dans le PDF aussi quand la police l'a, sinon (les polices standard) une puce • plus petite.
+10. **`label_width`** : 1 à 10 cm, et la moitié de la largeur au plus.
+11. **Le coût dépasse l'estimation** (§ 12.2) : +460 caractères pour tous (350 à 450 estimés), dont 245 de description (la syntaxe et ses limites) et 215 de schéma (l'élément de liste imbriqué deux fois) ; `fields` +458 (320 estimés pour le schéma seul), `code` +303 (250).
+
+**Non-régression (§ 14)**
+
+Les documents sans lien, note, renvoi, champ, code ni troisième niveau sont identiques, octet pour octet, au lot 4, en Word comme en PDF : les 17 documents et la relecture du script d'empreintes, et `DEVIS_SHA256` et `HOUSE_STYLES_SHA256`. Un document qui a tout (liens dans le texte, les cellules, les notes et les champs ; notes ; renvois en numérotation `none`, `decimal` et `article` ; trois niveaux ; champs ; code) passe les schémas XSD de l'ISO/IEC 29500 ; LibreOffice l'ouvre, met les notes en bas de page et recalcule les renvois (« 2 », « 2.1 ») ; relu puis réécrit, il redonne le même fichier.
+
+**Essais**
+
+- `test_document.py` : 125 (13 de plus) : liens, notes et renvois préparés (l'emphase autour d'un lien, une note qui contient un lien et un renvoi, les échappements, un lien sans schéma) ; six refus (schéma, note non refermée, note dans une note, note trop longue, titre inconnu, deux titres de même nom) ; titres, légendes et libellés sans lien ni note ; 100 notes au plus ; renvois dans un modèle (section imprimée, section sans titre refusée) ; trois niveaux et la liste à cocher à deux ; champs et code ; cellules enrichies ; les variantes avec `fields` et `code`.
+- `test_word.py` : 72 (7 de plus) : un document enrichi écrit (parties, relations, signets, styles), relu et réécrit au même fichier ; le renvoi à un titre numéroté (`decimal` : champ `REF` ; `article` : numéro en lien) ; pas de notes sans notes ; un document d'ailleurs (champ `REF` complexe, lien interne, note de fin, lien vers un fichier, signet qui n'est pas un titre) ; l'emphase des cellules, sauf l'en-tête et le total ; LibreOffice recalcule le renvoi.
+- `test_word_styles.py` : 70 (4 de plus) : les styles du texte enrichi pris à la charte (lien, notes, code, champs, `label_width`, numérotation à trois niveaux, ordre du schéma) ; aucun sans lui ; le coût de `fields` et `code`, et la note de relecture d'un outil qui ne les déclare pas ; `label_width` propre à `fields`.
+- `test_pdf.py` : 54 (2 de plus) : liens, notes de fin, renvois, trois niveaux, champs et code dans un PDF ; pas de « Notes » sans notes.
+- `test_memory_tool.py` : les champs et le code en markdown (un essai complété).
+- Suite complète : 4 413 réussis, 201 sautés (26 de plus qu'au lot 4). ruff, format, `lint-imports` (6 contrats) et pyright passent sans erreur.
 
 ## Sources
 

@@ -32,15 +32,20 @@ import dataclasses
 import io
 import re
 import zipfile
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final
 from xml.sax.saxutils import escape, quoteattr
 
 from loom_ia.tools_builtin._document.content import (
+    QUOTES,
+    REF_MARK,
     BlockOut,
     ChartOut,
+    CodeOut,
     ContentsOut,
+    Entry,
+    FieldsOut,
     HeadingOut,
     ImageOut,
     Inline,
@@ -49,10 +54,12 @@ from loom_ia.tools_builtin._document.content import (
     ParagraphOut,
     Prepared,
     QuoteOut,
+    Run,
     SignatureOut,
     TableOut,
     TitleOut,
     plain,
+    referenced,
 )
 from loom_ia.tools_builtin._document.picture import Picture
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
@@ -85,6 +92,8 @@ BOX_PAD: Final = 170
 COVER_SPACE: Final = 6 * CM
 # Les signets des sections : leurs identifiants commencent ici, loin de ceux du sommaire.
 SECTION_MARKS: Final = 1000
+# Les identifiants des signets des titres que vise un renvoi (``REF_MARK`` et leur rang).
+REF_MARKS: Final = 2000
 
 CONTENT_TYPES: Final = (
     _HEAD + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -180,6 +189,11 @@ SETTINGS: Final = (
     'w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>'
     "</w:settings>"
 )
+# Avec des notes de bas de page : les deux séparateurs, que Word veut nommés ici.
+SETTINGS_NOTES: Final = SETTINGS.replace(
+    "<w:compat>",
+    '<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr><w:compat>',
+)
 # Le style maison, tel qu'écrit dans un document sans style.
 STYLES: Final = look.styles_xml(house())
 
@@ -215,17 +229,93 @@ def _half(points: float | None) -> int | None:
     return look.half_points(points) if points is not None else None
 
 
-def _runs(runs: Inline, *, bold: bool = False, size: int | None = None) -> str:
+def _plain_runs(runs: Inline, *, bold: bool = False, size: int | None = None) -> str:
+    """Des segments sans lien, note ni renvoi : un titre, une légende, une case."""
+    return "".join(_one(run, bold=bold, size=size) for run in runs)
+
+
+def _one(run: Run, *, bold: bool = False, size: int | None = None, link: bool = False) -> str:
+    props = (
+        (f'<w:rStyle w:val="{look.HYPERLINK}"/>' if link else "")
+        + ("<w:b/><w:bCs/>" if run.bold or bold else "")
+        + ("<w:i/><w:iCs/>" if run.italic else "")
+        + _size(size)
+        + ('<w:u w:val="single"/>' if run.underline else "")
+    )
+    return _run(run.text, f"<w:rPr>{props}</w:rPr>" if props else "")
+
+
+def _runs(
+    body: _Body,
+    runs: Inline,
+    *,
+    bold: bool = False,
+    size: int | None = None,
+    part: str = "document",
+) -> str:
+    """Les segments d'un paragraphe, d'un élément de liste, d'une cellule : l'emphase, les
+    liens (une relation externe de ``part``), les appels de note, les renvois."""
     said = ""
-    for run in runs:
-        props = (
-            ("<w:b/><w:bCs/>" if run.bold or bold else "")
-            + ("<w:i/><w:iCs/>" if run.italic else "")
-            + _size(size)
-            + ('<w:u w:val="single"/>' if run.underline else "")
-        )
-        said += _run(run.text, f"<w:rPr>{props}</w:rPr>" if props else "")
+    index = 0
+    while index < len(runs):
+        run = runs[index]
+        if run.link is not None:
+            group = [run]
+            while index + len(group) < len(runs) and runs[index + len(group)].link == run.link:
+                group.append(runs[index + len(group)])
+            index += len(group)
+            body.used.add(look.HYPERLINK)
+            relation = body.relation(run.link, part)
+            said += (
+                f'<w:hyperlink r:id="{relation}" w:history="1">'
+                + "".join(_one(piece, bold=bold, size=size, link=True) for piece in group)
+                + "</w:hyperlink>"
+            )
+            continue
+        index += 1
+        if run.note is not None:
+            said += _footnote(body, run.note)
+        elif run.ref is not None:
+            said += _reference(body, run, bold=bold, size=size)
+        else:
+            said += _one(run, bold=bold, size=size)
     return said
+
+
+def _footnote(body: _Body, note: Inline) -> str:
+    """L'appel d'une note de bas de page ; son texte va dans ``footnotes.xml``."""
+    body.used.update((look.FOOTNOTE_TEXT, look.FOOTNOTE_REFERENCE))
+    number = len(body.footnotes) + 1
+    body.footnotes.append("")
+    body.footnotes[number - 1] = (
+        f'<w:footnote w:id="{number}"><w:p><w:pPr><w:pStyle w:val="{look.FOOTNOTE_TEXT}"/>'
+        f'</w:pPr><w:r><w:rPr><w:rStyle w:val="{look.FOOTNOTE_REFERENCE}"/></w:rPr>'
+        '<w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>'
+        + _runs(body, note, part="footnotes")
+        + "</w:p></w:footnote>"
+    )
+    return (
+        f'<w:r><w:rPr><w:rStyle w:val="{look.FOOTNOTE_REFERENCE}"/></w:rPr>'
+        f'<w:footnoteReference w:id="{number}"/></w:r>'
+    )
+
+
+def _reference(body: _Body, run: Run, *, bold: bool, size: int | None) -> str:
+    """Un renvoi : le numéro du titre visé (ses chiffres seuls), dans un champ ``REF`` que
+    Word recalcule ; un titre sans numéro, entre guillemets, en lien vers lui. Un article
+    (« Article 2 » et son tiret) : son numéro en lien, LibreOffice recalculant le champ
+    avec le libellé et le tiret."""
+    rank = run.ref or 0
+    mark = f"{REF_MARK}{rank}"
+    number = body.ref_numbers.get(rank)
+    if number is not None and rank not in body.articles:
+        shown = _one(dataclasses.replace(run, text=number), bold=bold, size=size)
+        return f'<w:fldSimple w:instr=" REF {mark} \\n \\t \\h ">{shown}</w:fldSimple>'
+    if number is None:
+        opening, closing = QUOTES[body.style.language]
+        number = f"{opening}{run.text}{closing}"
+    shown = _one(dataclasses.replace(run, text=number), bold=bold, size=size)
+    return f'<w:hyperlink w:anchor="{mark}" w:history="1">{shown}</w:hyperlink>'
 
 
 def _run(text: str, props: str = "") -> str:
@@ -268,7 +358,8 @@ class _Body:
     style: Style
     title: str
     template: Template | None = None
-    lists: list[bool] = field(default_factory=list[bool])
+    # Les listes : numérotée ?, à trois niveaux ?
+    lists: list[tuple[bool, bool]] = field(default_factory=list[tuple[bool, bool]])
     charts: list[ChartOut] = field(default_factory=list[ChartOut])
     # Les images distinctes, dans l'ordre où elles paraissent la première fois.
     media: list[Picture] = field(default_factory=list[Picture])
@@ -284,12 +375,28 @@ class _Body:
     # Le sommaire : ses entrées (niveau, texte, signet), et le signet de chaque titre repris.
     toc: list[tuple[int, str, str]] = field(default_factory=list[tuple[int, str, str]])
     marks: dict[int, tuple[int, str]] = field(default_factory=dict[int, tuple[int, str]])
+    # Les renvois : le rang de chaque titre (par bloc), ceux qu'un renvoi vise, et le numéro
+    # de chacun si les titres sont numérotés.
+    ranks: dict[int, int] = field(default_factory=dict[int, int])
+    targeted: set[int] = field(default_factory=set[int])
+    ref_numbers: dict[int, str] = field(default_factory=dict[int, str])
+    articles: set[int] = field(default_factory=set[int])
+    # Les notes de bas de page (leur XML), et les liens de chaque partie (leurs adresses).
+    footnotes: list[str] = field(default_factory=list[str])
+    links: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
 
     def word(self, name: str) -> str:
         """Le style Word d'un style nommé ; un style à toi est écrit s'il sert."""
         if name not in look.WORD_IDS and name != "paragraph":
             self.custom.add(name)
         return look.word_id(self.style, name)
+
+    def relation(self, address: str, part: str) -> str:
+        """La relation d'un lien dans une partie (le corps, les notes) : une par adresse."""
+        found = self.links.setdefault(part, [])
+        if address not in found:
+            found.append(address)
+        return f"rIdLink{found.index(address) + 1}"
 
     def picture(self, picture: Picture) -> int:
         """Le numéro de la partie qui porte l'image : chaque image distincte une fois."""
@@ -311,7 +418,7 @@ def _caption(body: _Body, kind: str, runs: Inline, style_id: str = "Caption") ->
             + f'<w:fldSimple w:instr=" SEQ {kind} \\* ARABIC "><w:r><w:t>{number}</w:t></w:r>'
             "</w:fldSimple>" + _run(" — ")
         )
-    return _paragraph(style_id, prefix + _runs(runs))
+    return _paragraph(style_id, prefix + _plain_runs(runs))
 
 
 def _border(value: str | None) -> str:
@@ -393,7 +500,7 @@ def _table(
         "body": {},
     }
 
-    def row(cells: Iterable[str], kind: str = "body", band: bool = False) -> str:
+    def row(cells: Sequence[str | Inline], kind: str = "body", band: bool = False) -> str:
         props = (
             "<w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>"
             if kind == "header"
@@ -412,9 +519,12 @@ def _table(
             align = (line_look.align if line_look is not None else None) or table.align[index]
             if align == "justify":
                 align = table.align[index]
-            runs = {prop: value for prop, value in own.items() if prop != "size"}
-            props = look.run_xml(runs) + _size(size or _half(own.get("size")))
-            content = _run(text, f"<w:rPr>{props}</w:rPr>" if props else "")
+            if isinstance(text, str):
+                runs = {prop: value for prop, value in own.items() if prop != "size"}
+                props = look.run_xml(runs) + _size(size or _half(own.get("size")))
+                content = _run(text, f"<w:rPr>{props}</w:rPr>" if props else "")
+            else:
+                content = _runs(body, text, size=size)
             said += (
                 f'<w:tc><w:tcPr><w:tcW w:w="{widths[index]}" w:type="dxa"/>{top}'
                 f'{_cell_fill(filled)}<w:vAlign w:val="center"/></w:tcPr>'
@@ -424,7 +534,7 @@ def _table(
         return said + "</w:tr>"
 
     said += row(table.headers, "header")
-    said += "".join(row(cells, band=index % 2 == 1) for index, cells in enumerate(table.rows))
+    said += "".join(row(cells, band=index % 2 == 1) for index, cells in enumerate(table.cells))
     if table.total is not None:
         said += row(table.total, "total")
     said += "</w:tbl>"
@@ -583,10 +693,10 @@ def _blocks(body: _Body, blocks: Sequence[BlockOut], width: int, layout: _Layout
         match block:
             case TitleOut(runs=runs):
                 said += _paragraph(
-                    "Title", _runs(runs), '<w:jc w:val="center"/>' if layout.cover else ""
+                    "Title", _plain_runs(runs), '<w:jc w:val="center"/>' if layout.cover else ""
                 )
             case HeadingOut(level=level, runs=runs):
-                content = _runs(runs)
+                content = _plain_runs(runs)
                 mark = body.marks.get(id(block))
                 if mark is not None:
                     number, name = mark
@@ -594,30 +704,34 @@ def _blocks(body: _Body, blocks: Sequence[BlockOut], width: int, layout: _Layout
                         f'<w:bookmarkStart w:id="{number}" w:name="{name}"/>{content}'
                         f'<w:bookmarkEnd w:id="{number}"/>'
                     )
+                rank = body.ranks.get(id(block), 0)
+                if rank in body.targeted:
+                    number = REF_MARKS + rank
+                    content = (
+                        f'<w:bookmarkStart w:id="{number}" w:name="{REF_MARK}{rank}"/>{content}'
+                        f'<w:bookmarkEnd w:id="{number}"/>'
+                    )
                 heading = _style_id(body, f"heading{level}", block.style, layout)
                 said += _paragraph(heading, content)
             case ParagraphOut(runs=runs):
                 paragraph = _style_id(body, "paragraph", block.style, layout)
-                said += _paragraph(paragraph, _runs(runs), align)
+                said += _paragraph(paragraph, _runs(body, runs), align)
             case ListOut(entries=entries, checkboxes=True):
                 body.used.update((look.CHECK, look.CHECK_2))
                 for entry in entries:
-                    said += _checkbox(look.CHECK, entry.checked, entry.runs, None)
+                    said += _checkbox(body, look.CHECK, entry.checked, entry.runs, None)
                     said += "".join(
-                        _checkbox(look.CHECK_2, checked, child, None)
-                        for child, checked in zip(
-                            entry.children, entry.children_checked, strict=True
-                        )
+                        _checkbox(body, look.CHECK_2, child.checked, child.runs, None)
+                        for child in entry.children
                     )
             case ListOut(ordered=ordered, entries=entries):
-                body.lists.append(ordered)
+                deep = any(child.children for entry in entries for child in entry.children)
+                body.lists.append((ordered, deep))
                 number = len(body.lists)
                 items = _style_id(body, "list", block.style, layout)
-                for entry in entries:
-                    said += _list_item(number, 0, entry.runs, align, items)
-                    said += "".join(
-                        _list_item(number, 1, child, align, items) for child in entry.children
-                    )
+                said += "".join(
+                    _list_items(body, number, 0, entry, align, items) for entry in entries
+                )
             case TableOut():
                 name = block.style or layout.styles.get("table") or "table"
                 text = body.word(name)
@@ -631,9 +745,10 @@ def _blocks(body: _Body, blocks: Sequence[BlockOut], width: int, layout: _Layout
                     else ""
                 )
                 note = _style_id(body, "note", block.style, layout)
-                said += _paragraph(note, head + _runs(runs))
+                said += _paragraph(note, head + _runs(body, runs))
             case QuoteOut(runs=runs, source=source):
-                said += _paragraph(_style_id(body, "quote", block.style, layout), _runs(runs))
+                quote = _style_id(body, "quote", block.style, layout)
+                said += _paragraph(quote, _runs(body, runs))
                 if source:
                     said += _paragraph("QuoteSource", _run(f"— {source}"))
             case ChartOut():
@@ -658,17 +773,22 @@ def _blocks(body: _Body, blocks: Sequence[BlockOut], width: int, layout: _Layout
                 said += _signature(body, block, width)
             case ContentsOut():
                 said += _contents(body, width)
+            case FieldsOut():
+                said += _fields(body, block, width)
+            case CodeOut(text=text):
+                body.used.add(look.CODE)
+                said += _paragraph(look.CODE, _run(text, "<w:rPr><w:noProof/></w:rPr>"))
     return said
 
 
-def _checkbox(style: str, checked: bool, runs: Inline, size: int | None) -> str:
+def _checkbox(body: _Body, style: str, checked: bool, runs: Inline, size: int | None) -> str:
     """Un élément de liste à cocher : la case (☒ ou ☐), une tabulation, le texte."""
     box = (
         f'<w:r><w:rPr><w:rFonts w:ascii="{look.CHECK_FONT}" w:hAnsi="{look.CHECK_FONT}" '
         f'w:cs="{look.CHECK_FONT}"/>{_size(size)}</w:rPr>'
         f"<w:t>{look.CHECKED if checked else look.UNCHECKED}</w:t></w:r><w:r><w:tab/></w:r>"
     )
-    return _paragraph(style, box + _runs(runs, size=size))
+    return _paragraph(style, box + _runs(body, runs, size=size))
 
 
 def _signature(body: _Body, block: SignatureOut, width: int) -> str:
@@ -778,6 +898,59 @@ def _toc_entries(body: _Body, blocks: Sequence[BlockOut]) -> None:
         body.toc.append((block.level, label, name))
 
 
+def _ref_targets(body: _Body, blocks: Sequence[BlockOut]) -> None:
+    """Les titres qu'un renvoi vise : leur rang (l'ordre des titres, celui de la
+    validation), et leur numéro, tel que le champ ``REF`` l'écrit, si les titres sont
+    numérotés (les chiffres seuls : « 2 », « 2.1 »)."""
+    targeted = referenced(blocks)
+    if not targeted:
+        return
+    body.targeted = set(targeted)
+    numbered = body.style.numbering != "none"
+    counters = [0, 0, 0]
+    rank = 0
+    for block in blocks:
+        if not isinstance(block, HeadingOut):
+            continue
+        rank += 1
+        body.ranks[id(block)] = rank
+        if numbered:
+            counters[block.level - 1] += 1
+            counters[block.level :] = [0] * (3 - block.level)
+            if rank in targeted:
+                body.ref_numbers[rank] = ".".join(str(n) for n in counters[: block.level])
+                if block.level == 1 and body.style.numbering == "article":
+                    body.articles.add(rank)
+
+
+def _footnotes(notes: Sequence[str]) -> str:
+    """Les notes de bas de page, après les deux séparateurs que Word attend."""
+    separators = "".join(
+        f'<w:footnote w:type="{kind}" w:id="{number}"><w:p><w:pPr>'
+        '<w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>'
+        f"<w:r><w:{kind}/></w:r></w:p></w:footnote>"
+        for number, kind in ((-1, "separator"), (0, "continuationSeparator"))
+    )
+    return (
+        _HEAD
+        + f"<w:footnotes xmlns:w={quoteattr(_W)} xmlns:r={quoteattr(_R)}>"
+        + separators
+        + "".join(notes)
+        + "</w:footnotes>"
+    )
+
+
+def _link_relations(body: _Body, part: str, *, bare: bool = False) -> str:
+    """Les relations des liens d'une partie : vers leur adresse, hors du document ;
+    ``bare`` : sans l'enveloppe (ajoutées aux relations du corps)."""
+    said = "".join(
+        f'<Relationship Id="rIdLink{n}" Type="{_TYPE}/hyperlink" Target={quoteattr(address)} '
+        'TargetMode="External"/>'
+        for n, address in enumerate(body.links.get(part, []), start=1)
+    )
+    return said if bare else _HEAD + f'<Relationships xmlns="{_REL}">{said}</Relationships>'
+
+
 def _heading_number(numbering: str, counters: Sequence[int], article: str) -> str:
     """Le numéro d'un titre, comme la numérotation de ``word/style.py`` l'écrit."""
     if len(counters) == 1:
@@ -785,9 +958,46 @@ def _heading_number(numbering: str, counters: Sequence[int], article: str) -> st
     return ".".join(str(number) for number in counters)
 
 
-def _list_item(number: int, level: int, runs: Inline, align: str, style: str) -> str:
+def _list_items(body: _Body, number: int, level: int, entry: Entry, align: str, style: str) -> str:
+    """Un élément de liste, et sa sous-liste, au niveau suivant."""
     numbering = f'<w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="{number}"/></w:numPr>'
-    return _paragraph(style, _runs(runs), numbering + align)
+    said = _paragraph(style, _runs(body, entry.runs), numbering + align)
+    return said + "".join(
+        _list_items(body, number, level + 1, child, align, style) for child in entry.children
+    )
+
+
+def _fields(body: _Body, block: FieldsOut, width: int) -> str:
+    """Des libellés et leurs valeurs : un tableau sans bordure, au style « loom fields » que
+    la relecture reconnaît ; une valeur vide est une ligne à remplir (le trait des
+    tableaux, en bas de sa cellule)."""
+    style = body.style
+    body.used.update((look.FIELDS, look.FIELD_VALUE))
+    label = min(round((style.look("fields").label_width or 4) * CM), width // 2)
+    widths = [label, width - label]
+    blank = f"<w:tcBorders><w:bottom {_border(style.look('table').line)}/></w:tcBorders>"
+    said = (
+        f'<w:tbl><w:tblPr><w:tblStyle w:val="{look.FIELDS}"/>'
+        f'<w:tblW w:w="{width}" w:type="dxa"/><w:tblLayout w:type="fixed"/>'
+        '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
+        f'<w:bottom w:w="0" w:type="dxa"/><w:right w:w="{CELL_GAP // 2}" w:type="dxa"/>'
+        '</w:tblCellMar><w:tblLook w:val="0000" w:firstRow="0" w:lastRow="0" '
+        'w:firstColumn="0" w:lastColumn="0" w:noHBand="1" w:noVBand="1"/></w:tblPr><w:tblGrid>'
+        + "".join(f'<w:gridCol w:w="{cell}"/>' for cell in widths)
+        + "</w:tblGrid>"
+    )
+    for name, value in block.items:
+        said += (
+            "<w:tr><w:trPr><w:cantSplit/></w:trPr>"
+            f'<w:tc><w:tcPr><w:tcW w:w="{widths[0]}" w:type="dxa"/></w:tcPr>'
+            + _paragraph(look.FIELD_LABEL, _run(name))
+            + f'</w:tc><w:tc><w:tcPr><w:tcW w:w="{widths[1]}" w:type="dxa"/>'
+            + ("" if value else blank)
+            + "</w:tcPr>"
+            + _paragraph(look.FIELD_VALUE, _runs(body, value))
+            + "</w:tc></w:tr>"
+        )
+    return said + "</w:tbl>" + _paragraph("Normal", "", _AFTER_TABLE)
 
 
 # --- Sections du modèle, sections Word ------------------------------------------------------
@@ -1130,10 +1340,21 @@ def render(
     style = style or house()
     body = _Body(style, plain(_title_runs(prepared)), template=template)
     _toc_entries(body, prepared.blocks)
+    _ref_targets(body, prepared.blocks)
     document, bands = _document(prepared, body)
     body_media = len(body.media)
     band_parts, listed = _band_parts(body, bands)
+    notes: tuple[tuple[str, str], ...] = ()
+    if body.footnotes:
+        listed.append(("rIdFootnotes", "footnotes", "footnotes.xml"))
+        notes = (("word/footnotes.xml", _footnotes(body.footnotes)),)
+        if body.links.get("footnotes"):
+            notes += (("word/_rels/footnotes.xml.rels", _link_relations(body, "footnotes")),)
     types, relations = _parts_listed(len(body.charts), body.media, body_media, listed)
+    if body.links.get("document"):
+        relations = relations.replace(
+            "</Relationships>", _link_relations(body, "document", bare=True) + "</Relationships>"
+        )
     language = look.LANGUAGES[style.language]
     font = style.look("text").font or ""
     parts: tuple[tuple[str, str | bytes], ...] = (
@@ -1148,7 +1369,8 @@ def render(
             "word/numbering.xml",
             look.numbering_xml(body.lists, style.numbering, style.labels.article),
         ),
-        ("word/settings.xml", SETTINGS),
+        ("word/settings.xml", SETTINGS_NOTES if body.footnotes else SETTINGS),
+        *notes,
         *band_parts,
         *(
             (f"word/charts/chart{n}.xml", chart.part(c, style.chart, font, language))

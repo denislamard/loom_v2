@@ -764,6 +764,7 @@ def test_a_style_file_is_checked(given: dict[str, Any], said: str) -> None:
         ({"x": {"base": "y"}}, "style x : base inconnue « y »"),
         ({"a": {"base": "b"}, "b": {"base": "a"}}, r"base en boucle \(a → b → a\)"),
         ({"note": {"borders": "grid"}}, r"style note\.borders : propre à table"),
+        ({"note": {"label_width": 3}}, r"style note\.label_width : propre à fields"),
         ({"chart": {"colors": ["brand"]}}, r"chart\.color : couleur « brand » inconnue"),
     ],
 )  # fmt: skip
@@ -1267,3 +1268,82 @@ async def test_libreoffice_prints_the_extra_blocks(tmp_path: Path, soffice: str)
     assert "Sommaire" in text and "2. Mesures" in text
     assert "Coupure d'eau faite" in text and "Canalisation" in text
     assert text.count("Bon pour accord") == 2 and "Signature :" in text
+
+
+# --- Le texte enrichi (lot 5) -------------------------------------------------------------
+
+RICH_BLOCKS: Final[list[dict[str, Any]]] = [
+    {"type": "heading", "text": "Objet"},
+    {"type": "paragraph", "text": "Voir [le site](https://a.fr)^[Une note.] et §[Objet]."},
+    {"type": "list", "items": [{"text": "a", "items": [{"text": "b", "items": ["c"]}]}]},
+    {"type": "list", "ordered": True, "items": ["un", "deux"]},
+    {"type": "fields", "items": [["Client", "Dupont"], ["Signature", ""]]},
+    {"type": "code", "text": "x = 1\n  y = 2"},
+]
+
+
+async def test_the_styles_of_rich_text(tmp_path: Path) -> None:
+    charte = {
+        "link": {"color": "C00000"},
+        "fields": {"label_width": 3},
+        "fields_label": {"italic": True},
+        "code": {"fill": "EEEEEE"},
+        "footnote": {"size": 8},
+    }
+    tool = make(tmp_path, blocks=("fields", "code"), style={"spec": charte})
+    path = await write(tool, "riche", RICH_BLOCKS)
+    document = part(path, "word/document.xml")
+    styles = part(path, "word/styles.xml")
+    numbering = part(path, "word/numbering.xml")
+    for xml in (document, styles, numbering, part(path, "word/footnotes.xml")):
+        check_order(xml)
+    # Le lien : un style de caractère, la couleur et le soulignement du style link.
+    assert '<w:color w:val="C00000"/>' in word_style(styles, "Hyperlink")
+    assert '<w:u w:val="single"/>' in word_style(styles, "Hyperlink")
+    assert '<w:sz w:val="16"/>' in word_style(styles, "FootnoteText")
+    assert '<w:vertAlign w:val="superscript"/>' in word_style(styles, "FootnoteReference")
+    code = word_style(styles, "LoomCode")
+    assert 'w:ascii="Courier New"' in code and 'w:fill="EEEEEE"' in code
+    label = word_style(styles, "LoomFieldLabel")
+    assert '<w:basedOn w:val="LoomFieldValue"/>' in label and "<w:i/>" in label
+    assert '<w:name w:val="loom fields"/>' in word_style(styles, "LoomFields")
+    # Les champs : le libellé large de label_width (3 cm), la valeur vide soulignée.
+    assert '<w:gridCol w:w="1701"/>' in document
+    assert document.count("<w:tcBorders><w:bottom ") == 1
+    # La liste à trois niveaux : une définition à trois niveaux, à part ; l'autre liste garde
+    # la sienne.
+    assert '<w:abstractNum w:abstractNumId="3">' in numbering
+    assert numbering.count('<w:lvl w:ilvl="2">') == 1
+    assert '<w:num w:numId="1"><w:abstractNumId w:val="3"/>' in numbering
+    assert '<w:num w:numId="2"><w:abstractNumId w:val="1"/>' in numbering
+
+
+async def test_without_rich_text_no_new_style(tmp_path: Path) -> None:
+    """Un document sans lien, note, champ ni code n'a aucun des styles qu'ils demandent."""
+    path = await write(make(tmp_path, blocks=("fields", "code")), "simple", RICH_BLOCKS[3:4])
+    styles = part(path, "word/styles.xml")
+    for style_id in ("Hyperlink", "FootnoteText", "LoomCode", "LoomFields", "LoomFieldValue"):
+        assert f'w:styleId="{style_id}"' not in styles, style_id
+    assert '<w:abstractNum w:abstractNumId="3">' not in part(path, "word/numbering.xml")
+
+
+async def test_fields_and_code_cost_only_when_declared(tmp_path: Path) -> None:
+    plain = make(tmp_path)
+    tool = make(tmp_path, blocks=("image", "fields", "code"))
+    assert "Champs ('type': 'fields')" not in plain.spec.description
+    assert "Champs ('type': 'fields')" in tool.spec.description
+    assert "Code ('type': 'code')" in tool.spec.description
+
+    def cost(mounted: WordTool) -> int:
+        schema = json.dumps(mounted.spec.input_schema, ensure_ascii=False, separators=(",", ":"))
+        return len(schema) + len(mounted.spec.description)
+
+    # Les deux blocs : 794 caractères mesurés (§ 22 de l'analyse).
+    assert 760 < cost(tool) - cost(plain) < 830
+    read_with = make(tmp_path, blocks=("fields",))
+    await write(tool, "fc", RICH_BLOCKS[4:])
+    read = await call(read_with, action="read", path="sortie/fc.docx")
+    assert read["notes"] == [
+        "Lu : code (1) ; cet outil n'en écrit pas : les retirer avant de réécrire le document "
+        "(ou blocks: [code] dans la config de l'outil)."
+    ]
