@@ -95,17 +95,6 @@ ELEMENTS: Final[tuple[str, ...]] = (
     "table",
     "box",
 )
-# La mise en page d'une section : ce que l'outil pose, Word seulement pour l'instant.
-LAYOUT_KEYS: Final = (
-    "box",
-    "beside",
-    "width",
-    "page_break",
-    "columns",
-    "landscape",
-    "cover",
-    "space_before",
-)
 
 
 class _Spec(BaseModel):
@@ -202,21 +191,6 @@ class Template:
                 current = section.position
             rows[section.position] = current
         return rows
-
-    @property
-    def layout(self) -> list[str]:
-        """Ce que le modèle règle au-delà du texte : style, styles, mise en page (Word)."""
-        said = ["style"] if self.style is not None else []
-        for section in self.sections:
-            spec = section.spec
-            if spec.styles:
-                said.append(f"{section.name}.styles")
-            said += [
-                f"{section.name}.{name}"
-                for name in LAYOUT_KEYS
-                if getattr(spec, name) != SectionSpec.model_fields[name].default
-            ]
-        return said
 
 
 def key(title: str) -> str:

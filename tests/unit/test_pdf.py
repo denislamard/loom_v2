@@ -9,6 +9,8 @@ meurent) et par une bombe de décompression.
 import asyncio
 import io
 import json
+import re
+import struct
 import subprocess
 import sys
 import time
@@ -26,18 +28,28 @@ from conftest import ConfigFactory, demo_agent
 from image_files import png
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen.canvas import Canvas
+from test_word_styles import (
+    CHARTE,
+    FACTURE_SECTIONS,
+    FACTURE_YAML,
+    RAPPORT_SECTIONS,
+    RAPPORT_YAML,
+)
 
 import loom_ia.tools_builtin.pdf.reader as reader_module
 from loom_ia.access.cli import main
 from loom_ia.adapters.stores import InMemoryEventStore
+from loom_ia.agents.spec import PythonTool, builtin_settings
 from loom_ia.config import ConfigError, load_config
 from loom_ia.core.bounded_regex import bounded_validator
 from loom_ia.core.model import DEFAULT_TENANT, RunId, SessionId
 from loom_ia.core.ports import ToolContext, ToolError
 from loom_ia.runtime import build_agent
 from loom_ia.tools_builtin import BuiltinContext
+from loom_ia.tools_builtin._style_params import SAFE_FONTS, font_fault, house
 from loom_ia.tools_builtin.pdf import PdfTool, build
 from loom_ia.tools_builtin.pdf import tool as tool_module
+from loom_ia.tools_builtin.pdf import writer as writer_module
 from loom_ia.tools_builtin.pdf_params import PdfParams
 
 CONTEXT: Final = ToolContext(
@@ -128,7 +140,7 @@ def pdf_of(*pages: str, form: dict[str, str] | None = None) -> bytes:
 def test_the_spec_names_the_folders_and_the_reading(tool: PdfTool) -> None:
     spec = tool.spec
     assert spec.name == "pdf"
-    for said in ("- recus : read", "Polices standard du PDF", "pages", "pas d'OCR", "next_page"):
+    for said in ("- recus : read", "Polices du PDF", "pages", "pas d'OCR", "next_page"):
         assert said in spec.description, said
     settings = tool.settings()
     assert settings.options == (
@@ -242,12 +254,15 @@ async def test_what_it_writes_reads_back(tool: PdfTool) -> None:
 
 
 async def test_underline_is_drawn_not_written(tool: PdfTool) -> None:
-    from loom_ia.tools_builtin._document.content import inline
-    from loom_ia.tools_builtin.pdf.writer import _markup  # pyright: ignore[reportPrivateUsage]
+    from reportlab.lib.styles import ParagraphStyle
 
-    assert _markup(inline("un <u>mot</u> et **<u>deux</u>**")) == (
-        "un <u>mot</u> et <b><u>deux</u></b>"
-    )
+    from loom_ia.tools_builtin._document.content import Prepared, inline
+    from loom_ia.tools_builtin.pdf.writer import _Body  # pyright: ignore[reportPrivateUsage]
+
+    body = _Body(Prepared(None, (), ()), house(), None, {})
+    look = house().look("paragraph")
+    said = body.text(inline("un <u>mot</u> et **<u>deux</u>**"), ParagraphStyle("p"), look)
+    assert said == "un <u>mot</u> et <b><u>deux</u></b>"
     blocks = [{"type": "paragraph", "text": "Le dépôt sera fermé le <u>vendredi 13</u>."}]
     await call(tool, path="sortie/u.pdf", title="Note", blocks=blocks)
     found = await call(tool, action="read", path="sortie/u.pdf")
@@ -449,7 +464,6 @@ def pdf_agent(**reference: Any) -> dict[str, Any]:
     [
         ({"charts": True}, r"charts → blocks: \[chart\]"),
         ({"images": True}, r"images → blocks: \[image\]"),
-        ({"blocks": ["toc"]}, "blocks : toc ne sert qu'à loom.word pour l'instant"),
     ],
 )
 def test_pdf_blocks_when_the_config_loads(
@@ -585,19 +599,22 @@ async def test_header_words_and_short_values_are_never_cut(
 
     from loom_ia.tools_builtin._document.arguments import WriteArguments
     from loom_ia.tools_builtin._document.content import SHORT_VALUE_CHARS, TableOut, prepare
-    from loom_ia.tools_builtin.pdf.writer import CELL, HEADER_CELL, TEXT_WIDTH
+    from loom_ia.tools_builtin.pdf.writer import CELL_PADDING, TWIP
 
     request = WriteArguments.model_validate({"path": "s/t.pdf", "title": None, "blocks": [table]})
     [found] = prepare(request, ZoneInfo("Europe/Paris")).blocks
     assert isinstance(found, TableOut)
+    # Le style maison en PDF : Calibri rendu en Helvetica, l'en-tête en gras.
+    size = house().look("table").size or 0
+    text_width = house().text_width * TWIP
     for index, (header, part) in enumerate(zip(found.headers, found.widths, strict=True)):
-        width = part * TEXT_WIDTH - 8  # 4 points de marge de chaque côté de la cellule
+        width = part * text_width - 2 * CELL_PADDING[1]
         for word in header.split():
-            assert stringWidth(word, HEADER_CELL.fontName, HEADER_CELL.fontSize) <= width, word
+            assert stringWidth(word, "Helvetica-Bold", size) <= width, word
         for row in [*found.rows, found.total or ()]:
             value = row[index] if row else ""
             if len(value) <= SHORT_VALUE_CHARS:
-                assert stringWidth(value, CELL.fontName, CELL.fontSize) <= width, value
+                assert stringWidth(value, "Helvetica", size) <= width, value
     await call(tool, path="sortie/top.pdf", blocks=[table], overwrite=True)
     text = PdfReader(disk / "sortie" / "top.pdf").pages[0].extract_text()
     for said in ("Rang", "Code", "Factures", "C-429", "18\u00a0034,17\u00a0€"):
@@ -700,7 +717,7 @@ async def test_images_in_a_pdf(disk: Path) -> None:
     drawn: list[Any] = [
         cast(Any, image).image.size for page in found.pages for image in page.images
     ]
-    assert drawn == [(390, 844), (2016, 1512), (390, 844)]
+    assert sorted(drawn) == [(390, 844), (390, 844), (2016, 1512)]
     assert "Écran 1" in found.pages[0].extract_text()
     again = await call(tool, path="sortie/cdc2.pdf", title="Cahier", blocks=blocks)
     assert again["sha256"] == result["sha256"]
@@ -727,16 +744,251 @@ async def test_a_pdf_follows_its_template(disk: Path) -> None:
     assert text.index("Contexte") < text.index("Travaux réalisés") < text.index("Un an.")
 
 
-def test_pdf_templates_have_no_layout_yet(disk: Path) -> None:
-    """Le style et la mise en page des sections ne servent qu'à loom.word pour l'instant."""
-    for written in (
-        "style: {heading1: {color: 0B5D3B}}\nsections:\n  A:\n",
-        "sections:\n  A:\n  B: {beside: true}\n",
-        "sections:\n  A: {styles: {heading1: heading1}}\n",
+# --- Le style dans le PDF (2.1.0) ---------------------------------------------------------
+
+FONTS: Final = Path("/usr/share/fonts/truetype/crosextra")
+SORTIE: Final = {"name": "sortie", "path": "sortie", "rights": ["read", "write", "overwrite"]}
+
+
+def styled_pdf(disk: Path, **params: Any) -> PdfTool:
+    """L'outil monté avec la charte, la facture et le rapport des essais de ``word``."""
+    (disk / "sortie" / "a.png").write_bytes(png(80, 60))
+    return make(
+        disk,
+        SORTIE,
+        blocks=["image", "signature", "toc", "checkboxes"],
+        style={"spec": CHARTE},
+        templates={"facture": {"text": FACTURE_YAML}, "rapport": {"text": RAPPORT_YAML}},
+        **params,
+    )
+
+
+def placed(page: Any) -> list[tuple[float, str]]:
+    """Le texte d'une page, morceau par morceau, avec sa hauteur dans la page."""
+    found: list[tuple[float, str]] = []
+
+    def seen(text: str, cm: Any, tm: Any, font: Any, size: Any) -> None:
+        del cm, font, size
+        if text.strip():
+            found.append((round(float(tm[5]), 1), text.strip()))
+
+    page.extract_text(visitor_text=seen)
+    return found
+
+
+def drawn(page: Any) -> bytes:
+    """Le flux de dessin d'une page : ses couleurs, ses polices, ses filets."""
+    return cast(bytes, page.get_contents().get_data())
+
+
+def test_no_visual_value_in_the_pdf_code() -> None:
+    """Ni couleur ni police dans l'écriture PDF : elles viennent de ``default.yaml``, et les
+    familles standard du PDF de ``PDF_FONTS``. Reste le blanc du papier (le trait entre deux
+    secteurs d'un graphique)."""
+    folder = Path(writer_module.__file__).parent
+    fonts = re.compile(
+        "|".join(sorted({*SAFE_FONTS, "helvetica", "times", "courier"})), re.IGNORECASE
+    )
+    for source in sorted(folder.glob("*.py")):
+        code = source.read_text(encoding="utf-8")
+        assert not re.findall(r"\b[0-9A-F]{6}\b", code), source.name
+        assert not fonts.search(code), f"{source.name} : {fonts.search(code)}"
+
+
+async def test_a_pdf_without_style_is_in_default_yaml(tool: PdfTool, disk: Path) -> None:
+    """Sans style, le style maison de Word : le corps en 11 points (Calibri, rendu en
+    Helvetica), les titres bleu nuit, « Page n / N » en pied."""
+    await call(tool, path="sortie/devis.pdf", **DEVIS)
+    page = PdfReader(disk / "sortie" / "devis.pdf").pages[0]
+    assert b" 11 Tf" in drawn(page)
+    assert b".121569 .219608 .392157 rg" in drawn(page)  # 1F3864, les titres
+    assert not any(label in ("style", "polices") for label, _ in tool.settings().options)
+
+
+async def test_a_facture_in_the_style_of_its_template(disk: Path) -> None:
+    """La facture de Word, en PDF : la charte (logo, couleurs, filets, mentions, filigrane)
+    et le modèle (émetteur et client côte à côte, récapitulatif à droite, titres discrets)."""
+    tool = styled_pdf(disk)
+    written = await call(
+        tool, path="sortie/f.pdf", template="facture", title="Facture", sections=FACTURE_SECTIONS
+    )
+    assert (written["pages"], written["warnings"]) == (1, [])
+    page = PdfReader(disk / "sortie" / "f.pdf").pages[0]
+    found = placed(page)
+    said = {text for _, text in found}
+    # Les titres des sections sans titre ne s'impriment pas ; les titres discrets, si.
+    assert not {"Émetteur", "Client", "Description"} & said
+    assert "Informations de paiement" in said
+    # Émetteur et client sur la même ligne.
+    height = {text: y for y, text in found}
+    assert height["Dupont Plomberie"] == height["SCI Les Tilleuls"]
+    text = page.extract_text()
+    for line in ("FACTURE", "BROUILLON", "Page 1 / 1", "SIRET 812 345 678 00021", "Net à payer"):
+        assert line in text, line
+    assert b".043137 .364706 .231373" in drawn(page)  # brand, 0B5D3B
+    assert b".909804 .945098 .92549 rg" in drawn(page)  # E8F1EC, l'en-tête des tableaux
+    assert b" Do" in drawn(page)  # le logo
+    again = await call(
+        tool, path="sortie/g.pdf", template="facture", title="Facture", sections=FACTURE_SECTIONS
+    )
+    assert again["sha256"] == written["sha256"]
+
+
+async def test_a_report_with_its_cover_landscape_and_columns(disk: Path) -> None:
+    tool = styled_pdf(disk)
+    sections = {**RAPPORT_SECTIONS, "Page de garde": [*RAPPORT_SECTIONS["Page de garde"]]}
+    sections["Page de garde"].append({"type": "toc"})
+    await call(tool, path="sortie/r.pdf", template="rapport", title="Rapport", sections=sections)
+    pages = PdfReader(disk / "sortie" / "r.pdf").pages
+    assert len(pages) == 4
+    landscape = [float(page.mediabox.width) > float(page.mediabox.height) for page in pages]
+    assert landscape == [False, False, True, False]
+    cover = pages[0].extract_text()
+    # La page de garde : sans en-tête, pied ni filigrane ; le sommaire et ses vraies pages.
+    assert "Page 1" not in cover and "BROUILLON" not in cover and "Page de garde" not in cover
+    numbers = [line.strip(" .") for line in cover.splitlines() if line.strip(" .").isdigit()]
+    assert numbers == ["2", "2", "3", "4"]
+    # Les entrées : le titre et son numéro, sans la mise en forme du titre (capitales).
+    for heading in ("1. Contexte", "1.1 Photos", "2. Mesures", "3. Conditions générales"):
+        assert heading in cover, heading
+    assert len(cast(list[Any], pages[0]["/Annots"])) == 4  # un lien par entrée
+    second = pages[1].extract_text()
+    assert "Figure 1 — Avant" in second and "Figure 2 — Après" in second
+    assert "Page 2 / 4" in second and "BROUILLON" in second
+    assert "Tableau 1 — Pression mesurée" in pages[2].extract_text()
+
+
+async def test_signature_contents_and_checkboxes(disk: Path) -> None:
+    tool = styled_pdf(disk)
+    blocks = [
+        {"type": "toc"},
+        {"type": "heading", "text": "Contrôles"},
+        {
+            "type": "list",
+            "checkboxes": True,
+            "items": ["[x] Coupure d'eau faite", {"text": "[ ] Fuite", "items": ["[x] Joint"]}],
+        },
+        {
+            "type": "signature",
+            "signers": ["Le client", "L'entreprise"],
+            "mention": "Bon pour accord",
+        },
+    ]
+    written = await call(tool, path="sortie/pv.pdf", template="none", blocks=blocks)
+    assert written["warnings"] == []
+    text = PdfReader(disk / "sortie" / "pv.pdf").pages[0].extract_text()
+    for said in ("SOMMAIRE", "Coupure d'eau faite", "Joint", "Le client", "L'entreprise",
+                 "Bon pour accord", "Date :", "Signature :"):  # fmt: skip
+        assert said in text, said
+    # Les cases sont dessinées : aucun caractère de case dans le texte.
+    assert "\u2610" not in text and "\u2612" not in text
+
+
+async def test_proposed_styles_and_language_in_a_pdf(disk: Path) -> None:
+    charte = {
+        "language": "en",
+        "important_note": {
+            "base": "note",
+            "description": "A warning the reader must not miss.",
+            "fill": "FDECEA",
+        },
+    }
+    tool = make(disk, SORTIE, style={"spec": charte})
+    assert '"important_note"' in json.dumps(tool.spec.input_schema)
+    blocks = [
+        {"type": "note", "style": "important_note", "text": "Closed on Friday."},
+        {
+            "type": "table",
+            "columns": [{"header": "Item"}, {"header": "Amount", "type": "amount_eur"}],
+            "rows": [["Joint", 1250.5]],
+            "totals": {"Amount": "sum"},
+        },
+    ]
+    await call(tool, path="sortie/n.pdf", blocks=blocks)
+    page = PdfReader(disk / "sortie" / "n.pdf").pages[0]
+    assert b".992157 .92549 .917647 rg" in drawn(page)  # FDECEA
+    text = page.extract_text()
+    assert "€1,250.50" in text and "Total" in text
+
+
+@pytest.mark.skipif(not (FONTS / "Caladea-Regular.ttf").is_file(), reason="police Caladea absente")
+async def test_an_embedded_font(disk: Path) -> None:
+    """Une police dont le style donne les fichiers : embarquée en sous-ensemble ; le même
+    fichier à chaque fois ; un caractère qu'elle n'a pas, dit."""
+    regular = (FONTS / "Caladea-Regular.ttf").read_bytes()
+    bold = (FONTS / "Caladea-Bold.ttf").read_bytes()
+    style = {"fonts": {"Caladea": {"regular": regular, "bold": bold}}, "text": {"font": "Caladea"}}
+    tool = make(disk, SORTIE, style={"spec": style})
+    assert ("polices", "Caladea : embarquée") in tool.settings().options
+    blocks = [{"type": "paragraph", "text": "Un **devis** et *une* note 🙂."}]
+    first = await call(tool, path="sortie/a.pdf", title="Devis", blocks=blocks)
+    second = await call(tool, path="sortie/b.pdf", title="Devis", blocks=blocks)
+    assert first["sha256"] == second["sha256"]
+    assert first["warnings"] == [
+        "1 caractère(s) absent(s) des polices du PDF, imprimé(s) en carré noir : 🙂 — les "
+        "remplacer par du texte"
+    ]
+    page = PdfReader(disk / "sortie" / "a.pdf").pages[0]
+    resources = cast(dict[str, Any], page["/Resources"])
+    fonts = cast(dict[str, Any], resources["/Font"])
+    names = {str(font.get_object()["/BaseFont"]) for font in fonts.values()}
+    assert {"/AAAAAA+Caladea-Regular", "/AAAAAA+Caladea-Bold"} <= names
+
+
+def test_what_a_font_must_be() -> None:
+    assert "WOFF" in str(font_fault(b"wOF2" + bytes(40)))
+    assert "CFF" in str(font_fault(b"OTTO" + bytes(40)))
+    assert "collection" in str(font_fault(b"ttcf" + bytes(40)))
+    assert font_fault(b"PK\x03\x04" + bytes(40)) == "pas une police TrueType (.ttf)"
+
+
+def _with_rights(data: bytes, rights: int) -> bytes:
+    """La police, ses droits d'embarquement (``fsType``) changés."""
+    count = struct.unpack(">H", data[4:6])[0]
+    for index in range(count):
+        name, _, offset, _ = struct.unpack(">4sIII", data[12 + 16 * index : 28 + 16 * index])
+        if name == b"OS/2":
+            return data[: offset + 8] + struct.pack(">H", rights) + data[offset + 10 :]
+    raise AssertionError("pas de table OS/2")
+
+
+@pytest.mark.skipif(not (FONTS / "Caladea-Regular.ttf").is_file(), reason="police Caladea absente")
+def test_fonts_are_read_when_the_config_loads(demo: ConfigFactory, tmp_path: Path) -> None:
+    (tmp_path / "sortie").mkdir()
+    folders = [{"name": "sortie", "path": "sortie", "rights": ["write"]}]
+    path = demo(agents=[pdf_agent(folders=folders, style="styles/charte.yaml")], storage=JSONL)
+    prompts = tmp_path / "prompts"
+    (prompts / "styles").mkdir(parents=True)
+    (prompts / "styles" / "charte.yaml").write_text(
+        "fonts:\n  Caladea: { regular: fonts/caladea.ttf }\ntext: { font: Caladea }\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"style\.fonts\.Caladea\.regular — police introuvable"):
+        load_config(path)
+    (prompts / "fonts").mkdir()
+    regular = (FONTS / "Caladea-Regular.ttf").read_bytes()
+    for data, said in (
+        (_with_rights(regular, 4), "aperçu et impression seulement"),
+        (_with_rights(regular, 2), "embarquement interdit"),
+        (b"wOF2" + bytes(40), "une police web"),
     ):
-        with pytest.raises(ValueError, match=r"ne servent qu'à loom\.word pour l'instant"):
-            make(
-                disk,
-                {"name": "sortie", "path": "sortie", "rights": ["write"]},
-                templates={"r": {"text": written}},
-            )
+        (prompts / "fonts" / "caladea.ttf").write_bytes(data)
+        with pytest.raises(ConfigError, match=said):
+            load_config(path)
+    # Modifiable (8) : embarquée.
+    (prompts / "fonts" / "caladea.ttf").write_bytes(_with_rights(regular, 8))
+    config = load_config(path)
+    declared = config.agents[0].tools[0]
+    assert isinstance(declared, PythonTool)
+    params = PdfParams.model_validate(builtin_settings(declared, PdfParams))
+    mounted = build(params, BuiltinContext(base_dir=tmp_path))
+    assert ("polices", "Caladea : embarquée") in mounted.settings().options
+    # Le format de la 2.0 : fonts nommait les polices du corps et des titres.
+    (prompts / "styles" / "charte.yaml").write_text("fonts: { body: Arial }\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="fonts → font, sur text et sur chaque titre"):
+        load_config(path)
+
+
+def test_validate_says_how_the_pdf_writes_the_fonts(disk: Path) -> None:
+    tool = make(disk, SORTIE, style={"spec": {"heading1": {"font": "Georgia"}}})
+    assert ("polices", "Calibri → Helvetica ; Georgia → Times") in tool.settings().options

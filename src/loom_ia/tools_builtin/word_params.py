@@ -16,11 +16,8 @@ l'importe pour valider la référence au chargement, sans importer l'outil.
       blocks: [chart, image]           # les blocs facultatifs : chart, image, signature, toc,
                                        # checkboxes ; aucun par défaut
       style: styles/charte.yaml        # la charte (facultatif), relative à resources_dir
-      templates:                       # modèles de document, relatifs à resources_dir
-        cahier-des-charges: modele-cdc.md
-        facture:                       # un modèle et son style (facultatif)
-          file: modele-facture.md
-          style: styles/facture.yaml
+      templates:                       # modèles de document, relatifs à resources_dir ; le
+        facture: templates/facture.yaml  # style d'un modèle se nomme dans son fichier
 
 Les dossiers suivent la forme de ``loom.local_files`` (``name``, ``path``,
 ``rights``, ``approval``) ; le droit ``delete`` n'a pas de sens ici et est refusé.
@@ -66,7 +63,7 @@ class WordParams(BaseModel):
     # Les modèles de document, par nom : fichiers relatifs à resources_dir, lus au chargement.
     templates: Templates = {}
     # La charte : un fichier de style relatif à resources_dir, lu au chargement, ou un style
-    # écrit en ligne ; le style d'un modèle se déclare sur le modèle (templates.<nom>.style).
+    # écrit en ligne ; le style d'un modèle se nomme dans le fichier du modèle (style:).
     style: StyleField = None
 
     @classmethod

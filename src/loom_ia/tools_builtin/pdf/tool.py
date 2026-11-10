@@ -2,6 +2,7 @@
 """L'outil ``pdf`` monté : écrire des PDF (reportlab), lire leur texte (pypdf) ; et sa fabrique."""
 
 import importlib.util
+from collections.abc import Sequence
 from importlib.metadata import version
 from typing import Annotated, ClassVar, Final
 from zoneinfo import ZoneInfo
@@ -15,10 +16,10 @@ from loom_ia.tools_builtin._document.arguments import (
     ReadArguments,
 )
 from loom_ia.tools_builtin._document.content import Prepared
-from loom_ia.tools_builtin._document.tool import DocumentTool
+from loom_ia.tools_builtin._document.tool import DocumentTool, read_styles
 from loom_ia.tools_builtin._folders import Folders, mount
-from loom_ia.tools_builtin._office_params import read_templates, word_only
-from loom_ia.tools_builtin._templates import Template
+from loom_ia.tools_builtin._office_params import read_templates
+from loom_ia.tools_builtin._style_params import Style
 from loom_ia.tools_builtin.pdf import reader, writer
 from loom_ia.tools_builtin.pdf_params import REFERENCE, SAFE_PYPDF, PdfParams
 
@@ -46,7 +47,9 @@ class PdfTool(DocumentTool):
     LABEL: ClassVar[str] = "document PDF"
 
     def _render(self, prepared: Prepared) -> tuple[bytes, dict[str, JsonValue], list[str]]:
-        data, pages, warnings = writer.render(prepared)
+        style = self._styles.of(prepared.template)
+        template = self._templates.get(prepared.template or "")
+        data, pages, warnings = writer.render(prepared, style, template)
         return data, {"pages": pages}, warnings
 
     async def _read(self, request: ReadArguments, where: str, data: bytes) -> dict[str, JsonValue]:
@@ -58,8 +61,8 @@ class PdfTool(DocumentTool):
 
     def _writing_notes(self) -> tuple[str, ...]:
         return (
-            "Polices standard du PDF : le français et les symboles courants passent ; un emoji "
-            "ou un idéogramme s'imprimerait en carré noir (signalé en avertissement).",
+            "Polices du PDF : le français et les symboles courants passent ; un emoji ou un "
+            "idéogramme s'imprimerait en carré noir (signalé en avertissement).",
         )
 
     def _reading_help(self, folders: str) -> str:
@@ -77,7 +80,7 @@ class PdfTool(DocumentTool):
             if reads
             else "aucun dossier read"
         )
-        return (*super()._options(), ("lecture des PDF", reading))
+        return (*super()._options(), ("lecture des PDF", reading), *self._styles.said)
 
 
 def build(params: BaseModel, context: BuiltinContext) -> PdfTool:
@@ -95,17 +98,31 @@ def build(params: BaseModel, context: BuiltinContext) -> PdfTool:
                 f"pypdf {version('pypdf')} : {'.'.join(map(str, SAFE_PYPDF))} ou plus attendu "
                 "(boucles sans fin sur des PDF forgés) — mettre à jour loom-ia[pdf]"
             )
+    templates = read_templates(params.templates, REFERENCE)
+    styles = read_styles(params, templates, REFERENCE, _fonts_said)
+    try:
+        writer.register_fonts(styles.all())
+    except ValueError as exc:
+        raise ValueError(f"{REFERENCE} : {exc}") from None
     return PdfTool(
         space,
         ZoneInfo(params.timezone),
         blocks=params.blocks,
-        templates=_pdf_templates(params),
+        templates=templates,
+        styles=styles,
     )
 
 
-def _pdf_templates(params: PdfParams) -> dict[str, Template]:
-    """Les modèles de ``loom.pdf`` : sans style ni mise en page de section, pour l'instant."""
-    templates = read_templates(params.templates, REFERENCE)
-    for template in templates.values():
-        word_only(template, REFERENCE)
-    return templates
+def _fonts_said(styles: Sequence[Style]) -> str | None:
+    """Les polices du style que le PDF n'écrit pas telles quelles : embarquées (``fonts``),
+    ou rendues par une famille standard du PDF."""
+    said: dict[str, str] = {}
+    for style in styles:
+        for family, how in writer.substitutions(style).items():
+            said.setdefault(family, how)
+    if not said:
+        return None
+    return " ; ".join(
+        f"{family} : {how}" if how == "embarquée" else f"{family} → {how}"
+        for family, how in sorted(said.items())
+    )

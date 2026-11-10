@@ -900,7 +900,7 @@ Chaque lot est livrable seul, testé, avec sa documentation.
 | **1. Le vocabulaire en anglais** (fait, § 18) | Blocs, valeurs, `none`, rôles et types d'`excel`, `memory` ; `blocks` à la place de `charts`, `images` et `extra_blocks` ; `saut_de_page` retiré, `note` redécrite | Mécanique, mais touche tous les tests : le faire d'abord évite de renommer deux fois |
 | **2. Le style hors du code (Word)** (fait, § 19) | `default.yaml`, le format de style (styles nommés, `base`, cascade, couleurs, `language`, `labels`), le chargeur, `word/style.py` piloté par le style ; Word sans charte identique à l'octet ; test sans valeur visuelle | La base de tout le reste |
 | **3. Les modèles en YAML et les sections (Word)** (fait, § 20) | Le format du modèle, `sections` dans l'appel, titres écrits par l'outil, `show_title`, `styles`, disposition, texte fixe, signets, relecture ; styles proposés au modèle de langage | Corrige ce qu'ont montré les essais du 10 novembre |
-| **4. La parité du PDF** | Le même style et les mêmes modèles en reportlab, polices TrueType, notes de fin, `checkboxes`, `signature`, `toc` | Clôt la rupture : les quatre premiers lots forment la 2.1.0 (O-5) |
+| **4. La parité du PDF** (fait, § 21) | Le même style et les mêmes modèles en reportlab, polices TrueType, notes de fin, `checkboxes`, `signature`, `toc` | Clôt la rupture : les quatre premiers lots forment la 2.1.0 (O-5) |
 | **5. Le texte enrichi** | `fields`, `code`, liens, notes de bas de page, renvois, emphase dans les cellules, listes à trois niveaux (Word et PDF) | Ajouts sans rupture |
 | **6. Les calculs** | Colonnes calculées, groupes et sous-totaux, `invoice_totals` | Le cœur du devis et de la facture |
 | **7. L'émargement** | `attendance` | Indépendant des autres ajouts |
@@ -1175,6 +1175,48 @@ sections:
 ```
 
 Les consignes perdent « dans l'ordre des sections ci-dessous » (l'outil range les sections) et « ne le répète pas en bloc `titre` » (le bloc n'existe plus, et un titre de niveau 1 est refusé dans une section) ; `paragraphe` et `liste` deviennent `paragraph` et `list`.
+
+## 21. Ce qui est écrit : le lot 4 (10 novembre 2026)
+
+Codé sans commit sur `0959fb1` (le lot 3). La section `2.1.0 - non publiée` du CHANGELOG a un paragraphe de plus. Avec ce lot, les quatre premiers forment la 2.1.0 (O-5).
+
+**Ce qui change**
+
+- **Le style dans `loom.pdf` (§ 10, D-5)** : `pdf_params.py` prend `style`, les modèles gardent leur style et leur forme. `read_styles` et les styles proposés passent de `word/tool.py` à `_document/tool.py`, communs aux deux outils : la charte et le style de chaque modèle sont résolus et vérifiés au montage de la même façon.
+- **`pdf/writer.py` réécrit** sur le style résolu. Un style nommé devient un `ParagraphStyle` de reportlab ; un style qui a un filet ou un fond (la note, la citation, le titre du document) devient une cellule de tableau qui les dessine, comme Word les pose autour d'un paragraphe. Les sections sont posées comme dans Word (le même découpage en lignes du modèle) : côte à côte et encadrées dans un tableau sans bordure, colonnes en `BalancedColumns`, paysage et page de garde en gabarits de page. L'en-tête, le pied et le filigrane sont dessinés à chaque page (`onPage`).
+- **Le sommaire** a ses vrais numéros de page : un premier rendu note la page de chaque titre (un rappel `onDraw`, qui marche aussi dans des colonnes), le suivant les écrit, avec « Page n / N » ; trois rendus au plus. Chaque entrée est un lien vers son titre.
+- **Les polices (§ 10)** : `fonts`, un réglage du fichier de style ; le chargeur lit les fichiers comme les logos, `font_fault` les vérifie (bibliothèque standard), le montage de `loom.pdf` les enregistre dans reportlab. Les familles standard du PDF sont une table de `_style_params.py` (`PDF_FONTS`) : le code de `pdf/` n'a ni couleur ni nom de police, et un essai le garde, comme pour `word/`.
+- **Sans style (D-6)** : `default.yaml`. Les PDF sans style changent d'aspect, et d'empreinte.
+
+**Écarts avec l'analyse, à valider**
+
+1. **Les notes de fin (O-6) ne sont pas dans ce lot** : sans notes de bas de page (lot 5), elles n'ont rien à rendre. Elles viendront avec elles.
+2. **Les polices à empattement se rendent en Times** (Times New Roman, Cambria, Georgia, Garamond), plus en Helvetica comme le dit le § 10 ; Courier New en Courier, le reste en Helvetica. C'est la proposition D-2 (a) de l'analyse du 9 novembre : l'équivalent le plus proche.
+3. **Les droits d'embarquement** : 0 et 8 acceptés, 2 et 4 refusés comme prévu, et aussi 0x100 (embarquer la police entière : le PDF n'en embarque qu'une partie) et 0x200 (en images seulement). **4 familles au plus** par fichier de style, chaque fichier à 2 Mo.
+4. **Les cases d'une liste à cocher sont toujours dessinées**, même avec une police embarquée qui a ☐ et ☒ : le même dessin partout.
+5. **Sans fichier `bold` ou `italic`**, le gras et l'italique d'une police embarquée s'écrivent dans sa graisse normale (Word, lui, les simule).
+6. **`fonts` ne sert qu'au PDF** (§ 3.4) : Word nomme la police sans l'embarquer, et `loom validate` le dit toujours pour `loom.word`.
+7. **Ce qui reste dans le code**, comme dans Word : la mise en forme des entrées du sommaire (le niveau 1 en gras, un retrait par niveau, des points de conduite), l'espace sous un tableau ou une image (celui du paragraphe vide que Word pose après : une ligne et 6 points), la distance de l'en-tête et du pied au bord (1 cm), le filigrane (45°, à demi transparent, à la largeur du cadre de Word).
+8. **Une page trop petite pour un bloc** : une section côte à côte ou encadrée, une note, se coupent d'une page à l'autre ; une image plus haute que la page est réduite ; un bloc qui ne tient toujours pas (une ligne de tableau très haute) est refusé avec un message, au lieu de l'erreur de reportlab.
+9. **`pdf/writer.py` fait 1 466 lignes**, plutôt que les 1 000 estimées (§ 12.3).
+
+**Non-régression (§ 14)**
+
+Les documents Word sont identiques, octet pour octet, au lot 3 : les 17 documents et le classeur d'essai, et les empreintes des essais de styles. Les PDF changent, comme prévu (D-6). La facture et le rapport des essais de Word, rendus en PDF puis comparés à leur rendu LibreOffice, ont la même page : mêmes zones, mêmes couleurs, mêmes filets, la même mise en page des sections ; le PDF a en plus les numéros de page du sommaire, et un pied centré sur la page en paysage.
+
+**Essais**
+
+- `test_pdf.py` : 52 (8 de plus) :
+  - aucune valeur visuelle dans `pdf/` ;
+  - le PDF sans style dans `default.yaml` ;
+  - la facture et le rapport des essais de Word, en PDF ;
+  - signature, sommaire et cases ;
+  - les styles proposés et l'anglais ;
+  - une police embarquée (sautée sans la police Caladea) ;
+  - les polices vérifiées au chargement ;
+  - ce que `loom validate` dit des polices.
+- `test_word_styles.py` : `loom.pdf` prend les styles et les trois blocs (deux essais réécrits).
+- Suite complète : 4 387 réussis, 201 sautés (8 de plus qu'au lot 3). ruff, format, `lint-imports` (6 contrats) et pyright passent sans erreur.
 
 ## Sources
 

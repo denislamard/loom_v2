@@ -1018,10 +1018,11 @@ tools:
     - name: sortie
       path: sortie
       rights: [ read, write, overwrite ]
+    style: styles/charte.yaml        # la même charte que word (facultatif)
     timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
 ```
 
-Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `blocks`, la liste des blocs facultatifs que voit le modèle — `chart` (voir « Des graphiques »), `image` (voir « Des images »), et pour `loom.word` seulement `signature`, `toc` et `checkboxes` (voir « Signature, sommaire, liste à cocher ») —, `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), et `style`, la charte des documents de `loom.word` (voir « Des styles de document »). Depuis loom-ia 2.1.0, `blocks` remplace `charts`, `images` et `extra_blocks`, refusés au chargement avec la forme qui les remplace (`charts → blocks: [chart]`). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
+Les paramètres sont ceux de `loom.excel` sans le recalcul : `folders`, avec la forme et les règles de `loom.local_files`, sauf `delete`, refusé (ces outils ne suppriment rien), `timezone`, `blocks`, la liste des blocs facultatifs que voit le modèle — `chart` (voir « Des graphiques »), `image` (voir « Des images »), `signature`, `toc` et `checkboxes` (voir « Signature, sommaire, liste à cocher ») —, `templates`, les modèles de document que l'outil vérifie (voir « Des modèles de document »), et `style`, la charte des documents (voir « Des styles de document »). Depuis loom-ia 2.1.0, `loom.pdf` a les mêmes : un même fichier de style et les mêmes modèles servent aux deux outils, la facture en Word pour l'artisan, en PDF pour l'envoi. Depuis loom-ia 2.1.0, `blocks` remplace `charts`, `images` et `extra_blocks`, refusés au chargement avec la forme qui les remplace (`charts → blocks: [chart]`). Un fichier existant n'est remplacé qu'avec `overwrite: true` et le droit `overwrite`, qui attend un humain par défaut. Un agent qui n'a que des dossiers `read` ne fait que lire. `description` est refusée sur la référence ; `skill` et `skill_file` s'ajoutent à la description, comme pour `excel`.
 
 `loom validate` montre les dossiers, puis le fuseau, les blocs facultatifs, les modèles, la lecture et, s'il y en a un, le style :
 
@@ -1038,7 +1039,7 @@ AGENTS
                  read
                  sortie → ./sortie
                  read, write · overwrite*
-                 fuseau : Europe/Paris · blocs : aucun · modèles : aucun · lecture des PDF : oui, process à part (20 s, 1 Gio)
+                 fuseau : Europe/Paris · blocs : aucun · modèles : aucun · lecture des PDF : oui, process à part (20 s, 1 Gio) · style : charte · polices : Calibri → Helvetica
 
   * = approbation requise
 …
@@ -1073,7 +1074,7 @@ Un appel décrit le document entier. Celui-ci, tiré d'un run réel (modèle sim
 - **Tableaux** : les types de colonne de `loom.excel` (`text`, `integer`, `decimal`, `amount_eur`, `amount_keur`, `percent`, `date`, `datetime`, `year`, `boolean`), avec la même conversion tolérante (`1 250,50`, `02/10/2026`, `15%`, `oui`). Une ligne plus courte que les colonnes est complétée de cellules vides. `totals` ajoute une ligne de total **calculée par l'outil** — un document n'a pas de formules — : `sum`, `average`, `count`, `min` ou `max`. `caption` est la légende, sous le tableau. 8 colonnes et 500 lignes au plus : au-delà, un classeur (`excel`) se lit mieux.
 - **Texte** : `**gras**`, `*italique*`, `<u>souligné</u>`, et `\n` pour aller à la ligne dans le même paragraphe ; ils se combinent (`**<u>mot</u>**`). Rien d'autre : un `#` ou un `-` en tête reste du texte, `2 * 3 * 4` aussi, comme une balise seule ou non refermée, et toute autre balise (`<b>`, `<br>`). Les cellules de tableau sont du texte simple.
 
-Le document produit : A4 portrait, marges de 2 cm, titre bleu nuit souligné d'un filet, titres de section bleu nuit, tableaux à en-tête bleu pâle répété d'une page à l'autre, ligne de total en gras sous un filet, nombres alignés à droite et dates centrées, notes en encadré gris à filet bleu, citations en retrait, « Page n / N » en pied. Le `.docx` est en Calibri 11 et déclaré en français (correcteur, césure). Le PDF reprend la même page en Helvetica, une police standard du PDF, non embarquée : le fichier reste léger.
+Le document produit : A4 portrait, marges de 2 cm, titre bleu nuit souligné d'un filet, titres de section bleu nuit, tableaux à en-tête bleu pâle répété d'une page à l'autre, ligne de total en gras sous un filet, nombres alignés à droite et dates centrées, notes en encadré gris à filet bleu, citations en retrait, « Page n / N » en pied. Le `.docx` est en Calibri 11 et déclaré en français (correcteur, césure). Le PDF reprend la même page, du même style (`default.yaml`, voir « Des styles de document »), en Helvetica 11, la police standard du PDF qui remplace Calibri, non embarquée : le fichier reste léger. Depuis loom-ia 2.1.0 ; avant, le PDF avait son propre style maison, en Helvetica 10,5.
 
 Les valeurs s'écrivent **à la française**, avec des espaces insécables : `1 250,50 €`, `12 500 k€`, `10,0 %`, `02/10/2026`, `02/10/2026 11:30` (une date-heure qui porte un fuseau passe à l'heure de `timezone`). Contrairement à `excel`, dont les formats suivent la langue du lecteur, un document est du texte figé. Les montants affichent leur unité : un en-tête « Montant HT » suffit.
 
@@ -1112,7 +1113,7 @@ Sont aussi refusés : un tableau de plus de 8 colonnes ou de 500 lignes, un en-t
 ["1 caractère(s) absent(s) des polices du PDF, imprimé(s) en carré noir : 🙂 — les remplacer par du texte"]
 ```
 
-Les polices standard du PDF couvrent le français et l'Europe de l'Ouest, plus les symboles grecs et mathématiques (`≥`, `α`, `€`, `œ`, `« »` passent) ; un emoji ou un idéogramme s'imprime en carré noir.
+Les polices standard du PDF couvrent le français et l'Europe de l'Ouest, plus les symboles grecs et mathématiques (`≥`, `α`, `€`, `œ`, `« »` passent) ; un emoji ou un idéogramme s'imprime en carré noir. Une police embarquée (`fonts`, voir « Des styles de document ») a ses propres caractères : l'avertissement dit ceux qu'elle n'a pas.
 
 #### Des graphiques
 
@@ -1147,7 +1148,7 @@ Quand les nombres ne sont dans aucun tableau du document, ils se donnent en lign
 - **`title`** au-dessus du graphique, **`caption`** en légende dessous.
 - **Bornes** : 50 libellés et 6 séries au plus ; un graphique en secteurs a une seule série, 12 parts au plus, et aucune valeur négative.
 
-Le style est figé, comme le reste : la palette part du bleu nuit du document ; les graduations sont des nombres ronds (`5 000 €`) ; chaque barre porte sa valeur quand il n'y a qu'une série et 12 barres au plus ; la légende n'apparaît qu'avec plusieurs séries, ou des secteurs. Dans le `.docx`, c'est un **graphique Word**, pas une image : net à toute taille, et son type, ses couleurs et son titre se retouchent dans Word. Ses nombres sont dans le graphique, sans classeur embarqué : « Modifier les données » n'en trouve pas. Dans le PDF, c'est un dessin vectoriel, aux mêmes couleurs et dans le même ordre ; un libellé de plus de 18 caractères y est raccourci sous l'axe.
+Les couleurs viennent du style (`chart` : la couleur de chaque série, le texte, la grille, le titre), comme le reste : la palette de `default.yaml` part du bleu nuit du document ; les graduations sont des nombres ronds (`5 000 €`) ; chaque barre porte sa valeur quand il n'y a qu'une série et 12 barres au plus ; la légende n'apparaît qu'avec plusieurs séries, ou des secteurs. Dans le `.docx`, c'est un **graphique Word**, pas une image : net à toute taille, et son type, ses couleurs et son titre se retouchent dans Word. Ses nombres sont dans le graphique, sans classeur embarqué : « Modifier les données » n'en trouve pas. Dans le PDF, c'est un dessin vectoriel, aux mêmes couleurs et dans le même ordre, dans la police du texte ; un libellé de plus de 18 caractères y est raccourci sous l'axe.
 
 Les fautes d'un graphique sont dites avec celles du document :
 
@@ -1180,7 +1181,7 @@ L'image est un fichier PNG ou JPEG d'un dossier qui a le droit `read` ; l'outil 
 - **`caption`** : la légende, sous l'image, dans le style des légendes de tableau, sur la même page qu'elle ; `**gras**`, `*italique*` et `<u>souligné</u>` permis.
 - **`alt`** : le texte alternatif, ce que montre l'image pour qui ne la voit pas (lecteur d'écran) ; sans lui, la légende en tient lieu.
 
-L'image est centrée, dans le flux du texte : ni position flottante, ni habillage. Le format se lit dans le fichier, jamais dans son nom. Dans le `.docx`, une image est rangée telle quelle, une seule fois même si elle sert deux fois ; le fichier reste le même, octet pour octet, pour un même appel. Dans le PDF, elle est posée à la même taille ; reportlab la lit avec Pillow, qui vient avec l'extra `pdf`. Un PDF n'a pas de texte alternatif.
+L'image est centrée, dans le flux du texte : ni position flottante, ni habillage. Le format se lit dans le fichier, jamais dans son nom. Dans le `.docx`, une image est rangée telle quelle, une seule fois même si elle sert deux fois ; le fichier reste le même, octet pour octet, pour un même appel. Dans le PDF, elle est posée à la même taille, réduite à la hauteur de la page si elle la dépasse ; reportlab la lit avec Pillow, qui vient avec l'extra `pdf`. Un PDF n'a pas de texte alternatif.
 
 Le résultat compte les images (`"images": 2`, à côté de `"blocks"`). Quatre cas ne sont qu'avertis :
 
@@ -1333,7 +1334,7 @@ Arguments invalides :
 
 **Une section au texte fixe** (`text`) est écrite par l'outil : mentions légales, conditions générales, coordonnées de l'émetteur. Elle ne coûte aucun token, et le modèle de langage ne peut rien y inventer, puisqu'il ne la voit pas. Le texte prend le balisage d'un bloc (`**gras**`, `*italique*`, `<u>souligné</u>`) ; une ligne vide sépare deux paragraphes, un retour à la ligne simple va à la ligne dans le même paragraphe. Une section au texte fixe n'est jamais facultative, et n'a pas d'`instructions`.
 
-Le `.docx` garde le modèle suivi dans sa **catégorie** (Fichier > Informations > Propriétés dans Word), que LibreOffice garde aussi, et chaque section commence par un signet caché (`_loom_s1`, `_loom_s2`…) : la relecture rend le document par sections (voir « Lire un document Word »). Un document libre, `none`, est le même fichier qu'un document écrit par un outil sans modèles. `pdf` suit les modèles de la même façon, sans leur forme (voir plus bas), et un PDF ne garde pas son modèle.
+Le `.docx` garde le modèle suivi dans sa **catégorie** (Fichier > Informations > Propriétés dans Word), que LibreOffice garde aussi, et chaque section commence par un signet caché (`_loom_s1`, `_loom_s2`…) : la relecture rend le document par sections (voir « Lire un document Word »). Un document libre, `none`, est le même fichier qu'un document écrit par un outil sans modèles. `pdf` suit les modèles de la même façon, forme comprise ; un PDF ne garde pas son modèle.
 
 Un fichier de modèle introuvable, hors du dossier des ressources, ou mal formé arrête le chargement, et `loom validate` le dit. Un modèle markdown de la 2.0 est refusé avec la forme nouvelle :
 
@@ -1346,7 +1347,7 @@ tools[loom.word].templates[devis] — modèle devis : sections.Remarques.show_ti
 
 Sans `templates`, rien ne change : ni action ni champs `template` et `sections`, ni ligne dans la description. Un outil à modèles doit avoir un dossier `write`.
 
-**La mise en page des sections**, pour `loom.word` : une section dit sa forme dans le modèle, et le modèle de langage n'en voit rien.
+**La mise en page des sections** : une section dit sa forme dans le modèle, et le modèle de langage n'en voit rien. `loom.word` et `loom.pdf` la posent de la même façon.
 
 | Clé d'une section | Effet |
 | --- | --- |
@@ -1402,15 +1403,9 @@ tools[loom.word].templates[facture] : « Informations de paiement ».styles.head
 tools[loom.word].templates[facture] — modèle facture : « Client » est côte à côte (beside) : ni columns, ni landscape, ni cover : …/prompts/templates/facture.yaml
 ```
 
-`loom.pdf` lit les mêmes modèles, mais refuse pour l'instant leur style et la forme de leurs sections ; `show_title`, `optional`, `instructions` et le texte fixe y valent :
-
-```text
-tools[loom.pdf].templates[facture] — loom.pdf : modèle facture : style, Émetteur.width, Client.box, Client.beside, … : le style et la mise en page des sections ne servent qu'à loom.word pour l'instant (loom.pdf écrit dans son style maison)
-```
-
 #### Des styles de document
 
-Depuis loom-ia 2.0.20, pour `loom.word` ; un format plus simple depuis 2.1.0. Sans charte, l'outil écrit tous ses documents dans le style maison : Calibri 11, titres bleu nuit, tableaux à grille. Une facture d'artisan demande autre chose : son logo, ses couleurs, un récapitulatif étroit à droite, les mentions légales en pied de page. **Le style se décrit dans des fichiers YAML de l'agent**, et l'outil n'en fixe rien : il pose les mêmes blocs, à la manière que le style décrit. La disposition des sections (côte à côte, encadrées, en colonnes) se décrit dans le modèle de document (voir « La mise en page des sections »).
+Depuis loom-ia 2.0.20, pour `loom.word` ; un format plus simple depuis 2.1.0, et pour `loom.pdf` aussi. Sans charte, l'outil écrit tous ses documents dans le style maison : Calibri 11, titres bleu nuit, tableaux à grille. Une facture d'artisan demande autre chose : son logo, ses couleurs, un récapitulatif étroit à droite, les mentions légales en pied de page. **Le style se décrit dans des fichiers YAML de l'agent**, et l'outil n'en fixe rien : il pose les mêmes blocs, à la manière que le style décrit. La disposition des sections (côte à côte, encadrées, en colonnes) se décrit dans le modèle de document (voir « La mise en page des sections »).
 
 **Un fichier de style est une liste de styles nommés** (`text`, `document_title`, `heading1`…), chacun avec ses propriétés, plus quelques réglages (`colors`, `page`, `language`…). Trois fichiers, du plus général au plus précis :
 
@@ -1508,6 +1503,7 @@ footer:                    # « Page n / N » vient de default.yaml
 | `labels` | Les libellés que l'outil écrit, un par un : `table` (Tableau), `figure` (Figure), `contents` (Sommaire), `date` (Date :), `signature` (Signature :), `article` (Article), `total` (Total) |
 | `image` | `grid` : deux images `half` qui se suivent se posent côte à côte, chacune avec sa légende |
 | `chart` | `colors` : la couleur de chaque série, dans l'ordre (12 au plus) ; `text`, `grid`, `title` : le texte, la grille, le titre |
+| `fonts` | Les fichiers TrueType d'une police, que le PDF embarque : `fonts: { Inter: { regular: fonts/Inter-Regular.ttf, bold: …, italic: …, bold_italic: … } }` (voir plus bas) |
 
 Une couleur s'écrit en six chiffres hexadécimaux, sans `#` (un `#` ouvre un commentaire YAML), ou par un nom de `colors`. Les tailles et les espacements sont en points ; les marges, les retraits et les largeurs en centimètres. `width: content` : un tableau étroit — la moitié de la page au plus, un récapitulatif — prend sa largeur, posé selon `position` ; un plus large garde toute la largeur. Pour retirer les numéros de page du pied de page : `footer: { center: "" }`. Aucune date n'est permise dans un en-tête ou un pied de page : deux documents identiques donneraient deux fichiers, et la date d'un document est son contenu.
 
@@ -1565,11 +1561,32 @@ tools[loom.word].style.header.logo — logo introuvable : …/prompts/images/log
 
 Une police hors des polices de tous les postes (Arial, Calibri, Cambria, Georgia, Times New Roman, Verdana, Tahoma, Trebuchet MS, Garamond, Courier New) s'affiche dans une police de remplacement chez qui ne l'a pas : Word ne l'embarque pas. `loom validate` le signale (`polices : Inter : hors des polices de tous les postes, remplacée(s) chez qui ne les a pas`).
 
-Les styles ne servent qu'à `loom.word` pour l'instant : `style` est refusé sur `loom.pdf`, et sur ses modèles, qui écrivent dans son style maison.
+**Les polices du PDF.** Le PDF a trois familles standard, qui ne s'embarquent pas : Helvetica (pour Arial, Helvetica, Calibri, Verdana, Tahoma, Trebuchet MS), Times (pour Times New Roman, Cambria, Georgia, Garamond) et Courier (pour Courier New). Une autre police s'y rend en Helvetica, sauf si le style donne ses fichiers TrueType : le PDF l'embarque alors, en sous-ensemble (seuls les caractères employés).
+
+```yaml
+# prompts/styles/charte.yaml
+fonts:
+  Inter:                          # le nom que prennent les styles (font: Inter)
+    regular: fonts/Inter-Regular.ttf
+    bold: fonts/Inter-Bold.ttf    # facultatifs : sans eux, le gras et l'italique
+    italic: fonts/Inter-Italic.ttf  # s'écrivent dans la graisse normale
+text: { font: Inter }
+```
+
+Les fichiers, relatifs à `resources_dir`, sont lus au chargement et vérifiés : une police TrueType (`.ttf`, contours `glyf`), 2 Mo au plus, 4 familles par fichier de style. Sa licence doit permettre de l'embarquer dans un document modifiable (`fsType` 0 ou 8) ; une police « aperçu et impression seulement », restreinte ou à embarquer entière est refusée, comme un `.otf` à contours CFF, une police web (`.woff2`) ou une collection (`.ttc`). loom lit les droits que déclare la police, pas sa licence : l'embarquement doit aussi être permis par celle-ci (l'OFL des polices Google le permet). Word, lui, nomme la police sans l'embarquer.
+
+```text
+tools[loom.pdf].style.fonts.Inter.regular — police « aperçu et impression seulement » (fsType 4) : sa licence ne permet pas un document modifiable : …/prompts/fonts/Inter-Regular.ttf
+tools[loom.pdf].style.fonts.Inter.regular — une police web (WOFF) : le fichier TrueType (.ttf) est attendu : …/prompts/fonts/Inter.woff2
+```
+
+`loom validate` dit, pour `loom.pdf`, comment s'écrit chaque police du style : `polices : Calibri → Helvetica ; Georgia → Times ; Inter : embarquée`.
+
+**En PDF**, le même style donne la même page : les mêmes styles nommés, la même disposition des sections, l'en-tête et le pied de page (logo, zones, mentions, « Page n / N ») et le filigrane dessinés à chaque page, à 1 cm du bord comme dans Word. Les en-têtes d'une page en paysage suivent le bord de la page couchée, ce que Word ne fait pas. Un PDF ne se relit pas en blocs : sa mise en page n'a pas à revenir.
 
 #### Signature, sommaire, liste à cocher
 
-Depuis loom-ia 2.0.20, pour `loom.word`, avec `signature`, `toc` et `checkboxes` dans `blocks` (aucun par défaut ; chacun se déclare seul depuis 2.1.0). Trois blocs qu'aucun style ne peut faire exister, parce qu'ils sont du contenu : une zone de signature, un sommaire, une liste à cocher. Ils couvrent les devis à signer, les PV, les contrats, les rapports et les listes de contrôle. Ils coûtent, par appel de modèle : `signature` environ 110 tokens, `toc` environ 55, `checkboxes` environ 25 (432, 220 et 97 caractères de description et de schéma).
+Depuis loom-ia 2.0.20, pour `loom.word`, et pour `loom.pdf` depuis 2.1.0, avec `signature`, `toc` et `checkboxes` dans `blocks` (aucun par défaut ; chacun se déclare seul depuis 2.1.0). Trois blocs qu'aucun style ne peut faire exister, parce qu'ils sont du contenu : une zone de signature, un sommaire, une liste à cocher. Ils couvrent les devis à signer, les PV, les contrats, les rapports et les listes de contrôle. Ils coûtent, par appel de modèle : `signature` environ 110 tokens, `toc` environ 55, `checkboxes` environ 25 (432, 220 et 97 caractères de description et de schéma).
 
 ```yaml
   - python: loom.word
@@ -1585,15 +1602,15 @@ Depuis loom-ia 2.0.20, pour `loom.word`, avec `signature`, `toc` et `checkboxes`
 ```
 
 - **`signature`** : une colonne par signataire (4 au plus, 80 caractères chacun), sans cadre : le libellé en gras, la mention en italique (200 caractères au plus ; les styles `signature` et `signature_mention`), « Date : », « Signature : » (`labels`) et 2 cm pour signer.
-- **`toc`** : la table des matières, tirée des titres du document, un seul par document. Ses entrées sont écrites par l'outil (les titres, avec leur numéro si le style numérote les titres ; une section dont le nom ne s'imprime pas, `show_title: false`, n'y est pas), dans un champ que Word met à jour à l'ouverture. Les numéros de page ne sont connus que du traitement de texte : Word les écrit à la mise à jour, LibreOffice à « Outils > Mettre à jour > Index ». Le style `toc` règle le sommaire : `toc: {levels: 2, page_numbers: true}` (les niveaux de titre repris, 1 à 3 ; `page_numbers: false` pour des liens sans numéros de page).
-- **Liste à cocher** : `checkboxes: true` sur une `list`, et chaque élément, sous-éléments compris, commence par `[x]` (coché) ou `[ ]` (vide), la convention markdown. Une case ☒ ou ☐ se pose devant. Une liste à cocher n'est pas numérotée.
+- **`toc`** : la table des matières, tirée des titres du document, un seul par document. Ses entrées sont écrites par l'outil (les titres, avec leur numéro si le style numérote les titres ; une section dont le nom ne s'imprime pas, `show_title: false`, n'y est pas), dans un champ que Word met à jour à l'ouverture. Les numéros de page ne sont connus que du traitement de texte : Word les écrit à la mise à jour, LibreOffice à « Outils > Mettre à jour > Index ». Le PDF, lui, a ses vrais numéros dès l'écriture, et chaque entrée est un lien vers son titre. Le style `toc` règle le sommaire : `toc: {levels: 2, page_numbers: true}` (les niveaux de titre repris, 1 à 3 ; `page_numbers: false` pour des liens sans numéros de page).
+- **Liste à cocher** : `checkboxes: true` sur une `list`, et chaque élément, sous-éléments compris, commence par `[x]` (coché) ou `[ ]` (vide), la convention markdown. Une case ☒ ou ☐ se pose devant ; dans le PDF, elle est dessinée (les polices standard n'ont pas ces caractères). Une liste à cocher n'est pas numérotée.
 
 ```text
 Document refusé :
 - bloc 2 (list), élément 1 : dans une liste à cocher (checkboxes), chaque élément commence par [x] (coché) ou [ ] (vide)
 ```
 
-La relecture rend ces blocs tels qu'écrits : `signature` avec ses signataires et sa mention, `toc` (ses entrées ne reviennent pas), la liste à cocher avec ses `[x]` et `[ ]`. Un document relu se réécrit tel quel. Un outil qui ne les déclare pas et lit un tel document le dit dans `notes` (« Lu : signature (1), toc (1) ; cet outil n'en écrit pas : … (ou blocks: [signature, toc] dans la config de l'outil) »), avant une réécriture que le schéma refuserait. `loom validate` les liste dans `blocs`. `loom.pdf` refuse `signature`, `toc` et `checkboxes` pour l'instant.
+La relecture rend ces blocs tels qu'écrits : `signature` avec ses signataires et sa mention, `toc` (ses entrées ne reviennent pas), la liste à cocher avec ses `[x]` et `[ ]`. Un document relu se réécrit tel quel. Un outil qui ne les déclare pas et lit un tel document le dit dans `notes` (« Lu : signature (1), toc (1) ; cet outil n'en écrit pas : … (ou blocks: [signature, toc] dans la config de l'outil) »), avant une réécriture que le schéma refuserait. `loom validate` les liste dans `blocs`.
 
 #### Lire un document Word
 
@@ -1653,12 +1670,12 @@ Avec `"action": "read"`, `word` lit un `.docx` (ou `.docm`, `.dotx`) d'un dossie
 #### À savoir
 
 - **Images** (avec `blocks: [image]`) : PNG et JPEG, en ligne et centrées, à trois largeurs ; ni habillage, ni rognage, ni rotation, ni image dans un tableau ou une note. L'orientation EXIF d'une photo n'est pas appliquée. `pdf` ne relit pas les images d'un PDF.
-- Pas d'en-tête de page personnalisé, pas de lien cliquable.
+- Pas de lien cliquable dans le texte (seulement les entrées du sommaire).
 - **Graphiques** : quatre types, ni aires, ni nuage de points, ni barres empilées, ni deux axes ; `from_table` ne vise que le dernier tableau qui précède ; pas de classeur dans le `.docx`. `pdf` ne relit pas un graphique : un PDF n'en garde que le dessin, dont le texte donne les libellés.
 - **On écrit un document neuf, ou on en lit un** : on ne modifie pas un document existant, et on ne remplit ni un modèle `.dotx` ni un formulaire PDF.
 - **Modèles de document** (avec `templates`) : l'outil vérifie les sections, pas leur contenu (ni les sous-parties, ni les tableaux attendus). Une consigne sur l'apparence (alignement, police) ne peut pas être suivie par le modèle de langage : la forme est celle du style et du modèle.
 - **La lecture d'un `.docx` ne voit pas** les images sans `image` dans `blocks` (ni, avec, celles d'un tableau ou d'une zone de texte), les en-têtes et pieds de page, les commentaires, les zones de texte ; elle les signale. Les formats `.doc`, `.odt` et `.rtf` sont refusés (« l'enregistrer en .docx depuis Word ou LibreOffice »).
-- **Le style ne se règle pas**, comme pour `excel`.
+- **PDF** : un bloc qui ne tient pas dans une page (une ligne de tableau très haute) est refusé : le découper. Une section côte à côte ou encadrée, une note longue continuent sur la page suivante.
 - **Rejeu** : comme pour `excel`, le rejeu sert le résultat du journal sans réécrire le fichier ; en rejeu en variante, un outil qui ne fait que lire est exécuté, un outil qui peut écrire ne l'est jamais.
 - **Coût** : environ 1,4 k tokens par outil et par appel de modèle, description et schéma compris ; environ 430 de plus avec `chart`, environ 190 avec `image`, environ 200 avec `signature`, `toc` et `checkboxes` ensemble, environ 250 avec `templates` (dont le champ `sections`) et 30 de plus par modèle déclaré (son nom et sa description), environ 80 pour un premier style proposé dans la charte. Le texte d'un modèle et ses styles proposés ne coûtent qu'à sa lecture.
 

@@ -228,17 +228,6 @@ def check_section_styles(template: Template, style: Style, where: str) -> None:
                 raise ValueError(f"{where} : « {section.name} ».styles.{element} : {fault}")
 
 
-def word_only(template: Template, reference: str) -> None:
-    """Un modèle de ``loom.pdf`` : ni style, ni mise en page de section, pour l'instant."""
-    said = template.layout
-    if said:
-        raise ValueError(
-            f"{reference} : modèle {template.name} : {', '.join(said)} : le style et la mise "
-            "en page des sections ne servent qu'à loom.word pour l'instant (loom.pdf écrit "
-            "dans son style maison)"
-        )
-
-
 type Templates = Annotated[
     dict[str, TemplateRef], BeforeValidator(_short_form), AfterValidator(_checked_templates)
 ]

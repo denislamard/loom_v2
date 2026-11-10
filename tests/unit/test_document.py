@@ -707,7 +707,7 @@ def test_a_template_is_its_sections() -> None:
     assert found.outline() == (
         "Contexte · Constat · Photos (optional) · Travaux réalisés · Conditions (fixed)"
     )
-    assert found.text == RAPPORT and found.style is None and found.layout == []
+    assert found.text == RAPPORT and found.style is None
     assert found.section("2. CONSTAT") is not None and found.section("Annexe") is None
     assert fixed_paragraphs(found.sections[4].spec.text or "") == [
         "**Garantie** : un an,\npièces et main-d'œuvre.",

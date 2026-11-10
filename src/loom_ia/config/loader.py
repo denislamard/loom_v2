@@ -36,14 +36,18 @@ from loom_ia.core.model import (
     checked_skill,
 )
 from loom_ia.core.template import Template, TemplateError
-from loom_ia.tools_builtin._office_params import TemplateRef, check_section_styles, word_only
+from loom_ia.tools_builtin._office_params import TemplateRef, check_section_styles
 from loom_ia.tools_builtin._style_params import (
+    MAX_FONT_BYTES,
     MAX_LOGO_BYTES,
     MAX_STYLE_CHARS,
+    FontFiles,
     Style,
     StyleFile,
     StyleRef,
     describe,
+    font_fault,
+    font_files,
     resolve,
 )
 from loom_ia.tools_builtin._templates import parse as parse_template
@@ -418,8 +422,6 @@ def _templates_read(
         try:
             text = path.read_text(encoding="utf-8")
             template = parse_template(name, text)
-            if declared.python == "loom.pdf":
-                word_only(template, declared.python)
         except (OSError, UnicodeDecodeError) as exc:
             raise ConfigError(f"{where} — modèle illisible : {exc}", source=source) from exc
         except ValueError as exc:
@@ -447,14 +449,16 @@ def _template_style(given: object, where: str, path: Path, *, source: Path) -> S
 def _styles_read(
     declared: PythonTool, resources_dir: Path, label: str, *, source: Path
 ) -> PythonTool:
-    """La charte d'un outil ``loom.word``, lue, et la cascade de chaque modèle vérifiée.
+    """La charte d'un outil ``loom.word`` ou ``loom.pdf``, lue, et la cascade de chaque
+    modèle vérifiée.
 
     La charte, relative à ``resources_dir`` et contenue dans ce dossier, est lue une fois
-    au chargement avec ses logos, et validée ici ; le style de chaque modèle l'a été avec
-    lui (``_templates_read``). La cascade est résolue comme à l'écriture —
+    au chargement avec ses logos et ses polices, et validée ici ; le style de chaque
+    modèle l'a été avec lui (``_templates_read``). La cascade est résolue comme à
+    l'écriture —
     ``default.yaml``, la charte, le style du modèle — et les styles que choisissent les
     sections y sont cherchés : une faute (clé inconnue, couleur inconnue, base en boucle,
-    style de section inconnu, logo absent) se voit dès ``loom validate``.
+    style de section inconnu, logo ou police absent) se voit dès ``loom validate``.
     """
     charte = cast(object, getattr(declared, "style", None))
     templates = cast(object, getattr(declared, "templates", None))
@@ -496,9 +500,10 @@ _COLON: Final = "mapping values are not allowed here"
 
 
 def _style_read(ref: StyleRef, resources_dir: Path, where: str, *, source: Path) -> StyleFile:
-    """Un fichier de style lu et validé, ses logos lus ; ou le style écrit en ligne."""
+    """Un fichier de style lu et validé, ses logos et ses polices lus ; ou le style écrit en
+    ligne."""
     if ref.spec is not None:
-        return _logos_read(ref.spec, resources_dir, where, source=source)
+        return _files_read(ref.spec, resources_dir, where, source=source)
     file = cast(Path, ref.file)
     path = _within_resources(resources_dir, file, where, source=source)
     if not path.is_file():
@@ -529,7 +534,16 @@ def _style_read(ref: StyleRef, resources_dir: Path, where: str, *, source: Path)
     except ValidationError as exc:
         lines = "\n".join(describe(exc, where))
         raise ConfigError(f"{lines}\n({path})", source=source) from exc
-    return _logos_read(spec, resources_dir, where, source=source)
+    return _files_read(spec, resources_dir, where, source=source)
+
+
+def _files_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Path) -> StyleFile:
+    return _fonts_read(
+        _logos_read(spec, resources_dir, where, source=source),
+        resources_dir,
+        where,
+        source=source,
+    )
 
 
 def _logos_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Path) -> StyleFile:
@@ -560,6 +574,42 @@ def _logos_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Pat
         styles[name] = props.model_copy(update={"logo": data})
         changed = True
     return spec.model_copy(update={"styles": styles}) if changed else spec
+
+
+def _fonts_read(spec: StyleFile, resources_dir: Path, where: str, *, source: Path) -> StyleFile:
+    """Les polices d'un style, lues et vérifiées (TrueType, droits d'embarquement) : leurs
+    octets à la place de leur fichier."""
+    if not spec.fonts:
+        return spec
+    fonts = {family: files.model_dump() for family, files in spec.fonts.items()}
+    for family, variant, given in font_files(spec):
+        if not isinstance(given, str):
+            continue
+        label = f"{where}.fonts.{family}.{variant}"
+        written = Path(given)
+        path = _within_resources(resources_dir, written, label, source=source)
+        if not path.is_file():
+            raise ConfigError(
+                f"{label} — police introuvable : {path}{_hint(resources_dir, written)}",
+                source=source,
+            )
+        try:
+            size = path.stat().st_size
+            if size > MAX_FONT_BYTES:
+                raise ConfigError(
+                    f"{label} — police de {size} octets, au-delà de {MAX_FONT_BYTES} : {path}",
+                    source=source,
+                )
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ConfigError(f"{label} — police illisible : {exc}", source=source) from exc
+        fault = font_fault(data)
+        if fault is not None:
+            raise ConfigError(f"{label} — {fault} : {path}", source=source)
+        fonts[family][variant] = data
+    return spec.model_copy(
+        update={"fonts": {family: FontFiles(**files) for family, files in fonts.items()}}
+    )
 
 
 def _ref_label(ref: McpTools | SourceTools) -> str:

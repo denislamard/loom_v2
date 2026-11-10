@@ -6,16 +6,18 @@ Les fichiers lus et écrits sont désignés comme dans ``loom.local_files`` —
 déclarés, droits, approbation par appel, liens qui sortent du dossier
 refusés, écriture atomique, fichier existant remplacé seulement avec
 ``overwrite``. Chaque format ne fournit que son rendu, sa lecture, et ce que
-sa description en dit.
+sa description en dit. Le style des documents aussi est commun (``read_styles``) : la
+charte, et le style de chaque modèle, résolus et vérifiés au montage.
 """
 
 import hashlib
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping
-from typing import ClassVar, Final
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import ClassVar, Final, Protocol
 from zoneinfo import ZoneInfo
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from loom_ia.core.model import SideEffects, ToolOutput, ToolSpec
 from loom_ia.core.ports import CallAssessment, ToolContext, ToolError
@@ -53,8 +55,23 @@ from loom_ia.tools_builtin._document.content import (
 from loom_ia.tools_builtin._document.picture import Picture, PictureError
 from loom_ia.tools_builtin._document.picture import parse as parse_picture
 from loom_ia.tools_builtin._folders import Folders, Located, write_bytes
-from loom_ia.tools_builtin._office_params import OPTIONAL_BLOCKS
-from loom_ia.tools_builtin._style_params import FRENCH, Labels
+from loom_ia.tools_builtin._office_params import (
+    OPTIONAL_BLOCKS,
+    TemplateRef,
+    check_section_styles,
+)
+from loom_ia.tools_builtin._style_params import (
+    Labels,
+    Style,
+    StyleFile,
+    StyleRef,
+    describe,
+    font_fault,
+    font_files,
+    house,
+    logos,
+    resolve,
+)
 from loom_ia.tools_builtin._templates import NONE as NO_TEMPLATE
 from loom_ia.tools_builtin._templates import Template
 from loom_ia.tools_builtin.local_files_params import Right
@@ -107,8 +124,159 @@ OPTIONAL_HELP: Final[Mapping[str, str]] = {
 }
 
 
+# --- Le style des documents ----------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Styles:
+    """Les styles résolus d'un outil : la charte, et charte + style du modèle, par modèle ;
+    le style maison sans charte (``default`` vide)."""
+
+    default: Style | None = None
+    by_template: Mapping[str, Style] = field(default_factory=dict[str, Style])
+    # Ce que ``loom validate`` en dit.
+    said: tuple[tuple[str, str], ...] = ()
+
+    def of(self, template: str | None) -> Style:
+        """Le style d'un document : celui de son modèle, sinon la charte."""
+        return self.by_template.get(template or "", self.default or house())
+
+    def all(self) -> list[Style]:
+        """Tous les styles de l'outil : la charte (ou la maison), puis ceux des modèles."""
+        return [self.default or house(), *self.by_template.values()]
+
+
+HOUSE_STYLES: Final = Styles()
+
+
+class StyledParams(Protocol):
+    """Les paramètres d'un outil de document : sa charte et ses modèles."""
+
+    @property
+    def style(self) -> StyleRef | None: ...
+
+    @property
+    def templates(self) -> Mapping[str, TemplateRef]: ...
+
+
+def read_styles(
+    params: StyledParams,
+    templates: Mapping[str, Template],
+    reference: str,
+    fonts_said: Callable[[Sequence[Style]], str | None],
+) -> Styles:
+    """Les styles de l'outil, vérifiés et résolus une fois, au montage.
+
+    Le chargeur de config a lu les fichiers (``spec``), leurs logos et leurs polices ; une
+    référence construite en Python sans passer par lui garde ``file`` : c'est une faute de
+    montage. Un modèle qui écrit son style en ligne le donne ici. Les logos sont reconnus
+    (PNG ou JPEG), les polices vérifiées (TrueType, droits d'embarquement), la cascade
+    résolue (couleurs nommées, bases), et les styles que choisissent les sections cherchés :
+    une faute se voit dès ``loom validate``. ``fonts_said`` : ce que le format dit des
+    polices de ses styles (``None`` : rien).
+    """
+    charte = _spec(params.style, f"{reference}.style")
+    own: dict[str, StyleFile] = {}
+    for name, ref in params.templates.items():
+        spec = _spec(ref.style, f"{reference}.templates[{name}].style") or _written(
+            templates[name], f"{reference}.templates[{name}].style"
+        )
+        if spec is not None:
+            own[name] = spec
+    declared = [spec for spec in (charte, *own.values()) if spec is not None]
+    for spec in declared:
+        _check_files(spec, reference)
+    default = _resolved(f"{reference}.style", charte)
+    by_template = {
+        name: _resolved(f"{reference}.templates[{name}].style", charte, spec)
+        for name, spec in own.items()
+    }
+    for name, template in templates.items():
+        check_section_styles(
+            template, by_template.get(name, default), f"{reference}.templates[{name}]"
+        )
+    if not declared:
+        return HOUSE_STYLES
+    said = [
+        (
+            "style",
+            ("charte" if charte is not None else "style maison")
+            + (f" ; style de modèle : {', '.join(own)}" if own else ""),
+        )
+    ]
+    fonts = fonts_said([default, *by_template.values()])
+    if fonts:
+        said.append(("polices", fonts))
+    proposed = default.proposed()
+    if proposed:
+        said.append(
+            (
+                "styles proposés",
+                " · ".join(
+                    f"{kind} : {', '.join(name for name, _ in names)}"
+                    for kind, names in proposed.items()
+                ),
+            )
+        )
+    return Styles(default=default, by_template=by_template, said=tuple(said))
+
+
+def _check_files(spec: StyleFile, reference: str) -> None:
+    """Les logos et les polices d'un style : lus (par le chargeur), et reconnus."""
+    for style, logo in logos(spec):
+        if isinstance(logo, str):
+            raise ValueError(f"{reference} : logo de {style} ({logo}) non lu")
+        try:
+            parse_picture(logo)
+        except PictureError as exc:
+            raise ValueError(f"{reference} : logo de {style} : {exc}") from None
+    for family, kind, data in font_files(spec):
+        if isinstance(data, str):
+            raise ValueError(f"{reference} : police {family}.{kind} ({data}) non lue")
+        fault = font_fault(data)
+        if fault is not None:
+            raise ValueError(f"{reference} : police {family}.{kind} : {fault}")
+
+
+def _written(template: Template, where: str) -> StyleFile | None:
+    """Le style qu'un modèle écrit en ligne ; un chemin doit avoir été lu au chargement."""
+    if template.style is None:
+        return None
+    if isinstance(template.style, str):
+        raise ValueError(
+            f"{where} ({template.style}) non lu — les styles se lisent au chargement de la "
+            "config (load_config), ou se donnent par leur contenu (spec)"
+        )
+    try:
+        return StyleFile.model_validate(template.style)
+    except ValidationError as exc:
+        raise ValueError("\n".join(describe(exc, where))) from None
+
+
+def _resolved(where: str, *files: StyleFile | None) -> Style:
+    try:
+        return resolve(*files)
+    except ValueError as exc:
+        raise ValueError(f"{where} : {exc}") from None
+
+
+def _spec(ref: StyleRef | None, where: str) -> StyleFile | None:
+    if ref is None:
+        return None
+    if ref.spec is None:
+        raise ValueError(
+            f"{where} ({ref.file}) non lu — les styles se lisent au chargement de la config "
+            "(load_config), ou se donnent par leur contenu (spec)"
+        )
+    return ref.spec
+
+
+# --- L'outil -------------------------------------------------------------------------
+
+
 class DocumentTool(ABC):
-    """Un outil de document monté avec ses dossiers et son fuseau."""
+    """Un outil de document monté avec ses dossiers, son fuseau, ses modèles et ses
+    styles."""
 
     NAME: ClassVar[str]
     # Les arguments du format, sans graphique ni image : ``variant`` les élargit.
@@ -125,9 +293,11 @@ class DocumentTool(ABC):
         *,
         blocks: Iterable[str] = (),
         templates: Mapping[str, Template] | None = None,
+        styles: Styles = HOUSE_STYLES,
     ) -> None:
         self._space = space
         self._zone = zone
+        self._styles = styles
         # Les blocs facultatifs déclarés, dans l'ordre de ``OPTIONAL_BLOCKS``.
         self._blocks = tuple(name for name in OPTIONAL_BLOCKS if name in set(blocks))
         self._charts = "chart" in self._blocks
@@ -363,32 +533,62 @@ class DocumentTool(ABC):
             raise ToolError(f"{located.address} dépasse {bound} octets.")
         return data
 
-    # --- Ce que chaque format fournit -----------------------------------------------------
+    # --- Les styles ---------------------------------------------------------------------
 
     def _proposed_styles(self) -> Mapping[str, Iterable[str]]:
         """Les styles proposés au modèle de langage, par type de bloc : la charte et tous les
         modèles (le schéma) ; aucun sans style."""
-        return {}
+        found: dict[str, list[str]] = {}
+        styles = [self._styles.default, *self._styles.by_template.values()]
+        for style in styles:
+            for kind, names in (style.proposed() if style is not None else {}).items():
+                found.setdefault(kind, []).extend(name for name, _ in names)
+        return found
 
     def _allowed(self, template: str | None) -> Allowed:
         """Les styles proposés qu'un document (celui de son modèle) peut choisir."""
-        del template
-        return NO_STYLES
+        style = self._styles.of(template)
+        allowed: dict[str, dict[str, int]] = {}
+        for kind, names in style.proposed().items():
+            for name, _ in names:
+                level = (style.block_type(name) or (kind, 0))[1]
+                allowed.setdefault(kind, {})[name] = level
+        return allowed or NO_STYLES
 
     def _template_styles(self, name: str) -> dict[str, JsonValue]:
         """Les styles que propose le style d'un modèle, en plus de la charte."""
-        del name
-        return {}
+        own = self._styles.by_template.get(name)
+        if own is None:
+            return {}
+        charte = (self._styles.default or house()).proposed()
+        found: dict[str, JsonValue] = {}
+        for kind, names in own.proposed().items():
+            added = {
+                style: said for style, said in names if (style, said) not in charte.get(kind, [])
+            }
+            if added:
+                found[kind] = dict(added)
+        return found
 
     def _styles_help(self) -> list[str]:
         """Les styles que propose la charte : dans la description, à chaque appel."""
-        return []
+        proposed = (self._styles.default or house()).proposed()
+        if not proposed:
+            return []
+        return [
+            "Styles proposés ('style' d'un bloc, facultatif ; ceux d'un modèle se lisent par "
+            "action=template) : "
+            + " ; ".join(
+                f"{kind} : " + ", ".join(f"{name} ({said})" for name, said in names)
+                for kind, names in proposed.items()
+            )
+        ]
 
     def _labels(self, template: str | None) -> Labels:
-        """La langue et les libellés d'un document (celui de son modèle) : ceux du style ;
-        le français, sans style."""
-        del template
-        return FRENCH
+        """La langue et les libellés d'un document (celui de son modèle) : ceux du style."""
+        return self._styles.of(template).labels
+
+    # --- Ce que chaque format fournit -----------------------------------------------------
 
     @abstractmethod
     def _render(self, prepared: Prepared) -> tuple[bytes, dict[str, JsonValue], list[str]]:

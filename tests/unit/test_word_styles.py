@@ -815,14 +815,15 @@ def test_an_uncommon_font_is_said(tmp_path: Path) -> None:
     assert options["polices"].startswith("Inter : hors des polices de tous les postes")
 
 
-def test_pdf_has_no_style_yet() -> None:
+def test_pdf_takes_the_style_of_word() -> None:
+    """Depuis 2.1.0, ``loom.pdf`` prend les mêmes styles, de la même façon."""
     folders = [{"name": "s", "path": "s", "rights": ["write"]}]
-    for given in (
-        {"folders": folders, "style": "charte.yaml"},
-        {"folders": folders, "templates": {"r": {"file": "r.md", "style": "r.yaml"}}},
-    ):
-        with pytest.raises(ValidationError, match=r"ne servent qu'à loom\.word pour l'instant"):
-            PdfParams.model_validate(given)
+    params = PdfParams.model_validate({"folders": folders, "style": "charte.yaml"})
+    assert params.style is not None and params.style.file == Path("charte.yaml")
+    with pytest.raises(ValidationError, match="le modèle nomme son style dans son fichier"):
+        PdfParams.model_validate(
+            {"folders": folders, "templates": {"r": {"file": "r.yaml", "style": "r.yaml"}}}
+        )
 
 
 # --- Le chargement de la config --------------------------------------------------------------
@@ -1244,12 +1245,15 @@ async def test_a_tool_without_the_blocks_says_so_when_reading(tmp_path: Path) ->
     assert "(ou blocks: [checkboxes, signature] dans" in read["notes"][0]
 
 
-def test_pdf_has_no_signature_toc_or_checkboxes_yet() -> None:
+def test_pdf_writes_signature_toc_and_checkboxes() -> None:
     folders = [{"name": "s", "path": "s", "rights": ["write"]}]
-    for name in ("signature", "toc", "checkboxes"):
-        with pytest.raises(ValidationError, match=f"blocks : {name} ne sert qu'à loom.word"):
-            PdfParams.model_validate({"folders": folders, "blocks": ["chart", name]})
-    assert PdfParams.model_validate({"folders": folders, "blocks": ["chart", "image"]}).blocks
+    blocks = ["chart", "signature", "toc", "checkboxes"]
+    assert PdfParams.model_validate({"folders": folders, "blocks": blocks}).blocks == (
+        "chart",
+        "signature",
+        "toc",
+        "checkboxes",
+    )
 
 
 async def test_libreoffice_prints_the_extra_blocks(tmp_path: Path, soffice: str) -> None:

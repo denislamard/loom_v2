@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Paramètres de ``loom.pdf`` : les dossiers permis, et le fuseau des dates-heures.
+"""Paramètres de ``loom.pdf`` : les dossiers permis, le fuseau, les modèles et le style.
 
 Module léger — Pydantic et ``_office_params`` seulement — : la config
 l'importe pour valider la référence au chargement, sans importer l'outil ni pypdf ni reportlab.
@@ -13,14 +13,19 @@ l'importe pour valider la référence au chargement, sans importer l'outil ni py
         path: sortie
         rights: [ write, overwrite ]   # remplacer un fichier : approbation par défaut
       timezone: Europe/Paris           # par défaut : le fuseau des dates-heures écrites
-      blocks: [chart, image]           # les blocs facultatifs ; aucun par défaut
+      blocks: [chart, image]           # les blocs facultatifs : chart, image, signature, toc,
+                                       # checkboxes ; aucun par défaut
+      style: styles/charte.yaml        # la charte (facultatif), relative à resources_dir
+      templates:                       # modèles de document, relatifs à resources_dir ; le
+        facture: templates/facture.yaml  # style d'un modèle se nomme dans son fichier
+
+``style`` et les modèles sont ceux de ``loom.word`` : un même fichier sert aux deux.
 
 Les dossiers suivent la forme de ``loom.local_files`` (``name``, ``path``,
 ``rights``, ``approval``) ; le droit ``delete`` n'a pas de sens ici et est refusé.
 """
 
-from collections.abc import Mapping
-from typing import Annotated, Final, Self, cast
+from typing import Annotated, Final, Self
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
@@ -33,6 +38,7 @@ from loom_ia.tools_builtin._office_params import (
     no_delete,
     no_old_keys,
 )
+from loom_ia.tools_builtin._style_params import StyleField
 from loom_ia.tools_builtin.local_files_params import FolderSpec
 
 REFERENCE: Final = "loom.pdf"
@@ -40,13 +46,6 @@ REFERENCE: Final = "loom.pdf"
 # PDF forgés (CVE-2026-59935, -59937). Ici, et non dans l'outil, pour que ``loom.memory``
 # le vérifie sans importer reportlab.
 SAFE_PYPDF: Final = (6, 14, 2)
-# Les blocs facultatifs que ``loom.pdf`` n'écrit pas encore.
-WORD_ONLY: Final = ("signature", "toc", "checkboxes")
-
-
-def _mapping(value: object) -> Mapping[object, object]:
-    """``value`` s'il est une table (le YAML d'un outil, d'un modèle), sinon une table vide."""
-    return cast(Mapping[object, object], value) if isinstance(value, Mapping) else {}
 
 
 class PdfParams(BaseModel):
@@ -64,10 +63,14 @@ class PdfParams(BaseModel):
     # à l'heure de ce fuseau, sans le nommer.
     timezone: str = DEFAULT_TIMEZONE
     # Les blocs facultatifs, chacun payé en tokens à chaque appel au modèle : chart
-    # (environ 430), image (environ 190). Aucun par défaut.
+    # (environ 430), image (environ 190), signature, toc et checkboxes (environ 190 à eux
+    # trois). Aucun par défaut.
     blocks: Blocks = ()
     # Les modèles de document, par nom : fichiers relatifs à resources_dir, lus au chargement.
     templates: Templates = {}
+    # La charte : un fichier de style relatif à resources_dir, lu au chargement, ou un style
+    # écrit en ligne ; le style d'un modèle se nomme dans le fichier du modèle (style:).
+    style: StyleField = None
 
     @model_validator(mode="before")
     @classmethod
@@ -76,29 +79,9 @@ class PdfParams(BaseModel):
 
     @classmethod
     def precheck(cls, value: object) -> object:
-        """Avant toute validation, aussi sur la référence de la config (``agents.spec``) : les
-        anciennes clés (``charts``…), les styles, la signature, le sommaire et la liste à
-        cocher, dits tels quels plutôt qu'un champ « extra » refusé sans explication."""
-        no_old_keys(value)
-        templates = _mapping(value).get("templates")
-        styled = "style" in _mapping(value) or any(
-            "style" in _mapping(ref) for ref in _mapping(templates).values()
-        )
-        if styled:
-            raise ValueError(
-                "style : les styles de document ne servent qu'à loom.word pour l'instant "
-                "(loom.pdf écrit dans son style maison) ; retirer style"
-            )
-        blocks = _mapping(value).get("blocks")
-        listed = cast(list[object], blocks) if isinstance(blocks, list | tuple) else []
-        word_only = [name for name in WORD_ONLY if name in listed]
-        if word_only:
-            verb = "ne sert" if len(word_only) == 1 else "ne servent"
-            raise ValueError(
-                f"blocks : {', '.join(word_only)} {verb} qu'à loom.word pour l'instant ; "
-                "loom.pdf écrit chart et image"
-            )
-        return value
+        """Avant toute validation, aussi sur la référence de la config (``agents.spec``) :
+        les clés de la 2.0 refusées avec ce qui les remplace."""
+        return no_old_keys(value)
 
     @model_validator(mode="after")
     def _check(self) -> Self:

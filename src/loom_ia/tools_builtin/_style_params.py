@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Le style d'un document ``word`` : des styles nommés, dans des fichiers YAML.
+"""Le style d'un document ``word`` ou ``pdf`` : des styles nommés, dans des fichiers YAML.
 
 Un fichier de style est une liste de **styles nommés** — ``text``, ``document_title``,
 ``heading1``… —, chacun avec ses propriétés (police, taille, couleur, espacements,
 filets), et quelques **réglages** (``colors``, ``page``, ``numbering``, ``language``,
-``labels``, ``image``, ``chart``). Trois fichiers, du plus général au plus précis :
+``labels``, ``image``, ``chart``, ``fonts``). Trois fichiers, du plus général au plus
+précis :
 
 1. ``styles/default.yaml``, livré avec loom : le style maison ;
 2. la charte de l'outil (``style:``) ;
-3. le style d'un modèle de document (``templates.<nom>.style``).
+3. le style d'un modèle de document (``style:`` dans le fichier du modèle).
 
 **Les fichiers d'abord** : chaque style complète le même style des fichiers précédents,
 propriété par propriété. **L'héritage ensuite** : un style prend les propriétés de sa
@@ -19,12 +20,16 @@ Un style à toi qui a une ``description`` est **proposé au modèle de langage**
 de bloc dont il descend (``important_note``, ``base: note`` : le champ ``style`` d'un bloc
 ``note``) ; il n'en voit que le nom et la description. Du reste, il ne voit rien.
 
+``fonts`` donne les fichiers TrueType d'une police, que le PDF embarque ; ils sont lus au
+chargement, et vérifiés (``font_fault``) : contours TrueType, droits d'embarquement.
+
 Module léger — Pydantic et PyYAML — : la config l'importe pour valider une référence,
 sans importer l'outil.
 """
 
 import difflib
 import re
+import struct
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import cache
@@ -45,6 +50,9 @@ from pydantic import (
 DEFAULT_FILE: Final = Path(__file__).with_name("styles") / "default.yaml"
 MAX_STYLE_CHARS: Final = 20_000
 MAX_LOGO_BYTES: Final = 2_000_000
+# Les polices embarquées dans le PDF : leurs fichiers, et leurs familles par fichier de style.
+MAX_FONT_BYTES: Final = 2_000_000
+MAX_FONT_FAMILIES: Final = 4
 MAX_BAND_TEXT: Final = 200
 MAX_BAND_LINES: Final = 4
 MAX_STYLES: Final = 80
@@ -66,6 +74,16 @@ SAFE_FONTS: Final = frozenset(
         "courier new",
     }
 )
+# Les polices standard du PDF, qui ne s'embarquent pas : celle qui rend une police du style
+# dont le style ne donne pas les fichiers (``fonts``), selon sa forme ; Helvetica sinon.
+PDF_FONTS: Final[Mapping[str, str]] = {
+    **dict.fromkeys(
+        ("arial", "helvetica", "calibri", "verdana", "tahoma", "trebuchet ms"), "Helvetica"
+    ),
+    **dict.fromkeys(("times new roman", "times", "cambria", "georgia", "garamond"), "Times-Roman"),
+    **dict.fromkeys(("courier new", "courier"), "Courier"),
+}
+PDF_FALLBACK: Final = "Helvetica"
 # Les champs d'un en-tête ou d'un pied de page.
 PLACEHOLDERS: Final = frozenset({"page", "pages", "title"})
 _PLACEHOLDER: Final = re.compile(r"\{([^{}]*)\}")
@@ -129,7 +147,9 @@ _OWNERS: Final[Mapping[str, frozenset[str]]] = {
     "text": frozenset({"watermark"}),
 }
 # Les réglages : des clés du fichier qui ne sont pas des styles.
-SETTINGS: Final = frozenset({"colors", "page", "numbering", "language", "labels", "image", "chart"})
+SETTINGS: Final = frozenset(
+    {"colors", "page", "numbering", "language", "labels", "image", "chart", "fonts"}
+)
 # La disposition des sections d'un modèle : dans le modèle de document depuis 2.1.0.
 LAYOUT: Final = frozenset({"sections", "beside"})
 # Les styles de bloc : un style à toi qui en descend peut être proposé au modèle de langage
@@ -150,7 +170,6 @@ OLD_KEYS: Final[Mapping[str, str]] = {
     "title": "document_title",
     "headings": "heading1, heading2, heading3 (et numbering : decimal, article)",
     "paragraphs": "text (line → line_spacing, after → space_after, justify → align: justify)",
-    "fonts": "font, sur text et sur chaque titre",
     "tables": "table et table_header (align → position, header.fill → table_header.fill)",
     "captions": "caption (numbered)",
     "images": "image (grid)",
@@ -353,6 +372,20 @@ class ImageSpec(_Spec):
     grid: bool | None = None
 
 
+class FontFiles(_Spec):
+    """Les fichiers TrueType d'une police, relatifs à ``resources_dir`` ; leurs octets une
+    fois lus au chargement. ``regular`` seul suffit : le gras et l'italique le prennent."""
+
+    regular: str | bytes
+    bold: str | bytes | None = None
+    italic: str | bytes | None = None
+    bold_italic: str | bytes | None = None
+
+
+# Les variantes d'une police, dans l'ordre de ``FontFiles``.
+FONT_VARIANTS: Final = ("regular", "bold", "italic", "bold_italic")
+
+
 class ChartSpec(_Spec):
     # La couleur de chaque série, dans l'ordre ; le texte, la grille, le titre.
     colors: Annotated[list[Color], Field(min_length=1, max_length=12)] | None = None
@@ -376,6 +409,7 @@ class StyleFile(_Spec):
     labels: LabelsSpec | None = None
     image: ImageSpec | None = None
     chart: ChartSpec | None = None
+    fonts: Annotated[dict[FontName, FontFiles], Field(max_length=MAX_FONT_FAMILIES)] | None = None
     styles: dict[StyleName, Props] = {}
 
     @model_validator(mode="before")
@@ -393,6 +427,12 @@ class StyleFile(_Spec):
                 "columns, landscape, cover, styles)"
             )
         old = [f"{name} → {OLD_KEYS[name]}" for name in OLD_KEYS if name in entries]
+        if _old_fonts(entries.get("fonts")):
+            old.append(
+                "fonts → font, sur text et sur chaque titre (fonts donne depuis 2.1.0 les "
+                "fichiers TrueType d'une police, pour le PDF : fonts: {Inter: {regular: "
+                "fonts/Inter-Regular.ttf}})"
+            )
         if old:
             raise ValueError(
                 f"style au format de la 2.0 : {' ; '.join(old)}. Un fichier de style est "
@@ -430,6 +470,20 @@ class StyleFile(_Spec):
             raise ValueError(f"{len(styles)} styles, au-delà de {MAX_STYLES}")
         data["styles"] = styles
         return data
+
+
+def _old_fonts(value: object) -> bool:
+    """``fonts`` au format de la 2.0 : ``body`` et ``headings``, un nom ou ``{name, size}``."""
+    if not isinstance(value, Mapping):
+        return False
+    for given in cast(Mapping[object, object], value).values():
+        if isinstance(given, str):
+            return True
+        if isinstance(given, Mapping) and {"name", "size"} & set(
+            cast(Mapping[object, object], given)
+        ):
+            return True
+    return False
 
 
 def describe(error: ValidationError, where: str) -> list[str]:
@@ -498,6 +552,71 @@ type StyleField = Annotated[StyleRef | None, BeforeValidator(short_style)]
 def logos(spec: StyleFile) -> list[tuple[str, str | bytes]]:
     """Les logos d'un fichier de style : (nom du style, fichier ou octets)."""
     return [(name, props.logo) for name, props in spec.styles.items() if props.logo is not None]
+
+
+def font_files(spec: StyleFile) -> list[tuple[str, str, str | bytes]]:
+    """Les fichiers des polices d'un fichier de style : (famille, variante, fichier ou
+    octets)."""
+    found: list[tuple[str, str, str | bytes]] = []
+    for family, files in (spec.fonts or {}).items():
+        for variant in FONT_VARIANTS:
+            given = cast(str | bytes | None, getattr(files, variant))
+            if given is not None:
+                found.append((family, variant, given))
+    return found
+
+
+# Le droit d'embarquer une police (``fsType`` de sa table OS/2) : ce qui l'interdit.
+_RESTRICTED: Final = 0x0002
+_PREVIEW_PRINT: Final = 0x0004
+_EDITABLE: Final = 0x0008
+_NO_SUBSETTING: Final = 0x0100
+_BITMAP_ONLY: Final = 0x0200
+
+
+def font_fault(data: bytes) -> str | None:
+    """Ce qui empêche d'embarquer une police dans un PDF ; ``None`` si rien.
+
+    Une police TrueType (contours ``glyf``), seule dans son fichier, dont la licence permet
+    l'embarquement, en sous-ensemble, pour un document qu'on peut modifier : ``fsType`` 0
+    (installable) ou 8 (modifiable). Une police « aperçu et impression » (4) est refusée :
+    un lecteur s'en servirait sans qu'on puisse modifier le document.
+    """
+    tag = data[:4]
+    if tag in (b"wOFF", b"wOF2"):
+        return "une police web (WOFF) : le fichier TrueType (.ttf) est attendu"
+    if tag == b"OTTO":
+        return "une police OpenType à contours CFF (.otf) : une police TrueType (.ttf) est attendue"
+    if tag == b"ttcf":
+        return "une collection de polices (.ttc) : un fichier .ttf par police est attendu"
+    if tag not in (b"\x00\x01\x00\x00", b"true") or len(data) < 12:
+        return "pas une police TrueType (.ttf)"
+    count = struct.unpack(">H", data[4:6])[0]
+    if len(data) < 12 + 16 * count:
+        return "police TrueType tronquée"
+    tables: dict[bytes, tuple[int, int]] = {}
+    for index in range(count):
+        name, _, offset, length = struct.unpack(">4sIII", data[12 + 16 * index : 28 + 16 * index])
+        tables[name] = (offset, length)
+    if b"glyf" not in tables:
+        return "pas de contours TrueType (table glyf) : une police TrueType (.ttf) est attendue"
+    offset, length = tables.get(b"OS/2", (0, 0))
+    if length < 10 or offset + 10 > len(data):
+        return "pas de table OS/2 : les droits d'embarquement de la police sont inconnus"
+    rights = struct.unpack(">H", data[offset + 8 : offset + 10])[0]
+    if not rights & _EDITABLE:
+        if rights & _PREVIEW_PRINT:
+            return (
+                "police « aperçu et impression seulement » (fsType 4) : sa licence ne permet "
+                "pas un document modifiable"
+            )
+        if rights & _RESTRICTED:
+            return "police à embarquement interdit (fsType 2) : sa licence ne le permet pas"
+    if rights & _NO_SUBSETTING:
+        return "police à embarquer entière (fsType 0x100) : le PDF n'en embarque qu'une partie"
+    if rights & _BITMAP_ONLY:
+        return "police à embarquer en images seulement (fsType 0x200)"
+    return None
 
 
 # --- Le style résolu ---------------------------------------------------------------------
@@ -613,6 +732,9 @@ class Style:
     labels: Labels = FRENCH
     image_grid: bool = False
     chart: ChartLook = ChartLook((), "", "", "")
+    # Les fichiers TrueType des polices, par famille puis variante (``regular``…) : le PDF
+    # les embarque.
+    fonts: Mapping[str, Mapping[str, bytes]] = field(default_factory=dict[str, Mapping[str, bytes]])
 
     @property
     def language(self) -> Language:
@@ -754,6 +876,14 @@ def resolve(*files: StyleFile | None) -> Style:
         if file.labels is not None:
             labels.update(file.labels.model_dump(exclude_none=True))
     said = Labels(language=language, **{**LABELS[language], **labels})
+    fonts: dict[str, dict[str, bytes]] = {}
+    for file in given:
+        for family in file.fonts or {}:
+            fonts[family] = {}
+        for family, variant, data in font_files(file):
+            # Un fichier non lu : le chargeur de config lit les fichiers ; la fabrique le refuse.
+            if isinstance(data, bytes):
+                fonts[family][variant] = data
     return Style(
         looks=looks,
         declared=declared,
@@ -770,6 +900,7 @@ def resolve(*files: StyleFile | None) -> Style:
         labels=said,
         image_grid=grid,
         chart=chart,
+        fonts={family: files for family, files in fonts.items() if "regular" in files},
     )
 
 
